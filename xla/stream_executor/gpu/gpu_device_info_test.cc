@@ -98,8 +98,12 @@ TEST(DeviceInfoTest, DeviceInfoMatches) {
       diff.IgnoreField(
           GpuDeviceInfoProto::GetDescriptor()->FindFieldByName("cub_version"));
     }
-    diff.IgnoreField(GpuDeviceInfoProto::GetDescriptor()->FindFieldByName(
-        "device_interconnect_info"));
+    diff.IgnoreField(
+        DeviceInterconnectInfoProto::GetDescriptor()->FindFieldByName(
+            "cluster_uuid"));
+    diff.IgnoreField(
+        DeviceInterconnectInfoProto::GetDescriptor()->FindFieldByName(
+            "clique_id"));
     diff.set_message_field_comparison(
         tsl::protobuf::util::MessageDifferencer::EQUIVALENT);
     std::string result;
