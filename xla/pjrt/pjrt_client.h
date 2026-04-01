@@ -712,13 +712,18 @@ class PjRtClient {
     return absl::UnimplementedError("CreateAliasBuffer is not supported.");
   }
 
+  // Creates a PjRtDeviceEvent which can be passed into DefineBuffer.
+  virtual absl::StatusOr<std::unique_ptr<PjRtDeviceEvent>> CreateDeviceEvent() {
+    return absl::UnimplementedError("CreateDeviceEvent is not supported.");
+  }
+
   // Defines a pjrt buffer from a shape, raw_buffer and definition events.
   virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> DefineBuffer(
       const Shape& shape, PjRtMemorySpace* memory_space,
       tsl::RCReference<PjRtRawBuffer> raw_buffer,
       absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>
           definition_device_events) {
-    return absl::UnimplementedError("DefineBuffer is not supported");
+    return absl::UnimplementedError("DefineBuffer is not supported.");
   }
 
   // Creates buffer in the given memory space that carries an error future

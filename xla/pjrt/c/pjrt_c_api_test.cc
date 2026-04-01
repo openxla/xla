@@ -995,6 +995,7 @@ FieldOffsetsAndSizesForVersion(int major_version, int minor_version) {
     if (minor_version >= 104) {
       add_field("PJRT_DeviceEvent_GetPJRTEvent", kFnPtrSize);
       add_field("PJRT_DeviceEvent_Destroy", kFnPtrSize);
+      add_field("PJRT_Client_CreateDeviceEvent", kFnPtrSize);
     }
     return version_offsets_and_sizes;
   }
@@ -1448,6 +1449,9 @@ TEST_F(PjrtCAbiTestBase, FieldOffsetsAndSizes) {
           {"PJRT_DeviceEvent_Destroy",
            {offsetof(PJRT_Api, PJRT_DeviceEvent_Destroy),
             sizeof(PJRT_Api::PJRT_DeviceEvent_Destroy)}},
+          {"PJRT_Client_CreateDeviceEvent",
+           {offsetof(PJRT_Api, PJRT_Client_CreateDeviceEvent),
+            sizeof(PJRT_Api::PJRT_Client_CreateDeviceEvent)}},
       };
   ASSERT_EQ(api_->pjrt_api_version.major_version, PJRT_API_MAJOR);
   ASSERT_EQ(api_->pjrt_api_version.minor_version, PJRT_API_MINOR);

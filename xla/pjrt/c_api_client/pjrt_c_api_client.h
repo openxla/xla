@@ -434,6 +434,8 @@ class PjRtCApiClient : public PjRtClient {
       absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>
           definition_device_events) override;
 
+  absl::StatusOr<std::unique_ptr<PjRtDeviceEvent>> CreateDeviceEvent() override;
+
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateErrorBuffer(
       absl::Status error, const Shape& shape, PjRtMemorySpace* memory) override;
 

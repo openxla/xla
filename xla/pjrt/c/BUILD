@@ -552,6 +552,8 @@ cc_library(
     ),
     visibility = ["//visibility:public"],
     deps = [
+        ":pjrt_c_api_raw_buffer_extension_hdrs",
+        ":pjrt_c_api_raw_buffer_internal",
         ":pjrt_c_api_abi_version_extension_hdrs",
         ":pjrt_c_api_custom_partitioner_extension_hdrs",
         ":pjrt_c_api_ffi_extension_hdrs",
@@ -691,6 +693,9 @@ xla_test(
         "config-cuda-only",
     ]),
     deps = [
+        ":pjrt_c_api_raw_buffer_extension_hdrs",
+        ":pjrt_c_api_raw_buffer_internal",
+        ":pjrt_c_api_raw_buffer_external",
         ":pjrt_c_api_ffi_extension_hdrs",
         ":pjrt_c_api_gpu",
         ":pjrt_c_api_gpu_extension_hdrs",
@@ -713,6 +718,7 @@ xla_test(
         "//xla/ffi/api:ffi",
         "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_compiler",
+        "//xla/pjrt:pjrt_c_api_client",
         "//xla/pjrt/distributed:in_memory_key_value_store",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
         "//xla/service:computation_placer_hdr",

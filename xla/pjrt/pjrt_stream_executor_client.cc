@@ -595,6 +595,12 @@ PjRtStreamExecutorClient::DefineBuffer(
   return py_buffer;
 }
 
+absl::StatusOr<std::unique_ptr<PjRtDeviceEvent>>
+PjRtStreamExecutorClient::CreateDeviceEvent() {
+  return std::make_unique<PjRtStreamExecutorDeviceEvent>(
+      BufferSequencingEvent::Create(async_work_runner()));
+}
+
 absl::StatusOr<std::pair<tsl::RCReference<CommonPjRtRawBuffer>,
                          CommonPjRtClient::PjRtFulfillAliasRawBufferCallback>>
 PjRtStreamExecutorClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,

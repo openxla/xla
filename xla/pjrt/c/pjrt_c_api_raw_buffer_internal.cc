@@ -114,16 +114,17 @@ PJRT_Error* PJRT_Client_DefineBuffer(PJRT_Client_DefineBuffer_Args* args) {
       pjrt::BuildXlaShapeFromC(args->shape_element_type, args->shape_dims,
                                args->shape_num_dims, args->shape_layout));
 
-  absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>> definition_events;
+  absl::InlinedVector<tsl::RCReference<xla::PjRtDeviceEvent>, 4>
+      definition_events;
   definition_events.reserve(args->num_definition_events);
   for (int i = 0; i < args->num_definition_events; ++i) {
     definition_events.push_back(args->device_events[i]->device_event);
   }
 
-  PJRT_ASSIGN_OR_RETURN(std::unique_ptr<PjRtBuffer> defined_cpp_buffer,
+  PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtBuffer> defined_cpp_buffer,
                         args->client->client->DefineBuffer(
                             shape, args->memory->memory_space,
-                            args->raw_buffer->raw_buffer, definition_events));
+                            args->raw_buffer->buffer, definition_events));
 
   PJRT_Buffer* defined_buffer =
       new PJRT_Buffer{std::move(defined_cpp_buffer), args->client};

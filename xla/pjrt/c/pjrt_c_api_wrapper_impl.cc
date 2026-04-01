@@ -851,6 +851,24 @@ PJRT_Error* PJRT_Client_DmaUnmap(PJRT_Client_DmaUnmap_Args* args) {
   return nullptr;
 }
 
+PJRT_Error* PJRT_Client_CreateDeviceEvent(
+    PJRT_Client_CreateDeviceEvent_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Client_CreateDeviceEvent_Args",
+      PJRT_Client_CreateDeviceEvent_Args_STRUCT_SIZE, args->struct_size));
+
+  PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtDeviceEvent> device_event,
+                        args->client->client->CreateDeviceEvent());
+
+  tsl::RCReference<xla::PjRtDeviceEvent> rc_device_event =
+      tsl::FormRef(device_event.release());
+  PJRT_DeviceEvent* out_device_event =
+      new PJRT_DeviceEvent{std::move(rc_device_event)};
+  args->device_event = out_device_event;
+
+  return nullptr;
+}
+
 // Searches `device_list` for a PJRT_Device* that wraps a provided
 // `xla::PjRtDevice *` (`cpp_device`). If a match is found, that PJRT_Device*
 // is returned. Otherwise, returns nullptr.
@@ -2717,8 +2735,8 @@ PJRT_Error* PJRT_Buffer_CopyRawToHostFuture(
       future, args->offset, args->transfer_size);
   args->event = new PJRT_Event{std::move(wrapped_promise)};
 
-  typedef absl::AnyInvocable<void(
-      PJRT_Buffer_CopyRawToHostFuture_Callback_Args*) &&>
+  typedef absl::AnyInvocable<
+      void(PJRT_Buffer_CopyRawToHostFuture_Callback_Args*) &&>
       Callback;
   auto callback = new Callback(
       [promise = std::move(promise)](
@@ -3089,7 +3107,9 @@ PJRT_Error* PJRT_DeviceEvent_GetPJRTEvent(
       "PJRT_DeviceEvent_GetPJRTEvent",
       PJRT_DeviceEvent_GetPJRTEvent_Args_STRUCT_SIZE, args->struct_size));
 
-  auto [promise, future] = xla::MakePromise();
+  auto promise_and_future = xla::MakePromise();
+  auto& promise = promise_and_future.first;
+  auto& future = promise_and_future.second;
 
   tsl::Future<> backing_future =
       tsl::MakeFutureWhenReady(args->device_event->device_event->async_value());
@@ -3862,6 +3882,8 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
       pjrt::PJRT_DeviceEvent_GetPJRTEvent,
       /*PJRT_DeviceEvent_Destroy=*/
       pjrt::PJRT_DeviceEvent_Destroy,
+      /*PJRT_Client_CreateDeviceEvent=*/
+      PJRT_Client_CreateDeviceEvent,
   };
 }
 

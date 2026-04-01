@@ -113,24 +113,24 @@ limitations under the License.
 namespace pjrt {
 
 void PjRtCApiRawBuffer_Destroy(const PJRT_Api* c_api,
-                 const PJRT_RawBuffer_Extension* extension,
-                 PJRT_RawBuffer* buffer);
+                               const PJRT_RawBuffer_Extension* extension,
+                               PJRT_RawBuffer* buffer);
 PJRT_Memory* PjRtCApiRawBuffer_GetMemorySpace(
-  const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
-  PJRT_RawBuffer* buffer);
+    const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
+    PJRT_RawBuffer* buffer);
 void* PjRtCApiRawBuffer_GetHostPointer(
-  const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
-  PJRT_RawBuffer* buffer);
+    const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
+    PJRT_RawBuffer* buffer);
 size_t PjRtCApiRawBuffer_GetOnDeviceSizeInBytes(
-  const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
-  PJRT_RawBuffer* buffer);
+    const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
+    PJRT_RawBuffer* buffer);
 xla::Future<> PjRtCApiRawBuffer_CopyRawHostToDevice(
-  const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
-  PJRT_RawBuffer* buffer, const void* src, int64_t offset,
-  int64_t transfer_size);
+    const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
+    PJRT_RawBuffer* buffer, const void* src, int64_t offset,
+    int64_t transfer_size);
 xla::Future<> PjRtCApiRawBuffer_CopyRawDeviceToHost(
-  const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
-  PJRT_RawBuffer* buffer, void* dst, int64_t offset, int64_t transfer_size);
+    const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
+    PJRT_RawBuffer* buffer, void* dst, int64_t offset, int64_t transfer_size);
 
 }  // namespace pjrt
 
@@ -1013,6 +1013,11 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiClient::DefineBuffer(
     absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>
         definition_device_events) {
   const PJRT_Api* c_api = pjrt_c_api();
+  if (c_api->pjrt_api_version.major_version == 0 &&
+      c_api->pjrt_api_version.minor_version < 104) {
+    return absl::UnimplementedError(
+        "DefineBuffer requires PJRT C API version 0.104 or higher.");
+  }
   auto* extension = FindExtension<PJRT_RawBuffer_Extension>(
       PJRT_Extension_Type::PJRT_Extension_Type_RawBuffer);
   if (extension == nullptr) {
@@ -1080,6 +1085,30 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiClient::DefineBuffer(
                               c_api);
 
   return std::make_unique<PjRtCApiBuffer>(this, args.defined_buffer);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtDeviceEvent>>
+PjRtCApiClient::CreateDeviceEvent() {
+  const PJRT_Api* c_api = pjrt_c_api();
+  if (c_api->pjrt_api_version.major_version == 0 &&
+      c_api->pjrt_api_version.minor_version < 104) {
+    return absl::UnimplementedError(
+        "CreateDeviceEvent requires PJRT C API version 0.104 or higher.");
+  }
+
+  PJRT_Client_CreateDeviceEvent_Args args;
+  args.struct_size = PJRT_Client_CreateDeviceEvent_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.client = c_client_.get();
+
+  RETURN_STATUS_IF_PJRT_ERROR(c_api->PJRT_Client_CreateDeviceEvent(&args),
+                              c_api);
+
+  pjrt::PJRT_DeviceEventDeleter deleter = pjrt::MakeDeviceEventDeleter(c_api);
+  std::unique_ptr<PJRT_DeviceEvent, ::pjrt::PJRT_DeviceEventDeleter>
+      device_event(args.device_event, deleter);
+
+  return std::make_unique<PjRtCApiDeviceEvent>(std::move(device_event), c_api);
 }
 
 absl::StatusOr<const PjRtTopologyDescription*>
@@ -4242,8 +4271,7 @@ size_t PjRtCApiRawBuffer::GetOnDeviceSizeInBytes() const {
                                                         c_buffer_);
 }
 
-Future<> PjRtCApiRawBuffer::CopyRawHostToDevice(const void* src,
-                                                int64_t offset,
+Future<> PjRtCApiRawBuffer::CopyRawHostToDevice(const void* src, int64_t offset,
                                                 int64_t transfer_size) {
   return pjrt::PjRtCApiRawBuffer_CopyRawHostToDevice(
       c_api_, c_extension_, c_buffer_, src, offset, transfer_size);

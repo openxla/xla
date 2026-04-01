@@ -55,12 +55,14 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_gpu_internal.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_layouts_extension.h"
+#include "xla/pjrt/c/pjrt_c_api_raw_buffer_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_test.h"
 #include "xla/pjrt/c/pjrt_c_api_test_base.h"
 #include "xla/pjrt/c/pjrt_c_api_triton_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
+#include "xla/pjrt/pjrt_c_api_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/service/computation_placer.h"
@@ -203,6 +205,109 @@ class PjrtCApiGpuBufferTest : public PjrtCApiGpuTest {
 
   std::unique_ptr<PJRT_Buffer, PJRT_BufferDeleter> buffer_;
 };
+
+TEST_F(PjrtCApiGpuTest, CreateAndDestroyDeviceEvent) {
+  // Simple test that checks we can create and destroy a PJRT_DeviceEvent
+  // without an error.
+
+  PJRT_Client_CreateDeviceEvent_Args create_args;
+  create_args.struct_size = PJRT_Client_CreateDeviceEvent_Args_STRUCT_SIZE;
+  create_args.extension_start = nullptr;
+  create_args.client = client_;
+  create_args.device_event = nullptr;
+
+  PJRT_Error* create_error = api_->PJRT_Client_CreateDeviceEvent(&create_args);
+  ASSERT_THAT(create_error, IsNull());
+  ASSERT_NE(create_args.device_event, nullptr);
+
+  PJRT_DeviceEvent_Destroy_Args destroy_args;
+  destroy_args.struct_size = PJRT_DeviceEvent_Destroy_Args_STRUCT_SIZE;
+  destroy_args.extension_start = nullptr;
+  destroy_args.device_event = create_args.device_event;
+
+  PJRT_Error* destroy_error = api_->PJRT_DeviceEvent_Destroy(&destroy_args);
+  ASSERT_THAT(destroy_error, IsNull());
+}
+
+TEST_F(PjrtCApiGpuBufferTest, DefineBuffer) {
+  // Simple test that checks if we can, without raising any errors, define a
+  // PJRT_Buffer from a definition event + raw buffer.
+
+  // Get the RawBuffer extension.
+  PJRT_RawBuffer_Extension* raw_buffer_extension =
+      pjrt::FindExtension<PJRT_RawBuffer_Extension>(
+          api_, PJRT_Extension_Type::PJRT_Extension_Type_RawBuffer);
+  CHECK_NE(raw_buffer_extension, nullptr);
+  CHECK_NE(raw_buffer_extension->PJRT_Client_DefineBuffer, nullptr);
+
+  // Create the raw buffer.
+  auto [buffer, buffer_future] = create_iota_buffer();
+  CHECK_OK(buffer_future.Await());
+  CHECK_NE(raw_buffer_extension->PJRT_RawBuffer_CreateRawAliasOfBuffer,
+           nullptr);
+  PJRT_RawBuffer_CreateRawAliasOfBuffer_Args raw_buffer_creation_args;
+  raw_buffer_creation_args.struct_size =
+      PJRT_RawBuffer_CreateRawAliasOfBuffer_Args_STRUCT_SIZE;
+  raw_buffer_creation_args.extension_start = nullptr;
+  raw_buffer_creation_args.buffer = buffer.get();
+  raw_buffer_creation_args.raw_buffer = nullptr;
+
+  PJRT_Error* raw_buffer_creation_error =
+      raw_buffer_extension->PJRT_RawBuffer_CreateRawAliasOfBuffer(
+          &raw_buffer_creation_args);
+  ASSERT_THAT(raw_buffer_creation_error, IsNull());
+  ASSERT_NE(raw_buffer_creation_args.raw_buffer, nullptr);
+
+  // Create the definition device event.
+  PJRT_Client_CreateDeviceEvent_Args definition_event_creation_args;
+  definition_event_creation_args.struct_size =
+      PJRT_Client_CreateDeviceEvent_Args_STRUCT_SIZE;
+  definition_event_creation_args.extension_start = nullptr;
+  definition_event_creation_args.client = client_;
+  definition_event_creation_args.device_event = nullptr;
+
+  PJRT_Error* definition_event_creation_error =
+      api_->PJRT_Client_CreateDeviceEvent(&definition_event_creation_args);
+  ASSERT_THAT(definition_event_creation_error, IsNull());
+  ASSERT_NE(definition_event_creation_args.device_event, nullptr);
+
+  // Get the shape and memory_space of the new buffer we will define. This is
+  // hardcoded based on the implementation of create_iota_buffer().
+  xla::Shape shape = xla::ShapeUtil::MakeShapeWithType<float>({4});
+  PJRT_Device* device = GetClientAddressableDevices()[0];
+  xla::PjRtMemorySpace* memory_space =
+      device->device->default_memory_space().value();
+
+  PJRT_Memory c_api_memory_space;
+  c_api_memory_space.memory_space = memory_space;
+  c_api_memory_space.client = client_;
+  c_api_memory_space.devices = {device};
+
+  // Define the new PJRT_Buffer.
+  PJRT_Client_DefineBuffer_Args define_buffer_args;
+  define_buffer_args.struct_size = PJRT_Client_DefineBuffer_Args_STRUCT_SIZE;
+  define_buffer_args.extension_start = nullptr;
+  define_buffer_args.client = client_;
+  define_buffer_args.shape_dims = shape.dimensions().data();
+  define_buffer_args.shape_num_dims = shape.dimensions().size();
+  define_buffer_args.shape_element_type =
+      pjrt::ConvertToPjRtBufferType(shape.element_type());
+  define_buffer_args.shape_layout = nullptr;
+  define_buffer_args.memory = &c_api_memory_space;
+  define_buffer_args.raw_buffer = raw_buffer_creation_args.raw_buffer;
+  define_buffer_args.num_definition_events = 1;
+  define_buffer_args.device_events =
+      &definition_event_creation_args.device_event;
+  define_buffer_args.defined_buffer = nullptr;
+
+  PJRT_Error* define_buffer_error =
+      raw_buffer_extension->PJRT_Client_DefineBuffer(&define_buffer_args);
+  ASSERT_THAT(define_buffer_error, IsNull());
+  ASSERT_NE(define_buffer_args.defined_buffer, nullptr);
+
+  std::unique_ptr<PJRT_Buffer, ::pjrt::PJRT_BufferDeleter> defined_buffer(
+      define_buffer_args.defined_buffer, ::pjrt::MakeBufferDeleter(api_));
+}
 
 TEST_F(PjrtCApiGpuBufferTest, CopyRawToHost) {
   auto [buffer, buffer_future] = create_iota_buffer();

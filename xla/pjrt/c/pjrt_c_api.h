@@ -1309,6 +1309,18 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Client_CreateBuffersForAsyncHostToDevice_Args,
 typedef PJRT_Error* PJRT_Client_CreateBuffersForAsyncHostToDevice(
     PJRT_Client_CreateBuffersForAsyncHostToDevice_Args* args);
 
+struct PJRT_Client_CreateDeviceEvent_Args {
+  size_t struct_size;
+  PJRT_Extension_Base* extension_start;
+  PJRT_Client* client;
+  PJRT_DeviceEvent* device_event;  // out
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Client_CreateDeviceEvent_Args, device_event);
+
+// Create a device event.
+typedef PJRT_Error* PJRT_Client_CreateDeviceEvent(
+    PJRT_Client_CreateDeviceEvent_Args* args);
+
 // -------------------------- Device Descriptions ------------------------------
 
 // Device descriptions may be associated with an actual device
@@ -3097,11 +3109,11 @@ typedef struct PJRT_Api {
 
   _PJRT_API_STRUCT_FIELD(PJRT_DeviceEvent_GetPJRTEvent);
   _PJRT_API_STRUCT_FIELD(PJRT_DeviceEvent_Destroy);
+  _PJRT_API_STRUCT_FIELD(PJRT_Client_CreateDeviceEvent);
 } PJRT_Api;
 
 enum {
-  PJRT_Api_STRUCT_SIZE =
-      PJRT_STRUCT_SIZE(PJRT_Api, PJRT_DeviceEvent_Destroy)
+  PJRT_Api_STRUCT_SIZE = PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Client_CreateDeviceEvent)
 };
 
 #undef _PJRT_API_STRUCT_FIELD
