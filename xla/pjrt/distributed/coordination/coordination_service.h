@@ -115,6 +115,8 @@ class CoordinationService {
     Stop();
   }
 
+  IncarnationId GetServiceIncarnation() { return service_incarnation_; }
+
   // Register a task to the service.
   // Possible service errors:
   //   - Internal: Service has shut down.
@@ -283,11 +285,7 @@ class CoordinationService {
   void PollForErrorAsync(TaskId task, tsl::StatusCallback done);
 
  private:
-  friend class CoordinationServiceRpcHandler;
-
   void LogConnectStatusLocked() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
-
-  IncarnationId GetServiceIncarnation();
   void BarrierAsyncLocked(absl::string_view barrier_id, int64_t counter,
                           absl::Duration timeout, TaskId task,
                           const std::vector<TaskId>& participating_tasks,

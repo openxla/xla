@@ -602,10 +602,6 @@ absl::Status CoordinationService::DisconnectTask(TaskId task) {
   return absl::OkStatus();
 }
 
-IncarnationId CoordinationService::GetServiceIncarnation() {
-  return service_incarnation_;
-}
-
 absl::Status CoordinationService::ReportTaskError(TaskId task,
                                                   const absl::Status& error) {
   absl::MutexLock l(state_mu_);
