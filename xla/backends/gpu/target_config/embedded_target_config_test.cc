@@ -37,7 +37,7 @@ limitations under the License.
 namespace stream_executor {
 namespace {
 
-TEST(DeviceInfoTest, DeviceInfoMatches) {
+TEST(EmbeddedTargetConfigTest, DeviceInfoMatches) {
   absl::flat_hash_map<std::string, GpuDeviceInfoProto> gpu_specs;
   for (const std::string file_name :
        {"a100_pcie_80", "a100_sxm_40", "a100_sxm_80", "a6000", "b200",
