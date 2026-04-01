@@ -646,12 +646,7 @@ xla_test(
 
 xla_test(
     name = "grouped_convolution_test",
-    timeout = "long",
     srcs = ["grouped_convolution_test.cc"],
-    disabled_backends = [
-        # disabled because it times out.
-        "cpu",
-    ],
     shard_count = 23,
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
