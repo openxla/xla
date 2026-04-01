@@ -81,12 +81,14 @@ StringAttr createFuncOp(NamedComputationOp namedComputationOp,
                         std::optional<TensorShardingPerValueAttr> inShardings,
                         std::optional<TensorShardingPerValueAttr> outShardings,
                         ManualAxesAttr manualAxesAttr) {
-  auto funcOp = FuncOp::create(
+  FuncOp funcOp = FuncOp::create(
       rewriter, namedComputationOp.getLoc(), namedComputationOp.getName(),
       rewriter.getFunctionType(namedComputationOp.getBody().getArgumentTypes(),
                                namedComputationOp.getResultTypes()),
       rewriter.getStringAttr("private"),
       /*argAttrs=*/ArrayAttr(), /*resultAttrs=*/ArrayAttr());
+  funcOp->setAttr(mlir::sdy::kOriginalFuncName,
+                  namedComputationOp.getNameAttr());
   if (manualAxesAttr) {
     funcOp->setAttr(kManualAxes, manualAxesAttr);
   }
