@@ -2631,6 +2631,16 @@ absl::Status VerifyAsynchronousInstructionPairs(const HloModule& module) {
               VerifySingleOperand(instruction, {HloOpcode::kAllReduceStart}));
           break;
         }
+        case HloOpcode::kAllGatherStart: {
+          TF_RETURN_IF_ERROR(
+              VerifySingleUser(instruction, {HloOpcode::kAllGatherDone}));
+          break;
+        }
+        case HloOpcode::kAllGatherDone: {
+          TF_RETURN_IF_ERROR(
+              VerifySingleOperand(instruction, {HloOpcode::kAllGatherStart}));
+          break;
+        }
         case HloOpcode::kCopyStart: {
           TF_RETURN_IF_ERROR(
               VerifySingleUser(instruction, {HloOpcode::kCopyDone}));
