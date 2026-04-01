@@ -1,7 +1,7 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_google")
+load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("//xla/util:build_defs.bzl", "embed_files")
 
@@ -74,6 +74,11 @@ cc_library(
     name = "gpu_topology_utils",
     srcs = ["gpu_topology_utils.cc"],
     hdrs = ["gpu_topology_utils.h"],
+    compatible_with = get_compatible_with_portable() + if_google(["//buildenv/target:libtpu"]),
+    visibility = internal_visibility([
+        "//xla/pjrt/gpu:legacy_gpu_topology_users",
+        ":__subpackages__",
+    ]),
     deps = [
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
