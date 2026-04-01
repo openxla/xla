@@ -725,6 +725,7 @@ cc_library(
         "//xla/backends/gpu/runtime:collective_clique_requests",
         "//xla/backends/gpu/runtime:collective_cliques",
         "//xla/backends/gpu/runtime:collective_memory",
+        "//xla/backends/gpu/runtime:collective_memory_cache",
         "//xla/backends/gpu/runtime:collective_memory_requests",
         "//xla/backends/gpu/runtime:collective_params",
         "//xla/backends/gpu/runtime:command_buffer_conversion_pass",
