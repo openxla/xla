@@ -38,6 +38,7 @@ cc_library(
     testonly = True,
     srcs = ["hlo_runner_main.cc"],
     compatible_with = None,
+    local_defines = if_cuda(["GOOGLE_CUDA=1"]),
     tags = ["no_mac"],
     deps = [
         ":create_client",
@@ -160,6 +161,7 @@ cc_library(
     name = "functional_hlo_runner",
     srcs = ["functional_hlo_runner.cc"],
     hdrs = ["functional_hlo_runner.h"],
+    local_defines = if_cuda(["GOOGLE_CUDA=1"]),
     deps = [
         ":hlo_input_output_format",
         ":profiler_interface",
@@ -220,7 +222,10 @@ cc_library(
         "@tsl//tsl/profiler/lib:profiler_session_impl",
         "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
-    ],
+    ] + if_cuda([
+        "//xla/backends/profiler/gpu:cupti_tracer",
+        "//xla/backends/profiler/gpu:device_tracer",  # Needed for CUPTI range profiling advanced config parsing.
+    ]),
 )
 
 filegroup(
@@ -231,6 +236,7 @@ filegroup(
 xla_test(
     name = "functional_hlo_runner_test",
     srcs = ["functional_hlo_runner_test.cc"],
+    copts = if_cuda(["-DGOOGLE_CUDA=1"]),
     backend_tags = {
         "h100": [
             "full",
