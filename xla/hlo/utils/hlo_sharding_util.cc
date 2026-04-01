@@ -277,7 +277,12 @@ bool IsSubTilingOrEqualNamedSharding(const Shape& potential_sharded_shape,
       !sharding.manual_axes().empty()) {
     return false;
   }
-  CHECK(sub_mesh.DeviceAssignmentEquals(mesh));
+  if (!sub_mesh.DeviceAssignmentEquals(mesh)) {
+    return IsSubTilingOrEqualSharding(
+        potential_sharded_shape,
+        HloSharding::V3ToV2Sharding(potential_subsharding),
+        HloSharding::V3ToV2Sharding(sharding));
+  }
 
   CHECK_EQ(potential_subsharding.num_dimensions(), sharding.num_dimensions());
 

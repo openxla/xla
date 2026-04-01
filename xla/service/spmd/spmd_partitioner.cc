@@ -2167,11 +2167,23 @@ std::optional<PartitionedHlo> PartitionedHlo::TryComplexReshardHandling(
     const HloSharding& target) const {
   VLOG(5) << "Trying to split complicated reshard: " << sharding().ToString()
           << " to " << target.ToString();
+
+  // TODO(b/498118846): Remove V2 conversion and support V3 directly.
+  HloSharding source_v2 =
+      sharding().UseNamedShardingLeaf()
+          ? HloSharding::V3ToV2Sharding(sharding().named_sharding())
+          : sharding();
+  HloSharding target_v2 =
+      target.UseNamedShardingLeaf()
+          ? HloSharding::V3ToV2Sharding(target.named_sharding())
+          : target;
+
   const bool is_source_partially_replicated =
-      sharding().ReplicateOnLastTileDim();
-  const bool is_target_partially_replicated = target.ReplicateOnLastTileDim();
+      source_v2.ReplicateOnLastTileDim();
+  const bool is_target_partially_replicated =
+      target_v2.ReplicateOnLastTileDim();
   if (auto reshape = PatternMatchMergeOrSplitSharding(this->base_shape(),
-                                                      sharding(), target)) {
+                                                      source_v2, target_v2)) {
     auto& [before_sharding, new_reshaped_sharding, source_dim] = *reshape;
     PartitionedHlo reshaped = SplitReshapeHelper(
         *this, source_dim, this->hlo()->shape().dimensions(source_dim),
@@ -2199,7 +2211,7 @@ std::optional<PartitionedHlo> PartitionedHlo::TryComplexReshardHandling(
     return reshaped;
   }
   if (auto intermediate_target =
-          PatternMatchPartiallyReplicateDim(sharding(), target)) {
+          PatternMatchPartiallyReplicateDim(source_v2, target_v2)) {
     VLOG(5) << "Matched \"pattern_match_partially_replicate_dim()\": "
             << intermediate_target->ToString();
     auto intermediate_reshard = Reshard(*intermediate_target);
@@ -2211,17 +2223,17 @@ std::optional<PartitionedHlo> PartitionedHlo::TryComplexReshardHandling(
     return final_reshard;
   }
   if (is_source_partially_replicated && !is_target_partially_replicated) {
-    const int64_t partial_repl_amount = sharding().dimensions().back();
+    const int64_t partial_repl_amount = source_v2.dimensions().back();
     int64_t first_different_dimension = -1;
     // Trying to match conditions like [..,X,..,Z,..,Y] last_tile_dim_replicate
     // to [..,Y,..,Z,..,X,..], where Y in the source is partially replicated,
     // but in the target it is not and some other dimension got moved or
     // modified. Try to remove the partial replication to simplify the step from
     // source to target sharding.
-    for (int64_t i = 0; i < target.num_dimensions(); ++i) {
-      if (target.dimension(i) != sharding().dimension(i) &&
-          sharding().dimension(i) == 1 &&
-          target.dimension(i) % partial_repl_amount == 0) {
+    for (int64_t i = 0; i < target_v2.num_dimensions(); ++i) {
+      if (target_v2.dimension(i) != source_v2.dimension(i) &&
+          source_v2.dimension(i) == 1 &&
+          target_v2.dimension(i) % partial_repl_amount == 0) {
         first_different_dimension = i;
         break;
       }
@@ -2230,12 +2242,12 @@ std::optional<PartitionedHlo> PartitionedHlo::TryComplexReshardHandling(
       return std::nullopt;
     }
     VLOG(5) << "Matched partially replicated to non partially replicated: "
-            << sharding().ToString();
-    std::vector<int64_t> transpose_dims(sharding().num_dimensions(), 0);
+            << source_v2.ToString();
+    std::vector<int64_t> transpose_dims(source_v2.num_dimensions(), 0);
     absl::c_iota(transpose_dims, 0);
     std::swap(transpose_dims[first_different_dimension], transpose_dims.back());
     auto intermediate_sharding =
-        hlo_sharding_util::TransposeSharding(sharding(), transpose_dims);
+        hlo_sharding_util::TransposeSharding(source_v2, transpose_dims);
     auto intermediate_reshard = Reshard(intermediate_sharding);
     auto reshard = intermediate_reshard.ReshardNoCache(
         target, /*pad_value=*/std::nullopt, /*allow_full_replication=*/false);
