@@ -39,6 +39,7 @@ limitations under the License.
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/TypeID.h"
+#include "mlir/Support/WalkResult.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "shardy/dialect/sdy/ir/constants.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
@@ -133,16 +134,10 @@ class ImportFuncCallsPass
     // will clone the mapped region.
     llvm::SmallDenseMap<StringRef, mlir::Region*> calleeNameToMovedRegion;
 
-    mlir::CallGraph callGraph(moduleOp);
-    llvm::ReversePostOrderTraversal<const mlir::CallGraph*> rpo(&callGraph);
-    for (mlir::CallGraphNode* node : llvm::reverse(rpo)) {
-      if (node->isExternal()) {
-        continue;
-      }
-      node->getCallableRegion()->walk([&](CallOp op) {
-        importCallOp(op, calleeNameToMovedRegion, rewriter, symbolTable);
-      });
-    }
+    mlir::sdy::walkCalls(moduleOp, [&](CallOp callOp) {
+      importCallOp(callOp, calleeNameToMovedRegion, rewriter, symbolTable);
+      return mlir::WalkResult::advance();
+    });
 
     // Erase all func ops that now have no call ops.
     for (auto [calleeName, _] : calleeNameToMovedRegion) {
