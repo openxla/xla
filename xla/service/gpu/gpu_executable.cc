@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
+#include "xla/backends/gpu/runtime/collective_memory_cache.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command_buffer_conversion_pass.h"
@@ -447,7 +448,8 @@ absl::Status ExecuteThunksImpl(
     Thunk::ExecutableSource executable_source,
     const ServiceExecutableRunOptions* run_options,
     const BufferAllocations& buffer_allocations, bool block_host_until_done,
-    const absl::flat_hash_set<ExecutionStreamId>& execution_stream_ids) {
+    const absl::flat_hash_set<ExecutionStreamId>& execution_stream_ids,
+    CollectiveMemoryCache& collective_memory_cache) {
   bool mock_collectives =
       run_options->run_options().gpu_executable_run_options()
           ? run_options->run_options()
@@ -661,11 +663,10 @@ absl::Status ExecuteThunksImpl(
   }
 
   // Acquire collective memories requested by thunks.
-  ASSIGN_OR_RETURN(
-      CollectiveMemory collective_memory,
-      AcquireCollectiveMemory(collective_params, collective_cliques,
-                              collective_memory_requests));
-
+  ASSIGN_OR_RETURN(CollectiveMemory collective_memory,
+                   AcquireCollectiveMemory(
+                       collective_params, collective_cliques,
+                       collective_memory_requests, collective_memory_cache));
   {  // Initialize thunks using prepared resources before execution.
     Thunk::InitializeParams initialize_params{
         executor,
@@ -1508,8 +1509,8 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
   TF_RETURN_IF_ERROR(ExecuteThunksImpl(
       has_module() ? &module_config().debug_options() : nullptr, module_name_,
       unique_id, *thunk_executor_, executable_source, run_options,
-      remapped_buffer_allocations, block_host_until_done,
-      execution_stream_ids_));
+      remapped_buffer_allocations, block_host_until_done, execution_stream_ids_,
+      collective_memory_cache_));
 
   // Record event so VA range can be reclaimed after GPU finishes.
   TF_RETURN_IF_ERROR(
@@ -1612,7 +1613,8 @@ absl::Status GpuExecutable::ExecuteThunks(
     TF_RETURN_IF_ERROR(ExecuteThunksImpl(
         has_module() ? &module_config().debug_options() : nullptr, module_name_,
         unique_id, *thunk_executor_, executable_source, run_options,
-        buffer_allocations, block_host_until_done, execution_stream_ids_));
+        buffer_allocations, block_host_until_done, execution_stream_ids_,
+        collective_memory_cache_));
   }
   return absl::OkStatus();
 }
