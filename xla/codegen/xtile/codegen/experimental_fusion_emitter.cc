@@ -301,6 +301,9 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
       return absl::UnimplementedError(
           absl::StrCat("Unsupported non-scalar constant ", hlo->ToString()));
     }
+    case HloOpcode::kDynamicSlice: {
+      return emitter_ctx.TiledHloToTensorValue(*tiled_hlo.operand(0));
+    }
     case HloOpcode::kIota: {
       return EmitIota(emitter_ctx, tiled_hlo);
     }
@@ -344,18 +347,18 @@ absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
   return std::move(results);
 }
 
-absl::Status EmitGeneric(
-    ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
-    const ::xla::gpu::experimental::TiledHloComputation& tiled_computation,
-    const ::xla::IndexingMap& schedule, xtile::EntryFuncOp fn,
-    MLIRContext* mlir_context) {
+absl::Status EmitGeneric(ImplicitLocOpBuilder& b,
+                         const HloFusionInstruction* fusion,
+                         const ge::TiledHloComputation& tiled_computation,
+                         const ::xla::IndexingMap& schedule,
+                         xtile::EntryFuncOp fn, MLIRContext* mlir_context) {
   if (VLOG_IS_ON(6)) {
     VLOG(6) << "Emitting XTile IR for fusion\n"
             << ExtractInstructionIntoNewModule(*fusion)->ToString();
     VLOG(6) << "Tiled computation: \n" << tiled_computation.ToString();
   }
   Value tile_id = fn.getTileId();
-  EmitterContext emitter_ctx{b, tile_id, schedule};
+  EmitterContext emitter_ctx{b, tile_id, schedule, tiled_computation};
   ASSIGN_OR_RETURN(auto results, EmitTiledComputation(emitter_ctx, fusion,
                                                       tiled_computation, fn));
   const HloComputation* computation = fusion->fused_instructions_computation();

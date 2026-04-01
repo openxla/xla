@@ -16,7 +16,9 @@ limitations under the License.
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
 
 #include <cstdint>
+#include <limits>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -51,12 +53,14 @@ limitations under the License.
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
+#include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/tiled_hlo_instruction.h"
 #include "xla/codegen/xtile/ir/xtile_attrs.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/indexing_map_serialization.h"
+#include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_map_converter.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -80,9 +84,13 @@ limitations under the License.
 namespace xla::xtile {
 
 using ::llvm::SmallVector;
+using ::mlir::AffineBinaryOpExpr;
+using ::mlir::AffineDimExpr;
 using ::mlir::AffineExpr;
 using ::mlir::AffineMap;
+using ::mlir::AffineSymbolExpr;
 using ::mlir::ArrayRef;
+using ::mlir::MLIRContext;
 using ::mlir::ShapedType;
 using ::mlir::Type;
 using ::mlir::Value;
@@ -142,6 +150,37 @@ absl::StatusOr<SmallVector<Value>> ComputeOffsetsForTile(
   }
   return emitters::ApplyIndexing(dim_only_tiling, /*dims=*/dims,
                                  /*symbols=*/{}, b);
+}
+
+void GetDimsAndSymbolIDsImpl(AffineExpr expr, SmallVector<unsigned>& dims,
+                             SmallVector<unsigned>& symbols) {
+  if (auto dim_expr = mlir::dyn_cast<AffineDimExpr>(expr)) {
+    dims.push_back(dim_expr.getPosition());
+  }
+  if (auto symbol_expr = mlir::dyn_cast<AffineSymbolExpr>(expr)) {
+    symbols.push_back(symbol_expr.getPosition());
+  }
+  if (auto binary_expr = mlir::dyn_cast<AffineBinaryOpExpr>(expr)) {
+    GetDimsAndSymbolIDsImpl(binary_expr.getLHS(), dims, symbols);
+    GetDimsAndSymbolIDsImpl(binary_expr.getRHS(), dims, symbols);
+  }
+}
+
+// Returns the sorted lists of dimension and symbol IDs that appear in the given
+// affine expressions.
+std::pair<SmallVector<unsigned>, SmallVector<unsigned>> GetDimsAndSymbolIDs(
+    ArrayRef<AffineExpr> exprs) {
+  SmallVector<unsigned> dims;
+  SmallVector<unsigned> symbols;
+  for (const auto& expr : exprs) {
+    GetDimsAndSymbolIDsImpl(expr, dims, symbols);
+  }
+  llvm::sort(dims);
+  dims.erase(llvm::unique(dims), dims.end());
+
+  llvm::sort(symbols);
+  symbols.erase(llvm::unique(symbols), symbols.end());
+  return std::make_pair(dims, symbols);
 }
 
 // Emit code corresponding to a fusion instruction somehow nested within the
@@ -205,21 +244,64 @@ SmallVector<int64_t> GetPaddedTileSizes(ArrayRef<int64_t> tile_sizes) {
 // the induction variables yet.
 absl::StatusOr<SmallVector<Value>> EmitterContext::EvaluateTilingParameters(
     ArrayRef<AffineExpr> exprs) {
-  SmallVector<AffineExpr> affine_exprs;
+  MLIRContext* mlir_context = schedule_.GetMLIRContext();
+  SmallVector<AffineExpr> schedule_exprs;
   for (const auto& expr : schedule_.GetSymbolicMap().GetResults()) {
-    affine_exprs.push_back(SymbolicExprToAffineExpr(expr, 1));
+    schedule_exprs.push_back(SymbolicExprToAffineExpr(expr, 1));
   }
+  // Get all dimension and symbol IDs from all of the expressions.
+  auto [dim_ids, symbol_ids] = GetDimsAndSymbolIDs(exprs);
+
+  // Remap parallel dimensions.
+  const ge::TilingSpace& tiling_space = tiled_computation_.tiling_space();
+  SmallVector<AffineExpr> dim_replacements;
+  for (const auto& [index, dim] : llvm::enumerate(dim_ids)) {
+    CHECK_EQ(tiling_space.dimensions()[dim].type,
+             ge::TilingSpace::DimensionSemantics::kParallel)
+        << "Sequential dimensions are not supported yet.";
+    dim_replacements.push_back(schedule_exprs[index]);
+  }
+
+  // Remap symbols that correspond to runtime variables.
+  int64_t symbol_count = 0;
+  SmallVector<AffineExpr> symbol_replacements;
+  SmallVector<Value> symbol_values;
+  if (!symbol_ids.empty()) {
+    symbol_replacements.resize(symbol_ids.back() + 1);
+    const auto& rt_symbol_to_tiled_hlo =
+        tiled_computation_.rt_symbol_to_tiled_hlo();
+    for (const auto& symbol_id : symbol_ids) {
+      auto it = rt_symbol_to_tiled_hlo.find(symbol_id);
+      TF_RET_CHECK(it != rt_symbol_to_tiled_hlo.end());
+      TensorValue tensor_value = TiledHloToTensorValue(*it->second);
+
+      mlir::OpBuilder::InsertionGuard guard(b_);
+      b_.setInsertionPointAfterValue(tensor_value);
+      Value scalar_value = mlir::tensor::ExtractOp::create(b_, tensor_value);
+      symbol_values.push_back(Cast(b_, scalar_value, b_.getIndexType()));
+
+      symbol_replacements[symbol_id] =
+          getAffineSymbolExpr(symbol_count++, mlir_context);
+    }
+  }
+
+  // Update the expressions with the remapped dimensions and symbols.
   SmallVector<AffineExpr> updated_exprs;
   for (const auto& expr : exprs) {
-    updated_exprs.push_back(expr.replaceDims(affine_exprs));
+    updated_exprs.push_back(
+        expr.replaceDimsAndSymbols(dim_replacements, symbol_replacements));
   }
   IndexingMap offset_indexing_map(
-      AffineMapToSymbolicMap(
-          AffineMap::get(1, 0, updated_exprs, schedule_.GetMLIRContext())),
-      schedule_.GetDimVars(), {}, {});
+      AffineMapToSymbolicMap(AffineMap::get(1, symbol_count, updated_exprs,
+                                            schedule_.GetMLIRContext())),
+      schedule_.GetDimVars(),
+      std::vector<IndexingMap::Variable>(
+          symbol_count,
+          IndexingMap::Variable(0, std::numeric_limits<int64_t>::max())),
+      {});
   SmallVector<Value> dims{Cast(b_, pid_, pid_.getType())};
   return emitters::ApplyIndexing(offset_indexing_map, /*dims=*/dims,
-                                 /*symbols=*/{}, b_);
+                                 /*symbols=*/symbol_values, b_);
 }
 
 absl::StatusOr<Type> PrimitiveTypeToMlirType(
