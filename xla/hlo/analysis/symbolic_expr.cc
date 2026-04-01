@@ -713,11 +713,16 @@ SymbolicExpr SymbolicExpr::ReplaceVariables(
 }
 
 SymbolicExpr SymbolicExpr::ReplaceDims(
+    absl::Span<const SymbolicExpr> dim_replacements) const {
+  return ReplaceVariables(dim_replacements);
+}
+
+SymbolicExpr SymbolicExpr::ReplaceDims(
     absl::Span<const SymbolicExpr> dim_replacements, int64_t current_num_dims,
     int64_t new_num_dims, int64_t num_symbols) const {
   CHECK_LE(dim_replacements.size(), current_num_dims);
   if (current_num_dims == new_num_dims) {
-    return ReplaceVariables(dim_replacements);
+    return ReplaceDims(dim_replacements);
   }
 
   llvm::SmallVector<SymbolicExpr> all_replacements;

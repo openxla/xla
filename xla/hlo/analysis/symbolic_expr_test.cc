@@ -147,11 +147,12 @@ TEST_F(SymbolicExprTest, ReplaceDims) {
   SymbolicExpr s0 = CreateSymbolExpr(0, /*num_dims=*/1, &ctx);
   SymbolicExpr s1 = CreateSymbolExpr(2, /*num_dims=*/1, &ctx);
   SymbolicExpr expr_to_sub = (d0 + s0 * 2) * s1;
-  SymbolicExpr result =
-      expr_to_sub.ReplaceDims({d0 + s1}, /*current_num_dims=*/1,
-                              /*new_num_dims=*/1, /*num_symbols=*/2);
 
-  EXPECT_EQ(result, ((d0 + s1) + s0 * 2) * s1);
+  // Testing both signatures of ReplaceDims.
+  EXPECT_EQ(expr_to_sub.ReplaceDims({d0 + s1}), ((d0 + s1) + s0 * 2) * s1);
+  EXPECT_EQ(expr_to_sub.ReplaceDims({d0 + s1}, /*current_num_dims=*/1,
+                                    /*new_num_dims=*/1, /*num_symbols=*/2),
+            ((d0 + s1) + s0 * 2) * s1);
 }
 
 TEST_F(SymbolicExprTest, ReplaceDimsWithShiftedSymbols) {
