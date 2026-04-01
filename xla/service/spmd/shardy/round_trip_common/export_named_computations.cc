@@ -235,7 +235,7 @@ void exportNamedComputations(ModuleOp moduleOp, SymbolTable& symbolTable,
     }
 
     FuncOp funcOp = symbolTable.lookup<FuncOp>(funcSymName);
-    maybeInsertReshardsOnFuncArguments(funcOp, callOp, symbolTable, rewriter);
+    insertReshardsOnFuncArguments(funcOp, callOp, symbolTable, rewriter);
     // Copy the func output shardings to the call op.
     if (TensorShardingPerValueAttr funcResultShardings =
             getFuncResultShardings(funcOp, symbolTable);
