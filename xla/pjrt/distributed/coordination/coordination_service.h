@@ -110,6 +110,12 @@ class CoordinationService {
     Stop();
   }
 
+  // CoordinationService is movable but not copyable.
+  CoordinationService(const CoordinationService&) = delete;
+  CoordinationService& operator=(const CoordinationService&) = delete;
+  CoordinationService(CoordinationService&&) = default;
+  CoordinationService& operator=(CoordinationService&&) = default;
+
   IncarnationId GetServiceIncarnation() { return service_incarnation_; }
 
   // Register a task to the service.
@@ -589,9 +595,6 @@ class CoordinationService {
   // the other state related to barriers and heartbeats to prevent illegal
   // memory access.
   std::unique_ptr<tsl::Thread> check_staleness_thread_;
-
-  CoordinationService(const CoordinationService&) = delete;
-  void operator=(const CoordinationService&) = delete;
 };
 
 }  // namespace xla
