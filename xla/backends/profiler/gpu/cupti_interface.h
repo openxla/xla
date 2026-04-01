@@ -53,6 +53,19 @@ struct CUpti_PmSampling_GetCounterDataSize_Params;
 struct CUpti_PmSampling_CounterDataImage_Initialize_Params;
 struct CUpti_PmSampling_GetCounterDataInfo_Params;
 struct CUpti_PmSampling_CounterData_GetSampleInfo_Params;
+
+struct CUpti_RangeProfiler_Enable_Params;
+struct CUpti_RangeProfiler_Disable_Params;
+struct CUpti_RangeProfiler_GetCounterDataSize_Params;
+struct CUpti_RangeProfiler_CounterDataImage_Initialize_Params;
+struct CUpti_RangeProfiler_SetConfig_Params;
+struct CUpti_RangeProfiler_Start_Params;
+struct CUpti_RangeProfiler_Stop_Params;
+struct CUpti_RangeProfiler_PushRange_Params;
+struct CUpti_RangeProfiler_PopRange_Params;
+struct CUpti_RangeProfiler_DecodeData_Params;
+struct CUpti_RangeProfiler_GetCounterDataInfo_Params;
+struct CUpti_RangeProfiler_CounterData_GetRangeInfo_Params;
 }
 
 namespace xla {
@@ -234,6 +247,33 @@ class CuptiInterface {
       CUpti_PmSampling_GetCounterDataInfo_Params* params) = 0;
   virtual CUptiResult PmSamplingCounterDataGetSampleInfo(
       CUpti_PmSampling_CounterData_GetSampleInfo_Params* params) = 0;
+
+  // Range profiling specific functions from
+  // cuda/extras/CUPTI/include/cupti_range_profiler.h
+  virtual CUptiResult RangeProfilerEnable(
+      CUpti_RangeProfiler_Enable_Params* params) = 0;
+  virtual CUptiResult RangeProfilerDisable(
+      CUpti_RangeProfiler_Disable_Params* params) = 0;
+  virtual CUptiResult RangeProfilerGetCounterDataSize(
+      CUpti_RangeProfiler_GetCounterDataSize_Params* params) = 0;
+  virtual CUptiResult RangeProfilerCounterDataImageInitialize(
+      CUpti_RangeProfiler_CounterDataImage_Initialize_Params* params) = 0;
+  virtual CUptiResult RangeProfilerSetConfig(
+      CUpti_RangeProfiler_SetConfig_Params* params) = 0;
+  virtual CUptiResult RangeProfilerStart(
+      CUpti_RangeProfiler_Start_Params* params) = 0;
+  virtual CUptiResult RangeProfilerStop(
+      CUpti_RangeProfiler_Stop_Params* params) = 0;
+  virtual CUptiResult RangeProfilerPushRange(
+      CUpti_RangeProfiler_PushRange_Params* params) = 0;
+  virtual CUptiResult RangeProfilerPopRange(
+      CUpti_RangeProfiler_PopRange_Params* params) = 0;
+  virtual CUptiResult RangeProfilerDecodeData(
+      CUpti_RangeProfiler_DecodeData_Params* params) = 0;
+  virtual CUptiResult RangeProfilerGetCounterDataInfo(
+      CUpti_RangeProfiler_GetCounterDataInfo_Params* params) = 0;
+  virtual CUptiResult RangeProfilerCounterDataGetRangeInfo(
+      CUpti_RangeProfiler_CounterData_GetRangeInfo_Params* params) = 0;
 
   virtual CUptiResult DeviceGetChipName(
       CUpti_Device_GetChipName_Params* params) = 0;

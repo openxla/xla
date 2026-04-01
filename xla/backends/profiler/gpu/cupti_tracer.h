@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/cupti_interface.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler.h"
+#include "xla/backends/profiler/gpu/cupti_range_profiler.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
@@ -62,6 +63,10 @@ struct CuptiTracerOptions {
   // This currently can not run second session with HES enabled, so do not turn
   // on this. TODO(b/466437495): Remove this comment once the bug is fixed.
   bool enable_activity_hardware_tracing = false;
+  // Range profiling configuration (defaults disabled).
+  // Only read during creation of a range profiling object, later changes have
+  // no effect.
+  CuptiRangeProfilerOptions range_profiler_options{};
 };
 
 class CuptiTracer;
@@ -157,6 +162,15 @@ class CuptiTracer {
     return option_.has_value() ? option_->required_callback_api_events : false;
   }
 
+  // Range profiling pass/range control. These delegate to the underlying
+  // CuptiRangeProfiler and are no-ops when range profiling is not enabled.
+  bool IsRangeProfilingEnabled() const { return range_profiling_enabled_; }
+  int NumRangeProfilingPasses() const;
+  absl::Status BeginRangePass();
+  absl::Status EndRangePass();
+  absl::Status PushProfilingRange(absl::string_view name);
+  absl::Status PopProfilingRange();
+
  protected:
   // protected constructor for injecting mock cupti interface for testing.
   explicit CuptiTracer(CuptiInterface* cupti_interface);
@@ -199,6 +213,7 @@ class CuptiTracer {
   int num_gpus_;
   std::optional<CuptiTracerOptions> option_;
   std::unique_ptr<xla::profiler::CuptiPmSampler> cupti_pm_sampler_;
+  std::unique_ptr<xla::profiler::CuptiRangeProfiler> cupti_range_profiler_;
   CuptiInterface* cupti_interface_ = nullptr;
   CuptiTraceCollector* collector_ = nullptr;
 
@@ -207,6 +222,7 @@ class CuptiTracer {
 
   bool api_tracing_enabled_ = false;
   bool pm_sampling_enabled_ = false;
+  bool range_profiling_enabled_ = false;
   // Cupti handle for driver or runtime API callbacks. Cupti permits a single
   // subscriber to be active at any time and can be used to trace Cuda runtime
   // as and driver calls for all contexts and devices.

@@ -283,6 +283,8 @@ cc_library(
         ":cupti_interface",
         ":cupti_marker_data_parser",
         ":cupti_pm_sampler_factory",
+        ":cupti_range_profiler",
+        ":cupti_range_profiler_factory",
         ":cupti_utils",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
@@ -315,6 +317,87 @@ cc_library(
         "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+    ],
+)
+
+cc_library(
+    name = "cupti_range_profiler",
+    hdrs = ["cupti_range_profiler.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "cupti_range_profiler_stub",
+    hdrs = [
+        "cupti_range_profiler.h",
+        "cupti_range_profiler_stub.h",
+    ],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        ":cupti_range_profiler",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "cupti_range_profiler_factory",
+    srcs = ["cupti_range_profiler_factory.cc"],
+    hdrs = [
+        "cupti_range_profiler.h",
+        "cupti_range_profiler_factory.h",
+    ],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        ":cupti_range_profiler",
+        "@com_google_absl//absl/status:statusor",
+        "@local_config_cuda//cuda:cupti_headers",
+    ] + if_cuda_newer_than(
+        "12_6",
+        [":cupti_range_profiler_impl"],
+        [":cupti_range_profiler_stub"],
+    ),
+)
+
+cc_library(
+    name = "cupti_range_profiler_impl",
+    srcs = ["cupti_range_profiler_impl.cc"],
+    hdrs = [
+        "cupti_range_profiler.h",
+        "cupti_range_profiler_impl.h",
+    ],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "manual",  # Requires CUDA 12.6+ (CUPTI Range Profiling API).
+    ],
+    deps = [
+        ":cupti_interface",
+        ":cupti_range_profiler",
+        ":cupti_status",
+        ":cupti_utils",
+        "//xla/stream_executor/cuda:cuda_status",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@local_config_cuda//cuda:cupti_headers",
     ],
 )
 
@@ -882,6 +965,8 @@ xla_test(
         ":cupti_collector",
         ":cupti_error_manager",
         ":cupti_pm_sampler_factory",  # buildcleaner: keep
+        ":cupti_range_profiler",
+        ":cupti_range_profiler_factory",  # buildcleaner: keep
         ":cupti_tracer",
         ":cupti_utils",
         ":cupti_wrapper",
