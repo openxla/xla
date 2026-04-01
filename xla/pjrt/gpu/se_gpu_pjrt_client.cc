@@ -1882,13 +1882,15 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   }
 
   size_t num_processes = global_topology.processes().size();
-  TF_ASSIGN_OR_RETURN(
-      auto clique_id_callback,
-      gpu_collectives->InitializeTopology({ProcessId(process_id), num_processes,
-                                           local_device_states.size(), kv_store,
-                                           device_to_process}));
-  gpu_executable_run_options->set_clique_id_callback(
-      std::move(clique_id_callback));
+  if (gpu_collectives->IsImplemented()) {
+    TF_ASSIGN_OR_RETURN(
+        auto clique_id_callback,
+        gpu_collectives->InitializeTopology(
+            {ProcessId(process_id), num_processes, local_device_states.size(),
+             kv_store, device_to_process}));
+    gpu_executable_run_options->set_clique_id_callback(
+        std::move(clique_id_callback));
+  }
 
   TF_ASSIGN_OR_RETURN(GpuTopologyProto gpu_topology,
                       BuildGpuTopology(global_topology, *gpu_target_config,
