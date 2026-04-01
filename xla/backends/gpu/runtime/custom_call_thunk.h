@@ -16,8 +16,6 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_CUSTOM_CALL_THUNK_H_
 #define XLA_BACKENDS_GPU_RUNTIME_CUSTOM_CALL_THUNK_H_
 
-#include <cstddef>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -33,6 +31,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/attribute_map.h"
@@ -45,20 +44,20 @@ limitations under the License.
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/object_pool.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/custom_call_status.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 
-// Thunk to run a GPU custom call.
+// Thunk to run an XLA FFI custom call on a GPU.
 //
-// This thunk's `ExecuteOnStream` implementation executes a host function
-// `call_target` which is expected to enqueue operations onto the GPU.
+// This thunk handles custom calls registered via the XLA FFI mechanism, which
+// provides a type-safe API for registering external functions with XLA runtime.
+//
+// For legacy (non-FFI) custom calls, see LegacyCustomCallThunk.
 //
 // Note that not all kCustomCall HLOs in XLA:GPU end up being run by this thunk.
 // XLA itself creates kCustomCall instructions when lowering kConvolution HLOs
@@ -84,26 +83,6 @@ class CustomCallThunk : public Thunk {
     ffi::ExecutionState prepare;
     ffi::ExecutionState init;
   };
-
-  using CustomCallTarget =
-      std::function<void(stream_executor::Stream*, void**, const char*, size_t,
-                         XlaCustomCallStatus*)>;
-
-  // Creates a serializable custom call thunk. The callback is resolved using
-  // the legacy CustomCall registry. For new code please use XLA FFI instead.
-  static absl::StatusOr<std::unique_ptr<CustomCallThunk>> Create(
-      ThunkInfo thunk_info, std::string target_name,
-      std::vector<NullableShapedSlice> operands,
-      std::vector<NullableShapedSlice> results, std::string opaque,
-      CustomCallApiVersion api_version, absl::string_view platform_name);
-
-  // Creates a custom call thunk from the given legacy custom call target.
-  // Note that a thunk created this way can't be serialized to a proto.
-  // This function is only permitted for unit testing code.
-  static absl::StatusOr<std::unique_ptr<CustomCallThunk>> Create(
-      ThunkInfo thunk_info, std::string target_name,
-      CustomCallTarget call_target, std::vector<NullableShapedSlice> operands,
-      std::vector<NullableShapedSlice> results, std::string opaque);
 
   // Creates a serializable custom call thunk. The callback is resolved using
   // XLA FFI.
@@ -150,14 +129,10 @@ class CustomCallThunk : public Thunk {
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
   const std::string& target_name() const { return target_name_; }
-  CustomCallTarget call_target() const { return call_target_; }
 
   std::optional<XLA_FFI_Handler_Bundle> bundle() const {
-    if (!bundle_.has_value()) {
-      return std::nullopt;
-    }
     const XLA_FFI_Handler_Bundle* c_bundle =
-        std::get_if<XLA_FFI_Handler_Bundle>(&bundle_.value());
+        std::get_if<XLA_FFI_Handler_Bundle>(&bundle_);
     return c_bundle ? std::make_optional(*c_bundle) : std::nullopt;
   }
 
@@ -171,8 +146,6 @@ class CustomCallThunk : public Thunk {
 
   const std::vector<NullableShapedSlice>& operands() const { return operands_; }
   const std::vector<NullableShapedSlice>& results() const { return results_; }
-
-  absl::string_view opaque() const { return opaque_; }
 
   BufferUses buffer_uses() const override {
     BufferUses res;
@@ -197,12 +170,6 @@ class CustomCallThunk : public Thunk {
       std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options);
 
  private:
-  CustomCallThunk(ThunkInfo thunk_info, std::string target_name,
-                  std::vector<NullableShapedSlice> operands,
-                  std::vector<NullableShapedSlice> results, std::string opaque,
-                  CustomCallTarget call_target,
-                  const std::optional<CustomCallApiVersion>& api_version);
-
   CustomCallThunk(
       ThunkInfo thunk_info, std::string target_name,
       std::variant<XLA_FFI_Handler_Bundle, OwnedHandlerBundle> bundle,
@@ -212,8 +179,6 @@ class CustomCallThunk : public Thunk {
       std::unique_ptr<ffi::ExecutionState> execution_state,
       const HloComputation* called_computation,
       std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options);
-
-  absl::Status ExecuteCustomCall(const ExecuteParams& params);
 
   absl::StatusOr<ObjectPool<xla::ffi::CallFrame>::BorrowedObject>
   BuildCallFrame(const BufferAllocations* absl_nullable buffer_allocations);
@@ -251,26 +216,15 @@ class CustomCallThunk : public Thunk {
       const CollectiveCliques* absl_nullable collective_cliques,
       const CollectiveMemory* absl_nullable collective_memory);
 
-  // API version of the custom call. If not set, it means the custom call thunk
-  // was initialized from a non-registered function pointer and can't be
-  // serialized to a proto.
-  std::optional<CustomCallApiVersion> api_version_;
   std::string target_name_;
 
   // Nulled shape slices represent null pointer arguments to the thunk.
   std::vector<NullableShapedSlice> operands_;
   std::vector<NullableShapedSlice> results_;
 
-  // This is a legacy custom call API that is discouraged, and will be
-  // deprecated once XLA:FFI mechanism is ready.
-  CustomCallTarget call_target_;
-  std::string opaque_;
-
-  // XLA FFI provides a right type safe mechanism for registering external
-  // functions with XLA runtime. It's under construction, and still misses
-  // a lot of features. Long term it will replace legacy custom calls.
-  std::optional<std::variant<XLA_FFI_Handler_Bundle, OwnedHandlerBundle>>
-      bundle_;
+  // XLA FFI handler bundle: either a C API bundle (from the global FFI
+  // registry) or an owned bundle (from xla::ffi::Bind()).
+  std::variant<XLA_FFI_Handler_Bundle, OwnedHandlerBundle> bundle_;
   std::optional<xla::ffi::AttributesMap> attributes_;
 
   // Reference call frame pre-initialized at construction time.
@@ -296,7 +250,6 @@ class CustomCallThunk : public Thunk {
   std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options_;
 };
 
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_RUNTIME_CUSTOM_CALL_THUNK_H_
