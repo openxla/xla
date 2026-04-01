@@ -2435,7 +2435,8 @@ SpmdPartitioningVisitor::MakePartitioningState() {
   return state;
 }
 
-std::vector<ReplicaGroup> SpmdPartitioningVisitor::CreateReplicaGroups(
+std::unique_ptr<CollectiveDeviceListBase>
+SpmdPartitioningVisitor::CreateReplicaGroups(
     std::vector<std::vector<int64_t>>& groups) {
   std::vector<ReplicaGroup> device_groups;
   device_groups.reserve(groups.size() * num_replicas_);
@@ -2447,11 +2448,20 @@ std::vector<ReplicaGroup> SpmdPartitioningVisitor::CreateReplicaGroups(
       }
     }
   }
-  return device_groups;
+  return std::make_unique<CollectiveDeviceList>(device_groups);
 }
 
-std::vector<ReplicaGroup> SpmdPartitioningVisitor::CreateReplicaGroups(
+std::unique_ptr<CollectiveDeviceListBase>
+SpmdPartitioningVisitor::CreateReplicaGroups(
     const hlo_sharding_util::DeviceGroupTileAssignment& groups) {
+  if (groups.has_iota()) {
+    IotaReplicaGroupList iota_list(
+        groups.num_groups(), groups.num_devices_per_group(), *groups.iota());
+    return std::make_unique<IotaReplicaGroupList>(
+        ExpandPartitionGroupListAcrossReplicas(iota_list, num_replicas_,
+                                               num_partitions_));
+  }
+
   std::vector<ReplicaGroup> device_groups;
   device_groups.reserve(groups.num_groups() * num_replicas_);
   for (int64_t i = 0; i < num_replicas_; ++i) {
@@ -2463,7 +2473,7 @@ std::vector<ReplicaGroup> SpmdPartitioningVisitor::CreateReplicaGroups(
       }
     }
   }
-  return device_groups;
+  return std::make_unique<CollectiveDeviceList>(device_groups);
 }
 
 absl::Status SpmdPartitioningVisitor::HandleCall(HloInstruction* hlo) {
