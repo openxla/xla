@@ -360,53 +360,61 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferDefaultLayout) {
 TEST(ArrayImplTest, MakeArrayFromHostBufferAndCopyToHostBuffer) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
 
-  DType dtype(DType::kF32);
-  Shape shape({2, 3});
-  std::vector<float> data(6);
-  absl::c_iota(data, 0);
   Device* device = client->addressable_devices().at(0);
-  ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
+  for (const Memory* memory : device->Memories()) {
+    SCOPED_TRACE(absl::StrCat(memory->Kind()));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto array, client->MakeArrayFromHostBuffer(
-                      data.data(), dtype, shape,
-                      /*byte_strides=*/std::nullopt, sharding,
-                      Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-                      /*on_done_with_host_buffer=*/{}));
+    DType dtype(DType::kF32);
+    Shape shape({2, 3});
+    std::vector<float> data(6);
+    absl::c_iota(data, 0);
+    ShardingRef sharding = SingleDeviceSharding::Create(device, memory->Kind());
 
-  std::vector<float> out_data(6);
-  auto future =
-      array->CopyToHostBuffer(out_data.data(), /*byte_strides=*/std::nullopt,
-                              ArrayCopySemantics::kAlwaysCopy);
-  TF_ASSERT_OK(future.Await());
-  EXPECT_THAT(out_data, ElementsAreArray(data));
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto array, client->MakeArrayFromHostBuffer(
+                        data.data(), dtype, shape,
+                        /*byte_strides=*/std::nullopt, sharding,
+                        Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+                        /*on_done_with_host_buffer=*/{}));
+
+    std::vector<float> out_data(6);
+    auto future =
+        array->CopyToHostBuffer(out_data.data(), /*byte_strides=*/std::nullopt,
+                                ArrayCopySemantics::kAlwaysCopy);
+    TF_ASSERT_OK(future.Await());
+    EXPECT_THAT(out_data, ElementsAreArray(data));
+  }
 }
 
 TEST(ArrayImplTest, MakeArrayFromHostBufferWithByteStridesAndCopyToHostBuffer) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
 
-  DType dtype(DType::kF32);
-  Shape shape({2, 3});
-  // The input data layout is minor-to-major.
-  std::vector<float> data = {0, 3, 1, 4, 2, 5};
-  std::vector<int64_t> byte_strides = {4, 8};
   Device* device = client->addressable_devices().at(0);
-  ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
+  for (const Memory* memory : device->Memories()) {
+    SCOPED_TRACE(absl::StrCat(memory->Kind()));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto array, client->MakeArrayFromHostBuffer(
-                      data.data(), dtype, shape, byte_strides, sharding,
-                      Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-                      /*on_done_with_host_buffer=*/{}));
+    DType dtype(DType::kF32);
+    Shape shape({2, 3});
+    // The input data layout is minor-to-major.
+    std::vector<float> data = {0, 3, 1, 4, 2, 5};
+    std::vector<int64_t> byte_strides = {4, 8};
+    ShardingRef sharding = SingleDeviceSharding::Create(device, memory->Kind());
 
-  std::vector<float> out_data(6);
-  // The expected output data layout is major-to-minor.
-  std::vector<float> expected_out_data = {0, 1, 2, 3, 4, 5};
-  auto future =
-      array->CopyToHostBuffer(out_data.data(), /*byte_strides=*/std::nullopt,
-                              ArrayCopySemantics::kAlwaysCopy);
-  TF_ASSERT_OK(future.Await());
-  EXPECT_THAT(out_data, ElementsAreArray(expected_out_data));
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto array, client->MakeArrayFromHostBuffer(
+                        data.data(), dtype, shape, byte_strides, sharding,
+                        Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+                        /*on_done_with_host_buffer=*/{}));
+
+    std::vector<float> out_data(6);
+    // The expected output data layout is major-to-minor.
+    std::vector<float> expected_out_data = {0, 1, 2, 3, 4, 5};
+    auto future =
+        array->CopyToHostBuffer(out_data.data(), /*byte_strides=*/std::nullopt,
+                                ArrayCopySemantics::kAlwaysCopy);
+    TF_ASSERT_OK(future.Await());
+    EXPECT_THAT(out_data, ElementsAreArray(expected_out_data));
+  }
 }
 
 TEST(ArrayImplTest, MakeArrayFromHostBufferWithNonCompactByteStrides) {
@@ -417,54 +425,64 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferWithNonCompactByteStrides) {
       client->MakeDeviceList(client->addressable_devices()));
   ASSERT_GT(device_list->size(), 1);
 
-  DType dtype(DType::kS8);
-  Shape shape({2, 2});
-  std::vector<int8_t> data = {0, -1, 1, -1, 2, -1, 3, -1};
-  std::vector<int64_t> byte_strides = {2, 4};
-  ShardingRef sharding = ConcreteEvenSharding::Create(
-      device_list, MemoryKind(), shape, /*shard_shape=*/shape,
-      /*is_fully_replicated=*/true);
+  for (const Memory* memory :
+       client->addressable_devices().front()->Memories()) {
+    SCOPED_TRACE(absl::StrCat(memory->Kind()));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      ArrayRef array, client->MakeArrayFromHostBuffer(
-                          data.data(), dtype, shape, byte_strides, sharding,
-                          Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-                          /*on_done_with_host_buffer=*/nullptr));
-  TF_ASSERT_OK(array->GetReadyFuture().Await());
+    DType dtype(DType::kS8);
+    Shape shape({2, 2});
+    std::vector<int8_t> data = {0, -1, 1, -1, 2, -1, 3, -1};
+    std::vector<int64_t> byte_strides = {2, 4};
+    ShardingRef sharding = ConcreteEvenSharding::Create(
+        device_list, memory->Kind(), shape, /*shard_shape=*/shape,
+        /*is_fully_replicated=*/true);
 
-  std::vector<int8_t> out_data(4);
-  tsl::Future<> future =
-      array->CopyToHostBuffer(out_data.data(), /*byte_strides=*/std::nullopt,
-                              ArrayCopySemantics::kAlwaysCopy);
-  TF_ASSERT_OK(future.Await());
-  EXPECT_THAT(out_data, ElementsAre(0, 2, 1, 3));
+    TF_ASSERT_OK_AND_ASSIGN(
+        ArrayRef array,
+        client->MakeArrayFromHostBuffer(
+            data.data(), dtype, shape, byte_strides, sharding,
+            Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+            /*on_done_with_host_buffer=*/nullptr));
+    TF_ASSERT_OK(array->GetReadyFuture().Await());
+
+    std::vector<int8_t> out_data(4);
+    tsl::Future<> future =
+        array->CopyToHostBuffer(out_data.data(), /*byte_strides=*/std::nullopt,
+                                ArrayCopySemantics::kAlwaysCopy);
+    TF_ASSERT_OK(future.Await());
+    EXPECT_THAT(out_data, ElementsAre(0, 2, 1, 3));
+  }
 }
 
 TEST(ArrayImplTest, MakeArrayFromHostBufferAndCopyToHostBufferWithByteStrides) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
 
-  DType dtype(DType::kF32);
-  Shape shape({2, 3});
-  // The input data layout is major-to-minor.
-  std::vector<float> data = {0, 1, 2, 3, 4, 5};
   Device* device = client->addressable_devices().at(0);
-  ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
+  for (const Memory* memory : device->Memories()) {
+    SCOPED_TRACE(absl::StrCat(memory->Kind()));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto array, client->MakeArrayFromHostBuffer(
-                      data.data(), dtype, shape,
-                      /*byte_strides=*/std::nullopt, sharding,
-                      Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-                      /*on_done_with_host_buffer=*/{}));
+    DType dtype(DType::kF32);
+    Shape shape({2, 3});
+    // The input data layout is major-to-minor.
+    std::vector<float> data = {0, 1, 2, 3, 4, 5};
+    ShardingRef sharding = SingleDeviceSharding::Create(device, memory->Kind());
 
-  std::vector<float> out_data(6);
-  // The requested output data layout is minor-to-major.
-  std::vector<int64_t> byte_strides = {4, 8};
-  std::vector<float> expected_out_data = {0, 3, 1, 4, 2, 5};
-  auto future = array->CopyToHostBuffer(out_data.data(), byte_strides,
-                                        ArrayCopySemantics::kAlwaysCopy);
-  TF_ASSERT_OK(future.Await());
-  EXPECT_THAT(out_data, ElementsAreArray(expected_out_data));
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto array, client->MakeArrayFromHostBuffer(
+                        data.data(), dtype, shape,
+                        /*byte_strides=*/std::nullopt, sharding,
+                        Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+                        /*on_done_with_host_buffer=*/{}));
+
+    std::vector<float> out_data(6);
+    // The requested output data layout is minor-to-major.
+    std::vector<int64_t> byte_strides = {4, 8};
+    std::vector<float> expected_out_data = {0, 3, 1, 4, 2, 5};
+    auto future = array->CopyToHostBuffer(out_data.data(), byte_strides,
+                                          ArrayCopySemantics::kAlwaysCopy);
+    TF_ASSERT_OK(future.Await());
+    EXPECT_THAT(out_data, ElementsAreArray(expected_out_data));
+  }
 }
 
 TEST(ArrayImplTest, MakeArrayFromHostBufferReplicated) {
