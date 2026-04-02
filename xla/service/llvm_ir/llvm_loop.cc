@@ -289,6 +289,7 @@ std::vector<llvm::Value*> ForLoopNest::EmitOperandArrayLoopNest(
       AddLoopsForShapeOnDimensions(shape, dimensions, name_suffix);
   // Verify every dimension except the 'dimension_to_skip' dimension was set in
   // the index.
+#ifndef NDEBUG
   for (size_t dimension = 0; dimension < multi_index.size(); ++dimension) {
     if (dimension == dimension_to_skip) {
       DCHECK_EQ(nullptr, multi_index[dimension]);
@@ -296,6 +297,7 @@ std::vector<llvm::Value*> ForLoopNest::EmitOperandArrayLoopNest(
       DCHECK_NE(nullptr, multi_index[dimension]);
     }
   }
+#endif  // NDEBUG
   return multi_index;
 }
 
