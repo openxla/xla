@@ -167,7 +167,7 @@ TEST_F(SymbolicMapSerializationTest, ParseSymbolicMap) {
   EXPECT_EQ(id.GetNumSymbols(), 0);
   EXPECT_THAT(id.GetResults(), ElementsAre(v0));
 
-  SymbolicMap empty = ParseSymbolicMap("()[] -> ()", &ctx);
+  SymbolicMap empty = ParseSymbolicMap("() -> ()", &ctx);
   EXPECT_EQ(empty.GetNumDims(), 0);
   EXPECT_EQ(empty.GetNumSymbols(), 0);
   EXPECT_TRUE(empty.IsEmpty());
@@ -177,7 +177,7 @@ TEST_F(SymbolicMapSerializationTest, ParseSymbolicMap) {
   EXPECT_EQ(no_dims.GetNumSymbols(), 1);
   EXPECT_THAT(no_dims.GetResults(), ElementsAre(v0));
 
-  SymbolicMap no_symbols = ParseSymbolicMap("(d0)[] -> (d0)", &ctx);
+  SymbolicMap no_symbols = ParseSymbolicMap("(d0) -> (d0)", &ctx);
   EXPECT_EQ(no_symbols.GetNumDims(), 1);
   EXPECT_EQ(no_symbols.GetNumSymbols(), 0);
   EXPECT_THAT(no_symbols.GetResults(), ElementsAre(v0));
@@ -230,14 +230,14 @@ TEST_F(SymbolicMapSerializationTest, ParseSymbolicMap_Invalid) {
 TEST_F(SymbolicMapSerializationTest, ParseSymbolicMapAndAdvance_ConsumesAll) {
   absl::string_view map_str = "(d0) -> (d0)";
   SymbolicMap map = ParseSymbolicMapAndAdvance(&map_str, &ctx);
-  EXPECT_EQ(map.ToString(), "(d0)[] -> (d0)");
+  EXPECT_EQ(map.ToString(), "(d0) -> (d0)");
   EXPECT_EQ(map_str, "");
 }
 
 TEST_F(SymbolicMapSerializationTest, ParseSymbolicMapAndAdvance_WithSuffix) {
   absl::string_view map_str = "(d0) -> (d0) domain: d0 in [0, 1]";
   SymbolicMap map = ParseSymbolicMapAndAdvance(&map_str, &ctx);
-  EXPECT_EQ(map.ToString(), "(d0)[] -> (d0)");
+  EXPECT_EQ(map.ToString(), "(d0) -> (d0)");
   EXPECT_EQ(absl::StripLeadingAsciiWhitespace(map_str), "domain: d0 in [0, 1]");
 }
 
