@@ -67,9 +67,9 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/tools/hlo_opt/compiled_opt_lib.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "tsl/platform/casts.h"
+#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 
