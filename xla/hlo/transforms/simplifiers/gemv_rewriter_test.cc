@@ -166,10 +166,17 @@ TEST_P(GemvRewriterTest, DoNotRewriteDotsWithNonNormalizedLayout) {
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo));
-  GemvRewriter rewriter;
+  GemvRewriter rewriter(is_layout_sensitive_);
   absl::StatusOr<bool> result = this->RunHloPass(&rewriter, module.get());
-  EXPECT_FALSE(result.ok());
-  EXPECT_EQ(result.status().message(), "Layout is not normalized.");
+  if (is_layout_sensitive_) {
+    EXPECT_FALSE(result.ok());
+    EXPECT_EQ(result.status().message(), "Layout is not normalized.");
+  } else {
+    // No rewrite when the layout is not normalized, but the pass should succeed
+    // in this configuration.
+    EXPECT_TRUE(result.ok());
+    EXPECT_FALSE(result.value());
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(
