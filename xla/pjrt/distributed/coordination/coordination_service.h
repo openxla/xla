@@ -300,9 +300,9 @@ class CoordinationService {
   void ConnectTask(TaskId task, IncarnationId incarnation)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Checks if any task has stopped sending heartbeats.
-  void CheckHeartbeatTimeout();
+  void CheckHeartbeatTimeout() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Checks if any barrier has timed out.
-  void CheckBarrierTimeout();
+  void CheckBarrierTimeout() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Checks both heartbeat and barrier timeouts. Use a single function so they
   // can be run in the same thread as threads are a constrained resource.
   void CheckStaleness();
@@ -589,7 +589,6 @@ class CoordinationService {
   bool client_polling_for_error_ ABSL_GUARDED_BY(state_mu_) = false;
   ErrorPollingState error_polling_state_ ABSL_GUARDED_BY(state_mu_);
 
-  absl::CondVar check_staleness_thread_cv_;
   bool shutting_down_ ABSL_GUARDED_BY(state_mu_) = false;
   // Note: sequence matters here, we must destroy the staleness thread before
   // the other state related to barriers and heartbeats to prevent illegal
