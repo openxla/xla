@@ -432,50 +432,6 @@ absl::Status CoordinationServiceAgent::Shutdown() {
   return status;
 }
 
-absl::Status CoordinationServiceAgent::Reset() {
-  {
-    absl::MutexLock l(state_mu_);
-    if (state_ != TaskState::ERROR) {
-      return MakeCoordinationError(FailedPrecondition(
-          "Reset() failed: coordination service agent is not in ERROR state."));
-    }
-  }
-
-  ResetTaskRequest request;
-  request.set_source_task_id(task_id_);
-  VLOG(3) << "ResetTaskRequest: " << request.DebugString();
-  ResetTaskResponse response;
-
-  absl::Status status;
-  absl::Notification n;
-  leader_client_->ResetTaskAsync(&request, &response,
-                                 [&status, &n](const absl::Status& s) {
-                                   status = s;
-                                   n.Notify();
-                                 });
-  n.WaitForNotification();
-  VLOG(3) << "ResetTaskResponse: " << status;
-  if (!status.ok()) {
-    return status;
-  }
-
-  // Reset agent state.
-  StopHeartbeat();
-  StopErrorPolling();
-  ResetCancellationManager();
-  {
-    absl::MutexLock l(state_mu_);
-    state_ = TaskState::DISCONNECTED;
-  }
-  {
-    absl::MutexLock l(shutdown_mu_);
-    shutting_down_ = false;
-  }
-
-  LOG(INFO) << "Coordination agent has been reset.";
-  return status;
-}
-
 absl::StatusOr<std::string> CoordinationServiceAgent::GetKeyValue(
     absl::string_view key) {
   return GetKeyValue(key, /*timeout=*/absl::InfiniteDuration());

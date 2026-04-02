@@ -143,6 +143,10 @@ class CoordinationService {
   //   - Internal: Service has shut down.
   //   - InvalidArgument: Unexpected task request.
   //   - FailedPrecondition: task has already disconnected.
+  //
+  // This method is for testing only.
+  //
+  // TODO(mwhittaker): Remove this method.
   absl::Status ResetTask(TaskId task);
 
   // Update the heartbeat timestamp of a task. This should only be invoked on

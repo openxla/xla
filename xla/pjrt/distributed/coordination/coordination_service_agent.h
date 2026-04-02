@@ -136,9 +136,6 @@ class CoordinationServiceAgent {
   //
   //               Connect           SetError
   //  DISCONNECTED ------> CONNECTED -------> ERROR
-  //       ^                                  |
-  //       |__________________________________|
-  //                     Reset
 
   CoordinationService::TaskId task_id() const { return task_id_; }
 
@@ -175,14 +172,6 @@ class CoordinationServiceAgent {
   //   - FailedPrecondition: Task was in error state (note: agent is still
   //                         shut down forcefully).
   absl::Status Shutdown();
-
-  // Disconnect from the service, and clean up the internal error status.
-  // Possible service errors:
-  //   - Internal: Coordination service has shut down.
-  //   - InvalidArgument: Unexpected task request.
-  //   - FailedPrecondition: task is not in error state/has already
-  //       disconnected.
-  absl::Status Reset();
 
   // Key-value store API.
   // The agent does not need to be connected to utilize the key-value store.

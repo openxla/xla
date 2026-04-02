@@ -103,7 +103,6 @@ class TestCoordinationClient : public CoordinationClient {
     done(absl::UnimplementedError(#method "Async"));                       \
   }
 
-  UNIMPLEMENTED(ResetTask);
   UNIMPLEMENTED(InsertKeyValue);
   UNIMPLEMENTED(TryGetKeyValue);
   UNIMPLEMENTED(IncrementKeyValue);
