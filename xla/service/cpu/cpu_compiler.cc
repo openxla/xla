@@ -111,6 +111,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/transforms/collectives/async_collective_replacer.h"
 #include "xla/hlo/transforms/collectives/collective_permute_cse.h"
 #include "xla/hlo/transforms/expanders/bitcast_dtypes_expander.h"
 #include "xla/hlo/transforms/expanders/cholesky_expander.h"
@@ -584,6 +585,12 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
                             xla::DebugOptions::CPU_OPT_PRESET_FAST_COMPILE;
   const bool flatten_before_fusion =
       !options::FlattenAfterFusion(module->config()) && !fast_compile;
+
+  // Replace asynchronous collectives with synchronous ones.
+  HloPassPipeline async_collective_pipeline("async-collective");
+  AsyncCollectiveReplacer::Config acr_config(HloPredicateTrue);
+  async_collective_pipeline.AddPass<AsyncCollectiveReplacer>(acr_config);
+  TF_RETURN_IF_ERROR(async_collective_pipeline.Run(module).status());
 
   if (num_partitions > 1) {
     if (!module->config().use_spmd_partitioning()) {
