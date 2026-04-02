@@ -3097,33 +3097,6 @@ xla_test(
 )
 
 cc_library(
-    name = "wait_for_streams_thunk",
-    srcs = ["wait_for_streams_thunk.cc"],
-    hdrs = ["wait_for_streams_thunk.h"],
-    deps = [
-        ":thunk",
-        ":thunk_proto_cc",
-        "//xla/stream_executor:stream",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-    ],
-)
-
-xla_cc_test(
-    name = "wait_for_streams_thunk_test",
-    srcs = ["wait_for_streams_thunk_test.cc"],
-    deps = [
-        ":thunk",
-        ":thunk_proto_cc",
-        ":wait_for_streams_thunk",
-        "//xla/tsl/platform:statusor",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_library(
     name = "cudnn_thunk",
     srcs = ["cudnn_thunk.cc"],
     hdrs = ["cudnn_thunk.h"],
@@ -3622,7 +3595,6 @@ cc_library(
         ":thunk",
         ":thunk_proto_cc",
         ":triangular_solve_thunk",
-        ":wait_for_streams_thunk",
         ":while_thunk",
         "//xla:util",
         "//xla/backends/cpu:target_machine_options",

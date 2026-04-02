@@ -67,9 +67,8 @@ namespace gpu {
 // thunks use stream #0, which is the default compute stream of an XLA
 // executable.
 //
-// Stream synchronizations are explicit and represented as WaitForStreams thunk
-// in a ThunkSequence. When ThunkSequence converted to CommandBuffer, execution
-// streams mapped to concurrent execution scopes and barriers between them.
+// When ThunkSequence converted to CommandBuffer, execution streams mapped to
+// graph of dependencies between commands.
 //
 // IMPORTANT: Async execution semantics and execution stream id
 //
@@ -185,7 +184,6 @@ class Thunk {
     kSend,
     kSequential,
     kTriangularSolve,
-    kWaitForStreams,
     kWhile
     // go/keep-sorted end
   };

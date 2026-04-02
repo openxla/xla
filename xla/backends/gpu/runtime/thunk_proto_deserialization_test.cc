@@ -621,23 +621,6 @@ TEST(ThunkProtoDeserializationTest, ConditionalThunk) {
   EXPECT_THAT(round_trip_proto, EqualsProto(proto));
 }
 
-TEST(ThunkProtoDeserializationTest, WaitForStreamsThunk) {
-  ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
-      R"pb(
-        thunk_info { execution_stream_id: 7 }
-        wait_for_streams_thunk { stream_id: 1 wait_for_stream_id: 2 }
-      )pb");
-
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Thunk> thunk,
-      DeserializeThunkProto(proto, /*buffer_allocations=*/{},
-                            /*hlo_module=*/nullptr, kTestPlatformName,
-                            se::GpuComputeCapability()));
-
-  TF_ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, thunk->ToProto());
-  EXPECT_THAT(round_trip_proto, EqualsProto(proto));
-}
-
 TEST(ThunkProtoDeserializationTest, CudnnThunk) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
