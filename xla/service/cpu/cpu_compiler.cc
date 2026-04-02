@@ -670,26 +670,25 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
       LibrarySupportsConvolution(module, target_machine_features);
 
   auto call_library_for_instruction = [&](const HloInstruction& instr) {
-    if (instr.opcode() != HloOpcode::kDot &&
-        instr.opcode() != HloOpcode::kConvolution) {
-      return false;
-    }
-
-    if (instr.opcode() == HloOpcode::kDot) {
-      auto dot_strategy = GetDotImplementationStrategy(
-          module->config(), instr, *target_machine_features,
-          /*allow_runtime_calls=*/true);
-      if (dot_strategy != DotImplementationStrategy::kEigen) {
-        // We aren't going to call a library for this dot.
-        return false;
+    switch (instr.opcode()) {
+      case HloOpcode::kDot: {
+        auto dot_strategy = GetDotImplementationStrategy(
+            module->config(), instr, *target_machine_features,
+            /*allow_runtime_calls=*/true);
+        if (dot_strategy != DotImplementationStrategy::kEigen) {
+          // We aren't going to call a library for this dot.
+          return false;
+        }
+        return library_supports_dot(instr);
       }
-      return library_supports_dot(instr);
+      case HloOpcode::kConvolution:
+        return library_supports_convolution(instr);
+      case HloOpcode::kReduce:
+      case HloOpcode::kReduceWindow:
+        return IsReduceLikeOpOffloadedToYnn(&instr);
+      default:
+        return false;
     }
-    if (instr.opcode() == HloOpcode::kConvolution) {
-      return library_supports_convolution(instr);
-    }
-
-    return false;
   };
 
   // If YNNPACK is enabled, we only need to upcast dots that YnnDotThunk does
@@ -765,7 +764,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   bool use_onednn_graph =
       module->config().debug_options().xla_cpu_use_onednn() &&
       IsOneDnnCompatible(is_aot_compile);
-  OneDnnFloatSupport onednn_bf16_support(BF16);
+  OneDnnFloatSupport onednn_bf16_support(BF16, call_library_for_instruction);
   if (use_onednn_custom_call || use_onednn_graph) {
     pipeline.AddPass<FloatNormalization>(&onednn_bf16_support);
   } else {
