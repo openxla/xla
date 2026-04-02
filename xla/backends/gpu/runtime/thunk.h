@@ -580,6 +580,9 @@ class ThunkSequence : public std::vector<std::unique_ptr<Thunk>> {
     return thunks;
   }
 
+  // Appends all thunks from `other` into this sequence.
+  void Append(ThunkSequence other);
+
   // Walks/Transforms all thunks nested in *this sequence.
   absl::Status WalkNested(Thunk::Walker callback);
   absl::Status TransformNested(Thunk::Transformer callback);
