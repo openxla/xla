@@ -79,6 +79,31 @@ ENTRY AddDotsFunc {
   }
 }
 
+TEST_F(GemmRewriteTest, NormalizeMultipleBatchDimensions) {
+  if (SkipGpuBlasLtTest()) {
+    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
+  }
+
+  const char* hlo_text = R"(
+HloModule module
+
+ENTRY test {
+  lhs = f32[2,3,16,10240]{3,2,1,0} parameter(0)
+  rhs = f32[2,3,10240,128]{3,2,1,0} parameter(1)
+  ROOT dot = f32[2,3,16,128]{3,2,1,0} dot(lhs, rhs),
+                lhs_batch_dims={0,1}, lhs_contracting_dims={3},
+                rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+})";
+
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+CHECK-DAG: %[[LHS_BITCAST:[a-zA-Z0-9_.-]+]] = f32[6,16,10240]{{.*}} {{bitcast}}
+CHECK-DAG: %[[RHS_BITCAST:[a-zA-Z0-9_.-]+]] = f32[6,10240,128]{{.*}} {{bitcast}}
+CHECK: = (f32[6,16,128]{2,1,0}, s8[{{[0-9]+}}]{0}) custom-call(%[[LHS_BITCAST]], %[[RHS_BITCAST]]), custom_call_target="__cublas{{.*}}matmul"
+CHECK: ROOT {{.*}} = f32[2,3,16,128]{3,2,1,0} {{bitcast}}
+)");
+}
+
 TEST_F(GemmRewriteTest, TestBatchedAutotuning) {
   if (HasCudaComputeCapability(se::CudaComputeCapability::Ampere())) {
     GTEST_SKIP()

@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/hlo_creation_utils.h"
+#include "xla/service/matmul_indexing_utils.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -561,6 +562,55 @@ uint32_t CountFinalUsers(const HloInstruction* instr) {
   return final_user_count;
 }
 
+absl::StatusOr<HloInstruction*> NormalizeBatchDimensions(HloInstruction* dot) {
+  HloDotInstruction* dot_instr = Cast<HloDotInstruction>(dot);
+  const DotDimensionNumbers& dnums = dot_instr->dot_dimension_numbers();
+
+  if (dnums.lhs_batch_dimensions_size() != 2) {
+    return dot;
+  }
+
+  TF_ASSIGN_OR_RETURN(auto dims, DotOperandDims::FromDot(dot));
+  std::array<HloInstruction*, 2> operands = {dot->mutable_operand(0),
+                                             dot->mutable_operand(1)};
+
+  for (size_t i : {0, 1}) {
+    absl::Span<const int64_t> batch_dims =
+        dims[i].Indices(DotOperandDims::kBatch);
+    int64_t b0 = batch_dims[0];
+    int64_t b1 = batch_dims[1];
+
+    if (b1 != b0 + 1) {
+      std::vector<int64_t> permutation(
+          operands[i]->shape().dimensions().size());
+      absl::c_iota(permutation, 0);
+      MoveSingleElement(absl::MakeSpan(permutation), b1, b1 < b0 ? b0 : b0 + 1);
+      TF_ASSIGN_OR_RETURN(operands[i],
+                          MakeTransposeHlo(operands[i], permutation));
+      LayoutUtil::SetToDefaultLayout(operands[i]->mutable_shape());
+      dims[i].ApplyPermutation(permutation);
+    }
+
+    TF_RETURN_IF_ERROR(
+        dims[i].Collapse(DotOperandDims::kBatch, /*remove_if_empty=*/false));
+    TF_ASSIGN_OR_RETURN(operands[i],
+                        MakeReshapeHlo(dims[i].shape(), operands[i]));
+  }
+
+  TF_ASSIGN_OR_RETURN(DotDimensionNumbers new_dnums,
+                      DotOperandDims::CreateDotDimensionNumbers(dims));
+  PrimitiveType accumulator_type = GetGemmAccumulatorType(dot_instr);
+  TF_ASSIGN_OR_RETURN(HloInstruction * new_dot,
+                      MakeDotHlo(operands[0], operands[1], new_dnums,
+                                 dot_instr->precision_config(),
+                                 accumulator_type, &dot_instr->metadata()));
+
+  TF_ASSIGN_OR_RETURN(HloInstruction * reshape,
+                      MakeReshapeHlo(dot->shape(), new_dot));
+
+  return reshape;
+}
+
 // The rewriting proceeds in a bottom-up way:
 //
 // (kDot A B) is rewritten into a (kCustomCall:gemm A B)
@@ -609,6 +659,15 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                                 /*allow_matrix_vector_multiplication=*/true));
     if (!is_supported_matmul) {
       return absl::OkStatus();
+    }
+
+    TF_ASSIGN_OR_RETURN(HloInstruction * normalized_instr,
+                        NormalizeBatchDimensions(instr));
+    if (normalized_instr != instr) {
+      TF_RETURN_IF_ERROR(ReplaceInstruction(instr, normalized_instr));
+      // After normalization, the dot instruction is followed by a reshape,
+      // taking the operand to get the actual dot instruction.
+      instr = normalized_instr->mutable_operand(0);
     }
 
     int64_t gemm_rewrite_size_threshold =

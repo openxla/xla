@@ -1898,8 +1898,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
           cuda_cc->IsAtLeast(se::CudaComputeCapability::kAmpere)) ||
          rocm_cc != nullptr)) {
       pipeline.AddPass<GemvRewriter>();
-      pipeline.AddPass<SplitkRewriter>(gpu_target_config.device_description,
-                                       /*normalize_dots=*/false);
+      pipeline.AddPass<SplitkRewriter>(gpu_target_config.device_description);
       pipeline.AddPass<GemmFusion>(gpu_version);
       pipeline.AddPass<HoistFusedBitcasts>();
       pipeline.AddPass<GemmFusionSwapOperands>();
