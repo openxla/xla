@@ -15,19 +15,23 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "third_party/gloop/util/functional/auto_function_runner.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/pair.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "xla/backends/profiler/subprocess/subprocess_registry.h"
 #include "xla/backends/profiler/util/metadata_registry.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/exceptions.h"
@@ -114,6 +118,35 @@ tensorflow::ProfileOptions DefaultPythonProfileOptions() {
   return options;
 }
 
+// Wrapper around AutoFunctionRunner that can be used in Python.
+class UnregisterFn {
+ public:
+  static UnregisterFn FromSubprocessCleanup(
+      profiler::subprocess::SubprocessCleanup&& subprocess_cleanup) {
+    return UnregisterFn{std::move(subprocess_cleanup)};
+  }
+  ~UnregisterFn() {
+    LOG_IF(WARNING, !runner_.empty())
+        << "Subprocess being unregistered by Python GC. This is likely not "
+           "intended and likely due to the UnregisterFn being discarded.";
+  }
+
+  // Default move constructor and assignment.
+  UnregisterFn(UnregisterFn&&) = default;
+  UnregisterFn& operator=(UnregisterFn&&) = default;
+
+  // Delete copy constructor and assignment.
+  UnregisterFn(const UnregisterFn&) = delete;
+  UnregisterFn& operator=(const UnregisterFn&) = delete;
+
+  void operator()() { runner_.Invoke(); }
+
+ private:
+  explicit UnregisterFn(profiler::subprocess::SubprocessCleanup&& runner)
+      : runner_(std::move(runner)) {}
+  profiler::subprocess::SubprocessCleanup runner_;
+};
+
 }  // namespace
 
 // nanobind requires in-place construction of types, but tsl::ProfilerSession
@@ -176,6 +209,18 @@ NB_MODULE(_profiler, m) {
         ") -> None"
           // clang-format on
           ));
+  nb::class_<UnregisterFn> unregister_fn_class(m, "UnregisterFn");
+  unregister_fn_class.def("__call__", &UnregisterFn::operator());
+  m.def(
+      "register_subprocess",
+      [](int pid, int port) -> UnregisterFn {
+        absl::StatusOr<profiler::subprocess::SubprocessCleanup> unregister_fn =
+            xla::profiler::subprocess::RegisterSubprocess(pid, port,
+                                                          std::nullopt);
+        xla::ThrowIfError(unregister_fn.status());
+        return UnregisterFn::FromSubprocessCleanup(std::move(*unregister_fn));
+      },
+      nb::arg("pid"), nb::arg("port"));
 
   nb::class_<ProfilerSessionWrapper> profiler_session_class(m,
                                                             "ProfilerSession");
