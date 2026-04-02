@@ -180,6 +180,13 @@ message DebugOptions {
   //--------------------------------------------------------------------------//
   // XLA:CPU options.
   //--------------------------------------------------------------------------//
+
+  enum CpuOptPreset {
+    CPU_OPT_PRESET_DEFAULT = 0;
+    CPU_OPT_PRESET_FAST_RUNTIME = 1;
+    CPU_OPT_PRESET_FAST_COMPILE = 2;
+  }
+
   // clang-format off
   // go/keep-sorted start newline_separated=yes skip_lines=1 ignore_prefixes=["optional bool","optional int32","optional string", "optional XnnGraphFusionMode", "repeated LibraryFusionType", "optional CpuSchedulerType"]
   // clang-format on
@@ -207,6 +214,9 @@ message DebugOptions {
     XNN_GRAPH_FUSION_MODE_GREEDY_SLINKY = 2;
     XNN_GRAPH_FUSION_MODE_BYPASS_COST_MODEL = 3;
   }
+
+  // XLA:CPU optimization preset.
+  optional CpuOptPreset xla_cpu_opt_preset = 466;
 
   // The number of seconds to wait before terminating a rendezvous call
   optional int32 xla_cpu_collective_call_terminate_timeout_seconds = 417;
@@ -1443,7 +1453,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 466
+  // Next id: 467
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
