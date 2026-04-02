@@ -463,6 +463,13 @@ absl::StatusOr<GpuTopology> InferGpuTopology(
         "--xla_gpu_target_config_filename for AOT compilation.");
   }
 
+  // If the CPU target options are not set, we infer them from the host CPU
+  // (typical JIT compilation)
+  if (!cpu_target_options.has_value()) {
+    VLOG(1) << "Inferring CPU target options from the host architecture.";
+    cpu_target_options.emplace(debug_opts);
+  }
+
   if (gpu_target_config.has_value()) {
     VLOG(1) << "Found target compilation environment, and "
             << (stream_exec == nullptr
@@ -2562,8 +2569,7 @@ GpuCompiler::CompileToBackendResult(
 
     // Compile the module to thunks and llvm IR.
     xla::cpu::TargetMachineOptions cpu_target_machine_options =
-        gpu_topology.host_target_machine_options().value_or(
-            xla::cpu::TargetMachineOptions());
+        gpu_topology.host_target_machine_options().value();
 
     ASSIGN_OR_RETURN(
         compile_module_results,
@@ -2650,8 +2656,7 @@ GpuCompiler::CompileToBackendResult(
       absl::StatusOr<xla::cpu::CompilationResultProto> cpu_compilation_result =
           GetCpuCompilationResult(
               host_execute_start_thunk->executable_proto().hlo_module(),
-              gpu_topology.host_target_machine_options().value_or(
-                  xla::cpu::TargetMachineOptions()));
+              gpu_topology.host_target_machine_options().value());
 
       CHECK_OK(cpu_compilation_result) << "Failed to compile host executable.";
 
@@ -3218,7 +3223,8 @@ GpuCompiler::LoadExecutableFromAotResult(
       hlo_module.get(), buffer_assignment.get(), &execution_stream_assignment,
       platform_name, device_description, mlir_context(), &llvm_context,
       /*emit_kernels=*/false, llvm::Triple(target_triple()), data_layout(),
-      std::move(llvm_compiler), cpu::TargetMachineOptions());
+      std::move(llvm_compiler),
+      cpu::TargetMachineOptions(hlo_module->config().debug_options()));
 
   absl::string_view cache_file_path =
       hlo_module->config().debug_options().xla_gpu_kernel_cache_file();
