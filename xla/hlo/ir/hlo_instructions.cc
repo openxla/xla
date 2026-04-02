@@ -489,10 +489,6 @@ void HloAsyncStartInstruction::PrintExtraAttributesImpl(
                 "\"");
     });
   }
-  if (options.syntax_sugar_async_ops() &&
-      async_wrapped_computation()->CanExpandIntoSingleInstruction()) {
-    async_wrapped_instruction()->PrintExtraAttributes(printer, options);
-  }
 
   if (!output_to_operand_aliasing().empty()) {
     printer.Next([this](Printer* printer) {
