@@ -55,6 +55,7 @@ limitations under the License.
 #include "shardy/dialect/mpmd/ir/utils.h"
 #include "shardy/dialect/mpmd/transforms/export/utils.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
+#include "shardy/dialect/sdy/transforms/import/passes.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -66,9 +67,6 @@ limitations under the License.
 #include "xla/python/ifrt/ir/transforms/debug.h"
 #include "xla/python/ifrt/ir/transforms/passes.h"
 #include "xla/service/computation_placer.h"
-#include "xla/service/spmd/shardy/constants.h"
-#include "xla/service/spmd/shardy/sdy_round_trip/pipelines.h"
-#include "xla/service/spmd/shardy/utils.h"
 
 namespace xla::ifrt::mpmd {
 namespace {
@@ -400,24 +398,6 @@ class LowerToIfrtPass
                                             std::move(patterns)))) {
       signalPassFailure();
     }
-
-    // Convert the xla.sdy.meshes attribute to ifrt.sdy.meshes attribute so
-    // that the attribute is preserved during IFRT versioning. This is safe
-    // to do because the attribute if forward and backward compatible.
-    if (auto front_end_attr = xla::sdy::getFrontendAttrs(module_op)) {
-      if (auto meshes_round_trip_attr =
-              front_end_attr.get(xla::sdy::kMeshesRoundTripAttr)) {
-        module_op->setAttr(xla::ifrt::kIfrtSdyMeshesRoundTripAttr,
-                           meshes_round_trip_attr);
-      }
-    }
-
-    // Clean up the sdy meshes.
-    mlir::IRRewriter rewriter(&ctx);
-    auto sdy_mesh_op_s = module_op.getOps<sdy::MeshOp>();
-    for (auto it = sdy_mesh_op_s.begin(); it != sdy_mesh_op_s.end();) {
-      rewriter.eraseOp(*it++);
-    }
   }
 
   StringRef getArgument() const override { return "mpmd-lower-to-ifrt"; }
@@ -539,13 +519,11 @@ std::unique_ptr<Pass> CreateBuildCompileOptionsPass(
 }
 
 void AddLowerToIfrtPasses(mlir::OpPassManager& pm) {
-  // TODO(icgog): We do not enable hlo sharding v3 yet because it does not
-  // interplay well with the per-mesh compile options. These passes run at
-  // lowering time/export time, but a compile time a different value might be
-  // given to 'xla_enable_hlo_sharding_v3' is needed.
-  xla::sdy::addSdyRoundTripExportPipeline(pm, /*keepMeshesInlined=*/false,
-                                          /*enableHloShardingV3=*/false);
   pm.addPass(CreateLowerToIfrtPass());
+  // After lowering to IFRT, we inline meshes inside fragment callees so we
+  // don't have to copy them over when IFRT is creating a separate spmd module
+  // for each fragment.
+  pm.addPass(mlir::sdy::createInlineMeshesPass());
   xla::ifrt::createIfrtToOutlinedAtomProgramsPipeline(pm);
 }
 
@@ -566,7 +544,6 @@ absl::Status LowerToIfrt(mlir::ModuleOp module) {
   InitPassManager(pm, "mpmd-lower-to-ifrt");
   pm.enableVerifier();
 
-  CHECK(mlir::mpmd::IsLoweredWithSdy(module));
   AddLowerToIfrtPasses(pm);
   StatusScopedDiagnosticHandler diagnostic_handler(module.getContext());
   if (mlir::failed(pm.run(module))) {

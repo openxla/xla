@@ -14,8 +14,9 @@
 // CHECK: #sp4 = #ifrt.sharding_param<2x1x1 to [0, 2, 1] on 2x2x2>
 // CHECK-LABEL: module
 
-// CHECK-NOT: sdy.mesh
+// CHECK: sdy.mesh @mesh_0 = <["x"=2, "y"=2, "z"=2]>
 sdy.mesh @mesh_0 = <["x"=2, "y"=2, "z"=2]>
+// CHECK: sdy.mesh @mesh_1 = <["axis_0"=2, "axis_1"=4, "axis_2"=4]>
 sdy.mesh @mesh_1 = <["axis_0"=2, "axis_1"=4, "axis_2"=4]>
 
 // CHECK: func.func public @main

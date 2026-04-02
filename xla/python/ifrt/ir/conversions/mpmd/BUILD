@@ -53,9 +53,6 @@ cc_library(
         "//xla/python/ifrt/ir/transforms:debug",
         "//xla/python/ifrt/ir/transforms:passes",
         "//xla/service:computation_placer_hdr",
-        "//xla/service/spmd/shardy:constants",
-        "//xla/service/spmd/shardy:utils",
-        "//xla/service/spmd/shardy/sdy_round_trip:pipelines",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
@@ -71,6 +68,7 @@ cc_library(
         "@shardy//shardy/dialect/mpmd/ir:dialect",
         "@shardy//shardy/dialect/mpmd/transforms/export:utils",
         "@shardy//shardy/dialect/sdy/ir:dialect",
+        "@shardy//shardy/dialect/sdy/transforms/import:passes",
         "@stablehlo//:stablehlo_ops",
     ],
 )
