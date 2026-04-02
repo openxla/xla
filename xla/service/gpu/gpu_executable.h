@@ -195,7 +195,7 @@ class GpuExecutable : public Executable {
       const ServiceExecutableRunOptions* run_options,
       VariantArguments arguments);
 
-  absl::Span<const BufferAllocation* absl_nonnull const> GetAllocations()
+  absl::Span<const BufferAllocation * absl_nonnull const> GetAllocations()
       const override {
     return allocation_ptrs_;
   }
@@ -348,8 +348,8 @@ class GpuExecutable : public Executable {
   // ThunkEmitter.
   std::unique_ptr<ThunkExecutor> thunk_executor_;
 
-  // Additional execution streams requested by `thunks_`.
-  absl::flat_hash_set<ExecutionStreamId> execution_stream_ids_;
+  // Number of additional compute streams requested by `AsyncStartThunks`.
+  int64_t num_additional_compute_streams_;
 
   std::string module_name_;
 

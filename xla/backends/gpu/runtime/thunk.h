@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/thunk_kind.pb.h"
@@ -55,38 +56,11 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/gtl/int_type.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
-#include "xla/tsl/platform/status_macros.h"
 
-namespace xla {
-namespace gpu {
-
-// Execution stream id allows to specify what Gpu stream Thunk should be using
-// for launching device work (kernels, library calls, etc.). By default all
-// thunks use stream #0, which is the default compute stream of an XLA
-// executable.
-//
-// When ThunkSequence converted to CommandBuffer, execution streams mapped to
-// graph of dependencies between commands.
-//
-// IMPORTANT: Async execution semantics and execution stream id
-//
-// For async thunks (i.e. thunks corresponding to `all-reduce-start` and
-// `all-reduce-done`) execution stream id means NOT a stream where the async
-// operation must execute, but a stream that async operation must be
-// synchronized with:
-//
-//   - Start operation must wait for the completion of all launched work on the
-//     execution stream id (usually by adding a stream wait) and after that
-//     launch async work on implementation defined extra stream (can be borrowed
-//     from a pool)
-//
-//   - Corresponding Done operation must synchronize execution stream id with
-//     an implementation defined stream that is running async work, again
-//     usually by adding a stream wait.
-//
-TSL_LIB_GTL_DEFINE_INT_TYPE(ExecutionStreamId, uint64_t);
+namespace xla::gpu {
 
 // Unique identifier for async events. The same identifier is expected to be
 // shared between a pair of StartThunk and corresponding DoneThunk. It is used
@@ -121,15 +95,8 @@ TSL_LIB_GTL_DEFINE_INT_TYPE(AsyncEventsUniqueId, uint64_t);
 // different threads and coordinate resource acquisition via rendezvous.
 class Thunk {
  public:
-  using ExecutionStreamIdMap =
-      absl::flat_hash_map<ExecutionStreamId, se::Stream*>;
-
   using BufferUses = absl::InlinedVector<BufferUse, 4>;
   using ResourceUses = absl::InlinedVector<ResourceUse, 1>;
-
-  // When default execution stream id is used, operations launched by a thunk
-  // must be synchronized with a stream passed in ExecuteOptions.
-  static constexpr auto kDefaultExecutionStreamId = ExecutionStreamId(0);
 
   enum Kind {
     // # go/keep-sorted start
@@ -215,8 +182,6 @@ class Thunk {
                                            ThunkId thunk_id);
 
     std::string profile_annotation;
-
-    ExecutionStreamId execution_stream_id = kDefaultExecutionStreamId;
 
     ThunkId thunk_id = ThunkId{0};
 
@@ -324,7 +289,7 @@ class Thunk {
         CollectiveParams* collective_params,
         CollectiveCliques* collective_cliques,
         CollectiveMemory* collective_memory,
-        ExecutionStreamIdMap additional_compute_streams = {},
+        std::vector<se::Stream*> additional_compute_streams = {},
         ExecutionScopedState* execution_scoped_state = nullptr);
 
     // Constructs execute parameters from an existing parameters but with
@@ -365,8 +330,8 @@ class Thunk {
     // XLA FFI execution context.
     const ffi::ExecutionContext* ffi_execution_context;
 
-    // Additional compute streams on which thunks launch operations.
-    ExecutionStreamIdMap additional_compute_streams;
+    // Additional compute streams on which thunks can launch operations.
+    std::vector<se::Stream*> additional_compute_streams;
 
     // Execution scoped state shared between prepare, initialize and execute.
     ExecutionScopedState* execution_scoped_state = nullptr;
@@ -388,7 +353,7 @@ class Thunk {
                   SendDeviceMemoryFunction* send_device_memory_function,
                   RecvDeviceMemoryFunction* recv_device_memory_function,
                   const ffi::ExecutionContext* ffi_execution_context,
-                  ExecutionStreamIdMap additional_compute_streams = {},
+                  std::vector<se::Stream*> additional_compute_streams = {},
                   ExecutionScopedState* execution_scoped_state = nullptr,
                   bool mock_collectives = false, int64_t execution_id = 0);
   };
@@ -458,16 +423,6 @@ class Thunk {
   friend void AbslStringify(Sink& sink, Kind kind) {
     sink.Append(KindToString(kind));
   }
-
-  ExecutionStreamId execution_stream_id() const {
-    return thunk_info_.execution_stream_id;
-  }
-  void set_execution_stream_id(ExecutionStreamId execution_stream_id) {
-    thunk_info_.execution_stream_id = execution_stream_id;
-  }
-
-  static absl::StatusOr<se::Stream*> GetStreamForExecution(
-      ExecutionStreamId stream_id, const ExecuteParams& params);
 
   // Returns `true` if this thunk requires inter-GPU communication.
   bool IsCollective() const;
@@ -622,7 +577,6 @@ std::invoke_result_t<F, const Thunk*> Thunk::Walk(F&& callback) const {
       std::forward<F>(callback));
 }
 
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_RUNTIME_THUNK_H_

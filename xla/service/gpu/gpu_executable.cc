@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/annotation.h"
+#include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
@@ -119,6 +120,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
@@ -127,7 +129,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -190,19 +191,21 @@ class GpuExecutableThunkPassBufferAllocator : public ThunkPassBufferAllocator {
 
 using ::tsl::profiler::ScopedAnnotation;
 
-// Returns the set of `ExecutionStreamIds` requested by all `Thunks` in the
-// `GpuExecutable`. At run time `Thunks` may use additional streams to launch
-// compute operations in parallel.
-static absl::flat_hash_set<ExecutionStreamId> GetExecutionStreamIds(
-    ThunkExecutor& executor) {
-  absl::flat_hash_set<ExecutionStreamId> stream_ids;
+// Returns the number of additional compute streams needed by all
+// `AsyncStartThunks` in the `GpuExecutable`.
+static int64_t GetNumAdditionalComputeStreams(ThunkExecutor& executor) {
+  int64_t num_streams = 0;
   CHECK_OK(executor.thunks().WalkNested([&](Thunk* thunk) -> absl::Status {
-    if (thunk->execution_stream_id() > 0) {
-      stream_ids.insert(thunk->execution_stream_id());
+    if (auto* async_start = dynamic_cast<AsyncStartThunk*>(thunk)) {
+      auto stream_id = async_start->execution_stream_id();
+      if (stream_id.is_computation()) {
+        num_streams = std::max<int64_t>(num_streams,
+                                        stream_id.computation_id().value() + 1);
+      }
     }
     return absl::OkStatus();
   }));
-  return stream_ids;
+  return num_streams;
 }
 
 static absl::Status RunThunkPasses(const DebugOptions& debug_options,
@@ -327,7 +330,8 @@ GpuExecutable::GpuExecutable(
       dnn_compiled_graphs_(std::move(dnn_compiled_graphs)),
       gpu_version_(device_description.gpu_compute_capability()),
       thunk_executor_(std::move(executable)),
-      execution_stream_ids_(GetExecutionStreamIds(*thunk_executor_)),
+      num_additional_compute_streams_(
+          GetNumAdditionalComputeStreams(*thunk_executor_)),
       module_name_(std::move(module_name)),
       program_shape_(std::move(program_shape)),
       allocation_ptrs_(GatherAllocationPtrs(
@@ -432,14 +436,16 @@ absl::Status BarrierAfterExecutable(
     const DebugOptions* absl_nullable debug_options, se::Stream& stream_to_sync,
     size_t num_participants);
 
-absl::Status ExecuteThunksImpl(
-    const DebugOptions* debug_options, const std::string& module_name,
-    ModuleIdentifier module_id, ThunkExecutor& thunk_executor,
-    Thunk::ExecutableSource executable_source,
-    const ServiceExecutableRunOptions* run_options,
-    const BufferAllocations& buffer_allocations, bool block_host_until_done,
-    const absl::flat_hash_set<ExecutionStreamId>& execution_stream_ids,
-    CollectiveMemoryCache& collective_memory_cache) {
+absl::Status ExecuteThunksImpl(const DebugOptions* debug_options,
+                               const std::string& module_name,
+                               ModuleIdentifier module_id,
+                               ThunkExecutor& thunk_executor,
+                               Thunk::ExecutableSource executable_source,
+                               const ServiceExecutableRunOptions* run_options,
+                               const BufferAllocations& buffer_allocations,
+                               bool block_host_until_done,
+                               int64_t num_additional_compute_streams,
+                               CollectiveMemoryCache& collective_memory_cache) {
   bool mock_collectives =
       run_options->run_options().gpu_executable_run_options()
           ? run_options->run_options()
@@ -569,30 +575,28 @@ absl::Status ExecuteThunksImpl(
     command_buffer_trace_stream = borrowed_command_buffer_trace_stream.get();
   }
 
-  // Borrow stream for additional compute streams
-  Thunk::ExecutionStreamIdMap additional_execution_streams;
-  std::vector<StreamPool::Ptr> additional_streams;
-  if (!execution_stream_ids.empty()) {
+  // Borrow streams for additional compute streams.
+  std::vector<se::Stream*> additional_compute_streams;
+  std::vector<StreamPool::Ptr> borrowed_compute_streams;
+  if (num_additional_compute_streams > 0) {
     if (run_options->HasStreamBorrower()) {
-      ASSIGN_OR_RETURN(additional_streams,
-                       run_options->BorrowStreams(executor->device_ordinal(),
-                                                  execution_stream_ids.size()));
-      int64_t i = 0;
-      for (ExecutionStreamId stream_id : execution_stream_ids) {
-        additional_execution_streams[stream_id] =
-            additional_streams.at(i).get();
-        i++;
+      ASSIGN_OR_RETURN(
+          borrowed_compute_streams,
+          run_options->BorrowStreams(executor->device_ordinal(),
+                                     num_additional_compute_streams));
+      additional_compute_streams.reserve(num_additional_compute_streams);
+      for (auto& stream : borrowed_compute_streams) {
+        additional_compute_streams.push_back(stream.get());
       }
       XLA_VLOG_DEVICE(2, run_options->device_ordinal())
           << absl::StreamFormat("Using %d additional compute streams.",
-                                additional_execution_streams.size());
+                                num_additional_compute_streams);
     } else {
       XLA_VLOG_DEVICE(2, run_options->device_ordinal())
           << "No stream borrower created. "
           << "Assigning the default stream to all parallel computes.";
-      for (ExecutionStreamId stream_id : execution_stream_ids) {
-        additional_execution_streams[stream_id] = main_stream;
-      }
+      additional_compute_streams.assign(num_additional_compute_streams,
+                                        main_stream);
     }
   }
 
@@ -691,7 +695,7 @@ absl::Status ExecuteThunksImpl(
   Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
       *run_options, buffer_allocations, main_stream,
       command_buffer_trace_stream, &collective_params, &collective_cliques,
-      &collective_memory, std::move(additional_execution_streams),
+      &collective_memory, std::move(additional_compute_streams),
       &execution_scoped_state);
 
   XLA_VLOG_DEVICE(1, run_options->device_ordinal())
@@ -1505,8 +1509,8 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
   TF_RETURN_IF_ERROR(ExecuteThunksImpl(
       has_module() ? &module_config().debug_options() : nullptr, module_name_,
       unique_id, *thunk_executor_, executable_source, run_options,
-      remapped_buffer_allocations, block_host_until_done, execution_stream_ids_,
-      collective_memory_cache_));
+      remapped_buffer_allocations, block_host_until_done,
+      num_additional_compute_streams_, collective_memory_cache_));
 
   // Record event so VA range can be reclaimed after GPU finishes.
   TF_RETURN_IF_ERROR(
@@ -1609,8 +1613,8 @@ absl::Status GpuExecutable::ExecuteThunks(
     TF_RETURN_IF_ERROR(ExecuteThunksImpl(
         has_module() ? &module_config().debug_options() : nullptr, module_name_,
         unique_id, *thunk_executor_, executable_source, run_options,
-        buffer_allocations, block_host_until_done, execution_stream_ids_,
-        collective_memory_cache_));
+        buffer_allocations, block_host_until_done,
+        num_additional_compute_streams_, collective_memory_cache_));
   }
   return absl::OkStatus();
 }

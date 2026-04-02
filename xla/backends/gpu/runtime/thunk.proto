@@ -42,7 +42,6 @@ import "xla/xla_data.proto";
 // Contains basic pieces of information that every thunk type has.
 message ThunkInfoProto {
   string profile_annotation = 1;
-  int64 execution_stream_id = 2;
   int64 thunk_id = 3;
 }
 
@@ -59,15 +58,16 @@ message ThunkMetadataListProto {
 }
 
 message AsyncStartThunkProto {
-  enum AsyncKind {
-    ASYNC_KIND_UNSPECIFIED = 0;
-    ASYNC_KIND_COMMUNICATION = 1;
-    ASYNC_KIND_COMPUTE = 2;
+  uint64 async_execution_id = 1;
+  ThunkSequenceProto thunks = 3;
+
+  oneof execution_stream_id {
+    uint64 computation_stream_id = 4;
+    uint64 communication_stream_id = 5;
   }
 
-  uint64 async_execution_id = 1;
-  AsyncKind async_kind = 2;
-  ThunkSequenceProto thunks = 3;
+  reserved 2;
+  reserved "async_kind";
 }
 
 message AsyncDoneThunkProto {

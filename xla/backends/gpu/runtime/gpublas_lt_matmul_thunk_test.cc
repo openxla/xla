@@ -451,11 +451,10 @@ TEST_F(GpuBlasLtMatmulThunkTest, ThunkProtoSerialization) {
 
   Thunk::ThunkInfo thunk_info;
   thunk_info.profile_annotation = "test";
-  thunk_info.execution_stream_id = 0;
 
   CublasLtMatmulThunkProto proto;
-  ASSERT_TRUE(google::protobuf::TextFormat::ParseFromString(kCublasLtMatmulThunkProtoText,
-                                                  &proto));
+  ASSERT_TRUE(google::protobuf::TextFormat::ParseFromString(
+      kCublasLtMatmulThunkProtoText, &proto));
 
   std::vector<BufferAllocation> allocations = {
       BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),  // UNUSED
@@ -528,7 +527,6 @@ TEST_F(GpuBlasLtMatmulThunkTest, ThunkProtoSerializationGroupedMatmul) {
 
   Thunk::ThunkInfo thunk_info;
   thunk_info.profile_annotation = "test";
-  thunk_info.execution_stream_id = 0;
 
   CublasLtMatmulThunkProto proto;
   ASSERT_TRUE(google::protobuf::TextFormat::ParseFromString(
