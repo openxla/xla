@@ -151,6 +151,7 @@ cc_library(
         ":pjrt_client",
         ":pjrt_executable",
         ":raw_buffer",
+        ":transpose",
         ":utils",
         "//xla:executable_run_options",
         "//xla:future",

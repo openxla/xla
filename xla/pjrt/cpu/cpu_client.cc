@@ -270,7 +270,6 @@ PjRtCpuClient::PjRtCpuClient(
       allocator_(std::move(allocator)),
       last_collective_launch_event_(
           tsl::MakeAvailableAsyncValueRef<CpuEvent>()),
-      transpose_cache_(1024),
       collectives_(std::move(collectives)),
       topology_(std::move(topology)),
       asynchronous_(asynchronous),
@@ -991,8 +990,7 @@ absl::StatusOr<PjRtDeviceEventRef> PjRtCpuClient::LinearizeHostBufferInto(
       ->CopyFromHostBuffer(
           data, type, dims, byte_strides, host_buffer_semantics,
           std::move(on_done_with_host_buffer), device_shape,
-          async_work_runner(), &transpose_mu_, &transpose_cache_,
-          eigen_intraop_pool(), max_transpose_threads_);
+          async_work_runner(), eigen_intraop_pool(), max_transpose_threads_);
 }
 
 absl::StatusOr<PjRtDeviceEventRef> PjRtCpuClient::LinearizeInto(

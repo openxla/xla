@@ -54,6 +54,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/raw_buffer.h"
+#include "xla/pjrt/transpose.h"
 #include "xla/pjrt/utils.h"
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
@@ -488,6 +489,12 @@ tsl::Future<> CommonPjRtClient::MakeTrackedReadyFuture(
     }
   });
   return result;
+}
+
+absl::StatusOr<std::shared_ptr<TransposePlan>>
+CommonPjRtClient::GetTransposePlan(const TransposePlan::Options& options) {
+  absl::MutexLock lock(&transpose_mu_);
+  return transpose_cache_.GetOrCreate(options);
 }
 
 Future<> CommonPjRtRawBufferImpl::CopyRawHostToDevice(const void* src,

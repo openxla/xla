@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/pjrt/async_work_runner.h"
+#include "xla/pjrt/common_pjrt_client.h"
 #include "xla/pjrt/cpu/abstract_cpu_buffer.h"
 #include "xla/pjrt/cpu/cpu_event.h"
 #include "xla/pjrt/cpu/tracked_cpu_device_buffer.h"
@@ -192,9 +193,10 @@ absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyFromHostBuffer(
     std::optional<absl::Span<int64_t const>> byte_strides,
     PjRtClient::HostBufferSemantics host_buffer_semantics,
     absl::AnyInvocable<void() &&> on_done_with_host_buffer, const Shape& shape,
-    AsyncWorkRunner* async_work_runner, absl::Mutex* transpose_mu,
-    TransposePlanCache* transpose_cache, tsl::thread::ThreadPool* thread_pool,
+    AsyncWorkRunner* async_work_runner, tsl::thread::ThreadPool* thread_pool,
     int max_transpose_threads) {
+  CommonPjRtClient* client =
+      tensorflow::down_cast<CommonPjRtClient*>(memory_space()->client());
   tsl::AsyncValueRef<CpuDeviceMemory> device_buffer = buffer_;
   bool has_default_layout =
       !byte_strides || HasMajorToMinorLayout(type, dims, *byte_strides);
@@ -229,8 +231,7 @@ absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyFromHostBuffer(
         options.num_threads =
             std::min(thread_pool->NumThreads(), max_transpose_threads);
       }
-      absl::MutexLock lock(*transpose_mu);
-      TF_ASSIGN_OR_RETURN(transpose, transpose_cache->GetOrCreate(options));
+      TF_ASSIGN_OR_RETURN(transpose, client->GetTransposePlan(options));
     }
     std::optional<std::function<void(std::function<void(void)>)>> schedule_work;
     if (thread_pool && max_transpose_threads > 1) {

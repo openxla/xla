@@ -295,17 +295,14 @@ void PjRtStreamExecutorRawBuffer::CopyToLiteralAsync(
             options.dims = on_device_shape.dimensions();
             options.permutation = permutation;
             options.input_striding = TransposePlan::Striding{byte_strides};
-            {
-              absl::MutexLock lock(client->transpose_mu_);
-              absl::StatusOr<std::shared_ptr<TransposePlan>> t =
-                  client->transpose_cache_.GetOrCreate(options);
-              if (!t.ok()) {
-                promise.Set(t.status());
-                client->SetEventAsError(usage_event, t.status());
-                return;
-              }
-              transpose = *std::move(t);
+            absl::StatusOr<std::shared_ptr<TransposePlan>> t =
+                client->GetTransposePlan(options);
+            if (!t.ok()) {
+              promise.Set(t.status());
+              client->SetEventAsError(usage_event, t.status());
+              return;
             }
+            transpose = *std::move(t);
           }
         }
 

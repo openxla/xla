@@ -347,12 +347,6 @@ class PjRtCpuClient final : public CommonPjRtClient {
   tsl::AsyncValueRef<CpuEvent> last_collective_launch_event_
       ABSL_GUARDED_BY(mu_);
 
-  // A cache for transpose plans. We use transposes to convert
-  // (possibly strided) buffers provided to BufferFromHostBuffer into dense
-  // major-to-minor layout.
-  absl::Mutex transpose_mu_;
-  TransposePlanCache transpose_cache_ ABSL_GUARDED_BY(transpose_mu_);
-
   std::shared_ptr<cpu::CpuCollectives> collectives_;
 
   std::unique_ptr<xla::CpuTopologyDescription> topology_;
