@@ -30,10 +30,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/status.h"
-#include "tsl/platform/strcat.h"
+#include "tsl/platform/platform.h"
 
 namespace tsl {
 namespace error {
@@ -166,7 +165,7 @@ inline absl::Status CreateWithUpdatedMessage(const absl::Status& status,
 inline absl::Status Create(
     absl::StatusCode code, absl::string_view message,
     const std::unordered_map<std::string, std::string>& payloads) {
-  Status status(code, message);
+  absl::Status status(code, message);
   InsertPayloads(status, payloads);
   return status;
 }
@@ -184,7 +183,7 @@ inline absl::Status CreateWithUpdatedMessage(const absl::Status& status,
 template <typename... Args>
 void AppendToMessage(absl::Status* status, Args... args) {
   auto new_status = CreateWithUpdatedMessage(
-      *status, ::tsl::strings::StrCat(status->message(), "\n\t", args...));
+      *status, absl::StrCat(status->message(), "\n\t", args...));
   CopyPayloads(*status, new_status);
   *status = std::move(new_status);
 }
@@ -1929,8 +1928,8 @@ template <typename... Args>
 ABSL_DEPRECATED(
     "Use absl::UnauthenticatedError(absl::StrCat(args...)) instead.")
 inline ABSL_STATUS Unauthenticated(Args... rest) {
-  return absl::UnauthenticatedError(::tsl::strings::StrCat(
-      ::tsl::errors::internal::PrepareForStrCat(rest)...));
+  return absl::UnauthenticatedError(
+      absl::StrCat(::tsl::errors::internal::PrepareForStrCat(rest)...));
 }
 inline absl::Status UnauthenticatedWithPayloads(
     absl::string_view message,
