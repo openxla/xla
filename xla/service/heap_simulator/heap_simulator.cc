@@ -2617,7 +2617,9 @@ void GlobalDecreasingSizeBestFitHeap<BufferType>::CommitChunk(
     const GlobalDecreasingSizeBestFitHeap<BufferType>::BufferInterval&
         buffer_interval,
     GlobalDecreasingSizeBestFitHeap<BufferType>::Chunk chunk) {
-  CHECK_EQ(chunk.size, buffer_interval.size);
+  CHECK_EQ(chunk.size, buffer_interval.size)
+      << "Chunk size mismatch for buffer: "
+      << buffer_interval.buffer->ToString();
   const int64_t max_colocation_size = GetMaxColocationSize(buffer_interval);
   Chunk max_size_chunk =
       Chunk::FromOffsetSize(chunk.offset, max_colocation_size);
