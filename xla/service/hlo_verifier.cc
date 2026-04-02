@@ -460,9 +460,8 @@ static absl::Status CheckReplicaGroups(HloInstruction* hlo,
 }
 
 static absl::Status CheckCommonAllGatherInvariants(
-    HloInstruction* hlo, int64_t* computed_shard_count,
+    HloAllGatherInstruction* ag, int64_t* computed_shard_count,
     bool check_replica_groups) {
-  auto ag = Cast<HloAllGatherInstruction>(hlo);
   CHECK_NE(computed_shard_count, nullptr) << "Expected a shard count as input";
   TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
                       GetCollectiveOpGroupMode(ag->channel_id().has_value(),
@@ -481,7 +480,7 @@ static absl::Status CheckCommonAllGatherInvariants(
             static_cast<int64_t>(ag->operand(i)->shape().dimensions().size()));
 
     Shape output_shape;
-    if (hlo->opcode() == HloOpcode::kAllGather) {
+    if (ag->opcode() == HloOpcode::kAllGather) {
       if (ag->operand_count() > 1) {
         TF_RET_CHECK(ag->shape().IsTuple() &&
                      ag->operand_count() == ag->shape().tuple_shapes().size());
@@ -489,7 +488,7 @@ static absl::Status CheckCommonAllGatherInvariants(
       output_shape = (ag->operand_count() == 1) ? ag->shape()
                                                 : ag->shape().tuple_shapes(i);
     } else {
-      TF_RET_CHECK(hlo->opcode() == HloOpcode::kAllGatherStart);
+      TF_RET_CHECK(ag->opcode() == HloOpcode::kAllGatherStart);
       TF_RET_CHECK(ag->shape().IsTuple() &&
                    ag->shape().tuple_shapes().size() == 2);
       if (ag->operand_count() > 1) {
@@ -516,7 +515,7 @@ static absl::Status CheckCommonAllGatherInvariants(
   // these verification checks in that case.
   TF_RET_CHECK(subgroup_size == 1 || shard_count == subgroup_size)
       << "shard_count = " << shard_count
-      << ", subgroup_size = " << subgroup_size << ", " << hlo->ToString();
+      << ", subgroup_size = " << subgroup_size << ", " << ag->ToString();
   *computed_shard_count = shard_count;
   return absl::OkStatus();
 }
@@ -525,7 +524,7 @@ absl::Status ShapeVerifier::HandleAllGather(HloInstruction* hlo) {
   auto ag = Cast<HloAllGatherInstruction>(hlo);
   int64_t shard_count;
   TF_RETURN_IF_ERROR(CheckCommonAllGatherInvariants(
-      hlo, &shard_count, opts_.ShouldCheckReplicaGroups()));
+      ag, &shard_count, opts_.ShouldCheckReplicaGroups()));
   std::vector<const Shape*> operand_shapes;
   for (const HloInstruction* operand : hlo->operands()) {
     operand_shapes.push_back(&operand->shape());
@@ -539,7 +538,7 @@ absl::Status ShapeVerifier::HandleAllGatherStart(HloInstruction* hlo) {
   auto ag = Cast<HloAllGatherInstruction>(hlo);
   int64_t shard_count;
   TF_RETURN_IF_ERROR(CheckCommonAllGatherInvariants(
-      hlo, &shard_count, opts_.ShouldCheckReplicaGroups()));
+      ag, &shard_count, opts_.ShouldCheckReplicaGroups()));
   std::vector<const Shape*> operand_shapes;
   for (const HloInstruction* operand : hlo->operands()) {
     operand_shapes.push_back(&operand->shape());
@@ -2646,6 +2645,16 @@ absl::Status VerifyAsynchronousInstructionPairs(const HloModule& module) {
         case HloOpcode::kAllReduceDone: {
           TF_RETURN_IF_ERROR(
               VerifySingleOperand(instruction, {HloOpcode::kAllReduceStart}));
+          break;
+        }
+        case HloOpcode::kAllGatherStart: {
+          TF_RETURN_IF_ERROR(
+              VerifySingleUser(instruction, {HloOpcode::kAllGatherDone}));
+          break;
+        }
+        case HloOpcode::kAllGatherDone: {
+          TF_RETURN_IF_ERROR(
+              VerifySingleOperand(instruction, {HloOpcode::kAllGatherStart}));
           break;
         }
         case HloOpcode::kCopyStart: {

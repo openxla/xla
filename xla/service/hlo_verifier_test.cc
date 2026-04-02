@@ -1856,6 +1856,41 @@ TEST_F(HloVerifierTest, AllReduceDoneWithoutStart) {
                         "needs to be all-reduce-start, found tuple"));
 }
 
+TEST_F(HloVerifierTest, AllGatherStartAndDone) {
+  const char* const kModuleStr = R"(
+  HloModule test
+  ENTRY entry {
+    p0 = f32[2,3] parameter(0)
+    start = (f32[2,3], f32[4,3]) all-gather-start(p0), dimensions={0},
+      replica_groups={{0,1}}
+    ROOT done = f32[4,3] all-gather-done(start)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleStr));
+}
+
+TEST_F(HloVerifierTest, AllGatherStartAndMultipleDone) {
+  const char* const kModuleStr = R"(
+  HloModule test
+  ENTRY entry {
+    p0 = f32[2,3] parameter(0)
+    start = (f32[2,3], f32[4,3]) all-gather-start(p0), dimensions={0},
+      replica_groups={{0,1}}
+    done1 = f32[4,3] all-gather-done(start)
+    ROOT done2 = f32[4,3] all-gather-done(start)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnUnverifiedModule(kModuleStr));
+
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(
+      status.message(),
+      HasSubstr("all-gather-start instruction requires one consumer, found 2"));
+}
+
 absl::StatusOr<std::unique_ptr<HloModule>> MakeAllToAllComputation(
     std::vector<std::vector<int64_t>> replica_groups,
     std::optional<int64_t> replica_count = std::nullopt,
@@ -5042,8 +5077,9 @@ TEST_F(HloVerifierTest, AllGatherStartWithUnexpectedArrayOutputShape) {
 
   ENTRY main {
     input = f32[128,32] parameter(0)
-    ROOT all-gather-start = f32[128,32] all-gather-start(input),
+    all-gather-start = f32[128,32] all-gather-start(input),
       replica_groups={{0,1}}, dimensions={0}
+    ROOT all-gather-done = f32[128,32] all-gather-done(all-gather-start)
   })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
                           ParseAndReturnUnverifiedModule(kHlo));
