@@ -331,12 +331,50 @@ cc_library(
     ],
 )
 
+exports_files(
+    ["basic_atom_program_compiler.h"],
+    visibility = if_google(
+        [
+            "//xla/python/ifrt/ir/google:__pkg__",
+            "//xla/python/ifrt:friends",
+        ],
+        ["//visibility:private"],
+    ),
+)
+
 cc_library(
     name = "basic_atom_program_compiler",
-    srcs = ["basic_atom_program_compiler.cc"],
     hdrs = ["basic_atom_program_compiler.h"],
-    compatible_with = get_compatible_with_portable(),
+    compatible_with = get_compatible_with_libtpu_portable(),
     visibility = internal_visibility(["//xla/python/ifrt:friends"]),
+    deps = [
+        if_google("//xla/python/ifrt/ir/google:basic_atom_program_compiler", ":basic_atom_program_compiler_oss"),
+        ":atom_program_compiler",
+        ":ir",
+        "//xla/pjrt:pjrt_executable",
+        "//xla/python/ifrt",
+        "//xla/python/ifrt/hlo:hlo_program",
+        "//xla/python/pjrt_ifrt:xla_ifrt",
+        "//xla/service:computation_placer_hdr",
+        "//xla/tsl/concurrency:future",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "basic_atom_program_compiler_oss",
+    srcs = [
+        "basic_atom_program_compiler.cc",
+        "basic_atom_program_compiler.h",
+    ],
+    visibility = ["//visibility:private"],
     deps = [
         ":atom_program_compiler",
         ":ir",
@@ -355,6 +393,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
     ],
+    alwayslink = True,
 )
 
 cc_library(

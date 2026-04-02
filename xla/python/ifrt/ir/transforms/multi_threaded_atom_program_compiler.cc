@@ -187,9 +187,8 @@ MultiThreadedAtomProgramCompiler::CompileXla(CallOp call_op,
   auto hlo_program = std::make_unique<HloProgram>(std::move(context),
                                                   std::move(cloned_module));
   AtomProgramCompileResult result;
-  result.name = absl::StrCat(
-      hlo_program->mlir_module().getName().value_or("<unknown>").str(), ".",
-      tsl::random::ThreadLocalNew64());
+  result.name =
+      absl::StrCat(hlo_program->name(), ".", tsl::random::ThreadLocalNew64());
   result.executable =
       compiler_->CompileXla(std::move(hlo_program), std::move(compile_options));
   return result;
