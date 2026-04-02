@@ -24,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
@@ -347,9 +348,9 @@ class PjRtTopologyDescription {
     return absl::UnimplementedError("ProcessBounds is unsupported.");
   }
 
-  // Serializes the topology for use in cache keys. (No guarantees on
-  // stability).
-  virtual absl::StatusOr<std::string> Serialize() const = 0;
+  // Returns a fingerprint of the topology for use in cache keys. (No guarantees
+  // on stability).
+  virtual absl::StatusOr<uint64_t> Fingerprint() const = 0;
 
   // Returns vendor specific attributes about the topology.
   // This map should only include static information available at cross-compile
@@ -386,7 +387,8 @@ inline bool IsTpuId(PjRtPlatformId platform_id) {
 
 // Returns true if it's GPU id.
 inline bool IsGpuId(PjRtPlatformId platform_id) {
-  return platform_id == xla::CudaId() || platform_id == xla::RocmId();
+  return platform_id == xla::CudaId() || platform_id == xla::RocmId() ||
+         platform_id == xla::SyclId();
 }
 
 // Returns true if it's CPU id.

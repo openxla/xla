@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu_topology.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_module_config.h"
@@ -109,9 +110,6 @@ class GpuCompiler : public LLVMCompiler {
 
   int64_t GetPointerSize() const { return pointer_size_; }
 
-  static absl::StatusOr<GpuTargetConfig> GetTargetConfig(
-      const Compiler::CompileOptions& options, const DebugOptions& debug_opts,
-      se::StreamExecutor* executor);
 
   mlir::MLIRContext* mlir_context() { return &mlir_context_; }
 
@@ -122,7 +120,8 @@ class GpuCompiler : public LLVMCompiler {
 
   virtual absl::StatusOr<bool> CanUseLinkModules(
       const HloModuleConfig& config,
-      const stream_executor::DeviceDescription& device_description) {
+      const stream_executor::DeviceDescription& device_description,
+      se::StreamExecutor* absl_nullable stream_exec) {
     return false;
   }
 
@@ -219,13 +218,15 @@ class GpuCompiler : public LLVMCompiler {
   absl::StatusOr<CompileResultWithMetadata> CompileToBackendResult(
       HloModule* module, llvm::LLVMContext* llvm_context,
       const CompileOptions& options,
-      const se::DeviceDescription& gpu_device_info);
+      const se::DeviceDescription& gpu_device_info,
+      se::StreamExecutor* absl_nullable stream_exec);
 
   absl::StatusOr<BackendCompileResult> CompileAndLink(
       const HloModuleConfig& module_config,
       CompileModuleResults& compile_module_results,
       const stream_executor::DeviceDescription& device_description,
-      const CompileOptions& options, const HloModule* debug_module);
+      const CompileOptions& options, const HloModule* debug_module,
+      se::StreamExecutor* absl_nullable stream_exec);
 
   absl::StatusOr<BackendCompileResult> CompileSingleModule(
       const HloModuleConfig& module_config,
@@ -251,7 +252,7 @@ class GpuCompiler : public LLVMCompiler {
   absl::Status OptimizeHloModule(HloModule* hlo_module,
                                  se::StreamExecutor* stream_exec,
                                  const CompileOptions& options,
-                                 const GpuTargetConfig& gpu_target_config,
+                                 const GpuTopology& gpu_topology,
                                  const GpuAliasInfo* alias_info,
                                  CompilationStats* compilation_stats);
 
@@ -277,7 +278,8 @@ class GpuCompiler : public LLVMCompiler {
   virtual absl::StatusOr<std::vector<uint8_t>> LinkModules(
       const stream_executor::DeviceDescription& device_description,
       std::vector<std::vector<uint8_t>> modules,
-      const DebugOptions& debug_options) {
+      const DebugOptions& debug_options,
+      se::StreamExecutor* absl_nullable stream_exec) {
     return Unimplemented("LinkModules is not implemented.");
   }
 

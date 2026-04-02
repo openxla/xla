@@ -22,7 +22,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -60,7 +59,9 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology_description.h"
 #include "xla/pjrt/raw_buffer.h"
+#include "xla/pjrt/thread_pool_async_work_runner.h"
 #include "xla/pjrt/transpose.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
@@ -194,10 +195,6 @@ class PjRtCpuClient final : public CommonPjRtClient {
       size_t on_device_bytes_count, PjRtMemorySpace* memory_space,
       bool is_mutable) override;
 
-  tsl::thread::ThreadPool* pjrt_client_thread_pool() const {
-    return pjrt_client_thread_pool_.get();
-  }
-
   AsyncWorkRunner* async_work_runner() const override {
     return async_work_runner_.get();
   }
@@ -235,24 +232,28 @@ class PjRtCpuClient final : public CommonPjRtClient {
                               size_t on_device_bytes_count,
                               bool retry_on_oom) override;
 
-  absl::StatusOr<std::pair<tsl::RCReference<PjRtDeviceEventPromise>,
-                           tsl::RCReference<PjRtDeviceEvent>>>
+  absl::StatusOr<
+      std::pair<tsl::RCReference<PjRtDeviceEventPromise>, PjRtDeviceEventRef>>
   CreateLinkedEventPromise(PjRtMemorySpace* memory_space,
                            absl::string_view debug_info) override;
 
   std::unique_ptr<PjRtDeviceEventSet> CreateDeviceEventSet(
       size_t preallocated_size) const override;
 
+  using CommonPjRtClient::DefineBuffer;
+
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> DefineBuffer(
-      const Shape& on_device_shape, PjRtMemorySpace* memory_space,
+      std::shared_ptr<const Shape> on_device_shape,
+      PjRtMemorySpace* memory_space,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
-      absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>
-          definition_device_events) override;
+      absl::InlinedVector<PjRtDeviceEventRef, 4> definition_device_events)
+      override;
 
+  using CommonPjRtClient::GetOnDeviceBytesCount;
   absl::StatusOr<int64_t> GetOnDeviceBytesCount(
-      PjRtMemorySpace* memory_space, const xla::Shape& shape) const override;
+      int memory_space_kind, const xla::Shape& shape) const override;
 
-  absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> LinearizeHostBufferInto(
+  absl::StatusOr<PjRtDeviceEventRef> LinearizeHostBufferInto(
       const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
       std::optional<absl::Span<int64_t const>> byte_strides,
       HostBufferSemantics host_buffer_semantics,
@@ -260,7 +261,7 @@ class PjRtCpuClient final : public CommonPjRtClient {
       const xla::Shape& device_shape,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) override;
 
-  absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> LinearizeInto(
+  absl::StatusOr<PjRtDeviceEventRef> LinearizeInto(
       const LiteralSlice& literal, const xla::Shape& device_shape,
       HostBufferSemantics host_buffer_semantics,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) override;
@@ -367,14 +368,9 @@ class PjRtCpuClient final : public CommonPjRtClient {
   // destruction guarantees that all scheduled tasks are completed. Otherwise,
   // we might get use-after-free races when dispatched executables try to access
   // the member variables of this class that are already destroyed.
-
-  // TODO(zhangqiaorjc): Use tsl::compat::EigenHostContextThreadPool.
   std::unique_ptr<tsl::thread::ThreadPool> eigen_intraop_pool_;
   std::unique_ptr<Eigen::ThreadPoolDevice> eigen_intraop_device_;
-
-  // Thread pool for running PjRtClient tasks.
-  std::unique_ptr<tsl::thread::ThreadPool> pjrt_client_thread_pool_;
-  std::unique_ptr<AsyncWorkRunner> async_work_runner_;
+  std::unique_ptr<ThreadPoolAsyncWorkRunner> async_work_runner_;
 
   // Maximum number of threads to use for any one transpose. We will use the
   // the lesser of this number and the thread pool size. 1 = no threading.
@@ -394,7 +390,8 @@ class CpuPjRtRawLoadedExecutable : public PjRtRawLoadedExecutable {
       absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> input_buffers,
       absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>>
           output_leaf_buffers,
-      PjRtDeviceEventSet& extra_deps, PjRtDeviceEventSet& control_deps,
+      std::unique_ptr<PjRtDeviceEventSet> extra_deps,
+      std::unique_ptr<PjRtDeviceEventSet> control_deps,
       bool is_predetermined_error, bool fill_future) &&
       override;
 
@@ -412,8 +409,8 @@ class CpuPjRtRawLoadedExecutable : public PjRtRawLoadedExecutable {
 class PjRtCpuExecutable final : public PjRtExecutable {
  public:
   PjRtCpuExecutable(
-      int num_replicas, int num_partitions,
-      bool parameter_is_tupled_arguments, CompileOptions compile_options,
+      int num_replicas, int num_partitions, bool parameter_is_tupled_arguments,
+      CompileOptions compile_options,
       std::unique_ptr<Executable> cpu_executable,
       absl::InlinedVector<BufferAllocation::Index, 4> result_buffer_indices,
       std::unique_ptr<HloModule> unoptimized_hlo_module);
@@ -436,6 +433,11 @@ class PjRtCpuExecutable final : public PjRtExecutable {
       const override {
     return std::vector<std::shared_ptr<HloModule>>{
         cpu_executable_->shared_module()};
+  }
+
+  absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+  GetParameterMemoryKinds() const override {
+    return Unimplemented("GetParameterMemoryKinds is not supported.");
   }
 
   absl::StatusOr<std::vector<std::vector<absl::string_view>>>

@@ -12,7 +12,6 @@ limitations under the License.
 #include "xla/service/spmd/shardy/sdy_round_trip/flatten_call_graph.h"
 
 #include <memory>
-#include <utility>
 
 #include "absl/log/check.h"
 #include "llvm/ADT/DenseSet.h"
@@ -28,7 +27,9 @@ limitations under the License.
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/TypeID.h"
+#include "mlir/Support/WalkResult.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
+#include "shardy/dialect/sdy/ir/utils.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/shardy/utils.h"
 
@@ -43,6 +44,7 @@ using ::mlir::SymbolTable;
 using ::mlir::func::CallOp;
 using ::mlir::func::FuncOp;
 using ::mlir::sdy::SdyDialect;
+using ::mlir::sdy::TensorShardingPerValueAttr;
 
 class SdyRoundTripFlattenCallGraphPass
     : public mlir::PassWrapper<SdyRoundTripFlattenCallGraphPass,
@@ -55,25 +57,24 @@ class SdyRoundTripFlattenCallGraphPass
     SymbolTable symbolTable(moduleOp);
 
     llvm::SmallDenseSet<StringRef> funcNames;
-    mlir::CallGraph callGraph(moduleOp);
-    llvm::ReversePostOrderTraversal<const mlir::CallGraph*> rpo(&callGraph);
-    for (mlir::CallGraphNode* node : llvm::reverse(rpo)) {
-      if (node->isExternal()) {
-        continue;
-      }
+
+    mlir::sdy::walkCalls(moduleOp, [&](CallOp callOp) {
       // TODO(enver): Should we special handle loops and conditionals?
-      node->getCallableRegion()->walk([&](CallOp callOp) {
-        if (auto [_, inserted] = funcNames.insert(callOp.getCallee());
-            inserted) {
-          return;
+      FuncOp funcOp = symbolTable.lookup<FuncOp>(callOp.getCallee());
+      CHECK(funcOp) << "Failed to lookup function: "
+                    << callOp.getCallee().str();
+      TensorShardingPerValueAttr callOpResultShardings =
+          mlir::sdy::getShardingPerValue(callOp);
+      if (auto [_, inserted] = funcNames.insert(funcOp.getName()); inserted) {
+        if (callOpResultShardings) {
+          mlir::sdy::setFuncResultShardings(funcOp, callOpResultShardings);
         }
-        FuncOp funcOp = symbolTable.lookup<FuncOp>(callOp.getCallee());
-        CHECK(funcOp) << "Failed to lookup function: "
-                      << callOp.getCallee().str();
-        callOp.setCallee(
-            symbolTable.insert(cloneFuncRecursively(funcOp, symbolTable)));
-      });
-    }
+        return mlir::WalkResult::advance();
+      }
+      callOp.setCallee(symbolTable.insert(
+          cloneFuncRecursively(funcOp, callOpResultShardings, symbolTable)));
+      return mlir::WalkResult::advance();
+    });
   }
 
   StringRef getArgument() const override {

@@ -15,8 +15,10 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/scan_rewriter.h"
 
+#include <cstdint>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -29,52 +31,105 @@ limitations under the License.
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
 absl::StatusOr<bool> ScanRewriter::RunOnComputation(
     HloComputation* computation) {
   bool changed = false;
-  std::vector<HloInstruction*> scans;
+  std::vector<HloScanInstruction*> scans;
   for (HloInstruction* inst : computation->instructions()) {
     if (inst->opcode() == HloOpcode::kScan) {
-      scans.push_back(inst);
+      scans.push_back(xla::Cast<HloScanInstruction>(inst));
     }
   }
 
-  for (HloInstruction* scan_instr : scans) {
-    // Only handles inclusive prefix sums for now.
-    if (scan_instr->operand_count() != 2) {
+  for (HloScanInstruction* scan : scans) {
+    // Skip if not a plain inclusive sum.
+    if (scan->is_reverse() || !scan->is_associative()) {
       continue;
     }
-    auto* scan = xla::Cast<HloScanInstruction>(scan_instr);
-    HloInstruction* root = scan->to_apply()->root_instruction();
-    if (root->opcode() != HloOpcode::kTuple ||   //
-        root->operand_count() != 2 ||            //
-        root->operand(0) != root->operand(1) ||  //
-        root->operand(0)->opcode() != HloOpcode::kAdd) {
+    if (scan->inputs().size() != 1 || scan->inits().size() != 1) {
+      continue;
+    }
+    if (absl::c_any_of(scan->users(), [](HloInstruction* user) {
+          return user->opcode() != HloOpcode::kGetTupleElement ||
+                 user->tuple_index() > 0;
+        })) {
+      continue;
+    }
+    const HloInstruction* init = scan->inits().front();
+    while (init->opcode() == HloOpcode::kBroadcast) {
+      init = init->operand(0);
+    }
+    if (!init->IsConstant() || !init->literal().IsZero({})) {
+      continue;
+    }
+    const HloInstruction* root = scan->to_apply()->root_instruction();
+    if (root->opcode() != HloOpcode::kTuple || root->operand_count() != 2 ||
+        root->operand(0) != root->operand(1)) {
+      continue;
+    }
+    auto binary_op = root->operand(0)->opcode();
+    if (binary_op != HloOpcode::kAdd) {
+      continue;
+    }
+    const Shape& shape = scan->shape().tuple_shapes(0);
+    if (!shape.IsArray()) {
+      continue;
+    }
+
+    int64_t scan_dim = scan->scan_dimension();
+    int64_t row_length = shape.dimensions(scan_dim);
+    int64_t vector_length = 1;
+    int64_t column_length = 1;
+    bool found_scan_dim = false;
+    for (int64_t dim : shape.layout().minor_to_major()) {
+      if (dim == scan_dim) {
+        found_scan_dim = true;
+      } else if (found_scan_dim) {
+        vector_length *= shape.dimensions(dim);
+      } else {
+        column_length *= shape.dimensions(dim);
+      }
+    }
+
+    // Skip if scan dimension is not the major dimension.
+    if (vector_length > 1) {
       continue;
     }
 
     // Create the custom call.
     Shape scratch_shape =
         ShapeUtil::MakeShape(U8, {0});  // Empty shape, assigned later.
-    Shape new_result_shape =
-        ShapeUtil::MakeTupleShape({scan_instr->shape(), scratch_shape});
+    Shape new_result_shape = ShapeUtil::MakeTupleShape({shape, scratch_shape});
 
     HloInstruction* custom_call =
         computation->AddInstruction(HloInstruction::CreateCustomCall(
-            new_result_shape, absl::MakeSpan(scan_instr->operands()),
+            new_result_shape, absl::MakeSpan(scan->operands()).first(1),
             kCubDeviceScanUnassignedScratchSizeTarget));
 
-    HloInstruction* get_tuple_element =
-        computation->AddInstruction(HloInstruction::CreateGetTupleElement(
-            scan_instr->shape(), custom_call, 0));
+    CubScanOptions::Kind kind = [&]() {
+      switch (binary_op) {
+        case HloOpcode::kAdd:
+          return CubScanOptions::SUM;
+        default:
+          return CubScanOptions::KIND_INVALID;
+      }
+    }();
 
-    TF_RETURN_IF_ERROR(scan_instr->ReplaceAllUsesWith(get_tuple_element));
-    TF_RETURN_IF_ERROR(computation->RemoveInstruction(scan_instr));
+    // Pass attributes via backend_config
+    xla::CubScanOptions options;
+    options.set_vector_length(vector_length);
+    options.set_row_length(row_length);
+    options.set_column_length(column_length);
+    options.set_kind(kind);
+    options.set_is_reverse(scan->is_reverse());
+    RETURN_IF_ERROR(custom_call->set_backend_config(options));
+
+    RETURN_IF_ERROR(scan->ReplaceAllUsesWithDifferentShape(custom_call));
+    RETURN_IF_ERROR(computation->RemoveInstruction(scan));
     changed = true;
   }
   return changed;
@@ -86,7 +141,7 @@ absl::StatusOr<bool> ScanRewriter::RunImpl(
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
-    TF_ASSIGN_OR_RETURN(bool result, RunOnComputation(computation));
+    ASSIGN_OR_RETURN(bool result, RunOnComputation(computation));
     changed |= result;
   }
   return changed;

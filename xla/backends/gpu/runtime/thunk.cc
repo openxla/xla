@@ -94,6 +94,16 @@ Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
       params.additional_compute_streams);
 }
 
+Thunk::ExecuteParams Thunk::ExecuteParams::WithComputeStream(
+    se::Stream* stream) const {
+  return ExecuteParams(buffer_allocations, stream, command_buffer_trace_stream,
+                       collective_params, collective_cliques, collective_memory,
+                       device_to_host_stream, host_to_device_stream,
+                       send_device_memory_function, recv_device_memory_function,
+                       ffi_execution_context, additional_compute_streams,
+                       execution_scoped_state, mock_collectives, execution_id);
+}
+
 Thunk::ExecuteParams::ExecuteParams(
     const BufferAllocations* buffer_allocations, se::Stream* stream,
     se::Stream* command_buffer_trace_stream,
@@ -128,42 +138,26 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
   switch (kind) {
     case kAllGather:
       return THUNK_KIND_ALL_GATHER;
-    case kAllGatherDone:
-      return THUNK_KIND_ALL_GATHER_DONE;
-    case kAllGatherStart:
-      return THUNK_KIND_ALL_GATHER_START;
     case kAllReduce:
       return THUNK_KIND_ALL_REDUCE;
-    case kAllReduceDone:
-      return THUNK_KIND_ALL_REDUCE_DONE;
-    case kAllReduceStart:
-      return THUNK_KIND_ALL_REDUCE_START;
     case kAllToAll:
       return THUNK_KIND_ALL_TO_ALL;
-    case kAllToAllDone:
-      return THUNK_KIND_ALL_TO_ALL_DONE;
-    case kAllToAllStart:
-      return THUNK_KIND_ALL_TO_ALL_START;
+    case kAsyncDone:
+      return THUNK_KIND_ASYNC_DONE;
+    case kAsyncStart:
+      return THUNK_KIND_ASYNC_START;
     case kBuffersDebugChecksum:
       return THUNK_KIND_BUFFERS_DEBUG_CHECKSUM;
     case kBuffersDebugFloatCheck:
       return THUNK_KIND_BUFFERS_DEBUG_FLOAT_CHECK;
     case kCollectiveBroadcast:
       return THUNK_KIND_COLLECTIVE_BROADCAST;
-    case kCollectiveBroadcastDone:
-      return THUNK_KIND_COLLECTIVE_BROADCAST_DONE;
-    case kCollectiveBroadcastStart:
-      return THUNK_KIND_COLLECTIVE_BROADCAST_START;
     case kCollectiveKernel:
       return THUNK_KIND_COLLECTIVE_KERNEL;
     case kCollectiveMetadata:
       return THUNK_KIND_COLLECTIVE_METADATA;
     case kCollectivePermute:
       return THUNK_KIND_COLLECTIVE_PERMUTE;
-    case kCollectivePermuteDone:
-      return THUNK_KIND_COLLECTIVE_PERMUTE_DONE;
-    case kCollectivePermuteStart:
-      return THUNK_KIND_COLLECTIVE_PERMUTE_START;
     case kCommandBuffer:
       return THUNK_KIND_COMMAND_BUFFER;
     case kConditional:
@@ -178,8 +172,6 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_COPY_DONE;
     case kCuDnn:
       return THUNK_KIND_CU_DNN;
-    case kCubSort:
-      return THUNK_KIND_CUB_SORT;
     case kCublasLtMatmul:
       return THUNK_KIND_CUBLAS_LT_MATMUL;
     case kCustomCall:
@@ -218,52 +210,30 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_MEMZERO;
     case kNorm:
       return THUNK_KIND_NORM;
-    case kNvshmemAllReduceDone:
-      return THUNK_KIND_NVSHMEM_ALL_REDUCE_DONE;
-    case kNvshmemAllReduceStart:
-      return THUNK_KIND_NVSHMEM_ALL_REDUCE_START;
+    case kNvshmemAllReduce:
+      return THUNK_KIND_NVSHMEM_ALL_REDUCE;
     case kNvshmemCollectivePermute:
       return THUNK_KIND_NVSHMEM_COLLECTIVE_PERMUTE;
-    case kNvshmemCollectivePermuteDone:
-      return THUNK_KIND_NVSHMEM_COLLECTIVE_PERMUTE_DONE;
-    case kNvshmemCollectivePermuteStart:
-      return THUNK_KIND_NVSHMEM_COLLECTIVE_PERMUTE_START;
     case kNvshmemRecv:
       return THUNK_KIND_NVSHMEM_RECV;
-    case kNvshmemRecvDone:
-      return THUNK_KIND_NVSHMEM_RECV_DONE;
     case kNvshmemSend:
       return THUNK_KIND_NVSHMEM_SEND;
-    case kNvshmemSendDone:
-      return THUNK_KIND_NVSHMEM_SEND_DONE;
     case kOutfeed:
       return THUNK_KIND_OUTFEED;
     case kPartitionId:
       return THUNK_KIND_PARTITION_ID;
     case kRaggedAllToAll:
       return THUNK_KIND_RAGGED_ALL_TO_ALL;
-    case kRaggedAllToAllDone:
-      return THUNK_KIND_RAGGED_ALL_TO_ALL_DONE;
-    case kRaggedAllToAllStart:
-      return THUNK_KIND_RAGGED_ALL_TO_ALL_START;
     case kRecv:
       return THUNK_KIND_RECV;
-    case kRecvDone:
-      return THUNK_KIND_RECV_DONE;
     case kReduceScatter:
       return THUNK_KIND_REDUCE_SCATTER;
-    case kReduceScatterDone:
-      return THUNK_KIND_REDUCE_SCATTER_DONE;
-    case kReduceScatterStart:
-      return THUNK_KIND_REDUCE_SCATTER_START;
     case kReplicaId:
       return THUNK_KIND_REPLICA_ID;
     case kSelectK:
       return THUNK_KIND_SELECT_K;
     case kSend:
       return THUNK_KIND_SEND;
-    case kSendDone:
-      return THUNK_KIND_SEND_DONE;
     case kSequential:
       return THUNK_KIND_SEQUENTIAL;
     case kTriangularSolve:
@@ -279,42 +249,26 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
   switch (kind) {
     case THUNK_KIND_ALL_GATHER:
       return kAllGather;
-    case THUNK_KIND_ALL_GATHER_DONE:
-      return kAllGatherDone;
-    case THUNK_KIND_ALL_GATHER_START:
-      return kAllGatherStart;
     case THUNK_KIND_ALL_REDUCE:
       return kAllReduce;
-    case THUNK_KIND_ALL_REDUCE_DONE:
-      return kAllReduceDone;
-    case THUNK_KIND_ALL_REDUCE_START:
-      return kAllReduceStart;
     case THUNK_KIND_ALL_TO_ALL:
       return kAllToAll;
-    case THUNK_KIND_ALL_TO_ALL_DONE:
-      return kAllToAllDone;
-    case THUNK_KIND_ALL_TO_ALL_START:
-      return kAllToAllStart;
+    case THUNK_KIND_ASYNC_DONE:
+      return kAsyncDone;
+    case THUNK_KIND_ASYNC_START:
+      return kAsyncStart;
     case THUNK_KIND_BUFFERS_DEBUG_CHECKSUM:
       return kBuffersDebugChecksum;
     case THUNK_KIND_BUFFERS_DEBUG_FLOAT_CHECK:
       return kBuffersDebugFloatCheck;
     case THUNK_KIND_COLLECTIVE_BROADCAST:
       return kCollectiveBroadcast;
-    case THUNK_KIND_COLLECTIVE_BROADCAST_DONE:
-      return kCollectiveBroadcastDone;
-    case THUNK_KIND_COLLECTIVE_BROADCAST_START:
-      return kCollectiveBroadcastStart;
     case THUNK_KIND_COLLECTIVE_KERNEL:
       return kCollectiveKernel;
     case THUNK_KIND_COLLECTIVE_METADATA:
       return kCollectiveMetadata;
     case THUNK_KIND_COLLECTIVE_PERMUTE:
       return kCollectivePermute;
-    case THUNK_KIND_COLLECTIVE_PERMUTE_DONE:
-      return kCollectivePermuteDone;
-    case THUNK_KIND_COLLECTIVE_PERMUTE_START:
-      return kCollectivePermuteStart;
     case THUNK_KIND_COMMAND_BUFFER:
       return kCommandBuffer;
     case THUNK_KIND_CONDITIONAL:
@@ -329,8 +283,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kCopyDone;
     case THUNK_KIND_CU_DNN:
       return kCuDnn;
-    case THUNK_KIND_CUB_SORT:
-      return kCubSort;
     case THUNK_KIND_CUBLAS_LT_MATMUL:
       return kCublasLtMatmul;
     case THUNK_KIND_CUSTOM_CALL:
@@ -369,52 +321,30 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kMemzero;
     case THUNK_KIND_NORM:
       return kNorm;
-    case THUNK_KIND_NVSHMEM_ALL_REDUCE_DONE:
-      return kNvshmemAllReduceDone;
-    case THUNK_KIND_NVSHMEM_ALL_REDUCE_START:
-      return kNvshmemAllReduceStart;
+    case THUNK_KIND_NVSHMEM_ALL_REDUCE:
+      return kNvshmemAllReduce;
     case THUNK_KIND_NVSHMEM_COLLECTIVE_PERMUTE:
       return kNvshmemCollectivePermute;
-    case THUNK_KIND_NVSHMEM_COLLECTIVE_PERMUTE_DONE:
-      return kNvshmemCollectivePermuteDone;
-    case THUNK_KIND_NVSHMEM_COLLECTIVE_PERMUTE_START:
-      return kNvshmemCollectivePermuteStart;
     case THUNK_KIND_NVSHMEM_RECV:
       return kNvshmemRecv;
-    case THUNK_KIND_NVSHMEM_RECV_DONE:
-      return kNvshmemRecvDone;
     case THUNK_KIND_NVSHMEM_SEND:
       return kNvshmemSend;
-    case THUNK_KIND_NVSHMEM_SEND_DONE:
-      return kNvshmemSendDone;
     case THUNK_KIND_OUTFEED:
       return kOutfeed;
     case THUNK_KIND_PARTITION_ID:
       return kPartitionId;
     case THUNK_KIND_RAGGED_ALL_TO_ALL:
       return kRaggedAllToAll;
-    case THUNK_KIND_RAGGED_ALL_TO_ALL_DONE:
-      return kRaggedAllToAllDone;
-    case THUNK_KIND_RAGGED_ALL_TO_ALL_START:
-      return kRaggedAllToAllStart;
     case THUNK_KIND_RECV:
       return kRecv;
-    case THUNK_KIND_RECV_DONE:
-      return kRecvDone;
     case THUNK_KIND_REDUCE_SCATTER:
       return kReduceScatter;
-    case THUNK_KIND_REDUCE_SCATTER_DONE:
-      return kReduceScatterDone;
-    case THUNK_KIND_REDUCE_SCATTER_START:
-      return kReduceScatterStart;
     case THUNK_KIND_REPLICA_ID:
       return kReplicaId;
     case THUNK_KIND_SELECT_K:
       return kSelectK;
     case THUNK_KIND_SEND:
       return kSend;
-    case THUNK_KIND_SEND_DONE:
-      return kSendDone;
     case THUNK_KIND_SEQUENTIAL:
       return kSequential;
     case THUNK_KIND_TRIANGULAR_SOLVE:
@@ -435,24 +365,16 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
   switch (kind) {
     // # go/keep-sorted start
     CASE(kAllGather);
-    CASE(kAllGatherDone);
-    CASE(kAllGatherStart);
     CASE(kAllReduce);
-    CASE(kAllReduceDone);
-    CASE(kAllReduceStart);
     CASE(kAllToAll);
-    CASE(kAllToAllDone);
-    CASE(kAllToAllStart);
+    CASE(kAsyncDone);
+    CASE(kAsyncStart);
     CASE(kBuffersDebugChecksum);
     CASE(kBuffersDebugFloatCheck);
     CASE(kCollectiveBroadcast);
-    CASE(kCollectiveBroadcastDone);
-    CASE(kCollectiveBroadcastStart);
     CASE(kCollectiveKernel);
     CASE(kCollectiveMetadata);
     CASE(kCollectivePermute);
-    CASE(kCollectivePermuteDone);
-    CASE(kCollectivePermuteStart);
     CASE(kCommandBuffer);
     CASE(kConditional);
     CASE(kConvolution);
@@ -460,7 +382,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kCopy);
     CASE(kCopyDone);
     CASE(kCuDnn);
-    CASE(kCubSort);
     CASE(kCublasLtMatmul);
     CASE(kCustomCall);
     CASE(kCustomKernel);
@@ -480,29 +401,18 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kMemset32BitValue);
     CASE(kMemzero);
     CASE(kNorm);
-    CASE(kNvshmemAllReduceDone);
-    CASE(kNvshmemAllReduceStart);
+    CASE(kNvshmemAllReduce);
     CASE(kNvshmemCollectivePermute);
-    CASE(kNvshmemCollectivePermuteDone);
-    CASE(kNvshmemCollectivePermuteStart);
     CASE(kNvshmemRecv);
-    CASE(kNvshmemRecvDone);
     CASE(kNvshmemSend);
-    CASE(kNvshmemSendDone);
     CASE(kOutfeed);
     CASE(kPartitionId);
     CASE(kRaggedAllToAll);
-    CASE(kRaggedAllToAllDone);
-    CASE(kRaggedAllToAllStart);
     CASE(kRecv);
-    CASE(kRecvDone);
     CASE(kReduceScatter);
-    CASE(kReduceScatterDone);
-    CASE(kReduceScatterStart);
     CASE(kReplicaId);
     CASE(kSelectK);
     CASE(kSend);
-    CASE(kSendDone);
     CASE(kSequential);
     CASE(kTriangularSolve);
     CASE(kWaitForStreams);
@@ -533,10 +443,8 @@ std::ostream& operator<<(std::ostream& os, Thunk::Kind kind) {
 }
 
 bool IsReductionCollective(Thunk::Kind kind) {
-  return kind == Thunk::kAllReduce || kind == Thunk::kAllReduceStart ||
-         kind == Thunk::kReduceScatter || kind == Thunk::kReduceScatterStart ||
-         kind == Thunk::kNvshmemAllReduceStart;
-  ;
+  return kind == Thunk::kAllReduce || kind == Thunk::kReduceScatter ||
+         kind == Thunk::kNvshmemAllReduce;
 }
 
 absl::StatusOr<Thunk::ThunkInfo> Thunk::ThunkInfo::FromProto(
@@ -569,32 +477,16 @@ bool Thunk::IsCollective() const {
   switch (kind()) {
     // go/keep-sorted start
     case kAllGather:
-    case kAllGatherDone:
-    case kAllGatherStart:
     case kAllReduce:
-    case kAllReduceDone:
-    case kAllReduceStart:
     case kAllToAll:
-    case kAllToAllDone:
-    case kAllToAllStart:
     case kCollectiveBroadcast:
-    case kCollectiveBroadcastDone:
-    case kCollectiveBroadcastStart:
     case kCollectivePermute:
-    case kCollectivePermuteDone:
-    case kCollectivePermuteStart:
     case kGroupDone:
     case kGroupStart:
     case kRaggedAllToAll:
-    case kRaggedAllToAllDone:
-    case kRaggedAllToAllStart:
     case kRecv:
-    case kRecvDone:
     case kReduceScatter:
-    case kReduceScatterDone:
-    case kReduceScatterStart:
     case kSend:
-    case kSendDone:
       // go/keep-sorted end
       return true;
     default:
@@ -689,8 +581,8 @@ absl::Status ThunkSequence::TransformNested(Thunk::Transformer callback) {
 //
 // Example:
 //   001: kReplicaId      [source       | next=002 (1)] ...
-//   002: kAllReduceStart [prev=001 (1) | next=003 (1)] ...
-//   003: kAllReduceDone  [prev=002 (1) | sink        ] ...
+//   002: kAsyncStart     [prev=001 (1) | next=003 (1)] ...
+//   003: kAsyncDone      [prev=002 (1) | sink        ] ...
 std::string ThunkSequence::ToString(int indent) const {
   std::string indent_str(indent * 2, ' ');
 

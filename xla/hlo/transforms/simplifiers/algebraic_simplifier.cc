@@ -2830,7 +2830,8 @@ AlgebraicSimplifierVisitor::OptimizeDotOfConcatHelper(
     HloInstruction* rhs, int64_t rhs_contracting_dim, bool swapped) {
   bool can_optimize = lhs->opcode() == HloOpcode::kConcatenate &&
                       lhs->concatenate_dimension() == lhs_contracting_dim &&
-                      rhs->opcode() == HloOpcode::kConstant;
+                      rhs->opcode() == HloOpcode::kConstant &&
+                      rhs->shape().dimensions().size() == 2;
   if (!can_optimize) {
     return nullptr;
   }
@@ -9943,6 +9944,11 @@ absl::StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToDot(
 absl::StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToMultiply(
     HloInstruction* convolution) {
   if (options_.is_layout_sensitive()) {
+    return false;
+  }
+
+  // Don't simplify conv to multiply for sparse convs.
+  if (convolution->sparsity_config().has_rhs()) {
     return false;
   }
 

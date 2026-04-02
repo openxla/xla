@@ -30,6 +30,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
@@ -1260,7 +1261,8 @@ TEST(GpuTopology, FromProto) {
       )pb",
       &msg));
 
-  std::unique_ptr<const GpuTopology> gpu_topology = GpuTopology::FromProto(msg);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<const GpuTopology> gpu_topology,
+                       GpuTopology::FromProto(msg));
   EXPECT_THAT(gpu_topology->platform_version(), "platform_version");
   EXPECT_THAT(gpu_topology->num_partitions(), 2);
   EXPECT_THAT(gpu_topology->num_hosts_per_partition(), 1);
@@ -1343,6 +1345,17 @@ constexpr char const* kD2HProgramTupleOutput = R"(
 )";
 
 }  // namespace
+
+TEST_F(TfrtGpuClientTest, ExecutableDeviceParameterMemoryKindTest) {
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kD2HProgram, *client_));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto memory_kinds,
+                          executable->GetParameterMemoryKinds());
+  EXPECT_EQ(memory_kinds.size(), 1);
+  EXPECT_EQ(memory_kinds[0].size(), 1);
+  EXPECT_EQ(memory_kinds[0][0], "device");
+}
 
 TEST_F(TfrtGpuClientTest, ExecutablePinnedHostOutputMemoryKindTest) {
   TF_ASSERT_OK_AND_ASSIGN(auto executable,

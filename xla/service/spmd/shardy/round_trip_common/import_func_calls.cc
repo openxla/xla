@@ -15,10 +15,8 @@ limitations under the License.
 
 #include "xla/service/spmd/shardy/round_trip_common/import_func_calls.h"
 
-#include <cstdint>
 #include <iterator>
 #include <memory>
-#include <optional>
 
 #include "absl/log/check.h"
 #include "llvm/ADT/DenseMap.h"
@@ -41,11 +39,11 @@ limitations under the License.
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/TypeID.h"
+#include "mlir/Support/WalkResult.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "shardy/dialect/sdy/ir/constants.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "shardy/dialect/sdy/ir/utils.h"
-#include "xla/service/spmd/shardy/utils.h"
 
 namespace xla {
 namespace sdy {
@@ -57,49 +55,14 @@ using ::mlir::StringRef;
 using ::mlir::SymbolTable;
 using ::mlir::func::CallOp;
 using ::mlir::func::FuncOp;
+using ::mlir::sdy::getFuncArgShardings;
+using ::mlir::sdy::getFuncResultShardings;
+using ::mlir::sdy::getOriginalFuncName;
 using ::mlir::sdy::getTensorRank;
 using ::mlir::sdy::kShardingAttr;
 using ::mlir::sdy::NamedComputationOp;
 using ::mlir::sdy::TensorShardingAttr;
 using ::mlir::sdy::TensorShardingPerValueAttr;
-
-// Returns the first non-maximal mesh on the argument shardings, if there is
-// one. Otherwise returns `std::nullopt`.
-// TODO(enver): Move to utils and potentially with a common helper that takes an
-// std::function to get the sharding given an index.
-std::optional<mlir::Attribute> getMeshOrRefOnArguments(
-    FuncOp funcOp, const SymbolTable& symbolTable) {
-  for (int64_t argNum = 0; argNum < funcOp.getNumArguments(); ++argNum) {
-    if (TensorShardingAttr sdySharding =
-            funcOp.getArgAttrOfType<TensorShardingAttr>(argNum, kShardingAttr);
-        sdySharding && !sdySharding.getMesh(symbolTable).isMaximal()) {
-      return std::make_optional(sdySharding.getMeshOrRef());
-    }
-  }
-  return std::nullopt;
-}
-
-TensorShardingPerValueAttr getFuncArgShardings(CallOp callOp, FuncOp funcOp,
-                                               const SymbolTable& symbolTable) {
-  std::optional<mlir::Attribute> meshOrRef =
-      getMeshOrRefOnArguments(funcOp, symbolTable);
-  if (!meshOrRef) {
-    return nullptr;
-  }
-  mlir::SmallVector<TensorShardingAttr> argShardings;
-  argShardings.reserve(funcOp.getNumArguments());
-  for (int64_t argNum = 0; argNum < funcOp.getNumArguments(); ++argNum) {
-    TensorShardingAttr sdySharding =
-        funcOp.getArgAttrOfType<TensorShardingAttr>(argNum, kShardingAttr);
-    argShardings.push_back(sdySharding
-                               ? sdySharding
-                               : TensorShardingAttr::getFullyOpen(
-                                     funcOp.getContext(),
-                                     getTensorRank(callOp.getOperand(argNum)),
-                                     *meshOrRef));
-  }
-  return TensorShardingPerValueAttr::get(funcOp.getContext(), argShardings);
-}
 
 void importCallOp(
     CallOp callOp,
@@ -122,13 +85,12 @@ void importCallOp(
   auto namedCompOp = NamedComputationOp::create(
       rewriter, callOp->getLoc(), callOp->getResultTypes(),
       getOriginalFuncName(funcOp), callOp.getOperands(),
-      /*inShardings=*/getFuncArgShardings(callOp, funcOp, symbolTable),
+      /*inShardings=*/getFuncArgShardings(funcOp, symbolTable),
       // TODO(b/439018088): Take func result shardings if call op result
       // shardings are empty.
       /*outShardings=*/
-      callOpResultShardings
-          ? callOpResultShardings
-          : getFuncResultShardings(callOp, funcOp, symbolTable));
+      callOpResultShardings ? callOpResultShardings
+                            : getFuncResultShardings(funcOp, symbolTable));
   namedCompOp->setAttrs(namedCompAttrs);
 
   mlir::Region& namedCompRegion = namedCompOp.getRegion();
@@ -172,16 +134,10 @@ class ImportFuncCallsPass
     // will clone the mapped region.
     llvm::SmallDenseMap<StringRef, mlir::Region*> calleeNameToMovedRegion;
 
-    mlir::CallGraph callGraph(moduleOp);
-    llvm::ReversePostOrderTraversal<const mlir::CallGraph*> rpo(&callGraph);
-    for (mlir::CallGraphNode* node : llvm::reverse(rpo)) {
-      if (node->isExternal()) {
-        continue;
-      }
-      node->getCallableRegion()->walk([&](CallOp op) {
-        importCallOp(op, calleeNameToMovedRegion, rewriter, symbolTable);
-      });
-    }
+    mlir::sdy::walkCalls(moduleOp, [&](CallOp callOp) {
+      importCallOp(callOp, calleeNameToMovedRegion, rewriter, symbolTable);
+      return mlir::WalkResult::advance();
+    });
 
     // Erase all func ops that now have no call ops.
     for (auto [calleeName, _] : calleeNameToMovedRegion) {

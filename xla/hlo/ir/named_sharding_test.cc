@@ -649,6 +649,14 @@ TEST(NamedShardingPredicatesTest, IsReplicated) {
 
   EXPECT_TRUE(NamedSharding(Mesh()).IsReplicated());
 }
+TEST(NamedShardingPredicatesTest, IsReplicatedWithAxisOfSize1) {
+  Mesh mesh({1, 2}, {"a", "b"});
+  NamedSharding sharding = test_utils::FromAxisNames(mesh, {{"a"}});
+  EXPECT_TRUE(sharding.IsReplicated());
+  EXPECT_FALSE(sharding.IsSingleDevice());
+  EXPECT_FALSE(sharding.IsManual());
+  EXPECT_FALSE(sharding.IsUnreduced());
+}
 
 TEST(NamedShardingPredicatesTest, IsSingleDevice) {
   Mesh mesh(1);
@@ -817,6 +825,60 @@ TEST(NamedShardingPredicatesTest, HasPartialReplication_UnreducedWithSubAxes) {
                                          /*replicated_axes=*/{},
                                          /*unreduced_axes=*/{"a:(1)2"})
                    .HasPartialReplication());
+}
+
+TEST(NamedShardingTest, GetImplicitlyReplicatedAxes_FullyExplicitlySharded) {
+  EXPECT_THAT(
+      test_utils::FromAxisNames(Mesh({2, 4, 3, 5}, {"a", "b", "c", "d"}),
+                                /*dim_shardings=*/{{"a", "b"}, {"c"}, {"d"}})
+          .GetImplicitlyReplicatedAxes(),
+      ElementsAre());
+}
+
+TEST(NamedShardingTest, GetImplicitlyReplicatedAxes_PartiallySharded) {
+  EXPECT_THAT(
+      test_utils::FromAxisNames(Mesh({2, 4, 3, 5}, {"a", "b", "c", "d"}),
+                                /*dim_shardings=*/{{"a"}})
+          .GetImplicitlyReplicatedAxes(),
+      ElementsAre(AxisRef(1), AxisRef(2), AxisRef(3)));
+}
+
+TEST(NamedShardingTest, GetImplicitlyReplicatedAxes_MixedWithOtherAxes) {
+  EXPECT_THAT(test_utils::FromAxisNames(
+                  Mesh({2, 4, 3, 5}, {"a", "b", "c", "d"}),
+                  /*dim_shardings=*/{{"a"}}, /*replicated_axes=*/{"b"},
+                  /*unreduced_axes=*/{"c"}, /*manual_axes=*/{"d"})
+                  .GetImplicitlyReplicatedAxes(),
+              ElementsAre());
+}
+
+TEST(NamedShardingTest,
+     GetImplicitlyReplicatedAxes_PartialShardingWithReplicated) {
+  EXPECT_THAT(test_utils::FromAxisNames(
+                  Mesh({2, 4, 3, 5}, {"a", "b", "c", "d"}),
+                  /*dim_shardings=*/{{"a"}}, /*replicated_axes=*/{"d"})
+                  .GetImplicitlyReplicatedAxes(),
+              ElementsAre(AxisRef(1), AxisRef(2)));
+}
+
+TEST(NamedShardingTest,
+     GetImplicitlyReplicatedAxes_WithSubAxes_MissingMiddleSubAxis) {
+  EXPECT_THAT(test_utils::FromAxisNames(Mesh({8, 9}, {"a", "b"}),
+                                        /*dim_shardings=*/{{"a:(1)2"}},
+                                        /*replicated_axes=*/{"a:(4)2"})
+                  .GetImplicitlyReplicatedAxes(),
+              ElementsAre(AxisRef(0, {2, 2}), AxisRef(1)));
+}
+
+TEST(NamedShardingTest,
+     GetImplicitlyReplicatedAxes_WithSubAxes_MissingOuterSubAxes) {
+  EXPECT_THAT(
+      test_utils::FromAxisNames(Mesh({8, 9}, {"a", "b"}),
+                                /*dim_shardings=*/{{"a:(2)2"}},
+                                /*replicated_axes=*/{},
+                                /*unreduced_axes=*/{"b:(3)3"})
+          .GetImplicitlyReplicatedAxes(),
+      ElementsAre(AxisRef(0, {1, 2}), AxisRef(0, {4, 2}), AxisRef(1, {1, 3})));
 }
 
 TEST(NamedShardingTest, JaxPartitions) {

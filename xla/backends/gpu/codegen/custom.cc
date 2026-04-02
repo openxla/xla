@@ -1237,16 +1237,6 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
     IrEmitterContext& ir_emitter_context, const HloFusionAdaptor& adaptor,
     const HloFusionInstruction& fusion_instr, const HloInstType* instr,
     bool use_global_device_ids, const CallGraph& call_graph) {
-  Thunk::Kind collective_done_thunk_kind;
-  switch (instr->opcode()) {
-    case HloOpcode::kReduceScatter:
-      collective_done_thunk_kind = Thunk::kReduceScatterDone;
-      break;
-    default:
-      return absl::InternalError(
-          "Unexpected operation in dynamic slice fusion");
-  }
-
   const BufferAssignment& buffer_assignment =
       ir_emitter_context.buffer_assignment();
 
@@ -1315,27 +1305,9 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
           /*source_memory_space=*/src_shape.layout().memory_space(),
           /*destination_memory_space=*/dst_shape.layout().memory_space()});
     }
-    auto collective_start_thunk =
+    auto collective_thunk =
         std::make_unique<NcclThunkType>(thunk_info, instr, buffers);
-    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events =
-        collective_start_thunk->async_events();
-    seq.emplace_back(std::move(collective_start_thunk));
-    // If the fusion is async, we do not emit the done thunk at the end.
-    if (fusion_instr.parent()->IsAsyncComputation()) {
-      auto async_start =
-          fusion_instr.parent()->GetUniqueCaller(HloOpcode::kAsyncStart);
-      CHECK(async_start) << "Async computations should have a unique caller.";
-      ir_emitter_context.collectives_async_events().insert(
-          {*async_start, async_events});
-    } else {
-      auto collective_done_thunk = std::make_unique<CollectiveDoneThunk>(
-          /*kind=*/collective_done_thunk_kind,
-          /*thunk_info=*/
-          Thunk::ThunkInfo::WithProfileAnnotation(
-              instr, ir_emitter_context.GetNextThunkId()),
-          /*async_events=*/async_events);
-      seq.emplace_back(std::move(collective_done_thunk));
-    }
+    seq.emplace_back(std::move(collective_thunk));
   } else {
     return implementable_status;
   }
@@ -1433,7 +1405,7 @@ absl::StatusOr<FusionEmissionResult> DynamicSliceFusion::Emit(
     const HloReduceScatterInstruction* rs =
         Cast<const HloReduceScatterInstruction>(
             &maybe_collective->instruction());
-    return EmitCollective<ReduceScatterStartThunk, HloReduceScatterInstruction>(
+    return EmitCollective<ReduceScatterThunk, HloReduceScatterInstruction>(
         ir_emitter_context, adaptor, /*fusion_instr=*/fusion, /*instr=*/rs,
         /*use_global_device_ids=*/rs->use_global_device_ids(),
         /*call_graph=*/call_graph_);

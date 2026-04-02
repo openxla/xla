@@ -30,14 +30,11 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/types/span.h"
-#include "google/protobuf/repeated_ptr_field.h"
 #include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
-#include "xla/backends/gpu/runtime/collective_multimem_registry.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.pb.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
-#include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_proto_deserialization.h"
 #include "xla/ffi/attribute_map.h"
@@ -119,14 +116,14 @@ void CheckProtoRoundTrip(const DynamicSliceThunk& thunk,
       [](const ThunkProto& thunk_proto,
          absl::Span<const BufferAllocation> fake_allocations_span)
       -> absl::StatusOr<std::unique_ptr<Thunk>> {
-    google::protobuf::RepeatedPtrField<ThunkProto> thunk_protos;
-    *thunk_protos.Add() = thunk_proto;
-    TF_ASSIGN_OR_RETURN(
-        ThunkSequence sequence,
-        DeserializeThunkSequenceProto(thunk_protos, fake_allocations_span,
-                                      /*hlo_module=*/nullptr,
-                                      /*platform_name=*/"TEST_PLATFORM",
-                                      /*gpu_compute_capability=*/{}));
+    ThunkSequenceProto thunk_sequence_proto;
+    *thunk_sequence_proto.add_thunks() = thunk_proto;
+    TF_ASSIGN_OR_RETURN(ThunkSequence sequence,
+                        DeserializeThunkSequenceProto(
+                            thunk_sequence_proto, fake_allocations_span,
+                            /*hlo_module=*/nullptr,
+                            /*platform_name=*/"TEST_PLATFORM",
+                            /*gpu_compute_capability=*/{}));
     return std::move(sequence.front());
   };
 
@@ -225,6 +222,7 @@ absl::StatusOr<std::unique_ptr<DynamicSliceThunk>> CreateSlicedGemmThunk(
           ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
           PrecisionConfig::ALG_UNSET, std::nullopt,
           se::blas::kDefaultComputePrecision, false, false,
+          /*scale_mode=*/se::gpu::ScaleMode::kNone,
           executor->GetDeviceDescription().gpu_compute_capability()));
   // Creating embedded GEMM thunk.
   ThunkSequence seq;
@@ -394,6 +392,7 @@ CreateMultipleSlicedOperandsGemmThunk(
           ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
           PrecisionConfig::ALG_UNSET, std::nullopt,
           se::blas::kDefaultComputePrecision, false, false,
+          /*scale_mode=*/se::gpu::ScaleMode::kNone,
           executor->GetDeviceDescription().gpu_compute_capability()));
 
   // Creating embedded GEMM thunk.
@@ -937,6 +936,7 @@ CreateSlicedGemmArbitraryArgumentOrderThunk(
           ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
           PrecisionConfig::ALG_UNSET, std::nullopt,
           se::blas::kDefaultComputePrecision, false, false,
+          /*scale_mode=*/se::gpu::ScaleMode::kNone,
           executor->GetDeviceDescription().gpu_compute_capability()));
 
   // Creating embedded GEMM thunk.
@@ -1111,6 +1111,7 @@ CreateSlicedGemmArbitraryNumberOfArgumentsThunk(
           ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
           PrecisionConfig::ALG_UNSET, std::nullopt,
           se::blas::kDefaultComputePrecision, false, false,
+          /*scale_mode=*/se::gpu::ScaleMode::kNone,
           executor->GetDeviceDescription().gpu_compute_capability()));
 
   // Creating embedded GEMM thunk.
@@ -1276,6 +1277,7 @@ CreateSlicedTupledOperandGemmThunk(
           ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
           PrecisionConfig::ALG_UNSET, std::nullopt,
           se::blas::kDefaultComputePrecision, false, false,
+          /*scale_mode=*/se::gpu::ScaleMode::kNone,
           executor->GetDeviceDescription().gpu_compute_capability()));
 
   // Creating embedded GEMM thunk.
@@ -1655,6 +1657,7 @@ CreateSlicedOperandsSameBufferGemmThunk(
           ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0, 0.0, 0.0,
           PrecisionConfig::ALG_UNSET, std::nullopt,
           se::blas::kDefaultComputePrecision, false, false,
+          /*scale_mode=*/se::gpu::ScaleMode::kNone,
           executor->GetDeviceDescription().gpu_compute_capability()));
 
   // Creating embedded GEMM thunk.
@@ -1862,6 +1865,7 @@ CreateHostInductionVariableAndOffsetEvaluationThunk(
           /*algorithm=*/std::nullopt,
           /*compute_precision=*/se::blas::kDefaultComputePrecision,
           /*grad_x=*/false, /*grad_y=*/false,
+          /*scale_mode=*/se::gpu::ScaleMode::kNone,
           /*gpu_version=*/
           executor->GetDeviceDescription().gpu_compute_capability()));
 
@@ -1975,12 +1979,9 @@ TEST_F(DynamicSliceThunkTest,
 
   CollectiveCliqueRequests clique_requests;
   CollectiveMemoryRequests memory_requests(allocations);
-  CollectiveMultimemRegistry multimem_registry(
-      executor, collective_params.global_device_id);
 
   Thunk::PrepareParams prepare_params{&collective_params, &clique_requests,
-                                      &memory_requests,   &multimem_registry,
-                                      executor,           &allocations};
+                                      &memory_requests, executor, &allocations};
 
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, /*buffer_allocations=*/allocations, stream.get(),
@@ -2150,9 +2151,8 @@ TEST_F(DynamicSliceThunkTest, TransformNested) {
                                         Thunk::ThunkInfo());
   }));
 
-  EXPECT_THAT(thunk.get_embedded_thunk(), NotNull());
-  EXPECT_THAT(thunk.get_embedded_thunk()->thunks(), SizeIs(1));
-  EXPECT_THAT(thunk.get_embedded_thunk()->thunks()[0]->kind(),
+  EXPECT_THAT(thunk.get_embedded_executor().thunks(), SizeIs(1));
+  EXPECT_THAT(thunk.get_embedded_executor().thunks()[0]->kind(),
               Thunk::Kind::kCustomCall);
 }
 

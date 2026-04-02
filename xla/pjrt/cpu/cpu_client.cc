@@ -281,11 +281,8 @@ PjRtCpuClient::PjRtCpuClient(
       eigen_intraop_device_(
           new Eigen::ThreadPoolDevice(eigen_intraop_pool_->AsEigenThreadPool(),
                                       eigen_intraop_pool_->NumThreads())),
-      pjrt_client_thread_pool_(
-          new tsl::thread::ThreadPool(tsl::Env::Default(), GetThreadOptions(),
-                                      "XLAPjRtCpuClient", num_threads)),
-      async_work_runner_(
-          MakeThreadPoolAsyncWorkRunner(pjrt_client_thread_pool_.get())),
+      async_work_runner_(std::make_unique<ThreadPoolAsyncWorkRunner>(
+          tsl::Env::Default(), "XLAPjRtCpuClient", num_threads)),
       max_transpose_threads_(max_transpose_threads) {
   for (const std::unique_ptr<PjRtCpuDevice>& device : owned_devices_) {
     devices_.push_back(device.get());
@@ -884,9 +881,8 @@ PjRtCpuClient::CompileInternal(
         build_options.device_allocator(), build_options.compile_thread_pool(),
         build_options.layout_canonicalization_callback()};
     if (!compile_options.thread_pool) {
-      compile_options.thread_pool = pjrt_client_thread_pool();
+      compile_options.thread_pool = async_work_runner_->thread_pool();
     }
-
     const cpu::TargetMachineOptions& target_machine_options =
         topology_->cpu_topology().target_machine_options();
 
@@ -959,7 +955,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::CreateErrorBuffer(
       CpuRawBuffer::Allocate(memory_space, ShapeUtil::ByteSizeOf(shape),
                              *allocator_));
   return std::make_unique<CommonPjRtBufferImpl>(
-      shape,
+      std::make_shared<const Shape>(shape),
       std::make_unique<TrackedCpuDeviceBuffer>(
           std::move(raw_buffer),
           tsl::AsyncValueRef<CpuEvent>(
@@ -984,8 +980,7 @@ bool PjRtCpuClient::BufferFromHostBufferSupportsZeroCopy(
       data, type, dims, byte_strides, shape);
 }
 
-absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>>
-PjRtCpuClient::LinearizeHostBufferInto(
+absl::StatusOr<PjRtDeviceEventRef> PjRtCpuClient::LinearizeHostBufferInto(
     const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
     std::optional<absl::Span<int64_t const>> byte_strides,
     HostBufferSemantics host_buffer_semantics,
@@ -1000,7 +995,7 @@ PjRtCpuClient::LinearizeHostBufferInto(
           eigen_intraop_pool(), max_transpose_threads_);
 }
 
-absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> PjRtCpuClient::LinearizeInto(
+absl::StatusOr<PjRtDeviceEventRef> PjRtCpuClient::LinearizeInto(
     const LiteralSlice& literal, const xla::Shape& device_shape,
     HostBufferSemantics host_buffer_semantics,
     tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) {
@@ -1028,8 +1023,8 @@ absl::StatusOr<CompiledMemoryStats> PjRtCpuExecutable::GetCompiledMemoryStats()
   return memory_stats;
 }
 
-absl::StatusOr<std::pair<tsl::RCReference<PjRtDeviceEventPromise>,
-                         tsl::RCReference<PjRtDeviceEvent>>>
+absl::StatusOr<
+    std::pair<tsl::RCReference<PjRtDeviceEventPromise>, PjRtDeviceEventRef>>
 PjRtCpuClient::CreateLinkedEventPromise(PjRtMemorySpace* memory_space,
                                         absl::string_view debug_info) {
   auto definition_event_promise = tsl::MakeIndirectAsyncValue();
@@ -1046,10 +1041,9 @@ std::unique_ptr<PjRtDeviceEventSet> PjRtCpuClient::CreateDeviceEventSet(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::DefineBuffer(
-    const Shape& on_device_shape, PjRtMemorySpace* memory_space,
+    std::shared_ptr<const Shape> on_device_shape, PjRtMemorySpace* memory_space,
     tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
-    absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>
-        definition_device_events) {
+    absl::InlinedVector<PjRtDeviceEventRef, 4> definition_device_events) {
   if (raw_buffer && raw_buffer->memory_space() != memory_space) {
     return absl::InvalidArgumentError(
         absl::StrFormat("DefineBuffer: Mismatch in memory spaces: %s vs %s",
@@ -1057,7 +1051,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::DefineBuffer(
                         memory_space->DebugString()));
   }
   return std::unique_ptr<PjRtBuffer>(std::make_unique<CommonPjRtBufferImpl>(
-      on_device_shape,
+      std::move(on_device_shape),
       std::make_unique<TrackedCpuDeviceBuffer>(
           std::move(raw_buffer),
           CpuTrackedDeviceEvent::AfterAll(definition_device_events)),
@@ -1121,7 +1115,7 @@ PjRtCpuClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
 }
 
 absl::StatusOr<int64_t> PjRtCpuClient::GetOnDeviceBytesCount(
-    PjRtMemorySpace* memory_space, const xla::Shape& shape) const {
+    int memory_space_kind, const xla::Shape& shape) const {
   return xla::ShapeUtil::ByteSizeOf(shape);
 }
 
@@ -1233,9 +1227,11 @@ PjRtCpuLoadedExecutable::PjRtCpuLoadedExecutable(
     std::vector<PjRtDevice*> addressable_devices, PjRtCpuClient* client)
     : CommonPjRtLoadedExecutable(
           executable->parameter_device_shapes_,
-          executable->cpu_executable_->result_shape(),
-          executable->output_memory_space_kind_ids_, addressable_devices,
-          addressable_device_logical_ids, std::move(device_assignment)),
+          std::make_shared<const Shape>(
+              executable->cpu_executable_->result_shape()),
+          std::vector<int>(), executable->output_memory_space_kind_ids_,
+          addressable_devices, addressable_device_logical_ids,
+          std::move(device_assignment)),
       client_(client),
       executable_(std::move(executable)) {
   input_buffer_sizes_in_bytes_ = executable_->input_buffer_sizes_in_bytes_;
@@ -1472,7 +1468,8 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     const ExecuteOptions& options,
     absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> input_buffers,
     absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> output_leaf_buffers,
-    PjRtDeviceEventSet& extra_deps, PjRtDeviceEventSet& control_deps,
+    std::unique_ptr<PjRtDeviceEventSet> extra_deps,
+    std::unique_ptr<PjRtDeviceEventSet> control_deps,
     bool is_predetermined_error, bool fill_future) && {
   PjRtRawLoadedExecutable::RawExecuteResult result;
   // `returned_future_can_be_set_event` indicates when `returned_future` can be
@@ -1486,10 +1483,11 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
       tsl::MakeConstructedAsyncValueRef<CpuEvent>();
 
   auto& input_deps =
-      *tensorflow::down_cast<CpuTrackedDeviceEventSet*>(&control_deps);
+      *tensorflow::down_cast<CpuTrackedDeviceEventSet*>(control_deps.get());
   size_t num_control_deps = input_deps.events().size();
   for (auto& event :
-       std::move(*tensorflow::down_cast<CpuTrackedDeviceEventSet*>(&extra_deps))
+       std::move(
+           *tensorflow::down_cast<CpuTrackedDeviceEventSet*>(extra_deps.get()))
            .Consume()) {
     input_deps.AddEvent(std::move(event));
   }

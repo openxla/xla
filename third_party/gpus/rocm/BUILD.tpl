@@ -335,7 +335,6 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
-    linkopts = ["-lnuma"],
     linkstatic = 1,
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
@@ -601,9 +600,11 @@ cc_library(
 alias(
     name = "amd_comgr",
     actual = select_threshold(
-        above_or_eq = ":amd_comgr_dynamic",
-        below = ":amd_comgr_static",
-        threshold = 71000,
+        threshold_dict = {
+            62000: ":amd_comgr_static",
+            71000: ":amd_comgr_dynamic",
+            71200: ":amd_comgr_static",
+        },
         value = rocm_version_number(),
     ),
 )

@@ -29,17 +29,14 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "google/protobuf/repeated_ptr_field.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.h"
+#include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/coordination/coordination_service_agent.h"
 #include "xla/pjrt/distributed/coordination/coordination_service_error_util.h"
 #include "xla/tsl/platform/status.h"
-#include "xla/tsl/protobuf/coordination_service.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {
-using tensorflow::CoordinatedTask;
-using tensorflow::CoordinationServiceError;
-using tensorflow::KeyValueEntry;
+using xla::coordination::KeyValueEntry;
 }  // namespace
 
 void CoordinationServiceRpcHandler::SetAgentInstance(
@@ -55,34 +52,35 @@ void CoordinationServiceRpcHandler::SetServiceInstance(
 }
 
 void CoordinationServiceRpcHandler::RegisterTaskAsync(
-    const tensorflow::RegisterTaskRequest* request,
-    tensorflow::RegisterTaskResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::RegisterTaskRequest* request,
+    xla::coordination::RegisterTaskResponse* response,
+    tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
         absl::InternalError("Coordination service is not enabled.")));
     return;
   }
-  const CoordinatedTask& task = request->source_task();
+  const int32_t task_id = request->source_task_id();
   const IncarnationId incarnation(request->incarnation());
   const IncarnationId leader_incarnation = service_->GetServiceIncarnation();
   response->set_leader_incarnation(leader_incarnation.value());
-  service_->RegisterTaskAsync(task.task_id(), incarnation, done);
+  service_->RegisterTaskAsync(task_id, incarnation, done);
 }
 
 void CoordinationServiceRpcHandler::HeartbeatAsync(
-    const tensorflow::HeartbeatRequest* request,
-    tensorflow::HeartbeatResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::HeartbeatRequest* request,
+    xla::coordination::HeartbeatResponse* response, tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
         absl::InternalError("Coordination service is not enabled.")));
     return;
   }
-  const CoordinatedTask& task = request->source_task();
+  const int32_t task_id = request->source_task_id();
   const IncarnationId incarnation(request->incarnation());
   const IncarnationId leader_incarnation = service_->GetServiceIncarnation();
-  absl::Status s = service_->RecordHeartbeat(task.task_id(), incarnation);
+  absl::Status s = service_->RecordHeartbeat(task_id, incarnation);
   if (!s.ok()) {
     done(s);
     return;
@@ -92,33 +90,35 @@ void CoordinationServiceRpcHandler::HeartbeatAsync(
 }
 
 void CoordinationServiceRpcHandler::ShutdownTaskAsync(
-    const tensorflow::ShutdownTaskRequest* request,
-    tensorflow::ShutdownTaskResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::ShutdownTaskRequest* request,
+    xla::coordination::ShutdownTaskResponse* response,
+    tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
         absl::InternalError("Coordination service is not enabled.")));
     return;
   }
-  service_->ShutdownTaskAsync(request->source_task().task_id(),
+  service_->ShutdownTaskAsync(request->source_task_id(),
                               [done](absl::Status s) { done(s); });
 }
 
 void CoordinationServiceRpcHandler::ResetTaskAsync(
-    const tensorflow::ResetTaskRequest* request,
-    tensorflow::ResetTaskResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::ResetTaskRequest* request,
+    xla::coordination::ResetTaskResponse* response, tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
         absl::InternalError("Coordination service is not enabled.")));
     return;
   }
-  done(service_->ResetTask(request->source_task().task_id()));
+  done(service_->ResetTask(request->source_task_id()));
 }
 
 void CoordinationServiceRpcHandler::WatchJobStateAsync(
-    const tensorflow::WatchJobStateRequest* request,
-    tensorflow::WatchJobStateResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::WatchJobStateRequest* request,
+    xla::coordination::WatchJobStateResponse* response,
+    tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
@@ -132,7 +132,7 @@ void CoordinationServiceRpcHandler::WatchJobStateAsync(
   }
   service_->WatchJobState(
       version_number,
-      [response, done](std::vector<tensorflow::CoordinatedTaskStateInfo> info,
+      [response, done](std::vector<xla::coordination::TaskInfo> info,
                        int64_t version_number) {
         absl::c_move(info, tsl::protobuf::RepeatedFieldBackInserter(
                                response->mutable_task_state()));
@@ -142,8 +142,9 @@ void CoordinationServiceRpcHandler::WatchJobStateAsync(
 }
 
 void CoordinationServiceRpcHandler::InsertKeyValueAsync(
-    const tensorflow::InsertKeyValueRequest* request,
-    tensorflow::InsertKeyValueResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::InsertKeyValueRequest* request,
+    xla::coordination::InsertKeyValueResponse* response,
+    tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
@@ -155,8 +156,9 @@ void CoordinationServiceRpcHandler::InsertKeyValueAsync(
 }
 
 void CoordinationServiceRpcHandler::GetKeyValueAsync(
-    const tensorflow::GetKeyValueRequest* request,
-    tensorflow::GetKeyValueResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::GetKeyValueRequest* request,
+    xla::coordination::GetKeyValueResponse* response,
+    tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
@@ -177,8 +179,9 @@ void CoordinationServiceRpcHandler::GetKeyValueAsync(
 }
 
 void CoordinationServiceRpcHandler::TryGetKeyValueAsync(
-    const tensorflow::TryGetKeyValueRequest* request,
-    tensorflow::TryGetKeyValueResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::TryGetKeyValueRequest* request,
+    xla::coordination::TryGetKeyValueResponse* response,
+    tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
@@ -196,8 +199,9 @@ void CoordinationServiceRpcHandler::TryGetKeyValueAsync(
 }
 
 void CoordinationServiceRpcHandler::IncrementKeyValueAsync(
-    const tensorflow::IncrementKeyValueRequest* request,
-    tensorflow::IncrementKeyValueResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::IncrementKeyValueRequest* request,
+    xla::coordination::IncrementKeyValueResponse* response,
+    tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
@@ -216,8 +220,9 @@ void CoordinationServiceRpcHandler::IncrementKeyValueAsync(
 }
 
 void CoordinationServiceRpcHandler::GetKeyValueDirAsync(
-    const tensorflow::GetKeyValueDirRequest* request,
-    tensorflow::GetKeyValueDirResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::GetKeyValueDirRequest* request,
+    xla::coordination::GetKeyValueDirResponse* response,
+    tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
@@ -232,8 +237,9 @@ void CoordinationServiceRpcHandler::GetKeyValueDirAsync(
 }
 
 void CoordinationServiceRpcHandler::DeleteKeyValueAsync(
-    const tensorflow::DeleteKeyValueRequest* request,
-    tensorflow::DeleteKeyValueResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::DeleteKeyValueRequest* request,
+    xla::coordination::DeleteKeyValueResponse* response,
+    tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
@@ -244,8 +250,8 @@ void CoordinationServiceRpcHandler::DeleteKeyValueAsync(
 }
 
 void CoordinationServiceRpcHandler::BarrierAsync(
-    const tensorflow::BarrierRequest* request,
-    tensorflow::BarrierResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::BarrierRequest* request,
+    xla::coordination::BarrierResponse* response, tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
@@ -253,12 +259,12 @@ void CoordinationServiceRpcHandler::BarrierAsync(
     return;
   }
   std::vector<CoordinationService::TaskId> tasks;
-  for (const tensorflow::CoordinatedTask& task : request->tasks()) {
-    tasks.push_back(task.task_id());
+  for (const int32_t task_id : request->task_ids()) {
+    tasks.push_back(task_id);
   }
   service_->BarrierAsync(request->barrier_id(), request->counter(),
                          absl::Milliseconds(request->barrier_timeout_in_ms()),
-                         request->source_task().task_id(), tasks,
+                         request->source_task_id(), tasks,
                          [done = std::move(done), response](
                              const absl::Status& status, int64_t counter) {
                            response->set_counter(counter);
@@ -267,8 +273,9 @@ void CoordinationServiceRpcHandler::BarrierAsync(
 }
 
 void CoordinationServiceRpcHandler::CancelBarrierAsync(
-    const tensorflow::CancelBarrierRequest* request,
-    tensorflow::CancelBarrierResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::CancelBarrierRequest* request,
+    xla::coordination::CancelBarrierResponse* response,
+    tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
@@ -276,12 +283,13 @@ void CoordinationServiceRpcHandler::CancelBarrierAsync(
     return;
   }
   done(service_->CancelBarrier(request->barrier_id(), request->counter(),
-                               request->source_task().task_id()));
+                               request->source_task_id()));
 }
 
 void CoordinationServiceRpcHandler::GetAliveTasksAsync(
-    const tensorflow::GetAliveTasksRequest* request,
-    tensorflow::GetAliveTasksResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::GetAliveTasksRequest* request,
+    xla::coordination::GetAliveTasksResponse* response,
+    tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
@@ -290,17 +298,17 @@ void CoordinationServiceRpcHandler::GetAliveTasksAsync(
   }
 
   std::vector<CoordinationService::TaskId> tasks;
-  for (const tensorflow::CoordinatedTask& task : request->tasks()) {
-    tasks.push_back(task.task_id());
+  for (const int32_t task_id : request->task_ids()) {
+    tasks.push_back(task_id);
   }
   service_->GetAliveTasksAsync(
-      request->requesting_task().task_id(), tasks,
+      request->requesting_task_id(), tasks,
       [done = std::move(done), response](
           const absl::Status& status,
           const std::vector<CoordinationService::TaskId>& alive_tasks,
           const std::vector<IncarnationId>& incarnations) {
         for (const CoordinationService::TaskId task : alive_tasks) {
-          response->add_alive_tasks()->set_task_id(task);
+          response->add_alive_task_ids(task);
         }
         for (IncarnationId id : incarnations) {
           response->add_incarnations(id.value());
@@ -310,8 +318,9 @@ void CoordinationServiceRpcHandler::GetAliveTasksAsync(
 }
 
 void CoordinationServiceRpcHandler::PollForErrorAsync(
-    const tensorflow::PollForErrorRequest* request,
-    tensorflow::PollForErrorResponse* response, tsl::StatusCallback done) {
+    const xla::coordination::PollForErrorRequest* request,
+    xla::coordination::PollForErrorResponse* response,
+    tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
@@ -319,7 +328,7 @@ void CoordinationServiceRpcHandler::PollForErrorAsync(
     return;
   }
   service_->PollForErrorAsync(
-      request->source_task().task_id(),
+      request->source_task_id(),
       [done = std::move(done)](const absl::Status& status) { done(status); });
 }
 

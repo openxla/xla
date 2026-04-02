@@ -379,7 +379,8 @@ absl::Status runShardingPropagation(
     // This branch is in production.
     addSdyRoundTripImportPipeline(pm, /*enableConstantImport=*/true,
                                   /*liftAndDedupMeshes=*/true,
-                                  debugOptions.xla_enable_hlo_sharding_v3());
+                                  debugOptions.xla_enable_hlo_sharding_v3(),
+                                  enableNativeNonFlatSupport);
   }
 
   // NOTE: if we are using auto-spmd, we will use conservative propagation
@@ -412,12 +413,6 @@ bool eraseInlineableAttrForShardyManualComputations(HloModule* module) {
           absl::StrContains(instruction->to_apply()->name(),
                             sdy::kManualComputationFuncName.str())) {
         instruction->erase_frontend_attribute(kXlaInlineableAttr);
-        // TODO(b/436603025). CallInliner do not inline the Shardy related
-        // manual computations based on the callee name. We have to rename the
-        // callee to a name such that it can be inlined. If we can remove the
-        // special handling in CallInliner, we can remove this renaming.
-        module->SetAndUniquifyComputationName(instruction->to_apply(),
-                                              "inlineable_callee");
         changed = true;
       }
     }

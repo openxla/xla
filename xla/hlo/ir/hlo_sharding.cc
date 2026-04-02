@@ -194,7 +194,7 @@ std::vector<AxisRef> GetOrderedAxisRefs(const NamedSharding& sharding) {
 
 }  // namespace
 
-HloSharding HloSharding::AssignDevice(int64_t device_id,
+HloSharding HloSharding::SingleDevice(int64_t device_id,
                                       absl::Span<const OpMetadata> metadata,
                                       bool use_named_sharding) {
   if (use_named_sharding) {
@@ -579,8 +579,15 @@ bool HloSharding::UsesDevice(int64_t device) const {
     });
   }
 
-  return IsReplicatedLeaf() || IsManualLeaf() ||
-         TileAgnosticDeviceAssignment().UsesDevice(device);
+  if (IsReplicatedLeaf() || IsManualLeaf()) {
+    return true;
+  }
+
+  if (std::optional<int64_t> unique_device = UniqueDevice()) {
+    return unique_device == device;
+  }
+
+  return device >= 0 && device < num_devices();
 }
 
 std::vector<int64_t> HloSharding::TileIndexForDevice(int64_t device) const {
@@ -886,7 +893,7 @@ absl::Status HloSharding::ValidateNonTuple(
     return absl::InvalidArgumentError(
         "Tile assignment only contains a single device. If a replicated "
         "sharding was intended, use HloSharding::Replicated(). If a device "
-        "placement was intended, use HloSharding::AssignDevice()");
+        "placement was intended, use HloSharding::SingleDevice()");
   }
 
   // The tile assignment tensor must have the same rank as the tiled data rank.
@@ -1254,9 +1261,9 @@ OpSharding HloSharding::ToProto() const {
         manual_axes.emplace_back(local_axis_index);
       } else if (type == OpSharding::UNREDUCED) {
         unreduced_axes.emplace_back(local_axis_index);
-      } else if (type == OpSharding::REPLICATED) {
-        replicated_axes.emplace_back(local_axis_index);
-      } else {
+      } else if (type != OpSharding::REPLICATED) {
+        // No need to add explicitly replicated axes; we assume they are
+        // implicitly replicated.
         LOG(FATAL) << "Unsupported subgroup type: "
                    << OpSharding::Type_Name(type);
       }
@@ -1282,15 +1289,13 @@ OpSharding HloSharding::ToProto() const {
 /*static*/ HloSharding HloSharding::V3ToV2Sharding(
     const NamedSharding& sharding) {
   // TODO(b/477900810): Remove sharding conversions.
-  LOG(WARNING) << "V3ToV2Sharding method involves sharding conversions for "
-                  "HloShardingV3, its use cases should be avoided.";
   const Mesh& mesh = sharding.mesh();
   absl::Span<const OpMetadata> metadata = sharding.metadata();
   if (sharding.IsReplicated()) {
     return HloSharding::Replicate(metadata);
   }
   if (sharding.IsSingleDevice()) {
-    return HloSharding::AssignDevice(mesh.device_assignment()(0), metadata);
+    return HloSharding::SingleDevice(mesh.device_assignment()(0), metadata);
   }
 
   std::vector<int64_t> tile_assignment_dims;

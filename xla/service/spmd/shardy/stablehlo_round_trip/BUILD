@@ -109,6 +109,7 @@ cc_library(
         ":export_ops",
         ":export_shardings",
         ":shard_map_export",
+        ":unflatten_call_graph",
         "//xla/service/spmd/shardy/round_trip_common:export_named_computations",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:Pass",
@@ -122,7 +123,6 @@ cc_library(
     srcs = ["stablehlo_import.cc"],
     hdrs = ["stablehlo_import.h"],
     deps = [
-        ":shard_map_import",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -133,7 +133,7 @@ cc_library(
         "//xla/service/spmd/shardy/round_trip_common:import_func_calls",
         "//xla/service/spmd/shardy/round_trip_common:import_sdy_custom_calls",
         "//xla/service/spmd/shardy/round_trip_common:open_while_free_vars_sharding",
-        "//xla/service/spmd/shardy/round_trip_common:pipeline_passes",
+        "//xla/service/spmd/shardy/sdy_round_trip:pipelines",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
@@ -169,28 +169,6 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "shard_map_import",
-    srcs = ["shard_map_import.cc"],
-    hdrs = ["shard_map_import.h"],
-    deps = [
-        "//xla:xla_data_proto_cc",
-        "//xla/service/spmd/shardy:constants",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Pass",
-        "@llvm-project//mlir:Support",
-        "@llvm-project//mlir:TransformUtils",
-        "@shardy//shardy/dialect/sdy/ir:dialect",
-        "@stablehlo//:stablehlo_ops",
-    ],
-)
-
-cc_library(
     name = "export_manual_reduction_collectives_cc",
     srcs = ["export_manual_reduction_collectives.cc"],
     hdrs = ["export_manual_reduction_collectives.h"],
@@ -207,5 +185,25 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@shardy//shardy/dialect/sdy/ir:dialect",
         "@stablehlo//:stablehlo_ops",
+    ],
+)
+
+cc_library(
+    name = "unflatten_call_graph",
+    srcs = ["unflatten_call_graph.cc"],
+    hdrs = ["unflatten_call_graph.h"],
+    deps = [
+        "//xla/mlir_hlo",
+        "//xla/service/spmd/shardy:constants",
+        "//xla/service/spmd/shardy:utils",
+        "@com_google_absl//absl/log:check",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:Analysis",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:TransformUtils",
+        "@shardy//shardy/dialect/sdy/ir:dialect",
     ],
 )

@@ -26,7 +26,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
-#include "xla/executable_run_options.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
@@ -73,9 +72,8 @@ TEST(AsyncExecutionTest, InitializeStartDone) {
   ASSERT_OK(async_execution.Initialize(&state, executor));
 
   {  // Start creates a dependency from stream to async_stream.
-    ASSERT_OK_AND_ASSIGN(auto guard,
-                         async_execution.Start(RunId(0), &state, stream.get(),
-                                               async_stream.get()));
+    ASSERT_OK_AND_ASSIGN(auto guard, async_execution.Start(&state, stream.get(),
+                                                           async_stream.get()));
   }  // ExecutionGuard destructor records the completion event on async_stream.
 
   // Done waits for the event recorded by the guard.
@@ -97,22 +95,6 @@ TEST(AsyncExecutionTest, DoneWithoutStartFails) {
 
   // Done without Initialize should fail because event is not in state.
   EXPECT_THAT(async_execution.Done(&state, stream.get()),
-              absl_testing::StatusIs(absl::StatusCode::kInternal));
-}
-
-TEST(AsyncExecutionTest, DoubleInitializeFails) {
-  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, CreateExecutor());
-
-  Thunk::ThunkInfo thunk_info;
-  thunk_info.thunk_id = ThunkId(1);
-  thunk_info.profile_annotation = "test-thunk";
-  TestThunk thunk(thunk_info);
-
-  AsyncExecution async_execution(&thunk);
-  Thunk::ExecutionScopedState state;
-
-  ASSERT_OK(async_execution.Initialize(&state, executor));
-  EXPECT_THAT(async_execution.Initialize(&state, executor),
               absl_testing::StatusIs(absl::StatusCode::kInternal));
 }
 
