@@ -97,15 +97,16 @@ void IfrtOutlineAtomProgramToModulePass::runOnOperation() {
             }
 
             // Copy function into the new module.
-            mlir::func::FuncOp cloned_func =
-                llvm::cast<mlir::func::FuncOp>(current_func->clone());
+            mlir::func::FuncOp cloned_func = current_func.clone();
+            builder.setInsertionPointToEnd(callee_module.getBody());
+            builder.insert(cloned_func);
+            // If the current function is the callee, then make it public and
+            // set it as the main function of the new module.
             if (current_func == callee) {
               cloned_callee = cloned_func;
               cloned_func.setSymName(kCalleeMainFuncName);
               cloned_func.setVisibility(mlir::SymbolTable::Visibility::Public);
             }
-            builder.setInsertionPointToEnd(callee_module.getBody());
-            builder.insert(cloned_func);
 
             // Check all symbols in function.
             std::optional<mlir::SymbolTable::UseRange> sym_uses =
