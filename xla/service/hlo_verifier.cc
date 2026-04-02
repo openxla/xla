@@ -476,15 +476,27 @@ static absl::Status CheckCommonAllGatherInvariants(
   int64_t shard_count;
   for (int64_t i = 0; i < ag->operand_count(); ++i) {
     TF_RET_CHECK(
+        ag->operand(i)->shape().IsArray() &&
         ag->all_gather_dimension() <
-        static_cast<int64_t>(ag->operand(i)->shape().dimensions().size()));
+            static_cast<int64_t>(ag->operand(i)->shape().dimensions().size()));
 
     Shape output_shape;
     if (hlo->opcode() == HloOpcode::kAllGather) {
+      if (ag->operand_count() > 1) {
+        TF_RET_CHECK(ag->shape().IsTuple() &&
+                     ag->operand_count() == ag->shape().tuple_shapes().size());
+      }
       output_shape = (ag->operand_count() == 1) ? ag->shape()
                                                 : ag->shape().tuple_shapes(i);
     } else {
       TF_RET_CHECK(hlo->opcode() == HloOpcode::kAllGatherStart);
+      TF_RET_CHECK(ag->shape().IsTuple() &&
+                   ag->shape().tuple_shapes().size() == 2);
+      if (ag->operand_count() > 1) {
+        TF_RET_CHECK(ag->shape().tuple_shapes(1).IsTuple() &&
+                     ag->operand_count() ==
+                         ag->shape().tuple_shapes(1).tuple_shapes().size());
+      }
       output_shape = (ag->operand_count() == 1)
                          ? ag->shape().tuple_shapes(1)
                          : ag->shape().tuple_shapes(1).tuple_shapes(i);
@@ -568,11 +580,16 @@ absl::Status ShapeVerifier::HandleReduceScatter(HloInstruction* hlo) {
   }
   TF_RET_CHECK(ars->scatter_dimension() >= 0);
   TF_RET_CHECK(ars->operand_count() >= 1);
+  if (ars->operand_count() > 1) {
+    TF_RET_CHECK(ars->shape().IsTuple() &&
+                 ars->operand_count() == ars->shape().tuple_shapes().size());
+  }
 
   for (int64_t i = 0; i < ars->operand_count(); ++i) {
     TF_RET_CHECK(
+        ars->operand(i)->shape().IsArray() &&
         ars->scatter_dimension() <
-        static_cast<int64_t>(ars->operand(i)->shape().dimensions().size()));
+            static_cast<int64_t>(ars->operand(i)->shape().dimensions().size()));
 
     const Shape& output_shape = (ars->operand_count() == 1)
                                     ? ars->shape()

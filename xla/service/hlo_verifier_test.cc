@@ -4951,6 +4951,107 @@ ENTRY main {
   EXPECT_THAT(verifier().Run(module.get()), absl_testing::IsOk());
 }
 
+TEST_F(HloVerifierTest, AllGatherWithUnexpectedTupleOperandShape) {
+  const char* const kHlo = R"(
+  HloModule all_gather_module
+
+  ENTRY main {
+    input = (f32[128,32], f32[128,32]) parameter(0)
+    ROOT all-gather = f32[128,32] all-gather(input),
+      replica_groups={{0,1}}, dimensions={0}
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnUnverifiedModule(kHlo));
+  absl::Status status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("ag->operand(i)->shape().IsArray()"));
+}
+
+TEST_F(HloVerifierTest, AllGatherWithUnexpectedArrayOutputShape) {
+  const char* const kHlo = R"(
+  HloModule all_gather_module
+
+  ENTRY main {
+    p0 = f32[128,32] parameter(0)
+    p1 = f32[128,32] parameter(1)
+    ROOT all-gather = f32[128,32] all-gather(p0, p1),
+      replica_groups={{0,1}}, dimensions={0}
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnUnverifiedModule(kHlo));
+  absl::Status status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(
+      status.message(),
+      HasSubstr("ag->shape().IsTuple() && "
+                "ag->operand_count() == ag->shape().tuple_shapes().size()"));
+}
+
+TEST_F(HloVerifierTest, ReduceScatterWithUnexpectedTupleOperandShape) {
+  const char* const kHlo = R"(
+  HloModule reduce_scatter_module
+
+  reduce {
+    p0 = f32[] parameter(0)
+    p1 = f32[] parameter(1)
+    ROOT add = f32[] add(p0, p1)
+  }
+
+  ENTRY main {
+    input = (f32[128,32], f32[128,32]) parameter(0)
+    ROOT reduce-scatter = f32[64,32] reduce-scatter(input),
+      replica_groups={{0,1}}, dimensions={0}, to_apply=reduce
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnUnverifiedModule(kHlo));
+  absl::Status status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(),
+              HasSubstr("ars->operand(i)->shape().IsArray()"));
+}
+
+TEST_F(HloVerifierTest, ReduceScatterWithUnexpectedArrayOutputShape) {
+  const char* const kHlo = R"(
+  HloModule reduce_scatter_module
+
+  reduce {
+    p0 = f32[] parameter(0)
+    p1 = f32[] parameter(1)
+    ROOT add = f32[] add(p0, p1)
+  }
+
+  ENTRY main {
+    p0 = f32[128,32] parameter(0)
+    p1 = f32[128,32] parameter(1)
+    ROOT reduce-scatter = f32[64,32] reduce-scatter(p0, p1),
+      replica_groups={{0,1}}, dimensions={0}, to_apply=reduce
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnUnverifiedModule(kHlo));
+  absl::Status status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(
+      status.message(),
+      HasSubstr("ars->shape().IsTuple() && "
+                "ars->operand_count() == ars->shape().tuple_shapes().size()"));
+}
+
+TEST_F(HloVerifierTest, AllGatherStartWithUnexpectedArrayOutputShape) {
+  const char* const kHlo = R"(
+  HloModule all_gather_module
+
+  ENTRY main {
+    input = f32[128,32] parameter(0)
+    ROOT all-gather-start = f32[128,32] all-gather-start(input),
+      replica_groups={{0,1}}, dimensions={0}
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnUnverifiedModule(kHlo));
+  absl::Status status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("ag->shape().IsTuple()"));
+}
+
 TEST_F(HloVerifierTest, ScaledDotWithNoScalesFails) {
   static constexpr absl::string_view kScaledDotHloString = R"(
     HloModule module
