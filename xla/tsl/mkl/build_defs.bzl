@@ -43,6 +43,7 @@ def if_mkl(if_true, if_false = []):
 # Use `if_onednn` for XLA code to allow different configurations between TF and
 # XLA in the future.
 if_onednn = if_mkl
+if_onednn_async = if_mkl
 
 def if_mkl_ml(if_true, if_false = []):
     """Shorthand for select()'ing on whether we're building with MKL-ML.
