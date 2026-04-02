@@ -27,7 +27,6 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
-#include "rocm/include/hip/hip_runtime.h"
 #include "xla/stream_executor/gpu/context.h"
 #include "xla/stream_executor/gpu/scoped_activate_context.h"
 #include "xla/stream_executor/rocm/rocm_driver_wrapper.h"
