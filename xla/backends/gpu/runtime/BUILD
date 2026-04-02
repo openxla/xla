@@ -2287,6 +2287,7 @@ cc_library(
     hdrs = ["collective_memory_cache.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "//xla/core/collectives:symmetric_memory",
         "//xla/stream_executor/gpu:multicast_memory",
         "//xla/tsl/util:tied_ref",
         "@com_google_absl//absl/base:core_headers",

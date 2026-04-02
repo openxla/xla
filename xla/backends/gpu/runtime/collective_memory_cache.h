@@ -20,6 +20,7 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/core/collectives/symmetric_memory.h"
 #include "xla/stream_executor/gpu/multicast_memory.h"
 #include "xla/tsl/util/tied_ref.h"
 
@@ -28,16 +29,22 @@ namespace xla::gpu {
 // Owns multicast and symmetric memories used by executable.
 // This cache is needed to prevent destruction of the multicast objects and
 // unregistering the symmetric memories before the executable is done using
-// them. The class is thread-safe.
+// them.
 class CollectiveMemoryCache {
  public:
   void AddMulticastMemory(
-      tsl::TiedRef<stream_executor::gpu::MulticastMemory> multicast_memory);
+      tsl::TiedRef<stream_executor::gpu::MulticastMemory> multicast_memory)
+      ABSL_LOCKS_EXCLUDED(mutex_);
+
+  void AddSymmetricMemory(tsl::TiedRef<SymmetricMemory> sym_memory)
+      ABSL_LOCKS_EXCLUDED(mutex_);
 
  private:
   absl::Mutex mutex_;
   std::vector<tsl::TiedRef<stream_executor::gpu::MulticastMemory>>
       multicast_memories_ ABSL_GUARDED_BY(mutex_);
+  std::vector<tsl::TiedRef<SymmetricMemory>> sym_memories_
+      ABSL_GUARDED_BY(mutex_);
 };
 
 }  // namespace xla::gpu

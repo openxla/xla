@@ -19,6 +19,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/synchronization/mutex.h"
+#include "xla/core/collectives/symmetric_memory.h"
 #include "xla/stream_executor/gpu/multicast_memory.h"
 #include "xla/tsl/util/tied_ref.h"
 
@@ -34,6 +35,18 @@ void CollectiveMemoryCache::AddMulticastMemory(
                  multicast_memory) { return multicast_memory.Expired(); }),
       multicast_memories_.end());
   multicast_memories_.push_back(std::move(multicast_memory));
+}
+
+void CollectiveMemoryCache::AddSymmetricMemory(
+    tsl::TiedRef<SymmetricMemory> sym_memory) {
+  absl::MutexLock lock(mutex_);
+  sym_memories_.erase(
+      std::remove_if(sym_memories_.begin(), sym_memories_.end(),
+                     [](tsl::TiedRef<SymmetricMemory>& sym_memory) {
+                       return sym_memory.Expired();
+                     }),
+      sym_memories_.end());
+  sym_memories_.push_back(std::move(sym_memory));
 }
 
 }  // namespace xla::gpu
