@@ -1891,6 +1891,42 @@ absl::StatusOr<MemorySpace> GetMemorySpaceEnum(const int64_t memory_space,
       absl::StrCat("Invalid memory space: ", memory_space));
 }
 
+std::optional<HloValue*> GetValueAliasedToLeft(
+    HloPosition position, const HloAliasAnalysis& alias_analysis) {
+  std::vector<std::pair<HloOperandIndex, ShapeIndex>>
+      in_place_input_output_pairs =
+          alias_analysis.dataflow_analysis().GetInPlaceInputOutputPairs(
+              position.instruction);
+  for (const auto& [input_operand_index, output_shape_index] :
+       in_place_input_output_pairs) {
+    if (output_shape_index == position.index) {
+      HloInstruction* operand = position.instruction->mutable_operand(
+          input_operand_index.operand_number);
+      ShapeIndex operand_index = input_operand_index.operand_index;
+      return &alias_analysis.dataflow_analysis().GetUniqueValueAt(
+          operand, operand_index);
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<HloValue*> GetValueAliasedToRight(
+    HloUse use, const HloAliasAnalysis& alias_analysis) {
+  std::vector<std::pair<HloOperandIndex, ShapeIndex>>
+      in_place_input_output_pairs =
+          alias_analysis.dataflow_analysis().GetInPlaceInputOutputPairs(
+              use.instruction);
+  for (const auto& [input_operand_index, output_shape_index] :
+       in_place_input_output_pairs) {
+    if (input_operand_index.operand_number == use.operand_number &&
+        input_operand_index.operand_index == use.operand_index) {
+      return &alias_analysis.dataflow_analysis().GetUniqueValueAt(
+          use.instruction, output_shape_index);
+    }
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
 absl::Status MsaAlgorithm::ProcessColoredBuffers() {
@@ -1900,7 +1936,14 @@ absl::Status MsaAlgorithm::ProcessColoredBuffers() {
     HloPosition position;
     HloUse use;
     bool use_colored = false;
-    int64_t time_of_coloring;
+    std::optional<int64_t> optional_time_of_coloring;
+    std::function<std::optional<int64_t>(HloInstruction*)> instruction_time =
+        [&](HloInstruction* instruction) {
+          auto it = hlo_live_range_.instruction_schedule().find(instruction);
+          return it != hlo_live_range_.instruction_schedule().end()
+                     ? std::make_optional(it->second)
+                     : std::nullopt;
+        };
     if (std::holds_alternative<HloUse>(
             buffer_coloring.buffer_position_or_use)) {
       use_colored = true;
@@ -1908,13 +1951,17 @@ absl::Status MsaAlgorithm::ProcessColoredBuffers() {
       position =
           HloPosition{use.instruction->mutable_operand(use.operand_number),
                       use.operand_index};
-      time_of_coloring =
-          hlo_live_range_.instruction_schedule().at(use.instruction);
+      optional_time_of_coloring = instruction_time(use.instruction);
     } else {
       position = std::get<HloPosition>(buffer_coloring.buffer_position_or_use);
-      time_of_coloring =
-          hlo_live_range_.instruction_schedule().at(position.instruction);
+      optional_time_of_coloring = instruction_time(position.instruction);
     }
+    if (!optional_time_of_coloring.has_value()) {
+      VLOG(1) << "Time of coloring not found for buffer coloring: "
+              << (use_colored ? use.ToString() : position.ToString());
+      continue;
+    }
+    int64_t time_of_coloring = optional_time_of_coloring.value();
     const int64_t memory_space = buffer_coloring.memory_space;
     HloValue& value = alias_analysis_.dataflow_analysis().GetUniqueValueAt(
         position.instruction, position.index);
@@ -1926,8 +1973,16 @@ absl::Status MsaAlgorithm::ProcessColoredBuffers() {
     bool position_requires_contiguous_allocation =
         options_.position_requires_contiguous_allocation_fn(
             value.defining_position());
-    int64_t definition_time = hlo_live_range_.instruction_schedule().at(
-        value.defining_position().instruction);
+    if (IsAsyncConversionCandidate(value.defining_position().instruction)) {
+      failed_async_conversions_[value.defining_position().instruction] =
+          AsyncConversionResult::kFailedValueNotAllowedInAlternateMemory;
+    }
+    std::optional<int64_t> optional_definition_time =
+        instruction_time(value.defining_position().instruction);
+    if (!optional_definition_time.has_value()) {
+      continue;
+    }
+    int64_t definition_time = optional_definition_time.value();
     auto contiguous_buffer_has_been_colored =
         [&](const HloPosition& defining_position, int64_t time_of_coloring,
             MemorySpace memory_space) -> absl::StatusOr<bool> {
@@ -1955,38 +2010,27 @@ absl::Status MsaAlgorithm::ProcessColoredBuffers() {
               << time_of_coloring;
       return true;
     };
-    if (memory_space_enum == MemorySpace::kDefault) {
-      if (position_requires_contiguous_allocation) {
-        TF_ASSIGN_OR_RETURN(bool has_been_colored,
-                            contiguous_buffer_has_been_colored(
-                                value.defining_position(), time_of_coloring,
-                                MemorySpace::kDefault));
-        if (has_been_colored) {
-          continue;
-        }
-        // If the defining position requires contiguous allocation, we color the
-        // defining position in default memory at the definition time. This is
-        // sufficient to ensure the entire live range will be in default memory.
-        time_of_coloring = definition_time;
-        contiguous_defining_positions_to_memory_space
-            [value.defining_position()] = MemorySpace::kDefault;
-      }
-      default_memory_coloring_requirements_[value.defining_position()]
-          .push_back(time_of_coloring);
-      continue;
-    }
-    CHECK(memory_space_enum == MemorySpace::kAlternate);
     int64_t start_time = time_of_coloring;
     int64_t end_time = time_of_coloring;
+
+    auto buffer_interval_it = buffer_intervals_.find(&value);
+    if (buffer_interval_it == buffer_intervals_.end()) {
+      VLOG(1) << "Buffer interval not found for value: " << value.ToString()
+              << " hlo position or use: "
+              << (use_colored ? use.ToString() : position.ToString());
+      continue;
+    }
+    int64_t buffer_size = buffer_interval_it->second.size;
     if (position_requires_contiguous_allocation) {
-      TF_ASSIGN_OR_RETURN(bool has_been_colored,
-                          contiguous_buffer_has_been_colored(
-                              value.defining_position(), time_of_coloring,
-                              MemorySpace::kAlternate));
+      TF_ASSIGN_OR_RETURN(
+          bool has_been_colored,
+          contiguous_buffer_has_been_colored(
+              value.defining_position(), time_of_coloring, memory_space_enum));
       if (has_been_colored) {
         continue;
       }
       start_time = definition_time;
+      int64_t earliest_use_time = std::numeric_limits<int64_t>::max();
       int64_t latest_use_time = start_time;
       for (const HloUse& use : value.GetUses()) {
         auto it = hlo_live_range_.instruction_schedule().find(use.instruction);
@@ -1995,19 +2039,103 @@ absl::Status MsaAlgorithm::ProcessColoredBuffers() {
           // start and end times do not extend beyond the async start and async
           // done instructions.
           latest_use_time = std::max(latest_use_time, it->second);
+          earliest_use_time = std::min(earliest_use_time, it->second);
         }
       }
       end_time = latest_use_time;
-      contiguous_defining_positions_to_memory_space[value.defining_position()] =
-          MemorySpace::kAlternate;
     }
-    MsaBufferInterval interval =
-        MsaBufferInterval{/*buffer=*/nullptr,
-                          /*size=*/buffer_intervals_.at(&value).size,
-                          /*start=*/start_time,
-                          /*end=*/end_time,
-                          /*colocations=*/{},
-                          /*need_allocation=*/true};
+    if (memory_space_enum == MemorySpace::kDefault) {
+      default_memory_coloring_requirements_[value.defining_position()]
+          .push_back({start_time, end_time});
+      continue;
+    }
+    MsaBufferInterval interval = MsaBufferInterval{/*buffer=*/nullptr,
+                                                   /*size=*/buffer_size,
+                                                   /*start=*/start_time,
+                                                   /*end=*/end_time,
+                                                   /*colocations=*/{},
+                                                   /*need_allocation=*/true};
+    // Contiguous buffer can alias to left or right.
+    // Colored use can only alias to right.
+    std::function<void(HloUse, MsaBufferInterval&)>
+        extend_colored_use_to_alias =
+            [&](HloUse hlo_use, MsaBufferInterval& interval) -> void {
+      std::optional<HloValue*> optional_aliased_value =
+          GetValueAliasedToRight(hlo_use, alias_analysis_);
+      if (!optional_aliased_value.has_value()) {
+        return;
+      }
+      HloValue* aliased_value = optional_aliased_value.value();
+      if (options_.position_requires_contiguous_allocation_fn(
+              aliased_value->defining_position())) {
+        for (const HloUse& aliased_value_use : aliased_value->GetUses()) {
+          auto it =
+              hlo_live_range_.instruction_schedule().find(use.instruction);
+          if (it != hlo_live_range_.instruction_schedule().end()) {
+            interval.end = std::max(interval.end, it->second);
+            auto has_been_colored = contiguous_buffer_has_been_colored(
+                aliased_value->defining_position(), it->second,
+                MemorySpace::kAlternate);
+            CHECK_OK(has_been_colored);
+            extend_colored_use_to_alias(aliased_value_use, interval);
+          }
+        }
+      }
+    };
+    if (use_colored) {
+      extend_colored_use_to_alias(use, interval);
+    } else if (position_requires_contiguous_allocation) {
+      for (const HloUse& hlo_use : value.GetUses()) {
+        extend_colored_use_to_alias(hlo_use, interval);
+      }
+    }
+
+    std::function<HloValue*(HloValue*, MsaBufferInterval&)>
+        extend_colored_position_to_alias =
+            [&](HloValue* value, MsaBufferInterval& interval) -> HloValue* {
+      std::optional<HloValue*> optional_aliased_value =
+          GetValueAliasedToLeft(value->defining_position(), alias_analysis_);
+      if (!optional_aliased_value.has_value()) {
+        return value;
+      }
+      HloValue* aliased_value = optional_aliased_value.value();
+      std::optional<int64_t> optional_aliased_value_definition_time =
+          instruction_time(aliased_value->defining_position().instruction);
+      if (!optional_aliased_value_definition_time.has_value()) {
+        return value;
+      }
+      int64_t aliased_value_definition_time =
+          optional_aliased_value_definition_time.value();
+      if (options_.position_requires_contiguous_allocation_fn(
+              aliased_value->defining_position())) {
+        interval.start =
+            std::min(interval.start, aliased_value_definition_time);
+        auto has_been_colored = contiguous_buffer_has_been_colored(
+            aliased_value->defining_position(), aliased_value_definition_time,
+            MemorySpace::kAlternate);
+        CHECK_OK(has_been_colored);
+        return extend_colored_position_to_alias(aliased_value, interval);
+      }
+      return aliased_value;
+    };
+
+    HloValue* extend_colored_value = &value;
+    if (!use_colored || position_requires_contiguous_allocation) {
+      VLOG(1) << "Original Value: " << value.ToString() << " at position "
+              << position.ToString() << " with interval: " << interval.start
+              << " to " << interval.end;
+      extend_colored_value = extend_colored_position_to_alias(&value, interval);
+      VLOG(1) << "Extended Value: " << extend_colored_value->ToString()
+              << " at position " << position.ToString()
+              << " with interval: " << interval.start << " to " << interval.end;
+      position = extend_colored_value->defining_position();
+      start_time = interval.start;
+      end_time = interval.end;
+    }
+    if (IsPositionColoredInAlternateMemoryAtTime(position, time_of_coloring)) {
+      continue;
+    }
+
     Chunk chunk_candidate = FindChunkCandidate(interval);
     if (chunk_candidate.chunk_end() > options_.max_size_in_bytes) {
       if (use_colored) {
@@ -2019,7 +2147,9 @@ absl::Status MsaAlgorithm::ProcessColoredBuffers() {
                 "instruction ",
                 use.instruction->name(), " at operand index ",
                 use.operand_number, " shape index ",
-                use.operand_index.ToString()));
+                use.operand_index.ToString(), " buffer size: ", buffer_size,
+                " interval.start: ", interval.start,
+                " interval.end: ", interval.end));
       }
       return FailedPrecondition(
           "%s",
@@ -2027,13 +2157,17 @@ absl::Status MsaAlgorithm::ProcessColoredBuffers() {
               "Too many buffers are colored in the alternate memory. Could not "
               "reserve alternate memory for colored output of instruction ",
               position.instruction->name(), " at shape index ",
-              position.index.ToString()));
+              position.index.ToString(), " buffer size: ", buffer_size,
+              " interval.start: ", interval.start,
+              " interval.end: ", interval.end));
     }
     std::vector<std::unique_ptr<ReservedAllocation>>& reserved_allocations =
-        reserved_allocations_for_alt_mem_colorings_[value.defining_position()];
+        reserved_allocations_for_alt_mem_colorings_[extend_colored_value
+                                                        ->defining_position()];
     reserved_allocations.push_back(std::make_unique<ReservedAllocation>(
-        value.defining_position(), chunk_candidate, start_time, end_time));
-    CommitChunk(interval, chunk_candidate);
+        extend_colored_value->defining_position(), chunk_candidate, start_time,
+        end_time));
+    AddToPendingChunks(interval, chunk_candidate);
     // We need to add an allocation block to the repack_allocation_blocks_ so
     // repacking can account for the reserved memory.
     repack_allocation_blocks_.push_back(MakeRepackAllocationBlock(
@@ -2042,6 +2176,7 @@ absl::Status MsaAlgorithm::ProcessColoredBuffers() {
     repack_allocation_blocks_.back().next_colocated =
         &(repack_allocation_blocks_.back());
   }
+  ClearPendingChunks();
   return absl::OkStatus();
 }
 
@@ -2971,7 +3106,8 @@ int64_t MsaAlgorithm::ReserveAlternateMemoryForScopedMemoryAllocations() {
       FindChunkCandidate(interval, /*preferred_offset=*/0);
   CHECK_EQ(chunk_candidate.offset, 0);
   CHECK_EQ(chunk_candidate.size, max_scoped_memory_size);
-  CommitChunk(interval, chunk_candidate);
+  AddToPendingChunks(interval, chunk_candidate);
+  ClearPendingChunks();
   return max_scoped_memory_size;
 }
 
@@ -2983,7 +3119,13 @@ void MsaAlgorithm::FreeAlternateMemoryForScopedMemoryAllocations(
       1;
   HeapSimulator::Chunk chunk = HeapSimulator::Chunk::FromOffsetSize(
       /*offset=*/0, /*size=*/max_scoped_memory_size);
-  interval_tree_.Remove(program_start_time, program_end_time, chunk);
+  MsaBufferInterval interval;
+  interval.buffer = nullptr;
+  interval.size = max_scoped_memory_size;
+  interval.start = program_start_time;
+  interval.end = program_end_time;
+  interval.need_allocation = true;
+  UncommitChunkAndUpdatePeakMemory(interval, chunk);
 }
 
 absl::StatusOr<HeapSimulator::Result<HloValue>> MsaAlgorithm::Finish() {
@@ -3244,7 +3386,7 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> MsaAlgorithm::Finish() {
               "no sync replacement is enabled.");
         }
 
-        UncommitPendingChunks(absl::MakeSpan(proposal.allocation_values));
+        UncommitPendingWork(absl::MakeSpan(proposal.allocation_values));
         proposal = GetJointProposal(interval);
         if (proposal.allocation_values.empty()) {
           VLOG(3)
@@ -3255,7 +3397,7 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> MsaAlgorithm::Finish() {
         --retry_number;
 
       } else if (result_requires_uncommit(result)) {
-        UncommitPendingChunks(absl::MakeSpan(proposal.allocation_values));
+        UncommitPendingWork(absl::MakeSpan(proposal.allocation_values));
         VLOG(2) << "Couldn't allocate. Retry number " << retry_number;
         if (retry_number > 0 && !sorted_async_conversion_candidates_.empty()) {
           failed_async_conversions_[sorted_async_conversion_candidates_.at(0)] =
@@ -3269,7 +3411,7 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> MsaAlgorithm::Finish() {
                   options_.repack_after_every_allocation) &&
                  num_repacks_ < options_.max_repacks && !repacked &&
                  !RepackAllocationsIncludeConvertedSyncMemOp()) {
-        UncommitPendingChunks(absl::MakeSpan(proposal.allocation_values));
+        UncommitPendingWork(absl::MakeSpan(proposal.allocation_values));
         ++num_repacks_;
         repacked = true;
         if (!options_.repacker) {
@@ -3318,7 +3460,7 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> MsaAlgorithm::Finish() {
           }
         }
         if (!inefficient_sites.empty()) {
-          UncommitPendingChunks(absl::MakeSpan(proposal.allocation_values));
+          UncommitPendingWork(absl::MakeSpan(proposal.allocation_values));
           for (const HloPositionOrUse& site : inefficient_sites) {
             // To avoid a livelock situation, we commit the required assignments
             // right away. Otherwise, reallocation can find alternate memory
@@ -4120,7 +4262,9 @@ absl::StatusOr<AllocationResult> MsaAlgorithm::AllocateAllocationValues(
                 << ResultToString(allocate_segment_result);
         result_mark(allocate_segment_result, result);
         if (options_.allocation_result_modifier_testing_fn) {
-          options_.allocation_result_modifier_testing_fn(request, result);
+          options_.allocation_result_modifier_testing_fn(
+              request, result,
+              options_.prefetch_interval_picker->retry_number());
         }
         if (request.require_copy_allocation) {
           auto allocation_sequence =
@@ -5819,7 +5963,7 @@ void MsaAlgorithm::ImportRepackedSlicedAllocation(
   // described in
   // MsaAlgorithm::PrefetchContext::SlicedSolution::slices_for_pending_chunks.
   // Doing so was for the benefit of MsaAlgorithm::pending_chunks_. However,
-  // pending_chunks_ are cleared before repacking, when UncommitPendingChunks()
+  // pending_chunks_ are cleared before repacking, when UncommitPendingWork()
   // is called. Thus, we don't need to worry about modifying the chunks here.
   for (const SliceDetail& slice_detail :
        allocation->slice_details_sorted_by_start_time()) {
@@ -5894,7 +6038,36 @@ absl::Status MsaAlgorithm::AreRepackedSlicesValid(
   return absl::OkStatus();
 }
 
-void MsaAlgorithm::UncommitPendingChunks(
+bool MsaAlgorithm::UncommitChunkAndUpdatePeakMemory(
+    const MsaBufferInterval& interval, const Chunk& chunk) {
+  VLOG(3) << "Uncommitting: [" << interval.start << ", " << interval.end
+          << "] off = " << chunk.offset << " size = " << chunk.size;
+  for (int i = interval.start; i <= interval.end; ++i) {
+    peak_memory_usage_[i] -= chunk.size;
+    CHECK_GE(peak_memory_usage_[i], 0)
+        << "Peak memory usage at " << i << " is below zero after uncommitting. "
+        << interval.start << "-" << interval.end << " : [" << chunk.offset
+        << ", " << chunk.size << "]";
+  }
+  return interval_tree_.Remove(interval.start, interval.end, chunk);
+}
+
+void MsaAlgorithm::CommitChunkAndUpdatePeakMemory(
+    const MsaBufferInterval& buffer_interval, const Chunk& chunk) {
+  for (int i = buffer_interval.start; i <= buffer_interval.end; ++i) {
+    peak_memory_usage_[i] += chunk.size;
+    CHECK_LE(peak_memory_usage_[i], options_.max_size_in_bytes)
+        << "Peak memory usage at " << i
+        << " exceeds the max size of alternate memory. "
+        << buffer_interval.start << "-" << buffer_interval.end << " : "
+        << chunk.ToString() << " buffer "
+        << (buffer_interval.buffer ? buffer_interval.buffer->ToString()
+                                   : "null");
+  }
+  CommitChunk(buffer_interval, chunk);
+}
+
+void MsaAlgorithm::UncommitPendingWork(
     absl::Span<AllocationValue> allocation_values) {
   // Clear the allocation sequence of the allocation values so that in case we
   // retry allocation after uncommitting.
@@ -5902,19 +6075,8 @@ void MsaAlgorithm::UncommitPendingChunks(
     allocation_value.mutable_allocation_sequence()->clear();
   }
   for (const auto& interval_and_chunk : pending_chunks_) {
-    const MsaBufferInterval& interval = interval_and_chunk.first;
-    const Chunk& chunk = interval_and_chunk.second;
-    VLOG(3) << "Uncommitting: [" << interval.start << ", " << interval.end
-            << "] off = " << chunk.offset << " size = " << chunk.size;
-    for (int i = interval.start; i <= interval.end; ++i) {
-      peak_memory_usage_[i] -= chunk.size;
-      CHECK_GE(peak_memory_usage_[i], 0)
-          << "Peak memory usage at " << i
-          << " is below zero after uncommitting. " << interval.start << "-"
-          << interval.end << " : [" << chunk.offset << ", " << chunk.size
-          << "]";
-    }
-    interval_tree_.Remove(interval.start, interval.end, chunk);
+    UncommitChunkAndUpdatePeakMemory(interval_and_chunk.first,
+                                     interval_and_chunk.second);
   }
   for (const AsynchronousCopy& async_copy : pending_async_copies_) {
     if (async_copy.destination == MemorySpace::kAlternate) {
@@ -5954,6 +6116,27 @@ void MsaAlgorithm::UncommitPendingChunks(
         break;
       }
     }
+  }
+  // As part of the uncommit, we need to re-reserve the previously freed chunks,
+  // corresponding to the deallocated reserved allocations that were pending.
+  for (const auto& allocation : pending_deallocated_reserved_allocations_) {
+    MsaBufferInterval interval =
+        MsaBufferInterval{/*buffer=*/nullptr,
+                          /*size=*/allocation->chunk().size,
+                          /*start=*/allocation->start_time(),
+                          /*end=*/allocation->end_time(),
+                          /*colocations=*/{},
+                          /*need_allocation=*/true};
+    Chunk chunk_candidate = FindChunkCandidate(
+        interval, /*preferred_offset=*/allocation->chunk().offset);
+    CHECK_EQ(chunk_candidate.offset, allocation->chunk().offset);
+    AddToPendingChunks(interval, chunk_candidate);
+    allocation->mark_chunk_reserved_in_interval_tree();
+    repack_allocation_blocks_.push_back(MakeRepackAllocationBlock(
+        allocation->start_time(), allocation->end_time(), chunk_candidate.size,
+        chunk_candidate.offset, allocation));
+    repack_allocation_blocks_.back().next_colocated =
+        &(repack_allocation_blocks_.back());
   }
   ClearPendingChunks();
 }
@@ -6038,6 +6221,7 @@ void MsaAlgorithm::ClearPendingChunks() {
   pending_required_assignments_.clear();
   aliased_offset_map_.clear();
   aliased_offsets_.clear();
+  pending_deallocated_reserved_allocations_.clear();
 }
 
 bool MsaAlgorithm::IsInstructionPendingReplacements(
@@ -6048,19 +6232,11 @@ bool MsaAlgorithm::IsInstructionPendingReplacements(
 }
 
 void MsaAlgorithm::AddToPendingChunks(const MsaBufferInterval& buffer_interval,
-                                      const Chunk& chunk_candidate) {
+                                      const Chunk& chunk) {
   VLOG(3) << "Committing chunk: " << buffer_interval.start << "-"
-          << buffer_interval.end << " : " << chunk_candidate.ToString();
-  pending_chunks_.emplace_back(buffer_interval, chunk_candidate);
-  for (int i = buffer_interval.start; i <= buffer_interval.end; ++i) {
-    peak_memory_usage_[i] += chunk_candidate.size;
-    CHECK_LE(peak_memory_usage_[i], options_.max_size_in_bytes)
-        << "Peak memory usage at " << i
-        << " exceeds the max size of alternate memory. "
-        << buffer_interval.start << "-" << buffer_interval.end << " : "
-        << chunk_candidate.ToString();
-  }
-  CommitChunk(buffer_interval, chunk_candidate);
+          << buffer_interval.end << " : " << chunk.ToString();
+  CommitChunkAndUpdatePeakMemory(buffer_interval, chunk);
+  pending_chunks_.emplace_back(buffer_interval, chunk);
 }
 
 std::optional<int> MsaAlgorithm::FindEarliestExclusiveTimeToSatisfyPeakMemory(
@@ -6181,17 +6357,22 @@ void MsaAlgorithm::CheckAndUpdateForDualLiveAllocationValues(
 
 void MsaAlgorithm::ReleaseReservedAllocationForAlternateMemoryColorings(
     ReservedAllocation* reserved_allocation) {
-  // We check if the reserved chunk is still reserved because this might
-  // be a retry of the same allocation request and the chunk might have
-  // been released in the previous attempt.
   if (!reserved_allocation->is_chunk_reserved_in_interval_tree()) {
     return;
   }
+  MsaBufferInterval buffer_interval = MsaBufferInterval{
+      /*buffer=*/nullptr,
+      /*size=*/reserved_allocation->chunk().size,
+      /*start=*/reserved_allocation->start_time(),
+      /*end=*/reserved_allocation->end_time(),
+      /*colocations=*/{},
+      /*need_allocation=*/true,
+  };
   // Release the reserved chunk from the interval tree.
-  CHECK(interval_tree_.Remove(reserved_allocation->start_time(),
-                              reserved_allocation->end_time(),
-                              reserved_allocation->chunk()));
-  reserved_allocation->chunk_freed_in_interval_tree();
+  CHECK(UncommitChunkAndUpdatePeakMemory(buffer_interval,
+                                         reserved_allocation->chunk()));
+  reserved_allocation->mark_chunk_freed_in_interval_tree();
+  pending_deallocated_reserved_allocations_.push_back(reserved_allocation);
   size_t original_size = repack_allocation_blocks_.size();
   repack_allocation_blocks_.remove_if(
       [reserved_allocation](
@@ -6208,7 +6389,7 @@ void MsaAlgorithm::FreeAlternateMemoryColoringReservedAllocations(
     return;
   }
   const HloPosition& defining_position =
-      request.allocation_value->defining_position();
+      request.allocation_value_to_update->defining_position();
   auto reserved_allocations_it =
       reserved_allocations_for_alt_mem_colorings_.find(defining_position);
   CHECK(reserved_allocations_it !=
@@ -6219,12 +6400,14 @@ void MsaAlgorithm::FreeAlternateMemoryColoringReservedAllocations(
   for (std::unique_ptr<ReservedAllocation>& reserved_allocation_ptr :
        reserved_allocations_it->second) {
     if (request.require_start_colored_in_alternate_memory &&
-        reserved_allocation_ptr->start_time() == inclusive_start_time) {
+        reserved_allocation_ptr->start_time() <= inclusive_start_time &&
+        inclusive_start_time <= reserved_allocation_ptr->end_time()) {
       ReleaseReservedAllocationForAlternateMemoryColorings(
           reserved_allocation_ptr.get());
     }
     if (request.require_end_colored_in_alternate_memory &&
-        reserved_allocation_ptr->end_time() == use_time) {
+        reserved_allocation_ptr->start_time() <= use_time &&
+        use_time <= reserved_allocation_ptr->end_time()) {
       ReleaseReservedAllocationForAlternateMemoryColorings(
           reserved_allocation_ptr.get());
     }
@@ -6237,9 +6420,7 @@ void MsaAlgorithm::UpdateRequestWithAlternateMemoryColoringRequirements(
     return;
   }
   const HloPosition& defining_position =
-      request.allocation_value->defining_position();
-  int64_t definition_time =
-      hlo_live_range_.instruction_schedule().at(defining_position.instruction);
+      request.allocation_value_to_update->defining_position();
 
   int64_t inclusive_start_time = request.inclusive_start_time;
   int64_t use_time = request.end_time;
@@ -6250,11 +6431,12 @@ void MsaAlgorithm::UpdateRequestWithAlternateMemoryColoringRequirements(
       reserved_allocations_for_alt_mem_colorings_.end()) {
     for (std::unique_ptr<ReservedAllocation>& reserved_allocation_ptr :
          reserved_allocations_it->second) {
-      if (inclusive_start_time == definition_time &&
-          reserved_allocation_ptr->start_time() == definition_time) {
+      if (reserved_allocation_ptr->start_time() <= inclusive_start_time &&
+          inclusive_start_time <= reserved_allocation_ptr->end_time()) {
         request.require_start_colored_in_alternate_memory = true;
       }
-      if (reserved_allocation_ptr->end_time() == use_time) {
+      if (reserved_allocation_ptr->start_time() <= use_time &&
+          use_time <= reserved_allocation_ptr->end_time()) {
         request.require_end_colored_in_alternate_memory = true;
       }
     }
@@ -6267,9 +6449,7 @@ void MsaAlgorithm::UpdateRequestWithDefaultMemoryColoringRequirements(
     return;
   }
   const HloPosition& defining_position =
-      request.allocation_value->defining_position();
-  int64_t definition_time =
-      hlo_live_range_.instruction_schedule().at(defining_position.instruction);
+      request.allocation_value_to_update->defining_position();
 
   int64_t inclusive_start_time = request.inclusive_start_time;
   int64_t use_time = request.end_time;
@@ -6278,12 +6458,14 @@ void MsaAlgorithm::UpdateRequestWithDefaultMemoryColoringRequirements(
       default_memory_coloring_requirements_.find(defining_position);
   if (default_memory_colorings_it !=
       default_memory_coloring_requirements_.end()) {
-    for (int64_t coloring_time : default_memory_colorings_it->second) {
-      if (inclusive_start_time == definition_time &&
-          coloring_time == definition_time) {
+    for (const TimeInterval& time_interval :
+         default_memory_colorings_it->second) {
+      if (time_interval.inclusive_start_time <= inclusive_start_time &&
+          inclusive_start_time <= time_interval.inclusive_end_time) {
         request.require_start_colored_in_default_memory = true;
       }
-      if (coloring_time == use_time) {
+      if (time_interval.inclusive_start_time <= use_time &&
+          use_time <= time_interval.inclusive_end_time) {
         request.require_end_colored_in_default_memory = true;
       }
     }
@@ -6479,10 +6661,24 @@ AllocationResult MsaAlgorithm::AllocateSegment(AllocationRequest& request) {
     // Since no-copy-allocation failed, continuous allocation is not possible in
     // the alternate memory.
     CHECK(!request.allocation_value->requires_contiguous_allocation());
-    allocation_result = ForceAlternateMemoryAllocationForMinTime(request);
-    // Allocation for short live range should succeed since we released a
-    // reserved chunk from the interval tree.
-    CHECK(allocation_result == AllocationResult::kSuccess);
+    if (request.allocation_value->allocation_sequence()->empty()) {
+      allocation_result = ForceAlternateMemoryAllocationForMinTime(request);
+      // Allocation for short live range should succeed since we released a
+      // reserved chunk from the interval tree.
+      CHECK(allocation_result == AllocationResult::kSuccess);
+    } else if (!IsAsyncConversionCandidate(
+                   request.allocation_value_to_update->defining_position()
+                       .instruction)) {
+      // If the start of an allocation is in alternate memory and the allocation
+      // sequence is not empty -
+      // - It is either an async converstion candidate, which means the coloring
+      //   requirement will be fulfilled with a copy allocation
+      // - Or we already have an allocation in the alternate memory.
+      Allocation* last_allocation =
+          request.allocation_value->allocation_sequence()->back().get();
+      CHECK(last_allocation->memory_space() == MemorySpace::kAlternate &&
+            last_allocation->end_time() >= request.inclusive_start_time);
+    }
   }
 
   auto prev_allocation_it = allocation_sequence->rbegin();
@@ -6501,9 +6697,12 @@ AllocationResult MsaAlgorithm::AllocateSegment(AllocationRequest& request) {
         (*prev_allocation_it)->defining_position() == defining_position) {
       // If there was an allocation for this HloValue that was in the alternate
       // memory space, we also need to perform an eviction.
+      // If start or end is required in alternate memory we need to force evict
+      // since the last allocation in alternate memory could not be extended.
       AllocationResult eviction_result = Evict(
           request,
-          /*force_evict=*/request.require_start_colored_in_alternate_memory);
+          /*force_evict=*/request.require_start_colored_in_alternate_memory ||
+              request.require_end_colored_in_alternate_memory);
       if (eviction_result != AllocationResult::kSuccess) {
         // A non-success eviction requires us to uncommit previous allocations.
         return result_mark(AllocationResult::kFailRequiresUncommit,
@@ -6836,7 +7035,8 @@ bool MsaAlgorithm::ViolatesMaximumOutstandingAsyncCopies(
 
 AllocationResult MsaAlgorithm::ForceAlternateMemoryAllocationForMinTime(
     const AllocationRequest& request) {
-  CHECK(request.allocation_value->allocation_sequence()->empty());
+  CHECK_EQ(request.allocation_value->defining_position(),
+           request.allocation_value_to_update->defining_position());
 
   MsaBufferInterval alternate_mem_interval = MsaBufferInterval{
       /*buffer=*/request.allocation_value->value(),
@@ -7067,6 +7267,7 @@ AllocationResult MsaAlgorithm::Evict(const AllocationRequest& request,
     return next_eviction_end_time;
   };
   int64_t original_end_time = eviction_mem_interval.end;
+  std::optional<Chunk> final_chunk_candidate;
   for (; eviction_mem_interval.end > eviction_end_time;
        eviction_mem_interval.end = next_eviction_end_time_candidate()) {
     Chunk chunk_candidate;
@@ -7091,7 +7292,7 @@ AllocationResult MsaAlgorithm::Evict(const AllocationRequest& request,
     if (chunk_candidate.offset == preferred_offset &&
         (eviction_mem_interval.end == original_end_time ||
          edge_time_indices_.contains(eviction_mem_interval.end))) {
-      AddToPendingChunks(eviction_mem_interval, chunk_candidate);
+      final_chunk_candidate = chunk_candidate;
       break;
     }
   }
@@ -7134,6 +7335,9 @@ AllocationResult MsaAlgorithm::Evict(const AllocationRequest& request,
   if (!eviction_interval_too_short && !eviction_violates_outstanding_copies &&
       !eviction_violates_resource) {
     prev_allocation->Extend(eviction_end_time);
+    if (final_chunk_candidate.has_value()) {
+      AddToPendingChunks(eviction_mem_interval, final_chunk_candidate.value());
+    }
     AddAsyncCopyOrOtherMemOp(
         *prev_allocation, MemorySpace::kDefault,
         /*chunk=*/std::nullopt, eviction_exclusive_start_time,
@@ -8348,8 +8552,10 @@ bool MsaAlgorithm::IsPositionColoredInDefaultMemoryAtTime(
         default_memory_coloring_requirements_.find(defining_position);
     if (default_memory_colorings_it !=
         default_memory_coloring_requirements_.end()) {
-      for (int64_t coloring_time : default_memory_colorings_it->second) {
-        if (coloring_time == time) {
+      for (const TimeInterval& time_interval :
+           default_memory_colorings_it->second) {
+        if (time_interval.inclusive_start_time <= time &&
+            time <= time_interval.inclusive_end_time) {
           return true;
         }
       }

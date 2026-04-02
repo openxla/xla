@@ -353,10 +353,10 @@ std::string ReservedAllocation::ToString() const {
   if (chunk) {
     absl::StrAppend(&memory_space_str, " chunk: ", chunk->ToString());
   }
-  return absl::StrCat(
-      "ReservedAllocation defined in alternate memory defined at ",
-      original_defining_position().ToString(), ", start_time: ", start_time(),
-      ", end_time: ", end_time(), " reserved: ", reserved_);
+  return absl::StrCat("ReservedAllocation defined in ", memory_space_str,
+                      " defined at ", original_defining_position().ToString(),
+                      ", start_time: ", start_time(),
+                      ", end_time: ", end_time(), " reserved: ", reserved_);
 }
 
 bool ReservedAllocation::operator==(const Allocation& other) const {
