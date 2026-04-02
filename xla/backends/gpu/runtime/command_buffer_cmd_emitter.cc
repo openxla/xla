@@ -69,7 +69,9 @@ namespace xla::gpu {
 
 namespace {
 // A context for tracking thunks to commands conversion details.
-struct ConversionContext {};
+struct ConversionContext {
+  std::vector<Command::ResourceUses> extra_resources;
+};
 }  // namespace
 
 // Appends command(s) converted from `sequence` to `cmd_sequence`.
@@ -417,14 +419,6 @@ static absl::Status AppendCommands(ConversionContext& ctx,
   }
 }
 
-namespace {
-
-void AddResourceDependency(Command* predecessor, Command* successor) {
-  predecessor->add_resource_use(ResourceUse::Read(successor->token()));
-}
-
-}  // namespace
-
 static absl::Status AppendCommands(ConversionContext& ctx,
                                    CommandSequence& cmd_sequence,
                                    const ThunkSequence& sequence,
@@ -449,6 +443,11 @@ static absl::Status AppendCommands(ConversionContext& ctx,
           << "Concurrent region ids are not monotonic.";
     }
   }
+
+  // Ensure extra_resources is sized to cover all commands added so far
+  // (including those added by nested AppendCommands calls).
+  ctx.extra_resources.resize(cmd_sequence.size());
+
   // Add dependencies between concurrent regions to serialize them.
   for (int64_t i = 1; i < concurrent_region_ids.size(); ++i) {
     int64_t concurrent_region_id = concurrent_region_ids[i - 1];
@@ -457,25 +456,11 @@ static absl::Status AppendCommands(ConversionContext& ctx,
          concurrent_region_id_to_thunk_indices[concurrent_region_id]) {
       for (int64_t next_thunk_index :
            concurrent_region_id_to_thunk_indices[next_concurrent_region_id]) {
-        AddResourceDependency(cmd_sequence[thunk_index].get(),
-                              cmd_sequence[next_thunk_index].get());
+        ctx.extra_resources[thunk_index].push_back(
+            ResourceUse::Read(cmd_sequence[next_thunk_index]->token()));
       }
     }
   }
-
-<<<<<<< HEAD
-  // Convert thunk control dependencies to token resource dependency, where
-  // the predecessor has the token write, and control successor does the token
-  // read.
-  for (const std::unique_ptr<Thunk>& thunk : sequence) {
-    for (const Thunk* control_predecessor : thunk->control_predecessors()) {
-      AddResourceDependency(
-          cmd_sequence[thunk_to_index[control_predecessor]].get(),
-          cmd_sequence[thunk_to_index[thunk.get()]].get());
-=======
-  // Ensure extra_resources is sized to cover all commands added so far
-  // (including those added by nested AppendCommands calls).
-  ctx.extra_resources.resize(cmd_sequence.size());
 
   // Convert thunk control dependencies to token resource dependency, where the
   // predecessor has the token write, and control successor does the token read.
@@ -484,7 +469,6 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       ctx.extra_resources[thunk_to_index[control_predecessor]].push_back(
           ResourceUse::Read(
               cmd_sequence[thunk_to_index[thunk.get()]]->token()));
->>>>>>> a76e866460 ([XLA:GPU] Remove mutable resource uses from Command; pass extras at construction)
     }
   }
 

@@ -240,7 +240,8 @@ static absl::StatusOr<std::vector<CommandOperation>> CreateCommandOperations(
     // kConcurrentRegions.
     case Mode::kConcurrent:
     case Mode::kConcurrentRegions: {
-      return CreateCommandOperationsWithConcurrentMode(commands);
+      return CreateCommandOperationsWithConcurrentMode(commands,
+                                                       extra_resources);
     }
 
     case Mode::kLHS: {
