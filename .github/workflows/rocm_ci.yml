@@ -83,7 +83,8 @@ jobs:
             --local_test_jobs=4 \
             --action_env=JAX_ENABLE_X64=1 \
             --repo_env=HERMETIC_PYTHON_VERSION=3.14 \
-            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE=${DOCKER_IMAGE}
+            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE=${DOCKER_IMAGE} \
+            --crosstool_top=@local_config_rocm//crosstool:toolchain-local
 
   xla:
     name: XLA Linux x86 AMD Instinct GPU
