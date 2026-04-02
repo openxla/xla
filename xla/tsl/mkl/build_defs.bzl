@@ -6,6 +6,7 @@ if_mkl_ml_only is a conditional to check for MKL-ML-only (no MKL-DNN) mode.
 if_mkl_lnx_x64 is a conditional to check for MKL
 if_enable_mkl is a conditional to check if building with MKL and MKL is enabled.
 if_mkldnn_openmp checks if we are building x86 backend with OpenMP.
+if_onednn_async checks if we are building x86 backend (only Intel) with experimental async runtime support.
 if_mkldnn_aarch64_acl checks if we are building with Arm Compute Library.
 
 mkl_repository is a repository rule for creating MKL repository rule that can
