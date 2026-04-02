@@ -238,8 +238,6 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_SEQUENTIAL;
     case kTriangularSolve:
       return THUNK_KIND_TRIANGULAR_SOLVE;
-    case kWaitForStreams:
-      return THUNK_KIND_WAIT_FOR_STREAMS;
     case kWhile:
       return THUNK_KIND_WHILE;
   };
@@ -349,8 +347,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kSequential;
     case THUNK_KIND_TRIANGULAR_SOLVE:
       return kTriangularSolve;
-    case THUNK_KIND_WAIT_FOR_STREAMS:
-      return kWaitForStreams;
     case THUNK_KIND_WHILE:
       return kWhile;
     default:
@@ -415,7 +411,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kSend);
     CASE(kSequential);
     CASE(kTriangularSolve);
-    CASE(kWaitForStreams);
     CASE(kWhile);
     // # go/keep-sorted end
   }
