@@ -2240,7 +2240,7 @@ GpuCompiler::CompileSingleModule(
     const HloModuleConfig& module_config,
     const stream_executor::DeviceDescription& device_description,
     const HloModule* debug_module, llvm::Module* llvm_module, bool relocatable,
-    const CompileOptions& options, std::optional<int> shard_number) {
+    std::optional<int> shard_number) {
   tsl::profiler::TraceMe traceme("CompileSingleModule");
   const DebugOptions& debug_options = module_config.debug_options();
   {
@@ -2273,7 +2273,7 @@ GpuCompiler::CompileSingleModule(
   ASSIGN_OR_RETURN(
       BackendCompileResult result,
       CompileTargetBinary(module_config, llvm_module, device_description,
-                          relocatable, debug_module, options, shard_number));
+                          relocatable, debug_module, shard_number));
 
   const bool should_dump = DumpingEnabledForHloModule(
       debug_module ? debug_module->name() : "", debug_options);
@@ -2382,21 +2382,21 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
   if (thread_pool) {
     absl::BlockingCounter counter(llvm_modules.size());
     for (int i = 0; i < llvm_modules.size(); ++i) {
-      thread_pool.get_mutable()->Schedule(
-          [&compile_results, i, &llvm_modules, &counter, this, &module_config,
-           &device_description, &debug_module, &options] {
-            // Each thread has its own context to avoid race conditions.
-            llvm::LLVMContext new_context;
-            std::unique_ptr<llvm::Module> new_module =
-                CopyToContext(*llvm_modules.at(i).module, new_context);
-            compile_results.at(i) = {
-                llvm_modules.at(i).name,
-                CompileSingleModule(module_config, device_description,
-                                    debug_module, new_module.get(),
-                                    /*relocatable=*/true, options,
-                                    /*shard_number=*/i)};
-            counter.DecrementCount();
-          });
+      thread_pool.get_mutable()->Schedule([&compile_results, i, &llvm_modules,
+                                           &counter, this, &module_config,
+                                           &device_description, &debug_module] {
+        // Each thread has its own context to avoid race conditions.
+        llvm::LLVMContext new_context;
+        std::unique_ptr<llvm::Module> new_module =
+            CopyToContext(*llvm_modules.at(i).module, new_context);
+        compile_results.at(i) = {
+            llvm_modules.at(i).name,
+            CompileSingleModule(module_config, device_description, debug_module,
+                                new_module.get(),
+                                /*relocatable=*/true,
+                                /*shard_number=*/i)};
+        counter.DecrementCount();
+      });
     }
     counter.Wait();
   } else {
@@ -2405,7 +2405,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
           llvm_modules.at(i).name,
           CompileSingleModule(module_config, device_description, debug_module,
                               &*llvm_modules.at(i).module,
-                              /*relocatable=*/true, options,
+                              /*relocatable=*/true,
                               /*shard_number=*/i)};
     }
   }
@@ -2420,8 +2420,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
     if (result.binary.empty()) {
       continue;
     }
-    ptx_snippets += result.asm_text;
-    ptx_snippets += "\n";
+    absl::StrAppend(&ptx_snippets, result.asm_text, "\n");
     binaries_to_link.push_back(result.binary);
     if (!name.empty()) {
       binaries_to_cache.push_back({name, result.binary});
@@ -2555,10 +2554,9 @@ GpuCompiler::CompileToBackendResult(
       if (user_pre_optimization_hook_) {
         user_pre_optimization_hook_(llvm_module);
       }
-      ASSIGN_OR_RETURN(
-          BackendCompileResult result,
-          CompileSingleModule(module->config(), descr, module, &llvm_module,
-                              false, options, std::nullopt));
+      ASSIGN_OR_RETURN(BackendCompileResult result,
+                       CompileSingleModule(module->config(), descr, module,
+                                           &llvm_module, false, std::nullopt));
       return std::move(result.binary);
     };
 
@@ -2626,7 +2624,7 @@ GpuCompiler::CompileToBackendResult(
         CompileSingleModule(module->config(),
                             gpu_topology.gpu_target_config().device_description,
                             module, &*compile_module_results.llvm_modules[0],
-                            /*relocatable=*/false, options,
+                            /*relocatable=*/false,
                             /*shard_number=*/std::nullopt));
   }
 
@@ -3210,11 +3208,10 @@ GpuCompiler::LoadExecutableFromAotResult(
     if (user_pre_optimization_hook_) {
       user_pre_optimization_hook_(llvm_module);
     }
-    CompileOptions compile_options;
-    ASSIGN_OR_RETURN(BackendCompileResult result,
-                     CompileSingleModule(hlo_module->config(), descr,
-                                         hlo_module.get(), &llvm_module, false,
-                                         compile_options, std::nullopt));
+    ASSIGN_OR_RETURN(
+        BackendCompileResult result,
+        CompileSingleModule(hlo_module->config(), descr, hlo_module.get(),
+                            &llvm_module, false, std::nullopt));
     return std::move(result.binary);
   };
   IrEmitterContext ir_emitter_context(

@@ -232,8 +232,7 @@ class GpuCompiler : public LLVMCompiler {
       const HloModuleConfig& module_config,
       const stream_executor::DeviceDescription& device_description,
       const HloModule* debug_module, llvm::Module* llvm_module,
-      bool relocatable, const CompileOptions& options,
-      std::optional<int> shard_number);
+      bool relocatable, std::optional<int> shard_number);
 
   absl::Status LoadAutotuneResultsFromFile(const DebugOptions& debug_options);
   absl::Status SerializeAutotuneResultsToFile(
@@ -268,7 +267,7 @@ class GpuCompiler : public LLVMCompiler {
       const HloModuleConfig& module_config, llvm::Module* llvm_module,
       const stream_executor::DeviceDescription& device_description,
       bool relocatable, const HloModule* debug_module,
-      const CompileOptions& options, std::optional<int> shard_number) = 0;
+      std::optional<int> shard_number) = 0;
 
   // Inserts and optimizes mandatory copies. Necessary for correctness.
   absl::Status RunPreSchedulingCopyInsertion(
