@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_TSL_PLATFORM_ERRORS_H_
 #define XLA_TSL_PLATFORM_ERRORS_H_
 
+#include <cassert>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -135,7 +136,7 @@ inline void CopyPayloads(const absl::Status& from, absl::Status& to) {
   });
 }
 
-#if defined(PLATFORM_GOOGLE)
+#ifdef PLATFORM_GOOGLE
 // Creates a new status with the given code, message and payloads.
 inline absl::Status Create(
     absl::StatusCode code, absl::string_view message,
@@ -161,7 +162,7 @@ inline absl::Status CreateWithUpdatedMessage(const absl::Status& status,
   return new_status;
 }
 
-#else
+#else   // PLATFORM_GOOGLE
 inline absl::Status Create(
     absl::StatusCode code, absl::string_view message,
     const std::unordered_map<std::string, std::string>& payloads) {
@@ -175,7 +176,7 @@ inline absl::Status CreateWithUpdatedMessage(const absl::Status& status,
   return Create(static_cast<absl::StatusCode>(status.code()), message,
                 GetPayloads(status));
 }
-#endif
+#endif  // PLATFORM_GOOGLE
 
 // Append some context to an error message.  Each time we append
 // context put it on a new line, since it is possible for there
