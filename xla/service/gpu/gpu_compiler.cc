@@ -419,6 +419,11 @@ absl::StatusOr<GpuTopology> InferGpuTopology(
   int32_t num_devices_per_host;
   std::optional<GpuTargetConfig> gpu_target_config;
   std::optional<cpu::TargetMachineOptions> cpu_target_options;
+
+  if (options.cpu_target_config.has_value()) {
+    cpu_target_options = options.cpu_target_config->cpu_target_machine_options;
+  }
+
   if (options.gpu_topology.has_value()) {
     const GpuTopology& gpu_topology = *options.gpu_topology;
     if (gpu_topology.has_gpu_target_config()) {
@@ -430,7 +435,9 @@ absl::StatusOr<GpuTopology> InferGpuTopology(
     num_partitions = gpu_topology.num_partitions();
     num_hosts_per_partition = gpu_topology.num_hosts_per_partition();
     num_devices_per_host = gpu_topology.num_devices_per_host();
-    cpu_target_options = gpu_topology.host_target_machine_options();
+    if (gpu_topology.host_target_machine_options().has_value()) {
+      cpu_target_options = gpu_topology.host_target_machine_options();
+    }
   } else {
     num_partitions = hlo_config.num_partitions();
     // If the caller didn't pass this in the GPU Topology assume single host.
@@ -2482,9 +2489,14 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
 
 namespace {
 absl::StatusOr<xla::cpu::CompilationResultProto> GetCpuCompilationResult(
-    const HloModuleProto& hlo_proto) {
+    const HloModuleProto& hlo_proto,
+    xla::cpu::TargetMachineOptions cpu_target_machine_options) {
   xla::cpu::NanoRtClient client;
   XlaComputation computation(hlo_proto);
+  Compiler::CompileOptions cpu_compile_options;
+  cpu_compile_options.cpu_target_config.emplace(
+      std::move(cpu_target_machine_options));
+
   TF_ASSIGN_OR_RETURN(std::unique_ptr<xla::cpu::NanoRtExecutable> executable,
                       client.Compile(computation));
   TF_ASSIGN_OR_RETURN(std::unique_ptr<CompiledModule> result,
@@ -2498,25 +2510,31 @@ absl::StatusOr<xla::cpu::CompilationResultProto> GetCpuCompilationResult(
 absl::StatusOr<GpuCompiler::CompileResultWithMetadata>
 GpuCompiler::CompileToBackendResult(
     HloModule* module, llvm::LLVMContext* llvm_context,
-    const CompileOptions& options, const se::DeviceDescription& gpu_device_info,
-    se::StreamExecutor* stream_exec) {
+    const GpuTopology& gpu_topology, const CompileOptions& options,
+    se::StreamExecutor* absl_nullable stream_exec) {
   tsl::profiler::TraceMe traceme("CompileToBackendResult");
-  std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(gpu_device_info);
-  RETURN_IF_ERROR(
-      RunPreSchedulingPasses(module, gpu_device_info, alias_info.get()));
-  ASSIGN_OR_RETURN(ScheduleMetadata schedule_metadata,
-                   ScheduleGpuModule(module, pointer_size_, gpu_device_info,
-                                     &mlir_context_, alias_info.get()));
+  std::unique_ptr<GpuAliasInfo> alias_info =
+      GetAliasInfo(gpu_topology.gpu_target_config().device_description);
+  RETURN_IF_ERROR(RunPreSchedulingPasses(
+      module, gpu_topology.gpu_target_config().device_description,
+      alias_info.get()));
+  ASSIGN_OR_RETURN(
+      ScheduleMetadata schedule_metadata,
+      ScheduleGpuModule(module, pointer_size_,
+                        gpu_topology.gpu_target_config().device_description,
+                        &mlir_context_, alias_info.get()));
   HloPassPipeline pipeline("scheduled-gpu-module");
   AddHloVerifier(&pipeline);
   RETURN_IF_ERROR(pipeline.Run(module).status());
-  RETURN_IF_ERROR(
-      RunPostSchedulingPipelines(module, schedule_metadata.scheduler_mem_limit,
-                                 gpu_device_info, alias_info.get()));
+  RETURN_IF_ERROR(RunPostSchedulingPipelines(
+      module, schedule_metadata.scheduler_mem_limit,
+      gpu_topology.gpu_target_config().device_description, alias_info.get()));
 
   ASSIGN_OR_RETURN(
       bool can_use_link_modules,
-      CanUseLinkModules(module->config(), gpu_device_info, stream_exec));
+      CanUseLinkModules(module->config(),
+                        gpu_topology.gpu_target_config().device_description,
+                        stream_exec));
   const bool split_modules =
       can_use_link_modules &&
       module->config()
@@ -2545,20 +2563,18 @@ GpuCompiler::CompileToBackendResult(
     };
 
     // Compile the module to thunks and llvm IR.
-    const xla::cpu::TargetMachineOptions* cpu_target_machine_options = nullptr;
-    if (options.cpu_target_config.has_value() &&
-        options.cpu_target_config->cpu_target_machine_options.has_value()) {
-      cpu_target_machine_options =
-          &*options.cpu_target_config->cpu_target_machine_options;
-    }
+    xla::cpu::TargetMachineOptions cpu_target_machine_options =
+        gpu_topology.host_target_machine_options().value_or(
+            xla::cpu::TargetMachineOptions());
 
     ASSIGN_OR_RETURN(
         compile_module_results,
         CompileModuleToLlvmIr(
             module, llvm_context, target_triple_, data_layout_, PlatformId(),
-            gpu_device_info, alias_info.get(),
-            std::move(buffer_size_bytes_function), llvm_options_lock,
-            std::move(llvm_compiler), cpu_target_machine_options));
+            gpu_topology.gpu_target_config().device_description,
+            alias_info.get(), std::move(buffer_size_bytes_function),
+            llvm_options_lock, std::move(llvm_compiler),
+            std::move(cpu_target_machine_options)));
   }
 
   for (const std::unique_ptr<llvm::Module>& llvm_module :
@@ -2592,7 +2608,8 @@ GpuCompiler::CompileToBackendResult(
     ASSIGN_OR_RETURN(
         backend_result,
         CompileAndLink(module->config(), compile_module_results,
-                       gpu_device_info, options, module, stream_exec));
+                       gpu_topology.gpu_target_config().device_description,
+                       options, module, stream_exec));
     LinkLlvmModulesInPlace(compile_module_results.llvm_modules);
   } else {
     LinkLlvmModulesInPlace(compile_module_results.llvm_modules);
@@ -2606,8 +2623,9 @@ GpuCompiler::CompileToBackendResult(
     }
     ASSIGN_OR_RETURN(
         backend_result,
-        CompileSingleModule(module->config(), gpu_device_info, module,
-                            &*compile_module_results.llvm_modules[0],
+        CompileSingleModule(module->config(),
+                            gpu_topology.gpu_target_config().device_description,
+                            module, &*compile_module_results.llvm_modules[0],
                             /*relocatable=*/false, options,
                             /*shard_number=*/std::nullopt));
   }
@@ -2633,7 +2651,9 @@ GpuCompiler::CompileToBackendResult(
           tsl::down_cast<HostExecuteStartThunk*>(thunk);
       absl::StatusOr<xla::cpu::CompilationResultProto> cpu_compilation_result =
           GetCpuCompilationResult(
-              host_execute_start_thunk->executable_proto().hlo_module());
+              host_execute_start_thunk->executable_proto().hlo_module(),
+              gpu_topology.host_target_machine_options().value_or(
+                  xla::cpu::TargetMachineOptions()));
 
       CHECK_OK(cpu_compilation_result) << "Failed to compile host executable.";
 
@@ -2704,8 +2724,8 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
   }
 
   ASSIGN_OR_RETURN(CompileResultWithMetadata res,
-                   CompileToBackendResult(module.get(), &llvm_context, options,
-                                          gpu_device_info, stream_exec));
+                   CompileToBackendResult(module.get(), &llvm_context,
+                                          gpu_topology, options, stream_exec));
   ModuleStats module_stats = res.backend_result.module_stats;
 
   if (DumpingEnabledForHloModule(*module)) {
@@ -2860,24 +2880,23 @@ GpuCompiler::NewCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
 absl::StatusOr<std::vector<std::unique_ptr<CompiledModule>>>
 GpuCompiler::LegacyCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
                                       const AotCompilationOptions& options) {
-  std::optional<Compiler::GpuTargetConfig> target_config;
-  if (options.gpu_topology().has_value() &&
-      options.gpu_topology()->has_gpu_target_config()) {
-    target_config = options.gpu_topology()->gpu_target_config();
-  }
-  CHECK(target_config.has_value() || options.executor() != nullptr);
-  const se::DeviceDescription& gpu_device_info =
-      target_config.has_value() ? target_config->device_description
-                                : options.executor()->GetDeviceDescription();
-  llvm::LLVMContext llvm_context;
-  ASSIGN_OR_RETURN(CompileResultWithMetadata res,
-                   CompileToBackendResult(hlo_module.get(), &llvm_context,
-                                          {options.device_allocator()},
-                                          gpu_device_info, nullptr));
+  CompileOptions compile_options;
+  compile_options.device_allocator = options.device_allocator();
+  compile_options.gpu_topology = options.gpu_topology();
+  ASSIGN_OR_RETURN(GpuTopology gpu_topology,
+                   InferGpuTopology(hlo_module->config(), options.executor(),
+                                    compile_options, options.debug_options(),
+                                    options.PlatformId()));
+  CHECK(gpu_topology.has_gpu_target_config());
 
-  // Create GpuThunkAotCompilationResult if thunk runtime is enabled.
+  llvm::LLVMContext llvm_context;
+  ASSIGN_OR_RETURN(
+      CompileResultWithMetadata res,
+      CompileToBackendResult(hlo_module.get(), &llvm_context, gpu_topology,
+                             compile_options, nullptr));
+
   std::vector<std::unique_ptr<CompiledModule>> results;
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       results.emplace_back(),
       LegacyGpuAotCompilationResult::FromModule(
           hlo_module.get(), res.compile_module_results.buffer_assignment.get(),
@@ -3202,7 +3221,7 @@ GpuCompiler::LoadExecutableFromAotResult(
       hlo_module.get(), buffer_assignment.get(), &execution_stream_assignment,
       platform_name, device_description, mlir_context(), &llvm_context,
       /*emit_kernels=*/false, llvm::Triple(target_triple()), data_layout(),
-      std::move(llvm_compiler));
+      std::move(llvm_compiler), cpu::TargetMachineOptions());
 
   absl::string_view cache_file_path =
       hlo_module->config().debug_options().xla_gpu_kernel_cache_file();
