@@ -2617,27 +2617,23 @@ void GlobalDecreasingSizeBestFitHeap<BufferType>::CommitChunk(
     const GlobalDecreasingSizeBestFitHeap<BufferType>::BufferInterval&
         buffer_interval,
     GlobalDecreasingSizeBestFitHeap<BufferType>::Chunk chunk) {
-  CHECK_EQ(chunk.size, buffer_interval.size);
+  CHECK_EQ(chunk.size, buffer_interval.size)
+      << "Chunk size mismatch for buffer: "
+      << buffer_interval.buffer->ToString();
   const int64_t max_colocation_size = GetMaxColocationSize(buffer_interval);
-  Chunk max_size_chunk =
-      Chunk::FromOffsetSize(chunk.offset, max_colocation_size);
+  CHECK_EQ(chunk.size, max_colocation_size);
 
-  result_.heap_size = result_.UpdatedHeapSize(max_size_chunk);
-  interval_tree_.Add(buffer_interval.start, buffer_interval.end,
-                     max_size_chunk);
+  result_.heap_size = result_.UpdatedHeapSize(chunk);
+  interval_tree_.Add(buffer_interval.start, buffer_interval.end, chunk);
+  AddToChunkMap(buffer_interval.buffer, chunk);
   for (auto colocation : GetTransitiveColocations(buffer_interval)) {
     auto colocation_interval = buffer_intervals_[colocation];
     // Create a colocation chunk with the same offset and the maximum size of
     // all colocated buffers.
-    Chunk colocation_chunk =
-        Chunk::FromOffsetSize(chunk.offset, max_colocation_size);
-    result_.heap_size = result_.UpdatedHeapSize(colocation_chunk);
     interval_tree_.Add(colocation_interval.start, colocation_interval.end,
-                       colocation_chunk);
-    AddToChunkMap(colocation, colocation_chunk);
+                       chunk);
+    AddToChunkMap(colocation, chunk);
   }
-
-  AddToChunkMap(buffer_interval.buffer, max_size_chunk);
 }
 
 template <typename BufferType>
