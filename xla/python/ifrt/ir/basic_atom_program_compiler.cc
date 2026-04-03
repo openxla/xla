@@ -46,21 +46,22 @@ namespace xla {
 namespace ifrt {
 
 absl::StatusOr<std::unique_ptr<AtomProgramCompiler>>
-BasicAtomProgramCompiler::Create(
-    Client* absl_nonnull client,
-    absl::Span<const DeviceId> device_assignments) {
+BasicAtomProgramCompiler::Create(Client* absl_nonnull client,
+                                 absl::Span<const DeviceId> device_assignments,
+                                 bool strict_memory_reservation) {
   for (const DeviceId device_id : device_assignments) {
     TF_RETURN_IF_ERROR(client->LookupDevice(device_id).status());
   }
-  return absl::WrapUnique(
-      new BasicAtomProgramCompiler(client, device_assignments));
+  return absl::WrapUnique(new BasicAtomProgramCompiler(
+      client, device_assignments, strict_memory_reservation));
 }
 
 BasicAtomProgramCompiler::BasicAtomProgramCompiler(
-    Client* absl_nonnull client, absl::Span<const DeviceId> device_assignments)
+    Client* absl_nonnull client, absl::Span<const DeviceId> device_assignments,
+    bool strict_memory_reservation)
     : client_(client),
-      device_assignments_(device_assignments.begin(),
-                          device_assignments.end()) {}
+      device_assignments_(device_assignments.begin(), device_assignments.end()),
+      strict_memory_reservation_(strict_memory_reservation) {}
 
 tsl::Future<LoadedExecutableRef> BasicAtomProgramCompiler::CompileXla(
     std::unique_ptr<HloProgram> hlo_program, xla::CompileOptions options) {
@@ -80,7 +81,6 @@ tsl::Future<LoadedExecutableRef> BasicAtomProgramCompiler::CompileXla(
       }));
   options.executable_build_options.set_device_assignment(device_assignment);
 
-  AtomProgramCompileResult result;
   TF_ASSIGN_OR_RETURN(DeviceListRef devices,
                       GetDeviceListFromXlaCompileOptions(client_, options));
   return client_->GetDefaultCompiler()->CompileAndLoad(

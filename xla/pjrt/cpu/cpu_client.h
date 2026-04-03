@@ -232,25 +232,28 @@ class PjRtCpuClient final : public CommonPjRtClient {
                               size_t on_device_bytes_count,
                               bool retry_on_oom) override;
 
-  absl::StatusOr<std::pair<tsl::RCReference<PjRtDeviceEventPromise>,
-                           tsl::RCReference<PjRtDeviceEvent>>>
+  absl::StatusOr<
+      std::pair<tsl::RCReference<PjRtDeviceEventPromise>, PjRtDeviceEventRef>>
   CreateLinkedEventPromise(PjRtMemorySpace* memory_space,
                            absl::string_view debug_info) override;
 
   std::unique_ptr<PjRtDeviceEventSet> CreateDeviceEventSet(
       size_t preallocated_size) const override;
 
+  using CommonPjRtClient::DefineBuffer;
+
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> DefineBuffer(
-      const Shape& on_device_shape, PjRtMemorySpace* memory_space,
+      std::shared_ptr<const Shape> on_device_shape,
+      PjRtMemorySpace* memory_space,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
-      absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>
-          definition_device_events) override;
+      absl::InlinedVector<PjRtDeviceEventRef, 4> definition_device_events)
+      override;
 
   using CommonPjRtClient::GetOnDeviceBytesCount;
   absl::StatusOr<int64_t> GetOnDeviceBytesCount(
       int memory_space_kind, const xla::Shape& shape) const override;
 
-  absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> LinearizeHostBufferInto(
+  absl::StatusOr<PjRtDeviceEventRef> LinearizeHostBufferInto(
       const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
       std::optional<absl::Span<int64_t const>> byte_strides,
       HostBufferSemantics host_buffer_semantics,
@@ -258,7 +261,7 @@ class PjRtCpuClient final : public CommonPjRtClient {
       const xla::Shape& device_shape,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) override;
 
-  absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> LinearizeInto(
+  absl::StatusOr<PjRtDeviceEventRef> LinearizeInto(
       const LiteralSlice& literal, const xla::Shape& device_shape,
       HostBufferSemantics host_buffer_semantics,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) override;
@@ -343,12 +346,6 @@ class PjRtCpuClient final : public CommonPjRtClient {
       launch_events_;
   tsl::AsyncValueRef<CpuEvent> last_collective_launch_event_
       ABSL_GUARDED_BY(mu_);
-
-  // A cache for transpose plans. We use transposes to convert
-  // (possibly strided) buffers provided to BufferFromHostBuffer into dense
-  // major-to-minor layout.
-  absl::Mutex transpose_mu_;
-  TransposePlanCache transpose_cache_ ABSL_GUARDED_BY(transpose_mu_);
 
   std::shared_ptr<cpu::CpuCollectives> collectives_;
 

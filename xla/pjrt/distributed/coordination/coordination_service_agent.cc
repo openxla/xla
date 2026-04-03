@@ -58,7 +58,6 @@ limitations under the License.
 
 namespace xla {
 
-using xla::coordination::DeviceInfo;
 using xla::coordination::KeyValueEntry;
 using xla::coordination::TaskState;
 
@@ -320,10 +319,6 @@ void CoordinationServiceAgent::PollForErrorAsync(tsl::StatusCallback done) {
       });
 }
 
-const DeviceInfo& CoordinationServiceAgent::GetClusterDeviceInfo() {
-  return cluster_devices_;
-}
-
 std::shared_ptr<tsl::CallOptions> CoordinationServiceAgent::WatchJobStateAsync(
     std::optional<int64_t> version_number,
     std::function<
@@ -434,50 +429,6 @@ absl::Status CoordinationServiceAgent::Shutdown() {
   // Cancel all pending GetKeyValue() and WaitAtBarrier() RPC calls.
   cancellation_manager_.StartCancel();
 
-  return status;
-}
-
-absl::Status CoordinationServiceAgent::Reset() {
-  {
-    absl::MutexLock l(state_mu_);
-    if (state_ != TaskState::ERROR) {
-      return MakeCoordinationError(FailedPrecondition(
-          "Reset() failed: coordination service agent is not in ERROR state."));
-    }
-  }
-
-  ResetTaskRequest request;
-  request.set_source_task_id(task_id_);
-  VLOG(3) << "ResetTaskRequest: " << request.DebugString();
-  ResetTaskResponse response;
-
-  absl::Status status;
-  absl::Notification n;
-  leader_client_->ResetTaskAsync(&request, &response,
-                                 [&status, &n](const absl::Status& s) {
-                                   status = s;
-                                   n.Notify();
-                                 });
-  n.WaitForNotification();
-  VLOG(3) << "ResetTaskResponse: " << status;
-  if (!status.ok()) {
-    return status;
-  }
-
-  // Reset agent state.
-  StopHeartbeat();
-  StopErrorPolling();
-  ResetCancellationManager();
-  {
-    absl::MutexLock l(state_mu_);
-    state_ = TaskState::DISCONNECTED;
-  }
-  {
-    absl::MutexLock l(shutdown_mu_);
-    shutting_down_ = false;
-  }
-
-  LOG(INFO) << "Coordination agent has been reset.";
   return status;
 }
 

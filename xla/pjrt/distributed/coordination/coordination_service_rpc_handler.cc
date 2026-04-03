@@ -103,18 +103,6 @@ void CoordinationServiceRpcHandler::ShutdownTaskAsync(
                               [done](absl::Status s) { done(s); });
 }
 
-void CoordinationServiceRpcHandler::ResetTaskAsync(
-    const xla::coordination::ResetTaskRequest* request,
-    xla::coordination::ResetTaskResponse* response, tsl::StatusCallback done) {
-  absl::ReaderMutexLock l(mu_);
-  if (service_ == nullptr) {
-    done(MakeCoordinationError(
-        absl::InternalError("Coordination service is not enabled.")));
-    return;
-  }
-  done(service_->ResetTask(request->source_task_id()));
-}
-
 void CoordinationServiceRpcHandler::WatchJobStateAsync(
     const xla::coordination::WatchJobStateRequest* request,
     xla::coordination::WatchJobStateResponse* response,

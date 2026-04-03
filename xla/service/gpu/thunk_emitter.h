@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/call_graph.h"
+#include "xla/service/gpu/gpu_hlo_ordering.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/service/shaped_slice.h"
@@ -102,7 +103,7 @@ class ThunkEmitter {
       const HloInstruction* hlo);
 
   absl::StatusOr<ThunkSequence> EmitCollectiveAsyncDone(
-      Thunk::Kind kind, const HloInstruction* hlo);
+      const HloInstruction* hlo);
 
   absl::StatusOr<ThunkSequence> EmitCollectiveGroupStartThunk(
       const HloInstruction* hlo);
@@ -171,8 +172,7 @@ class ThunkEmitter {
       const HloAllReduceInstruction* inst,
       std::optional<bool> use_global_device_ids);
 
-  absl::StatusOr<ThunkSequence> EmitNvshmemAsyncDone(Thunk::Kind kind,
-                                                     const HloInstruction* hlo);
+  absl::StatusOr<ThunkSequence> EmitNvshmemAsyncDone(const HloInstruction* hlo);
 
   absl::StatusOr<ThunkSequence> EmitNormThunk(
       const HloCustomCallInstruction* hlo);
@@ -227,10 +227,6 @@ class ThunkEmitter {
   absl::StatusOr<ShapedSlice> GetShapedSliceForHlo(
       const HloInstruction* instr, const ShapeIndex& index = {}) const;
 
-  CollectivesAsyncEvents& GetCollectivesAsyncEvents() {
-    return ir_emitter_context_->collectives_async_events();
-  }
-
   InstructionToHostExecuteAsyncEvents&
   GetInstructionToHostExecuteAsyncEvents() {
     return ir_emitter_context_->instruction_to_host_execute_async_events();
@@ -241,6 +237,7 @@ class ThunkEmitter {
   std::shared_ptr<HostSendRecvAsyncEvents> send_recv_events_;
 
   // Shared buffer addresses registry for NVSHMEM put/get operations.
+  [[deprecated("Use NCCL 2.28+ primitives instead.")]]
   std::shared_ptr<NvshmemBufferAddresses> nvshmem_buffer_addresses_;
 
   // Maps async-start instructions to their AsyncExecution so that the
@@ -257,6 +254,12 @@ class ThunkEmitter {
 
   // Modules for each emitted kernel.
   std::vector<std::unique_ptr<llvm::Module>> kernel_modules_;
+
+  // TODO(tjoerg): Attach the HloOrdering to the HloSchedule instead of
+  // re-creating it here.
+  absl::flat_hash_map<const HloModule*,
+                      std::unique_ptr<ConcurrentRegionsHloOrdering>>
+      concurrent_regions_ordering_;
 
   // Releasable lock for LLVM options. Most of the thunks are emitted under the
   // lock, however some thunks (e.g. custom calls) temporarily release the lock

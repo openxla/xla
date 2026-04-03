@@ -169,6 +169,12 @@ message DebugOptions {
   optional bool xla_unsupported_crash_on_hlo_pass_noop_change = 379;
   // Crash if a pass reports that it did not change the HLO but in fact it did.
   optional bool xla_unsupported_crash_on_hlo_pass_silent_hlo_change = 380;
+  // Enable reduction recognition pass, at various levels
+  // 0: disable reduction recognition pass.
+  // 1: enable only reduce-window recognition.
+  // 2: recognize dot general against constants.
+  // 3: recognize dot operations with additional multiplicative factors.
+  optional int32 xla_recognize_reduction_optimization_level = 463;
   // go/keep-sorted end
 
   //--------------------------------------------------------------------------//
@@ -331,10 +337,14 @@ message DebugOptions {
   // LHS: Uses the same latency hidden scheduling results as adopted by
   //   LatencyHidingScheduler which hides latencies of operations that can run
   //   in parallel with other operations.
+  // CONCURRENT_REGIONS: Allow concurrency in command buffer regions with
+  //   latency-bound kernels that are too small to utilize the GPU well
+  //   individually. Larger kernels are serialized.
   enum CommandBufferSchedulingMode {
     SERIALIZE = 0;
     CONCURRENT = 1;
     LHS = 2;
+    CONCURRENT_REGIONS = 3;
   }
 
   // Experimental optimizations for SPMD-based pipeline parallelism on GPU.
@@ -534,6 +544,11 @@ message DebugOptions {
 
   // Determine the types of commands that are recorded into command buffers.
   repeated CommandBufferCmdType xla_gpu_enable_command_buffer = 258;
+
+  // Enable VA remapping for command buffer thunks. When enabled, command buffer
+  // thunks use fixed virtual addresses across executions, allowing the command
+  // buffer to be recorded once and replayed without updates.
+  optional bool xla_gpu_enable_command_buffer_va_remapping = 464;
 
   // Enable radix sort using CUB.
   optional bool xla_gpu_enable_cub_radix_sort = 259;
@@ -779,6 +794,13 @@ message DebugOptions {
 
   // For sub-byte dot operands, layout them along contracting dimensions.
   optional bool xla_gpu_experimental_pack_dot_operands_along_k_dimension = 362;
+
+  // This controls the limitation of async-compute resource.
+  // This provides ample flexibility for control, enabling more asynchronous
+  // computations to execute concurrently. In host-offloading experiments,
+  // increasing this value effectively overlaps device-to-host (D2H) transfers
+  // with other computations, resulting in improved performance.
+  optional int32 xla_gpu_experimental_parallel_async_compute_limit = 465;
 
   // This controls how many in-flight collectives latency hiding scheduler
   // can schedule. Example usage:
@@ -1243,6 +1265,10 @@ message DebugOptions {
   // Dump HLO in long text format. Ignored unless xla_dump_hlo_as_text is true.
   optional bool xla_dump_hlo_as_long_text = 164;
 
+  // Dump BufferAssignment analysis. Ignored unless xla_dump_hlo_as_text is
+  // true.
+  optional bool xla_dump_buffer_assignment_analysis = 466;
+
   //
   // END flags controlling dumping HLO modules.
   //
@@ -1387,10 +1413,6 @@ message DebugOptions {
     AUTOTUNE_CACHE_MODE_READ = 2;
   }
 
-  // Whether to ignore channel ids(including verifier channel id checks)
-  // for collectives in the given HLO.
-  optional bool xla_ignore_channel_id = 330;
-
   optional bool xla_pjrt_allow_auto_layout_in_hlo = 344;
 
   // If true, the test launched with ClientLibraryTestBase will also try to
@@ -1425,7 +1447,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 463
+  // Next id: 467
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
@@ -1524,6 +1546,7 @@ message DebugOptions {
   reserved "xla_gpu_use_random_streams";
   reserved "xla_hlo_dump_as_graphdef";
   reserved "xla_hlo_tfgraph_device_scopes";
+  reserved "xla_ignore_channel_id";
   reserved "xla_use_shardy";
   reserved "xla_gpu_unsupported_annotate_with_emitter_loc";
   reserved "xla_gpu_experimental_enable_command_buffer_on_thunks";

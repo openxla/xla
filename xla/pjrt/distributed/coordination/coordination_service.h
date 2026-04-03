@@ -21,7 +21,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <tuple>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
@@ -39,7 +38,6 @@ limitations under the License.
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/coordination/key_value_store.h"
 #include "xla/service/global_device_id.h"
-#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/protobuf/coordination_config.pb.h"
 #include "tsl/platform/random.h"
@@ -92,11 +90,6 @@ class CoordinationService {
     // worker can disconnect individually.
     absl::Duration shutdown_barrier_timeout = absl::ZeroDuration();
 
-    // If a task restarts with a new incarnation, we may allow it to reconnect
-    // silently. This is useful when we know that a task can immediately resume
-    // work upon re-connecting to the service.
-    bool allow_new_incarnation_to_reconnect = false;
-
     // If true, a job can continue running even if some tasks have failed, and
     // tasks are allowed to rejoin. If false, tasks share fate. As soon as one
     // task fails, all tasks are permanently failed.
@@ -116,6 +109,14 @@ class CoordinationService {
     absl::MutexLock lock(state_mu_);
     Stop();
   }
+
+  // CoordinationService is movable but not copyable.
+  CoordinationService(const CoordinationService&) = delete;
+  CoordinationService& operator=(const CoordinationService&) = delete;
+  CoordinationService(CoordinationService&&) = default;
+  CoordinationService& operator=(CoordinationService&&) = default;
+
+  IncarnationId GetServiceIncarnation() { return service_incarnation_; }
 
   // Register a task to the service.
   // Possible service errors:
@@ -142,6 +143,10 @@ class CoordinationService {
   //   - Internal: Service has shut down.
   //   - InvalidArgument: Unexpected task request.
   //   - FailedPrecondition: task has already disconnected.
+  //
+  // This method is for testing only.
+  //
+  // TODO(mwhittaker): Remove this method.
   absl::Status ResetTask(TaskId task);
 
   // Update the heartbeat timestamp of a task. This should only be invoked on
@@ -285,17 +290,7 @@ class CoordinationService {
   void PollForErrorAsync(TaskId task, tsl::StatusCallback done);
 
  private:
-  friend class CoordinationServiceRpcHandler;
-  friend class CoordinationServiceTest_ListClusterDevices_TfDevice_Test;
-  friend class CoordinationServiceTest_ListClusterDevices_XlaDevice_Test;
-  friend class
-      CoordinationServiceTest_ListClusterDevices_DevicesAreNotAddedTwice_Test;
-
   void LogConnectStatusLocked() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
-
-  const xla::coordination::DeviceInfo& ListClusterDevices()
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
-  IncarnationId GetServiceIncarnation();
   void BarrierAsyncLocked(absl::string_view barrier_id, int64_t counter,
                           absl::Duration timeout, TaskId task,
                           const std::vector<TaskId>& participating_tasks,
@@ -309,9 +304,9 @@ class CoordinationService {
   void ConnectTask(TaskId task, IncarnationId incarnation)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Checks if any task has stopped sending heartbeats.
-  void CheckHeartbeatTimeout();
+  void CheckHeartbeatTimeout() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Checks if any barrier has timed out.
-  void CheckBarrierTimeout();
+  void CheckBarrierTimeout() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Checks both heartbeat and barrier timeouts. Use a single function so they
   // can be run in the same thread as threads are a constrained resource.
   void CheckStaleness();
@@ -424,12 +419,6 @@ class CoordinationService {
   // clients are not polling for error from the service, the service should stop
   // when there is an error. Otherwise, the service should not stop.
   bool IsClientPollingForError() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
-
-  // Checks if the barrier can be passed, if recoverable tasks reconnected or
-  // disconnected to the service while barrier is ongoing.
-  // This is only applicable if leave_barriers_on_recoverable_agent_restart flag
-  // is set to true.
-  void CheckBarrierStatusWithRecoverableTasks();
 
   // Returns a map of ongoing barriers to count of unsynced tasks waiting on
   // other barriers.
@@ -576,10 +565,6 @@ class CoordinationService {
   const IncarnationId service_incarnation_{tsl::random::New64()};
   const Config config_;
 
-  std::function<xla::coordination::DeviceInfo(
-      const xla::coordination::DeviceInfo& devices)>
-      post_aggregate_device_fn_;
-
   const std::string shutdown_barrier_id_ =
       absl::StrCat("Shutdown::", service_incarnation_.value());
   std::vector<TaskId> shutdown_barrier_tasks_ ABSL_GUARDED_BY(state_mu_);
@@ -590,7 +575,6 @@ class CoordinationService {
   int64_t cluster_state_version_number_ ABSL_GUARDED_BY(state_mu_) = 0;
   std::vector<WatchJobStateCallback> watch_job_state_callbacks_
       ABSL_GUARDED_BY(state_mu_);
-  xla::coordination::DeviceInfo cluster_devices_ ABSL_GUARDED_BY(state_mu_);
 
   KeyValueStore store_;
 
@@ -603,31 +587,17 @@ class CoordinationService {
   // The state of all pending GetAliveTasks calls.
   std::vector<AlivenessState> aliveness_states_ ABSL_GUARDED_BY(state_mu_);
 
-  // When the tasks connect to coordination service after cluster initialization
-  // is done, they will be added to this set.
-  // Tasks connecting after cluster initialization indicate that they
-  // reconnected to the service due to preemption or restart.
-  // Unsynced recoverable tasks will be excluded from the barrier check after
-  // the first cluster initialization.
-  // The service will remove them from the set when the tasks pass a
-  // barrier with other tasks.
-  absl::flat_hash_set<TaskId> unsynced_recoverable_jobs_
-      ABSL_GUARDED_BY(state_mu_);
   // Whether the agents are polling for error from the service. It will be set
   // to true when the service sees the first error polling request. Once set to
   // true, the value will never change back to false.
   bool client_polling_for_error_ ABSL_GUARDED_BY(state_mu_) = false;
   ErrorPollingState error_polling_state_ ABSL_GUARDED_BY(state_mu_);
 
-  absl::CondVar check_staleness_thread_cv_;
   bool shutting_down_ ABSL_GUARDED_BY(state_mu_) = false;
   // Note: sequence matters here, we must destroy the staleness thread before
   // the other state related to barriers and heartbeats to prevent illegal
   // memory access.
   std::unique_ptr<tsl::Thread> check_staleness_thread_;
-
-  CoordinationService(const CoordinationService&) = delete;
-  void operator=(const CoordinationService&) = delete;
 };
 
 }  // namespace xla

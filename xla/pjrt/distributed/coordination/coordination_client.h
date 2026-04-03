@@ -46,8 +46,6 @@ using xla::coordination::PollForErrorRequest;
 using xla::coordination::PollForErrorResponse;
 using xla::coordination::RegisterTaskRequest;
 using xla::coordination::RegisterTaskResponse;
-using xla::coordination::ResetTaskRequest;
-using xla::coordination::ResetTaskResponse;
 using xla::coordination::ShutdownTaskRequest;
 using xla::coordination::ShutdownTaskResponse;
 using xla::coordination::TryGetKeyValueRequest;
@@ -75,10 +73,6 @@ class CoordinationClient {
                                  const ShutdownTaskRequest* request,
                                  ShutdownTaskResponse* response,
                                  tsl::StatusCallback done) = 0;
-
-  virtual void ResetTaskAsync(const ResetTaskRequest* request,
-                              ResetTaskResponse* response,
-                              tsl::StatusCallback done) = 0;
 
   virtual void WatchJobStateAsync(tsl::CallOptions* call_opts,
                                   const WatchJobStateRequest* request,

@@ -42,7 +42,7 @@ cc_library(
         "//xla/mlir_hlo:transformation_helpers",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:device_description",
-        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
@@ -191,6 +191,25 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
+    ],
+)
+
+xla_cc_test(
+    name = "dot_algorithms_test",
+    srcs = ["dot_algorithms_test.cc"],
+    deps = [
+        ":dot_algorithms",
+        ":emitter_helpers",
+        "//xla/codegen/xtile/ir:xtile",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service/llvm_ir:llvm_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@stablehlo//:stablehlo_ops",
     ],
 )
 

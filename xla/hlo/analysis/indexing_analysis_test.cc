@@ -423,8 +423,8 @@ TEST_P(IndexingAnalysisTest, ReshapeNothing) {
   EXPECT_EQ(output_indexing.indexing_maps[0]
                 .begin()
                 ->map()
-                .GetAffineMap()
-                .getNumResults(),
+                .GetSymbolicMap()
+                .GetNumResults(),
             1);
 }
 
@@ -613,6 +613,23 @@ TEST_P(IndexingAnalysisTest, BitcastIsTranspose) {
                               d1 in [0, 5],
                               d2 in [0, 127],
                               d3 in [0, 12287]
+                          )"));
+}
+
+TEST_P(IndexingAnalysisTest, BitcastWithSize1DimensionIsTranspose) {
+  auto input_indexing = GetOutputToInputIndexing(ParseAndGetRoot(R"(
+    HloModule m
+    ENTRY e {
+      p0 = f32[1,250]{0,1} parameter(0)
+      ROOT bitcast = f32[250,1]{1,0} bitcast(p0)
+    }
+  )"));
+  EXPECT_THAT(input_indexing.ToString(), MatchIndexingString(R"(
+                            operand id = 0
+                              (d0, d1) -> (d1, d0),
+                              domain:
+                              d0 in [0, 249],
+                              d1 in [0, 0]
                           )"));
 }
 

@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/time/time.h"
@@ -37,6 +38,7 @@ limitations under the License.
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
 #include "xla/codegen/tiling/tiled_hlo_computation.h"
 #include "xla/codegen/tiling/tiled_hlo_instruction.h"
+#include "xla/codegen/tiling/tiling_specification.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -48,14 +50,18 @@ limitations under the License.
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/model/coalescing_analysis.h"
+#include "xla/service/gpu/model/gpu_dot_fusion_cost_model.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/gpu_performance_model_base.h"
+#include "xla/service/gpu/model/tiling_from_block_parameters.h"
 #include "xla/service/gpu/model/triton_emitter_constraints.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
@@ -266,6 +272,19 @@ int64_t GetNumWarps(int64_t largest_live_tile_size) {
   if (largest_live_tile_size <= 1024) return 2;
   if (largest_live_tile_size <= 4096) return 4;
   return 8;
+}
+
+absl::StatusOr<EstimateRunTimeData> GetDotEstimates(
+    const TiledHloInstruction* tiled_hlo,
+    const se::DeviceDescription& device_info) {
+  const auto* dot_instr = Cast<const HloDotInstruction>(tiled_hlo->hlo());
+  TF_RETURN_IF_ERROR(gpu_dot_fusion_cost_model::IsSupported(dot_instr));
+
+  BlockLevelParameters block_params;
+  block_params.output_tile_sizes.push_back(std::vector<int64_t>{
+      tiled_hlo->tile_sizes().begin(), tiled_hlo->tile_sizes().end()});
+  return gpu_dot_fusion_cost_model::EstimateRunTimeForDotOpWithBlockParameters(
+      dot_instr, block_params, device_info);
 }
 
 }  // namespace
@@ -516,9 +535,13 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledHloComputation(
     const LaunchDimensions& launch_dimensions) {
   absl::flat_hash_map<const HloInstruction*, OperandReadInfo> n_bytes_total_map;
 
+  // Compute time for dot flops is counted separately.
+  int64_t dot_flops = 0;
   int64_t flops = 0;
   int64_t bytes_read = 0;
   int64_t num_blocks = launch_dimensions.num_blocks();
+
+  absl::Duration dot_compute_time = absl::ZeroDuration();
 
   // Check if the computation is too large to fit in registers and would result
   // in spilling.
@@ -543,6 +566,28 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledHloComputation(
           // will still perform calculations on masked values, so they should
           // count towards FLOPs.
           int64_t num_elements = num_blocks_cur_hlo * padded_tile_size;
+
+          if (hlo->opcode() == HloOpcode::kDot) {
+            absl::StatusOr<EstimateRunTimeData> dot_perf_stats =
+                GetDotEstimates(tiled_hlo, *device_info_);
+            if (dot_perf_stats.ok()) {
+              // We're only using compute time for now - memory and L2 access
+              // data needs to be adjusted more carefully so that the model
+              // doesn't overlap their counting.
+              // TODO: b/495346904 - integrate the dot stats more completely.
+              dot_compute_time += dot_perf_stats->compute_time;
+
+              // The dot cost model operates on the tile- and wave- quantized
+              // FLOPS which is more accurate for performance estimates but
+              // the flops reported by the indexing model are naive algorithm
+              // flops.
+              // Since the compute time for these flops is already accounted
+              // for in dot_compute_time, we're accumulating it separately
+              // from `flops`.
+              dot_flops += FlopsPerElement(hlo) * num_elements;
+              return;
+            }
+          }
 
           // Tiles inside the computation contribute to the total FLOPs count.
           flops += FlopsPerElement(hlo) * num_elements;
@@ -619,13 +664,14 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledHloComputation(
 
   absl::Duration compute_time =
       ComputeTime(*device_info_, flops, num_blocks,
-                  launch_dimensions.num_threads_per_block());
+                  launch_dimensions.num_threads_per_block()) +
+      dot_compute_time;
 
   absl::Duration memory_access_time = read_time + write_time;
   absl::Duration exec_time =
       CombineComputeAndMemoryAccessTime(compute_time, memory_access_time);
 
-  return EstimateRunTimeData{/*flops=*/flops,
+  return EstimateRunTimeData{/*flops=*/flops + dot_flops,
                              /*bytes_read=*/bytes_read,
                              /*bytes_written=*/bytes_written,
                              /*read_time=*/read_time,
@@ -638,7 +684,7 @@ absl::StatusOr<EstimateRunTimeData>
 GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledFusion(
     const HloFusionAdaptor& fusion_adaptor,
     const LaunchDimensions& launch_dimensions,
-    const std::vector<std::vector<int64_t>>& tile_sizes) {
+    const BlockLevelParameters& block_level_parameters) {
   // TODO(b/332714755): Add caching for SymbolicTileAnalysis.
   SymbolicTileAnalysisOrError analysis_or_error =
       SymbolicTileAnalysis::AnalyzeFusion(
@@ -652,12 +698,8 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledFusion(
   SymbolicTileAnalysis analysis =
       std::get<SymbolicTileAnalysis>(std::move(analysis_or_error));
 
-  int64_t real_root_index = analysis.real_root_index();
-  absl::Span<int64_t const> real_root_tile_sizes = tile_sizes[real_root_index];
-  const HloInstruction* real_root =
-      &fusion_adaptor.GetRoots()[real_root_index].instruction();
-  Tiling tiling = Tiling({{real_root, FlatTiling(real_root_tile_sizes.begin(),
-                                                 real_root_tile_sizes.end())}});
+  TF_ASSIGN_OR_RETURN(Tiling tiling, TilingFromAnnotatedFusion(
+                                         analysis, block_level_parameters));
 
   TF_ASSIGN_OR_RETURN(TiledHloComputation tiled_hlo_computation,
                       analysis.ComputeTiledComputation(tiling));
@@ -679,9 +721,9 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTriton(
         "Could not get launch config for Triton fusion.");
   }
 
-  return EstimateRunTimeForTiledFusion(
-      fusion_analysis.fusion(), launch_config->launch_dimensions,
-      launch_config->block_level_parameters.output_tile_sizes);
+  return EstimateRunTimeForTiledFusion(fusion_analysis.fusion(),
+                                       launch_config->launch_dimensions,
+                                       launch_config->block_level_parameters);
 }
 
 /*static*/

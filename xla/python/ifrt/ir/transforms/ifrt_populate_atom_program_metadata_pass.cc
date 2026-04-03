@@ -176,11 +176,12 @@ mlir::LogicalResult PopulateMetadata(CallOp call_op, mlir::ModuleOp module_op,
   for (const auto& raw_io_alias :
        call_op.getIoAliases().getAsRange<mlir::DenseI32ArrayAttr>()) {
     llvm::ArrayRef<int> io_alias_as_array = raw_io_alias.asArrayRef();
-    callee_op.setArgAttr(io_alias_as_array[0], "tf.aliasing_output",
+    callee_op.setArgAttr(io_alias_as_array[0], kAliasingOutputAttrName,
                          builder.getI32IntegerAttr(io_alias_as_array[1]));
   }
   for (const int32_t idx : call_op.getDonatedInputIndices()) {
-    callee_op.setArgAttr(idx, "jax.buffer_donor", builder.getBoolAttr(true));
+    callee_op.setArgAttr(idx, kBufferDonationAttrName,
+                         builder.getBoolAttr(true));
   }
   return mlir::success();
 }

@@ -446,14 +446,13 @@ cc_library(
     srcs = ["errors.cc"],
     hdrs = ["errors.h"],
     deps = [
-        ":logging",
         ":macros",
         ":status",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
-        "@tsl//tsl/platform:strcat",
+        "@tsl//tsl/platform",
     ],
 )
 
@@ -789,6 +788,14 @@ cc_library(
 # copybara:comment_begin(oss-only)
 cc_library(
     name = "status_macros",
+    hdrs = ["status_macros.h"],
+    compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([]),  # The header should be used only in OSS.
+    deps = [":statusor"],
+)
+
+cc_library(
+    name = "gloop_status_macros",
     hdrs = ["status_macros.h"],
     compatible_with = get_compatible_with_portable(),
     visibility = internal_visibility([]),  # The header should be used only in OSS.

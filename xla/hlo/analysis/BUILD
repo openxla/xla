@@ -783,9 +783,7 @@ xla_cc_test(
     deps = [
         ":indexing_test_utils",
         ":symbolic_map",
-        "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/log:scoped_mock_log",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
@@ -829,6 +827,7 @@ cc_library(
     deps = [
         ":indexing_analysis",
         ":interval",
+        ":symbolic_map",
         "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",

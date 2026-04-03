@@ -192,7 +192,10 @@ class IndexingMap {
   }
 
   // Returns the symbolic map.
-  SymbolicMap GetSymbolicMap() const { return symbolic_map_; }
+  const SymbolicMap& GetSymbolicMap() const& { return symbolic_map_; }
+  // Return the symbolic map by value (moving it out of the temporary
+  // IndexingMap).
+  SymbolicMap GetSymbolicMap() && { return std::move(symbolic_map_); }
 
   // Returns the number of indexing map results.
   int64_t GetNumResults() const { return symbolic_map_.GetNumResults(); }
@@ -329,12 +332,12 @@ class IndexingMap {
       std::vector<Variable> range_vars, std::vector<Variable> rt_vars,
       absl::Span<std::pair<SymbolicExpr, Interval> const> constraints = {});
 
- private:
-  IndexingMap() = default;
-
   IndexingMap(SymbolicMap symbolic_map, std::vector<Variable> dimensions,
               std::vector<Variable> range_vars, std::vector<Variable> rt_vars,
               const llvm::MapVector<SymbolicExpr, Interval>& constraints);
+
+ private:
+  IndexingMap() = default;
 
   // Merges "mod" constraints for the same SymbolicExpr.
   // Returns true if simplification was performed.
