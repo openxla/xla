@@ -63,6 +63,5 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
-        "//xla/pjrt:pjrt_compiler",
     ],
 )

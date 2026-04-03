@@ -48,6 +48,9 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
     ],
     alwayslink = True,
 )
@@ -105,6 +108,7 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:errors",
     ],
 )
 
@@ -155,7 +159,6 @@ cc_library(
     deps = [
         ":pjrt_client_registry",
         "//xla/pjrt:pjrt_client",
-        "//xla/pjrt/interpreter:interpreter_client",
     ],
     alwayslink = True,
 )
@@ -433,6 +436,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -2382,6 +2386,8 @@ xla_test(
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -3104,6 +3110,9 @@ xla_test(
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
     ],
 )
 
@@ -3220,6 +3229,7 @@ xla_test(
         "@llvm-project//llvm:Core",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -3333,6 +3343,7 @@ xla_test(
         "//xla/service:shaped_buffer",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -3371,6 +3382,8 @@ xla_test(
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test_benchmark",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test_benchmark",
     ],
 )
 
@@ -3430,6 +3443,7 @@ xla_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -3615,6 +3629,8 @@ xla_cc_test(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -3892,6 +3908,7 @@ xla_test(
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:path",
+        "//xla/tsl/platform:env",
     ],
 )
 
