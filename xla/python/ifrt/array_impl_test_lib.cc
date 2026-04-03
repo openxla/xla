@@ -62,6 +62,7 @@ using ::testing::Each;
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::HasSubstr;
+using ::testing::Optional;
 using ::testing::SizeIs;
 
 // Returns a list of non-addressable devices in the client.
@@ -761,9 +762,13 @@ TEST(ArrayImplTest, MakeArraysFromHostBufferShardsWithLayout) {
   }
 
   TF_ASSERT_OK(array->GetReadyFuture().Await());
+
   TF_ASSERT_OK_AND_ASSIGN(auto result_layout, array->pjrt_layout());
   ASSERT_NE(result_layout, nullptr);
   EXPECT_EQ(*result_layout, *layout);
+
+  const int64_t expected_size = *dtype.byte_size() * shape.num_elements();
+  EXPECT_THAT(array->ByteSize(), IsOkAndHolds(Optional(expected_size)));
 }
 
 TEST(ArrayImplTest, MakeArrayFromHostBufferAndCopyToHostBufferWithString) {
