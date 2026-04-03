@@ -16,7 +16,6 @@ limitations under the License.
 #define XLA_PYTHON_IFRT_IR_CONVERSIONS_MPMD_UTILS_H_
 
 #include "absl/status/statusor.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "shardy/dialect/mpmd/ir/dialect.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "xla/hlo/ir/hlo_sharding.h"
@@ -40,9 +39,6 @@ absl::StatusOr<xla::ifrt::ShardingParam> MeshTensorTypeToShardingParam(
 // Converts a MeshTensorType to an HloSharding.
 xla::HloSharding GetHloSharding(mlir::mpmd::MeshTensorType mesh_tensor_type,
                                 mlir::sdy::MeshAttr sdy_mesh_attr);
-
-// Returns true if the function is annotated with the ifrt.function attribute.
-bool IsIfrtFunction(mlir::func::FuncOp func_op);
 
 }  // namespace xla::ifrt::mpmd
 

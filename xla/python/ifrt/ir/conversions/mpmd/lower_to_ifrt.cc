@@ -18,17 +18,12 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
-#include "absl/strings/str_cat.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/LogicalResult.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -38,7 +33,6 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
@@ -49,15 +43,11 @@ limitations under the License.
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/TypeID.h"
-#include "mlir/Support/WalkResult.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "shardy/dialect/mpmd/ir/dialect.h"
 #include "shardy/dialect/mpmd/ir/utils.h"
-#include "shardy/dialect/mpmd/transforms/export/utils.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "stablehlo/dialect/StablehloOps.h"
-#include "xla/client/executable_build_options.h"
-#include "xla/pjrt/pjrt_executable.h"
 #include "xla/python/ifrt/ir/constants.h"
 #include "xla/python/ifrt/ir/conversions/mpmd/utils.h"
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
@@ -66,7 +56,6 @@ limitations under the License.
 #include "xla/python/ifrt/ir/transforms/debug.h"
 #include "xla/python/ifrt/ir/transforms/passes.h"
 #include "xla/python/ifrt/ir/transforms/utils.h"
-#include "xla/service/computation_placer.h"
 
 namespace xla::ifrt::mpmd {
 namespace {
@@ -363,116 +352,10 @@ class LowerToIfrtPass
   }
 };
 
-class BuildCompileOptionsPass
-    : public mlir::PassWrapper<BuildCompileOptionsPass,
-                               mlir::OperationPass<mlir::ModuleOp>> {
- public:
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(BuildCompileOptionsPass)
-
-  explicit BuildCompileOptionsPass(
-      CompileOptionsMap& compile_options_map,
-      const absl::flat_hash_map<std::string, const EnvOptionsOverride>&
-          compile_options_overrides,
-      int threshold_for_argument_tupling,
-      llvm::function_ref<void(xla::ExecutableBuildOptions&, int64_t)>
-          set_reserved_bytes)
-      : compile_options_map_(compile_options_map),
-        compile_options_overrides_(compile_options_overrides),
-        threshold_for_argument_tupling_(threshold_for_argument_tupling),
-        set_reserved_bytes_(set_reserved_bytes) {}
-
- private:
-  CompileOptionsMap& compile_options_map_;
-  const absl::flat_hash_map<std::string, const EnvOptionsOverride>&
-      compile_options_overrides_;
-  int threshold_for_argument_tupling_;
-  std::function<void(xla::ExecutableBuildOptions&, int64_t)>
-      set_reserved_bytes_;
-
-  void runOnOperation() override {
-    mlir::ModuleOp module = getOperation();
-    mlir::SymbolTableCollection symbol_table;
-    mlir::func::FuncOp func_op = GetMainFunction(module);
-    int threshold_for_argument_tupling = threshold_for_argument_tupling_;
-    auto walk_result = func_op.walk([&](CallOp call_op) {
-      xla::CompileOptions compile_options;
-      xla::ExecutableBuildOptions& exec_build_options =
-          compile_options.executable_build_options;
-      mlir::ArrayRef<int> logical_device_ids =
-          call_op.getDevicesAttr().getIds();
-      exec_build_options.set_num_replicas(1);
-      exec_build_options.set_num_partitions(logical_device_ids.size());
-      xla::DeviceAssignment device_assignment(1, logical_device_ids.size());
-      // Build options use IFRT logical device ids.
-      for (const auto [i, device_id] : llvm::enumerate(logical_device_ids)) {
-        device_assignment(0, i) = device_id;
-      }
-      exec_build_options.set_device_assignment(device_assignment);
-      exec_build_options.set_use_spmd_partitioning(true);
-      exec_build_options.set_use_shardy_partitioner(true);
-      mlir::func::FuncOp callee = call_op.getCalleeOp(symbol_table);
-      if (auto reserved_hbm_bytes = callee->getAttrOfType<mlir::IntegerAttr>(
-              mpmd::kReservedHbmBytes)) {
-        set_reserved_bytes_(exec_build_options, reserved_hbm_bytes.getInt());
-      };
-      std::string callee_name =
-          callee->getParentOfType<mlir::ModuleOp>().getSymName()->str();
-      auto mesh_name_attr =
-          call_op->getAttrOfType<mlir::StringAttr>(kIfrtMeshNameAttrName);
-      CHECK(mesh_name_attr != nullptr)
-          << "ifrt.CallOp `" << callee_name << "` is missing "
-          << kIfrtMeshNameAttrName.str() << " attribute.";
-      // While the users provide per-mesh compilation options, we need to
-      // include callee name in the key because fragments assigned to the same
-      // mesh might have different `reserved_hbm_bytes`.
-      const std::string compile_options_key =
-          absl::StrCat(callee_name, "_mesh_", mesh_name_attr.str());
-      call_op->setAttr(
-          kIfrtCompileOptionsKey,
-          mlir::StringAttr::get(call_op->getContext(), compile_options_key));
-      // Apply the user-provided per-mesh compile option overrides.
-      if (auto option_overrides =
-              compile_options_overrides_.find(mesh_name_attr.str());
-          option_overrides != compile_options_overrides_.end()) {
-        compile_options.env_option_overrides = option_overrides->second;
-      }
-      if (threshold_for_argument_tupling > 0 &&
-          callee.getNumArguments() > threshold_for_argument_tupling) {
-        compile_options.parameter_is_tupled_arguments = true;
-      }
-      compile_options_map_.emplace(compile_options_key, compile_options);
-      return mlir::WalkResult::skip();
-    });
-    if (walk_result.wasInterrupted()) {
-      signalPassFailure();
-    }
-  }
-
-  mlir::StringRef getArgument() const override {
-    return "mpmd-ifrt-build-compile-options";
-  }
-
-  mlir::StringRef getDescription() const override {
-    return "Gets the compile options for each IFRT atom program.";
-  }
-};
-
 }  // namespace
 
 std::unique_ptr<mlir::Pass> CreateLowerToIfrtPass() {
   return std::make_unique<LowerToIfrtPass>();
-}
-
-std::unique_ptr<mlir::Pass> CreateBuildCompileOptionsPass(
-    CompileOptionsMap& compile_options_map,
-    const absl::flat_hash_map<std::string, const EnvOptionsOverride>&
-        compile_options_overrides,
-    int threshold_for_argument_tupling,
-    llvm::function_ref<void(xla::ExecutableBuildOptions&, int64_t)>
-        set_reserved_bytes) {
-  return std::make_unique<BuildCompileOptionsPass>(
-      compile_options_map, compile_options_overrides,
-      threshold_for_argument_tupling, set_reserved_bytes);
 }
 
 void AddLowerToIfrtPasses(mlir::OpPassManager& pm) {
@@ -503,30 +386,6 @@ absl::Status LowerToIfrt(mlir::ModuleOp module) {
     return diagnostic_handler.ConsumeStatus();
   }
   return absl::OkStatus();
-}
-
-absl::StatusOr<CompileOptionsMap> GetCompileOptions(
-    mlir::ModuleOp module,
-    const absl::flat_hash_map<std::string, const EnvOptionsOverride>&
-        compile_options_overrides,
-    int threshold_for_argument_tupling,
-    llvm::function_ref<void(xla::ExecutableBuildOptions&, int64_t)>
-        set_reserved_bytes) {
-  mlir::func::FuncOp main_func = GetMainFunction(module);
-  if (!IsIfrtFunction(main_func)) {
-    return absl::InvalidArgumentError("MLIR module is not an IFRT module.");
-  }
-  mlir::PassManager pm(module->getContext());
-  InitPassManager(pm, "mpmd-ifrt-build-compile-options");
-  CompileOptionsMap compile_options_map;
-  pm.addPass(CreateBuildCompileOptionsPass(
-      compile_options_map, compile_options_overrides,
-      threshold_for_argument_tupling, set_reserved_bytes));
-  StatusScopedDiagnosticHandler diagnostic_handler(module.getContext());
-  if (mlir::failed(pm.run(module))) {
-    return diagnostic_handler.ConsumeStatus();
-  }
-  return compile_options_map;
 }
 
 }  // namespace xla::ifrt::mpmd

@@ -68,7 +68,6 @@ cc_library(
         ":utils",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
-        "//xla/client:executable_build_options",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",
         "//xla/pjrt:mlir_to_hlo",
@@ -86,7 +85,6 @@ cc_library(
         "//xla/python/ifrt/ir:version",
         "//xla/python/ifrt/ir:vifrt",
         "//xla/python/ifrt/support:sharding_conversions",
-        "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_proto_cc",
         "//xla/service/spmd/shardy:constants",
         "//xla/service/spmd/shardy:utils",
@@ -132,6 +130,29 @@ cc_library(
 )
 
 cc_library(
+    name = "ifrt_create_compile_options_pass",
+    srcs = ["ifrt_create_compile_options_pass.cc"],
+    hdrs = ["ifrt_create_compile_options_pass.h"],
+    deps = [
+        ":debug",
+        ":utils",
+        "//xla/pjrt:pjrt_executable",
+        "//xla/python/ifrt/ir",
+        "//xla/python/ifrt/ir:compilation_utils",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+        "@shardy//shardy/dialect/mpmd/transforms/export:utils",
+    ],
+)
+
+cc_library(
     name = "built_in_spmd_expansions",
     srcs = ["built_in_spmd_expansions.cc"],
     hdrs = ["built_in_spmd_expansions.h"],
@@ -160,6 +181,8 @@ cc_library(
         "//xla/python/ifrt/support:sharding_conversions",
         "//xla/python/pjrt_ifrt:pjrt_dtype",
         "//xla/python/pjrt_ifrt:xla_ifrt",
+        "//xla/service:computation_placer_hdr",
+        "//xla/service/spmd/shardy:utils",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",

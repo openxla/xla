@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/python/ifrt/client.h"
@@ -34,10 +35,12 @@ limitations under the License.
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/hlo/hlo_program.h"
 #include "xla/python/ifrt/ir/atom_program_compiler.h"
+#include "xla/python/ifrt/ir/compilation_utils.h"
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/service/computation_placer.h"
+#include "xla/status_macros.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -83,6 +86,28 @@ tsl::Future<LoadedExecutableRef> BasicAtomProgramCompiler::CompileXla(
 
   TF_ASSIGN_OR_RETURN(DeviceListRef devices,
                       GetDeviceListFromXlaCompileOptions(client_, options));
+
+  TF_RET_CHECK(!devices->devices().empty())
+      << "CompileXla was called with empty device assignment.";
+  xla::ifrt::Device* first_device = devices->devices().front();
+  absl::string_view platform_name = first_device->PlatformName();
+  TF_RET_CHECK(platform_name == "tpu" || platform_name == "cpu" ||
+               platform_name == "cuda" || platform_name == "rocm")
+      << "Unsupported platform: " << platform_name;
+
+  if (strict_memory_reservation_) {
+    TF_RET_CHECK(first_device->PlatformName() == "tpu")
+        << "IFRT IR `strict_memory_reservation` option is only supported for "
+           "TPU devices. Got device platform: "
+        << first_device->PlatformName();
+    TF_ASSIGN_OR_RETURN(
+        int64_t device_memory,
+        first_device->Attributes().Get<int64_t>("device_memory_bytes_limit"));
+
+    TF_RETURN_IF_ERROR(SetStrictMemoryReservation(hlo_program->name(),
+                                                  device_memory, options));
+  }
+
   return client_->GetDefaultCompiler()->CompileAndLoad(
       std::move(hlo_program), std::make_unique<XlaCompileOptions>(
                                   std::move(options), std::move(devices)));
