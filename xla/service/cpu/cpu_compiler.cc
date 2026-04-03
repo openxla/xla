@@ -578,13 +578,10 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     HloModule* module, bool is_aot_compile,
     TargetMachineFeatures* target_machine_features) {
   const int64_t num_partitions = module->config().num_partitions();
-  const DebugOptions& debug_options = module->config().debug_options();
-  const bool use_fusion_emitters = debug_options.xla_cpu_use_fusion_emitters();
-  const bool use_shardy_partitioner = module->config().use_shardy_partitioner();
-  const bool fast_compile = debug_options.xla_cpu_opt_preset() ==
-                            xla::DebugOptions::CPU_OPT_PRESET_FAST_COMPILE;
-  const bool flatten_before_fusion =
-      !options::FlattenAfterFusion(module->config()) && !fast_compile;
+  const bool use_fusion_emitters =
+      module->config().debug_options().xla_cpu_use_fusion_emitters();
+  bool use_shardy_partitioner = module->config().use_shardy_partitioner();
+  bool flatten_before_fusion = !options::FlattenAfterFusion(module->config());
 
   // Replace asynchronous collectives with synchronous ones.
   HloPassPipeline async_collective_pipeline("async-collective");
@@ -876,6 +873,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
       }
 
 #ifdef XLA_ONEDNN
+      const DebugOptions& debug_options = module->config().debug_options();
       if ((debug_options.xla_cpu_use_onednn() ||
            debug_options.xla_cpu_experimental_onednn_custom_call()) &&
           cpu::OneDnnContractionRewriter::ShouldRewriteInstr(instr, true)) {
@@ -966,10 +964,6 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   const auto& debug_options = module->config().debug_options();
   const bool use_fusion_emitters = debug_options.xla_cpu_use_fusion_emitters();
   bool flatten_after_fusion = options::FlattenAfterFusion(module->config());
-  if (debug_options.xla_cpu_opt_preset() ==
-      xla::DebugOptions::CPU_OPT_PRESET_FAST_COMPILE) {
-    flatten_after_fusion = true;
-  }
   HloPassPipeline pipeline("HLO passes after layout assignment");
 
   {
@@ -2107,35 +2101,21 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
         options.cpu_target_config->cpu_target_machine_options.value();
   }
 
-  const bool fast_compile =
-      module->config().debug_options().xla_cpu_opt_preset() ==
-      xla::DebugOptions::CPU_OPT_PRESET_FAST_COMPILE;
-
-  llvm::CodeGenOptLevel opt_level =
-      IrCompiler::GetCodeGenOptLevel(module->config());
-  if (fast_compile &&
-      !module->config().debug_options().has_xla_backend_optimization_level()) {
-    opt_level = llvm::CodeGenOptLevel::Less;
-  }
-
-  const bool disable_expensive_passes =
-      module->config().debug_options().xla_llvm_disable_expensive_passes();
-
   // Options for compiling LLVM IR to machine code.
   IrCompiler::Options ir_compiler_options{
-      /*optimization_level=*/opt_level,
-      /*optimize_for_size=*/
-      options::OptimizeForSizeRequested(module->config()),
+      /*optimization_level=*/IrCompiler::GetCodeGenOptLevel(module->config()),
+      /*optimize_for_size=*/options::OptimizeForSizeRequested(module->config()),
       /*target_machine_options=*/
       target_machine_options,
       /*fast_math_flags=*/llvm_ir::GetCpuFastMathFlags(module->config()),
-      /*disable_expensive_passes=*/disable_expensive_passes,
-      /*disable_slp_vectorizer=*/
+      /*disable_expensive_passes=*/
+      module->config().debug_options().xla_llvm_disable_expensive_passes(),
+      /*slp_vectorizer_disabled=*/
       options::SlpVectorizerDisabled(module->config()),
       /*disable_loop_unrolling=*/
       options::DisableLoopUnrolling(module->config()),
       /*disable_platform_dependent_math=*/
-      options::DisablePlatformDependentMath(module->config()) || fast_compile,
+      options::DisablePlatformDependentMath(module->config()),
   };
 
   ThunkEmitter::Options thunk_emitter_options = {
@@ -2264,32 +2244,20 @@ CpuCompiler::CompileAheadOfTimeThunks(
       triple.normalize(), target_machine->getTargetCPU(),
       target_machine->getTargetFeatureString());
 
-  const bool fast_compile =
-      module->config().debug_options().xla_cpu_opt_preset() ==
-      xla::DebugOptions::CPU_OPT_PRESET_FAST_COMPILE;
-
-  llvm::CodeGenOptLevel opt_level = target_machine->getOptLevel();
-  if (fast_compile &&
-      !module->config().debug_options().has_xla_backend_optimization_level()) {
-    opt_level = llvm::CodeGenOptLevel::Less;
-  }
-
-  const bool disable_expensive_passes =
-      module->config().debug_options().xla_llvm_disable_expensive_passes();
-
   IrCompiler::Options ir_compiler_options = {
-      /*optimization_level=*/opt_level,
+      /*optimization_level=*/target_machine->getOptLevel(),
       /*optimize_for_size=*/
       options::OptimizeForSizeRequested(module->config()),
       /*target_machine_options=*/target_machine_options,
       /*fast_math_flags=*/llvm_ir::GetCpuFastMathFlags(module->config()),
-      /*disable_expensive_passes=*/disable_expensive_passes,
+      /*disable_expensive_passes=*/
+      module->config().debug_options().xla_llvm_disable_expensive_passes(),
       /*disable_slp_vectorizer=*/
       options::SlpVectorizerDisabled(module->config()),
       /*disable_loop_unrolling=*/
       options::DisableLoopUnrolling(module->config()),
       /*disable_platform_dependent_math=*/
-      options::DisablePlatformDependentMath(module->config()) || fast_compile,
+      options::DisablePlatformDependentMath(module->config()),
       /*dfsan_enabled=*/aot_options.sanitize_dataflow(),
       /*dfsan_abilists_enabled=*/aot_options.sanitize_abilists_dataflow()};
 
