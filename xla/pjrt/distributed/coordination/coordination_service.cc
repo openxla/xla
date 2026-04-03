@@ -642,7 +642,7 @@ std::vector<TaskInfo> CoordinationService::GetJobState() {
   return states_info;
 }
 
-void CoordinationService::NotifyWatchJobStateCallbacks() {
+void CoordinationService::NotifyWatchTasksCallbacks() {
   for (auto& callback : watch_job_state_callbacks_) {
     callback(GetJobState(), cluster_state_version_number_);
   }
@@ -651,11 +651,11 @@ void CoordinationService::NotifyWatchJobStateCallbacks() {
 
 void CoordinationService::ClusterStateUpdated() {
   cluster_state_version_number_++;
-  NotifyWatchJobStateCallbacks();
+  NotifyWatchTasksCallbacks();
 }
 
-void CoordinationService::WatchJobState(std::optional<int64_t> version_number,
-                                        WatchJobStateCallback callback) {
+void CoordinationService::WatchTasks(std::optional<int64_t> version_number,
+                                     WatchTasksCallback callback) {
   absl::MutexLock l(state_mu_);
   int64_t v = version_number.value_or(-1);
   CHECK_GE(cluster_state_version_number_, v);

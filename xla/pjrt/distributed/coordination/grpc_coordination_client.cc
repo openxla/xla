@@ -62,8 +62,8 @@ using xla::coordination::ShutdownTaskRequest;
 using xla::coordination::ShutdownTaskResponse;
 using xla::coordination::TryGetKeyValueRequest;
 using xla::coordination::TryGetKeyValueResponse;
-using xla::coordination::WatchJobStateRequest;
-using xla::coordination::WatchJobStateResponse;
+using xla::coordination::WatchTasksRequest;
+using xla::coordination::WatchTasksResponse;
 
 class GrpcCoordinationClientThread {
  public:
@@ -143,12 +143,12 @@ class GrpcCoordinationClient : public CoordinationClient {
         /*fail_fast=*/true, &target_);
   }
 
-  void WatchJobStateAsync(tsl::CallOptions* call_opts,
-                          const WatchJobStateRequest* request,
-                          WatchJobStateResponse* response,
-                          tsl::StatusCallback done) override {
+  void WatchTasksAsync(tsl::CallOptions* call_opts,
+                       const WatchTasksRequest* request,
+                       WatchTasksResponse* response,
+                       tsl::StatusCallback done) override {
     new tsl::RPCState<tsl::protobuf::Message>(
-        &stub_, cq_, "/xla.coordination.CoordinationService/WatchJobState",
+        &stub_, cq_, "/xla.coordination.CoordinationService/WatchTasks",
         *request, response, std::move(done), call_opts,
         /*threadpool=*/nullptr, /*max_retries=*/0, /*fail_fast=*/true,
         &target_);

@@ -319,19 +319,18 @@ void CoordinationServiceAgent::PollForErrorAsync(tsl::StatusCallback done) {
       });
 }
 
-std::shared_ptr<tsl::CallOptions> CoordinationServiceAgent::WatchJobStateAsync(
+std::shared_ptr<tsl::CallOptions> CoordinationServiceAgent::WatchTasksAsync(
     std::optional<int64_t> version_number,
-    std::function<
-        void(absl::StatusOr<xla::coordination::WatchJobStateResponse>)>
+    std::function<void(absl::StatusOr<xla::coordination::WatchTasksResponse>)>
         callback) {
-  auto request = std::make_shared<WatchJobStateRequest>();
-  auto response = std::make_shared<WatchJobStateResponse>();
+  auto request = std::make_shared<WatchTasksRequest>();
+  auto response = std::make_shared<WatchTasksResponse>();
   auto call_opts = std::make_shared<tsl::CallOptions>();
-  WatchJobStateRequest* request_ptr = request.get();
-  WatchJobStateResponse* response_ptr = response.get();
+  WatchTasksRequest* request_ptr = request.get();
+  WatchTasksResponse* response_ptr = response.get();
   request->set_version_number(version_number.value_or(-1));
 
-  leader_client_->WatchJobStateAsync(
+  leader_client_->WatchTasksAsync(
       call_opts.get(), request_ptr, response_ptr,
       [request = std::move(request), response = std::move(response),
        callback = std::move(callback)](const absl::Status& s) mutable {
@@ -344,17 +343,16 @@ std::shared_ptr<tsl::CallOptions> CoordinationServiceAgent::WatchJobStateAsync(
   return call_opts;
 }
 
-absl::StatusOr<xla::coordination::WatchJobStateResponse>
-CoordinationServiceAgent::WatchJobState(std::optional<int64_t> version_number) {
-  absl::StatusOr<xla::coordination::WatchJobStateResponse> response;
+absl::StatusOr<xla::coordination::WatchTasksResponse>
+CoordinationServiceAgent::WatchTasks(std::optional<int64_t> version_number) {
+  absl::StatusOr<xla::coordination::WatchTasksResponse> response;
   absl::Notification done;
-  WatchJobStateAsync(
-      version_number,
-      [&response,
-       &done](absl::StatusOr<xla::coordination::WatchJobStateResponse> r) {
-        response = std::move(r);
-        done.Notify();
-      });
+  WatchTasksAsync(version_number,
+                  [&response, &done](
+                      absl::StatusOr<xla::coordination::WatchTasksResponse> r) {
+                    response = std::move(r);
+                    done.Notify();
+                  });
   done.WaitForNotification();
   return response;
 }
