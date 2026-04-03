@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/python/ifrt/shape.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
+#include "xla/service/spmd/shardy/utils.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/statusor.h"
@@ -155,6 +156,9 @@ MultiThreadedAtomProgramCompiler::GetXlaCompileOptions(
     }
     exec_build_options.set_device_assignment(device_assignment);
     exec_build_options.set_use_spmd_partitioning(true);
+    if (xla::sdy::hasShardyMesh(module_op)) {
+      exec_build_options.set_use_shardy_partitioner(true);
+    }
     if (enable_sharding_propagation_) {
       mlir::func::FuncOp main_func = GetMainFunction(module_op);
       exec_build_options.set_allow_spmd_sharding_propagation_to_parameters(

@@ -67,9 +67,6 @@ limitations under the License.
 #include "xla/python/ifrt/ir/transforms/passes.h"
 #include "xla/python/ifrt/ir/transforms/utils.h"
 #include "xla/service/computation_placer.h"
-#include "xla/service/spmd/shardy/constants.h"
-#include "xla/service/spmd/shardy/sdy_round_trip/pipelines.h"
-#include "xla/service/spmd/shardy/utils.h"
 
 namespace xla::ifrt::mpmd {
 namespace {
@@ -357,24 +354,6 @@ class LowerToIfrtPass
                                                   std::move(patterns)))) {
       signalPassFailure();
     }
-
-    // Convert the xla.sdy.meshes attribute to ifrt.sdy.meshes attribute so
-    // that the attribute is preserved during IFRT versioning. This is safe
-    // to do because the attribute if forward and backward compatible.
-    if (auto front_end_attr = xla::sdy::getFrontendAttrs(module_op)) {
-      if (auto meshes_round_trip_attr =
-              front_end_attr.get(xla::sdy::kMeshesRoundTripAttr)) {
-        module_op->setAttr(xla::ifrt::kIfrtSdyMeshesRoundTripAttr,
-                           meshes_round_trip_attr);
-      }
-    }
-
-    // Clean up the sdy meshes.
-    mlir::IRRewriter rewriter(&ctx);
-    auto sdy_mesh_op_s = module_op.getOps<mlir::sdy::MeshOp>();
-    for (auto it = sdy_mesh_op_s.begin(); it != sdy_mesh_op_s.end();) {
-      rewriter.eraseOp(*it++);
-    }
   }
 
   mlir::StringRef getArgument() const override { return "mpmd-lower-to-ifrt"; }
@@ -497,12 +476,6 @@ std::unique_ptr<mlir::Pass> CreateBuildCompileOptionsPass(
 }
 
 void AddLowerToIfrtPasses(mlir::OpPassManager& pm) {
-  // TODO(icgog): We do not enable hlo sharding v3 yet because it does not
-  // interplay well with the per-mesh compile options. These passes run at
-  // lowering time/export time, but a compile time a different value might be
-  // given to 'xla_enable_hlo_sharding_v3' is needed.
-  xla::sdy::addSdyRoundTripExportPipeline(pm, /*keepMeshesInlined=*/false,
-                                          /*enableHloShardingV3=*/false);
   pm.addPass(CreateLowerToIfrtPass());
   createIfrtToOutlinedAtomProgramsPipeline(pm);
 }
