@@ -67,9 +67,6 @@ using ::mlir::sdy::ManualAxesAttr;
 using ::mlir::sdy::NamedComputationOp;
 using ::mlir::sdy::TensorShardingPerValueAttr;
 
-using ComputationKey = std::tuple<StringRef, TensorShardingPerValueAttr,
-                                  TensorShardingPerValueAttr, ManualAxesAttr>;
-
 struct NamedComputationWithCount {
   NamedComputationOp namedComputationOp;
   int64_t callSiteCount;
@@ -118,31 +115,8 @@ StringAttr createFuncOp(NamedComputationOp namedComputationOp,
   return symbolTable.insert(funcOp);
 }
 
-StringAttr createFuncOpOrGetFromCache(
-    NamedComputationOp namedComputationOp,
-    llvm::SmallDenseMap<ComputationKey, StringAttr>& funcCache,
-    mlir::IRRewriter& rewriter, SymbolTable& symbolTable,
-    ManualAxesAttr manualAxesAttr,
-    std::optional<TensorShardingPerValueAttr> inShardings,
-    std::optional<TensorShardingPerValueAttr> outShardings) {
-  ComputationKey key = {namedComputationOp.getName(),
-                        inShardings.value_or(TensorShardingPerValueAttr()),
-                        outShardings.value_or(TensorShardingPerValueAttr()),
-                        manualAxesAttr};
-  if (auto it = funcCache.find(key); it != funcCache.end()) {
-    return it->second;
-  }
-  StringAttr funcSymName =
-      createFuncOp(namedComputationOp, rewriter, symbolTable, inShardings,
-                   outShardings, manualAxesAttr);
-  funcCache.try_emplace(key, funcSymName);
-  return funcSymName;
-}
-
 void exportNamedComputations(ModuleOp moduleOp, SymbolTable& symbolTable) {
   mlir::Block& moduleBlock = moduleOp.getRegion().front();
-  llvm::SmallDenseMap<ComputationKey, StringAttr> funcCache;
-
 
   // NOTE: The walk needs to be in post order, which is the default order, to
   // account for nested named computations.
@@ -161,9 +135,9 @@ void exportNamedComputations(ModuleOp moduleOp, SymbolTable& symbolTable) {
       CHECK(inShardings.has_value());
       CHECK(outShardings.has_value());
     }
-    StringAttr funcSymName = createFuncOpOrGetFromCache(
-        namedComputationOp, funcCache, rewriter, symbolTable, manualAxesAttr,
-        inShardings, outShardings);
+    StringAttr funcSymName =
+        createFuncOp(namedComputationOp, rewriter, symbolTable, inShardings,
+                     outShardings, manualAxesAttr);
 
     // Replace the `NamedComputationOp` with a `CallOp`.
     rewriter.setInsertionPoint(namedComputationOp);

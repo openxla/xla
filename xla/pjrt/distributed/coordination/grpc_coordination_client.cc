@@ -58,8 +58,6 @@ using xla::coordination::PollForErrorRequest;
 using xla::coordination::PollForErrorResponse;
 using xla::coordination::RegisterTaskRequest;
 using xla::coordination::RegisterTaskResponse;
-using xla::coordination::ResetTaskRequest;
-using xla::coordination::ResetTaskResponse;
 using xla::coordination::ShutdownTaskRequest;
 using xla::coordination::ShutdownTaskResponse;
 using xla::coordination::TryGetKeyValueRequest;
@@ -128,16 +126,6 @@ class GrpcCoordinationClient : public CoordinationClient {
     new tsl::RPCState<tsl::protobuf::Message>(
         &stub_, cq_, "/xla.coordination.CoordinationService/ShutdownTask",
         *request, response, std::move(done), call_opts,
-        /*threadpool=*/nullptr, /*max_retries=*/0, /*fail_fast=*/true,
-        &target_);
-  }
-
-  void ResetTaskAsync(const ResetTaskRequest* request,
-                      ResetTaskResponse* response,
-                      tsl::StatusCallback done) override {
-    new tsl::RPCState<tsl::protobuf::Message>(
-        &stub_, cq_, "/xla.coordination.CoordinationService/ResetTask",
-        *request, response, std::move(done), /*call_opts=*/nullptr,
         /*threadpool=*/nullptr, /*max_retries=*/0, /*fail_fast=*/true,
         &target_);
   }

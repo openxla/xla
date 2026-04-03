@@ -92,13 +92,6 @@ message ShutdownTaskRequest {
 
 message ShutdownTaskResponse {}
 
-// Request and response messages for resetting a task state in the service.
-message ResetTaskRequest {
-  int32 source_task_id = 1;
-}
-
-message ResetTaskResponse {}
-
 // Request and response messages for watching the state of a remote job.
 //
 // The state of a job may change over time. For example, a task might fail and
@@ -285,10 +278,6 @@ service CoordinationService {
   rpc ShutdownTask(ShutdownTaskRequest) returns (ShutdownTaskResponse) {
     // [AUTOMATION]: Internal rpc option goes here.
   }
-
-  // Disconnects task from the service if it is in an ERROR state, thereby
-  // allowing it to reconnect via RegisterTask() in the future.
-  rpc ResetTask(ResetTaskRequest) returns (ResetTaskResponse);
 
   // Watches the state of every task in a remote job.
   rpc WatchJobState(WatchJobStateRequest) returns (WatchJobStateResponse);

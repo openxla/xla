@@ -44,10 +44,6 @@ class CoordinationServiceRpcHandler {
                          xla::coordination::ShutdownTaskResponse* response,
                          tsl::StatusCallback done);
 
-  void ResetTaskAsync(const xla::coordination::ResetTaskRequest* request,
-                      xla::coordination::ResetTaskResponse* response,
-                      tsl::StatusCallback done);
-
   void WatchJobStateAsync(
       const xla::coordination::WatchJobStateRequest* request,
       xla::coordination::WatchJobStateResponse* response,

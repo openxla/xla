@@ -111,6 +111,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/transforms/collectives/async_collective_replacer.h"
 #include "xla/hlo/transforms/collectives/collective_permute_cse.h"
 #include "xla/hlo/transforms/expanders/bitcast_dtypes_expander.h"
 #include "xla/hlo/transforms/expanders/cholesky_expander.h"
@@ -463,7 +464,7 @@ void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
 }
 
 std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
-    absl::string_view name, HloModule* module, bool is_fusion_emitters,
+    absl::string_view name, HloModule* module, bool use_fusion_emitters,
     bool use_onednn_custom_call) {
   // Run the following passes to a fixed point.
   auto pipeline =
@@ -484,7 +485,7 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
   pipeline->AddPass<SortSimplifier>();
   pipeline->AddPass<HloDCE>();
   pipeline->AddPass<GatherExpander>(GatherExpander::kEliminateSimpleGathers);
-  if (is_fusion_emitters) {
+  if (use_fusion_emitters) {
     // Conversion to MLIR only works with simplified gathers.
     pipeline->AddPass<GatherSimplifier>();
   }
@@ -577,10 +578,16 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     HloModule* module, bool is_aot_compile,
     TargetMachineFeatures* target_machine_features) {
   const int64_t num_partitions = module->config().num_partitions();
-  const bool is_fusion_emitters =
+  const bool use_fusion_emitters =
       module->config().debug_options().xla_cpu_use_fusion_emitters();
   bool use_shardy_partitioner = module->config().use_shardy_partitioner();
   bool flatten_before_fusion = !options::FlattenAfterFusion(module->config());
+
+  // Replace asynchronous collectives with synchronous ones.
+  HloPassPipeline async_collective_pipeline("async-collective");
+  AsyncCollectiveReplacer::Config acr_config(HloPredicateTrue);
+  async_collective_pipeline.AddPass<AsyncCollectiveReplacer>(acr_config);
+  TF_RETURN_IF_ERROR(async_collective_pipeline.Run(module).status());
 
   if (num_partitions > 1) {
     if (!module->config().use_spmd_partitioning()) {
@@ -883,24 +890,24 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   }
 
   pipeline.AddPass(CreateSimplificationPipeline(
-      "simplification", module, is_fusion_emitters, use_onednn_custom_call));
+      "simplification", module, use_fusion_emitters, use_onednn_custom_call));
 
   // Scatter expander is sandwiched between two simplification pipelines to
   // enable constant folding with the original scatter instructions (which is
   // more efficient than with the expanded version) but then to also ensure that
   // the resulting while loops are simplified.
   pipeline.AddPass<SelectAndScatterExpander>();
-  if (is_fusion_emitters) {
+  if (use_fusion_emitters) {
     pipeline.AddPass<ScatterExpander>(
         ScatterExpander::kEliminateSimpleScatters);
     pipeline.AddPass<ScatterSimplifier>();
   }
-  if (!is_fusion_emitters || !kFusionEmitterScatterEnabled) {
+  if (!use_fusion_emitters || !kFusionEmitterScatterEnabled) {
     pipeline.AddPass<ScatterExpander>(ScatterExpander::kEliminateAllScatters);
   }
 
   pipeline.AddPass(CreateSimplificationPipeline(
-      "post_scatter_expansion_simplification", module, is_fusion_emitters,
+      "post_scatter_expansion_simplification", module, use_fusion_emitters,
       use_onednn_custom_call));
 
   pipeline.AddPass<BitcastDtypesExpander>();
@@ -955,7 +962,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     TargetMachineFeatures* target_machine_features,
     const CompileOptions& compile_options) {
   const auto& debug_options = module->config().debug_options();
-  const bool is_fusion_emitters = debug_options.xla_cpu_use_fusion_emitters();
+  const bool use_fusion_emitters = debug_options.xla_cpu_use_fusion_emitters();
   bool flatten_after_fusion = options::FlattenAfterFusion(module->config());
   HloPassPipeline pipeline("HLO passes after layout assignment");
 
@@ -1033,7 +1040,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
       &alias_info,
       /*may_duplicate=*/!use_multi_output_fusion);
 
-  if (is_fusion_emitters) {
+  if (use_fusion_emitters) {
     bool use_experimental_loop_fusion =
         options::UseExperimentalLoopFusion(module->config());
     bool use_tiled_emitter = options::EnableTiledEmitter(module->config());

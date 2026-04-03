@@ -18,11 +18,14 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
@@ -85,7 +88,14 @@ class HloProgram : public llvm::RTTIExtends<HloProgram, Program> {
   // have a symbol name. The method should only be called by the constructors
   // to ensure that MLIR API is only used at construction time.
   static std::string GetModuleName(mlir::ModuleOp module) {
-    return module.getName().value_or("unnamed").str();
+    const std::optional<llvm::StringRef> name = module.getSymName();
+    if (name.has_value()) {
+      return std::string(*name);
+    }
+
+    // Generate a unique and stable computation name to help debugging.
+    return absl::StrFormat("unnamed_%x",
+                           reinterpret_cast<uintptr_t>(module.getOperation()));
   }
 
   std::unique_ptr<mlir::MLIRContext> mlir_context_;

@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/raw_buffer.h"
+#include "xla/pjrt/transpose.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
@@ -296,6 +297,9 @@ class CommonPjRtClient : public PjRtClient {
     return absl::UnimplementedError("LinearizeHostBufferInto is not supported");
   }
 
+  absl::StatusOr<std::shared_ptr<TransposePlan>> GetTransposePlan(
+      const TransposePlan::Options& options);
+
   virtual void ScheduleRemoteSend(
       PjRtMemorySpace* memory_space,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
@@ -348,6 +352,9 @@ class CommonPjRtClient : public PjRtClient {
 
  private:
   mutable absl::Mutex gang_scheduler_mu_;
+  absl::Mutex transpose_mu_;
+  TransposePlanCache transpose_cache_ ABSL_GUARDED_BY(transpose_mu_) =
+      TransposePlanCache(1024);
 };
 
 // Represents the launch state for a loaded executable. This state must be
