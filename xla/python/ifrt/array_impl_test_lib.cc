@@ -99,11 +99,12 @@ TEST(ArrayImplTest, MakeArrayFromHostBuffer) {
   UserContextScope user_context_scope(test_util::MakeUserContext(100));
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto array, client->MakeArrayFromHostBuffer(
-                      data->data(), dtype, shape,
-                      /*byte_strides=*/std::nullopt, sharding,
-                      Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-                      /*on_done_with_host_buffer=*/nullptr));
+      auto array,
+      client->MakeArrayFromHostBuffer(
+          data->data(), dtype, shape,
+          /*byte_strides=*/std::nullopt, sharding, /*layout=*/nullptr,
+          Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+          /*on_done_with_host_buffer=*/nullptr));
 
   EXPECT_EQ(array->dtype(), dtype);
   EXPECT_EQ(array->shape(), shape);
@@ -172,11 +173,12 @@ TEST(ArrayImplTest,
   UserContextScope user_context_scope(test_util::MakeUserContext(100));
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto array, client->MakeArrayFromHostBuffer(
-                      data->data(), dtype, shape,
-                      /*byte_strides=*/std::nullopt, sharding,
-                      Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-                      /*on_done_with_host_buffer=*/nullptr));
+      auto array,
+      client->MakeArrayFromHostBuffer(
+          data->data(), dtype, shape,
+          /*byte_strides=*/std::nullopt, sharding, /*layout=*/nullptr,
+          Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+          /*on_done_with_host_buffer=*/nullptr));
 
   EXPECT_EQ(array->dtype(), dtype);
   EXPECT_EQ(array->shape(), shape);
@@ -203,10 +205,11 @@ TEST_P(ArrayImplWithHostBufferSemanticsTest,
   auto on_done_with_host_buffer = [&]() { done_with_host_buffer.Notify(); };
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto array, client->MakeArrayFromHostBuffer(
-                      data->data(), dtype, shape,
-                      /*byte_strides=*/std::nullopt, sharding, semantics,
-                      std::move(on_done_with_host_buffer)));
+      auto array,
+      client->MakeArrayFromHostBuffer(data->data(), dtype, shape,
+                                      /*byte_strides=*/std::nullopt, sharding,
+                                      /*layout=*/nullptr, semantics,
+                                      std::move(on_done_with_host_buffer)));
 
   // Regardless of the host buffer semantics chosen, the host buffer must not be
   // used by the runtime once `on_done_with_host_buffer` has been called.
@@ -261,11 +264,12 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferImmutableOnlyDuringCall) {
   };
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto array, client->MakeArrayFromHostBuffer(
-                      data->data(), dtype, shape,
-                      /*byte_strides=*/std::nullopt, sharding,
-                      Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-                      std::move(on_done_with_host_buffer)));
+      auto array,
+      client->MakeArrayFromHostBuffer(
+          data->data(), dtype, shape,
+          /*byte_strides=*/std::nullopt, sharding, /*layout=*/nullptr,
+          Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+          std::move(on_done_with_host_buffer)));
 
   // `on_done_with_host_buffer` should have been called before returning from
   // `MakeArrayFromHostBuffer`.
@@ -288,7 +292,7 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferImmutableUntilTransferCompletes) {
       auto array,
       client->MakeArrayFromHostBuffer(
           data->data(), dtype, shape,
-          /*byte_strides=*/std::nullopt, sharding,
+          /*byte_strides=*/std::nullopt, sharding, /*layout=*/nullptr,
           Client::HostBufferSemantics::kImmutableUntilTransferCompletes,
           /*on_done_with_host_buffer=*/nullptr));
 
@@ -308,12 +312,13 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferZeroCopy) {
   Device* device = client->addressable_devices().at(0);
   ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
 
-  TF_ASSERT_OK_AND_ASSIGN(auto array,
-                          client->MakeArrayFromHostBuffer(
-                              data->data(), dtype, shape,
-                              /*byte_strides=*/std::nullopt, sharding,
-                              Client::HostBufferSemantics::kImmutableZeroCopy,
-                              /*on_done_with_host_buffer=*/nullptr));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto array,
+      client->MakeArrayFromHostBuffer(
+          data->data(), dtype, shape,
+          /*byte_strides=*/std::nullopt, sharding,
+          /*layout=*/nullptr, Client::HostBufferSemantics::kImmutableZeroCopy,
+          /*on_done_with_host_buffer=*/nullptr));
 
   // The `Array` may alias the host buffer, but once the transfer is done and
   // the `Array` is destroyed, the host buffer is not accessed. This test would
@@ -342,6 +347,7 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferDefaultLayout) {
         client->MakeArrayFromHostBuffer(
             data.data(), dtype, shape, /*byte_strides=*/std::nullopt,
             SingleDeviceSharding::Create(device, memory->Kind()),
+            /*layout=*/nullptr,
             Client::HostBufferSemantics::kImmutableOnlyDuringCall,
             /*on_done_with_host_buffer=*/nullptr));
     TF_ASSERT_OK(array->GetReadyFuture().Await());
@@ -372,11 +378,12 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferAndCopyToHostBuffer) {
     ShardingRef sharding = SingleDeviceSharding::Create(device, memory->Kind());
 
     TF_ASSERT_OK_AND_ASSIGN(
-        auto array, client->MakeArrayFromHostBuffer(
-                        data.data(), dtype, shape,
-                        /*byte_strides=*/std::nullopt, sharding,
-                        Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-                        /*on_done_with_host_buffer=*/{}));
+        auto array,
+        client->MakeArrayFromHostBuffer(
+            data.data(), dtype, shape,
+            /*byte_strides=*/std::nullopt, sharding, /*layout=*/nullptr,
+            Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+            /*on_done_with_host_buffer=*/{}));
 
     std::vector<float> out_data(6);
     auto future =
@@ -404,6 +411,7 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferWithByteStridesAndCopyToHostBuffer) {
     TF_ASSERT_OK_AND_ASSIGN(
         auto array, client->MakeArrayFromHostBuffer(
                         data.data(), dtype, shape, byte_strides, sharding,
+                        /*layout=*/nullptr,
                         Client::HostBufferSemantics::kImmutableOnlyDuringCall,
                         /*on_done_with_host_buffer=*/{}));
 
@@ -442,6 +450,7 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferWithNonCompactByteStrides) {
         ArrayRef array,
         client->MakeArrayFromHostBuffer(
             data.data(), dtype, shape, byte_strides, sharding,
+            /*layout=*/nullptr,
             Client::HostBufferSemantics::kImmutableOnlyDuringCall,
             /*on_done_with_host_buffer=*/nullptr));
     TF_ASSERT_OK(array->GetReadyFuture().Await());
@@ -472,6 +481,7 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferAndCopyToHostBufferWithByteStrides) {
         auto array, client->MakeArrayFromHostBuffer(
                         data.data(), dtype, shape,
                         /*byte_strides=*/std::nullopt, sharding,
+                        /*layout=*/nullptr,
                         Client::HostBufferSemantics::kImmutableOnlyDuringCall,
                         /*on_done_with_host_buffer=*/{}));
 
@@ -505,6 +515,7 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferReplicated) {
       client->MakeArrayFromHostBuffer(
           data->data(), dtype, shape,
           /*byte_strides=*/std::nullopt, sharding,
+          /*layout=*/nullptr,
           Client::HostBufferSemantics::kImmutableUntilTransferCompletes,
           /*on_done_with_host_buffer=*/nullptr));
 
@@ -796,6 +807,7 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferAndCopyToHostBufferWithString) {
       client->MakeArrayFromHostBuffer(
           data_ptr, dtype, shape,
           /*byte_strides=*/std::nullopt, std::move(sharding),
+          /*layout=*/nullptr,
           Client::HostBufferSemantics::kImmutableUntilTransferCompletes,
           /*on_done_with_host_buffer=*/[cords = std::move(cords)]() {}));
   EXPECT_EQ(array->user_context()->Id(), UserContextId(100));
@@ -942,6 +954,7 @@ TEST(ArrayImplTest, HostBufferRoundTripAllMemoryKinds) {
         auto array,
         client->MakeArrayFromHostBuffer(
             data.data(), dtype, shape, /*byte_strides=*/std::nullopt, sharding,
+            /*layout=*/nullptr,
             Client::HostBufferSemantics::kImmutableOnlyDuringCall,
             /*on_done_with_host_buffer=*/nullptr));
 
@@ -982,6 +995,7 @@ TEST(ArrayImplTest, HostBufferInt4) {
         client->MakeArrayFromHostBuffer(
             data.data(), dtype, shape,
             /*byte_strides=*/std::nullopt, sharding,
+            /*layout=*/nullptr,
             Client::HostBufferSemantics::kImmutableOnlyDuringCall,
             /*on_done_with_host_buffer=*/nullptr));
     TF_ASSERT_OK(array->GetReadyFuture().Await());
@@ -1082,12 +1096,14 @@ TEST(ArrayImplTest, AssembleArray) {
       auto array0, client->MakeArrayFromHostBuffer(
                        data.data(), dtype, shape,
                        /*byte_strides=*/std::nullopt, sharding0,
+                       /*layout=*/nullptr,
                        Client::HostBufferSemantics::kImmutableOnlyDuringCall,
                        /*on_done_with_host_buffer=*/{}));
   TF_ASSERT_OK_AND_ASSIGN(
       auto array1, client->MakeArrayFromHostBuffer(
                        data.data(), dtype, shape,
                        /*byte_strides=*/std::nullopt, sharding1,
+                       /*layout=*/nullptr,
                        Client::HostBufferSemantics::kImmutableOnlyDuringCall,
                        /*on_done_with_host_buffer=*/{}));
 
@@ -1136,12 +1152,14 @@ TEST(ArrayImplTest, AssembleAndDisassembleArray) {
       auto array0, client->MakeArrayFromHostBuffer(
                        data.data(), dtype, shape,
                        /*byte_strides=*/std::nullopt, sharding0,
+                       /*layout=*/nullptr,
                        Client::HostBufferSemantics::kImmutableOnlyDuringCall,
                        /*on_done_with_host_buffer=*/{}));
   TF_ASSERT_OK_AND_ASSIGN(
       auto array1, client->MakeArrayFromHostBuffer(
                        data.data(), dtype, shape,
                        /*byte_strides=*/std::nullopt, sharding1,
+                       /*layout=*/nullptr,
                        Client::HostBufferSemantics::kImmutableOnlyDuringCall,
                        /*on_done_with_host_buffer=*/{}));
 
@@ -1199,6 +1217,7 @@ TEST(ArrayImplTest, AssembleAndDisassembleSingleDeviceArray) {
       auto array, client->MakeArrayFromHostBuffer(
                       data.data(), dtype, shape,
                       /*byte_strides=*/std::nullopt, sharding,
+                      /*layout=*/nullptr,
                       Client::HostBufferSemantics::kImmutableOnlyDuringCall,
                       /*on_done_with_host_buffer=*/{}));
 
@@ -1241,10 +1260,11 @@ TEST(ArrayImplTest, CopyToSameDevices) {
   UserContextScope user_context_scope(test_util::MakeUserContext(100));
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto array, client->MakeArrayFromHostBuffer(
-                      data.data(), dtype, shape,
-                      /*byte_strides=*/std::nullopt, sharding, semantics,
-                      /*on_done_with_host_buffer=*/{}));
+      auto array,
+      client->MakeArrayFromHostBuffer(data.data(), dtype, shape,
+                                      /*byte_strides=*/std::nullopt, sharding,
+                                      /*layout=*/nullptr, semantics,
+                                      /*on_done_with_host_buffer=*/{}));
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto new_arrays,
@@ -1412,11 +1432,12 @@ TEST(ArrayImplTest, CopyToDifferentDevice) {
   std::vector<ArrayRef> shards;
   for (auto* device : devices->devices()) {
     ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
-    TF_ASSERT_OK_AND_ASSIGN(shards.emplace_back(),
-                            client->MakeArrayFromHostBuffer(
-                                data.data(), dtype, shape,
-                                /*byte_strides=*/std::nullopt, sharding,
-                                semantics, /*on_done_with_host_buffer=*/{}));
+    TF_ASSERT_OK_AND_ASSIGN(
+        shards.emplace_back(),
+        client->MakeArrayFromHostBuffer(data.data(), dtype, shape,
+                                        /*byte_strides=*/std::nullopt, sharding,
+                                        /*layout=*/nullptr, semantics,
+                                        /*on_done_with_host_buffer=*/{}));
   }
 
   // Intentionally use different shardings to verify that each result array has
@@ -1496,7 +1517,7 @@ TEST(ArrayImplTest, CopyMixedSourceDevices) {
         arrays.emplace_back(),
         client->MakeArrayFromHostBuffer(data.data(), dtype, shape,
                                         /*byte_strides=*/std::nullopt, sharding,
-                                        semantics,
+                                        /*layout=*/nullptr, semantics,
                                         /*on_done_with_host_buffer=*/{}));
   }
 
@@ -1527,11 +1548,12 @@ TEST(ArrayImplTest, CopyMixedSourceMemoryKind) {
   std::vector<ArrayRef> arrays;
   for (auto* memory : device->Memories()) {
     ShardingRef sharding = SingleDeviceSharding::Create(device, memory->Kind());
-    TF_ASSERT_OK_AND_ASSIGN(arrays.emplace_back(),
-                            client->MakeArrayFromHostBuffer(
-                                data.data(), dtype, shape,
-                                /*byte_strides=*/std::nullopt, sharding,
-                                semantics, /*on_done_with_host_buffer=*/{}));
+    TF_ASSERT_OK_AND_ASSIGN(
+        arrays.emplace_back(),
+        client->MakeArrayFromHostBuffer(data.data(), dtype, shape,
+                                        /*byte_strides=*/std::nullopt, sharding,
+                                        /*layout=*/nullptr, semantics,
+                                        /*on_done_with_host_buffer=*/{}));
   }
 
   Device* new_device = client->addressable_devices().at(1);
@@ -1561,11 +1583,12 @@ TEST(ArrayImplTest, CopyPreservesDefaultLayouts) {
       ShardingRef sharding =
           SingleDeviceSharding::Create(device, src_memory->Kind());
       TF_ASSERT_OK_AND_ASSIGN(
-          auto array,
-          client->MakeArrayFromHostBuffer(
-              data.data(), dtype, shape, /*byte_strides=*/std::nullopt,
-              sharding, Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-              /*on_done_with_host_buffer=*/nullptr));
+          auto array, client->MakeArrayFromHostBuffer(
+                          data.data(), dtype, shape,
+                          /*byte_strides=*/std::nullopt, sharding,
+                          /*layout=*/nullptr,
+                          Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+                          /*on_done_with_host_buffer=*/nullptr));
       TF_ASSERT_OK(array->GetReadyFuture().Await());
 
       TF_ASSERT_OK_AND_ASSIGN(auto src_layout, array->pjrt_layout());
@@ -1617,6 +1640,7 @@ TEST(ArrayImplTest, MakeAndCopyZeroSizedBuffers) {
         client->MakeArrayFromHostBuffer(
             nullptr, dtype, shape,
             /*byte_strides=*/std::nullopt, sharding,
+            /*layout=*/nullptr,
             Client::HostBufferSemantics::kImmutableOnlyDuringCall,
             /*on_done_with_host_buffer=*/nullptr));
     TF_ASSERT_OK(array->GetReadyFuture().Await());
@@ -1709,6 +1733,7 @@ TEST(ArrayImplTest, CopyArraysExhaustive) {
             client->MakeArrayFromHostBuffer(
                 data.data(), dtype, shape,
                 /*byte_strides=*/std::nullopt, sharding,
+                /*layout=*/nullptr,
                 Client::HostBufferSemantics::kImmutableOnlyDuringCall,
                 /*on_done_with_host_buffer=*/{}));
         EXPECT_EQ(array->sharding(), *sharding);
@@ -1762,6 +1787,7 @@ TEST(ArrayImplTest, CopyArraysSubByteDType) {
             client->MakeArrayFromHostBuffer(
                 data.data(), dtype, shape,
                 /*byte_strides=*/std::nullopt, sharding,
+                /*layout=*/nullptr,
                 Client::HostBufferSemantics::kImmutableOnlyDuringCall,
                 /*on_done_with_host_buffer=*/{}));
         EXPECT_EQ(array->sharding(), *sharding);
@@ -1927,10 +1953,11 @@ TEST(ArrayImplTest, GetReadyFuture) {
   auto semantics = Client::HostBufferSemantics::kImmutableOnlyDuringCall;
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto array, client->MakeArrayFromHostBuffer(
-                      data.data(), dtype, shape,
-                      /*byte_strides=*/std::nullopt, sharding, semantics,
-                      /*on_done_with_host_buffer=*/{}));
+      auto array,
+      client->MakeArrayFromHostBuffer(data.data(), dtype, shape,
+                                      /*byte_strides=*/std::nullopt, sharding,
+                                      /*layout=*/nullptr, semantics,
+                                      /*on_done_with_host_buffer=*/{}));
   TF_EXPECT_OK(array->GetReadyFuture().Await());
 }
 
@@ -1947,11 +1974,12 @@ TEST(ArrayImplTest, BatchedGetReadyFuture) {
 
   std::vector<ValueRef> values;
   for (int i = 0; i < 4; ++i) {
-    TF_ASSERT_OK_AND_ASSIGN(values.emplace_back(),
-                            client->MakeArrayFromHostBuffer(
-                                data.data(), dtype, shape,
-                                /*byte_strides=*/std::nullopt, sharding,
-                                semantics, /*on_done_with_host_buffer=*/{}));
+    TF_ASSERT_OK_AND_ASSIGN(
+        values.emplace_back(),
+        client->MakeArrayFromHostBuffer(data.data(), dtype, shape,
+                                        /*byte_strides=*/std::nullopt, sharding,
+                                        /*layout=*/nullptr, semantics,
+                                        /*on_done_with_host_buffer=*/{}));
   }
   TF_EXPECT_OK(client->GetReadyFuture(values).Await());
 }
@@ -1968,10 +1996,11 @@ TEST(ArrayImplTest, Delete) {
   auto semantics = Client::HostBufferSemantics::kImmutableOnlyDuringCall;
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto array, client->MakeArrayFromHostBuffer(
-                      data.data(), dtype, shape,
-                      /*byte_strides=*/std::nullopt, sharding, semantics,
-                      /*on_done_with_host_buffer=*/{}));
+      auto array,
+      client->MakeArrayFromHostBuffer(data.data(), dtype, shape,
+                                      /*byte_strides=*/std::nullopt, sharding,
+                                      /*layout=*/nullptr, semantics,
+                                      /*on_done_with_host_buffer=*/{}));
   TF_EXPECT_OK(array->Delete().Await());
 }
 
@@ -1987,10 +2016,11 @@ TEST(ArrayImplTest, DeleteIsIdempotent) {
   auto semantics = Client::HostBufferSemantics::kImmutableOnlyDuringCall;
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto array, client->MakeArrayFromHostBuffer(
-                      data.data(), dtype, shape,
-                      /*byte_strides=*/std::nullopt, sharding, semantics,
-                      /*on_done_with_host_buffer=*/{}));
+      auto array,
+      client->MakeArrayFromHostBuffer(data.data(), dtype, shape,
+                                      /*byte_strides=*/std::nullopt, sharding,
+                                      /*layout=*/nullptr, semantics,
+                                      /*on_done_with_host_buffer=*/{}));
 
   auto future_1 = array->Delete();
   auto future_2 = array->Delete();
@@ -2011,10 +2041,11 @@ TEST(ArrayImplTest, IsDeleted) {
   auto semantics = Client::HostBufferSemantics::kImmutableOnlyDuringCall;
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto array, client->MakeArrayFromHostBuffer(
-                      data.data(), dtype, shape,
-                      /*byte_strides=*/std::nullopt, sharding, semantics,
-                      /*on_done_with_host_buffer=*/{}));
+      auto array,
+      client->MakeArrayFromHostBuffer(data.data(), dtype, shape,
+                                      /*byte_strides=*/std::nullopt, sharding,
+                                      /*layout=*/nullptr, semantics,
+                                      /*on_done_with_host_buffer=*/{}));
   EXPECT_FALSE(array->IsDeleted());
   auto future = array->Delete();
   EXPECT_TRUE(array->IsDeleted());
