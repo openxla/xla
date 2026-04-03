@@ -452,6 +452,7 @@ cc_library(
     deps = [
         ":async_execution",
         ":collective_params",
+        ":execution_stream_id",
         ":thunk",
         ":thunk_executor",
         ":thunk_proto_cc",
@@ -461,6 +462,7 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
     ],
 )
@@ -471,6 +473,7 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":async_thunk",
+        ":execution_stream_id",
         ":memset_thunk",
         ":thunk",
         ":thunk_executor",
@@ -1962,6 +1965,7 @@ xla_test(
         ":command_buffer_cmd_emitter",
         ":command_buffer_thunk",
         ":command_executor",
+        ":execution_stream_id",
         ":ragged_all_to_all_thunk",
         ":thunk",
         ":thunk_executor",
@@ -2032,6 +2036,7 @@ xla_test(
         ":command_buffer_cmd_emitter",
         ":command_buffer_thunk",
         ":command_executor",
+        ":execution_stream_id",
         ":thunk",
         ":thunk_executor",
         ":thunk_proto_cc",
@@ -2119,6 +2124,7 @@ xla_test(
         ":command_buffer_cmd_emitter",
         ":command_buffer_thunk",
         ":command_executor",
+        ":execution_stream_id",
         ":thunk",
         ":thunk_executor",
         ":thunk_proto_cc",
@@ -2549,6 +2555,7 @@ xla_test(
         ":command_buffer_cmd_emitter",
         ":command_buffer_thunk",
         ":command_executor",
+        ":execution_stream_id",
         ":recv_thunk",
         ":send_thunk",
         ":thunk",
@@ -2820,6 +2827,25 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "execution_stream_id",
+    hdrs = ["execution_stream_id.h"],
+    deps = [
+        "//xla/tsl/lib/gtl:int_type",
+        "@com_google_absl//absl/strings:str_format",
+    ],
+)
+
+xla_cc_test(
+    name = "execution_stream_id_test",
+    srcs = ["execution_stream_id_test.cc"],
+    deps = [
+        ":execution_stream_id",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "thunk",
     srcs = ["thunk.cc"],
     hdrs = ["thunk.h"],
@@ -2829,6 +2855,7 @@ cc_library(
         ":collective_memory",
         ":collective_memory_requests",
         ":collective_params",
+        ":execution_stream_id",
         ":thunk_id",
         ":thunk_kind_proto_cc",
         ":thunk_proto_cc",
@@ -3625,6 +3652,7 @@ xla_cc_test(
         ":custom_kernel_thunk",
         ":device_to_device_copy_thunk",
         ":device_to_host_copy_thunk",
+        ":execution_stream_id",
         ":host_execute_thunk",
         ":host_send_recv_thunk",
         ":host_to_device_copy_thunk",
@@ -4054,6 +4082,7 @@ xla_test(
         ":conditional_thunk",
         ":cudnn_thunk",
         ":device_to_device_copy_thunk",
+        ":execution_stream_id",
         ":gemm_thunk",
         ":replica_id_thunk",
         ":sequential_thunk",
