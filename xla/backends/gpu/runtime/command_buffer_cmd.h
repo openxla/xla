@@ -37,10 +37,10 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/command_state.h"
-#include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_memcpy_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
+#include "xla/backends/gpu/runtime/legacy_custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -451,27 +451,11 @@ class CuDnnCmd : public TracedCommandBufferCmd {
 };
 
 //===----------------------------------------------------------------------===//
-// CustomCallCmd
+// CustomCallCmd (FFI)
 //===----------------------------------------------------------------------===//
 
 class CustomCallCmd : public Command {
  public:
-  using CustomCallTarget = CustomCallThunk::CustomCallTarget;
-  using AttributesMap = ffi::AttributesMap;
-
-  // This is a legacy custom call API that is discouraged, and will be
-  // deprecated once XLA:FFI mechanism is ready.
-  CustomCallCmd(std::string target_name, CustomCallTarget call_target,
-                std::vector<NullableShapedSlice> operands,
-                std::vector<NullableShapedSlice> results,
-                absl::string_view opaque)
-      : Command(CommandType::kCustomCallCmd),
-        target_name_(std::move(target_name)),
-        call_target_(std::move(call_target)),
-        opaque_(opaque),
-        operands_(std::move(operands)),
-        results_(std::move(results)) {}
-
   CustomCallCmd(std::string target_name, XLA_FFI_Handler* handler,
                 std::vector<NullableShapedSlice> operands,
                 std::vector<NullableShapedSlice> results,
@@ -498,26 +482,8 @@ class CustomCallCmd : public Command {
   bool IsNestedCommandBuffer() const final { return true; }
 
  private:
-  absl::StatusOr<const se::CommandBuffer::Command*> RecordLegacyCustomCall(
-      const Thunk::ExecuteParams& execute_param,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer);
-
-  absl::StatusOr<const se::CommandBuffer::Command*> RecordXlaFfiCall(
-      const Thunk::ExecuteParams& execute_param,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer);
-
   std::string target_name_;
 
-  // This is a legacy custom call API that is discouraged, and will be
-  // deprecated once XLA:FFI mechanism is ready.
-  CustomCallTarget call_target_;
-  std::string opaque_;
-
-  // XLA FFI provides a right type safe mechanism for registering external
-  // functions with XLA runtime. It's under construction, and still misses
-  // a lot of features. Long term it will replace legacy custom calls.
   XLA_FFI_Handler* handler_ = nullptr;
 
   // Reference call frame pre-initialized at construction time.
@@ -535,6 +501,43 @@ class CustomCallCmd : public Command {
   std::optional<ObjectPool<ffi::CallFrame>> call_frames_;
 
   const HloComputation* called_computation_;
+
+  std::vector<NullableShapedSlice> operands_;
+  std::vector<NullableShapedSlice> results_;
+};
+
+//===----------------------------------------------------------------------===//
+// LegacyCustomCallCmd
+//===----------------------------------------------------------------------===//
+
+class LegacyCustomCallCmd : public Command {
+ public:
+  using CustomCallTarget = LegacyCustomCallThunk::CustomCallTarget;
+
+  LegacyCustomCallCmd(std::string target_name, CustomCallTarget call_target,
+                      std::vector<NullableShapedSlice> operands,
+                      std::vector<NullableShapedSlice> results,
+                      absl::string_view opaque)
+      : Command(CommandType::kCustomCallCmd),
+        target_name_(std::move(target_name)),
+        call_target_(std::move(call_target)),
+        opaque_(opaque),
+        operands_(std::move(operands)),
+        results_(std::move(results)) {}
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override;
+
+  BufferUses buffer_uses() const override;
+  bool IsNestedCommandBuffer() const final { return true; }
+
+ private:
+  std::string target_name_;
+
+  CustomCallTarget call_target_;
+  std::string opaque_;
 
   std::vector<NullableShapedSlice> operands_;
   std::vector<NullableShapedSlice> results_;
