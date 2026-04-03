@@ -47,7 +47,7 @@ class CommandBufferThunk : public Thunk {
       std::unique_ptr<SequentialThunk> thunks = nullptr,
       bool enable_command_buffers_during_profiling = false,
       DebugOptions::CommandBufferUpdateMode command_buffer_update_mode =
-          DebugOptions::FULL_UPDATE);
+          DebugOptions::ALWAYS_UPDATE);
 
   const std::unique_ptr<SequentialThunk>& thunks() const { return thunks_; }
 
@@ -176,7 +176,7 @@ class CommandBufferThunk : public Thunk {
   DebugOptions::CommandBufferUpdateMode command_buffer_update_mode_;
 
   // Cached minimum allocation index of the first traced command. Computed once
-  // in the constructor for CUSTOM_LIBRARY_UPDATE_FREE mode.
+  // in the constructor for CAPTURE_CMD_NEVER_UPDATE mode.
   std::optional<BufferAllocation::Index> first_traced_cmd_alloc_idx_;
 
   // Command buffer thunk state allocated in heap to allow global (per-process)

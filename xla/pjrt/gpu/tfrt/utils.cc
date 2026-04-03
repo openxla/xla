@@ -46,8 +46,8 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
-#include "xla/backends/cpu/target_machine_options.h"
 #include "unsupported/Eigen/CXX11/Tensor"
+#include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/local_client.h"
@@ -656,7 +656,7 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
     const std::vector<std::unique_ptr<TfrtGpuDevice>>& devices) {
   GpuAllocatorConfig effective_config = allocator_config;
   if (GetDebugOptionsFromFlags().xla_gpu_command_buffer_update_mode() !=
-          DebugOptions::FULL_UPDATE &&
+          DebugOptions::ALWAYS_UPDATE &&
       effective_config.kind != GpuAllocatorConfig::Kind::kVmm) {
     LOG(WARNING) << "xla_gpu_command_buffer_update_mode requires the "
                     "VMM allocator. Overriding allocator kind to kVmm.";

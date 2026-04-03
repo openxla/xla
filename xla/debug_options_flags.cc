@@ -503,7 +503,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_print_compilation_stats(false);
 
   opts.set_xla_gpu_enable_pdl(true);
-  opts.set_xla_gpu_command_buffer_update_mode(DebugOptions::FULL_UPDATE);
+  opts.set_xla_gpu_command_buffer_update_mode(DebugOptions::ALWAYS_UPDATE);
   return opts;
 }
 

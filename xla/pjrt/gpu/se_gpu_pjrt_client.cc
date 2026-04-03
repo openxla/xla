@@ -1521,7 +1521,7 @@ GetStreamExecutorGpuDeviceAllocator(
   std::vector<se::MultiDeviceAdapter::AllocatorInfo> allocators;
   GpuAllocatorConfig::Kind effective_kind = allocator_config.kind;
   if (GetDebugOptionsFromFlags().xla_gpu_command_buffer_update_mode() !=
-          DebugOptions::FULL_UPDATE &&
+          DebugOptions::ALWAYS_UPDATE &&
       effective_kind != GpuAllocatorConfig::Kind::kVmm) {
     LOG(WARNING) << "xla_gpu_command_buffer_update_mode requires the "
                     "VMM allocator. Overriding allocator kind to kVmm.";

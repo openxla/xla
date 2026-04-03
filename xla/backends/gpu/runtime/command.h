@@ -156,7 +156,7 @@ class Command {
 
     // The CommandBufferUpdateMode for the enclosing command buffer thunk.
     DebugOptions::CommandBufferUpdateMode command_buffer_update_mode =
-        DebugOptions::FULL_UPDATE;
+        DebugOptions::ALWAYS_UPDATE;
   };
 
   // Create new commands in the command buffer using the given dependencies.

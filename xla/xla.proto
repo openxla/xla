@@ -358,16 +358,16 @@ message DebugOptions {
   }
 
   // Controls the VA remapping strategy for command buffer thunks.
-  //   FULL_UPDATE: VA remapping disabled; all commands update on every
+  //   ALWAYS_UPDATE: VA remapping disabled; all commands update on every
   //     execution.
-  //   FULL_UPDATE_FREE: All allocations VA-remapped to fixed addresses; no
+  //   NEVER_UPDATE: All allocations VA-remapped to fixed addresses; no
   //     command buffer update needed after initial recording.
-  //   CUSTOM_LIBRARY_UPDATE_FREE: Only traced/collective commands are
+  //   CAPTURE_CMD_NEVER_UPDATE: Only traced/collective commands are
   //     VA-remapped; other commands still update on each execution.
   enum CommandBufferUpdateMode {
-    FULL_UPDATE = 0;
-    FULL_UPDATE_FREE = 1;
-    CUSTOM_LIBRARY_UPDATE_FREE = 2;
+    ALWAYS_UPDATE = 0;
+    NEVER_UPDATE = 1;
+    CAPTURE_CMD_NEVER_UPDATE = 2;
   }
 
   // Experimental optimizations for SPMD-based pipeline parallelism on GPU.

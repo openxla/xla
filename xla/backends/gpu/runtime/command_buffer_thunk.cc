@@ -99,7 +99,7 @@ CommandBufferThunk::CommandBufferThunk(
   // Pre-compute the minimum allocation index of the first traced command so
   // GetOrCreateCommandBuffer() doesn't have to walk the command tree on every
   // call.
-  if (command_buffer_update_mode_ == DebugOptions::CUSTOM_LIBRARY_UPDATE_FREE) {
+  if (command_buffer_update_mode_ == DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
     bool found = false;
     CHECK_OK(commands_.Walk([&](const Command* command) -> absl::Status {
       if (!found && command->IsTracedCommand()) {
@@ -240,7 +240,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   // ranks to avoid deadlocks.
   if (cmd_buffer->command_buffer->state() ==
           se::CommandBuffer::State::kCreate ||
-      (command_buffer_update_mode_ != DebugOptions::FULL_UPDATE_FREE &&
+      (command_buffer_update_mode_ != DebugOptions::NEVER_UPDATE &&
        commands_.requires_initialization())) {
     VLOG(3) << "Initialize command buffer on device #"
             << params.executor->device_ordinal()
@@ -315,12 +315,11 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
   // Determine whether to (re-)record the command buffer and whether this is a
   // first-time initialization recording (VA remapping path).
   bool is_first_record =
-      command_buffer_update_mode_ == DebugOptions::FULL_UPDATE_FREE &&
+      command_buffer_update_mode_ == DebugOptions::NEVER_UPDATE &&
       cmd_buffer->command_buffer->state() == se::CommandBuffer::State::kCreate;
   bool needs_update =
-      (command_buffer_update_mode_ == DebugOptions::FULL_UPDATE ||
-       command_buffer_update_mode_ ==
-           DebugOptions::CUSTOM_LIBRARY_UPDATE_FREE) &&
+      (command_buffer_update_mode_ == DebugOptions::ALWAYS_UPDATE ||
+       command_buffer_update_mode_ == DebugOptions::CAPTURE_CMD_NEVER_UPDATE) &&
       (!updated_allocs.empty() || commands_.force_update());
 
   if (is_first_record || needs_update) {
@@ -381,12 +380,12 @@ absl::StatusOr<std::shared_ptr<CommandBufferThunk::ExecutorCommandBuffer>>
 CommandBufferThunk::GetOrCreateCommandBuffer(
     se::StreamExecutor* executor, const BufferAllocations& buffer_allocations) {
   void* first_alloc_address = nullptr;
-  if (command_buffer_update_mode_ == DebugOptions::FULL_UPDATE_FREE &&
+  if (command_buffer_update_mode_ == DebugOptions::NEVER_UPDATE &&
       !allocs_indices().empty()) {
     first_alloc_address =
         buffer_allocations.GetDeviceAddress(allocs_indices()[0]).opaque();
   } else if (command_buffer_update_mode_ ==
-             DebugOptions::CUSTOM_LIBRARY_UPDATE_FREE) {
+             DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
     // Use the cached minimum allocation index of the first traced command
     // (computed once at construction time) to look up the physical address of
     // its buffer allocation. This address serves as the key to identify which

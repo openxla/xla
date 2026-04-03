@@ -363,10 +363,10 @@ GpuExecutable::GpuExecutable(
   // fixed addresses; zero-size allocations have nothing to map).
   //
   // The set of collected indices depends on xla_gpu_command_buffer_update_mode:
-  //   FULL_UPDATE - collect nothing (VA remapping disabled)
-  //   FULL_UPDATE_FREE - collect all allocations from all command buffer
+  //   ALWAYS_UPDATE - collect nothing (VA remapping disabled)
+  //   NEVER_UPDATE - collect all allocations from all command buffer
   //     commands
-  //   CUSTOM_LIBRARY_UPDATE_FREE - collect only allocations from traced
+  //   CAPTURE_CMD_NEVER_UPDATE - collect only allocations from traced
   //     commands (TracedCommandBufferCmd subclasses) and collective commands
   //     (CollectiveCmd subclasses)
   if (thunk_executor_) {
@@ -374,17 +374,16 @@ GpuExecutable::GpuExecutable(
         has_module() ? module_config()
                            .debug_options()
                            .xla_gpu_command_buffer_update_mode()
-                     : DebugOptions::FULL_UPDATE;
+                     : DebugOptions::ALWAYS_UPDATE;
 
-    if (update_mode == DebugOptions::FULL_UPDATE_FREE ||
-        update_mode == DebugOptions::CUSTOM_LIBRARY_UPDATE_FREE) {
+    if (update_mode == DebugOptions::NEVER_UPDATE ||
+        update_mode == DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
       CHECK_OK(thunk_executor_->thunks().WalkNested(
-          [this, update_mode](const Thunk* t) -> absl::Status {
+          [&](const Thunk* t) -> absl::Status {
             auto* cbt = dynamic_cast<const CommandBufferThunk*>(t);
             if (cbt == nullptr) return absl::OkStatus();
-            return cbt->WalkCommands([this, update_mode](
-                                         const Command* cmd) -> absl::Status {
-              if (update_mode == DebugOptions::CUSTOM_LIBRARY_UPDATE_FREE &&
+            return cbt->WalkCommands([&](const Command* cmd) -> absl::Status {
+              if (update_mode == DebugOptions::CAPTURE_CMD_NEVER_UPDATE &&
                   !cmd->IsTracedCommand()) {
                 return absl::OkStatus();
               }
@@ -403,7 +402,7 @@ GpuExecutable::GpuExecutable(
               << command_buffer_allocation_indexes_.size()
               << " allocation indexes for module " << module_name_;
     }
-    // update_mode == FULL_UPDATE: collect nothing.
+    // update_mode == ALWAYS_UPDATE: collect nothing.
   }
 }
 
@@ -1616,7 +1615,7 @@ absl::Status GpuExecutable::ExecuteThunks(
   bool use_command_buffer_va_remapping =
       (command_buffer_allocation_indexes_.size() > 0) && has_module() &&
       module_config().debug_options().xla_gpu_command_buffer_update_mode() !=
-          DebugOptions::FULL_UPDATE &&
+          DebugOptions::ALWAYS_UPDATE &&
       dynamic_cast<se::DeviceAddressVmmAllocator*>(memory_allocator) != nullptr;
 
   XLA_VLOG_DEVICE(3, executor->device_ordinal()) << absl::StreamFormat(
