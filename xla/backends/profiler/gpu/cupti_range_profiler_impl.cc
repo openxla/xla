@@ -398,6 +398,35 @@ absl::Status CuptiRangeProfilerDevice::Decode(
   return absl::OkStatus();
 }
 
+std::vector<MetricProperties> CuptiRangeProfilerDevice::QueryMetricProperties() {
+  std::vector<MetricProperties> props;
+  props.reserve(enabled_metrics_.size());
+
+  for (const auto& metric : enabled_metrics_) {
+    MetricProperties mp;
+    if (host_obj_ != nullptr) {
+      DEF_SIZED_PRIV_STRUCT(
+          CUpti_Profiler_Host_GetMetricProperties_Params, p);
+      p.pHostObject = host_obj_;
+      p.pMetricName = metric.c_str();
+      CUptiResult result =
+          cupti_interface_->ProfilerHostGetMetricProperties(&p);
+      if (result == CUPTI_SUCCESS) {
+        if (p.pDescription != nullptr) {
+          mp.description = p.pDescription;
+        }
+        if (p.pHwUnit != nullptr) {
+          mp.hw_unit = p.pHwUnit;
+        }
+      } else {
+        LOG(WARNING) << "Failed to get metric properties for " << metric;
+      }
+    }
+    props.push_back(std::move(mp));
+  }
+  return props;
+}
+
 absl::Status CuptiRangeProfilerDevice::Disable() {
   if (range_profiler_obj_ == nullptr) {
     return absl::OkStatus();
@@ -513,8 +542,11 @@ absl::Status CuptiRangeProfilerImpl::FlushAndDecode() {
     TF_RETURN_IF_ERROR(dev->Decode(&results));
 
     if (options_.process_results) {
+      std::vector<MetricProperties> metric_props =
+          dev->QueryMetricProperties();
       RangeProfilerResults profiler_results(
-          dev->enabled_metrics(), std::move(results), dev->device_id());
+          dev->enabled_metrics(), std::move(metric_props),
+          std::move(results), dev->device_id());
       options_.process_results(&profiler_results);
     }
   }

@@ -722,6 +722,7 @@ cc_library(
         ":cupti_buffer_events",
         ":cupti_interface",
         ":cupti_pm_sampler_utils",
+        ":cupti_range_profiler",
         "//xla/tsl/cuda",
         "//xla/tsl/cuda:cupti",
         "//xla/tsl/profiler/utils:lock_free_queue",

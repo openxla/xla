@@ -1197,6 +1197,35 @@ absl::Status CuptiTracer::Enable(
 
   // Enable range profiling after CUPTI is initialized.
   if (option_->range_profiler_options.enable && num_gpus_requested > 0) {
+    // Callback to populate range profiling data to XPlane for each device.
+    // Preserve any user-supplied callback and chain it after XPlane population.
+    auto user_callback = option_->range_profiler_options.process_results;
+    option_->range_profiler_options.process_results =
+        [&xplanes, user_callback](RangeProfilerResults* results) {
+          if (!results) return;
+          int device_id = results->GetDeviceId();
+          if (device_id < 0 ||
+              device_id >= static_cast<int>(xplanes.size())) {
+            LOG(ERROR) << "Device ID " << device_id << " out of range.";
+            return;
+          }
+          if (!xplanes[device_id]) {
+            LOG(ERROR) << "Device ID " << device_id << " XPlane is null.";
+            return;
+          }
+          tensorflow::profiler::XPlane* xplane = xplanes[device_id].get();
+          xplane->set_name(GpuPlaneName(device_id));
+          XPlaneBuilder xplane_builder(xplane);
+          xplane_builder.AddStatValue(
+              *xplane_builder.GetOrCreateStatMetadata(
+                  tsl::profiler::GetStatTypeStr(
+                      tsl::profiler::StatType::kDeviceId)),
+              static_cast<int64_t>(device_id));
+          PopulateRangeProfilingEvents(results, &xplane_builder);
+          if (user_callback) {
+            user_callback(results);
+          }
+        };
     TF_ASSIGN_OR_RETURN(
         cupti_range_profiler_,
         CreateRangeProfiler(num_gpus_requested,

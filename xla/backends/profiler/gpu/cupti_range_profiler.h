@@ -66,6 +66,15 @@ struct RangeResult {
   std::vector<double> metric_values;
 };
 
+// Properties of a single metric, queried from CUPTI at decode time.
+// Parallel to the metrics vector in RangeProfilerResults.
+struct MetricProperties {
+  // Human-readable description (from CUPTI or fallback display name).
+  std::string description;
+  // Hardware unit the metric belongs to (e.g. "sm", "dram", "l1tex").
+  std::string hw_unit;
+};
+
 // Container for all decoded range profiling results from one session.
 class RangeProfilerResults {
  public:
@@ -75,12 +84,24 @@ class RangeProfilerResults {
         ranges_(std::move(ranges)),
         device_id_(device_id) {}
 
+  RangeProfilerResults(std::vector<std::string> metrics,
+                       std::vector<MetricProperties> metric_properties,
+                       std::vector<RangeResult> ranges, int device_id)
+      : metrics_(std::move(metrics)),
+        metric_properties_(std::move(metric_properties)),
+        ranges_(std::move(ranges)),
+        device_id_(device_id) {}
+
   const std::vector<std::string>& GetMetrics() const { return metrics_; }
+  const std::vector<MetricProperties>& GetMetricProperties() const {
+    return metric_properties_;
+  }
   const std::vector<RangeResult>& GetRanges() const { return ranges_; }
   int GetDeviceId() const { return device_id_; }
 
  private:
   std::vector<std::string> metrics_;
+  std::vector<MetricProperties> metric_properties_;
   std::vector<RangeResult> ranges_;
   int device_id_;
 };

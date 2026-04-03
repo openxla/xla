@@ -341,10 +341,31 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSubWithRangeProfiling) {
   // Disable() ends the last pass (PopRange + EndPass) then FlushAndDecode.
   tracer.Disable();
 
-  // Validate that results were delivered.
+  // Validate that results were delivered via the chained user callback.
   EXPECT_TRUE(range_results_received);
   EXPECT_GT(range_results_num_ranges, 0);
   EXPECT_GT(range_results_num_metrics, 0);
+
+  // Validate that range profiling results were written to XPlane.
+  ASSERT_FALSE(xplanes.empty());
+  ASSERT_NE(xplanes[0], nullptr);
+  const auto& plane = *xplanes[0];
+  // Must have at least one line (one profiled range).
+  EXPECT_GT(plane.lines_size(), 0);
+  // Each line should have events with kCounterValue stats.
+  bool found_counter_value = false;
+  for (const auto& line : plane.lines()) {
+    for (const auto& event : line.events()) {
+      for (const auto& stat : event.stats()) {
+        if (plane.stat_metadata().at(stat.metadata_id()).name() ==
+            "counter_value") {
+          found_counter_value = true;
+        }
+      }
+    }
+  }
+  EXPECT_TRUE(found_counter_value)
+      << "XPlane should contain range profiling events with kCounterValue";
 }
 
 // Multi-pass variant: request metrics from different counter groups to force
@@ -465,6 +486,25 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSubWithMultiPassRangeProfiling) {
   LOG(INFO) << "FP64 instructions: expected " << fp64_target
             << ", actual " << fp64_actual;
   EXPECT_THAT(fp64_actual, DistanceFrom(fp64_target, Lt(fp64_target * 0.05)));
+
+  // Validate that range profiling results were written to XPlane.
+  ASSERT_FALSE(xplanes.empty());
+  ASSERT_NE(xplanes[0], nullptr);
+  const auto& plane = *xplanes[0];
+  EXPECT_GT(plane.lines_size(), 0);
+  bool found_counter_value = false;
+  for (const auto& line : plane.lines()) {
+    for (const auto& event : line.events()) {
+      for (const auto& stat : event.stats()) {
+        if (plane.stat_metadata().at(stat.metadata_id()).name() ==
+            "counter_value") {
+          found_counter_value = true;
+        }
+      }
+    }
+  }
+  EXPECT_TRUE(found_counter_value)
+      << "XPlane should contain range profiling events with kCounterValue";
 
   if (num_passes == 1) {
     LOG(WARNING) << "All metrics fit in a single pass on this GPU; "

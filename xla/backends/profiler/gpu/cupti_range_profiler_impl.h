@@ -69,6 +69,11 @@ class CuptiRangeProfilerDevice {
   absl::Status DecodeData();
   absl::Status Decode(std::vector<RangeResult>* results);
 
+  // Query CUPTI for per-metric properties (description, hw unit).
+  // Returns one entry per enabled metric. Falls back gracefully if the
+  // API is unavailable (e.g. older CUPTI).
+  std::vector<MetricProperties> QueryMetricProperties();
+
   // Disable range profiling and destroy the profiler object.
   absl::Status Disable();
 
