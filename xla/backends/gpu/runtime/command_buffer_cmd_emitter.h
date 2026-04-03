@@ -29,7 +29,7 @@ struct ConvertToCommandsOptions {
       CommandExecutor::SynchronizationMode::kSerialize;
   bool enable_loop_unroll = false;
   DebugOptions::CommandBufferUpdateMode command_buffer_update_mode =
-      DebugOptions::FULL_UPDATE;
+      DebugOptions::ALWAYS_UPDATE;
 };
 
 // Converts thunk sequence to a command buffer cmd sequence.

@@ -567,7 +567,7 @@ absl::Status CommandExecutor::RecordUpdate(
 
     Command* command = commands_[id].get();
 
-    // For CUSTOM_LIBRARY_UPDATE_FREE mode, always skip updates for commands
+    // For CAPTURE_CMD_NEVER_UPDATE mode, always skip updates for commands
     // implemented via tracing (TracedCommandBufferCmd subclasses) or collective
     // operations (CollectiveCmd subclasses). Their buffer allocations are
     // VA-remapped to fixed offsets within the reserved VA range, so their
@@ -579,10 +579,10 @@ absl::Status CommandExecutor::RecordUpdate(
     // their buffer addresses are stable (VA-mapped), re-initialization is
     // unnecessary.
     if (record_params.command_buffer_update_mode ==
-            DebugOptions::CUSTOM_LIBRARY_UPDATE_FREE &&
+            DebugOptions::CAPTURE_CMD_NEVER_UPDATE &&
         command->IsTracedCommand()) {
       VLOG(3) << "Skipping update for traced command " << id
-              << " (CUSTOM_LIBRARY_UPDATE_FREE mode)";
+              << " (CAPTURE_CMD_NEVER_UPDATE mode)";
       return true;
     }
 

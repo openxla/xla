@@ -131,8 +131,8 @@ namespace xla {
 namespace {
 
 using ::testing::_;
-using ::testing::Contains;
 using ::testing::AllOf;
+using ::testing::Contains;
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Eq;
@@ -3688,7 +3688,7 @@ GpuClientOptions VmmClientOptions() {
 CompileOptions CmdBufVaRemappingOptions() {
   CompileOptions opts;
   auto* dbg = opts.executable_build_options.mutable_debug_options();
-  dbg->set_xla_gpu_command_buffer_update_mode(DebugOptions::FULL_UPDATE_FREE);
+  dbg->set_xla_gpu_command_buffer_update_mode(DebugOptions::NEVER_UPDATE);
   dbg->set_xla_gpu_graph_min_graph_size(1);
   dbg->add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   dbg->add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
@@ -4053,9 +4053,9 @@ TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingMultiplexing) {
   absl::SetVLogLevel("gpu_executable", old_vlog);
 }
 
-// Tests that CUSTOM_LIBRARY_UPDATE_FREE mode produces correct results across
+// Tests that CAPTURE_CMD_NEVER_UPDATE mode produces correct results across
 // multiple runs. The GEMM is routed through cuBLAS (GemmCmd/CublasLtCmd), which
-// are traced commands. In CUSTOM_LIBRARY_UPDATE_FREE mode only traced commands
+// are traced commands. In CAPTURE_CMD_NEVER_UPDATE mode only traced commands
 // populate command_buffer_allocation_indexes_, activating VA remapping so that
 // traced commands skip command buffer updates across alternating VA ranges.
 TEST(StreamExecutorGpuClientTest,
@@ -4066,7 +4066,7 @@ TEST(StreamExecutorGpuClientTest,
   // Pure GEMM: lhs * rhs. With Triton disabled the dot is lowered to a
   // GemmCmd/CublasLtCmd (TracedCommandBufferCmd subclass), so its allocations
   // populate command_buffer_allocation_indexes_ under
-  // CUSTOM_LIBRARY_UPDATE_FREE.
+  // CAPTURE_CMD_NEVER_UPDATE.
   static constexpr char kHlo[] = R"(
     HloModule custom_lib_update_free_test
     ENTRY main {
@@ -4079,7 +4079,7 @@ TEST(StreamExecutorGpuClientTest,
   CompileOptions opts;
   auto* dbg = opts.executable_build_options.mutable_debug_options();
   dbg->set_xla_gpu_command_buffer_update_mode(
-      DebugOptions::CUSTOM_LIBRARY_UPDATE_FREE);
+      DebugOptions::CAPTURE_CMD_NEVER_UPDATE);
   dbg->set_xla_gpu_graph_min_graph_size(1);
   dbg->add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   dbg->add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
@@ -4131,7 +4131,7 @@ TEST(StreamExecutorGpuClientTest,
   absl::SetVLogLevel("gpu_executable", old_vlog);
 }
 
-// Tests that two different executables using FULL_UPDATE_FREE can coexist
+// Tests that two different executables using NEVER_UPDATE can coexist
 // and interleave executions without interfering with each other's VA ranges.
 // Each executable maintains its own per-(executable, device) VA reservation,
 // so remapping in one does not corrupt the other.
