@@ -98,7 +98,8 @@ static absl::StatusOr<std::string> AotCompileCpuExecutable(
 static absl::StatusOr<std::string> CompileGpuExecutable(
     std::unique_ptr<HloModule> hlo_module,
     std::optional<Compiler::GpuTargetConfig> target_config,
-    CompilationResult& result, int32_t num_partitions, int32_t num_replicas) {
+    CompilationResult& result, int32_t num_partitions, int32_t num_replicas,
+    absl::string_view target_platform_version) {
   TF_ASSIGN_OR_RETURN(std::string platform_name,
                       xla::PlatformUtil::CanonicalPlatformName("gpu"));
   platform_name = absl::AsciiStrToUpper(platform_name);
@@ -118,6 +119,14 @@ static absl::StatusOr<std::string> CompileGpuExecutable(
                          /*num_partitions=*/num_partitions,
                          /*num_hosts_per_partition=*/1,
                          /*num_devices_per_host=*/num_replicas, *target_config);
+
+    // TODO(aliia): remove target_config from the arguments of xla_compile_lib
+    // altogether and use the GetGpuTopologyForPlatform constructor by default.
+    if (!target_platform_version.empty()) {
+      TF_ASSIGN_OR_RETURN(
+          topology, GetGpuTopologyForPlatform(target_platform_version,
+                                              num_partitions, 1, num_replicas));
+    }
     aot_options.set_gpu_topology(topology);
     // We need the optimized module, so we call RunHloPasses ourselves above.
     aot_options.set_run_backend_only(true);
@@ -176,14 +185,15 @@ absl::StatusOr<std::string> CompileExecutable(
     std::unique_ptr<HloModule> hlo_module, BackendType backend,
     std::optional<Compiler::GpuTargetConfig> gpu_target_config,
     std::optional<Compiler::CpuTargetConfig> cpu_target_config,
-    int32_t num_partitions, int32_t num_replicas, CompilationResult& result) {
+    int32_t num_partitions, int32_t num_replicas, CompilationResult& result,
+    absl::string_view target_platform_version) {
   if (backend == BackendType::kCpu) {
     return AotCompileCpuExecutable(std::move(hlo_module),
                                    std::move(cpu_target_config));
   }
-  return CompileGpuExecutable(std::move(hlo_module),
-                              std::move(gpu_target_config), result,
-                              num_partitions, num_replicas);
+  return CompileGpuExecutable(
+      std::move(hlo_module), std::move(gpu_target_config), result,
+      num_partitions, num_replicas, target_platform_version);
 }
 
 absl::Status WriteResultFile(const absl::string_view result_output_file,
@@ -438,7 +448,8 @@ absl::Status XlaCompileMain(const XlaCompileOptions& options) {
 
   auto result = CompileExecutable(
       std::move(hlo_module), backend, std::move(gpu_cfg), std::move(cpu_cfg),
-      options.num_partitions, options.num_replicas, compilation_result);
+      options.num_partitions, options.num_replicas, compilation_result,
+      options.gpu_options.target_platform_version);
   *compilation_result.mutable_status() = tsl::StatusToProto(result.status());
   if (!result.ok()) {
     return result.status();
