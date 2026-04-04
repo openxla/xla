@@ -183,6 +183,24 @@ class GpuCommunicator : public Communicator {
   virtual absl::Status LaunchRecv(se::DeviceAddressBase recv_buffer,
                                   PrimitiveType dtype, size_t count,
                                   RankId peer, const Executor& executor) = 0;
+
+  virtual absl::Status LaunchPut(se::DeviceAddressBase send_buffer,
+                                 SymmetricMemory* recv_buffer, size_t offset,
+                                 size_t count, RankId peer,
+                                 const Executor& executor) {
+    return Unimplemented("LaunchPut is not implemented");
+  }
+
+  virtual absl::Status LaunchSignal(RankId peer, const SignalDesc& signal_desc,
+                                    const Executor& executor) {
+    return Unimplemented("LaunchSignal is not implemented");
+  }
+
+  virtual absl::Status LaunchWaitSignal(RankId peer, int op_cnt,
+                                        const SignalDesc& signal_desc,
+                                        const Executor& executor) {
+    return Unimplemented("LaunchWaitSignal is not implemented");
+  }
 };
 
 }  // namespace xla::gpu
