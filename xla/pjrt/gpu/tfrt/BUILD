@@ -181,6 +181,7 @@ cc_library(
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_rocm([
         # keep sorted
+        "//xla/stream_executor/rocm:rocm_device_address_vmm_allocator",
         "@local_config_rocm//rocm:rocm_headers",
     ]),
 )

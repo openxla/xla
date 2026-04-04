@@ -111,7 +111,9 @@ limitations under the License.
 
 #if GOOGLE_CUDA
 #include "xla/stream_executor/cuda/cuda_device_address_vmm_allocator.h"
-#endif  // GOOGLE_CUDA
+#elif TENSORFLOW_USE_ROCM
+#include "xla/stream_executor/rocm/rocm_device_address_vmm_allocator.h"
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #if defined(PLATFORM_WINDOWS)
 // Required to build successfully with Mingw
@@ -669,7 +671,6 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
     for (const auto& device : devices) {
       se::StreamExecutor* executor = device->executor();
       if (executor == nullptr) {
-        // Skips remote devices.
         continue;
       }
       executor_streams.push_back({executor, device->stream()});
@@ -680,10 +681,26 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
             xla_client->platform(), allocator_config.memory_fraction,
             allocator_config.gpu_system_memory_size, executor_streams));
     return MaybeOwning<se::DeviceAddressAllocator>(std::move(vmm_alloc));
+#elif TENSORFLOW_USE_ROCM
+    std::vector<std::pair<se::StreamExecutor*, se::Stream*>> executor_streams;
+    for (const auto& device : devices) {
+      se::StreamExecutor* executor = device->executor();
+      if (executor == nullptr) {
+        // Skips remote devices.
+        continue;
+      }
+      executor_streams.push_back({executor, device->stream()});
+    }
+    TF_ASSIGN_OR_RETURN(
+        auto vmm_alloc,
+        se::gpu::RocmDeviceAddressVmmAllocator::Create(
+            xla_client->platform(), allocator_config.memory_fraction,
+            allocator_config.gpu_system_memory_size, executor_streams));
+    return MaybeOwning<se::DeviceAddressAllocator>(std::move(vmm_alloc));
 #else
     return absl::UnimplementedError(
-        "VMM allocator is only supported with CUDA.");
-#endif  // GOOGLE_CUDA
+        "VMM allocator is only supported with CUDA or ROCm.");
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   }
 
   std::vector<se::MultiDeviceAdapter::AllocatorInfo> allocators;

@@ -175,6 +175,26 @@ namespace wrap {
 
 HIP_ROUTINE_EACH(STREAM_EXECUTOR_HIP_WRAP)
 
+#if TF_ROCM_VERSION >= 60000
+
+// clang-format off
+#define HIP_ROUTINE_EACH_VMM(__macro)               \
+  __macro(hipMemCreate)                             \
+  __macro(hipMemRelease)                            \
+  __macro(hipMemAddressReserve)                     \
+  __macro(hipMemAddressFree)                        \
+  __macro(hipMemMap)                                \
+  __macro(hipMemUnmap)                              \
+  __macro(hipMemSetAccess)                          \
+  __macro(hipMemGetAllocationGranularity)           \
+  __macro(hipStreamWriteValue64)
+// clang-format on
+
+HIP_ROUTINE_EACH_VMM(STREAM_EXECUTOR_HIP_WRAP)
+
+#undef HIP_ROUTINE_EACH_VMM
+#endif  // TF_ROCM_VERSION >= 60000
+
 #if TF_ROCM_VERSION >= 60200
 
 // clang-format off
