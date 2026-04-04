@@ -64,6 +64,7 @@ class RocmExecutor : public GpuExecutor {
       : GpuExecutor(platform, device_ordinal) {}
   ~RocmExecutor() override;
   std::unique_ptr<ActivateContext> Activate() override;
+  void ClearError() override;
 
   absl::Status Init() override;
   blas::BlasSupport* AsBlas() override;

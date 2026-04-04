@@ -64,12 +64,13 @@ limitations under the License.
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
 #include "tsl/platform/platform.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -504,6 +505,20 @@ InvokeContext CustomCallThunk::BuildInvokeContext(
       execution_context};
 }
 
+// Activate the GPU context for the target device and clear any stale error
+// before invoking an FFI handler. FFI handlers call GPU runtime APIs
+// (hipBLAS, hipSOLVER, etc.) that depend on the thread-local active device
+// and a clean error state.
+static std::unique_ptr<se::ActivateContext> ActivateAndClearError(
+    se::Stream* stream) {
+  std::unique_ptr<se::ActivateContext> activation;
+  if (stream != nullptr) {
+    activation = stream->parent()->Activate();
+    stream->parent()->ClearError();
+  }
+  return activation;
+}
+
 absl::Status CustomCallThunk::ExecuteFfiHandler(
     RunId run_id, XLA_FFI_Handler* handler, XLA_FFI_ExecutionStage stage,
     se::Stream* stream, Thunk::ExecutionScopedState* execution_scoped_state,
@@ -521,6 +536,8 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
       !(buffer_allocations && stream)) {
     return absl::InternalError("buffer allocations and stream are required");
   }
+
+  auto activation = ActivateAndClearError(stream);
 
   TF_ASSIGN_OR_RETURN(auto call_frame, BuildCallFrame(buffer_allocations));
   InvokeContext context = BuildInvokeContext(
@@ -544,6 +561,8 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
       !(buffer_allocations && stream)) {
     return absl::InternalError("buffer allocations and stream are required");
   }
+
+  auto activation = ActivateAndClearError(stream);
 
   TF_ASSIGN_OR_RETURN(auto call_frame, BuildCallFrame(buffer_allocations));
   InvokeContext context = BuildInvokeContext(
