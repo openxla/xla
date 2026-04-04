@@ -125,9 +125,6 @@ cc_library(
         "no_oss",
         "nobuilder",
     ],
-    deps = [
-        "//xla/tsl/platform:types",
-    ],
 )
 
 cc_library(

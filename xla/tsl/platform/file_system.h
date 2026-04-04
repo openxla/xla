@@ -16,16 +16,15 @@ limitations under the License.
 #ifndef XLA_TSL_PLATFORM_FILE_SYSTEM_H_
 #define XLA_TSL_PLATFORM_FILE_SYSTEM_H_
 
-#include <stdint.h>
-
 #include <cstddef>
+#include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "absl/base/attributes.h"
 #include "absl/base/macros.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
@@ -33,11 +32,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/file_statistics.h"
-#include "xla/tsl/platform/macros.h"
-#include "xla/tsl/platform/types.h"
 #include "tsl/platform/cord.h"
-#include "tsl/platform/platform.h"
-#include "tsl/platform/stringpiece.h"
 
 #ifdef PLATFORM_WINDOWS
 #undef DeleteFile

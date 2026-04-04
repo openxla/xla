@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/cord.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/stack_frame.h"
 #include "xla/tsl/protobuf/error_codes.pb.h"
 #include "tsl/platform/platform.h"

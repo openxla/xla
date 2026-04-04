@@ -18,12 +18,21 @@ limitations under the License.
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <deque>
+#include <initializer_list>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/file_statistics.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/status.h"
 
 #if defined(PLATFORM_POSIX) || defined(IS_MOBILE_PLATFORM) || \
@@ -38,8 +47,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "tsl/platform/platform.h"
 #include "tsl/platform/scanner.h"
-#include "tsl/platform/str_util.h"
-#include "tsl/platform/strcat.h"
 
 namespace tsl {
 

@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef XLA_TSL_PLATFORM_ENV_H_
 #define XLA_TSL_PLATFORM_ENV_H_
 
-#include <stdint.h>
-
 #include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -510,13 +510,13 @@ class Env {
   /// \brief Returns the number of nano-seconds since the Unix epoch.
   virtual uint64_t NowNanos() const { return EnvTime::NowNanos(); }
 
-  /// \brief Returns the number of micro-seconds since the Unix epoch.
+  /// \brief Returns the number of microseconds since the Unix epoch.
   virtual uint64_t NowMicros() const { return EnvTime::NowMicros(); }
 
   /// \brief Returns the number of seconds since the Unix epoch.
   virtual uint64_t NowSeconds() const { return EnvTime::NowSeconds(); }
 
-  /// Sleeps/delays the thread for the prescribed number of micro-seconds.
+  /// Sleeps/delays the thread for the prescribed number of microseconds.
   virtual void SleepForMicroseconds(int64_t micros) = 0;
 
   /// Returns the process ID of the calling process.
