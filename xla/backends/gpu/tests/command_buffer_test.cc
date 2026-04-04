@@ -239,6 +239,30 @@ TEST_P(CommandBufferTest, Fusions) {
                               /*run_hlo_passes=*/false);
 }
 
+TEST_P(CommandBufferTest, Convolutions) {
+  constexpr absl::string_view hlo_text = R"(
+HloModule test
+ENTRY Test {
+  input = f32[8,128,2,32] parameter(0)
+  filter = f32[3,3,128,128] parameter(1)
+  conv = f32[8,128,2,32] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01
+ })";
+
+  HloModuleConfig config;
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CONVOLUTION);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  config.set_debug_options(debug_options);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
+
+  RunAndCompareThreeIterations(std::move(module), /*run_hlo_passes=*/true,
+                               ErrorSpec{1e-3, 2e-3});
+}
+
 static absl::Status Memcpy(se::Stream* stream, ffi::AnyBuffer src,
                            ffi::Result<ffi::AnyBuffer> dst) {
   se::DeviceAddressBase dst_mem = dst->device_memory();
