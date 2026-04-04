@@ -36,7 +36,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "google/protobuf/text_format.h"
-#include "xla/service/gpu/model/collective_interpolator_data.h"
+#include "xla/service/gpu/model/default_collective_perf_table.h"
 #include "xla/service/gpu/model/hlo_op_profile.pb.h"
 #include "xla/tools/collective_perf_table_gen.h"
 #include "xla/tsl/platform/env.h"
@@ -225,10 +225,10 @@ absl::Status UpdateHeader(const DeviceHloInstructionProfiles& new_profiles,
                           CollectivePerfTableGen* gen) {
   std::string header_path = GetFullPath(header_path_flag);
 
-  // 1. Parse kDefaultCollectivePTable to get current profiles
+  // 1. Parse `default_collective_perf_table.txtpb` to get current profiles
   DeviceHloInstructionProfiles current_profiles_proto;
-  CHECK(tsl::protobuf::TextFormat::ParseFromString(kDefaultCollectivePTable,
-                                                   &current_profiles_proto));
+  CHECK(tsl::protobuf::TextFormat::ParseFromString(
+      xla::gpu::get_default_collective_perf_table(), &current_profiles_proto));
   std::string current_profiles_pbtxt;
   tsl::protobuf::TextFormat::PrintToString(current_profiles_proto,
                                            &current_profiles_pbtxt);
