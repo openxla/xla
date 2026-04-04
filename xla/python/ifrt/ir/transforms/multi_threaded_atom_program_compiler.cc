@@ -24,8 +24,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -34,7 +32,6 @@ limitations under the License.
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/DebugStringHelper.h"
 #include "mlir/Support/LLVM.h"
-#include "xla/client/executable_build_options.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/hlo/hlo_program.h"
@@ -44,9 +41,7 @@ limitations under the License.
 #include "xla/python/ifrt/ir/ifrt_ops.h"
 #include "xla/python/ifrt/ir/transforms/utils.h"
 #include "xla/python/ifrt/shape.h"
-#include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
-#include "xla/service/spmd/shardy/utils.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/statusor.h"
@@ -54,47 +49,6 @@ limitations under the License.
 
 namespace xla {
 namespace ifrt {
-
-namespace {
-
-// Construct a bool vector with a True entry for each input sharding that must
-// be inferred.
-llvm::SmallVector<bool> GetInputShardingPropagation(
-    mlir::func::FuncOp func_op) {
-  llvm::SmallVector<bool> sharding_propagation_to_input;
-  sharding_propagation_to_input.reserve(func_op.getNumArguments());
-  for (int idx = 0; idx < func_op.getNumArguments(); ++idx) {
-    const auto hlo_sharding_attr =
-        func_op.getArgAttrOfType<mlir::StringAttr>(idx, kHloShardingAttrName);
-    if (hlo_sharding_attr == nullptr) {
-      sharding_propagation_to_input.push_back(true);
-    } else {
-      sharding_propagation_to_input.push_back(false);
-    }
-  }
-  return sharding_propagation_to_input;
-}
-
-// Construct a bool vector with a True entry for each output sharding that must
-// be inferred.
-llvm::SmallVector<bool> GetOutputShardingPropagation(
-    mlir::func::FuncOp func_op) {
-  llvm::SmallVector<bool> sharding_propagation_to_output;
-  sharding_propagation_to_output.reserve(func_op.getNumResults());
-  for (int idx = 0; idx < func_op.getNumResults(); ++idx) {
-    const auto hlo_sharding_attr =
-        func_op.getResultAttrOfType<mlir::StringAttr>(idx,
-                                                      kHloShardingAttrName);
-    if (hlo_sharding_attr == nullptr) {
-      sharding_propagation_to_output.push_back(true);
-    } else {
-      sharding_propagation_to_output.push_back(false);
-    }
-  }
-  return sharding_propagation_to_output;
-}
-
-}  // namespace
 
 absl::StatusOr<AtomProgramCompileResult>
 MultiThreadedAtomProgramCompiler::CompileModule(CallOp call_op,
@@ -118,57 +72,23 @@ MultiThreadedAtomProgramCompiler::CompileModule(CallOp call_op,
 absl::StatusOr<xla::CompileOptions>
 MultiThreadedAtomProgramCompiler::GetXlaCompileOptions(
     CallOp call_op, mlir::ModuleOp module_op) {
-  xla::CompileOptions compile_options;
-
   // If the CallOp has a compile options key, then try to use the provided
   // compile options.
-  auto compile_options_key =
-      call_op->getAttrOfType<mlir::StringAttr>(kIfrtCompileOptionsKey);
-  TF_ASSIGN_OR_RETURN(
-      std::optional<xla::CompileOptions> compile_options_override,
-      GetModuleXlaCompileOverrides(compile_options_key,
-                                   compile_options_overrides_));
+  if (auto compile_options_key =
+          call_op->getAttrOfType<mlir::StringAttr>(kIfrtCompileOptionsKey)) {
+    TF_ASSIGN_OR_RETURN(
+        std::optional<xla::CompileOptions> compile_options_override,
+        GetModuleXlaCompileOverrides(compile_options_key,
+                                     compile_options_overrides_));
 
-  if (compile_options_override.has_value()) {
-    return compile_options_override.value();
-  }
-
-  auto& exec_build_options = compile_options.executable_build_options;
-  // Executable build options are constructed using logical ids, which are
-  // later converted into real Device ids by using the logical ids as
-  // indices into the device list given at compilation invocation time.
-  llvm::ArrayRef<int> logical_device_ids = call_op.getDevices();
-  if (call_op->hasAttrOfType<mlir::UnitAttr>(kIfrtLocalViewAttrName)) {
-    exec_build_options.set_num_replicas(logical_device_ids.size());
-    exec_build_options.set_num_partitions(1);
-    xla::DeviceAssignment device_assignment(logical_device_ids.size(), 1);
-    for (const auto [i, device_id] : llvm::enumerate(logical_device_ids)) {
-      device_assignment(i, 0) = device_id;
-    }
-    exec_build_options.set_device_assignment(device_assignment);
-    exec_build_options.set_use_spmd_partitioning(false);
-  } else {
-    exec_build_options.set_num_replicas(1);
-    exec_build_options.set_num_partitions(logical_device_ids.size());
-    xla::DeviceAssignment device_assignment(1, logical_device_ids.size());
-    for (const auto [i, device_id] : llvm::enumerate(logical_device_ids)) {
-      device_assignment(0, i) = device_id;
-    }
-    exec_build_options.set_device_assignment(device_assignment);
-    exec_build_options.set_use_spmd_partitioning(true);
-    if (xla::sdy::hasShardyMesh(module_op)) {
-      exec_build_options.set_use_shardy_partitioner(true);
-    }
-    if (enable_sharding_propagation_) {
-      mlir::func::FuncOp main_func = GetMainFunction(module_op);
-      exec_build_options.set_allow_spmd_sharding_propagation_to_parameters(
-          GetInputShardingPropagation(main_func));
-      exec_build_options.set_allow_spmd_sharding_propagation_to_output(
-          GetOutputShardingPropagation(main_func));
+    if (compile_options_override.has_value()) {
+      return compile_options_override.value();
     }
   }
 
-  return compile_options;
+  return GetDefaultCompileOptions(
+      call_op, /*enable_sharding_propagation=*/enable_sharding_propagation_,
+      /*enable_parameter_tupling=*/false);
 }
 
 absl::StatusOr<AtomProgramCompileResult>

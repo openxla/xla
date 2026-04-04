@@ -27,7 +27,6 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/LogicalResult.h"
@@ -66,7 +65,6 @@ limitations under the License.
 #include "xla/python/ifrt/ir/transforms/debug.h"
 #include "xla/python/ifrt/ir/transforms/passes.h"
 #include "xla/python/ifrt/ir/transforms/utils.h"
-#include "xla/service/computation_placer.h"
 
 namespace xla::ifrt::mpmd {
 namespace {
@@ -393,35 +391,30 @@ class BuildCompileOptionsPass
     mlir::ModuleOp module = getOperation();
     mlir::SymbolTableCollection symbol_table;
     mlir::func::FuncOp func_op = GetMainFunction(module);
-    int threshold_for_argument_tupling = threshold_for_argument_tupling_;
+
     auto walk_result = func_op.walk([&](CallOp call_op) {
-      xla::CompileOptions compile_options;
-      xla::ExecutableBuildOptions& exec_build_options =
-          compile_options.executable_build_options;
-      mlir::ArrayRef<int> logical_device_ids =
-          call_op.getDevicesAttr().getIds();
-      exec_build_options.set_num_replicas(1);
-      exec_build_options.set_num_partitions(logical_device_ids.size());
-      xla::DeviceAssignment device_assignment(1, logical_device_ids.size());
-      // Build options use IFRT logical device ids.
-      for (const auto [i, device_id] : llvm::enumerate(logical_device_ids)) {
-        device_assignment(0, i) = device_id;
-      }
-      exec_build_options.set_device_assignment(device_assignment);
-      exec_build_options.set_use_spmd_partitioning(true);
-      exec_build_options.set_use_shardy_partitioner(true);
       mlir::func::FuncOp callee = call_op.getCalleeOp(symbol_table);
+      mlir::ModuleOp callee_module = callee->getParentOfType<mlir::ModuleOp>();
+      std::string callee_name = callee_module.getSymName()->str();
+
+      xla::CompileOptions compile_options = GetDefaultCompileOptions(
+          call_op, /*enable_sharding_propagation=*/false,
+          /*enable_parameter_tupling=*/threshold_for_argument_tupling_ > 0 &&
+              callee.getNumArguments() > threshold_for_argument_tupling_);
+
       if (auto reserved_hbm_bytes = callee->getAttrOfType<mlir::IntegerAttr>(
               mpmd::kReservedHbmBytes)) {
-        set_reserved_bytes_(exec_build_options, reserved_hbm_bytes.getInt());
+        set_reserved_bytes_(compile_options.executable_build_options,
+                            reserved_hbm_bytes.getInt());
       };
-      std::string callee_name =
-          callee->getParentOfType<mlir::ModuleOp>().getSymName()->str();
+
       auto mesh_name_attr =
           call_op->getAttrOfType<mlir::StringAttr>(kIfrtMeshNameAttrName);
-      CHECK(mesh_name_attr != nullptr)
-          << "ifrt.CallOp `" << callee_name << "` is missing "
-          << kIfrtMeshNameAttrName.str() << " attribute.";
+      if (mesh_name_attr == nullptr) {
+        call_op.emitError()
+            << " is missing " << kIfrtMeshNameAttrName.str() << " attribute";
+        return mlir::WalkResult::interrupt();
+      }
       // While the users provide per-mesh compilation options, we need to
       // include callee name in the key because fragments assigned to the same
       // mesh might have different `reserved_hbm_bytes`.
@@ -436,13 +429,10 @@ class BuildCompileOptionsPass
           option_overrides != compile_options_overrides_.end()) {
         compile_options.env_option_overrides = option_overrides->second;
       }
-      if (threshold_for_argument_tupling > 0 &&
-          callee.getNumArguments() > threshold_for_argument_tupling) {
-        compile_options.parameter_is_tupled_arguments = true;
-      }
       compile_options_map_.emplace(compile_options_key, compile_options);
       return mlir::WalkResult::skip();
     });
+
     if (walk_result.wasInterrupted()) {
       signalPassFailure();
     }

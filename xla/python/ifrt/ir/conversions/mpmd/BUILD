@@ -53,7 +53,6 @@ cc_library(
         "//xla/python/ifrt/ir/transforms:debug",
         "//xla/python/ifrt/ir/transforms:passes",
         "//xla/python/ifrt/ir/transforms:utils",
-        "//xla/service:computation_placer_hdr",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
