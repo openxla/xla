@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_FFI_H_
 #define XLA_BACKENDS_GPU_FFI_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -28,7 +29,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/c_api_internal.h"  // IWYU pragma: keep
-#include "xla/ffi/ffi.h"  // IWYU pragma: export
+#include "xla/ffi/ffi.h"                 // IWYU pragma: export
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/scratch_allocator.h"
@@ -52,7 +53,13 @@ struct CollectiveMemory {};            //  const xla::gpu::CollectiveMemory*
 struct TargetGpuComputeCapability {};  //  const se::GpuComputeCapability*
 struct CpuTargetMachineOptions {};     //  const xla::cpu::TargetMachineOptions*
 
-// Parametrized type tag for platform stream, e.g. cudaStream_t
+// Parametrized type tags for binding additional streams (binds as se::Stream*).
+template <size_t id>
+struct ComputationStream {};
+template <size_t id>
+struct CommunicationStream {};
+
+// Parametrized type tag for platform stream (binds as T, e.g. cudaStream_t).
 template <typename T>
 struct PlatformStream {};
 
@@ -86,6 +93,48 @@ struct CtxDecoding<PlatformStream<T>> {
           stream.value()->platform_specific_handle().stream);
     }
     return std::nullopt;
+  }
+};
+
+template <size_t id>
+struct CtxDecoding<ComputationStream<id>> {
+  using Type = stream_executor::Stream*;
+
+  static std::optional<Type> Decode(const XLA_FFI_Api* api,
+                                    XLA_FFI_ExecutionContext* ctx,
+                                    DiagnosticEngine& diagnostic) {
+    void* result = nullptr;
+    if (XLA_FFI_Error* error =
+            api->internal_api->XLA_FFI_INTERNAL_ComputationStream_Get(
+                ctx, static_cast<int64_t>(id), &result);
+        ABSL_PREDICT_FALSE(error)) {
+      diagnostic.Emit("Failed to get computation stream: ")
+          << internal::GetErrorMessage(api, error);
+      internal::DestroyError(api, error);
+      return std::nullopt;
+    }
+    return reinterpret_cast<Type>(result);
+  }
+};
+
+template <size_t id>
+struct CtxDecoding<CommunicationStream<id>> {
+  using Type = stream_executor::Stream*;
+
+  static std::optional<Type> Decode(const XLA_FFI_Api* api,
+                                    XLA_FFI_ExecutionContext* ctx,
+                                    DiagnosticEngine& diagnostic) {
+    void* result = nullptr;
+    if (XLA_FFI_Error* error =
+            api->internal_api->XLA_FFI_INTERNAL_CommunicationStream_Get(
+                ctx, static_cast<int64_t>(id), &result);
+        ABSL_PREDICT_FALSE(error)) {
+      diagnostic.Emit("Failed to get communication stream: ")
+          << internal::GetErrorMessage(api, error);
+      internal::DestroyError(api, error);
+      return std::nullopt;
+    }
+    return reinterpret_cast<Type>(result);
   }
 };
 
