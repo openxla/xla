@@ -1,9 +1,11 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    default_visibility = internal_visibility(["//xla/python/ifrt:internal"]),
     licenses = ["notice"],
 )
 
@@ -12,7 +14,10 @@ cc_library(
     srcs = ["module_parsing.cc"],
     hdrs = ["module_parsing.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:users"],
+    visibility = internal_visibility([
+        "//xla/python/ifrt/ir:users",
+        "//xla/python/ifrt/ir:internal",
+    ]),
     deps = [
         "//xla/mlir/utils:error_util",
         "//xla/mlir_hlo:hlo_dialect_registration",
@@ -39,7 +44,10 @@ cc_library(
     srcs = ["sharding_conversions.cc"],
     hdrs = ["sharding_conversions.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:users"],
+    visibility = internal_visibility([
+        "//xla/python/ifrt/ir:friends",
+        "//xla/python/ifrt/ir:internal",
+    ]),
     deps = [
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
