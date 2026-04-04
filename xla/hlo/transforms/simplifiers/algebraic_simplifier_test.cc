@@ -13073,6 +13073,46 @@ TEST_F(AlgebraicSimplifierTest, AllGatherOfBroadcast) {
               GmockMatch(m::Broadcast(m::Constant())));
 }
 
+TEST_F(AlgebraicSimplifierTest, AllReduceSumOfBroadcast) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+    add {
+      p0 = f32[] parameter(0)
+      p1 = f32[] parameter(1)
+      ROOT a = f32[] add(p0, p1)
+    }
+    test {
+      z = f32[] constant(10)
+      b = f32[4,4] broadcast(z), dimensions={}
+      ROOT ar = f32[4,4] all-reduce(b), to_apply=add, replica_groups={{0, 1, 2, 3}}
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  XLA_VLOG_LINES(1, m->ToString());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Broadcast()));
+}
+
+TEST_F(AlgebraicSimplifierTest, ReduceScatterSumOfBroadcast) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+    add {
+      p0 = f32[] parameter(0)
+      p1 = f32[] parameter(1)
+      ROOT a = f32[] add(p0, p1)
+    }
+    test {
+      z = f32[] constant(10)
+      b = f32[8,4] broadcast(z), dimensions={}
+      ROOT rs = f32[2,4] reduce-scatter(b), dimensions={0}, to_apply=add, replica_groups={{0, 1, 2, 3}}
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  XLA_VLOG_LINES(1, m->ToString());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Broadcast()));
+}
+
 TEST_F(AlgebraicSimplifierTest, TrivialMin) {
   constexpr absl::string_view kModuleStr = R"(
     HloModule m
