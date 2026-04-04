@@ -2215,6 +2215,7 @@ absl::StatusOr<HloInstruction*> PartitionDotGroupOnBatchImpl(
       lhs_grouped = AlignGroupsWith(std::move(lhs_grouped), rhs_grouped);
       lhs = lhs.Reshard(UngroupSharding(lhs_grouped));
     }
+    // TODO: Convert to v2 sharding
     auto reshaped_output_tiling = output_sharding.tile_assignment().Reshape(
         output_sharding_dims_adjusted_to_lhs);
     output_grouped = AlignGroupsWith(
@@ -4298,6 +4299,17 @@ absl::Status SpmdPartitioningVisitor::HandleDotHelper(
   if (hlo->sharding().IsSingleDevice()) {
     return DefaultAction(hlo);
   }
+  auto to_v2_sharding = [](PartitionedHlo* p) {
+    if (p->hlo() && p->hlo()->has_sharding() &&
+        p->sharding().UseNamedShardingLeaf()) {
+      p->hlo()->set_sharding(
+          HloSharding::V3ToV2Sharding(p->sharding().named_sharding()));
+    }
+  };
+  if (hlo->has_sharding() && hlo->sharding().UseNamedShardingLeaf()) {
+    hlo->set_sharding(
+        HloSharding::V3ToV2Sharding(hlo->sharding().named_sharding()));
+  }
   HloInstruction* partitioned_dot;
   Window conv_window;
   if constexpr (std::is_same_v<CreateShardedFunctor,
@@ -4306,11 +4318,15 @@ absl::Status SpmdPartitioningVisitor::HandleDotHelper(
         Cast<HloCustomCallInstruction>(hlo);
     PartitionedHlo& lhs_operand =
         GetPartitionedHlo(block_scaled_dot->operand(0));
+    to_v2_sharding(&lhs_operand);
     PartitionedHlo& raw_rhs_operand =
         GetPartitionedHlo(block_scaled_dot->operand(1));
+    to_v2_sharding(&raw_rhs_operand);
     PartitionedHlo& lhs_scale = GetPartitionedHlo(block_scaled_dot->operand(2));
+    to_v2_sharding(&lhs_scale);
     PartitionedHlo& raw_rhs_scale =
         GetPartitionedHlo(block_scaled_dot->operand(3));
+    to_v2_sharding(&raw_rhs_scale);
     // If lhs and rhs are the same instruction, make a copy for rhs.
     const PartitionedHlo& rhs_operand =
         (lhs_operand.hlo() == raw_rhs_operand.hlo())
@@ -4377,10 +4393,12 @@ absl::Status SpmdPartitioningVisitor::HandleDotHelper(
       partitioned_dot->set_sharding(original_output_sharding);
     }
   } else {
-    PartitionedHlo lhs = GetPartitionedHlo(hlo->operand(0));
-    PartitionedHlo raw_rhs = GetPartitionedHlo(hlo->operand(1));
+    PartitionedHlo& lhs = GetPartitionedHlo(hlo->operand(0));
+    to_v2_sharding(&lhs);
+    PartitionedHlo& raw_rhs = GetPartitionedHlo(hlo->operand(1));
+    to_v2_sharding(&raw_rhs);
     // If lhs and rhs are the same instruction, make a copy for rhs.
-    const PartitionedHlo rhs =
+    const PartitionedHlo& rhs =
         (lhs.hlo() == raw_rhs.hlo())
             ? MakeACopyAndReturnItsPartitionedHlo(raw_rhs, builder())
             : raw_rhs;
