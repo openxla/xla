@@ -128,6 +128,7 @@ xla_cc_test(
         ":mock_stream_executor",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -180,6 +181,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
+        "//xla/tsl/platform:logging",
     ],
 )
 
@@ -412,6 +414,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
+        "//xla/tsl/platform:errors",
     ],
 )
 
@@ -431,6 +434,8 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
     ],
 )
 
@@ -483,6 +488,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
+        "//xla/tsl/platform:errors",
     ],
 )
 
@@ -537,6 +543,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:statusor",
+        "//xla/tsl/platform:statusor",
     ],
 )
 
@@ -674,6 +681,9 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
+
     ],
 )
 
@@ -870,6 +880,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:statusor",
+        "//xla/tsl/platform:statusor",
     ],
 )
 
@@ -882,6 +893,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:statusor",
+        "//xla/tsl/platform:statusor",
     ],
 )
 
@@ -961,6 +973,8 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
     ],
 )
 
@@ -1002,6 +1016,8 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:thread_annotations",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
     ],
 )
 
@@ -1021,23 +1037,8 @@ cc_library(
 cc_library(
     name = "stream_executor_impl",
     deps = [
-        ":allocator_stats",
         ":blas",  # build_cleaner: keep
         ":command_buffer",  # build_cleaner: keep
-        ":device_address",
-        ":device_description",
-        ":dnn",
-        ":executor_cache",
-        ":fft",
-        ":kernel",
-        ":kernel_spec",
-        ":launch_dim",
-        ":platform",
-        ":platform_manager",
-        ":scratch_allocator",
-        ":stream_common",
-        ":stream_executor_common",
-        ":stream_executor_h",
     ] + if_oss(["//xla/tsl/protobuf:dnn_proto_cc_impl"]),
 )
 
@@ -1099,6 +1100,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -1183,6 +1185,7 @@ xla_cc_test(
         ":dnn",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -1195,6 +1198,7 @@ xla_cc_test(
         ":scoped_module_handle",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -1224,6 +1228,8 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -1240,6 +1246,9 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:statusor",
+        "//xla//tsl/platform:test",
+        "//xla//tsl/platform:statusor",
     ],
 )
 
@@ -1250,6 +1259,7 @@ xla_cc_test(
         ":bit_pattern",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:test",
     ],
 )
 

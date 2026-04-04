@@ -3,7 +3,7 @@ load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/pjrt/gpu:package_groups.bzl", "xla_gpu_internal_packages")
-load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm")
+load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -60,6 +60,7 @@ cc_library(
         ":gpu_metrics",
         ":se_gpu_pjrt_runtime_abi_version",
         ":se_gpu_topology_description",
+        "//xla:debug_options_flags",
         "//xla:executable_run_options",
         "//xla:future",
         "//xla:literal",
@@ -122,6 +123,9 @@ cc_library(
         "//xla/service:compiler",
         "//xla/service:computation_placer_hdr",
         "//xla/service:executable",
+        "//xla/service/gpu:gpu_constants",
+        "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu:stream_executor_util",
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
         "//xla/service:platform_util",
@@ -140,6 +144,8 @@ cc_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
+        "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator",
         "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/stream_executor/integrations:tf_allocator_adapter",
         "//xla/tsl/concurrency:async_value",
@@ -186,7 +192,7 @@ cc_library(
         "@tsl//tsl/profiler/lib:connected_traceme",
         "@tsl//tsl/profiler/lib:nvtx_utils",
         "@tsl//tsl/profiler/lib:traceme",
-    ] + if_cuda_or_rocm([
+    ] + if_gpu_is_configured([
         # keep sorted
         "//xla:debug_options_flags",
         "//xla/service/gpu:gpu_compiler",
@@ -201,9 +207,11 @@ cc_library(
     ]) + if_rocm([
         # keep sorted
         "@local_config_rocm//rocm:rocm_headers",
+    ]) + if_sycl([
+        # keep sorted
+        "@oneapi//:headers",
     ]),
 )
-
 xla_test(
     name = "se_gpu_pjrt_client_test",
     srcs = ["se_gpu_pjrt_client_test.cc"],
@@ -273,6 +281,7 @@ xla_test(
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
         "//xla/service:platform_util",
+        "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
         "//xla/service/gpu:gpu_memory_space_assignment",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:stream",
@@ -280,6 +289,7 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/framework:allocator",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
@@ -565,6 +575,25 @@ cc_library(
 )
 
 cc_library(
+    name = "se_gpu_pjrt_compiler_sycl_registration",
+    srcs = ["se_gpu_pjrt_compiler_sycl_registration.cc"],
+    compatible_with = [],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":se_gpu_pjrt_compiler_impl",
+        "//xla/pjrt:pjrt_compiler",
+        "//xla/pjrt:stream_executor_platform_id_mapping",
+        "//xla/service/gpu:intel_gpu_compiler",
+        "//xla/stream_executor/platform:initialize",
+        "//xla/stream_executor/sycl:sycl_platform_id",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
     name = "se_gpu_pjrt_compiler",
     hdrs = ["se_gpu_pjrt_compiler.h"],
     # TODO(b/382070262): Migrate users off this target - They should go though the PjRt ABI compatibility layer.
@@ -591,6 +620,8 @@ cc_library(
         ":se_gpu_pjrt_compiler_cuda_registration",
     ]) + if_rocm([
         ":se_gpu_pjrt_compiler_rocm_registration",
+    ]) + if_sycl([
+        ":se_gpu_pjrt_compiler_sycl_registration",
     ]),
 )
 
@@ -733,7 +764,6 @@ xla_cc_test(
         "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_device_dimensions",
         "//xla/pjrt:pjrt_stream_executor_device_description",
-        "//xla/runtime:process_id",
         "//xla/service:gpu_topology",
         "//xla/tsl/platform:statusor",
         "@com_google_googletest//:gtest_main",
