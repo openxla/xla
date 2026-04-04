@@ -1909,6 +1909,7 @@ def MHLO_ScanOp: MHLO_Op<"scan", [
     Variadic<MHLO_Tensor>:$inputs,
     Variadic<MHLO_Tensor>:$inits,
     ConfinedAttr<I64Attr, [IntNonNegative]>:$dimension,
+    OptionalAttr<ConfinedAttr<I64Attr, [IntNonNegative]>>:$scan_dim_size,
     DefaultValuedOptionalAttr<BoolAttr, "false">:$is_reverse,
     OptionalAttr<BoolAttr>:$is_associative
   );

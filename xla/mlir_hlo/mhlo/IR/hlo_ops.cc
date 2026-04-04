@@ -4476,6 +4476,12 @@ LogicalResult ScanOp::verify() {
     dimSize = inputType.getDimSize(dim);
   }
 
+  if (getScanDimSize() && dimSize != ShapedType::kDynamic &&
+      getScanDimSize().value() != dimSize) {
+    return emitOpError()
+           << "scan_dim_size attribute must match the scan dimension size";
+  }
+
   Block& bodyBlock = getBody().front();
   if (bodyBlock.getNumArguments() != getNumOperands()) {
     return emitOpError() << "expects " << getNumOperands()
@@ -4517,20 +4523,21 @@ ParseResult ScanOp::parse(OpAsmParser& parser, OperationState& result) {
       parser.parseKeyword("inits") ||
       parser.parseOperandList(inits, OpAsmParser::Delimiter::Paren) ||
       parser.parseKeyword("dimension") || parser.parseEqual() ||
-      parser.parseInteger(dimension) || parser.parseRegion(*body) ||
-      parser.parseOptionalAttrDict(result.attributes) ||
-      parser.parseColonType(funcType)) {
+      parser.parseInteger(dimension) ||
+      parser.parseOptionalAttrDictWithKeyword(result.attributes) ||
+      parser.parseRegion(*body) || parser.parseColonType(funcType)) {
     return failure();
   }
 
-  size_t numInputs = inputs.size();
-  size_t numCarries = inits.size();
+  int32_t numInputs = inputs.size();
+  int32_t numCarries = inits.size();
+  int32_t numOutputs = funcType.getNumResults() - numCarries;
   if (funcType.getInputs().size() != numInputs + numCarries) {
     return parser.emitError(
         parser.getNameLoc(),
         "operand types must match the number of inputs and inits");
   }
-  if (funcType.getResults().size() < numCarries) {
+  if (numOutputs < 0) {
     return parser.emitError(
         parser.getNameLoc(),
         "not enough result types to cover the required carries");
@@ -4549,13 +4556,10 @@ ParseResult ScanOp::parse(OpAsmParser& parser, OperationState& result) {
   Builder& builder = parser.getBuilder();
   result.addAttribute(ScanOp::getDimensionAttrName(result.name),
                       builder.getI64IntegerAttr(dimension));
-  result.addAttribute(
-      ScanOp::getOperandSegmentSizeAttr(),
-      builder.getDenseI32ArrayAttr({(int32_t)numInputs, (int32_t)numCarries}));
-  size_t numOutputs = funcType.getNumResults() - numCarries;
-  result.addAttribute(
-      ScanOp::getResultSegmentSizeAttr(),
-      builder.getDenseI32ArrayAttr({(int32_t)numOutputs, (int32_t)numCarries}));
+  result.addAttribute(ScanOp::getOperandSegmentSizeAttr(),
+                      builder.getDenseI32ArrayAttr({numInputs, numCarries}));
+  result.addAttribute(ScanOp::getResultSegmentSizeAttr(),
+                      builder.getDenseI32ArrayAttr({numOutputs, numCarries}));
 
   return success();
 }
@@ -4566,10 +4570,12 @@ void ScanOp::print(OpAsmPrinter& p) {
   p << ") inits (";
   p.printOperands(getInits());
   p << ") dimension=" << getDimension() << " ";
+  p.printOptionalAttrDictWithKeyword(
+      getOperation()->getAttrs(),
+      /*elidedAttrs=*/{"dimension", "operandSegmentSizes",
+                       "resultSegmentSizes"});
+  p << " ";
   p.printRegion(getBody(), /*printEntryBlockArgs=*/true);
-  p.printOptionalAttrDict(getOperation()->getAttrs(),
-                          /*elidedAttrs=*/{"dimension", "operandSegmentSizes",
-                                           "resultSegmentSizes"});
   p << " : ";
   p.printFunctionalType(*this);
 }
