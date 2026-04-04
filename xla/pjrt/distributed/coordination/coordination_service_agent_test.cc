@@ -117,9 +117,9 @@ class TestCoordinationClient : public CoordinationClient {
               (const GetAliveTasksRequest*, GetAliveTasksResponse*,
                tsl::StatusCallback),
               (override));
-  MOCK_METHOD(void, WatchJobStateAsync,
-              (tsl::CallOptions*, const WatchJobStateRequest*,
-               WatchJobStateResponse*, tsl::StatusCallback),
+  MOCK_METHOD(void, WatchTasksAsync,
+              (tsl::CallOptions*, const WatchTasksRequest*, WatchTasksResponse*,
+               tsl::StatusCallback),
               (override));
   MOCK_METHOD(void, HeartbeatAsync,
               (tsl::CallOptions*, const HeartbeatRequest*, HeartbeatResponse*,

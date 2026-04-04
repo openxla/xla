@@ -103,10 +103,9 @@ void CoordinationServiceRpcHandler::ShutdownTaskAsync(
                               [done](absl::Status s) { done(s); });
 }
 
-void CoordinationServiceRpcHandler::WatchJobStateAsync(
-    const xla::coordination::WatchJobStateRequest* request,
-    xla::coordination::WatchJobStateResponse* response,
-    tsl::StatusCallback done) {
+void CoordinationServiceRpcHandler::WatchTasksAsync(
+    const xla::coordination::WatchTasksRequest* request,
+    xla::coordination::WatchTasksResponse* response, tsl::StatusCallback done) {
   absl::ReaderMutexLock l(mu_);
   if (service_ == nullptr) {
     done(MakeCoordinationError(
@@ -118,7 +117,7 @@ void CoordinationServiceRpcHandler::WatchJobStateAsync(
   if (request->version_number() >= 0) {
     version_number.emplace(request->version_number());
   }
-  service_->WatchJobState(
+  service_->WatchTasks(
       version_number,
       [response, done](std::vector<xla::coordination::TaskInfo> info,
                        int64_t version_number) {

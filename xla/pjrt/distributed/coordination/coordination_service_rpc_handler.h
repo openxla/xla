@@ -44,10 +44,9 @@ class CoordinationServiceRpcHandler {
                          xla::coordination::ShutdownTaskResponse* response,
                          tsl::StatusCallback done);
 
-  void WatchJobStateAsync(
-      const xla::coordination::WatchJobStateRequest* request,
-      xla::coordination::WatchJobStateResponse* response,
-      tsl::StatusCallback done);
+  void WatchTasksAsync(const xla::coordination::WatchTasksRequest* request,
+                       xla::coordination::WatchTasksResponse* response,
+                       tsl::StatusCallback done);
 
   void InsertKeyValueAsync(
       const xla::coordination::InsertKeyValueRequest* request,

@@ -140,15 +140,14 @@ class CoordinationServiceAgent {
   CoordinationService::TaskId task_id() const { return task_id_; }
 
   // Watches the status of a remote job.
-  absl::StatusOr<xla::coordination::WatchJobStateResponse> WatchJobState(
+  absl::StatusOr<xla::coordination::WatchTasksResponse> WatchTasks(
       std::optional<int64_t> version_number);
 
   // Note: Cancel the underlying RPC call with `call_opts->StartCancel()` and
   // `call_opts->ClearCancelCallback()`.
-  std::shared_ptr<tsl::CallOptions> WatchJobStateAsync(
+  std::shared_ptr<tsl::CallOptions> WatchTasksAsync(
       std::optional<int64_t> version_number,
-      std::function<
-          void(absl::StatusOr<xla::coordination::WatchJobStateResponse>)>
+      std::function<void(absl::StatusOr<xla::coordination::WatchTasksResponse>)>
           callback);
 
   // Report error to coordination service. This will invoke the error callback.

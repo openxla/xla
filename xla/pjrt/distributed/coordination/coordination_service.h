@@ -160,10 +160,9 @@ class CoordinationService {
   absl::Status ReportTaskError(TaskId task, const absl::Status& error);
 
   // Watches the state and the error status of the job.
-  using WatchJobStateCallback = absl::AnyInvocable<void(
+  using WatchTasksCallback = absl::AnyInvocable<void(
       std::vector<xla::coordination::TaskInfo>, int64_t)>;
-  void WatchJobState(std::optional<int64_t> version_number,
-                     WatchJobStateCallback);
+  void WatchTasks(std::optional<int64_t> version_number, WatchTasksCallback);
 
   // Insert a configuration key-value in the coordination service.
   // For now, a key-value can only be inserted once and cannot be updated.
@@ -554,11 +553,11 @@ class CoordinationService {
   std::vector<xla::coordination::TaskInfo> GetJobState()
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
 
-  // Notifies all callbacks registered via WatchJobState.
-  void NotifyWatchJobStateCallbacks() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
+  // Notifies all callbacks registered via WatchTasks.
+  void NotifyWatchTasksCallbacks() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
 
   // This method should be called whenever the cluster state changes in a way
-  // such that NotifyWatchJobStateCallbacks should be called.
+  // such that NotifyWatchTasksCallbacks should be called.
   void ClusterStateUpdated() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
 
   tsl::Env& env_;
@@ -573,7 +572,7 @@ class CoordinationService {
   absl::flat_hash_map<TaskId, std::unique_ptr<TaskState>> cluster_state_
       ABSL_GUARDED_BY(state_mu_);
   int64_t cluster_state_version_number_ ABSL_GUARDED_BY(state_mu_) = 0;
-  std::vector<WatchJobStateCallback> watch_job_state_callbacks_
+  std::vector<WatchTasksCallback> watch_job_state_callbacks_
       ABSL_GUARDED_BY(state_mu_);
 
   KeyValueStore store_;
