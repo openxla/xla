@@ -320,7 +320,8 @@ class GpuExecutable : public Executable {
       const BufferAllocations& buffer_allocations,
       const ServiceExecutableRunOptions* run_options,
       stream_executor::StreamExecutor* executor, int64_t unique_id,
-      Thunk::ExecutableSource executable_source, bool block_host_until_done);
+      Thunk::ExecutableSource executable_source, bool block_host_until_done,
+      bool collective_use_minimal_resource);
 
   // The LLVM IR, in string format, of the unoptimized module generated for
   // this GpuExecutable. We save a string instead of an llvm::Module* because
