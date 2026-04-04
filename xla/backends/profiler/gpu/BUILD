@@ -491,8 +491,9 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:hip_runtime",
         "@local_config_rocm//rocm:rocm_headers",  # buildcleaner: keep
-        "@local_config_rocm//rocm:rocprofiler-sdk",  # buildcleaner: keep
+        "@local_config_rocm//rocm:rocprofiler_sdk",  # buildcleaner: keep
         "@tsl//tsl/platform:abi",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
@@ -522,7 +523,7 @@ cc_library(
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
         "@local_config_rocm//rocm:rocm_headers",  # buildcleaner: keep
-        "@local_config_rocm//rocm:rocprofiler-sdk",  # buildcleaner: keep
+        "@local_config_rocm//rocm:rocprofiler_sdk",  # buildcleaner: keep
         "@tsl//tsl/platform:abi",
     ],
 )

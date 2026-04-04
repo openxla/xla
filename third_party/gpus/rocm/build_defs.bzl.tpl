@@ -13,15 +13,6 @@ def if_rocm(if_true, if_false = []):
         "//conditions:default": if_false
     })
 
-def select_threshold(value, threshold_dict):
-    sorted_keys = sorted(threshold_dict.keys())
-    result = threshold_dict[sorted_keys[0]]  # Default to the first threshold's value
-    for key in sorted_keys:
-        if value >= key:
-            result = threshold_dict[key]
-
-    return result
-
 def rocm_default_copts():
     """Default options for all ROCm compilations."""
     return if_rocm(["-x", "rocm"] + %{rocm_extra_copts})
@@ -88,6 +79,8 @@ def rocm_library(copts = [], deps = [], **kwargs):
     """Wrapper over cc_library which adds default ROCm options."""
     if "@local_config_rocm//rocm:rocm_headers" not in deps:
       deps.append("@local_config_rocm//rocm:rocm_headers")
+    if "@local_config_rocm//rocm:hip_runtime" not in deps:
+      deps.append("@local_config_rocm//rocm:hip_runtime")
     cc_library(copts = rocm_default_copts() + copts, deps = deps, **kwargs)
 
 def get_rbe_amdgpu_pool(is_single_gpu = False):
