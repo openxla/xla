@@ -781,15 +781,17 @@ xla_test(
     },
     tags = ["cuda-only"],
     deps = [
+        ":gpu_collectives",
         ":nvshmem_collectives",
         "//xla:debug_options_flags",
         "//xla:status_macros",
+        "//xla/service:platform_util",
         "//xla/core/collectives:communicator",
+        "//xla/core/collectives:collectives_registry",
         "//xla/pjrt/distributed",
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:service",
         "//xla/runtime:process_id",
-        "//xla/stream_executor/cuda:nvshmem",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
@@ -800,7 +802,6 @@ xla_test(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest",
-        "@local_config_cuda//cuda:cuda_headers",
     ],
 )
 
