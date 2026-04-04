@@ -355,7 +355,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_copy_insertion_use_region_analysis(false);
   opts.set_xla_gpu_collect_cost_model_stats(false);
-  opts.set_xla_gpu_enable_split_k_autotuning(true);
+  opts.set_xla_gpu_enable_split_k_autotuning(false);
 
   opts.set_xla_gpu_cublas_fallback(true);
   opts.set_xla_gpu_cudnn_gemm_fusion_level(0);
@@ -471,7 +471,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
       false);
   opts.set_xla_enable_scoped_logging_timers(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_noop_change(false);
-  opts.set_xla_gpu_experimental_enable_split_k_rewrite(false);
+  opts.set_xla_gpu_experimental_enable_split_k_rewrite(true);
   opts.set_xla_gpu_experimental_enable_triton_warp_specialization(false);
   opts.set_xla_detect_unstable_reductions(DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_detect_unstable_reductions_post_optimizations(
