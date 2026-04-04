@@ -2215,6 +2215,32 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "ragged_dot_fusion_rewriter",
+    srcs = ["ragged_dot_fusion_rewriter.cc"],
+    hdrs = ["ragged_dot_fusion_rewriter.h"],
+    deps = [
+        "//xla:comparison_util",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:ir_emission_utils",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_library(
     name = "reduce_scatter_creator",
     srcs = ["reduce_scatter_creator.cc"],
     hdrs = ["reduce_scatter_creator.h"],
