@@ -1137,8 +1137,7 @@ absl::StatusOr<bool> PriorityFusion::RunImpl(
       DumpingEnabledForHloPass(name(), module->config().debug_options());
   if (dump_enabled) {
     fusion_process_dump_ = std::make_unique<FusionProcessDumpProto>();
-    *fusion_process_dump_->mutable_gpu_device_info() =
-        device_info_.ToGpuProto();
+    *fusion_process_dump_->mutable_gpu_device_info() = device_info_.ToProto();
   }
 
   // Compute the computations within which more fusion is possible.
