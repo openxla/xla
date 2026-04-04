@@ -158,6 +158,8 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_COLLECTIVE_METADATA;
     case kCollectivePermute:
       return THUNK_KIND_COLLECTIVE_PERMUTE;
+    case kCommand:
+      return THUNK_KIND_UNSPECIFIED;
     case kCommandBuffer:
       return THUNK_KIND_COMMAND_BUFFER;
     case kConditional:
@@ -371,6 +373,7 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kCollectiveKernel);
     CASE(kCollectiveMetadata);
     CASE(kCollectivePermute);
+    CASE(kCommand);
     CASE(kCommandBuffer);
     CASE(kConditional);
     CASE(kConvolution);
