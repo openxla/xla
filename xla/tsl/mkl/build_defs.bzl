@@ -109,9 +109,8 @@ def mkl_deps():
     """
     return select({
         Label("//xla/tsl/mkl:build_with_mkl_aarch64"): ["@mkl_dnn_acl_compatible//:mkl_dnn_acl"],
-        Label("//xla/tsl:linux_x86_64_with_onednn_async"): ["@onednn_async//:mkl_dnn"],
         Label("//xla/tsl:linux_x86_64"): ["@onednn//:mkl_dnn"],
-        Label("//xla/tsl:windows"): ["@onednn//:mkl_dnn"],
+        Label("//xla/tsl:windows"): ["@onednn//:onednn_cpu"],
         "//conditions:default": [],
     })
 
@@ -128,10 +127,16 @@ def mkl_dep():
     """
     return select({
         Label("//xla/tsl/mkl:build_with_mkl_aarch64"): "@mkl_dnn_acl_compatible//:mkl_dnn_acl",
-        Label("//xla/tsl:linux_x86_64_with_onednn_async"): "@onednn_async//:mkl_dnn",
         Label("//xla/tsl:linux_x86_64"): "@onednn//:mkl_dnn",
-        Label("//xla/tsl:windows"): "@onednn//:mkl_dnn",
+        Label("//xla/tsl:windows"): "@onednn//:onednn_cpu",
         "//conditions:default": "//xla/tsl/mkl:dummy_mkl_dnn",
+    })
+
+def onednn_cpu_gpu():
+    return select({
+        Label("@rules_ml_toolchain//common:is_sycl_enabled"): "@onednn//:onednn_gpu",
+        Label("//xla/tsl:linux_x86_64_with_onednn_async"): "@onednn_async//:onednn_cpu",
+        "//conditions:default": "@onednn//:onednn_cpu",
     })
 
 def if_onednn_async(if_true, if_false = []):
@@ -230,3 +235,60 @@ mkl_repository = repository_rule(
         "strip_prefix": attr.string(default = ""),
     },
 )
+
+def convert_cl_to_cpp(name, src, cl_list, **kwargs):
+    """Shorthand to generate embedded C++ sources from OpenCL kernels.
+
+    Args:
+      name: name of the genrule target.
+      src: template input file used to generate the kernel list.
+      cl_list: list of .cl kernel source files to embed.
+      **kwargs: additional arguments forwarded to native.genrule.
+
+    Returns:
+      None. This macro emits a genrule that produces C++ sources.
+    """
+    cpp_list = [cl.replace(".cl", "_kernel.cpp") for cl in cl_list]
+    kernel_list = src.replace(".in", "")
+    cpp_list.append(kernel_list)
+
+    tool = "@xla//third_party/mkl_dnn:gen_gpu_kernel_list"
+
+    native.genrule(
+        name = name,
+        srcs = [src],
+        outs = cpp_list,
+        tools = [tool],
+        cmd = "$(location {}) ".format(tool) + "--in=$< --out=$(@D) --header=False",
+        **kwargs
+    )
+
+def convert_header_to_cpp(name, src, header_list, **kwargs):
+    """Shorthand to generate embedded C++ sources from header files.
+
+    Args:
+      name: name of the genrule target.
+      src: template input file used to generate the header list.
+      header_list: list of .h header source files to embed.
+      **kwargs: additional arguments forwarded to native.genrule.
+
+    Returns:
+      None. This macro emits a genrule that produces C++ sources.
+    """
+    cpp_list = []
+    h_list = []
+    for h in header_list:
+        if h.endswith(".h"):
+            h_list.append(h.replace(".h", "_header.cpp"))
+    cpp_list.extend(h_list)
+
+    tool = "@xla//third_party/mkl_dnn:gen_gpu_kernel_list"
+
+    native.genrule(
+        name = name,
+        srcs = [src],
+        outs = cpp_list,
+        tools = [tool],
+        cmd = "$(location {}) ".format(tool) + "--in=$< --out=$(@D) --header=True",
+        **kwargs
+    )
