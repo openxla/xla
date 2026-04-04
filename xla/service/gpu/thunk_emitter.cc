@@ -94,6 +94,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/host_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/infeed_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
+#include "xla/backends/gpu/runtime/legacy_custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/norm_thunk.h"
 #include "xla/backends/gpu/runtime/nvshmem_all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/nvshmem_collective_permute_thunk.h"
@@ -165,6 +166,7 @@ limitations under the License.
 #include "xla/stream_executor/memory_space.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
@@ -173,7 +175,6 @@ limitations under the License.
 #include "tsl/platform/casts.h"
 #include "tsl/platform/human_readable_json.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 namespace {
@@ -261,10 +262,9 @@ absl::StatusOr<EmitCollectiveResult> EmitCollectiveKernelThunk(
 
 }  // namespace
 
-ThunkEmitter::ThunkEmitter(
-    IrEmitterContext* absl_nonnull ir_emitter_context,
-    llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
-        llvm_options_lock)
+ThunkEmitter::ThunkEmitter(IrEmitterContext* absl_nonnull ir_emitter_context,
+                           llvm_ir::LLVMCommandLineOptionsReleasableLock*
+                               absl_nonnull llvm_options_lock)
     : ir_emitter_context_(ir_emitter_context),
       send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
       nvshmem_buffer_addresses_(std::make_shared<NvshmemBufferAddresses>()),
@@ -973,7 +973,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
             << "Fall back to parse the raw backend config str.";
   }
 
-  auto ffi_thunk = [&]() -> absl::StatusOr<std::unique_ptr<CustomCallThunk>> {
+  auto ffi_thunk = [&]() -> absl::StatusOr<std::unique_ptr<Thunk>> {
     auto& called_computations = instr->called_computations();
     auto& backend_config_str =
         backend_config.ok()
@@ -1004,13 +1004,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
         ir_emitter_context_->cpu_target_machine_options());
   };
 
-  auto legacy_thunk =
-      [&]() -> absl::StatusOr<std::unique_ptr<CustomCallThunk>> {
+  auto legacy_thunk = [&]() -> absl::StatusOr<std::unique_ptr<Thunk>> {
     std::string opaque =
         backend_config.ok()
             ? backend_config->custom_call_backend_config().opaque()
             : instr->raw_backend_config_string();
-    return CustomCallThunk::Create(
+    return LegacyCustomCallThunk::Create(
         Thunk::ThunkInfo::WithProfileAnnotation(
             instr, ir_emitter_context_->GetNextThunkId()),
         call_target_name, std::move(operands), std::move(results),
@@ -1018,7 +1017,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
         ir_emitter_context_->platform_name());
   };
 
-  absl::StatusOr<std::unique_ptr<CustomCallThunk>> custom_call_thunk =
+  absl::StatusOr<std::unique_ptr<Thunk>> custom_call_thunk =
       is_ffi_custom_call ? ffi_thunk() : legacy_thunk();
 
   ThunkSequence thunks;
