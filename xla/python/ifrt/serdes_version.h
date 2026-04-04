@@ -39,10 +39,11 @@ class SerDesVersion {
   //
   // 0: 2025-05-20, initial version.
   // 1: 2026-02-19, added support for unreduced axes in ShardingParam.
+  // 2: 2026-03-19, Allow mixed serialization for stablehlo dialects.
 
   // Returns the current version.
   static SerDesVersion current() {
-    return SerDesVersion(SerDesVersionNumber(1));
+    return SerDesVersion(SerDesVersionNumber(2));
   }
 
   SerDesVersion(const SerDesVersion& other) = default;
