@@ -354,3 +354,60 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
     ],
 )
+
+cc_library(
+    name = "kernel_compiler",
+    hdrs = ["kernel_compiler.h"],
+    deps = [
+        "//xla:future",
+        "//xla:xla_proto_cc",
+        "//xla/backends/gpu/runtime:thunk",
+        "//xla/codegen:llvm_kernel_source",
+        "//xla/codegen/emitters:kernel_arguments",
+        "//xla/service/gpu:launch_dimensions",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@llvm-project//llvm:Core",
+    ],
+)
+
+cc_library(
+    name = "cubin_custom_kernel_compiler",
+    srcs = ["cubin_custom_kernel_compiler.cc"],
+    hdrs = ["cubin_custom_kernel_compiler.h"],
+    deps = [
+        ":kernel_compiler",
+        "//xla:future",
+        "//xla/backends/gpu/codegen/kernels:custom_kernel",
+        "//xla/backends/gpu/codegen/kernels:ptx_custom_kernel",
+        "//xla/backends/gpu/runtime:custom_kernel_thunk",
+        "//xla/backends/gpu/runtime:thunk",
+        "//xla/codegen:llvm_kernel_source",
+        "//xla/codegen/emitters:kernel_arguments",
+        "//xla/service/gpu:launch_dimensions",
+        "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:gloop_status_macros",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status:statusor",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:JITLink",
+    ],
+)
+
+xla_cc_test(
+    name = "cubin_custom_kernel_compiler_test",
+    srcs = ["cubin_custom_kernel_compiler_test.cc"],
+    deps = [
+        ":cubin_custom_kernel_compiler",
+        "//xla/backends/gpu/runtime:thunk",
+        "//xla/codegen:llvm_kernel_source",
+        "//xla/codegen/emitters:kernel_arguments",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/gpu:launch_dimensions",
+        "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Core",
+    ],
+)
