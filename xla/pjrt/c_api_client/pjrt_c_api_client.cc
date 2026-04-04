@@ -3974,6 +3974,13 @@ void PjRtCApiBuffer::CopyToRemoteDevice(
       pjrt::CppCrossHostRemoteSendCallbackToC(pjrt_c_api(), std::move(on_done));
   args.on_done = on_done_info;
 
+  // Destructor callback for freeing descriptor data
+  auto descriptor_destructor = [](char** descriptor_data, size_t* descriptor_size) {
+    delete descriptor_data;
+    delete descriptor_size;
+  };
+  args.descriptor_destructor = descriptor_destructor;
+
 #if PJRT_API_CROSS_HOST_TRANSFERS_EXTENSION_VERSION < 5
   absl::StatusOr<std::string> descriptor = serialized_descriptor.Await();
   CHECK_OK(descriptor) << "Failed to copy buffer to remote device: "
