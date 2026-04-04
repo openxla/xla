@@ -524,6 +524,25 @@ TEST(XplaneUtilsTest, TestAggregateXPlanes) {
 #endif
 }
 
+// Merging /host:metadata must preserve program_id as the event_metadata key
+// so XProf op attribution can still resolve modules.
+TEST(XPlaneUtilsTest, MergePlanesPreservesProgramIdEventMetadataKeys) {
+  XPlane src_plane;
+  src_plane.set_name(std::string(kMetadataPlaneName));
+  XPlaneBuilder src(&src_plane);
+  constexpr int64_t kProgramId = 664863;
+  const std::string hlo_module_name = "jit_train_step(664863)";
+  XEventMetadata* src_event_metadata = src.GetOrCreateEventMetadata(kProgramId);
+  src_event_metadata->set_name(hlo_module_name);
+
+  XPlane dst_plane;
+  MergePlanes(src_plane, &dst_plane);
+
+  ASSERT_TRUE(dst_plane.event_metadata().contains(kProgramId));
+  EXPECT_EQ(dst_plane.event_metadata().at(kProgramId).name(), hlo_module_name);
+  EXPECT_FALSE(dst_plane.event_metadata().contains(1));
+}
+
 TEST(XplaneUtilsTest, TestAggregateXPlanesWithNonUniqueMetadataNames) {
   XPlane xplane;
   XPlaneBuilder builder(&xplane);

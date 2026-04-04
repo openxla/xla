@@ -408,8 +408,12 @@ void MergePlanes(const XPlane& src_plane, XPlane* dst_plane) {
   });
 
   src.ForEachEventMetadata([&](const XEventMetadataVisitor& event_metadata) {
+    // Preserve metadata-plane event ids because XProf matches program_id
+    // to /host:metadata event_metadata keys during op attribution.
     XEventMetadata* dst_event_metadata =
-        dst.GetOrCreateEventMetadata(event_metadata.Name());
+        src_plane.name() == kMetadataPlaneName
+            ? dst.GetOrCreateEventMetadata(event_metadata.Id())
+            : dst.GetOrCreateEventMetadata(event_metadata.Name());
     CopyEventMetadata(*event_metadata.metadata(), src, *dst_event_metadata,
                       dst);
   });
