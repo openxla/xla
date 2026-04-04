@@ -81,6 +81,11 @@ class SyclExecutor : public gpu::GpuExecutor {
   // Synchronizes all device activity.
   bool SynchronizeAllActivity() override;
 
+  // Returns the device address for the given symbol in the specified module. If
+  // the symbol is not found, returns a NotFound error.
+  absl::StatusOr<DeviceAddressBase> GetSymbol(
+      const std::string& symbol_name, ModuleHandle module_handle) override;
+
   // Sets the specified device memory to zero synchronously.
   absl::Status SynchronousMemZero(DeviceMemoryBase* location,
                                   uint64_t size) override;

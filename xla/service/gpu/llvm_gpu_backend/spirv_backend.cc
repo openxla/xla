@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/base/no_destructor.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/TargetSelect.h"
@@ -29,6 +30,7 @@ limitations under the License.
 #include "llvm/lib/Target/SPIRV/MCTargetDesc/SPIRVBaseInfo.h"
 #include "llvm/lib/Target/SPIRV/SPIRVAPI.h"
 #include "llvm/lib/Target/SPIRV/SPIRVCommandLine.h"
+#include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "tsl/platform/errors.h"
@@ -183,13 +185,53 @@ absl::StatusOr<std::string> CompileToSPIRV(
   pm.add(llvm::createInferAddressSpacesPass(0));
   pm.run(*module);
 
+  // The LLVM SPIR-V backend removes unused globals during its passes for
+  // translation to SPIR-V. To prevent this, we create a fake use of those
+  // globals with a minimal fake use function. We first create a global pointer
+  // list with appending linkage containing pointers to all globals in the
+  // module. And then the fake use function uses getelementptr and load
+  // instruction to load the first element of the global pointer list.
+  llvm::Type* ptr_type = llvm::PointerType::getUnqual(context);
+  llvm::SmallVector<llvm::Constant*> global_ptrs;
+  for (llvm::GlobalVariable& global_var : module->globals()) {
+    global_ptrs.push_back(
+        llvm::ConstantExpr::getPointerCast(&global_var, ptr_type));
+  }
+  if (!global_ptrs.empty()) {
+    auto* arr_type = llvm::ArrayType::get(ptr_type, global_ptrs.size());
+    auto* arr_init = llvm::ConstantArray::get(arr_type, global_ptrs);
+    auto* global_ptr_arr = new llvm::GlobalVariable(
+        arr_type, /*isConstant=*/false, llvm::GlobalValue::AppendingLinkage,
+        /*Initializer=*/arr_init, "global_ptr_list",
+        /*ThreadLocalMode=*/llvm::GlobalValue::NotThreadLocal,
+        /*AddressSpace=*/1, /*isExternallyInitialized=*/false);
+    global_ptr_arr->setAlignment(llvm::Align(kConstantBufferAlignBytes));
+    module->insertGlobalVariable(global_ptr_arr);
+
+    // Create a fake use function that loads the first element of
+    // global_ptr_list to prevent it from being optimized away.
+    auto* fake_use_func_type =
+        llvm::FunctionType::get(ptr_type, /*isVarArg=*/false);
+    auto* fake_use_func = llvm::Function::Create(
+        fake_use_func_type, llvm::GlobalValue::ExternalLinkage,
+        "fake_use_globals", module);
+    fake_use_func->setCallingConv(llvm::CallingConv::SPIR_FUNC);
+    auto* bb = llvm::BasicBlock::Create(context, "entry", fake_use_func);
+    llvm::IRBuilder<> ir_builder(bb);
+    auto* gep = ir_builder.CreateConstGEP2_64(arr_type, global_ptr_arr,
+                                              /*Idx0=*/0, /*Idx1=*/0);
+    auto* load = ir_builder.CreateLoad(ptr_type, gep);
+    ir_builder.CreateRet(load);
+  }
+
   std::string spirv_str;
   std::string spirv_err_msg;
   std::vector<std::string> spirv_options{default_target_triple.str()};
   bool spirv_success = llvm::SPIRVTranslateModule(
       module, spirv_str, spirv_err_msg, *spirv_extensions, spirv_options);
   if (!spirv_success) {
-    return absl::AbortedError("Failed to translate LLVM module to SPIRV.");
+    return absl::AbortedError("Failed to translate LLVM module to SPIRV: " +
+                              spirv_err_msg);
   }
   return spirv_str;
 }
