@@ -148,6 +148,10 @@ message AlgorithmProto {
   // 0 workspace size from unknown workspace size in an old message, so this is
   // a message field.
   google.protobuf.UInt64Value workspace_size = 6;
+
+  // True when this algorithm was discovered via BF16 fallback for an FP8
+  // convolution during autotuning.
+  bool is_bf16_fallback = 7;
 }
 
 // Proto definition of AlgorithmConfig in "dnn.h".
