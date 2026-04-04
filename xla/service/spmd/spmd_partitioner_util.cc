@@ -2661,6 +2661,208 @@ HloSharding CreateMatchingShardingOnDims(
                              target_dims, source_sharding, source_dims);
 }
 
+namespace {
+
+bool IsAxisSuperset(const AxisRef& available, const AxisRef& requested) {
+  // If the mesh axes are not the same, they are not comparable.
+  if (available.mesh_axis_index() != requested.mesh_axis_index()) {
+    return false;
+  }
+  // If the available axis does not have sub-axis info, it represents the full
+  // mesh axis and is therefore a superset of any requested sub-axis.
+  if (!available.sub_axis_info().has_value()) {
+    return true;
+  }
+  // If the requested axis does not have sub-axis info, it represents the full
+  // mesh axis and is therefore not a subset of any requested sub-axis.
+  if (!requested.sub_axis_info().has_value()) {
+    return false;
+  }
+  // The available axis must contain the requested sub-axis.
+  return available.sub_axis_info()->pre_size <=
+             requested.sub_axis_info()->pre_size &&
+         requested.sub_axis_info()->next_pre_size() <=
+             available.sub_axis_info()->next_pre_size();
+}
+bool IsAxisUsedInSharding(
+    const AxisRef& axis, int64_t target_dim,
+    absl::Span<const NamedSharding::DimensionSharding> dim_shardings) {
+  for (int64_t i = 0; i < dim_shardings.size(); ++i) {
+    if (i == target_dim) {
+      continue;
+    }
+    for (const AxisRef& other_axis : dim_shardings[i].axes()) {
+      if (axis.Overlaps(other_axis)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void PropagateDimensionSharding(
+    const NamedSharding::DimensionSharding& source_dim_sharding,
+    int64_t target_dim, const Mesh& mesh,
+    std::vector<NamedSharding::DimensionSharding>* target_dim_shardings,
+    std::vector<AxisRef>* target_replicated_axes) {
+  std::vector<AxisRef> to_remove;
+  std::vector<AxisRef> to_add;
+
+  for (const AxisRef& axis : source_dim_sharding.axes()) {
+    for (const AxisRef& replicated_axis : *target_replicated_axes) {
+      if (replicated_axis.mesh_axis_index() != axis.mesh_axis_index()) {
+        continue;
+      }
+      if (!replicated_axis.sub_axis_info().has_value() &&
+          axis.sub_axis_info().has_value()) {
+        to_remove.push_back(replicated_axis);
+        int64_t mesh_size = mesh.axis_size(axis.mesh_axis_index());
+        int64_t p = axis.sub_axis_info()->pre_size;
+        int64_t s = axis.sub_axis_info()->size;
+
+        if (p > 1) {
+          to_add.push_back(AxisRef(axis.mesh_axis_index(), {1, p}));
+        }
+        int64_t next_p = p * s;
+        int64_t rem_size = mesh_size / next_p;
+        if (rem_size > 1) {
+          to_add.push_back(AxisRef(axis.mesh_axis_index(), {next_p, rem_size}));
+        }
+      } else if (IsAxisSuperset(axis, replicated_axis)) {
+        to_remove.push_back(replicated_axis);
+      }
+    }
+  }
+
+  (*target_dim_shardings)[target_dim] = source_dim_sharding;
+  std::erase_if(*target_replicated_axes,
+                [&to_remove](const auto& replicated_axis) {
+                  return absl::c_linear_search(to_remove, replicated_axis);
+                });
+  target_replicated_axes->insert(target_replicated_axes->end(), to_add.begin(),
+                                 to_add.end());
+  SortAndMergeAxes(*target_replicated_axes, mesh);
+}
+
+}  // namespace
+
+std::optional<GatherScatterParallelDimSharding>
+GatherScatterOperandsShardedAcrossParallelDimsNamedSharding(
+    const HloInstruction& operand, const HloInstruction& indices,
+    const hlo_sharding_util::GatherScatterDims& parallel_dims) {
+  const hlo_sharding_util::GatherScatterDims& dims = parallel_dims;
+  const DimensionVector& indices_parallel_dims = dims.indices_dims;
+  const DimensionVector& operand_parallel_dims = dims.operand_dims;
+
+  const HloSharding& idx_sharding = indices.sharding();
+  const HloSharding& op_sharding = operand.sharding();
+
+  if (idx_sharding.named_sharding().mesh() !=
+      op_sharding.named_sharding().mesh()) {
+    return std::nullopt;
+  }
+
+  absl::Span<const NamedSharding::DimensionSharding> idx_dim_shardings =
+      idx_sharding.named_sharding().dim_shardings();
+  absl::Span<const NamedSharding::DimensionSharding> op_dim_shardings =
+      op_sharding.named_sharding().dim_shardings();
+
+  std::vector<NamedSharding::DimensionSharding> new_indices_dims;
+  std::vector<NamedSharding::DimensionSharding> new_operand_dims;
+  std::vector<AxisRef> indices_rep;
+  std::vector<AxisRef> operand_rep;
+
+  bool changed = false;
+
+  // Lazily initialize the new shardings only when we find a dimension that
+  // needs propagation.
+  auto ensure_initialized = [&]() {
+    if (changed) {
+      return;
+    }
+    changed = true;
+    if (idx_sharding.named_sharding().IsReplicated()) {
+      new_indices_dims.resize(indices.shape().dimensions().size());
+    } else {
+      new_indices_dims.assign(idx_dim_shardings.begin(),
+                              idx_dim_shardings.end());
+    }
+    if (op_sharding.named_sharding().IsReplicated()) {
+      new_operand_dims.resize(operand.shape().dimensions().size());
+    } else {
+      new_operand_dims.assign(op_dim_shardings.begin(), op_dim_shardings.end());
+    }
+    indices_rep.assign(idx_sharding.named_sharding().replicated_axes().begin(),
+                       idx_sharding.named_sharding().replicated_axes().end());
+    operand_rep.assign(op_sharding.named_sharding().replicated_axes().begin(),
+                       op_sharding.named_sharding().replicated_axes().end());
+  };
+
+  for (int64_t i = 0; i < indices_parallel_dims.size(); ++i) {
+    int64_t idx_dim = indices_parallel_dims[i];
+    int64_t op_dim = operand_parallel_dims[i];
+
+    bool idx_replicated = idx_sharding.named_sharding().IsReplicated() ||
+                          idx_dim >= idx_dim_shardings.size() ||
+                          idx_dim_shardings[idx_dim].axes().empty();
+    bool op_replicated = op_sharding.named_sharding().IsReplicated() ||
+                         op_dim >= op_dim_shardings.size() ||
+                         op_dim_shardings[op_dim].axes().empty();
+
+    if (idx_replicated) {
+      if (!op_replicated) {
+        bool conflict = false;
+        for (const AxisRef& axis : op_dim_shardings[op_dim].axes()) {
+          if (IsAxisUsedInSharding(axis, idx_dim, idx_dim_shardings)) {
+            conflict = true;
+            break;
+          }
+        }
+        if (conflict) {
+          return std::nullopt;
+        }
+        ensure_initialized();
+        PropagateDimensionSharding(op_dim_shardings[op_dim], idx_dim,
+                                   idx_sharding.named_sharding().mesh(),
+                                   &new_indices_dims, &indices_rep);
+      }
+    } else if (op_replicated) {
+      bool conflict = false;
+      for (const AxisRef& axis : idx_dim_shardings[idx_dim].axes()) {
+        if (IsAxisUsedInSharding(axis, op_dim, op_dim_shardings)) {
+          conflict = true;
+          break;
+        }
+      }
+      if (conflict) {
+        return std::nullopt;
+      }
+      ensure_initialized();
+      PropagateDimensionSharding(idx_dim_shardings[idx_dim], op_dim,
+                                 op_sharding.named_sharding().mesh(),
+                                 &new_operand_dims, &operand_rep);
+    } else {
+      absl::Span<const AxisRef> idx_axes = idx_dim_shardings[idx_dim].axes();
+      absl::Span<const AxisRef> op_axes = op_dim_shardings[op_dim].axes();
+      if (idx_axes != op_axes) {
+        return std::nullopt;
+      }
+    }
+  }
+
+  if (!changed) {
+    return std::nullopt;
+  }
+
+  return GatherScatterParallelDimSharding{
+      HloSharding(NamedSharding(
+          idx_sharding.named_sharding().mesh(), std::move(new_indices_dims),
+          std::move(indices_rep), idx_sharding.named_sharding().manual_axes())),
+      HloSharding(NamedSharding(
+          op_sharding.named_sharding().mesh(), std::move(new_operand_dims),
+          std::move(operand_rep), op_sharding.named_sharding().manual_axes()))};
+}
+
 std::optional<GatherScatterParallelDimSharding>
 GatherScatterOperandsShardedAcrossParallelDims(
     const HloInstruction& operand, const HloInstruction& indices,
@@ -2670,8 +2872,27 @@ GatherScatterOperandsShardedAcrossParallelDims(
   if (indices_parallel_dims.size() != operand_parallel_dims.size()) {
     return std::nullopt;
   }
-  auto new_index_shard = indices.sharding();
-  auto new_operand_shard = operand.sharding();
+  const HloSharding& idx_sharding = indices.sharding();
+  const HloSharding& op_sharding = operand.sharding();
+
+  bool indices_v3 = idx_sharding.UseNamedShardingLeaf();
+  bool operand_v3 = op_sharding.UseNamedShardingLeaf();
+
+  if (indices_v3 && operand_v3) {
+    auto res = GatherScatterOperandsShardedAcrossParallelDimsNamedSharding(
+        operand, indices, parallel_dims);
+    if (res) {
+      return res;
+    }
+  }
+
+  HloSharding new_index_shard =
+      indices_v3 ? HloSharding::V3ToV2Sharding(idx_sharding.named_sharding())
+                 : idx_sharding;
+  HloSharding new_operand_shard =
+      operand_v3 ? HloSharding::V3ToV2Sharding(op_sharding.named_sharding())
+                 : op_sharding;
+
   int idx_parallel_tiles_num = new_index_shard.NumTiles(indices_parallel_dims);
   int op_parallel_tiles_num = new_operand_shard.NumTiles(operand_parallel_dims);
   if (idx_parallel_tiles_num == 1 && op_parallel_tiles_num == 1) {

@@ -16,21 +16,31 @@ limitations under the License.
 #include "xla/service/spmd/spmd_partitioner_util.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/mesh_and_axis.h"
 #include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/service/spmd/spmd_partitioner_util_internal.h"
+#include "xla/shape.h"
 
 namespace xla {
 namespace spmd {
 namespace {
+
+std::unique_ptr<HloInstruction> CreateParameterWithSharding(
+    int64_t index, const Shape& shape, const NamedSharding& sharding) {
+  auto inst = HloInstruction::CreateParameter(index, shape, "param");
+  inst->set_sharding(HloSharding(sharding));
+  return inst;
+}
 
 TEST(SPMDPartitionerUtilTest, PartialReplicateReshardCompatibleSharding1) {
   HloSharding partial_sharding =
@@ -659,6 +669,91 @@ TEST(SPMDPartitionerUtilTest,
     EXPECT_EQ(v3_group_list_1->flattened_replica_groups(),
               v3_group_list_2->flattened_replica_groups());
   }
+}
+
+TEST(SPMDPartitionerUtilTest,
+     GatherScatterOperandsShardedAcrossParallelDimsNamedSharding) {
+  Mesh mesh({2, 2}, {"a", "b"});
+  NamedSharding indices_named = test_utils::FromAxisNames(mesh, {{"a"}});
+  NamedSharding operand_named = test_utils::FromAxisNames(mesh, {{}});
+
+  auto result = GatherScatterOperandsShardedAcrossParallelDims(
+      *CreateParameterWithSharding(1, Shape(xla::PrimitiveType::F32, {20}),
+                                   operand_named),
+      *CreateParameterWithSharding(0, Shape(xla::PrimitiveType::F32, {10}),
+                                   indices_named),
+      /*parallel_dims=*/{{0}, {0}});
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->indices_sharding.named_sharding().dim_sharding(0).axes(),
+            indices_named.dim_sharding(0).axes());
+  EXPECT_EQ(result->operand_sharding.named_sharding().dim_sharding(0).axes(),
+            indices_named.dim_sharding(0).axes());
+}
+
+TEST(SPMDPartitionerUtilTest,
+     GatherScatterOperandsShardedAcrossParallelDimsNamedShardingSubAxes) {
+  Mesh mesh({4, 2}, {"a", "b"});
+  NamedSharding indices_named = test_utils::FromAxisNames(mesh, {{"a:(1)2"}});
+  NamedSharding operand_named = test_utils::FromAxisNames(mesh, {{}}, {"a"});
+
+  auto result = GatherScatterOperandsShardedAcrossParallelDims(
+      *CreateParameterWithSharding(1, Shape(xla::PrimitiveType::F32, {20}),
+                                   operand_named),
+      *CreateParameterWithSharding(0, Shape(xla::PrimitiveType::F32, {10}),
+                                   indices_named),
+      /*parallel_dims=*/{{0}, {0}});
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->indices_sharding.named_sharding().dim_sharding(0).axes(),
+            indices_named.dim_sharding(0).axes());
+  EXPECT_EQ(result->operand_sharding.named_sharding().dim_sharding(0).axes(),
+            indices_named.dim_sharding(0).axes());
+  EXPECT_EQ(
+      result->operand_sharding.named_sharding().replicated_axes(),
+      test_utils::FromAxisNames(mesh, {{}}, {"a:(2)2"}).replicated_axes());
+}
+
+TEST(SPMDPartitionerUtilTest,
+     GatherScatterOperandsShardedAcrossParallelDimsNamedShardingExplicit) {
+  Mesh mesh({2, 2}, {"a", "b"});
+  NamedSharding indices_named = test_utils::FromAxisNames(mesh, {{"a"}});
+  NamedSharding operand_named = test_utils::FromAxisNames(mesh, {{}}, {"a"});
+
+  auto result = GatherScatterOperandsShardedAcrossParallelDims(
+      *CreateParameterWithSharding(1, Shape(xla::PrimitiveType::F32, {20}),
+                                   operand_named),
+      *CreateParameterWithSharding(0, Shape(xla::PrimitiveType::F32, {10}),
+                                   indices_named),
+      /*parallel_dims=*/{{0}, {0}});
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->operand_sharding.named_sharding().dim_sharding(0).axes(),
+            indices_named.dim_sharding(0).axes());
+  EXPECT_TRUE(
+      result->operand_sharding.named_sharding().replicated_axes().empty());
+}
+
+TEST(SPMDPartitionerUtilTest,
+     GatherScatterOperandsShardedAcrossParallelDimsNamedShardingMixed) {
+  Mesh mesh({2, 2}, {"a", "b"});
+  NamedSharding indices_named = test_utils::FromAxisNames(mesh, {{"a"}, {}});
+  NamedSharding operand_named =
+      test_utils::FromAxisNames(mesh, {{}, {"b"}}, {"a"});
+
+  auto result = GatherScatterOperandsShardedAcrossParallelDims(
+      *CreateParameterWithSharding(1, Shape(xla::PrimitiveType::F32, {20, 20}),
+                                   operand_named),
+      *CreateParameterWithSharding(0, Shape(xla::PrimitiveType::F32, {10, 10}),
+                                   indices_named),
+      /*parallel_dims=*/{{0, 1}, {0, 1}});
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->operand_sharding.named_sharding().dim_sharding(0).axes(),
+            test_utils::FromAxisNames(mesh, {{"a"}}).dim_sharding(0).axes());
+  EXPECT_EQ(
+      result->indices_sharding.named_sharding().dim_sharding(1).axes(),
+      test_utils::FromAxisNames(mesh, {{}, {"b"}}).dim_sharding(1).axes());
 }
 
 }  // namespace

@@ -1544,8 +1544,12 @@ HloInstruction* SelectOperandForScatterIndexPassthroughDimensions(
   // Update partition_id for partial replicate.
   auto partition_id = indices.state().partition_id;
   if (indices.sharding().HasPartialReplication()) {
+    HloSharding sharding_v2 =
+        indices.sharding().UseNamedShardingLeaf()
+            ? HloSharding::V3ToV2Sharding(indices.sharding().named_sharding())
+            : indices.sharding();
     auto sharding_grouped = hlo_sharding_util::GroupShardingOnDims(
-        indices.sharding(), {indices.sharding().SubgroupReplicationDim()});
+        sharding_v2, {sharding_v2.SubgroupReplicationDim()});
     partition_id =
         GetInGroupPartitionId(partition_id, sharding_grouped.device_groups, b);
   }
@@ -1965,25 +1969,29 @@ absl::Status SpmdPartitioningVisitor::HandleScatterWithoutConflicts(
   // guaranteed by the scatter semantics.
   HloSharding indices_sharding = indices.sharding();
   for (int64_t i = 0; i < indices.num_dimensions(); ++i) {
+    int64_t dim_size =
+        indices_sharding.IsReplicated() ? 1 : indices_sharding.dimension(i);
     if (indices.base_shape().dimensions(i) !=
-        indices_sharding.dimension(i) * indices.hlo()->shape().dimensions(i)) {
+        dim_size * indices.hlo()->shape().dimensions(i)) {
       indices = indices.Replicate().Reshard(
           indices_sharding, /*pad_value=*/LiteralUtil::CreateR0<int32_t>(-1));
       break;
     }
   }
 
-  SpmdBuilder* b = builder();
-
   std::vector<int64_t> partitioned_inserted_window_dims;
   for (int64_t dim : dnums.inserted_window_dims()) {
-    if (operands[0].sharding().dimension(dim) > 1) {
+    int64_t dim_size = operands[0].sharding().IsReplicated()
+                           ? 1
+                           : operands[0].sharding().dimension(dim);
+    if (dim_size > 1) {
       // TODO(b/496605332). inserted_window_dims may not be in
       // scatter_dims_to_operand_dims.
       CHECK(absl::c_linear_search(dnums.scatter_dims_to_operand_dims(), dim));
       partitioned_inserted_window_dims.push_back(dim);
     }
   }
+  SpmdBuilder* b = builder();
   if (!partitioned_inserted_window_dims.empty()) {
     HloInstruction* indices_min;
     std::tie(indices_min, std::ignore) =
@@ -2125,8 +2133,10 @@ absl::Status SpmdPartitioningVisitor::HandleScatter(HloInstruction* hlo) {
   // Reshard indices with -1 padding, which will have no effect on the result as
   // guaranteed by the scatter semantics.
   for (auto i = 0; i != indices.num_dimensions(); ++i) {
+    int64_t dim_size =
+        indices_sharding.IsReplicated() ? 1 : indices_sharding.dimension(i);
     if (indices.base_shape().dimensions(i) !=
-        indices_sharding.dimension(i) * indices.hlo()->shape().dimensions(i)) {
+        dim_size * indices.hlo()->shape().dimensions(i)) {
       // Reshard only when we know that some dimension is padded.
       indices = indices.Replicate().Reshard(
           indices_sharding, /*pad_value=*/LiteralUtil::CreateR0<int32_t>(-1));
