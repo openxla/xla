@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
-#include <optional>
 #include <tuple>
 #include <utility>
 #include <vector>
