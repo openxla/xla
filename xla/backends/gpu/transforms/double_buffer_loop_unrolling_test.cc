@@ -1587,6 +1587,88 @@ ENTRY main {
   }
 }
 
+TEST_F(GpuLoopDoubleBufferTransformerTest,
+       UpdateDynamicVariablesInitStepAfterDoubleBuffering) {
+  absl::string_view kModuleString = R"(
+HloModule test
+
+condition {
+  input_tuple = (s32[], f32[4,8]{1,0:S(5)}, f32[1,8]{1,0}, s32[]) parameter(0)
+  cond = s32[] get-tuple-element(input_tuple), index=0
+  trip_count = s32[] constant(10)
+  ROOT done = pred[] compare(cond, trip_count), direction=LT
+}
+
+body {
+  input_tuple = (s32[], f32[4,8]{1,0:S(5)}, f32[1,8]{1,0}, s32[]) parameter(0)
+  idx = s32[] get-tuple-element(input_tuple), index=0
+  buffer = f32[4,8]{1,0:S(5)} get-tuple-element(input_tuple), index=1
+  update = f32[1,8]{1,0} get-tuple-element(input_tuple), index=2
+  counter = s32[] get-tuple-element(input_tuple), index=3
+
+  c0 = s32[] constant(0)
+  dus = f32[4,8]{1,0:S(5)} dynamic-update-slice(buffer, update, counter, c0)
+
+  c1 = s32[] constant(1)
+  idx_plus_1 = s32[] add(idx, c1)
+  counter_plus_1 = s32[] add(counter, c1)
+  ROOT output = (s32[], f32[4,8]{1,0:S(5)}, f32[1,8]{1,0}, s32[]) tuple(idx_plus_1, dus, update, counter_plus_1)
+}
+
+ENTRY main {
+  c0 = s32[] constant(0)
+  c3 = s32[] constant(3)
+  buffer_init = f32[4,8]{1,0:S(5)} parameter(0)
+  update_init = f32[1,8]{1,0} parameter(1)
+  input_tuple = (s32[], f32[4,8]{1,0:S(5)}, f32[1,8]{1,0}, s32[]) tuple(c0, buffer_init, update_init, c3)
+  ROOT while = (s32[], f32[4,8]{1,0:S(5)}, f32[1,8]{1,0}, s32[]) while(input_tuple), condition=condition, body=body, backend_config={"known_trip_count":{"n":"10"},"known_init_step":{"init":"0","step":"1"},"known_induction_variable":{"tuple_index":"0"},"dynamic_variable_tuple_indices":["3","0"],"dynamic_variables":[{"tuple_index":"0","init":"0","step":"1"},{"tuple_index":"3","init":"3","step":"1"}]}
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleString));
+
+  DoubleBufferLoopUnrolling double_buffer(
+      DoubleBufferLoopUnrolling::UnrollStrategy::kDoubleBuffer);
+  TupleSimplifier tuple_simplifier;
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, double_buffer.Run(module.get()));
+  ASSERT_TRUE(changed);
+  TF_ASSERT_OK_AND_ASSIGN(changed, tuple_simplifier.Run(module.get()));
+
+  std::vector<HloInstruction*> while_loops;
+  for (HloComputation* comp : module->computations()) {
+    for (HloInstruction* instr : comp->instructions()) {
+      if (instr->opcode() == HloOpcode::kWhile) {
+        while_loops.push_back(instr);
+      }
+    }
+  }
+
+  ASSERT_FALSE(while_loops.empty());
+
+  for (HloInstruction* while_loop : while_loops) {
+    TF_ASSERT_OK_AND_ASSIGN(
+        WhileLoopBackendConfig config,
+        while_loop->backend_config<WhileLoopBackendConfig>());
+
+    EXPECT_EQ(config.known_init_step().step(), 2);
+
+    absl::flat_hash_map<int64_t, std::pair<int64_t, int64_t>> dv_init_step;
+    for (const auto& dv : config.dynamic_variables()) {
+      dv_init_step[dv.tuple_index()] = {dv.init(), dv.step()};
+    }
+
+    ASSERT_TRUE(dv_init_step.contains(0));
+    EXPECT_EQ(dv_init_step[0].second, 2)
+        << "Primary variable step should be doubled after double buffering";
+
+    ASSERT_TRUE(dv_init_step.contains(3));
+    EXPECT_EQ(dv_init_step[3].second, 2)
+        << "Dynamic variable step should be doubled after double buffering";
+  }
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
