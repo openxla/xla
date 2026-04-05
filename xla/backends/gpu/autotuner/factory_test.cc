@@ -57,7 +57,7 @@ class FactoryTest : public xla::HloHardwareIndependentTestBase,
   se::StreamExecutor* stream_executor_;
   Compiler::GpuTargetConfig target_config_;
   DebugOptions debug_options_;
-  se::StreamExecutorMemoryAllocator allocator_;
+  stream_executor::StreamExecutorAddressAllocator allocator_;
 
   FactoryTest()
       : platform_(se::PlatformManager::PlatformWithName(
