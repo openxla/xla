@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"  // gloop
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
@@ -69,7 +70,6 @@ limitations under the License.
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
 #include "tsl/platform/platform.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
