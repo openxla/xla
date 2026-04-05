@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"  // gloop
 #include "xla/array2d.h"
 #include "xla/array3d.h"
 #include "xla/array4d.h"
@@ -56,7 +57,6 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 
