@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/cupti_range_profiler.h"
 #include "xla/backends/profiler/gpu/cupti_tracer.h"
 #include "xla/backends/profiler/gpu/cupti_wrapper.h"
+// #include "xla/tsl/platform/env.h"  // Uncomment for XSpace dump block below.
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
@@ -505,6 +506,27 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSubWithMultiPassRangeProfiling) {
   }
   EXPECT_TRUE(found_counter_value)
       << "XPlane should contain range profiling events with kCounterValue";
+
+  // To dump XSpace for manual xprof inspection, uncomment the block below.
+  // Mirrors GpuTracer::CollectData(): add xplanes first so Export() merges
+  // kernel records into the same device planes.
+  // {
+  //   tensorflow::profiler::XSpace space;
+  //   for (auto& xplane : xplanes) {
+  //     if (xplane && xplane->lines_size() > 0) {
+  //       *space.add_planes() = *xplane;
+  //     }
+  //   }
+  //   collector->Export(&space, CuptiTracer::GetTimestamp());
+  //   std::string serialized;
+  //   space.SerializeToString(&serialized);
+  //   std::string path = "/tmp/range_profiling.xspace.pb";
+  //   const char* test_outputs_dir = std::getenv("TEST_UNDECLARED_OUTPUTS_DIR");
+  //   if (test_outputs_dir != nullptr) {
+  //     path = std::string(test_outputs_dir) + "/range_profiling.xspace.pb";
+  //   }
+  //   tsl::WriteStringToFile(tsl::Env::Default(), path, serialized).IgnoreError();
+  // }
 
   if (num_passes == 1) {
     LOG(WARNING) << "All metrics fit in a single pass on this GPU; "
