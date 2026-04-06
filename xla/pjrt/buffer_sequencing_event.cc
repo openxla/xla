@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
