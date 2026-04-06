@@ -180,8 +180,7 @@ absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
 
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
-      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_,
-                                /*is_p2p=*/false));
+      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_));
 
   TF_ASSIGN_OR_RETURN(
       bool use_collective_kernel,
@@ -262,8 +261,7 @@ int64_t CollectiveKernelThunk::GetInputSizeBytes() const {
 absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
-      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_,
-                                /*is_p2p=*/false));
+      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_));
   const std::optional<RankId> rank =
       clique_key.rank(params.collective_params->global_device_id);
   TF_RET_CHECK(rank.has_value())
@@ -427,8 +425,7 @@ absl::Status CollectiveKernelThunk::ExecuteOnStream(
 
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
-      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_,
-                                /*is_p2p=*/false));
+      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_));
   const int32_t num_devices = clique_key.num_devices();
 
   // TODO(b/407736956): Support variadic all-reduce.

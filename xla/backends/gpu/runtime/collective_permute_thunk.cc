@@ -54,11 +54,11 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -93,7 +93,7 @@ CollectivePermuteThunk::CollectivePermuteThunk(
     int64_t replica_count, int64_t partition_count,
     const std::vector<Buffer>& buffers, bool p2p_memcpy_enabled)
     : CollectiveThunk(Thunk::kCollectivePermute, std::move(thunk_info),
-                      /*is_p2p=*/true),
+                      CommunicationId(1)),
       config_(GetP2PConfig(instr, replica_count, partition_count)),
       buffers_(buffers),
       p2p_memcpy_enabled_(p2p_memcpy_enabled) {}
@@ -102,7 +102,7 @@ CollectivePermuteThunk::CollectivePermuteThunk(
     ThunkInfo thunk_info, const P2PConfig& config,
     const std::vector<Buffer>& buffers, bool p2p_memcpy_enabled)
     : CollectiveThunk(Thunk::kCollectivePermute, std::move(thunk_info),
-                      /*is_p2p=*/true),
+                      CommunicationId(1)),
       config_(config),
       buffers_(buffers),
       p2p_memcpy_enabled_(p2p_memcpy_enabled) {}

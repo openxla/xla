@@ -38,23 +38,23 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
 CollectiveBroadcastThunk::CollectiveBroadcastThunk(ThunkInfo thunk_info,
                                                    CollectiveConfig config,
                                                    std::vector<Buffer> buffers)
-    : CollectiveThunk(Thunk::kCollectiveBroadcast, thunk_info, false),
+    : CollectiveThunk(Thunk::kCollectiveBroadcast, thunk_info),
       config_(config),
       buffers_(std::move(buffers)) {}
 
 CollectiveBroadcastThunk::CollectiveBroadcastThunk(
     ThunkInfo thunk_info, const HloCollectiveBroadcastInstruction* instr,
     std::vector<Buffer> buffers, bool p2p_memcpy_enabled)
-    : CollectiveThunk(Thunk::kCollectiveBroadcast, thunk_info, false),
+    : CollectiveThunk(Thunk::kCollectiveBroadcast, thunk_info),
       config_(GetCollectiveConfig(instr, std::nullopt)),
       buffers_(std::move(buffers)) {}
 
