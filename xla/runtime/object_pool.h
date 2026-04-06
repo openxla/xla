@@ -52,7 +52,8 @@ class ObjectPool {
   };
 
  public:
-  explicit ObjectPool(absl::AnyInvocable<absl::StatusOr<T>(Args...)> builder);
+  explicit ObjectPool(absl::AnyInvocable<absl::StatusOr<T>(Args...)> builder,
+                      bool enabled = true);
   ~ObjectPool();
 
   class BorrowedObject {
@@ -137,12 +138,16 @@ class ObjectPool {
   absl::AnyInvocable<absl::StatusOr<T>(Args...)> builder_;
   std::atomic<uintptr_t> head_;
   std::atomic<size_t> num_created_;
+  const bool pooling_enabled_;
 };
 
 template <typename T, typename... Args>
 ObjectPool<T, Args...>::ObjectPool(
-    absl::AnyInvocable<absl::StatusOr<T>(Args...)> builder)
-    : builder_(std::move(builder)), head_(0), num_created_(0) {
+    absl::AnyInvocable<absl::StatusOr<T>(Args...)> builder, bool enabled)
+    : builder_(std::move(builder)),
+      head_(0),
+      num_created_(0),
+      pooling_enabled_(enabled) {
   static_assert(sizeof(uintptr_t) == 8,
                 "ObjectPool tagged pointer requires a 64-bit platform");
   static_assert(alignof(Entry) >= (1 << kLowTagBits),
@@ -151,6 +156,9 @@ ObjectPool<T, Args...>::ObjectPool(
 
 template <typename T, typename... Args>
 ObjectPool<T, Args...>::~ObjectPool() {
+  if (!pooling_enabled_) {
+    return;
+  }
   Entry* entry = GetPtr(head_.load(std::memory_order_acquire));
   while (entry) {
     Entry* next = entry->next.load(std::memory_order_relaxed);
@@ -210,13 +218,20 @@ ObjectPool<T, Args...>::BorrowedObject::BorrowedObject(
 template <typename T, typename... Args>
 ObjectPool<T, Args...>::BorrowedObject::~BorrowedObject() {
   if (ABSL_PREDICT_TRUE(parent_ && entry_)) {
-    parent_->PushEntry(std::move(entry_));
+    if (parent_->pooling_enabled_) {
+      parent_->PushEntry(std::move(entry_));
+    }
   }
 }
 
 template <typename T, typename... Args>
 auto ObjectPool<T, Args...>::GetOrCreate(Args... args)
     -> absl::StatusOr<BorrowedObject> {
+  if (!pooling_enabled_) {
+    TF_ASSIGN_OR_RETURN(auto entry, CreateEntry(std::forward<Args>(args)...));
+    return BorrowedObject(this, std::move(entry));
+  }
+
   if (std::unique_ptr<Entry> entry = PopEntry(); ABSL_PREDICT_TRUE(entry)) {
     return BorrowedObject(this, std::move(entry));
   }

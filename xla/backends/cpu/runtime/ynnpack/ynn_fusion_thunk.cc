@@ -250,7 +250,8 @@ YnnFusionThunk::YnnFusionThunk(Options options, Info info,
       results_(std::move(results)),
       builder_(std::move(builder)),
       ynn_executable_pool_(
-          absl::bind_front(&YnnFusionThunk::CreateYnnExecutable, this)) {}
+          absl::bind_front(&YnnFusionThunk::CreateYnnExecutable, this),
+          /*enabled=*/false) {}
 
 YnnFusionThunk::YnnFusionThunk(Options options, Info info,
                                const HloInstruction* hlo,
@@ -267,7 +268,8 @@ YnnFusionThunk::YnnFusionThunk(Options options, Info info,
       captured_arguments_ids_(captured_arguments_ids.begin(),
                               captured_arguments_ids.end()),
       ynn_executable_pool_(
-          absl::bind_front(&YnnFusionThunk::CreateYnnExecutable, this)) {}
+          absl::bind_front(&YnnFusionThunk::CreateYnnExecutable, this),
+          /*enabled=*/false) {}
 
 YnnFusionThunk::~YnnFusionThunk() = default;
 
