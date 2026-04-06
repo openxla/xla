@@ -67,6 +67,8 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk_proto_deserialization.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/core/collectives/clique_key.h"
+#include "xla/core/collectives/collectives.h"
+#include "xla/core/collectives/collectives_registry.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
@@ -120,15 +122,16 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
 #include "xla/xla.pb.h"
+#include "tsl/platform/casts.h"
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -619,10 +622,17 @@ absl::Status ExecuteThunksImpl(const DebugOptions* debug_options,
   Thunk::ExecutionScopedState execution_scoped_state;
 
   // Parameters for executing collective operations.
+  std::optional<std::string> collectives_impl_name;
+  if (debug_options &&
+      !debug_options->xla_gpu_collectives_implementation().empty()) {
+    collectives_impl_name = debug_options->xla_gpu_collectives_implementation();
+  }
+
   ASSIGN_OR_RETURN(CollectiveParams collective_params,
                    CollectiveParams::Create(
                        *run_options, async_comms_streams,
                        LocalDeviceId(main_stream->parent()->device_ordinal()),
+                       std::move(collectives_impl_name),
                        collective_max_nchannels, p2p_max_nchannels));
 
   CollectiveCliqueRequests collective_clique_requests;
@@ -640,8 +650,7 @@ absl::Status ExecuteThunksImpl(const DebugOptions* debug_options,
 
   XLA_VLOG_DEVICE(3, run_options->device_ordinal()) << absl::StreamFormat(
       "Prepared GPU executable module: %s for execution: "
-      "#collective=[cliques=%d, "
-      "symmetric=%d]",
+      "#collective=[cliques=%d, symmetric=%d]",
       module_name, collective_clique_requests.size(),
       collective_memory_requests.symmetric_size());
 
@@ -1048,14 +1057,32 @@ static absl::Status CheckAlignment(const BufferAllocation& allocation,
 }
 
 // Resolve GpuCollectives instance that we should use for the run.
+// TODO(ezhulenev): We have almost identical method in `collective_params.cc`,
+// this one has to be removed.
 static GpuCollectives* ResolveGpuCollectives(
-    const ServiceExecutableRunOptions* run_options) {
+    const ServiceExecutableRunOptions* run_options,
+    const DebugOptions* debug_options) {
+  auto* gpu_options = run_options->run_options().gpu_executable_run_options();
+  if (gpu_options && gpu_options->collectives()) {
+    return gpu_options->collectives();
+  }
+
   absl::string_view platform_name =
       run_options->run_options().stream()->parent()->GetPlatform()->Name();
-  auto* gpu_options = run_options->run_options().gpu_executable_run_options();
-  return gpu_options && gpu_options->collectives()
-             ? gpu_options->collectives()
-             : GpuCollectives::Default(platform_name);
+
+  // If debug options specify a collectives implementation by name, look it up
+  // in the registry. Otherwise, use the default (highest-priority) one.
+  if (debug_options &&
+      !debug_options->xla_gpu_collectives_implementation().empty()) {
+    absl::StatusOr<Collectives*> collectives = CollectivesRegistry::Get(
+        platform_name, debug_options->xla_gpu_collectives_implementation());
+    CHECK_OK(collectives)  // Crash OK
+        << "Failed to get GPU collectives implementation: "
+        << debug_options->xla_gpu_collectives_implementation();
+    return tsl::down_cast<GpuCollectives*>(*collectives);
+  }
+
+  return GpuCollectives::Default(platform_name);
 }
 
 absl::StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
@@ -1066,8 +1093,11 @@ absl::StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
       [&] { return std::string("Build buffer allocations"); },
       tsl::profiler::TraceMeLevel::kInfo);
 
+  const DebugOptions* debug_options =
+      has_module() ? &module_config().debug_options() : nullptr;
+
   absl::flat_hash_map<LogicalBuffer::Color, int64_t> allocate_granularity;
-  if (auto* collectives = ResolveGpuCollectives(run_options)) {
+  if (auto* collectives = ResolveGpuCollectives(run_options, debug_options)) {
     // BFC allocator ignores memory alignment and always allocates 256 byte
     // aligned buffers, however for collective memory underlying libraries
     // require larger alignment. We conservatively round up all allocation

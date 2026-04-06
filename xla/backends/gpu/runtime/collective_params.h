@@ -17,6 +17,8 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_PARAMS_H_
 
 #include <cstdint>
+#include <optional>
+#include <string>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
@@ -38,14 +40,15 @@ struct CollectiveParams {
   // A mapping from local device ordinals to global device IDs.
   using GlobalDeviceIdMap = GpuExecutableRunOptions::DeviceIdMap;
 
-  // Creates NCCL execution parameters from the run options for the given
+  // Creates collective execution parameters from the run options for the given
   // local device. Returns an error if run options are misconfigured (i.e.
   // missing a global device mapping for a local device ordinal).
   static absl::StatusOr<CollectiveParams> Create(
       const ServiceExecutableRunOptions& run_options,
       absl::Span<se::Stream* const> async_streams,
-      LocalDeviceId local_device_id, int64_t collective_max_nchannels = 0,
-      int64_t p2p_max_nchannels = 0);
+      LocalDeviceId local_device_id,
+      std::optional<std::string> implementation_name = std::nullopt,
+      int64_t collective_max_nchannels = 0, int64_t p2p_max_nchannels = 0);
 
   GpuCollectives* collectives;
   se::StreamExecutor* executor;
