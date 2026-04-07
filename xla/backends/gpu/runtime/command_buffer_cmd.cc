@@ -113,13 +113,13 @@ limitations under the License.
 #include "xla/stream_executor/trace_command_buffer_factory.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -2027,12 +2027,20 @@ absl::StatusOr<const se::CommandBuffer::Command*> CollectivePermuteCmd::Record(
   const P2PConfig::SourceTargetMapEntry source_target =
       P2PConfig::GetSourceTarget(p2p_config_.id_to_source_target, current_id);
 
-  // MemCpy case is not currently supported in CommandBuffer.
+  // Remap source/target from logical IDs to communicator-local ranks.
+  TF_ASSIGN_OR_RETURN(
+      auto remapped_source_target,
+      RemapSourceTargetToCliqueRanks(
+          source_target, clique_key,
+          *execute_params.collective_params->device_assn, config().group_mode,
+          execute_params.collective_params->global_device_id));
+
+  // Memcpy case is not currently supported in CommandBuffer.
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
-        return RunCollectivePermute(source_target, device_buffers, *stream,
-                                    *comm, device_string, current_id,
+        return RunCollectivePermute(remapped_source_target, device_buffers,
+                                    *stream, *comm, device_string, current_id,
                                     /*use_memcpy=*/false,
                                     /*recv_ptr_map=*/nullptr,
                                     use_symmetric_buffer);
