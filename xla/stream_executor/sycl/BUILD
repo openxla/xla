@@ -465,6 +465,7 @@ xla_test(
     deps = [
         ":sycl_gpu_runtime",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
