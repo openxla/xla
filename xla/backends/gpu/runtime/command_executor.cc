@@ -478,7 +478,7 @@ CommandExecutor::RecordCreate(
       commands_.size(), command_buffer, dependencies.size(), record_id);
   uint64_t start_micros = tsl::Env::Default()->NowMicros();
 
-  auto* state = command_buffer->GetOrCreateResource<CommandExecutorsState>();
+  auto* state = command_buffer->GetOrConstructResource<CommandExecutorsState>();
   auto key = std::make_pair(this, record_id);
 
   // kCapture: run all commands via ExecuteOnStream inside a single Trace call.
