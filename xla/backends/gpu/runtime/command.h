@@ -211,21 +211,10 @@ class Command : public Thunk {
   // to new buffer allocations).
   using RecordAction = std::variant<RecordCreate, RecordUpdate>;
 
-  // Commands are not executed directly as Thunks; they are recorded into
-  // command buffers via Record(). ExecuteOnStream is not supported.
-  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
-    return absl::UnimplementedError(
-        "Command cannot be executed directly as a Thunk; use Record() instead");
-  }
-
   // Execute this command directly on a stream. Used by kCapture mode in
   // CommandExecutor to perform stream-capture recording. Subclasses that
   // support execution via stream capture must override this.
-
-  // This is a hack to avoid building error, and we are planning to make Command
-  // sub-class of Thunk, after that change, ExecuteOnStream is defined by each
-  // thunk subclass.
-  virtual absl::Status ExecuteOnStream(const Thunk::ExecuteParams& params) {
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
     return absl::UnimplementedError(
         "Command cannot be executed directly; use Record() instead.");
   }
