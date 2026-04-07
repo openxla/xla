@@ -1600,7 +1600,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectivePermute(
   }
 
   // For synchronous collectives, emit thunks directly without async wrapping.
-  if (IsGPUSyncCollective(*instr)) {
+  // However, if parallel collective overlap limit is > 1, multiple collectives
+  // may be in-flight on different streams. Emitting them synchronously would be
+  // unsafe as they could share communicators across streams. Force async
+  // emission in that case.
+  if (IsGPUSyncCollective(*instr) &&
+      ir_emitter_context_->debug_options()
+              .xla_gpu_experimental_parallel_collective_overlap_limit() <= 1) {
     hlo_async_executions_.try_emplace(instr, nullptr);
     return thunks;
   }
@@ -1744,7 +1750,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectiveThunk(
         ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
   }
   // For synchronous collectives, emit thunk directly without async wrapping.
-  if (IsGPUSyncCollective(*async_start)) {
+  // However, if parallel collective overlap limit is > 1, multiple collectives
+  // may be in-flight on different streams. Emitting them synchronously would be
+  // unsafe as they could share communicators across streams. Force async
+  // emission in that case.
+  if (IsGPUSyncCollective(*async_start) &&
+      ir_emitter_context_->debug_options()
+              .xla_gpu_experimental_parallel_collective_overlap_limit() <= 1) {
     hlo_async_executions_.try_emplace(async_start, nullptr);
     return ThunkSequence::Of(std::move(thunk));
   }
