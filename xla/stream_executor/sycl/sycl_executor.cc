@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/stream_executor/sycl/sycl_event.h"
 #include "xla/stream_executor/sycl/sycl_gpu_runtime.h"
 #include "xla/stream_executor/sycl/sycl_kernel.h"
+#include "xla/stream_executor/sycl/sycl_platform_id.h"
 #include "xla/stream_executor/sycl/sycl_stream.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -424,9 +425,7 @@ absl::Status SyclExecutor::Init() {
   TF_ASSIGN_OR_RETURN(device_, SyclDevicePool::GetDevice(device_ordinal()));
   TF_ASSIGN_OR_RETURN(sycl_context_, SyclContext::Create(device_ordinal()));
 
-  // Return OK status since StreamExecutor is usually initialized via
-  // TF_ASSERT_OK_AND_ASSIGN in unit tests.
-  return absl::OkStatus();
+  return InitBlas();
 }
 
 dnn::DnnSupport* SyclExecutor::AsDnn() {
@@ -931,6 +930,24 @@ absl::StatusOr<DeviceAddressBase> SyclExecutor::GetSymbol(
   return absl::NotFoundError(absl::StrFormat(
       "SyclExecutor::GetSymbol: Symbol '%s' not found in any loaded module.",
       symbol_name));
+}
+
+absl::Status SyclExecutor::InitBlas() {
+  absl::MutexLock lock(&mu_);
+  PluginRegistry* registry = PluginRegistry::Instance();
+  TF_ASSIGN_OR_RETURN(auto factory,
+                      registry->GetFactory<PluginRegistry::BlasFactory>(
+                          stream_executor::sycl::kSyclPlatformId));
+  blas_.reset(factory(this));
+  return absl::OkStatus();
+}
+
+blas::BlasSupport* SyclExecutor::AsBlas() {
+  absl::MutexLock lock(&mu_);
+  if (!blas_) {
+    LOG(FATAL) << "Sycl blas support not initialized.";
+  }
+  return blas_.get();
 }
 
 }  // namespace stream_executor::sycl

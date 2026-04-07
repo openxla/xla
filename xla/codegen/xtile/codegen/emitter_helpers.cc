@@ -37,7 +37,6 @@ limitations under the License.
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -56,8 +55,8 @@ limitations under the License.
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/indexing_map.h"
-#include "xla/hlo/analysis/indexing_map_serialization.h"
-#include "xla/hlo/analysis/symbolic_map_converter.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
+#include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -80,8 +79,6 @@ limitations under the License.
 namespace xla::xtile {
 
 using ::llvm::SmallVector;
-using ::mlir::AffineExpr;
-using ::mlir::AffineMap;
 using ::mlir::ArrayRef;
 using ::mlir::ShapedType;
 using ::mlir::Type;
@@ -112,7 +109,6 @@ Value EmitClampedIndex(mlir::ImplicitLocOpBuilder& b, Value value,
                                       CreateConst(b, value.getType(), upper));
   return ma::IndexCastOp::create(b, b.getIndexType(), clamped_index);
 }
-
 
 absl::StatusOr<SmallVector<Value>> ComputeOffsetsForTile(
     mlir::ImplicitLocOpBuilder& b, Value pid, ValueRange runtime_values,
@@ -204,18 +200,17 @@ SmallVector<int64_t> GetPaddedTileSizes(ArrayRef<int64_t> tile_sizes) {
 // This function only supports pid and does not support runtime values including
 // the induction variables yet.
 absl::StatusOr<SmallVector<Value>> EmitterContext::EvaluateTilingParameters(
-    ArrayRef<AffineExpr> exprs) {
-  SmallVector<AffineExpr> affine_exprs;
+    ArrayRef<SymbolicExpr> exprs) {
+  SmallVector<SymbolicExpr> symnolic_exprs;
   for (const auto& expr : schedule_.GetSymbolicMap().GetResults()) {
-    affine_exprs.push_back(SymbolicExprToAffineExpr(expr, 1));
+    symnolic_exprs.push_back(expr);
   }
-  SmallVector<AffineExpr> updated_exprs;
+  SmallVector<SymbolicExpr> updated_exprs;
   for (const auto& expr : exprs) {
-    updated_exprs.push_back(expr.replaceDims(affine_exprs));
+    updated_exprs.push_back(expr.ReplaceDims(symnolic_exprs));
   }
   IndexingMap offset_indexing_map(
-      AffineMapToSymbolicMap(
-          AffineMap::get(1, 0, updated_exprs, schedule_.GetMLIRContext())),
+      SymbolicMap::Get(schedule_.GetMLIRContext(), 1, 0, updated_exprs),
       schedule_.GetDimVars(), {}, {});
   SmallVector<Value> dims{Cast(b_, pid_, pid_.getType())};
   return emitters::ApplyIndexing(offset_indexing_map, /*dims=*/dims,

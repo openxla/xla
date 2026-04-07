@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,22 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_FUTURE_H_
-#define XLA_FUTURE_H_
+#include <memory>
 
-#include "xla/tsl/concurrency/future.h"  // IWYU pragma: export
-#include "xla/tsl/concurrency/interop.h"  // IWYU pragma: export
+#include "xla/service/gpu/model/hlo_op_profiler.h"
 
 namespace xla {
+namespace gpu {
 
-using ::tsl::Future;
-using ::tsl::FutureHelpers;
-using ::tsl::JoinFutures;
-using ::tsl::MakeFutureOn;
-using ::tsl::MakeFutureWhenReady;
-using ::tsl::MakePromise;
-using ::tsl::Promise;
+/*static*/ std::unique_ptr<HloOpProfiler::KernelTracer>
+HloOpProfiler::GetKernelTracer() {
+  return nullptr;
+}
 
+}  // namespace gpu
 }  // namespace xla
-
-#endif  // XLA_FUTURE_H_

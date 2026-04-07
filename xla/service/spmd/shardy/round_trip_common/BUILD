@@ -53,23 +53,6 @@ cc_library(
 )
 
 cc_library(
-    name = "import_func_calls",
-    srcs = ["import_func_calls.cc"],
-    hdrs = ["import_func_calls.h"],
-    deps = [
-        "@com_google_absl//absl/log:check",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:Analysis",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Pass",
-        "@llvm-project//mlir:Support",
-        "@llvm-project//mlir:TransformUtils",
-        "@shardy//shardy/dialect/sdy/ir:dialect",
-    ],
-)
-
-cc_library(
     name = "import_constants",
     srcs = ["import_constants.cc"],
     hdrs = ["import_constants.h"],

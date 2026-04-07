@@ -78,7 +78,7 @@ class EmitterContext {
 
   // Evaluates tiling parameters for the given affine expressions, e.g. offsets.
   absl::StatusOr<mlir::SmallVector<mlir::Value>> EvaluateTilingParameters(
-      mlir::ArrayRef<mlir::AffineExpr> exprs);
+      mlir::ArrayRef<SymbolicExpr> exprs);
 
  private:
   mlir::ImplicitLocOpBuilder& b_;

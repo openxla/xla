@@ -63,7 +63,6 @@ using ::mlir::func::FuncOp;
 
 using ::mlir::sdy::getFuncResultShardings;
 using ::mlir::sdy::kShardingAttr;
-using ::mlir::sdy::ManualAxesAttr;
 using ::mlir::sdy::NamedComputationOp;
 using ::mlir::sdy::TensorShardingPerValueAttr;
 
@@ -72,11 +71,13 @@ struct NamedComputationWithCount {
   int64_t callSiteCount;
 };
 
-StringAttr createFuncOp(NamedComputationOp namedComputationOp,
-                        mlir::IRRewriter& rewriter, SymbolTable& symbolTable,
-                        std::optional<TensorShardingPerValueAttr> inShardings,
-                        std::optional<TensorShardingPerValueAttr> outShardings,
-                        ManualAxesAttr manualAxesAttr) {
+// TODO(enver): TensorShardingPerValueAttr can be nullptr. Drop optional and use
+// nullptr. Be careful on handling an empty TensorShardingPerValueAttr properly.
+StringAttr createFuncOp(
+    NamedComputationOp namedComputationOp, mlir::IRRewriter& rewriter,
+    SymbolTable& symbolTable,
+    std::optional<TensorShardingPerValueAttr> inShardings,
+    std::optional<TensorShardingPerValueAttr> outShardings) {
   FuncOp funcOp = FuncOp::create(
       rewriter, namedComputationOp.getLoc(), namedComputationOp.getName(),
       rewriter.getFunctionType(namedComputationOp.getBody().getArgumentTypes(),
@@ -85,9 +86,6 @@ StringAttr createFuncOp(NamedComputationOp namedComputationOp,
       /*argAttrs=*/ArrayAttr(), /*resultAttrs=*/ArrayAttr());
   funcOp->setAttr(mlir::sdy::kOriginalFuncName,
                   namedComputationOp.getNameAttr());
-  if (manualAxesAttr) {
-    funcOp->setAttr(kManualAxes, manualAxesAttr);
-  }
 
   rewriter.setInsertionPointToStart(funcOp->getBlock());
   mlir::sdy::inlineRegionAndConvertTerminatorOp<mlir::func::ReturnOp>(
@@ -97,9 +95,6 @@ StringAttr createFuncOp(NamedComputationOp namedComputationOp,
   if (inShardings.has_value()) {
     for (auto [i, sharding] : llvm::enumerate(inShardings->getShardings())) {
       funcOp.setArgAttr(i, kShardingAttr, sharding);
-      if (manualAxesAttr) {
-        funcOp.setArgAttr(i, kManualAxes, manualAxesAttr);
-      }
     }
   }
 
@@ -107,9 +102,6 @@ StringAttr createFuncOp(NamedComputationOp namedComputationOp,
   if (outShardings.has_value()) {
     for (auto [i, sharding] : llvm::enumerate(outShardings->getShardings())) {
       funcOp.setResultAttr(i, kShardingAttr, sharding);
-      if (manualAxesAttr) {
-        funcOp.setResultAttr(i, kManualAxes, manualAxesAttr);
-      }
     }
   }
   return symbolTable.insert(funcOp);
@@ -124,20 +116,13 @@ void exportNamedComputations(ModuleOp moduleOp, SymbolTable& symbolTable) {
     mlir::IRRewriter rewriter(namedComputationOp);
     rewriter.setInsertionPointToEnd(&moduleBlock);
 
-    ManualAxesAttr manualAxesAttr =
-        namedComputationOp->getAttrOfType<ManualAxesAttr>(kManualAxes);
     std::optional<TensorShardingPerValueAttr> inShardings =
         namedComputationOp.getInShardings();
     std::optional<TensorShardingPerValueAttr> outShardings =
         namedComputationOp.getOutShardings();
-    if (manualAxesAttr) {
-      CHECK(!manualAxesAttr.empty());
-      CHECK(inShardings.has_value());
-      CHECK(outShardings.has_value());
-    }
-    StringAttr funcSymName =
-        createFuncOp(namedComputationOp, rewriter, symbolTable, inShardings,
-                     outShardings, manualAxesAttr);
+
+    StringAttr funcSymName = createFuncOp(
+        namedComputationOp, rewriter, symbolTable, inShardings, outShardings);
 
     // Replace the `NamedComputationOp` with a `CallOp`.
     rewriter.setInsertionPoint(namedComputationOp);
@@ -147,10 +132,6 @@ void exportNamedComputations(ModuleOp moduleOp, SymbolTable& symbolTable) {
         namedComputationOp, namedComputationOp.getResultTypes(), funcSymName,
         namedComputationOp.getOperands());
     callOp->setAttrs(callOpAttrs);
-    if (manualAxesAttr) {
-      callOp->setAttr(kManualAxes, manualAxesAttr);
-    }
-
     FuncOp funcOp = symbolTable.lookup<FuncOp>(funcSymName);
     // Copy the func output shardings to the call op.
     if (TensorShardingPerValueAttr funcResultShardings =

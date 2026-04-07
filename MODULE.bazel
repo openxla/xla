@@ -114,6 +114,7 @@ use_repo(
     "mpitrampoline",
     "nanobind",
     "nvshmem",
+    "nvtx_archive",
     "onednn",
     "pthreadpool",
     "raft",
