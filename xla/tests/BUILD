@@ -646,12 +646,7 @@ xla_test(
 
 xla_test(
     name = "grouped_convolution_test",
-    timeout = "long",
     srcs = ["grouped_convolution_test.cc"],
-    disabled_backends = [
-        # disabled because it times out.
-        "cpu",
-    ],
     shard_count = 23,
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2420,7 +2415,6 @@ xla_test(
 
 xla_test(
     name = "prng_test",
-    timeout = "long",
     srcs = ["prng_test.cc"],
     shard_count = 20,
     # TODO(b/148276347) The test fails on macOS.
@@ -2428,11 +2422,11 @@ xla_test(
         "no_mac",
         "noasan",
         "nosan",
-        "pjrt_migration_candidate",
     ],
-    use_legacy_runtime = True,
     deps = [
-        ":client_library_test_base",
+        ":client_library_test_runner_mixin",
+        ":hlo_pjrt_interpreter_reference_mixin",
+        ":hlo_pjrt_test_base",
         ":literal_test_util",
         ":xla_internal_test_main",
         "//xla:literal",
@@ -2440,13 +2434,17 @@ xla_test(
         "//xla:shape_util",
         "//xla:types",
         "//xla:xla_data_proto_cc",
-        "//xla/client:local_client",
         "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/builder:xla_computation",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:test",
         "//xla/service",
+        "//xla/service:hlo_runner_interface",
         "//xla/tests:xla_test_backend_predicates",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
     ],
@@ -2764,24 +2762,22 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    tags = ["pjrt_migration_candidate"],
-    use_legacy_runtime = True,
     deps = [
-        ":hlo_test_base",
+        ":aot_utils",
+        ":pjrt_client_registry",
         ":xla_internal_test_main",
-        "//xla:literal",
-        "//xla:literal_util",
-        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test",
-        "//xla/hlo/testlib:test_helpers",
+        "//xla/pjrt:pjrt_client",
+        "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_runner_interface",
-        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -3264,26 +3260,6 @@ xla_cc_test(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",
-    ],
-)
-
-xla_test(
-    name = "ptxas_bug_120501638_test",
-    srcs = ["ptxas_bug_120501638.cc"],
-    tags = [
-        # Disabled in OSS until nvidia publicly releases a fixed ptxas.
-        "no_oss",
-    ],
-    deps = [
-        ":hlo_pjrt_interpreter_reference_mixin",
-        ":hlo_pjrt_test_base",
-        ":xla_internal_test_main",  # fixdeps: keep
-        "//xla:debug_options_flags",
-        "//xla:error_spec",
-        "//xla/hlo/testlib:test",
-        "//xla/service:hlo_module_config",
-        "//xla/tsl/platform:statusor",
-        "//xla/tsl/platform:test",
     ],
 )
 

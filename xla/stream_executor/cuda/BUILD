@@ -19,6 +19,7 @@ load("//xla/tests:build_defs.bzl", "xla_test")
 load(
     "//xla/tsl:tsl.bzl",
     "if_google",
+    "if_nccl",
     "if_windows",
     "internal_visibility",
     "tsl_copts",
@@ -1135,6 +1136,7 @@ xla_cc_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
     ],
@@ -1833,14 +1835,13 @@ cc_library(
         ":cudnn_plugin",
         ":cufft_plugin",
         ":make_batch_pointers_kernel_cuda",
-        ":multi_gpu_barrier_kernel_cuda",
         ":ragged_all_to_all_kernel_cuda",
         ":redzone_allocator_kernel_cuda",
         ":repeat_buffer_kernel_cuda",
         ":topk_kernel_cuda",
         "//xla/tsl/cuda:cusparse",
         "//xla/tsl/cuda:tensorrt_rpath",
-    ],
+    ] + if_nccl([":multi_gpu_barrier_kernel_cuda"]),
     alwayslink = 1,
 )
 

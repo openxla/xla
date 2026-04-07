@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_PYTHON_IFRT_SUPPORT_MODULE_PARSING_H_
-#define XLA_PYTHON_IFRT_SUPPORT_MODULE_PARSING_H_
+#ifndef XLA_PYTHON_IFRT_IR_SUPPORT_MODULE_PARSING_H_
+#define XLA_PYTHON_IFRT_IR_SUPPORT_MODULE_PARSING_H_
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -41,4 +41,4 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ParseMlirModuleString(
 }  // namespace ifrt
 }  // namespace xla
 
-#endif  // XLA_PYTHON_IFRT_SUPPORT_MODULE_PARSING_H_
+#endif  // XLA_PYTHON_IFRT_IR_SUPPORT_MODULE_PARSING_H_

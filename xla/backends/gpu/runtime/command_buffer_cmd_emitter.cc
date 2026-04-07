@@ -395,15 +395,6 @@ static absl::Status AppendCommands(ConversionContext& ctx,
           std::make_unique<EmptyCmd>()));
     }
 
-    case Thunk::Kind::kWaitForStreams:
-      if (thunk.control_predecessors().empty()) {
-        return absl::OkStatus();
-      }
-      // If there are control dependencies between these thunks, create an
-      // empty command to act as a dependency node.
-      return append(absl::StatusOr<std::unique_ptr<Command>>(
-          std::make_unique<EmptyCmd>()));
-
     case Thunk::Kind::kCommandBuffer:
       return Internal(
           "Error trying to emit command for a CommandBufferThunk. Input HLO "

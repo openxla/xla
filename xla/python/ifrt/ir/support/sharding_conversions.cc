@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/python/ifrt/support/sharding_conversions.h"
+#include "xla/python/ifrt/ir/support/sharding_conversions.h"
 
 #include <algorithm>
 #include <cstdint>

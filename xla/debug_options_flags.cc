@@ -203,6 +203,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_dump_large_constants(false);
   opts.set_xla_dump_enable_mlir_pretty_form(true);
   opts.set_xla_dump_full_hlo_config(true);
+  opts.set_xla_dump_buffer_assignment_analysis(true);
   opts.set_xla_debug_buffer_assignment_show_max(15);
   opts.set_xla_cpu_use_onednn(false);
   opts.set_xla_cpu_experimental_onednn_custom_call(false);
@@ -450,6 +451,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_dot_merger_threshold_mb(64);
   opts.set_xla_enable_fast_math(false);
   opts.set_xla_gpu_experimental_parallel_collective_overlap_limit(1);
+  opts.set_xla_gpu_experimental_parallel_async_compute_limit(2);
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
@@ -501,6 +503,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_print_compilation_stats(false);
 
   opts.set_xla_gpu_enable_pdl(true);
+  opts.set_xla_gpu_enable_command_buffer_va_remapping(false);
   return opts;
 }
 
@@ -818,6 +821,20 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           return false;
         }
         debug_options->set_xla_cpu_experimental_xnn_graph_fusion_mode(mode);
+        return true;
+      };
+
+  auto setter_for_xla_cpu_opt_preset =
+      [debug_options](absl::string_view input) {
+        std::string upper_input = absl::AsciiStrToUpper(input);
+        if (!absl::StartsWith(upper_input, "CPU_OPT_PRESET_")) {
+          upper_input = absl::StrCat("CPU_OPT_PRESET_", upper_input);
+        }
+        DebugOptions::CpuOptPreset preset;
+        if (!DebugOptions::CpuOptPreset_Parse(upper_input, &preset)) {
+          return false;
+        }
+        debug_options->set_xla_cpu_opt_preset(preset);
         return true;
       };
 
@@ -1217,6 +1234,10 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_cpu_use_acl", bool_setter_for(&DebugOptions::set_xla_cpu_use_acl),
       debug_options->xla_cpu_use_acl(),
       "Generate calls to ACL (Arm Compute Library) in the CPU backend."));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_opt_preset", setter_for_xla_cpu_opt_preset,
+      DebugOptions::CpuOptPreset_Name(debug_options->xla_cpu_opt_preset()),
+      "Set CPU optimization preset (FAST_RUNTIME, FAST_COMPILE)"));
   flag_list->push_back(
       tsl::Flag("xla_cpu_use_fusion_emitters",
                 bool_setter_for(&DebugOptions::set_xla_cpu_use_fusion_emitters),
@@ -2602,6 +2623,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "This controls how many in-flight collectives "
       "latency hiding scheduler can schedule."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_parallel_async_compute_limit",
+      int32_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_parallel_async_compute_limit),
+      debug_options->xla_gpu_experimental_parallel_async_compute_limit(),
+      "This controls how many in-flight asynchronous computations "
+      "latency hiding scheduler can schedule."));
+  flag_list->push_back(tsl::Flag(
       "xla_pjrt_allow_auto_layout_in_hlo",
       bool_setter_for(&DebugOptions::set_xla_pjrt_allow_auto_layout_in_hlo),
       debug_options->xla_pjrt_allow_auto_layout_in_hlo(),
@@ -2977,6 +3005,19 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 bool_setter_for(&DebugOptions::set_xla_gpu_enable_pdl),
                 debug_options->xla_gpu_enable_pdl(),
                 "Enable PDL (Programmatic Dependent Launch)."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_command_buffer_va_remapping",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_enable_command_buffer_va_remapping),
+      debug_options->xla_gpu_enable_command_buffer_va_remapping(),
+      "Enable VA remapping for command buffer thunks. When enabled, command "
+      "buffer thunks use fixed virtual addresses across executions, allowing "
+      "the command buffer to be recorded once and replayed without updates."));
+  flag_list->push_back(tsl::Flag(
+      "xla_dump_buffer_assignment_analysis",
+      bool_setter_for(&DebugOptions::set_xla_dump_buffer_assignment_analysis),
+      debug_options->xla_dump_buffer_assignment_analysis(),
+      "Dump BufferAssignment analysis."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more
@@ -3060,6 +3101,7 @@ xla::DebugOptions GetDebugOptionsFromFlags() {
   return *flag_values;
 }
 
+// LINT.IfChange(get_flag_status)
 FlagStatus GetFlagStatus(absl::string_view flag_name) {
   // NOTE: The explicit internal constructor is needed as an explicitly typed
   // variable to avoid a method ambiguity error when compiling with GCC.
@@ -3091,6 +3133,7 @@ FlagStatus GetFlagStatus(absl::string_view flag_name) {
          : kDeprecatedFlags->contains(flag_name) ? FlagStatus::kDeprecated
                                                  : FlagStatus::kExperimental;
 }
+// LINT.ThenChange(Google-internal path)
 
 void ResetThreadLocalFuel() {
   absl::call_once(flags_init, &AllocateFlags, nullptr);

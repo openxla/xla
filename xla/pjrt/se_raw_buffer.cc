@@ -68,8 +68,7 @@ PjRtStreamExecutorDeviceEventPromise::PjRtStreamExecutorDeviceEventPromise(
           async_work_runner,
           tsl::AsyncValueRef<BufferSequencingEvent::EventState>(av_))) {}
 
-void PjRtStreamExecutorDeviceEventPromise::Set(
-    tsl::RCReference<PjRtDeviceEvent> event) {
+void PjRtStreamExecutorDeviceEventPromise::Set(PjRtDeviceEventRef event) {
   SetFromSEEvent(
       tensorflow::down_cast<PjRtStreamExecutorDeviceEvent*>(event.get())
           ->event());
@@ -100,7 +99,7 @@ void PjRtStreamExecutorDeviceEventPromise::SetReady() {
   }
 }
 
-absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>>
+absl::StatusOr<PjRtDeviceEventRef>
 PjRtStreamExecutorRawBuffer::CopyRawHostToDeviceAndReturnEvent(
     const void* src, int64_t offset, int64_t transfer_size) {
   se::Stream* stream = local_device_->host_to_device_stream();
@@ -156,7 +155,7 @@ PjRtStreamExecutorRawBuffer::CopyRawHostToDeviceAndReturnEvent(
   return tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(std::move(device_event));
 }
 
-absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>>
+absl::StatusOr<PjRtDeviceEventRef>
 PjRtStreamExecutorRawBuffer::CopyRawDeviceToHostAndReturnEvent(
     void* dst, int64_t offset, int64_t transfer_size) {
   se::Stream* stream = local_device_->GetDeviceToHostStream();
@@ -296,17 +295,14 @@ void PjRtStreamExecutorRawBuffer::CopyToLiteralAsync(
             options.dims = on_device_shape.dimensions();
             options.permutation = permutation;
             options.input_striding = TransposePlan::Striding{byte_strides};
-            {
-              absl::MutexLock lock(client->transpose_mu_);
-              absl::StatusOr<std::shared_ptr<TransposePlan>> t =
-                  client->transpose_cache_.GetOrCreate(options);
-              if (!t.ok()) {
-                promise.Set(t.status());
-                client->SetEventAsError(usage_event, t.status());
-                return;
-              }
-              transpose = *std::move(t);
+            absl::StatusOr<std::shared_ptr<TransposePlan>> t =
+                client->GetTransposePlan(options);
+            if (!t.ok()) {
+              promise.Set(t.status());
+              client->SetEventAsError(usage_event, t.status());
+              return;
             }
+            transpose = *std::move(t);
           }
         }
 
@@ -374,7 +370,7 @@ void PjRtStreamExecutorRawBuffer::CopyToLiteralAsync(
       tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(std::move(usage_event)));
 }
 
-absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>>
+absl::StatusOr<PjRtDeviceEventRef>
 PjRtStreamExecutorRawBuffer::MakeAllocationReadyEvent() {
   auto* client =
       tensorflow::down_cast<PjRtStreamExecutorClient*>(memory_space_->client());

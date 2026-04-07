@@ -29,12 +29,12 @@ limitations under the License.
 #include "mlir/IR/OwningOpRef.h"
 #include "stablehlo/dialect/Version.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.h"
+#include "xla/python/ifrt/ir/support/module_parsing.h"
 #include "xla/python/ifrt/ir/version.h"
 #include "xla/python/ifrt/serdes.h"
 #include "xla/python/ifrt/serdes.pb.h"
 #include "xla/python/ifrt/serdes_test_util.h"
 #include "xla/python/ifrt/serdes_version.h"
-#include "xla/python/ifrt/support/module_parsing.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla {

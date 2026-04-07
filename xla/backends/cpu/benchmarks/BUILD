@@ -69,7 +69,7 @@ cc_library(
         "//xla/tools:run_hlo_module_proto_cc",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
+        "//xla/tsl/platform:gloop_status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test_benchmark",
         "@com_google_absl//absl/base:nullability",
@@ -185,6 +185,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest",
     ],
 )
 

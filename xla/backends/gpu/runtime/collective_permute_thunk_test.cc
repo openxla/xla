@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
+#include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
@@ -134,8 +135,7 @@ ENTRY test_computation {
   ThunkSequence start_sequence;
   start_sequence.push_back(std::move(cp_start_thunk));
   auto async_start = std::make_unique<AsyncStartThunk>(
-      Thunk::ThunkInfo(), AsyncStartThunk::AsyncKind::kCommunication,
-      std::move(start_sequence));
+      Thunk::ThunkInfo(), CommunicationStreamId(0), std::move(start_sequence));
   auto async_done = std::make_unique<AsyncDoneThunk>(
       Thunk::ThunkInfo(), async_start->async_execution());
 
@@ -222,10 +222,7 @@ ENTRY test_computation {
 TEST(CollectiveThunkTest, ProtoRoundTrip) {
   ThunkProto proto = tsl::proto_testing::ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info {
-          profile_annotation: "partition_id_profile_annotation"
-          execution_stream_id: 2
-        }
+        thunk_info { profile_annotation: "partition_id_profile_annotation" }
         collective_permute_start_thunk {
           collective_config {}
           p2p_memcpy_enabled: true
@@ -235,9 +232,6 @@ TEST(CollectiveThunkTest, ProtoRoundTrip) {
 
   Thunk::ThunkInfo thunk_info;
   thunk_info.profile_annotation = proto.thunk_info().profile_annotation();
-  thunk_info.execution_stream_id = xla::gpu::ExecutionStreamId{
-      static_cast<xla::gpu::ExecutionStreamId::ValueType>(
-          proto.thunk_info().execution_stream_id())};
 
   std::vector<BufferAllocation> buffer_allocations = {
       BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)};
@@ -255,10 +249,7 @@ TEST(CollectiveThunkTest, ProtoRoundTrip) {
 TEST(CollectiveThunkTest, SyncCollective) {
   ThunkProto proto = tsl::proto_testing::ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info {
-          profile_annotation: "partition_id_profile_annotation"
-          execution_stream_id: 2
-        }
+        thunk_info { profile_annotation: "partition_id_profile_annotation" }
         collective_permute_start_thunk {
           collective_config {}
           p2p_memcpy_enabled: true
@@ -268,9 +259,6 @@ TEST(CollectiveThunkTest, SyncCollective) {
 
   Thunk::ThunkInfo thunk_info;
   thunk_info.profile_annotation = proto.thunk_info().profile_annotation();
-  thunk_info.execution_stream_id = xla::gpu::ExecutionStreamId{
-      static_cast<xla::gpu::ExecutionStreamId::ValueType>(
-          proto.thunk_info().execution_stream_id())};
 
   std::vector<BufferAllocation> buffer_allocations = {
       BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)};

@@ -37,10 +37,7 @@ TEST(ReplicaIdThunkTest, ProtoRoundTrip) {
   ThunkProto proto;
   CHECK(tsl::protobuf::TextFormat::ParseFromString(
       R"pb(
-        thunk_info {
-          profile_annotation: "replica_id_profile_annotation"
-          execution_stream_id: 1
-        }
+        thunk_info { profile_annotation: "replica_id_profile_annotation" }
         replica_id_thunk {
           dest_buffer { offset: 0 size: 4 buffer_allocation_index: 0 }
         }
@@ -51,9 +48,6 @@ TEST(ReplicaIdThunkTest, ProtoRoundTrip) {
 
   Thunk::ThunkInfo thunk_info;
   thunk_info.profile_annotation = proto.thunk_info().profile_annotation();
-  thunk_info.execution_stream_id = xla::gpu::ExecutionStreamId{
-      static_cast<xla::gpu::ExecutionStreamId::ValueType>(
-          proto.thunk_info().execution_stream_id())};
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ReplicaIdThunk> thunk,
       ReplicaIdThunk::FromProto(thunk_info, proto.replica_id_thunk(),
@@ -67,10 +61,7 @@ TEST(PartitionIdThunkTest, ProtoRoundTrip) {
   ThunkProto proto;
   CHECK(tsl::protobuf::TextFormat::ParseFromString(
       R"pb(
-        thunk_info {
-          profile_annotation: "partition_id_profile_annotation"
-          execution_stream_id: 2
-        }
+        thunk_info { profile_annotation: "partition_id_profile_annotation" }
         partition_id_thunk {
           dest_buffer { offset: 0 size: 4 buffer_allocation_index: 0 }
         }
@@ -81,9 +72,6 @@ TEST(PartitionIdThunkTest, ProtoRoundTrip) {
 
   Thunk::ThunkInfo thunk_info;
   thunk_info.profile_annotation = proto.thunk_info().profile_annotation();
-  thunk_info.execution_stream_id = xla::gpu::ExecutionStreamId{
-      static_cast<xla::gpu::ExecutionStreamId::ValueType>(
-          proto.thunk_info().execution_stream_id())};
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PartitionIdThunk> thunk,
       PartitionIdThunk::FromProto(thunk_info, proto.partition_id_thunk(),

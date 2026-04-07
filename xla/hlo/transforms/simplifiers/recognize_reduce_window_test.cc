@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,7 +15,8 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/recognize_reduce_window.h"
 
-#include <memory>
+#include <cstdint>
+#include <optional>
 #include <string>
 
 #include <gtest/gtest.h>

@@ -112,6 +112,11 @@ absl::StatusOr<ShardingRef> ShardingFromIfrtArrayType(
 absl::StatusOr<ArraySpec> ArraySpecFromMlirType(
     mlir::Type array_type, Client* client, const DeviceListRef& device_list);
 
+// Returns the default compile options for the given CallOp.
+xla::CompileOptions GetDefaultCompileOptions(CallOp call_op,
+                                             bool enable_sharding_propagation,
+                                             bool enable_parameter_tupling);
+
 }  // namespace ifrt
 }  // namespace xla
 

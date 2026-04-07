@@ -206,7 +206,7 @@ RaggedAllToAllThunk::RaggedAllToAllThunk(
 RaggedAllToAllThunk::RaggedAllToAllThunk(
     ThunkInfo thunk_info, const RaggedAllToAllConfig& config,
     std::vector<CollectiveThunk::Buffer> buffers)
-    : CollectiveThunk(Thunk::kRaggedAllToAll, thunk_info, /*is_p2p=*/false),
+    : CollectiveThunk(Thunk::kRaggedAllToAll, thunk_info),
       config_(config),
       buffers_(std::move(buffers)) {
   CHECK_EQ(config_.config.operand_element_type.size(), buffers_.size());
@@ -269,9 +269,9 @@ absl::StatusOr<RaggedAllToAllStreamState*> RaggedAllToAllThunk::InitializeOnce(
     }
   }
 
-  ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
-                   GetCollectiveGpuCliqueKey(*params.collective_params,
-                                             config_.config, /*is_p2p=*/false));
+  ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetCollectiveGpuCliqueKey(*params.collective_params, config_.config));
   const std::optional<RankId> rank =
       clique_key.rank(params.collective_params->global_device_id);
 
@@ -501,8 +501,15 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
     state = per_stream_states_[stream.parent()].get();
   }
 
+  FabricHomogeneity homogeneity =
+      CheckFabricHomogeneity(stream.parent(), clique_key);
+  // The fabric is "safe" unless we have confirmed a mismatch.
+  // This allows H100/Borg (kUnknown) to still use one-shot kernels.
+  // FabricInfo queries are unavailable with old driver (e.g. 535.xx).
+  bool fabric_safe = (homogeneity != FabricHomogeneity::kHeterogeneous);
+
   bool should_use_one_shot_kernel =
-      is_one_shot_kernel_enabled() && IsOneShotKernelSupported();
+      is_one_shot_kernel_enabled() && IsOneShotKernelSupported() && fabric_safe;
 
   if (should_use_one_shot_kernel && state->lsa_size.has_value() &&
       state->lsa_size.value() == clique_key.num_devices()) {
@@ -666,7 +673,7 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
     int64_t num_total_updates, int64_t num_input_rows, int64_t num_row_elements,
     absl::Span<DeviceBufferPair const> buffers) {
   int device_ordinal = stream.parent()->device_ordinal();
-  const int64_t num_ranks = clique_key.num_local_participants();
+  const int64_t num_ranks = clique_key.num_devices();
 
   XLA_VLOG_DEVICE(3, device_ordinal)
       << "Performing one-shot ragged-all-to-all with NCCL barrier rank: "

@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/codegen/tiling/constraint_expression.h"
 #include "xla/codegen/tiling/symbolic_tiled_hlo_instruction.h"
 #include "xla/codegen/tiling/tiled_hlo_computation.h"
-#include "xla/codegen/tiling/tiled_hlo_fusion_instruction.h"
 #include "xla/codegen/tiling/tiled_hlo_instruction.h"
 #include "xla/codegen/tiling/tiled_hlo_schedule.h"
 #include "xla/codegen/tiling/tiling_specification.h"
@@ -1221,6 +1220,14 @@ TEST(GetValidTilingsTest, ReturnsPowersOfTwoAndTheDimSizeForRankOne) {
               IsOkAndHolds(TilingVector({{1}, {2}, {4}, {5}})));
   EXPECT_THAT(GetFlatTilingsForInputSpace({11}),
               IsOkAndHolds(TilingVector({{1}, {2}, {4}, {8}, {11}})));
+}
+
+TEST(GetValidTilingsTest, HandlesLargeDimensions) {
+  // Test case for dimension larger than 2**32.
+  TF_ASSERT_OK_AND_ASSIGN(auto tilings_large,
+                          GetFlatTilingsForInputSpace({8589934592LL}));
+  ASSERT_GT(tilings_large.size(), 0);
+  EXPECT_EQ(tilings_large.back()[0], 8589934592LL);
 }
 
 TEST(GetValidTilingsTest, CreatesCartesianProductForRankTwo) {

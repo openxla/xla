@@ -86,7 +86,8 @@ struct FirstCallRendezvousKey {
 // Thunk base class for XLA:GPU collective operations.
 class CollectiveThunk : public Thunk {
  public:
-  CollectiveThunk(Kind kind, ThunkInfo thunk_info, bool is_p2p);
+  CollectiveThunk(Kind kind, ThunkInfo thunk_info,
+                  CommunicationId communication_id = CommunicationId(0));
 
   struct Buffer {
     int64_t element_count;
@@ -116,7 +117,7 @@ class CollectiveThunk : public Thunk {
   absl::StatusOr<std::vector<Communicator*>> GetCommunicators(
       const ExecuteParams& params) const override;
 
-  bool IsP2PCollective() const { return is_p2p_; }
+  CommunicationId communication_id() const { return communication_id_; }
 
  protected:
   // Returns true if the first call to this collective operation has to be
@@ -156,7 +157,7 @@ class CollectiveThunk : public Thunk {
   RendezvousFlag pre_call_rendezvous_flag_;
   RendezvousFlag post_call_rendezvous_flag_;
 
-  bool is_p2p_;
+  CommunicationId communication_id_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -198,7 +199,7 @@ absl::Status AddOpDescription(absl::Status status, OpT op,
 // Helper over GetGpuCliqueKey that builds clique key.
 absl::StatusOr<GpuCliqueKey> GetCollectiveGpuCliqueKey(
     const CollectiveParams& params, const CollectiveConfig& collective_config,
-    bool is_p2p);
+    CommunicationId communication_id = CommunicationId(0));
 
 struct DeviceBufferPair {
   PrimitiveType element_type;

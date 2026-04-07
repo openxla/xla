@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/python/ifrt/support/module_parsing.h"
+#include "xla/python/ifrt/ir/support/module_parsing.h"
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_PYTHON_IFRT_SUPPORT_SHARDING_CONVERSIONS_H_
-#define XLA_PYTHON_IFRT_SUPPORT_SHARDING_CONVERSIONS_H_
+#ifndef XLA_PYTHON_IFRT_IR_SUPPORT_SHARDING_CONVERSIONS_H_
+#define XLA_PYTHON_IFRT_IR_SUPPORT_SHARDING_CONVERSIONS_H_
 
 #include "absl/status/statusor.h"
 #include "xla/hlo/ir/hlo_sharding.h"
@@ -52,4 +52,4 @@ absl::StatusOr<ShardingParam> ToShardingParam(
 }  // namespace ifrt
 }  // namespace xla
 
-#endif  // XLA_PYTHON_IFRT_SUPPORT_SHARDING_CONVERSIONS_H_
+#endif  // XLA_PYTHON_IFRT_IR_SUPPORT_SHARDING_CONVERSIONS_H_

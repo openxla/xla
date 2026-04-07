@@ -90,7 +90,9 @@ limitations under the License.
 #include "xla/pjrt/tracked_device_buffer.h"
 #include "xla/pjrt/worker_thread.h"
 #include "xla/runtime/device_id.h"
+#include "xla/runtime/hang_watchdog.h"
 #include "xla/runtime/process_id.h"
+#include "xla/service/buffer_assignment.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
@@ -111,6 +113,7 @@ limitations under the License.
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/framework/allocator.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
@@ -492,6 +495,20 @@ class PreparedReceive {
   }
 };
 
+static absl::Duration PjRtClientWatchdogTimeout() {
+  const auto& debug_options = GetDebugOptionsFromFlags();
+  absl::Duration timeout = absl::InfiniteDuration();
+  if (!debug_options.xla_gpu_execution_terminate_timeout().empty()) {
+    if (!absl::ParseDuration(
+            debug_options.xla_gpu_execution_terminate_timeout(), &timeout)) {
+      LOG(WARNING) << "Failed to parse xla_gpu_execution_terminate_timeout: "
+                   << debug_options.xla_gpu_execution_terminate_timeout();
+      return absl::InfiniteDuration();
+    }
+  }
+  return timeout;
+}
+
 // Acquire the GPU clique and communicator for a given clique key.
 absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
     StreamExecutorGpuClient* client, gpu::GpuCollectives* gpu_collectives,
@@ -506,8 +523,23 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
   gpu::CliqueIdCallback clique_id_callback =
       dummy_gpu_run_options->clique_id_callback();
 
-  // Acquire the GPU clique for this receive.
+  // Acquire the GPU clique for this receive. Guard the acquisition with a hang
+  // watchdog because AcquireGpuClique can block indefinitely inside
+  // ncclCommInit waiting for remote nodes during NCCL communicator setup.
   if (!acquired_cliques_map.contains(clique_key)) {
+    int32_t device_ordinal = stream->parent()->device_ordinal();
+    absl::Duration watchdog_timeout = PjRtClientWatchdogTimeout();
+
+    std::shared_ptr<HangWatchdog::Guard> guard = nullptr;
+    if (watchdog_timeout < absl::InfiniteDuration()) {
+      std::string watchdog_name =
+          absl::StrFormat("[%d] PjRt GPU client AcquireGpuClique for %v",
+                          device_ordinal, clique_key);
+      guard = HangWatchdog::Global().Watch(
+          watchdog_name, watchdog_timeout,
+          HangWatchdog::Abort(watchdog_name, watchdog_timeout));
+    }
+
     TF_ASSIGN_OR_RETURN(
         acquired_cliques_map[clique_key],
         AcquireGpuClique(gpu_collectives,
@@ -577,7 +609,7 @@ absl::StatusOr<PreparedSend> PrepareSend(
               [&](tsl::RCReference<CommonPjRtRawBuffer> buf_raw_buffer,
                   std::vector<tsl::RCReference<tsl::AsyncValue>>
                       buf_definition_events) mutable
-                  -> absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> {
+                  -> absl::StatusOr<PjRtDeviceEventRef> {
                 raw_buffer = std::move(buf_raw_buffer);
                 usage_event->AndThen([raw_buffer]() {});
                 definition_events = std::move(buf_definition_events);
@@ -1819,13 +1851,15 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   }
 
   size_t num_processes = global_topology.processes().size();
-  TF_ASSIGN_OR_RETURN(
-      auto clique_id_callback,
-      gpu_collectives->InitializeTopology({ProcessId(process_id), num_processes,
-                                           local_device_states.size(), kv_store,
-                                           device_to_process}));
-  gpu_executable_run_options->set_clique_id_callback(
-      std::move(clique_id_callback));
+  if (gpu_collectives->IsImplemented()) {
+    TF_ASSIGN_OR_RETURN(
+        auto clique_id_callback,
+        gpu_collectives->InitializeTopology(
+            {ProcessId(process_id), num_processes, local_device_states.size(),
+             kv_store, device_to_process}));
+    gpu_executable_run_options->set_clique_id_callback(
+        std::move(clique_id_callback));
+  }
 
   TF_ASSIGN_OR_RETURN(GpuTopologyProto gpu_topology,
                       BuildGpuTopology(global_topology));

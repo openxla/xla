@@ -2051,9 +2051,9 @@ absl::Status SpmdPartitioningVisitor::HandleScatter(HloInstruction* hlo) {
   if (hlo->sharding().IsSingleDevice()) {
     return DefaultAction(hlo);
   }
-  if (!options_.need_resolve_conflicts) {
-    return HandleScatterWithoutConflicts(hlo);
-  }
+  // TODO(b/499988914): Re-enable HandleScatterWithoutConflicts after we fix
+  // the bug.
+
   const auto scatter = Cast<HloScatterInstruction>(hlo);
   // Check all operands have the same shapes and shardings, and all updates have
   // the same shapes and shardings, and live with this assumption during scatter

@@ -38,7 +38,7 @@ TEST(GpuCliqueRendezvousTest, TwoParticipants) {
   GlobalDeviceId id0 = GlobalDeviceId(0);
   GlobalDeviceId id1 = GlobalDeviceId(1);
 
-  GpuCliqueKey key({id0, id1}, /*num_local_participants=*/2, false);
+  GpuCliqueKey key({id0, id1}, /*num_local_participants=*/2);
 
   auto task = [&](int32_t id) {
     return [&, id] {

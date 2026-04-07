@@ -17,6 +17,7 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -41,9 +42,11 @@ namespace gpu {
 // are consolidated.
 class NvshmemAllReduceReduceScatterThunkBase : public NvshmemCollectiveThunk {
  public:
+  ABSL_DEPRECATED("Use NCCL 2.28+ primitives instead.")
   NvshmemAllReduceReduceScatterThunkBase(
       Kind kind, ThunkInfo thunk_info, AllReduceConfig config,
-      std::vector<CollectiveThunk::Buffer> buffers, bool is_p2p);
+      std::vector<CollectiveThunk::Buffer> buffers,
+      CommunicationId communication_id = CommunicationId(0));
 
   const CollectiveConfig& config() const override { return config_.config; }
   ReductionKind reduction_kind() const { return config_.reduction_kind; }
@@ -59,8 +62,10 @@ class NvshmemAllReduceReduceScatterThunkBase : public NvshmemCollectiveThunk {
 // AllReduce thunk.
 // -----------------------------------------------------------------------------
 
+// DEPRECATED: Use NCCL 2.28+ API instead.
 class NvshmemAllReduceThunk : public NvshmemAllReduceReduceScatterThunkBase {
  public:
+  ABSL_DEPRECATED("Use NCCL 2.28+ primitives instead.")
   NvshmemAllReduceThunk(ThunkInfo thunk_info,
                         const HloAllReduceInstruction* inst,
                         std::vector<CollectiveThunk::Buffer> buffers,
@@ -91,6 +96,7 @@ class NvshmemAllReduceThunk : public NvshmemAllReduceReduceScatterThunkBase {
 
 // -----------------------------------------------------------------------------
 
+ABSL_DEPRECATED("Use NCCL 2.28+ primitives instead.")
 absl::Status RunNvshmemAllReduce(GpuCollectives* collectives,
                                  ReductionKind reduction_kind,
                                  std::vector<DeviceBufferPair>& buffers,
