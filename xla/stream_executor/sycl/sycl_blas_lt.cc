@@ -31,6 +31,13 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& config,
   return std::make_unique<MatmulPlan>(config, epilogue);
 }
 
+absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetGroupedMatmulPlan(
+    gpu::GroupedGemmConfig& config,
+    const std::vector<gpu::BlasLt::Epilogue>& epilogues) const {
+  return absl::UnimplementedError(
+      "Grouped GEMM is not supported for Sycl BlasLt");
+}
+
 absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
     Stream* stream, const gpu::BlasLt::MemoryArgs& args,
     blas::ProfileResult* profile_result) const {

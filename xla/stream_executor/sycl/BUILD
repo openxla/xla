@@ -444,6 +444,7 @@ sycl_library(
     ],
     deps = [
         ":sycl_status",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
