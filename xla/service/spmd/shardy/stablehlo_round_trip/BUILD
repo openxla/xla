@@ -110,7 +110,6 @@ cc_library(
         ":export_shardings",
         ":shard_map_export",
         ":unflatten_call_graph",
-        "//xla/service/spmd/shardy/round_trip_common:export_named_computations",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
