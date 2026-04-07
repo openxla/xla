@@ -56,9 +56,9 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/gtl/int_type.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -501,12 +501,12 @@ class Thunk {
 
   virtual bool IsAsyncDone() const { return false; }
 
- protected:
-  friend class ThunkSequence;
-
   void set_profile_annotation(absl::string_view profile_annotation) {
     thunk_info_.profile_annotation = std::string(profile_annotation);
   }
+
+ protected:
+  friend class ThunkSequence;
 
   // Walks all nested thunks and calls `callback` for them.
   using Walker = absl::FunctionRef<absl::Status(Thunk*)>;

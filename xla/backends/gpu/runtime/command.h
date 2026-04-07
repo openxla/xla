@@ -25,6 +25,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/base/macros.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
@@ -39,6 +40,7 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 
@@ -124,10 +126,10 @@ bool IsCollectiveCommand(CommandType type);
 // `CommandCommandStateManager` documentation for details and example. If
 // command want's to attach some mutable state to the command buffer, it must be
 // done with a state manager.
-class Command : public Thunk {
+class CommandThunk : public Thunk {
  public:
-  explicit Command(CommandType cmd_type,
-                   se::StreamPriority priority = se::StreamPriority::Default)
+  explicit CommandThunk(CommandType cmd_type, se::StreamPriority priority =
+                                                  se::StreamPriority::Default)
       : Thunk(Thunk::Kind::kCommand, ThunkInfo{}),
         cmd_type_(cmd_type),
         priority_(priority) {
@@ -135,7 +137,7 @@ class Command : public Thunk {
     resource_uses_.push_back(ResourceUse::Write(token_));
   }
 
-  virtual ~Command() = default;
+  virtual ~CommandThunk() = default;
 
   // Parameters for recording commands into the command buffer.
   struct RecordParams {
@@ -223,11 +225,6 @@ class Command : public Thunk {
   // Returns true if command implemented as a nested command buffer.
   virtual bool IsNestedCommandBuffer() const { return false; }
 
-  // profile_annotation() is inherited from Thunk. The setter is public on
-  // Command (unlike Thunk where it is protected) because commands receive
-  // their annotation after construction via CopyMetadata in the emitter.
-  using Thunk::set_profile_annotation;
-
   CommandType command_type() const { return cmd_type_; }
   se::StreamPriority priority() const { return priority_; }
   void set_priority(se::StreamPriority priority) { priority_ = priority; }
@@ -238,12 +235,12 @@ class Command : public Thunk {
 
   // Recursively walks all the commands nested inside *this one and calls
   // the user-provided callback on every command. Always starts traversal with
-  // *this. These overloads accept Command*-typed callbacks and complement the
-  // Thunk*-typed Walk overloads inherited from Thunk.
-  template <typename F, WalkCallback<F, Command*>* = nullptr>
-  std::invoke_result_t<F, Command*> Walk(F&& callback);
-  template <typename F, WalkCallback<F, const Command*>* = nullptr>
-  std::invoke_result_t<F, const Command*> Walk(F&& callback) const;
+  // *this. These overloads accept CommandThunk*-typed callbacks and complement
+  // the Thunk*-typed Walk overloads inherited from Thunk.
+  template <typename F, WalkCallback<F, CommandThunk*>* = nullptr>
+  std::invoke_result_t<F, CommandThunk*> Walk(F&& callback);
+  template <typename F, WalkCallback<F, const CommandThunk*>* = nullptr>
+  std::invoke_result_t<F, const CommandThunk*> Walk(F&& callback) const;
 
  protected:
   // WalkNested uses Thunk::Walker = absl::FunctionRef<absl::Status(Thunk*)>.
@@ -266,7 +263,7 @@ class Command : public Thunk {
 };
 
 // Returns true if command is a collective one.
-inline bool IsCollectiveCommand(const Command& cmd) {
+inline bool IsCollectiveCommand(const CommandThunk& cmd) {
   return IsCollectiveCommand(cmd.command_type());
 }
 
@@ -274,28 +271,31 @@ inline bool IsCollectiveCommand(const Command& cmd) {
 // Command templates implementation.
 //===----------------------------------------------------------------------===//
 
-template <typename F, Command::WalkCallback<F, Command*>*>
-std::invoke_result_t<F, Command*> Command::Walk(F&& callback) {
-  if constexpr (std::is_void_v<std::invoke_result_t<F, Command*>>) {
-    Walk([f = std::forward<F>(callback)](Command* command) {
+template <typename F, CommandThunk::WalkCallback<F, CommandThunk*>*>
+std::invoke_result_t<F, CommandThunk*> CommandThunk::Walk(F&& callback) {
+  if constexpr (std::is_void_v<std::invoke_result_t<F, CommandThunk*>>) {
+    Walk([f = std::forward<F>(callback)](CommandThunk* command) {
       return (f(command), absl::OkStatus());
     }).IgnoreError();  // Error can never happen here.
   } else {
     RETURN_IF_ERROR(callback(this));
-    // Adapt Command*-typed callback to Thunk::Walker (Thunk*-typed) for
-    // WalkNested. The static_cast is safe because WalkNested only visits
-    // Commands in a Command context.
+    // Adapt CommandThunk*-typed callback to Thunk::Walker (Thunk*-typed) for
+    // WalkNested. The down_cast is safe because WalkNested only visits
+    // CommandThunks in a CommandThunk context.
     return WalkNested([&callback](Thunk* thunk) -> absl::Status {
-      return callback(static_cast<Command*>(thunk));
+      return callback(tsl::down_cast<CommandThunk*>(thunk));
     });
   }
 }
 
-template <typename F, Command::WalkCallback<F, const Command*>*>
-std::invoke_result_t<F, const Command*> Command::Walk(F&& callback) const {
-  return const_cast<Command*>(this)->Walk(  // NOLINT
+template <typename F, CommandThunk::WalkCallback<F, const CommandThunk*>*>
+std::invoke_result_t<F, const CommandThunk*> CommandThunk::Walk(
+    F&& callback) const {
+  return const_cast<CommandThunk*>(this)->Walk(  // NOLINT
       std::forward<F>(callback));
 }
+
+using Command ABSL_DEPRECATE_AND_INLINE() = CommandThunk;
 
 //===----------------------------------------------------------------------===//
 // Asynchronous commands
