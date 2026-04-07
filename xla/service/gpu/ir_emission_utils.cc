@@ -234,13 +234,18 @@ bool IsContiguousSlice(const HloInstruction& instr) {
 }
 
 llvm::Value* IsBlock0Thread0(llvm::IRBuilderBase* b) {
-  llvm::Value* is_thread0 = b->CreateICmpEQ(
-      b->getInt32(0),
-      EmitCallToTargetIntrinsic(TargetIntrinsicID::kThreadIdx, {}, {}, b));
+  // On Intel GPUs, intrinsics may return a non-i32 integer type, so we first
+  // emit the intrinsic call to get the correct type for the compare
+  // instruction.
+  llvm::Value* tid =
+      EmitCallToTargetIntrinsic(TargetIntrinsicID::kThreadIdx, {}, {}, b);
+  llvm::Value* is_thread0 =
+      b->CreateICmpEQ(llvm::ConstantInt::get(tid->getType(), 0), tid);
 
-  llvm::Value* is_block0 = b->CreateICmpEQ(
-      b->getInt32(0),
-      EmitCallToTargetIntrinsic(TargetIntrinsicID::kBlockIdx, {}, {}, b));
+  llvm::Value* bid =
+      EmitCallToTargetIntrinsic(TargetIntrinsicID::kBlockIdx, {}, {}, b);
+  llvm::Value* is_block0 =
+      b->CreateICmpEQ(llvm::ConstantInt::get(bid->getType(), 0), bid);
   return b->CreateAnd(is_thread0, is_block0);
 }
 
