@@ -20,6 +20,7 @@ limitations under the License.
 
 #include "absl/base/call_once.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/tsl/platform/errors.h"
 
 namespace stream_executor::sycl {
 
