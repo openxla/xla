@@ -3426,5 +3426,21 @@ BENCHMARK_POPULATE(PopulateParallel);
 BENCHMARK_POPULATE(PopulateLinear);
 BENCHMARK_POPULATE(PopulateLinearParallel);
 
+TEST(LiteralTest, SetShapeClearsCustomElementSizeInBitsOnTupleLeafArrays) {
+  Shape leaf = ShapeUtil::MakeShape(F32, {1024});
+  LayoutUtil::SetToDefaultLayout(&leaf);
+  leaf.mutable_layout()->set_element_size_in_bits(1);
+
+  Shape tuple = ShapeUtil::MakeTupleShape({leaf});
+
+  Literal literal(tuple);
+
+  ASSERT_TRUE(literal.shape().IsTuple());
+  ASSERT_EQ(literal.shape().tuple_shapes_size(), 1);
+  ASSERT_TRUE(literal.shape().tuple_shapes(0).has_layout());
+  EXPECT_EQ(literal.shape().tuple_shapes(0).layout().element_size_in_bits(), 0);
+}
+
 }  // namespace
+
 }  // namespace xla

@@ -254,19 +254,20 @@ void Literal::SetShape(const Shape& shape) {
     shape_ = intered_shape_ptr;
     return;
   }
+
   auto owning_shape_ptr = std::make_unique<Shape>(shape);
-  if (!LayoutUtil::HasLayout(*owning_shape_ptr)) {
-    ShapeUtil::ForEachMutableLeafShape(
-        owning_shape_ptr.get(), [](Shape* subshape, const ShapeIndex& index) {
-          if (!subshape->has_layout()) {
-            LayoutUtil::SetToDefaultLayout(subshape);
-          }
-        });
-  }
-  if (owning_shape_ptr->IsArray() &&
-      LayoutUtil::HasCustomElementSizeInBits(*owning_shape_ptr)) {
-    owning_shape_ptr->mutable_layout()->set_element_size_in_bits(0);
-  }
+
+  ShapeUtil::ForEachMutableLeafShape(
+      owning_shape_ptr.get(), [](Shape* subshape, const ShapeIndex& /*index*/) {
+        if (!subshape->has_layout()) {
+          LayoutUtil::SetToDefaultLayout(subshape);
+        }
+        if (subshape->IsArray() &&
+            LayoutUtil::HasCustomElementSizeInBits(*subshape)) {
+          subshape->mutable_layout()->set_element_size_in_bits(0);
+        }
+      });
+
   shape_ = std::move(owning_shape_ptr);
 }
 
