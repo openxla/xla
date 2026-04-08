@@ -107,9 +107,9 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "command",
-    srcs = ["command.cc"],
-    hdrs = ["command.h"],
+    name = "command_thunk",
+    srcs = ["command_thunk.cc"],
+    hdrs = ["command_thunk.h"],
     deps = [
         ":command_state",
         ":thunk",
@@ -135,7 +135,7 @@ cc_library(
     hdrs = ["command_executor.h"],
     deps = [
         ":annotation",
-        ":command",
+        ":command_thunk",
         ":command_state",
         ":thunk",
         "//xla:util",
@@ -181,7 +181,7 @@ cc_library(
         ":collective_execution",
         ":collective_permute_thunk",
         ":collective_thunk",
-        ":command",
+        ":command_thunk",
         ":command_executor",
         ":command_state",
         ":copy_thunk",
@@ -278,7 +278,7 @@ xla_test(
     srcs = ["command_buffer_cmd_test.cc"],
     backends = ["gpu"],
     deps = [
-        ":command",
+        ":command_thunk",
         ":command_buffer_cmd",
         ":command_executor",
         ":command_state",
@@ -332,7 +332,7 @@ cc_library(
         ":collective_broadcast_thunk",
         ":collective_permute_thunk",
         ":collective_thunk",
-        ":command",
+        ":command_thunk",
         ":command_buffer_cmd",
         ":command_executor",
         ":command_state",
@@ -589,7 +589,7 @@ cc_library(
     srcs = ["command_buffer_thunk.cc"],
     hdrs = ["command_buffer_thunk.h"],
     deps = [
-        ":command",
+        ":command_thunk",
         ":command_executor",
         ":command_state",
         ":sequential_thunk",  # build_cleaner: keep
@@ -622,7 +622,7 @@ xla_test(
     srcs = ["command_buffer_thunk_test.cc"],
     backends = ["gpu"],
     deps = [
-        ":command",
+        ":command_thunk",
         ":command_buffer_cmd",
         ":command_buffer_thunk",
         ":command_executor",
@@ -675,7 +675,7 @@ xla_test(
     backends = ["gpu"],
     tags = ["cuda-only"],
     deps = [
-        ":command",
+        ":command_thunk",
         ":command_buffer_cmd",
         ":command_buffer_thunk",
         ":command_executor",

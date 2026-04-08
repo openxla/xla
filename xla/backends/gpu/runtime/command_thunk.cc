@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_thunk.h"
 
 #include <string>
 
