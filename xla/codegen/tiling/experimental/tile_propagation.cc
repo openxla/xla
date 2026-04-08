@@ -512,7 +512,9 @@ std::optional<Tiles> PropagateTileToInput(const TilingSpace& tiling_space,
                                           const Tile& output_tile,
                                           int64_t output_index) {
   if (HloInstruction::IsOpElementwise(hlo.opcode()) ||
-      hlo.opcode() == HloOpcode::kMap) {
+      // For a single device, all-reduce is an elementwise op.
+      HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllReduceDone,
+                       HloOpcode::kMap>(&hlo)) {
     return {PropagateTileToInputForCwiseOp(hlo, output_tile)};
   }
   if (hlo.opcode() == HloOpcode::kBroadcast) {

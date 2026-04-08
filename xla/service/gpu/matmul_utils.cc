@@ -557,7 +557,7 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
   }
 
   if (lhs_batch_dims.size() > 1) {
-    return Internal("A single batch dimension is exepected");
+    return Internal("A single batch dimension is expected");
   }
 
   if ((ragged_mode == se::gpu::RaggedDotMode::kRaggedNonContracting) &&

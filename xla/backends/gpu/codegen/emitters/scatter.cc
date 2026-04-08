@@ -406,7 +406,7 @@ ScatterWithDistributedUpdates::ScatterWithDistributedUpdates(
   // two different update slice.
   auto launch_dimensions = CalculateLaunchDimensions(
       description_.update_shape, analysis_.device_info(),
-      {static_cast<int>(vector_size_)});
+      static_cast<int>(vector_size_));
   num_blocks_ = launch_dimensions.num_blocks();
   num_warps_ = CeilOfRatio(
       static_cast<int64_t>(launch_dimensions.num_threads_per_block()),
@@ -945,8 +945,7 @@ std::unique_ptr<ScatterFusion> CreateScatterFusion(
   // Otherwise, we distribute the linearized updates tensor.
   vector_size =
       std::gcd(num_elements_per_slice,
-               ComputeLoopFusionConfig(analysis, description.update_shape)
-                   .unroll_factor);
+               ComputeLoopFusionConfig(analysis, description.update_shape));
   return std::make_unique<ScatterWithDistributedUpdates>(
       analysis, description, vector_size, mlir_context);
 }

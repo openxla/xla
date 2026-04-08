@@ -113,16 +113,8 @@ class NcclIdStore {
                          : 1;
 
     // Create a KV store key for the given root process and captured clique key.
-    // We construct the key from the full (non-truncated) device list and
-    // exclude `num_local_participants` because it can differ across hosts for
-    // the same logical clique (e.g. P2P cliques from connected components).
     auto kv_key = [&](ProcessId root_process) {
-      return absl::StrFormat(
-          "root_process: %v; clique: devices=[%s]; communication_id=%v; "
-          "incarnations=[%s]",
-          root_process, absl::StrJoin(key.devices(), ","),
-          gpu_key->communication_id(),
-          absl::StrJoin(gpu_key->incarnations(), ","));
+      return absl::StrFormat("root_process: %v; clique: %v", root_process, key);
     };
 
     // Global devices that are responsible for generating clique ids.

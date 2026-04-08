@@ -114,7 +114,6 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
-        "@shardy//shardy/dialect/sdy/transforms/export:passes",
     ],
 )
 

@@ -17,34 +17,26 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_map.h"
-#include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
-#include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
-#include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
-#include "xla/runtime/device_id.h"
 #include "xla/service/backend.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/computation_placer.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable.h"
@@ -60,7 +52,6 @@ limitations under the License.
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/util.h"
-#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 
@@ -92,8 +83,8 @@ ENTRY test_computation {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
   config.set_debug_options(debug_options);
 
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                       ParseAndReturnVerifiedModule(hlo_text, config));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
 
   // Get CollectivePermute Instruction
   const HloInstruction* root_instr =
@@ -157,8 +148,8 @@ ENTRY test_computation {
   // Use LHS synchronization mode to append Done command
   conv_options.synchronization_mode =
       CommandExecutor::SynchronizationMode::kLHS;
-  ASSERT_OK_AND_ASSIGN(CommandExecutor cb_cmd_executor,
-                       ConvertToCommands(thunk_sequence, conv_options));
+  TF_ASSERT_OK_AND_ASSIGN(CommandExecutor cb_cmd_executor,
+                          ConvertToCommands(thunk_sequence, conv_options));
 
   // AsyncStart inlines its nested thunk as a command, and AsyncDone
   // with no control predecessors is a no-op, so we get 1 command.
@@ -184,17 +175,17 @@ ENTRY test_computation {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
   config.set_debug_options(debug_options);
 
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                       ParseAndReturnVerifiedModule(hlo_text, config));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
 
   se::StreamExecutor* executor = backend().default_stream_executor();
 
-  ASSERT_OK_AND_ASSIGN(
+  TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> compiled_module,
       backend().compiler()->RunHloPasses(module->Clone(), executor,
                                          /*device_allocator=*/nullptr));
 
-  ASSERT_OK_AND_ASSIGN(
+  TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Executable> executable,
       backend().compiler()->RunBackend(std::move(compiled_module), executor,
                                        /*device_allocator=*/nullptr));
@@ -276,153 +267,6 @@ TEST(CollectiveThunkTest, SyncCollective) {
                        CollectivePermuteThunk::FromProto(
                            thunk_info, proto.collective_permute_start_thunk(),
                            buffer_allocations));
-}
-
-// Helper to extract just the sorted component member lists (ignoring root keys)
-// for easier comparison.
-std::vector<std::vector<int64_t>> ComponentValues(
-    const absl::flat_hash_map<int64_t, std::vector<int64_t>>& components) {
-  std::vector<std::vector<int64_t>> result;
-  result.reserve(components.size());
-  for (const auto& [root, members] : components) {
-    result.push_back(members);
-  }
-  absl::c_sort(result);
-  return result;
-}
-
-TEST(SourceTargetConnectedComponentsTest, SingleComponent) {
-  // Ring pattern: 0->1->2->3->0, all connected.
-  std::vector<std::pair<int64_t, int64_t>> pairs = {
-      {0, 1}, {1, 2}, {2, 3}, {3, 0}};
-  auto components = SourceTargetConnectedComponents(4, pairs);
-  EXPECT_THAT(ComponentValues(components),
-              ElementsAre(ElementsAre(0, 1, 2, 3)));
-}
-
-TEST(SourceTargetConnectedComponentsTest, TwoDisjointRings) {
-  // Two 4-device rings on a 2-node setup: {0..3} and {4..7}.
-  std::vector<std::pair<int64_t, int64_t>> pairs = {
-      {0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}};
-  auto components = SourceTargetConnectedComponents(8, pairs);
-  EXPECT_THAT(ComponentValues(components),
-              ElementsAre(ElementsAre(0, 1, 2, 3), ElementsAre(4, 5, 6, 7)));
-}
-
-TEST(SourceTargetConnectedComponentsTest, IsolatedDevices) {
-  // Only devices 0 and 1 communicate; device 2 is isolated.
-  std::vector<std::pair<int64_t, int64_t>> pairs = {{0, 1}};
-  auto components = SourceTargetConnectedComponents(3, pairs);
-  EXPECT_THAT(ComponentValues(components),
-              ElementsAre(ElementsAre(0, 1), ElementsAre(2)));
-}
-
-TEST(SourceTargetConnectedComponentsTest, AllIsolated) {
-  // No pairs at all — every device is its own singleton.
-  std::vector<std::pair<int64_t, int64_t>> pairs = {};
-  auto components = SourceTargetConnectedComponents(4, pairs);
-  EXPECT_THAT(ComponentValues(components),
-              ElementsAre(ElementsAre(0), ElementsAre(1), ElementsAre(2),
-                          ElementsAre(3)));
-}
-
-TEST(SourceTargetConnectedComponentsTest, ChainNotRing) {
-  // Chain: 0->1->2->3 (no wrap). All connected via transitivity.
-  std::vector<std::pair<int64_t, int64_t>> pairs = {{0, 1}, {1, 2}, {2, 3}};
-  auto components = SourceTargetConnectedComponents(4, pairs);
-  EXPECT_THAT(ComponentValues(components),
-              ElementsAre(ElementsAre(0, 1, 2, 3)));
-}
-
-TEST(SourceTargetConnectedComponentsTest, SinglePairManyDevices) {
-  // 16 devices, only 0->1 communicates.
-  std::vector<std::pair<int64_t, int64_t>> pairs = {{0, 1}};
-  auto components = SourceTargetConnectedComponents(16, pairs);
-  // Should have {0,1} and 14 singletons.
-  EXPECT_EQ(components.size(), 15);
-  // Check the communicating pair is together.
-  bool found_pair = false;
-  for (const auto& [root, members] : components) {
-    if (members.size() == 2) {
-      EXPECT_THAT(members, ElementsAre(0, 1));
-      found_pair = true;
-    }
-  }
-  EXPECT_TRUE(found_pair);
-}
-
-TEST(RemapSourceTargetToCliqueRanksTest, CrossPartitionRemapsToCliqueRanks) {
-  // 4 devices, partition IDs 0-3. Clique only has devices {2, 3} (mapped to
-  // GlobalDeviceIds {2, 3}). Source-target pair: 2->3.
-  DeviceAssignment device_assn(/*replica_count=*/1, /*computation_count=*/4);
-  device_assn(0, 0) = 0;
-  device_assn(0, 1) = 1;
-  device_assn(0, 2) = 2;
-  device_assn(0, 3) = 3;
-
-  // Clique with devices {2, 3} — rank 0 = device 2, rank 1 = device 3.
-  GpuCliqueKey clique_key({GlobalDeviceId(2), GlobalDeviceId(3)},
-                          /*num_local_participants=*/2);
-
-  P2PConfig::SourceTargetMapEntry source_target;
-  source_target.source = 2;  // Partition ID 2 sends to us.
-  source_target.target = 3;  // We send to partition ID 3.
-
-  ASSERT_OK_AND_ASSIGN(
-      auto remapped,
-      RemapSourceTargetToCliqueRanks(
-          source_target, clique_key, device_assn,
-          CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_PARTITION,
-          GlobalDeviceId(3)));
-
-  // Partition 2 -> GlobalDeviceId 2 -> clique rank 0.
-  EXPECT_EQ(remapped.source, 0);
-  // Partition 3 -> GlobalDeviceId 3 -> clique rank 1.
-  EXPECT_EQ(remapped.target, 1);
-}
-
-TEST(RemapSourceTargetToCliqueRanksTest, NoSourceOrTarget) {
-  // Device is isolated — no source or target.
-  DeviceAssignment device_assn(/*replica_count=*/1, /*computation_count=*/2);
-  device_assn(0, 0) = 0;
-  device_assn(0, 1) = 1;
-
-  GpuCliqueKey clique_key({GlobalDeviceId(0)},
-                          /*num_local_participants=*/1);
-
-  P2PConfig::SourceTargetMapEntry source_target;  // Both nullopt.
-
-  ASSERT_OK_AND_ASSIGN(
-      auto remapped,
-      RemapSourceTargetToCliqueRanks(
-          source_target, clique_key, device_assn,
-          CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_PARTITION,
-          GlobalDeviceId(0)));
-
-  EXPECT_EQ(remapped.source, std::nullopt);
-  EXPECT_EQ(remapped.target, std::nullopt);
-}
-
-TEST(RemapSourceTargetToCliqueRanksTest, DeviceNotInCliqueReturnsError) {
-  DeviceAssignment device_assn(/*replica_count=*/1, /*computation_count=*/4);
-  device_assn(0, 0) = 0;
-  device_assn(0, 1) = 1;
-  device_assn(0, 2) = 2;
-  device_assn(0, 3) = 3;
-
-  // Clique only has device {0, 1}.
-  GpuCliqueKey clique_key({GlobalDeviceId(0), GlobalDeviceId(1)},
-                          /*num_local_participants=*/2);
-
-  P2PConfig::SourceTargetMapEntry source_target;
-  source_target.target = 3;  // Partition 3 -> GlobalDeviceId 3, not in clique.
-
-  auto result = RemapSourceTargetToCliqueRanks(
-      source_target, clique_key, device_assn,
-      CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_PARTITION,
-      GlobalDeviceId(0));
-
-  EXPECT_FALSE(result.ok());
 }
 
 }  // namespace

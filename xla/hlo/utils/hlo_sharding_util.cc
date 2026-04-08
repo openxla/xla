@@ -1064,8 +1064,8 @@ HloSharding TransposeSharding(const HloSharding& sharding,
     std::vector<NamedSharding::DimensionSharding> transposed_dim_shardings(
         sharding.num_dimensions());
     for (int64_t i = 0; i < dimensions.size(); ++i) {
-      transposed_dim_shardings[dimensions[i]] =
-          sharding.named_sharding().dim_sharding(i);
+      transposed_dim_shardings[i] =
+          sharding.named_sharding().dim_sharding(dimensions[i]);
     }
     return HloSharding(NamedSharding(
         sharding.named_sharding().mesh(), transposed_dim_shardings,

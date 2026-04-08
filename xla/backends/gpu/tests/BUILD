@@ -620,7 +620,10 @@ xla_test(
         ":gpu_pjrt_codegen_test",
         "//xla:debug_options_flags",
         "//xla/service:hlo_module_config",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
         "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
 )

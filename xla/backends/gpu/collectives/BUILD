@@ -133,6 +133,7 @@ cc_library(
         "//xla:util",
         "//xla/core/collectives:rank_id",
         "//xla/service:rendezvous",
+        "//xla/tsl/util:unique_any",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
@@ -153,7 +154,6 @@ xla_cc_test(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
-        "@com_google_googletest//:gtest",
     ],
 )
 

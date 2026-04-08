@@ -61,14 +61,19 @@ static constexpr auto kTritonDivisibilityAttr = "tt.divisibility";
 // Convenience class for holding the emitted values.
 class EmitterContext {
  public:
-  EmitterContext(mlir::ImplicitLocOpBuilder& b,
-                 const HloFusionInstruction* fusion, mlir::Value pid,
-                 IndexingMap schedule, xtile::EntryFuncOp entry_func)
+  EmitterContext(
+      mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+      mlir::Value pid, IndexingMap schedule, xtile::EntryFuncOp entry_func,
+      const gpu::experimental::TiledHloComputation& tiled_computation)
       : b_(b),
+
         pid_(pid),
+
         schedule_(std::move(schedule)),
         fusion_(fusion),
-        entry_func_(entry_func) {}
+        entry_func_(entry_func),
+        tiled_computation_(tiled_computation) {}
+
   mlir::ImplicitLocOpBuilder& b() { return b_; }
   mlir::Value pid() const { return pid_; }
 
@@ -99,6 +104,7 @@ class EmitterContext {
   IndexingMap schedule_;
   const HloFusionInstruction* fusion_ = nullptr;
   xtile::EntryFuncOp entry_func_;
+  const gpu::experimental::TiledHloComputation& tiled_computation_;
 };
 
 // Returns a string representation of the given MLIR entity.

@@ -50,7 +50,7 @@ class InPlaceDynamicUpdateSliceFusion : public EmitterBase {
   explicit InPlaceDynamicUpdateSliceFusion(const HloFusionAnalysis& analysis)
       : analysis_(analysis),
         dus_ops_(GetOutputDefiningDynamicUpdateSlices(analysis.fusion_roots())),
-        config_(ComputeLoopFusionConfig(
+        unroll_factor_(ComputeLoopFusionConfig(
             analysis, dus_ops_[0].instruction().operand(1)->shape())) {}
 
   LaunchDimensions launch_dimensions() const override;
@@ -86,7 +86,7 @@ class InPlaceDynamicUpdateSliceFusion : public EmitterBase {
  private:
   const HloFusionAnalysis& analysis_;
   std::vector<HloInstructionAdaptor> dus_ops_;
-  LaunchDimensionsConfig config_;
+  int unroll_factor_;
 };
 
 }  // namespace gpu

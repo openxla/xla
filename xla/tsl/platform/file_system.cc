@@ -200,6 +200,12 @@ absl::Status FileSystem::DeleteRecursively(const std::string& dirname,
 
 absl::Status FileSystem::RecursivelyCreateDir(const std::string& dirname,
                                               TransactionToken* token) {
+  return RecursivelyCreateDir(dirname, token, kDefaultMode);
+}
+
+absl::Status FileSystem::RecursivelyCreateDir(absl::string_view dirname,
+                                              TransactionToken* token,
+                                              uint32_t mode) {
   absl::string_view scheme, host, remaining_dir;
   this->ParseURI(dirname, &scheme, &host, &remaining_dir);
   std::vector<absl::string_view> sub_dirs;
@@ -237,7 +243,8 @@ absl::Status FileSystem::RecursivelyCreateDir(const std::string& dirname,
   std::string built_path(remaining_dir);
   for (const absl::string_view sub_dir : sub_dirs) {
     built_path = this->JoinPath(built_path, sub_dir);
-    absl::Status status = CreateDir(this->CreateURI(scheme, host, built_path));
+    absl::Status status =
+        CreateDir(this->CreateURI(scheme, host, built_path), mode);
     if (!status.ok() && status.code() != absl::StatusCode::kAlreadyExists) {
       return status;
     }

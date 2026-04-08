@@ -16,7 +16,9 @@ limitations under the License.
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
 
 #include <cstdint>
+#include <limits>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -50,13 +52,17 @@ limitations under the License.
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
+#include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/tiled_hlo_instruction.h"
 #include "xla/codegen/xtile/ir/xtile_attrs.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/indexing_map_serialization.h"
+#include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/analysis/symbolic_map.h"
+#include "xla/hlo/analysis/symbolic_map_converter.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -80,6 +86,7 @@ namespace xla::xtile {
 
 using ::llvm::SmallVector;
 using ::mlir::ArrayRef;
+using ::mlir::MLIRContext;
 using ::mlir::ShapedType;
 using ::mlir::Type;
 using ::mlir::Value;
@@ -196,22 +203,74 @@ SmallVector<int64_t> GetPaddedTileSizes(ArrayRef<int64_t> tile_sizes) {
   return result;
 }
 
+Value TensorValueToIndexTypeScalar(mlir::ImplicitLocOpBuilder& b,
+                                   const TensorValue& tensor_value) {
+  mlir::OpBuilder::InsertionGuard guard(b);
+  b.setInsertionPointAfterValue(tensor_value);
+  Value scalar_value = mlir::tensor::ExtractOp::create(b, tensor_value);
+  return Cast(b, scalar_value, b.getIndexType());
+}
+
 // Evaluates tiling parameters for the given affine expressions, e.g. offsets.
 // This function only supports pid and does not support runtime values including
 // the induction variables yet.
 absl::StatusOr<SmallVector<Value>> EmitterContext::EvaluateTilingParameters(
     ArrayRef<SymbolicExpr> exprs) {
+  MLIRContext* mlir_context = schedule_.GetMLIRContext();
+  const ge::TilingSpace& tiling_space = tiled_computation_.tiling_space();
+  // Get all dimension and symbol IDs from all of the expressions.
+  UsedParameters used_parameters =
+      GetUsedParameters(exprs, tiling_space.num_dimensions());
+  const auto& dim_ids = used_parameters.dimension_ids;
+  const auto& symbol_ids = used_parameters.symbol_ids;
+
+  // Remap parallel dimensions.
+  SmallVector<SymbolicExpr> dim_replacements;
+  if (!dim_ids.empty()) {
+    dim_replacements.resize(dim_ids.back() + 1);
+    for (int64_t dim : dim_ids) {
+      CHECK_EQ(tiling_space.dimensions()[dim].type,
+               ge::TilingSpace::DimensionSemantics::kParallel)
+          << "Sequential dimensions are not supported yet.";
+      dim_replacements[dim] = schedule_.GetSymbolicMap().GetResult(dim);
+    }
+  }
+
+  // Remap symbols that correspond to runtime variables.
+  int64_t symbol_count = 0;
+  SmallVector<SymbolicExpr> symbol_replacements;
+  SmallVector<Value> symbol_values;
+  if (!symbol_ids.empty()) {
+    symbol_replacements.resize(symbol_ids.back() + 1);
+    const auto& rt_symbol_to_tiled_hlo =
+        tiled_computation_.rt_symbol_to_tiled_hlo();
+    for (const auto& symbol_id : symbol_ids) {
+      auto it = rt_symbol_to_tiled_hlo.find(symbol_id);
+      TF_RET_CHECK(it != rt_symbol_to_tiled_hlo.end());
+      TensorValue tensor_value = TiledHloToTensorValue(*it->second);
+      symbol_values.push_back(TensorValueToIndexTypeScalar(b_, tensor_value));
+      symbol_replacements[symbol_id] = CreateSymbolExpr(
+          symbol_count++, tiling_space.num_dimensions(), mlir_context);
+    }
+  }
+
+  // Update the expressions with the remapped dimensions and symbols.
   SmallVector<SymbolicExpr> updated_exprs;
   for (const auto& expr : exprs) {
     updated_exprs.push_back(
-        expr.ReplaceDims(schedule_.GetSymbolicMap().GetResults()));
+        expr.ReplaceDimsAndSymbols(dim_replacements, symbol_replacements));
   }
   IndexingMap offset_indexing_map(
-      SymbolicMap::Get(schedule_.GetMLIRContext(), 1, 0, updated_exprs),
-      schedule_.GetDimVars(), {}, {});
+      SymbolicMap::Get(schedule_.GetMLIRContext(), /*num_dimensions=*/1,
+                       symbol_count, updated_exprs),
+      schedule_.GetDimVars(),
+      std::vector<IndexingMap::Variable>(
+          symbol_count,
+          IndexingMap::Variable(0, std::numeric_limits<int64_t>::max())),
+      {});
   SmallVector<Value> dims{Cast(b_, pid_, pid_.getType())};
   return emitters::ApplyIndexing(offset_indexing_map, /*dims=*/dims,
-                                 /*symbols=*/{}, b_);
+                                 /*symbols=*/symbol_values, b_);
 }
 
 absl::StatusOr<Type> PrimitiveTypeToMlirType(

@@ -111,6 +111,7 @@ class Thunk {
     kCollectiveKernel,
     kCollectiveMetadata,
     kCollectivePermute,
+    kCommand,
     kCommandBuffer,
     kConditional,
     kConvolution,
@@ -499,6 +500,10 @@ class Thunk {
   virtual bool IsAsyncStart() const { return false; }
 
   virtual bool IsAsyncDone() const { return false; }
+
+  void set_profile_annotation(absl::string_view profile_annotation) {
+    thunk_info_.profile_annotation = std::string(profile_annotation);
+  }
 
  protected:
   friend class ThunkSequence;

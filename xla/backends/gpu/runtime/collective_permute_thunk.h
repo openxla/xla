@@ -1,3 +1,6 @@
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/runtime/buffer_use.h"
+#include "xla/service/buffer_assignment.h"
 /* Copyright 2021 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +21,6 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <utility>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
@@ -31,22 +33,17 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/communicator.h"
-#include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/runtime/buffer_use.h"
-#include "xla/runtime/device_id.h"
-#include "xla/service/buffer_assignment.h"
-#include "xla/service/computation_placer.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 
-namespace xla::gpu {
+namespace xla {
+namespace gpu {
 
 using tsl::AsyncValueRef;
 
@@ -171,29 +168,7 @@ absl::Status RunCollectivePermute(
     const CollectivePermuteThunk::RecvPtrMap* recv_ptr_map = nullptr,
     bool use_symmetric_buffer = false);
 
-//===----------------------------------------------------------------------===//
-// Collective-permute communicating cliques helpers.
-//===----------------------------------------------------------------------===//
-
-// Computes connected components of the source-target pairs graph using
-// Union-Find. Returns a map from component root to sorted member IDs. All IDs
-// in [0, num_participants) are included; IDs not in any pair become singleton
-// components.
-absl::flat_hash_map<int64_t, std::vector<int64_t>>
-SourceTargetConnectedComponents(
-    int64_t num_participants,
-    absl::Span<const std::pair<int64_t, int64_t>> source_target_pairs);
-
-// Remaps source/target IDs from partition/replica space to communicator-local
-// ranks. When communicators are scoped to connected components (subsets of
-// devices), the partition/replica IDs used in HLO source_target_pairs don't
-// correspond to NCCL ranks. This function translates them via:
-//   logical_id -> GlobalDeviceId -> clique_key.rank().
-absl::StatusOr<P2PConfig::SourceTargetMapEntry> RemapSourceTargetToCliqueRanks(
-    const P2PConfig::SourceTargetMapEntry& source_target,
-    const GpuCliqueKey& clique_key, const DeviceAssignment& device_assn,
-    CollectiveOpGroupMode group_mode, GlobalDeviceId global_device_id);
-
-}  // namespace xla::gpu
+}  // namespace gpu
+}  // namespace xla
 
 #endif  // XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_PERMUTE_THUNK_H_

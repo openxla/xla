@@ -556,7 +556,7 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
     }
     return GetExecutable()->GetOutputMemoryKinds();
   }
-  absl::StatusOr<std::string> FingerprintExecutable() const {
+  absl::StatusOr<std::string> FingerprintExecutable() const override {
     if (extras_) {
       return extras_->fingerprint;
     }

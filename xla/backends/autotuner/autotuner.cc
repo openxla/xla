@@ -47,7 +47,9 @@ limitations under the License.
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/profiler.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/dump.h"
@@ -406,8 +408,9 @@ tsl::Future<Autotuner::Config> Autotuner::TuneBestConfig(
           return std::move(executable_candidates[0].config);
         }
 
-        TF_ASSIGN_OR_RETURN(std::vector<ConfigResult> results,
-                            ProfileAll(std::move(executable_candidates)));
+        TF_ASSIGN_OR_RETURN(
+            std::vector<ConfigResult> results,
+            ProfileAll(std::move(executable_candidates), instr));
         LogConfigResults(*instr, results);
         absl::StatusOr<ConfigResult> best_result = PickBestConfig(results);
         if (!best_result.ok()) {
@@ -592,7 +595,7 @@ Autotuner::CompileAll(HloInstruction* instr, std::vector<Config>& configs) {
 }
 
 absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
-    std::vector<ExecutableCandidate> candidates) {
+    std::vector<ExecutableCandidate> candidates, const HloInstruction* instr) {
   std::vector<ConfigResult> results_vec;
   results_vec.reserve(candidates.size());
 
@@ -600,15 +603,14 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
 
   ASSIGN_OR_RETURN(
       std::unique_ptr<InputBuffers> input_buffers,
-      profiler_->CreateInputBuffers(candidates[0].executable.get()));
+      profiler_->CreateInputBuffers(candidates[0].executable.get(), instr));
 
   std::optional<ScopedShapedBuffer> reference_output;
   if (autotune_config_.check_buffers) {
     VLOG(2) << "Checking buffers";
     reference_output = GetReferenceOutput(candidates, *input_buffers);
     if (!reference_output.has_value()) {
-      LOG(WARNING) << "No reference output found even though buffer checking "
-                      "was requested while autotuning";
+      LOG(WARNING) << "No reference output found even though buffer checking ";
     }
   }
 

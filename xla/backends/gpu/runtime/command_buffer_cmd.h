@@ -307,7 +307,7 @@ class ChildCmd : public Command {
       se::CommandBuffer* command_buffer) override;
 
   absl::Status WalkNested(
-      absl::FunctionRef<absl::Status(Command*)> callback) override;
+      absl::FunctionRef<absl::Status(Thunk*)> callback) override;
 
  private:
   CommandExecutor child_commands_;
@@ -331,7 +331,7 @@ class CaseCmd : public Command {
   BufferUses buffer_uses() const override;
 
   absl::Status WalkNested(
-      absl::FunctionRef<absl::Status(Command*)> callback) override;
+      absl::FunctionRef<absl::Status(Thunk*)> callback) override;
 
  private:
   ShapedSlice index_;
@@ -362,7 +362,7 @@ class WhileCmd : public Command {
   BufferUses buffer_uses() const override;
 
   absl::Status WalkNested(
-      absl::FunctionRef<absl::Status(Command*)> callback) override;
+      absl::FunctionRef<absl::Status(Thunk*)> callback) override;
 
  private:
   BufferAllocation::Slice pred_;
@@ -411,9 +411,11 @@ class GemmCmd : public TracedCommandBufferCmd {
 // CublasLtCmd
 //===----------------------------------------------------------------------===//
 
-class CublasLtCmd : public TracedCommandBufferCmd, public CublasLtMatmulThunk {
+class CublasLtCmd : public TracedCommandBufferCmd {
  public:
   explicit CublasLtCmd(const CublasLtMatmulThunk& matmul_thunk);
+
+  absl::Status Initialize(const Thunk::InitializeParams& params) override;
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams& execute_params,
@@ -423,6 +425,9 @@ class CublasLtCmd : public TracedCommandBufferCmd, public CublasLtMatmulThunk {
   BufferUses buffer_uses() const override;
 
   bool IsNestedCommandBuffer() const final { return true; }
+
+ private:
+  CublasLtMatmulThunk thunk_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -768,7 +773,7 @@ class DynamicSliceFusionCmd : public Command {
   bool IsNestedCommandBuffer() const final { return true; }
 
   absl::Status WalkNested(
-      absl::FunctionRef<absl::Status(Command*)> callback) override;
+      absl::FunctionRef<absl::Status(Thunk*)> callback) override;
 
  private:
   CommandExecutor embedded_commands_;

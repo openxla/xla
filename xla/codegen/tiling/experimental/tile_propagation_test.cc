@@ -121,6 +121,45 @@ TEST_F(TilePropagationTest, CanPropagateToOutputsOfElementwiseOp) {
   EXPECT_THAT(from_operand_1, Optional(MatchToString(kExpected)));
 }
 
+TEST_F(TilePropagationTest, CanPropagateToInputsOfAllReduceOp) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    %add {
+      %p0 = f32[] parameter(0)
+      %p1 = f32[] parameter(1)
+      ROOT %a = f32[] add(p0, p1)
+    }
+    ENTRY %module {
+      %p0 = f32[2,8,256] parameter(0)
+      %ar-start = f32[2,8,256] all-reduce-start(p0), replica_groups={{0,1}},
+        to_apply=%add
+      ROOT %ar-done = f32[2,8,256] all-reduce-done(%ar-start)
+    }
+  )");
+  auto tiling_space = TilingSpace::Create(
+      *HloFusionAdaptor::ForInstruction(root), &mlir_context_);
+  std::optional<Tiles> ar_done_operands = PropagateTileToInput(
+      *tiling_space, *root,
+      GetTestTile(*tiling_space, root->shape().dimensions()), 0);
+  EXPECT_THAT(ar_done_operands, Optional(MatchToString(R"(
+    0) (tid_0, tid_1, tid_2)
+      -> offsets [tid_0 * ts_0, tid_1 * ts_1, tid_2 * ts_2]
+         sizes [ts_0, ts_1, ts_2]
+         strides [1, 2, 3]
+         upper bounds [2, 8, 256]
+  )")));
+  std::optional<Tiles> ar_start_operands = PropagateTileToInput(
+      *tiling_space, *root->operand(0),
+      GetTestTile(*tiling_space, root->shape().dimensions()), 0);
+  EXPECT_THAT(ar_start_operands, Optional(MatchToString(R"(
+    0) (tid_0, tid_1, tid_2)
+      -> offsets [tid_0 * ts_0, tid_1 * ts_1, tid_2 * ts_2]
+         sizes [ts_0, ts_1, ts_2]
+         strides [1, 2, 3]
+         upper bounds [2, 8, 256]
+  )")));
+}
+
 TEST_F(TilePropagationTest, CanPropagateToInputOfBroadcastOp) {
   HloInstruction* root = ParseAndGetRoot(R"(
     HloModule m
