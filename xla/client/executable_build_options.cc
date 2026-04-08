@@ -206,9 +206,15 @@ absl::StatusOr<ExecutableBuildOptionsProto> ExecutableBuildOptions::ToProto()
   return output;
 }
 
+ExecutableBuildOptions CreateDefaultExecutableBuildOptions() {
+  ExecutableBuildOptions options;
+  *(options.mutable_debug_options()) = GetDebugOptionsFromFlags();
+  return options;
+}
+
 absl::StatusOr<ExecutableBuildOptions> ExecutableBuildOptionsFromProto(
     const ExecutableBuildOptionsProto& input) {
-  xla::ExecutableBuildOptions output;
+  ExecutableBuildOptions output = CreateDefaultExecutableBuildOptions();
   if (input.device_ordinal() != -1) {
     output.set_device_ordinal(input.device_ordinal());
   }

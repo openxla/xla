@@ -343,6 +343,8 @@ class ExecutableBuildOptions {
   int64_t slice_size_ = 0;
 };
 
+ExecutableBuildOptions CreateDefaultExecutableBuildOptions();
+
 absl::StatusOr<ExecutableBuildOptions> ExecutableBuildOptionsFromProto(
     const ExecutableBuildOptionsProto& input);
 
