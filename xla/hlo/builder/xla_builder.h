@@ -104,13 +104,11 @@ struct XlaBuilderFriend {
   static XlaOp BuildCollectivePermuteStart(
       XlaBuilder* builder, XlaOp operand,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-      const std::optional<ChannelHandle>& channel_id = std::nullopt,
-      const bool inplace = false);
+      const std::optional<ChannelHandle>& channel_id = std::nullopt);
   static XlaOp BuildCollectivePermuteStart(
       XlaBuilder* builder, absl::Span<const XlaOp> operands,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-      const std::optional<ChannelHandle>& channel_id = std::nullopt,
-      const bool inplace = false);
+      const std::optional<ChannelHandle>& channel_id = std::nullopt);
   static XlaOp BuildCollectivePermuteDone(XlaBuilder* builder, XlaOp operands,
                                           const Shape& shape);
 
@@ -982,14 +980,12 @@ class XlaBuilder {
   XlaOp CollectivePermute(
       XlaOp operand,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-      const std::optional<ChannelHandle>& channel_id = std::nullopt,
-      const bool inplace = false);
+      const std::optional<ChannelHandle>& channel_id = std::nullopt);
 
   XlaOp CollectivePermute(
       absl::Span<const XlaOp> operands,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-      const std::optional<ChannelHandle>& channel_id = std::nullopt,
-      const bool inplace = false);
+      const std::optional<ChannelHandle>& channel_id = std::nullopt);
 
   XlaOp ReplicaId();
 
@@ -1739,11 +1735,11 @@ class XlaBuilder {
   friend XlaOp CollectivePermute(
       XlaOp operand,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-      const std::optional<ChannelHandle>& channel_id, const bool inplace);
+      const std::optional<ChannelHandle>& channel_id);
   friend XlaOp MultiCollectivePermute(
       absl::Span<const XlaOp> operands,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-      const std::optional<ChannelHandle>& channel_id, const bool inplace);
+      const std::optional<ChannelHandle>& channel_id);
   friend XlaOp ReplicaId(XlaBuilder* builder);
   friend XlaOp SelectAndScatter(XlaOp operand, XlaComputationId select,
                                 absl::Span<const int64_t> window_dimensions,
@@ -1928,14 +1924,12 @@ class XlaBuilder {
   XlaOp CollectivePermuteImpl(
       XlaOp operand,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-      const std::optional<ChannelHandle>& channel_id, bool async,
-      const bool inplace);
+      const std::optional<ChannelHandle>& channel_id, bool async);
 
   XlaOp CollectivePermuteImpl(
       absl::Span<const XlaOp> operands,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-      const std::optional<ChannelHandle>& channel_id, bool async,
-      const bool inplace);
+      const std::optional<ChannelHandle>& channel_id, bool async);
 
   XlaOp ConditionalImpl(XlaOp branch_index,
                         absl::Span<XlaComputationId const> branch_computations,
@@ -2963,13 +2957,11 @@ XlaOp CollectiveBroadcast(
 XlaOp CollectivePermute(
     XlaOp operand,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id = std::nullopt,
-    const bool inplace = false);
+    const std::optional<ChannelHandle>& channel_id = std::nullopt);
 XlaOp MultiCollectivePermute(
     absl::Span<const XlaOp> operands,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id = std::nullopt,
-    const bool inplace = false);
+    const std::optional<ChannelHandle>& channel_id = std::nullopt);
 
 // Enqueues an operation that returns the replica ID.
 XlaOp ReplicaId(XlaBuilder* builder);
