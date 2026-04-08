@@ -49,12 +49,12 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/gpu/multicast_memory.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/safe_reinterpret_cast.h"
 #include "xla/tsl/util/tied_ref.h"
 #include "xla/util.h"
 #include "tsl/platform/casts.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -322,7 +322,7 @@ absl::StatusOr<MulticastMemoryMap> AcquireMulticastMemory(
 
     // A callback for rendezvous to allocate and map the multicast memory. We
     // do one round of rendezvous for each clique.
-    auto allocate = [&](absl::Span<const RendezvousParams*> params)
+    auto allocate = [&](absl::Span<RendezvousParams*> params)
         -> absl::StatusOr<MappedMulticastMemoryMap> {
       // Sort all participants by rank to get deterministic execution.
       absl::c_sort(params, RankCmp{});
@@ -460,7 +460,7 @@ absl::StatusOr<PeerMemoryMap> AcquirePeerMemory(
 
     // A callback for rendezvous to exchange peer allocation addresses with
     // all participating ranks.
-    auto exchange = [&](absl::Span<const RendezvousParams*> params)
+    auto exchange = [&](absl::Span<RendezvousParams*> params)
         -> absl::StatusOr<PeerMemoryMap> {
       // Sort all participants by rank to get deterministic execution.
       absl::c_sort(params, RankCmp{});
