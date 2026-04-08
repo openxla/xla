@@ -115,6 +115,14 @@ static absl::StatusOr<std::string> CompileGpuExecutable(
       .set_xla_gpu_experimental_aot_compiled_thunks(true);
 
   if (aot) {
+    TF_ASSIGN_OR_RETURN(se::Platform::Id target_platform_id,
+                        xla::PlatformUtil::GetPlatformIdFromCanonicalName(
+                            (*target_config).platform_name));
+    if (platform_id != target_platform_id) {
+      LOG(FATAL) << "Attempting to AOT compile for "
+                 << (*target_config).platform_name
+                 << ", but the current platform is " << platform_name << ".";
+    }
     AotCompilationOptions aot_options(platform_id);
     std::optional<GpuTopology> topology;
 
