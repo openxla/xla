@@ -2041,14 +2041,21 @@ absl::StatusOr<const se::CommandBuffer::Command*> CollectivePermuteCmd::Record(
   const P2PConfig::SourceTargetMapEntry source_target =
       P2PConfig::GetSourceTarget(p2p_config_.id_to_source_target, current_id);
 
+  // Convert logical source/target IDs to communicator-local ranks.
+  P2PConfig::SourceTargetRanks source_target_ranks;
+  if (source_target.source) {
+    source_target_ranks.source = RankId(*source_target.source);
+  }
+  if (source_target.target) {
+    source_target_ranks.target = RankId(*source_target.target);
+  }
+
   // MemCpy case is not currently supported in CommandBuffer.
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
-        return RunCollectivePermute(source_target, device_buffers, *stream,
-                                    *comm, device_string, current_id,
-                                    /*use_memcpy=*/false,
-                                    /*recv_ptr_map=*/nullptr,
+        return RunCollectivePermute(source_target_ranks, device_buffers,
+                                    *stream, *comm, device_string, current_id,
                                     use_symmetric_buffer);
       });
 }

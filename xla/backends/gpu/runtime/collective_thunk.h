@@ -111,7 +111,7 @@ class CollectiveThunk : public Thunk {
   }
 
   absl::Status Prepare(const PrepareParams& params) override;
-
+  absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
   absl::StatusOr<std::vector<Communicator*>> GetCommunicators(
@@ -128,6 +128,15 @@ class CollectiveThunk : public Thunk {
   // NCCL kernel execution races with a thunk before or after the collective
   // one that calls CUDA APIs that trigger a deadlock.
   virtual bool RequiresRendezvous() const = 0;
+
+  // Initializes collective operation for execution.
+  //
+  // At this stage it is possible to resolve buffer slices from a buffer
+  // assignment, but the content of all buffers is undefined.
+  virtual absl::Status InitializeCollective(const InitializeParams& params,
+                                            const GpuCliqueKey& clique_key) {
+    return absl::OkStatus();
+  }
 
   // Run collective operation on a given stream.
   //

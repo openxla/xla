@@ -357,7 +357,7 @@ TEST_P(AsyncCollectiveOps, AsyncCollectiveBroadcast) {
   LiteralTestUtil::ExpectR1Equal<uint32_t>({11, 11}, results[1]);
 }
 
-TEST_P(AsyncCollectiveOps, AsyncCollectivePermute) {
+TEST_P(AsyncMemcpyCollectiveOps, AsyncCollectivePermute) {
   const absl::string_view kModuleStr = R"(
   HloModule test
   ENTRY test_computation {
@@ -374,7 +374,6 @@ TEST_P(AsyncCollectiveOps, AsyncCollectivePermute) {
       << "Test requires at least " << kNumReplicas << " devices ("
       << device_count() << " available)";
 
-  const bool enable_async_collective_permute = GetParam();
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
 
@@ -388,7 +387,7 @@ TEST_P(AsyncCollectiveOps, AsyncCollectivePermute) {
       FindInstruction(hlo_module, HloOpcode::kCollectivePermuteDone);
   EXPECT_THAT(cp_start, NotNull());
   EXPECT_THAT(cp_done, NotNull());
-  EXPECT_EQ(IsAsync(cp_start), enable_async_collective_permute);
+  EXPECT_EQ(IsAsync(cp_start), enable_async_);
 
   const std::vector<Literal>& results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
@@ -396,7 +395,7 @@ TEST_P(AsyncCollectiveOps, AsyncCollectivePermute) {
   LiteralTestUtil::ExpectR1Equal<uint32_t>({10, 10}, results[1]);
 }
 
-TEST_P(AsyncCollectiveOps, CombinedCollectivePermute) {
+TEST_P(AsyncMemcpyCollectiveOps, CombinedCollectivePermute) {
   const absl::string_view kModuleStr = R"(
   HloModule test
   ENTRY test_computation {
@@ -412,7 +411,6 @@ TEST_P(AsyncCollectiveOps, CombinedCollectivePermute) {
   }
   )";
   const int64_t kNumReplicas = 2;
-  const bool enable_async_collective_permute = GetParam();
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
@@ -427,7 +425,7 @@ TEST_P(AsyncCollectiveOps, CombinedCollectivePermute) {
       FindInstruction(hlo_module, HloOpcode::kCollectivePermuteDone);
   EXPECT_THAT(cp_start, NotNull());
   EXPECT_THAT(cp_done, NotNull());
-  EXPECT_EQ(IsAsync(cp_start), enable_async_collective_permute);
+  EXPECT_EQ(IsAsync(cp_start), enable_async_);
 
   const std::vector<Literal>& results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
@@ -435,7 +433,7 @@ TEST_P(AsyncCollectiveOps, CombinedCollectivePermute) {
   LiteralTestUtil::ExpectR1Equal<uint32_t>({0, 0, 10, 10}, results[1]);
 }
 
-TEST_P(AsyncCollectiveOps, CollectivePermuteCombiner) {
+TEST_P(AsyncMemcpyCollectiveOps, CollectivePermuteCombiner) {
   const absl::string_view kModuleStr = R"(
   HloModule test
   ENTRY test_computation {
@@ -452,7 +450,6 @@ TEST_P(AsyncCollectiveOps, CollectivePermuteCombiner) {
   }
   )";
   const int64_t kNumReplicas = 4;
-  const bool enable_async_collective_permute = GetParam();
   if (device_count() < kNumReplicas) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
                  << device_count() << " available)";
@@ -485,7 +482,7 @@ TEST_P(AsyncCollectiveOps, CollectivePermuteCombiner) {
   // Expect 3 collective permute instructions combined into one.
   EXPECT_EQ(cp_start->operand_count(), 3);
   EXPECT_THAT(cp_done, NotNull());
-  EXPECT_EQ(IsAsync(cp_start), enable_async_collective_permute);
+  EXPECT_EQ(IsAsync(cp_start), enable_async_);
 
   const std::vector<Literal>& results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
