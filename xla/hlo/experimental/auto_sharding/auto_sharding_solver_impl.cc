@@ -20,7 +20,6 @@ limitations under the License.
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_solver.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_strategy.h"
 #include "xla/hlo/experimental/auto_sharding/iopddl.h"
-#include "ortools/linear_solver/linear_solver.h"
 
 namespace xla {
 namespace spmd {
