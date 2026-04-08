@@ -963,19 +963,96 @@ absl::Status NcclCommunicator::LaunchPut(se::DeviceAddressBase send_buffer,
                                          size_t offset, size_t count,
                                          RankId peer,
                                          const Executor& executor) {
-  return Unimplemented("NCCL Put is not yet implemented");
+#if NCCL_VERSION_CODE >= 22900
+  if (cancel_->IsCancelled()) {
+    return FailedPrecondition("NcclCommunicator aborted");
+  }
+  se::Stream* stream = ToStream(executor);
+
+  auto& peer_win = tsl::down_cast<NcclSymmetricMemory&>(*recv_buffer);
+
+  VLOG(3) << absl::StreamFormat(
+      "[%d] Launch NCCL Put operation; send_buffer=%p; peer_win=%v; "
+      "offset=%d; count=%d; peer=%d; comm=%p; stream=%p",
+      stream->parent()->device_ordinal(), send_buffer.opaque(), peer_win,
+      offset, count, peer.value(), comm_, stream);
+
+  TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclPutSignal(
+      send_buffer.opaque(), count, ncclInt8, peer.value(), peer_win.win(),
+      offset, 0, 0, 0, comm_, AsCudaStream(stream))));
+  if (group_nesting_level_ == 0) {
+    TF_RETURN_IF_ERROR(PollUntilDone());
+  }
+  return absl::OkStatus();
+#else
+  return Unimplemented("NCCL PutSignal requires NCCL >= 2.29.0 (current: %d)",
+                       NCCL_VERSION_CODE);
+#endif
 }
 
 absl::Status NcclCommunicator::LaunchSignal(RankId peer,
                                             const SignalDesc& signal_desc,
                                             const Executor& executor) {
-  return Unimplemented("NCCL Signal is not yet implemented");
+#if NCCL_VERSION_CODE >= 22900
+  if (cancel_->IsCancelled()) {
+    return FailedPrecondition("NcclCommunicator aborted");
+  }
+  se::Stream* stream = ToStream(executor);
+
+  const auto& nccl_desc = tsl::down_cast<const NcclSignalDesc&>(signal_desc);
+
+  VLOG(3) << absl::StreamFormat(
+      "[%d] Launch NCCL Signal operation; peer=%d; sig_idx=%d; ctx=%d; "
+      "comm=%p; stream=%p",
+      stream->parent()->device_ordinal(), peer.value(), nccl_desc.sig_idx(),
+      nccl_desc.ctx(), comm_, stream);
+
+  TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(
+      ncclSignal(peer.value(), nccl_desc.sig_idx(), nccl_desc.ctx(), 0, comm_,
+                 AsCudaStream(stream))));
+  if (group_nesting_level_ == 0) {
+    TF_RETURN_IF_ERROR(PollUntilDone());
+  }
+  return absl::OkStatus();
+#else
+  return Unimplemented("NCCL Signal requires NCCL >= 2.29.0 (current: %d)",
+                       NCCL_VERSION_CODE);
+#endif
 }
 
 absl::Status NcclCommunicator::LaunchWaitSignal(RankId peer, int op_cnt,
                                                 const SignalDesc& signal_desc,
                                                 const Executor& executor) {
-  return Unimplemented("NCCL WaitSignal is not yet implemented");
+#if NCCL_VERSION_CODE >= 22900
+  if (cancel_->IsCancelled()) {
+    return FailedPrecondition("NcclCommunicator aborted");
+  }
+  se::Stream* stream = ToStream(executor);
+
+  const auto& nccl_desc = tsl::down_cast<const NcclSignalDesc&>(signal_desc);
+
+  VLOG(3) << absl::StreamFormat(
+      "[%d] Launch NCCL WaitSignal operation; peer=%d; op_cnt=%d; "
+      "sig_idx=%d; ctx=%d; comm=%p; stream=%p",
+      stream->parent()->device_ordinal(), peer.value(), op_cnt,
+      nccl_desc.sig_idx(), nccl_desc.ctx(), comm_, stream);
+
+  ncclWaitSignalDesc_t desc;
+  desc.peer = peer.value();
+  desc.opCnt = op_cnt;
+  desc.sigIdx = nccl_desc.sig_idx();
+  desc.ctx = nccl_desc.ctx();
+
+  TF_RETURN_IF_ERROR(
+      XLA_NCCL_STATUS(ncclWaitSignal(1, &desc, comm_, AsCudaStream(stream))));
+  if (group_nesting_level_ == 0) {
+    TF_RETURN_IF_ERROR(PollUntilDone());
+  }
+  return absl::OkStatus();
+#else
+  return Unimplemented("NCCL WaitSignal requires NCCL >= 2.29.0 (current: %d)",
+                       NCCL_VERSION_CODE);
+#endif
 }
 
 std::string NcclCommunicator::ToString() const {

@@ -294,6 +294,7 @@ xla_cc_test(
         ":gpu_clique_key",
         ":gpu_collectives",
         ":gpu_communicator",
+        ":nccl_communicator",
         ":nccl_or_rccl_collectives",
         "//xla:future",
         "//xla:xla_data_proto_cc",
