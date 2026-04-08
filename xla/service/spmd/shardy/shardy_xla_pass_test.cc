@@ -50,8 +50,9 @@ void runShardy(VerifiedHloModule* module, bool stablehloImport,
     module->add_frontend_attribute(std::string(xla::sdy::kImportMhloShardings),
                                    "t");
   }
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          ShardyXLA(runSdyShardingPropagation).Run(module));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA(runSdyShardingPropagation, {},
+                                                  /*dedupFunctionsFully=*/false)
+                                            .Run(module));
   EXPECT_EQ(changed, expectChanged);
 }
 
