@@ -25,7 +25,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "absl/base/macros.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
@@ -126,10 +125,10 @@ bool IsCollectiveCommand(CommandType type);
 // `CommandCommandStateManager` documentation for details and example. If
 // command want's to attach some mutable state to the command buffer, it must be
 // done with a state manager.
-class CommandThunk : public Thunk {
+class Command : public Thunk {
  public:
-  explicit CommandThunk(CommandType cmd_type, se::StreamPriority priority =
-                                                  se::StreamPriority::Default)
+  explicit Command(CommandType cmd_type,
+                   se::StreamPriority priority = se::StreamPriority::Default)
       : Thunk(Thunk::Kind::kCommand, ThunkInfo{}),
         cmd_type_(cmd_type),
         priority_(priority) {
@@ -137,7 +136,7 @@ class CommandThunk : public Thunk {
     resource_uses_.push_back(ResourceUse::Write(token_));
   }
 
-  virtual ~CommandThunk() = default;
+  virtual ~Command() = default;
 
   // Parameters for recording commands into the command buffer.
   struct RecordParams {
@@ -235,12 +234,12 @@ class CommandThunk : public Thunk {
 
   // Recursively walks all the commands nested inside *this one and calls
   // the user-provided callback on every command. Always starts traversal with
-  // *this. These overloads accept CommandThunk*-typed callbacks and complement
-  // the Thunk*-typed Walk overloads inherited from Thunk.
-  template <typename F, WalkCallback<F, CommandThunk*>* = nullptr>
-  std::invoke_result_t<F, CommandThunk*> Walk(F&& callback);
-  template <typename F, WalkCallback<F, const CommandThunk*>* = nullptr>
-  std::invoke_result_t<F, const CommandThunk*> Walk(F&& callback) const;
+  // *this. These overloads accept Command*-typed callbacks and complement the
+  // Thunk*-typed Walk overloads inherited from Thunk.
+  template <typename F, WalkCallback<F, Command*>* = nullptr>
+  std::invoke_result_t<F, Command*> Walk(F&& callback);
+  template <typename F, WalkCallback<F, const Command*>* = nullptr>
+  std::invoke_result_t<F, const Command*> Walk(F&& callback) const;
 
  protected:
   // WalkNested uses Thunk::Walker = absl::FunctionRef<absl::Status(Thunk*)>.
@@ -263,7 +262,7 @@ class CommandThunk : public Thunk {
 };
 
 // Returns true if command is a collective one.
-inline bool IsCollectiveCommand(const CommandThunk& cmd) {
+inline bool IsCollectiveCommand(const Command& cmd) {
   return IsCollectiveCommand(cmd.command_type());
 }
 
@@ -271,31 +270,28 @@ inline bool IsCollectiveCommand(const CommandThunk& cmd) {
 // Command templates implementation.
 //===----------------------------------------------------------------------===//
 
-template <typename F, CommandThunk::WalkCallback<F, CommandThunk*>*>
-std::invoke_result_t<F, CommandThunk*> CommandThunk::Walk(F&& callback) {
-  if constexpr (std::is_void_v<std::invoke_result_t<F, CommandThunk*>>) {
-    Walk([f = std::forward<F>(callback)](CommandThunk* command) {
+template <typename F, Command::WalkCallback<F, Command*>*>
+std::invoke_result_t<F, Command*> Command::Walk(F&& callback) {
+  if constexpr (std::is_void_v<std::invoke_result_t<F, Command*>>) {
+    Walk([f = std::forward<F>(callback)](Command* command) {
       return (f(command), absl::OkStatus());
     }).IgnoreError();  // Error can never happen here.
   } else {
     RETURN_IF_ERROR(callback(this));
-    // Adapt CommandThunk*-typed callback to Thunk::Walker (Thunk*-typed) for
+    // Adapt Command*-typed callback to Thunk::Walker (Thunk*-typed) for
     // WalkNested. The down_cast is safe because WalkNested only visits
-    // CommandThunks in a CommandThunk context.
+    // Commands in a Command context.
     return WalkNested([&callback](Thunk* thunk) -> absl::Status {
-      return callback(tsl::down_cast<CommandThunk*>(thunk));
+      return callback(tsl::down_cast<Command*>(thunk));
     });
   }
 }
 
-template <typename F, CommandThunk::WalkCallback<F, const CommandThunk*>*>
-std::invoke_result_t<F, const CommandThunk*> CommandThunk::Walk(
-    F&& callback) const {
-  return const_cast<CommandThunk*>(this)->Walk(  // NOLINT
+template <typename F, Command::WalkCallback<F, const Command*>*>
+std::invoke_result_t<F, const Command*> Command::Walk(F&& callback) const {
+  return const_cast<Command*>(this)->Walk(  // NOLINT
       std::forward<F>(callback));
 }
-
-using Command ABSL_DEPRECATE_AND_INLINE() = CommandThunk;
 
 //===----------------------------------------------------------------------===//
 // Asynchronous commands

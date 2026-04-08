@@ -118,7 +118,6 @@ cc_library(
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:platform",
         "//xla/tsl/platform:status_macros",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log:check",
