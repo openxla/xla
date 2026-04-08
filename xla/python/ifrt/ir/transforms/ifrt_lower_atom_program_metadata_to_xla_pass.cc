@@ -30,9 +30,9 @@ limitations under the License.
 #include "xla/python/ifrt/ir/constants.h"
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
 #include "xla/python/ifrt/ir/ifrt_interfaces.h"
+#include "xla/python/ifrt/ir/support/sharding_conversions.h"
 #include "xla/python/ifrt/ir/transforms/passes.h"
 #include "xla/python/ifrt/ir/transforms/utils.h"
-#include "xla/python/ifrt/support/sharding_conversions.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {

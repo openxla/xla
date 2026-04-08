@@ -6,7 +6,7 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "is_rocm_configured",
 )
-load("//xla:xla.default.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_test", "xla_py_strict_test")
 load("//xla/tests:plugin.bzl", "plugins")
 load("//xla/tsl:package_groups.bzl", "DEFAULT_LOAD_VISIBILITY")
 load("//xla/tsl:tsl.bzl", "if_google")
@@ -29,7 +29,7 @@ NVIDIA_GPU_BACKENDS = [
     "b200",
     "gb200",
     "gb300",
-]
+] + if_google([], ["rtx6000pro"])
 
 # The generic "gpu" backend includes the actual backends in this list.
 NVIDIA_GPU_DEFAULT_BACKENDS = [
@@ -39,7 +39,7 @@ NVIDIA_GPU_DEFAULT_BACKENDS = [
     "b200",
     "gb200",
     "gb300",
-]
+] + if_google([], ["rtx6000pro"])
 
 AMD_GPU_DEFAULT_BACKENDS = ["amdgpu_any"]
 
@@ -86,6 +86,7 @@ def prepare_nvidia_gpu_backend_data(backends, disabled_backends, backend_tags, b
         "b200": (10, 0),
         "gb200": (10, 0),
         "gb300": (10, 3),
+        "rtx6000pro": (12, 0),
     }
     for gpu_backend in NVIDIA_GPU_BACKENDS:
         all_tags = new_backend_tags[gpu_backend]
@@ -509,3 +510,5 @@ def generate_backend_suites(backends = []):  # buildifier: disable=unnamed-macro
             name = "%s_tests" % backend,
             tags = ["xla_%s" % backend, "-broken", "manual"],
         )
+
+xla_py_test = xla_py_strict_test

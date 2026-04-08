@@ -53,7 +53,7 @@ TEST_P(DTypeSerDesTest, FromToFromProto) {
   for (int i = 1; i < DTypeProto::Kind_descriptor()->value_count(); ++i) {
     SCOPED_TRACE(DTypeProto::Kind_descriptor()->value(i)->name());
     DTypeProto proto;
-    proto.set_version_number(version().version_number().value());
+    proto.set_version_number(SerDesVersionNumber(0).value());
     proto.set_kind(static_cast<DTypeProto::Kind>(
         DTypeProto::Kind_descriptor()->value(i)->number()));
     TF_ASSERT_OK_AND_ASSIGN(DType dtype, DType::FromProto(proto));

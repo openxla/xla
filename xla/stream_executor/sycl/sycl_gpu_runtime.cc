@@ -20,6 +20,7 @@ limitations under the License.
 
 #include "absl/base/call_once.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/tsl/platform/errors.h"
 
 namespace stream_executor::sycl {
 
@@ -351,6 +352,20 @@ absl::Status SyclStreamPool::DestroyStream(int device_ordinal,
   VLOG(2) << "Successfully destroyed stream for device ordinal "
           << device_ordinal << ", stream pool size is " << stream_pool->size();
   return absl::OkStatus();
+}
+
+void SyclStreamPool::Reset() {
+  absl::MutexLock write_lock(&stream_pool_mu_);
+  for (auto& [device_ordinal, stream_pool] : stream_pool_map_) {
+    for (auto& stream_handle : stream_pool) {
+      if (stream_handle) {
+        stream_handle->wait();
+        stream_handle.reset();
+      }
+    }
+    stream_pool.clear();
+  }
+  stream_pool_map_.clear();
 }
 
 absl::StatusOr<SyclTimerProperties> SyclGetTimerProperties(int device_ordinal) {

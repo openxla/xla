@@ -15,7 +15,6 @@ limitations under the License.
 #include "xla/service/gpu/amdgpu_compiler.h"
 
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -231,8 +230,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult>
 AMDGPUCompiler::CompileTargetBinary(
     const HloModuleConfig& module_config, llvm::Module* llvm_module,
     const se::DeviceDescription& device_description, bool relocatable,
-    const HloModule* debug_module, const CompileOptions& options,
-    std::optional<int> shard_number) {
+    const HloModule* debug_module, std::optional<int> shard_number) {
   if (relocatable) {
     return Unimplemented("relocatable target binary is not implemented");
   }
@@ -244,12 +242,15 @@ AMDGPUCompiler::CompileTargetBinary(
     XLA_SCOPED_LOGGING_TIMER_IF(
         "AMDGPUCompiler::CompileTargetBinary - CompileToHsaco",
         module_config.debug_options().xla_enable_scoped_logging_timers());
+    // NODE: module_config.compilation_cache_key() is not used in the current
+    // implementation of CompileToHsaco since it invalidates the persistent
+    // file cache.
     TF_ASSIGN_OR_RETURN(
         hsaco_result,
         amdgpu::CompileToHsaco(llvm_module,
                                device_description.gpu_compute_capability(),
                                module_config.debug_options(),
-                               module_config.compilation_cache_key()));
+                               "" /*module_config.compilation_cache_key()*/));
   }
 
   return BackendCompileResult{"", std::move(hsaco_result.hsaco),

@@ -1561,20 +1561,14 @@ std::vector<const HloValue*> MsaAlgorithm::GenerateJointProcessedValues(
 void MsaAlgorithm::UpdateSyncDataMovementCandidatesForJointProcessedValues(
     const std::vector<const HloValue*>& joint_processed_values) {
   absl::flat_hash_set<const HloInstruction*> replaceable_sync_instructions;
-  absl::flat_hash_set<const HloInstruction*> do_not_touch_instructions;
   for (const HloValue* value : joint_processed_values) {
     for (const auto& use : value->GetUses()) {
-      bool is_use_replaceable_sync_candidate =
-          IsAsyncConversionCandidate(use.instruction);
-      if (is_use_replaceable_sync_candidate &&
-          !do_not_touch_instructions.contains(use.instruction)) {
+      if (IsAsyncConversionCandidate(use.instruction)) {
         replaceable_sync_instructions.insert(use.instruction);
       }
     }
     HloInstruction* inst = value->instruction();
-    bool is_inst_replaceable_sync_candidate = IsAsyncConversionCandidate(inst);
-    if (is_inst_replaceable_sync_candidate &&
-        !do_not_touch_instructions.contains(inst)) {
+    if (IsAsyncConversionCandidate(inst)) {
       replaceable_sync_instructions.insert(inst);
     }
   }
@@ -2346,10 +2340,13 @@ absl::Status MsaAlgorithm::AllocateAndScheduleExistingBlockPrefetches(
     AddToPendingChunks(interval, chunk_candidate);
 
     for (const HloUse& use : prefetch_done_value->GetUses()) {
-      allocations_->back()->AddUse(use);
-      // 2. Update the operands in alternate memory map.
-      operands_in_alternate_memory_map_[use.instruction].insert(
-          std::make_pair(use.operand_number, use.operand_index));
+      if (use.instruction->parent() ==
+          prefetch_done_value->instruction()->parent()) {
+        allocations_->back()->AddUse(use);
+        // 2. Update the operands in alternate memory map.
+        AddOperandToAlternateMemoryMap(use.instruction, use.operand_number,
+                                       use.operand_index);
+      }
     }
 
     // 3. Add the copy done and copy start values to the finalized values set.
@@ -2399,7 +2396,10 @@ absl::Status MsaAlgorithm::AllocateAndScheduleExistingBlockPrefetches(
       if (it != value_to_pinned_allocation.end()) {
         Allocation* allocation = it->second;
         for (const HloUse& use : original_value->GetUses()) {
-          allocation->AddUse(use);
+          if (use.instruction->parent() ==
+              original_value->instruction()->parent()) {
+            allocation->AddUse(use);
+          }
         }
       }
       finalized_values_.insert(aliased_value);
@@ -2501,9 +2501,11 @@ void MsaAlgorithm::ColocateAndFinalizeValuesAliasedToExistingBlockPrefetches(
         aliased_value_last_use_time));
     AddToPendingChunks(aliased_interval, aliased_chunk_candidate);
     for (const HloUse& use : aliased_value->GetUses()) {
-      allocations_->back()->AddUse(use);
-      operands_in_alternate_memory_map_[use.instruction].insert(
-          std::make_pair(use.operand_number, use.operand_index));
+      if (use.instruction->parent() == aliased_value->instruction()->parent()) {
+        allocations_->back()->AddUse(use);
+        AddOperandToAlternateMemoryMap(use.instruction, use.operand_number,
+                                       use.operand_index);
+      }
     }
     auto const sorted_position =
         std::lower_bound(prefetch_end_times.begin(), prefetch_end_times.end(),
@@ -2740,10 +2742,13 @@ absl::Status MsaAlgorithm::CreateNewBlockPrefetches(
         // to the alternate memory map or to the uses of the copy allocation.
         continue;
       }
-      allocations_->back()->AddUse(use);
-      // 2. Update the operands in alternate memory map.
-      operands_in_alternate_memory_map_[use.instruction].insert(
-          std::make_pair(use.operand_number, use.operand_index));
+      if (use.instruction->parent() ==
+          maybe_sliced_value->instruction()->parent()) {
+        allocations_->back()->AddUse(use);
+        // 2. Update the operands in alternate memory map.
+        AddOperandToAlternateMemoryMap(use.instruction, use.operand_number,
+                                       use.operand_index);
+      }
     }
 
     // 3. Add the value to the finalized values set.
@@ -2789,7 +2794,10 @@ absl::Status MsaAlgorithm::CreateNewBlockPrefetches(
       if (it != value_to_pinned_allocation.end()) {
         Allocation* allocation = it->second;
         for (const HloUse& use : original_value->GetUses()) {
-          allocation->AddUse(use);
+          if (use.instruction->parent() ==
+              original_value->instruction()->parent()) {
+            allocation->AddUse(use);
+          }
         }
       }
       finalized_values_.insert(aliased_value);
@@ -2890,9 +2898,11 @@ void MsaAlgorithm::ColocateAndFinalizeValuesAliasedToNewBlockPrefetches(
         aliased_value_last_use_time));
     AddToPendingChunks(aliased_interval, aliased_chunk_candidate);
     for (const HloUse& use : aliased_value->GetUses()) {
-      allocations_->back()->AddUse(use);
-      operands_in_alternate_memory_map_[use.instruction].insert(
-          std::make_pair(use.operand_number, use.operand_index));
+      if (use.instruction->parent() == aliased_value->instruction()->parent()) {
+        allocations_->back()->AddUse(use);
+        AddOperandToAlternateMemoryMap(use.instruction, use.operand_number,
+                                       use.operand_index);
+      }
     }
     auto const sorted_position =
         std::lower_bound(prefetch_end_times.begin(), prefetch_end_times.end(),

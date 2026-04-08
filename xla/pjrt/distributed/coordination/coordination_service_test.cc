@@ -19,24 +19,18 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
-#include "absl/base/thread_annotations.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/blocking_counter.h"
-#include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
-#include "xla/pjrt/distributed/coordination/coordination_client.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
-#include "xla/pjrt/distributed/coordination/coordination_service_error_util.h"
-#include "xla/tsl/distributed_runtime/call_options.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status.h"
@@ -52,15 +46,10 @@ using ::testing::Each;
 using ::testing::Ge;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
-using ::testing::Matcher;
 using ::testing::UnorderedElementsAre;
 using ::testing::UnorderedElementsAreArray;
 using ::testing::status::StatusIs;
 using ::tsl::proto_testing::EqualsProto;
-
-using tensorflow::CoordinatedJob;
-using tensorflow::CoordinationServiceConfig;
-using xla::coordination::CoordinatedTask;
 using xla::coordination::KeyValueEntry;
 
 constexpr absl::Duration kHeartbeatTimeout = absl::Seconds(2);
@@ -82,68 +71,13 @@ CoordinationService::Config GetCoordinationServiceConfig(int num_tasks,
   return config;
 }
 
-class TestCoordinationClient : public CoordinationClient {
- public:
-  TestCoordinationClient() = default;
-
-  absl::Status GetStatus() {
-    absl::MutexLock l(mu_);
-    return status_;
-  }
-
-  void RegisterTaskAsync(tsl::CallOptions* opts,
-                         const RegisterTaskRequest* request,
-                         RegisterTaskResponse* response,
-                         tsl::StatusCallback done) override {
-    done(absl::OkStatus());
-  }
-
-#define UNIMPLEMENTED(method)                                              \
-  void method##Async(const method##Request* request,                       \
-                     method##Response* response, tsl::StatusCallback done) \
-      override {                                                           \
-    done(absl::UnimplementedError(#method "Async"));                       \
-  }
-
-  UNIMPLEMENTED(ResetTask);
-  UNIMPLEMENTED(InsertKeyValue);
-  UNIMPLEMENTED(TryGetKeyValue);
-  UNIMPLEMENTED(IncrementKeyValue);
-  UNIMPLEMENTED(GetKeyValueDir);
-  UNIMPLEMENTED(DeleteKeyValue);
-  UNIMPLEMENTED(CancelBarrier);
-  UNIMPLEMENTED(GetAliveTasks);
-#undef UNIMPLEMENTED
-
-#define UNIMPLEMENTED_WITH_CALL_OPTS(method)                           \
-  void method##Async(                                                  \
-      tsl::CallOptions* call_opts, const method##Request* request,     \
-      method##Response* response, tsl::StatusCallback done) override { \
-    done(absl::UnimplementedError(#method "Async"));                   \
-  }
-
-  UNIMPLEMENTED_WITH_CALL_OPTS(GetKeyValue);
-  UNIMPLEMENTED_WITH_CALL_OPTS(Barrier);
-  UNIMPLEMENTED_WITH_CALL_OPTS(Heartbeat);
-  UNIMPLEMENTED_WITH_CALL_OPTS(ShutdownTask);
-  UNIMPLEMENTED_WITH_CALL_OPTS(PollForError);
-  UNIMPLEMENTED_WITH_CALL_OPTS(WatchJobState);
-#undef UNIMPLEMENTED_WITH_CALL_OPTS
-
- private:
-  absl::Mutex mu_;
-  absl::Status status_ ABSL_GUARDED_BY(mu_);
-};
-
 class CoordinationBarrierTest : public ::testing::Test {
  protected:
   explicit CoordinationBarrierTest(bool recoverable = false) {
     // Set up fake cluster with 3 tasks.
     const int num_tasks = 3;
     for (int i = 0; i < num_tasks; ++i) {
-      auto client = std::make_unique<TestCoordinationClient>();
       tasks_.push_back(i);
-      clients_.push_back(std::move(client));
     }
     CoordinationService::Config config =
         GetCoordinationServiceConfig(num_tasks, recoverable);
@@ -165,29 +99,18 @@ class CoordinationBarrierTest : public ::testing::Test {
 
   CoordinationService* GetCoordinationService() { return coord_service_.get(); }
 
-  std::vector<TestCoordinationClient*> GetClients() {
-    std::vector<TestCoordinationClient*> clients;
-    for (const auto& client : clients_) {
-      clients.push_back(client.get());
-    }
-    return clients;
-  }
-
  private:
   std::unique_ptr<CoordinationService> coord_service_;
   std::vector<CoordinationService::TaskId> tasks_;
-  std::vector<std::unique_ptr<TestCoordinationClient>> clients_;
 };
 
 // Sets up coordination service that expects 2 worker tasks.
 class CoordinateTwoTasksTest : public ::testing::Test {
  protected:
   // Set up coordination service.
-  void EnableCoordinationService(
-      bool enable_shutdown_barrier = false,
-      bool enable_register_barrier = false,
-      bool set_worker_job_recoverable = false,
-      bool allow_new_incarnation_to_reconnect = false) {
+  void EnableCoordinationService(bool enable_shutdown_barrier = false,
+                                 bool enable_register_barrier = false,
+                                 bool set_worker_job_recoverable = false) {
     CoordinationService::Config config = GetCoordinationServiceConfig(
         /*num_tasks=*/2, /*recoverable=*/set_worker_job_recoverable);
     config.heartbeat_timeout = kHeartbeatTimeout;
@@ -198,9 +121,6 @@ class CoordinateTwoTasksTest : public ::testing::Test {
       config.cluster_register_with_barrier = true;
       config.cluster_register_timeout = absl::Seconds(1);
     }
-    if (allow_new_incarnation_to_reconnect) {
-      config.allow_new_incarnation_to_reconnect = true;
-    }
     // Init service.
     coord_service_ =
         std::make_unique<CoordinationService>(tsl::Env::Default(), config);
@@ -208,10 +128,8 @@ class CoordinateTwoTasksTest : public ::testing::Test {
 
   const IncarnationId incarnation_0_{tsl::random::New64()};
   const IncarnationId incarnation_0_new_{tsl::random::New64()};
-  TestCoordinationClient client_0_;
   const IncarnationId incarnation_1_{tsl::random::New64()};
   const IncarnationId incarnation_1_new_{tsl::random::New64()};
-  TestCoordinationClient client_1_;
   std::unique_ptr<CoordinationService> coord_service_;
 };
 
@@ -253,9 +171,7 @@ TEST(CoordinationServiceTest,
      RegisterTask_AlreadyConnectedDifferentIncarnation_Fails) {
   const CoordinationService::Config config =
       GetCoordinationServiceConfig(/*num_tasks=*/1, /*recoverable=*/false);
-  CoordinatedTask task_0;
-  task_0.set_job_name("worker");
-  task_0.set_task_id(0);
+
   std::unique_ptr<CoordinationService> coord_service =
       std::make_unique<CoordinationService>(tsl::Env::Default(), config);
   // Task connects to coordination service.
@@ -437,18 +353,18 @@ TEST_F(CoordinateTwoTasksTest, TestTaskRestart) {
   EXPECT_THAT(s, StatusIs(absl::StatusCode::kAborted));
 }
 
-xla::coordination::CoordinatedTaskStateInfo info(
-    CoordinationService::TaskId task, IncarnationId incarnation_id,
-    xla::coordination::CoordinatedTaskState state) {
-  xla::coordination::CoordinatedTaskStateInfo info;
-  info.mutable_task()->set_task_id(task);
+xla::coordination::TaskInfo info(CoordinationService::TaskId task,
+                                 IncarnationId incarnation_id,
+                                 xla::coordination::TaskState state) {
+  xla::coordination::TaskInfo info;
+  info.set_task_id(task);
   info.set_incarnation(incarnation_id.value());
   info.set_state(state);
   return info;
 }
 
-TEST_F(CoordinateTwoTasksTest, WatchJobStateSucceeds) {
-  // This test calls WatchJobState on two successfully connected tasks.
+TEST_F(CoordinateTwoTasksTest, WatchTasksSucceeds) {
+  // This test calls WatchTasks on two successfully connected tasks.
 
   // Connect the tasks.
   EnableCoordinationService();
@@ -457,14 +373,13 @@ TEST_F(CoordinateTwoTasksTest, WatchJobStateSucceeds) {
 
   // Watch the job state, which should return immediately.
   absl::Notification done;
-  coord_service_->WatchJobState(
-      std::nullopt,
-      [&, this](std::vector<xla::coordination::CoordinatedTaskStateInfo> got,
-                int64_t version_number) {
-        using State = xla::coordination::CoordinatedTaskState;
-        std::vector<xla::coordination::CoordinatedTaskStateInfo> want(2);
-        want[0] = info(0, incarnation_0_, State::TASKSTATE_CONNECTED);
-        want[1] = info(1, incarnation_1_, State::TASKSTATE_CONNECTED);
+  coord_service_->WatchTasks(
+      std::nullopt, [&, this](std::vector<xla::coordination::TaskInfo> got,
+                              int64_t version_number) {
+        using State = xla::coordination::TaskState;
+        std::vector<xla::coordination::TaskInfo> want(2);
+        want[0] = info(0, incarnation_0_, State::CONNECTED);
+        want[1] = info(1, incarnation_1_, State::CONNECTED);
         EXPECT_THAT(got, UnorderedElementsAre(EqualsProto(want[0]),
                                               EqualsProto(want[1])));
         done.Notify();
@@ -472,8 +387,8 @@ TEST_F(CoordinateTwoTasksTest, WatchJobStateSucceeds) {
   done.WaitForNotification();
 }
 
-TEST_F(CoordinateTwoTasksTest, WatchJobStateReturnsDisconnected) {
-  // This test calls WatchJobState on one successfully connected task and one
+TEST_F(CoordinateTwoTasksTest, WatchTasksReturnsDisconnected) {
+  // This test calls WatchTasks on one successfully connected task and one
   // disconnected task.
 
   // Connect the tasks. Disconnect task 1.
@@ -484,14 +399,13 @@ TEST_F(CoordinateTwoTasksTest, WatchJobStateReturnsDisconnected) {
 
   // Watch the job state, which should return immediately.
   absl::Notification done;
-  coord_service_->WatchJobState(
-      std::nullopt,
-      [&, this](std::vector<xla::coordination::CoordinatedTaskStateInfo> got,
-                int64_t version_number) {
-        using State = xla::coordination::CoordinatedTaskState;
-        std::vector<xla::coordination::CoordinatedTaskStateInfo> want(2);
-        want[0] = info(0, incarnation_0_, State::TASKSTATE_CONNECTED);
-        want[1] = info(1, incarnation_1_, State::TASKSTATE_DISCONNECTED);
+  coord_service_->WatchTasks(
+      std::nullopt, [&, this](std::vector<xla::coordination::TaskInfo> got,
+                              int64_t version_number) {
+        using State = xla::coordination::TaskState;
+        std::vector<xla::coordination::TaskInfo> want(2);
+        want[0] = info(0, incarnation_0_, State::CONNECTED);
+        want[1] = info(1, incarnation_1_, State::DISCONNECTED);
         EXPECT_THAT(got, UnorderedElementsAre(EqualsProto(want[0]),
                                               EqualsProto(want[1])));
         EXPECT_THAT(version_number, Ge(0));
@@ -500,8 +414,8 @@ TEST_F(CoordinateTwoTasksTest, WatchJobStateReturnsDisconnected) {
   done.WaitForNotification();
 }
 
-TEST_F(CoordinateTwoTasksTest, WatchJobStateReturnsNewIncarnation) {
-  // This test calls WatchJobState after one task has restarted with a new
+TEST_F(CoordinateTwoTasksTest, WatchTasksReturnsNewIncarnation) {
+  // This test calls WatchTasks after one task has restarted with a new
   // incarnation.
   EnableCoordinationService();
   ASSERT_OK(coord_service_->RegisterTask(0, incarnation_0_));
@@ -511,14 +425,13 @@ TEST_F(CoordinateTwoTasksTest, WatchJobStateReturnsNewIncarnation) {
 
   // Watch the job state, which should return immediately.
   absl::Notification done;
-  coord_service_->WatchJobState(
-      std::nullopt,
-      [&, this](std::vector<xla::coordination::CoordinatedTaskStateInfo> got,
-                int64_t version_number) {
-        using State = xla::coordination::CoordinatedTaskState;
-        std::vector<xla::coordination::CoordinatedTaskStateInfo> want(2);
-        want[0] = info(0, incarnation_0_, State::TASKSTATE_CONNECTED);
-        want[1] = info(1, incarnation_1_ + 1, State::TASKSTATE_CONNECTED);
+  coord_service_->WatchTasks(
+      std::nullopt, [&, this](std::vector<xla::coordination::TaskInfo> got,
+                              int64_t version_number) {
+        using State = xla::coordination::TaskState;
+        std::vector<xla::coordination::TaskInfo> want(2);
+        want[0] = info(0, incarnation_0_, State::CONNECTED);
+        want[1] = info(1, incarnation_1_ + 1, State::CONNECTED);
         EXPECT_THAT(got, UnorderedElementsAre(EqualsProto(want[0]),
                                               EqualsProto(want[1])));
         EXPECT_THAT(version_number, Ge(0));
@@ -527,8 +440,8 @@ TEST_F(CoordinateTwoTasksTest, WatchJobStateReturnsNewIncarnation) {
   done.WaitForNotification();
 }
 
-TEST_F(CoordinateTwoTasksTest, WatchJobStateBlocksUntilChange) {
-  // This test calls checks that WatchJobState blocks until the job state
+TEST_F(CoordinateTwoTasksTest, WatchTasksBlocksUntilChange) {
+  // This test calls checks that WatchTasks blocks until the job state
   // changes.
 
   // Connect the tasks. Disconnect task 1.
@@ -539,10 +452,9 @@ TEST_F(CoordinateTwoTasksTest, WatchJobStateBlocksUntilChange) {
   // Watch the job state, which should return immediately.
   absl::Notification done_1;
   int64_t version_number = -1;
-  coord_service_->WatchJobState(
+  coord_service_->WatchTasks(
       std::nullopt,
-      [&](std::vector<xla::coordination::CoordinatedTaskStateInfo> got,
-          int64_t v) {
+      [&](std::vector<xla::coordination::TaskInfo> got, int64_t v) {
         EXPECT_THAT(v, Ge(0));
         version_number = v;
         done_1.Notify();
@@ -551,14 +463,13 @@ TEST_F(CoordinateTwoTasksTest, WatchJobStateBlocksUntilChange) {
 
   // Watch the job state again, which should block.
   absl::Notification done_2;
-  coord_service_->WatchJobState(
+  coord_service_->WatchTasks(
       version_number,
-      [&, this](std::vector<xla::coordination::CoordinatedTaskStateInfo> got,
-                int64_t v) {
-        using State = xla::coordination::CoordinatedTaskState;
-        std::vector<xla::coordination::CoordinatedTaskStateInfo> want(2);
-        want[0] = info(0, incarnation_0_, State::TASKSTATE_CONNECTED);
-        want[1] = info(1, incarnation_1_, State::TASKSTATE_DISCONNECTED);
+      [&, this](std::vector<xla::coordination::TaskInfo> got, int64_t v) {
+        using State = xla::coordination::TaskState;
+        std::vector<xla::coordination::TaskInfo> want(2);
+        want[0] = info(0, incarnation_0_, State::CONNECTED);
+        want[1] = info(1, incarnation_1_, State::DISCONNECTED);
         EXPECT_THAT(got, UnorderedElementsAre(EqualsProto(want[0]),
                                               EqualsProto(want[1])));
         EXPECT_THAT(v, Ge(version_number));
@@ -573,8 +484,8 @@ TEST_F(CoordinateTwoTasksTest, WatchJobStateBlocksUntilChange) {
   done_2.WaitForNotification();
 }
 
-TEST_F(CoordinateTwoTasksTest, WatchJobStateAfterTwoStateChanges) {
-  // This test calls WatchJobState after two state changes.
+TEST_F(CoordinateTwoTasksTest, WatchTasksAfterTwoStateChanges) {
+  // This test calls WatchTasks after two state changes.
   EnableCoordinationService();
   ASSERT_OK(coord_service_->RegisterTask(0, incarnation_0_));
   ASSERT_OK(coord_service_->RegisterTask(1, incarnation_1_));
@@ -582,14 +493,13 @@ TEST_F(CoordinateTwoTasksTest, WatchJobStateAfterTwoStateChanges) {
   // Watch the job state, which should return immediately.
   absl::Notification done_1;
   int64_t version_number = -1;
-  coord_service_->WatchJobState(
+  coord_service_->WatchTasks(
       std::nullopt,
-      [&, this](std::vector<xla::coordination::CoordinatedTaskStateInfo> got,
-                int64_t v) {
-        using State = xla::coordination::CoordinatedTaskState;
-        std::vector<xla::coordination::CoordinatedTaskStateInfo> want(2);
-        want[0] = info(0, incarnation_0_, State::TASKSTATE_CONNECTED);
-        want[1] = info(1, incarnation_1_, State::TASKSTATE_CONNECTED);
+      [&, this](std::vector<xla::coordination::TaskInfo> got, int64_t v) {
+        using State = xla::coordination::TaskState;
+        std::vector<xla::coordination::TaskInfo> want(2);
+        want[0] = info(0, incarnation_0_, State::CONNECTED);
+        want[1] = info(1, incarnation_1_, State::CONNECTED);
         EXPECT_THAT(got, UnorderedElementsAre(EqualsProto(want[0]),
                                               EqualsProto(want[1])));
         EXPECT_THAT(v, Ge(0));
@@ -606,14 +516,13 @@ TEST_F(CoordinateTwoTasksTest, WatchJobStateAfterTwoStateChanges) {
   // Watch the job state, which should return immediately because the state has
   // already changed.
   absl::Notification done_2;
-  coord_service_->WatchJobState(
+  coord_service_->WatchTasks(
       version_number,
-      [&, this](std::vector<xla::coordination::CoordinatedTaskStateInfo> got,
-                int64_t v) {
-        using State = xla::coordination::CoordinatedTaskState;
-        std::vector<xla::coordination::CoordinatedTaskStateInfo> want(2);
-        want[0] = info(0, incarnation_0_, State::TASKSTATE_CONNECTED);
-        want[1] = info(1, incarnation_1_ + 1, State::TASKSTATE_CONNECTED);
+      [&, this](std::vector<xla::coordination::TaskInfo> got, int64_t v) {
+        using State = xla::coordination::TaskState;
+        std::vector<xla::coordination::TaskInfo> want(2);
+        want[0] = info(0, incarnation_0_, State::CONNECTED);
+        want[1] = info(1, incarnation_1_ + 1, State::CONNECTED);
         EXPECT_THAT(got, UnorderedElementsAre(EqualsProto(want[0]),
                                               EqualsProto(want[1])));
         EXPECT_THAT(v, Ge(version_number));
@@ -1809,10 +1718,6 @@ TEST_F(CoordinateTwoTasksTest, RecoverableTaskWillNotPropagateError) {
 
   ASSERT_OK(
       coord_service_->ReportTaskError(0, absl::InternalError("test_error")));
-
-  // Since no error propagation for recoverable tasks, other tasks should work
-  // as normal.
-  TF_EXPECT_OK(client_1_.GetStatus());
 }
 
 TEST_F(CoordinateTwoTasksTest,
@@ -1857,30 +1762,11 @@ TEST_F(CoordinateTwoTasksTest,
 
   EXPECT_THAT(coord_service_->RecordHeartbeat(0, incarnation_0_),
               StatusIs(absl::StatusCode::kAborted));
-  // Since no error propagation for recoverable tasks, other tasks should work
-  // as normal.
-  TF_EXPECT_OK(client_1_.GetStatus());
 
   // Reset and register the error task again, both tasks should be healthy.
   TF_EXPECT_OK(coord_service_->ResetTask(0));
   TF_EXPECT_OK(coord_service_->RegisterTask(0, incarnation_0_new_));
   TF_EXPECT_OK(coord_service_->RecordHeartbeat(0, incarnation_0_new_));
-  TF_EXPECT_OK(client_1_.GetStatus());
-}
-
-TEST_F(CoordinateTwoTasksTest, UnavailableTaskCanReconnect) {
-  EnableCoordinationService(
-      /*enable_shutdown_barrier=*/false,
-      /*enable_register_barrier=*/false,
-      /*set_worker_job_recoverable=*/false,
-      /*allow_new_incarnation_to_reconnect=*/true);
-
-  TF_EXPECT_OK(coord_service_->RegisterTask(0, incarnation_0_));
-
-  ASSERT_OK(coord_service_->ReportTaskError(
-      0, MakeCoordinationError(absl::UnavailableError("test_error"))));
-
-  TF_EXPECT_OK(coord_service_->RegisterTask(0, incarnation_0_new_));
 }
 
 TEST_F(CoordinateTwoTasksTest, DoNotAllowPollForErrorIfNotInCluster) {

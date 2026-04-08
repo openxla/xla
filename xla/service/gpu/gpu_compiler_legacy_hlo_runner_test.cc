@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/ascii.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/tests/hlo_legacy_gpu_test_base.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -39,7 +40,6 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_compiler.h"
-#include "xla/service/gpu/tests/hlo_legacy_gpu_test_base.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
@@ -214,9 +214,12 @@ class KernelCacheTest : public HloLegacyGpuTestBase {
     CHECK(tsl::Env::Default()->LocalTempFilename(&cache_file_name_));
     HloModuleConfig config;
     config.set_debug_options(GetDebugOptionsForTest());
-    ASSERT_OK_AND_ASSIGN(bool can_use_link_modules,
-                         dynamic_cast<GpuCompiler*>(compiler())
-                             ->CanUseLinkModules(config, device_description()));
+    ASSERT_OK_AND_ASSIGN(auto stream_exec,
+                         GetTestPlatform()->ExecutorForDevice(0));
+    ASSERT_OK_AND_ASSIGN(
+        bool can_use_link_modules,
+        dynamic_cast<GpuCompiler*>(compiler())
+            ->CanUseLinkModules(config, device_description(), stream_exec));
     if (!can_use_link_modules) {
       GTEST_SKIP() << "Caching compiled kernels requires support of linking.";
     }

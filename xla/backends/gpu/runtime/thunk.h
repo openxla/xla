@@ -38,8 +38,8 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
-#include "xla/backends/gpu/runtime/collective_multimem_registry.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/thunk_kind.pb.h"
@@ -60,35 +60,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/tsl/platform/status_macros.h"
 
-namespace xla {
-namespace gpu {
-
-// Execution stream id allows to specify what Gpu stream Thunk should be using
-// for launching device work (kernels, library calls, etc.). By default all
-// thunks use stream #0, which is the default compute stream of an XLA
-// executable.
-//
-// Stream synchronizations are explicit and represented as WaitForStreams thunk
-// in a ThunkSequence. When ThunkSequence converted to CommandBuffer, execution
-// streams mapped to concurrent execution scopes and barriers between them.
-//
-// IMPORTANT: Async execution semantics and execution stream id
-//
-// For async thunks (i.e. thunks corresponding to `all-reduce-start` and
-// `all-reduce-done`) execution stream id means NOT a stream where the async
-// operation must execute, but a stream that async operation must be
-// synchronized with:
-//
-//   - Start operation must wait for the completion of all launched work on the
-//     execution stream id (usually by adding a stream wait) and after that
-//     launch async work on implementation defined extra stream (can be borrowed
-//     from a pool)
-//
-//   - Corresponding Done operation must synchronize execution stream id with
-//     an implementation defined stream that is running async work, again
-//     usually by adding a stream wait.
-//
-TSL_LIB_GTL_DEFINE_INT_TYPE(ExecutionStreamId, uint64_t);
+namespace xla::gpu {
 
 // Unique identifier for async events. The same identifier is expected to be
 // shared between a pair of StartThunk and corresponding DoneThunk. It is used
@@ -123,39 +95,22 @@ TSL_LIB_GTL_DEFINE_INT_TYPE(AsyncEventsUniqueId, uint64_t);
 // different threads and coordinate resource acquisition via rendezvous.
 class Thunk {
  public:
-  using ExecutionStreamIdMap =
-      absl::flat_hash_map<ExecutionStreamId, se::Stream*>;
-
   using BufferUses = absl::InlinedVector<BufferUse, 4>;
   using ResourceUses = absl::InlinedVector<ResourceUse, 1>;
-
-  // When default execution stream id is used, operations launched by a thunk
-  // must be synchronized with a stream passed in ExecuteOptions.
-  static constexpr auto kDefaultExecutionStreamId = ExecutionStreamId(0);
 
   enum Kind {
     // # go/keep-sorted start
     kAllGather,
-    kAllGatherDone,
-    kAllGatherStart,
     kAllReduce,
-    kAllReduceDone,
-    kAllReduceStart,
     kAllToAll,
-    kAllToAllDone,
-    kAllToAllStart,
     kAsyncDone,
     kAsyncStart,
     kBuffersDebugChecksum,
     kBuffersDebugFloatCheck,
     kCollectiveBroadcast,
-    kCollectiveBroadcastDone,
-    kCollectiveBroadcastStart,
     kCollectiveKernel,
     kCollectiveMetadata,
     kCollectivePermute,
-    kCollectivePermuteDone,
-    kCollectivePermuteStart,
     kCommandBuffer,
     kConditional,
     kConvolution,
@@ -182,32 +137,20 @@ class Thunk {
     kMemset32BitValue,
     kMemzero,
     kNorm,
-    kNvshmemAllReduceDone,
-    kNvshmemAllReduceStart,
+    kNvshmemAllReduce,
     kNvshmemCollectivePermute,
-    kNvshmemCollectivePermuteDone,
-    kNvshmemCollectivePermuteStart,
     kNvshmemRecv,
-    kNvshmemRecvDone,
     kNvshmemSend,
-    kNvshmemSendDone,
     kOutfeed,
     kPartitionId,
     kRaggedAllToAll,
-    kRaggedAllToAllDone,
-    kRaggedAllToAllStart,
     kRecv,
-    kRecvDone,
     kReduceScatter,
-    kReduceScatterDone,
-    kReduceScatterStart,
     kReplicaId,
     kSelectK,
     kSend,
-    kSendDone,
     kSequential,
     kTriangularSolve,
-    kWaitForStreams,
     kWhile
     // go/keep-sorted end
   };
@@ -239,8 +182,6 @@ class Thunk {
                                            ThunkId thunk_id);
 
     std::string profile_annotation;
-
-    ExecutionStreamId execution_stream_id = kDefaultExecutionStreamId;
 
     ThunkId thunk_id = ThunkId{0};
 
@@ -280,8 +221,6 @@ class Thunk {
     CollectiveCliqueRequests* collective_clique_requests = nullptr;
     // Collective memory requests for preparing symmetric allocations.
     CollectiveMemoryRequests* collective_memory_requests = nullptr;
-    // Multimem registry for preparing multimem objects.
-    CollectiveMultimemRegistry* absl_nonnull multimem_registry = nullptr;
     // Stream executor for the thunk.
     se::StreamExecutor* absl_nonnull executor = nullptr;
     // Buffer allocations for the thunk.
@@ -323,9 +262,6 @@ class Thunk {
     // Collective memory acquired based on memory requests.
     CollectiveMemory* collective_memory = nullptr;
 
-    // Multimem registry for preparing collective communicators.
-    CollectiveMultimemRegistry* multicast_memory_registry = nullptr;
-
     // XLA FFI execution context.
     const ffi::ExecutionContext* ffi_execution_context = nullptr;
 
@@ -353,7 +289,7 @@ class Thunk {
         CollectiveParams* collective_params,
         CollectiveCliques* collective_cliques,
         CollectiveMemory* collective_memory,
-        ExecutionStreamIdMap additional_compute_streams = {},
+        std::vector<se::Stream*> additional_compute_streams = {},
         ExecutionScopedState* execution_scoped_state = nullptr);
 
     // Constructs execute parameters from an existing parameters but with
@@ -394,8 +330,8 @@ class Thunk {
     // XLA FFI execution context.
     const ffi::ExecutionContext* ffi_execution_context;
 
-    // Additional compute streams on which thunks launch operations.
-    ExecutionStreamIdMap additional_compute_streams;
+    // Additional compute streams on which thunks can launch operations.
+    std::vector<se::Stream*> additional_compute_streams;
 
     // Execution scoped state shared between prepare, initialize and execute.
     ExecutionScopedState* execution_scoped_state = nullptr;
@@ -417,7 +353,7 @@ class Thunk {
                   SendDeviceMemoryFunction* send_device_memory_function,
                   RecvDeviceMemoryFunction* recv_device_memory_function,
                   const ffi::ExecutionContext* ffi_execution_context,
-                  ExecutionStreamIdMap additional_compute_streams = {},
+                  std::vector<se::Stream*> additional_compute_streams = {},
                   ExecutionScopedState* execution_scoped_state = nullptr,
                   bool mock_collectives = false, int64_t execution_id = 0);
   };
@@ -488,16 +424,6 @@ class Thunk {
     sink.Append(KindToString(kind));
   }
 
-  ExecutionStreamId execution_stream_id() const {
-    return thunk_info_.execution_stream_id;
-  }
-  void set_execution_stream_id(ExecutionStreamId execution_stream_id) {
-    thunk_info_.execution_stream_id = execution_stream_id;
-  }
-
-  static absl::StatusOr<se::Stream*> GetStreamForExecution(
-      ExecutionStreamId stream_id, const ExecuteParams& params);
-
   // Returns `true` if this thunk requires inter-GPU communication.
   bool IsCollective() const;
 
@@ -556,6 +482,16 @@ class Thunk {
     return control_predecessors_;
   }
 
+  // In scheduling mode kConcurrentRegions, thunks sequences are divided into
+  // regions. Thunks can be executed concurrently within the same region, but
+  // regions will be executed sequentially.
+  std::optional<uint64_t> concurrent_region_id() const {
+    return concurrent_region_id_;
+  }
+  void set_concurrent_region_id(uint64_t concurrent_region_id) {
+    concurrent_region_id_ = concurrent_region_id;
+  }
+
   virtual std::optional<AsyncEventsUniqueId> GetAsyncEventsUniqueId() const {
     return std::nullopt;
   }
@@ -581,6 +517,10 @@ class Thunk {
   // sequence in concurrent mode, and we should make sure that it does not
   // violate the control dependency in the original computation.
   std::vector<const Thunk*> control_predecessors_;
+
+  // Used in scheduling mode kConcurrentRegions only. More details in the
+  // comments on the getter method above.
+  std::optional<uint64_t> concurrent_region_id_;
 };
 
 // A sequence of thunks.
@@ -637,7 +577,6 @@ std::invoke_result_t<F, const Thunk*> Thunk::Walk(F&& callback) const {
       std::forward<F>(callback));
 }
 
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_RUNTIME_THUNK_H_

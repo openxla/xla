@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_COLLECTIVES_NCCL_COMMUNICATOR_H_
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -50,10 +51,21 @@ limitations under the License.
 
 #if NCCL_VERSION_CODE >= 22800
 // Device initiated collective operations were added in NCCL 2.28.0.
-#include "third_party/nccl/nccl_device.h"
-#endif  // NCCL_VERSION_CODE >= 22800
+#include "third_party/nccl/nccl_device.h"  // IWYU pragma: keep
+#endif                                          // NCCL_VERSION_CODE >= 22800
 
 namespace xla::gpu {
+
+class NcclSignalDesc final : public Communicator::SignalDesc {
+ public:
+  NcclSignalDesc(int sig_idx, int ctx) : sig_idx_(sig_idx), ctx_(ctx) {}
+  int sig_idx() const { return sig_idx_; }
+  int ctx() const { return ctx_; }
+
+ private:
+  int sig_idx_;
+  int ctx_;
+};
 
 // XLA collectives communicator wrapping an NCCL communicator.
 class NcclCommunicator : public GpuCommunicator {
@@ -143,6 +155,16 @@ class NcclCommunicator : public GpuCommunicator {
   Future<> Recv(se::DeviceAddressBase recv_buffer, PrimitiveType dtype,
                 size_t count, RankId peer, const Executor& executor) final;
 
+  Future<> Put(se::DeviceAddressBase send_buffer, SymmetricMemory* recv_buffer,
+               size_t offset, size_t count, RankId peer,
+               const Executor& executor) final;
+
+  Future<> Signal(RankId peer, const SignalDesc& signal_desc,
+                  const Executor& executor) final;
+
+  Future<> WaitSignal(RankId peer, int op_cnt, const SignalDesc& signal_desc,
+                      const Executor& executor) final;
+
   std::string ToString() const final;
 
   ncclComm_t comm() const { return comm_; }
@@ -212,6 +234,18 @@ class NcclCommunicator : public GpuCommunicator {
   absl::Status LaunchRecv(se::DeviceAddressBase recv_buffer,
                           PrimitiveType dtype, size_t count, RankId peer,
                           const Executor& executor) final;
+
+  absl::Status LaunchPut(se::DeviceAddressBase send_buffer,
+                         SymmetricMemory* recv_buffer, size_t offset,
+                         size_t count, RankId peer,
+                         const Executor& executor) final;
+
+  absl::Status LaunchSignal(RankId peer, const SignalDesc& signal_desc,
+                            const Executor& executor) final;
+
+  absl::Status LaunchWaitSignal(RankId peer, int op_cnt,
+                                const SignalDesc& signal_desc,
+                                const Executor& executor) final;
 
   // Polls the communicator until any pending non-blocking operations are "done"
   // or aborted.
@@ -301,9 +335,12 @@ class NcclDeviceCommunicator : public GpuDeviceCommunicator {
 
   PlatformCommunicatorHandle platform_comm() const final;
 
+  // Returns the size of the load/store accessible communication.
+  int64_t lsa_size() const final { return dev_comm_.lsaSize; };
+
   std::string ToString() const final;
 
-  PackedKernelArg PackKernelArg() const final;
+  se::PackedKernelArg PackKernelArg() const final;
 
  private:
   NcclDeviceCommunicator(const NcclCommunicator* comm, ncclDevComm dev_comm);

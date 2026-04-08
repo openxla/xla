@@ -151,36 +151,17 @@ absl::Status CopyCollectiveMetadataToDevice(
 absl::StatusOr<bool> CollectiveKernelThunk::IsSupported(
     const GpuCliqueKey& clique_key, se::StreamExecutor& executor,
     const CollectiveParams& collective_params) const {
-  if (!collective_kernel_enabled_) {
-    XLA_VLOG_DEVICE(3, executor.device_ordinal())
-        << "Collective kernel is not enabled.";
+  absl::Status status = IsAllReduceKernelSupported(
+      collective_kernel_enabled_, executor.GetDeviceDescription(),
+      /*num_operands= */ buffers_.size(), reduction_kind_,
+      clique_key.num_local_participants(), buffers_[0].element_count,
+      collective_config_.operand_element_type[0], clique_key.is_local(),
+      is_multimem_enabled_, collective_config_.replica_groups);
+  if (absl::IsUnimplemented(status)) {
+    VLOG(3) << "Collective kernel not supported: " << status.message();
     return false;
   }
-
-  // TODO(b/407736956): Support variadic all-reduce.
-  if (buffers_.size() != 1) {
-    XLA_VLOG_DEVICE(3, executor.device_ordinal())
-        << "Variadic arguments are not implemented for collective kernels.";
-    return false;
-  }
-  const int64_t num_elements = buffers_[0].element_count;
-  const int64_t input_size_bytes = GetInputSizeBytes();
-  const AllReduceStrategy strategy =
-      GetAllReduceStrategy(input_size_bytes, is_multimem_enabled_);
-  // Custom all-reduce strategy is only supported for small inputs.
-  if (input_size_bytes > GetMaxSupportedAllReduceSizeBytes(strategy)) {
-    XLA_VLOG_DEVICE(3, executor.device_ordinal())
-        << "Custom all-reduce strategy is only supported for small inputs.";
-    return false;
-  }
-
-  // Only single-host collectives are supported for now.
-  if (!clique_key.is_local()) {
-    XLA_VLOG_DEVICE(3, executor.device_ordinal())
-        << "Cross-host symmetric memory collectives are not supported.";
-    return false;
-  }
-
+  TF_RETURN_IF_ERROR(status);
   for (const GlobalDeviceId& device : clique_key.devices()) {
     TF_ASSIGN_OR_RETURN(const int peer_device_id,
                         GetLocalDeviceId(device, collective_params));
@@ -190,10 +171,7 @@ absl::StatusOr<bool> CollectiveKernelThunk::IsSupported(
       return false;
     }
   }
-
-  return IsAllReduceKernelSupported(
-      clique_key.num_local_participants(), num_elements,
-      collective_config_.operand_element_type[0], reduction_kind_, strategy);
+  return true;
 }
 
 absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
@@ -202,8 +180,7 @@ absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
 
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
-      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_,
-                                /*is_p2p=*/false));
+      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_));
 
   TF_ASSIGN_OR_RETURN(
       bool use_collective_kernel,
@@ -284,8 +261,7 @@ int64_t CollectiveKernelThunk::GetInputSizeBytes() const {
 absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
-      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_,
-                                /*is_p2p=*/false));
+      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_));
   const std::optional<RankId> rank =
       clique_key.rank(params.collective_params->global_device_id);
   TF_RET_CHECK(rank.has_value())
@@ -449,8 +425,7 @@ absl::Status CollectiveKernelThunk::ExecuteOnStream(
 
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
-      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_,
-                                /*is_p2p=*/false));
+      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_));
   const int32_t num_devices = clique_key.num_devices();
 
   // TODO(b/407736956): Support variadic all-reduce.

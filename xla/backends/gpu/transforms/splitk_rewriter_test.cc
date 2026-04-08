@@ -31,14 +31,17 @@ namespace xla {
 namespace gpu {
 namespace {
 
+se::DeviceDescription GetDeviceDescription() {
+  return se::DeviceDescription::FromProto(
+             ParseTextProto<stream_executor::GpuDeviceInfoProto>(
+                 "core_count: 132")
+                 .value())
+      .value();
+}
+
 class SplitkRewriterTest : public HloHardwareIndependentTestBase {
  public:
-  SplitkRewriterTest()
-      : rewriter_(se::DeviceDescription::FromProto(
-                      ParseTextProto<stream_executor::GpuDeviceInfoProto>(
-                          "core_count: 132")
-                          .value())
-                      .value()) {}
+  SplitkRewriterTest() : rewriter_(GetDeviceDescription()) {}
 
  protected:
   SplitkRewriter rewriter_;
@@ -151,6 +154,7 @@ TEST_F(SplitkRewriterTest, NoSplitKIfEnoughWork) {
                           rewriter_.HloModulePass::Run(module.get()));
   EXPECT_FALSE(changed);
 }
+
 
 TEST_F(SplitkRewriterTest, DoNotSplitKS32) {
   // We would split K otherwise, but for s32 operands we don't, because neither

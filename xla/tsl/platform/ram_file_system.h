@@ -41,10 +41,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/file_statistics.h"
 #include "xla/tsl/platform/file_system.h"
-#include "xla/tsl/platform/types.h"
 
 #ifdef PLATFORM_WINDOWS
 #undef DeleteFile
@@ -188,7 +186,7 @@ class RamFileSystem : public FileSystem {
     return absl::UnimplementedError("");
   }
 
-  absl::Status FileExists(const std::string& fname_,
+  absl::Status FileExists(absl::string_view fname_,
                           TransactionToken* token) override {
     FileStatistics stat;
     auto fname = StripSchemePrefix(fname_);
@@ -360,18 +358,18 @@ class RamFileSystem : public FileSystem {
     return ret;
   }
 
-  bool StartsWith(std::string s, std::string prefix) {
+  bool StartsWith(absl::string_view s, absl::string_view prefix) {
     return absl::StartsWith(s, prefix);
   }
 
-  std::string StripPrefix(std::string s, std::string prefix) {
+  std::string StripPrefix(absl::string_view s, absl::string_view prefix) {
     if (absl::StartsWith(s, prefix)) {
-      return s.erase(0, prefix.size());
+      s.remove_prefix(prefix.size());
     }
-    return s;
+    return std::string(s);
   }
 
-  std::string StripSchemePrefix(std::string name) {
+  std::string StripSchemePrefix(absl::string_view name) {
     std::string s = StripPrefix(name, scheme_);
     if (*(s.rbegin()) == '/') {
       s.pop_back();

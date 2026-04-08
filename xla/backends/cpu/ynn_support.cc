@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
@@ -130,7 +131,29 @@ bool IsBitcastOpSupportedByYnn(const HloInstruction* hlo) {
     return false;
   }
   const HloInstruction* input = hlo->operand(0);
+  if (!IsLayoutSupportedByYnn(hlo->shape()) ||
+      !IsLayoutSupportedByYnn(input->shape())) {
+    return false;
+  }
+
   return hlo->shape().element_type() == input->shape().element_type();
+}
+
+bool IsReshapeOpSupportedByYnn(const HloInstruction* hlo) {
+  CHECK_EQ(hlo->opcode(), HloOpcode::kReshape);
+  if (!YnnType(hlo->shape().element_type()).ok()) {
+    return false;
+  }
+  const HloInstruction* input = hlo->operand(0);
+  if (hlo->shape().element_type() != input->shape().element_type()) {
+    return false;
+  }
+  if (!IsLayoutSupportedByYnn(hlo->shape()) ||
+      !IsLayoutSupportedByYnn(input->shape())) {
+    return false;
+  }
+
+  return ShapeUtil::ReshapeIsBitcast(input->shape(), hlo->shape());
 }
 
 bool IsConstantSupportedByYnn(const HloInstruction* hlo) {
@@ -265,7 +288,8 @@ bool IsReduceLikeOpSupportedByYnn(const HloInstruction* hlo) {
     HloInstruction* init = reduce_like_op->init_values().front();
     const PrimitiveType type = init->shape().element_type();
     // TODO(ashaposhnikov): The list of supported types can be extended.
-    return type == F32 && type == reduce_like_op->shape().element_type();
+    return type == reduce_like_op->shape().element_type() &&
+           (type == F32 || type == BF16);
   };
 
   if (hlo->opcode() == HloOpcode::kReduce) {
@@ -340,14 +364,19 @@ bool IsReduceLikeOpOffloadedToYnn(const HloInstruction* hlo) {
     return false;
   }
   switch (input->opcode()) {
+    // We may consider allowing the ops below as input in the future.
+    // For now they are excluded because the codegen for the fusion with reduce
+    // can be faster.
     case HloOpcode::kMultiply:
-    case HloOpcode::kBitcast:
     case HloOpcode::kBroadcast:
     case HloOpcode::kSlice:
     case HloOpcode::kConcatenate:
-    case HloOpcode::kConvert:
-    case HloOpcode::kReshape:
       return false;
+    case HloOpcode::kConvert: {
+      PrimitiveType from = input->operand(0)->shape().element_type();
+      PrimitiveType to = input->shape().element_type();
+      return (from == BF16 && to == F32) || (from == S8 && to == S32);
+    }
     default: {
       return true;
     }

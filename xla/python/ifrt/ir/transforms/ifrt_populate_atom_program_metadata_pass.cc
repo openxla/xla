@@ -176,11 +176,12 @@ mlir::LogicalResult PopulateMetadata(CallOp call_op, mlir::ModuleOp module_op,
   for (const auto& raw_io_alias :
        call_op.getIoAliases().getAsRange<mlir::DenseI32ArrayAttr>()) {
     llvm::ArrayRef<int> io_alias_as_array = raw_io_alias.asArrayRef();
-    callee_op.setArgAttr(io_alias_as_array[0], "tf.aliasing_output",
+    callee_op.setArgAttr(io_alias_as_array[0], kAliasingOutputAttrName,
                          builder.getI32IntegerAttr(io_alias_as_array[1]));
   }
   for (const int32_t idx : call_op.getDonatedInputIndices()) {
-    callee_op.setArgAttr(idx, "jax.buffer_donor", builder.getBoolAttr(true));
+    callee_op.setArgAttr(idx, kBufferDonationAttrName,
+                         builder.getBoolAttr(true));
   }
   return mlir::success();
 }
@@ -217,18 +218,20 @@ void IfrtPopulateAtomProgramMetadataPass::runOnOperation() {
       [&](CallOp call_op) -> mlir::WalkResult {
         mlir::func::FuncOp callee = call_op.getCalleeOp(symbol_table);
         if (callee == nullptr) {
-          return call_op->emitOpError()
-                 << "can't find callee `" << call_op.getCalleeAttr() << "`";
+          call_op->emitOpError()
+              << "can't find callee `" << call_op.getCalleeAttr() << "`";
+          return mlir::WalkResult::interrupt();
         }
         mlir::ModuleOp callee_module =
             llvm::dyn_cast<mlir::ModuleOp>(callee->getParentOp());
         if (callee.getSymName() != kCalleeMainFuncName ||
             callee_module == nullptr) {
-          return call_op.emitOpError()
-                 << "requires callee outlined as `" << kCalleeMainFuncName
-                 << "` function in a ModuleOp. Actual callee name: "
-                 << callee.getSymName() << ". Actual callee parent: "
-                 << callee->getParentOp()->getName();
+          call_op.emitOpError()
+              << "requires callee outlined as `" << kCalleeMainFuncName
+              << "` function in a ModuleOp. Actual callee name: "
+              << callee.getSymName()
+              << ". Actual callee parent: " << callee->getParentOp()->getName();
+          return mlir::WalkResult::interrupt();
         }
 
         if (auto call_op_it = visited_call_ops.find(call_op);

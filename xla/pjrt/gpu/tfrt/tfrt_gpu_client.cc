@@ -54,7 +54,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
-#include "xla/maybe_owning.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
@@ -112,6 +111,7 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
+#include "xla/tsl/util/maybe_owning.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla_data.pb.h"
@@ -142,21 +142,12 @@ class UnboundedAsyncWorkRunner : public AsyncWorkRunner {
   explicit UnboundedAsyncWorkRunner(const std::string& name)
       : queue_(tsl::Env::Default(), name, {/*stack_size=*/512 * 1024}) {}
 
-  void Schedule(absl::AnyInvocable<void() &&> work) override {
-    // TSL TheadPool expects std::function that must be copyable, so we are
+  void Execute(Task task) final {
+    // UnboundedWorkQueue expects std::function that must be copyable, so we are
     // forced to do a little bit of manual memory management here.
-    queue_.Schedule(
-        [ptr = new absl::AnyInvocable<void() &&>(std::move(work))]() {
-          std::move (*ptr)();
-          delete ptr;
-        });
-  }
-
-  void ScheduleWhenReady(
-      absl::Span<const tsl::RCReference<tsl::AsyncValue>> values,
-      absl::AnyInvocable<void() &&> work) override {
-    tsl::RunWhenReady(values, [this, work = std::move(work)]() mutable {
-      Schedule([work = std::move(work)]() mutable { std::move(work)(); });
+    queue_.Schedule([ptr = new Task(std::move(task))] {
+      std::move (*ptr)();
+      delete ptr;
     });
   }
 
@@ -193,10 +184,12 @@ std::shared_ptr<HostMemoryAllocator> CreateHostMemoryAllocator(
 
   HostMemoryAllocator::Options allocator_options;
   allocator_options.alignment = tsl::Allocator::kAllocatorAlignment;
-  allocator_options.map_fn = [client](void* data, size_t size) {
+  allocator_options.map_fn = [client](std::optional<LocalDeviceId>, void* data,
+                                      size_t size) {
     return client->DmaMap(data, size);
   };
-  allocator_options.unmap_fn = [client](void* data) {
+  allocator_options.unmap_fn = [client](std::optional<LocalDeviceId>,
+                                        void* data) {
     return client->DmaUnmap(data);
   };
   return factory(std::move(allocator_options)).value();
@@ -308,7 +301,7 @@ absl::StatusOr<PjRtDevice*> TfrtGpuClient::LookupAddressableDevice(
 }
 
 void TfrtGpuClient::UpdateGlobalProcessInfo(
-    absl::Span<xla::coordination::CoordinatedTaskStateInfo> infos) {
+    absl::Span<xla::coordination::TaskInfo> infos) {
   if (!abort_collectives_on_failure_) {
     // If we're not aborting collectives, we don't need to track information
     // about other processes. We only track global process info to know when to
@@ -1364,8 +1357,8 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetTfrtGpuClientInternal(
 
   std::vector<std::unique_ptr<TfrtGpuDevice>> devices =
       std::move(device_topology_pair.first);
-  auto gpu_topology = std::shared_ptr<const GpuTopology>(
-      GpuTopology::FromProto(device_topology_pair.second));
+  ASSIGN_OR_RETURN(std::shared_ptr<const GpuTopology> gpu_topology,
+                   GpuTopology::FromProto(device_topology_pair.second));
 
   TF_ASSIGN_OR_RETURN(
       auto allocator,

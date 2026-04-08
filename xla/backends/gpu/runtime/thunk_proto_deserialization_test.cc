@@ -31,11 +31,11 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
-#include "xla/backends/gpu/runtime/copy_done_thunk.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/device_to_host_copy_thunk.h"
+#include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/host_execute_thunk.h"
 #include "xla/backends/gpu/runtime/host_send_recv_thunk.h"
 #include "xla/backends/gpu/runtime/host_to_device_copy_thunk.h"
@@ -93,11 +93,9 @@ using Kind = Thunk::Kind;
 constexpr absl::string_view kTestPlatformName = "TEST_PLATFORM";
 
 TEST(ThunkProtoDeserializationTest, SequentialThunkChain) {
-  constexpr ExecutionStreamId kExecutionStreamId{123};
   constexpr absl::string_view kProfileAnnotation = "profile_annotation";
 
   Thunk::ThunkInfo thunk_info{};
-  thunk_info.execution_stream_id = kExecutionStreamId;
   thunk_info.profile_annotation = kProfileAnnotation;
 
   // This constructs the following thunk tree:
@@ -125,10 +123,7 @@ TEST(ThunkProtoDeserializationTest, SequentialThunkChain) {
 TEST(ThunkProtoDeserializationTest, CopyThunk) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info {
-          profile_annotation: "profile_annotation"
-          execution_stream_id: 123
-        }
+        thunk_info { profile_annotation: "profile_annotation" }
         copy_thunk {
           source_buffer {
             slice { offset: 128 size: 384 buffer_allocation_index: 0 }
@@ -169,10 +164,7 @@ TEST(ThunkProtoDeserializationTest, CopyThunk) {
 TEST(ThunkProtoDeserializationTest, DeviceToHostCopyThunk) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info {
-          profile_annotation: "profile_annotation"
-          execution_stream_id: 123
-        }
+        thunk_info { profile_annotation: "profile_annotation" }
         device_to_host_copy_thunk {
           copy_thunk {
             source_buffer {
@@ -221,10 +213,7 @@ TEST(ThunkProtoDeserializationTest, DeviceToHostCopyThunk) {
 TEST(ThunkProtoDeserializationTest, HostToDeviceCopyThunk) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info {
-          profile_annotation: "profile_annotation"
-          execution_stream_id: 123
-        }
+        thunk_info { profile_annotation: "profile_annotation" }
         host_to_device_copy_thunk {
           copy_thunk {
             source_buffer {
@@ -273,10 +262,7 @@ TEST(ThunkProtoDeserializationTest, HostToDeviceCopyThunk) {
 TEST(ThunkProtoDeserializationTest, DeviceToDeviceCopyThunk) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info {
-          profile_annotation: "profile_annotation"
-          execution_stream_id: 123
-        }
+        thunk_info { profile_annotation: "profile_annotation" }
         device_to_device_copy_thunk {
           copy_thunk {
             source_buffer {
@@ -325,10 +311,7 @@ TEST(ThunkProtoDeserializationTest, DeviceToDeviceCopyThunk) {
 TEST(ThunkProtoDeserializationTest, WhileThunk) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info {
-          profile_annotation: "profile_annotation"
-          execution_stream_id: 123
-        }
+        thunk_info { profile_annotation: "profile_annotation" }
         while_thunk {
           condition_result_buffer_index {
             buffer_allocation_index: 5
@@ -337,10 +320,7 @@ TEST(ThunkProtoDeserializationTest, WhileThunk) {
           }
           condition_thunk_sequence {
             thunks {
-              thunk_info {
-                profile_annotation: "profile_annotation"
-                execution_stream_id: 123
-              }
+              thunk_info { profile_annotation: "profile_annotation" }
               copy_thunk {
                 source_buffer {
                   slice { offset: 128 size: 384 buffer_allocation_index: 0 }
@@ -371,10 +351,7 @@ TEST(ThunkProtoDeserializationTest, WhileThunk) {
           }
           body_thunk_sequence {
             thunks {
-              thunk_info {
-                profile_annotation: "profile_annotation"
-                execution_stream_id: 123
-              }
+              thunk_info { profile_annotation: "profile_annotation" }
               copy_thunk {
                 source_buffer {
                   slice { offset: 128 size: 384 buffer_allocation_index: 2 }
@@ -403,10 +380,7 @@ TEST(ThunkProtoDeserializationTest, WhileThunk) {
               }
             }
             thunks {
-              thunk_info {
-                profile_annotation: "profile_annotation"
-                execution_stream_id: 123
-              }
+              thunk_info { profile_annotation: "profile_annotation" }
               copy_thunk {
                 source_buffer {
                   slice { offset: 128 size: 384 buffer_allocation_index: 3 }
@@ -460,10 +434,7 @@ TEST(ThunkProtoDeserializationTest, WhileThunk) {
 TEST(ThunkProtoDeserializationTest, ConditionalThunk) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info {
-          profile_annotation: "profile_annotation"
-          execution_stream_id: 123
-        }
+        thunk_info { profile_annotation: "profile_annotation" }
         conditional_thunk {
           branch_index_buffer {
             slice { offset: 8 size: 1 buffer_allocation_index: 5 }
@@ -471,10 +442,7 @@ TEST(ThunkProtoDeserializationTest, ConditionalThunk) {
           }
           branch_thunks {
             thunks {
-              thunk_info {
-                profile_annotation: "profile_annotation"
-                execution_stream_id: 123
-              }
+              thunk_info { profile_annotation: "profile_annotation" }
               copy_thunk {
                 source_buffer {
                   slice { offset: 0 size: 256 buffer_allocation_index: 0 }
@@ -503,10 +471,7 @@ TEST(ThunkProtoDeserializationTest, ConditionalThunk) {
               }
             }
             thunks {
-              thunk_info {
-                profile_annotation: "profile_annotation"
-                execution_stream_id: 123
-              }
+              thunk_info { profile_annotation: "profile_annotation" }
               copy_thunk {
                 source_buffer {
                   slice { offset: 2 size: 258 buffer_allocation_index: 1 }
@@ -537,10 +502,7 @@ TEST(ThunkProtoDeserializationTest, ConditionalThunk) {
           }
           branch_thunks {
             thunks {
-              thunk_info {
-                profile_annotation: "profile_annotation"
-                execution_stream_id: 123
-              }
+              thunk_info { profile_annotation: "profile_annotation" }
               copy_thunk {
                 source_buffer {
                   slice { offset: 4 size: 260 buffer_allocation_index: 3 }
@@ -569,10 +531,7 @@ TEST(ThunkProtoDeserializationTest, ConditionalThunk) {
               }
             }
             thunks {
-              thunk_info {
-                profile_annotation: "profile_annotation"
-                execution_stream_id: 123
-              }
+              thunk_info { profile_annotation: "profile_annotation" }
               copy_thunk {
                 source_buffer {
                   slice { offset: 6 size: 262 buffer_allocation_index: 3 }
@@ -622,27 +581,10 @@ TEST(ThunkProtoDeserializationTest, ConditionalThunk) {
   EXPECT_THAT(round_trip_proto, EqualsProto(proto));
 }
 
-TEST(ThunkProtoDeserializationTest, WaitForStreamsThunk) {
-  ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
-      R"pb(
-        thunk_info { execution_stream_id: 7 }
-        wait_for_streams_thunk { stream_id: 1 wait_for_stream_id: 2 }
-      )pb");
-
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Thunk> thunk,
-      DeserializeThunkProto(proto, /*buffer_allocations=*/{},
-                            /*hlo_module=*/nullptr, kTestPlatformName,
-                            se::GpuComputeCapability()));
-
-  TF_ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, thunk->ToProto());
-  EXPECT_THAT(round_trip_proto, EqualsProto(proto));
-}
-
 TEST(ThunkProtoDeserializationTest, CudnnThunk) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info { execution_stream_id: 7 }
+        thunk_info {}
         cudnn_thunk {
           fingerprint: "fingerprint"
           args {
@@ -785,7 +727,7 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), kSimpleCustomCallName,
 TEST(ThunkProtoDeserializationTest, CustomCallThunk) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info { execution_stream_id: 7 }
+        thunk_info {}
         custom_call_thunk {
           target_name: "__xla_test$$simple_custom_call"
           operands {
@@ -863,10 +805,81 @@ TEST(ThunkProtoDeserializationTest, CustomCallThunk) {
   EXPECT_THAT(round_trip_proto, EqualsProto(proto));
 }
 
+TEST(ThunkProtoDeserializationTest, CublasLtGroupedMatmulThunk) {
+  ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
+      R"pb(
+        thunk_info { profile_annotation: "custom-call.4" }
+        cublas_lt_matmul_thunk {
+          grouped_gemm_config {
+            m: 101
+            n: 400
+            k: 407
+            batch_count: 1
+            group_count: 1
+            lhs_leading_dim_stride: 407
+            rhs_leading_dim_stride: 400
+            c_leading_dim_stride: 400
+            output_leading_dim_stride: 400
+            trans_a: BLAS_TRANSPOSE
+            trans_b: BLAS_TRANSPOSE
+            must_swap_operands: True
+            alpha_real: 1
+            type_a: F32
+            type_b: F32
+            type_c: F32
+            type_d: F32
+            stride_ragged_dim: 407
+            stride_group_dim: 400
+            output_stride_ragged_dim: 400
+            ragged_mode: RAGGED_NON_CONTRACTING
+          }
+          epilogue: EPILOGUE_DEFAULT
+          canonical_hlo: "(f32[101,400]{1,0}, s8[33554432]{0}) custom-call(f32[101,407]{1,0}, f32[2, 407,400]{1,0}, s32[2]{0}), custom_call_target=\"__cublas$lt$groupedMatmul backend_config={\"operation_queue_id\":\"0\",\"wait_on_operation_queues\":[], \"force_earliest_schedule\":false,\"reification_cost\":[], \"device_type\":\"DEVICE_TYPE_INVALID\", \"grouped_gemm_backend_config\":{\"gemm_backend_config\":{\"alpha_real\":1,\"beta\":0,\"dot_dimension_numbers\":{\"lhs_contracting_dimensions\":[\"1\"],\"rhs_contracting_dimensions\":[\"1\"],\"lhs_batch_dimensions\":[],\"rhs_batch_dimensions\":[]},\"alpha_imag\":0,\"epilogue\":\"DEFAULT\",\"grad_x\":false,\"grad_y\":false,\"damax_output\":false},\"ragged_dot_dimension_numbers\":{\"dot_dimension_numbers\":{\"lhs_contracting_dimensions\":[\"1\"],\"rhs_contracting_dimensions\":[\"1\"],\"lhs_batch_dimensions\":[],\"rhs_batch_dimensions\":[]},\"lhs_ragged_dimensions\":[\"0\"],\"rhs_group_dimensions\":[\"0\"]}}})"
+          a {
+            slice { size: 164428 buffer_allocation_index: 3 }
+            shape { element_type: F32 }
+          }
+          b {
+            slice { size: 1302400 buffer_allocation_index: 4 }
+            shape { element_type: F32 }
+          }
+          c {
+            slice { size: 161600 buffer_allocation_index: 5 }
+            shape { element_type: F32 }
+          }
+          d {
+            slice { size: 161600 buffer_allocation_index: 5 }
+            shape { element_type: F32 }
+          }
+          group_sizes {
+            slice { size: 8 buffer_allocation_index: 6 }
+            shape { element_type: S32 }
+          }
+        }
+      )pb");
+
+  std::vector<BufferAllocation> allocations = {
+      BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),  // UNUSED
+      BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0),  // UNUSED
+      BufferAllocation(/*index=*/2, /*size=*/4, /*color=*/0),  // UNUSED
+      BufferAllocation(/*index=*/3, /*size=*/164428, /*color=*/0),
+      BufferAllocation(/*index=*/4, /*size=*/651200, /*color=*/0),
+      BufferAllocation(/*index=*/5, /*size=*/161600, /*color=*/0),
+      BufferAllocation(/*index=*/6, /*size=*/8, /*color=*/0),
+  };
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Thunk> thunk,
+      DeserializeThunkProto(proto, allocations, /*hlo_module=*/nullptr,
+                            kTestPlatformName, se::GpuComputeCapability()));
+  TF_ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, thunk->ToProto());
+  EXPECT_THAT(round_trip_proto, EqualsProto(proto));
+}
+
 TEST(ThunkProtoDeserializationTest, EmptyThunkImplReturnsAnError) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info { execution_stream_id: 7 }
+        thunk_info {}
       )pb");
 
   EXPECT_THAT(DeserializeThunkProto(proto, /*buffer_allocations=*/{},
@@ -878,10 +891,10 @@ TEST(ThunkProtoDeserializationTest, EmptyThunkImplReturnsAnError) {
 TEST(ThunkProtoDeserializationTest, HostSendRecvThunksRoundTrip) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info { execution_stream_id: 7 }
+        thunk_info {}
         sequential_thunk {
           thunks {
-            thunk_info { execution_stream_id: 7 }
+            thunk_info {}
             host_send_thunk {
               shape {
                 element_type: F32
@@ -894,11 +907,11 @@ TEST(ThunkProtoDeserializationTest, HostSendRecvThunksRoundTrip) {
             }
           }
           thunks {
-            thunk_info { execution_stream_id: 7 }
+            thunk_info {}
             host_send_done_thunk { channel_id: 123 async_events_unique_id: 1 }
           }
           thunks {
-            thunk_info { execution_stream_id: 7 }
+            thunk_info {}
             host_recv_thunk {
               shape {
                 element_type: F32
@@ -912,7 +925,7 @@ TEST(ThunkProtoDeserializationTest, HostSendRecvThunksRoundTrip) {
             }
           }
           thunks {
-            thunk_info { execution_stream_id: 7 }
+            thunk_info {}
             host_recv_done_thunk { channel_id: 456 async_events_unique_id: 2 }
           }
         }
@@ -983,17 +996,17 @@ TEST(ThunkProtoDeserializationTest, HostSendRecvThunksRoundTrip) {
 TEST(ThunkProtoDeserializationTest, HostExecuteThunksRoundTrip) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info { execution_stream_id: 7 }
+        thunk_info {}
         sequential_thunk {
           thunks {
-            thunk_info { execution_stream_id: 7 }
+            thunk_info {}
             host_execute_start_thunk {
               executable_proto { executable_type: EXECUTABLE_TYPE_NANORT }
               async_events_unique_id: 123
             }
           }
           thunks {
-            thunk_info { execution_stream_id: 7 }
+            thunk_info {}
             host_execute_done_thunk { async_events_unique_id: 123 }
           }
         }
@@ -1041,7 +1054,7 @@ TEST(ThunkProtoDeserializationTest, HostExecuteThunksRoundTrip) {
 TEST(ThunkProtoDeserializationTest, CustomKernelThunkRoundTrip) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info { execution_stream_id: 7 }
+        thunk_info {}
         custom_kernel_thunk {
           custom_kernel {
             name: "test_kernel"
@@ -1083,7 +1096,7 @@ void test_kernel(void* args) {}
 TEST(ThunkProtoDeserializationTest, CustomKernelThunkSymbolResolvingWorks) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info { execution_stream_id: 7 }
+        thunk_info {}
         custom_kernel_thunk {
           custom_kernel {
             name: "test_kernel"
@@ -1132,51 +1145,37 @@ TEST(ThunkProtoDeserializationTest, CustomKernelThunkSymbolResolvingWorks) {
                      tsl::safe_reinterpret_cast<void*>(&test_kernel))));
 }
 
-TEST(ThunkProtoDeserializationTest, HostToDeviceCopyThunksRoundTrip) {
+TEST(ThunkProtoDeserializationTest, HostToDeviceCopyThunkRoundTrip) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
       R"pb(
-        thunk_info { execution_stream_id: 7 }
-        sequential_thunk {
-          thunks {
-            thunk_info { execution_stream_id: 7 }
-            host_to_device_copy_thunk {
-              copy_thunk {
-                source_buffer {
-                  slice { offset: 0 size: 1024 buffer_allocation_index: 0 }
-                  shape {
-                    dimensions: 256
-                    element_type: F32
-                    is_dynamic_dimension: false
-                    layout {
-                      minor_to_major: 0
-                      tail_padding_alignment_in_elements: 1
-                    }
-                  }
+        thunk_info {}
+        host_to_device_copy_thunk {
+          copy_thunk {
+            source_buffer {
+              slice { offset: 0 size: 1024 buffer_allocation_index: 0 }
+              shape {
+                dimensions: 256
+                element_type: F32
+                is_dynamic_dimension: false
+                layout {
+                  minor_to_major: 0
+                  tail_padding_alignment_in_elements: 1
                 }
-                destination_buffer {
-                  slice { offset: 0 size: 1024 buffer_allocation_index: 1 }
-                  shape {
-                    dimensions: 256
-                    element_type: F32
-                    is_dynamic_dimension: false
-                    layout {
-                      minor_to_major: 0
-                      tail_padding_alignment_in_elements: 1
-                    }
-                  }
-                }
-                mem_size: 1024
               }
-              async_events_unique_id: 123
-              instr_id: 1
             }
-          }
-          thunks {
-            thunk_info { execution_stream_id: 7 }
-            copy_done_thunk {
-              async_events_unique_id: 123
-              copy_start_instr_id: 1
+            destination_buffer {
+              slice { offset: 0 size: 1024 buffer_allocation_index: 1 }
+              shape {
+                dimensions: 256
+                element_type: F32
+                is_dynamic_dimension: false
+                layout {
+                  minor_to_major: 0
+                  tail_padding_alignment_in_elements: 1
+                }
+              }
             }
+            mem_size: 1024
           }
         }
       )pb");
@@ -1193,33 +1192,8 @@ TEST(ThunkProtoDeserializationTest, HostToDeviceCopyThunksRoundTrip) {
 
   TF_ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, thunk->ToProto());
 
-  const auto* sequential_thunk = dynamic_cast<SequentialThunk*>(thunk.get());
-  ASSERT_NE(sequential_thunk, nullptr);
-  ASSERT_EQ(sequential_thunk->thunks().size(), 2);
-
-  const auto* start_thunk =
-      dynamic_cast<HostToDeviceCopyThunk*>(sequential_thunk->thunks()[0].get());
-  ASSERT_NE(start_thunk, nullptr);
-
-  const auto* done_thunk =
-      dynamic_cast<CopyDoneThunk*>(sequential_thunk->thunks()[1].get());
-  ASSERT_NE(done_thunk, nullptr);
-
-  EXPECT_TRUE(start_thunk->GetAsyncEventsUniqueId().has_value());
-  EXPECT_TRUE(done_thunk->GetAsyncEventsUniqueId().has_value());
-  EXPECT_EQ(start_thunk->GetAsyncEventsUniqueId(),
-            done_thunk->GetAsyncEventsUniqueId());
-
-  // The unique id is regenerated on deserialization. Overwrite it with the
-  // original value for the purpose of the roundtrip test.
-  round_trip_proto.mutable_sequential_thunk()
-      ->mutable_thunks(0)
-      ->mutable_host_to_device_copy_thunk()
-      ->set_async_events_unique_id(123);
-  round_trip_proto.mutable_sequential_thunk()
-      ->mutable_thunks(1)
-      ->mutable_copy_done_thunk()
-      ->set_async_events_unique_id(123);
+  const auto* h2d_thunk = dynamic_cast<HostToDeviceCopyThunk*>(thunk.get());
+  ASSERT_NE(h2d_thunk, nullptr);
   EXPECT_THAT(round_trip_proto, EqualsProto(proto));
 }
 
@@ -1229,9 +1203,8 @@ TEST(ThunkProtoDeserializationTest, AsyncStartAndDoneThunk) {
   // round-trip.
   Thunk::ThunkInfo start_info;
   start_info.profile_annotation = "async_start";
-  start_info.execution_stream_id = ExecutionStreamId(1);
 
-  AsyncStartThunk start_thunk(start_info, AsyncStartThunk::AsyncKind::kCompute,
+  AsyncStartThunk start_thunk(start_info, ComputationStreamId(0),
                               ThunkSequence{});
 
   AsyncDoneThunk done_thunk(Thunk::ThunkInfo(), start_thunk.async_execution());

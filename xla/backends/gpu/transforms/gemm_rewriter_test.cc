@@ -79,6 +79,67 @@ ENTRY AddDotsFunc {
   }
 }
 
+TEST_F(GemmRewriteTest, NormalizeMultipleBatchDimensions) {
+  if (SkipGpuBlasLtTest()) {
+    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
+  }
+
+  const char* hlo_text = R"(
+HloModule module
+
+ENTRY test {
+  lhs = f32[2,3,16,10240]{3,2,1,0} parameter(0)
+  rhs = f32[2,3,10240,128]{3,2,1,0} parameter(1)
+  ROOT dot = f32[2,3,16,128]{3,2,1,0} dot(lhs, rhs),
+                lhs_batch_dims={0,1}, lhs_contracting_dims={3},
+                rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+})";
+
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+CHECK-DAG: %[[LHS_BITCAST:[a-zA-Z0-9_.-]+]] = f32[6,16,10240]{{.*}} {{bitcast}}
+CHECK-DAG: %[[RHS_BITCAST:[a-zA-Z0-9_.-]+]] = f32[6,10240,128]{{.*}} {{bitcast}}
+CHECK: = (f32[6,16,128]{2,1,0}, s8[{{[0-9]+}}]{0}) custom-call(%[[LHS_BITCAST]], %[[RHS_BITCAST]]), custom_call_target="__cublas{{.*}}matmul"
+CHECK: ROOT {{.*}} = f32[2,3,16,128]{3,2,1,0} {{bitcast}}
+)");
+}
+
+TEST_F(GemmRewriteTest, CheckCustomCallHipblasLtBF16) {
+  if (!IsRocm()) {
+    GTEST_SKIP() << "Test is ROCm-specific: verifies that MI200 falls back to "
+                    "legacy cuBLAS for BF16->F32 GEMMs (hipblasLt limitation), "
+                    "while other ROCm architectures use hipblasLt";
+  }
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  HloModuleConfig config;
+  config.set_debug_options(debug_options);
+  config.mutable_debug_options().set_xla_gpu_enable_cublaslt(true);
+  constexpr absl::string_view kHloText = R"(
+ENTRY e {
+  p0 = bf16[32,32] parameter(0)
+  p1 = bf16[32,32] parameter(1)
+  ROOT d = f32[32,32] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                          GetOptimizedModule(kHloText, config));
+  absl::StatusOr<bool> filecheck_result;
+  if (IsRocm() && Capability().rocm_compute_capability()->gfx9_mi200()) {
+    filecheck_result = RunFileCheck(optimized_module->ToString(), R"(
+    ; CHECK-NOT: convert
+    ; CHECK: __cublas$gemm
+    )");
+  } else {
+    filecheck_result = RunFileCheck(optimized_module->ToString(), R"(
+    ; CHECK-NOT: convert
+    ; CHECK: __cublas$lt$matmul
+    )");
+  }
+  TF_ASSERT_OK(filecheck_result.status());
+  EXPECT_TRUE(filecheck_result.value());
+}
+
 TEST_F(GemmRewriteTest, TestBatchedAutotuning) {
   if (HasCudaComputeCapability(se::CudaComputeCapability::Ampere())) {
     GTEST_SKIP()
@@ -838,7 +899,7 @@ ENTRY AddDotsFunc {
 }
 
 TEST_P(ParameterizedGemmRewriteTest, ComplexAlphaSimpleRewrite) {
-  if (!IsCuda() && GetDebugOptionsForTest().xla_gpu_enable_cublaslt()) {
+  if (IsRocm() && GetDebugOptionsForTest().xla_gpu_enable_cublaslt()) {
     GTEST_SKIP() << "TODO: Unsupported C64 gpublas-lt datatype on ROCM";
   }
   const char* hlo_text = R"(
@@ -972,7 +1033,7 @@ ENTRY bf16gemm {
   )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
 
-  if (!IsCuda()) {
+  if (IsRocm()) {
     MatchOptimizedHlo(hlo_text,
                       R"(
 ; CHECK: {{.*}} custom-call(bf16[12,4]{1,0} {{.*}}, bf16[4,8]{1,0} {{.*}}), custom_call_target="<<CUBLAS_CUSTOM_CALL_TARGET_PLACEHOLDER>>"
@@ -1002,7 +1063,7 @@ ENTRY bf16gemm {
   )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
 
-  if (!IsCuda()) {
+  if (IsRocm()) {
     MatchOptimizedHlo(hlo_text,
                       R"(
     ; CHECK: {{.*}} custom-call(bf16[3,3,4]{2,1,0} {{.*}}, bf16[3,3,2]{2,1,0} {{.*}}), custom_call_target="<<CUBLAS_CUSTOM_CALL_TARGET_PLACEHOLDER>>"
@@ -1031,11 +1092,11 @@ ENTRY int8gemm {
   )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
 
-  if (!IsCuda() ||
+  if (IsRocm() ||
       HasCudaComputeCapability(se::CudaComputeCapability::Volta())) {
     MatchOptimizedHlo(hlo_text,
                       R"(
-; CHECK: {{.*}} custom-call(s8[12,4]{1,0} [[A:%[^ ]+]], s8[4,8]{0,1} [[B:%[^ ]+]]), custom_call_target="__cublas$gemm"
+; CHECK: {{.*}} custom-call(s8[12,4]{1,0} [[A:%[^ ]+]], s8[4,8]{0,1} [[B:%[^ ]+]]), custom_call_target="<<CUBLAS_CUSTOM_CALL_TARGET_PLACEHOLDER>>"
   )",
                       /*print_operand_shape=*/true);
   } else {
@@ -1049,7 +1110,7 @@ ENTRY int8gemm {
 }
 
 TEST_F(GemmRewriteTest, Int8GemmRankGreaterThanTwo) {
-  if (!IsCuda()) {
+  if (IsRocm()) {
     GTEST_SKIP() << "DoBlasGemmWithAlgorithm is not yet implemented on ROCm";
   }
 
@@ -1066,12 +1127,20 @@ ENTRY main.4 {
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
 
-  if (!IsCuda() ||
+  if (IsRocm() ||
+      // Has at least Volta to support int8 GEMM.
       HasCudaComputeCapability(se::CudaComputeCapability::Volta())) {
+    DebugOptions debug_options = GetDebugOptionsForTest();
+    std::string custom_call_target = debug_options.xla_gpu_enable_cublaslt()
+                                         ? "__cublas$lt$matmul"
+                                         : "__cublas$gemm";
+
     MatchOptimizedHlo(hlo_text,
-                      R"(
-; CHECK: [[GEMM:%[^ ]+]] = (s32[8,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(s8[8,4]{1,0} %{{.*}}, s8[4,4]{0,1} %{{.*}}), custom_call_target="__cublas$gemm",
+                      absl::StrReplaceAll(
+                          R"(
+; CHECK: [[GEMM:%[^ ]+]] = (s32[8,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(s8[8,4]{1,0} %{{.*}}, s8[4,4]{0,1} %{{.*}}), custom_call_target="$0",
   )",
+                          {{"$0", custom_call_target}}),
                       /*print_operand_shape=*/true);
   }
 }
@@ -1091,12 +1160,12 @@ ENTRY int8gemm {
   )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
 
-  if (!IsCuda() ||
+  if (IsRocm() ||
       HasCudaComputeCapability(se::CudaComputeCapability::Volta())) {
     MatchOptimizedHlo(hlo_text,
                       R"(
 ; CHECK: {{.*}} custom-call(s8[12,4]{1,0} [[A:%[^ ]+]], s8[4,8]{0,1} [[B:%[^ ]+]]),
-; CHECK:           custom_call_target="__cublas$gemm",
+; CHECK:           custom_call_target="<<CUBLAS_CUSTOM_CALL_TARGET_PLACEHOLDER>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:       "alpha_real":1
 ; CHECK-DAG:       "alpha_imag":0
@@ -1126,12 +1195,12 @@ ENTRY int8gemm {
   )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
 
-  if (!IsCuda() ||
+  if (IsRocm() ||
       HasCudaComputeCapability(se::CudaComputeCapability::Volta())) {
     MatchOptimizedHlo(hlo_text,
                       R"(
 ; CHECK: {{.*}} custom-call(s8[12,4]{1,0} [[A:%[^ ]+]], s8[4,8]{0,1} [[B:%[^ ]+]]),
-; CHECK:           custom_call_target="__cublas$gemm",
+; CHECK:           custom_call_target="<<CUBLAS_CUSTOM_CALL_TARGET_PLACEHOLDER>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:       "alpha_real":1
 ; CHECK-DAG:       "alpha_imag":0
@@ -1149,7 +1218,7 @@ ENTRY int8gemm {
 }
 
 TEST_P(ParameterizedGemmRewriteTest, Int8GemmNotMultipleOfFour) {
-  if (!IsCuda()) {
+  if (IsRocm()) {
     GTEST_SKIP() << "DoBlasGemmWithAlgorithm is not yet implemented on ROCm";
   }
 
@@ -1164,11 +1233,11 @@ ENTRY int8gemm {
   )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
 
-  if (!IsCuda() ||
+  if (IsRocm() ||
       HasCudaComputeCapability(se::CudaComputeCapability::Volta())) {
     MatchOptimizedHlo(hlo_text,
                       R"(
-; CHECK: {{.*}} custom-call(s8[16,4]{1,0} [[A:%[^ ]+]], s8[4,12]{0,1} [[B:%[^ ]+]]), custom_call_target="__cublas$gemm"
+; CHECK: {{.*}} custom-call(s8[16,4]{1,0} [[A:%[^ ]+]], s8[4,12]{0,1} [[B:%[^ ]+]]), custom_call_target="<<CUBLAS_CUSTOM_CALL_TARGET_PLACEHOLDER>>"
   )",
                       /*print_operand_shape=*/true);
   } else {
@@ -1182,7 +1251,7 @@ ENTRY int8gemm {
 }
 
 TEST_P(ParameterizedGemmRewriteTest, GemmTypeCombinationCheck) {
-  if (!IsCuda()) {
+  if (IsRocm()) {
     GTEST_SKIP() << "DoBlasGemmWithAlgorithm is not yet implemented on ROCm";
   }
 
@@ -1201,7 +1270,7 @@ TEST_P(ParameterizedGemmRewriteTest, GemmTypeCombinationCheck) {
                            {"f16", "f32", true},
                            {"bf16", "f32", true}};
 
-  if (!IsCuda() ||
+  if (IsRocm() ||
       HasCudaComputeCapability(se::CudaComputeCapability::Ampere())) {
     // For compute capabilities before Ampere, we may do upcasting, so it
     // would be impossible for this test to fail. That is why we only add these
@@ -1316,6 +1385,10 @@ ENTRY test {
 }
 )";
 
+  bool is_mi200 =
+      IsRocm() && Capability().rocm_compute_capability()->gfx9_mi200();
+  // Mi200 does not support given type combination
+  auto kCustomCallTarget = is_mi200 ? "__cublas$gemm" : CustomCallTarget();
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriterOptions options;
@@ -1325,7 +1398,7 @@ ENTRY test {
   EXPECT_TRUE(changed);
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(m::CustomCall({CustomCallTarget()}), 0)));
+      GmockMatch(m::GetTupleElement(m::CustomCall({kCustomCallTarget}), 0)));
 }
 
 TEST_P(ParameterizedGemmRewriteTest, UpcastingF16ToF64) {
@@ -1580,6 +1653,34 @@ ENTRY main {
     // CHECK: ROOT %{{.*}} = f32[2,2]{1,0} get-tuple-element(%[[CC]]), index=0
   )")
                   .value());
+}
+
+TEST_F(GemmRewriteTest, SkipNonFusibleComputations) {
+  const char* hlo_text = R"(
+HloModule module
+
+reducer {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  lhs = f32[2,2] broadcast(p0), dimensions={}
+  rhs = f32[2,2] broadcast(p1), dimensions={}
+  dot = f32[2,2] dot(lhs, rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  slice = f32[1,1] slice(dot), slice={[0:1:1], [0:1:1]}
+  ROOT reshape = f32[] reshape(slice)
+}
+
+ENTRY main {
+  p0 = f32[10] parameter(0)
+  zero = f32[] constant(0.0)
+  ROOT reduce = f32[] reduce(p0, zero), dimensions={0}, to_apply=reducer
+}
+)";
+  // Expect no change.
+  RunAndFilecheckHloRewrite(
+      hlo_text,
+      GemmRewriter(se::CudaComputeCapability{},
+                   stream_executor::SemanticVersion{0, 0, 0}),
+      std::nullopt);
 }
 
 }  // namespace

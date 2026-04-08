@@ -30,7 +30,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/python/ifrt/ir/constants.h"
 #include "xla/python/ifrt/ir/sharding_param.h"
-#include "xla/python/ifrt/support/sharding_conversions.h"
+#include "xla/python/ifrt/ir/support/sharding_conversions.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/shardy/stablehlo_round_trip/export_shardings.h"
 

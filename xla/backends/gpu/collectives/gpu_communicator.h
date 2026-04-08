@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_COLLECTIVES_GPU_COMMUNICATOR_H_
 #define XLA_BACKENDS_GPU_COLLECTIVES_GPU_COMMUNICATOR_H_
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -36,6 +35,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/kernel_args.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 
@@ -88,12 +88,13 @@ class GpuDeviceCommunicator {
     return PlatformCommunicatorHandle{nullptr};
   }
 
+  // Returns the size of the load/store accessible communication.
+  virtual int64_t lsa_size() const = 0;
+
   virtual std::string ToString() const = 0;
 
-  // A packed kernel argument type for passing device communicator to device
-  // kernels (byte storage appropriately sized to fit platform-specific handle).
-  using PackedKernelArg = std::array<std::byte, 256>;
-  virtual PackedKernelArg PackKernelArg() const = 0;
+  // Packs device communicator as a device kernel argument.
+  virtual se::PackedKernelArg PackKernelArg() const = 0;
 
   template <typename Sink>
   friend void AbslStringify(Sink& sink, const GpuDeviceCommunicator& comm) {
@@ -182,14 +183,35 @@ class GpuCommunicator : public Communicator {
   virtual absl::Status LaunchRecv(se::DeviceAddressBase recv_buffer,
                                   PrimitiveType dtype, size_t count,
                                   RankId peer, const Executor& executor) = 0;
+
+  virtual absl::Status LaunchPut(se::DeviceAddressBase send_buffer,
+                                 SymmetricMemory* recv_buffer, size_t offset,
+                                 size_t count, RankId peer,
+                                 const Executor& executor) {
+    return Unimplemented("LaunchPut is not implemented");
+  }
+
+  virtual absl::Status LaunchSignal(RankId peer, const SignalDesc& signal_desc,
+                                    const Executor& executor) {
+    return Unimplemented("LaunchSignal is not implemented");
+  }
+
+  virtual absl::Status LaunchWaitSignal(RankId peer, int op_cnt,
+                                        const SignalDesc& signal_desc,
+                                        const Executor& executor) {
+    return Unimplemented("LaunchWaitSignal is not implemented");
+  }
 };
 
 }  // namespace xla::gpu
 
+// Specialize `KernelArgPacking` template to define how to pass device
+// communicators to device kernels. We rely on packing device comms to opaque
+// packed kernel arguments.
 namespace stream_executor {
 template <>
 struct KernelArgPacking<xla::gpu::GpuDeviceCommunicator*> {
-  using Type = xla::gpu::GpuDeviceCommunicator::PackedKernelArg;
+  using Type = PackedKernelArg;
   static Type Pack(xla::gpu::GpuDeviceCommunicator* comm) {
     return comm->PackKernelArg();
   }

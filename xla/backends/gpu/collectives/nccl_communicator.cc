@@ -179,6 +179,13 @@ class NcclCommunicator::NcclRegisteredBufferHandle
     }
   }
 
+  PackedKernelArg PackKernelArg() const final {
+    PackedKernelArg packed;
+    static_assert(sizeof(ncclWindow_t) <= sizeof(void*));
+    std::memcpy(packed.data(), &handle_, sizeof(ncclWindow_t));
+    return packed;
+  }
+
   absl::Status Unregister() final {
     VLOG(3) << absl::StreamFormat(
         "[%d] Deregister buffer for NCCL communicator; handle=%p; comm=%p",
@@ -378,31 +385,31 @@ absl::StatusOr<size_t> NcclCommunicator::NumRanks() const {
 absl::Status NcclCommunicator::RegisterBufferOnce(
     se::DeviceAddressBase buffer_range, int device_ordinal,
     bool use_symmetric_buffer) {
-  bool need_reg = false;
   {
     absl::MutexLock lock(registered_buffers_.mu);
-    if (!registered_buffers_.range_to_handle.contains(buffer_range.opaque())) {
-      need_reg = true;
-    } else {
+    if (registered_buffers_.range_to_handle.contains(buffer_range.opaque())) {
       XLA_VLOG_DEVICE(5, device_ordinal)
           << "Buffer range: " << buffer_range.opaque()
           << " with size: " << buffer_range.size() << " is already registered.";
+      return absl::OkStatus();
     }
   }
-  if (need_reg) {
-    XLA_VLOG_DEVICE(5, device_ordinal)
-        << "Registering " << buffer_range.opaque()
-        << " with size: " << buffer_range.size()
-        << ", is symmetric: " << (use_symmetric_buffer ? "true" : "false");
-    // Symmetric buffer registration is a collective operation,
-    // we need to do that before locking on a global.
-    TF_ASSIGN_OR_RETURN(
-        auto handle,
-        RegisterBuffer(buffer_range, device_ordinal, use_symmetric_buffer));
+
+  XLA_VLOG_DEVICE(5, device_ordinal)
+      << "Registering " << buffer_range.opaque()
+      << " with size: " << buffer_range.size()
+      << ", is symmetric: " << (use_symmetric_buffer ? "true" : "false");
+  // Symmetric buffer registration is a collective operation,
+  // we need to do that before locking on a global.
+  TF_ASSIGN_OR_RETURN(auto handle, RegisterBuffer(buffer_range, device_ordinal,
+                                                  use_symmetric_buffer));
+
+  {
     absl::MutexLock lock(registered_buffers_.mu);
     registered_buffers_.range_to_handle[buffer_range.opaque()] =
         std::move(handle);
   }
+
   return absl::OkStatus();
 }
 
@@ -556,6 +563,31 @@ Future<> NcclCommunicator::Recv(se::DeviceAddressBase recv_buffer,
                                 const Executor& executor) {
   return Execute([recv_buffer, dtype, count, peer, &executor, this]() {
     return LaunchRecv(recv_buffer, dtype, count, peer, executor);
+  });
+}
+
+Future<> NcclCommunicator::Put(se::DeviceAddressBase send_buffer,
+                               SymmetricMemory* recv_buffer, size_t offset,
+                               size_t count, RankId peer,
+                               const Executor& executor) {
+  return Execute([send_buffer, recv_buffer, offset, count, peer, &executor,
+                  this]() {
+    return LaunchPut(send_buffer, recv_buffer, offset, count, peer, executor);
+  });
+}
+
+Future<> NcclCommunicator::Signal(RankId peer, const SignalDesc& signal_desc,
+                                  const Executor& executor) {
+  return Execute([peer, &signal_desc, &executor, this]() {
+    return LaunchSignal(peer, signal_desc, executor);
+  });
+}
+
+Future<> NcclCommunicator::WaitSignal(RankId peer, int op_cnt,
+                                      const SignalDesc& signal_desc,
+                                      const Executor& executor) {
+  return Execute([peer, op_cnt, &signal_desc, &executor, this]() {
+    return LaunchWaitSignal(peer, op_cnt, signal_desc, executor);
   });
 }
 
@@ -926,6 +958,26 @@ absl::Status NcclCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
   return absl::OkStatus();
 }
 
+absl::Status NcclCommunicator::LaunchPut(se::DeviceAddressBase send_buffer,
+                                         SymmetricMemory* recv_buffer,
+                                         size_t offset, size_t count,
+                                         RankId peer,
+                                         const Executor& executor) {
+  return Unimplemented("NCCL Put is not yet implemented");
+}
+
+absl::Status NcclCommunicator::LaunchSignal(RankId peer,
+                                            const SignalDesc& signal_desc,
+                                            const Executor& executor) {
+  return Unimplemented("NCCL Signal is not yet implemented");
+}
+
+absl::Status NcclCommunicator::LaunchWaitSignal(RankId peer, int op_cnt,
+                                                const SignalDesc& signal_desc,
+                                                const Executor& executor) {
+  return Unimplemented("NCCL WaitSignal is not yet implemented");
+}
+
 std::string NcclCommunicator::ToString() const {
   // comm_ should not be "touched" outside of executor_, but we are printing
   // the pointer itself and not touching the value, so this is safe.
@@ -991,7 +1043,6 @@ NcclDeviceCommunicator::CreateFrom(const NcclCommunicator& comm,
 #if NCCL_VERSION_CODE >= 22900
   reqs = NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
 #endif
-  reqs.barrierCount = requirements.lsa_barrier_count;
   reqs.lsaBarrierCount = requirements.lsa_barrier_count;
 
   ncclDevComm dev_comm{};
@@ -1009,12 +1060,10 @@ std::string NcclDeviceCommunicator::ToString() const {
   return absl::StrFormat("NcclDeviceCommunicator(ncclDevComm*=%p)", &dev_comm_);
 }
 
-NcclDeviceCommunicator::PackedKernelArg NcclDeviceCommunicator::PackKernelArg()
-    const {
-  PackedKernelArg packed;
-  static_assert(sizeof(ncclDevComm) <= sizeof(PackedKernelArg));
-  std::memcpy(packed.data(), &dev_comm_, sizeof(ncclDevComm));
-  return packed;
+se::PackedKernelArg NcclDeviceCommunicator::PackKernelArg() const {
+  return se::PackedKernelArg(sizeof(ncclDevComm), [&](absl::Span<char> packed) {
+    std::memcpy(packed.data(), &dev_comm_, sizeof(ncclDevComm));
+  });
 }
 
 #endif  // NCCL_VERSION_CODE >= 22800
