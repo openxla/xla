@@ -461,6 +461,64 @@ cc_library(
 )
 
 cc_library(
+    name = "conv_fp8_fallback",
+    srcs = ["conv_fp8_fallback.cc"],
+    hdrs = ["conv_fp8_fallback.h"],
+    deps = [
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:cublas_cudnn",
+        "//xla/service/gpu:gpu_conv_runner",
+        "//xla/service/gpu:stream_executor_util",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:dnn",
+        "//xla/stream_executor:engine_options",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor:stream_executor_address_allocator",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "conv_fp8_fallback_test",
+    srcs = ["conv_fp8_fallback_test.cc"],
+    backends = [
+        "a100",
+        "h100",
+        "b200",
+    ],
+    tags = [
+        "cuda-only",
+        "no_mac",
+    ],
+    use_legacy_runtime = True,
+    deps = [
+        ":conv_fp8_fallback",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service/gpu:ir_emission_utils",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "conv_kind_assignment",
     srcs = ["conv_kind_assignment.cc"],
     hdrs = ["conv_kind_assignment.h"],

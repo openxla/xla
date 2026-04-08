@@ -1689,6 +1689,7 @@ cc_library(
         "//xla/backends/gpu/transforms:algorithm_checker",
         "//xla/backends/gpu/transforms:async_wrapper",
         "//xla/backends/gpu/transforms:composite_rewriter",
+        "//xla/backends/gpu/transforms:conv_fp8_fallback",
         "//xla/backends/gpu/transforms:conv_kind_assignment",
         "//xla/backends/gpu/transforms:conv_rewriter",
         "//xla/backends/gpu/transforms:convert_triton_gemm_config",

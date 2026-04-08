@@ -91,6 +91,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/collectives/gpu_collective_combiner_utils.h"
 #include "xla/backends/gpu/transforms/collectives/reduce_scatter_combiner.h"
 #include "xla/backends/gpu/transforms/composite_rewriter.h"
+#include "xla/backends/gpu/transforms/conv_fp8_fallback.h"
 #include "xla/backends/gpu/transforms/conv_rewriter.h"
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/backends/gpu/transforms/cudnn_custom_call_converter.h"
@@ -1979,6 +1980,9 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // Triton compilation needs normalized operations on bf16 (i.e. converted to
   // f32).
   add_float_normalization(pipeline);
+
+  // Rewrite FP8 conv custom calls to BF16 when cuDNN has no FP8 plans.
+  pipeline.AddPass<ConvFp8Fallback>(stream_exec);
 
   TF_RETURN_IF_ERROR(AddConvAndGemmAutotuningPass(
       &pipeline, hlo_module, gpu_version, options, thread_pool, stream_exec,
