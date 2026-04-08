@@ -32,7 +32,7 @@ class CommandBuffer;
 namespace xla::gpu {
 
 // Forward declaration.
-class Command;
+class CommandThunk;
 
 // A base class for externally managed command state.
 //
@@ -110,16 +110,16 @@ class CommandStateManager {
  public:
   template <typename State>
   State* absl_nullable GetOrNull(
-      const Command* cmd, const stream_executor::CommandBuffer* command_buffer);
+      const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer);
 
   template <typename State>
   State* absl_nonnull GetOrCreate(
-      const Command* cmd, const stream_executor::CommandBuffer* command_buffer,
+      const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer,
       absl::FunctionRef<std::unique_ptr<State>()> create);
 
   template <typename State>
   State* absl_nonnull GetOrCreate(
-      const Command* cmd, const stream_executor::CommandBuffer* command_buffer);
+      const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer);
 
  private:
   // We use strongly typed TypeId to distinguish between different state types.
@@ -134,16 +134,16 @@ class CommandStateManager {
   }
 
   CommandState* absl_nullable GetOrNull(
-      const Command* cmd, const stream_executor::CommandBuffer* command_buffer,
+      const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer,
       TypeId type_id);
 
   CommandState* absl_nonnull GetOrCreate(
-      const Command* cmd, const stream_executor::CommandBuffer* command_buffer,
+      const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer,
       TypeId type_id,
       absl::FunctionRef<std::unique_ptr<CommandState>()> create);
 
   using Key =
-      std::tuple<const Command*, const stream_executor::CommandBuffer*, TypeId>;
+      std::tuple<const CommandThunk*, const stream_executor::CommandBuffer*, TypeId>;
   absl::flat_hash_map<Key, std::unique_ptr<CommandState>> state_;
 };
 
@@ -153,7 +153,7 @@ class CommandStateManager {
 
 template <typename State>
 State* CommandStateManager::GetOrNull(
-    const Command* cmd, const stream_executor::CommandBuffer* command_buffer) {
+    const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer) {
   static_assert(std::is_base_of_v<CommandState, State>);
   return static_cast<State*>(
       GetOrNull(cmd, command_buffer, GetTypeId<State>()));
@@ -161,7 +161,7 @@ State* CommandStateManager::GetOrNull(
 
 template <typename State>
 State* CommandStateManager::GetOrCreate(
-    const Command* cmd, const stream_executor::CommandBuffer* command_buffer,
+    const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer,
     absl::FunctionRef<std::unique_ptr<State>()> create) {
   static_assert(std::is_base_of_v<CommandState, State>);
   return static_cast<State*>(GetOrCreate(
@@ -170,7 +170,7 @@ State* CommandStateManager::GetOrCreate(
 
 template <typename State>
 State* CommandStateManager::GetOrCreate(
-    const Command* cmd, const stream_executor::CommandBuffer* command_buffer) {
+    const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer) {
   return GetOrCreate<State>(cmd, command_buffer,
                             [] { return std::make_unique<State>(); });
 }

@@ -31,8 +31,8 @@ CommandStateManager::TypeId CommandStateManager::GetNextTypeId() {
 }
 
 CommandState* absl_nullable CommandStateManager::GetOrNull(
-    const Command* cmd, const stream_executor::CommandBuffer* command_buffer,
-    TypeId type_id) {
+    const CommandThunk* cmd,
+    const stream_executor::CommandBuffer* command_buffer, TypeId type_id) {
   Key key = {cmd, command_buffer, type_id};
   if (auto it = state_.find(key); it != state_.end()) {
     return it->second.get();
@@ -41,8 +41,9 @@ CommandState* absl_nullable CommandStateManager::GetOrNull(
 }
 
 CommandState* absl_nonnull CommandStateManager::GetOrCreate(
-    const Command* cmd, const stream_executor::CommandBuffer* command_buffer,
-    TypeId type_id, absl::FunctionRef<std::unique_ptr<CommandState>()> create) {
+    const CommandThunk* cmd,
+    const stream_executor::CommandBuffer* command_buffer, TypeId type_id,
+    absl::FunctionRef<std::unique_ptr<CommandState>()> create) {
   Key key = {cmd, command_buffer, type_id};
   if (auto it = state_.find(key); it != state_.end()) {
     return it->second.get();
