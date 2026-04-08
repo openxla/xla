@@ -730,7 +730,7 @@ CudaCommandBuffer::CaptureInlineAndReturnSinks(
   absl::flat_hash_set<CUgraphNode> has_successor;
   for (CUgraphNode new_node : new_nodes) {
     size_t num_deps = 0;
-#if CUDA_VERSION >= 12030
+#if CUDA_VERSION >= 12030 && CUDA_VERSION < 12090
     TF_RETURN_IF_ERROR(cuda::ToStatus(
         cuGraphNodeGetDependentNodes(new_node, nullptr, nullptr, &num_deps)));
     if (num_deps == 0) continue;
