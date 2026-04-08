@@ -216,6 +216,7 @@ std::unique_ptr<GpuProfiler> GpuProfiler::Create(
   se::DeviceAddressAllocator* active_allocator = external_allocator;
 
   if (active_allocator == nullptr) {
+    VLOG(1) << "No external allocator provided, creating a new allocator.";
     owned_allocator =
         std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
             stream_executor);

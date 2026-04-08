@@ -214,10 +214,9 @@ TEST_P(DotAlgorithmSupportTest, AlgorithmIsSupportedFromCudaCapability) {
     // Note: If the algorithm is not supported either the emitter will decline
     // to emit it (for Cublas enabled) , or the autotuner will not find any
     // supported configs (for CublasLt enabled).
-    EXPECT_THAT(
-        Run(hlo_text).message(),
-        ::testing::AnyOf(HasSubstr("Unsupported algorithm"),
-                         HasSubstr("could not find any supported configs")));
+    EXPECT_THAT(Run(hlo_text).message(),
+                ::testing::AnyOf(HasSubstr("Unsupported algorithm"),
+                                 HasSubstr("No supported configs")));
   }
 }
 
