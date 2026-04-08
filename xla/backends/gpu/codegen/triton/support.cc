@@ -543,72 +543,18 @@ bool IsAnnotatedWithTileSizes(const HloInstruction& instr) {
   return tile_sizes.ok() && tile_sizes->sizes_size() > 0;
 }
 
-CodegenDecision IsTritonSupportedDot(
+CodegenDecision IsTritonSupportedDotFusion(
     const HloDotInstruction& dot, const se::GpuComputeCapability& gpu_version) {
   if (!IsInTritonNestedGemmFusion(dot)) {
     return CodegenDecision::Forbid(
         "Dot operation is only supported in nested GEMM fusions.");
   }
-  PrimitiveType result_type = dot.shape().element_type();
-  const Shape& lhs_shape = dot.operand(0)->shape();
-  const Shape& rhs_shape = dot.operand(1)->shape();
-  PrimitiveType lhs_type = lhs_shape.element_type();
-  PrimitiveType rhs_type = rhs_shape.element_type();
-
-  bool both_operands_are_nested =
-      dot.operand(0)->opcode() == HloOpcode::kFusion &&
-      dot.operand(1)->opcode() == HloOpcode::kFusion;
-  bool contraction_tile_size_is_set = IsAnnotatedWithTileSizes(dot);
-  if (!contraction_tile_size_is_set && !both_operands_are_nested) {
+  if (!IsAnnotatedWithTileSizes(dot)) {
     return CodegenDecision::Forbid(
-        "Only operands that are fusions are supported if the dot does not have "
-        "a contraction tile size set.");
+        absl::StrCat("Dot operation must have a contraction tile size set: ",
+                     dot.ToString()));
   }
-
-  auto types_are = [&](PrimitiveType compare1, PrimitiveType compare2) {
-    return (lhs_type == compare1 && rhs_type == compare2) ||
-           (lhs_type == compare2 && rhs_type == compare1);
-  };
-  // TODO(b/393299275): add support tests for mixed types.
-  if (lhs_type != rhs_type && !types_are(F8E5M2, F8E4M3FN)) {
-    return CodegenDecision::Forbid(
-        "Dot operation only supports same types for lhs and rhs.");
-  }
-
-  if (result_type == PrimitiveType::S4) {
-    return CodegenDecision::Forbid("S4 is not supported.");
-  }
-
-  absl::Status status = CheckSupportedCheckDotDimensions(dot);
-  if (!status.ok()) {
-    return CodegenDecision::Forbid(status.message());
-  }
-
-  const PrecisionConfig& precision_config = dot.precision_config();
-  const PrecisionConfig::Algorithm algorithm = precision_config.algorithm();
-
-  if (!IsSupportedDotAlgorithm(algorithm, gpu_version)) {
-    return CodegenDecision::Forbid(
-        absl::StrCat("Unsupported dot algorithm: ",
-                     PrecisionConfig::Algorithm_Name(algorithm)));
-  }
-
-  if (algorithm == PrecisionConfig::ALG_UNSET) {
-    if (CodegenDecision decision =
-            AreTypesSupportedByAlgUnsetDot(lhs_type, result_type, gpu_version);
-        !decision) {
-      return decision;
-    }
-  }
-
-  if (CodegenDecision conversion_decision =
-          AreDotAlgorithmInputAndOutputConversionsSupported(
-              algorithm, lhs_type, rhs_type, result_type, gpu_version);
-      !conversion_decision) {
-    return conversion_decision;
-  }
-
-  return CodegenDecision::Allow();
+  return IsTritonSupportedDot(dot, gpu_version);
 }
 
 bool AnyOperandIsFusion(const HloInstruction& hlo) {
@@ -758,8 +704,9 @@ CodegenDecision IsTritonSupportedInstructionImpl(
       return CodegenDecision(instr.shape().element_type() != S4,
                              "S4 is not supported.");
     case HloOpcode::kDot:
-      return IsTritonSupportedDot(*Cast<HloDotInstruction>(&instr),
-                                  gpu_version);
+      // Dots must be contained in fusions to be supported.
+      return IsTritonSupportedDotFusion(*Cast<HloDotInstruction>(&instr),
+                                        gpu_version);
     case HloOpcode::kFusion:
       return CodegenDecision::Forbid("Nested fusions are not supported.");
     case HloOpcode::kAllReduceStart:
@@ -812,6 +759,60 @@ bool IsTritonUnsupportedOpcode(HloOpcode opcode) {
 }
 
 }  // namespace internal
+
+CodegenDecision IsTritonSupportedDot(
+    const HloDotInstruction& dot, const se::GpuComputeCapability& gpu_version) {
+  PrimitiveType result_type = dot.shape().element_type();
+  const Shape& lhs_shape = dot.operand(0)->shape();
+  const Shape& rhs_shape = dot.operand(1)->shape();
+  PrimitiveType lhs_type = lhs_shape.element_type();
+  PrimitiveType rhs_type = rhs_shape.element_type();
+
+  auto types_are = [&](PrimitiveType compare1, PrimitiveType compare2) {
+    return (lhs_type == compare1 && rhs_type == compare2) ||
+           (lhs_type == compare2 && rhs_type == compare1);
+  };
+  // TODO(b/393299275): add support tests for mixed types.
+  if (lhs_type != rhs_type && !types_are(F8E5M2, F8E4M3FN)) {
+    return CodegenDecision::Forbid(
+        "Dot operation only supports same types for lhs and rhs.");
+  }
+
+  if (result_type == PrimitiveType::S4) {
+    return CodegenDecision::Forbid("S4 is not supported.");
+  }
+
+  absl::Status status = CheckSupportedCheckDotDimensions(dot);
+  if (!status.ok()) {
+    return CodegenDecision::Forbid(status.message());
+  }
+
+  const PrecisionConfig& precision_config = dot.precision_config();
+  const PrecisionConfig::Algorithm algorithm = precision_config.algorithm();
+
+  if (!IsSupportedDotAlgorithm(algorithm, gpu_version)) {
+    return CodegenDecision::Forbid(
+        absl::StrCat("Unsupported dot algorithm: ",
+                     PrecisionConfig::Algorithm_Name(algorithm)));
+  }
+
+  if (algorithm == PrecisionConfig::ALG_UNSET) {
+    if (CodegenDecision decision =
+            AreTypesSupportedByAlgUnsetDot(lhs_type, result_type, gpu_version);
+        !decision) {
+      return decision;
+    }
+  }
+
+  if (CodegenDecision conversion_decision =
+          AreDotAlgorithmInputAndOutputConversionsSupported(
+              algorithm, lhs_type, rhs_type, result_type, gpu_version);
+      !conversion_decision) {
+    return conversion_decision;
+  }
+
+  return CodegenDecision::Allow();
+}
 
 absl::Status EnsureTritonSupportsComputeCapability(
     const se::GpuComputeCapability& gpu_compute_capability) {
