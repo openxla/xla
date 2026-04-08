@@ -1177,15 +1177,15 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest, DelayMoveToHostAsyncStart) {
     HloModule delay_moveToHost_asyncStart, is_scheduled=false
 
 
-    %wrapped_dynamic-update-slice_computation.6 (param_0.38286: bf16[8,2,4,128,128], param_1.38949: bf16[1,2,4,128,128], param_2.30408: s32[], param_3.25973: s32[], param_4.20600: s32[], param_5.16397: s32[], param_6.12209: s32[]) -> bf16[8,2,4,128,128] {
-      %param_0.38286 = bf16[8,2,4,128,128]{4,3,2,1,0:S(5)} parameter(0)
-      %param_1.38949 = bf16[1,2,4,128,128]{4,3,2,1,0} parameter(1)
-      %param_2.30408 = s32[] parameter(2)
-      %param_3.25973 = s32[] parameter(3)
-      %param_4.20600 = s32[] parameter(4)
-      %param_5.16397 = s32[] parameter(5)
-      %param_6.12209 = s32[] parameter(6)
-      ROOT %dynamic-update-slice.536.1 = bf16[8,2,4,128,128]{4,3,2,1,0:S(5)} dynamic-update-slice(%param_0.38286, %param_1.38949, %param_2.30408, %param_3.25973, %param_4.20600, /*index=5*/%param_5.16397, %param_6.12209)
+    %wrapped_dynamic-update-slice_computation.6 (p0.0: bf16[8,2,4,128,128], p1.0: bf16[1,2,4,128,128], p2.0: s32[], p3.0: s32[], p4.0: s32[], p5.0: s32[], p6.0: s32[]) -> bf16[8,2,4,128,128] {
+      %p0.0 = bf16[8,2,4,128,128]{4,3,2,1,0:S(5)} parameter(0)
+      %p1.0 = bf16[1,2,4,128,128]{4,3,2,1,0} parameter(1)
+      %p2.0 = s32[] parameter(2)
+      %p3.0 = s32[] parameter(3)
+      %p4.0 = s32[] parameter(4)
+      %p5.0 = s32[] parameter(5)
+      %p6.0 = s32[] parameter(6)
+      ROOT %dynamic-update-slice.536.1 = bf16[8,2,4,128,128]{4,3,2,1,0:S(5)} dynamic-update-slice(%p0.0, %p1.0, %p2.0, %p3.0, %p4.0, /*index=5*/%p5.0, %p6.0)
     }
 
     %async_computation.6 (param_0.6: bf16[8,2,4,128,128], param_1.6: bf16[1,2,4,128,128], param_2.6: s32[], param_3.6: s32[], param_4.6: s32[], param_5.2: s32[], param_6: s32[]) -> bf16[8,2,4,128,128] {
@@ -1216,7 +1216,7 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest, DelayMoveToHostAsyncStart) {
       p7 = bf16[1,8,16,16,128,7168] parameter(7)
       p8 = bf16[] parameter(8)
 
-      %all-to-all-start.4 = ((bf16[1,8,16,16,128,7168]{5,4,3,1,0,2}), bf16[1,8,16,16,128,7168]{5,4,3,1,0,2}) async-start(p7), calls=%async_computation.46, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"collective_backend_config":{"is_sync":false,"is_pipelined":false,"backend":"DEFAULT"},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+      %all-to-all-start.4 = ((bf16[1,8,16,16,128,7168]{5,4,3,1,0,2}), bf16[1,8,16,16,128,7168]{5,4,3,1,0,2}) async-start(p7), calls=%async_computation.46
       %all-to-all-done.4 = bf16[1,8,16,16,128,7168]{5,4,3,1,0,2} async-done(%all-to-all-start.4)
       %bitcast.309.7 = bf16[128,16,128,7168]{3,2,1,0} bitcast(%all-to-all-done.4)
       %bitcast.310.9 = bf16[] bitcast(p8)
@@ -1230,13 +1230,12 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest, DelayMoveToHostAsyncStart) {
 
   absl::string_view kFdoProfile = "";
   auto config = GetModuleConfig(kFdoProfile);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
+  TF_ASSERT_OK_AND_ASSIGN(auto module, // xla::HloModule
                           ParseAndReturnVerifiedModule(kHloModule, config));
 
   TF_EXPECT_OK(ScheduleModule(module.get()));
-  auto schedule = module->schedule();
   std::vector<HloInstruction*> instruction_sequence =
-      schedule.sequence(module->entry_computation()).instructions();
+      module->schedule().sequence(module->entry_computation()).instructions();
 
   EXPECT_TRUE(
       GetIndexByName(instruction_sequence, "dynamic-update-slice-start.18") <
