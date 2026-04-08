@@ -32,7 +32,7 @@ struct StateB : public CommandState {
 
 TEST(CommandStateManagerTest, GetOrCreateState) {
   // We need a fake command pointer to use as a key. Nullptr works just fine!
-  const Command* cmd = nullptr;
+  const CommandThunk* cmd = nullptr;
 
   CommandStateManager state_manager;
 

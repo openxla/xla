@@ -41,7 +41,7 @@ limitations under the License.
 
 namespace xla::gpu {
 
-// Command executor is responsible for recording commands sequence into the
+// CommandThunk executor is responsible for recording commands sequence into the
 // underlying command buffer and setting up dependencies between commands.
 class CommandExecutor {
  public:
@@ -98,7 +98,7 @@ class CommandExecutor {
   // no extra resource uses are added.
   static absl::StatusOr<CommandExecutor> Create(
       CommandSequence commands, SynchronizationMode synchronization_mode,
-      std::vector<Command::ResourceUses> extra_resources = {});
+      std::vector<CommandThunk::ResourceUses> extra_resources = {});
 
   // Prepares all commands added to a sequence.
   absl::Status Prepare(const Thunk::PrepareParams& params);
@@ -115,11 +115,11 @@ class CommandExecutor {
   // command buffer. For a more fine grained recording and updating of command
   // buffers see `RecordCreate` and `RecordUpdate` APIs defined below.
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
-                      const Command::RecordParams& record_params,
+                      const CommandThunk::RecordParams& record_params,
                       se::CommandBuffer* command_buffer,
                       RecordId record_id = RecordId(0));
 
-  // Records command creation into the command buffer. Command buffer must be
+  // Records command creation into the command buffer. CommandThunk buffer must be
   // in create state. The next command sequence recorded into the same command
   // buffer must use returned commands as dependencies, to guarantee that it is
   // correctly ordered after this command sequence.
@@ -131,17 +131,17 @@ class CommandExecutor {
   // commands will also depend on B's sink commands.
   absl::StatusOr<std::vector<const se::CommandBuffer::Command*>> RecordCreate(
       const Thunk::ExecuteParams& execute_params,
-      const Command::RecordParams& record_params,
+      const CommandThunk::RecordParams& record_params,
       se::CommandBuffer* command_buffer,
       absl::Span<const se::CommandBuffer::Command* const> dependencies,
       RecordId record_id = RecordId(0)) const;
 
-  // Records command updates into the command buffer. Command buffer must be
-  // in update state. Command buffer update can't change the dependency
+  // Records command updates into the command buffer. CommandThunk buffer must be
+  // in update state. CommandThunk buffer update can't change the dependency
   // structure of the underlying command buffer and can only update attributes
   // of the individual commands.
   absl::Status RecordUpdate(const Thunk::ExecuteParams& execute_params,
-                            const Command::RecordParams& record_params,
+                            const CommandThunk::RecordParams& record_params,
                             se::CommandBuffer* command_buffer,
                             RecordId record_id = RecordId(0)) const;
 
@@ -156,7 +156,7 @@ class CommandExecutor {
 
   bool requires_initialization() const {
     bool requires_initialization = false;
-    commands_.Walk([&](const Command* command) {
+    commands_.Walk([&](const CommandThunk* command) {
       requires_initialization |= command->requires_initialization();
     });
     return requires_initialization;
@@ -164,7 +164,7 @@ class CommandExecutor {
 
   bool force_update() const {
     bool force_update = false;
-    commands_.Walk([&](const Command* command) {
+    commands_.Walk([&](const CommandThunk* command) {
       force_update |= command->force_update();
     });
     return force_update;
@@ -172,7 +172,7 @@ class CommandExecutor {
 
   bool support_loop_unroll() const {
     bool support_loop_unroll = true;
-    commands_.Walk([&](const Command* command) {
+    commands_.Walk([&](const CommandThunk* command) {
       support_loop_unroll &= command->support_loop_unroll();
     });
     return support_loop_unroll;
@@ -184,11 +184,11 @@ class CommandExecutor {
 
   // Recursively traverses all commands in the executor and nested executors.
   absl::Status Walk(
-      absl::FunctionRef<absl::Status(const Command*)> callback) const {
+      absl::FunctionRef<absl::Status(const CommandThunk*)> callback) const {
     return commands_.Walk(callback);
   }
 
-  absl::Status Walk(absl::FunctionRef<absl::Status(Command*)> callback) {
+  absl::Status Walk(absl::FunctionRef<absl::Status(CommandThunk*)> callback) {
     return commands_.Walk(callback);
   }
 
@@ -201,7 +201,7 @@ class CommandExecutor {
   using CommandId = int64_t;
 
   // Commands recorded into the `se::CommandBuffer` by the `commands_` command
-  // sequence: commands returned from calls to `Command::Record`. Indexed by
+  // sequence: commands returned from calls to `CommandThunk::Record`. Indexed by
   // the command index in the `commands_` (aka `CommandId`). We pass these
   // commands back when we are recording command buffer updates.
   using RecordedCommands = std::vector<const se::CommandBuffer::Command*>;
@@ -234,7 +234,7 @@ class CommandExecutor {
 
   // Returns dependencies of the command with the given id.
   std::vector<const se::CommandBuffer::Command*> Dependencies(
-      const Command::RecordParams& record_params,
+      const CommandThunk::RecordParams& record_params,
       se::CommandBuffer* command_buffer, CommandId id,
       RecordId record_id) const;
 

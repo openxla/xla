@@ -320,7 +320,7 @@ TEST(KernelThunkTest, ConvertToCommandsPropagatesUsePdl) {
       ConvertToCommands(thunks, ConvertToCommandsOptions()));
 
   bool found_launch_cmd = false;
-  TF_ASSERT_OK(commands.Walk([&](const Command* command) {
+  TF_ASSERT_OK(commands.Walk([&](const CommandThunk* command) {
     if (auto* launch_cmd = dynamic_cast<const LaunchCmd*>(command);
         launch_cmd != nullptr) {
       found_launch_cmd = true;

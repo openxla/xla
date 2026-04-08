@@ -242,7 +242,7 @@ bool IsConvertible(const RaggedAllToAllThunk& ra2a_thunk,
     bool is_local = IsAllReplicasLocal(
         config.num_local_devices, ra2a_thunk.ragged_all_to_all_config().config);
     if (!is_local) {
-      VLOG(2) << "Skipping RaggedAllToAll Command Buffer conversion: "
+      VLOG(2) << "Skipping RaggedAllToAll CommandThunk Buffer conversion: "
                  "Operation requires multi-host communication "
               << "(num_local_devices=" << config.num_local_devices
               << "), but one-shot kernel only supports "

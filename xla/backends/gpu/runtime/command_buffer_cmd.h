@@ -82,8 +82,8 @@ namespace xla::gpu {
 // subsequent calls to XLA executable tend to reuse the same allocations.
 class TracedCommandBuffer : public CommandState {
  public:
-  explicit TracedCommandBuffer(const Command* trace_cmd,
-                               Command::BufferUses buffers,
+  explicit TracedCommandBuffer(const CommandThunk* trace_cmd,
+                               CommandThunk::BufferUses buffers,
                                int64_t capacity = 16);
 
   // Returns cached command buffer traced using the same buffer addresses or
@@ -100,7 +100,7 @@ class TracedCommandBuffer : public CommandState {
     std::vector<se::DeviceAddressBase> recorded_allocs;
     std::unique_ptr<se::CommandBuffer> command_buffer;
   };
-  const Command* trace_cmd_;
+  const CommandThunk* trace_cmd_;
   int64_t capacity_;
   std::vector<Entry> entries_;
 };
@@ -110,7 +110,7 @@ class TracedCommandBuffer : public CommandState {
 //===----------------------------------------------------------------------===//
 
 // A base class for commands implemented as tracing of stream activities.
-class TracedCommandBufferCmd : public Command {
+class TracedCommandBufferCmd : public CommandThunk {
  protected:
   explicit TracedCommandBufferCmd(CommandType cmd_type);
 
@@ -128,7 +128,7 @@ class TracedCommandBufferCmd : public Command {
 // EmptyCmd
 //===----------------------------------------------------------------------===//
 
-class EmptyCmd : public Command {
+class EmptyCmd : public CommandThunk {
  public:
   explicit EmptyCmd();
 
@@ -142,7 +142,7 @@ class EmptyCmd : public Command {
 // ComputationIdCmd (ReplicaId and PartitionId)
 //===----------------------------------------------------------------------===//
 
-class ComputationIdCmd : public Command {
+class ComputationIdCmd : public CommandThunk {
  public:
   enum class Kind { kReplica, kPartition };
 
@@ -164,7 +164,7 @@ class ComputationIdCmd : public Command {
 // LaunchCmd
 //===----------------------------------------------------------------------===//
 
-class LaunchCmd : public Command {
+class LaunchCmd : public CommandThunk {
  public:
   LaunchCmd(std::string kernel_name, absl::Span<const ShapedSlice> args,
             absl::Span<const BufferUse::MemoryAccess> args_access,
@@ -193,7 +193,7 @@ class LaunchCmd : public Command {
   // Programmatic Dependent Launch.
   bool use_pdl_;
 
-  // Command sequence can be recorded concurrently for multiple command buffers
+  // CommandThunk sequence can be recorded concurrently for multiple command buffers
   // on different stream executors and we need to synchronize mutable state.
   absl::Mutex mutex_;
   absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<se::Kernel>> kernels_
@@ -204,7 +204,7 @@ class LaunchCmd : public Command {
 // CustomKernelLaunchCmd
 //===----------------------------------------------------------------------===//
 
-class CustomKernelLaunchCmd : public Command {
+class CustomKernelLaunchCmd : public CommandThunk {
  public:
   CustomKernelLaunchCmd(absl::Span<const ShapedSlice> args,
                         absl::Span<const BufferUse::MemoryAccess> args_access,
@@ -224,7 +224,7 @@ class CustomKernelLaunchCmd : public Command {
   std::vector<BufferUse::MemoryAccess> args_access_;
   CustomKernel custom_kernel_;
 
-  // Command sequence can be recorded concurrently for multiple command buffers
+  // CommandThunk sequence can be recorded concurrently for multiple command buffers
   // on different stream executors and we need to synchronize mutable state.
   absl::Mutex mutex_;
   absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<se::Kernel>> kernels_
@@ -235,7 +235,7 @@ class CustomKernelLaunchCmd : public Command {
 // MemcpyDeviceToDeviceCmd
 //===----------------------------------------------------------------------===//
 
-class MemcpyDeviceToDeviceCmd : public Command {
+class MemcpyDeviceToDeviceCmd : public CommandThunk {
  public:
   MemcpyDeviceToDeviceCmd(ShapedSlice dst, ShapedSlice src, int64_t num_bytes);
 
@@ -256,7 +256,7 @@ class MemcpyDeviceToDeviceCmd : public Command {
 // MemzeroCmd
 //===----------------------------------------------------------------------===//
 
-class MemzeroCmd : public Command {
+class MemzeroCmd : public CommandThunk {
  public:
   explicit MemzeroCmd(ShapedSlice dst);
 
@@ -275,7 +275,7 @@ class MemzeroCmd : public Command {
 // Memset32Cmd
 //===----------------------------------------------------------------------===//
 
-class Memset32Cmd : public Command {
+class Memset32Cmd : public CommandThunk {
  public:
   Memset32Cmd(BufferAllocation::Slice dst, uint32_t bit_pattern);
 
@@ -295,7 +295,7 @@ class Memset32Cmd : public Command {
 // ChildCmd
 //===----------------------------------------------------------------------===//
 
-class ChildCmd : public Command {
+class ChildCmd : public CommandThunk {
  public:
   explicit ChildCmd(CommandExecutor child_commands);
 
@@ -317,7 +317,7 @@ class ChildCmd : public Command {
 // CaseCmd
 //===----------------------------------------------------------------------===//
 
-class CaseCmd : public Command {
+class CaseCmd : public CommandThunk {
  public:
   CaseCmd(ShapedSlice index, std::vector<CommandExecutor> branches);
 
@@ -343,7 +343,7 @@ class CaseCmd : public Command {
 // WhileCmd
 //===----------------------------------------------------------------------===//
 
-class WhileCmd : public Command {
+class WhileCmd : public CommandThunk {
  public:
   WhileCmd(BufferAllocation::Slice pred, CommandExecutor cond_commands,
            CommandExecutor body_commands,
@@ -459,7 +459,7 @@ class CuDnnCmd : public TracedCommandBufferCmd {
 // CustomCallCmd
 //===----------------------------------------------------------------------===//
 
-class CustomCallCmd : public Command {
+class CustomCallCmd : public CommandThunk {
  public:
   using CustomCallTarget = CustomCallThunk::CustomCallTarget;
   using AttributesMap = ffi::AttributesMap;
@@ -470,7 +470,7 @@ class CustomCallCmd : public Command {
                 std::vector<NullableShapedSlice> operands,
                 std::vector<NullableShapedSlice> results,
                 absl::string_view opaque)
-      : Command(CommandType::kCustomCallCmd),
+      : CommandThunk(CommandType::kCustomCallCmd),
         target_name_(std::move(target_name)),
         call_target_(std::move(call_target)),
         opaque_(opaque),
@@ -483,7 +483,7 @@ class CustomCallCmd : public Command {
                 ffi::CallFrame call_frame, ThunkId thunk_id,
                 std::shared_ptr<ffi::ExecutionState> execution_state,
                 const HloComputation* called_computation)
-      : Command(CommandType::kCustomCallCmd),
+      : CommandThunk(CommandType::kCustomCallCmd),
         target_name_(std::move(target_name)),
         handler_(handler),
         call_frame_(std::move(call_frame)),
@@ -549,7 +549,7 @@ class CustomCallCmd : public Command {
 // CollectiveCmd
 //===----------------------------------------------------------------------===//
 
-class CollectiveCmd : public Command {
+class CollectiveCmd : public CommandThunk {
  public:
   CollectiveCmd(CommandType cmd_type, CollectiveConfig config);
 
@@ -742,7 +742,7 @@ class SendCmd : public CollectiveCmd {
 // DynamicSliceFusionCmd
 //===----------------------------------------------------------------------===//
 
-class DynamicSliceFusionCmd : public Command {
+class DynamicSliceFusionCmd : public CommandThunk {
  public:
   DynamicSliceFusionCmd(
       CommandExecutor embedded_commands,
@@ -811,7 +811,7 @@ class DynamicSliceFusionCmd : public Command {
 
 // DynamicSliceCopyFusionCmd is a command that copies a slice from one
 // buffer to another, it is only supported for static slice.
-class DynamicSliceCopyFusionCmd : public Command {
+class DynamicSliceCopyFusionCmd : public CommandThunk {
  public:
   DynamicSliceCopyFusionCmd(const ShapedSlice& source_buffer,
                             const ShapedSlice& destination_buffer,

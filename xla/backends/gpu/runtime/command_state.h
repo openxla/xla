@@ -32,7 +32,7 @@ class CommandBuffer;
 namespace xla::gpu {
 
 // Forward declaration.
-class Command;
+class CommandThunk;
 
 // A base class for externally managed command state.
 //
@@ -49,7 +49,7 @@ class Command;
 //
 // To make a command stateful, it needs a `CommandStateManager` indirection:
 //
-//   class MyCommand : public Command {
+//   class MyCommand : public CommandThunk {
 //     public:
 //
 //     // Container for mutable state required for command execution.
@@ -57,7 +57,7 @@ class Command;
 //       ...
 //     };
 //
-//     absl::StatusOr<Command*> Record(...) override {
+//     absl::StatusOr<CommandThunk*> Record(...) override {
 //       // Attach a new instance of `MyState` to the active command buffer.
 //       // When a command buffer will be destroyed, the state will be destroyed
 //       // as well automatically by XLA runtime. If this command will be
@@ -79,7 +79,7 @@ class CommandState {
   virtual ~CommandState() = default;
 };
 
-// Command state manager owns command state recorded into the `command_buffer`
+// CommandThunk state manager owns command state recorded into the `command_buffer`
 // by commands in a command sequence. State is created lazily the first time
 // command is recorded using a given state manager (into a given command
 // buffer). State manager is owned by a command buffer thunk together with
@@ -89,17 +89,17 @@ class CommandState {
 // Note that the same command executor can be recorded into multiple nested
 // command buffers that belong to the same top-level executable command buffer,
 // i.e. this can happed with nested control flow. For this reason the key
-// for the state is a pair or `Command` and `se::CommandBuffer` which fully
+// for the state is a pair or `CommandThunk` and `se::CommandBuffer` which fully
 // identify where exactly command is being recorded.
 //
-// IMPORTANT: Command can be recorded into the command buffer multiple times
+// IMPORTANT: CommandThunk can be recorded into the command buffer multiple times
 // for different record ids (see `CommandExecutor::RecordId`). The typical
 // command lifecycle is:
 //
-// (1) Command::Prepare() - prepare state for execution
-// (2) Command::Initialize() - initialize resources for execution (or state)
-// (3) Command::Record(create) - record commands into the command buffer
-// (4) Command::Record(update) - update previousy recorded command
+// (1) CommandThunk::Prepare() - prepare state for execution
+// (2) CommandThunk::Initialize() - initialize resources for execution (or state)
+// (3) CommandThunk::Record(create) - record commands into the command buffer
+// (4) CommandThunk::Record(update) - update previousy recorded command
 //
 // Steps (1) and (2) called exactly one time for each top level XLA program
 // execution. Steps (3) and (4) can be called multiple times. In the most
@@ -110,16 +110,16 @@ class CommandStateManager {
  public:
   template <typename State>
   State* absl_nullable GetOrNull(
-      const Command* cmd, const stream_executor::CommandBuffer* command_buffer);
+      const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer);
 
   template <typename State>
   State* absl_nonnull GetOrCreate(
-      const Command* cmd, const stream_executor::CommandBuffer* command_buffer,
+      const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer,
       absl::FunctionRef<std::unique_ptr<State>()> create);
 
   template <typename State>
   State* absl_nonnull GetOrCreate(
-      const Command* cmd, const stream_executor::CommandBuffer* command_buffer);
+      const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer);
 
  private:
   // We use strongly typed TypeId to distinguish between different state types.
@@ -134,16 +134,16 @@ class CommandStateManager {
   }
 
   CommandState* absl_nullable GetOrNull(
-      const Command* cmd, const stream_executor::CommandBuffer* command_buffer,
+      const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer,
       TypeId type_id);
 
   CommandState* absl_nonnull GetOrCreate(
-      const Command* cmd, const stream_executor::CommandBuffer* command_buffer,
+      const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer,
       TypeId type_id,
       absl::FunctionRef<std::unique_ptr<CommandState>()> create);
 
   using Key =
-      std::tuple<const Command*, const stream_executor::CommandBuffer*, TypeId>;
+      std::tuple<const CommandThunk*, const stream_executor::CommandBuffer*, TypeId>;
   absl::flat_hash_map<Key, std::unique_ptr<CommandState>> state_;
 };
 
@@ -153,7 +153,7 @@ class CommandStateManager {
 
 template <typename State>
 State* CommandStateManager::GetOrNull(
-    const Command* cmd, const stream_executor::CommandBuffer* command_buffer) {
+    const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer) {
   static_assert(std::is_base_of_v<CommandState, State>);
   return static_cast<State*>(
       GetOrNull(cmd, command_buffer, GetTypeId<State>()));
@@ -161,7 +161,7 @@ State* CommandStateManager::GetOrNull(
 
 template <typename State>
 State* CommandStateManager::GetOrCreate(
-    const Command* cmd, const stream_executor::CommandBuffer* command_buffer,
+    const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer,
     absl::FunctionRef<std::unique_ptr<State>()> create) {
   static_assert(std::is_base_of_v<CommandState, State>);
   return static_cast<State*>(GetOrCreate(
@@ -170,7 +170,7 @@ State* CommandStateManager::GetOrCreate(
 
 template <typename State>
 State* CommandStateManager::GetOrCreate(
-    const Command* cmd, const stream_executor::CommandBuffer* command_buffer) {
+    const CommandThunk* cmd, const stream_executor::CommandBuffer* command_buffer) {
   return GetOrCreate<State>(cmd, command_buffer,
                             [] { return std::make_unique<State>(); });
 }

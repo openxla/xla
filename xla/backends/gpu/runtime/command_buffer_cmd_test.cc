@@ -95,9 +95,9 @@ static constexpr auto serialize =
 // A command buffer cmd for testing automatic barriers insertion by the command
 // buffer cmd commands. We never execute this command, we need it only to pass
 // buffer usage vector to the command buffer cmd commands.
-struct TestOnlyCommandBufferCmd : public Command {
-  explicit TestOnlyCommandBufferCmd(Command::BufferUses buffers)
-      : Command(CommandType::kEmptyCmd, {}), buffers(buffers) {}
+struct TestOnlyCommandBufferCmd : public CommandThunk {
+  explicit TestOnlyCommandBufferCmd(CommandThunk::BufferUses buffers)
+      : CommandThunk(CommandType::kEmptyCmd, {}), buffers(buffers) {}
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
@@ -110,9 +110,9 @@ struct TestOnlyCommandBufferCmd : public Command {
   BufferUses buffers;
 };
 
-class FakeCmd : public Command {
+class FakeCmd : public CommandThunk {
  public:
-  explicit FakeCmd() : Command(CommandType::kEmptyCmd, {}) {}
+  explicit FakeCmd() : CommandThunk(CommandType::kEmptyCmd, {}) {}
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
@@ -133,7 +133,7 @@ TEST(CommandBufferCmdStateManageTest, GetOrCreateState) {
   };
 
   // We need a fake command and command buffer pointer to use as a key.
-  auto* cmd = tsl::safe_reinterpret_cast<Command*>(std::intptr_t{0x1234567});
+  auto* cmd = tsl::safe_reinterpret_cast<CommandThunk*>(std::intptr_t{0x1234567});
   auto* command_buffer =
       tsl::safe_reinterpret_cast<se::CommandBuffer*>(std::intptr_t{0x1234567});
 
@@ -176,8 +176,8 @@ TEST(CommandBufferCmdTest, SerializeExecution) {
   auto use1 = BufferUse::Read(slice1, shape);
 
   CommandSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
+  commands.Emplace<TestOnlyCommandBufferCmd>(CommandThunk::BufferUses{use0});
+  commands.Emplace<TestOnlyCommandBufferCmd>(CommandThunk::BufferUses{use1});
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -197,8 +197,8 @@ TEST(CommandBufferCmdTest, NoReadBarrier) {
   auto use1 = BufferUse::Read(slice1, shape);
 
   CommandSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
+  commands.Emplace<TestOnlyCommandBufferCmd>(CommandThunk::BufferUses{use0});
+  commands.Emplace<TestOnlyCommandBufferCmd>(CommandThunk::BufferUses{use1});
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -218,8 +218,8 @@ TEST(CommandBufferCmdTest, NoWriteBarrier) {
   auto use1 = BufferUse::Write(slice1, shape);
 
   CommandSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
+  commands.Emplace<TestOnlyCommandBufferCmd>(CommandThunk::BufferUses{use0});
+  commands.Emplace<TestOnlyCommandBufferCmd>(CommandThunk::BufferUses{use1});
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -241,9 +241,9 @@ TEST(CommandBufferCmdTest, WriteConflictBarrier) {
   auto use2 = BufferUse::Write(slice1, shape);
 
   CommandSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use2});
+  commands.Emplace<TestOnlyCommandBufferCmd>(CommandThunk::BufferUses{use0});
+  commands.Emplace<TestOnlyCommandBufferCmd>(CommandThunk::BufferUses{use1});
+  commands.Emplace<TestOnlyCommandBufferCmd>(CommandThunk::BufferUses{use2});
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -292,7 +292,7 @@ TEST(CommandBufferCmdTest, MemcpyCmd) {
                                    stream.get(), nullptr, nullptr, nullptr);
 
   CommandStateManager state;
-  Command::RecordParams record_params = {state};
+  CommandThunk::RecordParams record_params = {state};
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
@@ -367,7 +367,7 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
                                    stream.get(), nullptr, nullptr, nullptr);
 
   CommandStateManager state;
-  Command::RecordParams record_params = {state};
+  CommandThunk::RecordParams record_params = {state};
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
@@ -443,7 +443,7 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
                                    stream.get(), nullptr, nullptr, nullptr);
 
   CommandStateManager state;
-  Command::RecordParams record_params = {state};
+  CommandThunk::RecordParams record_params = {state};
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
@@ -504,7 +504,7 @@ TEST(CommandBufferCmdTest, DynamicSliceCopyFusionCmd) {
                                    stream.get(), nullptr, nullptr, nullptr);
 
   CommandStateManager state;
-  Command::RecordParams record_params = {state};
+  CommandThunk::RecordParams record_params = {state};
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
@@ -531,7 +531,7 @@ TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {
     BufferAllocation alloc1(/*index=*/1, /*size=*/1024, /*color=*/0);
 
     Shape shape = ShapeUtil::MakeShape(U8, {1024});
-    Command::BufferUses buffers = {
+    CommandThunk::BufferUses buffers = {
         BufferUse::Read(BufferAllocation::Slice(&alloc0, 0, 1024), shape),
         BufferUse::Write(BufferAllocation::Slice(&alloc1, 0, 1024), shape)};
 
@@ -691,7 +691,7 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
                                    stream.get(), nullptr, nullptr, nullptr);
 
   CommandStateManager state;
-  Command::RecordParams record_params = {state};
+  CommandThunk::RecordParams record_params = {state};
 
   // Create a primary command buffer and record A -> B -> C with dependencies.
   TF_ASSERT_OK_AND_ASSIGN(
@@ -800,7 +800,7 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
                                    stream.get(), nullptr, nullptr, nullptr);
 
   CommandStateManager state;
-  Command::RecordParams record_params = {state};
+  CommandThunk::RecordParams record_params = {state};
 
   // Create a command buffer and record the nested ChildCmd (Create).
   TF_ASSERT_OK_AND_ASSIGN(
@@ -950,7 +950,7 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
 
   // Indicate which allocations changed to ensure update is not skipped.
   std::vector<BufferAllocation::Index> updated_allocs = {0, 2};
-  Command::RecordParams record_params2 = {state, std::move(updated_allocs)};
+  CommandThunk::RecordParams record_params2 = {state, std::move(updated_allocs)};
 
   TF_ASSERT_OK(outer_executor.Record(exec_params2, record_params2,
                                      command_buffer.get()));
@@ -985,7 +985,7 @@ static void BM_GetOrTraceCommandBuffer(benchmark::State& state) {
   BufferAllocation alloc1(/*index=*/1, /*size=*/1024, /*color=*/0);
 
   Shape shape = ShapeUtil::MakeShape(U8, {1024});
-  Command::BufferUses buffers = {
+  CommandThunk::BufferUses buffers = {
       BufferUse::Read(BufferAllocation::Slice(&alloc0, 0, 1024), shape),
       BufferUse::Write(BufferAllocation::Slice(&alloc1, 0, 1024), shape)};
 

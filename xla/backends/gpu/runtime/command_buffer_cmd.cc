@@ -156,7 +156,7 @@ static absl::string_view ReductionKindString(ReductionKind kind) {
 // Create a callback to create a command buffer from a command sequence.
 static se::CommandBuffer::CreateCommands CreateCommands(
     const CommandExecutor* commands, const Thunk::ExecuteParams* execute_params,
-    const Command::RecordParams* record_params) {
+    const CommandThunk::RecordParams* record_params) {
   return [=](se::CommandBuffer* command_buffer,
              absl::Span<const se::CommandBuffer::Command* const> dependencies) {
     return commands->RecordCreate(*execute_params, *record_params,
@@ -168,7 +168,7 @@ static se::CommandBuffer::CreateCommands CreateCommands(
 static std::vector<se::CommandBuffer::CreateCommands> CreateCommands(
     absl::Span<const CommandExecutor> commands,
     const Thunk::ExecuteParams* execute_params,
-    const Command::RecordParams* record_params) {
+    const CommandThunk::RecordParams* record_params) {
   std::vector<se::CommandBuffer::CreateCommands> create_commands;
   for (const CommandExecutor& cmd : commands) {
     create_commands.push_back(
@@ -180,7 +180,7 @@ static std::vector<se::CommandBuffer::CreateCommands> CreateCommands(
 // Create a callback to update a command buffer with command sequence.
 static se::CommandBuffer::UpdateCommands UpdateCommands(
     const CommandExecutor* commands, const Thunk::ExecuteParams* execute_params,
-    const Command::RecordParams* record_params) {
+    const CommandThunk::RecordParams* record_params) {
   return [=](se::CommandBuffer* command_buffer) {
     return commands->RecordUpdate(*execute_params, *record_params,
                                   command_buffer);
@@ -191,7 +191,7 @@ static se::CommandBuffer::UpdateCommands UpdateCommands(
 static std::vector<se::CommandBuffer::UpdateCommands> UpdateCommands(
     absl::Span<const CommandExecutor> commands,
     const Thunk::ExecuteParams* execute_params,
-    const Command::RecordParams* record_params) {
+    const CommandThunk::RecordParams* record_params) {
   std::vector<se::CommandBuffer::UpdateCommands> update_commands;
   for (const CommandExecutor& cmd : commands) {
     update_commands.push_back(
@@ -201,7 +201,7 @@ static std::vector<se::CommandBuffer::UpdateCommands> UpdateCommands(
 }
 
 //===----------------------------------------------------------------------===//
-// Command::RecordAction helpers.
+// CommandThunk::RecordAction helpers.
 //===----------------------------------------------------------------------===//
 
 using CreateCommand =
@@ -213,13 +213,13 @@ using UpdateCommand =
 
 // Handles a record action by calling one of the user-provided functions.
 static absl::StatusOr<const se::CommandBuffer::Command*> Handle(
-    Command::RecordAction action, CreateCommand create_command,
+    CommandThunk::RecordAction action, CreateCommand create_command,
     UpdateCommand update_command) {
-  if (auto* create = std::get_if<Command::RecordCreate>(&action)) {
+  if (auto* create = std::get_if<CommandThunk::RecordCreate>(&action)) {
     return create_command(create->dependencies);
   }
 
-  if (auto* update = std::get_if<Command::RecordUpdate>(&action)) {
+  if (auto* update = std::get_if<CommandThunk::RecordUpdate>(&action)) {
     TF_RETURN_IF_ERROR(update_command(update->command));
     return update->command;
   }
@@ -231,8 +231,8 @@ static absl::StatusOr<const se::CommandBuffer::Command*> Handle(
 // TracedCommandBuffer
 //===----------------------------------------------------------------------===//
 
-TracedCommandBuffer::TracedCommandBuffer(const Command* trace_cmd,
-                                         Command::BufferUses buffers,
+TracedCommandBuffer::TracedCommandBuffer(const CommandThunk* trace_cmd,
+                                         CommandThunk::BufferUses buffers,
                                          int64_t capacity)
     : trace_cmd_(trace_cmd), capacity_(capacity), entries_(capacity) {
   CHECK_GT(capacity, 0) << "capacity must be larger than 0";  // NOLINT
@@ -276,7 +276,7 @@ absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
     // pointer to cached command buffer.
     if (ABSL_PREDICT_TRUE(absl::c_equal(entries_[i].recorded_allocs, allocs) &&
                           entries_[i].command_buffer)) {
-      VLOG(6) << "Command buffer trace cache hit for command "
+      VLOG(6) << "CommandThunk buffer trace cache hit for command "
               << trace_cmd_->ToString(0);
       return shift_right(i).command_buffer.get();
     }
@@ -291,7 +291,7 @@ absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
       if (priority != se::StreamPriority::Default) {
         TF_RETURN_IF_ERROR(entries_[i].command_buffer->SetPriority(priority));
       }
-      VLOG(6) << "Command buffer trace cache create new item for command "
+      VLOG(6) << "CommandThunk buffer trace cache create new item for command "
               << trace_cmd_->ToString(0);
       return shift_right(i).command_buffer.get();
     }
@@ -304,7 +304,7 @@ absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
       entries_[capacity_ - 1].command_buffer,
       se::TraceCommandBufferFactory::Create(executor, stream, trace));
   entries_[capacity_ - 1].recorded_allocs.assign(allocs.begin(), allocs.end());
-  VLOG(6) << "Command buffer trace cache does replacement for command "
+  VLOG(6) << "CommandThunk buffer trace cache does replacement for command "
           << trace_cmd_->ToString(0);
   return shift_right(capacity_ - 1).command_buffer.get();
 }
@@ -314,7 +314,7 @@ absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
 //===----------------------------------------------------------------------===//
 
 TracedCommandBufferCmd::TracedCommandBufferCmd(CommandType cmd_type)
-    : Command(cmd_type) {}
+    : CommandThunk(cmd_type) {}
 
 absl::StatusOr<const se::CommandBuffer::Command*>
 TracedCommandBufferCmd::RecordTracedCommand(
@@ -351,7 +351,7 @@ TracedCommandBufferCmd::RecordTracedCommand(
 // EmptyCmd
 //===----------------------------------------------------------------------===//
 
-EmptyCmd::EmptyCmd() : Command(CommandType::kEmptyCmd) {}
+EmptyCmd::EmptyCmd() : CommandThunk(CommandType::kEmptyCmd) {}
 
 absl::StatusOr<const se::CommandBuffer::Command*> EmptyCmd::Record(
     const Thunk::ExecuteParams& execute_params,
@@ -373,9 +373,9 @@ absl::StatusOr<const se::CommandBuffer::Command*> EmptyCmd::Record(
 //===----------------------------------------------------------------------===//
 
 ComputationIdCmd::ComputationIdCmd(BufferAllocation::Slice dest, Kind kind)
-    : Command(CommandType::kComputationIdCmd), dest_(dest), kind_(kind) {}
+    : CommandThunk(CommandType::kComputationIdCmd), dest_(dest), kind_(kind) {}
 
-Command::BufferUses ComputationIdCmd::buffer_uses() const {
+CommandThunk::BufferUses ComputationIdCmd::buffer_uses() const {
   return {BufferUse::Write(dest_, ShapeUtil::MakeShape(S32, {}))};
 }
 
@@ -423,7 +423,7 @@ LaunchCmd::LaunchCmd(
     absl::Span<const BufferUse::MemoryAccess> args_access,
     LaunchDimensions dims, int64_t shmem_bytes,
     std::optional<stream_executor::gpu::TmaMetadata> tma_metadata, bool use_pdl)
-    : Command(CommandType::kLaunchCmd),
+    : CommandThunk(CommandType::kLaunchCmd),
       kernel_name_(std::move(kernel_name)),
       args_(args.begin(), args.end()),
       args_access_(args_access.begin(), args_access.end()),
@@ -515,7 +515,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> LaunchCmd::Record(
       });
 }
 
-Command::BufferUses LaunchCmd::buffer_uses() const {
+CommandThunk::BufferUses LaunchCmd::buffer_uses() const {
   BufferUses buffers;
   for (int32_t i = 0; i < args_.size(); ++i) {
     buffers.emplace_back(args_[i].slice, args_access_[i], args_[i].shape);
@@ -531,7 +531,7 @@ CustomKernelLaunchCmd::CustomKernelLaunchCmd(
     absl::Span<const ShapedSlice> args,
     absl::Span<const BufferUse::MemoryAccess> args_access,
     CustomKernel custom_kernel)
-    : Command(CommandType::kCustomKernelLaunchCmd),
+    : CommandThunk(CommandType::kCustomKernelLaunchCmd),
       args_(args.begin(), args.end()),
       args_access_(args_access.begin(), args_access.end()),
       custom_kernel_(std::move(custom_kernel)) {}
@@ -596,7 +596,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> CustomKernelLaunchCmd::Record(
       });
 }
 
-Command::BufferUses CustomKernelLaunchCmd::buffer_uses() const {
+CommandThunk::BufferUses CustomKernelLaunchCmd::buffer_uses() const {
   BufferUses buffers;
   for (int32_t i = 0; i < args_.size(); ++i) {
     buffers.emplace_back(args_[i].slice, args_access_[i], args_[i].shape);
@@ -611,7 +611,7 @@ Command::BufferUses CustomKernelLaunchCmd::buffer_uses() const {
 MemcpyDeviceToDeviceCmd::MemcpyDeviceToDeviceCmd(ShapedSlice dst,
                                                  ShapedSlice src,
                                                  int64_t num_bytes)
-    : Command(CommandType::kMemcpyDeviceToDeviceCmd),
+    : CommandThunk(CommandType::kMemcpyDeviceToDeviceCmd),
       dst_(dst),
       src_(src),
       num_bytes_(num_bytes) {
@@ -652,7 +652,7 @@ MemcpyDeviceToDeviceCmd::Record(const Thunk::ExecuteParams& execute_params,
       });
 }
 
-Command::BufferUses MemcpyDeviceToDeviceCmd::buffer_uses() const {
+CommandThunk::BufferUses MemcpyDeviceToDeviceCmd::buffer_uses() const {
   return {BufferUse::Write(dst_.slice, dst_.shape),
           BufferUse::Read(src_.slice, src_.shape)};
 }
@@ -662,7 +662,7 @@ Command::BufferUses MemcpyDeviceToDeviceCmd::buffer_uses() const {
 //===----------------------------------------------------------------------===//
 
 MemzeroCmd::MemzeroCmd(ShapedSlice dst)
-    : Command(CommandType::kMemzeroCmd), dst_(dst) {}
+    : CommandThunk(CommandType::kMemzeroCmd), dst_(dst) {}
 
 absl::StatusOr<const se::CommandBuffer::Command*> MemzeroCmd::Record(
     const Thunk::ExecuteParams& execute_params,
@@ -692,7 +692,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> MemzeroCmd::Record(
       });
 }
 
-Command::BufferUses MemzeroCmd::buffer_uses() const {
+CommandThunk::BufferUses MemzeroCmd::buffer_uses() const {
   return {BufferUse::Write(dst_.slice, dst_.shape)};
 }
 
@@ -701,7 +701,7 @@ Command::BufferUses MemzeroCmd::buffer_uses() const {
 //===----------------------------------------------------------------------===//
 
 Memset32Cmd::Memset32Cmd(BufferAllocation::Slice dst, uint32_t bit_pattern)
-    : Command(CommandType::kMemset32Cmd),
+    : CommandThunk(CommandType::kMemset32Cmd),
       dst_(dst),
       bit_pattern_(bit_pattern) {}
 
@@ -734,7 +734,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> Memset32Cmd::Record(
       });
 }
 
-Command::BufferUses Memset32Cmd::buffer_uses() const {
+CommandThunk::BufferUses Memset32Cmd::buffer_uses() const {
   return {BufferUse::Write(dst_, ShapeUtil::MakeShape(U32, {}))};
 }
 
@@ -743,7 +743,7 @@ Command::BufferUses Memset32Cmd::buffer_uses() const {
 //===----------------------------------------------------------------------===//
 
 ChildCmd::ChildCmd(CommandExecutor child_commands)
-    : Command(CommandType::kChildCmd),
+    : CommandThunk(CommandType::kChildCmd),
       child_commands_(std::move(child_commands)) {}
 
 absl::Status ChildCmd::Initialize(const Thunk::InitializeParams& params) {
@@ -782,7 +782,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> ChildCmd::Record(
 absl::Status ChildCmd::WalkNested(
     absl::FunctionRef<absl::Status(Thunk*)> callback) {
   return child_commands_.Walk(
-      [&](Command* cmd) -> absl::Status { return callback(cmd); });
+      [&](CommandThunk* cmd) -> absl::Status { return callback(cmd); });
 }
 
 //===----------------------------------------------------------------------===//
@@ -790,7 +790,7 @@ absl::Status ChildCmd::WalkNested(
 //===----------------------------------------------------------------------===//
 
 CaseCmd::CaseCmd(ShapedSlice index, std::vector<CommandExecutor> branches)
-    : Command(CommandType::kCaseCmd),
+    : CommandThunk(CommandType::kCaseCmd),
       index_(index),
       index_is_bool_(index.shape.element_type() == PRED),
       branches_(std::move(branches)) {}
@@ -838,7 +838,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> CaseCmd::Record(
       });
 }
 
-Command::BufferUses CaseCmd::buffer_uses() const {
+CommandThunk::BufferUses CaseCmd::buffer_uses() const {
   return {BufferUse::Read(index_.slice, index_.shape)};
 }
 
@@ -846,7 +846,7 @@ absl::Status CaseCmd::WalkNested(
     absl::FunctionRef<absl::Status(Thunk*)> callback) {
   for (auto& branch : branches_) {
     RETURN_IF_ERROR(branch.Walk(
-        [&](Command* cmd) -> absl::Status { return callback(cmd); }));
+        [&](CommandThunk* cmd) -> absl::Status { return callback(cmd); }));
   }
   return absl::OkStatus();
 }
@@ -858,7 +858,7 @@ absl::Status CaseCmd::WalkNested(
 WhileCmd::WhileCmd(BufferAllocation::Slice pred, CommandExecutor cond_commands,
                    CommandExecutor body_commands,
                    std::optional<int64_t> trip_count, bool enable_loop_unroll)
-    : Command(CommandType::kWhileCmd),
+    : CommandThunk(CommandType::kWhileCmd),
       pred_(pred),
       cond_commands_(std::move(cond_commands)),
       body_commands_(std::move(body_commands)),
@@ -914,7 +914,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> WhileCmd::Record(
       VLOG(3) << "Recording unrolled loop with trip_count: "
               << trip_count_.value();
 
-      Command::RecordParams new_record_params = record_params;
+      CommandThunk::RecordParams new_record_params = record_params;
       std::vector<const se::CommandBuffer::Command*> dependencies;
 
       ScopedWhileLoop loop("record_fn", trip_count_);
@@ -938,7 +938,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> WhileCmd::Record(
       VLOG(3) << "Updating unrolled loop with trip_count: "
               << trip_count_.value();
 
-      Command::RecordParams new_record_params = record_params;
+      CommandThunk::RecordParams new_record_params = record_params;
 
       ScopedWhileLoop loop("record_fn", trip_count_);
       for (int64_t i = 0; i < *trip_count_; loop.IncLoopIteration(), ++i) {
@@ -981,16 +981,16 @@ absl::StatusOr<const se::CommandBuffer::Command*> WhileCmd::Record(
       });
 }
 
-Command::BufferUses WhileCmd::buffer_uses() const {
+CommandThunk::BufferUses WhileCmd::buffer_uses() const {
   return {BufferUse::Read(pred_, ShapeUtil::MakeShape(PRED, {}))};
 }
 
 absl::Status WhileCmd::WalkNested(
     absl::FunctionRef<absl::Status(Thunk*)> callback) {
   RETURN_IF_ERROR(cond_commands_.Walk(
-      [&](Command* cmd) -> absl::Status { return callback(cmd); }));
+      [&](CommandThunk* cmd) -> absl::Status { return callback(cmd); }));
   return body_commands_.Walk(
-      [&](Command* cmd) -> absl::Status { return callback(cmd); });
+      [&](CommandThunk* cmd) -> absl::Status { return callback(cmd); });
 }
 
 //===----------------------------------------------------------------------===//
@@ -1048,8 +1048,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> GemmCmd::Record(
                              });
 }
 
-Command::BufferUses GemmCmd::buffer_uses() const {
-  Command::BufferUses buffer_uses = {
+CommandThunk::BufferUses GemmCmd::buffer_uses() const {
+  CommandThunk::BufferUses buffer_uses = {
       BufferUse::Read(lhs_buffer_, config_.lhs_layout.ToShape()),
       BufferUse::Read(rhs_buffer_, config_.rhs_layout.ToShape()),
       BufferUse::Write(output_buffer_, config_.output_layout.ToShape()),
@@ -1116,7 +1116,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> CublasLtCmd::Record(
       });
 }
 
-Command::BufferUses CublasLtCmd::buffer_uses() const {
+CommandThunk::BufferUses CublasLtCmd::buffer_uses() const {
   BufferUses buffer_usage;
   buffer_usage.reserve(13);
   buffer_usage.push_back(BufferUse::Read(thunk_.a_.slice, thunk_.a_.shape));
@@ -1213,8 +1213,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> CuDnnCmd::Record(
       });
 }
 
-Command::BufferUses CuDnnCmd::buffer_uses() const {
-  Command::BufferUses buffer_usage;
+CommandThunk::BufferUses CuDnnCmd::buffer_uses() const {
+  CommandThunk::BufferUses buffer_usage;
   buffer_usage.reserve(args_.size());
   for (int i = 0; i < args_.size() - 1; ++i) {
     buffer_usage.push_back(BufferUse::Read(args_[i].slice, args_[i].shape));
@@ -1412,8 +1412,8 @@ CustomCallCmd::RecordXlaFfiCall(const Thunk::ExecuteParams& execute_params,
       });
 }
 
-Command::BufferUses CustomCallCmd::buffer_uses() const {
-  Command::BufferUses buffer_usage;
+CommandThunk::BufferUses CustomCallCmd::buffer_uses() const {
+  CommandThunk::BufferUses buffer_usage;
   for (auto& slices : {operands_, results_}) {
     for (const std::optional<ShapedSlice>& slice : slices) {
       if (slice.has_value()) {
@@ -1429,7 +1429,7 @@ Command::BufferUses CustomCallCmd::buffer_uses() const {
 //===----------------------------------------------------------------------===//
 
 CollectiveCmd::CollectiveCmd(CommandType cmd_type, CollectiveConfig config)
-    : Command(cmd_type, se::StreamPriority::Highest),
+    : CommandThunk(cmd_type, se::StreamPriority::Highest),
       config_(std::move(config)) {}
 
 absl::Status CollectiveCmd::Prepare(const Thunk::PrepareParams& params) {
@@ -1531,7 +1531,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllReduceCmd::Record(
       });
 }
 
-Command::BufferUses AllReduceCmd::buffer_uses() const {
+CommandThunk::BufferUses AllReduceCmd::buffer_uses() const {
   BufferUses buffer_usage;
   for (auto& buffer : buffers_) {
     buffer_usage.emplace_back(BufferUse::Read(buffer.source_buffer.slice,
@@ -1598,7 +1598,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> ReduceScatterCmd::Record(
                              });
 }
 
-Command::BufferUses ReduceScatterCmd::buffer_uses() const {
+CommandThunk::BufferUses ReduceScatterCmd::buffer_uses() const {
   BufferUses buffer_usage;
   for (auto& buffer : buffers_) {
     buffer_usage.emplace_back(BufferUse::Read(buffer.source_buffer.slice,
@@ -1665,7 +1665,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllToAllCmd::Record(
       });
 }
 
-Command::BufferUses AllToAllCmd::buffer_uses() const {
+CommandThunk::BufferUses AllToAllCmd::buffer_uses() const {
   BufferUses buffer_usage;
   for (auto& buffer : buffers_) {
     buffer_usage.emplace_back(BufferUse::Read(buffer.source_buffer.slice,
@@ -1729,7 +1729,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllGatherCmd::Record(
       });
 }
 
-Command::BufferUses AllGatherCmd::buffer_uses() const {
+CommandThunk::BufferUses AllGatherCmd::buffer_uses() const {
   BufferUses buffer_usage;
   for (auto& buffer : buffers_) {
     buffer_usage.emplace_back(BufferUse::Read(buffer.source_buffer.slice,
@@ -1793,7 +1793,7 @@ CollectiveBroadcastCmd::Record(const Thunk::ExecuteParams& execute_params,
       });
 }
 
-Command::BufferUses CollectiveBroadcastCmd::buffer_uses() const {
+CommandThunk::BufferUses CollectiveBroadcastCmd::buffer_uses() const {
   BufferUses buffer_usage;
   for (auto& buffer : buffers_) {
     buffer_usage.emplace_back(BufferUse::Read(buffer.source_buffer.slice,
@@ -1882,7 +1882,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> RecvCmd::Record(
                              std::move(record_action), command_buffer, trace);
 }
 
-Command::BufferUses RecvCmd::buffer_uses() const {
+CommandThunk::BufferUses RecvCmd::buffer_uses() const {
   BufferUses buffer_usage;
   buffer_usage.emplace_back(BufferUse::Read(buffer_.source_buffer.slice,
                                             buffer_.source_buffer.shape));
@@ -1974,7 +1974,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> SendCmd::Record(
                              std::move(record_action), command_buffer, trace);
 }
 
-Command::BufferUses SendCmd::buffer_uses() const {
+CommandThunk::BufferUses SendCmd::buffer_uses() const {
   BufferUses buffer_usage;
   buffer_usage.emplace_back(BufferUse::Read(buffer_.source_buffer.slice,
                                             buffer_.source_buffer.shape));
@@ -2061,7 +2061,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> CollectivePermuteCmd::Record(
       });
 }
 
-Command::BufferUses CollectivePermuteCmd::buffer_uses() const {
+CommandThunk::BufferUses CollectivePermuteCmd::buffer_uses() const {
   BufferUses buffer_usage;
   for (const CollectiveThunk::Buffer& buffer : buffers_) {
     buffer_usage.emplace_back(BufferUse::Read(buffer.source_buffer.slice,
@@ -2087,7 +2087,7 @@ DynamicSliceFusionCmd::DynamicSliceFusionCmd(
     std::optional<
         const DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata*>
         offset_as_function_of_indvar_metadata)
-    : Command(CommandType::kDynamicSliceFusionCmd),
+    : CommandThunk(CommandType::kDynamicSliceFusionCmd),
       embedded_commands_(std::move(embedded_commands)),
       fake_allocations_(std::move(fake_allocations)),
       offset_as_function_of_indvar_metadata_(
@@ -2379,7 +2379,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceFusionCmd::Record(
 absl::Status DynamicSliceFusionCmd::WalkNested(
     absl::FunctionRef<absl::Status(Thunk*)> callback) {
   return embedded_commands_.Walk(
-      [&](Command* cmd) -> absl::Status { return callback(cmd); });
+      [&](CommandThunk* cmd) -> absl::Status { return callback(cmd); });
 }
 
 //===----------------------------------------------------------------------===//
@@ -2389,7 +2389,7 @@ absl::Status DynamicSliceFusionCmd::WalkNested(
 DynamicSliceCopyFusionCmd::DynamicSliceCopyFusionCmd(
     const ShapedSlice& source_buffer, const ShapedSlice& destination_buffer,
     uint64_t mem_size, DynamicMemcpyThunk::Offsets offsets)
-    : Command(CommandType::kDynamicSliceCopyFusionCmd),
+    : CommandThunk(CommandType::kDynamicSliceCopyFusionCmd),
       source_buffer_(source_buffer),
       destination_buffer_(destination_buffer),
       mem_size_(mem_size),
@@ -2444,8 +2444,8 @@ DynamicSliceCopyFusionCmd::Record(const Thunk::ExecuteParams& execute_params,
       });
 }
 
-Command::BufferUses DynamicSliceCopyFusionCmd::buffer_uses() const {
-  Command::BufferUses buffers;
+CommandThunk::BufferUses DynamicSliceCopyFusionCmd::buffer_uses() const {
+  CommandThunk::BufferUses buffers;
   buffers.emplace_back(
       BufferUse::Read(source_buffer_.slice, source_buffer_.shape));
   buffers.emplace_back(
@@ -2604,7 +2604,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> RaggedAllToAllCmd::Record(
                              std::move(trace));
 }
 
-Command::BufferUses RaggedAllToAllCmd::buffer_uses() const {
+CommandThunk::BufferUses RaggedAllToAllCmd::buffer_uses() const {
   BufferUses buffer_usage;
   for (const CollectiveThunk::Buffer& buffer : buffers_) {
     buffer_usage.emplace_back(BufferUse::Read(buffer.source_buffer.slice,

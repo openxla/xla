@@ -98,10 +98,10 @@ void AbslStringify(Sink& sink, CommandType type) {
 bool IsCollectiveCommand(CommandType type);
 
 //===----------------------------------------------------------------------===//
-// Command
+// CommandThunk
 //===----------------------------------------------------------------------===//
 
-// Command is a Thunk counterpart that instead of launching operations directly
+// CommandThunk is a Thunk counterpart that instead of launching operations directly
 // on the underlying device records them into command buffers.
 //
 // Commands have the same execution stages as thunks as they are executed by a
@@ -125,9 +125,9 @@ bool IsCollectiveCommand(CommandType type);
 // `CommandCommandStateManager` documentation for details and example. If
 // command want's to attach some mutable state to the command buffer, it must be
 // done with a state manager.
-class Command : public Thunk {
+class CommandThunk : public Thunk {
  public:
-  explicit Command(CommandType cmd_type,
+  explicit CommandThunk(CommandType cmd_type,
                    se::StreamPriority priority = se::StreamPriority::Default)
       : Thunk(Thunk::Kind::kCommand, ThunkInfo{}),
         cmd_type_(cmd_type),
@@ -135,7 +135,7 @@ class Command : public Thunk {
     token_ = Resource::Create(Resource::kToken);
   }
 
-  virtual ~Command() = default;
+  virtual ~CommandThunk() = default;
 
   // Parameters for recording commands into the command buffer.
   struct RecordParams {
@@ -174,7 +174,7 @@ class Command : public Thunk {
   // command buffers via Record(). ExecuteOnStream is not supported.
   absl::Status ExecuteOnStream(const ExecuteParams& params) override {
     return absl::UnimplementedError(
-        "Command cannot be executed directly as a Thunk; use Record() instead");
+        "CommandThunk cannot be executed directly as a Thunk; use Record() instead");
   }
 
   // Records commands into the command buffer. Returned commands will be passed
@@ -224,12 +224,12 @@ class Command : public Thunk {
 
   // Recursively walks all the commands nested inside *this one and calls
   // the user-provided callback on every command. Always starts traversal with
-  // *this. These overloads accept Command*-typed callbacks and complement the
+  // *this. These overloads accept CommandThunk*-typed callbacks and complement the
   // Thunk*-typed Walk overloads inherited from Thunk.
-  template <typename F, WalkCallback<F, Command*>* = nullptr>
-  std::invoke_result_t<F, Command*> Walk(F&& callback);
-  template <typename F, WalkCallback<F, const Command*>* = nullptr>
-  std::invoke_result_t<F, const Command*> Walk(F&& callback) const;
+  template <typename F, WalkCallback<F, CommandThunk*>* = nullptr>
+  std::invoke_result_t<F, CommandThunk*> Walk(F&& callback);
+  template <typename F, WalkCallback<F, const CommandThunk*>* = nullptr>
+  std::invoke_result_t<F, const CommandThunk*> Walk(F&& callback) const;
 
  protected:
   // WalkNested uses Thunk::Walker = absl::FunctionRef<absl::Status(Thunk*)>.
@@ -244,40 +244,40 @@ class Command : public Thunk {
   // dependency.
   std::shared_ptr<Resource> token_;
 
-  // Command priority, currently only support default, lowest and highest
+  // CommandThunk priority, currently only support default, lowest and highest
   // priority.
   se::StreamPriority priority_ = se::StreamPriority::Default;
 };
 
 // Returns true if command is a collective one.
-inline bool IsCollectiveCommand(const Command& cmd) {
+inline bool IsCollectiveCommand(const CommandThunk& cmd) {
   return IsCollectiveCommand(cmd.command_type());
 }
 
 //===----------------------------------------------------------------------===//
-// Command templates implementation.
+// CommandThunk templates implementation.
 //===----------------------------------------------------------------------===//
 
-template <typename F, Command::WalkCallback<F, Command*>*>
-std::invoke_result_t<F, Command*> Command::Walk(F&& callback) {
-  if constexpr (std::is_void_v<std::invoke_result_t<F, Command*>>) {
-    Walk([f = std::forward<F>(callback)](Command* command) {
+template <typename F, CommandThunk::WalkCallback<F, CommandThunk*>*>
+std::invoke_result_t<F, CommandThunk*> CommandThunk::Walk(F&& callback) {
+  if constexpr (std::is_void_v<std::invoke_result_t<F, CommandThunk*>>) {
+    Walk([f = std::forward<F>(callback)](CommandThunk* command) {
       return (f(command), absl::OkStatus());
     }).IgnoreError();  // Error can never happen here.
   } else {
     RETURN_IF_ERROR(callback(this));
-    // Adapt Command*-typed callback to Thunk::Walker (Thunk*-typed) for
+    // Adapt CommandThunk*-typed callback to Thunk::Walker (Thunk*-typed) for
     // WalkNested. The down_cast is safe because WalkNested only visits
-    // Commands in a Command context.
+    // Commands in a CommandThunk context.
     return WalkNested([&callback](Thunk* thunk) -> absl::Status {
-      return callback(tsl::down_cast<Command*>(thunk));
+      return callback(tsl::down_cast<CommandThunk*>(thunk));
     });
   }
 }
 
-template <typename F, Command::WalkCallback<F, const Command*>*>
-std::invoke_result_t<F, const Command*> Command::Walk(F&& callback) const {
-  return const_cast<Command*>(this)->Walk(  // NOLINT
+template <typename F, CommandThunk::WalkCallback<F, const CommandThunk*>*>
+std::invoke_result_t<F, const CommandThunk*> CommandThunk::Walk(F&& callback) const {
+  return const_cast<CommandThunk*>(this)->Walk(  // NOLINT
       std::forward<F>(callback));
 }
 
@@ -286,9 +286,9 @@ std::invoke_result_t<F, const Command*> Command::Walk(F&& callback) const {
 //===----------------------------------------------------------------------===//
 
 // A base class for a command that starts an asynchronous execution.
-class AsyncStartCommand : public Command {
+class AsyncStartCommand : public CommandThunk {
  public:
-  using Command::Command;
+  using CommandThunk::CommandThunk;
 
   // At run time async command might behave like a synchronous one, i.e.
   // some collective operations if they can't be overlapped with compute
@@ -297,10 +297,10 @@ class AsyncStartCommand : public Command {
 };
 
 // A command that completes an `async_start` command.
-class AsyncDoneCommand : public Command {
+class AsyncDoneCommand : public CommandThunk {
  public:
   explicit AsyncDoneCommand(const AsyncStartCommand* async_start)
-      : Command(CommandType::kAsyncDone), async_start_(async_start) {
+      : CommandThunk(CommandType::kAsyncDone), async_start_(async_start) {
     DCHECK(async_start_) << "AsyncStart command must be not null";
   }
 
@@ -316,11 +316,11 @@ class AsyncDoneCommand : public Command {
 //===----------------------------------------------------------------------===//
 
 // A sequence of commands (corresponds to a ThunkSequence from the Thunk API).
-class CommandSequence : public std::vector<std::unique_ptr<Command>> {
+class CommandSequence : public std::vector<std::unique_ptr<CommandThunk>> {
  public:
-  template <typename Command, typename... Args>
+  template <typename CommandThunk, typename... Args>
   void Emplace(Args&&... args) {
-    this->emplace_back(std::make_unique<Command>(std::forward<Args>(args)...));
+    this->emplace_back(std::make_unique<CommandThunk>(std::forward<Args>(args)...));
   }
 
   std::string ToString() const {
@@ -332,28 +332,28 @@ class CommandSequence : public std::vector<std::unique_ptr<Command>> {
   }
 
   absl::Status Walk(
-      absl::FunctionRef<absl::Status(const Command*)> callback) const {
-    for (const std::unique_ptr<Command>& cmd : *this) {
+      absl::FunctionRef<absl::Status(const CommandThunk*)> callback) const {
+    for (const std::unique_ptr<CommandThunk>& cmd : *this) {
       RETURN_IF_ERROR(cmd->Walk(callback));
     }
     return absl::OkStatus();
   }
 
-  absl::Status Walk(absl::FunctionRef<absl::Status(Command*)> callback) {
-    for (std::unique_ptr<Command>& cmd : *this) {
+  absl::Status Walk(absl::FunctionRef<absl::Status(CommandThunk*)> callback) {
+    for (std::unique_ptr<CommandThunk>& cmd : *this) {
       RETURN_IF_ERROR(cmd->Walk(callback));
     }
     return absl::OkStatus();
   }
 
-  void Walk(absl::FunctionRef<void(const Command*)> callback) const {
-    for (const std::unique_ptr<Command>& cmd : *this) {
+  void Walk(absl::FunctionRef<void(const CommandThunk*)> callback) const {
+    for (const std::unique_ptr<CommandThunk>& cmd : *this) {
       cmd->Walk(callback);
     }
   }
 
-  void Walk(absl::FunctionRef<void(Command*)> callback) {
-    for (std::unique_ptr<Command>& cmd : *this) {
+  void Walk(absl::FunctionRef<void(CommandThunk*)> callback) {
+    for (std::unique_ptr<CommandThunk>& cmd : *this) {
       cmd->Walk(callback);
     }
   }
