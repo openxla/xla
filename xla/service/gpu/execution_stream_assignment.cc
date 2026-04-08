@@ -57,9 +57,8 @@ void AbslStringify(Sink sink, ExecutionScopeKind kind) {
   }
 }
 
-// Returns dedicated P2P stream ID based on _xla_send_recv_pipeline attribute.
-// Uses separate streams (1 and 2) for pipeline 0/1 to avoid deadlocks in cyclic
-// patterns, stream 0 is the main stream.
+// Maps pipelined P2P ops to CommunicationStreamId(1) and (2), running them
+// on separate streams to avoid cyclic deadlocks.
 ExecutionStreamId GetP2PStreamId(const HloInstruction* instruction) {
   const auto& fe_map = instruction->frontend_attributes().map();
   auto it = fe_map.find(kSendRecvPipelineAttr);

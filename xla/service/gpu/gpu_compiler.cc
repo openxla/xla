@@ -3194,11 +3194,11 @@ GpuCompiler::LoadExecutableFromAotResult(
   ExecutionStreamAssignment execution_stream_assignment(
       hlo_module.get(),
       {
-          kNumComputeStreams,
+          kDefaultNumComputeStreams,
           hlo_module->config()
                   .debug_options()
                   .xla_gpu_experimental_enable_collective_multi_streaming()
-              ? kNumCollectiveStreams
+              ? kDefaultNumCommunicationStreams
               : 1,
       });
 

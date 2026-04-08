@@ -31,11 +31,6 @@ limitations under the License.
 
 namespace xla::gpu {
 
-inline constexpr int kNumComputeStreams = 4;
-inline constexpr int kNumCollectiveStreams = 2;
-inline constexpr int kAsyncStreamTotal =
-    kNumComputeStreams + kNumCollectiveStreams + 1;
-
 // CommunicationId is an opaque strongly-typed integer wrapper that represents
 // different kinds of communications for the same set of global devices.
 //
