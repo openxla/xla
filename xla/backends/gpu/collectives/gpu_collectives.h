@@ -147,6 +147,10 @@ class GpuCollectives : public Collectives {
   // Returns true if GPU collectives support device-initiated communication.
   virtual bool SupportsDeviceComm() const { return false; }
 
+  // Returns true iff communicator supports one-sided RMA operations
+  // (PutSignal, Signal, WaitSignal).
+  virtual bool SupportsOneSidedComm() const { return false; }
+
   // Returns minimum alignment requirement for symmetric memory.
   virtual size_t SymmetricMemoryAlignment() const { return 1; }
 

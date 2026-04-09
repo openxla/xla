@@ -468,12 +468,12 @@ TEST(GpuCollectivesTest, PutAndWaitSignal) {
     GTEST_SKIP() << "Test requires peer access between devices";
   }
 
-  ASSERT_OK_AND_ASSIGN(auto comms, CreateCommunicators(executors, {kD0, kD1}));
-
-  if (!absl::c_all_of(comms,
-                      [](auto& c) { return c->SupportsOneSidedComm(); })) {
-    GTEST_SKIP() << "GPU communicators do not support one-sided RMA";
+  GpuCollectives* collectives = GpuCollectives::Default("GPU");
+  if (!collectives->SupportsOneSidedComm()) {
+    GTEST_SKIP() << "GPU collectives do not support one-sided RMA";
   }
+
+  ASSERT_OK_AND_ASSIGN(auto comms, CreateCommunicators(executors, {kD0, kD1}));
 
   ASSERT_OK_AND_ASSIGN(auto allocators, CreateMemoryAllocators(executors));
 

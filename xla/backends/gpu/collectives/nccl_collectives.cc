@@ -59,12 +59,12 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -233,6 +233,10 @@ absl::StatusOr<CliqueId> NcclCollectives::CreateUniqueCliqueId() const {
 
 bool NcclCollectives::SupportsDeviceComm() const {
   return NCCL_VERSION_CODE >= 22800;
+}
+
+bool NcclCollectives::SupportsOneSidedComm() const {
+  return NCCL_VERSION_CODE >= 22900;
 }
 
 size_t NcclCollectives::SymmetricMemoryAlignment() const {
