@@ -890,10 +890,15 @@ class CuptiTraceCollectorImpl : public CuptiTraceCollector {
     // No metadata is used for this plane, we just use the XStat to
     // transfer the map without break any existing proto.
     tensorflow::profiler::XStatMetadata metadata;
+    int64_t last_id = 0;
     for (const auto& [child_id, parent_id] : scope_range_id_tree_) {
       metadata.set_id(child_id);
       plane.AddStatValue(metadata, parent_id);
+      last_id = std::max({last_id, child_id, parent_id});
     }
+    // Create a metadata entry with the last ID to avoid ID overlap if someone
+    // adds a new ID to the plane.
+    plane.GetOrCreateStatMetadata(last_id);
   }
   // Returns true if some GPU events are captured.
   bool Export(XSpace* space, uint64_t end_gpu_ns) override {
