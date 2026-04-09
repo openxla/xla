@@ -42,6 +42,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "google/protobuf/util/message_differencer.h"
 #include "xla/comparison_util.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
