@@ -31,7 +31,6 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
-#include "xla/backends/gpu/collectives/nccl_communicator.h"
 #include "xla/core/collectives/clique_id.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/communicator.h"
@@ -512,7 +511,7 @@ TEST(GpuCollectivesTest, PutAndWaitSignal) {
   ASSERT_OK_AND_ASSIGN(auto symm_recv,
                        AwaitSymmetricMemory(std::move(fsymm_recv)));
 
-  NcclSignalDesc signal_desc(0, 0);
+  GpuSignalDesc signal_desc(0, 0);
 
   auto f0 = MakeFutureOn<void>(exec, [&]() -> absl::Status {
     GpuCollectives::Executor gpu_exec(stream0.get());

@@ -39,6 +39,17 @@ limitations under the License.
 
 namespace xla::gpu {
 
+class GpuSignalDesc : public Communicator::SignalDesc {
+ public:
+  GpuSignalDesc(int sig_idx, int ctx) : sig_idx_(sig_idx), ctx_(ctx) {}
+  int sig_idx() const { return sig_idx_; }
+  int ctx() const { return ctx_; }
+
+ private:
+  int sig_idx_;
+  int ctx_;
+};
+
 // Platform-specific handle to the underlying communicator implementation. It
 // allows exporting collective communication primitives created and owned by
 // the XLA runtime to external libraries, for example via FFI calls.

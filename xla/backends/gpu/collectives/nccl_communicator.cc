@@ -998,6 +998,8 @@ absl::Status NcclCommunicator::LaunchPut(se::DeviceAddressBase send_buffer,
   XLA_NCCL_RETURN_IF_ERROR(ncclPutSignal(send_buffer.opaque(), count, ncclInt8,
                                          peer.value(), peer_win.win(), offset,
                                          0, 0, 0, comm_, AsCudaStream(stream)));
+#else
+  return Unimplemented("Put requires NCCL >= 2.29.0");
 #endif
   if (group_nesting_level_ == 0) {
     TF_RETURN_IF_ERROR(PollUntilDone());
@@ -1017,7 +1019,7 @@ absl::Status NcclCommunicator::LaunchSignal(RankId peer,
   }
   se::Stream* stream = ToStream(executor);
 
-  const auto& nccl_desc = tsl::down_cast<const NcclSignalDesc&>(signal_desc);
+  const auto& nccl_desc = tsl::down_cast<const GpuSignalDesc&>(signal_desc);
 
   VLOG(3) << absl::StreamFormat(
       "[%d] Launch NCCL Signal operation; peer=%d; sig_idx=%d; ctx=%d; "
@@ -1029,6 +1031,8 @@ absl::Status NcclCommunicator::LaunchSignal(RankId peer,
   XLA_NCCL_RETURN_IF_ERROR(ncclSignal(peer.value(), nccl_desc.sig_idx(),
                                       nccl_desc.ctx(), 0, comm_,
                                       AsCudaStream(stream)));
+#else
+  return Unimplemented("Signal requires NCCL >= 2.29.0");
 #endif
   if (group_nesting_level_ == 0) {
     TF_RETURN_IF_ERROR(PollUntilDone());
@@ -1048,7 +1052,7 @@ absl::Status NcclCommunicator::LaunchWaitSignal(RankId peer, int op_cnt,
   }
   se::Stream* stream = ToStream(executor);
 
-  const auto& nccl_desc = tsl::down_cast<const NcclSignalDesc&>(signal_desc);
+  const auto& nccl_desc = tsl::down_cast<const GpuSignalDesc&>(signal_desc);
 
   VLOG(3) << absl::StreamFormat(
       "[%d] Launch NCCL WaitSignal operation; peer=%d; op_cnt=%d; "
@@ -1065,6 +1069,8 @@ absl::Status NcclCommunicator::LaunchWaitSignal(RankId peer, int op_cnt,
 
   XLA_NCCL_RETURN_IF_ERROR(
       ncclWaitSignal(1, &desc, comm_, AsCudaStream(stream)));
+#else
+  return Unimplemented("WaitSignal requires NCCL >= 2.29.0");
 #endif
   if (group_nesting_level_ == 0) {
     TF_RETURN_IF_ERROR(PollUntilDone());
