@@ -115,12 +115,6 @@ RaggedAllToAllConfig GetRaggedAllToAllConfig(
   return config;
 }
 
-absl::Status SynchronousMemZero(se::StreamExecutor* executor,
-                                const se::MemoryAllocation& memory_allocation) {
-  se::DeviceAddressBase device_address = memory_allocation.address();
-  return executor->SynchronousMemZero(&device_address, device_address.size());
-}
-
 // Loads the offsets and sizes of the input and output ragged tensors from
 // device memory.
 //
@@ -340,13 +334,24 @@ absl::StatusOr<RaggedAllToAllStreamState*> RaggedAllToAllThunk::InitializeOnce(
                      collective_allocator->Allocate(
                          MultiGpuBarrierKernel::kMaxPeers * sizeof(void*)));
 
-    // 3. Zero-out BOTH buffers using SynchronousMemZero.
-    RETURN_IF_ERROR(
-        SynchronousMemZero(executor, *state->barrier_signal_buffer));
+    // 3. Zero-out BOTH buffers using MemZero.
+    {
+      se::DeviceAddressBase barrier_signal_buffer =
+          state->barrier_signal_buffer->address();
+      RETURN_IF_ERROR(params.stream->MemZero(&barrier_signal_buffer,
+                                             barrier_signal_buffer.size()));
+    }
 
     // Initialize the counter to 0.
     // This is ok, as the MultiGpuBarrierKernel pre-increments signal_value.
-    RETURN_IF_ERROR(SynchronousMemZero(executor, *state->barrier_signal_value));
+    {
+      se::DeviceAddressBase barrier_signal_value =
+          state->barrier_signal_value->address();
+      RETURN_IF_ERROR(params.stream->MemZero(&barrier_signal_value,
+                                             barrier_signal_value.size()));
+    }
+
+    RETURN_IF_ERROR(params.stream->BlockHostUntilDone());
   }
 
   RaggedAllToAllStreamState* state_ptr = state.get();
