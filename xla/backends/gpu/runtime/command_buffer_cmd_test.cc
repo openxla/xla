@@ -97,7 +97,7 @@ static constexpr auto serialize =
 // buffer usage vector to the command buffer cmd commands.
 struct TestOnlyCommandBufferCmd : public Command {
   explicit TestOnlyCommandBufferCmd(Command::BufferUses buffers)
-      : Command(CommandType::kEmptyCmd, {}), buffers(buffers) {}
+      : Command(Thunk::Kind::kEmptyCmd, {}), buffers(buffers) {}
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
@@ -112,7 +112,7 @@ struct TestOnlyCommandBufferCmd : public Command {
 
 class FakeCmd : public Command {
  public:
-  explicit FakeCmd() : Command(CommandType::kEmptyCmd, {}) {}
+  explicit FakeCmd() : Command(Thunk::Kind::kEmptyCmd, {}) {}
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction,

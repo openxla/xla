@@ -368,7 +368,7 @@ static void VlogCommandSequenceDetails(const CommandSequence& commands) {
       }
     }
 
-    std::string cmd_name = CommandTypeString(cmd->command_type());
+    std::string cmd_name = std::string(Thunk::KindToString(cmd->kind()));
 
     if (has_input && !has_output && !has_temp) {
       input_count++;

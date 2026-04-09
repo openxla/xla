@@ -15,31 +15,19 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/command.h"
 
-#include <string>
-
 namespace xla::gpu {
 
-std::string CommandTypeString(CommandType type) {
-  switch (type) {
-#define CASE_CMD_STRING(enum_name, cmd_name, ...) \
-  case CommandType::enum_name:                    \
-    return cmd_name;
-    XLA_GPU_COMMAND_LIST(CASE_CMD_STRING)
-#undef CASE_CMD_STRING
-  }
-}
-
-bool IsCollectiveCommand(CommandType type) {
-  switch (type) {
-    case CommandType::kAllGatherCmd:
-    case CommandType::kAllReduceCmd:
-    case CommandType::kAllToAllCmd:
-    case CommandType::kCollectiveBroadcastCmd:
-    case CommandType::kCollectivePermuteCmd:
-    case CommandType::kRaggedAllToAllCmd:
-    case CommandType::kReduceScatterCmd:
-    case CommandType::kRecvCmd:
-    case CommandType::kSendCmd:
+bool IsCollectiveCommand(Thunk::Kind kind) {
+  switch (kind) {
+    case Thunk::Kind::kAllGatherCmd:
+    case Thunk::Kind::kAllReduceCmd:
+    case Thunk::Kind::kAllToAllCmd:
+    case Thunk::Kind::kCollectiveBroadcastCmd:
+    case Thunk::Kind::kCollectivePermuteCmd:
+    case Thunk::Kind::kRaggedAllToAllCmd:
+    case Thunk::Kind::kReduceScatterCmd:
+    case Thunk::Kind::kRecvCmd:
+    case Thunk::Kind::kSendCmd:
       return true;
     default:
       return false;

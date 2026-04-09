@@ -56,9 +56,9 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/gtl/int_type.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -101,30 +101,48 @@ class Thunk {
   enum Kind {
     // # go/keep-sorted start
     kAllGather,
+    kAllGatherCmd,
     kAllReduce,
+    kAllReduceCmd,
     kAllToAll,
+    kAllToAllCmd,
     kAsyncDone,
+    kAsyncDoneCmd,
     kAsyncStart,
+    kBarrierCmd,
     kBuffersDebugChecksum,
     kBuffersDebugFloatCheck,
+    kCaseCmd,
+    kChildCmd,
     kCollectiveBroadcast,
+    kCollectiveBroadcastCmd,
+    kCollectiveCmd,
     kCollectiveKernel,
     kCollectiveMetadata,
     kCollectivePermute,
-    kCommand,
+    kCollectivePermuteCmd,
     kCommandBuffer,
+    kComputationIdCmd,
     kConditional,
     kConvolution,
     kConvolutionReorder,
     kCopy,
     kCopyDone,
     kCuDnn,
+    kCuDnnCmd,
+    kCublasLtCmd,
     kCublasLtMatmul,
     kCustomCall,
+    kCustomCallCmd,
     kCustomKernel,
+    kCustomKernelLaunchCmd,
     kDynamicSlice,
+    kDynamicSliceCopyFusionCmd,
+    kDynamicSliceFusionCmd,
+    kEmptyCmd,
     kFft,
     kGemm,
+    kGemmCmd,
     kGroupDone,
     kGroupStart,
     kHostExecuteDone,
@@ -135,8 +153,12 @@ class Thunk {
     kHostSendDone,
     kInfeed,
     kKernel,
+    kLaunchCmd,
+    kMemcpyDeviceToDeviceCmd,
     kMemset32BitValue,
+    kMemset32Cmd,
     kMemzero,
+    kMemzeroCmd,
     kNorm,
     kNvshmemAllReduce,
     kNvshmemCollectivePermute,
@@ -145,14 +167,21 @@ class Thunk {
     kOutfeed,
     kPartitionId,
     kRaggedAllToAll,
+    kRaggedAllToAllCmd,
     kRecv,
+    kRecvCmd,
     kReduceScatter,
+    kReduceScatterCmd,
     kReplicaId,
     kSelectK,
     kSend,
+    kSendCmd,
     kSequential,
+    kTracedCommand,
     kTriangularSolve,
-    kWhile
+    kUnknownCmd,
+    kWhile,
+    kWhileCmd
     // go/keep-sorted end
   };
 

@@ -112,7 +112,7 @@ class TracedCommandBuffer : public CommandState {
 // A base class for commands implemented as tracing of stream activities.
 class TracedCommandBufferCmd : public Command {
  protected:
-  explicit TracedCommandBufferCmd(CommandType cmd_type);
+  explicit TracedCommandBufferCmd(Thunk::Kind kind);
 
   // Creates a command buffer by calling a user-provided `trace` function and
   // adds it as a nested command to `command_buffer`. Traced command buffers
@@ -470,7 +470,7 @@ class CustomCallCmd : public Command {
                 std::vector<NullableShapedSlice> operands,
                 std::vector<NullableShapedSlice> results,
                 absl::string_view opaque)
-      : Command(CommandType::kCustomCallCmd),
+      : Command(Thunk::Kind::kCustomCallCmd),
         target_name_(std::move(target_name)),
         call_target_(std::move(call_target)),
         opaque_(opaque),
@@ -483,7 +483,7 @@ class CustomCallCmd : public Command {
                 ffi::CallFrame call_frame, ThunkId thunk_id,
                 std::shared_ptr<ffi::ExecutionState> execution_state,
                 const HloComputation* called_computation)
-      : Command(CommandType::kCustomCallCmd),
+      : Command(Thunk::Kind::kCustomCallCmd),
         target_name_(std::move(target_name)),
         handler_(handler),
         call_frame_(std::move(call_frame)),
@@ -551,7 +551,7 @@ class CustomCallCmd : public Command {
 
 class CollectiveCmd : public Command {
  public:
-  CollectiveCmd(CommandType cmd_type, CollectiveConfig config);
+  CollectiveCmd(Thunk::Kind kind, CollectiveConfig config);
 
   absl::Status Prepare(const Thunk::PrepareParams& params) final;
 

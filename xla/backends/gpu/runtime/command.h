@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_COMMAND_H_
 #define XLA_BACKENDS_GPU_RUNTIME_COMMAND_H_
 
-#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -38,64 +37,13 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/platform.h"
-#include "tsl/platform/casts.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 
-//===----------------------------------------------------------------------===//
-// CommandType
-//===----------------------------------------------------------------------===//
-
-// clang-format off
-#define XLA_GPU_COMMAND_LIST(V)                              \
-  V(kEmptyCmd, "EmptyCmd")                                   \
-  V(kChildCmd, "ChildCmd")                                   \
-  V(kTracedCommand, "TracedCommand")       \
-  V(kComputationIdCmd, "ComputationIdCmd")                   \
-  V(kLaunchCmd, "LaunchCmd")                                 \
-  V(kCustomKernelLaunchCmd, "CustomKernelLaunchCmd")         \
-  V(kCublasLtCmd, "CublasLtCmd")                             \
-  V(kCuDnnCmd, "CuDnnCmd")                                   \
-  V(kGemmCmd, "GemmCmd")                                     \
-  V(kMemcpyDeviceToDeviceCmd, "MemcpyDeviceToDeviceCmd")     \
-  V(kMemzeroCmd, "MemzeroCmd")                               \
-  V(kMemset32Cmd, "Memset32Cmd")                             \
-  V(kCaseCmd, "CaseCmd")                                     \
-  V(kWhileCmd, "WhileCmd")                                   \
-  V(kCustomCallCmd, "CustomCallCmd")                         \
-  V(kBarrierCmd, "BarrierCmd")                               \
-  V(kCollectiveCmd, "CollectiveCmd")                         \
-  V(kAllReduceCmd, "AllReduceCmd")                           \
-  V(kReduceScatterCmd, "ReduceScatterCmd")                   \
-  V(kAllToAllCmd, "AllToAllCmd")                             \
-  V(kAllGatherCmd, "AllGatherCmd")                           \
-  V(kCollectiveBroadcastCmd, "CollectiveBroadcastCmd")       \
-  V(kCollectivePermuteCmd, "CollectivePermuteCmd")           \
-  V(kRaggedAllToAllCmd, "RaggedAllToAllCmd")                 \
-  V(kRecvCmd, "RecvCmd")                                     \
-  V(kSendCmd, "SendCmd")                                     \
-  V(kAsyncDone, "AsyncDone")                                 \
-  V(kDynamicSliceFusionCmd, "DynamicSliceFusionCmd")         \
-  V(kDynamicSliceCopyFusionCmd, "DynamicSliceCopyFusionCmd") \
-  V(kUnknownCmd, "UnknownCmd") \
-  // clang-format on
-
-enum class CommandType : int32_t {
-#define DECLARE_ENUM(enum_name, cmd_name, ...) enum_name,
-  XLA_GPU_COMMAND_LIST(DECLARE_ENUM)
-#undef DECLARE_ENUM
-};
-
-std::string CommandTypeString(CommandType type);
-
-template <typename Sink>
-void AbslStringify(Sink& sink, CommandType type) {
-  sink.Append(CommandTypeString(type));
-}
-
-// Returns true if command type corresponds to a collective operation.
-bool IsCollectiveCommand(CommandType type);
+// Returns true if a Thunk::Kind corresponds to a collective command.
+bool IsCollectiveCommand(Thunk::Kind kind);
 
 //===----------------------------------------------------------------------===//
 // Command
@@ -127,11 +75,9 @@ bool IsCollectiveCommand(CommandType type);
 // done with a state manager.
 class Command : public Thunk {
  public:
-  explicit Command(CommandType cmd_type,
+  explicit Command(Thunk::Kind kind,
                    se::StreamPriority priority = se::StreamPriority::Default)
-      : Thunk(Thunk::Kind::kCommand, ThunkInfo{}),
-        cmd_type_(cmd_type),
-        priority_(priority) {
+      : Thunk(kind, ThunkInfo{}), priority_(priority) {
     token_ = Resource::Create(Resource::kToken);
   }
 
@@ -214,12 +160,11 @@ class Command : public Thunk {
   // Returns true if command implemented as a nested command buffer.
   virtual bool IsNestedCommandBuffer() const { return false; }
 
-  CommandType command_type() const { return cmd_type_; }
   se::StreamPriority priority() const { return priority_; }
   void set_priority(se::StreamPriority priority) { priority_ = priority; }
 
   std::string ToString(int indent) const override {
-    return CommandTypeString(cmd_type_);
+    return std::string(KindToString(kind()));
   }
 
   // Recursively walks all the commands nested inside *this one and calls
@@ -237,8 +182,6 @@ class Command : public Thunk {
   absl::Status WalkNested(Walker callback) override { return absl::OkStatus(); }
 
  private:
-  CommandType cmd_type_;
-
   // The token resource is used to specify additional dependency across
   // commands, like control dependency across HLO operators, and LHS scheduling
   // dependency.
@@ -251,7 +194,7 @@ class Command : public Thunk {
 
 // Returns true if command is a collective one.
 inline bool IsCollectiveCommand(const Command& cmd) {
-  return IsCollectiveCommand(cmd.command_type());
+  return IsCollectiveCommand(cmd.kind());
 }
 
 //===----------------------------------------------------------------------===//
@@ -300,7 +243,7 @@ class AsyncStartCommand : public Command {
 class AsyncDoneCommand : public Command {
  public:
   explicit AsyncDoneCommand(const AsyncStartCommand* async_start)
-      : Command(CommandType::kAsyncDone), async_start_(async_start) {
+      : Command(Thunk::Kind::kAsyncDoneCmd), async_start_(async_start) {
     DCHECK(async_start_) << "AsyncStart command must be not null";
   }
 

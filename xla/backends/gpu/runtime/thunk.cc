@@ -49,8 +49,8 @@ limitations under the License.
 #include "xla/service/service_executable_run_options.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/util.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/util.h"
 
 namespace xla::gpu {
 
@@ -158,7 +158,36 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_COLLECTIVE_METADATA;
     case kCollectivePermute:
       return THUNK_KIND_COLLECTIVE_PERMUTE;
-    case kCommand:
+    case kAllGatherCmd:
+    case kAllReduceCmd:
+    case kAllToAllCmd:
+    case kAsyncDoneCmd:
+    case kBarrierCmd:
+    case kCaseCmd:
+    case kChildCmd:
+    case kCollectiveBroadcastCmd:
+    case kCollectiveCmd:
+    case kCollectivePermuteCmd:
+    case kComputationIdCmd:
+    case kCuDnnCmd:
+    case kCublasLtCmd:
+    case kCustomCallCmd:
+    case kCustomKernelLaunchCmd:
+    case kDynamicSliceCopyFusionCmd:
+    case kDynamicSliceFusionCmd:
+    case kEmptyCmd:
+    case kGemmCmd:
+    case kLaunchCmd:
+    case kMemcpyDeviceToDeviceCmd:
+    case kMemset32Cmd:
+    case kMemzeroCmd:
+    case kRaggedAllToAllCmd:
+    case kRecvCmd:
+    case kReduceScatterCmd:
+    case kSendCmd:
+    case kTracedCommand:
+    case kUnknownCmd:
+    case kWhileCmd:
       return THUNK_KIND_UNSPECIFIED;
     case kCommandBuffer:
       return THUNK_KIND_COMMAND_BUFFER;
@@ -363,30 +392,48 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
   switch (kind) {
     // # go/keep-sorted start
     CASE(kAllGather);
+    CASE(kAllGatherCmd);
     CASE(kAllReduce);
+    CASE(kAllReduceCmd);
     CASE(kAllToAll);
+    CASE(kAllToAllCmd);
     CASE(kAsyncDone);
+    CASE(kAsyncDoneCmd);
     CASE(kAsyncStart);
+    CASE(kBarrierCmd);
     CASE(kBuffersDebugChecksum);
     CASE(kBuffersDebugFloatCheck);
+    CASE(kCaseCmd);
+    CASE(kChildCmd);
     CASE(kCollectiveBroadcast);
+    CASE(kCollectiveBroadcastCmd);
+    CASE(kCollectiveCmd);
     CASE(kCollectiveKernel);
     CASE(kCollectiveMetadata);
     CASE(kCollectivePermute);
-    CASE(kCommand);
+    CASE(kCollectivePermuteCmd);
     CASE(kCommandBuffer);
+    CASE(kComputationIdCmd);
     CASE(kConditional);
     CASE(kConvolution);
     CASE(kConvolutionReorder);
     CASE(kCopy);
     CASE(kCopyDone);
     CASE(kCuDnn);
+    CASE(kCuDnnCmd);
+    CASE(kCublasLtCmd);
     CASE(kCublasLtMatmul);
     CASE(kCustomCall);
+    CASE(kCustomCallCmd);
     CASE(kCustomKernel);
+    CASE(kCustomKernelLaunchCmd);
     CASE(kDynamicSlice);
+    CASE(kDynamicSliceCopyFusionCmd);
+    CASE(kDynamicSliceFusionCmd);
+    CASE(kEmptyCmd);
     CASE(kFft);
     CASE(kGemm);
+    CASE(kGemmCmd);
     CASE(kGroupDone);
     CASE(kGroupStart);
     CASE(kHostExecuteDone);
@@ -397,8 +444,12 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kHostSendDone);
     CASE(kInfeed);
     CASE(kKernel);
+    CASE(kLaunchCmd);
+    CASE(kMemcpyDeviceToDeviceCmd);
     CASE(kMemset32BitValue);
+    CASE(kMemset32Cmd);
     CASE(kMemzero);
+    CASE(kMemzeroCmd);
     CASE(kNorm);
     CASE(kNvshmemAllReduce);
     CASE(kNvshmemCollectivePermute);
@@ -407,14 +458,21 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kOutfeed);
     CASE(kPartitionId);
     CASE(kRaggedAllToAll);
+    CASE(kRaggedAllToAllCmd);
     CASE(kRecv);
+    CASE(kRecvCmd);
     CASE(kReduceScatter);
+    CASE(kReduceScatterCmd);
     CASE(kReplicaId);
     CASE(kSelectK);
     CASE(kSend);
+    CASE(kSendCmd);
     CASE(kSequential);
+    CASE(kTracedCommand);
     CASE(kTriangularSolve);
+    CASE(kUnknownCmd);
     CASE(kWhile);
+    CASE(kWhileCmd);
     // # go/keep-sorted end
   }
 }
