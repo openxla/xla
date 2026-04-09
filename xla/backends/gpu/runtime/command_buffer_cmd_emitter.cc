@@ -259,18 +259,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const PartitionIdThunk& thunk) {
-  return std::make_unique<ComputationIdCmd>(thunk.dest(),
-                                            ComputationIdCmd::Kind::kPartition);
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const ReplicaIdThunk& thunk) {
-  return std::make_unique<ComputationIdCmd>(thunk.dest(),
-                                            ComputationIdCmd::Kind::kReplica);
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const CustomCallThunk& thunk) {
   if (auto bundle = thunk.bundle(); bundle.has_value()) {
     return std::make_unique<CustomCallCmd>(
@@ -299,17 +287,20 @@ static absl::StatusOr<std::unique_ptr<Command>> CopyMetadata(
   return cmd;
 }
 
+// Takes Thunk& (non-const) rather than const Thunk& so that thunks which
+// also implement Command can be appended as borrowed Command* without
+// const_cast (which is banned). The thunks in ThunkSequence are non-const
+// (unique_ptr<Thunk>), so callers always have a non-const reference available.
 template <typename ThunkType, typename... Args>
-static absl::StatusOr<std::unique_ptr<Command>> Convert(const Thunk& thunk,
+static absl::StatusOr<std::unique_ptr<Command>> Convert(Thunk& thunk,
                                                         Args&&... args) {
-  return CopyMetadata(Convert(static_cast<const ThunkType&>(thunk),
-                              std::forward<Args>(args)...),
-                      thunk);
+  return CopyMetadata(
+      Convert(static_cast<ThunkType&>(thunk), std::forward<Args>(args)...),
+      thunk);
 }
 
 static absl::Status AppendCommands(ConversionContext& ctx,
-                                   CommandSequence& cmd_sequence,
-                                   const Thunk& thunk,
+                                   CommandSequence& cmd_sequence, Thunk& thunk,
                                    const ConvertToCommandsOptions& options) {
   auto append =
       [&](absl::StatusOr<std::unique_ptr<Command>> command) -> absl::Status {
@@ -317,7 +308,7 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return command.status();
     }
 
-    cmd_sequence.push_back(std::move(*command));
+    cmd_sequence.Append(std::move(*command));
     return absl::OkStatus();
   };
 
@@ -362,10 +353,13 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return append(Convert<RecvThunk>(thunk));
     case Thunk::Kind::kSend:
       return append(Convert<SendThunk>(thunk));
+    // These thunks implement Command directly; append borrowed pointers.
     case Thunk::Kind::kPartitionId:
-      return append(Convert<PartitionIdThunk>(thunk));
+      cmd_sequence.Append(static_cast<PartitionIdThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kReplicaId:
-      return append(Convert<ReplicaIdThunk>(thunk));
+      cmd_sequence.Append(static_cast<ReplicaIdThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kWhile:
       return append(Convert<WhileThunk>(thunk, options));
     case Thunk::Kind::kCuDnn:
