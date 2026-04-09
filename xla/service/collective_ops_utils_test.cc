@@ -352,6 +352,23 @@ TEST(CollectiveOpsUtilsTest, GetReplicaGroups) {
   EXPECT_EQ(all_reduce_groups.size(), 2);
   EXPECT_THAT(all_reduce_groups[0], testing::ElementsAre(0, 1));
   EXPECT_THAT(all_reduce_groups[1], testing::ElementsAre(2, 3));
+
+  // Test for plain kAllReduce (unwrapped inner collective that are extracted
+  // from kAsyncStart via async_wrapped_instruction()).
+  HloInstruction* all_reduce =
+      builder.AddInstruction(HloInstruction::CreateAllReduce(
+          param_shape, {param_0}, add_computation,
+          std::make_shared<CollectiveDeviceList>(replica_groups),
+          /*constrain_layout=*/false,
+          /*channel_id=*/3, /*use_global_device_ids=*/false));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<CollectiveDeviceListBase> plain_ar_groups_list,
+      GetAsyncReplicaGroups(all_reduce));
+  auto plain_ar_groups = plain_ar_groups_list->flattened_replica_groups();
+  EXPECT_EQ(plain_ar_groups.size(), 2);
+  EXPECT_THAT(plain_ar_groups[0], testing::ElementsAre(0, 1));
+  EXPECT_THAT(plain_ar_groups[1], testing::ElementsAre(2, 3));
 }
 
 TEST(CollectiveOpsUtilsTest, IsAsyncCollective) {
