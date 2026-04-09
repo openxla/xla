@@ -491,10 +491,7 @@ void HloAsyncStartInstruction::PrintExtraAttributesImpl(
   }
   if (options.syntax_sugar_async_ops() &&
       async_wrapped_computation()->CanExpandIntoSingleInstruction()) {
-    HloPrintOptions nested_options = options;
-    nested_options.set_print_frontend_attributes(
-        frontend_attributes().map().empty());
-    async_wrapped_instruction()->PrintExtraAttributes(printer, nested_options);
+    async_wrapped_instruction()->PrintExtraAttributes(printer, options);
   }
 
   if (!output_to_operand_aliasing().empty()) {
