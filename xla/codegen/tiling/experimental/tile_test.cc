@@ -20,6 +20,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "mlir/IR/MLIRContext.h"
+#include "xla/codegen/tiling/constraint_expression.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/hlo/analysis/indexing_test_utils.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -71,6 +72,56 @@ TEST_F(TileTest, StringFormat) {
       strides [1, 1]
       upper bounds [16, 32]
   )"));
+}
+
+TEST_F(TileTest, SimplifiesAlwaysSatisfiedDisjunction) {
+  TilingSpace tiling_space =
+      GetFakeTilingSpace(/*num_dims=*/1, /*num_rt_vars=*/0);
+
+  // (d0 in [0, 5]) || (1 in [1, 1]) should simplify to "always satisfied"
+  ConstraintExpression c_sym{{ParseAffineExpr("d0", &mlir_context_), {0, 5}}};
+  ConstraintExpression c_true{{ParseAffineExpr("1", &mlir_context_), {1, 1}}};
+
+  ConstraintExpression constraints = c_sym || c_true;
+  constraints.Simplify();
+  tiling_space.mutable_constraint() = constraints;
+
+  Tile tile{tiling_space, {GetFullDimTile(10, &mlir_context_)}};
+
+  EXPECT_TRUE(tiling_space.constraint().IsAlwaysSatisfied());
+  EXPECT_THAT(tile.ToString(), MatchIndexingString(R"(
+    (tid_0) ->
+      offsets [0]
+      sizes [16]
+      strides [1]
+      upper bounds [10]
+  )"));
+}
+
+TEST_F(TileTest, KeepsNecessaryConstraints) {
+  TilingSpace tiling_space =
+      GetFakeTilingSpace(/*num_dims=*/1, /*num_rt_vars=*/0);
+
+  // (d0 in [0, 5]) || (d0 in [10, 15])
+  ConstraintExpression c1{{ParseAffineExpr("d0", &mlir_context_), {0, 5}}};
+  ConstraintExpression c2{{ParseAffineExpr("d0", &mlir_context_), {10, 15}}};
+
+  ConstraintExpression constraints = c1 || c2;
+  constraints.Simplify();
+  tiling_space.mutable_constraint() = constraints;
+
+  Tile tile{tiling_space, {GetFullDimTile(10, &mlir_context_)}};
+
+  EXPECT_FALSE(tiling_space.constraint().IsAlwaysSatisfied());
+  EXPECT_THAT(tile.ToString(), MatchIndexingString(R"(
+    (tid_0) ->
+      offsets [0]
+      sizes [16]
+      strides [1]
+      upper bounds [10]
+  )"));
+  EXPECT_THAT(tiling_space.ToString(),
+              ::testing::HasSubstr("d0 in [0, 5] || d0 in [10, 15]"));
 }
 
 }  // namespace

@@ -49,6 +49,8 @@ struct DimensionRange {
   bool operator==(const DimensionRange& other) const {
     return start == other.start && count == other.count;
   }
+
+  int64_t end() const { return start + count - 1; }
 };
 
 // Represents a "minimal" reshape (subshape from reshape), i.e. a reshape that

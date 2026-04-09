@@ -268,7 +268,7 @@ absl::InlinedVector<const HloInstruction*, 2> ToInstructions(
 // * Otherwise, returns a region including tiled_root and all dependencies.
 /*static*/ TiledHloRegionOrError TiledHloComputation::CreateRegion(
     std::unique_ptr<TiledHloInstruction> tiled_root,
-    const HloFusionAdaptor& fusion, const TilingSpace& tiling_space,
+    const HloFusionAdaptor& fusion, TilingSpace& tiling_space,
     absl::flat_hash_map<int64_t, const TiledHloInstruction*>&
         rt_symbol_to_tiled_hlo) {
   std::vector<TiledHloInstruction*> worklist = {tiled_root.get()};

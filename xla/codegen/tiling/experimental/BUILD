@@ -52,6 +52,7 @@ xla_cc_test(
     srcs = ["tile_test.cc"],
     deps = [
         ":tile",
+        "//xla/codegen/tiling:constraint_expression",
         "//xla/hlo/analysis:indexing_test_utils",
         "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
@@ -88,6 +89,7 @@ cc_library(
     srcs = ["tile_propagation.cc"],
     hdrs = ["tile_propagation.h"],
     deps = [
+        ":reshape_analysis",
         ":tile",
         "//xla:literal_util",
         "//xla:permutation_util",

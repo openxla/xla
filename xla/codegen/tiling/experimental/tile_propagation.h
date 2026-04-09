@@ -31,12 +31,12 @@ using Tiles = llvm::SmallVector<Tile, 2>;
 
 std::string ToString(const Tiles& tiles);
 
-std::optional<Tiles> PropagateTileToInput(const TilingSpace& tiling_space,
+std::optional<Tiles> PropagateTileToInput(TilingSpace& tiling_space,
                                           const HloInstruction& hlo,
                                           const Tile& output_tile,
                                           int64_t output_index);
 
-std::optional<Tiles> PropagateTileToOutput(const TilingSpace& tiling_space,
+std::optional<Tiles> PropagateTileToOutput(TilingSpace& tiling_space,
                                            const HloInstruction& hlo,
                                            const Tile& input_tile,
                                            int64_t input_index);

@@ -143,7 +143,7 @@ std::string Tile::ToString(bool print_variables) const {
   ss << "] upper bounds [";
   llvm::interleaveComma(upper_bounds(), ss, print_expr);
   ss << ']';
-  return s;
+  return ss.str();
 }
 
 SmallVector<SymbolicExpr> Tile::offsets() const {

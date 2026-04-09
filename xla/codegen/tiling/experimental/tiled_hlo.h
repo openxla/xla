@@ -179,7 +179,7 @@ class TiledHloComputation {
 
   static TiledHloRegionOrError CreateRegion(
       std::unique_ptr<TiledHloInstruction> tiled_root,
-      const HloFusionAdaptor& fusion, const TilingSpace& tiling_space,
+      const HloFusionAdaptor& fusion, TilingSpace& tiling_space,
       absl::flat_hash_map<int64_t, const TiledHloInstruction*>&
           rt_symbol_to_tiled_hlo);
 

@@ -120,6 +120,12 @@ class ConstraintExpression {
   // ConstraintExpression canonically always satisfied.
   void Simplify();
 
+  bool operator==(const ConstraintExpression& other) const {
+    return is_satisfiable_ == other.is_satisfiable_ &&
+           disjoint_conjoint_constraints_ ==
+               other.disjoint_conjoint_constraints_;
+  }
+
  private:
   // This allows GUnit to print the expression.
   template <typename Sink>
@@ -140,6 +146,12 @@ class ConstraintExpression {
       h = H::combine(std::move(h), constraint);
     }
     return h;
+  }
+
+  template <typename H>
+  friend H AbslHashValue(H h, const ConstraintExpression& expr) {
+    return H::combine(std::move(h), expr.is_satisfiable_,
+                      expr.disjoint_conjoint_constraints_);
   }
 
   // When this is set to `false`, disjoint_conjoint_constraints_ must be empty.

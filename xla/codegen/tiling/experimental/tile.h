@@ -27,6 +27,7 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/codegen/tiling/constraint_expression.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 
 namespace xla::gpu::experimental {
@@ -99,7 +100,6 @@ H AbslHashValue(H h, const DimTile& dim_tile) {
 class Tile {
  public:
   Tile(const TilingSpace& tiling_space, llvm::SmallVector<DimTile> dim_tiles);
-
   Tile(const TilingSpace& tiling_space, llvm::ArrayRef<SymbolicExpr> offsets,
        llvm::ArrayRef<SymbolicExpr> sizes, llvm::ArrayRef<SymbolicExpr> strides,
        llvm::ArrayRef<SymbolicExpr> upper_bounds);
