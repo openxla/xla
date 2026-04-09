@@ -142,28 +142,6 @@ class EmptyCmd : public Command {
 };
 
 //===----------------------------------------------------------------------===//
-// ComputationIdCmd (ReplicaId and PartitionId)
-//===----------------------------------------------------------------------===//
-
-class ComputationIdCmd : public Command {
- public:
-  enum class Kind { kReplica, kPartition };
-
-  ComputationIdCmd(BufferAllocation::Slice dest, Kind kind);
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override;
-
- private:
-  BufferAllocation::Slice dest_;
-  Kind kind_;
-};
-
-//===----------------------------------------------------------------------===//
 // LaunchCmd
 //===----------------------------------------------------------------------===//
 

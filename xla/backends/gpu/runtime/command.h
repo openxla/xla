@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/xla.pb.h"
 #include "tsl/platform/casts.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 
@@ -137,6 +138,19 @@ class Command : public Thunk {
 
   virtual ~Command() = default;
 
+ protected:
+  // Constructor for Thunk subclasses that are also Commands. Preserves the
+  // caller's Thunk::Kind and ThunkInfo instead of using Kind::kCommand and an
+  // empty ThunkInfo.
+  Command(CommandType cmd_type, Thunk::Kind thunk_kind, ThunkInfo thunk_info,
+          se::StreamPriority priority = se::StreamPriority::Default)
+      : Thunk(thunk_kind, std::move(thunk_info)),
+        cmd_type_(cmd_type),
+        priority_(priority) {
+    token_ = Resource::Create(Resource::kToken);
+  }
+
+ public:
   // Parameters for recording commands into the command buffer.
   struct RecordParams {
     // An external state manager that gives efficient access to per-device state
@@ -288,6 +302,39 @@ std::invoke_result_t<F, const Command*> Command::Walk(F&& callback) const {
   return const_cast<Command*>(this)->Walk(  // NOLINT
       std::forward<F>(callback));
 }
+
+//===----------------------------------------------------------------------===//
+// CommandWrapper
+//===----------------------------------------------------------------------===//
+
+// A Command that forwards Record() to an existing Command* owned elsewhere.
+// Safe to use when the pointed-to command is guaranteed to outlive this
+// wrapper, e.g. because it is held in the original thunk sequence by a
+// CommandBufferThunk.
+class CommandWrapper : public Command {
+ public:
+  explicit CommandWrapper(Command* command)
+      : Command(command->command_type()), command_(command) {
+    DCHECK(command_) << "Wrapped command must be non-null";
+  }
+
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    return command_->ExecuteOnStream(params);
+  }
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override {
+    return command_->Record(execute_params, record_params, record_action,
+                            command_buffer);
+  }
+
+  BufferUses buffer_uses() const override { return command_->buffer_uses(); }
+
+ private:
+  Command* command_;
+};
 
 //===----------------------------------------------------------------------===//
 // Asynchronous commands

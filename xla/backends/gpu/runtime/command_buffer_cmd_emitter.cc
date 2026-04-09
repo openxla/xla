@@ -259,15 +259,18 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const PartitionIdThunk& thunk) {
-  return std::make_unique<ComputationIdCmd>(thunk.dest(),
-                                            ComputationIdCmd::Kind::kPartition);
+    PartitionIdThunk& thunk) {
+  // PartitionIdThunk implements Command directly; wrap a pointer to it rather
+  // than copying. Safe because the original thunk sequence is kept alive by
+  // CommandBufferThunk for the duration of the command buffer.
+  return std::make_unique<CommandWrapper>(&thunk);
 }
 
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const ReplicaIdThunk& thunk) {
-  return std::make_unique<ComputationIdCmd>(thunk.dest(),
-                                            ComputationIdCmd::Kind::kReplica);
+static absl::StatusOr<std::unique_ptr<Command>> Convert(ReplicaIdThunk& thunk) {
+  // ReplicaIdThunk implements Command directly; wrap a pointer to it rather
+  // than copying. Safe because the original thunk sequence is kept alive by
+  // CommandBufferThunk for the duration of the command buffer.
+  return std::make_unique<CommandWrapper>(&thunk);
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
@@ -300,16 +303,15 @@ static absl::StatusOr<std::unique_ptr<Command>> CopyMetadata(
 }
 
 template <typename ThunkType, typename... Args>
-static absl::StatusOr<std::unique_ptr<Command>> Convert(const Thunk& thunk,
+static absl::StatusOr<std::unique_ptr<Command>> Convert(Thunk& thunk,
                                                         Args&&... args) {
-  return CopyMetadata(Convert(static_cast<const ThunkType&>(thunk),
-                              std::forward<Args>(args)...),
-                      thunk);
+  return CopyMetadata(
+      Convert(static_cast<ThunkType&>(thunk), std::forward<Args>(args)...),
+      thunk);
 }
 
 static absl::Status AppendCommands(ConversionContext& ctx,
-                                   CommandSequence& cmd_sequence,
-                                   const Thunk& thunk,
+                                   CommandSequence& cmd_sequence, Thunk& thunk,
                                    const ConvertToCommandsOptions& options) {
   auto append =
       [&](absl::StatusOr<std::unique_ptr<Command>> command) -> absl::Status {

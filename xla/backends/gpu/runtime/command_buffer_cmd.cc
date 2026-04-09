@@ -113,13 +113,13 @@ limitations under the License.
 #include "xla/stream_executor/trace_command_buffer_factory.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -365,52 +365,6 @@ absl::StatusOr<const se::CommandBuffer::Command*> EmptyCmd::Record(
       [&](const se::CommandBuffer::Command* command) {
         // Empty command is not updatable.
         return absl::OkStatus();
-      });
-}
-
-//===----------------------------------------------------------------------===//
-// ComputationId
-//===----------------------------------------------------------------------===//
-
-ComputationIdCmd::ComputationIdCmd(BufferAllocation::Slice dest, Kind kind)
-    : Command(CommandType::kComputationIdCmd), dest_(dest), kind_(kind) {}
-
-Command::BufferUses ComputationIdCmd::buffer_uses() const {
-  return {BufferUse::Write(dest_, ShapeUtil::MakeShape(S32, {}))};
-}
-
-absl::StatusOr<const se::CommandBuffer::Command*> ComputationIdCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  se::DeviceAddressBase dst =
-      execute_params.buffer_allocations->GetDeviceAddress(dest_);
-
-  GlobalDeviceId global_device_id =
-      execute_params.collective_params->global_device_id;
-  TF_ASSIGN_OR_RETURN(
-      const DeviceAssignment::LogicalID logical_id,
-      execute_params.collective_params->device_assn->LogicalIdForDevice(
-          global_device_id));
-
-  uint32_t value = static_cast<uint32_t>(kind_ == Kind::kReplica
-                                             ? logical_id.replica_id
-                                             : logical_id.computation_id);
-
-  VLOG(5) << "ComputationIdCmd"
-          << ": kind=" << (kind_ == Kind::kReplica ? "replica" : "partition")
-          << "; value=" << value;
-  VLOG(5) << "  Id: " << dest_ << " (" << dst.opaque() << ")";
-
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateMemset(&dst, value, /*num_elements=*/1,
-                                            dependencies);
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateMemset(command, &dst, value,
-                                            /*num_elements=*/1);
       });
 }
 
