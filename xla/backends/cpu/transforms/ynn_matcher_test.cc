@@ -195,5 +195,101 @@ TEST_F(YnnReduceTest, ConvertReduce) {
   )");
 }
 
+class YnnEltwiseTest : public HloPjRtTestBase {
+ protected:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options = HloPjRtTestBase::GetDebugOptionsForTest();
+    debug_options.add_xla_cpu_experimental_ynn_fusion_type(
+        DebugOptions::LIBRARY_FUSION_TYPE_ELTWISE);
+    return debug_options;
+  }
+};
+
+TEST_F(YnnEltwiseTest, BroadcastAdd) {
+  const char* hlo_text = R"(
+  HloModule broadcast_add
+
+  ENTRY main {
+    input = f32[512] parameter(0)
+    bias = f32[512,512] parameter(1)
+    broadcasted = f32[512,512] broadcast(input), dimensions={1}
+    ROOT result = f32[512,512] add(broadcasted, bias)
+  }
+  )";
+
+  MatchOptimizedHlo(hlo_text, R"(
+    CHECK: %[[fused_fn:[^ ]+]] (
+    CHECK: broadcast
+    CHECK: add
+    CHECK: }
+    CHECK: "kind":"__ynn_fusion"
+  )");
+}
+
+TEST_F(YnnEltwiseTest, BroadcastMultiply) {
+  const char* hlo_text = R"(
+  HloModule broadcast_mul
+
+  ENTRY main {
+    input = f32[512] parameter(0)
+    arg1 = f32[512,512] parameter(1)
+    broadcasted = f32[512,512] broadcast(input), dimensions={0}
+    ROOT result = f32[512,512] multiply(broadcasted, arg1)
+  }
+  )";
+
+  MatchOptimizedHlo(hlo_text, R"(
+    CHECK: %[[fused_fn:[^ ]+]] (
+    CHECK: broadcast
+    CHECK: multiply
+    CHECK: }
+    CHECK: "kind":"__ynn_fusion"
+  )");
+}
+
+TEST_F(YnnEltwiseTest, Broadcast3DAdd) {
+  const char* hlo_text = R"(
+  HloModule broadcast_3d_add
+
+  ENTRY main {
+    input = f32[128,256] parameter(0)
+    bias = f32[128,512,256] parameter(1)
+    broadcasted = f32[128,512,256] broadcast(input), dimensions={0,2}
+    ROOT result = f32[128,512,256] add(broadcasted, bias)
+  }
+  )";
+
+  MatchOptimizedHlo(hlo_text, R"(
+    CHECK: %[[fused_fn:[^ ]+]] (
+    CHECK: broadcast
+    CHECK: add
+    CHECK: }
+    CHECK: "kind":"__ynn_fusion"
+  )");
+}
+
+TEST_F(YnnEltwiseTest, NonMonotonicBroadcastAdd) {
+  const char* hlo_text = R"(
+  HloModule non_monotonic_broadcast_add
+
+  ENTRY main {
+    input = f32[512,256] parameter(0)
+    bias = f32[256,512,1024] parameter(1)
+    broadcasted = f32[256,512,1024] broadcast(input), dimensions={1,0}
+    ROOT result = f32[256,512,1024] add(broadcasted, bias)
+  }
+  )";
+
+  // The broadcast is not supported because dimensions={1,0} is not monotonic.
+  // It should NOT be fused into the ynn_fusion.
+  MatchOptimizedHlo(hlo_text, R"(
+    CHECK: %[[fused_fn:[^ ]+]] (
+    CHECK-NOT: broadcast
+    CHECK: add
+    CHECK: }
+    CHECK: "kind":"__ynn_fusion"
+  )");
+}
+
 }  // namespace
 }  // namespace xla::cpu

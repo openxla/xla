@@ -58,6 +58,9 @@ bool IsLayoutSupportedByYnn(const Shape& shape);
 // Returns true if the bitcast op is supported by YNNPACK.
 bool IsBitcastOpSupportedByYnn(const HloInstruction* hlo);
 
+// Returns true if the broadcast op is supported by YNNPACK.
+bool IsBroadcastOpSupportedByYnn(const HloInstruction* hlo);
+
 // Returns true if the reshape op is supported by YNNPACK.
 bool IsReshapeOpSupportedByYnn(const HloInstruction* hlo);
 

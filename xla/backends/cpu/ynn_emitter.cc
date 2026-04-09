@@ -198,6 +198,39 @@ absl::StatusOr<uint32_t> DefineReshapeOp(ynn_subgraph_t subgraph,
   return DefineBitcastOp(subgraph, tensor_ids, instr);
 }
 
+absl::StatusOr<uint32_t> DefineBroadcastOp(ynn_subgraph_t subgraph,
+                                           TensorIdMap& tensor_ids,
+                                           const HloInstruction* instr) {
+  VLOG(3) << absl::StreamFormat("Define tensor value for broadcast op: %s",
+                                instr->ToString());
+  CHECK_EQ(instr->opcode(), HloOpcode::kBroadcast);
+  const HloInstruction* input = instr->operand(0);
+  TF_ASSIGN_OR_RETURN(auto in, FindTensorValue(tensor_ids, input));
+  TF_ASSIGN_OR_RETURN(auto out, DefineTensorValue(subgraph, instr));
+
+  auto dimensions = instr->dimensions();
+  auto input_dims = input->shape().dimensions();
+  auto output_dims = instr->shape().dimensions();
+
+  // We need to reshape the input to have 1s in the broadcasted dimensions.
+  std::vector<size_t> reshaped_dims(output_dims.size(), 1);
+  for (int i = 0; i < dimensions.size(); ++i) {
+    reshaped_dims[dimensions[i]] = input_dims[i];
+  }
+
+  uint32_t reshaped_id = YNN_INVALID_VALUE_ID;
+  YNN_RETURN_IF_ERROR(ynn_define_static_reshape(subgraph, reshaped_dims.size(),
+                                                reshaped_dims.data(), in,
+                                                &reshaped_id, /*flags=*/0));
+
+  auto out_ynn_dims = YnnDimensions(instr->shape());
+  YNN_RETURN_IF_ERROR(ynn_define_static_broadcast(
+      subgraph, out_ynn_dims.size(), out_ynn_dims.data(), reshaped_id, &out,
+      /*flags=*/0));
+
+  return out;
+}
+
 absl::StatusOr<uint32_t> DefineUnaryOp(ynn_subgraph_t subgraph,
                                        TensorIdMap& tensor_ids,
                                        const HloInstruction* instr) {
@@ -667,6 +700,17 @@ absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(const HloComputation* computation,
         }
         TF_ASSIGN_OR_RETURN(tensor_ids[instr],
                             DefineReshapeOp(subgraph.get(), tensor_ids, instr));
+      } break;
+
+      case HloOpcode::kBroadcast: {
+        if (!IsBroadcastOpSupportedByYnn(instr)) {
+          return InvalidArgument(
+              "Unsupported broadcast instruction in YNN fusion: %s",
+              instr->ToString());
+        }
+        TF_ASSIGN_OR_RETURN(
+            tensor_ids[instr],
+            DefineBroadcastOp(subgraph.get(), tensor_ids, instr));
       } break;
 
       case HloOpcode::kDot: {

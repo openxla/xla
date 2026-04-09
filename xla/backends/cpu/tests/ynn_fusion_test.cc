@@ -78,6 +78,48 @@ TEST_P(YnnFusionTest, AddAndMultiply) {
   RunTest(kModuleStr);
 }
 
+TEST_P(YnnFusionTest, BroadcastAdd) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule broadcast_add
+
+    ynn_fusion {
+      %input = $dtype[100] parameter(0)
+      %bias = $dtype[100,100] parameter(1)
+      %broadcasted = $dtype[100,100] broadcast(%input), dimensions={1}
+      ROOT %add = $dtype[100,100] add(%broadcasted, %bias)
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[100] parameter(0)
+      %p1 = $dtype[100,100] parameter(1)
+      ROOT %fusion = $dtype[100,100] fusion(%p0, %p1), kind=kCustom, calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
+TEST_P(YnnFusionTest, Broadcast3DMultiply) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule broadcast_3d_multiply
+
+    ynn_fusion {
+      %input = $dtype[10,20] parameter(0)
+      %arg1 = $dtype[10,30,20] parameter(1)
+      %broadcasted = $dtype[10,30,20] broadcast(%input), dimensions={0,2}
+      ROOT %mul = $dtype[10,30,20] multiply(%broadcasted, %arg1)
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[10,20] parameter(0)
+      %p1 = $dtype[10,30,20] parameter(1)
+      ROOT %fusion = $dtype[10,30,20] fusion(%p0, %p1), kind=kCustom, calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
 std::vector<YnnFusionTestParams> GetSameTypeTestCases() {
   return std::vector<YnnFusionTestParams>({
       YnnFusionTestParams{"bf16", "bf16"},
