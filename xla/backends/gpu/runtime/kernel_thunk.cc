@@ -23,13 +23,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
-#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "llvm/ADT/STLExtras.h"
+#include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/print_buffer_contents.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -39,6 +38,7 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/shape.h"
+#include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/kernel.h"
@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/tensor_map.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
@@ -62,7 +63,7 @@ KernelThunk::KernelThunk(Thunk::ThunkInfo thunk_info, std::string kernel_name,
                          stream_executor::gpu::TmaMetadata tma_metadata,
                          std::vector<int64_t> zeroed_output_buffer_indices,
                          bool use_pdl)
-    : Thunk(Kind::kKernel, std::move(thunk_info)),
+    : Command(CommandType::kLaunchCmd, Kind::kKernel, std::move(thunk_info)),
       args_(kernel_arguments.GetArgumentShapedSlices()),
       written_(kernel_arguments.GetArgumentOutputFlags()),
       zeroed_output_buffer_indices_(std::move(zeroed_output_buffer_indices)),
@@ -176,6 +177,41 @@ absl::Status KernelThunk::Initialize(const InitializeParams& params) {
   return absl::OkStatus();
 }
 
+absl::StatusOr<KernelThunk::KernelWithArgs> KernelThunk::GetKernelAndArgs(
+    const BufferAllocations& buffer_allocations,
+    se::StreamExecutor* executor) const {
+  se::Kernel* kernel;
+  {
+    absl::MutexLock lock(mutex_);
+    auto it = kernel_cache_.find(executor);
+    if (it == kernel_cache_.end() || it->second == nullptr) {
+      return absl::InternalError(absl::StrFormat(
+          "Kernel not loaded for executor (Initialize() not called): %s",
+          kernel_name_));
+    }
+    kernel = it->second.get();
+  }
+  absl::InlinedVector<se::KernelArg, 4> kernel_args;
+  for (int idx = 0; idx < args_.size(); ++idx) {
+    se::DeviceAddressBase buf =
+        buffer_allocations.GetDeviceAddress(args_[idx].slice);
+    VLOG(5) << "  Arg #" << idx << ": " << args_[idx].slice << ": "
+            << buf.opaque() << " (" << buf.size() << "B)";
+    if (auto it = tma_metadata_.arg_index_to_tma_info.find(idx);
+        it != tma_metadata_.arg_index_to_tma_info.end()) {
+      const se::gpu::TmaDescriptor& tma_desc = it->second;
+      TF_ASSIGN_OR_RETURN(se::TensorMap tensor_map,
+                          executor->CreateTensorMap(tma_desc, buf.opaque()));
+      VLOG(5) << "  Using TensorMap for arg #" << idx << ": "
+              << tma_desc.ToString();
+      kernel_args.push_back(std::move(tensor_map));
+    } else {
+      kernel_args.push_back(buf);
+    }
+  }
+  return KernelWithArgs{kernel, std::move(kernel_args)};
+}
+
 absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
   se::Stream* stream = params.stream;
   se::StreamExecutor* executor = stream->parent();
@@ -186,42 +222,12 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
     TF_RETURN_IF_ERROR(stream->MemZero(&address, address.size()));
   }
 
-  // Lookup the loaded kernel.
-  se::Kernel* kernel = nullptr;
-  {
-    absl::MutexLock lock(mutex_);
-    auto it = kernel_cache_.find(executor);
-    CHECK(it != kernel_cache_.end())
-        << "Initialize() not called for StreamExecutor " << executor;
-    kernel = it->second.get();
-  }
+  TF_ASSIGN_OR_RETURN(auto kernel_with_args,
+                      GetKernelAndArgs(*params.buffer_allocations, executor));
+  auto& [kernel, kernel_args] = kernel_with_args;
 
   int device_ordinal = executor->device_ordinal();
   XLA_VLOG_DEVICE(3, device_ordinal) << "Launching " << kernel->name();
-
-  absl::InlinedVector<se::KernelArg, 4> kernel_args;
-  for (const auto& [idx, arg] : llvm::enumerate(args_)) {
-    se::DeviceAddressBase buf =
-        params.buffer_allocations->GetDeviceAddress(arg.slice);
-    XLA_VLOG_DEVICE(3, device_ordinal)
-        << "Arg: alloc #" << arg.slice.index()
-        << ", offset: " << arg.slice.offset() << ": " << buf.opaque() << " ("
-        << buf.size() << "B)";
-
-    if (auto it = tma_metadata_.arg_index_to_tma_info.find(idx);
-        it != tma_metadata_.arg_index_to_tma_info.end()) {
-      // TMA descriptor argument.
-      const se::gpu::TmaDescriptor& tma_desc = it->second;
-      TF_ASSIGN_OR_RETURN(se::TensorMap tensor_map,
-                          executor->CreateTensorMap(tma_desc, buf.opaque()));
-      XLA_VLOG_DEVICE(3, device_ordinal)
-          << "Using TensorMap for arg #" << idx << ": " << tma_desc.ToString();
-      kernel_args.push_back(std::move(tensor_map));
-    } else {
-      // Buffer argument.
-      kernel_args.push_back(buf);
-    }
-  }
 
   if (VLOG_IS_ON(100)) {
     PrintBufferContents(stream, kernel_args);
@@ -231,6 +237,33 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
       *kernel,
       absl::Span<se::KernelArg>(kernel_args.data(), kernel_args.size()),
       launch_dimensions_, cluster_dim_, stream);
+}
+
+absl::StatusOr<const se::CommandBuffer::Command*> KernelThunk::Record(
+    const Thunk::ExecuteParams& execute_params,
+    const RecordParams& record_params, RecordAction record_action,
+    se::CommandBuffer* command_buffer) {
+  se::StreamExecutor* executor = execute_params.stream->parent();
+
+  TF_ASSIGN_OR_RETURN(
+      auto kernel_with_args,
+      GetKernelAndArgs(*execute_params.buffer_allocations, executor));
+  auto& [kernel, kernel_args] = kernel_with_args;
+  auto packed_args = se::PackKernelArgs(kernel_args, shmem_bytes_);
+
+  if (auto* create = std::get_if<RecordCreate>(&record_action)) {
+    return command_buffer->CreateLaunch(
+        launch_dimensions_.thread_counts_per_block(),
+        launch_dimensions_.block_counts(), *kernel, *packed_args,
+        create->dependencies, priority());
+  }
+  if (auto* update = std::get_if<RecordUpdate>(&record_action)) {
+    RETURN_IF_ERROR(command_buffer->UpdateLaunch(
+        update->command, launch_dimensions_.thread_counts_per_block(),
+        launch_dimensions_.block_counts(), *kernel, *packed_args));
+    return update->command;
+  }
+  return Internal("Invalid record action");
 }
 
 Thunk::BufferUses KernelThunk::buffer_uses() const {
