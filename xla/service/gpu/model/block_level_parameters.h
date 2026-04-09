@@ -38,6 +38,7 @@ struct BlockLevelParameters {
   int64_t global_scratch_memory_size = 0;
   bool is_tma_allowed = false;
   bool is_warp_specialization_allowed = false;
+  int waves_per_eu = 0;
 
   // Returns a BlockLevelParameters struct from a BlockLevelFusionConfig proto.
   static BlockLevelParameters FromBlockLevelFusionConfig(
@@ -49,6 +50,7 @@ struct BlockLevelParameters {
     result.is_tma_allowed = config.is_tma_allowed();
     result.is_warp_specialization_allowed =
         config.is_warp_specialization_allowed();
+    result.waves_per_eu = config.waves_per_eu();
     result.output_tile_sizes.reserve(config.output_tiles_size());
     for (const auto& tile : config.output_tiles()) {
       result.output_tile_sizes.push_back(
@@ -70,6 +72,7 @@ struct BlockLevelParameters {
     config.set_num_stages(num_stages);
     config.set_is_tma_allowed(is_tma_allowed);
     config.set_is_warp_specialization_allowed(is_warp_specialization_allowed);
+    config.set_waves_per_eu(waves_per_eu);
     return config;
   }
 };

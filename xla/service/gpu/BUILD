@@ -1205,6 +1205,7 @@ xla_cc_test(
     srcs = ["matmul_utils_test.cc"],
     deps = [
         ":matmul_utils",
+        "//xla:autotuning_proto_cc",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",

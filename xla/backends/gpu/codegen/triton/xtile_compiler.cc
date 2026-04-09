@@ -525,6 +525,16 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
       VerifyModule(*ll_triton_module);
     }
 
+    // Apply ROCm-specific waves_per_eu attribute if set.
+    if (gpu_cc.IsRocm() && block_level_parameters.waves_per_eu > 0) {
+      if (auto* fn = ll_triton_module->getFunction(kernel_name)) {
+        std::string waves_attr =
+            absl::StrCat(block_level_parameters.waves_per_eu, ", ",
+                         block_level_parameters.waves_per_eu);
+        fn->addFnAttr("amdgpu-waves-per-eu", waves_attr);
+      }
+    }
+
     // Integrate LLVM matmul kernel into XLA's LLVM module.
     captured_nvvm_annotations =
         xgt::ExtractNvvmAnnotations(ll_triton_module.get());

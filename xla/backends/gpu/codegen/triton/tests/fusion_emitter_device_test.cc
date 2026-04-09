@@ -2072,6 +2072,87 @@ TEST_F(TritonEmitterTest, RocmWarpSizeIsSetCorrectly) {
   EXPECT_THAT(RunFileCheck(triton_passes_log, kPattern_n), true);
 }
 
+TEST_F(TritonEmitterTest, RocmWavesPerEuAttributeIsSet) {
+  if (GpuComputeCapability().IsCuda()) {
+    GTEST_SKIP() << "waves_per_eu is ROCm-specific";
+  }
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> verified_module,
+                          ParseAndReturnVerifiedModule(GetDotAlgorithmHlo(
+                              F16, F16, PrecisionConfig::ALG_UNSET)));
+
+  const HloFusionInstruction* triton_fusion = Cast<HloFusionInstruction>(
+      verified_module->entry_computation()->root_instruction());
+
+  llvm::LLVMContext llvm_ctx;
+  mlir::MLIRContext mlir_context;
+  llvm::Triple target_triple(amdgpu::TargetTriple());
+  std::string data_layout(amdgpu::DataLayout());
+
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {{16, 64}};
+  block_level_parameters.num_warps = 1;
+  block_level_parameters.waves_per_eu = 4;
+
+  se::DeviceDescription dev_info = TestGpuDeviceInfo::AMDMI210DeviceInfo();
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      TritonWrapperResult result,
+      TritonWrapper(
+          "test_fn", triton_fusion,
+          se::GpuComputeCapability{se::RocmComputeCapability("gfx90a")},
+          dev_info, block_level_parameters, target_triple, data_layout,
+          llvm_ctx, mlir_context));
+
+  ASSERT_NE(result.llvm_module, nullptr);
+  auto* fn = result.llvm_module->getFunction("test_fn");
+  ASSERT_NE(fn, nullptr)
+      << "Kernel function 'test_fn' not found in LLVM module";
+  auto attr = fn->getFnAttribute("amdgpu-waves-per-eu");
+  ASSERT_TRUE(attr.isStringAttribute());
+  EXPECT_EQ(attr.getValueAsString().str(), "4, 4");
+}
+
+TEST_F(TritonEmitterTest, RocmWavesPerEuZeroOmitsAttribute) {
+  if (GpuComputeCapability().IsCuda()) {
+    GTEST_SKIP() << "waves_per_eu is ROCm-specific";
+  }
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> verified_module,
+                          ParseAndReturnVerifiedModule(GetDotAlgorithmHlo(
+                              F16, F16, PrecisionConfig::ALG_UNSET)));
+
+  const HloFusionInstruction* triton_fusion = Cast<HloFusionInstruction>(
+      verified_module->entry_computation()->root_instruction());
+
+  llvm::LLVMContext llvm_ctx;
+  mlir::MLIRContext mlir_context;
+  llvm::Triple target_triple(amdgpu::TargetTriple());
+  std::string data_layout(amdgpu::DataLayout());
+
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {{16, 64}};
+  block_level_parameters.num_warps = 1;
+  block_level_parameters.waves_per_eu = 0;
+
+  se::DeviceDescription dev_info = TestGpuDeviceInfo::AMDMI210DeviceInfo();
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      TritonWrapperResult result,
+      TritonWrapper(
+          "test_fn", triton_fusion,
+          se::GpuComputeCapability{se::RocmComputeCapability("gfx90a")},
+          dev_info, block_level_parameters, target_triple, data_layout,
+          llvm_ctx, mlir_context));
+
+  ASSERT_NE(result.llvm_module, nullptr);
+  auto* fn = result.llvm_module->getFunction("test_fn");
+  ASSERT_NE(fn, nullptr)
+      << "Kernel function 'test_fn' not found in LLVM module";
+  EXPECT_FALSE(fn->hasFnAttribute("amdgpu-waves-per-eu"))
+      << "waves_per_eu=0 should not set amdgpu-waves-per-eu attribute";
+}
+
 struct ScaleDotTestParams {
   std::string lhs_type;
   std::string rhs_type;
