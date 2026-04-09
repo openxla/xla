@@ -453,8 +453,6 @@ TEST_P(GpuAbortCollectivesTest, Abort) {
 INSTANTIATE_TEST_SUITE_P(GpuAbortCollectives, GpuAbortCollectivesTest,
                          testing::Values(true, false));
 
-#if NCCL_VERSION_CODE >= 22900
-
 TEST(GpuCollectivesTest, PutAndWaitSignal) {
   ASSERT_OK_AND_ASSIGN(se::Platform * platform,
                        se::PlatformManager::PlatformWithName("CUDA"));
@@ -472,8 +470,9 @@ TEST(GpuCollectivesTest, PutAndWaitSignal) {
 
   ASSERT_OK_AND_ASSIGN(auto comms, CreateCommunicators(executors, {kD0, kD1}));
 
-  if (!absl::c_all_of(comms, [](auto& c) { return c->SupportsDeviceComm(); })) {
-    GTEST_SKIP() << "GPU communicators do not support symmetric memory";
+  if (!absl::c_all_of(comms,
+                      [](auto& c) { return c->SupportsOneSidedComm(); })) {
+    GTEST_SKIP() << "GPU communicators do not support one-sided RMA";
   }
 
   ASSERT_OK_AND_ASSIGN(auto allocators, CreateMemoryAllocators(executors));
@@ -549,8 +548,6 @@ TEST(GpuCollectivesTest, PutAndWaitSignal) {
   EXPECT_THAT(h_recv0, testing::ElementsAre(5.0f, 6.0f, 7.0f, 8.0f));
   EXPECT_THAT(h_recv1, testing::ElementsAre(1.0f, 2.0f, 3.0f, 4.0f));
 }
-
-#endif  // NCCL_VERSION_CODE >= 22900
 
 }  // namespace
 }  // namespace xla::gpu

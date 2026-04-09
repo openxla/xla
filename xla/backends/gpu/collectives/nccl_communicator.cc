@@ -251,6 +251,14 @@ bool NcclCommunicator::SupportsDeviceComm() const {
 #endif  // NCCL_VERSION_CODE >= 22800
 }
 
+bool NcclCommunicator::SupportsOneSidedComm() const {
+#if NCCL_VERSION_CODE >= 22900
+  return true;
+#else
+  return false;
+#endif  // NCCL_VERSION_CODE >= 22900
+}
+
 absl::StatusOr<std::unique_ptr<GpuDeviceCommunicator>>
 NcclCommunicator::CreateDeviceComm(
     const GpuDeviceCommunicator::Requirements& requirements) {
@@ -963,7 +971,10 @@ absl::Status NcclCommunicator::LaunchPut(se::DeviceAddressBase send_buffer,
                                          size_t offset, size_t count,
                                          RankId peer,
                                          const Executor& executor) {
-#if NCCL_VERSION_CODE >= 22900
+  if (!SupportsOneSidedComm()) {
+    return Unimplemented("Put requires NCCL >= 2.29.0 (current: %d)",
+                         NCCL_VERSION_CODE);
+  }
   if (cancel_->IsCancelled()) {
     return FailedPrecondition("NcclCommunicator aborted");
   }
@@ -977,23 +988,24 @@ absl::Status NcclCommunicator::LaunchPut(se::DeviceAddressBase send_buffer,
       stream->parent()->device_ordinal(), send_buffer.opaque(), peer_win,
       offset, count, peer.value(), comm_, stream);
 
-  TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclPutSignal(
-      send_buffer.opaque(), count, ncclInt8, peer.value(), peer_win.win(),
-      offset, 0, 0, 0, comm_, AsCudaStream(stream))));
+#if NCCL_VERSION_CODE >= 22900
+  XLA_NCCL_RETURN_IF_ERROR(ncclPutSignal(send_buffer.opaque(), count, ncclInt8,
+                                         peer.value(), peer_win.win(), offset,
+                                         0, 0, 0, comm_, AsCudaStream(stream)));
+#endif
   if (group_nesting_level_ == 0) {
     TF_RETURN_IF_ERROR(PollUntilDone());
   }
   return absl::OkStatus();
-#else
-  return Unimplemented("NCCL PutSignal requires NCCL >= 2.29.0 (current: %d)",
-                       NCCL_VERSION_CODE);
-#endif
 }
 
 absl::Status NcclCommunicator::LaunchSignal(RankId peer,
                                             const SignalDesc& signal_desc,
                                             const Executor& executor) {
-#if NCCL_VERSION_CODE >= 22900
+  if (!SupportsOneSidedComm()) {
+    return Unimplemented("Signal requires NCCL >= 2.29.0 (current: %d)",
+                         NCCL_VERSION_CODE);
+  }
   if (cancel_->IsCancelled()) {
     return FailedPrecondition("NcclCommunicator aborted");
   }
@@ -1007,23 +1019,24 @@ absl::Status NcclCommunicator::LaunchSignal(RankId peer,
       stream->parent()->device_ordinal(), peer.value(), nccl_desc.sig_idx(),
       nccl_desc.ctx(), comm_, stream);
 
-  TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(
-      ncclSignal(peer.value(), nccl_desc.sig_idx(), nccl_desc.ctx(), 0, comm_,
-                 AsCudaStream(stream))));
+#if NCCL_VERSION_CODE >= 22900
+  XLA_NCCL_RETURN_IF_ERROR(ncclSignal(peer.value(), nccl_desc.sig_idx(),
+                                      nccl_desc.ctx(), 0, comm_,
+                                      AsCudaStream(stream)));
+#endif
   if (group_nesting_level_ == 0) {
     TF_RETURN_IF_ERROR(PollUntilDone());
   }
   return absl::OkStatus();
-#else
-  return Unimplemented("NCCL Signal requires NCCL >= 2.29.0 (current: %d)",
-                       NCCL_VERSION_CODE);
-#endif
 }
 
 absl::Status NcclCommunicator::LaunchWaitSignal(RankId peer, int op_cnt,
                                                 const SignalDesc& signal_desc,
                                                 const Executor& executor) {
-#if NCCL_VERSION_CODE >= 22900
+  if (!SupportsOneSidedComm()) {
+    return Unimplemented("WaitSignal requires NCCL >= 2.29.0 (current: %d)",
+                         NCCL_VERSION_CODE);
+  }
   if (cancel_->IsCancelled()) {
     return FailedPrecondition("NcclCommunicator aborted");
   }
@@ -1037,22 +1050,20 @@ absl::Status NcclCommunicator::LaunchWaitSignal(RankId peer, int op_cnt,
       stream->parent()->device_ordinal(), peer.value(), op_cnt,
       nccl_desc.sig_idx(), nccl_desc.ctx(), comm_, stream);
 
+#if NCCL_VERSION_CODE >= 22900
   ncclWaitSignalDesc_t desc;
   desc.peer = peer.value();
   desc.opCnt = op_cnt;
   desc.sigIdx = nccl_desc.sig_idx();
   desc.ctx = nccl_desc.ctx();
 
-  TF_RETURN_IF_ERROR(
-      XLA_NCCL_STATUS(ncclWaitSignal(1, &desc, comm_, AsCudaStream(stream))));
+  XLA_NCCL_RETURN_IF_ERROR(
+      ncclWaitSignal(1, &desc, comm_, AsCudaStream(stream)));
+#endif
   if (group_nesting_level_ == 0) {
     TF_RETURN_IF_ERROR(PollUntilDone());
   }
   return absl::OkStatus();
-#else
-  return Unimplemented("NCCL WaitSignal requires NCCL >= 2.29.0 (current: %d)",
-                       NCCL_VERSION_CODE);
-#endif
 }
 
 std::string NcclCommunicator::ToString() const {
