@@ -287,11 +287,10 @@ static absl::StatusOr<std::unique_ptr<Command>> CopyMetadata(
   return cmd;
 }
 
-// Takes Thunk& (non-const) rather than const Thunk& so that Convert overloads
-// for thunks that also implement Command can capture a non-const Command* for
-// CommandWrapper without const_cast (which is banned). The thunks in
-// ThunkSequence are non-const (unique_ptr<Thunk>), so callers always have a
-// non-const reference available.
+// Takes Thunk& (non-const) rather than const Thunk& so that thunks which
+// also implement Command can be appended as borrowed Command* without
+// const_cast (which is banned). The thunks in ThunkSequence are non-const
+// (unique_ptr<Thunk>), so callers always have a non-const reference available.
 template <typename ThunkType, typename... Args>
 static absl::StatusOr<std::unique_ptr<Command>> Convert(Thunk& thunk,
                                                         Args&&... args) {

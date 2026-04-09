@@ -237,10 +237,8 @@ class Command : public Thunk {
   virtual bool IsNestedCommandBuffer() const { return false; }
 
   CommandType command_type() const { return cmd_type_; }
-  virtual se::StreamPriority priority() const { return priority_; }
-  virtual void set_priority(se::StreamPriority priority) {
-    priority_ = priority;
-  }
+  se::StreamPriority priority() const { return priority_; }
+  void set_priority(se::StreamPriority priority) { priority_ = priority; }
 
   std::string ToString(int indent) const override {
     return CommandTypeString(cmd_type_);
