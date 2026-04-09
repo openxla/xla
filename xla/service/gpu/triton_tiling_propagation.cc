@@ -1124,8 +1124,7 @@ GetPropagatedDimOrdersAndRequirementsIfProfitablyFusible(
         "Not fusing power with multiple users because it may result in "
         "expensive op duplication.");
   }
-  if (auto decision =
-          legacy_triton::IsTritonSupportedInstruction(hlo, gpu_version);
+  if (auto decision = IsTritonSupportedInstruction(hlo, gpu_version);
       !decision.CanFuse()) {
     return decision;
   }
