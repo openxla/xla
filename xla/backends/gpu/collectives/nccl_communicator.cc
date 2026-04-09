@@ -252,11 +252,17 @@ bool NcclCommunicator::SupportsDeviceComm() const {
 }
 
 bool NcclCommunicator::SupportsOneSidedComm() const {
-#if NCCL_VERSION_CODE >= 22900
+#if NCCL_VERSION_CODE >= 22907
+  ncclCommProperties_t props = NCCL_COMM_PROPERTIES_INITIALIZER;
+  if (ncclCommQueryProperties(comm_, &props) == ncclSuccess) {
+    return props.hostRmaSupport;
+  }
+  return false;
+#elif NCCL_VERSION_CODE >= 22900
   return true;
 #else
   return false;
-#endif  // NCCL_VERSION_CODE >= 22900
+#endif
 }
 
 absl::StatusOr<std::unique_ptr<GpuDeviceCommunicator>>
