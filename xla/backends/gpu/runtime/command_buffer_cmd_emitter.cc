@@ -355,10 +355,10 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return append(Convert<SendThunk>(thunk));
     // These thunks implement Command directly; append borrowed pointers.
     case Thunk::Kind::kPartitionId:
-      cmd_sequence.Append(&static_cast<PartitionIdThunk&>(thunk));
+      cmd_sequence.Append(static_cast<PartitionIdThunk*>(&thunk));
       return absl::OkStatus();
     case Thunk::Kind::kReplicaId:
-      cmd_sequence.Append(&static_cast<ReplicaIdThunk&>(thunk));
+      cmd_sequence.Append(static_cast<ReplicaIdThunk*>(&thunk));
       return absl::OkStatus();
     case Thunk::Kind::kWhile:
       return append(Convert<WhileThunk>(thunk, options));
