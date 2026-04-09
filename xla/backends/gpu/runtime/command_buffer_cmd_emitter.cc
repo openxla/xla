@@ -259,21 +259,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    PartitionIdThunk& thunk) {
-  // PartitionIdThunk implements Command directly; wrap a pointer to it rather
-  // than copying. Safe because the original thunk sequence is kept alive by
-  // CommandBufferThunk for the duration of the command buffer.
-  return std::make_unique<CommandWrapper>(&thunk);
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(ReplicaIdThunk& thunk) {
-  // ReplicaIdThunk implements Command directly; wrap a pointer to it rather
-  // than copying. Safe because the original thunk sequence is kept alive by
-  // CommandBufferThunk for the duration of the command buffer.
-  return std::make_unique<CommandWrapper>(&thunk);
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const CustomCallThunk& thunk) {
   if (auto bundle = thunk.bundle(); bundle.has_value()) {
     return std::make_unique<CustomCallCmd>(
@@ -302,6 +287,11 @@ static absl::StatusOr<std::unique_ptr<Command>> CopyMetadata(
   return cmd;
 }
 
+// Takes Thunk& (non-const) rather than const Thunk& so that Convert overloads
+// for thunks that also implement Command can capture a non-const Command* for
+// CommandWrapper without const_cast (which is banned). The thunks in
+// ThunkSequence are non-const (unique_ptr<Thunk>), so callers always have a
+// non-const reference available.
 template <typename ThunkType, typename... Args>
 static absl::StatusOr<std::unique_ptr<Command>> Convert(Thunk& thunk,
                                                         Args&&... args) {
@@ -319,7 +309,7 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return command.status();
     }
 
-    cmd_sequence.push_back(std::move(*command));
+    cmd_sequence.Append(std::move(*command));
     return absl::OkStatus();
   };
 
@@ -364,10 +354,13 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return append(Convert<RecvThunk>(thunk));
     case Thunk::Kind::kSend:
       return append(Convert<SendThunk>(thunk));
+    // These thunks implement Command directly; append borrowed pointers.
     case Thunk::Kind::kPartitionId:
-      return append(Convert<PartitionIdThunk>(thunk));
+      cmd_sequence.Append(&static_cast<PartitionIdThunk&>(thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kReplicaId:
-      return append(Convert<ReplicaIdThunk>(thunk));
+      cmd_sequence.Append(&static_cast<ReplicaIdThunk&>(thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kWhile:
       return append(Convert<WhileThunk>(thunk, options));
     case Thunk::Kind::kCuDnn:

@@ -237,8 +237,10 @@ class Command : public Thunk {
   virtual bool IsNestedCommandBuffer() const { return false; }
 
   CommandType command_type() const { return cmd_type_; }
-  se::StreamPriority priority() const { return priority_; }
-  void set_priority(se::StreamPriority priority) { priority_ = priority; }
+  virtual se::StreamPriority priority() const { return priority_; }
+  virtual void set_priority(se::StreamPriority priority) {
+    priority_ = priority;
+  }
 
   std::string ToString(int indent) const override {
     return CommandTypeString(cmd_type_);
@@ -304,39 +306,6 @@ std::invoke_result_t<F, const Command*> Command::Walk(F&& callback) const {
 }
 
 //===----------------------------------------------------------------------===//
-// CommandWrapper
-//===----------------------------------------------------------------------===//
-
-// A Command that forwards Record() to an existing Command* owned elsewhere.
-// Safe to use when the pointed-to command is guaranteed to outlive this
-// wrapper, e.g. because it is held in the original thunk sequence by a
-// CommandBufferThunk.
-class CommandWrapper : public Command {
- public:
-  explicit CommandWrapper(Command* command)
-      : Command(command->command_type()), command_(command) {
-    DCHECK(command_) << "Wrapped command must be non-null";
-  }
-
-  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
-    return command_->ExecuteOnStream(params);
-  }
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override {
-    return command_->Record(execute_params, record_params, record_action,
-                            command_buffer);
-  }
-
-  BufferUses buffer_uses() const override { return command_->buffer_uses(); }
-
- private:
-  Command* command_;
-};
-
-//===----------------------------------------------------------------------===//
 // Asynchronous commands
 //===----------------------------------------------------------------------===//
 
@@ -371,16 +340,36 @@ class AsyncDoneCommand : public Command {
 //===----------------------------------------------------------------------===//
 
 // A sequence of commands (corresponds to a ThunkSequence from the Thunk API).
-class CommandSequence : public std::vector<std::unique_ptr<Command>> {
+//
+// Commands are stored as raw pointers in append order. Ownership is split:
+// - Commands created during conversion (i.e. Command subclasses in
+//   command_buffer_cmd.h that are not yet migrated to their corresponding
+//   Thunk) are owned by this sequence's internal `owned_` vector.
+// - Commands that live in a Thunk which itself implements Command (e.g.
+//   ReplicaOrPartitionIdThunk) are borrowed: only a raw pointer is stored here,
+//   and the ThunkSequence in CommandBufferThunk retains ownership.
+class CommandSequence : public std::vector<Command*> {
  public:
-  template <typename Command, typename... Args>
+  // Appends an owned command. Ownership is transferred to this sequence.
+  void Append(std::unique_ptr<Command> command) {
+    this->push_back(command.get());
+    owned_.push_back(std::move(command));
+  }
+
+  // Appends a borrowed command. The caller must ensure the command outlives
+  // this sequence (e.g. it is a Thunk that also implements Command, owned by
+  // the ThunkSequence in CommandBufferThunk).
+  void Append(Command* command) { this->push_back(command); }
+
+  // Constructs a new command in place and transfers ownership to this sequence.
+  template <typename Cmd, typename... Args>
   void Emplace(Args&&... args) {
-    this->emplace_back(std::make_unique<Command>(std::forward<Args>(args)...));
+    Append(std::make_unique<Cmd>(std::forward<Args>(args)...));
   }
 
   std::string ToString() const {
     std::string result;
-    for (const auto& cmd : *this) {
+    for (Command* cmd : *this) {
       result += cmd->ToString(0) + "\n";
     }
     return result;
@@ -388,30 +377,35 @@ class CommandSequence : public std::vector<std::unique_ptr<Command>> {
 
   absl::Status Walk(
       absl::FunctionRef<absl::Status(const Command*)> callback) const {
-    for (const std::unique_ptr<Command>& cmd : *this) {
+    for (Command* cmd : *this) {
       RETURN_IF_ERROR(cmd->Walk(callback));
     }
     return absl::OkStatus();
   }
 
   absl::Status Walk(absl::FunctionRef<absl::Status(Command*)> callback) {
-    for (std::unique_ptr<Command>& cmd : *this) {
+    for (Command* cmd : *this) {
       RETURN_IF_ERROR(cmd->Walk(callback));
     }
     return absl::OkStatus();
   }
 
   void Walk(absl::FunctionRef<void(const Command*)> callback) const {
-    for (const std::unique_ptr<Command>& cmd : *this) {
+    for (Command* cmd : *this) {
       cmd->Walk(callback);
     }
   }
 
   void Walk(absl::FunctionRef<void(Command*)> callback) {
-    for (std::unique_ptr<Command>& cmd : *this) {
+    for (Command* cmd : *this) {
       cmd->Walk(callback);
     }
   }
+
+ private:
+  // Owns commands that were constructed during conversion (i.e. not backed by
+  // a Thunk). Borrowed commands (Thunks implementing Command) are not here.
+  std::vector<std::unique_ptr<Command>> owned_;
 };
 
 }  // namespace xla::gpu

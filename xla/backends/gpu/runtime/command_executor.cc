@@ -125,10 +125,9 @@ std::vector<CommandOperation> CreateCommandOperationsWithConcurrentMode(
   // For concurrent synchronization mode, pass in buffer and resources for
   // dependency inference.
   for (size_t i = 0; i < commands.size(); ++i) {
-    operations.emplace_back(commands[i].get(),
-                            extra_resources.empty()
-                                ? absl::Span<const ResourceUse>{}
-                                : extra_resources[i]);
+    operations.emplace_back(commands[i], extra_resources.empty()
+                                             ? absl::Span<const ResourceUse>{}
+                                             : extra_resources[i]);
   }
 
   VlogOperations(operations);
@@ -150,16 +149,15 @@ bool IsAsyncDone(const Command* cmd) {
 // Helper: Find the corresponding Start command for a given Done command
 int64_t FindMatchingStartId(const CommandSequence& commands, int64_t done_idx) {
   const auto* done_cmd =
-      dynamic_cast<const AsyncDoneCommand*>(commands[done_idx].get());
+      dynamic_cast<const AsyncDoneCommand*>(commands[done_idx]);
   CHECK(done_cmd);
 
   for (int64_t j = done_idx - 1; j >= 0; --j) {
-    if (!IsAsyncStart(commands[j].get())) {
+    if (!IsAsyncStart(commands[j])) {
       continue;
     }
 
-    const auto* start_cmd =
-        dynamic_cast<const AsyncStartCommand*>(commands[j].get());
+    const auto* start_cmd = dynamic_cast<const AsyncStartCommand*>(commands[j]);
     CHECK(start_cmd);
 
     if (start_cmd->IsAsync() && done_cmd->async_start() == start_cmd) {
@@ -175,7 +173,7 @@ void AddDependencyOnPrevNonStart(const CommandSequence& commands,
                                  int64_t current_idx,
                                  Command::ResourceUses& extras) {
   for (int64_t j = current_idx - 1; j >= 0; --j) {
-    if (IsAsyncStart(commands[j].get())) {
+    if (IsAsyncStart(commands[j])) {
       // Skip other starts
       continue;
     }
@@ -193,7 +191,7 @@ std::vector<CommandOperation> CreateCommandOperationsWithLHSMode(
   // 1. Dependency Analysis Phase: pre-compute LHS resource uses per command.
   std::vector<Command::ResourceUses> lhs_extras(commands.size());
   for (int64_t i = 0; i < static_cast<int64_t>(commands.size()); ++i) {
-    if (IsAsyncDone(commands[i].get())) {
+    if (IsAsyncDone(commands[i])) {
       // CASE A: Async Done — depends on its matching Start command
       int64_t start_id = FindMatchingStartId(commands, i);
       CHECK_NE(start_id, -1);
@@ -221,7 +219,7 @@ std::vector<CommandOperation> CreateCommandOperationsWithLHSMode(
                     extra_resources[i].end());
     }
     merged.insert(merged.end(), lhs_extras[i].begin(), lhs_extras[i].end());
-    operations.emplace_back(commands[i].get(), merged);
+    operations.emplace_back(commands[i], merged);
   }
 
   VlogOperations(operations);
@@ -299,7 +297,7 @@ CommandExecutor::CommandExecutor(SynchronizationMode synchronization_mode,
 
   // Iterate over the commands in the top level command sequence to build a
   // mapping from command index to allocation indices.
-  for (const std::unique_ptr<Command>& cmd : commands_) {
+  for (Command* cmd : commands_) {
     absl::btree_set<BufferAllocation::Index> cmd_allocs_indices;
     cmd->Walk([&](const Command* command) {
       for (const BufferUse& buffer_use : command->buffer_uses()) {
@@ -488,7 +486,7 @@ CommandExecutor::RecordCreate(
   std::vector<const se::CommandBuffer::Command*> sink_commands;
 
   for (CommandId id = 0; id < commands_.size(); ++id) {
-    Command* command = commands_[id].get();
+    Command* command = commands_[id];
 
     std::optional<tsl::profiler::ScopedAnnotation> annotation =
         GetKernelAnnotation(command->profile_annotation());
@@ -564,7 +562,7 @@ absl::Status CommandExecutor::RecordUpdate(
       return false;
     }
 
-    Command* command = commands_[id].get();
+    Command* command = commands_[id];
 
     // For CAPTURE_CMD_NEVER_UPDATE mode, always skip updates for commands
     // implemented via tracing (TracedCommandBufferCmd subclasses) or collective
@@ -625,7 +623,7 @@ absl::Status CommandExecutor::RecordUpdate(
   size_t num_skipped_command_updates = 0;
 
   for (CommandId id = 0; id < commands_.size(); ++id) {
-    Command* command = commands_[id].get();
+    Command* command = commands_[id];
 
     std::optional<tsl::profiler::ScopedAnnotation> annotation =
         GetKernelAnnotation(command->profile_annotation());

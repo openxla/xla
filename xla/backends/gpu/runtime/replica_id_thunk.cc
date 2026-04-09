@@ -74,8 +74,8 @@ ReplicaOrPartitionIdThunk::Record(const Thunk::ExecuteParams& execute_params,
                                         create->dependencies);
   }
   if (auto* update = std::get_if<RecordUpdate>(&record_action)) {
-    TF_RETURN_IF_ERROR(command_buffer->UpdateMemset(update->command, &dst,
-                                                    value, /*num_elements=*/1));
+    RETURN_IF_ERROR(command_buffer->UpdateMemset(update->command, &dst, value,
+                                                 /*num_elements=*/1));
     return update->command;
   }
   return Internal("Invalid record action");
