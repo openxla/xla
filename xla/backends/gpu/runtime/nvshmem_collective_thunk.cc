@@ -17,6 +17,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
@@ -105,6 +106,10 @@ absl::Status NvshmemCollectiveThunk::Prepare(const PrepareParams& params) {
                           *params.collective_params->device_assn,
                           config().replica_groups, config().group_mode));
 
+  // Sort device groups: RequestClique expects pre-sorted groups.
+  absl::c_for_each(device_groups, [](auto& group) { absl::c_sort(group); });
+  absl::c_sort(device_groups);
+
   // Any NVSHMEM collective will need to require a barrier at the end of
   // graph execution to make sure all reads and writes to symmetrics buffers
   // are finished and ready for the next iteration of executable.
@@ -112,7 +117,7 @@ absl::Status NvshmemCollectiveThunk::Prepare(const PrepareParams& params) {
   clique_reqs.barrier_reqs = CollectiveCliqueRequests::BarrierRequirements{
       /*module_execution_barrier=*/true};
   return params.collective_clique_requests->RequestClique(
-      clique_key, std::move(device_groups), clique_reqs);
+      clique_key, device_groups, clique_reqs);
 }
 
 absl::Status NvshmemCollectiveThunk::Initialize(
