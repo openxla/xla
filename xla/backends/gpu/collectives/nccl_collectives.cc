@@ -235,6 +235,10 @@ bool NcclCollectives::SupportsDeviceComm() const {
   return NCCL_VERSION_CODE >= 22800;
 }
 
+bool NcclCollectives::SupportsOneSidedComm() const {
+  return NCCL_VERSION_CODE >= 22900;
+}
+
 size_t NcclCollectives::SymmetricMemoryAlignment() const {
   // TODO(ezhulenev): Query memory alignment from CUDA executor for multicast
   // memory (CU_MULTICAST_GRANULARITY_MINIMUM). Find how to query it for NCCL.
