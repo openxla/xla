@@ -1219,8 +1219,7 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest, DelayMoveToHostAsyncStart) {
       %all-to-all-start.4 = ((bf16[1,8,16,16,128,7168]{5,4,3,1,0,2}), bf16[1,8,16,16,128,7168]{5,4,3,1,0,2}) async-start(p7), calls=%async_computation.46
       %all-to-all-done.4 = bf16[1,8,16,16,128,7168]{5,4,3,1,0,2} async-done(%all-to-all-start.4)
       %bitcast.309.7 = bf16[128,16,128,7168]{3,2,1,0} bitcast(%all-to-all-done.4)
-      %bitcast.310.9 = bf16[] bitcast(p8)
-      %broadcast_in_dim.6026.9 = bf16[128,16,128,7168]{3,2,1,0} broadcast(%bitcast.310.9), dimensions={}
+      %broadcast_in_dim.6026.9 = bf16[128,16,128,7168]{3,2,1,0} broadcast(%p8), dimensions={}
       %mul.5173.7 = bf16[128,16,128,7168]{3,2,1,0} multiply(%bitcast.309.7, %broadcast_in_dim.6026.9)
       %dynamic-update-slice-start.18 = ((bf16[8,2,4,128,128]{4,3,2,1,0:S(5)}, bf16[1,2,4,128,128]{4,3,2,1,0}, s32[], s32[], s32[], /*index=5*/s32[], s32[]), bf16[8,2,4,128,128]{4,3,2,1,0:S(5)}, u32[]) async-start(p0, p1, p2, p3, p4, p5, p6), calls=%async_computation.6
       %dynamic-update-slice-done.18 = bf16[8,2,4,128,128]{4,3,2,1,0:S(5)} async-done(%dynamic-update-slice-start.18)
@@ -1230,7 +1229,7 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest, DelayMoveToHostAsyncStart) {
 
   absl::string_view kFdoProfile = "";
   auto config = GetModuleConfig(kFdoProfile);
-  TF_ASSERT_OK_AND_ASSIGN(auto module, // xla::HloModule
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(kHloModule, config));
 
   TF_EXPECT_OK(ScheduleModule(module.get()));
