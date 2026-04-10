@@ -723,18 +723,6 @@ SyclExecutor::CreateEventBasedTimer(Stream* stream, bool use_delay_kernel) {
   return std::make_unique<SyclTimer>(std::move(timer));
 }
 
-absl::Status SyclExecutor::SynchronousMemZero(DeviceMemoryBase* location,
-                                              uint64_t size) {
-  if (reinterpret_cast<uintptr_t>(location->opaque()) % sizeof(uint32_t) == 0 &&
-      size % sizeof(uint32_t) == 0) {
-    return SynchronousMemsetUint32(sycl_context_.get(),
-                                   AsSyclDevicePtr(location), 0x0,
-                                   size / sizeof(uint32_t));
-  }
-  return SynchronousMemsetUint8(sycl_context_.get(), AsSyclDevicePtr(location),
-                                0x0, size);
-}
-
 absl::Status SyclExecutor::SynchronousMemcpy(DeviceMemoryBase* gpu_dst,
                                              const void* host_src,
                                              uint64_t size) {
