@@ -329,16 +329,14 @@ void PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice(
   xla::Future<std::string> future(std::move(serialized_descriptor));
 #else
   auto [promise, future] = xla::MakePromise<std::string>();
-  // Use client-provided destructor if available (version 6+), otherwise fall
-  // back to delete for backwards compatibility with version 5 clients.
-  PJRT_Transfers_DescriptorDestructor destructor =
-      [](char** d, size_t* s) { delete d; delete s; };
-  if (args->struct_size >=
-      PJRT_STRUCT_SIZE(
-          PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args,
-          descriptor_destructor)) {
-    destructor = args->descriptor_destructor;
-  }
+#if PJRT_API_CROSS_HOST_TRANSFERS_EXTENSION_VERSION < 6
+  auto destructor = [](char** d, size_t* s) {
+    delete d;
+    delete s;
+  };
+#else
+  PJRT_Transfers_DescriptorDestructor destructor = args->descriptor_destructor;
+#endif
   if (args->event == nullptr) {
     // If `event` is not provided, populate the descriptor data synchronously.
     std::string serialized_descriptor = std::string(
