@@ -34,7 +34,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
-#include "xla/backends/gpu/runtime/kernel_thunk.h"
+#include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -256,13 +256,14 @@ TEST(CommandBufferCmdTest, WriteConflictBarrier) {
   // TODO(ezhulenev): Check that executor correctly infer dependencies.
 }
 
-TEST(CommandBufferCmdTest, MemcpyCmd) {
+TEST(CommandBufferCmdTest, LaunchCmd) {
   se::StreamExecutor* stream_executor = GpuExecutor();
 
   auto stream = stream_executor->CreateStream().value();
   int64_t length = 4;
   int64_t byte_length = sizeof(int32_t) * length;
-  Shape shape = ShapeUtil::MakeShape(S32, {length});
+
+  Shape shape = ShapeUtil::MakeShape(S32, {1});
 
   // Prepare arguments: a=42, b=0
   se::DeviceAddress<int32_t> a =
@@ -280,13 +281,29 @@ TEST(CommandBufferCmdTest, MemcpyCmd) {
   BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
   BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
 
+  std::vector<ShapedSlice> args{
+      {slice_a, shape}, {slice_a, shape}, {slice_b, shape}};  // b = a + a
+  auto args_access = {BufferUse::MemoryAccess::kRead,
+                      BufferUse::MemoryAccess::kRead,
+                      BufferUse::MemoryAccess::kWrite};
+
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<MemcpyDeviceToDeviceCmd>(
-      ShapedSlice{slice_b, shape}, ShapedSlice{slice_a, shape}, byte_length);
+  commands.Emplace<LaunchCmd>("AddI32", absl::MakeConstSpan(args), args_access,
+                              LaunchDimensions(1, 4),
+                              /*shmem_bytes=*/0);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
+
+  // Initialize command commands and load device kernels.
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<uint8_t> fatbin,
+      se::gpu::GetGpuTestKernelsFatbin(stream_executor->GetPlatform()->Name()));
+  Thunk::ExecutableSource source = {/*text=*/{},
+                                    /*binary=*/fatbin};
+
+  TF_ASSERT_OK(executor.Initialize({stream_executor, source}));
 
   ServiceExecutableRunOptions run_options;
   se::StreamExecutorAddressAllocator allocator(stream_executor);
@@ -311,7 +328,83 @@ TEST(CommandBufferCmdTest, MemcpyCmd) {
   std::vector<int32_t> dst(4, 0);
   TF_ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
 
-  ASSERT_EQ(dst, std::vector<int32_t>(4, 42));
+  ASSERT_EQ(dst, std::vector<int32_t>(4, 42 + 42));
+}
+
+TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
+  se::StreamExecutor* stream_executor = GpuExecutor();
+
+  auto stream = stream_executor->CreateStream().value();
+  int64_t length = 4;
+  int64_t byte_length = sizeof(int32_t) * length;
+  Shape shape = ShapeUtil::MakeShape(S32, {1});
+
+  // Prepare arguments: a=42, b=0
+  se::DeviceAddress<int32_t> a =
+      stream_executor->AllocateArray<int32_t>(length, 0);
+  se::DeviceAddress<int32_t> b =
+      stream_executor->AllocateArray<int32_t>(length, 0);
+
+  TF_ASSERT_OK(stream->Memset32(&a, 42, byte_length));
+  TF_ASSERT_OK(stream->MemZero(&b, byte_length));
+
+  // Prepare buffer allocations for recording command buffer.
+  BufferAllocation alloc_a(/*index=*/0, byte_length, /*color=*/0);
+  BufferAllocation alloc_b(/*index=*/1, byte_length, /*color=*/0);
+
+  BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
+  BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
+
+  std::vector<ShapedSlice> args{
+      {slice_a, shape}, {slice_a, shape}, {slice_b, shape}};  // b = a + a
+  auto args_access = {BufferUse::MemoryAccess::kRead,
+                      BufferUse::MemoryAccess::kRead,
+                      BufferUse::MemoryAccess::kWrite};
+
+  // Prepare commands sequence for constructing command buffer.
+  CommandSequence commands;
+  commands.Emplace<LaunchCmd>("AddI32", absl::MakeConstSpan(args), args_access,
+                              LaunchDimensions(1, 4),
+                              /*shmem_bytes=*/0);
+  commands.back()->set_priority(se::StreamPriority::Highest);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      CommandExecutor executor,
+      CommandExecutor::Create(std::move(commands), serialize));
+
+  // Initialize command commands and load device kernels.
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<uint8_t> fatbin,
+      se::gpu::GetGpuTestKernelsFatbin(stream_executor->GetPlatform()->Name()));
+  Thunk::ExecutableSource source = {/*text=*/{},
+                                    /*binary=*/fatbin};
+
+  TF_ASSERT_OK(executor.Initialize({stream_executor, source}));
+
+  ServiceExecutableRunOptions run_options;
+  se::StreamExecutorAddressAllocator allocator(stream_executor);
+  BufferAllocations allocations({a, b}, 0, &allocator);
+
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
+
+  CommandStateManager state;
+  Command::RecordParams record_params = {state};
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto command_buffer,
+      stream_executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
+  TF_ASSERT_OK(executor.Record(params, record_params, command_buffer.get()));
+
+  // Execute command buffer and verify that it copied the memory.
+  TF_ASSERT_OK(command_buffer->Submit(stream.get()));
+
+  // Copy `b` data back to host.
+  std::vector<int32_t> dst(4, 0);
+  TF_ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
+
+  ASSERT_EQ(dst, std::vector<int32_t>(4, 42 + 42));
 }
 
 TEST(CommandBufferCmdTest, DynamicSliceCopyFusionCmd) {
@@ -523,8 +616,9 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
 
   // Executor C: c = b (memcpy)
   CommandSequence seq_c;
-  seq_c.Emplace<MemcpyDeviceToDeviceCmd>(
-      ShapedSlice{slice_c, shape}, ShapedSlice{slice_b, shape}, byte_length);
+  seq_c.Emplace<DeviceToDeviceCopyThunk>(
+      Thunk::ThunkInfo(), ShapedSlice{slice_b, shape},
+      ShapedSlice{slice_c, shape}, byte_length);
   TF_ASSERT_OK_AND_ASSIGN(CommandExecutor exec_c,
                           CommandExecutor::Create(std::move(seq_c), serialize));
 
@@ -617,8 +711,9 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
 
   // Inner child: c = a (device-to-device memcpy)
   CommandSequence inner_seq;
-  inner_seq.Emplace<MemcpyDeviceToDeviceCmd>(
-      ShapedSlice{slice_c, shape}, ShapedSlice{slice_a, shape}, byte_length);
+  inner_seq.Emplace<DeviceToDeviceCopyThunk>(
+      Thunk::ThunkInfo(), ShapedSlice{slice_a, shape},
+      ShapedSlice{slice_c, shape}, byte_length);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor inner_executor,
       CommandExecutor::Create(std::move(inner_seq), serialize));

@@ -101,12 +101,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const DeviceToDeviceCopyThunk& thunk) {
-  return std::make_unique<MemcpyDeviceToDeviceCmd>(
-      thunk.destination(), thunk.source(), thunk.size_bytes());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const DynamicMemcpyThunk& thunk) {
   return std::make_unique<DynamicSliceCopyFusionCmd>(
       thunk.source(), thunk.destination(), thunk.mem_size(), thunk.offsets());
@@ -305,7 +299,9 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       if (dynamic_cast<const DynamicMemcpyThunk*>(&thunk)) {
         return append(Convert<DynamicMemcpyThunk>(thunk));
       } else {
-        return append(Convert<DeviceToDeviceCopyThunk>(thunk));
+        // DeviceToDeviceCopyThunk implements Command directly.
+        cmd_sequence.Append(static_cast<DeviceToDeviceCopyThunk*>(&thunk));
+        return absl::OkStatus();
       }
     case Thunk::Kind::kCustomCall:
       return append(Convert<CustomCallThunk>(thunk));
