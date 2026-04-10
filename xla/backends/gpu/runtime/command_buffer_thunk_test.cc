@@ -114,26 +114,6 @@ KernelArgsPacking CreateDefaultArgsPacking() {
   };
 }
 
-// Helper: creates a KernelThunk for use in command sequences, replacing the
-// now-removed LaunchCmd. Converts ShapedSlice + MemoryAccess to
-// KernelArguments.
-static std::unique_ptr<KernelThunk> MakeLaunchThunk(
-    std::string kernel_name, absl::Span<const ShapedSlice> args,
-    absl::Span<const MemoryAccess> args_access, LaunchDimensions dims,
-    int64_t shmem_bytes, stream_executor::gpu::TmaMetadata tma_metadata = {}) {
-  std::vector<emitters::KernelArgument> kernel_args;
-  kernel_args.reserve(args.size());
-  for (int i = 0; i < static_cast<int>(args.size()); ++i) {
-    emitters::KernelArgument arg(args[i].shape, args[i].slice);
-    arg.set_written(args_access[i] != MemoryAccess::kRead);
-    kernel_args.push_back(std::move(arg));
-  }
-  return std::make_unique<KernelThunk>(
-      Thunk::ThunkInfo(), std::move(kernel_name),
-      emitters::KernelArguments(std::move(kernel_args)), std::move(dims),
-      /*cluster_dim=*/std::nullopt, shmem_bytes, std::move(tma_metadata));
-}
-
 // Some of the tests rely on CUDA 12.3+ features.
 bool IsAtLeastCuda12300(const se::StreamExecutor* stream_executor) {
   const auto& device_description = stream_executor->GetDeviceDescription();
@@ -540,9 +520,9 @@ TEST(CommandBufferThunkTest, LaunchCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Append(MakeLaunchThunk("AddI32", args, args_access,
-                                  LaunchDimensions(1, 4),
-                                  /*shmem_bytes=*/0));
+  commands.Append(KernelThunk::MakeKernelThunk("AddI32", args, args_access,
+                                               LaunchDimensions(1, 4),
+                                               /*shmem_bytes=*/0));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -647,9 +627,9 @@ TEST(CommandBufferThunkTest, CustomAddKernelLaunchCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Append(MakeLaunchThunk("AddI32", args, args_access,
-                                  LaunchDimensions(1, 4),
-                                  /*shmem_bytes=*/0));
+  commands.Append(KernelThunk::MakeKernelThunk("AddI32", args, args_access,
+                                               LaunchDimensions(1, 4),
+                                               /*shmem_bytes=*/0));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -1329,12 +1309,12 @@ TEST(CommandBufferThunkTest, MultipleLaunchCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Append(MakeLaunchThunk("AddI32", args, args_access,
-                                  LaunchDimensions(1, 4),
-                                  /*shmem_bytes=*/0));
-  commands.Append(MakeLaunchThunk("AddI32", args_1, args_access,
-                                  LaunchDimensions(1, 4),
-                                  /*shmem_bytes=*/0));
+  commands.Append(KernelThunk::MakeKernelThunk("AddI32", args, args_access,
+                                               LaunchDimensions(1, 4),
+                                               /*shmem_bytes=*/0));
+  commands.Append(KernelThunk::MakeKernelThunk("AddI32", args_1, args_access,
+                                               LaunchDimensions(1, 4),
+                                               /*shmem_bytes=*/0));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -1457,17 +1437,17 @@ TEST(CommandBufferThunkTest, CaseCmd) {
   {  // Case 0: b = a + a
     std::vector<ShapedSlice> args{
         {slice_a, shape}, {slice_a, shape}, {slice_b, shape}};
-    branches_sequence[0].Append(MakeLaunchThunk("AddI32", args, args_access,
-                                                LaunchDimensions(1, 4),
-                                                /*shmem_bytes=*/0));
+    branches_sequence[0].Append(KernelThunk::MakeKernelThunk(
+        "AddI32", args, args_access, LaunchDimensions(1, 4),
+        /*shmem_bytes=*/0));
   }
 
   {  // Case 1: b = b + b
     std::vector<ShapedSlice> args{
         {slice_b, shape}, {slice_b, shape}, {slice_b, shape}};
-    branches_sequence[1].Append(MakeLaunchThunk("AddI32", args, args_access,
-                                                LaunchDimensions(1, 4),
-                                                /*shmem_bytes=*/0));
+    branches_sequence[1].Append(KernelThunk::MakeKernelThunk(
+        "AddI32", args, args_access, LaunchDimensions(1, 4),
+        /*shmem_bytes=*/0));
   }
 
   std::vector<CommandExecutor> branches(2);
@@ -1575,18 +1555,18 @@ TEST(CommandBufferThunkTest, WhileCmd) {
 
   // Prepare commands sequence for loop `cond`.
   CommandSequence cond_commands;
-  cond_commands.Append(MakeLaunchThunk("IncAndCmp", cond_args, cond_args_access,
-                                       LaunchDimensions(1, 1),
-                                       /*shmem_bytes=*/0));
+  cond_commands.Append(KernelThunk::MakeKernelThunk(
+      "IncAndCmp", cond_args, cond_args_access, LaunchDimensions(1, 1),
+      /*shmem_bytes=*/0));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor cond_executor,
       CommandExecutor::Create(std::move(cond_commands), serialize));
 
   // Prepare commands sequence for loop `body`.
   CommandSequence body_commands;
-  body_commands.Append(MakeLaunchThunk("AddI32", body_args, body_args_access,
-                                       LaunchDimensions(1, 4),
-                                       /*shmem_bytes=*/0));
+  body_commands.Append(KernelThunk::MakeKernelThunk(
+      "AddI32", body_args, body_args_access, LaunchDimensions(1, 4),
+      /*shmem_bytes=*/0));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor body_executor,
       CommandExecutor::Create(std::move(body_commands), serialize));

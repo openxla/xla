@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/stream_executor_util.h"
+#include "xla/service/shaped_slice.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
@@ -146,6 +147,24 @@ absl::StatusOr<std::unique_ptr<KernelThunk>> KernelThunk::FromProto(
       emitters::KernelArguments(std::move(arguments)), launch_dimensions,
       cluster_dim, proto.shmem_bytes(), tma_metadata,
       std::move(zeroed_output_buffer_indices), proto.use_pdl());
+}
+
+/*static*/ std::unique_ptr<KernelThunk> KernelThunk::MakeKernelThunk(
+    std::string kernel_name, absl::Span<const ShapedSlice> args,
+    absl::Span<const BufferUse::MemoryAccess> args_access,
+    LaunchDimensions dims, int64_t shmem_bytes,
+    stream_executor::gpu::TmaMetadata tma_metadata) {
+  std::vector<emitters::KernelArgument> kernel_args;
+  kernel_args.reserve(args.size());
+  for (int i = 0; i < static_cast<int>(args.size()); ++i) {
+    emitters::KernelArgument arg(args[i].shape, args[i].slice);
+    arg.set_written(args_access[i] != BufferUse::MemoryAccess::kRead);
+    kernel_args.push_back(std::move(arg));
+  }
+  return std::make_unique<KernelThunk>(
+      Thunk::ThunkInfo(), std::move(kernel_name),
+      emitters::KernelArguments(std::move(kernel_args)), std::move(dims),
+      /*cluster_dim=*/std::nullopt, shmem_bytes, std::move(tma_metadata));
 }
 
 absl::Status KernelThunk::Initialize(const InitializeParams& params) {

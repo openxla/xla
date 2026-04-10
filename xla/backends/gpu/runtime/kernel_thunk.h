@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/launch_dimensions.h"
@@ -88,6 +89,13 @@ class KernelThunk : public Command {
   static absl::StatusOr<std::unique_ptr<KernelThunk>> FromProto(
       ThunkInfo thunk_info, const KernelThunkProto& proto,
       absl::Span<const BufferAllocation> buffer_allocations);
+
+  // Creates a KernelThunk from ShapedSlice + MemoryAccess pairs.
+  static std::unique_ptr<KernelThunk> MakeKernelThunk(
+      std::string kernel_name, absl::Span<const ShapedSlice> args,
+      absl::Span<const BufferUse::MemoryAccess> args_access,
+      LaunchDimensions dims, int64_t shmem_bytes,
+      stream_executor::gpu::TmaMetadata tma_metadata = {});
 
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;

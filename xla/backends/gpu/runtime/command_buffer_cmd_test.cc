@@ -75,27 +75,6 @@ static se::StreamExecutor* GpuExecutor() {
   return platform->ExecutorForDevice(0).value();
 }
 
-// Helper: creates a KernelThunk for use in command sequences, replacing the
-// now-removed LaunchCmd. Converts ShapedSlice + MemoryAccess to
-// KernelArguments.
-static std::unique_ptr<KernelThunk> MakeLaunchThunk(
-    std::string kernel_name, absl::Span<const ShapedSlice> args,
-    absl::Span<const BufferUse::MemoryAccess> args_access,
-    LaunchDimensions dims, int64_t shmem_bytes) {
-  std::vector<emitters::KernelArgument> kernel_args;
-  kernel_args.reserve(args.size());
-  for (int i = 0; i < static_cast<int>(args.size()); ++i) {
-    emitters::KernelArgument arg(args[i].shape, args[i].slice);
-    arg.set_written(args_access[i] != BufferUse::MemoryAccess::kRead);
-    kernel_args.push_back(std::move(arg));
-  }
-  return std::make_unique<KernelThunk>(
-      Thunk::ThunkInfo(), std::move(kernel_name),
-      emitters::KernelArguments(std::move(kernel_args)), std::move(dims),
-      /*cluster_dim=*/std::nullopt, shmem_bytes,
-      /*tma_metadata=*/stream_executor::gpu::TmaMetadata{});
-}
-
 // Some of the tests rely on CUDA 12.9+ features.
 bool IsAtLeastCuda12900(const se::StreamExecutor* stream_executor) {
   const auto& device_description = stream_executor->GetDeviceDescription();
@@ -534,9 +513,10 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
     auto args_access = {BufferUse::MemoryAccess::kRead,
                         BufferUse::MemoryAccess::kRead,
                         BufferUse::MemoryAccess::kWrite};
-    seq_b.Append(MakeLaunchThunk("AddI32", absl::MakeConstSpan(args),
-                                 args_access, LaunchDimensions(1, 4),
-                                 /*shmem_bytes=*/0));
+    seq_b.Append(
+        KernelThunk::MakeKernelThunk("AddI32", absl::MakeConstSpan(args),
+                                     args_access, LaunchDimensions(1, 4),
+                                     /*shmem_bytes=*/0));
   }
   TF_ASSERT_OK_AND_ASSIGN(CommandExecutor exec_b,
                           CommandExecutor::Create(std::move(seq_b), serialize));
