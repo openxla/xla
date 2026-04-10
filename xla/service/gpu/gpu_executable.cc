@@ -124,6 +124,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
@@ -133,7 +134,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {

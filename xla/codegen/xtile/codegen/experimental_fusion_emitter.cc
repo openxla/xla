@@ -67,8 +67,8 @@ limitations under the License.
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/xla_data.pb.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::xtile {
 namespace {

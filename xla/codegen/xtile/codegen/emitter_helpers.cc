@@ -77,10 +77,10 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::xtile {
 

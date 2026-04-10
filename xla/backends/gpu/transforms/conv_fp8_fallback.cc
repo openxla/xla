@@ -97,11 +97,13 @@ absl::StatusOr<absl::string_view> GetBf16FallbackCustomCallTarget(
 }
 
 // Probes cuDNN for available execution plans for the given convolution config.
-absl::StatusOr<bool> HasCudnnPlans(
-    se::dnn::DnnSupport* dnn, se::dnn::ConvolutionKind conv_kind,
-    se::dnn::DataType input_type, se::dnn::DataType output_type,
-    se::Stream* stream, const GpuConvConfig& gpu_conv_config,
-    const se::EngineOptions& engine_options) {
+absl::StatusOr<bool> HasCudnnPlans(se::dnn::DnnSupport* dnn,
+                                   se::dnn::ConvolutionKind conv_kind,
+                                   se::dnn::DataType input_type,
+                                   se::dnn::DataType output_type,
+                                   se::Stream* stream,
+                                   const GpuConvConfig& gpu_conv_config,
+                                   const se::EngineOptions& engine_options) {
   std::vector<std::unique_ptr<const se::dnn::ConvRunner>> conv_runners;
   std::vector<std::unique_ptr<const se::dnn::FusedConvRunner>>
       fused_conv_runners;
@@ -122,8 +124,7 @@ absl::StatusOr<bool> HasCudnnPlans(
           gpu_conv_config.input_descriptor, gpu_conv_config.filter_descriptor,
           gpu_conv_config.bias_descriptor, gpu_conv_config.output_descriptor,
           gpu_conv_config.conv_desc, /*use_fallback=*/false,
-          gpu_conv_config.fusion->mode, engine_options,
-          &fused_conv_runners));
+          gpu_conv_config.fusion->mode, engine_options, &fused_conv_runners));
       if (fused_conv_runners.empty()) {
         TF_RETURN_IF_ERROR(dnn->GetFusedConvolveRunners(
             se::dnn::ConvolutionKind::FORWARD, input_type,
@@ -131,12 +132,11 @@ absl::StatusOr<bool> HasCudnnPlans(
             gpu_conv_config.conv_result_scale,
             gpu_conv_config.fusion->side_input_scale,
             gpu_conv_config.fusion->leakyrelu_alpha, stream,
-            gpu_conv_config.input_descriptor,
-            gpu_conv_config.filter_descriptor,
-            gpu_conv_config.bias_descriptor,
-            gpu_conv_config.output_descriptor, gpu_conv_config.conv_desc,
-            /*use_fallback=*/true, gpu_conv_config.fusion->mode,
-            engine_options, &fused_conv_runners));
+            gpu_conv_config.input_descriptor, gpu_conv_config.filter_descriptor,
+            gpu_conv_config.bias_descriptor, gpu_conv_config.output_descriptor,
+            gpu_conv_config.conv_desc,
+            /*use_fallback=*/true, gpu_conv_config.fusion->mode, engine_options,
+            &fused_conv_runners));
       }
       return !fused_conv_runners.empty();
     }
@@ -242,8 +242,7 @@ absl::Status RewriteToBf16(HloCustomCallInstruction* instr) {
       cudnn_conv_config.algorithm().has_workspace_size()
           ? cudnn_conv_config.algorithm().workspace_size().value()
           : 0;
-  new_call_element_shapes.push_back(
-      ShapeUtil::MakeShape(U8, {workspace_size}));
+  new_call_element_shapes.push_back(ShapeUtil::MakeShape(U8, {workspace_size}));
   Shape new_call_shape = ShapeUtil::MakeTupleShape(new_call_element_shapes);
 
   // 3. Create the BF16 custom call (FORWARD_GRAPH → plain FORWARD).
@@ -303,9 +302,8 @@ absl::StatusOr<bool> ConvFp8Fallback::RunImpl(
 
   auto allocator =
       std::make_unique<se::StreamExecutorAddressAllocator>(stream_exec_);
-  TF_ASSIGN_OR_RETURN(
-      se::Stream * stream,
-      allocator->GetStream(stream_exec_->device_ordinal()));
+  TF_ASSIGN_OR_RETURN(se::Stream * stream,
+                      allocator->GetStream(stream_exec_->device_ordinal()));
 
   bool changed = false;
   for (HloComputation* comp :

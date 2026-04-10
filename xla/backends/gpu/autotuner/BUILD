@@ -1001,9 +1001,11 @@ xla_test(
     tags = ["gpu"],
     use_legacy_runtime = True,
     deps = [
+        ":cublas",
         ":custom_kernel",
         ":fission_backend",
         ":gpu_codegen_backend",
+        ":rocblas",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
         "//xla:xla_proto_cc",

@@ -65,8 +65,8 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

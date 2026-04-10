@@ -327,6 +327,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/util/maybe_owning.h"
@@ -342,7 +343,6 @@ limitations under the License.
 #include "tsl/platform/stacktrace.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 #ifdef PLATFORM_GOOGLE
 #include "xla/hlo/experimental/auto_sharding/auto_sharding.h"

@@ -34,7 +34,8 @@ namespace {
 
 namespace se = ::stream_executor;
 
-// FP8 ForwardGraph custom call (the most common case from CudnnFusedConvRewriter).
+// FP8 ForwardGraph custom call (the most common case from
+// CudnnFusedConvRewriter).
 const char kFp8ConvForwardGraphHlo[] = R"(
   HloModule module
 
@@ -384,9 +385,8 @@ TEST_F(ConvFp8FallbackTest, Fp8BiasActivationConvRunsSuccessfully) {
 }
 
 TEST_F(ConvFp8FallbackTest, Fp8E5m2ConvRunsSuccessfully) {
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<HloModule> hlo_module,
-      ParseAndReturnVerifiedModule(kFp8E5m2ConvForwardHlo));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(kFp8E5m2ConvForwardHlo));
   ConvFp8Fallback pass(stream_executor_);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(hlo_module.get()));
 
