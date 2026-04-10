@@ -40,7 +40,6 @@ limitations under the License.
 #include "xla/xla.pb.h"
 #include "tsl/platform/casts.h"
 #include "xla/tsl/platform/status_macros.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 

@@ -824,7 +824,7 @@ TEST(KernelThunkTest, RecordCommandBufferUpdateWithNewOutputBuffer) {
 
   result = 0;
   TF_ASSERT_OK(stream->Memcpy(&result, c_dev, sizeof(int32_t)));
-  EXPECT_EQ(result, 3);  // original buffer unchanged
+  EXPECT_EQ(result, 3);  // original buffer still holds first-run result
 }
 
 TEST(KernelThunkTest, RecordFailsWithoutInitialize) {
