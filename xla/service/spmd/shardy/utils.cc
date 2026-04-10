@@ -147,7 +147,7 @@ void removeFrontendAttribute(
     DictionaryAttr frontendAttributes, StringRef attributeName,
     std::function<void(ArrayRef<NamedAttribute>)> setAttr,
     std::function<void()> removeAttr) {
-  SmallVector<NamedAttribute> existingAttributes =
+  auto existingAttributes =
       getExistingFrontendAttributes(frontendAttributes, attributeName);
   if (!existingAttributes.empty()) {
     setAttr(existingAttributes);
@@ -195,7 +195,7 @@ std::optional<TensorShardingAttr> adjustShardingInternal(
 }  // namespace
 
 void setFrontendAttribute(Operation* op, StringRef name, Attribute value) {
-  SmallVector<NamedAttribute> existingAttributes =
+  auto existingAttributes =
       getExistingFrontendAttributes(getFrontendAttrs(op), "");
   setFrontendAttribute(existingAttributes, name, value);
   setFrontendAttrs(op, existingAttributes);
@@ -203,9 +203,8 @@ void setFrontendAttribute(Operation* op, StringRef name, Attribute value) {
 
 void setFrontendAttribute(FuncOp funcOp, StringRef name, Attribute value,
                           int64_t argNum) {
-  SmallVector<NamedAttribute> existingAttributes =
-      getExistingFrontendAttributes(getFuncArgFrontendAttrs(funcOp, argNum),
-                                    "");
+  auto existingAttributes = getExistingFrontendAttributes(
+      getFuncArgFrontendAttrs(funcOp, argNum), "");
   setFrontendAttribute(existingAttributes, name, value);
   setFuncArgFrontendAttrs(funcOp, argNum, existingAttributes);
 }
