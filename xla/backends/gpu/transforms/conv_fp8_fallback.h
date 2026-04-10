@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_TRANSFORMS_CONV_FP8_FALLBACK_H_
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -24,6 +25,9 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 
 namespace xla {
+
+class HloCustomCallInstruction;
+
 namespace gpu {
 
 // Rewrites FP8 cuDNN convolution custom calls to BF16 when cuDNN does not
@@ -39,6 +43,11 @@ namespace gpu {
 // algorithm from the available plans).
 //
 // When StreamExecutor is null (AOT compilation), the pass is a no-op.
+
+// Rewrites one FP8 cuDNN convolution custom call to the BF16 equivalent (see
+// ConvFp8Fallback). Used by the pass after cuDNN probing; exposed for tests.
+absl::Status RewriteFp8ConvCustomCallToBf16(HloCustomCallInstruction* instr);
+
 class ConvFp8Fallback : public HloModulePass {
  public:
   explicit ConvFp8Fallback(stream_executor::StreamExecutor* stream_exec)

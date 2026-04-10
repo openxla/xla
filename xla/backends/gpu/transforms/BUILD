@@ -492,28 +492,47 @@ cc_library(
     ],
 )
 
-xla_test(
-    name = "conv_fp8_fallback_test",
+xla_cc_test(
+    name = "conv_fp8_fallback_rewrite_test",
     srcs = ["conv_fp8_fallback_test.cc"],
-    backends = [
-        "a100",
-        "h100",
-        "b200",
-    ],
-    tags = [
-        "cuda-only",
-        "no_mac",
-    ],
-    use_legacy_runtime = True,
+    args = ["--gtest_filter=ConvFp8FallbackRewriteTest.*"],
+    tags = ["no_mac"],
     deps = [
         ":conv_fp8_fallback",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:platform_util",
-        "//xla/service/gpu:ir_emission_utils",
-        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor:platform_manager",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "conv_fp8_fallback_gpu_test",
+    srcs = ["conv_fp8_fallback_test.cc"],
+    args = ["--gtest_filter=ConvFp8FallbackGpuTest.*"],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "no_mac",
+    ],
+    deps = [
+        ":conv_fp8_fallback",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cuda_platform",
+        "//xla/stream_executor/gpu:gpu_init_impl",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
 )

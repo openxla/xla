@@ -190,8 +190,9 @@ absl::StatusOr<bool> HasCudnnPlans(se::dnn::DnnSupport* dnn,
   }
 }
 
-// Rewrites an FP8 conv custom call to use BF16 types instead.
-absl::Status RewriteToBf16(HloCustomCallInstruction* instr) {
+}  // namespace
+
+absl::Status RewriteFp8ConvCustomCallToBf16(HloCustomCallInstruction* instr) {
   if (!instr->shape().IsTuple() || instr->shape().tuple_shapes_size() < 2) {
     return absl::InvalidArgumentError(
         "Expected (result, workspace) tuple from conv custom call");
@@ -286,8 +287,6 @@ absl::Status RewriteToBf16(HloCustomCallInstruction* instr) {
   return absl::OkStatus();
 }
 
-}  // namespace
-
 absl::StatusOr<bool> ConvFp8Fallback::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -358,7 +357,7 @@ absl::StatusOr<bool> ConvFp8Fallback::RunImpl(
                    << " has no cuDNN FP8 plans; rewriting to BF16. "
                    << "Try different convolution dimensions/group counts "
                    << "to regain FP8.";
-      TF_RETURN_IF_ERROR(RewriteToBf16(custom_call));
+      TF_RETURN_IF_ERROR(RewriteFp8ConvCustomCallToBf16(custom_call));
       changed = true;
     }
   }

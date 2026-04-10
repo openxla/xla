@@ -18,12 +18,16 @@ limitations under the License.
 #include <memory>
 
 #include <gtest/gtest.h>
+#include "absl/log/check.h"
+#include "absl/strings/ascii.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/platform_util.h"
+#include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
@@ -200,18 +204,34 @@ const char kFp8E5m2ConvForwardHlo[] = R"(
     ROOT %gte = f8e5m2[16,54,54,16]{3,2,1,0} get-tuple-element(%cudnn-conv), index=0
   })";
 
-class ConvFp8FallbackTest : public HloHardwareIndependentTestBase {
- protected:
-  ConvFp8FallbackTest()
-      : stream_executor_(PlatformUtil::GetDefaultPlatform()
-                             .value()
-                             ->ExecutorForDevice(0)
-                             .value()) {}
+HloCustomCallInstruction* GetCudnnConvFromEntryRoot(HloModule* module) {
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  CHECK_EQ(root->opcode(), HloOpcode::kGetTupleElement);
+  HloInstruction* conv = root->mutable_operand(0);
+  CHECK_EQ(conv->opcode(), HloOpcode::kCustomCall);
+  return Cast<HloCustomCallInstruction>(conv);
+}
 
-  se::StreamExecutor* stream_executor_;
+// HLO rewrite tests do not need a StreamExecutor or live GPU.
+using ConvFp8FallbackRewriteTest = HloHardwareIndependentTestBase;
+
+class ConvFp8FallbackGpuTest : public HloHardwareIndependentTestBase {
+ protected:
+  void SetUp() override {
+    HloHardwareIndependentTestBase::SetUp();
+    TF_ASSERT_OK_AND_ASSIGN(std::string platform_name,
+                            PlatformUtil::CanonicalPlatformName("gpu"));
+    platform_name = absl::AsciiStrToUpper(platform_name);
+    TF_ASSERT_OK_AND_ASSIGN(
+        se::Platform * platform,
+        se::PlatformManager::PlatformWithName(platform_name));
+    TF_ASSERT_OK_AND_ASSIGN(stream_executor_, platform->ExecutorForDevice(0));
+  }
+
+  se::StreamExecutor* stream_executor_ = nullptr;
 };
 
-TEST_F(ConvFp8FallbackTest, NullStreamExecutorReturnsNoChange) {
+TEST_F(ConvFp8FallbackRewriteTest, NullStreamExecutorReturnsNoChange) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
                           ParseAndReturnVerifiedModule(kFp8ConvForwardHlo));
   ConvFp8Fallback pass(/*stream_exec=*/nullptr);
@@ -219,7 +239,7 @@ TEST_F(ConvFp8FallbackTest, NullStreamExecutorReturnsNoChange) {
   EXPECT_FALSE(changed);
 }
 
-TEST_F(ConvFp8FallbackTest, F32ConvIsNotModified) {
+TEST_F(ConvFp8FallbackGpuTest, F32ConvIsNotModified) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
                           ParseAndReturnVerifiedModule(kF32ConvHlo));
   ConvFp8Fallback pass(stream_executor_);
@@ -234,180 +254,166 @@ TEST_F(ConvFp8FallbackTest, F32ConvIsNotModified) {
   EXPECT_EQ(conv->shape().tuple_shapes(0).element_type(), F32);
 }
 
-// This test verifies the pass runs without error on FP8 ForwardGraph convs.
-// Whether it rewrites depends on whether cuDNN supports FP8 for the given
-// config on this hardware. Either outcome is valid.
-TEST_F(ConvFp8FallbackTest, Fp8ForwardGraphConvRunsSuccessfully) {
+TEST_F(ConvFp8FallbackRewriteTest, RewriteFp8ToBf16_ForwardGraph) {
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> hlo_module,
       ParseAndReturnVerifiedModule(kFp8ConvForwardGraphHlo));
-  ConvFp8Fallback pass(stream_executor_);
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(hlo_module.get()));
+  HloCustomCallInstruction* conv = GetCudnnConvFromEntryRoot(hlo_module.get());
+  TF_ASSERT_OK(RewriteFp8ConvCustomCallToBf16(conv));
 
-  if (changed) {
-    // If rewritten: verify BF16 conversion structure.
-    HloInstruction* root = hlo_module->entry_computation()->root_instruction();
-    ASSERT_EQ(root->opcode(), HloOpcode::kGetTupleElement);
-    HloInstruction* replacement_tuple = root->mutable_operand(0);
-    ASSERT_EQ(replacement_tuple->opcode(), HloOpcode::kTuple);
+  HloInstruction* root = hlo_module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kGetTupleElement);
+  HloInstruction* replacement_tuple = root->mutable_operand(0);
+  ASSERT_EQ(replacement_tuple->opcode(), HloOpcode::kTuple);
 
-    // First element should be convert(BF16→FP8).
-    HloInstruction* result_convert = replacement_tuple->mutable_operand(0);
-    ASSERT_EQ(result_convert->opcode(), HloOpcode::kConvert);
-    EXPECT_EQ(result_convert->shape().element_type(), F8E4M3FN);
+  HloInstruction* result_convert = replacement_tuple->mutable_operand(0);
+  ASSERT_EQ(result_convert->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(result_convert->shape().element_type(), F8E4M3FN);
 
-    // The convert's operand should be GTE from BF16 custom call.
-    HloInstruction* gte = result_convert->mutable_operand(0);
-    ASSERT_EQ(gte->opcode(), HloOpcode::kGetTupleElement);
+  HloInstruction* gte = result_convert->mutable_operand(0);
+  ASSERT_EQ(gte->opcode(), HloOpcode::kGetTupleElement);
 
-    HloInstruction* new_conv = gte->mutable_operand(0);
-    ASSERT_EQ(new_conv->opcode(), HloOpcode::kCustomCall);
-    // ForwardGraph should become plain Forward.
-    EXPECT_EQ(new_conv->custom_call_target(), "__cudnn$convForward");
-    EXPECT_EQ(new_conv->shape().tuple_shapes(0).element_type(), BF16);
+  HloInstruction* new_conv = gte->mutable_operand(0);
+  ASSERT_EQ(new_conv->opcode(), HloOpcode::kCustomCall);
+  EXPECT_EQ(new_conv->custom_call_target(), "__cudnn$convForward");
+  EXPECT_EQ(new_conv->shape().tuple_shapes(0).element_type(), BF16);
 
-    // FP8 operands should be wrapped in converts to BF16.
-    EXPECT_EQ(new_conv->operand(0)->opcode(), HloOpcode::kConvert);
-    EXPECT_EQ(new_conv->operand(0)->shape().element_type(), BF16);
-    EXPECT_EQ(new_conv->operand(1)->opcode(), HloOpcode::kConvert);
-    EXPECT_EQ(new_conv->operand(1)->shape().element_type(), BF16);
-
-    // Scale operands should be stripped (plain Forward doesn't use them).
-    EXPECT_EQ(new_conv->operand_count(), 2);
-  }
-  // If not changed, the original HLO is preserved (cuDNN supports FP8).
+  EXPECT_EQ(new_conv->operand(0)->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(new_conv->operand(0)->shape().element_type(), BF16);
+  EXPECT_EQ(new_conv->operand(1)->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(new_conv->operand(1)->shape().element_type(), BF16);
+  EXPECT_EQ(new_conv->operand_count(), 2);
 }
 
-TEST_F(ConvFp8FallbackTest, Fp8ForwardConvRunsSuccessfully) {
+TEST_F(ConvFp8FallbackRewriteTest, RewriteFp8ToBf16_Forward) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(kFp8ConvForwardHlo));
+  HloCustomCallInstruction* conv = GetCudnnConvFromEntryRoot(hlo_module.get());
+  TF_ASSERT_OK(RewriteFp8ConvCustomCallToBf16(conv));
+
+  HloInstruction* root = hlo_module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kGetTupleElement);
+  HloInstruction* replacement_tuple = root->mutable_operand(0);
+  ASSERT_EQ(replacement_tuple->opcode(), HloOpcode::kTuple);
+
+  HloInstruction* result_convert = replacement_tuple->mutable_operand(0);
+  ASSERT_EQ(result_convert->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(result_convert->shape().element_type(), F8E4M3FN);
+
+  HloInstruction* new_conv =
+      result_convert->mutable_operand(0)->mutable_operand(0);
+  EXPECT_EQ(new_conv->custom_call_target(), "__cudnn$convForward");
+  EXPECT_EQ(new_conv->shape().tuple_shapes(0).element_type(), BF16);
+  EXPECT_EQ(new_conv->operand(0)->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(new_conv->operand(0)->shape().element_type(), BF16);
+  EXPECT_EQ(new_conv->operand(1)->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(new_conv->operand(1)->shape().element_type(), BF16);
+}
+
+TEST_F(ConvFp8FallbackRewriteTest, RewriteFp8ToBf16_BackwardInput) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> hlo_module,
+      ParseAndReturnVerifiedModule(kFp8ConvBackwardInputHlo));
+  HloCustomCallInstruction* conv = GetCudnnConvFromEntryRoot(hlo_module.get());
+  TF_ASSERT_OK(RewriteFp8ConvCustomCallToBf16(conv));
+
+  HloInstruction* root = hlo_module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kGetTupleElement);
+  HloInstruction* replacement_tuple = root->mutable_operand(0);
+  ASSERT_EQ(replacement_tuple->opcode(), HloOpcode::kTuple);
+
+  HloInstruction* result_convert = replacement_tuple->mutable_operand(0);
+  ASSERT_EQ(result_convert->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(result_convert->shape().element_type(), F8E4M3FN);
+
+  HloInstruction* new_conv =
+      result_convert->mutable_operand(0)->mutable_operand(0);
+  EXPECT_EQ(new_conv->custom_call_target(), "__cudnn$convBackwardInput");
+  EXPECT_EQ(new_conv->shape().tuple_shapes(0).element_type(), BF16);
+}
+
+TEST_F(ConvFp8FallbackRewriteTest, RewriteFp8ToBf16_BackwardFilter) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> hlo_module,
+      ParseAndReturnVerifiedModule(kFp8ConvBackwardFilterHlo));
+  HloCustomCallInstruction* conv = GetCudnnConvFromEntryRoot(hlo_module.get());
+  TF_ASSERT_OK(RewriteFp8ConvCustomCallToBf16(conv));
+
+  HloInstruction* root = hlo_module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kGetTupleElement);
+  HloInstruction* replacement_tuple = root->mutable_operand(0);
+  ASSERT_EQ(replacement_tuple->opcode(), HloOpcode::kTuple);
+
+  HloInstruction* result_convert = replacement_tuple->mutable_operand(0);
+  ASSERT_EQ(result_convert->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(result_convert->shape().element_type(), F8E4M3FN);
+
+  HloInstruction* new_conv =
+      result_convert->mutable_operand(0)->mutable_operand(0);
+  EXPECT_EQ(new_conv->custom_call_target(), "__cudnn$convBackwardFilter");
+  EXPECT_EQ(new_conv->shape().tuple_shapes(0).element_type(), BF16);
+}
+
+TEST_F(ConvFp8FallbackRewriteTest, RewriteFp8ToBf16_BiasActivation) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> hlo_module,
+      ParseAndReturnVerifiedModule(kFp8ConvBiasActivationHlo));
+  HloCustomCallInstruction* conv = GetCudnnConvFromEntryRoot(hlo_module.get());
+  TF_ASSERT_OK(RewriteFp8ConvCustomCallToBf16(conv));
+
+  HloInstruction* root = hlo_module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kGetTupleElement);
+  HloInstruction* replacement_tuple = root->mutable_operand(0);
+  ASSERT_EQ(replacement_tuple->opcode(), HloOpcode::kTuple);
+
+  HloInstruction* result_convert = replacement_tuple->mutable_operand(0);
+  ASSERT_EQ(result_convert->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(result_convert->shape().element_type(), F8E4M3FN);
+
+  HloInstruction* new_conv =
+      result_convert->mutable_operand(0)->mutable_operand(0);
+  EXPECT_EQ(new_conv->custom_call_target(),
+            "__cudnn$convBiasActivationForward");
+  EXPECT_EQ(new_conv->shape().tuple_shapes(0).element_type(), BF16);
+  EXPECT_EQ(new_conv->operand(0)->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(new_conv->operand(0)->shape().element_type(), BF16);
+  EXPECT_EQ(new_conv->operand(1)->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(new_conv->operand(1)->shape().element_type(), BF16);
+  EXPECT_EQ(new_conv->operand(2)->opcode(), HloOpcode::kParameter);
+}
+
+TEST_F(ConvFp8FallbackRewriteTest, RewriteFp8ToBf16_E5m2Forward) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(kFp8E5m2ConvForwardHlo));
+  HloCustomCallInstruction* conv = GetCudnnConvFromEntryRoot(hlo_module.get());
+  TF_ASSERT_OK(RewriteFp8ConvCustomCallToBf16(conv));
+
+  HloInstruction* root = hlo_module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kGetTupleElement);
+  HloInstruction* replacement_tuple = root->mutable_operand(0);
+  ASSERT_EQ(replacement_tuple->opcode(), HloOpcode::kTuple);
+
+  HloInstruction* result_convert = replacement_tuple->mutable_operand(0);
+  ASSERT_EQ(result_convert->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(result_convert->shape().element_type(), F8E5M2);
+
+  HloInstruction* new_conv =
+      result_convert->mutable_operand(0)->mutable_operand(0);
+  EXPECT_EQ(new_conv->custom_call_target(), "__cudnn$convForward");
+  EXPECT_EQ(new_conv->shape().tuple_shapes(0).element_type(), BF16);
+  EXPECT_EQ(new_conv->operand(0)->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(new_conv->operand(0)->shape().element_type(), BF16);
+  EXPECT_EQ(new_conv->operand(1)->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(new_conv->operand(1)->shape().element_type(), BF16);
+}
+
+// Smoke test: full pass with live cuDNN probing must not fail on GPU.
+TEST_F(ConvFp8FallbackGpuTest, Fp8ForwardPassRunsOnGpu) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
                           ParseAndReturnVerifiedModule(kFp8ConvForwardHlo));
   ConvFp8Fallback pass(stream_executor_);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(hlo_module.get()));
-
-  if (changed) {
-    HloInstruction* root = hlo_module->entry_computation()->root_instruction();
-    ASSERT_EQ(root->opcode(), HloOpcode::kGetTupleElement);
-    HloInstruction* replacement_tuple = root->mutable_operand(0);
-    ASSERT_EQ(replacement_tuple->opcode(), HloOpcode::kTuple);
-
-    HloInstruction* result_convert = replacement_tuple->mutable_operand(0);
-    ASSERT_EQ(result_convert->opcode(), HloOpcode::kConvert);
-    EXPECT_EQ(result_convert->shape().element_type(), F8E4M3FN);
-
-    HloInstruction* new_conv =
-        result_convert->mutable_operand(0)->mutable_operand(0);
-    EXPECT_EQ(new_conv->custom_call_target(), "__cudnn$convForward");
-    EXPECT_EQ(new_conv->shape().tuple_shapes(0).element_type(), BF16);
-    EXPECT_EQ(new_conv->operand(0)->opcode(), HloOpcode::kConvert);
-    EXPECT_EQ(new_conv->operand(0)->shape().element_type(), BF16);
-  }
-}
-
-TEST_F(ConvFp8FallbackTest, Fp8BackwardInputConvRunsSuccessfully) {
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<HloModule> hlo_module,
-      ParseAndReturnVerifiedModule(kFp8ConvBackwardInputHlo));
-  ConvFp8Fallback pass(stream_executor_);
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(hlo_module.get()));
-
-  if (changed) {
-    HloInstruction* root = hlo_module->entry_computation()->root_instruction();
-    ASSERT_EQ(root->opcode(), HloOpcode::kGetTupleElement);
-    HloInstruction* replacement_tuple = root->mutable_operand(0);
-    ASSERT_EQ(replacement_tuple->opcode(), HloOpcode::kTuple);
-
-    HloInstruction* result_convert = replacement_tuple->mutable_operand(0);
-    ASSERT_EQ(result_convert->opcode(), HloOpcode::kConvert);
-    EXPECT_EQ(result_convert->shape().element_type(), F8E4M3FN);
-
-    HloInstruction* new_conv =
-        result_convert->mutable_operand(0)->mutable_operand(0);
-    EXPECT_EQ(new_conv->custom_call_target(), "__cudnn$convBackwardInput");
-    EXPECT_EQ(new_conv->shape().tuple_shapes(0).element_type(), BF16);
-  }
-}
-
-TEST_F(ConvFp8FallbackTest, Fp8BackwardFilterConvRunsSuccessfully) {
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<HloModule> hlo_module,
-      ParseAndReturnVerifiedModule(kFp8ConvBackwardFilterHlo));
-  ConvFp8Fallback pass(stream_executor_);
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(hlo_module.get()));
-
-  if (changed) {
-    HloInstruction* root = hlo_module->entry_computation()->root_instruction();
-    ASSERT_EQ(root->opcode(), HloOpcode::kGetTupleElement);
-    HloInstruction* replacement_tuple = root->mutable_operand(0);
-    ASSERT_EQ(replacement_tuple->opcode(), HloOpcode::kTuple);
-
-    HloInstruction* result_convert = replacement_tuple->mutable_operand(0);
-    ASSERT_EQ(result_convert->opcode(), HloOpcode::kConvert);
-    EXPECT_EQ(result_convert->shape().element_type(), F8E4M3FN);
-
-    HloInstruction* new_conv =
-        result_convert->mutable_operand(0)->mutable_operand(0);
-    EXPECT_EQ(new_conv->custom_call_target(), "__cudnn$convBackwardFilter");
-    EXPECT_EQ(new_conv->shape().tuple_shapes(0).element_type(), BF16);
-  }
-}
-
-TEST_F(ConvFp8FallbackTest, Fp8BiasActivationConvRunsSuccessfully) {
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<HloModule> hlo_module,
-      ParseAndReturnVerifiedModule(kFp8ConvBiasActivationHlo));
-  ConvFp8Fallback pass(stream_executor_);
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(hlo_module.get()));
-
-  if (changed) {
-    HloInstruction* root = hlo_module->entry_computation()->root_instruction();
-    ASSERT_EQ(root->opcode(), HloOpcode::kGetTupleElement);
-    HloInstruction* replacement_tuple = root->mutable_operand(0);
-    ASSERT_EQ(replacement_tuple->opcode(), HloOpcode::kTuple);
-
-    HloInstruction* result_convert = replacement_tuple->mutable_operand(0);
-    ASSERT_EQ(result_convert->opcode(), HloOpcode::kConvert);
-    EXPECT_EQ(result_convert->shape().element_type(), F8E4M3FN);
-
-    HloInstruction* new_conv =
-        result_convert->mutable_operand(0)->mutable_operand(0);
-    // BiasActivation stays BiasActivation.
-    EXPECT_EQ(new_conv->custom_call_target(),
-              "__cudnn$convBiasActivationForward");
-    EXPECT_EQ(new_conv->shape().tuple_shapes(0).element_type(), BF16);
-    // FP8 operands should be converted to BF16.
-    EXPECT_EQ(new_conv->operand(0)->opcode(), HloOpcode::kConvert);
-    EXPECT_EQ(new_conv->operand(0)->shape().element_type(), BF16);
-    EXPECT_EQ(new_conv->operand(1)->opcode(), HloOpcode::kConvert);
-    EXPECT_EQ(new_conv->operand(1)->shape().element_type(), BF16);
-    // Bias (f32) should pass through without conversion.
-    EXPECT_EQ(new_conv->operand(2)->opcode(), HloOpcode::kParameter);
-  }
-}
-
-TEST_F(ConvFp8FallbackTest, Fp8E5m2ConvRunsSuccessfully) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(kFp8E5m2ConvForwardHlo));
-  ConvFp8Fallback pass(stream_executor_);
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(hlo_module.get()));
-
-  if (changed) {
-    HloInstruction* root = hlo_module->entry_computation()->root_instruction();
-    ASSERT_EQ(root->opcode(), HloOpcode::kGetTupleElement);
-    HloInstruction* replacement_tuple = root->mutable_operand(0);
-    ASSERT_EQ(replacement_tuple->opcode(), HloOpcode::kTuple);
-
-    HloInstruction* result_convert = replacement_tuple->mutable_operand(0);
-    ASSERT_EQ(result_convert->opcode(), HloOpcode::kConvert);
-    // Should convert back to the original F8E5M2 type.
-    EXPECT_EQ(result_convert->shape().element_type(), F8E5M2);
-
-    HloInstruction* new_conv =
-        result_convert->mutable_operand(0)->mutable_operand(0);
-    EXPECT_EQ(new_conv->custom_call_target(), "__cudnn$convForward");
-    EXPECT_EQ(new_conv->shape().tuple_shapes(0).element_type(), BF16);
-    EXPECT_EQ(new_conv->operand(0)->opcode(), HloOpcode::kConvert);
-    EXPECT_EQ(new_conv->operand(0)->shape().element_type(), BF16);
-  }
+  (void)changed;
 }
 
 }  // namespace
