@@ -1096,6 +1096,11 @@ message DebugOptions {
   // source and target are located within a node(nvlink).
   optional bool xla_gpu_use_memcpy_local_p2p = 287;
 
+  // Split collective-permute into connected-component replica groups instead of
+  // one giant clique. Enables smaller NCCL communicators and the p2p memcpy
+  // path for local components on multi-node setups.
+  optional bool xla_gpu_collective_permute_connected_components = 471;
+
   // An option to enable using cuDNN runtime compiled fusion kernels which is
   // available and recommended for Ampere+ GPUs.
   optional bool xla_gpu_use_runtime_fusion = 181;

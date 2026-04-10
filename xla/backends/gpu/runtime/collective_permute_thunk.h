@@ -61,13 +61,16 @@ class CollectivePermuteThunk : public CollectiveThunk {
                          const HloCollectivePermuteInstruction* instr,
                          int64_t replica_count, int64_t partition_count,
                          const std::vector<Buffer>& buffers,
-                         bool p2p_memcpy_enabled);
+                         bool p2p_memcpy_enabled,
+                         bool connected_components_enabled);
   CollectivePermuteThunk(ThunkInfo thunk_info, const P2PConfig& config,
                          const std::vector<Buffer>& buffers,
-                         bool p2p_memcpy_enabled);
+                         bool p2p_memcpy_enabled,
+                         bool connected_components_enabled);
 
   static P2PConfig GetP2PConfig(const HloCollectivePermuteInstruction* instr,
-                                int64_t replica_count, int64_t partition_count);
+                                int64_t replica_count, int64_t partition_count,
+                                bool connected_components_enabled);
 
   static bool IsDegenerate(const HloCollectivePermuteInstruction* instr,
                            int64_t replica_count, int64_t partition_count);
@@ -82,6 +85,10 @@ class CollectivePermuteThunk : public CollectiveThunk {
   absl::Span<const Buffer> buffers() const { return buffers_; }
 
   const P2PConfig& p2p_config() const { return config_; }
+
+  bool connected_components_enabled() const {
+    return connected_components_enabled_;
+  }
 
   static absl::StatusOr<std::unique_ptr<CollectivePermuteThunk>> FromProto(
       ThunkInfo thunk_info, const CollectivePermuteStartThunkProto& thunk_proto,
@@ -103,24 +110,10 @@ class CollectivePermuteThunk : public CollectiveThunk {
                              Communicator& comm) override;
 
  private:
-  // Computes connected components from the source-target pairs in config.
-  // Returns a map from each logical ID to its component members.
-  static absl::flat_hash_map<int64_t, std::vector<int64_t>>
-  InitConnectedComponents(const P2PConfig& config, bool p2p_memcpy_enabled);
-
-  // Builds a GpuCliqueKey covering only the devices in the connected component
-  // that `current_id` belongs to. Returns the key and whether it is fully
-  // local.
-  absl::StatusOr<GpuCliqueKey> BuildCommunicatingCliqueKey(
-      int64_t current_id, const CollectiveParams& params) const;
-
   const P2PConfig config_;
   std::vector<Buffer> buffers_;
   bool p2p_memcpy_enabled_ = false;
-
-  // Cached connected components: maps each logical ID to the sorted list of
-  // logical IDs in its connected component. Computed once at construction time.
-  absl::flat_hash_map<int64_t, std::vector<int64_t>> id_to_component_members_;
+  bool connected_components_enabled_ = false;
 };
 
 absl::Status RunCollectivePermute(P2PConfig::SourceTargetRanks source_target,

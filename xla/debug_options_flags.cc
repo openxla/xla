@@ -403,6 +403,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 #endif
 
   opts.set_xla_gpu_use_memcpy_local_p2p(false);
+  opts.set_xla_gpu_collective_permute_connected_components(false);
 
   opts.set_xla_reduce_window_rewrite_base_length(16);
 
@@ -2414,6 +2415,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_use_memcpy_local_p2p),
       debug_options->xla_gpu_use_memcpy_local_p2p(),
       "Whether to use memcpy for local p2p communication."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_collective_permute_connected_components",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_collective_permute_connected_components),
+      debug_options->xla_gpu_collective_permute_connected_components(),
+      "Split collective-permute into connected-component replica groups "
+      "instead of one giant clique."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_use_inprocess_lld",
                 bool_setter_for(&DebugOptions::set_xla_gpu_use_inprocess_lld),
