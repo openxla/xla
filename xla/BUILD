@@ -433,7 +433,10 @@ cc_library(
     name = "future",
     hdrs = ["future.h"],
     visibility = ["//visibility:public"],
-    deps = ["//xla/tsl/concurrency:future"],
+    deps = [
+        "//xla/tsl/concurrency:future",
+        "//xla/tsl/concurrency:interop",
+    ],
 )
 
 cc_library(
@@ -771,6 +774,7 @@ cc_library(
         ":types",
         ":util",
         ":xla_data_proto_cc",
+        "//xla/tests:constraint_state",
         "//xla/tsl/lib/core:bitmap",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",

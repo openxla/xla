@@ -142,6 +142,27 @@ TEST_P(DeviceListTest, EqualityTest) {
   EXPECT_NE(*device_list1, *device_list6);
 }
 
+TEST_P(DeviceListTest, DifferencesStringIdentical) {
+  auto a = GetDevices({0, 1});
+  auto b = GetDevices({0, 1});
+  EXPECT_EQ(DeviceListDifferencesString(*a, *b), "");
+}
+
+TEST_P(DeviceListTest, DifferencesStringDifferentSizes) {
+  auto a = GetDevices({0, 1});
+  auto b = GetDevices({0});
+  std::string diff = DeviceListDifferencesString(*a, *b);
+  EXPECT_THAT(diff, ::testing::HasSubstr("sizes: 2 vs. 1"));
+}
+
+TEST_P(DeviceListTest, DifferencesStringDifferentDevices) {
+  auto a = GetDevices({0, 1});
+  auto b = GetDevices({1, 0});
+  std::string diff = DeviceListDifferencesString(*a, *b);
+  EXPECT_THAT(diff, ::testing::HasSubstr("device #0"));
+  EXPECT_THAT(diff, ::testing::HasSubstr("device #1"));
+}
+
 INSTANTIATE_TEST_SUITE_P(
     NumDevices, DeviceListTest,
     testing::Values(test_util::DeviceTestParam{/*num_devices=*/2,

@@ -17,6 +17,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/errors.h"
 
 namespace stream_executor::sycl {
 namespace {
@@ -67,8 +68,7 @@ class SyclGpuRuntimeTest : public ::testing::Test {
   absl::StatusOr<void*> AllocateAndInitDeviceBuffer(
       int count, int value, int device_ordinal = kDefaultDeviceOrdinal) {
     TF_ASSIGN_OR_RETURN(void* buf, AllocateDeviceBuffer(count));
-    TF_RETURN_IF_ERROR(
-        SyclMemfillDevice(device_ordinal, buf, value, sizeof(int) * count));
+    TF_RETURN_IF_ERROR(SyclMemfillDevice(device_ordinal, buf, value, count));
     if (buf == nullptr) {
       return absl::InternalError(
           "SyclGpuRuntimeTest::AllocateAndInitDeviceBuffer: Failed to fill "
@@ -472,8 +472,8 @@ TEST_F(SyclGpuRuntimeTest, TestMemsetDevice) {
       SyclMallocDevice(kDefaultDeviceOrdinal, sizeof(char) * kCount));
   ASSERT_NE(src_device, nullptr);
 
-  TF_ASSERT_OK(SyclMemsetDevice(kDefaultDeviceOrdinal, src_device, 'A',
-                                sizeof(char) * kCount));
+  TF_ASSERT_OK(
+      SyclMemsetDevice(kDefaultDeviceOrdinal, src_device, 'A', kCount));
 
   TF_ASSERT_OK_AND_ASSIGN(void* dst_host, AllocateHostBuffer(kCount));
 
@@ -497,14 +497,12 @@ TEST_F(SyclGpuRuntimeTest, TestMemsetDevice_Negative) {
   ASSERT_NE(src_device, nullptr);
 
   // Attempt to memset with an invalid device ordinal.
-  EXPECT_THAT(SyclMemsetDevice(kInvalidDeviceOrdinal, src_device, 'A',
-                               sizeof(char) * kCount),
+  EXPECT_THAT(SyclMemsetDevice(kInvalidDeviceOrdinal, src_device, 'A', kCount),
               absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 
   // Attempt to memset a null pointer.
   void* null_ptr = nullptr;
-  EXPECT_THAT(SyclMemsetDevice(kDefaultDeviceOrdinal, null_ptr, 'A',
-                               sizeof(char) * kCount),
+  EXPECT_THAT(SyclMemsetDevice(kDefaultDeviceOrdinal, null_ptr, 'A', kCount),
               absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 
   FreeAndNullify(src_device);
@@ -520,8 +518,8 @@ TEST_F(SyclGpuRuntimeTest, TestMemsetDeviceAsync) {
 
   TF_ASSERT_OK_AND_ASSIGN(void* device_buf, AllocateDeviceBuffer(kCount));
 
-  TF_ASSERT_OK(SyclMemsetDeviceAsync(stream_handle.get(), device_buf, 'B',
-                                     sizeof(char) * kCount));
+  TF_ASSERT_OK(
+      SyclMemsetDeviceAsync(stream_handle.get(), device_buf, 'B', kCount));
 
   // Synchronize the stream to ensure the memset is complete before checking
   // results.
@@ -552,7 +550,7 @@ TEST_F(SyclGpuRuntimeTest, TestMemfillDeviceAsync) {
   TF_ASSERT_OK_AND_ASSIGN(void* device_buf, AllocateDeviceBuffer(kCount));
 
   TF_ASSERT_OK(SyclMemfillDeviceAsync(stream_handle.get(), device_buf,
-                                      0xDEADC0DE, sizeof(int) * kCount));
+                                      0xDEADC0DE, kCount));
 
   // Synchronize the stream to ensure the fill is complete before checking
   // results.
@@ -579,9 +577,9 @@ TEST_F(SyclGpuRuntimeTest, TestMemfillDeviceAsync_Negative) {
 
   // Attempt to fill a null pointer.
   void* null_ptr = nullptr;
-  EXPECT_THAT(SyclMemfillDeviceAsync(stream_handle.get(), null_ptr, 0xFEEDEAF,
-                                     sizeof(int) * kCount),
-              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(
+      SyclMemfillDeviceAsync(stream_handle.get(), null_ptr, 0xFEEDEAF, kCount),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 TEST_F(SyclGpuRuntimeTest, TestMultiDeviceAllocationAndSyncCopy) {

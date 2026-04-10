@@ -20,7 +20,6 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -52,13 +51,6 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
-// Maps async start ops to their async events so we can emit done thunk
-// sharing events with corresponding start thunk. Async events may be null if
-// the start op is degenerate (so not emitted).
-using CollectivesAsyncEvents =
-    absl::flat_hash_map<std::variant<mlir::Operation*, const HloInstruction*>,
-                        std::shared_ptr<CollectiveThunk::AsyncEvents>>;
-
 // Maps host offloading start ops to their async events so we can emit done
 // thunk sharing events with corresponding start thunk.
 using InstructionToHostExecuteAsyncEvents =
@@ -70,16 +62,16 @@ using InstructionToHostExecuteAsyncEvents =
 // assignment and the name uniquer.
 class IrEmitterContext {
  public:
-  IrEmitterContext(
-      const HloModule* hlo_module, const BufferAssignment* buffer_assignment,
-      const ExecutionStreamAssignment* execution_stream_assignment,
-      absl::string_view platform_name,
-      const se::DeviceDescription& gpu_device_info,
-      mlir::MLIRContext* mlir_context, llvm::LLVMContext* llvm_context,
-      bool emit_kernels, llvm::Triple target_triple, std::string data_layout,
-      LlvmIrCompiler compiler,
-      const xla::cpu::TargetMachineOptions* cpu_target_machine_options =
-          nullptr)
+  IrEmitterContext(const HloModule* hlo_module,
+                   const BufferAssignment* buffer_assignment,
+                   const ExecutionStreamAssignment* execution_stream_assignment,
+                   absl::string_view platform_name,
+                   const se::DeviceDescription& gpu_device_info,
+                   mlir::MLIRContext* mlir_context,
+                   llvm::LLVMContext* llvm_context, bool emit_kernels,
+                   llvm::Triple target_triple, std::string data_layout,
+                   LlvmIrCompiler compiler,
+                   xla::cpu::TargetMachineOptions cpu_target_machine_options)
       : hlo_module_(hlo_module),
         buffer_assignment_(buffer_assignment),
         execution_stream_assignment_(execution_stream_assignment),
@@ -91,7 +83,7 @@ class IrEmitterContext {
         target_triple_(std::move(target_triple)),
         emit_kernels_(emit_kernels),
         compiler_(std::move(compiler)),
-        cpu_target_machine_options_(cpu_target_machine_options) {}
+        cpu_target_machine_options_(std::move(cpu_target_machine_options)) {}
 
   // Disallow copy and assign.
   IrEmitterContext(const IrEmitterContext&) = delete;
@@ -113,7 +105,7 @@ class IrEmitterContext {
     return gpu_device_info_.gpu_compute_capability();
   }
 
-  const xla::cpu::TargetMachineOptions* cpu_target_machine_options() const {
+  const xla::cpu::TargetMachineOptions& cpu_target_machine_options() const {
     return cpu_target_machine_options_;
   }
 
@@ -140,9 +132,6 @@ class IrEmitterContext {
   }
 
   KernelReuseCache& kernel_cache() { return kernel_cache_; }
-  CollectivesAsyncEvents& collectives_async_events() {
-    return collectives_async_events_;
-  }
 
   InstructionToHostExecuteAsyncEvents&
   instruction_to_host_execute_async_events() {
@@ -186,7 +175,6 @@ class IrEmitterContext {
   const std::string data_layout_;
   llvm::Triple target_triple_;
 
-  CollectivesAsyncEvents collectives_async_events_;
   InstructionToHostExecuteAsyncEvents instruction_to_host_execute_async_events_;
 
   // We should not emit kernels when loading thunks from a compilation result.
@@ -196,7 +184,7 @@ class IrEmitterContext {
   ThunkIdGenerator thunk_id_generator_;
 
   LlvmIrCompiler compiler_;
-  const xla::cpu::TargetMachineOptions* cpu_target_machine_options_;
+  const xla::cpu::TargetMachineOptions cpu_target_machine_options_;
 };
 
 }  // namespace gpu

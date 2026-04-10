@@ -597,12 +597,16 @@ ENTRY main {
 
   const HloInstruction* root = module->entry_computation()->root_instruction();
 
-  EXPECT_EQ(CountCopies(*module), 4);
-  // Make sure that there is no copy of AllGatherDone.
+  EXPECT_EQ(CountCopies(*module), 5);
+  // All-gather-done is scheduled as late as possible to overlap with
+  // computation, which requires an extra copy to resolve the live range
+  // conflict with param_1.
   const HloInstruction* while_op =
       root->operand(0)->operand(0)->operand(0)->operand(0);
-  EXPECT_EQ(while_op->while_body()->root_instruction()->operand(1)->opcode(),
-            HloOpcode::kAllGatherDone);
+  const HloInstruction* operand_1 =
+      while_op->while_body()->root_instruction()->operand(1);
+  EXPECT_EQ(operand_1->opcode(), HloOpcode::kCopy);
+  EXPECT_EQ(operand_1->operand(0)->opcode(), HloOpcode::kAllGatherDone);
 }
 
 // This test ensures that the pathway for using the cuBLAS fallback (forming a
@@ -1951,6 +1955,9 @@ XLA_FFI_DEFINE_HANDLER(
 
 TEST_F(GpuCompilerTest,
        ParametersUsedByCollectiveMosaicShouldBeCopiedToCollectiveMemory) {
+  if (device_description().gpu_compute_capability().IsRocm()) {
+    GTEST_SKIP() << "Mosaic GPU is not supported on ROCm.";
+  }
   XLA_FFI_Handler_Bundle bundle = {
       /*instantiate=*/nullptr,
       /*prepare=*/nullptr,

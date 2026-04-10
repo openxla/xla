@@ -547,5 +547,5 @@ NcclCollectives::InitializeTopology(const Topology& topology) {
 
 }  // namespace xla::gpu
 
-XLA_COLLECTIVES_REGISTER("CUDA", "nccl", 1,
+XLA_COLLECTIVES_REGISTER("CUDA", "nccl", 100,
                          std::make_unique<xla::gpu::NcclCollectives>());

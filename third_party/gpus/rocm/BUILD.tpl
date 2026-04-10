@@ -151,11 +151,13 @@ cc_library(
         ":build_hermetic": [
             "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib",
             "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib/llvm/lib",
+            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib/rocm_sysdeps/lib",
             "-Lexternal/local_config_rocm/rocm/%{rocm_root}/lib",
         ],
         ":link_only": [
             "-Wl,-rpath-link,external/local_config_rocm/rocm/%{rocm_root}/lib",
             "-Wl,-rpath-link,external/local_config_rocm/rocm/%{rocm_root}/lib/llvm/lib",
+            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib/rocm_sysdeps/lib",
             "-Lexternal/local_config_rocm/rocm/%{rocm_root}/lib",
         ],
         ":multiple_rocm_paths": [
@@ -513,11 +515,9 @@ cc_library(
 
 cc_library(
     name = "hipblaslt",
+    srcs = ["%{rocm_root}/lib/libhipblaslt.so"],
     hdrs = glob(["%{rocm_root}/include/hipblaslt/**"]),
-    data = glob([
-        "%{rocm_root}/lib/hipblaslt/**",
-        "%{rocm_root}/lib/libhipblaslt.so*",
-    ]),
+    data = glob(["%{rocm_root}/lib/hipblaslt/**"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/hipblaslt",

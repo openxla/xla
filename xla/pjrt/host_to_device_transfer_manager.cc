@@ -91,7 +91,7 @@ class CommonAsyncHostToDeviceTransferManager
     absl::InlinedVector<std::unique_ptr<ScopedEvent>, 4> allocation_events;
     absl::InlinedVector<tsl::RCReference<PjRtDeviceEventPromise>, 4>
         definition_events;
-    absl::InlinedVector<Shape, 4> device_shapes;
+    absl::InlinedVector<std::shared_ptr<const Shape>, 4> device_shapes;
     absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>
         undispatched_buffer_refs;
     absl::InlinedVector<size_t, 4> buffer_sizes;
@@ -126,9 +126,11 @@ class CommonAsyncHostToDeviceTransferManager
               device_layouts.has_value() && (*device_layouts)[i].has_value()
                   ? &(*(*device_layouts)[i])
                   : nullptr));
+      auto shared_device_shape =
+          std::make_shared<const Shape>(std::move(device_shape));
       TF_ASSIGN_OR_RETURN(
           int64_t on_device_bytes_count,
-          client->GetOnDeviceBytesCount(memory_space, device_shape));
+          client->GetOnDeviceBytesCount(memory_space, *shared_device_shape));
       TF_ASSIGN_OR_RETURN(
           auto raw_buffer,
           client->AllocateRawBuffer(memory_space, on_device_bytes_count,
@@ -137,7 +139,7 @@ class CommonAsyncHostToDeviceTransferManager
       // We make an event that will become available when the final transfer
       // is complete.
       tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise;
-      tsl::RCReference<PjRtDeviceEvent> definition_event;
+      PjRtDeviceEventRef definition_event;
       if (client->event_tracking_enabled()) {
         TF_ASSIGN_OR_RETURN(
             std::tie(definition_event_promise, definition_event),
@@ -154,9 +156,9 @@ class CommonAsyncHostToDeviceTransferManager
 
       TF_ASSIGN_OR_RETURN(
           auto buffer,
-          client->DefineBuffer(device_shape, memory_space, raw_buffer,
+          client->DefineBuffer(shared_device_shape, memory_space, raw_buffer,
                                {std::move(definition_event)}));
-      device_shapes.push_back(std::move(device_shape));
+      device_shapes.push_back(std::move(shared_device_shape));
       buffers.push_back(std::move(buffer));
       undispatched_buffer_refs.push_back(raw_buffer);
       buffer_sizes.push_back(on_device_bytes_count);
@@ -261,14 +263,14 @@ class CommonAsyncHostToDeviceTransferManager
     TF_ASSIGN_OR_RETURN(
         auto h2d_transfer_event,
         client_->LinearizeInto(
-            literal, device_shapes_[buffer_index],
+            literal, *device_shapes_[buffer_index],
             PjRtClient::HostBufferSemantics::kImmutableUntilTransferCompletes,
             raw_buffer));
     if (client_->event_tracking_enabled()) {
       // Acquire when logging, for the sake of definition_events_.
       absl::MutexLock l(mu_);
       client_->AppendDescriptionToEvent(
-          memory_space_, h2d_transfer_event->async_value(),
+          memory_space_, h2d_transfer_event.async_value(),
           " TransferToDevice TransferLiteralToBuffer",
           {definition_events_[buffer_index]->async_value()});
     }
@@ -303,7 +305,7 @@ class CommonAsyncHostToDeviceTransferManager
       // AppendDescriptionToEvent.
       definition_event->Set(std::move(transfer_event));
     };
-    h2d_transfer_event->AndThen(std::move(finish));
+    h2d_transfer_event.AndThen(std::move(finish));
     std::move(cleanup).Cancel();
 
     return absl::OkStatus();
@@ -382,16 +384,16 @@ class CommonAsyncHostToDeviceTransferManager
                                 ? absl::StrCat(" Op:", debug_info_.value())
                                 : "";
       client_->AppendDescriptionToEvent(
-          memory_space_, h2d_transfer_event->async_value(),
+          memory_space_, h2d_transfer_event.async_value(),
           absl::StrCat(" TransferToDevice TransferRawData offset:", offset,
                        " size:", transfer_size,
                        " last_transfer:", is_last_transfer, op_name),
           {definition_events_[buffer_index]->async_value()});
     }
 
-    h2d_transfer_event->AndThen([this, buffer_index,
-                                 transfer_event = h2d_transfer_event,
-                                 on_done = std::move(on_done)]() mutable {
+    h2d_transfer_event.AndThen([this, buffer_index,
+                                transfer_event = h2d_transfer_event,
+                                on_done = std::move(on_done)]() mutable {
       tsl::RCReference<PjRtDeviceEventPromise> definition_event;
       {
         absl::MutexLock l(mu_);
@@ -411,10 +413,10 @@ class CommonAsyncHostToDeviceTransferManager
         if (definition_event_ref) {
           // If this is not the last completed transfer, then we need to set the
           // error while holding the lock to avoid a race.
-          auto state = transfer_event->async_value()->state();
+          auto state = transfer_event.async_value()->state();
           if (state == tsl::AsyncValue::State::kError) {
             definition_event_ref->SetError(
-                transfer_event->async_value()->GetError());
+                transfer_event.async_value()->GetError());
             definition_event_ref = tsl::RCReference<PjRtDeviceEventPromise>();
           } else {
             CHECK(state == tsl::AsyncValue::State::kConcrete);
@@ -501,7 +503,7 @@ class CommonAsyncHostToDeviceTransferManager
       absl::InlinedVector<std::unique_ptr<ScopedEvent>, 4> allocation_events,
       absl::InlinedVector<tsl::RCReference<PjRtDeviceEventPromise>, 4>
           definition_events,
-      absl::InlinedVector<Shape, 4> device_shapes,
+      absl::InlinedVector<std::shared_ptr<const Shape>, 4> device_shapes,
       AsyncWorkRunner* async_work_runner, CommonPjRtClient* client,
       PjRtMemorySpace* memory_space, std::optional<std::string> debug_info)
       : debug_info_(std::move(debug_info)),
@@ -550,7 +552,7 @@ class CommonAsyncHostToDeviceTransferManager
   absl::InlinedVector<tsl::RCReference<PjRtDeviceEventPromise>, 4>
       definition_events_ ABSL_GUARDED_BY(mu_);
   // Device shapes for all buffers with either compact or custom layout.
-  const absl::InlinedVector<Shape, 4> device_shapes_;
+  const absl::InlinedVector<std::shared_ptr<const Shape>, 4> device_shapes_;
   // Count of buffers that have not yet been fully transferred.
   size_t remaining_buffer_count_ ABSL_GUARDED_BY(mu_);
   // Count of transfers that have been started but have not yet called cleanup.

@@ -384,8 +384,8 @@ TEST_F(IndexingMapTest, KnownEmpty_Composition) {
   EXPECT_THAT(known_empty, MatchIndexingMap("KNOWN EMPTY"));
   EXPECT_THAT(indexing_map * known_empty, MatchIndexingMap("KNOWN EMPTY"));
   EXPECT_THAT(known_empty * indexing_map, MatchIndexingMap("KNOWN EMPTY"));
-  EXPECT_EQ((indexing_map * known_empty).GetAffineMap().getNumResults(), 1);
-  EXPECT_EQ((known_empty * indexing_map).GetAffineMap().getNumResults(), 1);
+  EXPECT_EQ((indexing_map * known_empty).GetSymbolicMap().GetNumResults(), 1);
+  EXPECT_EQ((known_empty * indexing_map).GetSymbolicMap().GetNumResults(), 1);
 }
 
 TEST_F(IndexingMapTest,
@@ -1393,13 +1393,13 @@ TEST_F(IndexingMapTest,
   EXPECT_THAT(
       std::make_tuple(result3, constraint_expr, constraint_interval),
       AnyOf(std::make_tuple(
-                ParseSymbolicExpr("6 * s0 + 3", &mlir_context_, /*num_dims=*/1),
-                ParseSymbolicExpr("(6 * s0 + 3) mod 7", &mlir_context_,
+                ParseSymbolicExpr("s0 * 6 + 3", &mlir_context_, /*num_dims=*/1),
+                ParseSymbolicExpr("(s0 * 6 + 3) mod 7", &mlir_context_,
                                   /*num_dims=*/1),
                 Interval{5, 5}),
             std::make_tuple(
-                ParseSymbolicExpr("7 * s0 + 5", &mlir_context_, /*num_dims=*/1),
-                ParseSymbolicExpr("(7 * s0 + 5) mod 6", &mlir_context_,
+                ParseSymbolicExpr("s0 * 7 + 5", &mlir_context_, /*num_dims=*/1),
+                ParseSymbolicExpr("(s0 * 7 + 5) mod 6", &mlir_context_,
                                   /*num_dims=*/1),
                 Interval{3, 3})));
 }
@@ -1650,6 +1650,74 @@ TEST_F(IndexingMapTest, ConvertRangeVariablesToDimensionsWithRuntimeVars) {
      rt0 in [0, 0],
      rt1 in [0, 1]
   )"));
+}
+
+TEST_F(IndexingMapTest, SymbolicMapGetResultsLvalueIteration) {
+  // Related to b/498518750. This test ensures we can safely iterate over its
+  // GetResults(). Before fixing it, the SymbolicMap temporary was destroyed,
+  // leading to a use-after-free when accessing the ArrayRef view.
+  IndexingMap indexing_map = Parse(R"(
+    (d0) -> (d0),
+    domain:
+      d0 in [0, 3]
+  )");
+
+  std::vector<SymbolicExpr> results;
+  for (const auto& expr : indexing_map.GetSymbolicMap().GetResults()) {
+    results.push_back(expr);
+  }
+
+  ASSERT_EQ(results.size(), 1);
+}
+
+TEST_F(IndexingMapTest, GetUsedParameters) {
+  auto dim0 = CreateDimExpr(0, &mlir_context_);
+  auto dim1 = CreateDimExpr(1, &mlir_context_);
+  auto sym0 = CreateSymbolExpr(0, /*num_dims=*/2, &mlir_context_);
+  auto sym1 = CreateSymbolExpr(1, /*num_dims=*/2, &mlir_context_);
+  auto const42 = CreateSymbolicConstant(42, &mlir_context_);
+
+  // Test with only dimensions.
+  UsedParameters used_params = GetUsedParameters({dim0, dim1}, /*num_dims=*/2);
+  EXPECT_THAT(used_params.dimension_ids, ElementsAre(0, 1));
+  EXPECT_TRUE(used_params.symbol_ids.empty());
+
+  // Test with only symbols.
+  used_params = GetUsedParameters({sym0, sym1}, /*num_dims=*/2);
+  EXPECT_TRUE(used_params.dimension_ids.empty());
+  EXPECT_THAT(used_params.symbol_ids, ElementsAre(0, 1));
+
+  // Test with both dimensions and symbols.
+  used_params = GetUsedParameters({dim0 + sym0, dim1 * sym1}, /*num_dims=*/2);
+  EXPECT_THAT(used_params.dimension_ids, ElementsAre(0, 1));
+  EXPECT_THAT(used_params.symbol_ids, ElementsAre(0, 1));
+
+  // Test with constants and operations.
+  used_params =
+      GetUsedParameters({dim0 * 2 + const42, sym1 - 10}, /*num_dims=*/2);
+  EXPECT_THAT(used_params.dimension_ids, ElementsAre(0));
+  EXPECT_THAT(used_params.symbol_ids, ElementsAre(1));
+
+  // Test with multiple expressions.
+  used_params = GetUsedParameters({dim0, sym0, dim1 + sym1}, /*num_dims=*/2);
+  EXPECT_THAT(used_params.dimension_ids, ElementsAre(0, 1));
+  EXPECT_THAT(used_params.symbol_ids, ElementsAre(0, 1));
+
+  // Test with expressions not using any dims or symbols.
+  used_params = GetUsedParameters({const42, const42 + const42}, /*num_dims=*/2);
+  EXPECT_TRUE(used_params.dimension_ids.empty());
+  EXPECT_TRUE(used_params.symbol_ids.empty());
+
+  // Test with duplicate variables.
+  used_params = GetUsedParameters({dim0, dim0, sym1, sym1}, /*num_dims=*/2);
+  EXPECT_THAT(used_params.dimension_ids, ElementsAre(0));
+  EXPECT_THAT(used_params.symbol_ids, ElementsAre(1));
+
+  // Test with mixed types.
+  used_params = GetUsedParameters({dim0 * sym0 + const42, dim1 % 3},
+                                  /*num_dims=*/2);
+  EXPECT_THAT(used_params.dimension_ids, ElementsAre(0, 1));
+  EXPECT_THAT(used_params.symbol_ids, ElementsAre(0));
 }
 
 }  // namespace

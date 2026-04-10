@@ -21,10 +21,12 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
+#include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
+#include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/recv_thunk.h"
 #include "xla/backends/gpu/runtime/send_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -124,21 +126,22 @@ ENTRY computation {
                                     /*destination_memory_space=*/0};
 
   // ThunkSequence Creation
-  std::shared_ptr<CollectiveThunk::AsyncEvents> async_events =
-      std::make_shared<CollectiveThunk::AsyncEvents>();
-
   auto send_thunk = std::make_unique<SendThunk>(Thunk::ThunkInfo{}, send_instr,
                                                 /*replica_count=*/2,
                                                 /*partition_count=*/1, buffer);
 
-  send_thunk->set_async_events(async_events);
+  ThunkSequence send_sequence;
+  send_sequence.push_back(std::move(send_thunk));
 
-  auto send_done_thunk = std::make_unique<CollectiveDoneThunk>(
-      Kind::kSendDone, Thunk::ThunkInfo{}, async_events);
+  auto async_start = std::make_unique<AsyncStartThunk>(
+      Thunk::ThunkInfo{}, CommunicationStreamId(0), std::move(send_sequence));
+
+  auto async_done = std::make_unique<AsyncDoneThunk>(
+      Thunk::ThunkInfo{}, async_start->async_execution());
 
   ThunkSequence thunk_sequence;
-  thunk_sequence.push_back(std::move(send_thunk));
-  thunk_sequence.push_back(std::move(send_done_thunk));
+  thunk_sequence.push_back(std::move(async_start));
+  thunk_sequence.push_back(std::move(async_done));
 
   // Convert to Commands and Verification
   ConvertToCommandsOptions conv_options;
@@ -148,8 +151,9 @@ ENTRY computation {
   TF_ASSERT_OK_AND_ASSIGN(CommandExecutor cb_cmd_executor,
                           ConvertToCommands(thunk_sequence, conv_options));
 
-  // Check that we have two commands: start and done.
-  EXPECT_EQ(cb_cmd_executor.size(), 2);
+  // AsyncStart inlines its nested send thunk as a command, and AsyncDone
+  // with no control predecessors is a no-op, so we get 1 command.
+  EXPECT_EQ(cb_cmd_executor.size(), 1);
 }
 
 // Test case to verify that Recv HLO instruction is correctly
@@ -216,21 +220,22 @@ ENTRY computation {
                                     /*destination_memory_space=*/0};
 
   // ThunkSequence Creation
-  std::shared_ptr<CollectiveThunk::AsyncEvents> async_events =
-      std::make_shared<CollectiveThunk::AsyncEvents>();
-
   auto recv_thunk = std::make_unique<RecvThunk>(Thunk::ThunkInfo{}, recv_instr,
                                                 /*replica_count=*/2,
                                                 /*partition_count=*/1, buffer);
 
-  recv_thunk->set_async_events(async_events);
+  ThunkSequence recv_sequence;
+  recv_sequence.push_back(std::move(recv_thunk));
 
-  auto recv_done_thunk = std::make_unique<CollectiveDoneThunk>(
-      Kind::kRecvDone, Thunk::ThunkInfo{}, async_events);
+  auto async_start = std::make_unique<AsyncStartThunk>(
+      Thunk::ThunkInfo{}, CommunicationStreamId(0), std::move(recv_sequence));
+
+  auto async_done = std::make_unique<AsyncDoneThunk>(
+      Thunk::ThunkInfo{}, async_start->async_execution());
 
   ThunkSequence thunk_sequence;
-  thunk_sequence.push_back(std::move(recv_thunk));
-  thunk_sequence.push_back(std::move(recv_done_thunk));
+  thunk_sequence.push_back(std::move(async_start));
+  thunk_sequence.push_back(std::move(async_done));
 
   // Convert to Commands and Verification
   ConvertToCommandsOptions conv_options;
@@ -240,8 +245,9 @@ ENTRY computation {
   TF_ASSERT_OK_AND_ASSIGN(CommandExecutor cb_cmd_executor,
                           ConvertToCommands(thunk_sequence, conv_options));
 
-  // Check that we have two commands: start and done.
-  EXPECT_EQ(cb_cmd_executor.size(), 2);
+  // AsyncStart inlines its nested recv thunk as a command, and AsyncDone
+  // with no control predecessors is a no-op, so we get 1 command.
+  EXPECT_EQ(cb_cmd_executor.size(), 1);
 }
 
 TEST_F(GpuSendRecvTest, TestCommandBufferThunkContainsSendRecv) {
@@ -309,8 +315,8 @@ ENTRY computation {
   }
   // Verify that the inner Thunks match the expected sequence from the HLO
   EXPECT_THAT(kinds, UnorderedElementsAre(Kind::kReplicaId, Kind::kKernel,
-                                          Kind::kSend, Kind::kSendDone,
-                                          Kind::kRecv, Kind::kRecvDone));
+                                          Kind::kAsyncStart, Kind::kAsyncDone,
+                                          Kind::kAsyncStart, Kind::kAsyncDone));
 }
 
 }  // namespace

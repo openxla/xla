@@ -155,6 +155,10 @@ TEST_F(AlgorithmTest, Algorithm3xBF16) {
 }
 
 TEST_F(AlgorithmTest, Algorithm6xBF16) {
+  if (GpuComputeComp().IsRocm() &&
+      GpuComputeComp().rocm_compute_capability()->gfx9_mi200()) {
+    GTEST_SKIP() << "ALG_DOT_BF16_BF16_F32_X6 not supported on MI200.";
+  }
   constexpr absl::string_view kHloText = R"(
     HloModule Algorithm6xBF16
 
@@ -873,6 +877,48 @@ TEST_F(TritonAlgorithmTest, Dot_BF16_X6_WithConst) {
       kHloText, ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
 }
 
+TEST_F(TritonAlgorithmTest, UnsetAlgorithmToBF16) {
+  constexpr absl::string_view kHloText = R"hlo(
+    HloModule UnsetAlgorithmToBF16
+
+    triton_fusion_dot {
+      p0 = f32[256,256] parameter(0)
+      p1 = f32[256,256] parameter(1)
+      ROOT dot = f32[256,256] dot(p0, p1),
+          lhs_contracting_dims={0},
+          rhs_contracting_dims={1}
+    }
+
+    ENTRY entry_computation {
+      p0 = f32[256,256] parameter(0)
+      p1 = f32[256,256] parameter(1)
+      ROOT root = f32[256,256] fusion(p0, p1),
+        kind=kCustom,
+        calls=triton_fusion_dot,
+        backend_config={
+          "fusion_backend_config":{
+            "kind":"__triton_nested_gemm_fusion",
+            "block_level_fusion_config":{
+              "output_tiles": [{"sizes": ["16","256","16"]}],
+              "num_stages":4,
+              "num_warps":4,
+              "num_ctas":1
+            }},
+          "force_earliest_schedule":false
+        }
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_default_to_alg_dot_bf16_bf16_f32(true);
+  EXPECT_OK(
+      CreateTritonIrAndFileCheckForDot(module.get(), "triton_fusion_dot", R"(
+      CHECK: tt.dot{{.*}}tensor<256x16xbf16> * tensor<16x16xbf16> -> tensor<256x16xf32>
+    )"))
+      << "Arguments should be converted to BF16.";
+}
+
 using PC = PrecisionConfig;
 using ::testing::TestParamInfo;
 using ::testing::WithParamInterface;
@@ -1055,6 +1101,18 @@ class NumericTestsForBlas : public BlasAlgorithmTest,
   )";
 
  protected:
+  void SetUp() override {
+    PC::Algorithm algorithm = GetParam();
+    if (GpuComputeComp().IsRocm() &&
+        GpuComputeComp().rocm_compute_capability()->gfx9_mi200() &&
+        (algorithm == PC::ALG_DOT_BF16_BF16_F32_X3 ||
+         algorithm == PC::ALG_DOT_BF16_BF16_F32_X6 ||
+         algorithm == PC::ALG_DOT_BF16_BF16_F32_X9)) {
+      GTEST_SKIP() << AlgorithmToString(GetParam())
+                   << " not supported on MI200.";
+    }
+  }
+
   std::string algorithm_;
 };
 
@@ -1551,10 +1609,15 @@ TEST_P(TritonAndBlasSupportForDifferentTensorSizes,
     case PC::ALG_DOT_BF16_BF16_F32_X6:
     case PC::ALG_DOT_BF16_BF16_F32_X9:
       if (GpuComputeComp().IsRocm()) {
-        // X6 and X9 algorithms on ROCm marked as not supported
-        // because they often require too much shared memory.
-        EXPECT_FALSE(result_or_status.value())
-            << "algorithms not supported on ROCm";
+        if (result_or_status.status().ok()) {
+          // X6 and X9 algorithms on ROCm marked as not supported
+          // because they often require too much shared memory.
+          EXPECT_FALSE(result_or_status.value())
+              << "algorithms not supported on ROCm";
+        } else if (GpuComputeComp().rocm_compute_capability()->gfx9_mi200()) {
+          EXPECT_EQ(result_or_status.status().code(),
+                    absl::StatusCode::kInternal);
+        }
       } else {
         ASSERT_TRUE(result_or_status.status().ok())
             << "failed to compile " << algorithm_;

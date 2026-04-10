@@ -1,13 +1,15 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
-load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
+load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm_is_configured")
 
 # Libraries for performance modeling of HLO.
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
+load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -435,6 +437,7 @@ cc_library(
         ":gpu_indexing_performance_model",
         ":gpu_performance_model",
         ":gpu_performance_model_base",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:hlo_cost_analysis",
@@ -553,6 +556,7 @@ cc_library(
         ":block_level_parameters",
         ":coalescing_analysis",
         ":fusion_analysis_cache",
+        ":gpu_dot_fusion_cost_model",
         ":gpu_hlo_cost_analysis",
         ":gpu_performance_model_base",
         ":hlo_op_profiles",
@@ -575,6 +579,7 @@ cc_library(
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:launch_dimensions",
         "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:function_ref",
@@ -747,10 +752,11 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/codegen:fusion_emitter",
         "//xla/backends/gpu/codegen:fusions",
-        "//xla/codegen/tiling:affine_map_evaluator",
+        "//xla/backends/gpu/codegen/emitters:mlir_kernel_emitter",
         "//xla/codegen/tiling:tiled_hlo_instruction",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/analysis:interval",
+        "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:gpu_fusible",
         "//xla/service/gpu:hlo_fusion_analysis",
@@ -819,6 +825,7 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/stream_executor/rocm:rocm_compute_capability",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
@@ -843,11 +850,105 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "hlo_op_profiler_lib",
-    srcs = ["hlo_op_profiler.cc"],
+    name = "hlo_op_profiler_cuda",
+    srcs = [
+        "hlo_op_profiler.cc",
+        "hlo_op_profiler_cuda.cc",
+    ],
+    hdrs = ["hlo_op_profiler.h"],
+    compatible_with = [],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "manual",
+    ],
+    deps = [
+        ":hlo_op_profile_proto_cc",
+        "//xla:debug_options_flags",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/profiler/gpu:cupti_buffer_events",
+        "//xla/backends/profiler/gpu:cupti_collector",
+        "//xla/backends/profiler/gpu:cupti_tracer",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:gpu_plugin",
+        "//xla/service:hlo_module_config",
+        "//xla/service:hlo_runner_interface",
+        "//xla/service:hlo_verifier",
+        "//xla/service:interpreter_plugin",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:test_utils",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:die_if_null",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "hlo_op_profiler_rocm",
+    srcs = [
+        "hlo_op_profiler.cc",
+        "hlo_op_profiler_rocm.cc",
+    ],
+    hdrs = ["hlo_op_profiler.h"],
+    compatible_with = [],
+    tags = [
+        "gpu",
+        "manual",
+        "rocm-only",
+    ],
+    deps = [
+        ":hlo_op_profile_proto_cc",
+        "//xla:debug_options_flags",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/profiler/gpu:rocm_collector",
+        "//xla/backends/profiler/gpu:rocm_tracer",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:gpu_plugin",
+        "//xla/service:hlo_module_config",
+        "//xla/service:hlo_runner_interface",
+        "//xla/service:hlo_verifier",
+        "//xla/service:interpreter_plugin",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:test_utils",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:die_if_null",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "hlo_op_profiler_stub",
+    srcs = [
+        "hlo_op_profiler.cc",
+        "hlo_op_profiler_stub.cc",
+    ],
     hdrs = ["hlo_op_profiler.h"],
     compatible_with = get_compatible_with_portable(),
-    local_defines = if_cuda(["GOOGLE_CUDA"]),
+    tags = ["manual"],
     deps = [
         ":hlo_op_profile_proto_cc",
         "//xla:debug_options_flags",
@@ -856,7 +957,6 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/service:executable",
         "//xla/service:gpu_plugin",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_runner_interface",
@@ -875,14 +975,33 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
-    ] + if_cuda([
-        # keep sorted
-        "//xla/backends/profiler/gpu:cupti_buffer_events",
-        "//xla/backends/profiler/gpu:cupti_collector",
-        "//xla/backends/profiler/gpu:cupti_tracer",
-    ]),
+    ],
+)
+
+cc_library(
+    name = "hlo_op_profiler_lib",
+    srcs = [],
+    hdrs = ["hlo_op_profiler.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        ":hlo_op_profile_proto_cc",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_runner_interface",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+    ] + if_cuda_or_rocm_is_configured(
+        [],
+        [":hlo_op_profiler_stub"],
+    ) + if_rocm_is_configured(
+        [":hlo_op_profiler_rocm"],
+    ) + if_cuda_is_configured(
+        [":hlo_op_profiler_cuda"],
+    ),
 )
 
 xla_test(
@@ -944,7 +1063,6 @@ xla_test(
     # TODO(b/372714955): Fix the memory leak!
     args = if_google(["--heap_check="]),
     backends = ["gpu"],
-    local_defines = if_cuda(["GOOGLE_CUDA"]),
     deps = [
         ":hlo_op_profiler_lib",
         "//xla:xla_data_proto_cc",

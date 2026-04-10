@@ -53,6 +53,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/codegen/llvm/llvm_ir_compiler.h"
+#include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
@@ -66,6 +67,7 @@ limitations under the License.
 #include "xla/service/gpu/execution_stream_assignment.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable.h"
+#include "xla/service/gpu/gpu_hlo_ordering.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/metrics.h"
@@ -105,7 +107,17 @@ CompileModuleResults InitializeResults(const HloModule* hlo_module) {
   results.module_name = hlo_module->name();
   results.use_original_allocations = true;
   results.execution_stream_assignment =
-      std::make_unique<ExecutionStreamAssignment>(hlo_module);
+      std::make_unique<ExecutionStreamAssignment>(
+          hlo_module,
+          ExecutionStreamAssignment::Options{
+              kDefaultNumComputeStreams,
+              /*number_of_collective_execution_streams=*/
+              hlo_module->config()
+                      .debug_options()
+                      .xla_gpu_experimental_enable_collective_multi_streaming()
+                  ? kDefaultNumCommunicationStreams
+                  : 1,
+          });
   return results;
 }
 
@@ -192,11 +204,17 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
   opts.colorer = CreateColorer(options);
   opts.temp_buffer_color = color;
   std::unique_ptr<HloOrdering> hlo_ordering;
-  if (options.xla_gpu_command_buffer_scheduling_mode() ==
-      DebugOptions::CONCURRENT) {
-    hlo_ordering = std::make_unique<DependencyHloOrdering>(module);
-  } else {
-    hlo_ordering = std::make_unique<SequentialHloOrdering>(module->schedule());
+  switch (options.xla_gpu_command_buffer_scheduling_mode()) {
+    case DebugOptions::CONCURRENT:
+      hlo_ordering = std::make_unique<DependencyHloOrdering>(module);
+      break;
+    case DebugOptions::CONCURRENT_REGIONS:
+      hlo_ordering =
+          std::make_unique<ConcurrentRegionsHloOrdering>(module->schedule());
+      break;
+    default:
+      hlo_ordering =
+          std::make_unique<SequentialHloOrdering>(module->schedule());
   }
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<BufferAssignment> buffer_assignment,
@@ -220,7 +238,7 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     BufferValue::SizeFunction buffer_size_bytes_function,
     llvm_ir::LLVMCommandLineOptionsReleasableLock& llvm_options_lock,
     LlvmIrCompiler compiler,
-    const xla::cpu::TargetMachineOptions* cpu_target_machine_options) {
+    xla::cpu::TargetMachineOptions cpu_target_machine_options) {
   tsl::profiler::TraceMe traceme("CompileModuleToLlvmIr");
   const bool use_cache = UseCache(hlo_module->config().debug_options());
 
@@ -248,7 +266,7 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
       results.execution_stream_assignment.get(), platform_id->ToName(),
       device_desc, mlir_context.get(), llvm_context, /*emit_kernels=*/true,
       llvm::Triple(target_triple), data_layout, std::move(compiler),
-      cpu_target_machine_options);
+      std::move(cpu_target_machine_options));
   ThunkEmitter thunk_emitter(&ir_emitter_context, &llvm_options_lock);
 
   const DebugOptions& options = hlo_module->config().debug_options();

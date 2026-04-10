@@ -684,22 +684,29 @@ bool AxesOverlap(absl::Span<const AxisRef> axes1,
 }  // namespace
 
 std::optional<HloSharding> PartialReplicateReshardCompatibleSharding(
-    const HloSharding& partial_sharding, const HloSharding& target_sharding) {
-  if (!(partial_sharding.UseNamedShardingLeaf()
-            ? partial_sharding.HasPartialReplication()
-            : partial_sharding.ReplicateOnLastTileDim())) {
+    const HloSharding& raw_partial_sharding,
+    const HloSharding& raw_target_sharding) {
+  if (!raw_partial_sharding.HasPartialReplication()) {
     return std::nullopt;
   }
-  if (partial_sharding.num_devices() != target_sharding.num_devices()) {
+  if (raw_partial_sharding.num_devices() != raw_target_sharding.num_devices()) {
     return std::nullopt;
   }
-  const int64_t rank = partial_sharding.TiledDataRank();
-  if (rank != target_sharding.TiledDataRank()) {
+  const int64_t rank = raw_partial_sharding.TiledDataRank();
+  if (rank != raw_target_sharding.TiledDataRank()) {
     return std::nullopt;
   }
+  bool same_sharding_type = raw_partial_sharding.UseNamedShardingLeaf() ==
+                            raw_target_sharding.UseNamedShardingLeaf();
 
-  CHECK_EQ(partial_sharding.UseNamedShardingLeaf(),
-           target_sharding.UseNamedShardingLeaf());
+  const HloSharding& target_sharding =
+      !same_sharding_type && raw_target_sharding.UseNamedShardingLeaf()
+          ? HloSharding::V3ToV2Sharding(raw_target_sharding.named_sharding())
+          : raw_target_sharding;
+  const HloSharding& partial_sharding =
+      !same_sharding_type && raw_partial_sharding.UseNamedShardingLeaf()
+          ? HloSharding::V3ToV2Sharding(raw_partial_sharding.named_sharding())
+          : raw_partial_sharding;
 
   std::vector<int64_t> expand_dims_shards;
   expand_dims_shards.reserve(rank);
@@ -2663,8 +2670,20 @@ GatherScatterOperandsShardedAcrossParallelDims(
   if (indices_parallel_dims.size() != operand_parallel_dims.size()) {
     return std::nullopt;
   }
-  auto new_index_shard = indices.sharding();
-  auto new_operand_shard = operand.sharding();
+  const HloSharding& idx_sharding = indices.sharding();
+  const HloSharding& op_sharding = operand.sharding();
+
+  // AlignShardingOnDims is called for these shardings later on where conversion
+  // happens anyway.
+  HloSharding new_index_shard =
+      idx_sharding.UseNamedShardingLeaf()
+          ? HloSharding::V3ToV2Sharding(idx_sharding.named_sharding())
+          : idx_sharding;
+  HloSharding new_operand_shard =
+      op_sharding.UseNamedShardingLeaf()
+          ? HloSharding::V3ToV2Sharding(op_sharding.named_sharding())
+          : op_sharding;
+
   int idx_parallel_tiles_num = new_index_shard.NumTiles(indices_parallel_dims);
   int op_parallel_tiles_num = new_operand_shard.NumTiles(operand_parallel_dims);
   if (idx_parallel_tiles_num == 1 && op_parallel_tiles_num == 1) {

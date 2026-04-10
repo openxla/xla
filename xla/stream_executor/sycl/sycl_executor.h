@@ -41,6 +41,9 @@ class SyclExecutor : public gpu::GpuExecutor {
   // Returns OK on success, error status on failure.
   absl::Status Init() override;
 
+  // Blas support implementation for SYCL.
+  blas::BlasSupport* AsBlas() override;
+
   // Returns the DNN support implementation for SYCL.
   dnn::DnnSupport* AsDnn() override;
 
@@ -228,6 +231,11 @@ class SyclExecutor : public gpu::GpuExecutor {
   // Returns true if the module was unloaded, false otherwise.
   bool UnloadGpuBinary(ModuleHandle module_handle)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);
+
+  // Mutex for blas, dnn, and fft.
+  absl::Mutex mu_;
+  std::unique_ptr<blas::BlasSupport> blas_ ABSL_GUARDED_BY(mu_);
+  absl::Status InitBlas();
 };
 
 }  // namespace stream_executor::sycl

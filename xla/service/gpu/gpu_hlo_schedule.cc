@@ -90,6 +90,7 @@ namespace {
 
 bool ShouldScheduleAsEarlyAsPossible(const HloInstruction& instr) {
   switch (instr.opcode()) {
+    case HloOpcode::kAllGatherStart:
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kCollectivePermuteStart:
       return !IsGPUSyncCollective(instr);
@@ -114,6 +115,7 @@ bool ShouldScheduleSuccessor(const HloInstruction& sussessor,
 
 bool ShouldScheduleAsLateAsPossible(const HloInstruction& instr) {
   switch (instr.opcode()) {
+    case HloOpcode::kAllGatherDone:
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kCollectivePermuteDone:
       return ShouldScheduleAsEarlyAsPossible(*instr.operand(0));
@@ -576,7 +578,8 @@ absl::Status RunLatencyHidingSchedulerPasses(
 
   SchedulerConfig config = MakeGPUSchedulerConfig(
       memory_limit,
-      options.xla_gpu_experimental_parallel_collective_overlap_limit());
+      options.xla_gpu_experimental_parallel_collective_overlap_limit(),
+      options.xla_gpu_experimental_parallel_async_compute_limit());
 
   auto shape_size_in_bytes = ShapeSizeBytesFunction(pointer_size);
 
@@ -883,7 +886,8 @@ uint64_t GetSchedulerMemoryLimit(const HloModule& module,
 }
 
 SchedulerConfig MakeGPUSchedulerConfig(uint64_t memory_limit,
-                                       int64_t overlap_limit) {
+                                       int64_t overlap_limit,
+                                       int64_t async_compute_limit) {
   SchedulerConfig config;
   config.all_reduce_overlap_limit = 1;
   config.collective_broadcast_overlap_limit = 1;
@@ -893,6 +897,7 @@ SchedulerConfig MakeGPUSchedulerConfig(uint64_t memory_limit,
   config.schedule_send_recvs = true;
   config.memory_limit = memory_limit;
   config.parallel_collective_overlap_limit = overlap_limit;
+  config.parallel_async_compute_limit = async_compute_limit;
 
   CHECK(config.collective_broadcast_overlap_limit <=
         config.parallel_collective_overlap_limit);

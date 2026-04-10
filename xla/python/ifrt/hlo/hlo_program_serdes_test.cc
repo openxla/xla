@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -153,7 +154,10 @@ module {
 
 INSTANTIATE_TEST_SUITE_P(
     SerDesVersion, HloProgramSerDesTest,
-    testing::ValuesIn(test_util::Week4OldOrLaterSerDesVersions()));
+    testing::ValuesIn(test_util::Week4OldOrLaterSerDesVersions()),
+    [](const testing::TestParamInfo<SerDesVersion>& info) {
+      return absl::StrCat(info.param.version_number().value());
+    });
 
 }  // namespace
 }  // namespace ifrt
