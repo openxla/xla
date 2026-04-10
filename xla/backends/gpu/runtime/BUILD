@@ -1078,18 +1078,33 @@ xla_cc_test(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "device_to_device_copy_thunk_test",
     srcs = ["device_to_device_copy_thunk_test.cc"],
+    backends = ["gpu"],
     deps = [
+        ":command",
+        ":command_state",
         ":device_to_device_copy_thunk",
         ":thunk",
         ":thunk_proto_cc",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/service:buffer_assignment",
+        "//xla/service:platform_util",
+        "//xla/service:executable",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/stream_executor:command_buffer",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_address_allocator",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util/proto:parse_text_proto",
         "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
 )
