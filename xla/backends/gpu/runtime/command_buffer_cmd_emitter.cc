@@ -126,11 +126,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const Memset32BitValueThunk& thunk) {
-  return std::make_unique<Memset32Cmd>(thunk.destination(), thunk.value());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const WhileThunk& thunk, const ConvertToCommandsOptions& options) {
   VLOG(1) << "WhileThunk: " << thunk.profile_annotation();
   TF_ASSIGN_OR_RETURN(
@@ -331,8 +326,6 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return append(Convert<GemmThunk>(thunk));
     case Thunk::Kind::kCublasLtMatmul:
       return append(Convert<CublasLtMatmulThunk>(thunk));
-    case Thunk::Kind::kMemset32BitValue:
-      return append(Convert<Memset32BitValueThunk>(thunk));
     case Thunk::Kind::kMemzero:
       return append(Convert<MemzeroThunk>(thunk));
     case Thunk::Kind::kAllGather:
@@ -354,6 +347,9 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kSend:
       return append(Convert<SendThunk>(thunk));
     // These thunks implement Command directly; append borrowed pointers.
+    case Thunk::Kind::kMemset32BitValue:
+      cmd_sequence.Append(static_cast<Memset32BitValueThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kPartitionId:
       cmd_sequence.Append(static_cast<PartitionIdThunk*>(&thunk));
       return absl::OkStatus();

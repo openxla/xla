@@ -253,26 +253,6 @@ class MemzeroCmd : public Command {
 };
 
 //===----------------------------------------------------------------------===//
-// Memset32Cmd
-//===----------------------------------------------------------------------===//
-
-class Memset32Cmd : public Command {
- public:
-  Memset32Cmd(BufferAllocation::Slice dst, uint32_t bit_pattern);
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override;
-
- private:
-  BufferAllocation::Slice dst_;
-  uint32_t bit_pattern_;
-};
-
-//===----------------------------------------------------------------------===//
 // ChildCmd
 //===----------------------------------------------------------------------===//
 

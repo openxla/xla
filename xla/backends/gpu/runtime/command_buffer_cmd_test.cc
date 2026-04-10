@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
+#include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
@@ -644,8 +645,10 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
   BufferAllocation::Slice slice_c(&alloc_c, 0, byte_length);
 
   // Executor A: a = 1 (memset)
+  Memset32BitValueThunk memset_a_thunk(Thunk::ThunkInfo(), /*value=*/1,
+                                       slice_a);
   CommandSequence seq_a;
-  seq_a.Emplace<Memset32Cmd>(slice_a, /*bit_pattern=*/1);
+  seq_a.Append(&memset_a_thunk);
   TF_ASSERT_OK_AND_ASSIGN(CommandExecutor exec_a,
                           CommandExecutor::Create(std::move(seq_a), serialize));
 
@@ -766,11 +769,15 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
       CommandExecutor::Create(std::move(inner_seq), serialize));
 
   // Middle child wraps inner.
+  Memset32BitValueThunk memset_b3_thunk(Thunk::ThunkInfo(), /*value=*/3,
+                                        slice_b);
+  Memset32BitValueThunk memset_b5_thunk(Thunk::ThunkInfo(), /*value=*/5,
+                                        slice_b);
   CommandSequence middle_seq;
   middle_seq.Emplace<ChildCmd>(std::move(inner_executor));
   // Add a couple of extra commands that don't affect `c`.
-  middle_seq.Emplace<Memset32Cmd>(slice_b, /*bit_pattern=*/3);
-  middle_seq.Emplace<Memset32Cmd>(slice_b, /*bit_pattern=*/5);
+  middle_seq.Append(&memset_b3_thunk);
+  middle_seq.Append(&memset_b5_thunk);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor middle_executor,
       CommandExecutor::Create(std::move(middle_seq), serialize));
@@ -819,9 +826,10 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
   //   Node 2: EmptyCmd (EMPTY)    -> depends on Node 1
   //
   // Middle graph (graph_2, nested in ChildCmd):
-  //   Node 0: ChildCmd (graph_3)              -> depends on nothing
-  //   Node 1: Memset32Cmd (MEMSET, value=3)   -> depends on Node 0
-  //   Node 2: MemcpyDeviceToDeviceCmd (MEMCPY b->b) -> depends on Node 1
+  //   Node 0: ChildCmd (graph_3)                           -> depends on
+  //   nothing Node 1: Memset32BitValueThunk (MEMSET, value=3)      -> depends
+  //   on Node 0 Node 2: Memset32BitValueThunk (MEMSET, value=5)      -> depends
+  //   on Node 1
   //
   // Inner graph (graph_3, nested in ChildCmd):
   //   Node 0: MemcpyDeviceToDeviceCmd (MEMCPY a->c) -> no dependencies
@@ -871,8 +879,8 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
 
     auto middle_commands = middle_gpu_buffer->commands();
     ASSERT_EQ(middle_commands.size(), 3)
-        << "Middle level should have 3 commands: ChildCmd, Memset32Cmd, "
-           "MemcpyDeviceToDeviceCmd";
+        << "Middle level should have 3 commands: ChildCmd, "
+           "Memset32BitValueThunk (value=3), Memset32BitValueThunk (value=5)";
 
     // First command: GpuChildCommand (wrapping inner graph)
     auto* middle_child_cmd =
@@ -883,20 +891,21 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
     ASSERT_NE(middle_child_cmd->command_buffer, nullptr)
         << "Middle GpuChildCommand should have a nested command buffer";
 
-    // Second command: GpuCommand (Memset32Cmd)
+    // Second command: GpuCommand (Memset32BitValueThunk, value=3)
     auto* middle_memset_cmd =
         dynamic_cast<const se::gpu::GpuCommandBuffer::GpuCommand*>(
             middle_commands[1].get());
     ASSERT_NE(middle_memset_cmd, nullptr)
-        << "Second middle command should be GpuCommand (Memset32Cmd)";
+        << "Second middle command should be GpuCommand "
+           "(Memset32BitValueThunk, value=3)";
 
-    // Third command: GpuCommand (MemcpyDeviceToDeviceCmd b->b)
-    auto* middle_memcpy_cmd =
+    // Third command: GpuCommand (Memset32BitValueThunk, value=5)
+    auto* middle_memset5_cmd =
         dynamic_cast<const se::gpu::GpuCommandBuffer::GpuCommand*>(
             middle_commands[2].get());
-    ASSERT_NE(middle_memcpy_cmd, nullptr)
+    ASSERT_NE(middle_memset5_cmd, nullptr)
         << "Third middle command should be GpuCommand "
-           "(MemcpyDeviceToDeviceCmd)";
+           "(Memset32BitValueThunk, value=5)";
 
     // Verify inner level (inside middle ChildCmd): 1 command
     auto* inner_gpu_buffer = dynamic_cast<se::gpu::GpuCommandBuffer*>(
