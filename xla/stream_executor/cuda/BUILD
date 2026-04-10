@@ -1840,13 +1840,15 @@ cc_library(
         ":cudnn_plugin",
         ":cufft_plugin",
         ":make_batch_pointers_kernel_cuda",
-        ":ragged_all_to_all_kernel_cuda",
         ":redzone_allocator_kernel_cuda",
         ":repeat_buffer_kernel_cuda",
         ":topk_kernel_cuda",
         "//xla/tsl/cuda:cusparse",
         "//xla/tsl/cuda:tensorrt_rpath",
-    ] + if_nccl([":multi_gpu_barrier_kernel_cuda"]),
+    ] + if_nccl([
+        ":multi_gpu_barrier_kernel_cuda",
+        ":ragged_all_to_all_kernel_cuda",
+    ]),
     alwayslink = 1,
 )
 
@@ -2868,9 +2870,11 @@ cuda_library(
     ],
     deps = [
         ":cuda_platform_id",
+        "//xla/core/collectives:symmetric_memory",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/gpu:ragged_all_to_all_kernel",
+        "//xla/tsl/cuda:nccl",
         "@com_google_absl//absl/base",
     ],
     alwayslink = 1,

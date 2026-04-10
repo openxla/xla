@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
@@ -224,22 +225,33 @@ absl::StatusOr<SmallVector<Value>> EmitterContext::EvaluateTilingParameters(
   const auto& dim_ids = used_parameters.dimension_ids;
   const auto& symbol_ids = used_parameters.symbol_ids;
 
+  int64_t symbol_count = 0;
+  SmallVector<Value> symbol_values;
+
   // Remap parallel dimensions.
   SmallVector<SymbolicExpr> dim_replacements;
   if (!dim_ids.empty()) {
     dim_replacements.resize(dim_ids.back() + 1);
     for (int64_t dim : dim_ids) {
-      CHECK_EQ(tiling_space.dimensions()[dim].type,
-               ge::TilingSpace::DimensionSemantics::kParallel)
-          << "Sequential dimensions are not supported yet.";
-      dim_replacements[dim] = schedule_.GetSymbolicMap().GetResult(dim);
+      switch (tiling_space.dimensions()[dim].type) {
+        case ge::TilingSpace::DimensionSemantics::kParallel: {
+          dim_replacements[dim] = schedule_.GetSymbolicMap().GetResult(dim);
+          break;
+        }
+        case ge::TilingSpace::DimensionSemantics::kSequential: {
+          dim_replacements[dim] =
+              CreateSymbolExpr(symbol_count++, /*num_dims=*/1, mlir_context);
+          symbol_values.push_back(GetSequentialDimValue(dim));
+          break;
+        }
+        default:
+          return absl::InvalidArgumentError("Unsupported dimension semantics.");
+      }
     }
   }
 
   // Remap symbols that correspond to runtime variables.
-  int64_t symbol_count = 0;
   SmallVector<SymbolicExpr> symbol_replacements;
-  SmallVector<Value> symbol_values;
   if (!symbol_ids.empty()) {
     symbol_replacements.resize(symbol_ids.back() + 1);
     const auto& rt_symbol_to_tiled_hlo =
@@ -249,8 +261,8 @@ absl::StatusOr<SmallVector<Value>> EmitterContext::EvaluateTilingParameters(
       TF_RET_CHECK(it != rt_symbol_to_tiled_hlo.end());
       TensorValue tensor_value = TiledHloToTensorValue(*it->second);
       symbol_values.push_back(TensorValueToIndexTypeScalar(b_, tensor_value));
-      symbol_replacements[symbol_id] = CreateSymbolExpr(
-          symbol_count++, tiling_space.num_dimensions(), mlir_context);
+      symbol_replacements[symbol_id] =
+          CreateSymbolExpr(symbol_count++, /*num_dims=*/1, mlir_context);
     }
   }
 
@@ -852,6 +864,87 @@ absl::Status CheckConcatenateOperands(
     }
   }
   return absl::OkStatus();
+}
+
+std::pair<SmallVector<int64_t>, SmallVector<int64_t>> CollapseUnitDims(
+    llvm::ArrayRef<int64_t> shape, llvm::ArrayRef<int64_t> counterpart_shape) {
+  SmallVector<int64_t> shape_without_unit_dims;
+  SmallVector<int64_t> non_unit_dims_indices;
+  for (auto [i, size] : llvm::enumerate(shape)) {
+    if (size != 1 || size != counterpart_shape[i]) {
+      shape_without_unit_dims.push_back(size);
+      non_unit_dims_indices.push_back(i);
+    }
+  }
+  return {std::move(shape_without_unit_dims), std::move(non_unit_dims_indices)};
+}
+
+absl::StatusOr<TensorValue> CanonicalizeDotOperand(
+    mlir::ImplicitLocOpBuilder& b, TensorValue operand,
+    int64_t contracting_dim_idx, DotOperandSide side,
+    TensorValue counterpart_operand) {
+  llvm::ArrayRef<int64_t> shape = operand.getType().getShape();
+  llvm::ArrayRef<int64_t> counterpart_shape =
+      counterpart_operand == nullptr ? shape
+                                     : counterpart_operand.getType().getShape();
+
+  auto [shape_without_unit_dims, non_unit_dims_indices] =
+      CollapseUnitDims(shape, counterpart_shape);
+
+  if (shape_without_unit_dims.size() != 2) {
+    return absl::FailedPreconditionError(
+        "Expected dot operand tile to have exactly two non-unit tile sizes");
+  }
+  if (shape.size() != shape_without_unit_dims.size()) {
+    ASSIGN_OR_RETURN(operand,
+                     EmitTiledReshape(b, shape_without_unit_dims, operand));
+  }
+  int expected_contracting_dim_position = side == DotOperandSide::kLhs ? 1 : 0;
+  bool is_transposed =
+      non_unit_dims_indices[expected_contracting_dim_position] !=
+      contracting_dim_idx;
+
+  if (is_transposed) {
+    SmallVector<int64_t, 2> transposed_shape{shape_without_unit_dims[1],
+                                             shape_without_unit_dims[0]};
+    operand =
+        EmitTiledTranspose(b, transposed_shape, /*dimensions=*/{1, 0}, operand);
+  }
+  return operand;
+}
+
+absl::StatusOr<TensorValue> EmitTiledReshape(mlir::ImplicitLocOpBuilder& b,
+                                             ArrayRef<int64_t> tile_sizes,
+                                             TensorValue input) {
+  mlir::RankedTensorType input_type = input.getType();
+  SmallVector<int64_t> padded_tile_sizes = GetPaddedTileSizes(tile_sizes);
+
+  // At this point we know that neither the input nor the output are 0D tensors.
+  auto output_tensor_type = mlir::RankedTensorType::get(
+      padded_tile_sizes, input_type.getElementType());
+
+  if (input_type.getNumElements() != output_tensor_type.getNumElements()) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Reshape input and output shapes must be the same, got ",
+                     absl::StrJoin(input_type.getShape(), "x"), " -> ",
+                     absl::StrJoin(output_tensor_type.getShape(), "x")));
+  }
+  return mlir::stablehlo::ReshapeOp::create(b, output_tensor_type, input);
+}
+
+TensorValue EmitTiledTranspose(mlir::ImplicitLocOpBuilder& b,
+                               ArrayRef<int64_t> tile_sizes,
+                               SmallVector<int64_t> dimensions,
+                               TensorValue input) {
+  SmallVector<int64_t> padded_tile_sizes = GetPaddedTileSizes(tile_sizes);
+
+  Type input_element_type = input.getType().getElementType();
+  Type output_tensor_type =
+      mlir::RankedTensorType::get(padded_tile_sizes, input_element_type);
+
+  mlir::DenseI64ArrayAttr order = b.getDenseI64ArrayAttr(dimensions);
+  return mlir::stablehlo::TransposeOp::create(b, output_tensor_type, input,
+                                              order);
 }
 
 }  // namespace xla::xtile

@@ -860,6 +860,9 @@ cc_library(
     ] + if_cuda([
         "//xla/service:gpu_plugin",
         "//xla/stream_executor:cuda_platform",
+    ]) + if_rocm([
+        "//xla/service:gpu_plugin",
+        "//xla/stream_executor:rocm_platform",
     ]),
     alwayslink = True,
 )

@@ -611,6 +611,14 @@ TEST_F(LiteralUtilTest, LogicalInequalitySlowPath) {
   EXPECT_FALSE(b.Equal(a, false));
 }
 
+TEST_F(LiteralUtilTest, MakeReturnsErrorOnHugeAllocation) {
+  // Create a shape that is too large to allocate.
+  Shape huge_shape = ShapeUtil::MakeShape(F32, {1ULL << 50});
+  auto literal_or = Literal::Make(huge_shape, /*allocate_arrays=*/true);
+  EXPECT_FALSE(literal_or.ok());
+  EXPECT_EQ(literal_or.status().code(), absl::StatusCode::kResourceExhausted);
+}
+
 TEST_F(LiteralUtilTest, CreateWithoutLayout) {
   Shape default_layout_shape = ShapeUtil::MakeShape(F32, {2, 1});
   Shape no_layout_shape = default_layout_shape;

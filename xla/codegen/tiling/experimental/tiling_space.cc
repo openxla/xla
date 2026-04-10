@@ -22,6 +22,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/types/span.h"
@@ -258,6 +259,12 @@ std::unique_ptr<TilingSpace> TilingSpace::Create(const HloFusionAdaptor& fusion,
   }
 
   return tiling_space;
+}
+
+int64_t TilingSpace::num_parallel_dimsensions() const {
+  return absl::c_count_if(dimensions_, [](const DimensionInfo& dim) {
+    return dim.type == DimensionSemantics::kParallel;
+  });
 }
 
 }  // namespace xla::gpu::experimental

@@ -33,6 +33,7 @@ cc_library(
         "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -88,6 +89,7 @@ cc_library(
     srcs = ["tile_propagation.cc"],
     hdrs = ["tile_propagation.h"],
     deps = [
+        ":reshape_analysis",
         ":tile",
         "//xla:literal_util",
         "//xla:permutation_util",

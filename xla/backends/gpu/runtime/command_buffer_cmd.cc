@@ -2503,14 +2503,19 @@ absl::StatusOr<const se::CommandBuffer::Command*> RaggedAllToAllCmd::Record(
             }
 
             // Zero buffers synchronously (Safe during graph construction)
-            state_status = executor->SynchronousMemZero(
+            state_status = execute_params.stream->MemZero(
                 state->barrier_signal_buffer.address_ptr(), signal_buf_bytes);
             if (!state_status.ok()) {
               return nullptr;
             }
 
-            state_status = executor->SynchronousMemZero(
+            state_status = execute_params.stream->MemZero(
                 state->barrier_signal_value.address_ptr(), sizeof(uint32_t));
+            if (!state_status.ok()) {
+              return nullptr;
+            }
+
+            state_status = execute_params.stream->BlockHostUntilDone();
             if (!state_status.ok()) {
               return nullptr;
             }

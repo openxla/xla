@@ -56,7 +56,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tools/hlo_decomposer.h"
-#include "xla/tsl/platform/status_macros.h"  // gloop
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -282,6 +282,7 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
       params.is_tma_allowed = config.is_tma_allowed;
       params.is_warp_specialization_allowed =
           config.is_warp_specialization_allowed;
+      params.waves_per_eu = config.waves_per_eu;
       return params;
     }
     VLOG(4) << "mapped_dot_tile_sizes: "

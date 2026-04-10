@@ -717,6 +717,12 @@ bool SyclExecutor::SynchronizeAllActivity() {
   return sycl_context_->Synchronize().ok();
 }
 
+absl::StatusOr<std::unique_ptr<EventBasedTimer>>
+SyclExecutor::CreateEventBasedTimer(Stream* stream, bool use_delay_kernel) {
+  TF_ASSIGN_OR_RETURN(SyclTimer timer, SyclTimer::Create(this, stream));
+  return std::make_unique<SyclTimer>(std::move(timer));
+}
+
 absl::Status SyclExecutor::SynchronousMemZero(DeviceMemoryBase* location,
                                               uint64_t size) {
   if (reinterpret_cast<uintptr_t>(location->opaque()) % sizeof(uint32_t) == 0 &&

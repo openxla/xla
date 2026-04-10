@@ -94,6 +94,7 @@ cc_library(
         "//xla/codegen/tiling:tiled_hlo_schedule",
         "//xla/codegen/tiling:tiling_specification",
         "//xla/codegen/tiling/experimental:scheduling",
+        "//xla/codegen/tiling/experimental:tile",
         "//xla/codegen/tiling/experimental:tiled_hlo",
         "//xla/codegen/xtile/ir:xtile",
         "//xla/codegen/xtile/ir/transforms:passes",

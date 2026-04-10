@@ -29,7 +29,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -133,7 +132,10 @@ absl::StatusOr<Compiler*> StreamExecutorGpuCompiler::GetOrCreateCompiler() {
   return compiler_.get();
 }
 
-absl::StatusOr<gpu::GpuTargetConfig> GetGpuTargetConfig(
+namespace {
+// Returns a `GpuTopology` populated with a target config obtained from the
+// given parameters. Will fail if no target_config is found.
+absl::StatusOr<GpuTopology> GetTopologyWithTargetConfig(
     const PjRtTopologyDescription& topology, const CompileOptions& options) {
   const auto gpu_topology_description =
       dynamic_cast<const xla::StreamExecutorGpuTopologyDescription*>(&topology);
@@ -142,34 +144,29 @@ absl::StatusOr<gpu::GpuTargetConfig> GetGpuTargetConfig(
         "The PjRtTopologyDescription must be a "
         "StreamExecutorGpuTopologyDescription.");
   }
+  // TODO: b/491510579 - The gpu_topology_description has 2 fields for a target
+  // config, we should fold them and we can get rid of this if branch.
   if (gpu_topology_description->target_config().has_value()) {
     VLOG(2) << "Found GPU target config in PjRt topology description.";
-    return Compiler::GpuTargetConfig::FromProto(
-        *gpu_topology_description->target_config());
+    ASSIGN_OR_RETURN(gpu::GpuTargetConfig gpu_target_config,
+                     Compiler::GpuTargetConfig::FromProto(
+                         *gpu_topology_description->target_config()));
+    return gpu_topology_description->gpu_topology().CopyWithNewTargetConfig(
+        gpu_target_config);
   }
   if (gpu_topology_description->gpu_topology().has_gpu_target_config()) {
     VLOG(2) << "Found GPU target config in GpuTopology.";
-    return gpu_topology_description->gpu_topology().gpu_target_config();
+    return gpu_topology_description->gpu_topology();
   }
   if (options.gpu_target_config.has_value()) {
     VLOG(2) << "Found GPU target config in compile options.";
-    return options.gpu_target_config.value();
+    return gpu_topology_description->gpu_topology().CopyWithNewTargetConfig(
+        options.gpu_target_config.value());
   }
   return absl::InvalidArgumentError(
       "No GPU target config found in topology description or compile options.");
 }
-
-std::optional<cpu::TargetMachineOptions> GetHostTargetMachineOptions(
-    const PjRtTopologyDescription& pjrt_topology) {
-  const auto gpu_topology_description =
-      dynamic_cast<const xla::StreamExecutorGpuTopologyDescription*>(
-          &pjrt_topology);
-  if (gpu_topology_description == nullptr ||
-      gpu_topology_description->gpu_topology_ptr() == nullptr) {
-    return std::nullopt;
-  }
-  return gpu_topology_description->gpu_topology().host_target_machine_options();
-}
+}  // namespace
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>>
 StreamExecutorGpuCompiler::Compile(
@@ -184,20 +181,20 @@ StreamExecutorGpuCompiler::Compile(
   // the options as provided by the caller.
   CompileOptions input_options = options;
 
-  absl::StatusOr<Compiler::GpuTargetConfig> gpu_target_config =
-      GetGpuTargetConfig(topology, options);
-  if (!gpu_target_config.ok() && client == nullptr) {
+  absl::StatusOr<GpuTopology> topology_with_target_config =
+      GetTopologyWithTargetConfig(topology, options);
+  if (!topology_with_target_config.ok() && client == nullptr) {
     // Note that we have code that depends on this being an UnimplementedError,
     // therefore we have this explicit early return here.
     return absl::UnimplementedError(absl::StrCat(
         "Compilation without client and without target config specified is not "
         "implemented. Details: ",
-        gpu_target_config.status().ToString()));
+        topology_with_target_config.status().ToString()));
   }
-  if (!gpu_target_config.ok() && client != nullptr) {
+  if (!topology_with_target_config.ok() && client != nullptr) {
     LOG(INFO) << "Found PjRtClient and no GPU target config. Performing a JIT "
                  "compilation. Details: "
-              << gpu_target_config.status();
+              << topology_with_target_config.status();
     TF_RET_CHECK(IsGpuClient(*client))
         << "JIT compilation requires a GPU PjRt client.";
     TF_RETURN_IF_ERROR(IsValidTopologyAndClientForCompile(topology, client));
@@ -206,7 +203,8 @@ StreamExecutorGpuCompiler::Compile(
     return executable;
   }
 
-  ASSIGN_OR_RETURN(options.gpu_target_config, gpu_target_config);
+  ASSIGN_OR_RETURN(GpuTopology xla_gpu_topology, topology_with_target_config);
+  options.gpu_target_config = xla_gpu_topology.gpu_target_config();
   if (layout_callback != nullptr) {
     options.executable_build_options.set_layout_canonicalization_callback(
         std::move(layout_callback));
@@ -258,9 +256,6 @@ StreamExecutorGpuCompiler::Compile(
   DumpHloModuleIfEnabled(*hlo_module, kBeforeOptimizationsDumpName);
 
   AotCompilationOptions aot_options(gpu_compiler->PlatformId());
-  GpuTopology xla_gpu_topology = GetSingleDeviceGpuTopology(
-      /*platform_version=*/"", *options.gpu_target_config,
-      GetHostTargetMachineOptions(topology));
   aot_options.set_gpu_topology(xla_gpu_topology);
   aot_options.set_run_backend_only(
       options.executable_build_options.run_backend_only());
@@ -303,10 +298,10 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
                                    MaybeOwningMlirModule module,
                                    const PjRtTopologyDescription& topology,
                                    PjRtClient* client) {
-  absl::StatusOr<Compiler::GpuTargetConfig> gpu_target_config =
-      GetGpuTargetConfig(topology, options);
+  absl::StatusOr<GpuTopology> topology_with_target_config =
+      GetTopologyWithTargetConfig(topology, options);
 
-  if (!gpu_target_config.ok() && client != nullptr) {
+  if (!topology_with_target_config.ok() && client != nullptr) {
     TF_RET_CHECK(IsGpuClient(*client))
         << "GPU compilation requires a GPU PjRt client.";
     TF_RETURN_IF_ERROR(IsValidTopologyAndClientForCompile(topology, client));

@@ -373,10 +373,9 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_cc_test(
     name = "command_buffer_cmd_emitter_test",
     srcs = ["command_buffer_cmd_emitter_test.cc"],
-    backends = ["gpu"],
     deps = [
         ":command_buffer_cmd_emitter",
         ":command_executor",
@@ -1918,6 +1917,7 @@ cc_library(
         ":thunk_proto_cc",
         "//xla:future",
         "//xla:shape_util",
+        "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/collectives:gpu_clique_key",
@@ -3453,6 +3453,7 @@ cc_library(
         "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/core/collectives:symmetric_memory",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:stream",

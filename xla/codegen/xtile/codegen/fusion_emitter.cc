@@ -310,40 +310,6 @@ SmallVector<Value> GetRuntimeValues(
   return runtime_values;
 }
 
-absl::StatusOr<TensorValue> EmitTiledReshape(mlir::ImplicitLocOpBuilder& b,
-                                             ArrayRef<int64_t> tile_sizes,
-                                             TensorValue input) {
-  mlir::RankedTensorType input_type = input.getType();
-  SmallVector<int64_t> padded_tile_sizes = GetPaddedTileSizes(tile_sizes);
-
-  // At this point we know that neither the input nor the output are 0D tensors.
-  auto output_tensor_type = mlir::RankedTensorType::get(
-      padded_tile_sizes, input_type.getElementType());
-
-  if (input_type.getNumElements() != output_tensor_type.getNumElements()) {
-    return absl::InvalidArgumentError(
-        absl::StrCat("Reshape input and output shapes must be the same, got ",
-                     absl::StrJoin(input_type.getShape(), "x"), " -> ",
-                     absl::StrJoin(output_tensor_type.getShape(), "x")));
-  }
-
-  return stablehlo::ReshapeOp::create(b, output_tensor_type, input);
-}
-
-TensorValue EmitTiledTranspose(mlir::ImplicitLocOpBuilder& b,
-                               ArrayRef<int64_t> tile_sizes,
-                               SmallVector<int64_t> dimensions,
-                               TensorValue input) {
-  SmallVector<int64_t> padded_tile_sizes = GetPaddedTileSizes(tile_sizes);
-
-  Type input_element_type = input.getType().getElementType();
-  Type output_tensor_type =
-      mlir::RankedTensorType::get(padded_tile_sizes, input_element_type);
-
-  mlir::DenseI64ArrayAttr order = b.getDenseI64ArrayAttr(dimensions);
-
-  return stablehlo::TransposeOp::create(b, output_tensor_type, input, order);
-}
 
 absl::StatusOr<TensorValue> EmitTiledBitcast(
     mlir::ImplicitLocOpBuilder& b, const TiledHloInstruction& tiled_bitcast,
@@ -522,75 +488,6 @@ absl::StatusOr<TensorValue> MaskDotOperand(
   }
 
   return dot_operand_value;
-}
-
-// Returns `shape` without all its unit dimensions, as well as the index of the
-// remaining dimensions in the original `shape`.
-std::pair<SmallVector<int64_t>, SmallVector<int64_t>> CollapseUnitDims(
-    llvm::ArrayRef<int64_t> shape, llvm::ArrayRef<int64_t> counterpart_shape) {
-  SmallVector<int64_t> shape_without_unit_dims;
-  SmallVector<int64_t> non_unit_dims_indices;
-  for (auto [i, size] : llvm::enumerate(shape)) {
-    if (size != 1 || size != counterpart_shape[i]) {
-      shape_without_unit_dims.push_back(size);
-      non_unit_dims_indices.push_back(i);
-    }
-  }
-  return {std::move(shape_without_unit_dims), std::move(non_unit_dims_indices)};
-}
-
-enum class DotOperandSide { kLhs, kRhs };
-
-// Canonicalizes the given operand of a dot operation, i.e. make it a 2D tensor,
-// and make sure that the contracting dimension is where we expect it to be for
-// the given side (the second dimension for LHS, the first dimension for the
-// RHS).
-//
-// If it is a scaled-dot scale operand then we drop the extra dims only
-// when they equal to 1  and are matching with the corresponding operand.
-// Example:
-//   when lhs_scale operand with shape [1,128, 1] (passed as operand parameter)
-//   and lhs operand with shape [1,128, 32] (passed as counterpart_operand
-//   parameter)
-//   the function will drop only the first dim and will keep the last one
-//   because the last one of the lhs operand is not equal to 1.
-//
-// Returns an error if canonicalization is not possible.
-absl::StatusOr<TensorValue> CanonicalizeDotOperand(
-    mlir::ImplicitLocOpBuilder& b, TensorValue operand,
-    int64_t contracting_dim_idx, DotOperandSide side,
-    TensorValue counterpart_operand = nullptr) {
-  llvm::ArrayRef<int64_t> shape = operand.getType().getShape();
-  llvm::ArrayRef<int64_t> counterpart_shape =
-      counterpart_operand == nullptr ? shape
-                                     : counterpart_operand.getType().getShape();
-
-  auto [shape_without_unit_dims, non_unit_dims_indices] =
-      CollapseUnitDims(shape, counterpart_shape);
-
-  if (shape_without_unit_dims.size() != 2) {
-    return absl::FailedPreconditionError(
-        "Expected dot operand tile to have exactly two non-unit tile sizes");
-  }
-
-  if (shape.size() != shape_without_unit_dims.size()) {
-    TF_ASSIGN_OR_RETURN(operand,
-                        EmitTiledReshape(b, shape_without_unit_dims, operand));
-  }
-
-  int expected_contracting_dim_position = side == DotOperandSide::kLhs ? 1 : 0;
-  bool is_transposed =
-      non_unit_dims_indices[expected_contracting_dim_position] !=
-      contracting_dim_idx;
-
-  if (is_transposed) {
-    SmallVector<int64_t, 2> transposed_shape{shape_without_unit_dims[1],
-                                             shape_without_unit_dims[0]};
-    operand =
-        EmitTiledTranspose(b, transposed_shape, /*dimensions=*/{1, 0}, operand);
-  }
-
-  return operand;
 }
 
 absl::StatusOr<TensorValue> EmitTiledHloInstruction(
