@@ -44,7 +44,6 @@ constexpr char kDefaultDenylist[] = R"pb(
     hlo: "(f32[512,512,7,7]{3,2,1,0}, u8[0]{0}) custom-call(f32[512,512,7,7]{3,2,1,0}, f32[512,512,3,3]{3,2,1,0}, f32[512]{0}), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_oi01->bf01, custom_call_target=\"__cudnn$convBiasActivationForward\""
     backend_config {
       operation_queue_id: 0
-      wait_on_operation_queues: []
       cudnn_conv_backend_config: {
         activation_mode: kNone
         conv_result_scale: 1
@@ -62,7 +61,6 @@ constexpr char kDefaultDenylist[] = R"pb(
     hlo: "(f32[512,512,7,7]{3,2,1,0}, u8[0]{0}) custom-call(f32[512,512,7,7]{3,2,1,0}, f32[512,512,3,3]{3,2,1,0}, f32[512]{0}), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_oi01->bf01, custom_call_target=\"__cudnn$convBiasActivationForward\""
     backend_config {
       operation_queue_id: 0
-      wait_on_operation_queues: []
       cudnn_conv_backend_config: {
         activation_mode: kNone
         conv_result_scale: 1
@@ -79,7 +77,6 @@ constexpr char kDefaultDenylist[] = R"pb(
     hlo: "(f32[27,256,32,32]{3,2,1,0}, u8[0]{0}) custom-call(f32[27,256,32,32]{3,2,1,0}, f32[256,256,3,3]{3,2,1,0}, f32[256]{0}, f32[27,256,32,32]{3,2,1,0}), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_oi01->bf01, custom_call_target=\"__cudnn$convBiasActivationForward\""
     backend_config {
       operation_queue_id: 0
-      wait_on_operation_queues: []
       cudnn_conv_backend_config: {
         activation_mode: kNone
         conv_result_scale: 1
@@ -96,7 +93,6 @@ constexpr char kDefaultDenylist[] = R"pb(
     hlo: "(f32[27,256,32,32]{3,2,1,0}, u8[0]{0}) custom-call(f32[27,256,32,32]{3,2,1,0}, f32[256,256,3,3]{3,2,1,0}, f32[256]{0}, f32[27,256,32,32]{3,2,1,0}), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_oi01->bf01, custom_call_target=\"__cudnn$convBiasActivationForward\""
     backend_config {
       operation_queue_id: 0
-      wait_on_operation_queues: []
       cudnn_conv_backend_config: {
         activation_mode: kNone
         conv_result_scale: 1
@@ -113,7 +109,6 @@ constexpr char kDefaultDenylist[] = R"pb(
     hlo: "(f32[27,256,32,32]{3,2,1,0}, u8[0]{0}) custom-call(f32[27,256,32,32]{3,2,1,0}, f32[256,256,3,3]{3,2,1,0}, f32[256]{0}, f32[27,256,32,32]{3,2,1,0}), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_oi01->bf01, custom_call_target=\"__cudnn$convBiasActivationForward\""
     backend_config {
       operation_queue_id: 0
-      wait_on_operation_queues: []
       cudnn_conv_backend_config: {
         activation_mode: kNone
         conv_result_scale: 1
@@ -130,7 +125,6 @@ constexpr char kDefaultDenylist[] = R"pb(
     hlo: "(f32[27,256,32,32]{3,2,1,0}, u8[0]{0}) custom-call(f32[27,256,32,32]{3,2,1,0}, f32[256,256,3,3]{3,2,1,0}, f32[256]{0}, f32[27,256,32,32]{3,2,1,0}), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_oi01->bf01, custom_call_target=\"__cudnn$convBiasActivationForward\""
     backend_config {
       operation_queue_id: 0
-      wait_on_operation_queues: []
       cudnn_conv_backend_config: {
         activation_mode: kNone
         conv_result_scale: 1
@@ -148,7 +142,6 @@ constexpr char kDefaultDenylist[] = R"pb(
     backend_config {
       force_earliest_schedule: false
       operation_queue_id: 0
-      wait_on_operation_queues: []
       cudnn_conv_backend_config: {
         activation_mode: kNone
         conv_result_scale: 1
