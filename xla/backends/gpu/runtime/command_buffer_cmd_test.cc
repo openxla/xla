@@ -18,6 +18,8 @@ limitations under the License.
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -32,9 +34,11 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
+#include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -69,6 +73,27 @@ static se::StreamExecutor* GpuExecutor() {
       absl::AsciiStrToUpper(PlatformUtil::CanonicalPlatformName("gpu").value());
   auto* platform = se::PlatformManager::PlatformWithName(name).value();
   return platform->ExecutorForDevice(0).value();
+}
+
+// Helper: creates a KernelThunk for use in command sequences, replacing the
+// now-removed LaunchCmd. Converts ShapedSlice + MemoryAccess to
+// KernelArguments.
+static std::unique_ptr<KernelThunk> MakeLaunchThunk(
+    std::string kernel_name, absl::Span<const ShapedSlice> args,
+    absl::Span<const BufferUse::MemoryAccess> args_access,
+    LaunchDimensions dims, int64_t shmem_bytes) {
+  std::vector<emitters::KernelArgument> kernel_args;
+  kernel_args.reserve(args.size());
+  for (int i = 0; i < static_cast<int>(args.size()); ++i) {
+    emitters::KernelArgument arg(args[i].shape, args[i].slice);
+    arg.set_written(args_access[i] != BufferUse::MemoryAccess::kRead);
+    kernel_args.push_back(std::move(arg));
+  }
+  return std::make_unique<KernelThunk>(
+      Thunk::ThunkInfo(), std::move(kernel_name),
+      emitters::KernelArguments(std::move(kernel_args)), std::move(dims),
+      /*cluster_dim=*/std::nullopt, shmem_bytes,
+      /*tma_metadata=*/stream_executor::gpu::TmaMetadata{});
 }
 
 // Some of the tests rely on CUDA 12.9+ features.
@@ -343,9 +368,9 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<LaunchCmd>("AddI32", absl::MakeConstSpan(args), args_access,
-                              LaunchDimensions(1, 4),
-                              /*shmem_bytes=*/0);
+  commands.Append(MakeLaunchThunk("AddI32", absl::MakeConstSpan(args),
+                                  args_access, LaunchDimensions(1, 4),
+                                  /*shmem_bytes=*/0));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -417,9 +442,9 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<LaunchCmd>("AddI32", absl::MakeConstSpan(args), args_access,
-                              LaunchDimensions(1, 4),
-                              /*shmem_bytes=*/0);
+  commands.Append(MakeLaunchThunk("AddI32", absl::MakeConstSpan(args),
+                                  args_access, LaunchDimensions(1, 4),
+                                  /*shmem_bytes=*/0));
   commands.back()->set_priority(se::StreamPriority::Highest);
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -660,8 +685,9 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
     auto args_access = {BufferUse::MemoryAccess::kRead,
                         BufferUse::MemoryAccess::kRead,
                         BufferUse::MemoryAccess::kWrite};
-    seq_b.Emplace<LaunchCmd>("AddI32", absl::MakeConstSpan(args), args_access,
-                             LaunchDimensions(1, 4), /*shmem_bytes=*/0);
+    seq_b.Append(MakeLaunchThunk("AddI32", absl::MakeConstSpan(args),
+                                 args_access, LaunchDimensions(1, 4),
+                                 /*shmem_bytes=*/0));
   }
   TF_ASSERT_OK_AND_ASSIGN(CommandExecutor exec_b,
                           CommandExecutor::Create(std::move(seq_b), serialize));
