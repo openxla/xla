@@ -148,8 +148,6 @@ message AlgorithmProto {
   // 0 workspace size from unknown workspace size in an old message, so this is
   // a message field.
   google.protobuf.UInt64Value workspace_size = 6;
-
-  reserved 7;
 }
 
 // Proto definition of AlgorithmConfig in "dnn.h".
