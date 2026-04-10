@@ -205,6 +205,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_sharding",
         "//xla/mlir/utils:type_util",
+        "//xla/python/ifrt/ir:utils",
         "//xla/service/spmd/shardy/stablehlo_round_trip:export_shardings",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",

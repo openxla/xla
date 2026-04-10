@@ -39,7 +39,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"  // gloop
 #include "google/protobuf/message.h"
 #include "xla/executable_run_options.h"
 #include "xla/future.h"
@@ -74,6 +73,7 @@ limitations under the License.
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/tstring.h"
+#include "xla/tsl/platform/status_macros.h"  // gloop
 
 namespace xla {
 
@@ -938,7 +938,7 @@ bool HloRunnerPjRt::HasProperty(const HloRunnerPropertyTag::Type tag) const {
     return pjrt_client_->platform_name() == CudaName();
   }
   if (tag == HloRunnerPropertyTag::kUsingGpuOneAPI) {
-    return pjrt_client_->platform_name() == SyclName();
+    return pjrt_client_->platform_name() == OneapiName();
   }
   return false;
 }

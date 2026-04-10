@@ -226,6 +226,7 @@ cc_library(
     deps = [
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:logging",
