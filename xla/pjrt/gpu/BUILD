@@ -209,7 +209,7 @@ cc_library(
         "@local_config_rocm//rocm:rocm_headers",
     ]) + if_sycl([
         # keep sorted
-        "@oneapi//:headers",
+        "@local_config_sycl//sycl:sycl_headers",
     ]),
 )
 
