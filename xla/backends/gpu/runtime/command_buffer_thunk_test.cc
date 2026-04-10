@@ -157,7 +157,7 @@ static constexpr auto serialize =
 
 }  // namespace
 
-TEST(CommandBufferThunkTest, MemcpyCmd) {
+TEST(CommandBufferThunkTest, DeviceToDeviceCopy) {
   se::StreamExecutor* stream_executor = GpuExecutor();
 
   TF_ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());

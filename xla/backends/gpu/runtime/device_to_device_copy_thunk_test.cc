@@ -307,6 +307,13 @@ TEST(DeviceToDeviceCopyThunkTest, RecordCommandBufferUpdate) {
   std::vector<int32_t> result_second(length, 0);
   TF_ASSERT_OK(stream->Memcpy(result_second.data(), dst_second, byte_length));
   EXPECT_EQ(result_second, std::vector<int32_t>(length, 42));
+
+  // dst_first should still hold the value from the first Submit (not zeroed or
+  // overwritten by the update), confirming the copy was redirected.
+  std::vector<int32_t> result_first_after(length, 0);
+  TF_ASSERT_OK(
+      stream->Memcpy(result_first_after.data(), dst_first, byte_length));
+  EXPECT_EQ(result_first_after, std::vector<int32_t>(length, 42));
 }
 
 }  // namespace

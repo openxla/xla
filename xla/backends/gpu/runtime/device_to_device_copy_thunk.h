@@ -41,7 +41,7 @@ namespace gpu {
 // Also implements Command so it can be recorded directly into command buffers.
 class DeviceToDeviceCopyThunk : public Command {
  public:
-  // Constructs a CopyThunk that copies host data from `source_buffer` to the
+  // Constructs a thunk that copies device data from `source_buffer` to the
   // device buffer `destination_buffer`.
   DeviceToDeviceCopyThunk(ThunkInfo thunk_info,
                           const ShapedSlice& source_buffer,
