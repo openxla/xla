@@ -203,6 +203,7 @@ xla_cc_test(
     deps = [
         ":dot_algorithms",
         ":emitter_helpers",
+        "//xla:xla_proto_cc",
         "//xla/codegen/xtile/ir:xtile",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
