@@ -2267,7 +2267,6 @@ TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
       api_version=API_VERSION_STATUS_RETURNING,
       backend_config={
         "operation_queue_id": "0",
-        "wait_on_operation_queues": [],
         "cudnn_fmha_backend_config": {
           "algorithm": {
             "algo_id": "0",

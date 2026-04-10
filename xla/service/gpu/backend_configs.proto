@@ -409,10 +409,6 @@ message GpuBackendConfig {
   // different IDs.
   int64 operation_queue_id = 1;
 
-  // Specifies which operation queues to await for data when running with
-  // multiple operation queues.
-  repeated int64 wait_on_operation_queues = 2;
-
   oneof backend_config {
     CudnnConvBackendConfig cudnn_conv_backend_config = 3;
 
@@ -457,4 +453,6 @@ message GpuBackendConfig {
 
   // Specifies the device type for the instruction.
   DeviceType device_type = 14;
+
+  reserved 2;  // was wait_on_operation_queues
 }
