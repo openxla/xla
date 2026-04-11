@@ -54,9 +54,9 @@ static se::StreamExecutor* GpuExecutor() {
   return platform->ExecutorForDevice(0).value();
 }
 
-// ===========================================================================
+//===----------------------------------------------------------------------===//
 // Proto round-trip tests
-// ===========================================================================
+//===----------------------------------------------------------------------===//
 
 TEST(MemzeroThunkTest, ProtoRoundTrip) {
   ThunkProto proto = ParseTextProtoOrDie<ThunkProto>(
@@ -110,9 +110,9 @@ TEST(Memset32BitValueThunkTest, ProtoRoundTrip) {
   EXPECT_THAT(round_trip_proto, EqualsProto(proto));
 }
 
-// ===========================================================================
+//===----------------------------------------------------------------------===//
 // Command buffer tests (Record)
-// ===========================================================================
+//===----------------------------------------------------------------------===//
 
 TEST(Memset32BitValueThunkTest, RecordCommandBuffer) {
   se::StreamExecutor* executor = GpuExecutor();
