@@ -701,7 +701,7 @@ PartitionedHlo PartitionedHlo::ReshardNoCache(
     auto partially_sharded = PerGroupSliceFromReplicated(
         hlo_, state_.partition_id, target_grouped.device_groups, group_dims,
         target_grouped.group_dim_sizes, state_.b);
-    partially_sharded->set_sharding(target);
+    partially_sharded->set_sharding(target_v2);
     return PartitionedHlo(partially_sharded, base_shape(), state_);
   }
 
