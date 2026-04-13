@@ -1117,6 +1117,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":types",
+        ":util",
         ":xla_data_proto_cc",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/algorithm:container",
