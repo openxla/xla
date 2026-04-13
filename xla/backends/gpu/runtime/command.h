@@ -37,9 +37,10 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -51,7 +52,6 @@ namespace xla::gpu {
 #define XLA_GPU_COMMAND_LIST(V)                              \
   V(kEmptyCmd, "EmptyCmd")                                   \
   V(kChildCmd, "ChildCmd")                                   \
-  V(kTracedCommand, "TracedCommand")       \
   V(kComputationIdCmd, "ComputationIdCmd")                   \
   V(kLaunchCmd, "LaunchCmd")                                 \
   V(kCustomKernelLaunchCmd, "CustomKernelLaunchCmd")         \
@@ -253,6 +253,25 @@ class Command : public Thunk {
   std::invoke_result_t<F, const Command*> Walk(F&& callback) const;
 
  protected:
+  // Dispatches a RecordAction to either the create or update path.
+  static absl::StatusOr<const se::CommandBuffer::Command*> Handle(
+      RecordAction action,
+      absl::FunctionRef<absl::StatusOr<const se::CommandBuffer::Command*>(
+          absl::Span<const se::CommandBuffer::Command* const>)>
+          create_command,
+      absl::FunctionRef<absl::Status(const se::CommandBuffer::Command*)>
+          update_command);
+
+  // Creates a cached traced child command buffer (using stream-activity
+  // tracing) and records it into `command_buffer`. The traced command buffer is
+  // cached in an instance of TracedCommandBuffer kept in `record_params.state`
+  // and reused when the buffer allocations haven't changed.
+  absl::StatusOr<const se::CommandBuffer::Command*> RecordTracedCommand(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer,
+      absl::FunctionRef<absl::Status(se::Stream*)> trace);
+
   // WalkNested uses Thunk::Walker = absl::FunctionRef<absl::Status(Thunk*)>.
   // Subclasses that have nested commands must override this.
   absl::Status WalkNested(Walker callback) override { return absl::OkStatus(); }

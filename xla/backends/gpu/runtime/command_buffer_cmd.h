@@ -61,7 +61,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
-#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -71,61 +70,6 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
-
-//===----------------------------------------------------------------------===//
-// TracedCommandBuffer
-//===----------------------------------------------------------------------===//
-
-// A cache for traced command buffers that will re-trace on change in buffer
-// allocations that are relevant for `buffers` passed to constructor. We use a
-// very simple most-recently-used cache of traced command buffers as in practice
-// subsequent calls to XLA executable tend to reuse the same allocations.
-class TracedCommandBuffer : public CommandState {
- public:
-  explicit TracedCommandBuffer(const Command* trace_cmd,
-                               Command::BufferUses buffers,
-                               int64_t capacity = 16);
-
-  // Returns cached command buffer traced using the same buffer addresses or
-  // traces and caches a new command buffer using user provided callback.
-  absl::StatusOr<se::CommandBuffer*> GetOrTraceCommandBuffer(
-      const BufferAllocations* buffer_allocation, se::StreamExecutor* executor,
-      se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace,
-      se::StreamPriority priority = se::StreamPriority::Default);
-
- private:
-  std::vector<BufferAllocation::Index> allocs_indices_;
-
-  struct Entry {
-    std::vector<se::DeviceAddressBase> recorded_allocs;
-    std::unique_ptr<se::CommandBuffer> command_buffer;
-  };
-  const Command* trace_cmd_;
-  int64_t capacity_;
-  std::vector<Entry> entries_;
-};
-
-//===----------------------------------------------------------------------===//
-// TracedCommandBufferCmd
-//===----------------------------------------------------------------------===//
-
-// A base class for commands implemented as tracing of stream activities.
-class TracedCommandBufferCmd : public Command {
- public:
-  bool IsTracedCommand() const override { return true; }
-
- protected:
-  explicit TracedCommandBufferCmd(CommandType cmd_type);
-
-  // Creates a command buffer by calling a user-provided `trace` function and
-  // adds it as a nested command to `command_buffer`. Traced command buffers
-  // cached and reused in an instance of `TracedCommandBuffer` kept in `state`.
-  absl::StatusOr<const se::CommandBuffer::Command*> RecordTracedCommand(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer,
-      absl::FunctionRef<absl::Status(se::Stream*)> trace);
-};
 
 //===----------------------------------------------------------------------===//
 // EmptyCmd
@@ -360,7 +304,7 @@ class WhileCmd : public Command {
 // GemmCmd
 //===----------------------------------------------------------------------===//
 
-class GemmCmd : public TracedCommandBufferCmd {
+class GemmCmd : public Command {
  public:
   GemmCmd(GemmConfig config, const BufferAllocation::Slice& lhs_buffer,
           const BufferAllocation::Slice& rhs_buffer,
@@ -376,6 +320,7 @@ class GemmCmd : public TracedCommandBufferCmd {
 
   BufferUses buffer_uses() const override;
 
+  bool IsTracedCommand() const override { return true; }
   bool IsNestedCommandBuffer() const final { return true; }
 
  private:
@@ -392,7 +337,7 @@ class GemmCmd : public TracedCommandBufferCmd {
 // CublasLtCmd
 //===----------------------------------------------------------------------===//
 
-class CublasLtCmd : public TracedCommandBufferCmd {
+class CublasLtCmd : public Command {
  public:
   explicit CublasLtCmd(const CublasLtMatmulThunk& matmul_thunk);
 
@@ -405,35 +350,11 @@ class CublasLtCmd : public TracedCommandBufferCmd {
 
   BufferUses buffer_uses() const override;
 
+  bool IsTracedCommand() const override { return true; }
   bool IsNestedCommandBuffer() const final { return true; }
 
  private:
   CublasLtMatmulThunk thunk_;
-};
-
-//===----------------------------------------------------------------------===//
-// CuDnnCmd
-//===----------------------------------------------------------------------===//
-
-class CuDnnCmd : public TracedCommandBufferCmd {
- public:
-  CuDnnCmd(absl::Span<const ShapedSlice> args,
-           std::shared_ptr<se::dnn::LazyDnnGraph> graph);
-
-  absl::Status Initialize(const Thunk::InitializeParams& params) override;
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override;
-
-  bool IsNestedCommandBuffer() const final { return true; }
-
- private:
-  std::vector<ShapedSlice> args_;
-  const std::shared_ptr<se::dnn::LazyDnnGraph> graph_;
 };
 
 //===----------------------------------------------------------------------===//
