@@ -592,6 +592,17 @@ HloSharding InferDotOperandSharding(
 // (using tile_assignment_devices). Otherwise, does nothing.
 void ConvertV2ToV1Sharding(OpSharding& sharding);
 
+// Helper to get V2 sharding without copying if already in V2.
+// `storage` must outlive the returned reference.
+inline const HloSharding& GetV2Sharding(const HloSharding& sharding,
+                                        std::optional<HloSharding>& storage) {
+  if (sharding.UseNamedShardingLeaf()) {
+    storage = HloSharding::V3ToV2Sharding(sharding.named_sharding());
+    return *storage;
+  }
+  return sharding;
+}
+
 }  // namespace hlo_sharding_util
 }  // namespace xla
 

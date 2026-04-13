@@ -281,10 +281,9 @@ HloInstruction* GetFinalFftUsingCollectivePermute(
       dest_transform));
   // collective permute for source partition_id and source_transfrom.
   std::vector<std::pair<int64_t, int64_t>> src_dst_pairs;
-  HloSharding tile_based_sharding =
-      sharding.UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(sharding.named_sharding())
-          : std::move(sharding);
+  std::optional<HloSharding> tile_based_sharding_storage;
+  const HloSharding& tile_based_sharding =
+      hlo_sharding_util::GetV2Sharding(sharding, tile_based_sharding_storage);
   tile_based_sharding.EachTile([&](absl::Span<const int64_t> indices,
                                    int64_t src_device) {
     std::vector<int64_t> target_indices(indices.begin(), indices.end());

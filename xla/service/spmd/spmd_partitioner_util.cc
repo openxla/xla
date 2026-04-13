@@ -699,13 +699,20 @@ std::optional<HloSharding> PartialReplicateReshardCompatibleSharding(
   bool same_sharding_type = raw_partial_sharding.UseNamedShardingLeaf() ==
                             raw_target_sharding.UseNamedShardingLeaf();
 
+  std::optional<HloSharding> target_storage;
   const HloSharding& target_sharding =
-      !same_sharding_type && raw_target_sharding.UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(raw_target_sharding.named_sharding())
+      (!same_sharding_type && raw_target_sharding.UseNamedShardingLeaf())
+          ? (target_storage = HloSharding::V3ToV2Sharding(
+                 raw_target_sharding.named_sharding()),
+             *target_storage)
           : raw_target_sharding;
+
+  std::optional<HloSharding> partial_storage;
   const HloSharding& partial_sharding =
-      !same_sharding_type && raw_partial_sharding.UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(raw_partial_sharding.named_sharding())
+      (!same_sharding_type && raw_partial_sharding.UseNamedShardingLeaf())
+          ? (partial_storage = HloSharding::V3ToV2Sharding(
+                 raw_partial_sharding.named_sharding()),
+             *partial_storage)
           : raw_partial_sharding;
 
   std::vector<int64_t> expand_dims_shards;
@@ -1247,10 +1254,9 @@ std::optional<HloInstruction*> ExchangeHalo(
   }
   // Left halo.
   // Coalescing the zero-bcasted left halos.
-  HloSharding tile_based_sharding =
-      target.UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(target.named_sharding())
-          : target;
+  std::optional<HloSharding> tile_based_sharding_storage;
+  const HloSharding& tile_based_sharding =
+      hlo_sharding_util::GetV2Sharding(target, tile_based_sharding_storage);
   int64_t left_coalesced_zero_halo_size = 0;
   for (int64_t i = CeilOfRatio(max_left_halo_size, input_shard_size) - 1;
        i >= 0 && (-i - 1) * input_shard_size < right_bound; --i) {
@@ -2349,14 +2355,13 @@ bool CanReshardWithCollectivePermute(const HloSharding& source_input,
                target_input.named_sharding().dim_shardings();
   }
 
-  HloSharding source =
-      source_input.UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(source_input.named_sharding())
-          : source_input;
-  HloSharding target =
-      target_input.UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(target_input.named_sharding())
-          : target_input;
+  std::optional<HloSharding> source_storage;
+  const HloSharding& source =
+      hlo_sharding_util::GetV2Sharding(source_input, source_storage);
+
+  std::optional<HloSharding> target_storage;
+  const HloSharding& target =
+      hlo_sharding_util::GetV2Sharding(target_input, target_storage);
 
   return !source.IsReplicatedOrSingleDevice() &&
          !target.IsReplicatedOrSingleDevice() &&

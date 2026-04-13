@@ -88,6 +88,8 @@ namespace spmd {
 
 namespace {
 using hlo_sharding_util::GroupedSharding;
+
+using hlo_sharding_util::GetV2Sharding;
 }  // namespace
 
 std::string SpmdLogger::MakeReport() {
@@ -813,10 +815,8 @@ PartitionedHlo::ReshardAsWindowedInput(const Window& window,
                                        bool mask_invalid_region,
                                        bool force_mask_in_compact) {
   auto& cache = state_.reshard_cache->per_hlo_cache[hlo()].window_reshard_cache;
-  HloSharding target =
-      raw_target.UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(raw_target.named_sharding())
-          : raw_target;
+  std::optional<HloSharding> target_storage;
+  const HloSharding& target = GetV2Sharding(raw_target, target_storage);
   for (auto& entry : cache) {
     if (std::get<0>(entry) == target &&
         protobuf_util::HaveSameSerialization(std::get<1>(entry), window)) {
@@ -3161,19 +3161,17 @@ absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
   // do not yet support NamedSharding.
   // Instead of converting shardings in utilities we convert them here to avoid
   // multiple conversions.
+  std::optional<HloSharding> sharding_storage;
   const HloSharding& sharding =
-      hlo->sharding().UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(hlo->sharding().named_sharding())
-          : hlo->sharding();
+      GetV2Sharding(hlo->sharding(), sharding_storage);
 
   const Shape& in_shape = hlo->operand(0)->shape();
   const Shape& out_shape = hlo->shape();
   auto operand = GetPartitionedHlo(hlo->operand(0));
 
+  std::optional<HloSharding> operand_sharding_storage;
   const HloSharding& operand_sharding =
-      operand.sharding().UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(operand.sharding().named_sharding())
-          : operand.sharding();
+      GetV2Sharding(operand.sharding(), operand_sharding_storage);
 
   std::vector<std::pair<const HloSharding, const HloSharding>> sharding_pairs;
   auto insert_sharding_pair = [&](const HloSharding& in_sharding,
@@ -3239,10 +3237,9 @@ absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
           .Reshard(sharding)
           .hlo();
     };
+    std::optional<HloSharding> operand_sharding_storage;
     const HloSharding& operand_sharding =
-        operand.sharding().UseNamedShardingLeaf()
-            ? HloSharding::V3ToV2Sharding(operand.sharding().named_sharding())
-            : operand.sharding();
+        GetV2Sharding(operand.sharding(), operand_sharding_storage);
 
     // Check if operand sharding and sharding have the same number of tiles.
     if (operand_sharding.NumTiles() != sharding.NumTiles()) {
@@ -3396,10 +3393,9 @@ absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
       recursive_shard =
           [&](PartitionedHlo& operand, const HloSharding& sharding,
               const Shape& base_shape) -> absl::StatusOr<HloInstruction*> {
+    std::optional<HloSharding> operand_sharding_storage;
     const HloSharding& operand_sharding =
-        operand.sharding().UseNamedShardingLeaf()
-            ? HloSharding::V3ToV2Sharding(operand.sharding().named_sharding())
-            : operand.sharding();
+        GetV2Sharding(operand.sharding(), operand_sharding_storage);
     const Shape& operand_base_shape = operand.base_shape();
     HloSharding propagated = hlo_sharding_util::PropagateShardingThroughReshape(
         operand_base_shape, base_shape, operand_sharding);

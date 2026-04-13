@@ -4344,11 +4344,9 @@ absl::Status SpmdPartitioningVisitor::HandleDotHelper(
           original_rhs_scale_sharding.named_sharding()));
     }
 
-    HloSharding v2_output_sharding = original_output_sharding;
-    if (v2_output_sharding.UseNamedShardingLeaf()) {
-      v2_output_sharding =
-          HloSharding::V3ToV2Sharding(v2_output_sharding.named_sharding());
-    }
+    std::optional<HloSharding> v2_output_sharding_storage;
+    const HloSharding& v2_output_sharding = hlo_sharding_util::GetV2Sharding(
+        original_output_sharding, v2_output_sharding_storage);
 
     PartitionedHloMX lhs_mx(lhs_operand, lhs_scale);
     PartitionedHloMX rhs_mx(rhs_operand, rhs_scale);
@@ -4402,11 +4400,9 @@ absl::Status SpmdPartitioningVisitor::HandleDotHelper(
           HloSharding::V3ToV2Sharding(original_rhs_sharding.named_sharding()));
     }
 
-    HloSharding v2_output_sharding = original_output_sharding;
-    if (v2_output_sharding.UseNamedShardingLeaf()) {
-      v2_output_sharding =
-          HloSharding::V3ToV2Sharding(v2_output_sharding.named_sharding());
-    }
+    std::optional<HloSharding> v2_output_sharding_storage;
+    const HloSharding& v2_output_sharding = hlo_sharding_util::GetV2Sharding(
+        original_output_sharding, v2_output_sharding_storage);
 
     TF_ASSIGN_OR_RETURN(
         partitioned_dot,

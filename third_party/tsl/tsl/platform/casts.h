@@ -16,15 +16,16 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_CASTS_H_
 #define TENSORFLOW_TSL_PLATFORM_CASTS_H_
 
-#include "absl/base/casts.h"
 #include "tsl/platform/platform.h"
 
-namespace tensorflow {
-using ::absl::down_cast;
-}
-
-namespace tsl {
-using ::absl::down_cast;
-}
+#if defined(PLATFORM_GOOGLE)
+#include "xla/tsl/platform/google/casts.h"  // IWYU pragma: export
+#elif defined(PLATFORM_POSIX) || defined(PLATFORM_POSIX_ANDROID) ||    \
+    defined(PLATFORM_GOOGLE_ANDROID) || defined(PLATFORM_POSIX_IOS) || \
+    defined(PLATFORM_GOOGLE_IOS) || defined(PLATFORM_WINDOWS)
+#include "xla/tsl/platform/default/casts.h"  // IWYU pragma: export
+#else
+#error Define the appropriate PLATFORM_<foo> macro for this platform
+#endif
 
 #endif  // TENSORFLOW_TSL_PLATFORM_CASTS_H_

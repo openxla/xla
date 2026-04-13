@@ -307,15 +307,11 @@ bool IsSubTilingOrEqualSharding(const Shape& potential_sharded_shape,
         raw_sharding.named_sharding());
   }
 
-  HloSharding potential_subsharding =
-      raw_potential_subsharding.UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(
-                raw_potential_subsharding.named_sharding())
-          : raw_potential_subsharding;
-  HloSharding sharding =
-      raw_sharding.UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(raw_sharding.named_sharding())
-          : raw_sharding;
+  std::optional<HloSharding> potential_subsharding_storage;
+  const HloSharding& potential_subsharding =
+      GetV2Sharding(raw_potential_subsharding, potential_subsharding_storage);
+  std::optional<HloSharding> sharding_storage;
+  const HloSharding& sharding = GetV2Sharding(raw_sharding, sharding_storage);
 
   // Some early exit cases.
   // If any manual sharding return false.
@@ -688,10 +684,8 @@ bool MergeShardingIfCompatible(const HloSharding& to_merge_input,
     return false;
   }
 
-  HloSharding to_merge =
-      to_merge_input.UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(to_merge_input.named_sharding())
-          : to_merge_input;
+  std::optional<HloSharding> to_merge_storage;
+  const HloSharding& to_merge = GetV2Sharding(to_merge_input, to_merge_storage);
 
   if (dst->UseNamedShardingLeaf()) {
     *dst = HloSharding::V3ToV2Sharding(dst->named_sharding());
@@ -1364,10 +1358,9 @@ HloSharding ReverseSharding(const HloSharding& sharding,
   // Supporting reverse operation on NamedSharding would require reversing
   // mesh's device assignment, creating multiple meshes. Instead it's better to
   // convert to tile-based sharding.
-  HloSharding tile_based_sharding =
-      sharding.UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(sharding.named_sharding())
-          : sharding;
+  std::optional<HloSharding> tile_based_sharding_storage;
+  const HloSharding& tile_based_sharding =
+      GetV2Sharding(sharding, tile_based_sharding_storage);
 
   Array<int64_t> new_tile_assignment(tile_based_sharding.dimensions());
   new_tile_assignment.Each(
@@ -2472,10 +2465,8 @@ std::string GroupedSharding::ToString() const {
 GroupedSharding GroupShardingOnAllDimsExcept(
     const HloSharding& input_sharding, absl::Span<const int64_t> non_group_dims,
     bool subgroup_manual) {
-  HloSharding sharding =
-      input_sharding.UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(input_sharding.named_sharding())
-          : input_sharding;
+  std::optional<HloSharding> sharding_storage;
+  const HloSharding& sharding = GetV2Sharding(input_sharding, sharding_storage);
 
   std::vector<int64_t> group_dims(sharding.num_dimensions());
   absl::c_iota(group_dims, 0);
@@ -2500,10 +2491,8 @@ GroupedSharding GroupShardingOnDims(const HloSharding& input_sharding,
                                     absl::Span<const int64_t> group_dims,
                                     absl::Span<const int64_t> group_dim_shards,
                                     bool subgroup_manual) {
-  HloSharding sharding =
-      input_sharding.UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(input_sharding.named_sharding())
-          : input_sharding;
+  std::optional<HloSharding> sharding_storage;
+  const HloSharding& sharding = GetV2Sharding(input_sharding, sharding_storage);
 
   CHECK(!sharding.IsReplicatedOrSingleDevice());
 
@@ -2628,10 +2617,8 @@ std::vector<int64_t> PrimeFactorization(int64_t num) {
 GroupedSharding GroupShardingOnReplicatedDim(
     const HloSharding& input_sharding, int64_t num_groups, int64_t num_tiles,
     int64_t data_rank, absl::Span<const int64_t> replicable_dims) {
-  HloSharding sharding =
-      input_sharding.UseNamedShardingLeaf()
-          ? HloSharding::V3ToV2Sharding(input_sharding.named_sharding())
-          : input_sharding;
+  std::optional<HloSharding> sharding_storage;
+  const HloSharding& sharding = GetV2Sharding(input_sharding, sharding_storage);
 
   // 1. Try group sharding on partially replicated dim.
   if (sharding.ReplicateOnLastTileDim() &&

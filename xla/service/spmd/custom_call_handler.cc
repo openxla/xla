@@ -367,10 +367,10 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_RotateRight(
       }
       if (shard_distance != 0) {
         std::vector<std::pair<int64_t, int64_t>> pairs;
-        HloSharding tile_based_sharding =
-            hlo->sharding().UseNamedShardingLeaf()
-                ? HloSharding::V3ToV2Sharding(hlo->sharding().named_sharding())
-                : hlo->sharding();
+        std::optional<HloSharding> tile_based_sharding_storage;
+        const HloSharding& tile_based_sharding =
+            hlo_sharding_util::GetV2Sharding(hlo->sharding(),
+                                             tile_based_sharding_storage);
         tile_based_sharding.EachTile(
             [&](absl::Span<const int64_t> indices, int64_t device) {
               if (indices[dim] >= participating_shards) {
@@ -552,7 +552,7 @@ SpmdPartitioningVisitor::ConstructHaloExchangeSuperShard(
     int64_t post_halo_shard_size, HloInstruction* pad_value,
     bool first_shard_uses_pad_value) {
   PartitionedHlo input = GetPartitionedHlo(input_operand);
-  HloSharding element_sharding = input_operand->sharding();
+  const HloSharding& element_sharding = input_operand->sharding();
 
   TF_RET_CHECK(!element_sharding.IsReplicatedOrSingleDevice())
       << "Halo Exchange requires sharding along the wrap dimension.";
@@ -586,11 +586,10 @@ SpmdPartitioningVisitor::ConstructHaloExchangeSuperShard(
   HloInstruction* right_halo = nullptr;
   if (right_amount > 0) {
     std::vector<std::pair<int64_t, int64_t>> pairs;
-    if (element_sharding.UseNamedShardingLeaf()) {
-      element_sharding =
-          HloSharding::V3ToV2Sharding(element_sharding.named_sharding());
-    }
-    element_sharding.EachTile(
+    std::optional<HloSharding> v2_element_sharding_storage;
+    const HloSharding& v2_element_sharding = hlo_sharding_util::GetV2Sharding(
+        element_sharding, v2_element_sharding_storage);
+    v2_element_sharding.EachTile(
         [&](absl::Span<const int64_t> indices, int64_t device) {
           if (indices[dim] >= participating_shards) {
             return;
@@ -602,7 +601,7 @@ SpmdPartitioningVisitor::ConstructHaloExchangeSuperShard(
             return;
           }
           pairs.emplace_back(device,
-                             element_sharding.tile_assignment()(dst_idx));
+                             v2_element_sharding.tile_assignment()(dst_idx));
         });
     absl::c_sort(pairs);
 
@@ -640,11 +639,10 @@ SpmdPartitioningVisitor::ConstructHaloExchangeSuperShard(
       participating_shards_minus_one_op, Comparison::Direction::kEq));
   if (left_amount > 0) {
     std::vector<std::pair<int64_t, int64_t>> pairs;
-    if (element_sharding.UseNamedShardingLeaf()) {
-      element_sharding =
-          HloSharding::V3ToV2Sharding(element_sharding.named_sharding());
-    }
-    element_sharding.EachTile(
+    std::optional<HloSharding> v2_element_sharding_storage;
+    const HloSharding& v2_element_sharding = hlo_sharding_util::GetV2Sharding(
+        element_sharding, v2_element_sharding_storage);
+    v2_element_sharding.EachTile(
         [&](absl::Span<const int64_t> indices, int64_t device) {
           if (indices[dim] >= participating_shards) {
             return;
@@ -656,7 +654,7 @@ SpmdPartitioningVisitor::ConstructHaloExchangeSuperShard(
             return;
           }
           pairs.emplace_back(device,
-                             element_sharding.tile_assignment()(dst_idx));
+                             v2_element_sharding.tile_assignment()(dst_idx));
         });
     std::sort(pairs.begin(), pairs.end());
 
