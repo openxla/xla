@@ -197,7 +197,9 @@ class StreamExecutor {
   [[deprecated(
       "Use stream-ordered MemZero + BlockHostUntilReady "
       "instead.")]] virtual absl::Status
-  SynchronousMemZero(DeviceAddressBase* location, uint64_t size) = 0;
+  SynchronousMemZero(DeviceAddressBase* location, uint64_t size) {
+    return absl::UnimplementedError("Not implemented");
+  }
 
   // Returns a DeviceAddressBase representing the range [base, base + size)
   // for the given DeviceAddressBase, such that location is contained within the
