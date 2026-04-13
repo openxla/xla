@@ -687,11 +687,18 @@ PartitionedHlo PartitionedHlo::ReshardNoCache(
   }
 
   // 'Replicated' to partial replicated.
-  if (target.ReplicateOnLastTileDim()) {
-    std::vector<int64_t> group_dims(target.num_dimensions() - 1);
+  if (target.HasPartialReplication()) {
+    HloSharding target_v2 =
+        target.UseNamedShardingLeaf()
+            ? HloSharding::V3ToV2Sharding(target.named_sharding())
+            : target;
+    std::vector<int64_t> group_dims(target_v2.num_dimensions());
     absl::c_iota(group_dims, 0);
+    int64_t replication_dim = target_v2.SubgroupReplicationDim();
+    CHECK_NE(replication_dim, -1) << "Expected replicated dim";
+    group_dims.erase(group_dims.begin() + replication_dim);
     auto target_grouped =
-        hlo_sharding_util::GroupShardingOnDims(target, group_dims);
+        hlo_sharding_util::GroupShardingOnDims(target_v2, group_dims);
     auto partially_sharded = PerGroupSliceFromReplicated(
         hlo_, state_.partition_id, target_grouped.device_groups, group_dims,
         target_grouped.group_dim_sizes, state_.b);
@@ -2029,11 +2036,21 @@ PatternMatchMergeOrSplitSharding(const Shape& base_shape,
   if (source.TiledDataRank() != target.TiledDataRank()) {
     return std::nullopt;
   }
-  if ((source.HasPartialReplication() ^ target.HasPartialReplication()) ||
-      (source.HasPartialReplication() &&
-       source.dimensions()[source.TiledDataRank()] !=
-           target.dimensions()[target.TiledDataRank()])) {
+  if (source.HasPartialReplication() ^ target.HasPartialReplication()) {
     return std::nullopt;
+  }
+  if (source.HasPartialReplication()) {
+    auto get_repl_factor = [](const HloSharding& s) {
+      if (s.UseNamedShardingLeaf()) {
+        int64_t sharded_dims_product =
+            absl::c_accumulate(s.dimensions(), 1LL, std::multiplies<int64_t>());
+        return s.num_devices() / sharded_dims_product;
+      }
+      return s.dimensions()[s.TiledDataRank()];
+    };
+    if (get_repl_factor(source) != get_repl_factor(target)) {
+      return std::nullopt;
+    }
   }
 
   // Collect dimension indices with different tile assignment sizes.
@@ -2061,7 +2078,6 @@ PatternMatchMergeOrSplitSharding(const Shape& base_shape,
     diff_index_2.push_back(i);
   }
 
-  // Iterate combination of diff_index_1 and diff_index_2.
   for (int64_t i : diff_index_2) {
     for (int64_t j : diff_index_1) {
       if (source.dimension(i) * source.dimension(j) !=
@@ -2247,17 +2263,118 @@ std::optional<PartitionedHlo> PartitionedHlo::TryComplexReshardHandling(
   return std::nullopt;
 }
 
+namespace {
+
+std::optional<int64_t> FindDimBySize(const NamedSharding& a,
+                                     const NamedSharding& b) {
+  // Iterate backwards to prioritize the right-most (minor) data dimension.
+  for (int64_t i = a.num_dimensions() - 1; i >= 0; --i) {
+    if (a.dimension(i) > b.dimension(i)) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<AxisRef> FindDiffAxis(const NamedSharding& a,
+                                    const NamedSharding& b, int64_t dim) {
+  for (const AxisRef& axis : a.dim_sharding(dim).axes()) {
+    if (!absl::c_linear_search(b.dim_sharding(dim).axes(), axis)) {
+      return axis;
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
 std::optional<PartitionedHlo>
 PartitionedHlo::ReshardPartialReplicateWithAllToAll(
     const HloSharding& target) const {
-  bool source_is_partial_replicate = sharding().ReplicateOnLastTileDim();
+  if (sharding().UseNamedShardingLeaf() && target.UseNamedShardingLeaf()) {
+    const NamedSharding& src_named = sharding().named_sharding();
+    const NamedSharding& tgt_named = target.named_sharding();
+
+    std::optional<int64_t> source_dim = FindDimBySize(src_named, tgt_named);
+    std::optional<int64_t> target_dim = FindDimBySize(tgt_named, src_named);
+
+    if (!source_dim || !target_dim) {
+      return std::nullopt;
+    }
+
+    std::optional<AxisRef> to_replicate_axis =
+        FindDiffAxis(src_named, tgt_named, *source_dim);
+    std::optional<AxisRef> to_shard_axis =
+        FindDiffAxis(tgt_named, src_named, *target_dim);
+
+    if (!to_replicate_axis || !to_shard_axis) {
+      return std::nullopt;
+    }
+
+    // Found axes to swap. Construct intermediate sharding.
+    std::vector<NamedSharding::DimensionSharding> intermediate_dim_shardings(
+        src_named.dim_shardings().begin(), src_named.dim_shardings().end());
+
+    absl::Span<const AxisRef> src_axes =
+        src_named.dim_sharding(*source_dim).axes();
+    std::vector<AxisRef> new_src_axes;
+    new_src_axes.reserve(src_axes.size());
+    for (const auto& axis : src_axes) {
+      if (axis != *to_replicate_axis) {
+        new_src_axes.push_back(axis);
+      }
+    }
+    intermediate_dim_shardings[*source_dim] = NamedSharding::DimensionSharding(
+        std::move(new_src_axes), /*is_closed=*/true);
+
+    absl::Span<const AxisRef> tgt_axes =
+        src_named.dim_sharding(*target_dim).axes();
+    std::vector<AxisRef> new_tgt_axes(tgt_axes.begin(), tgt_axes.end());
+    new_tgt_axes.reserve(tgt_axes.size() + 1);
+    new_tgt_axes.push_back(*to_shard_axis);
+    intermediate_dim_shardings[*target_dim] = NamedSharding::DimensionSharding(
+        std::move(new_tgt_axes), /*is_closed=*/true);
+
+    auto tmp_src_sharding = HloSharding(
+        NamedSharding(src_named.mesh(), std::move(intermediate_dim_shardings),
+                      src_named.replicated_axes(), src_named.unreduced_axes(),
+                      src_named.manual_axes(), src_named.metadata()));
+
+    if (sharding().HasPartialReplication()) {
+      if (auto src_tgt_dims = GetReshardAllToAllSourceTargetDims(
+              sharding(), tmp_src_sharding)) {
+        return ReshardWithAllToAll(tmp_src_sharding, *src_tgt_dims)
+            .Reshard(target);
+      }
+    } else {
+      auto partitioned_hlo = Reshard(tmp_src_sharding);
+      if (auto src_tgt_dims = GetReshardAllToAllSourceTargetDims(
+              partitioned_hlo.sharding(), target)) {
+        return partitioned_hlo.ReshardWithAllToAll(target, *src_tgt_dims);
+      }
+    }
+
+    return std::nullopt;
+  }
+
+  HloSharding source_sharding =
+      sharding().UseNamedShardingLeaf()
+          ? HloSharding::V3ToV2Sharding(sharding().named_sharding())
+          : sharding();
+  HloSharding target_sharding =
+      target.UseNamedShardingLeaf()
+          ? HloSharding::V3ToV2Sharding(target.named_sharding())
+          : target;
+
+  bool source_is_partial_replicate = source_sharding.ReplicateOnLastTileDim();
   const auto& partial_replicate_sharding =
-      source_is_partial_replicate ? sharding() : target;
+      source_is_partial_replicate ? source_sharding : target_sharding;
   // If neither the source nor the target is partial replicate, return null.
   if (!partial_replicate_sharding.ReplicateOnLastTileDim()) {
     return std::nullopt;
   }
-  const auto& tile_sharding = source_is_partial_replicate ? target : sharding();
+  const auto& tile_sharding =
+      source_is_partial_replicate ? target_sharding : source_sharding;
   // If both source and target are partial replicate, should be supported in
   // Reshard with AllToAll already.
   if (tile_sharding.ReplicateOnLastTileDim() ||
@@ -2316,7 +2433,7 @@ PartitionedHlo::ReshardPartialReplicateWithAllToAll(
 
   if (source_is_partial_replicate) {
     if (auto src_tgt_dims = GetReshardAllToAllSourceTargetDims(
-            sharding(), tmp_partial_replicate_sharding)) {
+            source_sharding, tmp_partial_replicate_sharding)) {
       auto partitioned_hlo =
           ReshardWithAllToAll(tmp_partial_replicate_sharding, *src_tgt_dims);
       return partitioned_hlo.Reshard(target);
@@ -2325,7 +2442,7 @@ PartitionedHlo::ReshardPartialReplicateWithAllToAll(
     auto partitioned_hlo = Reshard(tmp_partial_replicate_sharding);
 
     if (auto src_tgt_dims = GetReshardAllToAllSourceTargetDims(
-            partitioned_hlo.sharding(), target)) {
+            partitioned_hlo.sharding(), target_sharding)) {
       return partitioned_hlo.ReshardWithAllToAll(target, *src_tgt_dims);
     }
   }
