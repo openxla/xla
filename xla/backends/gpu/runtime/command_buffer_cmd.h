@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_memcpy_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
-#include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -205,27 +204,6 @@ class WhileCmd : public Command {
   std::optional<int64_t> trip_count_;
   bool enable_loop_unroll_ = false;
   bool is_unrolled_loop_ = false;
-};
-
-//===----------------------------------------------------------------------===//
-// CublasLtCmd
-//===----------------------------------------------------------------------===//
-
-class CublasLtCmd : public TracedCommand {
- public:
-  explicit CublasLtCmd(const CublasLtMatmulThunk& matmul_thunk);
-
-  absl::Status Initialize(const Thunk::InitializeParams& params) override;
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override;
-
- private:
-  CublasLtMatmulThunk thunk_;
 };
 
 //===----------------------------------------------------------------------===//
