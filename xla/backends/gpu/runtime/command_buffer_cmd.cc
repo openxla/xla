@@ -651,48 +651,6 @@ Command::BufferUses MemzeroCmd::buffer_uses() const {
 }
 
 //===----------------------------------------------------------------------===//
-// Memset32Cmd
-//===----------------------------------------------------------------------===//
-
-Memset32Cmd::Memset32Cmd(BufferAllocation::Slice dst, uint32_t bit_pattern)
-    : Command(CommandType::kMemset32Cmd),
-      dst_(dst),
-      bit_pattern_(bit_pattern) {}
-
-absl::StatusOr<const se::CommandBuffer::Command*> Memset32Cmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  se::DeviceAddressBase dst =
-      execute_params.buffer_allocations->GetDeviceAddress(dst_);
-
-  VLOG(5) << "Memset32Cmd: bit_pattern=" << bit_pattern_;
-  VLOG(5) << "  Dst: " << dst_ << " (" << dst.opaque() << ")";
-
-  if (dst_.size() == 0) {
-    VLOG(5) << "Skip recording Memset32Cmd command of 0 bytes";
-    return nullptr;
-  }
-
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateMemset(
-            &dst, bit_pattern_,
-            /*num_elements=*/dst_.size() / sizeof(uint32_t), dependencies);
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateMemset(
-            command, &dst, bit_pattern_,
-            /*num_elements=*/dst_.size() / sizeof(uint32_t));
-      });
-}
-
-Command::BufferUses Memset32Cmd::buffer_uses() const {
-  return {BufferUse::Write(dst_, ShapeUtil::MakeShape(U32, {}))};
-}
-
-//===----------------------------------------------------------------------===//
 // ChildCmd
 //===----------------------------------------------------------------------===//
 

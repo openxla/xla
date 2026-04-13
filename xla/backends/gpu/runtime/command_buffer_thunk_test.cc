@@ -287,8 +287,9 @@ TEST(CommandBufferThunkTest, Memset32Cmd) {
   BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
 
   // Prepare commands sequence for constructing command buffer.
+  Memset32BitValueThunk memset_thunk(Thunk::ThunkInfo(), /*value=*/84, slice_a);
   CommandSequence commands;
-  commands.Emplace<Memset32Cmd>(slice_a, int32_t{84});
+  commands.Append(&memset_thunk);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -333,16 +334,17 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersDisabledDuringProfiling) {
   BufferAllocation alloc_a(/*index=*/0, byte_length, /*color=*/0);
   BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
 
+  // Memset32BitValueThunk implements Command directly, so the same thunk is
+  // used for both the fallback ThunkSequence and the CommandSequence.
   auto memset_thunk =
       std::make_unique<Memset32BitValueThunk>(Thunk::ThunkInfo(), 84, slice_a);
+  Memset32BitValueThunk* memset_thunk_ptr = memset_thunk.get();
   ThunkSequence thunks;
   thunks.push_back(std::move(memset_thunk));
   auto seq_thunks =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
-  // Prepare commands sequence for constructing command buffer that should not
-  // be used.
   CommandSequence commands;
-  commands.Emplace<Memset32Cmd>(slice_a, int32_t{12});
+  commands.Append(memset_thunk_ptr);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -392,16 +394,17 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersEnabledDuringProfiling) {
   BufferAllocation alloc_a(/*index=*/0, byte_length, /*color=*/0);
   BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
 
+  // Memset32BitValueThunk implements Command directly, so the same thunk is
+  // used for both the fallback ThunkSequence and the CommandSequence.
   auto memset_thunk =
       std::make_unique<Memset32BitValueThunk>(Thunk::ThunkInfo(), 84, slice_a);
+  Memset32BitValueThunk* memset_thunk_ptr = memset_thunk.get();
   ThunkSequence thunks;
   thunks.push_back(std::move(memset_thunk));
   auto seq_thunks =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
-  // Prepare commands sequence for constructing command buffer that should not
-  // be used.
   CommandSequence commands;
-  commands.Emplace<Memset32Cmd>(slice_a, int32_t{12});
+  commands.Append(memset_thunk_ptr);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -435,7 +438,7 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersEnabledDuringProfiling) {
   std::vector<int32_t> dst(4, 0);
   TF_ASSERT_OK(stream->Memcpy(dst.data(), a, byte_length));
 
-  ASSERT_EQ(dst, std::vector<int32_t>(4, 12));
+  ASSERT_EQ(dst, std::vector<int32_t>(4, 84));
 }
 
 TEST(CommandBufferThunkTest, Memset32CmdOnDifferentStreams) {
@@ -452,9 +455,11 @@ TEST(CommandBufferThunkTest, Memset32CmdOnDifferentStreams) {
   BufferAllocation::Slice slice1(&alloc, 1 * sizeof(int32_t), sizeof(int32_t));
 
   // Prepare commands sequence for constructing command buffer.
+  Memset32BitValueThunk memset_thunk0(Thunk::ThunkInfo(), /*value=*/12, slice0);
+  Memset32BitValueThunk memset_thunk1(Thunk::ThunkInfo(), /*value=*/34, slice1);
   CommandSequence commands;
-  commands.Emplace<Memset32Cmd>(slice0, int32_t{12});
-  commands.Emplace<Memset32Cmd>(slice1, int32_t{34});
+  commands.Append(&memset_thunk0);
+  commands.Append(&memset_thunk1);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -1612,14 +1617,16 @@ TEST(CommandBufferThunkTest, WhileCmd) {
 TEST(CommandBufferThunkTest, ToStringPrintsNestedThunks) {
   BufferAllocation alloc_a(/*index=*/0, /*size=*/4, /*color=*/0);
   BufferAllocation::Slice slice_a(&alloc_a, /*offset=*/0, /*size=*/4);
+  auto memset_thunk =
+      std::make_unique<Memset32BitValueThunk>(Thunk::ThunkInfo(), 42, slice_a);
+  Memset32BitValueThunk* memset_thunk_ptr = memset_thunk.get();
   CommandSequence commands;
-  commands.Emplace<Memset32Cmd>(slice_a, int32_t{42});
+  commands.Append(memset_thunk_ptr);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
   ThunkSequence thunks;
-  thunks.emplace_back(
-      std::make_unique<Memset32BitValueThunk>(Thunk::ThunkInfo(), 42, slice_a));
+  thunks.push_back(std::move(memset_thunk));
   CommandBufferThunk thunk(
       std::move(executor), Thunk::ThunkInfo(),
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks)));
