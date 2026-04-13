@@ -47,3 +47,4 @@ If you'd like to contribute to XLA, review
 While under TensorFlow governance, all community spaces for SIG OpenXLA are
 subject to the
 [TensorFlow Code of Conduct](https://github.com/tensorflow/tensorflow/blob/master/CODE_OF_CONDUCT.md).
+# Minor documentation fix
