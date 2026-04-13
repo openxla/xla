@@ -1661,6 +1661,19 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "service_executable_run_options",
+    hdrs = ["service_executable_run_options.h"],
+    deps = [
+        ":stream_pool",
+        "//xla:executable_run_options",
+        "//xla/stream_executor:platform",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
     name = "executable",
     srcs = ["executable.cc"],
     hdrs = [
@@ -1673,6 +1686,7 @@ cc_library(
         ":hlo_module_config",
         ":hlo_proto_cc",
         ":maybe_owning_device_address",
+        ":service_executable_run_options",
         ":shaped_buffer",
         ":stream_pool",
         "//xla:executable_run_options",
