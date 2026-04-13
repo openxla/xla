@@ -1,15 +1,134 @@
+diff --git a/shardy/dialect/sdy/transforms/common/propagation_options.h b/shardy/dialect/sdy/transforms/common/propagation_options.h
+index 70ea796..6875b1b 100644
+--- a/shardy/dialect/sdy/transforms/common/propagation_options.h
++++ b/shardy/dialect/sdy/transforms/common/propagation_options.h
+@@ -56,8 +56,6 @@ struct PropagationOptions {
+   // flattening it. The default is false, meaning it will flatten the graph and
+   // then propagate.
+   bool enableNativeNonFlatSupport = false;
+-  // Whether to inline late within shardy.
+-  bool enableLateInlining = true;
+ };
+ 
+ }  // namespace sdy
+diff --git a/third_party/llvm/generated.patch b/third_party/llvm/generated.patch
+index 509398d..7519c31 100644
+--- a/third_party/llvm/generated.patch
++++ b/third_party/llvm/generated.patch
+@@ -1 +1,101 @@
+ Auto generated patch. Do not edit or delete it, even if empty.
++diff -ruN --strip-trailing-cr a/llvm/lib/Transforms/IPO/SampleProfileMatcher.cpp b/llvm/lib/Transforms/IPO/SampleProfileMatcher.cpp
++--- a/llvm/lib/Transforms/IPO/SampleProfileMatcher.cpp
+++++ b/llvm/lib/Transforms/IPO/SampleProfileMatcher.cpp
++@@ -798,31 +798,31 @@
++     return;
++ 
++   // Scan the profile NameTable for candidates whose demangled basename matches
++-  // a unique orphan. Use a quick substring check to avoid demangling every
++-  // entry. Only keep 1:1 basename matches (exactly one profile candidate).
++-  // Maps basename -> profile FunctionId; entries with multiple candidates are
++-  // removed.
+++  // a unique orphan. Use a map to track exactly one candidate per basename.
++   StringMap<FunctionId> CandidateByBaseName;
++   for (auto &ProfileFuncId : *NameTable) {
++     StringRef ProfName = ProfileFuncId.stringRef();
++     if (ProfName.empty())
++       continue;
++-    for (auto &[BaseName, _] : OrphansByBaseName) {
++-      if (AmbiguousBaseNames.count(BaseName) || !ProfName.contains(BaseName))
++-        continue;
++-      std::string ProfBaseName = getDemangledBaseName(Demangler, ProfName);
++-      if (ProfBaseName != BaseName)
+++
+++    std::string ProfBaseName = getDemangledBaseName(Demangler, ProfName);
+++    if (ProfBaseName.empty())
+++      continue;
+++
+++    if (OrphansByBaseName.count(ProfBaseName)) {
+++      if (AmbiguousBaseNames.count(ProfBaseName))
++         continue;
+++
++       auto [It, Inserted] =
++-          CandidateByBaseName.try_emplace(BaseName, ProfileFuncId);
+++          CandidateByBaseName.try_emplace(ProfBaseName, ProfileFuncId);
++       if (!Inserted) {
++         // More than one profile entry shares this basename — mark ambiguous.
++         CandidateByBaseName.erase(It);
++-        AmbiguousBaseNames.insert(BaseName);
+++        AmbiguousBaseNames.insert(ProfBaseName);
++       }
++-      break;
++     }
++   }
+++
++   if (CandidateByBaseName.empty())
++     return;
++ 
++diff -ruN --strip-trailing-cr a/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel b/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
++--- a/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
+++++ b/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
++@@ -1068,9 +1068,22 @@
++     ],
++ )
++ 
+++# These flags are needed for python extensions to work.
+++PYTHON_BINDINGS_COPTS = [
+++    "-fexceptions",
+++    "-frtti",
+++]
+++
+++PYTHON_BINDINGS_FEATURES = [
+++    # Cannot use header_modules (parse_headers feature fails).
+++    "-use_header_modules",
+++]
+++
++ cc_library(
++     name = "MLIRBindingsPythonHeadersAndDeps",
++     hdrs = [":MLIRBindingsPythonHeaderFiles"],
+++    copts = PYTHON_BINDINGS_COPTS,
+++    features = PYTHON_BINDINGS_FEATURES,
++     includes = ["include"],
++     deps = [
++         ":CAPIDebug",
++@@ -1097,6 +1110,8 @@
++ cc_library(
++     name = "MLIRBindingsPythonNanobindHeadersAndDeps",
++     hdrs = [":MLIRBindingsPythonHeaderFiles"],
+++    copts = PYTHON_BINDINGS_COPTS,
+++    features = PYTHON_BINDINGS_FEATURES,
++     includes = ["include"],
++     deps = [
++         ":CAPIDebug",
++@@ -1107,17 +1122,6 @@
++     ],
++ )
++ 
++-# These flags are needed for python extensions to work.
++-PYTHON_BINDINGS_COPTS = [
++-    "-fexceptions",
++-    "-frtti",
++-]
++-
++-PYTHON_BINDINGS_FEATURES = [
++-    # Cannot use header_modules (parse_headers feature fails).
++-    "-use_header_modules",
++-]
++-
++ filegroup(
++     name = "MLIRBindingsPythonSourceFiles",
++     srcs = [
 diff --git a/third_party/llvm/workspace.bzl b/third_party/llvm/workspace.bzl
-index 80bdff6..1d2327c 100644
+index 1d2327c..f220caa 100644
 --- a/third_party/llvm/workspace.bzl
 +++ b/third_party/llvm/workspace.bzl
 @@ -4,8 +4,8 @@ load("//third_party:repo.bzl", "tf_http_archive")
  
  def repo(name):
      """Imports LLVM."""
--    LLVM_COMMIT = "8918319853fbdf9e6f6cb69e96848f913a22bc31"
--    LLVM_SHA256 = "698fcde81111e2f28c03ba3f4017bc3395246d6f30b2e05d44f6619bd9bdd0b3"
-+    LLVM_COMMIT = "815edc3ff646392bfee2b381d37dd35e4b04f9c5"
-+    LLVM_SHA256 = "bbc6fa4993162bdc7dd39b53927906a455940b87c782d0a37e00127f8bf8c696"
+-    LLVM_COMMIT = "815edc3ff646392bfee2b381d37dd35e4b04f9c5"
+-    LLVM_SHA256 = "bbc6fa4993162bdc7dd39b53927906a455940b87c782d0a37e00127f8bf8c696"
++    LLVM_COMMIT = "2cf353b5e8560723409f3f9164bddec76f499963"
++    LLVM_SHA256 = "3a9b33b701b9ebd4110ef795d23be54fb5d762ca4e190480c4a06d71b7aa8064"
  
      tf_http_archive(
          name = name,
