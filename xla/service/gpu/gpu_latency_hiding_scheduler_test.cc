@@ -487,6 +487,9 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
   auto config = GetModuleConfig(kFdoProfile);
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kHloModule, config));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_experimental_enable_collective_multi_streaming(true);
 
   TF_EXPECT_OK(ScheduleModule(module.get(), /*num_parallel_resources=*/2));
   auto schedule = module->schedule();

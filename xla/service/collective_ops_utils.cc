@@ -205,10 +205,6 @@ absl::StatusOr<std::unique_ptr<CollectiveDeviceListBase>> GetAsyncReplicaGroups(
       instruction->opcode() == HloOpcode::kAllReduceStart) {
     return instruction->device_list()->Clone();
   }
-  // Handle unwrapped inner collectives.
-  if (DynCast<HloCollectiveInstruction>(instruction) != nullptr) {
-    return instruction->device_list()->Clone();
-  }
   return InvalidArgument(
       "Unexpected instruction type: %s is not an async collective "
       "instruction",
