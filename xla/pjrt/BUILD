@@ -272,8 +272,10 @@ cc_library(
         "//xla/client:local_client",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:event",
+        "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/sycl:sycl_platform_id",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
@@ -1636,6 +1638,7 @@ cc_library(
     srcs = ["host_memory_allocator.cc"],
     hdrs = ["host_memory_allocator.h"],
     deps = [
+        "//xla/runtime:device_id",
         "//xla/tsl/framework:allocator",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",

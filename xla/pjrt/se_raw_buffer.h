@@ -32,24 +32,6 @@ limitations under the License.
 
 namespace xla {
 
-class PjRtStreamExecutorDeviceEvent : public PjRtDeviceEvent {
- public:
-  explicit PjRtStreamExecutorDeviceEvent(
-      tsl::AsyncValueRef<BufferSequencingEvent> event)
-      : event_(std::move(event)) {}
-
-  const tsl::AsyncValueRef<BufferSequencingEvent>& event() const {
-    return event_;
-  }
-
-  tsl::AsyncValue* async_value() const override {
-    return event_.GetAsyncValue();
-  }
-
- private:
-  tsl::AsyncValueRef<BufferSequencingEvent> event_;
-};
-
 class PjRtStreamExecutorDeviceEventPromise : public PjRtDeviceEventPromise {
  public:
   PjRtStreamExecutorDeviceEventPromise(PjRtStreamExecutorClient* client,

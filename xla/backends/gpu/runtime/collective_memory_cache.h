@@ -16,12 +16,18 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_MEMORY_CACHE_H_
 #define XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_MEMORY_CACHE_H_
 
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/stream_executor/gpu/multicast_memory.h"
+#include "xla/stream_executor/memory_allocation.h"
 #include "xla/tsl/util/tied_ref.h"
 
 namespace xla::gpu {
@@ -39,12 +45,28 @@ class CollectiveMemoryCache {
   void AddSymmetricMemory(tsl::TiedRef<SymmetricMemory> sym_memory)
       ABSL_LOCKS_EXCLUDED(mutex_);
 
+  std::optional<std::pair<std::shared_ptr<stream_executor::MemoryAllocation>,
+                          std::shared_ptr<SymmetricMemory>>>
+  GetScratchMemory(int64_t device_ordinal) ABSL_LOCKS_EXCLUDED(mutex_);
+
+  void AddScratchMemory(
+      int64_t device_ordinal,
+      tsl::TiedRef<stream_executor::MemoryAllocation> memory_allocation,
+      tsl::TiedRef<SymmetricMemory> symmetric_memory)
+      ABSL_LOCKS_EXCLUDED(mutex_);
+
  private:
   absl::Mutex mutex_;
   std::vector<tsl::TiedRef<stream_executor::gpu::MulticastMemory>>
       multicast_memories_ ABSL_GUARDED_BY(mutex_);
   std::vector<tsl::TiedRef<SymmetricMemory>> sym_memories_
       ABSL_GUARDED_BY(mutex_);
+
+  absl::flat_hash_map<int64_t, tsl::TiedRef<stream_executor::MemoryAllocation>>
+      scratch_memory_allocations_ ABSL_GUARDED_BY(mutex_);
+
+  absl::flat_hash_map<int64_t, tsl::TiedRef<SymmetricMemory>>
+      scratch_symmetric_memories_ ABSL_GUARDED_BY(mutex_);
 };
 
 }  // namespace xla::gpu

@@ -74,15 +74,9 @@ class RangeEvaluator {
 
   // Checks whether an `SymbolicExpr` always describes a non-negative value.
   bool IsAlwaysPositiveOrZero(SymbolicExpr expr);
-  // TODO: b/446856820 - Remove once fully migrated to SymbolicMap.
-  ABSL_DEPRECATED("Use IsAlwaysPositiveOrZero(SymbolicExpr) instead")
-  bool IsAlwaysPositiveOrZero(mlir::AffineExpr expr);
 
   // Computes the range of expression using its subexpression ranges.
   Interval ComputeExpressionRange(SymbolicExpr expr);
-  // TODO: b/446856820 - Remove once fully migrated to SymbolicMap.
-  ABSL_DEPRECATED("Use ComputeExpressionRange(SymbolicExpr) instead")
-  Interval ComputeExpressionRange(mlir::AffineExpr expr);
 
   // Return MLIR context.
   mlir::MLIRContext* GetMLIRContext() const { return mlir_context_; }
@@ -268,15 +262,6 @@ class IndexingMap {
       llvm::ArrayRef<SymbolicExpr> dim_const_exprs,
       llvm::ArrayRef<SymbolicExpr> symbol_const_exprs) const;
 
-  // Deprecated. TODO: b/446856820 - Remove once fully migrated to SymbolicMap.
-  ABSL_DEPRECATED("Use the overload with SymbolicExpr arguments instead")
-  llvm::SmallVector<int64_t, 4> Evaluate(
-      llvm::ArrayRef<mlir::AffineExpr> dim_const_exprs,
-      llvm::ArrayRef<mlir::AffineExpr> symbol_const_exprs) const {
-    return Evaluate(
-        AffineExprsToSymbolicExprs(dim_const_exprs, GetDimensionCount()),
-        AffineExprsToSymbolicExprs(symbol_const_exprs, GetDimensionCount()));
-  }
   // Evaluates indexing map results at a given point.
   llvm::SmallVector<int64_t, 4> Evaluate(
       llvm::ArrayRef<SymbolicExpr> dim_const_exprs,
@@ -462,6 +447,16 @@ std::vector<IndexingMap::Variable> RangeVarsFromTensorSizes(
 // `(d0, d1, d2)[s0]{rt0} -> (d0, d1, s0, d2, rt0)`.
 IndexingMap ConvertRangeVariablesToDimensions(
     const IndexingMap& map, llvm::ArrayRef<int64_t> range_var_indices);
+
+// Returns IDs of dimensions and symbols that participate in SymbolicExpr.
+struct UsedParameters {
+  // Sorted list of dimension IDs.
+  llvm::SmallVector<int64_t> dimension_ids;
+  // Sorted list of symbol IDs.
+  llvm::SmallVector<int64_t> symbol_ids;
+};
+UsedParameters GetUsedParameters(absl::Span<const SymbolicExpr> exprs,
+                                 int64_t num_dims);
 
 }  // namespace xla
 

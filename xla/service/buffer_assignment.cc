@@ -2605,6 +2605,8 @@ PeakMemorySizes AllocateStaticBuffers(BufferMap& buffers,
   return {padded_memory, unpadded_memory};
 }
 
+}  // namespace
+
 absl::StatusOr<absl::flat_hash_map<int64_t, int64_t>>
 ComputeLogicalBufferUnpaddedSizes(
     const HloModuleProto& hlo_module_proto,
@@ -2643,8 +2645,6 @@ ComputeLogicalBufferUnpaddedSizes(
   }
   return logical_buffer_unpadded_sizes;
 }
-
-}  // namespace
 
 int64_t ComputeTotalAllocationBytes(const BufferAssignmentProto& proto,
                                     int64_t memory_color) {

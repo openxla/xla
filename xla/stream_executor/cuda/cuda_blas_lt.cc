@@ -261,6 +261,30 @@ auto BlasLt::MatmulPlan::GetAlgorithms(const Stream* stream,
         cu_preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
         max_workspace_size));
 
+#if CUDA_VERSION >= 11080
+    // Set dummy (non-null, aligned) scale pointers before querying heuristics
+    // so that cuBLASLt considers algorithms that support FP8 tensor scaling.
+    // Real pointers are set in DoMatmul() before cublasLtMatmul().
+    auto is_fp8 = [](cudaDataType_t type) {
+      return type == CUDA_R_8F_E4M3 || type == CUDA_R_8F_E5M2;
+    };
+    bool is_fp8_scaled = is_fp8(a_desc_.type()) || is_fp8(b_desc_.type());
+    if (is_fp8_scaled) {
+      void* dummy = reinterpret_cast<void*>(0x40);
+      TF_RETURN_IF_ERROR(
+          SetAttr(op_desc_.get(), CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, dummy));
+      TF_RETURN_IF_ERROR(
+          SetAttr(op_desc_.get(), CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, dummy));
+      if (is_fp8(c_desc_.type())) {
+        TF_RETURN_IF_ERROR(SetAttr(
+            op_desc_.get(), CUBLASLT_MATMUL_DESC_C_SCALE_POINTER, dummy));
+      }
+      if (is_fp8(d_desc_.type())) {
+        TF_RETURN_IF_ERROR(SetAttr(
+            op_desc_.get(), CUBLASLT_MATMUL_DESC_D_SCALE_POINTER, dummy));
+      }
+    }
+#endif
     std::unique_ptr<ActivateContext> activation = blas_lt->parent_->Activate();
 
     int found_algorithm_count = 0;
@@ -401,31 +425,23 @@ absl::Status BlasLt::MatmulPlan::DoMatmul(
                                  args.bias.opaque()));
     }
 #if CUDA_VERSION >= 11080
-    if (a_scale != nullptr) {
-      TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                 CUBLASLT_MATMUL_DESC_A_SCALE_POINTER,
-                                 a_scale.opaque()));
-    }
-    if (b_scale != nullptr) {
-      TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                 CUBLASLT_MATMUL_DESC_B_SCALE_POINTER,
-                                 b_scale.opaque()));
-    }
-    if (args.c_scale != nullptr) {
-      TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                 CUBLASLT_MATMUL_DESC_C_SCALE_POINTER,
-                                 args.c_scale.opaque()));
-    }
-    if (args.d_scale != nullptr) {
-      TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                 CUBLASLT_MATMUL_DESC_D_SCALE_POINTER,
-                                 args.d_scale.opaque()));
-    }
-    if (args.d_amax != nullptr) {
-      TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                 CUBLASLT_MATMUL_DESC_AMAX_D_POINTER,
-                                 args.d_amax.opaque()));
-    }
+    // Always set scale pointers (null when not provided) to overwrite any
+    // dummy values left by GetAlgorithms().
+    TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                               CUBLASLT_MATMUL_DESC_A_SCALE_POINTER,
+                               a_scale.opaque()));
+    TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                               CUBLASLT_MATMUL_DESC_B_SCALE_POINTER,
+                               b_scale.opaque()));
+    TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                               CUBLASLT_MATMUL_DESC_C_SCALE_POINTER,
+                               args.c_scale.opaque()));
+    TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                               CUBLASLT_MATMUL_DESC_D_SCALE_POINTER,
+                               args.d_scale.opaque()));
+    TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                               CUBLASLT_MATMUL_DESC_AMAX_D_POINTER,
+                               args.d_amax.opaque()));
 #else
     if (!(a_scale == nullptr && b_scale == nullptr && args.c_scale == nullptr &&
           args.d_scale == nullptr && args.d_amax == nullptr)) {

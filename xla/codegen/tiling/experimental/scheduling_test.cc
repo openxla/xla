@@ -40,11 +40,17 @@ limitations under the License.
 
 namespace xla::gpu::experimental {
 namespace {
+
 using absl_testing::IsOkAndHolds;
 using absl_testing::StatusIs;
+using mlir::MLIRContext;
+
 }  // namespace
 
-using mlir::MLIRContext;
+MATCHER_P(MatchSchedule, schedule_string, "") {
+  return ExplainMatchResult(
+      true, ApproximateMatch(schedule_string, arg.ToString()), result_listener);
+}
 
 class SchedulingTest : public HloHardwareIndependentTestBase {
  public:
@@ -90,11 +96,10 @@ TEST_F(SchedulingTest, OnlyParallelDimensions) {
       ROOT fusion = f32[2,97]{1,0} fusion(p0, p1), kind=kLoop, calls=fusion
     })",
                                                              {1, 32});
-  auto scheduling = Schedule(tiled_computation);
-  EXPECT_THAT(
-      scheduling,
-      IsOkAndHolds(MatchIndexingMap(
-          "(pid) -> (pid floordiv 4, pid mod 4), domain: pid in [0, 7]")));
+  auto scheduling = GetSchedule(tiled_computation);
+  EXPECT_THAT(scheduling,
+              IsOkAndHolds(MatchSchedule(
+                  "d0 -> pid floordiv 4, d1 -> pid mod 4, pid_bounds=[0, 7]")));
 }
 
 TEST_F(SchedulingTest, ReductionsAndContractionsAreNotSupported) {
@@ -117,11 +122,10 @@ TEST_F(SchedulingTest, ReductionsAndContractionsAreNotSupported) {
       ROOT fusion = f32[2,97]{1,0} fusion(p0), kind=kLoop, calls=fusion
     })",
                    {1, 32, /*reduction_tile_size=*/8});
-  auto scheduling = Schedule(tiled_computation);
-  EXPECT_THAT(
-      scheduling,
-      StatusIs(absl::StatusCode::kUnimplemented,
-               testing::HasSubstr("Only parallel dimensions are supported")));
+  auto scheduling = GetSchedule(tiled_computation);
+  EXPECT_THAT(scheduling,
+              IsOkAndHolds(MatchSchedule(
+                  "d0 -> pid floordiv 4, d1 -> pid mod 4, pid_bounds=[0, 7]")));
 }
 
 }  // namespace xla::gpu::experimental

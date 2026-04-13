@@ -424,14 +424,14 @@ class PreparedSend {
   gpu::GpuCliqueKey clique_key_;
   tsl::RCReference<CommonPjRtRawBuffer> raw_buffer_;
   std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events_;
-  tsl::RCReference<PjRtStreamExecutorDeviceEvent> usage_event_;
+  tsl::AsyncValueRef<BufferSequencingEvent> usage_event_;
   AcquiredCliqueAndCommunicator clique_and_communicator_;
   std::shared_ptr<Promise<>> promise_;
 
   PreparedSend(StreamExecutorGpuClient* client, gpu::GpuCliqueKey clique_key,
                tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
                std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events,
-               tsl::RCReference<PjRtStreamExecutorDeviceEvent> usage_event,
+               tsl::AsyncValueRef<BufferSequencingEvent> usage_event,
                AcquiredCliqueAndCommunicator clique_and_communicator,
                std::shared_ptr<Promise<>> promise)
       : client_(client),
@@ -446,12 +446,12 @@ class PreparedSend {
   PreparedSend& operator=(PreparedSend&&) = default;
 
   ~PreparedSend() {
-    if (!usage_event_ || usage_event_->event()->IsDefined()) {
+    if (!usage_event_ || usage_event_->IsDefined()) {
       return;
     }
     LOG(WARNING) << "PreparedSend destroyed with unfulfilled usage_event";
     client_->SetEventAsError(
-        usage_event_->event(),
+        usage_event_,
         absl::InternalError("PreparedSend destroyed without fulfilling "
                             "usage_event"));
   }
@@ -463,15 +463,14 @@ class PreparedReceive {
   gpu::GpuCliqueKey clique_key_;
   std::unique_ptr<PjRtBuffer> buffer_;
   tsl::RCReference<CommonPjRtRawBuffer> raw_buffer_;
-  tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event_;
+  tsl::AsyncValueRef<BufferSequencingEvent> definition_event_;
   AcquiredCliqueAndCommunicator clique_and_communicator_;
 
-  PreparedReceive(
-      StreamExecutorGpuClient* client, gpu::GpuCliqueKey clique_key,
-      std::unique_ptr<PjRtBuffer> buffer,
-      tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
-      tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event,
-      AcquiredCliqueAndCommunicator clique_and_communicator)
+  PreparedReceive(StreamExecutorGpuClient* client, gpu::GpuCliqueKey clique_key,
+                  std::unique_ptr<PjRtBuffer> buffer,
+                  tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+                  tsl::AsyncValueRef<BufferSequencingEvent> definition_event,
+                  AcquiredCliqueAndCommunicator clique_and_communicator)
       : client_(client),
         clique_key_(std::move(clique_key)),
         buffer_(std::move(buffer)),
@@ -483,13 +482,13 @@ class PreparedReceive {
   PreparedReceive& operator=(PreparedReceive&&) = default;
 
   ~PreparedReceive() {
-    if (!definition_event_ || definition_event_->event()->IsDefined()) {
+    if (!definition_event_ || definition_event_->IsDefined()) {
       return;
     }
     LOG(WARNING)
         << "PreparedReceive destroyed with unfulfilled definition_event";
     client_->SetEventAsError(
-        definition_event_->event(),
+        definition_event_,
         absl::InternalError("PreparedReceive destroyed without fulfilling "
                             "definition_event"));
   }
@@ -572,7 +571,7 @@ absl::StatusOr<PreparedSend> PrepareSend(
     CrossHostTransferKey transfer_key,
     gpu::AcquiredCliquesMap& acquired_cliques_map,
     std::shared_ptr<Promise<>> promise,
-    tsl::RCReference<PjRtStreamExecutorDeviceEvent> usage_event) {
+    tsl::AsyncValueRef<BufferSequencingEvent> usage_event) {
   GlobalDeviceId src_device(buffer->device()->global_device_id().value());
   GlobalDeviceId dst_device(dst_global_device_id.value());
 
@@ -611,9 +610,9 @@ absl::StatusOr<PreparedSend> PrepareSend(
                       buf_definition_events) mutable
                   -> absl::StatusOr<PjRtDeviceEventRef> {
                 raw_buffer = std::move(buf_raw_buffer);
-                usage_event->AndThen([raw_buffer]() {});
+                usage_event.AndThen([raw_buffer]() {});
                 definition_events = std::move(buf_definition_events);
-                return usage_event;
+                return PjRtDeviceEventRef(usage_event);
               },
               "PrepareSend"));
 
@@ -630,7 +629,7 @@ absl::StatusOr<PreparedReceive> PrepareReceive(
     se::Stream* stream, PjRtDevice* device, PjRtMemorySpace* memory_space,
     GlobalDeviceId src_global_device_id, CrossHostTransferKey transfer_key,
     Shape shape, gpu::AcquiredCliquesMap& acquired_cliques_map,
-    tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event) {
+    tsl::AsyncValueRef<BufferSequencingEvent> definition_event) {
   GlobalDeviceId src_device(src_global_device_id.value());
   GlobalDeviceId dst_device(device->global_device_id().value());
 
@@ -673,8 +672,8 @@ absl::StatusOr<PreparedReceive> PrepareReceive(
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<PjRtBuffer> buffer,
       client->DefineBuffer(std::move(on_device_shape), memory_space, raw_buffer,
-                           {definition_event}));
-  definition_event->AndThen([raw_buffer]() {});
+                           {PjRtDeviceEventRef(definition_event)}));
+  definition_event.AndThen([raw_buffer]() {});
 
   return PreparedReceive(client, std::move(clique_key), std::move(buffer),
                          std::move(raw_buffer), std::move(definition_event),
@@ -704,17 +703,16 @@ GroupReceivesByCliqueKey(std::vector<PreparedReceive>&& prepared_receives) {
 
 absl::Status FulfillDeviceEvent(
     PjRtStreamExecutorClient* client, LocalDeviceState* local_device_state,
-    se::Stream* stream,
-    tsl::RCReference<PjRtStreamExecutorDeviceEvent> device_event,
+    se::Stream* stream, tsl::AsyncValueRef<BufferSequencingEvent> device_event,
     const absl::Status& status) {
   if (!status.ok()) {
-    client->SetEventAsError(device_event->event(), status);
+    client->SetEventAsError(device_event, status);
     return absl::OkStatus();
   }
-  absl::Status s = client->AllocateAndRecordEvent(device_event->event(),
-                                                  local_device_state, stream);
+  absl::Status s =
+      client->AllocateAndRecordEvent(device_event, local_device_state, stream);
   if (!s.ok()) {
-    client->SetEventAsError(device_event->event(), s);
+    client->SetEventAsError(device_event, s);
   }
   return s;
 }
@@ -815,7 +813,7 @@ void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
   se::Stream* stream;
   std::vector<PreparedSend> prepared_sends;
   prepared_sends.reserve(buffers.size());
-  tsl::RCReference<PjRtStreamExecutorDeviceEvent> usage_event;
+  tsl::AsyncValueRef<BufferSequencingEvent> usage_event;
 
   tsl::profiler::TraceMe trace([&] {
     return tsl::profiler::TraceMeEncode(
@@ -830,8 +828,7 @@ void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
     stream = local_device_state->GetDeviceToDeviceStream();
     gpu::GpuCollectives* gpu_collectives =
         gpu::GpuCollectives::Default(stream->parent()->GetPlatform()->Name());
-    usage_event = tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(
-        BufferSequencingEvent::Create(this->async_work_runner()));
+    usage_event = BufferSequencingEvent::Create(this->async_work_runner());
 
     gpu::AcquiredCliquesMap acquired_cliques_map;
     for (int i = 0; i < buffers.size(); ++i) {
@@ -840,7 +837,7 @@ void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
           transfer_keys[i], acquired_cliques_map, promises[i], usage_event);
 
       if (!prepared_send.ok()) {
-        SetEventAsError(usage_event->event(), prepared_send.status());
+        SetEventAsError(usage_event, prepared_send.status());
         return prepared_send.status();
       }
 
@@ -992,9 +989,8 @@ StreamExecutorGpuClient::PrepareReceiveBuffer(PjRtDevice* device, Shape shape) {
       BufferSequencingEvent::Create(this->async_work_runner());
   TF_ASSIGN_OR_RETURN(
       auto buffer,
-      DefineBuffer(
-          std::move(on_device_shape), memory_space, raw_buffer,
-          {tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(definition_event)}));
+      DefineBuffer(std::move(on_device_shape), memory_space, raw_buffer,
+                   {PjRtDeviceEventRef(std::move(definition_event))}));
 
   return PrepareReceiveBufferResult{std::move(buffer), std::move(raw_buffer),
                                     local_device, stream,
@@ -1049,7 +1045,7 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
   buffers.reserve(shapes.size());
   std::vector<PreparedReceive> prepared_receives;
   prepared_receives.reserve(shapes.size());
-  tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event;
+  tsl::AsyncValueRef<BufferSequencingEvent> definition_event;
 
   tsl::profiler::TraceMe trace([&] {
     return tsl::profiler::TraceMeEncode(
@@ -1065,8 +1061,8 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
                         device->default_memory_space());
     gpu::GpuCollectives* gpu_collectives =
         gpu::GpuCollectives::Default(stream->parent()->GetPlatform()->Name());
-    definition_event = tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(
-        BufferSequencingEvent::Create(this->async_work_runner()));
+    definition_event =
+        (BufferSequencingEvent::Create(this->async_work_runner()));
 
     gpu::AcquiredCliquesMap acquired_cliques_map;
     for (int i = 0; i < shapes.size(); ++i) {
@@ -1076,7 +1072,7 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
                          acquired_cliques_map, definition_event);
 
       if (!prepared_receive.ok()) {
-        SetEventAsError(definition_event->event(), prepared_receive.status());
+        SetEventAsError(definition_event, prepared_receive.status());
         return prepared_receive.status();
       }
 
@@ -1259,8 +1255,7 @@ void StreamExecutorGpuClient::ScheduleRemoteSend(
               }
             });
       });
-  usage_event_promise->Set(
-      tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(std::move(usage_event)));
+  usage_event_promise->Set(PjRtDeviceEventRef(std::move(usage_event)));
 }
 
 // Receive functionality for original cross-host transfers API.
@@ -1519,7 +1514,15 @@ GetStreamExecutorGpuDeviceAllocator(
     const std::map<int, std::unique_ptr<LocalDeviceState>>&
         addressable_devices) {
   std::vector<se::MultiDeviceAdapter::AllocatorInfo> allocators;
-  switch (allocator_config.kind) {
+  GpuAllocatorConfig::Kind effective_kind = allocator_config.kind;
+  if (GetDebugOptionsFromFlags().xla_gpu_command_buffer_update_mode() !=
+          DebugOptions::ALWAYS_UPDATE &&
+      effective_kind != GpuAllocatorConfig::Kind::kVmm) {
+    LOG(WARNING) << "xla_gpu_command_buffer_update_mode requires the "
+                    "VMM allocator. Overriding allocator kind to kVmm.";
+    effective_kind = GpuAllocatorConfig::Kind::kVmm;
+  }
+  switch (effective_kind) {
     case GpuAllocatorConfig::Kind::kCudaAsync: {
       for (const auto& ordinal_and_device : addressable_devices) {
         TF_ASSIGN_OR_RETURN(
@@ -1979,7 +1982,9 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
         local_device_states.begin()->second->compute_stream()->parent();
     HostMemoryAllocator::Options allocator_options;
     allocator_options.alignment = tsl::Allocator::kAllocatorAlignment;
-    allocator_options.map_fn = [stream_executor](void* data, size_t size) {
+    allocator_options.map_fn = [stream_executor](
+                                   std::optional<LocalDeviceId> local_device_id,
+                                   void* data, size_t size) {
       bool success = stream_executor->HostMemoryRegister(data, size);
       if (!success) {
         return absl::InternalError(absl::StrFormat(
@@ -1987,14 +1992,16 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
       }
       return absl::OkStatus();
     };
-    allocator_options.unmap_fn = [stream_executor](void* data) {
-      bool success = stream_executor->HostMemoryUnregister(data);
-      if (!success) {
-        return absl::InternalError(absl::StrFormat(
-            "Failed to unregister host memory at address: %ps", data));
-      }
-      return absl::OkStatus();
-    };
+    allocator_options.unmap_fn =
+        [stream_executor](std::optional<LocalDeviceId> local_device_id,
+                          void* data) {
+          bool success = stream_executor->HostMemoryUnregister(data);
+          if (!success) {
+            return absl::InternalError(absl::StrFormat(
+                "Failed to unregister host memory at address: %ps", data));
+          }
+          return absl::OkStatus();
+        };
     TF_ASSIGN_OR_RETURN(
         host_memory_allocator,
         options.host_memory_allocator_factory(std::move(allocator_options)));

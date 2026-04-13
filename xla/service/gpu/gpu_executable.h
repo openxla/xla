@@ -320,7 +320,8 @@ class GpuExecutable : public Executable {
       const BufferAllocations& buffer_allocations,
       const ServiceExecutableRunOptions* run_options,
       stream_executor::StreamExecutor* executor, int64_t unique_id,
-      Thunk::ExecutableSource executable_source, bool block_host_until_done);
+      Thunk::ExecutableSource executable_source, bool block_host_until_done,
+      bool collective_use_minimal_resource);
 
   // The LLVM IR, in string format, of the unoptimized module generated for
   // this GpuExecutable. We save a string instead of an llvm::Module* because
@@ -427,7 +428,8 @@ class GpuExecutable : public Executable {
   // Separate mutex for VA ranges to avoid contention with module_handle_mutex_
   // during VA remapping operations which may involve GPU synchronization.
   absl::Mutex va_ranges_mutex_;
-  absl::node_hash_map<stream_executor::StreamExecutor*, VaRanges>
+  absl::node_hash_map<std::pair<stream_executor::StreamExecutor*, int>,
+                      VaRanges>
       module_va_ranges_ ABSL_GUARDED_BY(va_ranges_mutex_);
 
   GpuExecutable(const GpuExecutable&) = delete;

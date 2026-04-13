@@ -81,16 +81,15 @@ class ThunkEmitter {
   // the generated code and so must be initialized by XLA. The value of these
   // constants will be stored in 'content'. Constants with initializers in the
   // generated code will have empty 'content'.
-  absl::StatusOr<ThunkSequence> EmitHloComputation(
-      const HloComputation* computation);
+  AsyncThunkSequence EmitHloComputation(const HloComputation* computation);
 
-  absl::StatusOr<ThunkSequence> EmitHloInstruction(
-      const HloInstruction* hlo, bool emit_group_thunks = false);
+  AsyncThunkSequence EmitHloInstruction(const HloInstruction* hlo,
+                                        bool emit_group_thunks = false);
 
   // Calls the right function to emit the custom call thunk for `hlo`.
   absl::StatusOr<ThunkSequence> EmitCustomCallSwitch(const HloInstruction* hlo);
 
-  absl::StatusOr<ThunkSequence> EmitAsyncStart(const HloInstruction* hlo);
+  AsyncThunkSequence EmitAsyncStart(const HloInstruction* instr);
 
   absl::StatusOr<ThunkSequence> EmitAsyncComputation(const HloInstruction* hlo);
 
@@ -99,14 +98,12 @@ class ThunkEmitter {
 
   absl::StatusOr<ThunkSequence> EmitAsyncDone(const HloInstruction* hlo);
 
-  absl::StatusOr<ThunkSequence> EmitCommandBufferThunk(
-      const HloInstruction* hlo);
+  AsyncThunkSequence EmitCommandBufferThunk(const HloInstruction* instr);
 
   absl::StatusOr<ThunkSequence> EmitCollectiveAsyncDone(
       const HloInstruction* hlo);
 
-  absl::StatusOr<ThunkSequence> EmitCollectiveGroupStartThunk(
-      const HloInstruction* hlo);
+  AsyncThunkSequence EmitCollectiveGroupStartThunk(const HloInstruction* instr);
 
   absl::StatusOr<ThunkSequence> EmitCollectivePermute(
       const HloCollectivePermuteInstruction* hlo);
@@ -116,7 +113,7 @@ class ThunkEmitter {
       Thunk::Kind kind, const HloInstruction* async_start,
       const HloInstType* inst, std::optional<bool> use_global_device_ids);
 
-  absl::StatusOr<ThunkSequence> EmitConditional(const HloInstruction* hlo);
+  AsyncThunkSequence EmitConditional(const HloInstruction* instr);
 
   absl::StatusOr<ThunkSequence> EmitConstant(const HloConstantInstruction* hlo);
 
@@ -218,7 +215,7 @@ class ThunkEmitter {
   absl::StatusOr<ThunkSequence> EmitTritonCustomCall(
       const HloCustomCallInstruction* hlo);
 
-  absl::StatusOr<ThunkSequence> EmitWhile(const HloInstruction* hlo);
+  AsyncThunkSequence EmitWhile(const HloInstruction* instr);
 
   absl::Status AssertNonDeterminismIsOkay(const std::string& op_name);
 

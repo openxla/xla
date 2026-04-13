@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,9 +12,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "xla/backends/gpu/codegen/emitters/emitter_base.h"
+#include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -52,7 +53,7 @@ namespace xla {
 namespace gpu {
 namespace {
 
-class DummyCopyEmitter : public EmitterBase {
+class DummyCopyEmitter : public MlirKernelEmitter {
  public:
   LaunchDimensions launch_dimensions() const final { return {1, 100}; }
 
@@ -84,10 +85,11 @@ class DummyCopyEmitter : public EmitterBase {
   }
 };
 
-class EmitterBaseTest : public HloHardwareIndependentTestBase {
+class MlirKernelFusionTest : public HloHardwareIndependentTestBase {
  protected:
-  EmitterBaseTest() {
-    mlir_context_.appendDialectRegistry(EmitterBase::GetDialectRegistry());
+  MlirKernelFusionTest() {
+    mlir_context_.appendDialectRegistry(
+        MlirKernelEmitter::GetDialectRegistry());
     mlir_context_.loadAllAvailableDialects();
     RegisterSymbolicExprStorage(&mlir_context_);
   }
@@ -107,7 +109,7 @@ constexpr absl::string_view kModule = R"(
       ROOT fusion = f32[100] fusion(%p0), kind=kLoop, calls=fused_computation
     })";
 
-TEST_F(EmitterBaseTest, CreateMlirModule) {
+TEST_F(MlirKernelFusionTest, CreateMlirModule) {
   auto module = ParseAndReturnVerifiedModule(kModule).value();
   DummyCopyEmitter emitter;
   TF_ASSERT_OK_AND_ASSIGN(
@@ -136,11 +138,11 @@ TEST_F(EmitterBaseTest, CreateMlirModule) {
   EXPECT_TRUE(filecheck_result);
 }
 
-TEST_F(EmitterBaseTest, CreateLLVMModule) {
+TEST_F(MlirKernelFusionTest, CreateLLVMModule) {
   llvm::LLVMContext llvm_context;
 
   auto module = ParseAndReturnVerifiedModule(kModule).value();
-  DummyCopyEmitter emitter;
+  MlirKernelFusion emitter(std::make_unique<DummyCopyEmitter>());
   TF_ASSERT_OK_AND_ASSIGN(
       auto llvm_module,
       emitter.CreateLLVMModule(

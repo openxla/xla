@@ -216,14 +216,14 @@ struct BlasLt {
   };
 
   struct MemoryArgs {
-    DeviceMemoryBase a, b, c, d;                          // these are mandatory
-    DeviceMemoryBase bias, aux;                           // these may be null
-    DeviceMemoryBase a_scale, b_scale, c_scale, d_scale;  // these may be null
+    DeviceAddressBase a, b, c, d;  // these are mandatory
+    DeviceAddressBase bias, aux;   // these may be null
+    DeviceAddressBase a_scale, b_scale, c_scale, d_scale;  // these may be null
     union {
-      DeviceMemoryBase d_amax;       // this may be null
-      DeviceMemoryBase group_sizes;  // used by grouped gemm
+      DeviceAddressBase d_amax;       // this may be null
+      DeviceAddressBase group_sizes;  // used by grouped gemm
     };
-    DeviceMemoryBase workspace;           // either workspace or
+    DeviceAddressBase workspace;          // either workspace or
     ScratchAllocator* scratch_allocator;  // scratch_allocator must not be null
   };
 
@@ -317,13 +317,13 @@ struct BlasLt {
 
     // API that uses pre-allocated buffer as workspace (grouped matmul).
     absl::Status ExecuteOnStream(
-        Stream* stream, DeviceMemoryBase a, DeviceMemoryBase b,
-        DeviceMemoryBase c, DeviceMemoryBase d, DeviceMemoryBase group_sizes,
-        DeviceMemoryBase bias,  // may be null
-        DeviceMemoryBase aux,   // may be null
-        DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
-        DeviceMemoryBase c_scale, DeviceMemoryBase d_scale,
-        DeviceMemoryBase d_amax, DeviceMemoryBase workspace,
+        Stream* stream, DeviceAddressBase a, DeviceAddressBase b,
+        DeviceAddressBase c, DeviceAddressBase d, DeviceAddressBase group_sizes,
+        DeviceAddressBase bias,  // may be null
+        DeviceAddressBase aux,   // may be null
+        DeviceAddressBase a_scale, DeviceAddressBase b_scale,
+        DeviceAddressBase c_scale, DeviceAddressBase d_scale,
+        DeviceAddressBase d_amax, DeviceAddressBase workspace,
         blas::ProfileResult* profile_result = nullptr) const {
       return ExecuteOnStream(stream,
                              MemoryArgs{a,

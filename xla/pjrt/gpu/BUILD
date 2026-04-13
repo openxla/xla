@@ -481,7 +481,6 @@ cc_library(
         ":se_gpu_topology_description",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla/backends/cpu:target_machine_options",
         "//xla/backends/gpu/target_config",
         "//xla/client:executable_build_options",
         "//xla/hlo/builder:xla_computation",

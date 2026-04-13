@@ -926,6 +926,12 @@ int64_t ComputeIndefiniteAllocationsInBytes(const BufferAssignmentProto& proto,
 int64_t ComputeTotalAllocationBytes(const BufferAssignmentProto& proto,
                                     int64_t memory_color);
 
+// Computes the unpadded size of each logical buffer.
+absl::StatusOr<absl::flat_hash_map<int64_t, int64_t>>
+ComputeLogicalBufferUnpaddedSizes(
+    const HloModuleProto& hlo_module_proto,
+    const BufferAssignmentProto& buffer_assignment_proto);
+
 }  // namespace xla
 
 #endif  // XLA_SERVICE_BUFFER_ASSIGNMENT_H_

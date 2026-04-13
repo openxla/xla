@@ -600,10 +600,19 @@ absl::Status WindowsFileSystem::DeleteFile(const std::string& fname,
 
 absl::Status WindowsFileSystem::CreateDir(const std::string& name,
                                           TransactionToken* token) {
+  return CreateDir(name, token, kDefaultMode);
+}
+
+absl::Status WindowsFileSystem::CreateDir(const std::string& name,
+                                          TransactionToken* token,
+                                          uint32_t mode) {
   absl::Status result;
   std::wstring ws_name = Utf8ToWideChar(name);
   if (ws_name.empty()) {
     return absl::AlreadyExistsError(name);
+  }
+  if (mode != kDefaultMode) {
+    return absl::UnimplementedError(absl::StrCat("Unsupported mode: ", mode));
   }
   if (_wmkdir(ws_name.c_str()) != 0) {
     result = IOError("Failed to create a directory: " + name, errno);

@@ -40,6 +40,8 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
+#include "xla/backends/gpu/runtime/scratch_memory.h"
+#include "xla/backends/gpu/runtime/scratch_memory_requests.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/thunk_kind.pb.h"
@@ -55,6 +57,7 @@ limitations under the License.
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/lib/gtl/int_type.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
@@ -111,6 +114,7 @@ class Thunk {
     kCollectiveKernel,
     kCollectiveMetadata,
     kCollectivePermute,
+    kCommand,
     kCommandBuffer,
     kConditional,
     kConvolution,
@@ -221,6 +225,8 @@ class Thunk {
     CollectiveCliqueRequests* collective_clique_requests = nullptr;
     // Collective memory requests for preparing symmetric allocations.
     CollectiveMemoryRequests* collective_memory_requests = nullptr;
+    // Scratch memory requests for preparing scratch memory allocations.
+    ScratchMemoryRequests* scratch_memory_requests = nullptr;
     // Stream executor for the thunk.
     se::StreamExecutor* absl_nonnull executor = nullptr;
     // Buffer allocations for the thunk.
@@ -261,6 +267,9 @@ class Thunk {
 
     // Collective memory acquired based on memory requests.
     CollectiveMemory* collective_memory = nullptr;
+
+    // Scratch memory acquired based on scratch memory requests.
+    ScratchMemory* scratch_memory = nullptr;
 
     // XLA FFI execution context.
     const ffi::ExecutionContext* ffi_execution_context = nullptr;
@@ -500,6 +509,10 @@ class Thunk {
 
   virtual bool IsAsyncDone() const { return false; }
 
+  void set_profile_annotation(absl::string_view profile_annotation) {
+    thunk_info_.profile_annotation = std::string(profile_annotation);
+  }
+
  protected:
   friend class ThunkSequence;
 
@@ -526,7 +539,14 @@ class Thunk {
 // A sequence of thunks.
 class ThunkSequence : public std::vector<std::unique_ptr<Thunk>> {
  public:
-  using std::vector<std::unique_ptr<Thunk>>::vector;
+  ThunkSequence() = default;
+  ThunkSequence(ThunkSequence&&) = default;
+  ThunkSequence(const ThunkSequence&) = delete;
+
+  ThunkSequence& operator=(ThunkSequence&&) = default;
+
+  explicit ThunkSequence(int64_t len)
+      : std::vector<std::unique_ptr<Thunk>>::vector(len) {}
 
   // Creates a thunks sequence from a single thunk.
   static ThunkSequence Of(std::unique_ptr<Thunk> thunk) {
@@ -544,6 +564,8 @@ class ThunkSequence : public std::vector<std::unique_ptr<Thunk>> {
   // thunk-specific description. Useful for diagnosing suboptimal schedules.
   std::string ToString(int indent) const;
 };
+
+using AsyncThunkSequence = tsl::Future<ThunkSequence>;
 
 std::ostream& operator<<(std::ostream& os, Thunk::Kind kind);
 

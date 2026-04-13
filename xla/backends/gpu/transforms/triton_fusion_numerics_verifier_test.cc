@@ -232,7 +232,6 @@ ENTRY main (p0: bf16[128,512], p1: bf16[256,512], p2: bf16[512,512]) -> bf16[384
   ROOT gemm_f = bf16[384,512]{1,0} fusion(p0, p1, p2),
     kind=kCustom, calls=gemm_computation, backend_config={
     "operation_queue_id":"0",
-    "wait_on_operation_queues":[],
     "fusion_backend_config":{
       "kind":"__triton_nested_gemm_fusion",
       "block_level_fusion_config":{

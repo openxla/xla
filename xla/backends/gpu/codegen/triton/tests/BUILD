@@ -57,6 +57,14 @@ lit_device_test(
         "h100",
         "b200",
     ],
+    tags_override = {
+        "dot/dot_unit_tile_sizes.hlo": ["nozapfhahn"],
+        "dot/dot.hlo": ["nozapfhahn"],
+        "dot/layout_021_201_210.hlo": ["nozapfhahn"],
+        "dot/layout_201_012_201.hlo": ["nozapfhahn"],
+        "dot/layout_210_210_102.hlo": ["nozapfhahn"],
+        "dot/layout_210_210_210.hlo": ["nozapfhahn"],
+    },
     tools = [
         ":triton_test_correctness",
         "//xla/backends/gpu/codegen/triton/tools:hlo_to_xtileir",

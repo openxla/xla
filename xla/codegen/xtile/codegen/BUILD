@@ -18,9 +18,7 @@ package_group(
 cc_library(
     name = "emitter_helpers",
     srcs = ["emitter_helpers.cc"],
-    hdrs = [
-        "emitter_helpers.h",
-    ],
+    hdrs = ["emitter_helpers.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla:comparison_util",
@@ -32,10 +30,14 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/codegen/emitters:elemental_hlo_to_mlir",
         "//xla/codegen/tiling:tiled_hlo_instruction",
+        "//xla/codegen/tiling/experimental:scheduling",
+        "//xla/codegen/tiling/experimental:tile",
         "//xla/codegen/tiling/experimental:tiled_hlo",
         "//xla/codegen/xtile/ir:xtile",
         "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/analysis:interval",
         "//xla/hlo/analysis:symbolic_map",
+        "//xla/hlo/analysis:symbolic_map_converter",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:map_mhlo_to_scalar_op",
@@ -91,6 +93,7 @@ cc_library(
         "//xla/codegen/tiling:tiled_hlo_schedule",
         "//xla/codegen/tiling:tiling_specification",
         "//xla/codegen/tiling/experimental:scheduling",
+        "//xla/codegen/tiling/experimental:tile",
         "//xla/codegen/tiling/experimental:tiled_hlo",
         "//xla/codegen/xtile/ir:xtile",
         "//xla/codegen/xtile/ir/transforms:passes",

@@ -212,17 +212,10 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
 
     VLOG(6) << "fusion instruction: " << fusion->ToString() << "\n";
     VLOG(6) << "tiling space: " << tiling_space->ToString();
-
-    // TODO(pifon): Support contraction tile sizes here.
-    if (block_level_parameters.output_tile_sizes.size() != 1) {
-      return Internal(
-          "Only single-result fusions are supported for now. Received %d "
-          "roots.",
-          block_level_parameters.output_tile_sizes.size());
-    }
-    // Triton requires that all block dimensions are a power of 2.
-    tiling_space->AssignTileSizes(xtile::GetPaddedTileSizes(
-        block_level_parameters.output_tile_sizes.front()));
+    TF_ASSIGN_OR_RETURN(
+        llvm::SmallVector<int64_t> tile_sizes,
+        GetTilingSpaceConcreteSizes(*tiling_space, block_level_parameters));
+    tiling_space->AssignTileSizes(xtile::GetPaddedTileSizes(tile_sizes));
 
     TileAnalysisOrError tiled_computation_or =
         TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space));
@@ -525,6 +518,16 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
       VerifyModule(*ll_triton_module);
     }
 
+    // Apply ROCm-specific waves_per_eu attribute if set.
+    if (gpu_cc.IsRocm() && block_level_parameters.waves_per_eu > 0) {
+      if (auto* fn = ll_triton_module->getFunction(kernel_name)) {
+        std::string waves_attr =
+            absl::StrCat(block_level_parameters.waves_per_eu, ", ",
+                         block_level_parameters.waves_per_eu);
+        fn->addFnAttr("amdgpu-waves-per-eu", waves_attr);
+      }
+    }
+
     // Integrate LLVM matmul kernel into XLA's LLVM module.
     captured_nvvm_annotations =
         xgt::ExtractNvvmAnnotations(ll_triton_module.get());
@@ -609,6 +612,13 @@ absl::Status LowerXTileToTriton(
     pm.addPass(mlir::triton::xla::CreateTritonXLAMathToLibdevicePass(
         libdevice_path, triple));
 
+    if (fusion.GetModule()
+            ->config()
+            .debug_options()
+            .xla_gpu_experimental_scaled_dot_with_triton()) {
+      pm.addPass(
+          mlir::triton::xla::CreateTritonXLAConvertUnsupportedTypesPass());
+    }
     tsl::StatusScopedDiagnosticHandler diagnostic_handler(&mlir_context);
     if (absl::Status status =
             diagnostic_handler.consumeStatus(pm.run(xtile_dialect_module));
@@ -619,39 +629,18 @@ absl::Status LowerXTileToTriton(
     }
   }
 
-  {
-    if (fusion.GetModule()
-            ->config()
-            .debug_options()
-            .xla_gpu_experimental_scaled_dot_with_triton()) {
-      // Convert unsupported types before verification.
-      mlir::PassManager pm(&mlir_context);
-
-      EnableIRPrintingIfRequested(pm, &mlir_context, *fusion.GetModule(),
-                                  fusion.name(),
-                                  "convert-scaled-dot-unsupported-types");
-      pm.addPass(
-          mlir::triton::xla::CreateTritonXLAConvertUnsupportedTypesPass());
-      if (mlir::failed(pm.run(xtile_dialect_module))) {
-        return CreateInternalError(
-            "Failed to fix unsupported types in Triton module for fusion:",
-            &fusion, xtile_dialect_module);
-      }
-    }
-
-    if (mlir::failed(mlir::verify(xtile_dialect_module))) {
-      return CreateInternalError("Failed to verify Triton module for fusion:",
-                                 &fusion, xtile_dialect_module);
-    }
-    mlir::PassManager pm(&mlir_context);
-    EnableIRPrintingIfRequested(pm, &mlir_context, *fusion.GetModule(),
-                                fusion.name(), "canonicalize-cse");
-    pm.addPass(mlir::createCanonicalizerPass());
-    pm.addPass(mlir::createCSEPass());
-    if (mlir::failed(pm.run(xtile_dialect_module))) {
-      return CreateInternalError("Failed to create Triton module for fusion:",
-                                 &fusion, xtile_dialect_module);
-    }
+  if (mlir::failed(mlir::verify(xtile_dialect_module))) {
+    return CreateInternalError("Failed to verify Triton module for fusion:",
+                               &fusion, xtile_dialect_module);
+  }
+  mlir::PassManager pm(&mlir_context);
+  EnableIRPrintingIfRequested(pm, &mlir_context, *fusion.GetModule(),
+                              fusion.name(), "canonicalize-cse");
+  pm.addPass(mlir::createCanonicalizerPass());
+  pm.addPass(mlir::createCSEPass());
+  if (mlir::failed(pm.run(xtile_dialect_module))) {
+    return CreateInternalError("Failed to create Triton module for fusion:",
+                               &fusion, xtile_dialect_module);
   }
   return absl::OkStatus();
 }

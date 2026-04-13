@@ -503,7 +503,7 @@ absl::StatusOr<CompileOptionsMap> GetCompileOptions(
     llvm::function_ref<void(xla::ExecutableBuildOptions&, int64_t)>
         set_reserved_bytes) {
   mlir::func::FuncOp main_func = GetMainFunction(module);
-  if (!IsIfrtFunction(main_func)) {
+  if (!xla::ifrt::IsIfrtFunction(main_func)) {
     return absl::InvalidArgumentError("MLIR module is not an IFRT module.");
   }
   mlir::PassManager pm(module->getContext());

@@ -66,23 +66,8 @@ class CpuTrackedDeviceEventPromise : public PjRtDeviceEventPromise {
   tsl::RCReference<tsl::IndirectAsyncValue> av_;
 };
 
-class CpuTrackedDeviceEvent : public PjRtDeviceEvent {
- public:
-  explicit CpuTrackedDeviceEvent(tsl::AsyncValueRef<CpuEvent> event)
-      : event_(std::move(event)) {}
-
-  const tsl::AsyncValueRef<CpuEvent>& event() const { return event_; }
-
-  tsl::AsyncValue* async_value() const override {
-    return event_.GetAsyncValue();
-  }
-
-  static tsl::AsyncValueRef<CpuEvent> AfterAll(
-      absl::Span<const PjRtDeviceEventRef> events);
-
- private:
-  tsl::AsyncValueRef<CpuEvent> event_;
-};
+tsl::AsyncValueRef<CpuEvent> AfterAllCpuEvents(
+    absl::Span<const PjRtDeviceEventRef> events);
 
 class CpuTrackedDeviceEventSet : public PjRtDeviceEventSet {
  public:

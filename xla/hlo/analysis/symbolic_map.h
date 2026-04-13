@@ -92,6 +92,7 @@ class SymbolicMap {
   // Move the results out if the map is a temporary
   llvm::SmallVector<SymbolicExpr> GetResults() && { return std::move(exprs_); }
   SymbolicExpr GetResult(unsigned idx) const { return exprs_[idx]; }
+  void SetResult(unsigned idx, SymbolicExpr expr) { exprs_[idx] = expr; }
 
   std::string ToString() const;
 

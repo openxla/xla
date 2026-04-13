@@ -33,6 +33,7 @@ cc_library(
         "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -62,10 +63,33 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "reshape_analysis",
+    srcs = ["reshape_analysis.cc"],
+    hdrs = ["reshape_analysis.h"],
+    deps = [
+        "//xla:shape_util",
+        "@com_google_absl//absl/log:check",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+xla_cc_test(
+    name = "reshape_analysis_test",
+    srcs = ["reshape_analysis_test.cc"],
+    deps = [
+        ":reshape_analysis",
+        "//xla:shape_util",
+        "//xla/tsl/platform:test_main",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
     name = "tile_propagation",
     srcs = ["tile_propagation.cc"],
     hdrs = ["tile_propagation.h"],
     deps = [
+        ":reshape_analysis",
         ":tile",
         "//xla:literal_util",
         "//xla:permutation_util",
@@ -132,11 +156,15 @@ cc_library(
         ":tiled_hlo",
         "//xla:util",
         "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/analysis:interval",
         "//xla/hlo/analysis:symbolic_map",
         "@com_google_absl//absl/log",
-        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
     ],
 )
 

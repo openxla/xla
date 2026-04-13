@@ -151,11 +151,13 @@ cc_library(
         ":build_hermetic": [
             "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib",
             "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib/llvm/lib",
+            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib/rocm_sysdeps/lib",
             "-Lexternal/local_config_rocm/rocm/%{rocm_root}/lib",
         ],
         ":link_only": [
             "-Wl,-rpath-link,external/local_config_rocm/rocm/%{rocm_root}/lib",
             "-Wl,-rpath-link,external/local_config_rocm/rocm/%{rocm_root}/lib/llvm/lib",
+            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib/rocm_sysdeps/lib",
             "-Lexternal/local_config_rocm/rocm/%{rocm_root}/lib",
         ],
         ":multiple_rocm_paths": [

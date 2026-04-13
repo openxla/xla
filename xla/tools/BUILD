@@ -837,6 +837,7 @@ cc_library(
     tags = [
         "no_mac",
     ],
+    target_compatible_with = if_rocm(["@platforms//cpu:x86_64"]),
     deps = [
         ":collective_perf_table_gen",
         "//xla/hlo/ir:hlo",
@@ -860,6 +861,9 @@ cc_library(
     ] + if_cuda([
         "//xla/service:gpu_plugin",
         "//xla/stream_executor:cuda_platform",
+    ]) + if_rocm([
+        "//xla/service:gpu_plugin",
+        "//xla/stream_executor:rocm_platform",
     ]),
     alwayslink = True,
 )
