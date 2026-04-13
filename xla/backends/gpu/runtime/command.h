@@ -37,9 +37,9 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -216,7 +216,7 @@ class Command : public Thunk {
   virtual bool requires_initialization() const { return false; }
 
   // Returns true if this command is implemented via CUDA stream activity
-  // tracing (i.e. a subclass of TracedCommandBufferCmd).
+  // tracing (i.e. a subclass of TracedCommand).
   virtual bool IsTracedCommand() const { return false; }
 
   // Returns true if command supports loop unroll, the while loop can be

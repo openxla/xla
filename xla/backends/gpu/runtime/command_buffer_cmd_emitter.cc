@@ -62,8 +62,8 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/util.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/util.h"
 
 namespace xla::gpu {
 
@@ -129,13 +129,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
   return std::make_unique<WhileCmd>(
       thunk.condition_result_buffer(), std::move(cond_cmds),
       std::move(body_cmds), thunk.trip_count(), options.enable_loop_unroll);
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const GemmThunk& thunk) {
-  return std::make_unique<GemmCmd>(thunk.config(), thunk.lhs_buffer(),
-                                   thunk.rhs_buffer(), thunk.output_buffer(),
-                                   thunk.workspace(), thunk.deterministic());
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
@@ -315,8 +308,11 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kKernel:
       cmd_sequence.Append(static_cast<KernelThunk*>(&thunk));
       return absl::OkStatus();
+    // GemmThunk implements TracedCommand directly; append as borrowed
+    // pointer — the thunk outlives the command sequence.
     case Thunk::Kind::kGemm:
-      return append(Convert<GemmThunk>(thunk));
+      cmd_sequence.Append(static_cast<GemmThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kCublasLtMatmul:
       return append(Convert<CublasLtMatmulThunk>(thunk));
     case Thunk::Kind::kMemzero:

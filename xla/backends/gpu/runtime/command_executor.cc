@@ -568,7 +568,7 @@ absl::Status CommandExecutor::RecordUpdate(
     Command* command = commands_[id];
 
     // For CAPTURE_CMD_NEVER_UPDATE mode, always skip updates for commands
-    // implemented via tracing (TracedCommandBufferCmd subclasses) or collective
+    // implemented via tracing (TracedCommand subclasses) or collective
     // operations (CollectiveCmd subclasses). Their buffer allocations are
     // VA-remapped to fixed offsets within the reserved VA range, so their
     // recorded addresses remain valid across executions — no update is needed.
