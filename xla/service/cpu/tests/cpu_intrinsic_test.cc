@@ -185,6 +185,21 @@ IntrinsicTestSpec CpuUnaryIntrinsicTestCases[] = {
         HloOpcode::kRsqrt, F32, true, kTriple_x86_64, "+avx512f",
         R"(CHECK: fmul <16 x float>{{.*}} splat (float -5.000000e-01)"},
 
+    // F64 kRsqrt must NOT go through the SIMD fast-approximation intrinsic.
+    // The intrinsic body's Newton-Raphson refinement step contains an
+    // fmul against a -0.5 splat (mirror of the F32 CHECK above). When F64
+    // falls through to the base 1/sqrt(x) lowering — which is correctly
+    // rounded via llvm.sqrt + fdiv — that splat is absent from the IR.
+    // Regression test for f64 rsqrt being 1 ULP off the IEEE-correctly
+    // rounded value.
+    IntrinsicTestSpec{
+        HloOpcode::kRsqrt, F64, true, kTriple_x86_64, "+avx",
+        R"(CHECK-NOT: splat (double -5.000000e-01))"},
+
+    IntrinsicTestSpec{
+        HloOpcode::kRsqrt, F64, true, kTriple_x86_64, "+avx512f",
+        R"(CHECK-NOT: splat (double -5.000000e-01))"},
+
     // F16 tanh is implemented via upcast to F32; should have the same
     // vectorized IR.
     IntrinsicTestSpec{

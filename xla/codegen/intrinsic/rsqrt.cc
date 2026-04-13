@@ -171,10 +171,13 @@ absl::StatusOr<llvm::Function*> Rsqrt::CreateDefinition(
 
   // Rsqrt is not portable across all CPUs, so we fall back to 1 / sqrt(x) if
   // 1. The user explicitly requested it, or
-  // 2. The target CPU does not support AVX512F for F64, or
+  // 2. The element type is F64 (the SIMD intrinsic + Newton-Raphson body is up
+  //    to 1 ULP off the IEEE-correctly-rounded 1/sqrt(x); F64 callers expect
+  //    bit-exact agreement with std::sqrt, so always use the correctly-rounded
+  //    fdiv+sqrt path), or
   // 3. The target CPU does not support AVX for F32.
   if (options.disable_platform_dependent_math ||
-      (type.element_type() == F64 && !options.Contains("+avx512f")) ||
+      type.element_type() == F64 ||
       !options.Contains("+avx")) {
     LOG_EVERY_N(INFO, 1000) << "Falling back to 1 / sqrt(x) for " << type.name()
                             << " " << options.disable_platform_dependent_math;

@@ -9404,6 +9404,30 @@ TEST_F(AlgebraicSimplifierTest, RecipSqrt) {
                                              m::Rsqrt(m::Parameter(0)))));
 }
 
+// Test that 1/sqrt(X) is NOT simplified to rsqrt(X) for f64.
+//
+// kSqrt and kDivide are in StableHLO's correctly-rounded bucket; kRsqrt is
+// in the implementation-defined-precision bucket and several emitters lower
+// it to a fast approximation that is up to 1 ULP off. Rewriting silently
+// moves the user's explicit 1/sqrt(x) into the approximate bucket they did
+// not opt into.
+TEST_F(AlgebraicSimplifierTest, RecipSqrtF64NotRewritten) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = f64[] parameter(0)
+      p1 = f64[] parameter(1)
+      sqrt = f64[] sqrt(p0)
+      ROOT div = f64[] divide(p1, sqrt)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).ok());
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(m::Divide(m::Parameter(1), m::Sqrt(m::Parameter(0)))));
+}
+
 // Test that 1/rsqrt(X) is simplified to sqrt(X).
 TEST_F(AlgebraicSimplifierTest, RecipRsqrt) {
   constexpr absl::string_view kModuleStr = R"(

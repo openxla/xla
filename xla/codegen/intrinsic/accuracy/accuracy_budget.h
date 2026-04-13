@@ -105,7 +105,7 @@ constexpr AccuracyBudget kRsqrtF32Budget = {
 };
 
 constexpr AccuracyBudget kRsqrtF64Budget = {
-    /*cpu=*/{/*regular=*/1,
+    /*cpu=*/{/*regular=*/0,
              /*subnormal=*/1000000,
              /*special_values=*/4},
     /*gpu=*/

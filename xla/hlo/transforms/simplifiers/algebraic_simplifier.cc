@@ -2448,7 +2448,15 @@ absl::Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
   }
 
   // A/sqrt(B) => A*rsqrt(B).
-  if (Match(divide, m::Divide(m::Op(&a), m::Sqrt(m::Op(&b)).WithOneUse()))) {
+  //
+  // Skip f64: kSqrt and kDivide are in StableHLO's correctly-rounded bucket,
+  // but kRsqrt is in the implementation-defined-precision bucket and several
+  // emitters lower it to a fast approximation that is up to 1 ULP off the
+  // IEEE-correctly-rounded value. Rewriting silently moves the user's
+  // explicit 1/sqrt(x) into the approximate bucket they did not opt into.
+  // f32 is unaffected: ML workloads explicitly want the fast rsqrt path.
+  if (Match(divide, m::Divide(m::Op(&a), m::Sqrt(m::Op(&b)).WithOneUse())) &&
+      divide->shape().element_type() != F64) {
     auto* rsqrt = divide->mutable_operand(1)->AddInstruction(
         HloInstruction::CreateUnary(divide->shape(), HloOpcode::kRsqrt, b));
     return ReplaceWithNewInstruction(
