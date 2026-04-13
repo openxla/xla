@@ -126,8 +126,7 @@ limitations under the License.
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/tsl/platform/status_macros.h"
 
-#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) || \
-    defined(TENSORFLOW_USE_SYCL)
+#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
 #include "xla/debug_options_flags.h"
 #include "xla/pjrt/gpu/gpu_metrics.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
@@ -136,7 +135,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/xla.pb.h"
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM || TENSORFLOW_USE_SYCL
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
@@ -1377,8 +1376,7 @@ StreamExecutorGpuClient::CompileAndLoad(MaybeOwningMlirModule module,
   auto executable =
       PjRtStreamExecutorClient::CompileAndLoad(std::move(module), options);
 
-#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) || \
-    defined(TENSORFLOW_USE_SYCL)
+#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
   for (const PjRtDevice* device : addressable_devices()) {
     LocalDeviceState* local_device_state =
         tensorflow::down_cast<const PjRtStreamExecutorDevice*>(device)
@@ -1395,7 +1393,7 @@ StreamExecutorGpuClient::CompileAndLoad(MaybeOwningMlirModule module,
       }
     }
   }
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM || TENSORFLOW_USE_SYCL
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   return executable;
 }
 
@@ -1405,8 +1403,7 @@ StreamExecutorGpuClient::CompileAndLoad(const XlaComputation& computation,
   auto executable =
       PjRtStreamExecutorClient::CompileAndLoad(computation, options);
 
-#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) || \
-    defined(TENSORFLOW_USE_SYCL)
+#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
   for (const PjRtDevice* device : addressable_devices()) {
     LocalDeviceState* local_device_state =
         tensorflow::down_cast<const PjRtStreamExecutorDevice*>(device)
@@ -1423,7 +1420,7 @@ StreamExecutorGpuClient::CompileAndLoad(const XlaComputation& computation,
       }
     }
   }
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM || TENSORFLOW_USE_SYCL
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   return executable;
 }
 
@@ -1956,7 +1953,7 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
 #if TENSORFLOW_USE_ROCM
   auto pjrt_platform_name = xla::RocmName();
 #elif TENSORFLOW_USE_SYCL
-  auto pjrt_platform_name = xla::OneapiName();
+  auto pjrt_platform_name = xla::SyclName();
 #else   // TENSORFLOW_USE_ROCM
   auto pjrt_platform_name = xla::CudaName();
 #endif  // TENSORFLOW_USE_ROCM
@@ -2080,8 +2077,7 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
   return devices;
 }
 
-#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) || \
-    defined(TENSORFLOW_USE_SYCL)
+#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
 static absl::Status CheckAlignment(const BufferAllocation& allocation,
                                    se::DeviceAddressBase buffer, int arg_idx) {
   const int64_t expected_alignment = [&] {
@@ -2102,7 +2098,7 @@ static absl::Status CheckAlignment(const BufferAllocation& allocation,
   }
   return absl::OkStatus();
 }
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM || TENSORFLOW_USE_SYCL
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 absl::StatusOr<PjRtStreamExecutorExecutionOutput>
 StreamExecutorGpuClient::RunAsync(
@@ -2111,8 +2107,7 @@ StreamExecutorGpuClient::RunAsync(
     absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> results,
     ExecutableRunOptions run_options_inp, bool parameter_is_tupled_arguments,
     absl::Span<const Shape> executable_parameter_shapes) {
-#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) || \
-    defined(TENSORFLOW_USE_SYCL)
+#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
   std::vector<const Shape*> argument_shapes;
   argument_shapes.reserve(flat_arguments.size());
   for (const Shape& arg_shape : executable_parameter_shapes) {
@@ -2351,7 +2346,7 @@ StreamExecutorGpuClient::RunAsync(
   return PjRtStreamExecutorClient::RunAsync(
       exec, device, flat_arguments, results, std::move(run_options_inp),
       parameter_is_tupled_arguments, executable_parameter_shapes);
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM || TENSORFLOW_USE_SYCL
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 }
 
 absl::StatusOr<std::unique_ptr<PjRtRuntimeAbiVersion>>

@@ -36,7 +36,6 @@ Platform* GPUMachineManager();
 // Returns the string describing the name of the GPU platform in use.
 // This value is "CUDA" by default, and
 // "ROCM" when TF is built with `--config==rocm`
-// "SYCL" when TF is built with `--config==sycl`
 std::string GpuPlatformName();
 
 }  // namespace stream_executor

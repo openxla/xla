@@ -47,8 +47,6 @@ Platform* GPUMachineManager() {
 std::string GpuPlatformName() {
 #if TENSORFLOW_USE_ROCM
   return "ROCM";
-#elif TENSORFLOW_USE_SYCL
-  return "SYCL";
 #else
   // This function will return "CUDA" even when building TF without GPU support
   // This is done to preserve existing functionality

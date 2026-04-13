@@ -95,14 +95,6 @@ static auto ArgsAccess(const std::vector<bool>& written) {
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const KernelThunk& thunk) {
-  return std::make_unique<LaunchCmd>(
-      thunk.kernel_name(), thunk.arguments(), ArgsAccess(thunk.written()),
-      thunk.launch_dimensions(), thunk.shmem_bytes(), thunk.tma_metadata(),
-      thunk.use_pdl());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const CustomKernelThunk& thunk) {
   return std::make_unique<CustomKernelLaunchCmd>(
       thunk.arguments(), ArgsAccess(thunk.written()), thunk.custom_kernel());
@@ -319,8 +311,10 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return append(Convert<CustomCallThunk>(thunk));
     case Thunk::Kind::kCustomKernel:
       return append(Convert<CustomKernelThunk>(thunk));
+    // KernelThunk implements Command directly; append borrowed pointer.
     case Thunk::Kind::kKernel:
-      return append(Convert<KernelThunk>(thunk));
+      cmd_sequence.Append(static_cast<KernelThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kGemm:
       return append(Convert<GemmThunk>(thunk));
     case Thunk::Kind::kCublasLtMatmul:

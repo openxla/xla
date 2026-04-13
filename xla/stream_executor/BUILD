@@ -1028,8 +1028,23 @@ cc_library(
 cc_library(
     name = "stream_executor_impl",
     deps = [
+        ":allocator_stats",
         ":blas",  # build_cleaner: keep
         ":command_buffer",  # build_cleaner: keep
+        ":device_address",
+        ":device_description",
+        ":dnn",
+        ":executor_cache",
+        ":fft",
+        ":kernel",
+        ":kernel_spec",
+        ":launch_dim",
+        ":platform",
+        ":platform_manager",
+        ":scratch_allocator",
+        ":stream_common",
+        ":stream_executor_common",
+        ":stream_executor_h",
     ] + if_oss(["//xla/tsl/protobuf:dnn_proto_cc_impl"]),
 )
 
