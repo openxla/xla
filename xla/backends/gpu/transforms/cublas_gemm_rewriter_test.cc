@@ -3754,7 +3754,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
@@ -3809,7 +3809,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
@@ -3846,7 +3846,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
@@ -3884,7 +3884,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
@@ -3928,7 +3928,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
@@ -3965,7 +3965,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
@@ -4010,7 +4010,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
@@ -4067,7 +4067,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
@@ -4103,7 +4103,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
@@ -4141,7 +4141,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
@@ -4186,7 +4186,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
@@ -4243,7 +4243,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
@@ -4280,7 +4280,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
@@ -4317,7 +4317,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
@@ -4361,7 +4361,7 @@ ENTRY AddRaggedDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
                     ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
-                    ; CHECK-SAME: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
                     ; CHECK-SAME: "grouped_gemm_backend_config":{
