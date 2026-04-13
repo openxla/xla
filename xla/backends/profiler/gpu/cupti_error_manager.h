@@ -218,6 +218,32 @@ class CuptiErrorManager : public xla::profiler::CuptiInterface {
   CUptiResult PmSamplingCounterDataGetSampleInfo(
       CUpti_PmSampling_CounterData_GetSampleInfo_Params* params) override;
 
+  // Range profiling specific functions
+  CUptiResult RangeProfilerEnable(
+      CUpti_RangeProfiler_Enable_Params* params) override;
+  CUptiResult RangeProfilerDisable(
+      CUpti_RangeProfiler_Disable_Params* params) override;
+  CUptiResult RangeProfilerGetCounterDataSize(
+      CUpti_RangeProfiler_GetCounterDataSize_Params* params) override;
+  CUptiResult RangeProfilerCounterDataImageInitialize(
+      CUpti_RangeProfiler_CounterDataImage_Initialize_Params* params) override;
+  CUptiResult RangeProfilerSetConfig(
+      CUpti_RangeProfiler_SetConfig_Params* params) override;
+  CUptiResult RangeProfilerStart(
+      CUpti_RangeProfiler_Start_Params* params) override;
+  CUptiResult RangeProfilerStop(
+      CUpti_RangeProfiler_Stop_Params* params) override;
+  CUptiResult RangeProfilerPushRange(
+      CUpti_RangeProfiler_PushRange_Params* params) override;
+  CUptiResult RangeProfilerPopRange(
+      CUpti_RangeProfiler_PopRange_Params* params) override;
+  CUptiResult RangeProfilerDecodeData(
+      CUpti_RangeProfiler_DecodeData_Params* params) override;
+  CUptiResult RangeProfilerGetCounterDataInfo(
+      CUpti_RangeProfiler_GetCounterDataInfo_Params* params) override;
+  CUptiResult RangeProfilerCounterDataGetRangeInfo(
+      CUpti_RangeProfiler_CounterData_GetRangeInfo_Params* params) override;
+
   CUptiResult DeviceGetChipName(
       CUpti_Device_GetChipName_Params* params) override;
 

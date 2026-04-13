@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
+#include "xla/backends/profiler/gpu/cupti_range_profiler.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
@@ -147,6 +148,14 @@ class CuptiTraceCollector {
 std::unique_ptr<CuptiTraceCollector> CreateCuptiCollector(
     const CuptiTracerCollectorOptions& options, uint64_t start_walltime_ns,
     uint64_t start_gputime_ns);
+
+// Populates range profiling results into the given XPlane so they appear in
+// the xprof perf_counters tool.  Creates one XLine per profiled range and one
+// XEvent per metric, annotated with kCounterValue, kPerformanceCounterDescription,
+// and kPerformanceCounterSets stats.
+void PopulateRangeProfilingEvents(
+    const RangeProfilerResults* results,
+    tsl::profiler::XPlaneBuilder* plane);
 
 }  // namespace profiler
 }  // namespace xla

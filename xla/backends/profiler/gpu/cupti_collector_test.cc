@@ -288,6 +288,156 @@ TEST(PmSamplesTest, PopulateCounterLineSkipsNan) {
   EXPECT_EQ(stat.double_value(), 123.0);
 }
 
+TEST(RangeProfilingTest, PopulateRangeProfilingEventsBasic) {
+  // Two metrics, one range.
+  std::vector<std::string> metrics = {"sm__cycles_active.sum",
+                                      "dram__bytes.sum"};
+  std::vector<MetricProperties> props = {
+      {/*description=*/"SM Active Cycles", /*hw_unit=*/"sm"},
+      {/*description=*/"DRAM Bytes", /*hw_unit=*/"dram"},
+  };
+  std::vector<RangeResult> ranges = {{
+      /*range_name=*/"hlo_execution",
+      /*start_timestamp_ns=*/1000,
+      /*end_timestamp_ns=*/2000,
+      /*metric_values=*/{42.0, 100.0},
+  }};
+  RangeProfilerResults results(metrics, props, ranges, /*device_id=*/0);
+
+  tensorflow::profiler::XPlane plane;
+  tsl::profiler::XPlaneBuilder plane_builder(&plane);
+  PopulateRangeProfilingEvents(&results, &plane_builder);
+
+  // One line (one range), two events (two metrics).
+  ASSERT_EQ(plane.lines_size(), 1);
+  const auto& line = plane.lines(0);
+  EXPECT_EQ(line.name(), "hlo_execution");
+  ASSERT_EQ(line.events_size(), 2);
+
+  // Check each event has three stats: counter_value, description, sets.
+  for (const auto& event : line.events()) {
+    ASSERT_EQ(event.stats_size(), 3);
+  }
+
+  // Verify event names map to raw metric names.
+  absl::flat_hash_set<std::string> event_names;
+  for (const auto& event : line.events()) {
+    event_names.insert(
+        plane.event_metadata().at(event.metadata_id()).name());
+  }
+  EXPECT_TRUE(event_names.contains("sm__cycles_active.sum"));
+  EXPECT_TRUE(event_names.contains("dram__bytes.sum"));
+
+  // Verify counter values and CUPTI-provided descriptions.
+  using tsl::profiler::GetStatTypeStr;
+  using tsl::profiler::StatType;
+  for (const auto& event : line.events()) {
+    std::string event_name =
+        plane.event_metadata().at(event.metadata_id()).name();
+    for (const auto& stat : event.stats()) {
+      std::string stat_name =
+          plane.stat_metadata().at(stat.metadata_id()).name();
+      if (stat_name == GetStatTypeStr(StatType::kCounterValue)) {
+        if (event_name == "sm__cycles_active.sum") {
+          EXPECT_EQ(stat.uint64_value(), 42);
+        } else {
+          EXPECT_EQ(stat.uint64_value(), 100);
+        }
+      }
+      if (stat_name ==
+          GetStatTypeStr(StatType::kPerformanceCounterDescription)) {
+        if (event_name == "sm__cycles_active.sum") {
+          EXPECT_EQ(stat.str_value(), "SM Active Cycles");
+        } else {
+          EXPECT_EQ(stat.str_value(), "DRAM Bytes");
+        }
+      }
+      if (stat_name == GetStatTypeStr(StatType::kPerformanceCounterSets)) {
+        if (event_name == "sm__cycles_active.sum") {
+          EXPECT_EQ(stat.str_value(), "sm");
+        } else {
+          EXPECT_EQ(stat.str_value(), "dram");
+        }
+      }
+    }
+  }
+}
+
+TEST(RangeProfilingTest, PopulateRangeProfilingEventsFallback) {
+  // Without MetricProperties, falls back to prefix-based category and
+  // display-name map.
+  std::vector<std::string> metrics = {"sm__cycles_active.sum"};
+  std::vector<RangeResult> ranges = {{
+      /*range_name=*/"test_range",
+      /*start_timestamp_ns=*/500,
+      /*end_timestamp_ns=*/1500,
+      /*metric_values=*/{7.0},
+  }};
+  // Use the constructor without properties.
+  RangeProfilerResults results(metrics, ranges, /*device_id=*/0);
+
+  tensorflow::profiler::XPlane plane;
+  tsl::profiler::XPlaneBuilder plane_builder(&plane);
+  PopulateRangeProfilingEvents(&results, &plane_builder);
+
+  ASSERT_EQ(plane.lines_size(), 1);
+  EXPECT_EQ(plane.lines(0).name(), "test_range");
+  ASSERT_EQ(plane.lines(0).events_size(), 1);
+
+  const auto& event = plane.lines(0).events(0);
+  ASSERT_EQ(event.stats_size(), 3);
+
+  // Verify fallback category (prefix "sm__" → "Streaming Multiprocessor").
+  using tsl::profiler::GetStatTypeStr;
+  using tsl::profiler::StatType;
+  for (const auto& stat : event.stats()) {
+    std::string stat_name =
+        plane.stat_metadata().at(stat.metadata_id()).name();
+    if (stat_name == GetStatTypeStr(StatType::kPerformanceCounterSets)) {
+      EXPECT_EQ(stat.str_value(), "Streaming Multiprocessor");
+    }
+    if (stat_name == GetStatTypeStr(StatType::kCounterValue)) {
+      EXPECT_EQ(stat.uint64_value(), 7);
+    }
+  }
+}
+
+TEST(RangeProfilingTest, PopulateRangeProfilingEventsMultipleRanges) {
+  std::vector<std::string> metrics = {"sm__cycles_active.sum"};
+  std::vector<MetricProperties> props = {
+      {/*description=*/"Cycles", /*hw_unit=*/"sm"},
+  };
+  std::vector<RangeResult> ranges = {
+      {/*range_name=*/"range_0",
+       /*start_timestamp_ns=*/100,
+       /*end_timestamp_ns=*/200,
+       /*metric_values=*/{10.0}},
+      {/*range_name=*/"range_1",
+       /*start_timestamp_ns=*/300,
+       /*end_timestamp_ns=*/400,
+       /*metric_values=*/{20.0}},
+  };
+  RangeProfilerResults results(metrics, props, ranges, /*device_id=*/0);
+
+  tensorflow::profiler::XPlane plane;
+  tsl::profiler::XPlaneBuilder plane_builder(&plane);
+  PopulateRangeProfilingEvents(&results, &plane_builder);
+
+  // Two lines (two ranges), one event each.
+  ASSERT_EQ(plane.lines_size(), 2);
+  EXPECT_EQ(plane.lines(0).name(), "range_0");
+  EXPECT_EQ(plane.lines(1).name(), "range_1");
+  EXPECT_EQ(plane.lines(0).events_size(), 1);
+  EXPECT_EQ(plane.lines(1).events_size(), 1);
+}
+
+TEST(RangeProfilingTest, PopulateRangeProfilingEventsNullResults) {
+  tensorflow::profiler::XPlane plane;
+  tsl::profiler::XPlaneBuilder plane_builder(&plane);
+  PopulateRangeProfilingEvents(nullptr, &plane_builder);
+  EXPECT_EQ(plane.lines_size(), 0);
+}
+
 }  // namespace
 }  // namespace profiler
 }  // namespace xla

@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -45,6 +46,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda_occupancy.h"
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler_utils.h"
+#include "xla/backends/profiler/gpu/cupti_range_profiler.h"
 #include "xla/tsl/profiler/utils/math_utils.h"
 #include "xla/tsl/profiler/utils/parse_annotation.h"
 #include "xla/tsl/profiler/utils/timespan.h"
@@ -78,6 +80,48 @@ using tsl::profiler::StatType;
 using tsl::profiler::XEventBuilder;
 using tsl::profiler::XLineBuilder;
 using tsl::profiler::XPlaneBuilder;
+
+// Maps a CUPTI metric name prefix to a human-readable hardware unit category
+// for the perf_counters tool "Set" column.
+std::string GetRangeMetricCategory(absl::string_view metric_name) {
+  if (absl::StartsWith(metric_name, "sm__") ||
+      absl::StartsWith(metric_name, "smsp__")) {
+    return "Streaming Multiprocessor";
+  }
+  if (absl::StartsWith(metric_name, "dram__")) {
+    return "DRAM";
+  }
+  if (absl::StartsWith(metric_name, "dramc__")) {
+    return "DRAM Controller";
+  }
+  if (absl::StartsWith(metric_name, "fbpa__")) {
+    return "Frame Buffer Partition";
+  }
+  if (absl::StartsWith(metric_name, "nvl") ||
+      absl::StartsWith(metric_name, "nvltx__") ||
+      absl::StartsWith(metric_name, "nvlrx__")) {
+    return "NVLink";
+  }
+  if (absl::StartsWith(metric_name, "pcie__")) {
+    return "PCIe";
+  }
+  if (absl::StartsWith(metric_name, "gpc__")) {
+    return "GPC";
+  }
+  if (absl::StartsWith(metric_name, "gr__")) {
+    return "Graphics Engine";
+  }
+  if (absl::StartsWith(metric_name, "sys__")) {
+    return "System";
+  }
+  if (absl::StartsWith(metric_name, "l1tex__")) {
+    return "L1/TEX Cache";
+  }
+  if (absl::StartsWith(metric_name, "lts__")) {
+    return "L2 Cache";
+  }
+  return "GPU";
+}
 
 bool IsNvtxActivityEvent(const CuptiTracerEvent& event) {
   return event.source == CuptiTracerEventSource::Activity &&
@@ -719,6 +763,74 @@ const std::vector<SamplerRange>& PmSamples::GetSamplerRanges() const {
 }
 
 int64_t PmSamples::GetDeviceId() const { return device_id_; }
+
+void PopulateRangeProfilingEvents(const RangeProfilerResults* results,
+                                  XPlaneBuilder* plane) {
+  if (!results) return;
+
+  const auto& metrics = results->GetMetrics();
+  const auto& ranges = results->GetRanges();
+  const auto& metric_props = results->GetMetricProperties();
+
+  // Pre-create stat metadata for the three perf_counters stat types.
+  XStatMetadata* counter_value_stat = plane->GetOrCreateStatMetadata(
+      tsl::profiler::GetStatTypeStr(StatType::kCounterValue));
+  XStatMetadata* description_stat = plane->GetOrCreateStatMetadata(
+      tsl::profiler::GetStatTypeStr(StatType::kPerformanceCounterDescription));
+  XStatMetadata* sets_stat = plane->GetOrCreateStatMetadata(
+      tsl::profiler::GetStatTypeStr(StatType::kPerformanceCounterSets));
+
+  // Pre-compute per-metric metadata: event metadata, description, category.
+  // Prefer CUPTI-provided MetricProperties; fall back to display-name map and
+  // prefix-based category when properties are unavailable.
+  bool have_props = (metric_props.size() == metrics.size());
+
+  struct MetricInfo {
+    XEventMetadata* event_metadata;
+    std::string description;
+    std::string category;
+  };
+  std::vector<MetricInfo> metric_infos;
+  metric_infos.reserve(metrics.size());
+  for (size_t i = 0; i < metrics.size(); ++i) {
+    MetricInfo info;
+    info.event_metadata = plane->GetOrCreateEventMetadata(metrics[i]);
+    if (have_props && !metric_props[i].description.empty()) {
+      info.description = metric_props[i].description;
+    } else {
+      info.description = GetGpuProfileMetricName(metrics[i]);
+    }
+    if (have_props && !metric_props[i].hw_unit.empty()) {
+      info.category = metric_props[i].hw_unit;
+    } else {
+      info.category = GetRangeMetricCategory(metrics[i]);
+    }
+    metric_infos.push_back(std::move(info));
+  }
+
+  // One XLine per range, one XEvent per metric on each line.
+  for (int64_t range_idx = 0; range_idx < static_cast<int64_t>(ranges.size());
+       ++range_idx) {
+    const auto& range = ranges[range_idx];
+    XLineBuilder line = plane->GetOrCreateLine(range_idx);
+    line.SetName(range.range_name);
+    line.SetTimestampNs(0);
+
+    DCHECK_EQ(metrics.size(), range.metric_values.size());
+    for (size_t i = 0; i < range.metric_values.size(); ++i) {
+      tsl::profiler::Timespan timespan(
+          tsl::profiler::NanoToPico(range.start_timestamp_ns),
+          tsl::profiler::NanoToPico(range.end_timestamp_ns -
+                                    range.start_timestamp_ns));
+      XEventBuilder event = line.AddEvent(timespan,
+                                          *metric_infos[i].event_metadata);
+      event.AddStatValue(*counter_value_stat,
+                         static_cast<uint64_t>(range.metric_values[i]));
+      event.AddStatValue(*description_stat, metric_infos[i].description);
+      event.AddStatValue(*sets_stat, metric_infos[i].category);
+    }
+  }
+}
 
 void CuptiTraceCollector::OnTracerCollectedCallbackData(
     std::vector<CallbackAnnotationsAndEvents> callback_annotations_and_events,

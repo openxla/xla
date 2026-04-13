@@ -270,6 +270,31 @@ cuptiProfilerCounterDataImageCalculateScratchBufferSize(
     CUpti_PmSampling_GetCounterDataInfo_Params* params);
 [[gnu::weak]] CUptiResult cuptiPmSamplingCounterDataGetSampleInfo(
     CUpti_PmSampling_CounterData_GetSampleInfo_Params* params);
+
+[[gnu::weak]] CUptiResult cuptiRangeProfilerEnable(
+    CUpti_RangeProfiler_Enable_Params* params);
+[[gnu::weak]] CUptiResult cuptiRangeProfilerDisable(
+    CUpti_RangeProfiler_Disable_Params* params);
+[[gnu::weak]] CUptiResult cuptiRangeProfilerGetCounterDataSize(
+    CUpti_RangeProfiler_GetCounterDataSize_Params* params);
+[[gnu::weak]] CUptiResult cuptiRangeProfilerCounterDataImageInitialize(
+    CUpti_RangeProfiler_CounterDataImage_Initialize_Params* params);
+[[gnu::weak]] CUptiResult cuptiRangeProfilerSetConfig(
+    CUpti_RangeProfiler_SetConfig_Params* params);
+[[gnu::weak]] CUptiResult cuptiRangeProfilerStart(
+    CUpti_RangeProfiler_Start_Params* params);
+[[gnu::weak]] CUptiResult cuptiRangeProfilerStop(
+    CUpti_RangeProfiler_Stop_Params* params);
+[[gnu::weak]] CUptiResult cuptiRangeProfilerPushRange(
+    CUpti_RangeProfiler_PushRange_Params* params);
+[[gnu::weak]] CUptiResult cuptiRangeProfilerPopRange(
+    CUpti_RangeProfiler_PopRange_Params* params);
+[[gnu::weak]] CUptiResult cuptiRangeProfilerDecodeData(
+    CUpti_RangeProfiler_DecodeData_Params* params);
+[[gnu::weak]] CUptiResult cuptiRangeProfilerGetCounterDataInfo(
+    CUpti_RangeProfiler_GetCounterDataInfo_Params* params);
+[[gnu::weak]] CUptiResult cuptiRangeProfilerCounterDataGetRangeInfo(
+    CUpti_RangeProfiler_CounterData_GetRangeInfo_Params* params);
 }
 
 // Profiler Host APIs
@@ -664,6 +689,115 @@ CUptiResult CuptiWrapper::PmSamplingCounterDataGetSampleInfo(
     CUpti_PmSampling_CounterData_GetSampleInfo_Params* params) {
   if (cuptiPmSamplingCounterDataGetSampleInfo != nullptr) {
     return cuptiPmSamplingCounterDataGetSampleInfo(params);
+  } else {
+    return CUPTI_ERROR_NOT_SUPPORTED;
+  }
+}
+
+// Range profiling APIs
+CUptiResult CuptiWrapper::RangeProfilerEnable(
+    CUpti_RangeProfiler_Enable_Params* params) {
+  if (cuptiRangeProfilerEnable != nullptr) {
+    return cuptiRangeProfilerEnable(params);
+  } else {
+    return CUPTI_ERROR_NOT_SUPPORTED;
+  }
+}
+
+CUptiResult CuptiWrapper::RangeProfilerDisable(
+    CUpti_RangeProfiler_Disable_Params* params) {
+  if (cuptiRangeProfilerDisable != nullptr) {
+    return cuptiRangeProfilerDisable(params);
+  } else {
+    return CUPTI_ERROR_NOT_SUPPORTED;
+  }
+}
+
+CUptiResult CuptiWrapper::RangeProfilerGetCounterDataSize(
+    CUpti_RangeProfiler_GetCounterDataSize_Params* params) {
+  if (cuptiRangeProfilerGetCounterDataSize != nullptr) {
+    return cuptiRangeProfilerGetCounterDataSize(params);
+  } else {
+    return CUPTI_ERROR_NOT_SUPPORTED;
+  }
+}
+
+CUptiResult CuptiWrapper::RangeProfilerCounterDataImageInitialize(
+    CUpti_RangeProfiler_CounterDataImage_Initialize_Params* params) {
+  if (cuptiRangeProfilerCounterDataImageInitialize != nullptr) {
+    return cuptiRangeProfilerCounterDataImageInitialize(params);
+  } else {
+    return CUPTI_ERROR_NOT_SUPPORTED;
+  }
+}
+
+CUptiResult CuptiWrapper::RangeProfilerSetConfig(
+    CUpti_RangeProfiler_SetConfig_Params* params) {
+  if (cuptiRangeProfilerSetConfig != nullptr) {
+    return cuptiRangeProfilerSetConfig(params);
+  } else {
+    return CUPTI_ERROR_NOT_SUPPORTED;
+  }
+}
+
+CUptiResult CuptiWrapper::RangeProfilerStart(
+    CUpti_RangeProfiler_Start_Params* params) {
+  if (cuptiRangeProfilerStart != nullptr) {
+    return cuptiRangeProfilerStart(params);
+  } else {
+    return CUPTI_ERROR_NOT_SUPPORTED;
+  }
+}
+
+CUptiResult CuptiWrapper::RangeProfilerStop(
+    CUpti_RangeProfiler_Stop_Params* params) {
+  if (cuptiRangeProfilerStop != nullptr) {
+    return cuptiRangeProfilerStop(params);
+  } else {
+    return CUPTI_ERROR_NOT_SUPPORTED;
+  }
+}
+
+CUptiResult CuptiWrapper::RangeProfilerPushRange(
+    CUpti_RangeProfiler_PushRange_Params* params) {
+  if (cuptiRangeProfilerPushRange != nullptr) {
+    return cuptiRangeProfilerPushRange(params);
+  } else {
+    return CUPTI_ERROR_NOT_SUPPORTED;
+  }
+}
+
+CUptiResult CuptiWrapper::RangeProfilerPopRange(
+    CUpti_RangeProfiler_PopRange_Params* params) {
+  if (cuptiRangeProfilerPopRange != nullptr) {
+    return cuptiRangeProfilerPopRange(params);
+  } else {
+    return CUPTI_ERROR_NOT_SUPPORTED;
+  }
+}
+
+CUptiResult CuptiWrapper::RangeProfilerDecodeData(
+    CUpti_RangeProfiler_DecodeData_Params* params) {
+  if (cuptiRangeProfilerDecodeData != nullptr) {
+    return cuptiRangeProfilerDecodeData(params);
+  } else {
+    return CUPTI_ERROR_NOT_SUPPORTED;
+  }
+}
+
+CUptiResult CuptiWrapper::RangeProfilerGetCounterDataInfo(
+    CUpti_RangeProfiler_GetCounterDataInfo_Params* params) {
+  if (cuptiRangeProfilerGetCounterDataInfo != nullptr) {
+    return cuptiRangeProfilerGetCounterDataInfo(params);
+  } else {
+    return CUPTI_ERROR_NOT_SUPPORTED;
+  }
+}
+
+CUptiResult CuptiWrapper::RangeProfilerCounterDataGetRangeInfo(
+    CUpti_RangeProfiler_CounterData_GetRangeInfo_Params* params) {
+  if (cuptiRangeProfilerCounterDataGetRangeInfo != nullptr) {
+    return cuptiRangeProfilerCounterDataGetRangeInfo(params);
   } else {
     return CUPTI_ERROR_NOT_SUPPORTED;
   }

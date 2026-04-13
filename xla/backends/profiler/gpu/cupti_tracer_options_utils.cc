@@ -117,6 +117,24 @@ absl::Status UpdateCuptiTracerOptionsFromProfilerOptions(
             1024ULL;
       }));
 
+  TF_RETURN_IF_ERROR(SetValue<std::string>(
+      profile_options, "gpu_range_profiling_counters", input_keys,
+      [&](const std::string& value) {
+        std::vector<std::string> metrics;
+        for (absl::string_view metric :
+             absl::StrSplit(value, ',', absl::SkipEmpty())) {
+          metrics.push_back(std::string(absl::StripAsciiWhitespace(metric)));
+        }
+        tracer_options.range_profiler_options.metrics = metrics;
+        tracer_options.range_profiler_options.enable = !metrics.empty();
+      }));
+
+  TF_RETURN_IF_ERROR(SetValue<bool>(
+      profile_options, "gpu_range_profiling_allow_multipass", input_keys,
+      [&](bool value) {
+        tracer_options.range_profiler_options.allow_multipass = value;
+      }));
+
   if (!input_keys.empty()) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Parsing advanced_configuration failed for CUPTI tracer. The following "

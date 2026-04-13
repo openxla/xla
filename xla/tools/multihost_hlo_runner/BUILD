@@ -304,7 +304,12 @@ xla_test(
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
-    ] + if_cuda(["//xla/tsl/cuda:nvml"]),
+    ] + if_cuda_or_rocm([
+        "//xla/backends/profiler/gpu:device_tracer",
+    ]) + if_cuda([
+        "//xla/backends/profiler/gpu:cupti_tracer",
+        "//xla/tsl/cuda:nvml",
+    ]),
 )
 
 tsl_pybind_extension(

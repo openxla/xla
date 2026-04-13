@@ -681,6 +681,104 @@ CUptiResult CuptiErrorManager::PmSamplingCounterDataGetSampleInfo(
   return err;
 }
 
+// Range profiling specific functions
+CUptiResult CuptiErrorManager::RangeProfilerEnable(
+    CUpti_RangeProfiler_Enable_Params* params) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->RangeProfilerEnable(params);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::RangeProfilerDisable(
+    CUpti_RangeProfiler_Disable_Params* params) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->RangeProfilerDisable(params);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::RangeProfilerGetCounterDataSize(
+    CUpti_RangeProfiler_GetCounterDataSize_Params* params) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->RangeProfilerGetCounterDataSize(params);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::RangeProfilerCounterDataImageInitialize(
+    CUpti_RangeProfiler_CounterDataImage_Initialize_Params* params) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err =
+      interface_->RangeProfilerCounterDataImageInitialize(params);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::RangeProfilerSetConfig(
+    CUpti_RangeProfiler_SetConfig_Params* params) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->RangeProfilerSetConfig(params);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::RangeProfilerStart(
+    CUpti_RangeProfiler_Start_Params* params) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->RangeProfilerStart(params);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::RangeProfilerStop(
+    CUpti_RangeProfiler_Stop_Params* params) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->RangeProfilerStop(params);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::RangeProfilerPushRange(
+    CUpti_RangeProfiler_PushRange_Params* params) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->RangeProfilerPushRange(params);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::RangeProfilerPopRange(
+    CUpti_RangeProfiler_PopRange_Params* params) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->RangeProfilerPopRange(params);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::RangeProfilerDecodeData(
+    CUpti_RangeProfiler_DecodeData_Params* params) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->RangeProfilerDecodeData(params);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::RangeProfilerGetCounterDataInfo(
+    CUpti_RangeProfiler_GetCounterDataInfo_Params* params) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->RangeProfilerGetCounterDataInfo(params);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
+CUptiResult CuptiErrorManager::RangeProfilerCounterDataGetRangeInfo(
+    CUpti_RangeProfiler_CounterData_GetRangeInfo_Params* params) {
+  IGNORE_CALL_IF_DISABLED;
+  CUptiResult err = interface_->RangeProfilerCounterDataGetRangeInfo(params);
+  LOG_AND_DISABLE_IF_ERROR(err);
+  return err;
+}
+
 CUptiResult CuptiErrorManager::DeviceGetChipName(
     CUpti_Device_GetChipName_Params* params) {
   IGNORE_CALL_IF_DISABLED;

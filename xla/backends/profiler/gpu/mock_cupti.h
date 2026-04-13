@@ -218,6 +218,38 @@ class MockCupti : public xla::profiler::CuptiInterface {
               (CUpti_PmSampling_CounterData_GetSampleInfo_Params * params),
               (override));
 
+  // Range Profiling APIs
+  MOCK_METHOD(CUptiResult, RangeProfilerEnable,
+              (CUpti_RangeProfiler_Enable_Params * params), (override));
+  MOCK_METHOD(CUptiResult, RangeProfilerDisable,
+              (CUpti_RangeProfiler_Disable_Params * params), (override));
+  MOCK_METHOD(CUptiResult, RangeProfilerGetCounterDataSize,
+              (CUpti_RangeProfiler_GetCounterDataSize_Params * params),
+              (override));
+  MOCK_METHOD(
+      CUptiResult, RangeProfilerCounterDataImageInitialize,
+      (CUpti_RangeProfiler_CounterDataImage_Initialize_Params * params),
+      (override));
+  MOCK_METHOD(CUptiResult, RangeProfilerSetConfig,
+              (CUpti_RangeProfiler_SetConfig_Params * params), (override));
+  MOCK_METHOD(CUptiResult, RangeProfilerStart,
+              (CUpti_RangeProfiler_Start_Params * params), (override));
+  MOCK_METHOD(CUptiResult, RangeProfilerStop,
+              (CUpti_RangeProfiler_Stop_Params * params), (override));
+  MOCK_METHOD(CUptiResult, RangeProfilerPushRange,
+              (CUpti_RangeProfiler_PushRange_Params * params), (override));
+  MOCK_METHOD(CUptiResult, RangeProfilerPopRange,
+              (CUpti_RangeProfiler_PopRange_Params * params), (override));
+  MOCK_METHOD(CUptiResult, RangeProfilerDecodeData,
+              (CUpti_RangeProfiler_DecodeData_Params * params), (override));
+  MOCK_METHOD(CUptiResult, RangeProfilerGetCounterDataInfo,
+              (CUpti_RangeProfiler_GetCounterDataInfo_Params * params),
+              (override));
+  MOCK_METHOD(
+      CUptiResult, RangeProfilerCounterDataGetRangeInfo,
+      (CUpti_RangeProfiler_CounterData_GetRangeInfo_Params * params),
+      (override));
+
   MOCK_METHOD(CUptiResult, DeviceGetChipName,
               (CUpti_Device_GetChipName_Params * params), (override));
 

@@ -58,6 +58,8 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/cupti_marker_data_parser.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler_factory.h"
+#include "xla/backends/profiler/gpu/cupti_range_profiler.h"
+#include "xla/backends/profiler/gpu/cupti_range_profiler_factory.h"
 #include "xla/backends/profiler/gpu/cupti_utils.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
@@ -1097,7 +1099,7 @@ CuptiTracer::CuptiTracer(CuptiInterface* cupti_interface)
 
 bool CuptiTracer::IsAvailable() const {
   return NumGpus() && !activity_tracing_enabled_ && !api_tracing_enabled_ &&
-         !pm_sampling_enabled_;
+         !pm_sampling_enabled_ && !range_profiling_enabled_;
 }
 
 int CuptiTracer::NumGpus() {
@@ -1152,6 +1154,15 @@ absl::Status CuptiTracer::Enable(
   tsl::profiler::AnnotationStack::Enable(true);
 
   int num_gpus_requested = xplanes.size();
+  // PM sampling and range profiling both use the CUPTI profiling subsystem
+  // and cannot be active simultaneously.
+  if (option_->pm_sampler_options.enable &&
+      option_->range_profiler_options.enable) {
+    return absl::InvalidArgumentError(
+        "PM sampling and range profiling cannot be enabled simultaneously. "
+        "Disable one before enabling the other.");
+  }
+
   // Enable PM Sampling after CUPTI is initialized.
   if (option_->pm_sampler_options.enable && num_gpus_requested > 0) {
     // Callback to populate PM sampling data to XPlane for each device.
@@ -1184,10 +1195,81 @@ absl::Status CuptiTracer::Enable(
     pm_sampling_enabled_ = true;
   }
 
+  // Enable range profiling after CUPTI is initialized.
+  if (option_->range_profiler_options.enable && num_gpus_requested > 0) {
+    // Callback to populate range profiling data to XPlane for each device.
+    // Preserve any user-supplied callback and chain it after XPlane population.
+    auto user_callback = option_->range_profiler_options.process_results;
+    option_->range_profiler_options.process_results =
+        [&xplanes, user_callback](RangeProfilerResults* results) {
+          if (!results) return;
+          int device_id = results->GetDeviceId();
+          if (device_id < 0 ||
+              device_id >= static_cast<int>(xplanes.size())) {
+            LOG(ERROR) << "Device ID " << device_id << " out of range.";
+            return;
+          }
+          if (!xplanes[device_id]) {
+            LOG(ERROR) << "Device ID " << device_id << " XPlane is null.";
+            return;
+          }
+          tensorflow::profiler::XPlane* xplane = xplanes[device_id].get();
+          xplane->set_name(GpuPlaneName(device_id));
+          XPlaneBuilder xplane_builder(xplane);
+          xplane_builder.AddStatValue(
+              *xplane_builder.GetOrCreateStatMetadata(
+                  tsl::profiler::GetStatTypeStr(
+                      tsl::profiler::StatType::kDeviceId)),
+              static_cast<int64_t>(device_id));
+          PopulateRangeProfilingEvents(results, &xplane_builder);
+          if (user_callback) {
+            user_callback(results);
+          }
+        };
+    TF_ASSIGN_OR_RETURN(
+        cupti_range_profiler_,
+        CreateRangeProfiler(num_gpus_requested,
+                            option_->range_profiler_options));
+    int num_passes = cupti_range_profiler_->NumPasses();
+    // Reject multi-pass configurations unless the caller explicitly allows
+    // them. Most XLA workloads cannot replay, so this is the safe default.
+    if (num_passes > 1 && !option_->range_profiler_options.allow_multipass) {
+      cupti_range_profiler_.reset();
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Range profiling requires ", num_passes,
+          " passes for the requested metrics, but allow_multipass is false. "
+          "Either reduce the number of metrics to fit in a single pass, or "
+          "use the multi-hlo-runner which supports multi-pass profiling."));
+    }
+    range_profiling_enabled_ = true;
+    TF_RETURN_IF_ERROR(BeginRangePass());
+    TF_RETURN_IF_ERROR(PushProfilingRange(
+          option_->range_profiler_options.range_name));
+  }
+
   return status;
 }
 
 void CuptiTracer::Disable() {
+  // Flush and tear down range profiling before Cupti Tracer is disabled.
+  if (range_profiling_enabled_) {
+    if (absl::Status status = PopProfilingRange(); !status.ok()) {
+      LOG(WARNING) << "Failed to pop the range profiler range: " << status;
+    }
+    if (absl::Status status = EndRangePass(); !status.ok()) {
+      LOG(WARNING) << "Failed to end the range profiler pass: " << status;
+    }
+    if (absl::Status status = cupti_range_profiler_->FlushAndDecode();
+        !status.ok()) {
+      LOG(WARNING) << "Failed to flush range profiler: " << status;
+    }
+    if (absl::Status status = cupti_range_profiler_->Deinitialize();
+        !status.ok()) {
+      LOG(WARNING) << "Failed to deinitialize range profiler: " << status;
+    }
+    range_profiling_enabled_ = false;
+  }
+
   // Disables the PM Sampling before Cupti Tracer is disabled.
   if (pm_sampling_enabled_) {
     if (absl::Status status = cupti_pm_sampler_->StopSampler(); !status.ok()) {
@@ -1235,6 +1317,31 @@ void CuptiTracer::Disable() {
   option_.reset();
   cupti_driver_api_hook_.reset();
   tsl::profiler::AnnotationStack::Enable(false);
+}
+
+int CuptiTracer::NumRangeProfilingPasses() const {
+  if (!range_profiling_enabled_ || !cupti_range_profiler_) return 1;
+  return cupti_range_profiler_->NumPasses();
+}
+
+absl::Status CuptiTracer::BeginRangePass() {
+  if (!range_profiling_enabled_) return absl::OkStatus();
+  return cupti_range_profiler_->BeginPass();
+}
+
+absl::Status CuptiTracer::EndRangePass() {
+  if (!range_profiling_enabled_) return absl::OkStatus();
+  return cupti_range_profiler_->EndPass();
+}
+
+absl::Status CuptiTracer::PushProfilingRange(absl::string_view name) {
+  if (!range_profiling_enabled_) return absl::OkStatus();
+  return cupti_range_profiler_->PushRange(name);
+}
+
+absl::Status CuptiTracer::PopProfilingRange() {
+  if (!range_profiling_enabled_) return absl::OkStatus();
+  return cupti_range_profiler_->PopRange();
 }
 
 // Generate default callback ids list that tracer needs to enable them.
