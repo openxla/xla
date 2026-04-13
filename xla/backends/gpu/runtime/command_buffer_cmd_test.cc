@@ -102,7 +102,7 @@ static constexpr auto serialize =
 // buffer usage vector to the command buffer cmd commands.
 struct TestOnlyCommandBufferCmd : public Command {
   explicit TestOnlyCommandBufferCmd(Command::BufferUses buffers)
-      : Command(CommandType::kEmptyCmd, {}), buffers(buffers) {}
+      : Command(CommandType::kUnknownCmd, {}), buffers(buffers) {}
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
@@ -117,7 +117,7 @@ struct TestOnlyCommandBufferCmd : public Command {
 
 class FakeCmd : public Command {
  public:
-  explicit FakeCmd() : Command(CommandType::kEmptyCmd, {}) {}
+  explicit FakeCmd() : Command(CommandType::kUnknownCmd, {}) {}
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
@@ -640,9 +640,8 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
   // Outer child wraps middle.
   CommandSequence outer_seq;
   outer_seq.Emplace<ChildCmd>(std::move(middle_executor));
-  // Add a couple more commands at the outer level that still don't affect `c`.
+  // Add another command at the outer level that still doesn't affect `c`.
   outer_seq.Emplace<MemzeroCmd>(ShapedSlice{slice_b, shape});
-  outer_seq.Emplace<EmptyCmd>();
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor outer_executor,
       CommandExecutor::Create(std::move(outer_seq), serialize));
@@ -678,7 +677,6 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
   // Outer graph (graph_1):
   //   Node 0: ChildCmd (graph_2)  -> depends on nothing
   //   Node 1: MemzeroCmd (MEMSET) -> depends on Node 0
-  //   Node 2: EmptyCmd (EMPTY)    -> depends on Node 1
   //
   // Middle graph (graph_2, nested in ChildCmd):
   //   Node 0: ChildCmd (graph_3)                           -> depends on
@@ -694,10 +692,10 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
     ASSERT_NE(gpu_cmd_buffer, nullptr)
         << "Expected command buffer to be a GpuCommandBuffer";
 
-    // Verify outer level: 3 commands (ChildCmd, MemzeroCmd, EmptyCmd)
+    // Verify outer level: 2 commands (ChildCmd, MemzeroCmd)
     auto outer_commands = gpu_cmd_buffer->commands();
-    ASSERT_EQ(outer_commands.size(), 3)
-        << "Outer level should have 3 commands: ChildCmd, MemzeroCmd, EmptyCmd";
+    ASSERT_EQ(outer_commands.size(), 2)
+        << "Outer level should have 2 commands: ChildCmd, MemzeroCmd";
 
     // First command: GpuChildCommand (wrapping middle graph)
     auto* outer_child_cmd =
@@ -716,15 +714,6 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
         << "Second outer command should be GpuCommand (MemzeroCmd)";
     ASSERT_NE(outer_memzero_cmd->handle, nullptr)
         << "MemzeroCmd should have a valid graph node handle";
-
-    // Third command: GpuCommand (EmptyCmd)
-    auto* outer_empty_cmd =
-        dynamic_cast<const se::gpu::GpuCommandBuffer::GpuCommand*>(
-            outer_commands[2].get());
-    ASSERT_NE(outer_empty_cmd, nullptr)
-        << "Third outer command should be GpuCommand (EmptyCmd)";
-    ASSERT_NE(outer_empty_cmd->handle, nullptr)
-        << "EmptyCmd should have a valid graph node handle";
 
     // Verify middle level (inside first ChildCmd): 3 commands
     auto* middle_gpu_buffer = dynamic_cast<se::gpu::GpuCommandBuffer*>(

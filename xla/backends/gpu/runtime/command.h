@@ -37,9 +37,9 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -49,7 +49,6 @@ namespace xla::gpu {
 
 // clang-format off
 #define XLA_GPU_COMMAND_LIST(V)                              \
-  V(kEmptyCmd, "EmptyCmd")                                   \
   V(kChildCmd, "ChildCmd")                                   \
   V(kTracedCommand, "TracedCommand")       \
   V(kComputationIdCmd, "ComputationIdCmd")                   \

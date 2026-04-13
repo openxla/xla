@@ -113,13 +113,13 @@ limitations under the License.
 #include "xla/stream_executor/trace_command_buffer_factory.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -344,27 +344,6 @@ TracedCommandBufferCmd::RecordTracedCommand(
       },
       [&](const se::CommandBuffer::Command* command) {
         return command_buffer->UpdateChildCommand(command, *nested_cmd);
-      });
-}
-
-//===----------------------------------------------------------------------===//
-// EmptyCmd
-//===----------------------------------------------------------------------===//
-
-EmptyCmd::EmptyCmd() : Command(CommandType::kEmptyCmd) {}
-
-absl::StatusOr<const se::CommandBuffer::Command*> EmptyCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateEmptyCmd(dependencies, priority());
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        // Empty command is not updatable.
-        return absl::OkStatus();
       });
 }
 
