@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "absl/status/status.h"
@@ -45,31 +46,33 @@ namespace {
 
 absl::StatusOr<nb::bytes> SerializeVersionedProgram(
     MlirModule module, absl::string_view ifrt_ir_version,
-    absl::string_view atom_program_version, bool version_in_place) {
+    absl::string_view atom_program_version, bool version_in_place,
+    std::optional<std::string> atom_program_sdy_version) {
   auto program = std::make_unique<IfrtIRProgram>(unwrap(module));
   TF_ASSIGN_OR_RETURN(
       Serialized serialized,
-      Serialize(*program,
-                std::make_unique<SerializeIfrtIRProgramOptions>(
-                    std::string(ifrt_ir_version),
-                    std::string(atom_program_version), version_in_place)));
+      Serialize(*program, std::make_unique<SerializeIfrtIRProgramOptions>(
+                              std::string(ifrt_ir_version),
+                              std::string(atom_program_version),
+                              atom_program_sdy_version, version_in_place)));
   std::string serialized_str = serialized.SerializeAsString();
   return nb::bytes(serialized_str.data(), serialized_str.size());
 }
 
 absl::StatusOr<nb::bytes> SerializeVersionedProgram(
     absl::string_view module_str, absl::string_view ifrt_ir_version,
-    absl::string_view atom_program_version, bool version_in_place) {
+    absl::string_view atom_program_version, bool version_in_place,
+    std::optional<std::string> atom_program_sdy_version) {
   mlir::MLIRContext context;
   TF_ASSIGN_OR_RETURN(auto module,
                       support::ParseMlirModuleString(module_str, context));
   auto program = std::make_unique<IfrtIRProgram>(module.release());
   TF_ASSIGN_OR_RETURN(
       auto serialized,
-      Serialize(*program,
-                std::make_unique<SerializeIfrtIRProgramOptions>(
-                    std::string(ifrt_ir_version),
-                    std::string(atom_program_version), version_in_place)));
+      Serialize(*program, std::make_unique<SerializeIfrtIRProgramOptions>(
+                              std::string(ifrt_ir_version),
+                              std::string(atom_program_version),
+                              atom_program_sdy_version, version_in_place)));
   std::string serialized_str = serialized.SerializeAsString();
   return nb::bytes(serialized_str.data(), serialized_str.size());
 }
@@ -122,24 +125,27 @@ NB_MODULE(ir_py, m) {
   m.def(
       "serialize_ifrt_ir_program",
       [](MlirModule module, absl::string_view ifrt_ir_version,
-         absl::string_view atom_program_version,
-         bool version_in_place) -> nb::bytes {
+         absl::string_view atom_program_version, bool version_in_place,
+         std::optional<std::string> atom_program_sdy_version) -> nb::bytes {
         return xla::ValueOrThrow(SerializeVersionedProgram(
-            module, ifrt_ir_version, atom_program_version, version_in_place));
+            module, ifrt_ir_version, atom_program_version, version_in_place,
+            atom_program_sdy_version));
       },
       nb::arg("module"), nb::arg("ifrt_ir_version"),
-      nb::arg("atom_program_version"), nb::arg("version_in_place"));
+      nb::arg("atom_program_version"), nb::arg("version_in_place"),
+      nb::arg("atom_program_sdy_version").none() = nb::none());
   m.def(
       "serialize_ifrt_ir_program",
       [](absl::string_view module_str, absl::string_view ifrt_ir_version,
-         absl::string_view atom_program_version,
-         bool version_in_place) -> nb::bytes {
-        return xla::ValueOrThrow(
-            SerializeVersionedProgram(module_str, ifrt_ir_version,
-                                      atom_program_version, version_in_place));
+         absl::string_view atom_program_version, bool version_in_place,
+         std::optional<std::string> atom_program_sdy_version) -> nb::bytes {
+        return xla::ValueOrThrow(SerializeVersionedProgram(
+            module_str, ifrt_ir_version, atom_program_version, version_in_place,
+            atom_program_sdy_version));
       },
       nb::arg("module_str"), nb::arg("ifrt_ir_version"),
-      nb::arg("atom_program_version"), nb::arg("version_in_place"));
+      nb::arg("atom_program_version"), nb::arg("version_in_place"),
+      nb::arg("atom_program_sdy_version").none() = nb::none());
 
   // Deserializes a versioned IFRT IR program to IFRT IR.
   m.def(

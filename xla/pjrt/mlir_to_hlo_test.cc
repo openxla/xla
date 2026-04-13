@@ -26,6 +26,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "shardy/dialect/sdy/ir/dialect.h"
 #include "stablehlo/api/PortableApi.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/tsl/platform/statusor.h"
@@ -35,7 +36,6 @@ namespace {
 
 using ::absl_testing::StatusIs;
 using ::testing::HasSubstr;
-using ::testing::Not;
 
 // Portable artifacts are serialized using `serializePortableArtifact` will have
 // a version tag with the target version, i.e. StableHLO_v1.0.0.
@@ -176,6 +176,30 @@ TEST(MlirToHloTest, MhloMixedSerializationTest_UnregisteredDialect) {
   EXPECT_THAT(Serialize(*module, "1.11.0"),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("found unstable op: UnknownOp")));
+}
+
+TEST(MlirToHloTest, StableHloSdyMixedSerializationTest) {
+  constexpr char kProgram[] =
+      R"(
+    sdy.mesh @empty_mesh = <[]>
+    func.func @main(%arg0: tensor<1xf32> {sdy.sharding = #sdy.sharding<@empty_mesh, [{}]>}) -> tensor<1xf32> {
+      %cst = stablehlo.constant dense<1.0> : tensor<1xf32>
+      %0 = stablehlo.add %arg0, %cst : tensor<1xf32>
+      return %0 : tensor<1xf32>
+    }
+  )";
+  mlir::MLIRContext context;
+  TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                          ParseMlirModuleString(kProgram, context));
+  mlir::sdy::SdyDialectVersion sdy_version =
+      mlir::sdy::SdyDialectVersion::getMinimumVersion();
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::string blob,
+      SerializeUsingVersionedStablehlo(*module, "1.11.0", /*inplace=*/false,
+                                       /*allow_mixed_serialization=*/true,
+                                       sdy_version.toString()));
+
+  EXPECT_THAT(blob, IsVhloArtifact("1.11.0"));
 }
 
 TEST(MlirToHloTest, InvalidBytecodeTest) {

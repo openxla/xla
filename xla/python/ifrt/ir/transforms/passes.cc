@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/python/ifrt/ir/transforms/passes.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -137,13 +138,15 @@ absl::Status createOutlinedAtomProgramsToCompiledPipeline(
   return absl::OkStatus();
 }
 
-void createIfrtToVersionedPipeline(mlir::OpPassManager& pm,
-                                   std::string ifrt_target_version,
-                                   std::string vhlo_target_version,
-                                   IfrtIrProgramProto& ifrt_ir_program) {
+void createIfrtToVersionedPipeline(
+    mlir::OpPassManager& pm, std::string ifrt_target_version,
+    std::string vhlo_target_version,
+    std::optional<std::string> sdy_target_version,
+    IfrtIrProgramProto& ifrt_ir_program) {
   pm.addPass(createIfrtRemoveAttrsFromOtherDialectsPass());
   pm.addPass(createIfrtAtomProgramsToVhloPass(
-      ifrt_ir_program.mutable_atom_programs(), std::move(vhlo_target_version)));
+      ifrt_ir_program.mutable_atom_programs(), std::move(vhlo_target_version),
+      std::move(sdy_target_version)));
   pm.addPass(createIfrtLegalizeToVifrtPass());
   // Run symbol DCE to remove atom programs that have been legalized to VHLO.
   pm.addPass(mlir::createSymbolDCEPass());

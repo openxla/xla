@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_PYTHON_IFRT_IR_TRANSFORMS_PASSES_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "absl/container/flat_hash_map.h"
@@ -85,7 +86,8 @@ std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>> createIfrtToDotPass(
 std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
 createIfrtAtomProgramsToVhloPass(
     tsl::protobuf::RepeatedPtrField<IfrtIrAtomProgramProto>* atom_programs,
-    std::string vhlo_target_version);
+    std::string vhlo_target_version,
+    std::optional<std::string> sdy_target_version);
 
 std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
 createIfrtAtomProgramsFromVhloPass(
@@ -153,10 +155,11 @@ absl::Status createOutlinedAtomProgramsToCompiledPipeline(
 
 // Creates a pipeline that converts an IFRT IR program to a versioned IFRT IR
 // program, and a versioned VHLO programs populated within `IfrtIrProgramProto`.
-void createIfrtToVersionedPipeline(mlir::OpPassManager& pm,
-                                   std::string ifrt_target_version,
-                                   std::string vhlo_target_version,
-                                   IfrtIrProgramProto& ifrt_ir_program);
+void createIfrtToVersionedPipeline(
+    mlir::OpPassManager& pm, std::string ifrt_target_version,
+    std::string vhlo_target_version,
+    std::optional<std::string> sdy_target_version,
+    IfrtIrProgramProto& ifrt_ir_program);
 
 // Creates a pipeline that converts a versioned IFRT IR program to an IFRT IR
 // program.

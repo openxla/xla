@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_PJRT_MLIR_TO_HLO_H_
 #define XLA_PJRT_MLIR_TO_HLO_H_
 
-#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -78,6 +77,10 @@ std::optional<mlir::StringRef> FindPotentiallyUnstableDialects(
 // plugins on a quarterly update cycle.
 std::string GetDefaultStablehloVersion();
 
+// Returns a version of Shardy ~12w old, for forward compatibility with PJRT
+// plugins on a quarterly update cycle.
+std::string GetDefaultSdyVersion();
+
 // Serialize using MLIR Bytecode Format. This is as stable as the dialects used
 // in the module. I.e. if only StableHLO & SDY are used, will serialize them
 // using VHLO & SDY. If compatibility must be guaranteed for all dialects, use
@@ -106,7 +109,8 @@ absl::StatusOr<std::string> Serialize(mlir::ModuleOp mlir_module,
 // MLIR bytecode format will be used.
 absl::StatusOr<std::string> SerializeUsingVersionedStablehlo(
     mlir::ModuleOp mlir_module, absl::string_view requested_target,
-    bool inplace = false, bool allow_mixed_serialization = false);
+    bool inplace = false, bool allow_mixed_serialization = false,
+    std::optional<std::string> sdy_version = std::nullopt);
 
 // Given a module that might be a portable artifact, deserialize and upgrade it
 // back to StableHLO.

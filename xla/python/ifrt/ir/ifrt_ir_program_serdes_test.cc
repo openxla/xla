@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -182,6 +183,7 @@ module @multiple_calls_of_same_module {
   auto options = std::make_unique<SerializeIfrtIRProgramOptions>(
       Version::getCurrentVersion().toString(),
       ::mlir::vhlo::Version::getCurrentVersion().toString(),
+      /*atom_program_sdy_version=*/std::nullopt,
       /*version_in_place=*/false);
   TF_ASSERT_OK_AND_ASSIGN(serialized,
                           Serialize(*initial_program, std::move(options)));
@@ -227,6 +229,7 @@ module @multiple_calls_of_same_module {
   auto options = std::make_unique<SerializeIfrtIRProgramOptions>(
       Version::getCurrentVersion().toString(),
       ::mlir::vhlo::Version::getCurrentVersion().toString(),
+      /*atom_program_sdy_version=*/std::nullopt,
       /*version_in_place=*/false);
   TF_ASSERT_OK_AND_ASSIGN(serialized,
                           Serialize(*initial_program, std::move(options)));
@@ -270,7 +273,8 @@ module {
   // `SerializeIfrtIRProgramOptions::ifrt_version`.
   auto options = std::make_unique<SerializeIfrtIRProgramOptions>(
       Version::getCurrentVersion().toString(),
-      ::mlir::vhlo::Version::getCurrentVersion().toString());
+      ::mlir::vhlo::Version::getCurrentVersion().toString(),
+      /*atom_program_sdy_version=*/std::nullopt);
   EXPECT_THAT(
       Serialize(*initial_program, std::move(options)),
       absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,

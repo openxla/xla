@@ -94,7 +94,7 @@ class HloProgramSerDes : public llvm::RTTIExtends<HloProgramSerDes, SerDes> {
     if (version.version_number() >= SerDesVersionNumber(3)) {
       return xla::SerializeUsingVersionedStablehlo(
           *module, xla::GetDefaultStablehloVersion(), /*inplace=*/false,
-          /*allow_mixed_serialization=*/true);
+          /*allow_mixed_serialization=*/true, xla::GetDefaultSdyVersion());
     }
     return xla::SerializeUsingVersionedStablehlo(
         *module, xla::GetDefaultStablehloVersion());
