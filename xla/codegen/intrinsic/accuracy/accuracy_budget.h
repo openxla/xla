@@ -157,10 +157,10 @@ constexpr AccuracyBudget kErfF64Budget = {
 
 // Sqrt
 constexpr AccuracyBudget kSqrtF32Budget = {
-    /*cpu=*/{/*regular=*/1,
+    /*cpu=*/{/*regular=*/0,
              /*subnormal=*/1000000},
     /*gpu=*/
-    {/*regular=*/1,
+    {/*regular=*/0,
      /*subnormal=*/1000000},
 };
 
