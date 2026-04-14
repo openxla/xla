@@ -2710,6 +2710,7 @@ cc_library(
         ":gpu_latency_hiding_scheduler",
         ":hlo_fusion_analysis",
         ":ir_emission_utils",
+        "//xla:printer",
         "//xla:shape_util",
         "//xla:util",
         "//xla/backends/gpu/transforms:pgle_accuracy_checker",
