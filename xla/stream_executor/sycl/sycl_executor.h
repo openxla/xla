@@ -91,10 +91,6 @@ class SyclExecutor : public gpu::GpuExecutor {
   absl::StatusOr<std::unique_ptr<EventBasedTimer>> CreateEventBasedTimer(
       Stream* stream, bool use_delay_kernel) override;
 
-  // Sets the specified device memory to zero synchronously.
-  absl::Status SynchronousMemZero(DeviceMemoryBase* location,
-                                  uint64_t size) override;
-
   // Copies memory from host to device synchronously.
   absl::Status SynchronousMemcpy(DeviceMemoryBase* gpu_dst,
                                  const void* host_src, uint64_t size) override;

@@ -922,20 +922,6 @@ bool RocmExecutor::HostMemoryUnregister(void* location) {
   return true;
 }
 
-absl::Status RocmExecutor::SynchronousMemZero(DeviceAddressBase* location,
-                                              uint64_t size) {
-  std::unique_ptr<ActivateContext> activation = Activate();
-  hipDeviceptr_t rocm_location = AsROCmDevicePtr(location);
-  if (reinterpret_cast<uintptr_t>(location->opaque()) % sizeof(uint32_t) == 0 &&
-      size % sizeof(uint32_t) == 0) {
-    return ToStatus(
-        wrap::hipMemsetD32(rocm_location, 0x0, size / sizeof(uint32_t)),
-        "Failed to memset memory");
-  }
-  return ToStatus(wrap::hipMemsetD8(rocm_location, 0x0, size),
-                  "Failed to memset memory");
-}
-
 absl::Status RocmExecutor::SynchronousMemcpy(DeviceAddressBase* gpu_dst,
                                              const void* host_src,
                                              uint64_t size) {
