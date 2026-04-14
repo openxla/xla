@@ -1,1 +1,24 @@
+diff --ruN a/stablehlo/stablehlo/transforms/VhloToVersion.cpp b/stablehlo/stablehlo/transforms/VhloToVersion.cpp
+--- stablehlo/stablehlo/transforms/VhloToVersion.cpp
++++ stablehlo/stablehlo/transforms/VhloToVersion.cpp
+@@ -278,12 +278,13 @@
+   LLVM_DEBUG(llvm::dbgs() << "Legal op types for target. " << op << '\n');
+ 
+   // Validate location
+-  if (!isLegalLocation(op->getLoc(), targetVersion)) {
+-    LLVM_DEBUG(llvm::dbgs()
+-               << "Illegal op location for target. " << op << '\n');
+-    // TODO: One integrated into ecosystem return an error in these cases.
+-  }
+-  LLVM_DEBUG(llvm::dbgs() << "Legal op location for target. " << op << '\n');
++  LLVM_DEBUG(
++      if (!isLegalLocation(op->getLoc(), targetVersion)) {
++        llvm::dbgs() << "Illegal op location for target. " << op << '\n';
++        // TODO: One integrated into ecosystem return an error in these cases.
++      } else {
++        llvm::dbgs() << "Legal op location for target. " << op << '\n';
++      });
+ 
+   return true;
+ }
 

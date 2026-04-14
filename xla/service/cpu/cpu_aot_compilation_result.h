@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_profile_printer_data.pb.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
@@ -118,7 +119,11 @@ class CpuAotCompilationResult : public CompiledModule {
   ~CpuAotCompilationResult() override = default;
 
   absl::StatusOr<std::string> SerializeAsString() const override {
-    return proto_.SerializeAsString();
+    std::string serialized;
+    if (!tsl::SerializeToStringDeterministic(proto_, &serialized)) {
+      return Internal("Failed to serialize CpuAotCompilationResult.");
+    }
+    return serialized;
   }
 
   absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable() && override;

@@ -1151,6 +1151,9 @@ absl::StatusOr<xla::CompiledMemoryStats> GetCompiledMemoryStats(
   results.host_temp_size_in_bytes = args.host_temp_size_in_bytes;
   results.peak_memory_in_bytes = args.peak_memory_in_bytes;
   results.total_size_in_bytes = args.total_size_in_bytes;
+  results.total_allocation_bytes = args.total_allocation_bytes;
+  results.indefinite_allocations = args.indefinite_allocations;
+  results.peak_unpadded_heap_bytes = args.peak_unpadded_heap_bytes;
   return results;
 }
 

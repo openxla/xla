@@ -723,11 +723,6 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
       << ", address=" << barrier_signal_symmetric_memory->addr().opaque()
       << ", size=" << barrier_signal_symmetric_memory->addr().size() << ")";
 
-  // Copy the output buffer to the symmetric temporary output buffer.
-  se::DeviceAddressBase output_temporary_symmetric_memory_addr =
-      output_temporary_symmetric_memory->addr();
-  TF_RETURN_IF_ERROR(stream.MemcpyD2D(&output_temporary_symmetric_memory_addr,
-                                      output_buffer, output_buffer.size()));
   // 1. Barrier (Pre-Kernel)
   // Global synchronization before P2P writes.
   // Ensures that all peers have reached this point and their output buffers

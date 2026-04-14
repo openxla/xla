@@ -228,7 +228,8 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
       get_tile_sizes(dot->shape().dimensions().size());
   VLOG(2) << "FindOutputTileSizesForEpilogue: " << tiled_dot.ToString()
           << "\nConstraints: "
-          << analysis.GetTilingSpecification().constraints().ToString()
+          << analysis.GetTilingSpecification().constraints().ToString(
+                 analysis.GetTilingSpecification().num_parameters())
           << "Expected dot tile sizes: "
           << absl::StrJoin(expected_dot_tile_sizes, " ");
 

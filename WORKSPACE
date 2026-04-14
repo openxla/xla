@@ -1,21 +1,22 @@
 # buildifier: disable=load-on-top
 workspace(name = "xla")
 
-load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
-
-# Initialize toolchains for ML projects.
+# Initialize the XLA repository and all dependencies.
 #
-# A hermetic build system is designed to produce completely reproducible builds for C++.
-# Details: https://github.com/google-ml-infra/rules_ml_toolchain
-tf_http_archive(
-    name = "rules_ml_toolchain",
-    sha256 = "f2c924e85a22ba2eaa0c08657e5f5467fedbc3d0506f9cc0c69dd97ed9fbaf28",
-    strip_prefix = "rules_ml_toolchain-99c43dfe995a0e81c767d5b6d686191992672fe6",
-    urls = tf_mirror_urls(
-        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/99c43dfe995a0e81c767d5b6d686191992672fe6.tar.gz",
-    ),
-)
+# The cascade of load() statements and xla_workspace?() calls works around the
+# restriction that load() statements need to be at the top of .bzl files.
+# E.g. we can not retrieve a new repository with http_archive and then load()
+# a macro from that repository in the same file.
 
+load(":workspace4.bzl", "xla_workspace4")
+
+xla_workspace4()
+
+load(":workspace3.bzl", "xla_workspace3")
+
+xla_workspace3()
+
+# Initialize hermetic C++
 load(
     "@rules_ml_toolchain//cc/deps:cc_toolchain_deps.bzl",
     "cc_toolchain_deps",
@@ -33,20 +34,6 @@ register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
 
-# Initialize the XLA repository and all dependencies.
-#
-# The cascade of load() statements and xla_workspace?() calls works around the
-# restriction that load() statements need to be at the top of .bzl files.
-# E.g. we can not retrieve a new repository with http_archive and then load()
-# a macro from that repository in the same file.
-
-load(":workspace4.bzl", "xla_workspace4")
-
-xla_workspace4()
-
-load(":workspace3.bzl", "xla_workspace3")
-
-xla_workspace3()
 
 # Initialize hermetic Python
 load("//third_party/py:python_init_rules.bzl", "python_init_rules")

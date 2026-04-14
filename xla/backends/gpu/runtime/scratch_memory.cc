@@ -66,10 +66,19 @@ absl::StatusOr<ScratchMemory> AcquireScratchMemory(
       std::unique_ptr<stream_executor::MemoryAllocator> collective_allocator,
       executor->CreateMemoryAllocator(
           stream_executor::MemorySpace::kCollective));
-  TF_RET_CHECK(scratch_memory_requests.Size() == 1)
-      << "Only one scratch memory allocation is supported per device.";
 
-  auto [clique_key, size] = scratch_memory_requests.OrderedRequests()[0];
+  auto ordered_requests = scratch_memory_requests.OrderedRequests();
+  auto [clique_key, size] = ordered_requests[0];
+
+  for (const auto& [key, s] : ordered_requests) {
+    if (key.num_devices() > clique_key.num_devices()) {
+      clique_key = key;
+    }
+
+    if (s > size) {
+      size = s;
+    }
+  }
 
   ASSIGN_OR_RETURN(
       std::unique_ptr<stream_executor::MemoryAllocation> memory_allocation,

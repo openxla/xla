@@ -420,8 +420,13 @@ CommandBufferThunk::GetOrCreateCommandBuffer(
   auto emplaced = state_->command_buffers.emplace(
       key, std::make_shared<ExecutorCommandBuffer>(std::move(command_buffer)));
   // With kNumVaReservationSets=2, at most 2 command buffers should exist per
-  // executor (one per VA reservation set).
-  DCHECK_LE(state_->command_buffers.size(), static_cast<size_t>(2))
+  // executor (one per VA reservation set). A CommandBufferThunk may be shared
+  // across replicas (multiple executors), so count only entries for this
+  // executor rather than the total map size.
+  size_t count_for_executor = std::count_if(
+      state_->command_buffers.begin(), state_->command_buffers.end(),
+      [executor](const auto& entry) { return entry.first.first == executor; });
+  DCHECK_LE(count_for_executor, static_cast<size_t>(2))
       << "command_buffers map has more entries than expected VA reservation "
       << "sets for executor " << executor;
 

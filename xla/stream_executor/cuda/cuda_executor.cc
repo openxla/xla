@@ -1294,22 +1294,6 @@ bool CudaExecutor::HostMemoryUnregister(void* location) {
   return HostUnregister(cuda_context_, location);
 }
 
-absl::Status CudaExecutor::SynchronousMemZero(DeviceAddressBase* location,
-                                              uint64_t size) {
-  std::unique_ptr<ActivateContext> activation = Activate();
-  // cuMemset calls are usually asynchronous with respect to the host and issue
-  // operations on the default stream. XLA's streams are non-blocking
-  // (CU_STREAM_NON_BLOCKING) and, therefore, not ordered with respect to the
-  // default stream.
-  // https://docs.nvidia.com/cuda/cuda-driver-api/api-sync-behavior.html#api-sync-behavior__memset
-  // If an appropriate stream is available at the call site, use it instead of
-  // this method.
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<Stream> stream,
-                      StreamExecutor::CreateStream());
-  TF_RETURN_IF_ERROR(stream->MemZero(location, size));
-  return stream->BlockHostUntilDone();
-}
-
 absl::Status CudaExecutor::SynchronousMemcpy(DeviceAddressBase* gpu_dst,
                                              const void* host_src,
                                              uint64_t size) {

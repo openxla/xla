@@ -67,15 +67,13 @@ absl::Status CollectiveMemoryRequests::RequestSymmetricAddress(
 }
 
 absl::Status CollectiveMemoryRequests::RequestMulticastAllocation(
-    const GpuCliqueKey& clique_key, BufferAllocation::Index allocation,
-    bool range_mapped) {
+    const GpuCliqueKey& clique_key, BufferAllocation::Index allocation) {
   VLOG(5) << "Add multicast allocation request: " << clique_key
           << "; allocation=" << allocation;
 
   // If multicast allocation requests already exists add allocation index to it.
   if (auto it = mcast_allocations_.find(clique_key);
       it != mcast_allocations_.end()) {
-    it->second.range_mapped |= range_mapped;
     MulticastAllocations& allocs = it->second;
     allocs.allocations.insert(allocation);
   }
@@ -84,20 +82,19 @@ absl::Status CollectiveMemoryRequests::RequestMulticastAllocation(
   // order on all replicas. We rely on this property to assign unique id to
   // multicast allocation requests to guarantee deterministic execution order.
   MulticastAllocations alloc{
-      /*id=*/mcast_allocations_.size(), clique_key, range_mapped, {allocation}};
+      /*id=*/mcast_allocations_.size(), clique_key, {allocation}};
 
   mcast_allocations_.try_emplace(clique_key, std::move(alloc));
   return absl::OkStatus();
 }
 
 absl::Status CollectiveMemoryRequests::RequestMulticastAddress(
-    const GpuCliqueKey& clique_key, const se::DeviceAddressBase& addr,
-    bool range_mapped) {
+    const GpuCliqueKey& clique_key, const se::DeviceAddressBase& addr) {
   VLOG(5) << "Add multicast address request: " << clique_key.ToString()
           << "; address=" << addr.opaque();
 
   if (auto allocation = buffers_.FindAllocationIndex(addr)) {
-    return RequestMulticastAllocation(clique_key, *allocation, range_mapped);
+    return RequestMulticastAllocation(clique_key, *allocation);
   }
   return Internal("Can't find buffer allocation index for a device address");
 }

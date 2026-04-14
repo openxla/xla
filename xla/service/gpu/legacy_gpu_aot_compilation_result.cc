@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -86,7 +87,12 @@ LegacyGpuAotCompilationResult::FromProto(const GpuExecutableProto& proto,
 
 absl::StatusOr<std::string> LegacyGpuAotCompilationResult::SerializeAsString()
     const {
-  return proto_.SerializeAsString();
+  std::string serialized;
+  if (!tsl::SerializeToStringDeterministic(proto_, &serialized)) {
+    return Internal(
+        "Failed to serialize LegacyGpuAotCompilationResult deterministically.");
+  }
+  return serialized;
 }
 
 absl::StatusOr<std::unique_ptr<Executable>>

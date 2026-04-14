@@ -403,6 +403,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 #endif
 
   opts.set_xla_gpu_use_memcpy_local_p2p(false);
+  opts.set_xla_gpu_collective_permute_connected_components(false);
 
   opts.set_xla_reduce_window_rewrite_base_length(16);
 
@@ -472,7 +473,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_enable_scoped_logging_timers(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_noop_change(false);
   opts.set_xla_gpu_experimental_enable_collective_multi_streaming(false);
-  opts.set_xla_gpu_experimental_enable_split_k_rewrite(true);
+  opts.set_xla_gpu_experimental_force_split_k(0);
   opts.set_xla_gpu_experimental_enable_triton_warp_specialization(false);
   opts.set_xla_detect_unstable_reductions(DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_detect_unstable_reductions_post_optimizations(
@@ -1036,6 +1037,20 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           return true;
         };
       };
+
+  auto setter_for_force_split_k = [debug_options](int32_t value) {
+    if (value < 0) {
+      return false;
+    }
+    // TODO: Replace with std::has_single_bit once we are C++20.
+    if (value > 0 && (value & (value - 1)) != 0) {
+      LOG(ERROR)
+          << "xla_gpu_experimental_force_split_k must be a power of two.";
+      return false;
+    }
+    debug_options->set_xla_gpu_experimental_force_split_k(value);
+    return true;
+  };
 
   // Don't use an initializer list for initializing the vector; this would
   // create a temporary copy, and exceeds the stack space when compiling with
@@ -2414,6 +2429,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_use_memcpy_local_p2p),
       debug_options->xla_gpu_use_memcpy_local_p2p(),
       "Whether to use memcpy for local p2p communication."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_collective_permute_connected_components",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_collective_permute_connected_components),
+      debug_options->xla_gpu_collective_permute_connected_components(),
+      "Split collective-permute into connected-component replica groups "
+      "instead of one giant clique."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_use_inprocess_lld",
                 bool_setter_for(&DebugOptions::set_xla_gpu_use_inprocess_lld),
@@ -2819,13 +2841,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "If non empty will interpret this variable as a path for performance "
       "tables for matmuls. Expects `xla.gpu.DeviceHloInstructionProfiles` "
       "proto."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_enable_split_k_rewrite",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_experimental_enable_split_k_rewrite),
-      debug_options->xla_gpu_experimental_enable_split_k_rewrite(),
-      "Enable the pass that splits GEMMs that underutilize the GPU load by "
-      "splitting the K dimension using a heuristic."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_experimental_force_split_k", setter_for_force_split_k,
+                debug_options->xla_gpu_experimental_force_split_k(),
+                "Force a specific split_k value. Must be a power of two. Zero "
+                "(default) means do not force split_k and use the heuristic."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_triton_warp_specialization",
       bool_setter_for(

@@ -284,10 +284,11 @@ absl::InlinedVector<const HloInstruction*, 2> ToInstructions(
 
     auto operands_tiles =
         PropagateTileToInput(tiling_space, *hlo, tiled_hlo->tile(), 0);
-    if (!operands_tiles.has_value()) {
+    if (!operands_tiles.ok()) {
       return FusionDecision::Forbid("Couldn't propagate tile ")
              << tiled_hlo->tile().ToString() << " to the input of "
-             << hlo->ToString();
+             << hlo->ToString()
+             << " with error: " << operands_tiles.status().ToString();
     }
 
     HloInstructionAdaptor instruction_adaptor(*hlo, &fusion);

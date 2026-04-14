@@ -19,6 +19,8 @@ limitations under the License.
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -28,6 +30,7 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
+#include "xla/tsl/profiler/utils/xplane_utils.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
@@ -286,6 +289,36 @@ TEST(PmSamplesTest, PopulateCounterLineSkipsNan) {
   const auto& stat = event.stats(0);
   EXPECT_EQ(plane.stat_metadata().at(stat.metadata_id()).name(), "metric1");
   EXPECT_EQ(stat.double_value(), 123.0);
+}
+
+TEST(CuptiCollectorTest, ExportScopeRangeIdTreePreventsIdOverlap) {
+  CuptiTracerCollectorOptions options;
+  options.num_gpus = 1;
+  std::unique_ptr<CuptiTraceCollector> collector =
+      CreateCuptiCollector(options, 0, 0);
+
+  std::vector<CallbackAnnotationsAndEvents> callback_events;
+  CallbackAnnotationsAndEvents events;
+  events.scope_range_id_tree().insert({1, 2});
+  events.scope_range_id_tree().insert({3, 10});
+  callback_events.push_back(std::move(events));
+
+  collector->OnTracerCollectedCallbackData(std::move(callback_events),
+                                           /*need_callback_events=*/true);
+
+  XSpace space;
+  collector->Export(&space, /*end_gpu_ns=*/210);
+
+  tensorflow::profiler::XPlane* tree_plane =
+      tsl::profiler::FindMutablePlaneWithName(
+          &space, tsl::profiler::kScopeRangeIdTreePlaneName);
+  ASSERT_NE(tree_plane, nullptr);
+
+  // Create a new metadata using XPlaneBuilder and verify its ID is greater
+  // than 10.
+  tsl::profiler::XPlaneBuilder plane_builder(tree_plane);
+  auto* new_stat = plane_builder.GetOrCreateStatMetadata("new_stat");
+  EXPECT_GT(new_stat->id(), 10);
 }
 
 }  // namespace

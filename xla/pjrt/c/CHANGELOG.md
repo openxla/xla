@@ -1,5 +1,9 @@
 # PJRT C API changelog
 
+## 0.104
+
+* Added `total_allocation_bytes`, `indefinite_allocations` and `peak_unpadded_heap_bytes` to GetCompiledMemoryStats
+
 ## 0.103
 
 * Added `payload` and `num_payload` to `PJRT_Client_CreateErrorBuffer_Args` to support passing status payloads during error buffer creation.

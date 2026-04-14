@@ -387,64 +387,6 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSliceToDynamic(
   return thunk_sequence;
 }
 
-AsyncThunkSequence ThunkEmitter::EmitCommandBufferThunk(
-    const HloInstruction* instr) {
-  // Spawn a new ThunkEmitter to emit thunks for the command buffer computation.
-  // Then convert emitted thunks to a sequence of Commands. The resulting thunk
-  // added to the thunk sequence is a CommandBufferThunk. Thunks emitted from
-  // the command buffer computation are discarded.
-  DCHECK_EQ(instr->called_computations().size(), 1);
-  const HloComputation* command_buffer = instr->called_computations().front();
-
-  Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
-      instr, ir_emitter_context_->GetNextThunkId());
-  return EmitHloComputation(command_buffer)
-      .Map([thunk_info = std::move(thunk_info),
-            &debug_options = ir_emitter_context_->debug_options()](
-               ThunkSequence thunk_sequence) -> absl::StatusOr<ThunkSequence> {
-        // Maybe serialize all commands in a sequence by forcing barriers
-        // between all recorded commands. This guarantees that we execute
-        // all device operations in the exact same order as a thunk
-        // sequence.
-        CommandExecutor::SynchronizationMode synchronization_mode;
-        auto mode = debug_options.xla_gpu_command_buffer_scheduling_mode();
-        switch (mode) {
-          case DebugOptions::SERIALIZE:
-            synchronization_mode =
-                CommandExecutor::SynchronizationMode::kSerialize;
-            break;
-          case DebugOptions::CONCURRENT:
-            synchronization_mode =
-                CommandExecutor::SynchronizationMode::kConcurrent;
-            break;
-          case DebugOptions::LHS:
-            synchronization_mode = CommandExecutor::SynchronizationMode::kLHS;
-            break;
-          default:
-            return Internal("Unsupported command buffer scheduling mode: %d",
-                            mode);
-        }
-
-        bool enable_loop_unroll =
-            debug_options.xla_gpu_command_buffer_unroll_loops();
-        DebugOptions::CommandBufferUpdateMode update_mode =
-            debug_options.xla_gpu_command_buffer_update_mode();
-        ASSIGN_OR_RETURN(
-            CommandExecutor cmd_executor,
-            ConvertToCommands(
-                thunk_sequence,
-                ConvertToCommandsOptions{synchronization_mode,
-                                         enable_loop_unroll, update_mode}));
-
-        return GetThunkSequence(std::make_unique<CommandBufferThunk>(
-            std::move(cmd_executor), std::move(thunk_info),
-            std::make_unique<SequentialThunk>(Thunk::ThunkInfo{},
-                                              std::move(thunk_sequence)),
-            debug_options.xla_enable_command_buffers_during_profiling(),
-            update_mode));
-      });
-}
-
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConvolutionThunk(
     const HloCustomCallInstruction* instr) {
   std::vector<ShapedSlice> operand_slices;
@@ -1474,6 +1416,13 @@ AsyncThunkSequence ThunkEmitter::EmitWhile(const HloInstruction* instr) {
       });
 }
 
+AsyncThunkSequence ThunkEmitter::EmitCallComputation(
+    const HloInstruction* instr) {
+  DCHECK_EQ(instr->called_computations().size(), 1);
+  const HloComputation* computation = instr->called_computations().front();
+  return EmitHloComputation(computation);
+}
+
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRngGetAndUpdateState(
     const HloRngGetAndUpdateStateInstruction* instr) {
   std::string ir_name = std::string(instr->name());
@@ -1629,7 +1578,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectivePermute(
           Thunk::ThunkInfo::WithProfileAnnotation(
               instr, ir_emitter_context_->GetNextThunkId()),
           instr, replica_count, partition_count, buffers,
-          ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p()));
+          ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
+          ir_emitter_context_->debug_options()
+              .xla_gpu_collective_permute_connected_components()));
     }
   }
 
@@ -1814,60 +1765,6 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectiveThunk(
   }
 
   return GetThunkSequence(std::move(start_thunk));
-}
-
-std::vector<const HloInstruction*> GetRealDependencyInstructions(
-    const HloInstruction* instr) {
-  std::vector<const HloInstruction*> real_deps;
-  switch (instr->opcode()) {
-    case HloOpcode::kSend:
-    case HloOpcode::kSendDone:
-    case HloOpcode::kRecv:
-    case HloOpcode::kRecvDone:
-      return {FindCanonicalSendRecvStartOp(instr)};
-    case HloOpcode::kAllGatherDone:
-    case HloOpcode::kAllReduceDone:
-    case HloOpcode::kAsyncDone:
-    case HloOpcode::kCollectivePermuteDone:
-    case HloOpcode::kCopyDone:
-      return {instr->operand(0)};
-    case HloOpcode::kAllGatherStart:
-    case HloOpcode::kAllReduceStart:
-    case HloOpcode::kAsyncStart:
-    case HloOpcode::kCollectivePermuteStart:
-    case HloOpcode::kCall:
-    case HloOpcode::kConditional:
-    case HloOpcode::kConstant:
-    case HloOpcode::kCustomCall:
-    case HloOpcode::kFusion:
-    case HloOpcode::kCopy:
-    case HloOpcode::kInfeed:
-    case HloOpcode::kOutfeed:
-    case HloOpcode::kPartitionId:
-    case HloOpcode::kFft:
-    case HloOpcode::kReplicaId:
-    case HloOpcode::kRngGetAndUpdateState:
-    case HloOpcode::kSort:
-    case HloOpcode::kWhile:
-    case HloOpcode::kCopyStart:
-      return {instr};
-    case HloOpcode::kAddDependency:
-    case HloOpcode::kAfterAll:
-    case HloOpcode::kTuple:
-      for (const HloInstruction* operand : instr->operands()) {
-        auto deps = GetRealDependencyInstructions(operand);
-        real_deps.insert(real_deps.end(), deps.begin(), deps.end());
-      }
-      return real_deps;
-    case HloOpcode::kBitcast:
-    case HloOpcode::kGetTupleElement: {
-      auto deps = GetRealDependencyInstructions(instr->operand(0));
-      real_deps.insert(real_deps.end(), deps.begin(), deps.end());
-    }
-      return real_deps;
-    default:
-      return {};
-  }
 }
 
 AsyncThunkSequence ThunkEmitter::EmitCollectiveGroupStartThunk(
@@ -2756,7 +2653,7 @@ AsyncThunkSequence ThunkEmitter::EmitHloInstruction(const HloInstruction* hlo,
     case HloOpcode::kAsyncStart:
       return EmitAsyncStart(hlo);
     case HloOpcode::kCall:
-      return EmitCommandBufferThunk(hlo);
+      return EmitCallComputation(hlo);
     case HloOpcode::kCollectivePermuteDone:
       return IsNvshmemCollective(hlo) ? EmitNvshmemAsyncDone(hlo)
                                       : EmitCollectiveAsyncDone(hlo);
@@ -2876,28 +2773,6 @@ AsyncThunkSequence ThunkEmitter::EmitHloComputation(
             for (auto& thunk : thunks) {
               if (concurrent_region_id.has_value()) {
                 thunk->set_concurrent_region_id(concurrent_region_id.value());
-              }
-            }
-          }
-          for (const HloInstruction* control_predecessor :
-               instr->control_predecessors()) {
-            std::vector<const HloInstruction*> real_successors =
-                GetRealDependencyInstructions(instr);
-            std::vector<const HloInstruction*> real_predecessors =
-                GetRealDependencyInstructions(control_predecessor);
-            for (const HloInstruction* real_predecessor : real_predecessors) {
-              for (const HloInstruction* real_successor : real_successors) {
-                // if the instruction does not have a thunk, it is a degenerated
-                // instruction, and we skip it.
-                if (instr_to_thunk.contains(real_successor) &&
-                    instr_to_thunk.contains(real_predecessor)) {
-                  instr_to_thunk[real_successor]->add_control_predecessor(
-                      instr_to_thunk[real_predecessor]);
-                  VLOG(3) << "Add thunk control dependency for predecessor:  "
-                          << instr_to_thunk[real_predecessor]->ToString(0)
-                          << " successor: "
-                          << instr_to_thunk[real_successor]->ToString(0);
-                }
               }
             }
           }

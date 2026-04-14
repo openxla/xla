@@ -28,7 +28,10 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"  // gloop
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
@@ -110,7 +113,7 @@ Tiles PropagateTileToOutputForBroadcastOp(const HloBroadcastInstruction& bcast,
   return {Tile{input_tile.tiling_space(), std::move(dim_tiles)}};
 }
 
-std::optional<Tiles> PropagateTileToInputForConcatenateOp(
+absl::StatusOr<Tiles> PropagateTileToInputForConcatenateOp(
     const HloConcatenateInstruction& concatenate, const Tile& output_tile) {
   int64_t num_operands = concatenate.operand_count();
 
@@ -124,9 +127,9 @@ std::optional<Tiles> PropagateTileToInputForConcatenateOp(
   if (upper_bound.GetType() != SymbolicExprType::kConstant) {
     // TODO(b/422677091): Also support non-constant symbolic expressions for
     // upper bound.
-    VLOG(2) << "Can't propagate tile to input of concatenate op with "
-               "non-constant upper bound.";
-    return std::nullopt;
+    return absl::UnimplementedError(
+        "Can't propagate tile to input of concatenate op with "
+        "non-constant upper bound.");
   }
   int64_t offset = 0;
   for (const HloInstruction* operand : concatenate.operands()) {
@@ -273,8 +276,8 @@ Tiles PropagateTileToInputForDynamicSliceOp(
   return operand_tiles;
 }
 
-std::optional<Tiles> PropagateTileToInputForPadOp(const HloPadInstruction& pad,
-                                                  const Tile& output_tile) {
+absl::StatusOr<Tiles> PropagateTileToInputForPadOp(const HloPadInstruction& pad,
+                                                   const Tile& output_tile) {
   MLIRContext* ctx = output_tile.mlir_context();
   const PaddingConfig& padding_config = pad.padding_config();
 
@@ -285,9 +288,8 @@ std::optional<Tiles> PropagateTileToInputForPadOp(const HloPadInstruction& pad,
        llvm::zip(output_tile.dim_tiles(), padding_config.dimensions(),
                  pad.operand(0)->shape().dimensions())) {
     if (padding_dim.interior_padding() != 0) {
-      VLOG(2)
-          << "Can't propagate tile to input of pad op with interior padding.";
-      return std::nullopt;
+      return absl::UnimplementedError(
+          "Can't propagate tile to input of pad op with interior padding.");
     }
     dim_tiles.push_back(
         DimTile{result_dim_tile.offset - padding_dim.edge_padding_low(),
@@ -550,44 +552,95 @@ void PropagateTileThroughMinimalReshape(
   }
 }
 
-std::optional<Tiles> PropagateTileThroughReshape(const Tile& source_tile,
-                                                 const Shape& source_shape,
-                                                 const Shape& target_shape) {
-  auto reshapes = GetMinimalReshapes(source_shape, target_shape);
+absl::StatusOr<Tile> PropagateTileThroughReshape(const Tile& tile,
+                                                 const Shape& src,
+                                                 const Shape& dst) {
+  auto reshapes = GetMinimalReshapes(src, dst);
   if (!IsSupportedReshape(reshapes)) {
-    VLOG(2) << "Unsupported reshape: " << source_shape.ToString() << " -> "
-            << target_shape.ToString();
-    return std::nullopt;
+    return absl::UnimplementedError(absl::StrCat(
+        "Unsupported reshape: ", src.ToString(), " -> ", dst.ToString()));
   }
-
   SmallVector<DimTile> target_dim_tiles;
-  target_dim_tiles.reserve(target_shape.dimensions().size());
-  for (int64_t i = 0; i < target_shape.dimensions().size(); ++i) {
-    target_dim_tiles.push_back(
-        GetFullDimTile(target_shape.dimensions(i), source_tile.mlir_context()));
+  target_dim_tiles.reserve(dst.dimensions().size());
+  for (int64_t dim_size : dst.dimensions()) {
+    target_dim_tiles.push_back(GetFullDimTile(dim_size, tile.mlir_context()));
   }
-
   for (const auto& minimal_reshape : reshapes) {
-    PropagateTileThroughMinimalReshape(minimal_reshape, source_tile,
-                                       source_shape, target_shape,
+    PropagateTileThroughMinimalReshape(minimal_reshape, tile, src, dst,
                                        target_dim_tiles);
   }
-
-  return {Tiles{Tile(source_tile.tiling_space(), std::move(target_dim_tiles))}};
+  return {Tile(tile.tiling_space(), std::move(target_dim_tiles))};
 }
 
-std::optional<Tiles> PropagateTileToInputForReshapeOp(const HloInstruction& hlo,
-                                                      const Tile& output_tile) {
+absl::StatusOr<Tiles> PropagateTileToInputForReshapeOp(
+    const HloInstruction& hlo, const Tile& output_tile) {
   const Shape& input_shape = hlo.operand(0)->shape();
   const Shape& output_shape = hlo.shape();
-  return PropagateTileThroughReshape(output_tile, output_shape, input_shape);
+  ASSIGN_OR_RETURN(
+      auto input_tile,
+      PropagateTileThroughReshape(output_tile, output_shape, input_shape));
+  return Tiles{std::move(input_tile)};
 }
 
-std::optional<Tiles> PropagateTileToOutputForReshapeOp(
+absl::StatusOr<Tiles> PropagateTileToOutputForReshapeOp(
     const HloInstruction& hlo, const Tile& input_tile) {
   const Shape& input_shape = hlo.operand(0)->shape();
   const Shape& output_shape = hlo.shape();
-  return PropagateTileThroughReshape(input_tile, input_shape, output_shape);
+  ASSIGN_OR_RETURN(
+      auto output_tile,
+      PropagateTileThroughReshape(input_tile, input_shape, output_shape));
+  return Tiles{std::move(output_tile)};
+}
+
+absl::StatusOr<Tile> PropagateTileForBitcastOp(const Tile& tile,
+                                               const Shape& src,
+                                               const Shape& dst) {
+  if (!ShapeUtil::IsDecomposableBitcast(src, dst)) {
+    return absl::InvalidArgumentError("Bitcast is not decomposable.");
+  }
+  // Bitcast is transpose.
+  if (!src.dimensions().empty()) {
+    if (std::optional<std::vector<int64_t>> transpose_dims =
+            ShapeUtil::DeduceTransposeDimensionsForBitcast(src, dst)) {
+      return PropagateTileThroughTransposeOp(tile, *transpose_dims);
+    }
+  }
+  // Bitcast is reshape.
+  if (ShapeUtil::ReshapeIsBitcast(src, dst, /*ignore_element_type=*/true)) {
+    return PropagateTileThroughReshape(tile, src, dst);
+  }
+  // Bitcast is a `trt`, i.e. transpose-reshape-transpose.
+  auto maybe_trt = ShapeUtil::DecomposeBitcastToTrt(src, dst);
+  if (!maybe_trt.has_value()) {
+    return absl::InvalidArgumentError("Bitcast is not decomposable to TRT.");
+  }
+  const ShapeUtil::BitcastDecompositionTrt& trt = maybe_trt.value();
+  Tile transpose1_tile =
+      PropagateTileThroughTransposeOp(tile, trt.transpose1_dims);
+  ASSIGN_OR_RETURN(auto reshape_tile, PropagateTileThroughReshape(
+                                          transpose1_tile, trt.reshape_shape,
+                                          trt.transpose1_shape));
+  return PropagateTileThroughTransposeOp(reshape_tile, trt.transpose2_dims);
+}
+
+absl::StatusOr<Tiles> PropagateTileToInputForBitcastOp(
+    const HloInstruction& hlo, const Tile& output_tile) {
+  const Shape& input_shape = hlo.operand(0)->shape();
+  const Shape& output_shape = hlo.shape();
+  ASSIGN_OR_RETURN(
+      auto input_tile,
+      PropagateTileForBitcastOp(output_tile, output_shape, input_shape));
+  return Tiles{std::move(input_tile)};
+}
+
+absl::StatusOr<Tiles> PropagateTileToOutputForBitcastOp(
+    const HloInstruction& hlo, const Tile& input_tile) {
+  const Shape& input_shape = hlo.operand(0)->shape();
+  const Shape& output_shape = hlo.shape();
+  ASSIGN_OR_RETURN(
+      auto output_tile,
+      PropagateTileForBitcastOp(input_tile, input_shape, output_shape));
+  return Tiles{std::move(output_tile)};
 }
 
 }  // namespace
@@ -600,15 +653,18 @@ std::string ToString(const Tiles& tiles) {
   return ss.str();
 }
 
-std::optional<Tiles> PropagateTileToInput(const TilingSpace& tiling_space,
-                                          const HloInstruction& hlo,
-                                          const Tile& output_tile,
-                                          int64_t output_index) {
+absl::StatusOr<Tiles> PropagateTileToInput(const TilingSpace& tiling_space,
+                                           const HloInstruction& hlo,
+                                           const Tile& output_tile,
+                                           int64_t output_index) {
   if (HloInstruction::IsOpElementwise(hlo.opcode()) ||
       // For a single device, all-reduce is an elementwise op.
       HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllReduceDone,
                        HloOpcode::kMap>(&hlo)) {
     return {PropagateTileToInputForCwiseOp(hlo, output_tile)};
+  }
+  if (hlo.opcode() == HloOpcode::kBitcast) {
+    return PropagateTileToInputForBitcastOp(hlo, output_tile);
   }
   if (hlo.opcode() == HloOpcode::kBroadcast) {
     return PropagateTileToInputForBroadcastOp(
@@ -645,18 +701,20 @@ std::optional<Tiles> PropagateTileToInput(const TilingSpace& tiling_space,
   if (hlo.opcode() == HloOpcode::kReshape) {
     return PropagateTileToInputForReshapeOp(hlo, output_tile);
   }
-  LOG(INFO) << "Output to input tile propagation not implemented for "
-            << hlo.opcode();
-  return std::nullopt;
+  return absl::InvalidArgumentError(absl::StrCat(
+      "Output to input tile propagation not implemented for ", hlo.opcode()));
 }
 
-std::optional<Tiles> PropagateTileToOutput(const TilingSpace& tiling_space,
-                                           const HloInstruction& hlo,
-                                           const Tile& input_tile,
-                                           int64_t input_index) {
+absl::StatusOr<Tiles> PropagateTileToOutput(const TilingSpace& tiling_space,
+                                            const HloInstruction& hlo,
+                                            const Tile& input_tile,
+                                            int64_t input_index) {
   if (HloInstruction::IsOpElementwise(hlo.opcode()) ||
       hlo.opcode() == HloOpcode::kMap) {
     return PropagateTileToOutputForCwiseOp(hlo, input_tile);
+  }
+  if (hlo.opcode() == HloOpcode::kBitcast) {
+    return PropagateTileToOutputForBitcastOp(hlo, input_tile);
   }
   if (hlo.opcode() == HloOpcode::kBroadcast) {
     return PropagateTileToOutputForBroadcastOp(
@@ -668,9 +726,9 @@ std::optional<Tiles> PropagateTileToOutput(const TilingSpace& tiling_space,
   if (hlo.opcode() == HloOpcode::kReduce) {
     const HloReduceInstruction& reduce = *Cast<HloReduceInstruction>(&hlo);
     if (input_index >= reduce.input_count()) {
-      LOG(INFO) << "Input to output tile propagation not implemented "
-                   "from reduction init operands.";
-      return std::nullopt;
+      return absl::InvalidArgumentError(
+          "Input to output tile propagation not implemented from reduction "
+          "init operands.");
     }
     return PropagateTileToOutputForReduceOp(reduce, input_tile);
   }
@@ -681,9 +739,8 @@ std::optional<Tiles> PropagateTileToOutput(const TilingSpace& tiling_space,
   if (hlo.opcode() == HloOpcode::kReshape) {
     return PropagateTileToOutputForReshapeOp(hlo, input_tile);
   }
-  LOG(INFO) << "Input to output tile propagation not implemented for "
-            << hlo.opcode();
-  return std::nullopt;
+  return absl::InvalidArgumentError(absl::StrCat(
+      "Input to output tile propagation not implemented for ", hlo.opcode()));
 }
 
 }  // namespace xla::gpu::experimental

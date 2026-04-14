@@ -85,6 +85,11 @@ std::optional<Literal> GetReductionIdentity(ReductionKind kind,
 absl::StatusOr<std::vector<int>> GetParticipatingIDs(
     CollectiveOpGroupMode group_mode, int current_id,
     std::optional<int> total_participant_count,
+    absl::Span<const ReplicaGroup> replica_groups);
+
+absl::StatusOr<std::vector<int>> GetParticipatingIDs(
+    CollectiveOpGroupMode group_mode, int current_id,
+    std::optional<int> total_participant_count,
     const CollectiveDeviceListBase& groups);
 
 // Returns the replica groups for the given async collective instruction.

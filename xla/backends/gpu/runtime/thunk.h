@@ -58,17 +58,11 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/future.h"
-#include "xla/tsl/lib/gtl/int_type.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
 #include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
-
-// Unique identifier for async events. The same identifier is expected to be
-// shared between a pair of StartThunk and corresponding DoneThunk. It is used
-// to collect async regions for a CommandBufferThunk.
-TSL_LIB_GTL_DEFINE_INT_TYPE(AsyncEventsUniqueId, uint64_t);
 
 // Thunk acts as the bridge between IrEmitter and GpuExecutable. It stores the
 // metadata IrEmitter generates for GpuExecutable to invoke an HloInstruction.
@@ -483,14 +477,6 @@ class Thunk {
       absl::AnyInvocable<absl::StatusOr<std::unique_ptr<Thunk>>(
           const ThunkProto&, absl::Span<const BufferAllocation>) const>;
 
-  void add_control_predecessor(const Thunk* control_predecessor) {
-    control_predecessors_.push_back(control_predecessor);
-  }
-
-  std::vector<const Thunk*> control_predecessors() const {
-    return control_predecessors_;
-  }
-
   // In scheduling mode kConcurrentRegions, thunks sequences are divided into
   // regions. Thunks can be executed concurrently within the same region, but
   // regions will be executed sequentially.
@@ -500,14 +486,6 @@ class Thunk {
   void set_concurrent_region_id(uint64_t concurrent_region_id) {
     concurrent_region_id_ = concurrent_region_id;
   }
-
-  virtual std::optional<AsyncEventsUniqueId> GetAsyncEventsUniqueId() const {
-    return std::nullopt;
-  }
-
-  virtual bool IsAsyncStart() const { return false; }
-
-  virtual bool IsAsyncDone() const { return false; }
 
   void set_profile_annotation(absl::string_view profile_annotation) {
     thunk_info_.profile_annotation = std::string(profile_annotation);
@@ -523,13 +501,6 @@ class Thunk {
  private:
   Kind kind_;
   ThunkInfo thunk_info_;
-
-  // The list of control predecessors of the thunk.
-  // Thunk needs to maintain the control dependency information because
-  // when it is executed by command buffer, and command buffer may execute the
-  // sequence in concurrent mode, and we should make sure that it does not
-  // violate the control dependency in the original computation.
-  std::vector<const Thunk*> control_predecessors_;
 
   // Used in scheduling mode kConcurrentRegions only. More details in the
   // comments on the getter method above.

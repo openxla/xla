@@ -232,9 +232,6 @@ class Command : public Thunk {
 
   std::shared_ptr<Resource> token() const { return token_; }
 
-  // Returns true if command implemented as a nested command buffer.
-  virtual bool IsNestedCommandBuffer() const { return false; }
-
   CommandType command_type() const { return cmd_type_; }
   se::StreamPriority priority() const { return priority_; }
   void set_priority(se::StreamPriority priority) { priority_ = priority; }

@@ -1260,8 +1260,16 @@ absl::StatusOr<CompiledMemoryStats> TfrtGpuExecutable::GetCompiledMemoryStats()
       executables_[0]->executable()->buffer_assignment_proto();
   if (proto != nullptr) {
     memory_stats.serialized_buffer_assignment = proto->SerializeAsString();
-    TF_ASSIGN_OR_RETURN(memory_stats.peak_memory_in_bytes,
-                        ComputePeakMemory(*proto));
+    HloModuleProto hlo_module_proto =
+        executables_[0]->executable()->module().ToProto();
+    TF_ASSIGN_OR_RETURN(auto peak_memories,
+                        ComputePeakMemorySizes(*proto, hlo_module_proto));
+    memory_stats.peak_memory_in_bytes = peak_memories.padded;
+    memory_stats.peak_unpadded_heap_bytes = peak_memories.unpadded;
+    memory_stats.total_allocation_bytes =
+        ComputeTotalAllocationBytes(*proto, /*memory_color=*/0);
+    memory_stats.indefinite_allocations =
+        ComputeIndefiniteAllocationsInBytes(*proto, /*memory_color=*/0);
   }
   memory_stats.PopulateBufferStatsFromAllocations(
       executables_[0]->executable()->GetAllocations());

@@ -93,8 +93,6 @@ class CudaExecutor : public GpuExecutor {
       Stream* stream, bool use_delay_kernel) override;
   absl::StatusOr<DeviceAddressBase> GetSymbol(
       const std::string& symbol_name, ModuleHandle module_handle) override;
-  absl::Status SynchronousMemZero(DeviceAddressBase* location,
-                                  uint64_t size) override;
   absl::Status SynchronousMemcpy(DeviceAddressBase* gpu_dst,
                                  const void* host_src, uint64_t size) override;
   absl::Status SynchronousMemcpy(void* host_dst,

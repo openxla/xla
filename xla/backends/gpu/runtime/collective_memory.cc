@@ -348,16 +348,7 @@ absl::StatusOr<MulticastMemoryMap> AcquireMulticastMemory(
         // Allocate a multicast object for all participating devices.
         size_t multicast_size;
 
-        // TODO(b/486104046): Add a separate API for range mapped allocations,
-        // instead of using the size of the range mapped allocation.
-        if (r.range_mapped) {
-          ASSIGN_OR_RETURN(se::DeviceAddressBase address_range,
-                           gpu_executor->GetMemoryRange(
-                               params[0]->buffers.GetDeviceAddress(i)));
-          multicast_size = address_range.size();
-        } else {
-          multicast_size = params[0]->buffers.GetDeviceAddress(i).size();
-        }
+        multicast_size = params[0]->buffers.GetDeviceAddress(i).size();
         ASSIGN_OR_RETURN(
             std::unique_ptr<se::gpu::MulticastMemory> multicast_memory,
             gpu_executor->CreateMulticastMemory(multicast_size, params.size()));

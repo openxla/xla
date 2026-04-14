@@ -125,6 +125,7 @@ limitations under the License.
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -135,6 +136,7 @@ limitations under the License.
 #include "tsl/platform/casts.h"
 #include "tsl/platform/denormal.h"
 #include "tsl/platform/fingerprint.h"
+#include "tsl/platform/protobuf.h"
 #include "tsl/platform/setround.h"
 #include "tsl/profiler/lib/traceme.h"
 
@@ -444,7 +446,12 @@ absl::StatusOr<std::string> PjRtCpuExecutable::SerializeExecutable() const {
   *proto.mutable_serialized_executable() = std::move(serialized);
   TF_ASSIGN_OR_RETURN(*proto.mutable_compile_options(),
                       compile_options_.ToProto());
-  return proto.SerializeAsString();
+  std::string serialized_proto;
+  if (!tsl::SerializeToStringDeterministic(proto, &serialized_proto)) {
+    return Internal(
+        "PjRtCpuClient::SerializeExecutable proto serialization failed");
+  }
+  return serialized_proto;
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
@@ -1013,8 +1020,15 @@ absl::StatusOr<CompiledMemoryStats> PjRtCpuExecutable::GetCompiledMemoryStats()
   memory_stats.serialized_buffer_assignment = proto.SerializeAsString();
   memory_stats.PopulateBufferStatsFromAllocations(
       cpu_executable_->GetAllocations());
-  TF_ASSIGN_OR_RETURN(memory_stats.peak_memory_in_bytes,
-                      ComputePeakMemory(proto));
+  HloModuleProto hlo_module_proto = cpu_executable_->module().ToProto();
+  TF_ASSIGN_OR_RETURN(auto peak_memories,
+                      ComputePeakMemorySizes(proto, hlo_module_proto));
+  memory_stats.peak_memory_in_bytes = peak_memories.padded;
+  memory_stats.peak_unpadded_heap_bytes = peak_memories.unpadded;
+  memory_stats.total_allocation_bytes =
+      ComputeTotalAllocationBytes(proto, /*memory_color=*/0);
+  memory_stats.indefinite_allocations =
+      ComputeIndefiniteAllocationsInBytes(proto, /*memory_color=*/0);
   return memory_stats;
 }
 

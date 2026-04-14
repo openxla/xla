@@ -387,8 +387,14 @@ class SplitkRewriterVisitor : public DfsHloRewriteVisitor {
       // splitting K.
       return absl::OkStatus();
     }
-    const size_t split_k =
-        ChooseSplitK(GetDotDimensions(dot), device_description_);
+    size_t split_k = dot->parent()
+                         ->parent()
+                         ->config()
+                         .debug_options()
+                         .xla_gpu_experimental_force_split_k();
+    if (split_k == 0) {
+      split_k = ChooseSplitK(GetDotDimensions(dot), device_description_);
+    }
     if (split_k == 1) {
       return absl::OkStatus();
     }
@@ -406,12 +412,6 @@ class SplitkRewriterVisitor : public DfsHloRewriteVisitor {
 absl::StatusOr<bool> SplitkRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  if (!module->config()
-           .debug_options()
-           .xla_gpu_experimental_enable_split_k_rewrite()) {
-    return false;
-  }
-
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {

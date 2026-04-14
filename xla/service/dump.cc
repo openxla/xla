@@ -352,8 +352,14 @@ static std::vector<std::string> DumpHloModuleImpl(
         file_paths.push_back(DumpToFileInDirOrStdoutImpl(
             StrCat(filename, "-buffer-assignment-values.txt"),
             buffer_assignment_values, opts));
-        live_range.Append(
-            [&] { return buffer_assn->hlo_live_range().ToString(); });
+        live_range.Append([&] {
+          if (buffer_assn->HasHloLiveRange()) {
+            return buffer_assn->hlo_live_range().ToString();
+          }
+          return std::string(
+              "HloLiveRange not available (finalized or constructed from "
+              "proto)");
+        });
         file_paths.push_back(DumpToFileInDirOrStdoutImpl(
             StrCat(filename, "-live-range.txt"), live_range, opts));
       }

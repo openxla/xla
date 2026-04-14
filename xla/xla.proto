@@ -475,6 +475,11 @@ message DebugOptions {
   // Size threshold (in bytes) for the GPU collective-permute combiner.
   optional int64 xla_gpu_collective_permute_combine_threshold_bytes = 378;
 
+  // Split collective-permute into connected-component replica groups instead of
+  // one giant clique. Enables smaller NCCL communicators and the p2p memcpy
+  // path for local components on multi-node setups.
+  optional bool xla_gpu_collective_permute_connected_components = 471;
+
   // The minimum data size in bytes to trigger collective-permute-decomposer
   // transformation.
   optional int64 xla_gpu_collective_permute_decomposer_threshold = 237;
@@ -794,10 +799,6 @@ message DebugOptions {
   // Enable rewriting OneHot patterns to Gather.
   optional bool xla_gpu_experimental_enable_onehot_rewriter = 458;
 
-  // Enable the pass that splits GEMMs that underutilize the GPU load by
-  // splitting the K dimension using a heuristic.
-  optional bool xla_gpu_experimental_enable_split_k_rewrite = 386;
-
   // Enable fusion for the subchannel dequantisation sequences like
   // [x,z]param -> [x,y,z]broadcast -> [x*y,z]bitcast -> multiply -> dot.
   // Performance can be worse, because some block sizes / split-k > 1 is
@@ -816,6 +817,10 @@ message DebugOptions {
 
   // When possible, XLA will use Triton's auto warp specialization feature.
   optional bool xla_gpu_experimental_enable_triton_warp_specialization = 421;
+
+  // Force a specific split_k. Must be a power of two. Zero (default) means do
+  // not force split_k and use the heuristic.
+  optional int32 xla_gpu_experimental_force_split_k = 472;
 
   // Controls max unroll factor on Blackwell architectures. This is also
   // guarded with a heuristic, but the heuristic is not perfect, so changing
@@ -1478,7 +1483,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 471
+  // Next id: 473
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
@@ -1548,6 +1553,7 @@ message DebugOptions {
   reserved "xla_gpu_ensure_minor_dot_contraction_dims";
   reserved "xla_gpu_experimental_enable_dynamic_dot_search_space";
   reserved "xla_gpu_experimental_enable_nan_counter_on_thunks";
+  reserved "xla_gpu_experimental_enable_split_k_rewrite";
   reserved "xla_gpu_experimental_enable_triton_i4_rewrites";
   reserved "xla_gpu_experimental_enable_triton_softmax_priority_fusion";
   reserved "xla_gpu_graph_eviction_timeout_seconds";

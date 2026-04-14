@@ -2498,10 +2498,18 @@ PJRT_Error* PJRT_Executable_GetCompiledMemoryStats(
   // TODO(b/475848769): Remove after 12week compatibility window is over.
   // Only fill the new field if the caller's struct is large enough.
   if (args->struct_size >=
-      PJRT_Executable_GetCompiledMemoryStats_Args_STRUCT_SIZE) {
+      PJRT_STRUCT_SIZE(PJRT_Executable_GetCompiledMemoryStats_Args,
+                       total_size_in_bytes)) {
     args->total_size_in_bytes = memory_stats.total_size_in_bytes;
   }
-  args->total_size_in_bytes = memory_stats.total_size_in_bytes;
+
+  if (args->struct_size >=
+      PJRT_STRUCT_SIZE(PJRT_Executable_GetCompiledMemoryStats_Args,
+                       peak_unpadded_heap_bytes)) {
+    args->total_allocation_bytes = memory_stats.total_allocation_bytes;
+    args->indefinite_allocations = memory_stats.indefinite_allocations;
+    args->peak_unpadded_heap_bytes = memory_stats.peak_unpadded_heap_bytes;
+  }
   return nullptr;
 }
 

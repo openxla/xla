@@ -883,8 +883,14 @@ TEST(ExecutableTest, ExecutableSerialization) {
   // CompiledMemoryStats upon executable deserialization.
   loaded_compiled_memory_stats.serialized_buffer_assignment = "";
   loaded_compiled_memory_stats.peak_memory_in_bytes = 0;
+  loaded_compiled_memory_stats.total_allocation_bytes = 0;
+  loaded_compiled_memory_stats.indefinite_allocations = 0;
+  loaded_compiled_memory_stats.peak_unpadded_heap_bytes = 0;
   deserialized_compiled_memory_stats.serialized_buffer_assignment = "";
   deserialized_compiled_memory_stats.peak_memory_in_bytes = 0;
+  deserialized_compiled_memory_stats.total_allocation_bytes = 0;
+  deserialized_compiled_memory_stats.indefinite_allocations = 0;
+  deserialized_compiled_memory_stats.peak_unpadded_heap_bytes = 0;
 
   EXPECT_THAT(deserialized_compiled_memory_stats.ToProto(),
               EqualsProto(loaded_compiled_memory_stats.ToProto()));

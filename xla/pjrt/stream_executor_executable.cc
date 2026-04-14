@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/abi/executable_abi_version.h"
+#include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -58,7 +59,12 @@ absl::StatusOr<std::string> StreamExecutorExecutable::SerializeExecutable()
     ExecutableAndOptionsProto proto;
     TF_ASSIGN_OR_RETURN(*proto.mutable_compile_options(),
                         compile_options_.ToProto());
-    return proto.SerializeAsString();
+    std::string result;
+    if (!tsl::SerializeToStringDeterministic(proto, &result)) {
+      return absl::InternalError(
+          "Failed to serialize ExecutableAndOptionsProto");
+    }
+    return result;
   }
   std::string serialized;
   if (std::holds_alternative<std::vector<std::unique_ptr<CompiledModule>>>(
@@ -95,7 +101,11 @@ absl::StatusOr<std::string> StreamExecutorExecutable::SerializeExecutable()
   *proto.mutable_serialized_executable() = std::move(serialized);
   TF_ASSIGN_OR_RETURN(*proto.mutable_compile_options(),
                       compile_options_.ToProto());
-  return proto.SerializeAsString();
+  std::string result;
+  if (!tsl::SerializeToStringDeterministic(proto, &result)) {
+    return absl::InternalError("Failed to serialize ExecutableAndOptionsProto");
+  }
+  return result;
 }
 
 absl::StatusOr<absl::flat_hash_map<std::string, PjRtValueType>>
@@ -177,8 +187,16 @@ StreamExecutorExecutable::GetCompiledMemoryStats() const {
       alloc_ptrs.push_back(&alloc);
     }
     memory_stats.PopulateBufferStatsFromAllocations(alloc_ptrs);
-    TF_ASSIGN_OR_RETURN(memory_stats.peak_memory_in_bytes,
-                        ComputePeakMemory(proto));
+    HloModuleProto hlo_module_proto =
+        aot_executable->shared_optimized_module()->ToProto();
+    TF_ASSIGN_OR_RETURN(auto peak_memories,
+                        ComputePeakMemorySizes(proto, hlo_module_proto));
+    memory_stats.peak_memory_in_bytes = peak_memories.padded;
+    memory_stats.peak_unpadded_heap_bytes = peak_memories.unpadded;
+    memory_stats.total_allocation_bytes =
+        ComputeTotalAllocationBytes(proto, /*memory_color=*/0);
+    memory_stats.indefinite_allocations =
+        ComputeIndefiniteAllocationsInBytes(proto, /*memory_color=*/0);
     return memory_stats;
   }
 
@@ -193,8 +211,16 @@ StreamExecutorExecutable::GetCompiledMemoryStats() const {
       local_executables[0]->executable()->buffer_assignment_proto();
   if (proto != nullptr) {
     memory_stats.serialized_buffer_assignment = proto->SerializeAsString();
-    TF_ASSIGN_OR_RETURN(memory_stats.peak_memory_in_bytes,
-                        ComputePeakMemory(*proto));
+    HloModuleProto hlo_module_proto =
+        local_executables[0]->executable()->module().ToProto();
+    TF_ASSIGN_OR_RETURN(auto peak_memories,
+                        ComputePeakMemorySizes(*proto, hlo_module_proto));
+    memory_stats.peak_memory_in_bytes = peak_memories.padded;
+    memory_stats.peak_unpadded_heap_bytes = peak_memories.unpadded;
+    memory_stats.total_allocation_bytes =
+        ComputeTotalAllocationBytes(*proto, /*memory_color=*/0);
+    memory_stats.indefinite_allocations =
+        ComputeIndefiniteAllocationsInBytes(*proto, /*memory_color=*/0);
   }
   memory_stats.PopulateBufferStatsFromAllocations(
       local_executables[0]->executable()->GetAllocations());

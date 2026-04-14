@@ -387,6 +387,7 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "//xla/stream_executor:platform",
         "//xla/stream_executor/host:host_platform_id",
+        "//xla/tsl/lib/strings:proto_serialization",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",

@@ -186,8 +186,9 @@ cc_library(
     srcs = ["constraint_expression.cc"],
     hdrs = ["constraint_expression.h"],
     deps = [
-        ":affine_map_evaluator",
         "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/analysis:interval",
+        "//xla/hlo/analysis:symbolic_map",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
@@ -195,8 +196,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Support",
     ],
 )
 
@@ -206,6 +205,7 @@ xla_cc_test(
     deps = [
         ":constraint_expression",
         "//xla/hlo/analysis:indexing_test_utils",
+        "//xla/hlo/analysis:symbolic_map",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
@@ -218,8 +218,8 @@ cc_library(
     hdrs = ["size_and_stride_expression.h"],
     deps = [
         ":constraint_expression",
-        "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/analysis:interval",
+        "//xla/hlo/analysis:symbolic_map",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -227,7 +227,6 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Support",
     ],
 )
 
@@ -236,10 +235,10 @@ cc_library(
     srcs = ["symbolic_tile.cc"],
     hdrs = ["symbolic_tile.h"],
     deps = [
-        ":affine_map_evaluator",
         ":constraint_expression",
         ":size_and_stride_expression",
         "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/analysis:symbolic_map",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -354,6 +353,7 @@ cc_library(
         "//xla:util",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/analysis:interval",
+        "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:instruction_fusion",

@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/layout.h"
+#include "xla/printer.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -449,14 +450,21 @@ absl::Status RunP2PSchedulePreparation(HloModule* module) {
 //
 // Returns said fingerprint.
 std::string TagWithFingerprint(HloModule* module) {
+  // Use HighwayHashPrinter to compute the fingerprint by streaming HLO text
+  // directly into the hasher, avoiding materialization of the full module text
+  // as a string. For large modules this avoids multi-GB string allocations.
+  HighwayHashPrinter printer;
+  module->Print(&printer, HloPrintOptions::Canonical()
+                              .set_print_backend_config(true)
+                              // The backend config can be a json string,
+                              // and the order of keys in json is not
+                              // guaranteed. So we need to sort the keys
+                              // to make the fingerprint deterministic.
+                              .set_sort_backend_config(true));
+  tsl::Fprint128 fp128 = printer.ToFingerprint128();
   std::string fingerprint =
-      module->GetFingerprint128(HloPrintOptions::Canonical()
-                                    .set_print_backend_config(true)
-                                    // The backend config can be a json string,
-                                    // and the order of keys in json is not
-                                    // guaranteed. So we need to sort the keys
-                                    // to make the fingerprint deterministic.
-                                    .set_sort_backend_config(true));
+      absl::StrCat(absl::Hex(fp128.low64, absl::kZeroPad16),
+                   absl::Hex(fp128.high64, absl::kZeroPad16));
   module->add_frontend_attribute(std::string(kFingerprintBeforeLHS),
                                  fingerprint);
   VLOG(1) << "Fingerprint before LHS for module " << module->name() << "("
@@ -564,6 +572,57 @@ LegalizeSchedulingAnnotations::Config SchedulingAnnotationsConfig() {
   return annotation_config;
 }
 
+// Delays MoveToHostAsyncStart as late as possible
+// to achieve better overlapping with computation.
+// The only pattern we are seeing is async start of a fusion with a dynamic
+// update slice:
+// ```
+// %async_start = async_start(%fusion), async_wrapped={%fusion}
+// %dynamic_update_slice = dynamic_update_slice(%param, %update, %indices)
+// %wrapped_dynamic-update-slice_computation {
+//   %param_0.38286 = ... parameter(0)
+//   %param_1.38949 = ... parameter(1)
+//   %param_2.30408 = s32[] parameter(2)
+//   %param_3.25973 = s32[] parameter(3)
+//   %param_4.20600 = s32[] parameter(4)
+//   %param_5.16397 = s32[] parameter(5)
+//   %param_6.12209 = s32[] parameter(6)
+//   ROOT %dynamic-update-slice.1 = dynamic-update-slice()
+// }
+// ```
+// To add more patterns like non-fused when observed on real workloads.
+std::optional<DefaultSchedulerCore::CandidateResult>
+DelayMoveToHostAsyncStartCandidateCondition(
+    DefaultSchedulerCore::ScheduleCandidate& a,
+    DefaultSchedulerCore::ScheduleCandidate& b) {
+  auto is_send_host_dus_fn =
+      [=](DefaultSchedulerCore::ScheduleCandidate& a) -> bool {
+    bool is_send_host_dus = false;
+    if (a.node->GetOpcode() == HloOpcode::kAsyncStart) {
+      if (a.node->GetInstr().async_wrapped_instruction()->opcode() ==
+          HloOpcode::kFusion) {
+        auto fused_instrs = a.node->GetInstr()
+                                .async_wrapped_instruction()
+                                ->fused_instructions();
+        for (auto instr : fused_instrs) {
+          if (instr->opcode() == HloOpcode::kDynamicUpdateSlice) {
+            is_send_host_dus = true;
+            break;
+          }
+        }
+      }
+    }
+    return is_send_host_dus;
+  };
+
+  if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
+          !is_send_host_dus_fn(a), a, !is_send_host_dus_fn(b), b,
+          "kDelayMoveToHostAsyncStart")) {
+    return value;
+  }
+  return std::nullopt;
+}
+
 // Adds necessary passes to perform latency hiding estimations for the
 // `pipeline`.
 absl::Status RunLatencyHidingSchedulerPasses(
@@ -648,6 +707,12 @@ absl::Status RunLatencyHidingSchedulerPasses(
         }
       }
     }
+
+    if (!config.top_down_scheduling) {
+      // Only do this for bottom-up scheduling, as top-down scheduling is not
+      // supported yet.
+      return DelayMoveToHostAsyncStartCandidateCondition(a, b);
+    }
     return std::nullopt;
   };
 
@@ -655,7 +720,11 @@ absl::Status RunLatencyHidingSchedulerPasses(
       scheduling_context, config,
       /*target_scheduling_rule=*/nullptr,
       /*early_target_scheduling_rule=*/gpu_early_scheduling_rule,
-      /*post_processing_fn=*/nullptr);
+      /*post_processing_fn=*/nullptr,
+      /*scheduling_instruction_crosses_overlap_limit=*/
+      options.xla_gpu_experimental_enable_collective_multi_streaming()
+          ? GpuScheduleCrossesOverlapLimit
+          : nullptr);
 
   pipeline.AddPass<LatencyHidingScheduler>(scheduling_context,
                                            std::move(scheduler_core));

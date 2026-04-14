@@ -77,12 +77,13 @@ TEST_F(TiledHloTest, TestPrinting) {
   )");
   auto tiling_space = TilingSpace::Create(
       *HloFusionAdaptor::ForInstruction(root), &mlir_context_);
-  std::optional<Tiles> tiled_operands = PropagateTileToInput(
-      *tiling_space, *root,
-      GetTestTile(*tiling_space, root->shape().dimensions()), 0);
+  ASSERT_OK_AND_ASSIGN(
+      Tiles tiled_operands,
+      PropagateTileToInput(
+          *tiling_space, *root,
+          GetTestTile(*tiling_space, root->shape().dimensions()), 0));
 
-  ASSERT_TRUE(tiled_operands.has_value());
-  TiledHloInstruction tiled_hlo_instruction(root, (*tiled_operands)[0]);
+  TiledHloInstruction tiled_hlo_instruction(root, tiled_operands[0]);
   EXPECT_THAT(tiled_hlo_instruction, MatchString(R"(
     hlo: %broadcast = f32[10,20,30]{2,1,0} broadcast(%p0), dimensions={0,2}
     tile: (tid_0, tid_1, tid_2)
@@ -114,13 +115,15 @@ TEST_F(TiledHloTest, TestReduceWithRegionPrinting) {
       *HloFusionAdaptor::ForInstruction(reduce), &mlir_context_);
   auto tiled_reduce = std::make_unique<TiledHloInstruction>(
       reduce, GetTestTile(*tiling_space_reduce, reduce->shape().dimensions()));
-  std::optional<Tiles> operands_tiles = PropagateTileToInput(
-      *tiling_space_reduce, *reduce,
-      GetTestTile(*tiling_space_reduce, reduce->shape().dimensions()), 0);
+  ASSERT_OK_AND_ASSIGN(
+      Tiles operands_tiles,
+      PropagateTileToInput(
+          *tiling_space_reduce, *reduce,
+          GetTestTile(*tiling_space_reduce, reduce->shape().dimensions()), 0));
 
   TiledHloInstruction::Region region;
   for (const auto& [operand, tile] :
-       llvm::zip(reduce->operands(), (*operands_tiles))) {
+       llvm::zip(reduce->operands(), operands_tiles)) {
     region.push_back(std::make_unique<TiledHloInstruction>(operand, tile));
   }
   tiled_reduce->AddRegion(std::move(region));

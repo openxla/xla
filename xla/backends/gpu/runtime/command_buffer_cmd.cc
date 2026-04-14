@@ -1358,8 +1358,12 @@ absl::Status CollectiveCmd::Prepare(const Thunk::PrepareParams& params) {
                           *params.collective_params->device_assn,
                           config().replica_groups, config().group_mode));
 
-  return params.collective_clique_requests->RequestClique(
-      clique_key, std::move(device_groups));
+  // Sort device groups: RequestClique expects pre-sorted groups.
+  absl::c_for_each(device_groups, [](auto& group) { absl::c_sort(group); });
+  absl::c_sort(device_groups);
+
+  return params.collective_clique_requests->RequestClique(clique_key,
+                                                          device_groups);
 }
 
 absl::StatusOr<const se::CommandBuffer::Command*>

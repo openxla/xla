@@ -1417,8 +1417,8 @@ TEST_F(IndexingMapTest, RescaleSymbolsKeepsHashmapConsistent) {
   )");
   EXPECT_TRUE(indexing_map.RescaleSymbols());
 
-  for (auto& [expr, interval] : indexing_map.GetConstraints()) {
-    EXPECT_TRUE(indexing_map.GetConstraints().contains(expr))
+  for (auto& [expr, interval] : indexing_map.GetSymbolicConstraints()) {
+    EXPECT_TRUE(indexing_map.GetSymbolicConstraints().contains(expr))
         << "Don't modify the *keys* of the hashmap.";
   }
 }

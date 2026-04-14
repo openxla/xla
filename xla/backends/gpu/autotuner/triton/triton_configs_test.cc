@@ -27,7 +27,7 @@ TEST(TritonConfigsTest, PlatformsReturnNonEmptyConfig) {
   EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kAmpere),
               SizeIs(36));
   EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kBlackwell),
-              SizeIs(57));
+              SizeIs(40));
   EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kDefaultCuda),
               SizeIs(32));
   EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kDefaultRocm),

@@ -347,6 +347,7 @@ message CollectivePermuteStartThunkProto {
   repeated SourceTarget source_target_pairs = 4;
 
   bool p2p_memcpy_enabled = 6;
+  bool connected_components_enabled = 7;
 }
 
 message SendThunkProto {

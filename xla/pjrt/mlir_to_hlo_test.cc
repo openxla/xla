@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -45,7 +46,7 @@ MATCHER_P(IsVhloArtifact, version, "") {
 }
 
 TEST(MlirToHloTest, StablehloTest) {
-  constexpr char kProgram[] =
+  constexpr absl::string_view kProgram =
       R"(
     func.func @add(%arg0: tensor<1x2xf32>) -> tensor<1x2xf32> {
       %cst = stablehlo.constant dense<1.0> : tensor<1x2xf32>
@@ -63,7 +64,7 @@ TEST(MlirToHloTest, StablehloTest) {
 }
 
 TEST(MlirToHloTest, StablehloPluginNewerThanFramework) {
-  constexpr char kProgram[] =
+  constexpr absl::string_view kProgram =
       R"(
     func.func @add(%arg0: tensor<1x2xf32>) -> tensor<1x2xf32> {
       %cst = stablehlo.constant dense<1.0> : tensor<1x2xf32>
@@ -82,7 +83,7 @@ TEST(MlirToHloTest, StablehloPluginNewerThanFramework) {
 }
 
 TEST(MlirToHloTest, ChloTest) {
-  constexpr char kProgram[] =
+  constexpr absl::string_view kProgram =
       R"(
     func.func @add(%arg0: tensor<1x2xf32>) -> tensor<1x2xf32> {
       %cst = stablehlo.constant dense<1.0> : tensor<1x2xf32>
@@ -100,7 +101,7 @@ TEST(MlirToHloTest, ChloTest) {
 }
 
 TEST(MlirToHloTest, ChloTanOpTest) {
-  constexpr char kProgram[] =
+  constexpr absl::string_view kProgram =
       R"(
     func.func @add(%arg0: tensor<1x2xf32>) -> tensor<1x2xf32> {
       %0 = chlo.tan %arg0 : tensor<1x2xf32> -> tensor<1x2xf32>
@@ -117,7 +118,7 @@ TEST(MlirToHloTest, ChloTanOpTest) {
 }
 
 TEST(MlirToHloTest, MhloMixedSerializationTest) {
-  constexpr char kProgram[] =
+  constexpr absl::string_view kProgram =
       R"(
     func.func @add(%arg0: tensor<1x2xf32>) -> tensor<1x2xf32> {
       %cst = mhlo.constant dense<1.0> : tensor<1x2xf32>
@@ -135,7 +136,7 @@ TEST(MlirToHloTest, MhloMixedSerializationTest) {
 }
 
 TEST(MlirToHloTest, MhloMixedSerializationTest_UnstableDialect) {
-  constexpr char kProgram[] =
+  constexpr absl::string_view kProgram =
       R"(
   module {
     func.func @main() -> tensor<16xf32> {
@@ -152,11 +153,29 @@ TEST(MlirToHloTest, MhloMixedSerializationTest_UnstableDialect) {
   mlir::MLIRContext context;
   TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
                           ParseMlirModuleString(kProgram, context));
-  auto status = Serialize(*module, "1.11.0");
 
   // Use Mixed serialization starting at v1.11.0.
-  EXPECT_THAT(status, StatusIs(absl::StatusCode::kInvalidArgument,
-                               HasSubstr("found unstable op: func.constant")));
+  EXPECT_THAT(Serialize(*module, "1.11.0"),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("found unstable op: func.constant")));
+}
+
+TEST(MlirToHloTest, MhloMixedSerializationTest_UnregisteredDialect) {
+  constexpr absl::string_view kProgram =
+      R"(
+    func.func @main(%arg0: tensor<f32>) -> tensor<f32> {
+      %0 = "UnknownOp"(%arg0) : (tensor<f32>) -> tensor<f32>
+      return %0 : tensor<f32>
+    }
+  )";
+  mlir::MLIRContext context;
+  context.allowUnregisteredDialects();
+  TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                          ParseMlirModuleString(kProgram, context));
+
+  EXPECT_THAT(Serialize(*module, "1.11.0"),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("found unstable op: UnknownOp")));
 }
 
 TEST(MlirToHloTest, InvalidBytecodeTest) {
