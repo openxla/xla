@@ -112,8 +112,6 @@ class TracedCommandBuffer : public CommandState {
 // A base class for commands implemented as tracing of stream activities.
 class TracedCommandBufferCmd : public Command {
  public:
-  bool IsTracedCommand() const override { return true; }
-
  protected:
   explicit TracedCommandBufferCmd(CommandType cmd_type);
 
@@ -515,8 +513,6 @@ class CollectiveCmd : public Command {
   CollectiveCmd(CommandType cmd_type, CollectiveConfig config);
 
   absl::Status Prepare(const Thunk::PrepareParams& params) final;
-
-  bool IsTracedCommand() const override { return true; }
 
   bool requires_initialization() const final { return true; }
 

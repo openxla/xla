@@ -137,6 +137,7 @@ cc_library(
     deps = [
         ":annotation",
         ":command",
+        ":command_buffer_cmd",
         ":command_state",
         ":thunk",
         "//xla:util",
@@ -594,6 +595,7 @@ cc_library(
     hdrs = ["command_buffer_thunk.h"],
     deps = [
         ":command",
+        ":command_buffer_cmd",
         ":command_executor",
         ":command_state",
         ":sequential_thunk",  # build_cleaner: keep

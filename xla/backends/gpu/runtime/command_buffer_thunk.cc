@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -103,7 +104,9 @@ CommandBufferThunk::CommandBufferThunk(
   if (command_buffer_update_mode_ == DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
     bool found = false;
     CHECK_OK(commands_.Walk([&](const Command* command) -> absl::Status {
-      if (!found && command->IsTracedCommand()) {
+      if (!found &&
+          (dynamic_cast<const TracedCommandBufferCmd*>(command) != nullptr ||
+           dynamic_cast<const CollectiveCmd*>(command) != nullptr)) {
         found = true;
         std::optional<BufferAllocation::Index> min_idx;
         for (const auto& use : command->buffer_uses()) {

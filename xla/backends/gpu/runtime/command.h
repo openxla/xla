@@ -215,10 +215,6 @@ class Command : public Thunk {
   // ensure that all ranks execute NCCL command update.
   virtual bool requires_initialization() const { return false; }
 
-  // Returns true if this command is implemented via CUDA stream activity
-  // tracing (i.e. a subclass of TracedCommandBufferCmd).
-  virtual bool IsTracedCommand() const { return false; }
-
   // Returns true if command supports loop unroll, the while loop can be
   // unrolled only if it has pre-known trip count and also all commands from the
   // body commands are unrollable.

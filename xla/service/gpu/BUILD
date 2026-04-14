@@ -732,6 +732,7 @@ cc_library(
         "//xla/backends/gpu/runtime:collective_memory_requests",
         "//xla/backends/gpu/runtime:collective_params",
         "//xla/backends/gpu/runtime:command",
+        "//xla/backends/gpu/runtime:command_buffer_cmd",
         "//xla/backends/gpu/runtime:command_buffer_conversion_pass",
         "//xla/backends/gpu/runtime:command_buffer_thunk",
         "//xla/backends/gpu/runtime:nvshmem_collective_thunk",

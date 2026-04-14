@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/command_buffer_conversion_pass.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
@@ -181,7 +182,7 @@ class GpuExecutableThunkPassBufferAllocator : public ThunkPassBufferAllocator {
       BufferAllocation::Index start_idx)
       : next_idx_(start_idx) {}
 
-  absl::StatusOr<BufferAllocation* absl_nonnull> NewEmptyAllocation(
+  absl::StatusOr<BufferAllocation * absl_nonnull> NewEmptyAllocation(
       int64_t size) override {
     allocations_.push_back(BufferAllocation(next_idx_++, size, /*color=*/0));
     return &allocations_.back();
@@ -430,7 +431,8 @@ GpuExecutable::GpuExecutable(
             if (cbt == nullptr) return absl::OkStatus();
             return cbt->WalkCommands([&](const Command* cmd) -> absl::Status {
               if (update_mode == DebugOptions::CAPTURE_CMD_NEVER_UPDATE &&
-                  !cmd->IsTracedCommand()) {
+                  dynamic_cast<const TracedCommandBufferCmd*>(cmd) == nullptr &&
+                  dynamic_cast<const CollectiveCmd*>(cmd) == nullptr) {
                 return absl::OkStatus();
               }
               for (const BufferUse& use : cmd->buffer_uses()) {

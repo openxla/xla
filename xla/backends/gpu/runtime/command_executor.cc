@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
@@ -570,14 +571,15 @@ absl::Status CommandExecutor::RecordUpdate(
     // VA-remapped to fixed offsets within the reserved VA range, so their
     // recorded addresses remain valid across executions — no update is needed.
     //
-    // Note: CollectiveCmd satisfies both IsTracedCommand() and
+    // Note: CollectiveCmd satisfies both this check and
     // requires_initialization(), but the requires_initialization() check below
-    // is intentionally unreachable for traced commands in this mode. Because
+    // is intentionally unreachable for these commands in this mode. Because
     // their buffer addresses are stable (VA-mapped), re-initialization is
     // unnecessary.
     if (record_params.command_buffer_update_mode ==
             DebugOptions::CAPTURE_CMD_NEVER_UPDATE &&
-        command->IsTracedCommand()) {
+        (dynamic_cast<const TracedCommandBufferCmd*>(command) != nullptr ||
+         dynamic_cast<const CollectiveCmd*>(command) != nullptr)) {
       VLOG(3) << "Skipping update for traced command " << id
               << " (CAPTURE_CMD_NEVER_UPDATE mode)";
       return true;
