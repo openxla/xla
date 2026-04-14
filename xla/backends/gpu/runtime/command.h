@@ -37,9 +37,9 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -231,9 +231,6 @@ class Command : public Thunk {
   virtual bool force_update() const { return false; }
 
   std::shared_ptr<Resource> token() const { return token_; }
-
-  // Returns true if command implemented as a nested command buffer.
-  virtual bool IsNestedCommandBuffer() const { return false; }
 
   CommandType command_type() const { return cmd_type_; }
   se::StreamPriority priority() const { return priority_; }
