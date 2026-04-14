@@ -2606,14 +2606,18 @@ ShapeInference::InferScalarBroadcastShape(absl::Span<const Shape> shapes) {
     int64_t output_shape_dimension =
         output_shape.dimensions(all_gather_dimension);
     const bool is_dynamic = IsUnboundedDynamicSize(output_shape_dimension);
-    auto [ag_product, ag_overflow] =
-        OverflowSafeMultiply(shard_count, output_shape_dimension);
-    if (ag_overflow) {
-      return InvalidArgument("AllGather dimension overflow");
+    int64_t ag_result = output_shape_dimension;
+    if (!is_dynamic) {
+      auto [ag_product, ag_overflow] =
+          OverflowSafeMultiply(shard_count, output_shape_dimension);
+      if (ag_overflow) {
+        return InvalidArgument("AllGather dimension overflow");
+      }
+      ag_result = ag_product;
     }
     output_shape.set_dimensions(
         all_gather_dimension,
-        is_dynamic ? Shape::kUnboundedSize : ag_product, is_dynamic);
+        is_dynamic ? Shape::kUnboundedSize : ag_result, is_dynamic);
     output_shapes.push_back(output_shape);
   }
   if (output_shapes.size() == 1) {
@@ -2736,15 +2740,14 @@ ShapeInference::InferScalarBroadcastShape(absl::Span<const Shape> shapes) {
       IsUnboundedDynamicSize(new_dimensions[split_dimension])
           ? Shape::kUnboundedSize
           : new_dimensions[split_dimension] / split_count;
-  auto [ata_product, ata_overflow] =
-      OverflowSafeMultiply(new_dimensions[concat_dimension], split_count);
-  if (ata_overflow) {
-    return InvalidArgument("AllToAll concat dimension overflow");
+  if (!IsUnboundedDynamicSize(new_dimensions[concat_dimension])) {
+    auto [ata_product, ata_overflow] =
+        OverflowSafeMultiply(new_dimensions[concat_dimension], split_count);
+    if (ata_overflow) {
+      return InvalidArgument("AllToAll concat dimension overflow");
+    }
+    new_dimensions[concat_dimension] = ata_product;
   }
-  new_dimensions[concat_dimension] =
-      IsUnboundedDynamicSize(new_dimensions[concat_dimension])
-          ? Shape::kUnboundedSize
-          : ata_product;
 
   const std::vector<bool> dynamic_dimensions(shape.dynamic_dimensions().begin(),
                                              shape.dynamic_dimensions().end());
