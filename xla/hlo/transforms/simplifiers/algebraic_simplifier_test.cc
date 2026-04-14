@@ -9387,6 +9387,11 @@ TEST_F(AlgebraicSimplifierTest, DividedByConstantInstructionWithoutLayout) {
 }
 
 // Test that 1/sqrt(X) is simplified to rsqrt(X).
+// Regression guard for the `A/sqrt(B) => A*rsqrt(B)` rewrite on f32. The
+// f64 guard added below (`RecipSqrtF64NotRewritten`) must not accidentally
+// inhibit this rewrite — ML workloads (layer norm, attention norm) depend
+// on the fast rsqrt path for f32, and this test will fail if the guard
+// overshoots and disables the rewrite for all float types.
 TEST_F(AlgebraicSimplifierTest, RecipSqrt) {
   constexpr absl::string_view kModuleStr = R"(
     HloModule m
@@ -9437,64 +9442,86 @@ TEST_F(AlgebraicSimplifierTest, RecipSqrtF64NotRewritten) {
 // `A/sqrt(B) => A*rsqrt(B)` rewrite was one such violation for f64 (see
 // `RecipSqrtF64NotRewritten` above), and this invariant is the general
 // safety net that will catch future regressions of the same shape.
+// Returns true if `opcode` is in the StableHLO "implementation-defined
+// precision" bucket — i.e., a transcendental or other op whose precision
+// is not normatively constrained by the spec.
+static bool IsImplementationDefinedPrecision(HloOpcode opcode) {
+  switch (opcode) {
+    case HloOpcode::kRsqrt:
+    case HloOpcode::kExp:
+    case HloOpcode::kExpm1:
+    case HloOpcode::kLog:
+    case HloOpcode::kLog1p:
+    case HloOpcode::kLogistic:
+    case HloOpcode::kCbrt:
+    case HloOpcode::kErf:
+    case HloOpcode::kSin:
+    case HloOpcode::kCos:
+    case HloOpcode::kTan:
+    case HloOpcode::kSinh:
+    case HloOpcode::kCosh:
+    case HloOpcode::kTanh:
+    case HloOpcode::kAsin:
+    case HloOpcode::kAcos:
+    case HloOpcode::kAtan2:
+    case HloOpcode::kAsinh:
+    case HloOpcode::kAcosh:
+    case HloOpcode::kAtanh:
+    case HloOpcode::kPower:  // implementation-defined except for integer RHS
+      return true;
+    default:
+      return false;
+  }
+}
+
 TEST_F(AlgebraicSimplifierTest,
        DoesNotIntroduceApproximateOpsFromCorrectlyRoundedInputsF64) {
   // A mix of correctly-rounded ops arranged in patterns the simplifier
-  // might try to rewrite (division by sqrt, squared-sqrt, divide by a
-  // constant, nested add/mul chains).
+  // might try to rewrite (division by sqrt, squared-sqrt, sqrt-over-sqrt,
+  // nested divides, chained add/mul, scalar-broadcast constants). The
+  // union here is deliberately broader than strictly necessary — any new
+  // simplifier rewrite that introduces an implementation-defined op from
+  // these building blocks will trip this test.
   constexpr absl::string_view kModuleStr = R"(
     HloModule m
     test {
       p0 = f64[8] parameter(0)
       p1 = f64[8] parameter(1)
+      p2 = f64[8] parameter(2)
       one = f64[] constant(1)
       one_bcast = f64[8] broadcast(one), dimensions={}
+      two = f64[] constant(2)
+      two_bcast = f64[8] broadcast(two), dimensions={}
       sqrt_p0 = f64[8] sqrt(p0)
+      sqrt_p1 = f64[8] sqrt(p1)
+      sqrt_p2 = f64[8] sqrt(p2)
       recip_sqrt = f64[8] divide(one_bcast, sqrt_p0)
-      p1_over_sqrt = f64[8] divide(p1, sqrt_p0)
+      p1_over_sqrt_p0 = f64[8] divide(p1, sqrt_p0)
+      sqrt_over_sqrt = f64[8] divide(sqrt_p0, sqrt_p1)
       sqrt_sq = f64[8] multiply(sqrt_p0, sqrt_p0)
+      p2_over_sqrt_sq = f64[8] divide(p2, sqrt_sq)
+      nested_div = f64[8] divide(p1_over_sqrt_p0, sqrt_p1)
+      sqrt_diff = f64[8] subtract(sqrt_p0, sqrt_p1)
+      sqrt_times_two = f64[8] multiply(sqrt_p0, two_bcast)
       abs_p1 = f64[8] abs(p1)
       neg_p0 = f64[8] negate(p0)
-      sum = f64[8] add(recip_sqrt, p1_over_sqrt)
-      sum2 = f64[8] add(sum, sqrt_sq)
-      sum3 = f64[8] add(sum2, abs_p1)
-      ROOT result = f64[8] add(sum3, neg_p0)
+      sum1 = f64[8] add(recip_sqrt, p1_over_sqrt_p0)
+      sum2 = f64[8] add(sum1, sqrt_sq)
+      sum3 = f64[8] add(sum2, sqrt_over_sqrt)
+      sum4 = f64[8] add(sum3, p2_over_sqrt_sq)
+      sum5 = f64[8] add(sum4, nested_div)
+      sum6 = f64[8] add(sum5, sqrt_diff)
+      sum7 = f64[8] add(sum6, sqrt_times_two)
+      sum8 = f64[8] add(sum7, abs_p1)
+      ROOT result = f64[8] add(sum8, neg_p0)
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).ok());
 
-  auto is_implementation_defined_precision = [](HloOpcode opcode) {
-    switch (opcode) {
-      case HloOpcode::kRsqrt:
-      case HloOpcode::kExp:
-      case HloOpcode::kExpm1:
-      case HloOpcode::kLog:
-      case HloOpcode::kLog1p:
-      case HloOpcode::kLogistic:
-      case HloOpcode::kCbrt:
-      case HloOpcode::kErf:
-      case HloOpcode::kSin:
-      case HloOpcode::kCos:
-      case HloOpcode::kTan:
-      case HloOpcode::kSinh:
-      case HloOpcode::kCosh:
-      case HloOpcode::kTanh:
-      case HloOpcode::kAsin:
-      case HloOpcode::kAcos:
-      case HloOpcode::kAtan2:
-      case HloOpcode::kAsinh:
-      case HloOpcode::kAcosh:
-      case HloOpcode::kAtanh:
-        return true;
-      default:
-        return false;
-    }
-  };
-
   for (HloComputation* computation : m->computations()) {
     for (HloInstruction* inst : computation->instructions()) {
-      EXPECT_FALSE(is_implementation_defined_precision(inst->opcode()))
+      EXPECT_FALSE(IsImplementationDefinedPrecision(inst->opcode()))
           << "Simplifier introduced an implementation-defined-precision op ("
           << HloOpcodeString(inst->opcode()) << ") from an input module "
           << "containing only correctly-rounded ops. Result module:\n"
@@ -9502,6 +9529,7 @@ TEST_F(AlgebraicSimplifierTest,
     }
   }
 }
+
 
 // Test that 1/rsqrt(X) is simplified to sqrt(X).
 TEST_F(AlgebraicSimplifierTest, RecipRsqrt) {
