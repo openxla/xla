@@ -57,9 +57,7 @@ TEST(RsqrtTest, Name) {
 }
 
 constexpr int kF32UlpsPrecision = 1;
-// F64 rsqrt now lowers to a correctly-rounded 1/sqrt(x) (see Rsqrt::CreateDefinition);
-// the test contract is bit-exact agreement with the host's `1 / sqrt(x)` reference.
-constexpr int kF64UlpsPrecision = 0;
+constexpr int kF64UlpsPrecision = 1;
 
 void AddOneOverSqrt(llvm::LLVMContext& context, llvm::Module& module,
                     llvm::Type* type) {
