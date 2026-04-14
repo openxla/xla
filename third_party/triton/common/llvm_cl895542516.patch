@@ -1,6 +1,6 @@
 --- a/lib/Dialect/Triton/IR/Ops.cpp
 +++ b/lib/Dialect/Triton/IR/Ops.cpp
-@@ -214,11 +214,10 @@
+@@ -234,11 +234,10 @@ TransOp::inferReturnTypes(MLIRContext *context, std::optional<Location> loc,
  }
  
  //-- DotOp --
@@ -16,7 +16,7 @@
    // type is the same as the accumulator
    auto accTy = cast<RankedTensorType>(operands[2].getType());
    inferredReturnTypes.push_back(accTy);
-@@ -481,11 +480,10 @@
+@@ -501,11 +500,10 @@ inferReduceReturnShape(std::optional<Location> loc, RankedTensorType argTy,
    return success();
  }
  
@@ -32,7 +32,7 @@
    Properties *prop = properties.as<Properties *>();
    int axis = prop->axis.getInt();
    for (auto arg : operands) {
-@@ -636,11 +634,10 @@
+@@ -656,11 +654,10 @@ void ScanOp::build(OpBuilder &builder, OperationState &state,
    ScanOp::build(builder, state, inferredReturnTypes, operands, axis, reverse);
  }
  
@@ -48,7 +48,7 @@
    for (auto arg : operands)
      inferredReturnTypes.push_back(arg.getType());
    return success();
-@@ -737,9 +734,9 @@
+@@ -757,9 +754,9 @@ LogicalResult UnsplatOp::verify() {
  }
  
  LogicalResult UnsplatOp::inferReturnTypes(
@@ -61,7 +61,7 @@
    auto dstTy = cast<RankedTensorType>(operands[0].getType()).getElementType();
    inferredReturnTypes.push_back(dstTy);
    return success();
-@@ -747,9 +744,9 @@
+@@ -767,9 +764,9 @@ LogicalResult UnsplatOp::inferReturnTypes(
  
  //-- ExpandDimsOp --
  LogicalResult ExpandDimsOp::inferReturnTypes(
@@ -74,7 +74,7 @@
    // infer shape
    auto arg = operands[0];
    auto argTy = cast<RankedTensorType>(arg.getType());
-@@ -1344,9 +1341,9 @@
+@@ -1469,9 +1466,9 @@ LogicalResult GatherOp::verify() {
  }
  
  LogicalResult GatherOp::inferReturnTypes(
@@ -90,7 +90,7 @@
 
 --- a/lib/Dialect/TritonNvidiaGPU/IR/Ops.cpp
 +++ b/lib/Dialect/TritonNvidiaGPU/IR/Ops.cpp
-@@ -49,9 +49,9 @@
+@@ -49,9 +49,9 @@ namespace nvidia_gpu {
  
  // -- WarpGroupDotOp --
  LogicalResult WarpGroupDotOp::inferReturnTypes(
@@ -103,7 +103,7 @@
    // type is the same as the accumulator
    auto accTy = cast<RankedTensorType>(operands[2].getType());
    inferredReturnTypes.push_back(accTy);
-@@ -156,9 +156,9 @@
+@@ -156,9 +156,9 @@ bool WarpGroupDotOp::verifyDims() {
  
  // -- WarpGroupDotWaitOp --
  LogicalResult WarpGroupDotWaitOp::inferReturnTypes(
@@ -119,7 +119,7 @@
 
 --- a/third_party/amd/lib/Dialect/TritonAMDGPU/IR/Dialect.cpp
 +++ b/third_party/amd/lib/Dialect/TritonAMDGPU/IR/Dialect.cpp
-@@ -851,9 +851,9 @@
+@@ -869,9 +869,9 @@ LogicalResult AsyncCopyMbarrierArriveOp::verify() {
  // prefetch. Values are the byte offsets added to the base pointer for each
  // prefetch instruction.
  LogicalResult TDMPrefetchOp::inferReturnTypes(
