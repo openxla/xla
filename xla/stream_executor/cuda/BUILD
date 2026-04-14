@@ -859,7 +859,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//tsl/platform:statusor",
+        "//xla/tsl/platform:status_macros",
     ],
 )
 
@@ -929,6 +929,7 @@ xla_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
+        "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
