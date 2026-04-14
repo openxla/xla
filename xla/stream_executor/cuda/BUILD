@@ -859,6 +859,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@local_config_cuda//cuda:cuda_headers",
+        "//xla/tsl/platform:status_macros",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -929,6 +930,31 @@ xla_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+xla_test(
+    name = "cuda_memory_reservation_multigpu_test",
+    srcs = ["cuda_memory_reservation_multigpu_test.cc"],
+    backend_tags = {
+        "gpu": ["multi_gpu"],
+    },
+    backends = ["gpu"],
+    tags = ["cuda-only"],
+    deps = [
+        ":cuda_memory_reservation",
+        ":cuda_platform_id",
+        ":cuda_raw_memory_allocation",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/lib/core:status_test_util",
+        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],

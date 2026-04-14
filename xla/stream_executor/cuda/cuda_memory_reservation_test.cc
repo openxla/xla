@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/types/span.h"
+#include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/cuda/cuda_raw_memory_allocation.h"
 #include "xla/stream_executor/device_address.h"
@@ -56,11 +57,11 @@ class CudaMemoryReservationTest : public ::testing::Test {
  protected:
   void SetUp() override {
     TF_ASSERT_OK_AND_ASSIGN(
-        Platform * platform,
-        PlatformManager::PlatformWithId(cuda::kCudaPlatformId));
-    TF_ASSERT_OK_AND_ASSIGN(executor_, platform->ExecutorForDevice(0));
+        platform_, PlatformManager::PlatformWithId(cuda::kCudaPlatformId));
+    TF_ASSERT_OK_AND_ASSIGN(executor_, platform_->ExecutorForDevice(0));
   }
 
+  Platform* platform_ = nullptr;
   StreamExecutor* executor_ = nullptr;
 };
 
@@ -162,6 +163,27 @@ TEST_F(CudaMemoryReservationTest, TwoReservationsDifferentAddresses) {
                           CudaMemoryReservation::Create(executor_, kTestSize));
 
   EXPECT_NE(res1->address().opaque(), res2->address().opaque());
+}
+
+// Verifies that MapTo grants read/write access to the local device via
+// cuMemSetAccess, readable back via cuMemGetAccess.
+TEST_F(CudaMemoryReservationTest, SetAccessGrantsLocalDeviceAccess) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto alloc, CudaRawMemoryAllocation::Create(executor_, kTestSize));
+  TF_ASSERT_OK_AND_ASSIGN(auto res,
+                          CudaMemoryReservation::Create(executor_, kTestSize));
+
+  const size_t alloc_size = alloc->address().size();
+  TF_ASSERT_OK_AND_ASSIGN(auto mapping, res->MapTo(0, 0, alloc_size, *alloc));
+
+  CUmemLocation loc = {};
+  loc.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  loc.id = static_cast<int>(executor_->device_ordinal());
+  unsigned long long flags = 0;
+  CUdeviceptr base_ptr = reinterpret_cast<CUdeviceptr>(res->address().opaque());
+  ASSERT_EQ(cuMemGetAccess(&flags, &loc, base_ptr), CUDA_SUCCESS);
+  EXPECT_EQ(flags, static_cast<unsigned long long>(
+                       CU_MEM_ACCESS_FLAGS_PROT_READWRITE));
 }
 
 }  // namespace
