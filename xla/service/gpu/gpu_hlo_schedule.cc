@@ -712,7 +712,11 @@ absl::Status RunLatencyHidingSchedulerPasses(
       scheduling_context, config,
       /*target_scheduling_rule=*/nullptr,
       /*early_target_scheduling_rule=*/gpu_early_scheduling_rule,
-      /*post_processing_fn=*/nullptr);
+      /*post_processing_fn=*/nullptr,
+      /*scheduling_instruction_crosses_overlap_limit=*/
+      options.xla_gpu_experimental_enable_collective_multi_streaming()
+          ? GpuScheduleCrossesOverlapLimit
+          : nullptr);
 
   pipeline.AddPass<LatencyHidingScheduler>(scheduling_context,
                                            std::move(scheduler_core));
