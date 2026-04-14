@@ -28,10 +28,12 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "xla/backends/gpu/runtime/async_execution.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
+#include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "xla/tsl/platform/status_macros.h"
@@ -129,7 +131,7 @@ std::shared_ptr<AsyncExecution> AsyncStartThunk::async_execution() const {
 
 AsyncDoneThunk::AsyncDoneThunk(ThunkInfo thunk_info,
                                std::shared_ptr<AsyncExecution> async_execution)
-    : Thunk(Thunk::kAsyncDone, std::move(thunk_info)),
+    : Command(CommandType::kAsyncDone, Kind::kAsyncDone, std::move(thunk_info)),
       async_execution_(std::move(async_execution)) {}
 
 std::string AsyncDoneThunk::ToString(int indent) const {
@@ -138,6 +140,20 @@ std::string AsyncDoneThunk::ToString(int indent) const {
 
 absl::Status AsyncDoneThunk::ExecuteOnStream(const ExecuteParams& params) {
   return async_execution_->Done(params.execution_scoped_state, params.stream);
+}
+
+absl::StatusOr<const se::CommandBuffer::Command*> AsyncDoneThunk::Record(
+    const Thunk::ExecuteParams& execute_params,
+    const RecordParams& record_params, RecordAction record_action,
+    se::CommandBuffer* command_buffer) {
+  if (auto* create = std::get_if<RecordCreate>(&record_action)) {
+    return command_buffer->CreateEmptyCmd(create->dependencies, priority());
+  }
+  if (auto* update = std::get_if<RecordUpdate>(&record_action)) {
+    // No parameters to update; return existing node unchanged.
+    return update->command;
+  }
+  return Internal("Invalid record action");
 }
 
 AsyncExecutionId AsyncDoneThunk::async_execution_id() const {

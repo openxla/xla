@@ -348,27 +348,6 @@ TracedCommandBufferCmd::RecordTracedCommand(
 }
 
 //===----------------------------------------------------------------------===//
-// EmptyCmd
-//===----------------------------------------------------------------------===//
-
-EmptyCmd::EmptyCmd() : Command(CommandType::kEmptyCmd) {}
-
-absl::StatusOr<const se::CommandBuffer::Command*> EmptyCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateEmptyCmd(dependencies, priority());
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        // Empty command is not updatable.
-        return absl::OkStatus();
-      });
-}
-
-//===----------------------------------------------------------------------===//
 // CustomKernelLaunchCmd
 //===----------------------------------------------------------------------===//
 

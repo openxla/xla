@@ -355,6 +355,9 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kReplicaId:
       cmd_sequence.Append(static_cast<ReplicaIdThunk*>(&thunk));
       return absl::OkStatus();
+    case Thunk::Kind::kAsyncDone:
+      // Async done thunks are no-ops in command buffers.
+      return absl::OkStatus();
     case Thunk::Kind::kWhile:
       return append(Convert<WhileThunk>(thunk, options));
     case Thunk::Kind::kCuDnn:
@@ -374,11 +377,6 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kAsyncStart: {
       auto& start = static_cast<const AsyncStartThunk&>(thunk);
       return AppendCommands(ctx, cmd_sequence, start.thunks(), options);
-    }
-
-    // Async done thunks are no-ops in command buffers.
-    case Thunk::Kind::kAsyncDone: {
-      return absl::OkStatus();
     }
 
     case Thunk::Kind::kCommandBuffer:

@@ -49,7 +49,6 @@ namespace xla::gpu {
 
 // clang-format off
 #define XLA_GPU_COMMAND_LIST(V)                              \
-  V(kEmptyCmd, "EmptyCmd")                                   \
   V(kChildCmd, "ChildCmd")                                   \
   V(kTracedCommand, "TracedCommand")       \
   V(kComputationIdCmd, "ComputationIdCmd")                   \

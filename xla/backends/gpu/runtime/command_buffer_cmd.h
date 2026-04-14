@@ -128,20 +128,6 @@ class TracedCommandBufferCmd : public Command {
 };
 
 //===----------------------------------------------------------------------===//
-// EmptyCmd
-//===----------------------------------------------------------------------===//
-
-class EmptyCmd : public Command {
- public:
-  explicit EmptyCmd();
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-};
-
-//===----------------------------------------------------------------------===//
 // CustomKernelLaunchCmd
 //===----------------------------------------------------------------------===//
 
