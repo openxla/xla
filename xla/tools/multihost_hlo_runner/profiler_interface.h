@@ -27,7 +27,12 @@ class ProfilerInterface {
   virtual void CreateSession() = 0;
   // Uploads profiling session data after finishing running HLO module.
   virtual void UploadSession() = 0;
+  // Returns the number of replay passes required by the profiler (e.g. for
+  // hardware counter collection that needs multiple passes over the same
+  // workload). Only valid after CreateSession(). Returns 0 by default.
+  virtual int GetNumRequiredPasses() const { return 0; }
 };
+
 }  // namespace xla
 
 #endif  // XLA_TOOLS_MULTIHOST_HLO_RUNNER_PROFILER_INTERFACE_H_

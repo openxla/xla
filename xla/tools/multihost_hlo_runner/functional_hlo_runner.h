@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <random>
@@ -72,14 +73,17 @@ class HLORunnerProfiler : public XSpaceProfilerInterface {
   // If keep_xspace is true, the XSpace proto can be retrieved
   // by GetXSpace() after UploadSession() is called, which can be used by
   // caller to get a programmatic handler of the profile data and create XProf.
+  // If range_profiling_metrics is non-empty, range profiling will be enabled
+  // with the given comma-separated CUPTI metric names.
   static absl::StatusOr<std::unique_ptr<HLORunnerProfiler>> Create(
-      absl::string_view dump_path, bool keep_xspace = false);
+      absl::string_view dump_path, bool keep_xspace = false,
+      absl::string_view range_profiling_metrics = "");
 
-  // Default ctor.
-  explicit HLORunnerProfiler(absl::string_view dump_path, bool keep_xspace);
+  HLORunnerProfiler(absl::string_view dump_path, bool keep_xspace,
+                    absl::string_view range_profiling_metrics);
 
-  // Start a new profiling session.
   void CreateSession() override;
+  int GetNumRequiredPasses() const override;
 
   // Stop the current profiling session.
   void UploadSession() override;
@@ -92,6 +96,8 @@ class HLORunnerProfiler : public XSpaceProfilerInterface {
   std::string dump_path_;
   // Whether to keep the XSpace proto after UploadSession() is called.
   bool keep_xspace_;
+  // Comma-separated CUPTI metric names for range profiling (empty = disabled).
+  std::string range_profiling_metrics_;
   // The profiler session.
   std::unique_ptr<tsl::ProfilerSession> session_;
   // The XSpace proto to be returned by GetXSpace().
@@ -253,7 +259,8 @@ struct RunningOptions {
       ModuleArgumentMode::kUseRandomInputs;
   // Option controlling the outputs of the HLO.
   ModuleOutputMode module_output_mode = ModuleOutputMode::kReturnOutputs;
-  // Repeatedly execute the HLO for this many times.
+  // Repeatedly execute the HLO for this many times. May be increased
+  // automatically if range profiling requires more passes.
   size_t num_repeats = 1;
   // The last `num_repeats_with_profiler` repeats out of `num_repeats` will be
   // profiled. Default is 1, i.e., the last repeat will be profiled.
@@ -273,6 +280,17 @@ struct RunningOptions {
   // Note that the first repeat is a warmup run, and uses less precise
   // profiling method.
   std::vector<ExecutionProfile>* execution_profiles = nullptr;
+
+  // Number of unprofiled warmup passes before range profiling begins.
+  size_t range_profiling_warmup_passes = 0;
+
+  // Optional hooks called around each repeat for range profiling.
+  // begin_pass_hook is called before Execute, end_pass_hook after Await.
+  // push_range_hook/pop_range_hook bracket the Execute+Await.
+  std::function<absl::Status()> begin_pass_hook;
+  std::function<absl::Status()> end_pass_hook;
+  std::function<absl::Status()> push_range_hook;
+  std::function<absl::Status()> pop_range_hook;
 
   // Should we log the inputs and outputs to stderr?
   bool log_input_output() const {

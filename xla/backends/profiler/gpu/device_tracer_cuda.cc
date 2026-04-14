@@ -190,11 +190,12 @@ absl::Status GpuTracer::CollectData(XSpace* space) {
       if (!events_dropped.empty()) {
         space->add_warnings(std::move(events_dropped));
       }
-      if (options_.pm_sampler_options.enable) {
-        // Adds PM sampling xplanes to the response before CuptiCollector to
-        // merge and export all the events.
+      if (options_.pm_sampler_options.enable ||
+          options_.range_profiler_options.enable) {
+        // Adds PM sampling / range profiling xplanes to the response before
+        // CuptiCollector so Export() merges kernel records into the same planes.
         for (auto& xplane : xplanes_) {
-          if (xplane) {
+          if (xplane && xplane->lines_size() > 0) {
             *space->add_planes() = *xplane;
           }
         }

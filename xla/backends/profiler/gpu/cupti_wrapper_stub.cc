@@ -364,6 +364,67 @@ CUptiResult CuptiWrapperStub::PmSamplingCounterDataGetSampleInfo(
   return CUPTI_SUCCESS;
 }
 
+// Range profiling specific functions
+CUptiResult CuptiWrapperStub::RangeProfilerEnable(
+    CUpti_RangeProfiler_Enable_Params* params) {
+  return CUPTI_SUCCESS;
+}
+
+CUptiResult CuptiWrapperStub::RangeProfilerDisable(
+    CUpti_RangeProfiler_Disable_Params* params) {
+  return CUPTI_SUCCESS;
+}
+
+CUptiResult CuptiWrapperStub::RangeProfilerGetCounterDataSize(
+    CUpti_RangeProfiler_GetCounterDataSize_Params* params) {
+  return CUPTI_SUCCESS;
+}
+
+CUptiResult CuptiWrapperStub::RangeProfilerCounterDataImageInitialize(
+    CUpti_RangeProfiler_CounterDataImage_Initialize_Params* params) {
+  return CUPTI_SUCCESS;
+}
+
+CUptiResult CuptiWrapperStub::RangeProfilerSetConfig(
+    CUpti_RangeProfiler_SetConfig_Params* params) {
+  return CUPTI_SUCCESS;
+}
+
+CUptiResult CuptiWrapperStub::RangeProfilerStart(
+    CUpti_RangeProfiler_Start_Params* params) {
+  return CUPTI_SUCCESS;
+}
+
+CUptiResult CuptiWrapperStub::RangeProfilerStop(
+    CUpti_RangeProfiler_Stop_Params* params) {
+  return CUPTI_SUCCESS;
+}
+
+CUptiResult CuptiWrapperStub::RangeProfilerPushRange(
+    CUpti_RangeProfiler_PushRange_Params* params) {
+  return CUPTI_SUCCESS;
+}
+
+CUptiResult CuptiWrapperStub::RangeProfilerPopRange(
+    CUpti_RangeProfiler_PopRange_Params* params) {
+  return CUPTI_SUCCESS;
+}
+
+CUptiResult CuptiWrapperStub::RangeProfilerDecodeData(
+    CUpti_RangeProfiler_DecodeData_Params* params) {
+  return CUPTI_SUCCESS;
+}
+
+CUptiResult CuptiWrapperStub::RangeProfilerGetCounterDataInfo(
+    CUpti_RangeProfiler_GetCounterDataInfo_Params* params) {
+  return CUPTI_SUCCESS;
+}
+
+CUptiResult CuptiWrapperStub::RangeProfilerCounterDataGetRangeInfo(
+    CUpti_RangeProfiler_CounterData_GetRangeInfo_Params* params) {
+  return CUPTI_SUCCESS;
+}
+
 CUptiResult CuptiWrapperStub::DeviceGetChipName(
     CUpti_Device_GetChipName_Params* params) {
   return CUPTI_SUCCESS;

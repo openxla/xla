@@ -42,6 +42,10 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/init_main.h"
 
+#if GOOGLE_CUDA
+#include "xla/backends/profiler/gpu/cupti_tracer.h"
+#endif
+
 namespace {
 const char* const kUsage = R"(
 This tool lets you run an HLO module on one or more GPUs.
@@ -111,6 +115,8 @@ struct HloRunnerConfig {
   float gpu_client_mem_fraction = xla::GpuAllocatorConfig{}.memory_fraction;
   bool profile_execution = false;
   std::string xla_gpu_dump_xspace_to = "";
+  std::string range_profiling_metrics = "";
+  int32_t range_profiling_warmup_passes = 0;
 };
 
 }  // namespace
@@ -270,11 +276,18 @@ static absl::Status RunMultihostHloRunner(int argc, char** argv,
                  opts.address_str, gpu_options,
                  absl::Seconds(opts.gpu_client_initialization_timeout_sec)));
     // Create a GPURunnerProfiler to profile GPU executions to save xspace data
-    // to disk.
-    if (env.client != nullptr && !opts.xla_gpu_dump_xspace_to.empty()) {
-      TF_ASSIGN_OR_RETURN(hlo_runner_profiler,
-                          HLORunnerProfiler::Create(opts.xla_gpu_dump_xspace_to,
-                                                    /*keep_xspace=*/false));
+    // to disk. Also required when range profiling metrics are specified.
+    if (env.client != nullptr &&
+        (!opts.xla_gpu_dump_xspace_to.empty() ||
+         !opts.range_profiling_metrics.empty())) {
+      if (opts.xla_gpu_dump_xspace_to.empty()) {
+        opts.xla_gpu_dump_xspace_to = "/tmp/xprof_range_profiling.xspace.pb";
+      }
+      TF_ASSIGN_OR_RETURN(
+          hlo_runner_profiler,
+          HLORunnerProfiler::Create(opts.xla_gpu_dump_xspace_to,
+                                    /*keep_xspace=*/false,
+                                    opts.range_profiling_metrics));
       running_options.profiler = hlo_runner_profiler.get();
     }
   } else if (opts.device_type_str == "host") {
@@ -296,6 +309,29 @@ static absl::Status RunMultihostHloRunner(int argc, char** argv,
   if (opts.profile_execution) {
     running_options.execution_profiles = &execution_profiles;
   }
+
+#if GOOGLE_CUDA
+  // Set up range profiling hooks if metrics are specified. The hooks call
+  // CuptiTracer singleton methods which delegate to the range profiler that
+  // was created during ProfilerSession::Create (via CuptiTracer::Enable).
+  if (!opts.range_profiling_metrics.empty()) {
+    auto* tracer = xla::profiler::CuptiTracer::GetCuptiTracerSingleton();
+    running_options.range_profiling_warmup_passes =
+        opts.range_profiling_warmup_passes;
+    running_options.begin_pass_hook = [tracer]() -> absl::Status {
+      return tracer->BeginRangePass();
+    };
+    running_options.end_pass_hook = [tracer]() -> absl::Status {
+      return tracer->EndRangePass();
+    };
+    running_options.push_range_hook = [tracer]() -> absl::Status {
+      return tracer->PushProfilingRange("hlo_execution");
+    };
+    running_options.pop_range_hook = [tracer]() -> absl::Status {
+      return tracer->PopProfilingRange();
+    };
+  }
+#endif
 
   for (int c = 1; c < argc; c++) {
     const char* hlo_file = argv[c];
@@ -439,6 +475,16 @@ int main(int argc, char** argv) {
                 "If set, we will profile the execution and print the results."),
       tsl::Flag("xla_gpu_dump_xspace_to", &opts.xla_gpu_dump_xspace_to,
                 "A directory to dump xspace data for GPU profiling."),
+      tsl::Flag("range_profiling_metrics", &opts.range_profiling_metrics,
+                "Comma-separated list of CUPTI metrics for range profiling "
+                "(e.g. \"sm__cycles_elapsed.avg,sm__inst_executed.sum\"). "
+                "Automatically sets the number of repeats to match the "
+                "required number of profiling passes."),
+      tsl::Flag("range_profiling_warmup_passes",
+                &opts.range_profiling_warmup_passes,
+                "Number of unprofiled warmup passes to run before range "
+                "profiling begins. Warms caches and stabilizes GPU state. "
+                "Default: 0."),
       // This option is not used during parsing, but it is added here for
       // documentation, and for ensuring that the parser knows this should be
       // ignored if present.

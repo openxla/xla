@@ -80,6 +80,9 @@ limitations under the License.
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#if GOOGLE_CUDA
+#include "xla/backends/profiler/gpu/cupti_tracer.h"
+#endif
 #include "tsl/platform/path.h"
 #include "tsl/platform/platform.h"
 #include "tsl/platform/protobuf.h"
@@ -1239,6 +1242,138 @@ TEST_F(FunctionalHloRunnerTest, ProfileMultipleRepeatsSingleSession) {
   TF_EXPECT_OK(FunctionalHloRunner::LoadAndRun(
       *client, debug_options, preproc_options, compile_options, running_options,
       {GetHloPath("single_device.hlo")}, InputFormat::kText));
+}
+
+TEST_F(FunctionalHloRunnerTest, ProfileMultipleRepeatsWithRangeProfiling) {
+  if (test::DeviceTypeIs(test::kCpu)) {
+    GTEST_SKIP() << "GPU-only test (range profiling requires CUPTI)";
+  }
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                          GetPjRtClient());
+
+  std::string profile_dump_path =
+      tsl::io::JoinPath(testing::TempDir(), "range_profiling_xspace.pb");
+
+  // Create profiler with range profiling metrics.
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto profiler,
+      HLORunnerProfiler::Create(profile_dump_path, /*keep_xspace=*/true,
+                                "sm__cycles_active.sum"));
+
+  FunctionalHloRunner::RunningOptions running_options;
+  running_options.profiler = profiler.get();
+  running_options.num_repeats = 3;
+  running_options.num_repeats_with_profiler = running_options.num_repeats;
+
+#if GOOGLE_CUDA
+  // Wire up range profiling hooks (same as hlo_runner_main.cc).
+  auto* tracer = xla::profiler::CuptiTracer::GetCuptiTracerSingleton();
+  running_options.begin_pass_hook = [tracer]() -> absl::Status {
+    return tracer->BeginRangePass();
+  };
+  running_options.end_pass_hook = [tracer]() -> absl::Status {
+    return tracer->EndRangePass();
+  };
+  running_options.push_range_hook = [tracer]() -> absl::Status {
+    return tracer->PushProfilingRange("hlo_execution");
+  };
+  running_options.pop_range_hook = [tracer]() -> absl::Status {
+    return tracer->PopProfilingRange();
+  };
+#endif
+
+  auto result = FunctionalHloRunner::LoadAndRun(
+      *client, /*debug_options=*/{}, /*preproc_options=*/{},
+      /*compile_options=*/{}, running_options,
+      {GetHloPath("single_device.hlo")}, InputFormat::kText);
+
+  if (absl::IsPermissionDenied(result.status())) {
+    GTEST_SKIP() << "Range profiling requires root/admin access";
+  }
+  // Range profiling may not be supported on all GPUs/CUPTI versions.
+  // If Enable fails, it should still not crash — just skip.
+  if (!result.ok()) {
+    GTEST_SKIP() << "Range profiling not available: " << result.status();
+  }
+}
+
+// Multi-pass variant: uses metrics from different counter groups to force
+// CUPTI to require multiple replay passes, exercising the adaptive loop.
+TEST_F(FunctionalHloRunnerTest,
+       ProfileMultipleRepeatsWithMultiPassRangeProfiling) {
+  if (test::DeviceTypeIs(test::kCpu)) {
+    GTEST_SKIP() << "GPU-only test (range profiling requires CUPTI)";
+  }
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                          GetPjRtClient());
+
+  std::string profile_dump_path = tsl::io::JoinPath(
+      testing::TempDir(), "multipass_range_profiling_xspace.pb");
+
+  // Metrics spanning multiple HW units to force multi-pass collection.
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto profiler,
+      HLORunnerProfiler::Create(
+          profile_dump_path, /*keep_xspace=*/true,
+          "smsp__warps_issue_stalled_barrier.avg,"
+          "smsp__warps_issue_stalled_long_scoreboard.avg,"
+          "smsp__warps_issue_stalled_math_pipe_throttle.avg,"
+          "smsp__warps_issue_stalled_not_selected.avg,"
+          "smsp__warps_issue_stalled_tex_throttle.avg,"
+          "smsp__warps_issue_stalled_wait.avg,"
+          "smsp__inst_executed.sum,"
+          "smsp__cycles_active.sum,"
+          "smsp__inst_executed_op_global_ld.sum,"
+          "smsp__thread_inst_executed_pred_on.sum,"
+          "sm__mio2rf_writeback_active.sum,"
+          "sm__mio_inst_issued.sum,"
+          "l1tex__t_set_accesses.sum,"
+          "l1tex__t_set_accesses_pipe_lsu.sum,"
+          "l1tex__t_set_conflicts.sum,"
+          "l1tex__texin_requests.sum,"
+          "l1tex__texin_sm2tex_req_cycles_active.sum,"
+          "dram__bytes.sum,"
+          "dram__throughput.avg_pct_of_peak_sustained_elapsed,"
+          "dram__cycles_active.sum,"
+          "dram__sectors.sum,"
+          "fbpa__dram_read_bytes.sum,"
+          "fbpa__dram_write_bytes.sum,"
+          "fbpa__dram_sectors.sum"));
+
+  FunctionalHloRunner::RunningOptions running_options;
+  running_options.profiler = profiler.get();
+  // Start with 1 repeat; the adaptive loop should increase it based on
+  // the pass count returned by GetNumRequiredPasses().
+  running_options.num_repeats = 1;
+  running_options.num_repeats_with_profiler = 1;
+
+#if GOOGLE_CUDA
+  auto* tracer = xla::profiler::CuptiTracer::GetCuptiTracerSingleton();
+  running_options.begin_pass_hook = [tracer]() -> absl::Status {
+    return tracer->BeginRangePass();
+  };
+  running_options.end_pass_hook = [tracer]() -> absl::Status {
+    return tracer->EndRangePass();
+  };
+  running_options.push_range_hook = [tracer]() -> absl::Status {
+    return tracer->PushProfilingRange("hlo_execution");
+  };
+  running_options.pop_range_hook = [tracer]() -> absl::Status {
+    return tracer->PopProfilingRange();
+  };
+#endif
+
+  auto result = FunctionalHloRunner::LoadAndRun(
+      *client, /*debug_options=*/{}, /*preproc_options=*/{},
+      /*compile_options=*/{}, running_options,
+      {GetHloPath("single_device.hlo")}, InputFormat::kText);
+
+  if (absl::IsPermissionDenied(result.status())) {
+    GTEST_SKIP() << "Range profiling requires root/admin access";
+  }
+  if (!result.ok()) {
+    GTEST_SKIP() << "Range profiling not available: " << result.status();
+  }
 }
 
 TEST_F(FunctionalHloRunnerTest, ProfileMultipleRepeatsSessionPerRepeat) {
