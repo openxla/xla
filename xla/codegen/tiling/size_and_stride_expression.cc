@@ -29,16 +29,25 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineMap.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/codegen/tiling/constraint_expression.h"
+#include "xla/hlo/analysis/indexing_map_serialization.h"
 #include "xla/hlo/analysis/interval.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
-#include "xla/hlo/analysis/symbolic_map.h"
 
 namespace xla {
 namespace {
 
 using ::llvm::SmallVector;
+using ::mlir::AffineBinaryOpExpr;
+using ::mlir::AffineConstantExpr;
+using ::mlir::AffineDimExpr;
+using ::mlir::AffineExpr;
+using ::mlir::AffineExprKind;
+using ::mlir::AffineSymbolExpr;
+using ::mlir::getAffineConstantExpr;
 using ::mlir::MLIRContext;
 using Constraint = ConstraintExpression::Constraint;
 using ConjointConstraints = llvm::SmallVector<Constraint, 2>;
@@ -48,8 +57,8 @@ using ConjointConstraints = llvm::SmallVector<Constraint, 2>;
 //
 // TODO(b/349487906): Currently, this fails when the stride is not exactly unit.
 std::optional<SizeAndStrideExpression> ExtractSizeAndStrideFromMod(
-    SymbolicExpr lhs, SymbolicExpr modulus, int64_t num_dims) {
-  if (modulus.GetType() != SymbolicExprType::kConstant) {
+    AffineExpr lhs, AffineExpr modulus) {
+  if (modulus.getKind() != AffineExprKind::Constant) {
     return std::nullopt;
   }
   // TODO(b/349487906): handle the non-one stride case, both in the code and in
@@ -70,8 +79,8 @@ std::optional<SizeAndStrideExpression> ExtractSizeAndStrideFromMod(
   //       n - ((n - 1) floordiv c) * c
   //     = n - (n / c - 1) * c    (n % c == 0 => (n - 1) floordiv c = n / c - 1)
   //     = n - (n - c) = c
-  auto make_result = [&](SymbolicExpr dividend) {
-    SymbolicExpr size = dividend - (dividend - 1).floorDiv(modulus) * modulus;
+  auto make_result = [&](AffineExpr dividend) {
+    AffineExpr size = dividend - (dividend - 1).floorDiv(modulus) * modulus;
     // modulus % dividend == 0 || dividend % modulus == 0.
     Interval zero_interval{/*lower=*/0, /*upper=*/0};
     ConstraintExpression constraints =
@@ -81,17 +90,17 @@ std::optional<SizeAndStrideExpression> ExtractSizeAndStrideFromMod(
     return SizeAndStrideExpression(size, /*stride=*/1, std::move(constraints));
   };
 
-  if (IsDimension(lhs, num_dims)) {
+  if (llvm::isa<AffineDimExpr>(lhs)) {
     return make_result(lhs);
   }
 
-  if (lhs.GetType() != SymbolicExprType::kFloorDiv) {
+  if (lhs.getKind() != AffineExprKind::FloorDiv) {
     return std::nullopt;
   }
-  SymbolicExpr dim = lhs.GetLHS();
-  SymbolicExpr den = lhs.GetRHS();
-  if (!IsDimension(dim, num_dims) ||
-      den.GetType() != SymbolicExprType::kConstant) {
+  AffineExpr dim = llvm::cast<AffineBinaryOpExpr>(lhs).getLHS();
+  AffineExpr den = llvm::cast<AffineBinaryOpExpr>(lhs).getRHS();
+  if (dim.getKind() != AffineExprKind::DimId ||
+      den.getKind() != AffineExprKind::Constant) {
     return std::nullopt;
   }
 
@@ -118,7 +127,7 @@ std::optional<SizeAndStrideExpression> ExtractSizeAndStrideFromMod(
   //     = n ceildiv d - (n ceildiv d - c)
   //     = c
   // We represent `n ceildiv d` as `(n + d - 1) floordiv d`, since indexing
-  // maps are not compatible with CeilDiv symbolic expressions.
+  // maps are not compatible with CeilDiv affine expressions.
   return make_result((dim + (den - 1)).floorDiv(den));
 }
 
@@ -128,11 +137,11 @@ std::optional<SizeAndStrideExpression> ExtractSizeAndStrideFromMod(
 // TODO(b/349487906): Currently, this fails when the numerator of the stride
 // is not exactly unit.
 std::optional<SizeAndStrideExpression> ExtractSizeAndStrideFromFloorDiv(
-    SymbolicExpr num, SymbolicExpr den, int64_t num_dims) {
-  if (den.GetType() != SymbolicExprType::kConstant) {
+    AffineExpr num, AffineExpr den) {
+  if (den.getKind() != AffineExprKind::Constant) {
     return std::nullopt;
   }
-  if (!IsDimension(num, num_dims)) {
+  if (num.getKind() != AffineExprKind::DimId) {
     return std::nullopt;
   }
 
@@ -141,18 +150,19 @@ std::optional<SizeAndStrideExpression> ExtractSizeAndStrideFromFloorDiv(
   // (1 ceildiv c) = 1.
   //
   // We represent `a ceildiv b` as `(a + b - 1) floordiv b`, since indexing
-  // maps are not compatible with CeilDiv symbolic expressions.
+  // maps are not compatible with CeilDiv affine expressions.
   return SizeAndStrideExpression((num + (den - 1)).floorDiv(den), /*stride=*/1);
 }
 
 // See documentation of `DestructureSummation` for an explanation of the
 // algorithm.
-void DestructureSummationImpl(SymbolicExpr expr,
-                              std::vector<SymbolicExpr>& summands) {
-  switch (expr.GetType()) {
-    case SymbolicExprType::kAdd: {
-      DestructureSummationImpl(expr.GetLHS(), summands);
-      DestructureSummationImpl(expr.GetRHS(), summands);
+void DestructureSummationImpl(AffineExpr expr,
+                              std::vector<AffineExpr>& summands) {
+  switch (expr.getKind()) {
+    case AffineExprKind::Add: {
+      const auto add = llvm::cast<AffineBinaryOpExpr>(expr);
+      DestructureSummationImpl(add.getLHS(), summands);
+      DestructureSummationImpl(add.getRHS(), summands);
       break;
     }
     default:
@@ -167,17 +177,17 @@ void DestructureSummationImpl(SymbolicExpr expr,
 // The order of the returned subexpressions is not guaranteed to match the order
 // in which they appear in the original expression.
 //
-// SymbolicExprType::kAdd should be the operation that binds the least tightly,
+// AffineExprKind::Add should be the operation that binds the least tightly,
 // allowing us to simply recursively destructure expressions until we reach an
-// SymbolicExprType that is not an SymbolicExprType::kAdd.
+// AffineExprKind that is not an AffineExprKind::Add.
 //
 // Note that this will only work correctly for expressions that do no
 // factoring/grouping of summands such as `(d0 + d1) * c` or `(d0 + d1) mod c`.
 // It's unclear at this point whether this restriction will prove problematic,
 // but it isn't really worth thinking about until we are sure this actually
 // has practical implications.
-std::vector<SymbolicExpr> DestructureSummation(SymbolicExpr expr) {
-  std::vector<SymbolicExpr> summands;
+std::vector<AffineExpr> DestructureSummation(AffineExpr expr) {
+  std::vector<AffineExpr> summands;
   DestructureSummationImpl(expr, summands);
   return summands;
 }
@@ -187,17 +197,17 @@ std::vector<SymbolicExpr> DestructureSummation(SymbolicExpr expr) {
 // for any of the summands.
 std::optional<std::vector<SizeAndStrideExpression>>
 ExtractSizesAndStridesFromMultivariateSummation(
-    SymbolicExpr summation, absl::Span<Interval const> dimension_intervals,
+    AffineExpr summation, absl::Span<Interval const> dimension_intervals,
     absl::Span<Interval const> symbol_intervals) {
-  std::vector<SymbolicExpr> summands = DestructureSummation(summation);
+  std::vector<AffineExpr> summands = DestructureSummation(summation);
 
   std::vector<SizeAndStrideExpression> sizes_and_strides;
   sizes_and_strides.reserve(summands.size());
-  for (SymbolicExpr summand : summands) {
+  for (AffineExpr summand : summands) {
     std::optional<SizeAndStrideExpression> maybe_size_and_stride =
         ExtractSizeAndStride(summand, dimension_intervals, symbol_intervals);
     if (!maybe_size_and_stride.has_value()) {
-      VLOG(1) << "Couldn't extract size and stride from " << summand;
+      VLOG(1) << "Couldn't extract size and stride from " << ToString(summand);
       return std::nullopt;
     }
     sizes_and_strides.push_back(*maybe_size_and_stride);
@@ -206,24 +216,24 @@ ExtractSizesAndStridesFromMultivariateSummation(
 }
 
 // Given a list of sizes and strides, returns the product of all sizes.
-SymbolicExpr CombineSizes(
+AffineExpr CombineSizes(
     absl::Span<SizeAndStrideExpression const> sizes_and_strides) {
   CHECK(!sizes_and_strides.empty());
-  SymbolicExpr product =
-      CreateSymbolicConstant(1, sizes_and_strides[0].size.GetContext());
+  AffineExpr product =
+      getAffineConstantExpr(1, sizes_and_strides[0].size.getContext());
   for (const SizeAndStrideExpression& size_and_stride : sizes_and_strides) {
     product = product * size_and_stride.size;
   }
   return product;
 }
 
-// Returns an symbolic expression logically equivalent to
+// Returns an affine expression logically equivalent to
 //   `eq_param != 1 ? true_expr : false_expr`.
 // `eq_param` is assumed to be able to be in the inclusive range
 //    {1, 2, ..., eq_param_inclusive_upper_bound}.
-SymbolicExpr IfNeqOne(SymbolicExpr eq_param, SymbolicExpr true_expr,
-                      SymbolicExpr false_expr,
-                      int64_t eq_param_inclusive_upper_bound) {
+AffineExpr IfNeqOne(AffineExpr eq_param, AffineExpr true_expr,
+                    AffineExpr false_expr,
+                    int64_t eq_param_inclusive_upper_bound) {
   // Let e = eq_param, and b = eq_param_inclusive_bound, then we have:
   //     1 <= e <= b
   // <=> -b <= e - b - 1 <= -1              (subtract (b + 1))
@@ -246,11 +256,12 @@ SymbolicExpr IfNeqOne(SymbolicExpr eq_param, SymbolicExpr true_expr,
   //   (b + 1 - e) floordiv b = 1 <=> e = 1, and
   //   (b + 1 - e) floordiv b = 0 <=> e != 1
   // hold.
-  SymbolicExpr b = CreateSymbolicConstant(eq_param_inclusive_upper_bound,
-                                          eq_param.GetContext());
-  SymbolicExpr condition = (b + 1 - eq_param).floorDiv(b);
+  AffineExpr b = getAffineConstantExpr(eq_param_inclusive_upper_bound,
+                                       eq_param.getContext());
+  AffineExpr condition = mlir::getAffineBinaryOpExpr(AffineExprKind::FloorDiv,
+                                                     b + 1 - eq_param, b);
 
-  return condition * false_expr + (-condition + 1) * true_expr;
+  return condition * false_expr + (1 - condition) * true_expr;
 }
 
 // Sorts a list of `SizeAndStrideExpression`s by stride in descending order.
@@ -260,8 +271,10 @@ void SortByStrideInDescendingOrder(
     std::vector<SizeAndStrideExpression>& sizes_and_strides) {
   absl::c_sort(sizes_and_strides, [&](const SizeAndStrideExpression& sas1,
                                       const SizeAndStrideExpression& sas2) {
-    int64_t stride1 = std::abs(sas1.stride.GetValue());
-    int64_t stride2 = std::abs(sas2.stride.GetValue());
+    int64_t stride1 =
+        std::abs(llvm::cast<AffineConstantExpr>(sas1.stride).getValue());
+    int64_t stride2 =
+        std::abs(llvm::cast<AffineConstantExpr>(sas2.stride).getValue());
     return stride1 > stride2;
   });
 }
@@ -270,18 +283,20 @@ void SortByStrideInDescendingOrder(
 //
 // `size` must be a constant or dimension expression.
 std::optional<int64_t> TryGetSizeExpressionRangeSize(
-    SymbolicExpr size, absl::Span<Interval const> dimension_intervals) {
-  if (size.GetType() == SymbolicExprType::kConstant) {
-    return size.GetValue();
+    AffineExpr size, absl::Span<Interval const> dimension_intervals) {
+  if (size.getKind() == AffineExprKind::Constant) {
+    return llvm::cast<AffineConstantExpr>(size).getValue();
   }
-  auto dim_position = GetDimensionIndex(size, dimension_intervals.size());
+  CHECK(size.getKind() == AffineExprKind::DimId);
+  auto dim_position = llvm::dyn_cast<AffineDimExpr>(size).getPosition();
   const Interval& interval = dimension_intervals.at(dim_position);
   if (interval.lower != 0) {
     // TODO(bchetioui): I think we may need to handle this to have reshapes
     // working well with concatenations. Nevertheless, we can take a look
     // later.
-    VLOG(1) << "Attempted to combine strides but got dimension " << size
-            << " with lower bound " << interval.lower << " != 0";
+    VLOG(1) << "Attempted to combine strides but got dimension "
+            << ToString(size) << " with lower bound " << interval.lower
+            << " != 0";
     return std::nullopt;
   }
   // We need to add 1 to the upper bound of the interval to describe the
@@ -317,14 +332,14 @@ std::optional<int64_t> TryGetSizeExpressionRangeSize(
 //
 // If all the sizes are 1, then return a zero stride. Note that this
 // value is arbitrarily chosen.
-std::optional<SymbolicExpr> CombineStrides(
+std::optional<AffineExpr> CombineStrides(
     std::vector<SizeAndStrideExpression> sizes_and_strides,
     absl::Span<Interval const> dimension_intervals) {
   CHECK(!sizes_and_strides.empty());
   for (const SizeAndStrideExpression& size_and_stride : sizes_and_strides) {
-    if (size_and_stride.stride.GetType() != SymbolicExprType::kConstant) {
+    if (size_and_stride.stride.getKind() != AffineExprKind::Constant) {
       VLOG(1) << "Attempted to combine non-constant stride: "
-              << size_and_stride.stride;
+              << ToString(size_and_stride.stride);
       return std::nullopt;
     }
 
@@ -335,11 +350,11 @@ std::optional<SymbolicExpr> CombineStrides(
     // If a size is not a constant and not exactly a dimension parameter, then
     // it is dubious whether we know the bounds---and may thus calculate wrong
     // strides.
-    if (size_and_stride.size.GetType() != SymbolicExprType::kConstant &&
-        !IsDimension(size_and_stride.size, dimension_intervals.size())) {
+    if (size_and_stride.size.getKind() != AffineExprKind::Constant &&
+        size_and_stride.size.getKind() != AffineExprKind::DimId) {
       VLOG(1) << "Attempted to combine strides but got non-constant, "
                  "non-dimension size "
-              << size_and_stride.size;
+              << ToString(size_and_stride.size);
       return std::nullopt;
     }
   }
@@ -357,7 +372,8 @@ std::optional<SymbolicExpr> CombineStrides(
     if (!size_expression_range_size.has_value()) {
       return std::nullopt;
     }
-    int64_t stride = size_and_stride.stride.GetValue();
+    int64_t stride =
+        llvm::cast<AffineConstantExpr>(size_and_stride.stride).getValue();
 
     // The minormost stride can be anything, but we expect every subsequent
     // stride to be exactly `p_stride * p_size` where `p_size` is the upper
@@ -369,7 +385,9 @@ std::optional<SymbolicExpr> CombineStrides(
     const SizeAndStrideExpression& previous_size_and_stride =
         sizes_and_strides[dim_id - 1];
 
-    int64_t previous_stride = previous_size_and_stride.stride.GetValue();
+    int64_t previous_stride =
+        llvm::cast<AffineConstantExpr>(previous_size_and_stride.stride)
+            .getValue();
 
     if (*size_expression_range_size * std::abs(stride) !=
         std::abs(previous_stride)) {
@@ -382,11 +400,11 @@ std::optional<SymbolicExpr> CombineStrides(
   }
 
   // Produce a nested if statement as described in the function's documentation.
-  MLIRContext* ctx = sizes_and_strides[0].stride.GetContext();
-  SymbolicExpr nested_if = CreateSymbolicConstant(0, ctx);
+  MLIRContext* ctx = sizes_and_strides[0].stride.getContext();
+  AffineExpr nested_if = getAffineConstantExpr(0, ctx);
   for (const SizeAndStrideExpression& size_and_stride : sizes_and_strides) {
-    SymbolicExpr size = size_and_stride.size;
-    SymbolicExpr stride = size_and_stride.stride;
+    AffineExpr size = size_and_stride.size;
+    AffineExpr stride = size_and_stride.stride;
     std::optional<int64_t> size_expression_range_size =
         TryGetSizeExpressionRangeSize(size, dimension_intervals);
     if (!size_expression_range_size.has_value()) {
@@ -432,7 +450,7 @@ TryConstructSingleConjointConstraintForDestructuredSummation(
 
   // Add full dimensions.
   while (running_size_index <= partial_dim_index + num_full_dims) {
-    SymbolicExpr size_expr = sizes_and_strides[running_size_index].size;
+    AffineExpr size_expr = sizes_and_strides[running_size_index].size;
     std::optional<int64_t> max_size =
         TryGetSizeExpressionRangeSize(size_expr, dimension_intervals);
     if (!max_size.has_value()) {
@@ -520,8 +538,8 @@ std::optional<SizeAndStrideExpression> CombineSizesAndStrides(
   if (VLOG_IS_ON(1)) {
     for (const SizeAndStrideExpression& size_and_stride : sizes_and_strides) {
       LOG(INFO) << "CombineSizesAndStrides:";
-      LOG(INFO) << "size: " << size_and_stride.size
-                << " stride: " << size_and_stride.stride;
+      LOG(INFO) << "size: " << ToString(size_and_stride.size)
+                << " stride: " << ToString(size_and_stride.stride);
     }
   }
 
@@ -530,8 +548,8 @@ std::optional<SizeAndStrideExpression> CombineSizesAndStrides(
     constraints = constraints && size_and_stride.constraints;
   }
 
-  SymbolicExpr size = CombineSizes(sizes_and_strides);
-  std::optional<SymbolicExpr> stride =
+  AffineExpr size = CombineSizes(sizes_and_strides);
+  std::optional<AffineExpr> stride =
       CombineStrides(sizes_and_strides, dimension_intervals);
   if (!stride.has_value()) {
     return std::nullopt;
@@ -551,30 +569,16 @@ std::optional<SizeAndStrideExpression> CombineSizesAndStrides(
 }  // anonymous namespace
 
 std::optional<SizeAndStrideExpression> ExtractSizeAndStride(
-    SymbolicExpr strided_indexing,
-    absl::Span<Interval const> dimension_intervals,
+    AffineExpr strided_indexing, absl::Span<Interval const> dimension_intervals,
     absl::Span<Interval const> symbol_intervals) {
-  MLIRContext* ctx = strided_indexing.GetContext();
+  MLIRContext* ctx = strided_indexing.getContext();
 
-  int64_t num_dims = dimension_intervals.size();
-  auto expr = strided_indexing;
-  switch (strided_indexing.GetType()) {
-    case SymbolicExprType::kVariable: {
-      if (IsDimension(expr, num_dims)) {
-        return SizeAndStrideExpression(/*size=*/expr, /*stride=*/1);
-      }
-      const Interval& symbol_interval =
-          symbol_intervals[GetSymbolIndex(expr, num_dims)];
-      if (symbol_interval.lower != 0) {
-        return std::nullopt;
-      }
-
-      return SizeAndStrideExpression(
-          /*size=*/CreateSymbolicConstant(symbol_interval.upper + 1, ctx),
-          /*stride=*/1);
-    }
-    case SymbolicExprType::kMul: {
-      SymbolicExpr lhs = expr.GetLHS();
+  switch (strided_indexing.getKind()) {
+    case AffineExprKind::DimId:
+      return SizeAndStrideExpression(/*size=*/strided_indexing, /*stride=*/1);
+    case AffineExprKind::Mul: {
+      const auto mul = llvm::cast<AffineBinaryOpExpr>(strided_indexing);
+      AffineExpr lhs = mul.getLHS();
       std::optional<SizeAndStrideExpression> maybe_size_and_stride =
           ExtractSizeAndStride(lhs, dimension_intervals, symbol_intervals);
       if (!maybe_size_and_stride.has_value()) {
@@ -583,20 +587,32 @@ std::optional<SizeAndStrideExpression> ExtractSizeAndStride(
 
       return SizeAndStrideExpression(
           /*size=*/maybe_size_and_stride->size,
-          /*stride=*/maybe_size_and_stride->stride * expr.GetRHS());
+          /*stride=*/maybe_size_and_stride->stride * mul.getRHS());
     }
-    case SymbolicExprType::kMod: {
-      return ExtractSizeAndStrideFromMod(expr.GetLHS(), expr.GetRHS(),
-                                         dimension_intervals.size());
+    case AffineExprKind::Mod: {
+      auto mod = llvm::cast<AffineBinaryOpExpr>(strided_indexing);
+      return ExtractSizeAndStrideFromMod(mod.getLHS(), mod.getRHS());
     }
-    case SymbolicExprType::kFloorDiv: {
-      return ExtractSizeAndStrideFromFloorDiv(expr.GetLHS(), expr.GetRHS(),
-                                              dimension_intervals.size());
+    case AffineExprKind::FloorDiv: {
+      auto floor_div = llvm::cast<AffineBinaryOpExpr>(strided_indexing);
+      return ExtractSizeAndStrideFromFloorDiv(floor_div.getLHS(),
+                                              floor_div.getRHS());
     }
-    case SymbolicExprType::kConstant:
-      return SizeAndStrideExpression(/*size=*/CreateSymbolicConstant(1, ctx),
+    case AffineExprKind::Constant:
+      return SizeAndStrideExpression(/*size=*/getAffineConstantExpr(1, ctx),
                                      /*stride=*/0);
-    case SymbolicExprType::kAdd: {
+    case AffineExprKind::SymbolId: {
+      auto symbol = llvm::cast<AffineSymbolExpr>(strided_indexing);
+      const Interval& symbol_interval = symbol_intervals[symbol.getPosition()];
+      if (symbol_interval.lower != 0) {
+        return std::nullopt;
+      }
+
+      return SizeAndStrideExpression(
+          /*size=*/getAffineConstantExpr(symbol_interval.upper + 1, ctx),
+          /*stride=*/1);
+    }
+    case AffineExprKind::Add: {
       std::optional<std::vector<SizeAndStrideExpression>>
           maybe_sizes_and_strides =
               ExtractSizesAndStridesFromMultivariateSummation(
@@ -607,9 +623,7 @@ std::optional<SizeAndStrideExpression> ExtractSizeAndStride(
       return CombineSizesAndStrides(std::move(*maybe_sizes_and_strides),
                                     dimension_intervals);
     }
-    case SymbolicExprType::kCeilDiv:
-    case SymbolicExprType::kMax:
-    case SymbolicExprType::kMin:
+    case AffineExprKind::CeilDiv:
       break;
   };
   LOG(FATAL) << "unreachable";

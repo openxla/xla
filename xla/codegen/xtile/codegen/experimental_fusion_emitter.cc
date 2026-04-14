@@ -31,7 +31,6 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -62,10 +61,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
-#include "xla/permutation_util.h"
-#include "xla/primitive_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
-#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
@@ -556,87 +552,6 @@ absl::StatusOr<TensorValue> EmitPad(EmitterContext& emitter_ctx,
           .getResult());
 }
 
-absl::StatusOr<TensorValue> EmitBitcast(
-    EmitterContext& emitter_ctx, const ge::TiledHloInstruction& tiled_bitcast,
-    TensorValue input) {
-  Shape input_shape = tiled_bitcast.hlo()->operand(0)->shape();
-  const Shape& output_shape = tiled_bitcast.hlo()->shape();
-  const PrimitiveType input_primitive_type = input_shape.element_type();
-  const PrimitiveType output_primitive_type = output_shape.element_type();
-
-  auto& b = emitter_ctx.b();
-  ASSIGN_OR_RETURN(Type output_element_type,
-                   PrimitiveTypeToMlirType(b, output_primitive_type));
-  ASSIGN_OR_RETURN(SmallVector<int64_t> operand_tile_sizes,
-                   tiled_bitcast.operand(0)->tile().GetStaticTileSizes());
-  ASSIGN_OR_RETURN(SmallVector<int64_t> output_tile_sizes,
-                   tiled_bitcast.tile().GetStaticTileSizes());
-
-  // If the bitcast changes the element type to an element type of the same
-  // bitwidth, we need to emit a ttir::BitcastOp.
-  if (input_primitive_type != output_primitive_type) {
-    if (primitive_util::BitWidth(input_primitive_type) !=
-        primitive_util::BitWidth(output_primitive_type)) {
-      return absl::InvalidArgumentError(
-          "Bitcast with different bitwidth for operand and output shape "
-          "element type is not yet supported.");
-    }
-    auto output_type =
-        mlir::RankedTensorType::get(operand_tile_sizes, output_element_type);
-    input = mlir::cast<TensorValue>(
-        mlir::tensor::BitcastOp::create(b, output_type, input).getResult());
-    input_shape.set_element_type(output_shape.element_type());
-  }
-
-  // Any Bitcast is decomposable to a transpose+reshape+transpose.
-  auto trt = ShapeUtil::DecomposeBitcastToTrt(input_shape, output_shape);
-  TF_RET_CHECK(trt.has_value());
-
-  // When replacing the `bitcast` with `transpose` + `reshape` + `transpose` we
-  // need to provide the tile sizes at output of each op. We already have the
-  // tiling of the `input` (before the first transpose) and the tiling of the
-  // final output (after the second transpose), so what's missing are the two
-  // tilings in between - after the first transpose and after the reshape. In
-  // the case of arbitrary ops, we would need to run the tiling analysis to
-  // compute this, but in the case of bitcast we can trivially compute the
-  // needed tile sizes from the input and output.
-
-  // The tiles sizes we need to use for the output of the first transpose
-  // are the permuted tiles sizes of the input. Note that these are
-  // different, even in rank, compared to the tile sizes of the final shape of
-  // the bitcast, so it's not possible to easily propagate them from the output.
-  std::vector<int64_t> transpose1_tile_sizes =
-      Permute(operand_tile_sizes, trt->transpose1_dims);
-  TensorValue normalized_input =
-      trt->IsTranspose1Identity()
-          ? input
-          : EmitTiledTranspose(b, transpose1_tile_sizes,
-                               llvm::to_vector(trt->transpose1_dims), input);
-
-  // Like the first transpose above, the tile sizes after the second transpose
-  // are a permutation (according to transpose2_dims) of the tile sizes of
-  // the reshape. Since we know the tile sizes of the final transpose and need
-  // the tile sizes of the reshape, we compute the tile sizes backwards, taking
-  // the inverse permutation.
-  std::vector<int64_t> reshape_tile_sizes =
-      PermuteInverse(operand_tile_sizes, trt->transpose2_dims);
-  TensorValue normalized_reshape;
-  if (ShapeUtil::Equal(trt->transpose1_shape, trt->reshape_shape)) {
-    normalized_reshape = normalized_input;
-  } else {
-    ASSIGN_OR_RETURN(normalized_reshape,
-                     EmitTiledReshape(b, reshape_tile_sizes, normalized_input));
-  }
-
-  // The final transpose simply uses the tile sizes computed for the original
-  // bitcast by the tiling analysis.
-  return trt->IsTranspose2Identity()
-             ? normalized_reshape
-             : EmitTiledTranspose(b, output_tile_sizes,
-                                  llvm::to_vector(trt->transpose2_dims),
-                                  normalized_reshape);
-}
-
 absl::StatusOr<TensorValue> EmitTiledHloInstruction(
     EmitterContext& emitter_ctx, const ge::TiledHloInstruction& tiled_hlo) {
   auto& b = emitter_ctx.b();
@@ -695,6 +610,13 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
     operands.push_back(emitter_ctx.TiledHloToTensorValue(*operand));
   }
   switch (hlo->opcode()) {
+    case HloOpcode::kTranspose: {
+      ASSIGN_OR_RETURN(auto static_tile_sizes,
+                       tiled_hlo.tile().GetStaticTileSizes());
+      auto padded_tile_sizes = GetPaddedTileSizes(static_tile_sizes);
+      return EmitTranspose(b, padded_tile_sizes, hlo->dimensions(),
+                           mlir::cast<TensorValue>(operands[0]));
+    }
     case HloOpcode::kBroadcast: {
       return EmitBroadcast(b, tiled_hlo, mlir::cast<TensorValue>(operands[0]));
     }
@@ -711,20 +633,11 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
     case HloOpcode::kIota: {
       return EmitIota(emitter_ctx, tiled_hlo);
     }
-    case HloOpcode::kPad: {
-      return EmitPad(emitter_ctx, tiled_hlo);
-    }
     case HloOpcode::kSlice: {
       return emitter_ctx.TiledHloToTensorValue(*tiled_hlo.operand(0));
     }
-    case HloOpcode::kTranspose: {
-      ASSIGN_OR_RETURN(auto tile_sizes, tiled_hlo.tile().GetStaticTileSizes());
-      return EmitTranspose(b, tile_sizes, hlo->dimensions(),
-                           mlir::cast<TensorValue>(operands[0]));
-    }
-    case HloOpcode::kBitcast: {
-      return EmitBitcast(emitter_ctx, tiled_hlo,
-                         mlir::cast<TensorValue>(operands[0]));
+    case HloOpcode::kPad: {
+      return EmitPad(emitter_ctx, tiled_hlo);
     }
     default:
       break;

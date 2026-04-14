@@ -132,8 +132,7 @@ RankedTensorType SqueezeTensorType(RankedTensorType type,
         cast<DialectInferLayoutInterface>(&encoding.getDialect());
     [[maybe_unused]] LogicalResult result =
         inferLayoutInterface->inferReshapeOpEncoding(
-            type.getShape(), encoding, shape, encoding, /*allowReorder=*/false,
-            /*loc=*/std::nullopt);
+            type.getShape(), encoding, shape, encoding, /*loc=*/std::nullopt);
     CHECK(succeeded(result));
   }
   return RankedTensorType::get(shape, type.getElementType(), encoding);

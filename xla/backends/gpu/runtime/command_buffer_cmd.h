@@ -356,6 +356,8 @@ class GemmCmd : public TracedCommandBufferCmd {
 
   BufferUses buffer_uses() const override;
 
+  bool IsNestedCommandBuffer() const final { return true; }
+
  private:
   const GemmConfig config_;
   const BufferAllocation::Slice lhs_buffer_;
@@ -383,6 +385,8 @@ class CublasLtCmd : public TracedCommandBufferCmd {
 
   BufferUses buffer_uses() const override;
 
+  bool IsNestedCommandBuffer() const final { return true; }
+
  private:
   CublasLtMatmulThunk thunk_;
 };
@@ -404,6 +408,8 @@ class CuDnnCmd : public TracedCommandBufferCmd {
       se::CommandBuffer* command_buffer) override;
 
   BufferUses buffer_uses() const override;
+
+  bool IsNestedCommandBuffer() const final { return true; }
 
  private:
   std::vector<ShapedSlice> args_;
@@ -455,6 +461,7 @@ class CustomCallCmd : public Command {
       se::CommandBuffer* command_buffer) override;
 
   BufferUses buffer_uses() const override;
+  bool IsNestedCommandBuffer() const final { return true; }
 
  private:
   absl::StatusOr<const se::CommandBuffer::Command*> RecordLegacyCustomCall(
@@ -512,6 +519,8 @@ class CollectiveCmd : public Command {
   bool IsTracedCommand() const override { return true; }
 
   bool requires_initialization() const final { return true; }
+
+  bool IsNestedCommandBuffer() const final { return true; }
 
   absl::StatusOr<const se::CommandBuffer::Command*> RecordTracedCommand(
       const Thunk::ExecuteParams& execute_params,
@@ -723,6 +732,8 @@ class DynamicSliceFusionCmd : public Command {
   bool force_update() const final { return true; }
 
   bool requires_initialization() const final;
+
+  bool IsNestedCommandBuffer() const final { return true; }
 
   absl::Status WalkNested(
       absl::FunctionRef<absl::Status(Thunk*)> callback) override;

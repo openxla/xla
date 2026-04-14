@@ -27,7 +27,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/backends/gpu/runtime/host_async_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/runtime/buffer_use.h"
@@ -92,7 +91,7 @@ using HostSendRecvAsyncEventsMap =
 // HostSendThunk
 //===----------------------------------------------------------------------===//
 
-class HostSendThunk : public HostAsyncThunk {
+class HostSendThunk : public Thunk {
  public:
   static absl::StatusOr<std::unique_ptr<HostSendThunk>> FromProto(
       ThunkInfo thunk_info, const HostSendThunkProto& proto,
@@ -134,7 +133,7 @@ class HostSendThunk : public HostAsyncThunk {
 // HostSendDoneThunk
 //===----------------------------------------------------------------------===//
 
-class HostSendDoneThunk : public HostAsyncThunk {
+class HostSendDoneThunk : public Thunk {
  public:
   static absl::StatusOr<std::unique_ptr<HostSendDoneThunk>> FromProto(
       ThunkInfo thunk_info, const HostSendDoneThunkProto& proto,
@@ -164,7 +163,7 @@ class HostSendDoneThunk : public HostAsyncThunk {
 // HostRecvThunk
 //===----------------------------------------------------------------------===//
 
-class HostRecvThunk : public HostAsyncThunk {
+class HostRecvThunk : public Thunk {
  public:
   static absl::StatusOr<std::unique_ptr<HostRecvThunk>> FromProto(
       ThunkInfo thunk_info, const HostRecvThunkProto& proto,
@@ -206,7 +205,7 @@ class HostRecvThunk : public HostAsyncThunk {
 // HostRecvDoneThunk
 //===----------------------------------------------------------------------===//
 
-class HostRecvDoneThunk : public HostAsyncThunk {
+class HostRecvDoneThunk : public Thunk {
  public:
   static absl::StatusOr<std::unique_ptr<HostRecvDoneThunk>> FromProto(
       ThunkInfo thunk_info, const HostRecvDoneThunkProto& proto,

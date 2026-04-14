@@ -1767,6 +1767,60 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectiveThunk(
   return GetThunkSequence(std::move(start_thunk));
 }
 
+std::vector<const HloInstruction*> GetRealDependencyInstructions(
+    const HloInstruction* instr) {
+  std::vector<const HloInstruction*> real_deps;
+  switch (instr->opcode()) {
+    case HloOpcode::kSend:
+    case HloOpcode::kSendDone:
+    case HloOpcode::kRecv:
+    case HloOpcode::kRecvDone:
+      return {FindCanonicalSendRecvStartOp(instr)};
+    case HloOpcode::kAllGatherDone:
+    case HloOpcode::kAllReduceDone:
+    case HloOpcode::kAsyncDone:
+    case HloOpcode::kCollectivePermuteDone:
+    case HloOpcode::kCopyDone:
+      return {instr->operand(0)};
+    case HloOpcode::kAllGatherStart:
+    case HloOpcode::kAllReduceStart:
+    case HloOpcode::kAsyncStart:
+    case HloOpcode::kCollectivePermuteStart:
+    case HloOpcode::kCall:
+    case HloOpcode::kConditional:
+    case HloOpcode::kConstant:
+    case HloOpcode::kCustomCall:
+    case HloOpcode::kFusion:
+    case HloOpcode::kCopy:
+    case HloOpcode::kInfeed:
+    case HloOpcode::kOutfeed:
+    case HloOpcode::kPartitionId:
+    case HloOpcode::kFft:
+    case HloOpcode::kReplicaId:
+    case HloOpcode::kRngGetAndUpdateState:
+    case HloOpcode::kSort:
+    case HloOpcode::kWhile:
+    case HloOpcode::kCopyStart:
+      return {instr};
+    case HloOpcode::kAddDependency:
+    case HloOpcode::kAfterAll:
+    case HloOpcode::kTuple:
+      for (const HloInstruction* operand : instr->operands()) {
+        auto deps = GetRealDependencyInstructions(operand);
+        real_deps.insert(real_deps.end(), deps.begin(), deps.end());
+      }
+      return real_deps;
+    case HloOpcode::kBitcast:
+    case HloOpcode::kGetTupleElement: {
+      auto deps = GetRealDependencyInstructions(instr->operand(0));
+      real_deps.insert(real_deps.end(), deps.begin(), deps.end());
+    }
+      return real_deps;
+    default:
+      return {};
+  }
+}
+
 AsyncThunkSequence ThunkEmitter::EmitCollectiveGroupStartThunk(
     const HloInstruction* instr) {
   ThunkSequence thunks;
@@ -2773,6 +2827,28 @@ AsyncThunkSequence ThunkEmitter::EmitHloComputation(
             for (auto& thunk : thunks) {
               if (concurrent_region_id.has_value()) {
                 thunk->set_concurrent_region_id(concurrent_region_id.value());
+              }
+            }
+          }
+          for (const HloInstruction* control_predecessor :
+               instr->control_predecessors()) {
+            std::vector<const HloInstruction*> real_successors =
+                GetRealDependencyInstructions(instr);
+            std::vector<const HloInstruction*> real_predecessors =
+                GetRealDependencyInstructions(control_predecessor);
+            for (const HloInstruction* real_predecessor : real_predecessors) {
+              for (const HloInstruction* real_successor : real_successors) {
+                // if the instruction does not have a thunk, it is a degenerated
+                // instruction, and we skip it.
+                if (instr_to_thunk.contains(real_successor) &&
+                    instr_to_thunk.contains(real_predecessor)) {
+                  instr_to_thunk[real_successor]->add_control_predecessor(
+                      instr_to_thunk[real_predecessor]);
+                  VLOG(3) << "Add thunk control dependency for predecessor:  "
+                          << instr_to_thunk[real_predecessor]->ToString(0)
+                          << " successor: "
+                          << instr_to_thunk[real_successor]->ToString(0);
+                }
               }
             }
           }

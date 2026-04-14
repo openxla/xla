@@ -91,6 +91,8 @@ class RocmExecutor : public GpuExecutor {
       Stream* stream, bool use_delay_kernel) override;
   absl::StatusOr<DeviceAddressBase> GetSymbol(
       const std::string& symbol_name, ModuleHandle module_handle) override;
+  absl::Status SynchronousMemZero(DeviceAddressBase* location,
+                                  uint64_t size) override;
   absl::Status SynchronousMemcpy(DeviceAddressBase* gpu_dst,
                                  const void* host_src, uint64_t size) override;
   absl::Status SynchronousMemcpy(void* host_dst,
@@ -138,7 +140,8 @@ class RocmExecutor : public GpuExecutor {
   absl::Status InitBlas();
 
   // Loads a module in HSACO format.
-  absl::StatusOr<ModuleHandle> LoadModuleFromHsaco(const char* hsaco)
+  absl::StatusOr<ModuleHandle> LoadModuleFromHsaco(const char* hsaco,
+                                                   size_t size)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);
 
   bool UnloadGpuBinary(ModuleHandle module_handle)

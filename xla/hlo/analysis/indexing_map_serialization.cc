@@ -925,13 +925,11 @@ std::string ToString(const IndexingMap& indexing_map,
     }
   }
   std::vector<std::string> expr_range_strings;
-  const auto& constraints = indexing_map.GetSymbolicConstraints();
+  const auto& constraints = indexing_map.GetConstraints();
   expr_range_strings.reserve(constraints.size());
   for (const auto& [expr, range] : constraints) {
-    auto affine_expr = SymbolicExprToAffineExpr(expr, dim_names.size());
-    expr_range_strings.push_back(
-        absl::StrCat(ToString(affine_expr, dim_names, symbol_names), " in ",
-                     range.ToString()));
+    expr_range_strings.push_back(absl::StrCat(
+        ToString(expr, dim_names, symbol_names), " in ", range.ToString()));
   }
   std::sort(expr_range_strings.begin(), expr_range_strings.end());
   if (!expr_range_strings.empty()) {

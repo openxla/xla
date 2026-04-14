@@ -387,14 +387,8 @@ class SplitkRewriterVisitor : public DfsHloRewriteVisitor {
       // splitting K.
       return absl::OkStatus();
     }
-    size_t split_k = dot->parent()
-                         ->parent()
-                         ->config()
-                         .debug_options()
-                         .xla_gpu_experimental_force_split_k();
-    if (split_k == 0) {
-      split_k = ChooseSplitK(GetDotDimensions(dot), device_description_);
-    }
+    const size_t split_k =
+        ChooseSplitK(GetDotDimensions(dot), device_description_);
     if (split_k == 1) {
       return absl::OkStatus();
     }

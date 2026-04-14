@@ -22,28 +22,29 @@ limitations under the License.
 #include <utility>
 
 #include "absl/types/span.h"
+#include "mlir/IR/AffineExpr.h"
+#include "xla/hlo/analysis/indexing_map.h"
 #include "xla/codegen/tiling/constraint_expression.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 
 namespace xla {
 
 // Encapsulates expressions for size and stride and the corresponding
 // constraints on the dimension values that need to be satisfied.
 struct SizeAndStrideExpression {
-  SymbolicExpr size;
-  SymbolicExpr stride;
+  mlir::AffineExpr size;
+  mlir::AffineExpr stride;
   ConstraintExpression constraints;
 
   explicit SizeAndStrideExpression(
-      SymbolicExpr size, int64_t stride,
+      mlir::AffineExpr size, int64_t stride,
       ConstraintExpression constraints =
           ConstraintExpression::GetAlwaysSatisfied())
       : SizeAndStrideExpression(
-            size, CreateSymbolicConstant(stride, size.GetContext()),
+            size, mlir::getAffineConstantExpr(stride, size.getContext()),
             std::move(constraints)) {}
 
   explicit SizeAndStrideExpression(
-      SymbolicExpr size, SymbolicExpr stride,
+      mlir::AffineExpr size, mlir::AffineExpr stride,
       ConstraintExpression constraints =
           ConstraintExpression::GetAlwaysSatisfied())
       : size(size), stride(stride), constraints(std::move(constraints)) {}
@@ -63,7 +64,7 @@ struct SizeAndStrideExpression {
 // according to the computed stride and size expressions from the
 // SizeAndStrideExpression return value).
 //
-// `strided_indexing` should be a SymbolicExpr involving dimension ids between 0
+// `strided_indexing` should be an AffineExpr involving dimension ids between 0
 // and `dimension_intervals.size() - 1`, and symbol ids between 0 and
 // `symbol_intervals.size() - 1`. `dimension_intervals` specifies the valid
 // range of values for the different dimension ids, `symbol_intervals` specifies
@@ -72,7 +73,7 @@ struct SizeAndStrideExpression {
 // for stride and tile size together with constraints on the values for the
 // dimensions which need to be satisfied to make the expressions valid.
 std::optional<SizeAndStrideExpression> ExtractSizeAndStride(
-    SymbolicExpr strided_indexing,
+    mlir::AffineExpr strided_indexing,
     absl::Span<Interval const> dimension_intervals,
     absl::Span<Interval const> symbol_intervals);
 

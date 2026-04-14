@@ -205,36 +205,6 @@ ENTRY %main.2 (broadcast: f32[2,128,128], b.1: f32[128,2,128]) -> f32[2,128,128]
   CHECK_OK(splitk_rewriter.HloModulePass::Run(module.get()));
 }
 
-TEST_F(SplitkRewriterTest, ForceSplitK) {
-  const char* hlo_string = R"(
-    HloModule module
-
-    ENTRY test {
-      lhs = f32[1024,512]{1,0} parameter(0)
-      rhs = f32[512,2048]{1,0} parameter(1)
-      ROOT dot = f32[1024,2048]{1,0} dot(lhs, rhs),
-                             lhs_contracting_dims={1}, rhs_contracting_dims={0}
-    })";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_experimental_enable_split_k_rewrite(true);
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_experimental_force_split_k(2);
-
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          rewriter_.HloModulePass::Run(module.get()));
-  EXPECT_TRUE(changed);
-  EXPECT_TRUE(RunFileCheck(module->ToString(), R"(
-CHECK: dot({{.*}}), lhs_batch_dims={1}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}
-CHECK: ROOT {{.*}} = f32[1024,2048]{1,0} reduce
-  )")
-                  .value_or(false));
-}
-
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

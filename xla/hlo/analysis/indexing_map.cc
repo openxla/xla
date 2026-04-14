@@ -981,7 +981,19 @@ std::vector<Interval> IndexingMap::GetSymbolBounds() const {
   return bounds;
 }
 
-// TODO: (b/446858351) - Remove this function once all the users are migrated to
+// TODO: b/446856820 - Remove this function once all the users are migrated to
+// the symbolic map constructor.
+llvm::MapVector<mlir::AffineExpr, Interval> IndexingMap::GetConstraints()
+    const {
+  llvm::MapVector<mlir::AffineExpr, Interval> affine_constraints;
+  for (const auto& [expr, range] : constraints_) {
+    affine_constraints[SymbolicExprToAffineExpr(
+        expr, symbolic_map_.GetNumDims())] = range;
+  }
+  return affine_constraints;
+}
+
+// TODO: b/446856820 - Remove this function once all the users are migrated to
 // the symbolic map constructor.
 void IndexingMap::AddConstraint(mlir::AffineExpr expr, Interval range) {
   AddConstraint(AffineExprToSymbolicExpr(expr, GetDimensionCount()), range);
@@ -1032,6 +1044,17 @@ void IndexingMap::AddConstraint(SymbolicExpr expr, Interval range) {
 
 void IndexingMap::EraseConstraint(SymbolicExpr expr) {
   constraints_.erase(expr);
+}
+
+// TODO: b/446856820  - Remove this function once all the users are migrated to
+// the symbolic map getters.
+bool IndexingMap::ConstraintsSatisfied(
+    ArrayRef<mlir::AffineExpr> dim_const_exprs,
+    ArrayRef<mlir::AffineExpr> symbol_const_exprs) const {
+  return ConstraintsSatisfied(
+      AffineExprsToSymbolicExprs(dim_const_exprs, symbolic_map_.GetNumDims()),
+      AffineExprsToSymbolicExprs(symbol_const_exprs,
+                                 symbolic_map_.GetNumDims()));
 }
 
 bool IndexingMap::ConstraintsSatisfied(

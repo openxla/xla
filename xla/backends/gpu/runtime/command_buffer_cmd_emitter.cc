@@ -62,8 +62,8 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -128,11 +128,12 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const WhileThunk& thunk, const ConvertToCommandsOptions& options) {
   VLOG(1) << "WhileThunk: " << thunk.profile_annotation();
-  ASSIGN_OR_RETURN(
+  TF_ASSIGN_OR_RETURN(
       CommandExecutor cond_cmds,
       ConvertToCommands(thunk.condition_executor().thunks(), options));
-  ASSIGN_OR_RETURN(CommandExecutor body_cmds,
-                   ConvertToCommands(thunk.body_executor().thunks(), options));
+  TF_ASSIGN_OR_RETURN(
+      CommandExecutor body_cmds,
+      ConvertToCommands(thunk.body_executor().thunks(), options));
 
   return std::make_unique<WhileCmd>(
       thunk.condition_result_buffer(), std::move(cond_cmds),
@@ -163,16 +164,16 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
     // For boolean predicates, we need to convert the branches in reverse order
     // because the first branch is the "false" branch and the second is "true"
     CHECK_EQ(thunk.branch_executors().size(), 2);
-    ASSIGN_OR_RETURN(
+    TF_ASSIGN_OR_RETURN(
         branch_cmds.emplace_back(),
         ConvertToCommands(thunk.branch_executors()[1].thunks(), options));
-    ASSIGN_OR_RETURN(
+    TF_ASSIGN_OR_RETURN(
         branch_cmds.emplace_back(),
         ConvertToCommands(thunk.branch_executors()[0].thunks(), options));
   } else {
     for (auto& branch_thunk : thunk.branch_executors()) {
-      ASSIGN_OR_RETURN(CommandExecutor cmds,
-                       ConvertToCommands(branch_thunk.thunks(), options));
+      TF_ASSIGN_OR_RETURN(CommandExecutor cmds,
+                          ConvertToCommands(branch_thunk.thunks(), options));
       branch_cmds.emplace_back(std::move(cmds));
     }
   }
@@ -235,7 +236,7 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const DynamicSliceThunk& thunk, const ConvertToCommandsOptions& options) {
-  ASSIGN_OR_RETURN(
+  TF_ASSIGN_OR_RETURN(
       CommandExecutor embedded_cmds,
       ConvertToCommands(thunk.get_embedded_executor().thunks(), options));
 
@@ -376,9 +377,14 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return AppendCommands(ctx, cmd_sequence, start.thunks(), options);
     }
 
-    // Async done thunks are no-ops in command buffers.
+    // Async done thunks are no-ops in command buffers. Create an empty
+    // command only if needed as a dependency node.
     case Thunk::Kind::kAsyncDone: {
-      return absl::OkStatus();
+      if (thunk.control_predecessors().empty()) {
+        return absl::OkStatus();
+      }
+      return append(absl::StatusOr<std::unique_ptr<Command>>(
+          std::make_unique<EmptyCmd>()));
     }
 
     case Thunk::Kind::kCommandBuffer:
@@ -403,7 +409,7 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       concurrent_region_id_to_thunk_indices;
   std::vector<int64_t> concurrent_region_ids;
   for (const std::unique_ptr<Thunk>& thunk : sequence) {
-    RETURN_IF_ERROR(AppendCommands(ctx, cmd_sequence, *thunk, options));
+    TF_RETURN_IF_ERROR(AppendCommands(ctx, cmd_sequence, *thunk, options));
     int64_t index = cmd_sequence.size() - 1;
     thunk_to_index[thunk.get()] = index;
     if (thunk->concurrent_region_id().has_value()) {
@@ -437,6 +443,16 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     }
   }
 
+  // Convert thunk control dependencies to token resource dependency, where the
+  // predecessor has the token write, and control successor does the token read.
+  for (const std::unique_ptr<Thunk>& thunk : sequence) {
+    for (const Thunk* control_predecessor : thunk->control_predecessors()) {
+      ctx.extra_resources[thunk_to_index[control_predecessor]].push_back(
+          ResourceUse::Read(
+              cmd_sequence[thunk_to_index[thunk.get()]]->token()));
+    }
+  }
+
   return absl::OkStatus();
 }
 
@@ -447,7 +463,7 @@ absl::StatusOr<CommandExecutor> ConvertToCommands(
       options.synchronization_mode);
   ConversionContext ctx;
   CommandSequence cmd_sequence;
-  RETURN_IF_ERROR(AppendCommands(ctx, cmd_sequence, sequence, options));
+  TF_RETURN_IF_ERROR(AppendCommands(ctx, cmd_sequence, sequence, options));
   return CommandExecutor::Create(std::move(cmd_sequence),
                                  options.synchronization_mode,
                                  std::move(ctx.extra_resources));

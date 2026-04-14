@@ -29,7 +29,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "xla/backends/gpu/runtime/host_async_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/core/host_offloading/host_offloading_allocator.h"
@@ -76,7 +75,7 @@ using HostExecuteAsyncEventsMap =
     absl::flat_hash_map<AsyncEventsUniqueId,
                         std::shared_ptr<HostExecuteAsyncEvents>>;
 
-class HostExecuteStartThunk : public HostAsyncThunk {
+class HostExecuteStartThunk : public Thunk {
  public:
   struct SliceAndShape {
     BufferAllocation::Slice slice;
@@ -148,7 +147,7 @@ class HostExecuteStartThunk : public HostAsyncThunk {
   std::shared_ptr<HostExecuteAsyncEvents> async_events_;
 };
 
-class HostExecuteDoneThunk : public HostAsyncThunk {
+class HostExecuteDoneThunk : public Thunk {
  public:
   explicit HostExecuteDoneThunk(
       Thunk::ThunkInfo thunk_info,

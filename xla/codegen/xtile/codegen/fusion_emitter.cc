@@ -39,6 +39,7 @@ limitations under the License.
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -75,8 +76,6 @@ limitations under the License.
 #include "xla/codegen/xtile/ir/transforms/passes.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "xla/hlo/analysis/indexing_map.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
-#include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -112,6 +111,7 @@ namespace arith = ::mlir::arith;
 namespace stablehlo = ::mlir::stablehlo;
 
 using ::llvm::SmallVector;
+using ::mlir::AffineMap;
 using ::mlir::ArrayRef;
 using ::mlir::MLIRContext;
 using ::mlir::Type;
@@ -564,16 +564,12 @@ absl::StatusOr<TensorValue> EmitDot(
 
   TF_ASSIGN_OR_RETURN(int64_t loop_iteration_count,
                       GetDotLoopIterationCount(tiled_hlo_dot));
-  auto ctx = b.getContext();
-  auto pid_dim = CreateDimExpr(0, ctx);
-  auto ki_symbol = CreateSymbolExpr(0, /*num_dims=*/1, ctx);
-  SmallVector<SymbolicExpr> result_exprs;
-  result_exprs.push_back(pid_dim * loop_iteration_count + ki_symbol);
+  auto pid_dim = b.getAffineDimExpr(0);
+  auto ki_symbol = b.getAffineSymbolExpr(0);
   // Instructions in the region are tiled with indexing map
   // 'pid * loop_iter_count + ki'.
   IndexingMap computation_index_map{
-      SymbolicMap::Get(ctx, /*num_dimensions=*/1, /*num_symbols=*/1,
-                       result_exprs),
+      AffineMap::get(1, 1, pid_dim * loop_iteration_count + ki_symbol),
       {IndexingMap::Variable{
           tiled_hlo_dot.tile_offsets_indexing()->GetDimensionBound(0), "pid"}},
       {IndexingMap::Variable{{0, loop_iteration_count - 1}, "k"}},
@@ -705,14 +701,12 @@ absl::StatusOr<TensorValue> EmitScaledDot(
 
   TF_ASSIGN_OR_RETURN(int64_t loop_iteration_count,
                       GetDotLoopIterationCount(tiled_hlo_dot));
-  auto ctx = b.getContext();
-  auto pid_dim = CreateDimExpr(0, ctx);
-  auto ki_symbol = CreateSymbolExpr(0, /*num_dims=*/1, ctx);
+  auto pid_dim = b.getAffineDimExpr(0);
+  auto ki_symbol = b.getAffineSymbolExpr(0);
   // Instructions in the region are tiled with indexing map
   // 'pid * loop_iter_count + ki'.
   IndexingMap computation_index_map{
-      SymbolicMap::Get(ctx, /*num_dimensions=*/1, /*num_symbols=*/1,
-                       {pid_dim * loop_iteration_count + ki_symbol}),
+      AffineMap::get(1, 1, pid_dim * loop_iteration_count + ki_symbol),
       {IndexingMap::Variable{
           tiled_hlo_dot.tile_offsets_indexing()->GetDimensionBound(0), "pid"}},
       {IndexingMap::Variable{{0, loop_iteration_count - 1}, "k"}},

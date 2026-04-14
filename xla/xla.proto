@@ -822,10 +822,6 @@ message DebugOptions {
   // When possible, XLA will use Triton's auto warp specialization feature.
   optional bool xla_gpu_experimental_enable_triton_warp_specialization = 421;
 
-  // Force a specific split_k. Must be a power of two. Zero (default) means do
-  // not force split_k and use the heuristic.
-  optional int32 xla_gpu_experimental_force_split_k = 472;
-
   // Controls max unroll factor on Blackwell architectures. This is also
   // guarded with a heuristic, but the heuristic is not perfect, so changing
   // this flag can cause both performance improvements and performance
@@ -1487,7 +1483,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 473
+  // Next id: 472
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
