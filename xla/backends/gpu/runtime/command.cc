@@ -16,6 +16,11 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command.h"
 
 #include <string>
+#include <variant>
+
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "xla/stream_executor/command_buffer.h"
 
 namespace xla::gpu {
 
@@ -27,6 +32,32 @@ std::string CommandTypeString(CommandType type) {
     XLA_GPU_COMMAND_LIST(CASE_CMD_STRING)
 #undef CASE_CMD_STRING
   }
+}
+
+absl::StatusOr<const se::CommandBuffer::Command*> Command::Record(
+    const Thunk::ExecuteParams& execute_params,
+    const RecordParams& /*record_params*/, RecordAction record_action,
+    se::CommandBuffer* command_buffer) {
+  if (construction_mode_ == ConstructionMode::kExplicit) {
+    return absl::UnimplementedError("Record is not implemented");
+  }
+
+  // kCapture mode
+  if (std::holds_alternative<RecordUpdate>(record_action)) {
+    return absl::UnimplementedError(
+        "RecordUpdate is not supported in kCapture construction mode.");
+  }
+
+  // RecordCreate: capture ExecuteOnStream into the command buffer via Trace.
+  auto& create = std::get<RecordCreate>(record_action);
+  se::Stream* trace_stream = execute_params.command_buffer_trace_stream;
+
+  return command_buffer->Trace(
+      trace_stream,
+      [this, &execute_params]() -> absl::Status {
+        return ExecuteOnStream(execute_params);
+      },
+      create.dependencies);
 }
 
 bool IsCollectiveCommand(CommandType type) {

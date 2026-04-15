@@ -38,7 +38,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"  // gloop
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Instructions.h"
@@ -170,6 +169,8 @@ limitations under the License.
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"  // gloop
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
@@ -287,10 +288,9 @@ ThunkSequence FlattenThunkSequence(std::vector<ThunkSequence>&& sequences) {
 
 }  // namespace
 
-ThunkEmitter::ThunkEmitter(
-    IrEmitterContext* absl_nonnull ir_emitter_context,
-    llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
-        llvm_options_lock)
+ThunkEmitter::ThunkEmitter(IrEmitterContext* absl_nonnull ir_emitter_context,
+                           llvm_ir::LLVMCommandLineOptionsReleasableLock*
+                               absl_nonnull llvm_options_lock)
     : ir_emitter_context_(ir_emitter_context),
       send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
       nvshmem_buffer_addresses_(std::make_shared<NvshmemBufferAddresses>()),
@@ -402,6 +402,58 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSliceToDynamic(
                                                ir_emitter_context_));
   kernel_modules_.push_back(std::move(local_llvm_module));
   return thunk_sequence;
+}
+
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCommandBufferThunk(
+    const HloInstruction* instr) {
+  // Spawn a new ThunkEmitter to emit thunks for the command buffer computation.
+  // Then convert emitted thunks to a sequence of Commands. The resulting thunk
+  // added to the thunk sequence is a CommandBufferThunk. Thunks emitted from
+  // the command buffer computation are discarded.
+  DCHECK_EQ(instr->called_computations().size(), 1);
+  const HloComputation* command_buffer = instr->called_computations().front();
+  TF_ASSIGN_OR_RETURN(auto thunk_sequence, EmitHloComputation(command_buffer));
+
+  // Maybe serialize all commands in a sequence by forcing barriers
+  // between all recorded commands. This guarantees that we execute
+  // all device operations in the exact same order as a thunk
+  // sequence.
+  CommandExecutor::SynchronizationMode synchronization_mode;
+  auto mode = ir_emitter_context_->debug_options()
+                  .xla_gpu_command_buffer_scheduling_mode();
+  switch (mode) {
+    case DebugOptions::SERIALIZE:
+      synchronization_mode = CommandExecutor::SynchronizationMode::kSerialize;
+      break;
+    case DebugOptions::CONCURRENT:
+      synchronization_mode = CommandExecutor::SynchronizationMode::kConcurrent;
+      break;
+    case DebugOptions::LHS:
+      synchronization_mode = CommandExecutor::SynchronizationMode::kLHS;
+      break;
+    default:
+      return Internal("Unsupported command buffer scheduling mode: %d", mode);
+  }
+
+  bool enable_loop_unroll = ir_emitter_context_->debug_options()
+                                .xla_gpu_command_buffer_unroll_loops();
+  DebugOptions::CommandBufferUpdateMode update_mode =
+      ir_emitter_context_->debug_options().xla_gpu_command_buffer_update_mode();
+  TF_ASSIGN_OR_RETURN(
+      CommandExecutor cmd_executor,
+      ConvertToCommands(thunk_sequence, ConvertToCommandsOptions{
+                                            synchronization_mode,
+                                            enable_loop_unroll, update_mode}));
+
+  return GetThunkSequence(std::make_unique<CommandBufferThunk>(
+      std::move(cmd_executor),
+      Thunk::ThunkInfo::WithProfileAnnotation(
+          instr, ir_emitter_context_->GetNextThunkId()),
+      std::make_unique<SequentialThunk>(Thunk::ThunkInfo{},
+                                        std::move(thunk_sequence)),
+      ir_emitter_context_->debug_options()
+          .xla_enable_command_buffers_during_profiling(),
+      update_mode));
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConvolutionThunk(

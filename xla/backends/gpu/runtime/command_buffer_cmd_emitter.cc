@@ -62,8 +62,8 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/util.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/util.h"
 
 namespace xla::gpu {
 
@@ -428,6 +428,16 @@ static absl::Status AppendCommands(ConversionContext& ctx,
         ctx.extra_resources[thunk_index].push_back(
             ResourceUse::Read(cmd_sequence[next_thunk_index]->token()));
       }
+    }
+  }
+
+  // Convert thunk control dependencies to token resource dependency, where the
+  // predecessor has the token write, and control successor does the token read.
+  for (const std::unique_ptr<Thunk>& thunk : sequence) {
+    for (const Thunk* control_predecessor : thunk->control_predecessors()) {
+      ctx.extra_resources[thunk_to_index[control_predecessor]].push_back(
+          ResourceUse::Read(
+              cmd_sequence[thunk_to_index[thunk.get()]]->token()));
     }
   }
 

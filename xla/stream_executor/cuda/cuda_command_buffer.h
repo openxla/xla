@@ -156,8 +156,9 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
   absl::StatusOr<GraphNodeHandle> CreateEmptyNode(
       absl::Span<const GraphNodeHandle> dependencies) override;
 
-  absl::Status Trace(Stream* stream,
-                     absl::AnyInvocable<absl::Status()> function) override;
+  absl::StatusOr<std::vector<GraphNodeHandle>> CaptureInlineAndReturnSinks(
+      absl::Span<const GraphNodeHandle> dependencies, Stream* stream,
+      absl::AnyInvocable<absl::Status()> function) override;
 
   absl::Status LaunchGraph(Stream* stream) override;
 
