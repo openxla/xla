@@ -195,13 +195,6 @@ absl::StatusOr<std::string> CompileToSPIRV(
       module, gpu_version, debug_options, "", SPIRVTargetModuleLinker,
       default_target_triple, target_machine.get(), kDefaultInlineThreshold));
 
-  // Unlike other GPU backends like NVTPTX and AMDGPU, SPIRV does not have
-  // address inference pass in the TargetPassConfig. So we do it here
-  // explicitly.
-  llvm::legacy::PassManager pm;
-  pm.add(llvm::createInferAddressSpacesPass(0));
-  pm.run(*module);
-
   // The LLVM SPIR-V backend removes unused globals during its passes for
   // translation to SPIR-V. To prevent this, we create a fake use of those
   // globals with a minimal fake use function. We first create a global pointer
@@ -241,16 +234,7 @@ absl::StatusOr<std::string> CompileToSPIRV(
     ir_builder.CreateRet(load);
   }
 
-  std::string spirv_str;
-  std::string spirv_err_msg;
-  std::vector<std::string> spirv_options{default_target_triple.str()};
-  bool spirv_success = llvm::SPIRVTranslateModule(
-      module, spirv_str, spirv_err_msg, *spirv_extensions, spirv_options);
-  if (!spirv_success) {
-    return absl::AbortedError("Failed to translate LLVM module to SPIRV: " +
-                              spirv_err_msg);
-  }
-  return spirv_str;
+  return EmitModuleToSPIRV(module, target_machine.get());
 }
 
 }  // namespace xla::gpu::spirv
