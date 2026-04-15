@@ -220,12 +220,17 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   // Helpers for cross host transfers.
   absl::Duration cross_host_transfer_timeout_ = absl::Minutes(3);
 
-  void ScheduleSendsOnLocalDevice(
-      PjRtDevice* device,
+  struct CrossHostTransferSpec {
+    GlobalDeviceId src_global_device_id;
+    GlobalDeviceId dst_global_device_id;
+    tsl::RCReference<PjRtRawBuffer> raw_buffer;
+  };
+
+  void ScheduleTransfersOnLocalDevice(
+      LocalDeviceState* local_device_state, GlobalDeviceId device_id,
       tsl::AsyncValueRef<BufferSequencingEvent> transfer_event,
-      std::vector<tsl::RCReference<PjRtRawBuffer>> raw_buffers,
       std::vector<tsl::RCReference<tsl::AsyncValue>> transfer_dependency_avs,
-      std::vector<GlobalDeviceId> dst_global_device_ids);
+      std::vector<CrossHostTransferSpec> transfer_specs);
 
   struct PrepareReceiveBufferResult {
     std::unique_ptr<PjRtBuffer> buffer;

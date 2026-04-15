@@ -714,167 +714,187 @@ StreamExecutorGpuClient::CrossHostSendBuffers(
 
   // Schedule sends.
   for (auto& [device, send_idxs] : sends_by_device) {
+    GlobalDeviceId src_global_device_id = device->global_device_id();
+
     // Create a transfer event for transfers on this device.
     tsl::AsyncValueRef<BufferSequencingEvent> transfer_event =
         BufferSequencingEvent::Create(this->async_work_runner());
 
-    std::vector<tsl::RCReference<PjRtRawBuffer>> curr_raw_buffers;
-    curr_raw_buffers.reserve(send_idxs.size());
+    // Extract transfer dependencies, form transfer specs, and fulfill
+    // usage_event_promises.
     std::vector<tsl::RCReference<tsl::AsyncValue>> curr_transfer_dependency_avs;
-    std::vector<GlobalDeviceId> curr_dst_ids;
-    curr_dst_ids.reserve(send_idxs.size());
+    std::vector<CrossHostTransferSpec> transfer_specs;
+    transfer_specs.reserve(send_idxs.size());
 
     for (int idx : send_idxs) {
-      curr_raw_buffers.push_back(std::move(raw_buffers[idx]));
       for (tsl::RCReference<tsl::AsyncValue>& event :
            transfer_dependency_avs[idx]) {
         curr_transfer_dependency_avs.push_back(std::move(event));
       }
-      curr_dst_ids.push_back(dst_global_device_ids[idx]);
+      transfer_specs.push_back(CrossHostTransferSpec{
+          src_global_device_id, dst_global_device_ids[idx],
+          std::move(raw_buffers[idx])});
 
       usage_event_promises[idx]->Set(PjRtDeviceEventRef(transfer_event));
     }
 
-    ScheduleSendsOnLocalDevice(
-        device, std::move(transfer_event), std::move(curr_raw_buffers),
-        std::move(curr_transfer_dependency_avs), std::move(curr_dst_ids));
+    // Get the local_device_state and use it to schedule transfers. Fail
+    // transfers early if we cannot get the local_device_state.
+    absl::StatusOr<LocalDeviceState*> local_device_state =
+        tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
+            ->GetLocalDeviceState();
+    if (!local_device_state.ok()) {
+      SetEventAsError(transfer_event, local_device_state.status());
+      continue;
+    }
+
+    ScheduleTransfersOnLocalDevice(
+        *local_device_state, src_global_device_id, std::move(transfer_event),
+        std::move(curr_transfer_dependency_avs), std::move(transfer_specs));
   }
 
   return futures;
 }
 
-void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
-    PjRtDevice* device,
+void StreamExecutorGpuClient::ScheduleTransfersOnLocalDevice(
+    LocalDeviceState* local_device_state, GlobalDeviceId device_id,
     tsl::AsyncValueRef<BufferSequencingEvent> transfer_event,
-    std::vector<tsl::RCReference<PjRtRawBuffer>> raw_buffers,
     std::vector<tsl::RCReference<tsl::AsyncValue>> transfer_dependency_avs,
-    std::vector<GlobalDeviceId> dst_global_device_ids) {
-  // Get the local device state, transfer stream, and prepare the send
-  // buffers. We associate the group of sends with a single usage_event.
-  LocalDeviceState* local_device_state;
-  se::Stream* stream;
-  std::vector<PreparedTransfer> prepared_sends;
-  prepared_sends.reserve(raw_buffers.size());
-
+    std::vector<CrossHostTransferSpec> transfer_specs) {
   tsl::profiler::TraceMe trace([&] {
     return tsl::profiler::TraceMeEncode(
         absl::StrFormat(
-            "[%v] StreamExecutorGpuClient::ScheduleSendsOnLocalDevice",
-            device->local_device_id()),
-        {{"num_buffers", raw_buffers.size()}});
+            "[%v] StreamExecutorGpuClient::ScheduleTransfersOnLocalDevice",
+            local_device_state->local_device_id()),
+        {{"num_buffers", transfer_specs.size()}});
   });
 
-  auto setup_sends = [&]() -> absl::Status {
-    TF_ASSIGN_OR_RETURN(local_device_state, GetLocalDeviceState(device));
-    stream = local_device_state->GetDeviceToDeviceStream();
+  se::Stream* stream = local_device_state->GetDeviceToDeviceStream();
+  std::vector<PreparedTransfer> prepared_transfers;
+  prepared_transfers.reserve(transfer_specs.size());
+
+  auto prepare_transfers = [&]() -> absl::Status {
     gpu::GpuCollectives* gpu_collectives =
         gpu::GpuCollectives::Default(stream->parent()->GetPlatform()->Name());
 
     gpu::AcquiredCliquesMap acquired_cliques_map;
-    for (int i = 0; i < raw_buffers.size(); ++i) {
-      absl::StatusOr<PreparedTransfer> prepared_send =
+    for (int i = 0; i < transfer_specs.size(); ++i) {
+      bool is_sender = device_id == transfer_specs[i].src_global_device_id;
+      TF_ASSIGN_OR_RETURN(
+          PreparedTransfer prepared_transfer,
           PrepareTransfer(this, gpu_collectives, stream,
-                          device->global_device_id(), dst_global_device_ids[i],
-                          raw_buffers[i], acquired_cliques_map, transfer_event,
-                          /*is_sender=*/true);
+                          transfer_specs[i].src_global_device_id,
+                          transfer_specs[i].dst_global_device_id,
+                          std::move(transfer_specs[i].raw_buffer),
+                          acquired_cliques_map, transfer_event, is_sender));
 
-      if (!prepared_send.ok()) {
-        SetEventAsError(transfer_event, prepared_send.status());
-        return prepared_send.status();
-      }
-
-      prepared_sends.push_back(*std::move(prepared_send));
+      prepared_transfers.push_back(std::move(prepared_transfer));
     }
 
     return absl::OkStatus();
   };
 
-  if (absl::Status status = setup_sends(); !status.ok()) {
+  if (absl::Status status = prepare_transfers(); !status.ok()) {
+    FulfillDeviceEvent(this, local_device_state, stream, transfer_event,
+                       status);
     return;
   }
 
-  // Form the closure called for each group of sends.
-  auto launch_send_group = [](gpu::GpuCommunicator* gpu_communicator,
-                              absl::Span<PreparedTransfer> prepared_sends,
-                              se::Stream* stream) -> absl::Status {
-    for (PreparedTransfer& prepared_send : prepared_sends) {
-      // Launch the send.
+  // Form the closure called for each group of transfers.
+  auto launch_transfer_group =
+      [](gpu::GpuCommunicator* gpu_communicator,
+         absl::Span<PreparedTransfer> prepared_transfers,
+         se::Stream* stream) -> absl::Status {
+    for (PreparedTransfer& prepared_transfer : prepared_transfers) {
+      // Launch the transfer.
       auto mem = tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
-                     prepared_send.raw_buffer_.get())
+                     prepared_transfer.raw_buffer_.get())
                      ->device_buffer();
-      TF_RETURN_IF_ERROR(gpu_communicator->LaunchSend(
-          /*send_buffer=*/mem->mem(),
-          /*dtype=*/U8,
-          /*count=*/mem->mem().size(),
-          /*peer=*/RankId(1),
-          /*executor=*/gpu::GpuCollectives::On(*stream)));
+      if (prepared_transfer.is_sender_) {
+        TF_RETURN_IF_ERROR(gpu_communicator->LaunchSend(
+            /*send_buffer=*/mem->mem(),
+            /*dtype=*/U8,
+            /*count=*/mem->mem().size(),
+            /*peer=*/RankId(1),
+            /*executor=*/gpu::GpuCollectives::On(*stream)));
+      } else {
+        TF_RETURN_IF_ERROR(gpu_communicator->LaunchRecv(
+            /*send_buffer=*/mem->mem(),
+            /*dtype=*/U8,
+            /*count=*/mem->mem().size(),
+            /*peer=*/RankId(0),
+            /*executor=*/gpu::GpuCollectives::On(*stream)));
+      }
     }
     return absl::OkStatus();
   };
 
   // Form the closure to schedule on the device's execute thread.
-  auto execute_sends_fn = [this, local_device_state, stream,
-                           transfer_dependency_avs =
-                               std::move(transfer_dependency_avs),
-                           prepared_sends = std::move(prepared_sends),
-                           launch_send_group = std::move(launch_send_group),
-                           transfer_event =
-                               std::move(transfer_event)]() mutable {
-    // Wait for transfer dependencies.
-    if (auto status =
-            WaitForAsyncValueRefsOnStream(transfer_dependency_avs, stream);
-        !status.ok()) {
-      FulfillDeviceEvent(this, local_device_state, stream, transfer_event,
-                         status);
-      return;
-    }
-
-    // Group transfers by GPU clique.
-    absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>
-        grouped_sends = GroupTransfersByCliqueKey(std::move(prepared_sends));
-
-    // Transfers for a particular clique are executed as a group. This
-    // vector holds group futures for each clique_key in grouped_sends.
-    std::vector<Future<>> group_futures;
-    group_futures.reserve(grouped_sends.size());
-
-    for (auto& [clique_key, curr_sends] : grouped_sends) {
-      tsl::profiler::TraceMe trace([&k = clique_key] {
-        return tsl::profiler::TraceMeEncode("LaunchSend", {{"clique", k}});
-      });
-
-      // Get the communicator on which we will execute this group of
-      // transfers. We assume each clique key is associated with a unique
-      // communicator, so we just take the communicator of the first
-      // transfer_idx of this clique key.
-      gpu::GpuCommunicator* gpu_communicator =
-          curr_sends[0].clique_and_communicator_.second;
-
-      // Launch the group of transfers.
-      group_futures.push_back(gpu_communicator->GroupExecute(
-          [&launch_send_group, &curr_sends = curr_sends,
-           stream](gpu::GpuCommunicator* gpu_comm) -> absl::Status {
-            return launch_send_group(gpu_comm, absl::MakeSpan(curr_sends),
-                                     stream);
-          }));
-    }
-
-    // On a separate thread pool, await group futures and fulfill buffer
-    // sequencing events and promises.
-    Future<> all_sends_future = JoinFutures(group_futures);
-
-    all_sends_future.OnReady(
-        *async_work_runner(), [this, local_device_state, stream, transfer_event,
-                               grouped_sends = std::move(grouped_sends)](
-                                  const absl::Status& status) mutable {
-          // Add transfer_event onto the stream.
+  auto execute_transfers_fn =
+      [this, local_device_state, stream,
+       transfer_dependency_avs = std::move(transfer_dependency_avs),
+       prepared_transfers = std::move(prepared_transfers),
+       launch_transfer_group = std::move(launch_transfer_group),
+       transfer_event = std::move(transfer_event)]() mutable {
+        // Wait for transfer dependencies.
+        if (auto status =
+                WaitForAsyncValueRefsOnStream(transfer_dependency_avs, stream);
+            !status.ok()) {
           FulfillDeviceEvent(this, local_device_state, stream, transfer_event,
                              status);
-        });
-  };
+          return;
+        }
+
+        // Group transfers by GPU clique.
+        absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>
+            grouped_transfers =
+                GroupTransfersByCliqueKey(std::move(prepared_transfers));
+
+        // Transfers for a particular clique are executed as a group. This
+        // vector holds group futures for each clique_key in grouped_sends.
+        std::vector<Future<>> group_futures;
+        group_futures.reserve(grouped_transfers.size());
+
+        for (auto& [clique_key, curr_transfers] : grouped_transfers) {
+          tsl::profiler::TraceMe trace([&k = clique_key] {
+            return tsl::profiler::TraceMeEncode("LaunchTransfer",
+                                                {{"clique", k}});
+          });
+
+          // Get the communicator on which we will execute this group of
+          // transfers. We assume each clique key is associated with a unique
+          // communicator, so we just take the communicator of the first
+          // transfer_idx of this clique key.
+          gpu::GpuCommunicator* gpu_communicator =
+              curr_transfers[0].clique_and_communicator_.second;
+
+          // Launch the group of transfers.
+          group_futures.push_back(gpu_communicator->GroupExecute(
+              [&launch_transfer_group, &curr_transfers = curr_transfers,
+               stream](gpu::GpuCommunicator* gpu_comm) -> absl::Status {
+                return launch_transfer_group(
+                    gpu_comm, absl::MakeSpan(curr_transfers), stream);
+              }));
+        }
+
+        // On a separate thread pool, await group futures and fulfill buffer
+        // sequencing events and promises.
+        Future<> all_transfers_future = JoinFutures(group_futures);
+
+        all_transfers_future.OnReady(
+            *async_work_runner(),
+            [this, local_device_state, stream, transfer_event,
+             grouped_transfers = std::move(grouped_transfers)](
+                const absl::Status& status) mutable {
+              // Add transfer_event onto the stream.
+              FulfillDeviceEvent(this, local_device_state, stream,
+                                 transfer_event, status);
+            });
+      };
 
   // Schedule transfers on the execute thread.
-  local_device_state->execute_thread()->Schedule(std::move(execute_sends_fn));
+  local_device_state->execute_thread()->Schedule(
+      std::move(execute_transfers_fn));
 }
 
 // Prepare a receive buffer on a given device for receiving data as part of a
