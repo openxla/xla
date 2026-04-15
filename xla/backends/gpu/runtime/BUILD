@@ -274,6 +274,27 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "command_executor_test",
+    srcs = ["command_executor_test.cc"],
+    deps = [
+        ":command",
+        ":command_executor",
+        "//xla:shape_util",
+        "//xla/runtime:buffer_use",
+        "//xla/runtime:execution_graph",
+        "//xla/runtime:resource_use",
+        "//xla/service:buffer_assignment",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
 xla_test(
     name = "command_buffer_cmd_test",
     srcs = ["command_buffer_cmd_test.cc"],
