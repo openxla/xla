@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
+#include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -289,9 +290,9 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<LaunchCmd>("AddI32", absl::MakeConstSpan(args), args_access,
-                              LaunchDimensions(1, 4),
-                              /*shmem_bytes=*/0);
+  commands.Append(KernelThunk::MakeKernelThunk(
+      "AddI32", absl::MakeConstSpan(args), args_access, LaunchDimensions(1, 4),
+      /*shmem_bytes=*/0));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -363,9 +364,9 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<LaunchCmd>("AddI32", absl::MakeConstSpan(args), args_access,
-                              LaunchDimensions(1, 4),
-                              /*shmem_bytes=*/0);
+  commands.Append(KernelThunk::MakeKernelThunk(
+      "AddI32", absl::MakeConstSpan(args), args_access, LaunchDimensions(1, 4),
+      /*shmem_bytes=*/0));
   commands.back()->set_priority(se::StreamPriority::Highest);
 
   TF_ASSERT_OK_AND_ASSIGN(

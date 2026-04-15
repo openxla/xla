@@ -306,6 +306,7 @@ xla_test(
         ":command_state",
         ":copy_thunk",
         ":device_to_device_copy_thunk",
+        ":kernel_thunk",
         ":memset_thunk",
         ":shaped_slice",
         ":thunk",
