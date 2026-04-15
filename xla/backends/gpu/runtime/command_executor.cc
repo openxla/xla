@@ -270,33 +270,21 @@ absl::StatusOr<CommandExecutor> CommandExecutor::Create(
     TF_ASSIGN_OR_RETURN(execution_graph,
                         ExecutionGraph::Create<CommandOperation>(operations));
     VLOG(3) << "Execution graph: " << execution_graph->ToString();
-    if (VLOG_IS_ON(3)) {
-      if (ExecutionGraph::Renderer* renderer = ExecutionGraph::GetRenderer()) {
-        absl::InlinedVector<const ExecutionGraph::Operation*, 32>
-            operations_ptrs;
-        operations_ptrs.reserve(operations.size());
-        for (const auto& operation : operations) {
-          operations_ptrs.push_back(&operation);
-        }
-        auto graph_as_string = renderer->GenerateGraphAsString(operations_ptrs);
-        auto url = renderer->PublishGraph(graph_as_string);
-        if (url.ok()) {
-          VLOG(3) << "Rendered execution graph: " << *url;
-        }
-      }
-    }
   }
 
   return CommandExecutor(synchronization_mode, std::move(commands),
-                         std::move(execution_graph));
+                         std::move(execution_graph),
+                         std::move(extra_resources));
 }
 
-CommandExecutor::CommandExecutor(SynchronizationMode synchronization_mode,
-                                 CommandSequence commands,
-                                 std::optional<ExecutionGraph> execution_graph)
+CommandExecutor::CommandExecutor(
+    SynchronizationMode synchronization_mode, CommandSequence commands,
+    std::optional<ExecutionGraph> execution_graph,
+    std::vector<Command::ResourceUses> extra_resources)
     : synchronization_mode_(synchronization_mode),
       commands_(std::move(commands)),
-      execution_graph_(std::move(execution_graph)) {
+      execution_graph_(std::move(execution_graph)),
+      extra_resources_(std::move(extra_resources)) {
   // Walk all nested commands and collect all buffers used by this executor.
   commands_.Walk([&](const Command* command) {
     Command::BufferUses buffer_uses = command->buffer_uses();
@@ -742,6 +730,31 @@ const absl::flat_hash_set<BufferUse>& CommandExecutor::buffer_uses() const {
 absl::Span<const BufferAllocation::Index> CommandExecutor::allocs_indices()
     const {
   return allocs_indices_;
+}
+
+absl::StatusOr<std::string> CommandExecutor::RenderExecutionGraph() const {
+  ExecutionGraph::Renderer* renderer = ExecutionGraph::GetRenderer();
+  if (renderer == nullptr) {
+    return Unimplemented("No execution graph renderer registered");
+  }
+
+  if (synchronization_mode_ == SynchronizationMode::kSerialize) {
+    return Unimplemented(
+        "Execution graph rendering is only supported for "
+        "concurrent/LHS synchronization mode");
+  }
+
+  TF_ASSIGN_OR_RETURN(auto operations,
+                      CreateCommandOperations(commands_, synchronization_mode_,
+                                              extra_resources_));
+  absl::InlinedVector<const ExecutionGraph::Operation*, 32> operations_ptrs;
+  operations_ptrs.reserve(operations.size());
+  for (const auto& operation : operations) {
+    operations_ptrs.push_back(&operation);
+  }
+
+  auto graph_as_string = renderer->GenerateGraphAsString(operations_ptrs);
+  return renderer->PublishGraph(graph_as_string);
 }
 
 }  // namespace xla::gpu

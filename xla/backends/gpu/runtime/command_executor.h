@@ -178,6 +178,10 @@ class CommandExecutor {
     return support_loop_unroll;
   }
 
+  // Renders the execution graph using default renderer. Returns url of the
+  // rendered graph, or an error if rendering failed.
+  absl::StatusOr<std::string> RenderExecutionGraph() const;
+
   // Recursively traverses all commands in the executor and nested executors.
   absl::Status Walk(
       absl::FunctionRef<absl::Status(const Command*)> callback) const {
@@ -216,7 +220,8 @@ class CommandExecutor {
 
   CommandExecutor(SynchronizationMode synchronization_mode,
                   CommandSequence commands,
-                  std::optional<ExecutionGraph> execution_graph);
+                  std::optional<ExecutionGraph> execution_graph,
+                  std::vector<Command::ResourceUses> extra_resources);
 
   absl::Status CheckCommandBufferState(
       se::CommandBuffer* command_buffer,
@@ -251,6 +256,11 @@ class CommandExecutor {
   // A mapping from command id to unique buffer allocations indices referenced
   // by the command (sorted by the buffer allocation index).
   std::vector<std::vector<BufferAllocation::Index>> cmd_allocs_indices_;
+
+  // Per-command extra resource uses passed at construction time (e.g.
+  // control-dependency tokens from the emitter). Stored so that
+  // RenderExecutionGraph() can reproduce the same dependency graph.
+  std::vector<Command::ResourceUses> extra_resources_;
 };
 
 using CommandBufferCmdExecutor ABSL_DEPRECATE_AND_INLINE() = CommandExecutor;

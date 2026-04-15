@@ -54,12 +54,12 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/platform.h"
 #include "tsl/profiler/lib/profiler_lock.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -436,6 +436,13 @@ ConvertThunksToCommandBuffer(
       !thunks_to_convert.empty()
           ? absl::StrCat("_", thunks_to_convert.front()->thunk_info().thunk_id)
           : "");
+
+  if (VLOG_IS_ON(2)) {
+    auto graph = cmd_executor.RenderExecutionGraph();
+    if (graph.ok()) {
+      VLOG(2) << command_buffer_profile_annotation << " graph: " << *graph;
+    }
+  }
 
   Thunk::ThunkInfo thunk_info;
   thunk_info.profile_annotation = command_buffer_profile_annotation;
