@@ -52,7 +52,7 @@ limitations under the License.
 #if NCCL_VERSION_CODE >= 22800
 // Device initiated collective operations were added in NCCL 2.28.0.
 #include "third_party/nccl/nccl_device.h"  // IWYU pragma: keep
-#endif                                          // NCCL_VERSION_CODE >= 22800
+#endif                                     // NCCL_VERSION_CODE >= 22800
 
 namespace xla::gpu {
 
@@ -172,15 +172,7 @@ class NcclCommunicator : public GpuCommunicator {
 
   NcclCommunicator(se::StreamExecutor* stream_executor, ncclComm_t comm,
                    std::unique_ptr<tsl::Executor> executor,
-                   std::shared_ptr<CancellationToken> cancel)
-      : stream_executor_(stream_executor),
-        comm_(comm),
-        executor_(std::move(executor)),
-        cancel_(std::move(cancel)) {
-    VLOG(1) << absl::StreamFormat("[%d] Created NCCL communicator %s",
-                                  stream_executor_->device_ordinal(),
-                                  this->ToString());
-  }
+                   std::shared_ptr<CancellationToken> cancel);
 
   absl::Status GroupStart();
   absl::Status GroupEnd();
@@ -239,6 +231,9 @@ class NcclCommunicator : public GpuCommunicator {
                                 const SignalDesc& signal_desc,
                                 const Executor& executor) final;
 
+  // Queries NCCL for one-sided comm support. Called once at construction.
+  bool QuerySupportsOneSidedComm() const;
+
   // Polls the communicator until any pending non-blocking operations are "done"
   // or aborted.
   absl::Status PollUntilDone() const;
@@ -290,6 +285,9 @@ class NcclCommunicator : public GpuCommunicator {
 
   // Has comm_ been aborted?
   bool aborted_ = false;
+
+  // Cached result of querying NCCL for one-sided comm support.
+  bool supports_one_sided_comm_ = false;
 
   // Nesting level of current NCCL group
   int group_nesting_level_ = 0;

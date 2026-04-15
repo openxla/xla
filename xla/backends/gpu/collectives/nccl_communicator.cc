@@ -240,8 +240,22 @@ class NcclCommunicator::NcclRegisteredBufferHandle
 };
 
 //==-----------------------------------------------------------------------===//
-// NCCL Device Communicator
+// NCCL Communicator
 //==-----------------------------------------------------------------------===//
+
+NcclCommunicator::NcclCommunicator(se::StreamExecutor* stream_executor,
+                                   ncclComm_t comm,
+                                   std::unique_ptr<tsl::Executor> executor,
+                                   std::shared_ptr<CancellationToken> cancel)
+    : stream_executor_(stream_executor),
+      comm_(comm),
+      executor_(std::move(executor)),
+      cancel_(std::move(cancel)),
+      supports_one_sided_comm_(QuerySupportsOneSidedComm()) {
+  VLOG(1) << absl::StreamFormat("[%d] Created NCCL communicator %s",
+                                stream_executor_->device_ordinal(),
+                                this->ToString());
+}
 
 bool NcclCommunicator::SupportsDeviceComm() const {
 #if NCCL_VERSION_CODE >= 22800
@@ -252,6 +266,10 @@ bool NcclCommunicator::SupportsDeviceComm() const {
 }
 
 bool NcclCommunicator::SupportsOneSidedComm() const {
+  return supports_one_sided_comm_;
+}
+
+bool NcclCommunicator::QuerySupportsOneSidedComm() const {
 #if NCCL_VERSION_CODE >= 22907
   ncclCommProperties_t props = NCCL_COMM_PROPERTIES_INITIALIZER;
   if (ncclCommQueryProperties(comm_, &props) == ncclSuccess) {
@@ -277,18 +295,10 @@ NcclCommunicator::CreateDeviceComm(
 #endif  // NCCL_VERSION_CODE >= 22800
 }
 
-//==-----------------------------------------------------------------------===//
-// NCCL Symmetric Memory
-//==-----------------------------------------------------------------------===//
-
 absl::StatusOr<std::unique_ptr<SymmetricMemory>>
 NcclCommunicator::CreateSymmetricMemory(se::DeviceAddressBase addr) {
   return NcclSymmetricMemory::Create(comm_, addr);
 }
-
-//==-----------------------------------------------------------------------===//
-// NCCL Communicator
-//==-----------------------------------------------------------------------===//
 
 absl::StatusOr<std::unique_ptr<NcclCommunicator>> NcclCommunicator::Create(
     se::StreamExecutor* stream_executor,
@@ -757,7 +767,7 @@ absl::Status NcclCommunicator::LaunchAllGather(
 
 // If all buffers are contiguous returns a device address range that covers
 // all of them, otherwise returns an empty optional.
-static std::optional<se::DeviceAddressBase> IsContinguous(
+static std::optional<se::DeviceAddressBase> IsContiguous(
     absl::Span<const se::DeviceAddressBase> buffers) {
   if (buffers.empty()) {
     return std::nullopt;
@@ -794,8 +804,8 @@ absl::Status NcclCommunicator::LaunchAllToAll(
     absl::StrAppendFormat(out, "%p", buffer.opaque());
   };
 
-  auto send_contiguous = IsContinguous(send_buffers);
-  auto recv_contiguous = IsContinguous(recv_buffers);
+  auto send_contiguous = IsContiguous(send_buffers);
+  auto recv_contiguous = IsContiguous(recv_buffers);
 
   VLOG(3) << absl::StreamFormat(
       "[%d] Launch NCCL AllToAll operation; send_buffers=[%s]; "
