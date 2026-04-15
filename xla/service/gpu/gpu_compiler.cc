@@ -190,7 +190,6 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/all_gather_pad_ds_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/all_gather_permuted_ds_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/all_reduce_folder.h"
-#include "xla/hlo/transforms/simplifiers/broadcast_canonicalizer.h"
 #include "xla/hlo/transforms/simplifiers/conditional_canonicalizer.h"
 #include "xla/hlo/transforms/simplifiers/convert_mover.h"
 #include "xla/hlo/transforms/simplifiers/dot_merger.h"
@@ -1462,8 +1461,6 @@ absl::Status RunLayoutNormalizationPasses(
   // duplicate or NOPs, so remove them with algebraic simplification and CSE.
   layout_normalization_pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(
       algsimp_options, gpu_version);
-  // Layout normalization will create broadcasts that are not canonical.
-  layout_normalization_pipeline.AddPass<BroadcastCanonicalizer>();
   // Layout normalization will create scatters that are not simplified and
   // also have unsorted update_window_dims.
   layout_normalization_pipeline.AddPass<ScatterSimplifier>();
@@ -1940,7 +1937,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // Layout normalization will create scatters that are not simplified and
     // also have unsorted update_window_dims.
     pipeline.AddPass<ScatterSimplifier>();
-    pipeline.AddPass<BroadcastCanonicalizer>();
     pipeline.AddPass<ReductionDegenerateDimRemover>();
     pipeline.AddPass<ReductionLayoutNormalizer>();
     // Run Softmax fusion after layout normalization. We expect a default layout

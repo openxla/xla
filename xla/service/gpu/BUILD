@@ -1843,7 +1843,6 @@ cc_library(
         "//xla/hlo/transforms/simplifiers:all_gather_pad_ds_simplifier",
         "//xla/hlo/transforms/simplifiers:all_gather_permuted_ds_simplifier",
         "//xla/hlo/transforms/simplifiers:all_reduce_folder",
-        "//xla/hlo/transforms/simplifiers:broadcast_canonicalizer",
         "//xla/hlo/transforms/simplifiers:conditional_canonicalizer",
         "//xla/hlo/transforms/simplifiers:convert_mover",
         "//xla/hlo/transforms/simplifiers:dot_merger",
