@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/xla.pb.h"
@@ -68,9 +69,11 @@ class TritonFusionNumericsVerifierTest
 
  protected:
   std::unique_ptr<xla::HloModule> Module(absl::string_view hlo_text_template,
-                                         absl::string_view type) {
+                                         absl::string_view type,
+                                         int value = 0) {
     auto m = ParseAndReturnVerifiedModule(
-        absl::Substitute(hlo_text_template, type), GetModuleConfigForTest());
+        absl::Substitute(hlo_text_template, type, value),
+        GetModuleConfigForTest());
     EXPECT_OK(m);
     return std::move(m.value());
   }
@@ -237,12 +240,15 @@ ENTRY main (p0: bf16[128,512], p1: bf16[256,512], p2: bf16[512,512]) -> bf16[384
         "num_warps":"8",
         "output_tiles":[{"sizes":["128","256"]}],
         "num_ctas":1,
-        "num_stages":4,
+        "num_stages":$1,
         "is_tma_allowed":false}}}
 }
 )";
+  se::Platform* platform = PlatformUtil::GetDefaultPlatform().value();
+  int num_stages = platform->id() == se::rocm::kROCmPlatformId ? 2 : 4;
   auto module = Module(kMultiOutputFusionHloText,
-                       primitive_util::LowercasePrimitiveTypeName(GetParam()));
+                       primitive_util::LowercasePrimitiveTypeName(GetParam()),
+                       num_stages);
 
   EXPECT_NE(TritonFusion(*module), nullptr);
   auto verifier = TritonFusionNumericsVerifier(
