@@ -545,7 +545,7 @@ absl::StatusOr<PreparedTransfer> PrepareTransfer(
   // Form the GPU clique key.
   // TODO(asrao, mwhittaker): Supply correct incarnations when creating the
   // clique key.
-  gpu::GpuCliqueKey clique_key = gpu::GpuCliqueKey(
+  const gpu::GpuCliqueKey clique_key = gpu::GpuCliqueKey(
       /*devices=*/{src_device, dst_device},
       /*num_local_participants=*/1);
 
@@ -693,7 +693,7 @@ StreamExecutorGpuClient::CrossHostSendBuffers(
                 [&](tsl::RCReference<CommonPjRtRawBuffer> buf_raw_buffer,
                     std::vector<tsl::RCReference<tsl::AsyncValue>>
                         buf_definition_events) mutable
-                    -> absl::StatusOr<PjRtDeviceEventRef> {
+                -> absl::StatusOr<PjRtDeviceEventRef> {
                   // Keep raw_buffer alive until the usage_event completes,
                   // preventing the allocation from being freed while the
                   // send is in-flight.
@@ -713,8 +713,8 @@ StreamExecutorGpuClient::CrossHostSendBuffers(
   }
 
   // Schedule sends.
-  for (auto& [device, send_idxs] : sends_by_device) {
-    GlobalDeviceId src_global_device_id = device->global_device_id();
+  for (const auto& [device, send_idxs] : sends_by_device) {
+    const GlobalDeviceId src_global_device_id = device->global_device_id();
 
     // Create a transfer event for transfers on this device.
     tsl::AsyncValueRef<BufferSequencingEvent> transfer_event =
@@ -779,7 +779,8 @@ void StreamExecutorGpuClient::ScheduleTransfersOnLocalDevice(
 
     gpu::AcquiredCliquesMap acquired_cliques_map;
     for (int i = 0; i < transfer_specs.size(); ++i) {
-      bool is_sender = device_id == transfer_specs[i].src_global_device_id;
+      const bool is_sender =
+          device_id == transfer_specs[i].src_global_device_id;
       TF_ASSIGN_OR_RETURN(
           PreparedTransfer prepared_transfer,
           PrepareTransfer(this, gpu_collectives, stream,
@@ -810,6 +811,11 @@ void StreamExecutorGpuClient::ScheduleTransfersOnLocalDevice(
       auto mem = tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
                      prepared_transfer.raw_buffer_.get())
                      ->device_buffer();
+
+      // We always set `peer` to RankId(1) if we are the sender, and RankId(0)
+      // if we are the receiver. This is because `PrepareTransfer()` always
+      // acquires a GPU clique where the sender is rank 0 and the receiver is
+      // rank 1.
       if (prepared_transfer.is_sender_) {
         TF_RETURN_IF_ERROR(gpu_communicator->LaunchSend(
             /*send_buffer=*/mem->mem(),
