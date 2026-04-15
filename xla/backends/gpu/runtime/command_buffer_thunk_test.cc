@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
+#include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/memset_thunk.h"
@@ -750,9 +751,10 @@ TEST(CommandBufferThunkTest, GemmCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<GemmCmd>(config.value(), slice_lhs, slice_rhs, slice_out,
-                            slice_workspace,
-                            /*deterministic=*/true);
+  commands.Append(
+      std::make_unique<GemmThunk>(Thunk::ThunkInfo{}, config.value(), slice_lhs,
+                                  slice_rhs, slice_out, slice_workspace,
+                                  /*deterministic=*/true));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -873,9 +875,9 @@ TEST(CommandBufferThunkTest, ChildGemmCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence child_commands;
-  child_commands.Emplace<GemmCmd>(config.value(), slice_lhs, slice_rhs,
-                                  slice_out, slice_workspace,
-                                  /*deterministic=*/true);
+  child_commands.Append(std::make_unique<GemmThunk>(
+      Thunk::ThunkInfo{}, config.value(), slice_lhs, slice_rhs, slice_out,
+      slice_workspace, /*deterministic=*/true));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor child_executor,
       CommandExecutor::Create(std::move(child_commands), serialize));
@@ -1011,9 +1013,9 @@ TEST(CommandBufferThunkTest, DISABLED_DynamicSliceFusionCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence embed_commands;
-  embed_commands.Emplace<GemmCmd>(config.value(), fake_slice_lhs, slice_rhs,
-                                  slice_out, slice_workspace,
-                                  /*deterministic=*/true);
+  embed_commands.Append(std::make_unique<GemmThunk>(
+      Thunk::ThunkInfo{}, config.value(), fake_slice_lhs, slice_rhs, slice_out,
+      slice_workspace, /*deterministic=*/true));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor embed_executor,
       CommandExecutor::Create(std::move(embed_commands), serialize));

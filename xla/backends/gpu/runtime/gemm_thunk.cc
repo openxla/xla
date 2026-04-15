@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/runtime/traced_command.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -45,7 +46,8 @@ GemmThunk::GemmThunk(ThunkInfo thunk_info, GemmConfig config,
                      const BufferAllocation::Slice& output_buffer,
                      std::optional<const BufferAllocation::Slice> workspace,
                      bool deterministic)
-    : Thunk(Kind::kGemm, thunk_info),
+    : TracedCommand(CommandType::kGemmCmd, Thunk::Kind::kGemm,
+                    std::move(thunk_info)),
       config_(std::move(config)),
       lhs_buffer_(lhs_buffer),
       rhs_buffer_(rhs_buffer),

@@ -132,13 +132,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const GemmThunk& thunk) {
-  return std::make_unique<GemmCmd>(thunk.config(), thunk.lhs_buffer(),
-                                   thunk.rhs_buffer(), thunk.output_buffer(),
-                                   thunk.workspace(), thunk.deterministic());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const CublasLtMatmulThunk& thunk) {
   if (!thunk.workspace().has_value()) {
     return absl::InternalError(
@@ -315,8 +308,14 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kKernel:
       cmd_sequence.Append(static_cast<KernelThunk*>(&thunk));
       return absl::OkStatus();
-    case Thunk::Kind::kGemm:
-      return append(Convert<GemmThunk>(thunk));
+    case Thunk::Kind::kGemm: {
+      auto& gemm_thunk = static_cast<GemmThunk&>(thunk);
+      cmd_sequence.Append(std::make_unique<GemmThunk>(
+          gemm_thunk.thunk_info(), gemm_thunk.config(), gemm_thunk.lhs_buffer(),
+          gemm_thunk.rhs_buffer(), gemm_thunk.output_buffer(),
+          gemm_thunk.workspace(), gemm_thunk.deterministic()));
+      return absl::OkStatus();
+    }
     case Thunk::Kind::kCublasLtMatmul:
       return append(Convert<CublasLtMatmulThunk>(thunk));
     case Thunk::Kind::kMemzero:

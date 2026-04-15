@@ -72,7 +72,6 @@ limitations under the License.
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
-#include "xla/debug_options_flags.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_state.h"
@@ -92,7 +91,6 @@ limitations under the License.
 #include "xla/service/custom_call_status_internal.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/shape_util.h"
@@ -225,126 +223,6 @@ static absl::StatusOr<const se::CommandBuffer::Command*> Handle(
   }
 
   return Internal("Invalid record action");
-}
-
-//===----------------------------------------------------------------------===//
-// TracedCommandBuffer
-//===----------------------------------------------------------------------===//
-
-TracedCommandBuffer::TracedCommandBuffer(const Command* trace_cmd,
-                                         Command::BufferUses buffers,
-                                         int64_t capacity)
-    : trace_cmd_(trace_cmd), capacity_(capacity), entries_(capacity) {
-  CHECK_GT(capacity, 0) << "capacity must be larger than 0";  // NOLINT
-  // Collect unique buffer allocation indices in a set first and convert to
-  // vector as flat hash set iteration has measurable overheads.
-  absl::flat_hash_set<BufferAllocation::Index> allocs_indices;
-  for (auto& buffer : buffers) {
-    allocs_indices.insert(buffer.slice().index());
-  }
-  allocs_indices_.assign(allocs_indices.begin(), allocs_indices.end());
-}
-
-absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
-    const BufferAllocations* buffer_allocation, se::StreamExecutor* executor,
-    se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace,
-    se::StreamPriority priority) {
-  // Collect memory addresses for relevant allocations.
-  absl::InlinedVector<se::DeviceAddressBase, 4> allocs;
-  allocs.reserve(allocs_indices_.size());
-  for (auto& index : allocs_indices_) {
-    allocs.emplace_back(buffer_allocation->GetDeviceAddress(index));
-  }
-
-  // Moves entry at `i` position to front and moves entries in `[0, i)` range
-  // one element to the right. Returns reference to the first entry.
-  auto shift_right = [&](size_t i) -> Entry& {
-    if (i == 0) {
-      return entries_[0];
-    }
-
-    Entry entry = std::move(entries_[i]);
-    do {
-      entries_[i] = std::move(entries_[i - 1]);
-    } while (--i > 0);
-
-    return entries_[0] = std::move(entry);
-  };
-
-  for (size_t i = 0; i < capacity_; ++i) {
-    // Found entry for a given allocations, move it to front and return a
-    // pointer to cached command buffer.
-    if (ABSL_PREDICT_TRUE(absl::c_equal(entries_[i].recorded_allocs, allocs) &&
-                          entries_[i].command_buffer)) {
-      VLOG(6) << "Command buffer trace cache hit for command "
-              << trace_cmd_->ToString(0);
-      return shift_right(i).command_buffer.get();
-    }
-
-    // Create a new entry by calling a user-provided tracing function, move it
-    // to front and return a pointer to cached command buffer.
-    if (entries_[i].command_buffer == nullptr) {
-      TF_ASSIGN_OR_RETURN(
-          entries_[i].command_buffer,
-          se::TraceCommandBufferFactory::Create(executor, stream, trace));
-      entries_[i].recorded_allocs.assign(allocs.begin(), allocs.end());
-      if (priority != se::StreamPriority::Default) {
-        TF_RETURN_IF_ERROR(entries_[i].command_buffer->SetPriority(priority));
-      }
-      VLOG(6) << "Command buffer trace cache create new item for command "
-              << trace_cmd_->ToString(0);
-      return shift_right(i).command_buffer.get();
-    }
-  }
-
-  // Create a new entry by calling a user-provided tracing function, replace
-  // the last entry with it, move it to front and return a pointer to cached
-  // command buffer.
-  TF_ASSIGN_OR_RETURN(
-      entries_[capacity_ - 1].command_buffer,
-      se::TraceCommandBufferFactory::Create(executor, stream, trace));
-  entries_[capacity_ - 1].recorded_allocs.assign(allocs.begin(), allocs.end());
-  VLOG(6) << "Command buffer trace cache does replacement for command "
-          << trace_cmd_->ToString(0);
-  return shift_right(capacity_ - 1).command_buffer.get();
-}
-
-//===----------------------------------------------------------------------===//
-// TracedCommandBufferCmd
-//===----------------------------------------------------------------------===//
-
-TracedCommandBufferCmd::TracedCommandBufferCmd(CommandType cmd_type)
-    : Command(cmd_type) {}
-
-absl::StatusOr<const se::CommandBuffer::Command*>
-TracedCommandBufferCmd::RecordTracedCommand(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer,
-    absl::FunctionRef<absl::Status(se::Stream*)> trace) {
-  auto traced_cmd = record_params.state.GetOrCreate<TracedCommandBuffer>(
-      this, command_buffer, [&] {
-        const auto& debug_options = xla::GetDebugOptionsFromFlags();
-        return std::make_unique<TracedCommandBuffer>(
-            this, buffer_uses(),
-            debug_options.xla_cmd_buffer_trace_cache_size());
-      });
-
-  TF_ASSIGN_OR_RETURN(
-      auto nested_cmd,
-      traced_cmd->GetOrTraceCommandBuffer(
-          execute_params.buffer_allocations, execute_params.stream->parent(),
-          execute_params.command_buffer_trace_stream, trace, priority()));
-
-  VLOG(5) << "Record traced command into command buffer: " << command_buffer;
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateChildCommand(*nested_cmd, dependencies);
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateChildCommand(command, *nested_cmd);
-      });
 }
 
 //===----------------------------------------------------------------------===//
@@ -797,79 +675,11 @@ absl::Status WhileCmd::WalkNested(
 }
 
 //===----------------------------------------------------------------------===//
-// GemmCmd
-//===----------------------------------------------------------------------===//
-
-GemmCmd::GemmCmd(GemmConfig config, const BufferAllocation::Slice& lhs_buffer,
-                 const BufferAllocation::Slice& rhs_buffer,
-                 const BufferAllocation::Slice& output_buffer,
-                 std::optional<BufferAllocation::Slice> workspace,
-                 bool deterministic)
-    : TracedCommandBufferCmd(CommandType::kGemmCmd),
-      config_(std::move(config)),
-      lhs_buffer_(lhs_buffer),
-      rhs_buffer_(rhs_buffer),
-      output_buffer_(output_buffer),
-      workspace_(workspace),
-      deterministic_(deterministic) {}
-
-absl::Status GemmCmd::Initialize(const Thunk::InitializeParams& params) {
-  if (!params.stream->parent()->AsBlas()) {
-    return absl::InternalError("Failed to initialize BLAS support for GemmCmd");
-  }
-  return absl::OkStatus();
-}
-
-absl::StatusOr<const se::CommandBuffer::Command*> GemmCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  se::DeviceAddressBase lhs =
-      execute_params.buffer_allocations->GetDeviceAddress(lhs_buffer_);
-  se::DeviceAddressBase rhs =
-      execute_params.buffer_allocations->GetDeviceAddress(rhs_buffer_);
-  se::DeviceAddressBase out =
-      execute_params.buffer_allocations->GetDeviceAddress(output_buffer_);
-
-  se::DeviceAddressBase workspace(/*opaque=*/nullptr, /*size=*/0);
-  if (workspace_.has_value()) {
-    workspace =
-        execute_params.buffer_allocations->GetDeviceAddress(workspace_.value());
-  }
-
-  VLOG(5) << "GemmCmd: deterministic=" << deterministic_;
-  VLOG(5) << "  Lhs: " << lhs_buffer_ << " (" << lhs.opaque() << ")";
-  VLOG(5) << "  Lhs: " << rhs_buffer_ << " (" << rhs.opaque() << ")";
-  VLOG(5) << "  Out: " << output_buffer_ << " (" << out.opaque() << ")";
-  VLOG(5) << "  Workspace: " << workspace.opaque();
-
-  return RecordTracedCommand(execute_params, record_params,
-                             std::move(record_action), command_buffer,
-                             [&](se::Stream* stream) {
-                               return RunGemm(config_, lhs, rhs, out, workspace,
-                                              deterministic_, stream);
-                             });
-}
-
-Command::BufferUses GemmCmd::buffer_uses() const {
-  Command::BufferUses buffer_uses = {
-      BufferUse::Read(lhs_buffer_, config_.lhs_layout.ToShape()),
-      BufferUse::Read(rhs_buffer_, config_.rhs_layout.ToShape()),
-      BufferUse::Write(output_buffer_, config_.output_layout.ToShape()),
-  };
-  if (workspace_.has_value()) {
-    buffer_uses.push_back(BufferUse::Write(
-        *workspace_, ShapeUtil::MakeShape(S8, {workspace_->size()})));
-  }
-  return buffer_uses;
-}
-
-//===----------------------------------------------------------------------===//
 // CublasLtCmd
 //===----------------------------------------------------------------------===//
 
 CublasLtCmd::CublasLtCmd(const CublasLtMatmulThunk& matmul_thunk)
-    : TracedCommandBufferCmd(CommandType::kCublasLtCmd), thunk_(matmul_thunk) {}
+    : TracedCommand(CommandType::kCublasLtCmd), thunk_(matmul_thunk) {}
 
 absl::Status CublasLtCmd::Initialize(const Thunk::InitializeParams& params) {
   return thunk_.Initialize(params);
@@ -966,7 +776,7 @@ Command::BufferUses CublasLtCmd::buffer_uses() const {
 
 CuDnnCmd::CuDnnCmd(absl::Span<const ShapedSlice> args,
                    const std::shared_ptr<se::dnn::LazyDnnGraph> graph)
-    : TracedCommandBufferCmd(CommandType::kCuDnnCmd),
+    : TracedCommand(CommandType::kCuDnnCmd),
       args_(args.cbegin(), args.cend()),
       graph_(graph) {}
 

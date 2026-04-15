@@ -216,7 +216,7 @@ class Command : public Thunk {
   virtual bool requires_initialization() const { return false; }
 
   // Returns true if this command is implemented via CUDA stream activity
-  // tracing (i.e. a subclass of TracedCommandBufferCmd).
+  // tracing (i.e. a subclass of TracedCommand).
   virtual bool IsTracedCommand() const { return false; }
 
   // Returns true if command supports loop unroll, the while loop can be
