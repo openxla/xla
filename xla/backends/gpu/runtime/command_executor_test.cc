@@ -40,7 +40,7 @@ namespace {
 class FakeCmd : public Command {
  public:
   explicit FakeCmd(Command::BufferUses uses = {})
-      : Command(CommandType::kEmptyCmd), uses_(std::move(uses)) {}
+      : Command(CommandType::kUnknownCmd), uses_(std::move(uses)) {}
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
