@@ -401,6 +401,12 @@ struct Options {
   // data to prefetch.
   bool enable_window_prefetch = false;
 
+  // Max number of window prefetch operands allowed.
+  int64_t window_prefetch_max_operands = 1024;
+
+  // Min span size for window prefetch operands allowed.
+  int64_t window_prefetch_min_span_size = 4096;
+
   // The mode to use for window prefetching.
   WindowPrefetchMode window_prefetch_mode = WindowPrefetchMode::kWindowExposure;
 

@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_stream_executor_client.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/pjrt/raw_buffer.h"
+#include "xla/pjrt/se_raw_buffer.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
@@ -220,10 +221,11 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   absl::Duration cross_host_transfer_timeout_ = absl::Minutes(3);
 
   void ScheduleSendsOnLocalDevice(
-      PjRtDevice* device, std::vector<PjRtBuffer*> buffers,
-      std::vector<GlobalDeviceId> dst_global_device_ids,
-      std::vector<CrossHostTransferKey> transfer_keys,
-      std::vector<std::shared_ptr<Promise<>>> promises);
+      PjRtDevice* device,
+      tsl::AsyncValueRef<BufferSequencingEvent> transfer_event,
+      std::vector<tsl::RCReference<PjRtRawBuffer>> raw_buffers,
+      std::vector<tsl::RCReference<tsl::AsyncValue>> transfer_dependency_avs,
+      std::vector<GlobalDeviceId> dst_global_device_ids);
 
   struct PrepareReceiveBufferResult {
     std::unique_ptr<PjRtBuffer> buffer;

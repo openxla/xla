@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 
 #include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/tsl/platform/status_macros.h"  // gloop
 #include "xla/runtime/work_cluster.h"
@@ -33,6 +34,22 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+
+absl::StatusOr<LaunchDimensions> LaunchDimensions::FromWorkDimensions(
+    const WorkDimensions& work_dimensions) {
+  if (work_dimensions.num_work_clusters != NumWorkClusters{}) {
+    return absl::InvalidArgumentError(
+        "Provided work_dimensions can't be represented as LaunchDimensions.");
+  }
+  return LaunchDimensions{
+      se::BlockDim{work_dimensions.num_work_groups.x,
+                   work_dimensions.num_work_groups.y,
+                   work_dimensions.num_work_groups.z},
+      se::ThreadDim{work_dimensions.num_work_items.x,
+                    work_dimensions.num_work_items.y,
+                    work_dimensions.num_work_items.z},
+  };
+}
 
 WorkDimensions LaunchDimensions::AsWorkDimensions() const {
   return WorkDimensions{

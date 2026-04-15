@@ -1163,11 +1163,11 @@ xla_cc_binary(
 )
 
 xla_test(
-    name = "autotuner_main_tap_test",
+    name = "autotuner_main_test",
     srcs = ["autotuner_main.cc"],
-    args = ["--hlo_file=$(location autotuner_main.hlo)"],
+    args = ["--hlo_file=$(location test.hlo)"],
     backends = ["gpu"],
-    data = ["autotuner_main.hlo"],
+    data = ["test.hlo"],
     fail_if_no_test_linked = False,  # NOLINT=not based on gtest and thus doesn't support --gunit_fail_if_no_test_linked.
     fail_if_no_test_selected = False,  # NOLINT=not based on gtest and thus doesn't support --gunit_fail_if_no_test_selected.
     shuffle_tests = False,  # CANNOT_SHUFFLE_TESTS=not based on gtest and thus doesn't support shuffling.

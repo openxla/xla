@@ -4,6 +4,14 @@ load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@xla//third_party/rules_python/python:defs.bzl", "py_binary")
 load(
+    "//xla:native_test.bzl",
+    "native_test",
+)
+load(
+    "//xla:platform_native_rule.default.bzl",
+    "platform_native_rule",
+)
+load(
     "//xla/tests:build_defs.bzl",
     "prepare_gpu_backend_data",
 )
@@ -65,6 +73,7 @@ def lit_test_suite(
         exec_properties = {},
         tags = [],
         gpu_suffix = "",
+        native_test_rule = native_test,
         **kwargs):
     """Creates one lit test per source file and a test suite that bundles them.
 
@@ -98,6 +107,8 @@ def lit_test_suite(
         requirement to run on a GPU.
       gpu_suffix: string. A suffix derived from the gpu name that can be added
         to make (file) names unique.
+      native_test_rule: callable. A rule or macro to create the test target,
+        instead of `native_test`.
       **kwargs: additional keyword arguments to pass to all generated rules.
 
     See https://llvm.org/docs/CommandGuide/lit.html for details on lit
@@ -132,6 +143,7 @@ def lit_test_suite(
             hermetic_cuda_data_dir = hermetic_cuda_data_dir,
             exec_properties = exec_properties,
             gpu_suffix = gpu_suffix,
+            native_test_rule = native_test_rule,
             **kwargs
         )
 
@@ -314,8 +326,10 @@ def lit_device_test(
             "XLA_TEST_DEVICE": device,
             "XLA_TEST_MODIFIERS": ",".join(modifiers),
         })
+        this_backend_tags = ["xla_%s" % backend, "xla_device_%s" % backend] + tags + backend_tags.get(backend, [])
+        test_name = "%s_%s" % (name, backend)
         lit_test_suite(
-            name = "%s_%s" % (name, backend),
+            name = test_name,
             srcs = srcs,
             cfg = cfg,
             tools = tools,
@@ -328,8 +342,9 @@ def lit_device_test(
             tags_override = tags_override,
             hermetic_cuda_data_dir = hermetic_cuda_data_dir,
             exec_properties = exec_properties,
-            tags = ["xla_%s" % backend] + tags + backend_tags.get(backend, []),
+            tags = this_backend_tags,
             gpu_suffix = "_%s" % (backend),
+            native_test_rule = platform_native_rule(name = test_name, backend = backend),
             **kwargs
         )
 
@@ -363,6 +378,7 @@ def lit_test(
         hermetic_cuda_data_dir = None,
         exec_properties = {},
         gpu_suffix = "",
+        native_test_rule = native_test,
         **kwargs):
     """Runs a single test file with LLVM's lit tool.
 
@@ -393,6 +409,8 @@ def lit_test(
         requirement to run on a GPU.
       gpu_suffix: string. A suffix derived from the gpu name that can be added
         to make (file) names unique.
+      native_test_rule: callable. A rule or macro to create the test target,
+        instead of `native_test`.
       **kwargs: additional keyword arguments to pass to all generated rules.
 
     See https://llvm.org/docs/CommandGuide/lit.html for details on lit
@@ -470,7 +488,7 @@ def lit_test(
         )
         test_file = output_file
 
-    native_test(
+    native_test_rule(
         name = name,
         src = lit_name,
         args = [
@@ -497,37 +515,6 @@ def lit_test(
         exec_properties = exec_properties,
         **kwargs
     )
-
-def _shared_impl(ctx):
-    out = ctx.attr.out
-    if not out:
-        out = ctx.attr.name
-    output = ctx.actions.declare_file(out)
-    ctx.actions.symlink(
-        target_file = ctx.executable.src,
-        output = output,
-        is_executable = True,
-    )
-
-    runfiles = ctx.runfiles(files = ctx.files.data)
-
-    # For Bazel 4.x support. Drop when Bazel 4.x is no longer supported
-    to_merge = ([d[DefaultInfo].default_runfiles for d in ctx.attr.data] +
-                [ctx.attr.src[DefaultInfo].default_runfiles])
-    if hasattr(runfiles, "merge_all"):
-        runfiles = runfiles.merge_all(to_merge)
-    else:
-        for m in to_merge:
-            runfiles = runfiles.merge(m)
-    return DefaultInfo(
-        executable = output,
-        files = depset([output]),
-        runfiles = runfiles,
-    )
-
-def _native_test_impl(ctx):
-    default_info = _shared_impl(ctx)
-    return [default_info, testing.TestEnvironment(ctx.attr.env)]
 
 def _tools_on_path_impl(ctx):
     runfiles = ctx.runfiles()
@@ -592,25 +579,3 @@ _tools_on_path = rule(
 # We have to manually set "env" on the test rule because the builtin one is only
 # available in native rules. See
 # https://docs.bazel.build/versions/main/be/common-definitions.html#test.env
-_TEST_ATTRS = {
-    "src": attr.label(
-        executable = True,
-        allow_files = True,
-        mandatory = True,
-        cfg = "target",
-    ),
-    "data": attr.label_list(allow_files = True),
-    # "out" is attr.string instead of attr.output, so that it is select()'able.
-    "out": attr.string(),
-    "env": attr.string_dict(
-        doc = "Mirrors the common env attribute that otherwise is" +
-              " only available on native rules. See" +
-              " https://docs.bazel.build/versions/main/be/common-definitions.html#test.env",
-    ),
-}
-
-native_test = rule(
-    implementation = _native_test_impl,
-    attrs = _TEST_ATTRS,
-    test = True,
-)

@@ -503,7 +503,7 @@ ENTRY entry {
   const HloFusionInstruction* fusion1 = Cast<HloFusionInstruction>(
       module1_and_metadata.computation->FusionInstruction());
   EXPECT_THAT(
-      TritonWrapper("test_fn", fusion1, se::GpuComputeCapability{cc},
+      TritonWrapper("test_fn", *fusion1, se::GpuComputeCapability{cc},
                     device_info, module1_and_metadata.block_level_parameters,
                     target_triple, data_layout, llvm_ctx, mlir_context_),
       absl_testing::StatusIs(
@@ -519,7 +519,7 @@ ENTRY entry {
 
   TF_ASSERT_OK_AND_ASSIGN(
       const auto result,
-      TritonWrapper("test_fn", fusion2, se::GpuComputeCapability{cc},
+      TritonWrapper("test_fn", *fusion2, se::GpuComputeCapability{cc},
                     device_info, module2_and_metadata.block_level_parameters,
                     target_triple, data_layout, llvm_ctx, mlir_context_));
   // Use optin shared memory which is > shared_memory_per_block.
@@ -895,7 +895,7 @@ ENTRY entry {
   const HloFusionInstruction* fusion1 = Cast<HloFusionInstruction>(
       module1_and_metadata.computation->FusionInstruction());
   EXPECT_THAT(
-      TritonWrapper("test_fn", fusion1, se::GpuComputeCapability{cc},
+      TritonWrapper("test_fn", *fusion1, se::GpuComputeCapability{cc},
                     device_info, module1_and_metadata.block_level_parameters,
                     target_triple, data_layout, llvm_ctx, mlir_context_),
       absl_testing::StatusIs(tsl::error::RESOURCE_EXHAUSTED,
@@ -910,7 +910,7 @@ ENTRY entry {
       module1_and_metadata.computation->FusionInstruction());
 
   TF_EXPECT_OK(
-      TritonWrapper("test_fn", fusion2, se::GpuComputeCapability{cc},
+      TritonWrapper("test_fn", *fusion2, se::GpuComputeCapability{cc},
                     device_info, module2_and_metadata.block_level_parameters,
                     target_triple, data_layout, llvm_ctx, mlir_context_)
           .status());
@@ -2064,7 +2064,7 @@ ENTRY e {
 
   TF_ASSERT_OK_AND_ASSIGN(
       const auto result,
-      TritonWrapper("test_fn", triton_dot_fusion, GpuComputeCapability(),
+      TritonWrapper("test_fn", *triton_dot_fusion, GpuComputeCapability(),
                     dev_info,
                     optin_shmem_module_and_metadata.block_level_parameters,
                     target_triple, data_layout, llvm_ctx, mlir_context_));

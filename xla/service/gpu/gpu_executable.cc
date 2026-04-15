@@ -301,6 +301,12 @@ static absl::Status RunThunkPasses(const DebugOptions& debug_options,
 
 absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
     Params params) {
+  if (params.buffer_assignment_proto.has_value() &&
+      params.buffer_assignment != nullptr) {
+    return absl::InvalidArgumentError(
+        "Cannot set both buffer_assignment_proto and buffer_assignment.");
+  }
+
   int64_t next_idx = 0;
   if (params.mlir_allocations.has_value()) {
     next_idx = params.mlir_allocations->size();
@@ -345,7 +351,8 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
       std::move(params.output_info), params.enable_debug_info_manager,
       std::move(params.module_stats), std::move(thunk_sequence_proto),
       std::move(params.executable_abi_version),
-      std::move(params.cpu_target_machine_options)));
+      std::move(params.cpu_target_machine_options),
+      std::move(params.buffer_assignment_proto)));
 }
 
 // Implementation note: HLO profiling is always enabled for GPU executables,
@@ -365,7 +372,8 @@ GpuExecutable::GpuExecutable(
     bool enable_debug_info_manager, ModuleStats module_stats,
     absl::StatusOr<std::vector<ThunkProto>> thunk_sequence_proto,
     stream_executor::ExecutableAbiVersion executable_abi_version,
-    std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options)
+    std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options,
+    std::optional<BufferAssignmentProto> buffer_assignment_proto)
     : Executable(std::move(debug_module)),
       text_(std::move(asm_text)),
       binary_(std::move(binary)),
@@ -380,6 +388,7 @@ GpuExecutable::GpuExecutable(
           mlir_allocations, buffer_assignment.get(), thunk_pass_allocations)),
       allocations_(std::move(mlir_allocations)),
       buffer_assignment_(std::move(buffer_assignment)),
+      buffer_assignment_proto_(std::move(buffer_assignment_proto)),
       thunk_pass_allocations_(std::move(thunk_pass_allocations)),
       alias_info_(std::move(alias_info)),
       debug_buffer_assignment_show_max_(
@@ -1628,6 +1637,13 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
   return absl::OkStatus();
 }
 
+std::optional<BufferAssignmentProto> GpuExecutable::buffer_assignment_proto()
+    const {
+  if (buffer_assignment_ != nullptr) {
+    return buffer_assignment_->ToProto();
+  }
+  return buffer_assignment_proto_;
+}
 absl::Status GpuExecutable::ExecuteThunks(
     const BufferAllocations& buffer_allocations,
     const ServiceExecutableRunOptions* run_options) {
@@ -1887,6 +1903,12 @@ absl::StatusOr<GpuExecutableProto> GpuExecutable::ToProto() const {
         allocation->ToProto());
   }
 
+  if (buffer_assignment_ != nullptr) {
+    *proto.mutable_buffer_assignment() = buffer_assignment_->ToProto();
+  } else if (buffer_assignment_proto_.has_value()) {
+    *proto.mutable_buffer_assignment() = buffer_assignment_proto_.value();
+  }
+
   if (has_module()) {
     *proto.mutable_hlo_module_with_config() = module().ToProtoWithConfig();
   }
@@ -1931,6 +1953,9 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
   if (proto.has_hlo_module_with_config()) {
     ASSIGN_OR_RETURN(params.debug_module, HloModule::CreateFromProtoWithConfig(
                                               proto.hlo_module_with_config()));
+  }
+  if (proto.has_buffer_assignment()) {
+    params.buffer_assignment_proto.emplace(proto.buffer_assignment());
   }
 
   params.mlir_allocations.emplace();

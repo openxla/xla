@@ -6055,16 +6055,17 @@ absl::Status SpmdPartitioner::ConvertUnreducedSharding(
         std::vector<HloSharding> subshardings = sharding.tuple_elements();
         bool should_convert = false;
         for (HloSharding& subsharding : subshardings) {
-          if (subsharding.UseNamedShardingLeaf() &&
-              !subsharding.named_sharding().unreduced_axes().empty()) {
-            TF_ASSIGN_OR_RETURN(subsharding, convert_unreduced_named_sharding(
-                                                 hlo, subsharding));
-            should_convert = true;
-          } else if (subsharding.IsUnreducedSubgroup()) {
-            TF_ASSIGN_OR_RETURN(
-                subsharding,
-                convert_unreduced_subgroup_sharding(hlo, subsharding));
-            should_convert = true;
+          if (subsharding.IsUnreducedSubgroup()) {
+            if (subsharding.UseNamedShardingLeaf()) {
+              TF_ASSIGN_OR_RETURN(subsharding, convert_unreduced_named_sharding(
+                                                   hlo, subsharding));
+            } else {
+              TF_ASSIGN_OR_RETURN(
+                  subsharding,
+                  convert_unreduced_subgroup_sharding(hlo, subsharding));
+
+              should_convert = true;
+            }
           } else if (subsharding.IsUnreduced()) {
             subsharding = convert_unreduced_sharding(hlo);
             should_convert = true;
@@ -6074,16 +6075,18 @@ absl::Status SpmdPartitioner::ConvertUnreducedSharding(
           hlo->set_sharding(HloSharding::Tuple(hlo->shape(), subshardings));
         }
       } else {
-        if (sharding.UseNamedShardingLeaf() &&
-            !sharding.named_sharding().unreduced_axes().empty()) {
-          TF_ASSIGN_OR_RETURN(HloSharding new_sharding,
-                              convert_unreduced_named_sharding(hlo, sharding));
-          hlo->set_sharding(new_sharding);
-        } else if (sharding.IsUnreducedSubgroup()) {
-          TF_ASSIGN_OR_RETURN(
-              HloSharding new_sharding,
-              convert_unreduced_subgroup_sharding(hlo, sharding));
-          hlo->set_sharding(new_sharding);
+        if (sharding.IsUnreducedSubgroup()) {
+          if (sharding.UseNamedShardingLeaf()) {
+            TF_ASSIGN_OR_RETURN(
+                HloSharding new_sharding,
+                convert_unreduced_named_sharding(hlo, sharding));
+            hlo->set_sharding(new_sharding);
+          } else {
+            TF_ASSIGN_OR_RETURN(
+                HloSharding new_sharding,
+                convert_unreduced_subgroup_sharding(hlo, sharding));
+            hlo->set_sharding(new_sharding);
+          }
         } else if (sharding.IsUnreduced()) {
           hlo->set_sharding(convert_unreduced_sharding(hlo));
         }

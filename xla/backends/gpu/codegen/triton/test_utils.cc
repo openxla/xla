@@ -102,7 +102,8 @@ absl::Status CreateTritonIrAndFileCheck(
     const HloComputation& computation,
     const BlockLevelParameters& block_level_parameters,
     absl::string_view filecheck_pattern) {
-  auto* fusion = Cast<HloFusionInstruction>(computation.FusionInstruction());
+  HloFusionInstruction* fusion =
+      Cast<HloFusionInstruction>(computation.FusionInstruction());
 
   mlir::MLIRContext mlir_context;
   bool use_experimental_tiling =
@@ -113,7 +114,7 @@ absl::Status CreateTritonIrAndFileCheck(
   TF_ASSIGN_OR_RETURN(
       mlir::OwningOpRef<mlir::ModuleOp> triton_module,
       CreateTritonModule(
-          "triton_fn", fusion, TestGpuDeviceInfo::RTXA6000DeviceInfo(),
+          "triton_fn", *fusion, TestGpuDeviceInfo::RTXA6000DeviceInfo(),
           block_level_parameters, mlir_context, use_experimental_tiling));
 
   std::string out;

@@ -10057,6 +10057,7 @@ entry {
   options.op_span_size_fn =
       [&](HloInstruction* original_hlo, HloInstruction* cloned_hlo,
           int64_t operand_index) -> int64_t { return 32; };
+  options.window_prefetch_min_span_size = 2;
   AssignMemorySpace(module.get(), std::move(options),
                     /*max_prefetch_interval=*/10,
                     /*min_prefetch_interval=*/0);
@@ -10128,6 +10129,7 @@ entry {
   Options options = DefaultMemorySpaceOptions();
   options.enable_window_prefetch = true;
   options.op_span_size_fn = op_span_size_fn;
+  options.window_prefetch_min_span_size = 2;
   options.reserved_scoped_memory_fn = reserved_scoped_memory_fn;
   AssignMemorySpace(module.get(), std::move(options),
                     /*max_prefetch_interval=*/10,

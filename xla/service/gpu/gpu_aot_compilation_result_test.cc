@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal_util.h"
+#include "xla/pjrt/compiled_memory_stats.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.h"
@@ -57,6 +58,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/util/split_proto/split_proto_reader.h"
 
@@ -146,6 +148,17 @@ class GpuAotCompilationResultTest : public ::testing::Test {
         params.executable_abi_version,
         stream_executor::ExecutableAbiVersion::FromDeviceDescription(
             device_description_));
+
+    params.buffer_assignment_proto =
+        tsl::proto_testing::ParseTextProtoOrDie<BufferAssignmentProto>(R"pb(
+          buffer_allocations { size: 1024 }
+          logical_buffers { size: 1024 }
+          heap_simulator_traces {
+            events { kind: ALLOC }
+            events { kind: FREE }
+          }
+        )pb");
+
     ASSIGN_OR_RETURN(std::unique_ptr<GpuExecutable> executable,
                      GpuExecutable::Create(std::move(params)));
     return executable->ToProto();
@@ -249,6 +262,20 @@ TEST_F(GpuAotCompilationResultTest, LoadExecutable) {
       ->mutable_hlo_module()
       ->clear_id();
   EXPECT_THAT(executable_proto, EqualsProto(reference_executable));
+}
+
+TEST_F(GpuAotCompilationResultTest, GetCompiledMemoryStats) {
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto reference_executable,
+                       CreateGpuExecutableProto());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuAotCompilationResult> result,
+      GpuAotCompilationResult::FromProto(reference_executable));
+
+  ASSERT_OK_AND_ASSIGN(CompiledMemoryStats memory_stats,
+                       result->GetCompiledMemoryStats());
+  EXPECT_EQ(memory_stats.peak_memory_in_bytes, 1024);
+  EXPECT_EQ(memory_stats.serialized_buffer_assignment,
+            reference_executable.buffer_assignment().SerializeAsString());
 }
 
 }  // namespace

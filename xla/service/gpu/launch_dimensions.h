@@ -78,6 +78,8 @@ class LaunchDimensions {
                         thread_counts_per_block_.z, "}");
   }
 
+  static absl::StatusOr<LaunchDimensions> FromWorkDimensions(
+      const WorkDimensions& work_dimensions);
   WorkDimensions AsWorkDimensions() const;
 
   LaunchDimensionsProto ToProto() const;

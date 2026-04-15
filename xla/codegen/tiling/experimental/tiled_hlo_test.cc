@@ -46,6 +46,7 @@ namespace xla::gpu::experimental {
 namespace {
 
 using ::mlir::MLIRContext;
+using ::testing::Contains;
 using ::testing::Eq;
 using ::testing::Pair;
 using ::testing::Pointee;
@@ -94,61 +95,6 @@ TEST_F(TiledHloTest, TestPrinting) {
   )"));
 }
 
-TEST_F(TiledHloTest, TestReduceWithRegionPrinting) {
-  HloInstruction* reduce = ParseAndGetRoot(R"(
-    HloModule m
-
-    max {
-      x = f32[] parameter(0)
-      y = f32[] parameter(1)
-      ROOT maximum = f32[] maximum(x, y)
-    }
-
-    ENTRY e {
-      p0 = f32[2,97]{1,0} parameter(0)
-      constant = f32[] constant(-inf)
-      ROOT reduce = f32[2]{0} reduce(p0, constant), dimensions={1}, to_apply=max
-    }
-  )");
-
-  auto tiling_space_reduce = TilingSpace::Create(
-      *HloFusionAdaptor::ForInstruction(reduce), &mlir_context_);
-  auto tiled_reduce = std::make_unique<TiledHloInstruction>(
-      reduce, GetTestTile(*tiling_space_reduce, reduce->shape().dimensions()));
-  ASSERT_OK_AND_ASSIGN(
-      Tiles operands_tiles,
-      PropagateTileToInput(
-          *tiling_space_reduce, *reduce,
-          GetTestTile(*tiling_space_reduce, reduce->shape().dimensions()), 0));
-
-  TiledHloInstruction::Region region;
-  for (const auto& [operand, tile] :
-       llvm::zip(reduce->operands(), operands_tiles)) {
-    region.push_back(std::make_unique<TiledHloInstruction>(operand, tile));
-  }
-  tiled_reduce->AddRegion(std::move(region));
-
-  EXPECT_THAT(*tiled_reduce, MatchString(R"(
-    hlo: %reduce = f32[2]{0} reduce(%p0, %constant), dimensions={1}, to_apply=%max
-    tile: (tid_0, tid_1)
-      -> offsets [tid_0 * ts_0]
-         sizes [ts_0]
-         strides [1]
-         upper bounds [2]
-    region #0 {
-      hlo: %p0 = f32[2,97]{1,0} parameter(0)
-      tile: (tid_0, tid_1)
-        -> offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1]
-           strides [1, 1] upper bounds [2, 97]
-      hlo: %constant = f32[] constant(-inf)
-      tile: (tid_0, tid_1)
-        -> offsets [] sizes [] strides [] upper bounds []
-    }
-  )"));
-}
-
-using ::testing::Contains;
-
 MATCHER_P2(IsHloWithOperands, opcode, operand_opcodes,
            "Check if HLO has given opcode and operands with given opcodes") {
   const TiledHloInstruction& hlo = *arg;
@@ -174,13 +120,10 @@ class TileAnalysisTest : public HloHardwareIndependentTestBase {
   }
 
   TiledHloComputation ParseAndTile(absl::string_view hlo_string,
-                                   absl::Span<const int64_t> tile_sizes = {}) {
+                                   absl::Span<const int64_t> tile_sizes) {
     HloInstruction* root = ParseAndGetRoot(hlo_string);
     auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
     auto tiling_space = TilingSpace::Create(*fusion_adaptor, &mlir_context_);
-    if (!tile_sizes.empty()) {
-      tiling_space->AssignTileSizes(tile_sizes);
-    }
     auto tiled_computation_or =
         TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space));
     CHECK(std::holds_alternative<TiledHloComputation>(tiled_computation_or));
@@ -191,8 +134,43 @@ class TileAnalysisTest : public HloHardwareIndependentTestBase {
   std::unique_ptr<VerifiedHloModule> module_;
 };
 
-TEST_F(TileAnalysisTest, SimpleNormalizationDiamondIsSupported) {
-  const TiledHloComputation tiled_computation = ParseAndTile(R"(
+TEST_F(TileAnalysisTest, SingleTileReduce) {
+  const TiledHloComputation tiled_computation = ParseAndTile(R"hlo(
+    max {
+      x = f32[] parameter(0)
+      y = f32[] parameter(1)
+      ROOT maximum = f32[] maximum(x, y)
+    }
+
+    ENTRY e {
+      p0 = f32[2,97]{1,0} parameter(0)
+      constant = f32[] constant(-inf)
+      ROOT reduce = f32[2]{0} reduce(p0, constant), dimensions={1}, to_apply=max
+    })hlo",
+                                                             {4, 100});
+
+  EXPECT_THAT(tiled_computation, MatchString(R"(
+Dimensions:
+0 type: parallel size: 2 dim ID:0 hlo: %reduce = f32[2]{0} reduce(%p0, %constant), dimensions={1}, to_apply=%max
+1 type: sequential size: 97 dim ID:1 hlo: %reduce = f32[2]{0} reduce(%p0, %constant), dimensions={1}, to_apply=%max
+Root tiles:
+0 root tile:  offsets [tid_0 * ts_0] sizes [ts_0] strides [1] upper bounds [2]
+
+Tiled HLO:
+  p0.tile_0 = parameter()  offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1] strides [1, 1] upper bounds [2, 97]
+  constant.tile_0 = constant()  offsets [] sizes [] strides [] upper bounds []
+  reduce.tile_0 = reduce(p0.tile_0, constant.tile_0)  offsets [tid_0 * ts_0] sizes [ts_0] strides [1] upper bounds [2]
+  )"));
+
+  EXPECT_THAT(
+      tiled_computation.tiled_hlo_instructions(),
+      Contains(IsHloWithOperands(
+          HloOpcode::kReduce, std::vector<HloOpcode>{HloOpcode::kParameter,
+                                                     HloOpcode::kConstant})));
+}
+
+TEST_F(TileAnalysisTest, SimpleNormalizationDiamond) {
+  const TiledHloComputation tiled_computation = ParseAndTile(R"hlo(
     max {
       p1 = f32[] parameter(1)
       p0 = f32[] parameter(0)
@@ -210,7 +188,8 @@ TEST_F(TileAnalysisTest, SimpleNormalizationDiamondIsSupported) {
     ENTRY main {
       p0 = f32[2,97]{1,0} parameter(0)
       ROOT fusion = f32[2,97]{1,0} fusion(p0), kind=kLoop, calls=fusion
-    })");
+    })hlo",
+                                                             {8, 128, 128});
 
   EXPECT_THAT(tiled_computation, MatchString(R"(
     Dimensions:
@@ -219,30 +198,24 @@ TEST_F(TileAnalysisTest, SimpleNormalizationDiamondIsSupported) {
     1 type: parallel size: 97 dim ID:1
       hlo: %subtract = f32[2,97]{1,0} subtract(%p0.1, %broadcast)
     2 type: sequential size: 97 dim ID:1
-      hlo: %reduce = f32[2]{0} reduce(%p0.1, %constant), dimensions={1},
-                     to_apply=%max
-
+      hlo: %reduce = f32[2]{0} reduce(%p0.1, %constant), dimensions={1}, to_apply=%max
     Root tiles:
-    0 root tile:  offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1]
-                  strides [1, 1] upper bounds [2, 97]
+    0 root tile:
+      offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1] strides [1, 1] upper bounds [2, 97]
 
     Tiled HLO:
-      p0.2.tile_0 = parameter() offsets [tid_0 * ts_0, tid_1 * ts_1]
-        sizes [ts_0, ts_1] strides [1, 1] upper bounds [2, 97]
+      p0.2.tile_0 = parameter()
+        offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1] strides [1, 1] upper bounds [2, 97]
+      p0.2.tile_1 = parameter()
+        offsets [tid_0 * ts_0, tid_2 * ts_2] sizes [ts_0, ts_2] strides [1, 1] upper bounds [2, 97]
+      constant.tile_0 = constant()
+        offsets [] sizes [] strides [] upper bounds []
       reduce.tile_0 = reduce(p0.2.tile_1, constant.tile_0)
         offsets [tid_0 * ts_0] sizes [ts_0] strides [1] upper bounds [2]
-        region #0 {
-          p0.2.tile_1 = parameter() offsets [tid_0 * ts_0, tid_2 * ts_2]
-            sizes [ts_0, ts_2] strides [1, 1] upper bounds [2, 97]
-          constant.tile_0 = constant() offsets [] sizes [] strides []
-            upper bounds []
-        }
       broadcast.tile_0 = broadcast(reduce.tile_0)
-        offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1]
-        strides [1, 1] upper bounds [2, 97]
+        offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1] strides [1, 1] upper bounds [2, 97]
       subtract.tile_0 = subtract(p0.2.tile_0, broadcast.tile_0)
-        offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1]
-        strides [1, 1] upper bounds [2, 97]
+        offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1] strides [1, 1] upper bounds [2, 97]
   )"));
 
   EXPECT_THAT(tiled_computation.tiled_hlo_instructions(),
@@ -257,7 +230,8 @@ TEST_F(TileAnalysisTest, SimpleNormalizationDiamondIsSupported) {
 }
 
 TEST_F(TileAnalysisTest, ConcatenateIsSupported) {
-  const TiledHloComputation tiled_computation = ParseAndTile(R"(
+  const TiledHloComputation tiled_computation = ParseAndTile(
+      R"hlo(
     concatenate {
       p0 = bf16[6] parameter(0)
       p1 = bf16[6] parameter(1)
@@ -271,7 +245,8 @@ TEST_F(TileAnalysisTest, ConcatenateIsSupported) {
       p2 = bf16[6] parameter(2)
       ROOT fusion = bf16[18] fusion(p0, p1, p2),
         kind=kCustom, calls=concatenate
-    })");
+    })hlo",
+      {3});
 
   EXPECT_THAT(tiled_computation, MatchString(R"(
     Dimensions:
@@ -304,8 +279,9 @@ TEST_F(TileAnalysisTest, ConcatenateIsSupported) {
                   std::vector<HloOpcode>(3, HloOpcode::kParameter))));
 }
 
-TEST_F(TileAnalysisTest, DotIsSupported) {
-  const TiledHloComputation tiled_computation = ParseAndTile(R"(
+TEST_F(TileAnalysisTest, Dot) {
+  const TiledHloComputation tiled_computation = ParseAndTile(
+      R"hlo(
     fusion {
       p0 = f32[4,8] parameter(0)
       p1 = f32[8,16] parameter(1)
@@ -317,34 +293,29 @@ TEST_F(TileAnalysisTest, DotIsSupported) {
       p0 = f32[4,8] parameter(0)
       p1 = f32[8,16] parameter(1)
       ROOT fusion = f32[4,16] fusion(p0, p1), kind=kLoop, calls=fusion
-    })");
+    })hlo",
+      {1, 2, 4});
 
   EXPECT_THAT(tiled_computation, MatchString(R"(
     Dimensions:
     0 type: parallel size: 4 dim ID:0
-      hlo: %dot = f32[4,16]{1,0} dot(%p0, %p1), lhs_contracting_dims={1},
-                  rhs_contracting_dims={0}
+      hlo: %dot = f32[4,16]{1,0} dot(%p0, %p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     1 type: parallel size: 16 dim ID:1
-      hlo: %dot = f32[4,16]{1,0} dot(%p0, %p1), lhs_contracting_dims={1},
-                  rhs_contracting_dims={0}
+      hlo: %dot = f32[4,16]{1,0} dot(%p0, %p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     2 type: sequential size: 8 dim ID:2
-      hlo: %dot = f32[4,16]{1,0} dot(%p0, %p1), lhs_contracting_dims={1},
-                  rhs_contracting_dims={0}
-
+      hlo: %dot = f32[4,16]{1,0} dot(%p0, %p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     Root tiles:
-    0 root tile:  offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1]
-                  strides [1, 1] upper bounds [4, 16]
+    0 root tile:  offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1] strides [1, 1] upper bounds [4, 16]
 
     Tiled HLO:
       dot.tile_0 = dot(p0.1.tile_0, p1.1.tile_0)
-        offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1]
-        strides [1, 1] upper bounds [4, 16]
-        region #0 {
-          p0.1.tile_0 = parameter() offsets [tid_0 * ts_0, tid_2 * ts_2]
-            sizes [ts_0, ts_2] strides [1, 1] upper bounds [4, 8]
-          p1.1.tile_0 = parameter() offsets [tid_2 * ts_2, tid_1 * ts_1]
-            sizes [ts_2, ts_1] strides [1, 1] upper bounds [8, 16]
-        }
+        offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1] strides [1, 1] upper bounds [4, 16]
+      region #0 {
+        p0.1.tile_0 = parameter()
+          offsets [tid_0 * ts_0, tid_2 * ts_2] sizes [ts_0, ts_2] strides [1, 1] upper bounds [4, 8]
+        p1.1.tile_0 = parameter()
+          offsets [tid_2 * ts_2, tid_1 * ts_1] sizes [ts_2, ts_1] strides [1, 1] upper bounds [8, 16]
+      }
   )"));
 
   EXPECT_THAT(
@@ -353,8 +324,9 @@ TEST_F(TileAnalysisTest, DotIsSupported) {
           HloOpcode::kDot, std::vector<HloOpcode>(2, HloOpcode::kParameter))));
 }
 
-TEST_F(TileAnalysisTest, DotIsSupportedConcreteTileSizes) {
-  const TiledHloComputation tiled_computation = ParseAndTile(R"(
+TEST_F(TileAnalysisTest, DotWithFullContractionDimTile) {
+  const TiledHloComputation tiled_computation = ParseAndTile(
+      R"hlo(
     fusion {
       p0 = f32[4,8] parameter(0)
       p1 = f32[8,16] parameter(1)
@@ -366,35 +338,30 @@ TEST_F(TileAnalysisTest, DotIsSupportedConcreteTileSizes) {
       p0 = f32[4,8] parameter(0)
       p1 = f32[8,16] parameter(1)
       ROOT fusion = f32[4,16] fusion(p0, p1), kind=kLoop, calls=fusion
-    })",
-                                                             {2, 4, 8});
+    })hlo",
+      {32, 32, 32});
 
   EXPECT_THAT(tiled_computation, MatchString(R"(
     Dimensions:
-    0 type: parallel size: 4 tile size: 2 dim ID:0
-      hlo: %dot = f32[4,16]{1,0} dot(%p0, %p1), lhs_contracting_dims={1},
-                  rhs_contracting_dims={0}
-    1 type: parallel size: 16 tile size: 4 dim ID:1
-      hlo: %dot = f32[4,16]{1,0} dot(%p0, %p1), lhs_contracting_dims={1},
-                  rhs_contracting_dims={0}
-    2 type: sequential size: 8 tile size: 8 dim ID:2
-      hlo: %dot = f32[4,16]{1,0} dot(%p0, %p1), lhs_contracting_dims={1},
-                  rhs_contracting_dims={0}
-
+    0 type: parallel size: 4 dim ID:0
+      hlo: %dot = f32[4,16]{1,0} dot(%p0, %p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    1 type: parallel size: 16 dim ID:1
+      hlo: %dot = f32[4,16]{1,0} dot(%p0, %p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    2 type: sequential size: 8 dim ID:2
+      hlo: %dot = f32[4,16]{1,0} dot(%p0, %p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     Root tiles:
-    0 root tile:  offsets [tid_0 * 2, tid_1 * 4] sizes [2, 4]
-                  strides [1, 1] upper bounds [4, 16]
+    0 root tile:
+      offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1] strides [1, 1] upper bounds [4, 16]
 
     Tiled HLO:
       dot.tile_0 = dot(p0.1.tile_0, p1.1.tile_0)
-        offsets [tid_0 * 2, tid_1 * 4] sizes [2, 4]
-        strides [1, 1] upper bounds [4, 16]
-        region #0 {
-          p0.1.tile_0 = parameter() offsets [tid_0 * 2, tid_2 * 8]
-            sizes [2, 8] strides [1, 1] upper bounds [4, 8]
-          p1.1.tile_0 = parameter() offsets [tid_2 * 8, tid_1 * 4]
-            sizes [8, 4] strides [1, 1] upper bounds [8, 16]
-        }
+        offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1] strides [1, 1] upper bounds [4, 16]
+      region #0 {
+        p0.1.tile_0 = parameter()
+          offsets [tid_0 * ts_0, tid_2 * ts_2] sizes [ts_0, ts_2] strides [1, 1] upper bounds [4, 8]
+        p1.1.tile_0 = parameter()
+          offsets [tid_2 * ts_2, tid_1 * ts_1] sizes [ts_2, ts_1] strides [1, 1] upper bounds [8, 16]
+      }
   )"));
 
   EXPECT_THAT(
@@ -403,8 +370,8 @@ TEST_F(TileAnalysisTest, DotIsSupportedConcreteTileSizes) {
           HloOpcode::kDot, std::vector<HloOpcode>(2, HloOpcode::kParameter))));
 }
 
-TEST_F(TileAnalysisTest, ScaledDotIsSupported) {
-  const TiledHloComputation tiled_computation = ParseAndTile(R"(
+TEST_F(TileAnalysisTest, ScaledDot) {
+  const TiledHloComputation tiled_computation = ParseAndTile(R"hlo(
     fusion {
       lhs = f8e4m3fn[128,64] parameter(0)
       rhs = f8e4m3fn[64,128] parameter(1)
@@ -421,44 +388,41 @@ TEST_F(TileAnalysisTest, ScaledDotIsSupported) {
       rhs_scale = f8e8m0fnu[2,128] parameter(3)
       ROOT fusion = f32[128,128] fusion(lhs, rhs, lhs_scale, rhs_scale),
         kind=kLoop, calls=fusion
-    })");
+    })hlo",
+                                                             {2, 4, 8});
 
   EXPECT_THAT(tiled_computation, MatchString(R"(
     Dimensions:
     0 type: parallel size: 128 dim ID:0
-      hlo: %dot = f32[128,128]{1,0}
-                  scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
-                  lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      hlo: %dot = f32[128,128]{1,0} scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
     1 type: parallel size: 128 dim ID:1
-      hlo: %dot = f32[128,128]{1,0}
-                  scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
-                  lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      hlo: %dot = f32[128,128]{1,0} scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
     2 type: sequential size: 64 dim ID:2
-      hlo: %dot = f32[128,128]{1,0}
-                  scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
-                  lhs_contracting_dims={1}, rhs_contracting_dims={0}
-
+      hlo: %dot = f32[128,128]{1,0} scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
     Root tiles:
-    0 root tile:  offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1]
-                  strides [1, 1] upper bounds [128, 128]
+    0 root tile:  offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1] strides [1, 1] upper bounds [128, 128]
 
     Tiled HLO:
       dot.tile_0 = scaled-dot(lhs.1.tile_0, rhs.1.tile_0, lhs_scale.1.tile_0, rhs_scale.1.tile_0)
-        offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1]
-        strides [1, 1] upper bounds [128, 128]
-        region #0 {
-          lhs.1.tile_0 = parameter() offsets [tid_0 * ts_0, tid_2 * ts_2]
-            sizes [ts_0, ts_2] strides [1, 1] upper bounds [128, 64]
-          rhs.1.tile_0 = parameter() offsets [tid_2 * ts_2, tid_1 * ts_1]
-            sizes [ts_2, ts_1] strides [1, 1] upper bounds [64, 128]
-          lhs_scale.1.tile_0 = parameter() offsets [tid_0 * ts_0, (tid_2 * ts_2) floordiv 32]
-            sizes [ts_0, (tid_2 * ts_2 + ts_2 - 1) floordiv 32 - (tid_2 * ts_2) floordiv 32 + 1]
-            strides [1, 1] upper bounds [128, 2]
-          rhs_scale.1.tile_0 = parameter() offsets [(tid_2 * ts_2) floordiv 32, tid_1 * ts_1]
-            sizes [(tid_2 * ts_2 + ts_2 - 1) floordiv 32 - (tid_2 * ts_2) floordiv 32 + 1, ts_1]
-            strides [1, 1] upper bounds [2, 128]
-        }
-    )"));
+        offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1] strides [1, 1] upper bounds [128, 128]
+      region #0 {
+        lhs.1.tile_0 = parameter()
+          offsets [tid_0 * ts_0, tid_2 * ts_2] sizes [ts_0, ts_2] strides [1, 1] upper bounds [128, 64]
+        rhs.1.tile_0 = parameter()
+          offsets [tid_2 * ts_2, tid_1 * ts_1] sizes [ts_2, ts_1] strides [1, 1] upper bounds [64, 128]
+        lhs_scale.1.tile_0 = parameter()
+          offsets [tid_0 * ts_0, (tid_2 * ts_2) floordiv 32]
+          sizes [ts_0, (tid_2 * ts_2 + ts_2 - 1) floordiv 32 - (tid_2 * ts_2) floordiv 32 + 1]
+          strides [1, 1] upper bounds [128, 2]
+        rhs_scale.1.tile_0 = parameter()
+          offsets [(tid_2 * ts_2) floordiv 32, tid_1 * ts_1]
+          sizes [(tid_2 * ts_2 + ts_2 - 1) floordiv 32 - (tid_2 * ts_2) floordiv 32 + 1, ts_1]
+          strides [1, 1] upper bounds [2, 128]
+      }
+  )"));
 
   EXPECT_THAT(tiled_computation.tiled_hlo_instructions(),
               Contains(IsHloWithOperands(
@@ -467,7 +431,7 @@ TEST_F(TileAnalysisTest, ScaledDotIsSupported) {
 }
 
 TEST_F(TileAnalysisTest, RuntimeVariablesAreEmittedFirst) {
-  const TiledHloComputation tiled_computation = ParseAndTile(R"(
+  const TiledHloComputation tiled_computation = ParseAndTile(R"hlo(
     fusion {
       p0 = s32[64] parameter(0)
       c13 = s32[] constant(13)
@@ -479,7 +443,8 @@ TEST_F(TileAnalysisTest, RuntimeVariablesAreEmittedFirst) {
     ENTRY main {
       p0 = s32[64] parameter(0)
       ROOT fusion = s32[10] fusion(p0), kind=kCustom, calls=fusion
-    })");
+    })hlo",
+                                                             {10});
 
   EXPECT_THAT(tiled_computation, MatchString(R"(
     Dimensions:

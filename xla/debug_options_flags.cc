@@ -1038,20 +1038,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         };
       };
 
-  auto setter_for_force_split_k = [debug_options](int32_t value) {
-    if (value < 0) {
-      return false;
-    }
-    // TODO: Replace with std::has_single_bit once we are C++20.
-    if (value > 0 && (value & (value - 1)) != 0) {
-      LOG(ERROR)
-          << "xla_gpu_experimental_force_split_k must be a power of two.";
-      return false;
-    }
-    debug_options->set_xla_gpu_experimental_force_split_k(value);
-    return true;
-  };
-
   // Don't use an initializer list for initializing the vector; this would
   // create a temporary copy, and exceeds the stack space when compiling with
   // certain configurations.
@@ -2841,11 +2827,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "If non empty will interpret this variable as a path for performance "
       "tables for matmuls. Expects `xla.gpu.DeviceHloInstructionProfiles` "
       "proto."));
-  flag_list->push_back(
-      tsl::Flag("xla_gpu_experimental_force_split_k", setter_for_force_split_k,
-                debug_options->xla_gpu_experimental_force_split_k(),
-                "Force a specific split_k value. Must be a power of two. Zero "
-                "(default) means do not force split_k and use the heuristic."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_force_split_k",
+      int32_setter_for(&DebugOptions::set_xla_gpu_experimental_force_split_k),
+      debug_options->xla_gpu_experimental_force_split_k(),
+      "Force a specific split_k value. Zero (default) means do not force "
+      "split_k and use the heuristic."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_triton_warp_specialization",
       bool_setter_for(

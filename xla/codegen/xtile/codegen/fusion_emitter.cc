@@ -310,7 +310,6 @@ SmallVector<Value> GetRuntimeValues(
   return runtime_values;
 }
 
-
 absl::StatusOr<TensorValue> EmitTiledBitcast(
     mlir::ImplicitLocOpBuilder& b, const TiledHloInstruction& tiled_bitcast,
     TensorValue input) {
@@ -387,7 +386,7 @@ absl::StatusOr<TensorValue> EmitTiledBitcast(
 }
 
 absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloComputation& tiled_computation, mlir::FunctionOpInterface fn,
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values);
@@ -491,13 +490,13 @@ absl::StatusOr<TensorValue> MaskDotOperand(
 }
 
 absl::StatusOr<TensorValue> EmitTiledHloInstruction(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloInstruction& tiled_hlo, mlir::FunctionOpInterface fn,
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values);
 
 absl::Status EmitTiledInstructionList(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const std::vector<std::unique_ptr<TiledHloInstruction>>& tiled_instructions,
     mlir::FunctionOpInterface fn, Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
@@ -515,9 +514,8 @@ absl::Status EmitTiledInstructionList(
 }
 
 // Emits dot instruction that has LHS and RHS as part of its region.
-// TODO(b/446827313): pass references instead of pointers across the file.
 absl::StatusOr<TensorValue> EmitDot(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloInstruction& tiled_hlo_dot, mlir::FunctionOpInterface fn,
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
@@ -533,8 +531,6 @@ absl::StatusOr<TensorValue> EmitDot(
   //   acc += dot(lhs, rhs)
   // }
   // c = acc
-  // TODO(b/446827313): it is legal for dot to have no regions if LHS and RHS
-  // are already emitted and there is no reduction loop to emit.
   TF_RET_CHECK(tiled_hlo_dot.regions().size() == 1);
 
   SmallVector<int64_t> padded_tile_sizes =
@@ -592,8 +588,6 @@ absl::StatusOr<TensorValue> EmitDot(
     Value computation_index = xla::ApplyIndexingOp::create(
                                   b, ValueRange{pid, ki}, computation_index_map)
                                   .getResult(0);
-    // TODO(b/446827313): we should be careful here about adding to the "values"
-    // map: not all instructions will be valid outside of the loop.
     TF_RETURN_IF_ERROR(EmitTiledInstructionList(b, fusion,
                                                 tiled_hlo_dot.regions().front(),
                                                 fn, computation_index, values));
@@ -659,7 +653,7 @@ absl::StatusOr<TensorValue> EmitDot(
 
 // Emits scaled dot instruction that is not nested into the fusion.
 absl::StatusOr<TensorValue> EmitScaledDot(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloInstruction& tiled_hlo_dot, mlir::FunctionOpInterface fn,
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
@@ -675,8 +669,6 @@ absl::StatusOr<TensorValue> EmitScaledDot(
   //   acc += dot(lhs, rhs)
   // }
   // c = acc
-  // TODO(b/446827313): it is legal for dot to have no regions if LHS and RHS
-  // are already emitted and there is no reduction loop to emit.
   TF_RET_CHECK(tiled_hlo_dot.regions().size() == 1);
 
   SmallVector<int64_t> padded_tile_sizes =
@@ -731,8 +723,6 @@ absl::StatusOr<TensorValue> EmitScaledDot(
     Value computation_index = xla::ApplyIndexingOp::create(
                                   b, ValueRange{pid, ki}, computation_index_map)
                                   .getResult(0);
-    // TODO(b/446827313): we should be careful here about adding to the "values"
-    // map: not all instructions will be valid outside of the loop.
     TF_RETURN_IF_ERROR(EmitTiledInstructionList(b, fusion,
                                                 tiled_hlo_dot.regions().front(),
                                                 fn, computation_index, values));
@@ -814,7 +804,7 @@ absl::StatusOr<TensorValue> EmitScaledDot(
 }
 
 absl::StatusOr<TensorValue> EmitConcatenate(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloInstruction& tiled_concatenate, mlir::FunctionOpInterface fn,
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
@@ -1025,19 +1015,19 @@ absl::StatusOr<TensorValue> EmitAllReduce(
 }
 
 absl::StatusOr<TensorValue> EmitTiledHloInstruction(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloInstruction& tiled_hlo, mlir::FunctionOpInterface fn,
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
   const HloInstruction* hlo = tiled_hlo.hlo();
   VLOG(4) << "EmitTiledHloInstruction: " << hlo->ToString();
 
-  if (hlo->opcode() == HloOpcode::kParameter && !fusion->IsUserOf(hlo)) {
+  if (hlo->opcode() == HloOpcode::kParameter && !fusion.IsUserOf(hlo)) {
     hlo = hlo->parent()->FusionInstruction()->operand(hlo->parameter_number());
   }
 
-  if (fusion->IsUserOf(hlo)) {
-    int64_t arg_index = fusion->operand_index(hlo);
+  if (fusion.IsUserOf(hlo)) {
+    int64_t arg_index = fusion.operand_index(hlo);
     // Walk up the parameter chain to find the outermost operand index.
     while (auto* instr = hlo->parent()->FusionInstruction()) {
       arg_index = hlo->parameter_number();  // Nested operands are parameters.
@@ -1067,7 +1057,7 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
         return absl::InternalError(absl::StrCat(
             "Parameters were loaded with an unexpected element type "
             "while lowering ",
-            fusion->called_computation()->ToString()));
+            fusion.called_computation()->ToString()));
       }
       parameter =
           mlir::cast<TensorValue>(Cast(b, parameter, expected_element_type));
@@ -1113,8 +1103,7 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
   }
 
   if (hlo->opcode() == HloOpcode::kAllReduceStart) {
-    const HloComputation* computation =
-        fusion->fused_instructions_computation();
+    const HloComputation* computation = fusion.fused_instructions_computation();
     const HloInstruction* root_instruction = computation->root_instruction();
     if (root_instruction->opcode() == HloOpcode::kAllReduceDone) {
       root_instruction = root_instruction->operand(0);
@@ -1173,7 +1162,7 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
 }
 
 absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloComputation& tiled_computation, mlir::FunctionOpInterface fn,
     Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
@@ -1214,13 +1203,13 @@ absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
 namespace {
 
 absl::Status EmitGeneric(mlir::OpBuilder builder,
-                         const HloFusionInstruction* fusion,
+                         const HloFusionInstruction& fusion,
                          const SymbolicTileAnalysis& symbolic_tile_analysis,
                          const Tiling& tiling, xtile::EntryFuncOp fn,
                          MLIRContext* mlir_context) {
   if (VLOG_IS_ON(6)) {
     VLOG(6) << "Emitting XTile IR for fusion\n"
-            << ExtractInstructionIntoNewModule(*fusion)->ToString();
+            << ExtractInstructionIntoNewModule(fusion)->ToString();
   }
 
   // TODO(b/372454662): Decide which root to use. Currently, we only support
@@ -1284,7 +1273,7 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
                       EmitTiledComputation(b, fusion, tiled_hlo_computation, fn,
                                            tile_id, values));
 
-  const HloComputation* computation = fusion->fused_instructions_computation();
+  const HloComputation* computation = fusion.fused_instructions_computation();
   for (auto [root, result, arg] :
        llvm::zip(tiled_hlo_computation.GetRoots(), results,
                  fn.getArguments().drop_front(computation->num_parameters()))) {
@@ -1317,14 +1306,14 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
 // triton specific things. It should be migrated to use non-triton specific
 // utilities.
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
-    absl::string_view fn_name, const HloFusionInstruction* fusion,
+    absl::string_view fn_name, const HloFusionInstruction& fusion,
     const SymbolicTileAnalysis& symbolic_tile_analysis, const Tiling& tiling,
     MLIRContext& mlir_context, absl::Span<mlir::Type> opaque_args_types,
     const std::optional<stream_executor::GpuComputeCapability>& gpu_cc) {
-  const auto debug_options = fusion->GetModule()->config().debug_options();
+  const auto debug_options = fusion.GetModule()->config().debug_options();
 
   const HloComputation* hlo_computation =
-      fusion->fused_instructions_computation();
+      fusion.fused_instructions_computation();
 
   auto loc = mlir::NameLoc::get(
       mlir::StringAttr::get(&mlir_context, hlo_computation->name()));

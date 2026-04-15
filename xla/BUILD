@@ -1535,6 +1535,8 @@ bzl_library(
     name = "lit_bzl",
     srcs = ["lit.bzl"],
     deps = [
+        ":native_test_bzl",
+        ":platform_native_rule_bzl",
         "//xla/tests:build_defs_bzl",
         "@rules_cc//cc/common",
         # copybara:uncomment "@rules_python//python:defs_bzl",
@@ -1544,6 +1546,29 @@ bzl_library(
         "//xla/tsl:tsl_default_bzl",
         "//xla/tsl/platform/default:cuda_build_defs_bzl",
     ],
+)
+
+bzl_library(
+    name = "native_test_bzl",
+    srcs = ["native_test.bzl"],
+    visibility = ["//visibility:private"],
+    deps = ["//xla/tsl:package_groups_bzl"],
+)
+
+bzl_library(
+    name = "platform_native_rule_bzl",
+    srcs = if_google(
+        ["platform_native_rule.google.bzl"],
+        ["platform_native_rule.default.bzl"],
+    ),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":native_test_bzl",
+        "//xla/tsl:package_groups_bzl",
+    ] + if_google([
+        "//third_party/bazel_rules/rules_platform/platform_test:defs_bzl",
+        "//xla/tests:build_defs_bzl",
+    ]),
 )
 
 xla_bzl_library()

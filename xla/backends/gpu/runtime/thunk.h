@@ -512,8 +512,11 @@ class ThunkSequence : public std::vector<std::unique_ptr<Thunk>> {
  public:
   ThunkSequence() = default;
   ThunkSequence(ThunkSequence&&) = default;
+  explicit ThunkSequence(std::vector<std::unique_ptr<Thunk>>&& thunks)
+      : std::vector<std::unique_ptr<Thunk>>(std::move(thunks)) {};
   ThunkSequence(const ThunkSequence&) = delete;
 
+  ThunkSequence& operator=(ThunkSequence&) = delete;
   ThunkSequence& operator=(ThunkSequence&&) = default;
 
   explicit ThunkSequence(int64_t len)

@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/indexing_map_serialization.h"  // IWYU pragma: keep
+#include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -382,7 +383,8 @@ absl::StatusOr<TensorValue> EmitDot(EmitterContext& emitter_ctx,
     Value iv = for_op.getInductionVar();
     Value iv_i32 = Cast(b, for_op.getInductionVar(), b.getI32Type());
     CHECK(emitter_ctx.MapSymbolIdToSequentialDimValue(
-        sequential_dim_ids.front(), iv));
+        ge::TiledDimId(sequential_dim_ids.front()), iv,
+        Interval{0, loop_iteration_count.front() - 1}));
 
     // Emit the dot region.
     const ge::TiledHloInstruction* lhs_operand = tiled_dot.operand(0);
@@ -758,25 +760,25 @@ absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
 }
 
 absl::Status EmitGeneric(ImplicitLocOpBuilder& b,
-                         const HloFusionInstruction* fusion,
+                         const HloFusionInstruction& fusion,
                          const ge::TiledHloComputation& tiled_computation,
                          const ge::Schedule& schedule, xtile::EntryFuncOp fn,
                          MLIRContext* mlir_context) {
   if (VLOG_IS_ON(6)) {
     VLOG(6) << "Emitting XTile IR for fusion\n"
-            << ExtractInstructionIntoNewModule(*fusion)->ToString();
+            << ExtractInstructionIntoNewModule(fusion)->ToString();
     VLOG(6) << "Tiled computation: \n" << tiled_computation.ToString();
   }
   Value tile_id = fn.getTileId();
-  EmitterContext emitter_ctx{b,        fusion, tile_id,
-                             schedule, fn,     tiled_computation};
+  EmitterContext emitter_ctx{b,        &fusion, tile_id,
+                             schedule, fn,      tiled_computation};
 
   VLOG(2) << "EmitTiledComputation: " << tiled_computation.ToString();
   ASSIGN_OR_RETURN(auto results,
                    EmitTiledComputation(
                        emitter_ctx, tiled_computation.tiled_hlo_instructions(),
                        tiled_computation.roots()));
-  const HloComputation* computation = fusion->fused_instructions_computation();
+  const HloComputation* computation = fusion.fused_instructions_computation();
   for (const auto& [root, result, arg] :
        llvm::zip(tiled_computation.roots(), results,
                  fn.getArguments().drop_front(computation->num_parameters()))) {
@@ -807,12 +809,12 @@ absl::Status EmitGeneric(ImplicitLocOpBuilder& b,
 // triton specific things. It should be migrated to use non-triton specific
 // utilities.
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
-    absl::string_view fn_name, const HloFusionInstruction* fusion,
+    absl::string_view fn_name, const HloFusionInstruction& fusion,
     const ::xla::gpu::experimental::TiledHloComputation& tiled_computation,
     MLIRContext& mlir_context, absl::Span<mlir::Type> opaque_args_types,
     const std::optional<GpuComputeCapability>& gpu_cc) {
   const HloComputation* hlo_computation =
-      fusion->fused_instructions_computation();
+      fusion.fused_instructions_computation();
 
   Location loc = mlir::NameLoc::get(
       mlir::StringAttr::get(&mlir_context, hlo_computation->name()));

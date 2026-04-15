@@ -19,15 +19,19 @@ limitations under the License.
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "absl/functional/overload.h"
 #include "absl/memory/memory.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"  // gloop
 #include "google/protobuf/arena.h"
 #include "riegeli/bytes/string_writer.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/pjrt/compiled_memory_stats.h"
+#include "xla/service/buffer_assignment.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
@@ -98,6 +102,39 @@ const GpuExecutableProto& GpuAotCompilationResult::GetExecutableProto() const {
           [](const GpuExecutableProto& stack_proto)
               -> const GpuExecutableProto& { return stack_proto; }),
       gpu_executable_proto_);
+}
+
+absl::StatusOr<CompiledMemoryStats>
+GpuAotCompilationResult::GetCompiledMemoryStats() const {
+  CompiledMemoryStats memory_stats;
+  memory_stats.serialized_buffer_assignment =
+      GetExecutableProto().buffer_assignment().SerializeAsString();
+
+  std::vector<BufferAllocation> allocations;
+  allocations.reserve(
+      GetExecutableProto().buffer_assignment().buffer_allocations_size());
+  for (const BufferAllocationProto& allocation :
+       GetExecutableProto().buffer_assignment().buffer_allocations()) {
+    allocations.push_back(BufferAllocation::FromProto(allocation));
+  }
+  std::vector<const BufferAllocation*> alloc_ptrs;
+  alloc_ptrs.reserve(allocations.size());
+  for (const BufferAllocation& alloc : allocations) {
+    alloc_ptrs.push_back(&alloc);
+  }
+  memory_stats.PopulateBufferStatsFromAllocations(alloc_ptrs);
+  ASSIGN_OR_RETURN(
+      auto peak_memories,
+      ComputePeakMemorySizes(
+          GetExecutableProto().buffer_assignment(),
+          GetExecutableProto().hlo_module_with_config().hlo_module()));
+  memory_stats.peak_memory_in_bytes = peak_memories.padded;
+  memory_stats.peak_unpadded_heap_bytes = peak_memories.unpadded;
+  memory_stats.total_allocation_bytes = ComputeTotalAllocationBytes(
+      GetExecutableProto().buffer_assignment(), /*memory_color=*/0);
+  memory_stats.indefinite_allocations = ComputeIndefiniteAllocationsInBytes(
+      GetExecutableProto().buffer_assignment(), /*memory_color=*/0);
+  return memory_stats;
 }
 
 }  // namespace xla::gpu

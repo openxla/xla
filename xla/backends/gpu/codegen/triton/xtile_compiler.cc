@@ -179,14 +179,14 @@ absl::StatusOr<std::unique_ptr<llvm::Module>> TranslateLLVMToLLVMIR(
 }
 
 absl::Status CreateInternalError(absl::string_view message,
-                                 const HloFusionInstruction* fusion,
+                                 const HloFusionInstruction& fusion,
                                  mlir::ModuleOp triton_module) {
   std::string err;
   llvm::raw_string_ostream os(err);
   os << message << "\n";
-  os << "fusion instruction: " << fusion->ToString() << "\n";
+  os << "fusion instruction: " << fusion.ToString() << "\n";
   os << "HLO module to reproduce:\n"
-     << ExtractInstructionIntoNewModule(*fusion)->ToString();
+     << ExtractInstructionIntoNewModule(fusion)->ToString();
   os << "triton_module>>>\n";
   triton_module->print(os, mlir::OpPrintingFlags().enableDebugInfo(true, true));
   os << "<<<triton_module\n";
@@ -194,23 +194,23 @@ absl::Status CreateInternalError(absl::string_view message,
 }
 
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
-    absl::string_view fn_name, const HloFusionInstruction* fusion,
+    absl::string_view fn_name, const HloFusionInstruction& fusion,
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     absl::Span<mlir::Type> opaque_args_types, mlir::MLIRContext& mlir_context,
     bool use_experimental_tiling) {
-  const HloComputation* computation = fusion->fused_instructions_computation();
+  const HloComputation* computation = fusion.fused_instructions_computation();
 
   if (use_experimental_tiling) {
     using experimental::TileAnalysisOrError;
     using experimental::TiledHloComputation;
     using experimental::TilingSpace;
 
-    auto fusion_adaptor = HloFusionAdaptor::ForInstruction(fusion);
+    auto fusion_adaptor = HloFusionAdaptor::ForInstruction(&fusion);
     std::unique_ptr<TilingSpace> tiling_space =
         TilingSpace::Create(*fusion_adaptor, &mlir_context);
 
-    VLOG(6) << "fusion instruction: " << fusion->ToString() << "\n";
+    VLOG(6) << "fusion instruction: " << fusion.ToString() << "\n";
     VLOG(6) << "tiling space: " << tiling_space->ToString();
     TF_ASSIGN_OR_RETURN(
         llvm::SmallVector<int64_t> tile_sizes,
@@ -256,7 +256,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
 }
 
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
-    absl::string_view fn_name, const HloFusionInstruction* fusion,
+    absl::string_view fn_name, const HloFusionInstruction& fusion,
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     MLIRContext& mlir_context, bool use_experimental_tiling) {
@@ -264,11 +264,11 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
   RegisterSymbolicExprStorage(&mlir_context);
 
   const HloComputation* hlo_computation =
-      fusion->fused_instructions_computation();
+      fusion.fused_instructions_computation();
 
   std::string fusion_kind(kTritonFusionKind);
-  if (fusion->has_backend_config()) {
-    auto backend_config = fusion->backend_config<GpuBackendConfig>();
+  if (fusion.has_backend_config()) {
+    auto backend_config = fusion.backend_config<GpuBackendConfig>();
     if (backend_config.ok()) {
       fusion_kind = backend_config->fusion_backend_config().kind();
     }
@@ -313,27 +313,27 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
                           absl::MakeSpan(opaque_args_types), mlir_context,
                           use_experimental_tiling));
 
-  const auto debug_options = fusion->GetModule()->config().debug_options();
+  const auto debug_options = fusion.GetModule()->config().debug_options();
   if (DumpingEnabledForHloModule(*hlo_computation->parent()) &&
       DumpingEnabledForEmitter("triton-fusion", debug_options)) {
-    auto suffix = absl::StrCat(fusion->name(), ".before_validation.ttir.txt");
+    auto suffix = absl::StrCat(fusion.name(), ".before_validation.ttir.txt");
     DumpToFileInDirOrStdout(*hlo_computation->parent(), "", suffix,
                             GetModuleIrString(triton_module.get()));
     VLOG(6) << "xtile_module: " << GetModuleIrString(triton_module.get());
-    std::string fusion_suffix = absl::StrCat(fusion->name(), ".hlo");
+    std::string fusion_suffix = absl::StrCat(fusion.name(), ".hlo");
     DumpToFileInDirOrStdout(
         *hlo_computation->parent(), "", fusion_suffix,
-        ExtractInstructionIntoNewModule(*fusion)->ToString());
+        ExtractInstructionIntoNewModule(fusion)->ToString());
   }
 
   TF_RETURN_IF_ERROR(ir_emitter_triton_internal::LowerXTileToTriton(
-      triton_module.get(), mlir_context, *fusion, device_info,
+      triton_module.get(), mlir_context, fusion, device_info,
       block_level_parameters));
 
   VLOG(6) << GetModuleIrString(triton_module.get());
   if (DumpingEnabledForHloModule(*hlo_computation->parent()) &&
       DumpingEnabledForEmitter("triton-fusion", debug_options)) {
-    std::string suffix = absl::StrCat(fusion->name(), ".ttir.txt");
+    std::string suffix = absl::StrCat(fusion.name(), ".ttir.txt");
     DumpToFileInDirOrStdout(*hlo_computation->parent(), "", suffix,
                             GetModuleIrString(triton_module.get()));
   }
@@ -369,7 +369,7 @@ std::ostream& operator<<(std::ostream& os, const TritonWrapperResult& result) {
 }
 
 absl::StatusOr<TritonWrapperResult> TritonWrapper(
-    absl::string_view fn_name, const HloFusionInstruction* fusion,
+    absl::string_view fn_name, const HloFusionInstruction& fusion,
     const se::GpuComputeCapability& gpu_cc,
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
@@ -378,7 +378,7 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
   TF_RETURN_IF_ERROR(CheckAtLeastAmpere(gpu_cc));
 
   bool use_experimental_tiling =
-      fusion->GetModule()
+      fusion.GetModule()
           ->config()
           .debug_options()
           .xla_gpu_experimental_enable_tiling_propagation();
@@ -387,20 +387,20 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
       CreateTritonModule(fn_name, fusion, device_info, block_level_parameters,
                          mlir_context, use_experimental_tiling));
 
-  VLOG(3) << fusion->ToString(HloPrintOptions::ShortParsable());
-  VLOG(3) << fusion->fused_instructions_computation()->ToString(
+  VLOG(3) << fusion.ToString(HloPrintOptions::ShortParsable());
+  VLOG(3) << fusion.fused_instructions_computation()->ToString(
       HloPrintOptions::ShortParsable());
 
-  const auto error_ctx_provider = [fusion]() -> std::string {
+  const auto error_ctx_provider = [&fusion]() -> std::string {
     return absl::StrCat(
-        "Fusion: ", fusion->ToString(HloPrintOptions::ShortParsable()),
+        "Fusion: ", fusion.ToString(HloPrintOptions::ShortParsable()),
         "Computation: ",
-        fusion->fused_instructions_computation()->ToString(
+        fusion.fused_instructions_computation()->ToString(
             HloPrintOptions::ShortParsable()));
   };
 
   // Compile Triton kernel to LLVM.
-  const HloModule* hlo_module = fusion->GetModule();
+  const HloModule* hlo_module = fusion.GetModule();
   return CompileTritonToLLVM(
       fn_name, *hlo_module, device_info, block_level_parameters,
       triton_module.get(), target_triple, data_layout, llvm_context,
@@ -624,14 +624,14 @@ absl::Status LowerXTileToTriton(
             diagnostic_handler.consumeStatus(pm.run(xtile_dialect_module));
         !status.ok()) {
       return CreateInternalError(
-          "Failed to lower from shared dialect to Triton.", &fusion,
+          "Failed to lower from shared dialect to Triton.", fusion,
           xtile_dialect_module);
     }
   }
 
   if (mlir::failed(mlir::verify(xtile_dialect_module))) {
     return CreateInternalError("Failed to verify Triton module for fusion:",
-                               &fusion, xtile_dialect_module);
+                               fusion, xtile_dialect_module);
   }
   mlir::PassManager pm(&mlir_context);
   EnableIRPrintingIfRequested(pm, &mlir_context, *fusion.GetModule(),
@@ -640,7 +640,7 @@ absl::Status LowerXTileToTriton(
   pm.addPass(mlir::createCSEPass());
   if (mlir::failed(pm.run(xtile_dialect_module))) {
     return CreateInternalError("Failed to create Triton module for fusion:",
-                               &fusion, xtile_dialect_module);
+                               fusion, xtile_dialect_module);
   }
   return absl::OkStatus();
 }

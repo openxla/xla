@@ -7336,6 +7336,7 @@ absl::Status MsaAlgorithm::WindowPrefetch() {
     }
   }
 
+  int64_t window_prefetch_operand_count = 0;
   // Prefetch the window buffers.
   for (const HloUse& use : uses_in_default_memory_) {
     if (!window_prefetchable_instructions.contains(use.instruction)) {
@@ -7345,7 +7346,9 @@ absl::Status MsaAlgorithm::WindowPrefetch() {
     CHECK(options_.op_span_size_fn);
     int64_t span_size = options_.op_span_size_fn(
         use.instruction, cloned_insts[use.instruction], use.operand_number);
-    if (span_size != 0) {
+    if (span_size >= options_.window_prefetch_min_span_size &&
+        window_prefetch_operand_count < options_.window_prefetch_max_operands) {
+      window_prefetch_operand_count++;
       WindowPrefetchOperand(use, span_size);
     }
   }

@@ -355,8 +355,8 @@ tsl::Future<Autotuner::Config> Autotuner::GetConfig(HloInstruction* instr) {
 absl::Status Autotuner::IsValidExecutable(
     const absl::StatusOr<std::unique_ptr<Executable>>& executable) const {
   if (!executable.ok()) {
-    return absl::Status(
-        executable.status().code(),
+    return tsl::errors::CreateWithUpdatedMessage(
+        executable.status(),
         absl::StrCat("Compilation failed: ", executable.status().message()));
   }
 
@@ -457,9 +457,12 @@ absl::StatusOr<std::vector<Autotuner::Config>> Autotuner::GetConfigsForAll(
     absl::StatusOr<Config> config_or = std::move(future_configs[i]).Await();
     combined_status.Update(config_or.status());
     if (!config_or.ok()) {
-      LOG(ERROR) << "Could not get config for HLO: "
-                 << instruction_groups[i][0]->ToString()
-                 << ". Status: " << config_or.status();
+      LOG(ERROR)
+          << "Could not get config for HLO: "
+          << instruction_groups[i][0]->ToString(
+                 HloPrintOptions().set_print_subcomputation_mode(
+                     HloPrintOptions::PrintSubcomputationMode::kFullBodies))
+          << ". Status: " << config_or.status();
       num_failures++;
     }
     status_or_configs.push_back(std::move(config_or));
@@ -579,8 +582,8 @@ std::optional<std::unique_ptr<Executable>> Autotuner::Compile(
       config.codegen_backend->Compile(*instr, *config.backend_config);
 
   if (absl::Status status = IsValidExecutable(executable); !status.ok()) {
-    VLOG(4) << "Compilation failed for config " << config.ToString()
-            << " with status: " << status;
+    VLOG(4) << "Skipping config " << config.ToString()
+            << " as it could not be compiled successfully. Error: " << status;
     return std::nullopt;
   }
   return std::make_optional(std::move(*executable));

@@ -67,8 +67,8 @@ std::string TilingSpace::DimensionInfo::ToString() const {
 void TilingSpace::AppendDimension(const HloInstruction* hlo,
                                   int64_t dim_position, int64_t dim_size,
                                   DimensionSemantics dim_type) {
-  dimensions_.push_back(DimensionInfo{static_cast<ID>(dimensions_.size()),
-                                      dim_size, dim_type, hlo, dim_position});
+  dimensions_.push_back(DimensionInfo{TiledDimId(dimensions_.size()), dim_size,
+                                      dim_type, hlo, dim_position});
   hlo_to_dimension_[std::make_pair(hlo, dim_position)] = &dimensions_.back();
 }
 
@@ -76,7 +76,7 @@ void TilingSpace::AppendRTVar(const HloInstruction* hlo, int64_t operand_id,
                               const HloInstruction* rt_var,
                               int64_t upper_bound) {
   rt_vars_.push_back(RTVarInfo{
-      static_cast<ID>(rt_vars_.size()),
+      static_cast<int64_t>(rt_vars_.size()),
       Interval{0, upper_bound},
       rt_var,
   });
@@ -194,7 +194,7 @@ void TilingSpace::AssignTileSizes(absl::Span<const int64_t> tile_sizes) {
   llvm::DenseMap<SymbolicExpr, SymbolicExpr> replacement_map;
   for (const auto& [index, dim] : llvm::enumerate(dimensions_)) {
     dim.tile_size = tile_sizes[index];
-    replacement_map[CreateSymbolExpr(dim.id, dimensions_.size(),
+    replacement_map[CreateSymbolExpr(dim.id.value(), dimensions_.size(),
                                      mlir_context_)] =
         CreateSymbolicConstant(tile_sizes[index], mlir_context_);
   }

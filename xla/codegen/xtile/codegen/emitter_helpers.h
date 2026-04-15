@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
 #include "xla/codegen/tiling/tiled_hlo_instruction.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
+#include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -89,17 +90,20 @@ class EmitterContext {
     return tiled_hlo_to_tensor_.insert(std::make_pair(tiled_hlo, value)).second;
   }
 
-  mlir::Value GetSequentialDimValue(int64_t sequential_dim_id) const {
+  std::pair<mlir::Value, Interval> GetSequentialDimValue(
+      gpu::experimental::TiledDimId sequential_dim_id) const {
     CHECK(sequential_dim_id_to_value_.contains(sequential_dim_id))
         << "Sequential dim id " << sequential_dim_id
         << " not found in the induction var map.";
     return sequential_dim_id_to_value_.at(sequential_dim_id);
   }
 
-  bool MapSymbolIdToSequentialDimValue(int64_t sequential_dim_id,
-                                       mlir::Value value) {
+  bool MapSymbolIdToSequentialDimValue(
+      gpu::experimental::TiledDimId sequential_dim_id, mlir::Value value,
+      Interval interval) {
     return sequential_dim_id_to_value_
-        .insert(std::make_pair(sequential_dim_id, value))
+        .insert(
+            std::make_pair(sequential_dim_id, std::make_pair(value, interval)))
         .second;
   }
 
@@ -117,7 +121,9 @@ class EmitterContext {
   const HloFusionInstruction* fusion_ = nullptr;
   xtile::EntryFuncOp entry_func_;
   const gpu::experimental::TiledHloComputation& tiled_computation_;
-  absl::flat_hash_map<int64_t, mlir::Value> sequential_dim_id_to_value_;
+  absl::flat_hash_map<gpu::experimental::TiledDimId,
+                      std::pair<mlir::Value, Interval>>
+      sequential_dim_id_to_value_;
 };
 
 // Returns a string representation of the given MLIR entity.
@@ -346,7 +352,7 @@ absl::StatusOr<mlir::Type> GetMlirType(
 
 // Function to get the MLIR types from a HloFusionInstruction.
 absl::StatusOr<llvm::SmallVector<mlir::Type>> GetFnArgTypes(
-    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
+    mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     absl::Span<mlir::Type> opaque_args_types,
     const std::optional<stream_executor::GpuComputeCapability>& gpu_cc);
 

@@ -16,29 +16,96 @@ limitations under the License.
 #ifndef XLA_PJRT_DEVICE_EVENT_H_
 #define XLA_PJRT_DEVICE_EVENT_H_
 
-#include <typeinfo>
-#include <utility>
+#include <cstddef>
 
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/future.h"
+#include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api_device_event.h"
+#include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/tsl/concurrency/async_value.h"
-#include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
 
 namespace xla {
+
+namespace internal {
+
+template <typename T>
+const PJRT_DeviceEvent_FunctionTable* GetBuiltinDeviceEventCApiFunctionTable() {
+  static const PJRT_DeviceEvent_FunctionTable device_event_vtable = {
+      /*struct_size=*/sizeof(PJRT_DeviceEvent_FunctionTable),
+      /*extension_start=*/nullptr,
+      /*inc_ref=*/
+      +[](void* device_event) {
+        reinterpret_cast<tsl::AsyncValue*>(device_event)->AddRef();
+      },
+      /*dec_ref=*/
+      +[](void* device_event) {
+        reinterpret_cast<tsl::AsyncValue*>(device_event)->DropRef();
+      },
+      /*and_then=*/
+      +[](void* device_event, PJRT_DeviceEvent_AndThen callback,
+          void* user_arg) {
+        reinterpret_cast<tsl::AsyncValue*>(device_event)
+            ->AndThen([callback, user_arg]() { callback(user_arg); });
+      },
+      /*get_error_if_present=*/
+      +[](void* device_event, PJRT_Error_Code* code, const char** message,
+          size_t* message_size) -> int {
+        if (const absl::Status* error =
+                reinterpret_cast<tsl::AsyncValue*>(device_event)
+                    ->GetErrorIfPresent()) {
+          *code = pjrt::StatusCodeToPjrtErrorCode(error->code());
+          absl::string_view error_message = error->message();
+          *message = error_message.data();
+          *message_size = error_message.size();
+          return 1;
+        }
+        return 0;
+      }};
+  return &device_event_vtable;
+}
+
+}  // namespace internal
 
 // RAII type for holding type-checked tsl::AsyncValue* for the
 // underlying device event types.
 class PjRtDeviceEventRef {
  public:
   PjRtDeviceEventRef() = default;
+  ~PjRtDeviceEventRef() { reset(); }
+
+  PjRtDeviceEventRef(const PjRtDeviceEventRef& other)
+      : vtable_(other.vtable_), device_event_(other.CopyRawRef()) {}
+
+  PjRtDeviceEventRef(PjRtDeviceEventRef&& other) noexcept
+      : vtable_(other.vtable_), device_event_(other.ReleaseRawRef()) {}
+
+  PjRtDeviceEventRef& operator=(const PjRtDeviceEventRef& other) {
+    if (this != &other) {
+      reset();
+      vtable_ = other.vtable_;
+      device_event_ = other.CopyRawRef();
+    }
+    return *this;
+  }
+
+  PjRtDeviceEventRef& operator=(PjRtDeviceEventRef&& other) noexcept {
+    if (this != &other) {
+      reset();
+      vtable_ = other.vtable_;
+      device_event_ = other.ReleaseRawRef();
+    }
+    return *this;
+  }
 
   template <typename T>
   explicit PjRtDeviceEventRef(tsl::AsyncValueRef<T> value)
-      : type_(&typeid(T*)), async_value_(value.ReleaseRCRef()) {}
+      : vtable_(internal::GetBuiltinDeviceEventCApiFunctionTable<T>()),
+        device_event_(value.ReleaseRCRef().release()) {}
 
   // Runs a callback when an event becomes ready.
   template <typename Waiter>
@@ -47,29 +114,53 @@ class PjRtDeviceEventRef {
   }
 
   // TODO(parkers): Remove direct async_value usages.
-  tsl::AsyncValue* async_value() const { return async_value_.get(); }
+  tsl::AsyncValue* async_value() const {
+    return reinterpret_cast<tsl::AsyncValue*>(device_event_);
+  }
 
   template <typename T>
   tsl::AsyncValueRef<T> down_cast() const& {
-    if (*type_ != typeid(T*)) {
+    if (device_event_ == nullptr ||
+        vtable_ != internal::GetBuiltinDeviceEventCApiFunctionTable<T>()) {
       return nullptr;
     }
-    return tsl::AsyncValueRef<T>(async_value_);
+    return tsl::AsyncValueRef<T>(tsl::FormRef(async_value()));
   }
 
   template <typename T>
   tsl::AsyncValueRef<T> down_cast() && {
-    if (*type_ != typeid(T*)) {
+    if (device_event_ == nullptr ||
+        vtable_ != internal::GetBuiltinDeviceEventCApiFunctionTable<T>()) {
       return nullptr;
     }
-    return tsl::AsyncValueRef<T>(std::move(async_value_));
+    return tsl::AsyncValueRef<T>(
+        tsl::TakeRef(reinterpret_cast<tsl::AsyncValue*>(ReleaseRawRef())));
   }
 
-  explicit operator bool() const { return async_value_ != nullptr; }
+  void reset() {
+    if (device_event_ != nullptr) {
+      auto* vtable = vtable_;
+      vtable->dec_ref(ReleaseRawRef());
+    }
+  }
+
+  explicit operator bool() const { return device_event_ != nullptr; }
 
  private:
-  const std::type_info* type_ = nullptr;
-  tsl::RCReference<tsl::AsyncValue> async_value_;
+  const PJRT_DeviceEvent_FunctionTable* vtable_ = nullptr;
+  void* CopyRawRef() const {
+    if (device_event_ != nullptr) {
+      vtable_->inc_ref(device_event_);
+    }
+    return device_event_;
+  }
+  void* ReleaseRawRef() {
+    vtable_ = nullptr;
+    auto* device_event = device_event_;
+    device_event_ = nullptr;
+    return device_event;
+  }
+  void* device_event_ = nullptr;
 };
 
 // Instead of taking a device event as an argument, apis may instead decide to

@@ -21,11 +21,14 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/pjrt/compiled_memory_stats.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/compiled_module.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
@@ -79,8 +82,7 @@ class LegacyGpuAotCompilationResult : public CompiledModule {
     return module_;
   }
 
-  absl::StatusOr<std::unique_ptr<BufferAssignment>> buffer_assignment()
-      const override;
+  absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override;
 
   const GpuExecutableProto& GetGpuExecutableProto() const { return proto_; }
 
@@ -121,8 +123,7 @@ class EarlyExitCompilationResult : public CompiledModule {
     return module_;
   }
 
-  absl::StatusOr<std::unique_ptr<BufferAssignment>> buffer_assignment()
-      const override;
+  absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override;
 
  private:
   std::shared_ptr<HloModule> module_;

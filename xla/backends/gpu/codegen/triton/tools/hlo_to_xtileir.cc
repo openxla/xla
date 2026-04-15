@@ -55,7 +55,7 @@ absl::Status RealMain(absl::string_view input_file,
   }
 
   ASSIGN_OR_RETURN(auto gpu_config, fusion->backend_config<GpuBackendConfig>());
-  const auto* fusion_instr = Cast<HloFusionInstruction>(fusion);
+  const HloFusionInstruction* fusion_instr = Cast<HloFusionInstruction>(fusion);
   const FusionBackendConfig& backend_config =
       gpu_config.fusion_backend_config();
   if (!backend_config.has_block_level_fusion_config()) {
@@ -70,7 +70,7 @@ absl::Status RealMain(absl::string_view input_file,
   // Note that CreateTritonModule creates an xtile dialect module that
   // CreateTritonXlaPipeline() will lower to TTIR.
   auto status_or_module = CreateTritonModule(
-      "triton_fn", fusion_instr, TestGpuDeviceInfo::RTXA6000DeviceInfo(),
+      "triton_fn", *fusion_instr, TestGpuDeviceInfo::RTXA6000DeviceInfo(),
       block_level_parameters, mlir_context, use_experimental_tiling);
   if (status_or_module.ok()) {
     (*status_or_module)->print(llvm::outs());

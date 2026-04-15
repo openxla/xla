@@ -142,46 +142,6 @@ class EmptyCmd : public Command {
 };
 
 //===----------------------------------------------------------------------===//
-// LaunchCmd
-//===----------------------------------------------------------------------===//
-
-class LaunchCmd : public Command {
- public:
-  LaunchCmd(std::string kernel_name, absl::Span<const ShapedSlice> args,
-            absl::Span<const BufferUse::MemoryAccess> args_access,
-            LaunchDimensions dims, int64_t shmem_bytes,
-            std::optional<stream_executor::gpu::TmaMetadata> tma_metadata =
-                std::nullopt,
-            bool use_pdl = false);
-
-  absl::Status Initialize(const Thunk::InitializeParams& params) override;
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override;
-  bool use_pdl() const { return use_pdl_; }
-
- private:
-  std::string kernel_name_;
-  std::vector<ShapedSlice> args_;
-  std::vector<BufferUse::MemoryAccess> args_access_;
-  LaunchDimensions dims_;
-  int64_t shmem_bytes_;
-  std::optional<stream_executor::gpu::TmaMetadata> tma_metadata_;
-  // Programmatic Dependent Launch.
-  bool use_pdl_;
-
-  // Command sequence can be recorded concurrently for multiple command buffers
-  // on different stream executors and we need to synchronize mutable state.
-  absl::Mutex mutex_;
-  absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<se::Kernel>> kernels_
-      ABSL_GUARDED_BY(mutex_);
-};
-
-//===----------------------------------------------------------------------===//
 // CustomKernelLaunchCmd
 //===----------------------------------------------------------------------===//
 

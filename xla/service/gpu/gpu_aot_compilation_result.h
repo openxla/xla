@@ -27,6 +27,7 @@ limitations under the License.
 #include "google/protobuf/arena.h"
 #include "riegeli/bytes/reader.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/pjrt/compiled_memory_stats.h"
 #include "xla/service/compiled_module.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
@@ -87,6 +88,8 @@ class GpuAotCompilationResult : public CompiledModule {
     return stream_executor::ExecutableAbiVersion::FromProto(
         GetExecutableProto().executable_abi_version());
   }
+
+  absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const final;
 
  private:
   const GpuExecutableProto& GetExecutableProto() const;

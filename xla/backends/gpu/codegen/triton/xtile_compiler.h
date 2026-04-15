@@ -72,7 +72,7 @@ void LoadMlirDialectsForTriton(mlir::MLIRContext& mlir_context);
 // Generate Triton IR by running the provided generator and compile it into LLVM
 // IR.
 absl::StatusOr<TritonWrapperResult> TritonWrapper(
-    absl::string_view fn_name, const HloFusionInstruction* fusion,
+    absl::string_view fn_name, const HloFusionInstruction& fusion,
     const se::GpuComputeCapability& cc,
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
@@ -82,7 +82,7 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
 // Creates the initial Triton module for the given fusion. Visible for testing,
 // use TritonWrapper instead.
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
-    absl::string_view fn_name, const HloFusionInstruction* fusion,
+    absl::string_view fn_name, const HloFusionInstruction& fusion,
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     mlir::MLIRContext& mlir_context, bool use_experimental_tiling = false);

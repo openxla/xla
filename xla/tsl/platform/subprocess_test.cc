@@ -479,5 +479,17 @@ TEST_F(SubProcessTest, Running) {
   EXPECT_TRUE(proc.Wait());
   EXPECT_FALSE(proc.running());
 }
+
+TEST_F(SubProcessTest, GetFD) {
+  tsl::SubProcess proc;
+  proc.SetProgram(NoopProgram(), {NoopProgram()});
+  proc.SetChannelAction(CHAN_STDOUT, ACTION_PIPE);
+  EXPECT_EQ(proc.GetFD(CHAN_STDOUT), -1);
+  EXPECT_TRUE(proc.Start());
+  int fd = proc.GetFD(CHAN_STDOUT);
+  EXPECT_GE(fd, 0);
+  EXPECT_TRUE(proc.Wait());
+  EXPECT_EQ(proc.GetFD(CHAN_STDOUT), fd);
+}
 }  // namespace
 }  // namespace tsl

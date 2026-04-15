@@ -303,7 +303,7 @@ class SupportTest : public HloHardwareIndependentTestBase,
       target_triple_ = llvm::Triple(amdgpu::TargetTriple());
     }
     auto run_triton_codegen = [&]() {
-      return TritonWrapper("test_fn", &ti.TritonFusion(), cc, dev_info,
+      return TritonWrapper("test_fn", ti.TritonFusion(), cc, dev_info,
                            block_level_parameters, target_triple_, data_layout_,
                            llvm_ctx_, mlir_context_);
     };
@@ -2032,43 +2032,6 @@ INSTANTIATE_TEST_SUITE_P(
                        ::testing::Values(F8E5M2, F8E4M3FN),
                        ::testing::ValuesIn(AllDevicesToTest())),
     MixedF8DotTest::ParamToString);
-
-// TODO(b/446827313): review tests: some of them are redundant after removing of
-// nested fusions.
-
-TEST_F(DotTest, NonFusionRhs) {
-  const std::string kHloTestTemplate = R"(
-ENTRY triton_computation {
-  p0 = $0[128,256] parameter(0)
-  p1 = $0[256,512] parameter(1)
-  ROOT result = $0[128,512] dot(p0, p1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0},
-    backend_config={sizes:[64]}
-}
-)";
-  TF_ASSERT_OK_AND_ASSIGN(
-      TestedInstruction ti,
-      ParseTemplateAndGetInstruction(kHloTestTemplate, F32, HloOpcode::kDot));
-  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{16, 32},
-                 DefaultDeviceForTesting());
-}
-
-TEST_F(DotTest, NonFusionLhs) {
-  const std::string kHloTestTemplate = R"(
-ENTRY triton_computation {
-  p0 = $0[128,256] parameter(0)
-  p1 = $0[256,512] parameter(1)
-  ROOT result = $0[128,512] dot(p0, p1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0},
-    backend_config={sizes:[16]}
-}
-)";
-  TF_ASSERT_OK_AND_ASSIGN(
-      TestedInstruction ti,
-      ParseTemplateAndGetInstruction(kHloTestTemplate, F32, HloOpcode::kDot));
-  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{16, 32},
-                 DefaultDeviceForTesting());
-}
 
 TEST_F(DotTest, SingleBatchDim) {
   const std::string kHloTestTemplate = R"(

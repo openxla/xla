@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/types.h"
 #include "tsl/platform/thread_annotations.h"
@@ -53,6 +54,24 @@ class SubProcess {
   //    action: What to do with the channel.
   // Virtual for backwards compatibility; do not create new subclasses.
   virtual void SetChannelAction(Channel chan, ChannelAction action);
+
+  // GetFD()
+  //    Get the actual file descriptor for the given channel.
+  //    All of the fds will be -1 if the process isn't running
+  //    or if ChannelAction for channel is not ACTION_PIPE.
+  //
+  //    Fatal error conditions:
+  //      Invalid channel number;
+  //
+  //    chan: Which channel?
+  //    Return file descriptor.
+  virtual inline int GetFD(Channel chan) const {
+    if (!chan_valid(chan)) {
+      LOG(FATAL) << "GetFD called with invalid channel: " << chan;
+    }
+    absl::MutexLock dataLock(&data_mu_);
+    return parent_pipe_[chan];
+  }
 
   // SetProgram()
   //    Set up a program and argument list for execution, with the full

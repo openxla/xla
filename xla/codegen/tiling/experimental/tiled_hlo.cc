@@ -191,8 +191,7 @@ void SortTiledHloInstructionsInPostOrder(
 
 bool IsControlFlowLoop(const TiledHloInstruction& tiled_hlo) {
   const HloOpcode hlo_opcode = tiled_hlo.hlo()->opcode();
-  return hlo_opcode == HloOpcode::kDot || hlo_opcode == HloOpcode::kScaledDot ||
-         hlo_opcode == HloOpcode::kReduce;
+  return hlo_opcode == HloOpcode::kDot || hlo_opcode == HloOpcode::kScaledDot;
 }
 
 bool IsControlFlowCondition(const TiledHloInstruction& tiled_hlo) {
@@ -377,14 +376,16 @@ absl::InlinedVector<const HloInstruction*, 2> ToInstructions(
       roots_with_no_users.push_back(root_tiled_hlo.get());
     }
 
-    auto region_or_error = CreateRegion(std::move(root_tiled_hlo), fusion,
-                                        *tiling_space, rt_symbol_to_tiled_hlo);
-    if (auto* decision = std::get_if<FusionDecision>(&region_or_error)) {
+    TiledHloRegionOrError region_or_error =
+        CreateRegion(std::move(root_tiled_hlo), fusion, *tiling_space,
+                     rt_symbol_to_tiled_hlo);
+    if (FusionDecision* decision =
+            std::get_if<FusionDecision>(&region_or_error)) {
       return *decision;
     }
-    auto region =
+    TiledHloInstruction::Region region =
         std::get<TiledHloInstruction::Region>(std::move(region_or_error));
-    for (auto& tiled_hlo : region) {
+    for (std::unique_ptr<TiledHloInstruction>& tiled_hlo : region) {
       tiled_hlo_instructions_set.Insert(std::move(tiled_hlo));
     }
   }

@@ -1,5 +1,5 @@
 load("@xla//third_party/rules_python/python:py_test.bzl", "py_test")
-load("//xla:pytype.bzl", "pytype_strict_library")
+load("//xla:pytype.bzl", "pytype_strict_binary", "pytype_strict_library")
 load(
     "//xla:xla.default.bzl",
     "xla_cc_test",
@@ -264,7 +264,13 @@ cc_library(
 nanobind_pywrap_extension(
     name = "_hlo_pass",
     srcs = ["hlo_pass.cc"],
+    pytype_deps = [
+        "//third_party/py/jax/jaxlib:_jax",
+    ],
     pytype_srcs = ["_hlo_pass.pyi"],
+    stub_replacement_patterns = {
+        "_hlo_pass.__prefix__": "from jax.jaxlib._jax import HloModule",
+    },
     visibility = [":friends"],
     deps = [
         "//xla/hlo/pass:hlo_pass",
@@ -284,6 +290,9 @@ nanobind_pywrap_extension(
         "//third_party/py/jax/jaxlib:_jax",
     ],
     pytype_srcs = ["_xla_builder.pyi"],
+    stub_replacement_patterns = {
+        "_xla_builder.__prefix__": "from jax.jaxlib._jax import XlaComputation, OpSharding_Type, ProgramShape, Shape",
+    },
     deps = [
         ":nb_helpers",
         "//xla:shape_util",
@@ -300,11 +309,30 @@ nanobind_pywrap_extension(
 nanobind_pywrap_extension(
     name = "_ops",
     srcs = ["ops.cc"],
+    postprocess_stubgen = ":posprocess_ops_stub",
     pytype_deps = [
         ":_xla_builder",
         "//third_party/py/jax/jaxlib:_jax",
     ],
     pytype_srcs = ["_ops.pyi"],
+    stub_replacement_patterns = {
+        "_ops.__prefix__": "\n".join([
+            "from ._xla_builder import XlaOp, XlaBuilder",
+            "from jax.jaxlib._jax import Literal, PrimitiveType, Shape, XlaComputation",
+            "from typing import Any",
+            "ChannelHandle = Any",
+            "ConvolutionDimensionNumbers = Any",
+            "DotDimensionNumbers = Any",
+            "Layout = Any",
+            "LiteralSlice = Any",
+            "GatherDimensionNumbers = Any",
+            "PaddingConfig = Any",
+            "PrecisionConfig = Any",
+            "ReplicaGroup = Any",
+            "ResultAccuracy = Any",
+            "ScatterDimensionNumbers = Any",
+        ]),
+    },
     deps = [
         ":literal_type_casters",
         ":nb_absl_span",
@@ -330,6 +358,15 @@ nanobind_pywrap_extension(
         "//xla/hlo/builder/lib:svd",
         "//xla/pjrt:status_casters",
         "//xla/service:hlo_proto_cc",
+    ],
+)
+
+pytype_strict_binary(
+    name = "posprocess_ops_stub",
+    srcs = ["posprocess_ops_stub.py"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "@absl_py//absl:app",
     ],
 )
 
@@ -401,7 +438,11 @@ cc_library(
 nanobind_pywrap_extension(
     name = "_profiler",
     srcs = ["profiler.cc"],
+    pytype_deps = ["//third_party/py/typing_extensions"],
     pytype_srcs = ["_profiler.pyi"],
+    stub_replacement_patterns = {
+        "_profiler.__prefix__": "from ._profile_data import ProfileData",
+    },
     visibility = internal_visibility([
         ":jax",
         "//third_party/py/torch_tpu:__subpackages__",

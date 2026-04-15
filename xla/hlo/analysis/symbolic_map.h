@@ -69,9 +69,9 @@ inline int64_t GetSymbolIndex(SymbolicExpr expr, int64_t num_dims) {
 class SymbolicMap {
  public:
   SymbolicMap() = default;
-  static SymbolicMap Get(mlir::MLIRContext* ctx, int64_t num_dimensions,
-                         int64_t num_symbols,
-                         llvm::SmallVector<SymbolicExpr> exprs);
+  static SymbolicMap Get(mlir::MLIRContext* ctx, int64_t num_dimensions = 0,
+                         int64_t num_symbols = 0,
+                         llvm::SmallVector<SymbolicExpr> exprs = {});
   static SymbolicMap GetMultiDimIdentityMap(int64_t num_dimensions,
                                             mlir::MLIRContext* ctx);
 

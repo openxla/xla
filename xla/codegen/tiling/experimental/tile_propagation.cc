@@ -55,7 +55,6 @@ namespace {
 
 using ::llvm::ArrayRef;
 using ::llvm::SmallVector;
-
 using ::mlir::MLIRContext;
 
 DimTile GetDimTile(const TilingSpace::DimensionInfo& dim_info, bool is_symbolic,
@@ -63,9 +62,10 @@ DimTile GetDimTile(const TilingSpace::DimensionInfo& dim_info, bool is_symbolic,
   CHECK(is_symbolic || dim_info.tile_size >= 0)
       << "Concrete tile size cannot be negative.";
   SymbolicExpr tile_size =
-      is_symbolic ? CreateSymbolExpr(dim_info.id, num_dimensions, ctx)
+      is_symbolic ? CreateSymbolExpr(dim_info.id.value(), num_dimensions, ctx)
                   : CreateSymbolicConstant(dim_info.tile_size, ctx);
-  return GetDefaultDimTile(dim_info.id, tile_size, dim_info.dimension_size);
+  return GetDefaultDimTile(dim_info.id.value(), tile_size,
+                           dim_info.dimension_size);
 }
 
 Tiles PropagateTileToInputForCwiseOp(const HloInstruction& hlo,

@@ -102,7 +102,7 @@ TritonFusion::GenerateTritonKernelAndWrapper(
         fusion.ToString()));
   }
   return TritonWrapper(
-      impl_fn_name, &fusion, cc, device_info,
+      impl_fn_name, fusion, cc, device_info,
       BlockLevelParameters::FromBlockLevelFusionConfig(
           analysis_.fusion_backend_config().block_level_fusion_config()),
       target_triple, data_layout, *llvm_context, *mlir_context);

@@ -21,7 +21,7 @@ fusion {
 
 // CHECK-NEW: #[[$ATTR_0:.+]] = #xla.indexing_map<"(pid) -> (((pid floordiv 8) mod 2) * 16), domain: pid in [0, 255]">
 // CHECK-NEW: #[[$ATTR_1:.+]] = #xla.indexing_map<"(pid) -> (pid floordiv 16), domain: pid in [0, 255]">
-// CHECK-NEW: #[[$ATTR_2:.+]] = #xla.indexing_map<"(d0) -> (d0 * 32), domain: d0 in [0, 9223372036854775807]">
+// CHECK-NEW: #[[$ATTR_2:.+]] = #xla.indexing_map<"(d0) -> (d0 * 32), domain: d0 in [0, 7]">
 // CHECK-NEW: #[[$ATTR_3:.+]] = #xla.indexing_map<"(pid) -> ((pid mod 8) * 64), domain: pid in [0, 255]">
 
 // CHECK:      xtile.entry_func @triton_fn

@@ -644,45 +644,40 @@ bool ShouldDerivationSimplifyPointDimensions(const HloFusionAdaptor& fusion) {
 absl::Status PopulateNestedParameters(
     const HloFusionAdaptor& fusion,
     TilingSpecification::ParameterMapping& parameter_mapping) {
-  auto set_mapping_for_instruction = [&](const HloInstruction& instruction,
-                                         int64_t num_parameters) {
-    // This should never happen if our outer logic is correct, but we check
-    // it just in case.
-    if (!instruction.shape().IsArray()) {
-      return absl::FailedPreconditionError(absl::StrCat(
-          "Instruction ", instruction.ToString(),
-          " has non-array shape: ", instruction.shape().ToString()));
-    }
-    // If the instruction is already in the specification, update it. This
-    // should in principle only occur if the instruction defines both tiling
-    // parameters visible at its output as well as hidden tiling parameters.
-    // A `dot` that is the root of a fusion will model this case, for
-    // example.
-    for (TilingSpecification::InstructionAndNumTilingParameters& mapping :
-         parameter_mapping) {
-      if (mapping.instruction == &instruction) {
-        mapping.num_tiling_parameters += num_parameters;
-        return absl::OkStatus();
-      }
-    }
-    parameter_mapping.push_back({&instruction, num_parameters});
-    return absl::OkStatus();
-  };
-
   const auto& instructions = fusion.MakeInstructionPostOrder();
   for (int64_t i = instructions.size() - 1; i >= 0; --i) {
     const HloInstructionAdaptor& instruction_adaptor = instructions[i];
     if (!fusion.ContainsInstruction(instruction_adaptor)) {
       continue;
     }
-    // TODO(b/446827313): inline function?
     if (IsSomeDot(instruction_adaptor.instruction())) {
-      int64_t num_parameters = instruction_adaptor.instruction()
-                                   .dot_dimension_numbers()
+      const HloInstruction& instruction = instruction_adaptor.instruction();
+      int64_t num_parameters = instruction.dot_dimension_numbers()
                                    .lhs_contracting_dimensions()
                                    .size();
-      TF_RETURN_IF_ERROR(set_mapping_for_instruction(
-          instruction_adaptor.instruction(), num_parameters));
+      // This should never happen if our outer logic is correct, but we check
+      // it just in case.
+      if (!instruction.shape().IsArray()) {
+        return absl::FailedPreconditionError(absl::StrCat(
+            "Instruction ", instruction.ToString(),
+            " has non-array shape: ", instruction.shape().ToString()));
+      }
+      // If the instruction is already in the specification, update it. This
+      // should in principle only occur if the instruction defines both tiling
+      // parameters visible at its output as well as hidden tiling parameters.
+      // A `dot` that is the root of a fusion will model this case, for
+      // example.
+      auto it = absl::c_find_if(
+          parameter_mapping,
+          [&](TilingSpecification::InstructionAndNumTilingParameters& mapping) {
+            return mapping.instruction == &instruction;
+          });
+
+      if (it != parameter_mapping.end()) {
+        it->num_tiling_parameters += num_parameters;
+      } else {
+        parameter_mapping.push_back({&instruction, num_parameters});
+      }
     }
   }
   return absl::OkStatus();
@@ -1807,10 +1802,6 @@ absl::StatusOr<std::unique_ptr<TiledHloInstruction>> ComputeTiledHloInstruction(
             *symbolic_tiled_hlo,
             output_tiling_info.linear_output_tile_offset_indexing,
             mlir_context));
-    // TODO(b/446827313): check if this works for cases with regions as we
-    // might need to pull runtime variables into the region. Another possibility
-    // is that sub-regions might pollute the map with own tiled instructions
-    // that are not present in the parent region.
     runtime_variables = MapToTiledInstructions(
         symbolic_tiled_hlo->runtime_variables(), symbolic_to_tiled_hlo_map);
     // Symbols here can only be runtime variables.

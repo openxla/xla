@@ -1691,6 +1691,21 @@ PjRtClient::CrossHostReceiveBuffers(absl::Span<const xla::Shape> shapes,
                    << status;
       }
     };
+    for (auto& descriptor : recv_state->descriptors) {
+      if (descriptor.serialized_descriptors.size() != 1) {
+        CHECK_NOTNULL(recv_state->cancel_notifier);
+        absl::Status error_status = absl::InternalError(
+            absl::StrFormat("`descriptor.serialized_descriptors` in "
+                            "xla::PjRtCrossHostRecvNotifier "
+                            "must have length 1, but has length %d",
+                            descriptor.serialized_descriptors.size()));
+        for (auto& sub_descriptor : descriptor.serialized_descriptors) {
+          recv_state->cancel_notifier(sub_descriptor, error_status,
+                                      on_canceled);
+        }
+        return;
+      }
+    }
     if (recv_state->descriptors.size() != keys.size()) {
       absl::Status error_status = absl::InternalError(absl::StrFormat(
           "Descriptors must be the same size as keys. Descriptors: %d, "

@@ -269,7 +269,7 @@ absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitTiledFusionKernel(
     const Tiling& tiling) {
   auto constraints_builder = TiledEmitterConstraints::GetBuilder();
   ASSIGN_OR_RETURN(auto module,
-                   xtile::EmitXTileModule(name, &fusion, symbolic_tile_analysis,
+                   xtile::EmitXTileModule(name, fusion, symbolic_tile_analysis,
                                           tiling, context));
   module->setName(absl::StrCat("__compute_module", "_", name));
 

@@ -635,7 +635,7 @@ std::optional<IndexingMap> ParseIndexingMap(llvm::StringRef input,
       llvm::errs() << "Expected an empty indexing map\n";
       return std::nullopt;
     }
-    return IndexingMap{AffineMap::get(mlir_context),
+    return IndexingMap{SymbolicMap::Get(mlir_context),
                        /*dimensions=*/{}, /*range_vars=*/{}, /*rt_vars=*/{}};
   }
 
@@ -747,15 +747,17 @@ std::optional<IndexingMap> ParseIndexingMap(llvm::StringRef input,
       ArrayRef(affine_exprs).drop_front(num_affine_map_results);
 
   // Populate constraints.
-  SmallVector<std::pair<AffineExpr, Interval>> constraints;
+  SmallVector<std::pair<SymbolicExpr, Interval>> constraints;
   constraints.reserve(constraint_exprs.size());
   for (const auto& [expr, bounds] :
        llvm::zip(constraint_exprs, constraint_bounds)) {
-    constraints.push_back(std::make_pair(expr, bounds));
+    constraints.push_back(std::make_pair(
+        AffineExprToSymbolicExpr(expr, dim_vars.size()), bounds));
   }
-  auto map = AffineMap::get(dim_vars.size(), range_vars.size() + rt_vars.size(),
-                            affine_map_results, mlir_context);
-  return IndexingMap{map, std::move(dim_vars), std::move(range_vars),
+  auto symbolic_map = AffineMapToSymbolicMap(
+      AffineMap::get(dim_vars.size(), range_vars.size() + rt_vars.size(),
+                     affine_map_results, mlir_context));
+  return IndexingMap{symbolic_map, std::move(dim_vars), std::move(range_vars),
                      std::move(rt_vars), constraints};
 }
 

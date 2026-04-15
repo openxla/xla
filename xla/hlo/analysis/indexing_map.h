@@ -32,14 +32,11 @@ limitations under the License.
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "mlir/IR/AffineExpr.h"
-#include "mlir/IR/AffineMap.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/analysis/symbolic_map.h"
-#include "xla/hlo/analysis/symbolic_map_converter.h"
 
 namespace xla {
 
@@ -128,18 +125,14 @@ class IndexingMap {
     std::string name = "";
   };
 
-  // TODO: b/446858351 - Remove AffineMap constructors once all the users are
-  // migrated to SymbolicMap.
-  ABSL_DEPRECATED("Use IndexingMap(SymbolicMap, ...) instead")
   IndexingMap(
-      mlir::AffineMap affine_map, std::vector<Variable> dimensions,
+      SymbolicMap symbolic_map, std::vector<Variable> dimensions,
       std::vector<Variable> range_vars, std::vector<Variable> rt_vars,
-      absl::Span<std::pair<mlir::AffineExpr, Interval> const> constraints = {});
+      absl::Span<std::pair<SymbolicExpr, Interval> const> constraints = {});
 
-  ABSL_DEPRECATED("Use IndexingMap(SymbolicMap, ...) instead")
-  IndexingMap(mlir::AffineMap affine_map, std::vector<Variable> dimensions,
+  IndexingMap(SymbolicMap symbolic_map, std::vector<Variable> dimensions,
               std::vector<Variable> range_vars, std::vector<Variable> rt_vars,
-              const llvm::MapVector<mlir::AffineExpr, Interval>& constraints);
+              const llvm::MapVector<SymbolicExpr, Interval>& constraints);
 
   IndexingMap(const IndexingMap&) = default;
   IndexingMap(IndexingMap&&) noexcept = default;
@@ -148,13 +141,6 @@ class IndexingMap {
 
   // Returns an undefined indexing map.
   static IndexingMap GetUndefined() { return IndexingMap(); }
-
-  // TODO: b/446858351 - Remove AffineMap-based factory functions once all the
-  // users are migrated to SymbolicMap.
-  ABSL_DEPRECATED("Use FromTensorSizes(SymbolicMap, ...) instead")
-  static IndexingMap FromTensorSizes(
-      mlir::AffineMap affine_map, absl::Span<const int64_t> dim_upper_bounds,
-      absl::Span<const int64_t> symbol_upper_bounds);
 
   static IndexingMap FromTensorSizes(
       SymbolicMap symbolic_map, absl::Span<const int64_t> dim_upper_bounds,
@@ -172,18 +158,6 @@ class IndexingMap {
 
   // Return MLIRContext.
   mlir::MLIRContext* GetMLIRContext() const;
-
-  // Returns the affine map.
-  // TODO: b/446856820 - Remove once all the users are migrated to SymbolicMap.
-  ABSL_DEPRECATED("Use GetSymbolicMap() instead")
-  mlir::AffineMap GetAffineMap() const {
-    // To avoid recomputing affine_map_ is a cached conversion from
-    // symbolic_map_ that gets invalidated when the symbolic_map_ changes.
-    if (!affine_map_) {
-      affine_map_ = SymbolicMapToAffineMap(GetSymbolicMap());
-    }
-    return affine_map_;
-  }
 
   // Returns the symbolic map.
   const SymbolicMap& GetSymbolicMap() const& { return symbolic_map_; }
@@ -237,9 +211,6 @@ class IndexingMap {
   // Allows to add bounds for the symbolic expression `expr`. If there are
   // bounds for the `expr`, then computes intersection of the current and new
   // ranges.
-  // TODO: b/446858351 - Remove once fully migrated to SymbolicMap.
-  ABSL_DEPRECATED("Use AddConstraint(SymbolicExpr, Interval) instead")
-  void AddConstraint(mlir::AffineExpr expr, Interval range);
   void AddConstraint(SymbolicExpr expr, Interval range);
   void ClearConstraints() { constraints_.clear(); }
   void EraseConstraint(SymbolicExpr expr);
@@ -300,15 +271,6 @@ class IndexingMap {
   // (d0, d1, d2, d3, d4, d5) -> (d0, d1, d2, d3, d4, d5)
   IndexingMap ConvertSymbolsToDimensions() const;
 
-  IndexingMap(
-      SymbolicMap symbolic_map, std::vector<Variable> dimensions,
-      std::vector<Variable> range_vars, std::vector<Variable> rt_vars,
-      absl::Span<std::pair<SymbolicExpr, Interval> const> constraints = {});
-
-  IndexingMap(SymbolicMap symbolic_map, std::vector<Variable> dimensions,
-              std::vector<Variable> range_vars, std::vector<Variable> rt_vars,
-              const llvm::MapVector<SymbolicExpr, Interval>& constraints);
-
  private:
   IndexingMap() = default;
 
@@ -334,7 +296,6 @@ class IndexingMap {
   bool VerifyConstraintIntervals();
 
   SymbolicMap symbolic_map_;
-  mutable mlir::AffineMap affine_map_;
 
   // A dimension variable represents a dimension of a tensor or a GPU grid.
   // Dimension variables correspond to the dimensions of the `symbolic_map_`.

@@ -3270,6 +3270,7 @@ xla_test(
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_address_allocator",
+        "//xla/stream_executor/rocm:rocm_platform_id",
         "//xla/tests:hlo_pjrt_test_base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",

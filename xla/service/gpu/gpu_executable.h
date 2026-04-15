@@ -134,6 +134,7 @@ class GpuExecutable : public Executable {
     ModuleStats module_stats;
     stream_executor::ExecutableAbiVersion executable_abi_version;
     std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options;
+    std::optional<BufferAssignmentProto> buffer_assignment_proto;
   };
 
   static absl::StatusOr<std::unique_ptr<GpuExecutable>> Create(Params params);
@@ -202,9 +203,17 @@ class GpuExecutable : public Executable {
 
   const std::vector<ConstantInfo>& constants() const { return constants_; }
 
+  // Only returns a non-null pointer if this executable was constructed with a
+  // valid BufferAssignment. Deserialized executables do not have a valid
+  // BufferAssignment and will return nullptr.
   const BufferAssignment* buffer_assignment() const {
     return buffer_assignment_.get();
   }
+
+  // Returns the proto representation of `buffer_assignment()` if available,
+  // otherwise returns the stored buffer assignment proto if available. Returns
+  // nullopt if neither is available.
+  std::optional<BufferAssignmentProto> buffer_assignment_proto() const;
 
   const GpuAliasInfo* alias_info() const { return alias_info_.get(); }
 
@@ -291,7 +300,8 @@ class GpuExecutable : public Executable {
       bool enable_debug_info_manager, ModuleStats module_stats,
       absl::StatusOr<std::vector<ThunkProto>> thunk_sequence_proto,
       stream_executor::ExecutableAbiVersion executable_abi_version,
-      std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options);
+      std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options,
+      std::optional<BufferAssignmentProto> buffer_assignment_proto);
 
   // GpuExecutable check with either AMD's ISA version, or Nvidia's major minor
   // version for compute capability, depending on the hardware.
@@ -382,6 +392,12 @@ class GpuExecutable : public Executable {
   //
   // This object is also used for dumping debug info.
   std::shared_ptr<const xla::BufferAssignment> buffer_assignment_;
+
+  // A buffer assignment proto may exists when `buffer_assignment_` is nullptr.
+  // This happens when the executable is reconstructed from a proto (e.g. AOT).
+  // The full BufferAssignment object can't be reconstructed because it requires
+  // access to the compiler. But for debugging purposes, the proto is enough.
+  std::optional<BufferAssignmentProto> buffer_assignment_proto_;
 
   // Extra allocations added by thunk passes outside of the normal buffer
   // assignment process.
