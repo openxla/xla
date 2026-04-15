@@ -469,6 +469,41 @@ TEST_P(CollectivesModeOps, CollectivePermute) {
   LiteralTestUtil::ExpectR1Equal<uint32_t>({10, 10}, results[1]);
 }
 
+// Verifies that collective-permute works correctly when the input is a
+// parameter (allocated in default memory space S(0)) and the result is returned
+// directly. The copy insertion pass must insert copies to move parameter data
+// into collective memory space when required.
+TEST_P(CollectivesModeOps, CollectivePermuteOnParameters) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+  ENTRY test_computation {
+    p = u32[2] parameter(0)
+    ROOT permute = u32[2] collective-permute(p), source_target_pairs={{1,0}, {0,1}}
+  }
+  )";
+  const int64_t kNumReplicas = 2;
+  ASSERT_GE(device_count(), kNumReplicas)
+      << "Test requires at least " << kNumReplicas << " devices ("
+      << device_count() << " available)";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
+
+  // Replica 0 gets {10, 10}, replica 1 gets {11, 11}.
+  auto arg0 = LiteralUtil::CreateR1<uint32_t>({10, 10});
+  auto arg1 = LiteralUtil::CreateR1<uint32_t>({11, 11});
+  std::vector<std::vector<Literal*>> args = {{&arg0}, {&arg1}};
+
+  TF_ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                          ExecuteReplicated(std::move(module), args));
+
+  const std::vector<Literal>& results = execution_result.results;
+  ASSERT_EQ(results.size(), kNumReplicas);
+  // After permute: replica 0 receives from replica 1, replica 1 from replica 0.
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({11, 11}, results[0]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({10, 10}, results[1]);
+}
+
 TEST_P(CollectivesModeOps, CombinedCollectivePermute) {
   const absl::string_view kModuleStr = R"(
   HloModule test

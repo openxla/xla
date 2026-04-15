@@ -262,6 +262,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
+#include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu/gpu_spmd_pipeline.h"
 #include "xla/service/gpu/hlo_fusion_stats.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -2181,6 +2182,7 @@ bool ShouldAddCopyForCollectiveMemorySpace(const HloValue* value) {
       (inst->opcode() == HloOpcode::kConstant)) {
     for (auto& use : value->GetUses()) {
       if ((is_nccl_buffers_used && IsCollective(use.instruction)) ||
+          RequiresCollectiveMemorySpace(use.instruction) ||
           IsCollectiveMosaicGpuInstruction(*use.instruction)) {
         return true;
       }

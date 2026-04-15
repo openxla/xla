@@ -127,7 +127,7 @@ bool IsNvshmemInstruction(const HloInstruction* inst) {
 // Returns true if the instruction's collectives mode requires symmetric
 // (collective) memory. Device-initiated and one-sided collectives need all
 // buffers registered with the collective runtime ahead of time.
-bool RequiresSymmetricMemory(const HloInstruction* inst) {
+bool RequiresCollectiveSymmetricMemorySpace(const HloInstruction* inst) {
   if (!inst->has_backend_config()) {
     return false;
   }
@@ -173,11 +173,11 @@ bool HasSymmetricMemoryInstruction(const HloValue& input_alias) {
     return false;
   }
   for (const HloUse& use : input_alias.GetUses()) {
-    if (RequiresSymmetricMemory(use.instruction)) {
+    if (RequiresCollectiveSymmetricMemorySpace(use.instruction)) {
       return true;
     }
   }
-  return RequiresSymmetricMemory(input_alias.instruction());
+  return RequiresCollectiveSymmetricMemorySpace(input_alias.instruction());
 }
 
 bool HasMosaicInstruction(const HloValue& input_alias,
