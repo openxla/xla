@@ -231,6 +231,7 @@ cudaIpcGetEventHandle
 cudaIpcGetMemHandle
 cudaIpcOpenEventHandle
 cudaIpcOpenMemHandle
+cudaKernelSetAttributeForDevice
 cudaLaunchCooperativeKernel
 cudaLaunchCooperativeKernelMultiDevice
 cudaLaunchCooperativeKernel_ptsz
@@ -240,6 +241,7 @@ cudaLaunchKernel
 cudaLaunchKernelExC
 cudaLaunchKernelExC_ptsz
 cudaLaunchKernel_ptsz
+cudaLibraryUnload
 cudaMalloc
 cudaMalloc3D
 cudaMalloc3DArray
