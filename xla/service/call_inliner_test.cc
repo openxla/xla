@@ -832,74 +832,6 @@ ENTRY main {
             expected_module->ToFingerprint(options));
 }
 
-TEST_F(CallInlinerTest, InliningMergesOpMetadataRecursively) {
-  const char* hlo = R"(
-
-cond {
-  input = f32[128,32] parameter(0)
-  ROOT c0 = pred[] constant(0), metadata={op_name="while/cond"}
-}
-
-body {
-  input = f32[128,32] parameter(0)
-  ROOT convert = f32[128,32] convert(input), metadata={op_name="while/body"}
-}
-
-callee {
-  input = f32[128,32] parameter(0)
-  ROOT while = f32[128,32] while(input), metadata={op_name="while"},
-    condition=cond, body=body
-}
-
-ENTRY main {
-  input = f32[128,32] parameter(0)
-  ROOT result = f32[128,32] call(input), to_apply=callee, metadata={op_name="x"}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                          ParseAndReturnVerifiedModule(hlo));
-  ASSERT_THAT(CallInliner().Run(m.get()), absl_testing::IsOkAndHolds(true));
-
-  auto root = m->entry_computation()->root_instruction();
-  EXPECT_THAT(root, op::While());
-  EXPECT_EQ(root->metadata().op_name(), "x/while");
-  EXPECT_EQ(root->while_condition()->root_instruction()->metadata().op_name(),
-            "x/while/cond");
-  EXPECT_EQ(root->while_body()->root_instruction()->metadata().op_name(),
-            "x/while/body");
-}
-
-TEST_F(CallInlinerTest, InliningMergesOpNoEmbeddedRecursion) {
-  const char* hlo = R"(
-
-reducer {
-  x = f32[] parameter(0)
-  y = f32[] parameter(1)
-  ROOT add = f32[] add(x, y)
-}
-
-callee {
-  input = f32[128,32] parameter(0)
-  const = f32[] constant(0)
-  ROOT reduce = f32[128] reduce(input, const), dimensions={1}, to_apply=reducer, metadata={op_name="reduce"}
-}
-
-ENTRY main {
-  input = f32[128,32] parameter(0)
-  ROOT result = f32[128] call(input), to_apply=callee, metadata={op_name="x"}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                          ParseAndReturnVerifiedModule(hlo));
-  CallInliner call_inliner;
-  EXPECT_THAT(call_inliner.Run(m.get()), absl_testing::IsOkAndHolds(true));
-
-  auto root = m->entry_computation()->root_instruction();
-  EXPECT_THAT(root, op::Reduce());
-  EXPECT_EQ(root->metadata().op_name(), "x/reduce");
-  EXPECT_EQ(root->to_apply()->root_instruction()->metadata().op_name(), "");
-}
-
 TEST_F(CallInlinerTest, GetInlinedModule) {
   const char* hlo = R"(
 
@@ -912,12 +844,12 @@ reducer {
 callee {
   input = f32[128,32] parameter(0)
   const = f32[] constant(0)
-  ROOT reduce = f32[128] reduce(input, const), dimensions={1}, to_apply=reducer, metadata={op_name="reduce"}
+  ROOT reduce = f32[128] reduce(input, const), dimensions={1}, to_apply=reducer
 }
 
 ENTRY main {
   input = f32[128,32] parameter(0)
-  ROOT result = f32[128] call(input), to_apply=callee, metadata={op_name="x"}
+  ROOT result = f32[128] call(input), to_apply=callee
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
@@ -926,34 +858,6 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(auto inlined_module, GetInlinedModule(m.get()));
   auto root = inlined_module.module->entry_computation()->root_instruction();
   EXPECT_THAT(root, op::Reduce());
-  EXPECT_EQ(root->metadata().op_name(), "x/reduce");
-  EXPECT_EQ(root->to_apply()->root_instruction()->metadata().op_name(), "");
-}
-
-TEST_F(CallInlinerTest, InliningDoesNotDuplicateLongOpNames) {
-  const char* hlo = R"(
-callee {
-  input = f32[128,32] parameter(0)
-  ROOT y = f32[128,32] negate(input), metadata={op_name="y"}
-}
-
-ENTRY main {
-  input = f32[128,32] parameter(0)
-  ROOT result = f32[128,32] call(input), to_apply=callee
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                          ParseAndReturnVerifiedModule(hlo));
-  auto root = m->entry_computation()->root_instruction();
-  ASSERT_THAT(root, op::Call());
-  OpMetadata metadata = root->metadata();
-  metadata.set_op_name(std::string(CallInliner::kMaxOpNameSize, 'x'));
-  root->set_metadata(metadata);
-  ASSERT_THAT(CallInliner().Run(m.get()), absl_testing::IsOkAndHolds(true));
-
-  root = m->entry_computation()->root_instruction();
-  EXPECT_THAT(root, op::Negate());
-  EXPECT_EQ(root->metadata().op_name(), "y");
 }
 
 TEST_F(CallInlinerTest, InliningCallBack) {
@@ -996,116 +900,6 @@ ENTRY main {
               op::Subtract(op::Call(op::Parameter(0)), op::Parameter(0)));
 }
 
-struct ModuleWithCall {
-  std::unique_ptr<HloModule> module;
-  HloInstruction* call;
-  HloInstruction* neg;
-};
-
-ModuleWithCall CreateModuleWithCall(const std::string& module_name) {
-  auto module = std::make_unique<HloModule>(module_name, HloModuleConfig());
-  HloComputation::Builder inner_builder("inner");
-  auto* p0 = inner_builder.AddInstruction(
-      HloInstruction::CreateParameter(0, ShapeUtil::MakeShape(F32, {}), "p0"));
-  auto* neg = inner_builder.AddInstruction(HloInstruction::CreateUnary(
-      ShapeUtil::MakeShape(F32, {}), HloOpcode::kNegate, p0));
-  HloComputation* inner = module->AddEmbeddedComputation(inner_builder.Build());
-
-  HloComputation::Builder outer_builder("outer");
-  auto* constant = outer_builder.AddInstruction(
-      HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(1.0f)));
-  auto* call = outer_builder.AddInstruction(HloInstruction::CreateCall(
-      ShapeUtil::MakeShape(F32, {}), {constant}, inner));
-  module->AddEntryComputation(outer_builder.Build());
-
-  return {std::move(module), call, neg};
-}
-
-TEST_F(CallInlinerTest, InlinedStackFrameConcatenation) {
-  ModuleWithCall m = CreateModuleWithCall(TestName());
-
-  HloStackFrame frame1;
-  frame1.file_name = "file1.py";
-  frame1.function_name = "func1";
-  frame1.line = 10;
-  frame1.parent_frame_id = StackFrameId{0};
-  StackFrameId id1 = m.module->mutable_stack_frames().AddStackFrame(frame1);
-
-  HloStackFrame frame2;
-  frame2.file_name = "file2.py";
-  frame2.function_name = "func2";
-  frame2.line = 20;
-  frame2.parent_frame_id = StackFrameId{0};
-  StackFrameId id2 = m.module->mutable_stack_frames().AddStackFrame(frame2);
-
-  OpMetadata neg_metadata;
-  neg_metadata.set_stack_frame_id(id2.value);
-  m.neg->set_metadata(neg_metadata);
-
-  OpMetadata call_metadata;
-  call_metadata.set_stack_frame_id(id1.value);
-  m.call->set_metadata(call_metadata);
-
-  TF_ASSERT_OK(CallInliner::Inline(m.call).status());
-
-  HloInstruction* inlined_neg = nullptr;
-  for (auto* inst : m.module->entry_computation()->instructions()) {
-    if (inst->opcode() == HloOpcode::kNegate) {
-      inlined_neg = inst;
-      break;
-    }
-  }
-  ASSERT_NE(inlined_neg, nullptr);
-
-  StackFrameId new_frame_id{inlined_neg->metadata().stack_frame_id()};
-  EXPECT_NE(new_frame_id, id1);
-  EXPECT_NE(new_frame_id, id2);
-  EXPECT_TRUE(new_frame_id.valid());
-
-  HloStackFrame new_frame =
-      m.module->stack_frames().GetStackFrame(new_frame_id);
-  EXPECT_EQ(new_frame.file_name, "file2.py");
-  EXPECT_EQ(new_frame.function_name, "func2");
-  EXPECT_EQ(new_frame.parent_frame_id, id1);
-}
-
-TEST_F(CallInlinerTest, InlinedStackFrameRedundantPrefixSkipsConcatenation) {
-  ModuleWithCall m = CreateModuleWithCall(TestName());
-
-  HloStackFrame frame1;
-  frame1.file_name = "file1.py";
-  frame1.function_name = "func1";
-  frame1.line = 10;
-  frame1.parent_frame_id = StackFrameId{0};
-  StackFrameId id1 = m.module->mutable_stack_frames().AddStackFrame(frame1);
-
-  HloStackFrame frame2;
-  frame2.file_name = "file2.py";
-  frame2.function_name = "func2";
-  frame2.line = 20;
-  frame2.parent_frame_id = id1;
-  StackFrameId id2 = m.module->mutable_stack_frames().AddStackFrame(frame2);
-
-  OpMetadata call_metadata;
-  call_metadata.set_stack_frame_id(id1.value);
-  m.call->set_metadata(call_metadata);
-
-  OpMetadata neg_metadata;
-  neg_metadata.set_stack_frame_id(id2.value);
-  m.neg->set_metadata(neg_metadata);
-
-  TF_ASSERT_OK(CallInliner::Inline(m.call).status());
-
-  HloInstruction* inlined_neg = nullptr;
-  for (auto* inst : m.module->entry_computation()->instructions()) {
-    if (inst->opcode() == HloOpcode::kNegate) {
-      inlined_neg = inst;
-      break;
-    }
-  }
-  ASSERT_NE(inlined_neg, nullptr);
-  EXPECT_EQ(inlined_neg->metadata().stack_frame_id(), id2.value);
-}
 TEST_F(CallInlinerTest, ReproduceDanglingPointerWithSchedule) {
   auto module = std::make_unique<HloModule>(TestName(), HloModuleConfig());
 
