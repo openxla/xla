@@ -437,13 +437,6 @@ ConvertThunksToCommandBuffer(
           ? absl::StrCat("_", thunks_to_convert.front()->thunk_info().thunk_id)
           : "");
 
-  if (VLOG_IS_ON(2)) {
-    auto graph = cmd_executor.RenderExecutionGraph();
-    if (graph.ok()) {
-      VLOG(2) << command_buffer_profile_annotation << " graph: " << *graph;
-    }
-  }
-
   Thunk::ThunkInfo thunk_info;
   thunk_info.profile_annotation = command_buffer_profile_annotation;
   if (tsl::profiler::ProfilerLock::HasActiveSession() &&

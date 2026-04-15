@@ -178,10 +178,6 @@ class CommandExecutor {
     return support_loop_unroll;
   }
 
-  // Renders the execution graph using default renderer. Returns url of the
-  // rendered graph, or an error if rendering failed.
-  absl::StatusOr<std::string> RenderExecutionGraph();
-
   // Recursively traverses all commands in the executor and nested executors.
   absl::Status Walk(
       absl::FunctionRef<absl::Status(const Command*)> callback) const {
