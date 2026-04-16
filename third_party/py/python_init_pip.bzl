@@ -13,6 +13,21 @@ load(
 )
 
 def python_init_pip():
+    # Test-only: exposes libcute_dsl_runtime.so from the pip wheel for use by
+    # the CuTeDSL custom-call C++ test (cute_dsl_custom_call_test).
+    cutlass_dsl_annotations = {
+        "nvidia-cutlass-dsl-libs-cu13": package_annotation(
+            additive_build_content = """\
+cc_import(
+    name = "cute_dsl_runtime",
+    hdrs = glob(["site-packages/nvidia_cutlass_dsl/include/*.h"]),
+    shared_library = "site-packages/nvidia_cutlass_dsl/lib/libcute_dsl_runtime.so",
+    visibility = ["//visibility:public"],
+)
+""",
+        ),
+    }
+
     numpy_annotations = {
         "numpy": package_annotation(
             additive_build_content = """\
@@ -58,12 +73,13 @@ cc_library(
 
     pip_parse(
         name = "pypi",
-        annotations = numpy_annotations,
+        annotations = numpy_annotations | cutlass_dsl_annotations,
         python_interpreter_target = "@{}_host//:python".format(
             get_toolchain_name_per_python_version("python"),
         ),
         extra_hub_aliases = {
             "numpy": ["numpy_headers"],
+            "nvidia-cutlass-dsl-libs-cu13": ["cute_dsl_runtime"],
         },
         # NOTE: (Required for rules_python >= 1.7.0)
         # pipstar flag default has been flipped to be on by default.

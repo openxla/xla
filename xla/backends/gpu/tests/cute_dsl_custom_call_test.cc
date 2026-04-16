@@ -19,10 +19,16 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
+#include "xla/ffi/api/api.h"
+#include "xla/ffi/ffi.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
 #include "tsl/platform/path.h"
+
+XLA_FFI_DECLARE_HANDLER_SYMBOL(CuteDSLRT_NvJaxCutlassCallExecute);
+XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(), "CuteDSLRT_NvJaxCutlassCall",
+                          "CUDA", CuteDSLRT_NvJaxCutlassCallExecute);
 
 namespace xla::gpu {
 namespace {
@@ -36,13 +42,7 @@ TEST_F(CuteDslCustomCallTest, RunVectorAdd) {
   std::string hlo_text;
   TF_ASSERT_OK(tsl::ReadFileToString(tsl::Env::Default(), hlo_path, &hlo_text));
 
-  auto result = Run(hlo_text, /*run_hlo_passes=*/true);
-
-  // TODO: b/448630810 - Update this test once registration is implemented.
-  EXPECT_FALSE(result);
-  EXPECT_THAT(result.message(),
-              ::testing::HasSubstr("No FFI handler registered for "
-                                   "CuteDSLRT_NvJaxCutlassCall"));
+  EXPECT_TRUE(Run(hlo_text, /*run_hlo_passes=*/true));
 }
 
 }  // namespace
