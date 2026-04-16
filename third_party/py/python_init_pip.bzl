@@ -79,6 +79,7 @@ cc_library(
         ),
         extra_hub_aliases = {
             "numpy": ["numpy_headers"],
+            "nvidia-cutlass-dsl-libs-cu13": ["cute_dsl_runtime"],
         },
         # NOTE: (Required for rules_python >= 1.7.0)
         # pipstar flag default has been flipped to be on by default.
