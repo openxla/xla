@@ -335,8 +335,38 @@ message DebugOptions {
   // XLA:GPU options.
   //--------------------------------------------------------------------------//
   // clang-format off
-  // go/keep-sorted start newline_separated=yes skip_lines=2 ignore_prefixes=["optional AutotuneCacheMode","optional bool","optional float","optional int32","optional int64","optional LibNvJitLinkMode","map<string, string>","optional PGLEStrictnessLevel","optional PipelineParallelismOptLevel","repeated CollectiveOpType","repeated CommandBufferCmdType","repeated string","optional ShapeChecks","optional string","optional WhileLoopUnrolling","repeated GenericTritonEmitterFeature","optional CommandBufferSchedulingMode", "repeated AutotuneBackend", "optional CommandBufferUpdateMode"] // NOLINT
+  // go/keep-sorted start newline_separated=yes skip_lines=2 ignore_prefixes=["optional AutotuneCacheMode","optional bool","optional float","optional int32","optional int64","optional LibNvJitLinkMode","map<string, string>","optional PGLEStrictnessLevel","optional PipelineParallelismOptLevel","repeated CollectiveOpType","repeated CommandBufferCmdType","repeated string","optional ShapeChecks","optional string","optional WhileLoopUnrolling","repeated GenericTritonEmitterFeature","optional CommandBufferSchedulingMode", "repeated AutotuneBackend", "optional CollectivesMode","optional CommandBufferUpdateMode"] // NOLINT
   // clang-format on
+
+  // Memory mode for XLA:GPU collective operations.
+  //
+  // COLLECTIVES_PRIVATE_MEMORY:
+  //   Collective operations working on private device memory that lives in a
+  //   per-device memory space. This is also called two-sided collectives
+  //   because it requires both sides of the collective operation to exchange
+  //   local device pointers before they can make progress.
+  //
+  // COLLECTIVES_SYMMETRIC_MEMORY:
+  //   Collective operations working on symmetric device memory, which gives
+  //   a global view of device memory across all participating ranks. With
+  //   symmetric memory, collective operations can be implemented as one-sided
+  //   operations where data can be written directly to a remote buffer, or as
+  //   device-initiated collectives that run as device kernels and do not
+  //   require any device-to-host synchronization.
+  //
+  // COLLECTIVES_PEER_MEMORY:
+  //   Collective operations implemented directly on top of peer memory access,
+  //   either by reading/writing peer memory directly or by mapping all
+  //   participating buffers to the multimem. This is typically supported only
+  //   within a single process, where all ranks can use rendezvous to exchange
+  //   device buffers.
+  //
+  enum CollectivesMode {
+    COLLECTIVES_MEMORY_INVALID = 0;
+    COLLECTIVES_PRIVATE_MEMORY = 1;
+    COLLECTIVES_SYMMETRIC_MEMORY = 2;
+    COLLECTIVES_PEER_MEMORY = 3;
+  }
 
   // Command buffer scheduling mode.
   // SERIALIZE: Serialize all commands in a command buffer.
@@ -483,6 +513,11 @@ message DebugOptions {
   // The minimum data size in bytes to trigger collective-permute-decomposer
   // transformation.
   optional int64 xla_gpu_collective_permute_decomposer_threshold = 237;
+
+  // Memory mode for the collective-permute operation. Determines which memory
+  // space collective-permute buffers are allocated in. See CollectivesMode for
+  // details.
+  optional CollectivesMode xla_gpu_collective_permute_mode = 503;
 
   // Name of the GPU collectives implementation to use (e.g. "nccl",
   // "loopback"). When empty (the default), the highest-priority registered

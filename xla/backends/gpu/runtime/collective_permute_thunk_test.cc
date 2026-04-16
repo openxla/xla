@@ -139,7 +139,7 @@ ENTRY test_computation {
   auto cp_start_thunk = std::make_unique<CollectivePermuteThunk>(
       Thunk::ThunkInfo{}, cp_instr, /*replica_count=*/2,
       /*partition_count=*/1, std::move(buffers),
-      /*p2p_memcpy_enabled=*/false,
+      /*collectives_mode=*/DebugOptions::COLLECTIVES_PRIVATE_MEMORY,
       /*connected_components_enabled=*/false);
 
   ThunkSequence start_sequence;
@@ -235,7 +235,7 @@ TEST(CollectiveThunkTest, ProtoRoundTrip) {
         thunk_info { profile_annotation: "partition_id_profile_annotation" }
         collective_permute_start_thunk {
           collective_config {}
-          p2p_memcpy_enabled: true
+          collectives_mode: COLLECTIVES_PEER_MEMORY
           source_target_pairs: { source: 1 target: 2 }
         }
       )pb");
@@ -262,7 +262,7 @@ TEST(CollectiveThunkTest, SyncCollective) {
         thunk_info { profile_annotation: "partition_id_profile_annotation" }
         collective_permute_start_thunk {
           collective_config {}
-          p2p_memcpy_enabled: true
+          collectives_mode: COLLECTIVES_PEER_MEMORY
           source_target_pairs: { source: 1 target: 2 }
         }
       )pb");

@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -87,8 +88,12 @@ struct FirstCallRendezvousKey {
 // Thunk base class for XLA:GPU collective operations.
 class CollectiveThunk : public Thunk {
  public:
+  using CollectivesMode = DebugOptions::CollectivesMode;
+
   CollectiveThunk(Kind kind, ThunkInfo thunk_info,
-                  CommunicationId communication_id = CommunicationId(0));
+                  CommunicationId communication_id = CommunicationId(0),
+                  CollectivesMode collectives_mode =
+                      DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
 
   struct Buffer {
     int64_t element_count;
@@ -119,13 +124,14 @@ class CollectiveThunk : public Thunk {
       const ExecuteParams& params) const override;
 
   CommunicationId communication_id() const { return communication_id_; }
+  CollectivesMode collectives_mode() const { return collectives_mode_; }
+
+  // Shorthands for checking the collectives memory mode of this thunk.
+  bool use_private_memory() const;
+  bool use_symmetric_memory() const;
+  bool use_peer_memory() const;
 
  protected:
-  virtual absl::Status PrepareCollective(const PrepareParams& params,
-                                         const GpuCliqueKey& clique_key) {
-    return absl::OkStatus();
-  }
-
   // Returns true if the first call to this collective operation has to be
   // guarded with a rendezvous synchronization with other local participants
   // before and after running the collective operation itself.
@@ -134,6 +140,16 @@ class CollectiveThunk : public Thunk {
   // NCCL kernel execution races with a thunk before or after the collective
   // one that calls CUDA APIs that trigger a deadlock.
   virtual bool RequiresRendezvous() const = 0;
+
+  // Prepares collective operation for execution.
+  //
+  // At this stage it is possible to request symmetric or multicast memory for
+  // the collective buffers. Subclasses override this to request memory needed
+  // for one-sided or device-initiated collectives.
+  virtual absl::Status PrepareCollective(const PrepareParams& params,
+                                         const GpuCliqueKey& clique_key) {
+    return absl::OkStatus();
+  }
 
   // Initializes collective operation for execution.
   //
@@ -173,6 +189,7 @@ class CollectiveThunk : public Thunk {
   RendezvousFlag post_call_rendezvous_flag_;
 
   CommunicationId communication_id_;
+  CollectivesMode collectives_mode_;
 
   // Device assignment is owned by PjRtExecutable and never changes between
   // thunk executions, and replica groups are baked into the thunk at compile

@@ -21,14 +21,12 @@ limitations under the License.
 #include <utility>
 
 #include "absl/status/statusor.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory_cache.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/scratch_memory_requests.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/symmetric_memory.h"
-#include "xla/status_macros.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_allocator.h"
 #include "xla/stream_executor/memory_space.h"
@@ -53,13 +51,10 @@ absl::StatusOr<ScratchMemory> AcquireScratchMemory(
   }
 
   int64_t device_ordinal = executor->device_ordinal();
-  std::optional<std::pair<std::shared_ptr<stream_executor::MemoryAllocation>,
-                          std::shared_ptr<SymmetricMemory>>>
-      cached_scratch_memory =
-          collective_memory_cache.GetScratchMemory(device_ordinal);
-  if (cached_scratch_memory.has_value()) {
-    return ScratchMemory(std::move(cached_scratch_memory->first),
-                         std::move(cached_scratch_memory->second));
+  auto [cached_alloc, cached_sym] =
+      collective_memory_cache.FindScratchMemory(device_ordinal);
+  if (cached_alloc != nullptr) {
+    return ScratchMemory(std::move(cached_alloc), std::move(cached_sym));
   }
 
   ASSIGN_OR_RETURN(
@@ -105,16 +100,10 @@ absl::StatusOr<ScratchMemory> AcquireScratchMemory(
       tsl::TiedRef<stream_executor::MemoryAllocation> tied_memory_allocation,
       cliques.Tie(clique_key, std::move(memory_allocation)));
 
-  collective_memory_cache.AddScratchMemory(device_ordinal,
-                                           std::move(tied_memory_allocation),
-                                           std::move(tied_symmetric_memory));
-
-  std::optional<std::pair<std::shared_ptr<stream_executor::MemoryAllocation>,
-                          std::shared_ptr<SymmetricMemory>>>
-      returned_scratch_memory =
-          collective_memory_cache.GetScratchMemory(device_ordinal);
-  return ScratchMemory(std::move(returned_scratch_memory->first),
-                       std::move(returned_scratch_memory->second));
+  auto [alloc, sym_mem] = collective_memory_cache.AddScratchMemory(
+      device_ordinal, std::move(tied_memory_allocation),
+      std::move(tied_symmetric_memory));
+  return ScratchMemory(std::move(alloc), std::move(sym_mem));
 }
 
 }  // namespace gpu
