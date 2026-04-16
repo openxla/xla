@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
+#include "xla/backends/gpu/runtime/legacy_custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/ffi/attribute_map.h"
@@ -876,7 +877,7 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
 
   // For legacy custom calls we convert all API versions into the latest
   // status-returning one and pass backend config as an opaque string.
-  CustomCallThunk::CustomCallTarget custom_call_target;
+  LegacyCustomCallThunk::CustomCallTarget custom_call_target;
 
   // For XLA FFI handlers we decode opaque backend config into attributes map
   // at IR emission time, so that we do not need to parse MLIR at run time.
@@ -924,9 +925,8 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
   auto thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
       &fusion, ir_emitter_context.GetNextThunkId());
 
-  auto ffi_thunk =
-      [&](Slices ops,
-          Slices res) -> absl::StatusOr<std::unique_ptr<CustomCallThunk>> {
+  auto ffi_thunk = [&](Slices ops,
+                       Slices res) -> absl::StatusOr<std::unique_ptr<Thunk>> {
     auto& called_computations = custom_call.called_computations();
     auto& backend_config_str =
         backend_config.ok()
@@ -952,16 +952,15 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
   };
 
   auto legacy_thunk =
-      [&](Slices ops,
-          Slices res) -> absl::StatusOr<std::unique_ptr<CustomCallThunk>> {
+      [&](Slices ops, Slices res) -> absl::StatusOr<std::unique_ptr<Thunk>> {
     std::string opaque =
         backend_config.ok()
             ? backend_config->custom_call_backend_config().opaque()
             : custom_call.raw_backend_config_string();
-    return CustomCallThunk::Create(thunk_info, call_target_name, std::move(ops),
-                                   std::move(res), std::move(opaque),
-                                   custom_call.api_version(),
-                                   ir_emitter_context.platform_name());
+    return LegacyCustomCallThunk::Create(
+        thunk_info, call_target_name, std::move(ops), std::move(res),
+        std::move(opaque), custom_call.api_version(),
+        ir_emitter_context.platform_name());
   };
 
   std::vector<BufferAllocation> fake_allocations(num_args, {0, 0, 0});
