@@ -530,6 +530,27 @@ TEST(ParseRepeatedEnumFlagsTest, AutotuneBackend) {
                                             autotuner::Backend::CUBLAS));
 }
 
+TEST(CollectivesModeParsingTest, CaseInsensitive) {
+  DebugOptions debug_options = DefaultDebugOptionsIgnoringFlags();
+  std::vector<tsl::Flag> flag_objects;
+  MakeDebugOptionsFlags(&flag_objects, &debug_options);
+
+  SetXlaFlagsEnvVar("--xla_gpu_collective_permute_mode=private");
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
+  EXPECT_EQ(debug_options.xla_gpu_collective_permute_mode(),
+            DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
+
+  SetXlaFlagsEnvVar("--xla_gpu_collective_permute_mode=Symmetric");
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
+  EXPECT_EQ(debug_options.xla_gpu_collective_permute_mode(),
+            DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY);
+
+  SetXlaFlagsEnvVar("--xla_gpu_collective_permute_mode=Peer");
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
+  EXPECT_EQ(debug_options.xla_gpu_collective_permute_mode(),
+            DebugOptions::COLLECTIVES_PEER_MEMORY);
+}
+
 TEST(ParseIntRangeInclusiveTest, SingleInteger) {
   IntRangeInclusive range;
   EXPECT_TRUE(ParseIntRangeInclusive("10", range));
