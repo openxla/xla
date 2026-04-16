@@ -58,6 +58,7 @@ tf_proto_library(
     deps = [
         "//xla:autotuning_proto",
         "//xla:xla_data_proto",
+        "//xla:xla_proto",
         "//xla/tsl/protobuf:dnn_proto",
     ],
 )
@@ -699,6 +700,17 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "buffer_allocations_test",
+    srcs = ["buffer_allocations_test.cc"],
+    deps = [
+        ":buffer_allocations",
+        "//xla/stream_executor:device_address",
+        "//xla/tsl/platform:test_main",
+        "@tsl//tsl/platform:test",
     ],
 )
 

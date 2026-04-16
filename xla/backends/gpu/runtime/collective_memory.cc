@@ -78,6 +78,12 @@ std::pair<SymmetricMemory*, size_t> CollectiveMemory::FindSymmetricMemory(
 }
 
 std::pair<SymmetricMemory*, size_t> CollectiveMemory::FindSymmetricMemory(
+    const GpuCliqueKey& clique, BufferAllocation::Slice slice) const {
+  auto [sym, sym_offset] = FindSymmetricMemory(clique, slice.index());
+  return std::make_pair(sym, sym_offset + slice.offset());
+}
+
+std::pair<SymmetricMemory*, size_t> CollectiveMemory::FindSymmetricMemory(
     const GpuCliqueKey& clique, se::DeviceAddressBase addr) const {
   auto allocation = buffers_.FindAllocationIndex(addr);
   if (!allocation.has_value()) {
@@ -101,6 +107,12 @@ std::pair<void*, size_t> CollectiveMemory::FindMultimemAddress(
   }
 
   return std::make_pair(it->second.multimem_ptr, 0);
+}
+
+std::pair<void*, size_t> CollectiveMemory::FindMultimemAddress(
+    const GpuCliqueKey& clique, BufferAllocation::Slice slice) const {
+  auto [mmem, mmem_offset] = FindMultimemAddress(clique, slice.index());
+  return std::make_pair(mmem, mmem_offset + slice.offset());
 }
 
 std::pair<void*, size_t> CollectiveMemory::FindMultimemAddress(
@@ -133,6 +145,16 @@ std::optional<se::DeviceAddressBase> CollectiveMemory::FindPeerAddress(
   }
 
   return addr->second;
+}
+
+std::optional<se::DeviceAddressBase> CollectiveMemory::FindPeerAddress(
+    const GpuCliqueKey& clique, RankId rank,
+    BufferAllocation::Slice slice) const {
+  auto peer_alloc = FindPeerAddress(clique, rank, slice.index());
+  if (!peer_alloc.has_value()) {
+    return std::nullopt;
+  }
+  return peer_alloc->GetByteSlice(slice.offset(), slice.size());
 }
 
 std::optional<se::DeviceAddressBase> CollectiveMemory::FindPeerAddress(
@@ -215,7 +237,7 @@ AcquireSymmetricMemory(
     const CollectiveParams& params, CollectiveCliques& cliques,
     const BufferAllocations& buffers,
     absl::Span<const CollectiveMemoryRequests::SymmetricAllocations> allocs,
-    CollectiveMemoryCache& collective_memory_cache) {
+    CollectiveMemoryCache& memory_cache) {
   absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
       sym_memories;
 
@@ -223,8 +245,8 @@ AcquireSymmetricMemory(
     std::optional<RankId> rank = r.key.rank(params.global_device_id);
 
     if (!rank.has_value()) {
-      return Internal("Can't find global device id %v in clique key %s",
-                      params.global_device_id, r.key.ToString());
+      return Internal("Can't find global device id %v in clique key %v",
+                      params.global_device_id, r.key);
     }
 
     // TODO(ezhulenev): All of the buffer allocations that we make symmetric
@@ -241,13 +263,19 @@ AcquireSymmetricMemory(
 
     ASSIGN_OR_RETURN(GpuCommunicator * comm, cliques.GetComm(r.key, *rank));
     for (BufferAllocation::Index i : r.allocations) {
-      ASSIGN_OR_RETURN(
-          std::unique_ptr<SymmetricMemory> symm,
-          comm->CreateSymmetricMemory(buffers.GetDeviceAddress(i)));
+      se::DeviceAddressBase addr = buffers.GetDeviceAddress(i);
+      CollectiveMemory::Key mem_key = std::make_pair(r.key, i);
+      // Check cache first to avoid redundant collective window registration.
+      if (auto cached = memory_cache.FindSymmetricMemory(r.key, addr)) {
+        sym_memories[mem_key] = std::move(cached);
+        continue;
+      }
+      ASSIGN_OR_RETURN(std::unique_ptr<SymmetricMemory> symm,
+                       comm->CreateSymmetricMemory(addr));
       ASSIGN_OR_RETURN(tsl::TiedRef<SymmetricMemory> tied_symm,
                        cliques.Tie(r.key, std::move(symm)));
-      sym_memories[std::make_pair(r.key, i)] = tied_symm.Lock();
-      collective_memory_cache.AddSymmetricMemory(std::move(tied_symm));
+      sym_memories[mem_key] =
+          memory_cache.AddSymmetricMemory(r.key, addr, std::move(tied_symm));
     }
   }
 
@@ -288,7 +316,7 @@ absl::StatusOr<MulticastMemoryMap> AcquireMulticastMemory(
     const CollectiveParams& params, CollectiveCliques& cliques,
     const BufferAllocations& buffers,
     absl::Span<const CollectiveMemoryRequests::MulticastAllocations> allocs,
-    CollectiveMemoryCache& collective_memory_cache) {
+    CollectiveMemoryCache& memory_cache) {
   int32_t device_ordinal = params.executor->device_ordinal();
 
   MulticastMemoryMap mcast_memories;
@@ -400,9 +428,11 @@ absl::StatusOr<MulticastMemoryMap> AcquireMulticastMemory(
 
     // Copy clique multicast memory to each participating thread.
     for (auto& [k, v] : *clique_mcast_memories) {
-      mcast_memories[k] = {v.multicast_memory.Lock(),
-                           v.rank_multimem_ptr.at(*rank)};
-      collective_memory_cache.AddMulticastMemory(std::move(v.multicast_memory));
+      se::DeviceAddressBase mcast_addr = buffers.GetDeviceAddress(k.second);
+      mcast_memories[k] = {
+          memory_cache.AddMulticastMemory(k.first, mcast_addr,
+                                          std::move(v.multicast_memory)),
+          v.rank_multimem_ptr.at(*rank)};
     }
   }
 
@@ -502,7 +532,7 @@ absl::StatusOr<PeerMemoryMap> AcquirePeerMemory(
 absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
     const CollectiveParams& params, CollectiveCliques& cliques,
     const CollectiveMemoryRequests& requests,
-    CollectiveMemoryCache& collective_memory_cache) {
+    CollectiveMemoryCache& memory_cache) {
   // We rely on deterministic order of memory requests, to guarantee that all
   // ranks create collective memory in identical order, otherwise we can get
   // a deadlock.
@@ -562,12 +592,11 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
 
   ASSIGN_OR_RETURN(auto sym_memories,
                    AcquireSymmetricMemory(params, cliques, requests.buffers(),
-                                          sym_allocs, collective_memory_cache));
+                                          sym_allocs, memory_cache));
 
-  ASSIGN_OR_RETURN(
-      MulticastMemoryMap mcast_memories,
-      AcquireMulticastMemory(params, cliques, requests.buffers(), mcast_allocs,
-                             collective_memory_cache));
+  ASSIGN_OR_RETURN(MulticastMemoryMap mcast_memories,
+                   AcquireMulticastMemory(params, cliques, requests.buffers(),
+                                          mcast_allocs, memory_cache));
 
   ASSIGN_OR_RETURN(
       auto peer_memories,

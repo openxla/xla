@@ -757,7 +757,7 @@ absl::Status NcclCommunicator::LaunchAllGather(
 
 // If all buffers are contiguous returns a device address range that covers
 // all of them, otherwise returns an empty optional.
-static std::optional<se::DeviceAddressBase> IsContinguous(
+static std::optional<se::DeviceAddressBase> IsContiguous(
     absl::Span<const se::DeviceAddressBase> buffers) {
   if (buffers.empty()) {
     return std::nullopt;
@@ -794,8 +794,8 @@ absl::Status NcclCommunicator::LaunchAllToAll(
     absl::StrAppendFormat(out, "%p", buffer.opaque());
   };
 
-  auto send_contiguous = IsContinguous(send_buffers);
-  auto recv_contiguous = IsContinguous(recv_buffers);
+  auto send_contiguous = IsContiguous(send_buffers);
+  auto recv_contiguous = IsContiguous(recv_buffers);
 
   VLOG(3) << absl::StreamFormat(
       "[%d] Launch NCCL AllToAll operation; send_buffers=[%s]; "
