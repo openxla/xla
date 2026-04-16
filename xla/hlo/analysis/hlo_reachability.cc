@@ -155,17 +155,21 @@ std::unique_ptr<HloReachabilityMap> HloReachabilityMap::Build(
   return result;
 }
 
-void HloReachabilityMap::UpdateReachabilityThroughInstruction(
-    const HloInstruction* instruction) {
+void HloReachabilityMap::UpdateReachabilityThroughInstructions(
+    absl::Span<const HloInstruction* const> instructions) {
   std::queue<const HloInstruction*> worklist;
-  worklist.push(instruction);
-
-  std::vector<HloInstruction*> inputs;
 
   // Keep track of the number of times an instruction is in the worklist and
   // only process it only if it is the last occurrence. Note that this might
   // still mean that an instruction is processed multiple times.
   absl::flat_hash_map<const HloInstruction*, int64_t> in_worklist;
+
+  for (const HloInstruction* instruction : instructions) {
+    worklist.push(instruction);
+    ++in_worklist[instruction];
+  }
+
+  std::vector<HloInstruction*> inputs;
 
   while (!worklist.empty()) {
     const HloInstruction* item = worklist.front();

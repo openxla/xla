@@ -111,8 +111,15 @@ class HloReachabilityMap {
   void SetReachable(Index a, Index b) { BitSetFromIndex(b).Set(a); }
 
   // Updates the given reachability map after the immediate predecessor set
+  // (operands and control predecessors) of a set of instructions has changed.
+  void UpdateReachabilityThroughInstructions(
+      absl::Span<const HloInstruction* const> instructions);
+
+  // Updates the given reachability map after the immediate predecessor set
   // (operands and control predecessors) of 'instruction' has changed.
-  void UpdateReachabilityThroughInstruction(const HloInstruction* instruction);
+  void UpdateReachabilityThroughInstruction(const HloInstruction* instruction) {
+    UpdateReachabilityThroughInstructions({instruction});
+  }
 
   // Returns true if "b" is reachable from "a"
   //
