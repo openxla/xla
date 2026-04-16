@@ -209,6 +209,23 @@ CreateSymmetricMemory(
   return futures;
 }
 
+// Create symmetric memory with given comms and address ranges.
+static std::vector<Future<std::unique_ptr<SymmetricMemory>>>
+CreateSymmetricMemory(tsl::Executor& exec,
+                      absl::Span<const std::unique_ptr<GpuCommunicator>> comms,
+                      absl::Span<const se::DeviceAddressBase> addrs) {
+  CHECK_EQ(comms.size(), addrs.size());
+
+  std::vector<Future<std::unique_ptr<SymmetricMemory>>> futures;
+  futures.reserve(addrs.size());
+  for (size_t i = 0; i < comms.size(); ++i) {
+    futures.emplace_back(MakeFutureOn(
+        exec, [=] { return comms[i]->CreateSymmetricMemory(addrs[i]); }));
+  }
+
+  return futures;
+}
+
 // Wait for symmetric memory futures to become available.
 static absl::StatusOr<std::vector<std::unique_ptr<SymmetricMemory>>>
 AwaitSymmetricMemory(
@@ -291,16 +308,27 @@ TEST(GpuCollectivesTest, CreateSymmetricMemory) {
   }
 
   ASSERT_OK_AND_ASSIGN(auto allocators, CreateMemoryAllocators(executors));
-  ASSERT_OK_AND_ASSIGN(auto allocs, Allocate(allocators, 1024));
+  ASSERT_OK_AND_ASSIGN(auto allocs, Allocate(allocators, 8192));
 
   // Because creating symmetric memory is a collective operation, we must call
   // it from a thead pool to avoid deadlocks.
   tsl::thread::ThreadPool pool(tsl::Env::Default(), "collectives", 2);
   tsl::Executor& exec = *pool.AsExecutor();
 
-  // Register allocated buffers as symmetric memory.
-  auto fsymm = CreateSymmetricMemory(exec, comms, allocs);
-  ASSERT_OK_AND_ASSIGN(auto symm, AwaitSymmetricMemory(std::move(fsymm)));
+  {  // Register allocated buffers as symmetric memory.
+    auto fsymm = CreateSymmetricMemory(exec, comms, allocs);
+    ASSERT_OK_AND_ASSIGN(auto symm, AwaitSymmetricMemory(std::move(fsymm)));
+  }
+
+  {  // Now let's try to register address ranges with same size but different
+     // offset from the base allocation.
+    se::DeviceAddressBase addr0 =
+        se::DeviceAddress<char>(allocs[0]->address()).GetSlice(0, 4096);
+    se::DeviceAddressBase addr1 =
+        se::DeviceAddress<char>(allocs[1]->address()).GetSlice(4096, 4096);
+    auto fsymm = CreateSymmetricMemory(exec, comms, {addr0, addr1});
+    ASSERT_OK_AND_ASSIGN(auto symm, AwaitSymmetricMemory(std::move(fsymm)));
+  }
 }
 
 TEST(GpuCollectivesTest, CreateSymmetricMemoryOnDifferentComms) {

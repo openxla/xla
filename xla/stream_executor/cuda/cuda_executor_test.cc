@@ -225,7 +225,7 @@ TEST(CudaExecutorTest, GetPointerMemorySpaceWorksWithDeviceAddress) {
               absl_testing::IsOkAndHolds(MemorySpace::kDevice));
 }
 
-TEST(CudaExecutorTest, AllocateMemoryWithVmmApi) {
+TEST(CudaExecutorTest, RetainVmmMemoryHandleForP2PSpace) {
   TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
                           PlatformManager::PlatformWithName("CUDA"));
   TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
@@ -246,8 +246,7 @@ TEST(CudaExecutorTest, AllocateMemoryWithVmmApi) {
   EXPECT_NE(handle.handle(), 0);
 }
 
-TEST(CudaExecutorTest,
-     RetainVmmMemoryHandleForTheMemoryAllocatedWithoutVmmApi) {
+TEST(CudaExecutorTest, RetainVmmMemoryHandleForDefaultSpace) {
   TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
                           PlatformManager::PlatformWithName("CUDA"));
   TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
@@ -261,8 +260,47 @@ TEST(CudaExecutorTest,
   EXPECT_NE(ptr.opaque(), nullptr);
   EXPECT_EQ(ptr.size(), 1024);
 
-  EXPECT_THAT(cuda_executor->RetainVmmMemoryHandle(ptr.opaque()),
-              absl_testing::StatusIs(absl::StatusCode::kInternal));
+  TF_ASSERT_OK_AND_ASSIGN(CudaExecutor::VmmMemoryHandle handle,
+                          cuda_executor->RetainVmmMemoryHandle(ptr.opaque()));
+  EXPECT_NE(handle.handle(), 0);
 }
+TEST(CudaExecutorTest, DeviceMemoryUsageReportsNonZero) {
+  TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
+                          PlatformManager::PlatformWithName("CUDA"));
+  TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                          platform->ExecutorForDevice(0));
+
+  int64_t free_memory = 0;
+  int64_t total_memory = 0;
+  ASSERT_TRUE(executor->DeviceMemoryUsage(&free_memory, &total_memory));
+  EXPECT_GT(free_memory, 0);
+  EXPECT_GT(total_memory, 0);
+  EXPECT_LE(free_memory, total_memory);
+}
+
+TEST(CudaExecutorTest, DeviceMemoryUsageAfterAllocation) {
+  TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
+                          PlatformManager::PlatformWithName("CUDA"));
+  TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                          platform->ExecutorForDevice(0));
+
+  int64_t free_before = 0;
+  int64_t total_before = 0;
+  ASSERT_TRUE(executor->DeviceMemoryUsage(&free_before, &total_before));
+
+  DeviceAddressBase allocation =
+      executor->Allocate(1024 * 1024, static_cast<int>(MemorySpace::kDevice));
+  ASSERT_NE(allocation.opaque(), nullptr);
+
+  int64_t free_after = 0;
+  int64_t total_after = 0;
+  ASSERT_TRUE(executor->DeviceMemoryUsage(&free_after, &total_after));
+
+  EXPECT_LT(free_after, free_before);
+  EXPECT_EQ(total_after, total_before);
+
+  executor->Deallocate(&allocation);
+}
+
 }  // namespace
 }  // namespace stream_executor::gpu

@@ -64,8 +64,7 @@ class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
   RaggedAllToAllTestBase(bool enable_async, RaggedAllToAllImplType impl_type)
       : CollectiveOpsWithFlagsBase(enable_async, /*enable_p2p_memcpy=*/false,
                                    /*enable_symmetric_buffer=*/false,
-                                   /*memory_size=*/64 * kMB,
-                                   /*collectives_memory_size=*/0),
+                                   /*memory_size=*/64 * kMB),
         impl_type_(impl_type) {}
 
   // Creates random test data for a ragged-all-to-all.
@@ -512,8 +511,8 @@ TEST_P(RaggedAllToAllTest, RaggedAllToAll_2GPUs_S4) {
     send_sizes = s32[2] parameter(3)
     output_offsets = s32[2] parameter(4)
     recv_sizes = s32[2] parameter(5)
-    ROOT ra2a = s4[4,2]{1,0:E(4)} ragged-all-to-all(input, output, 
-      input_offsets, send_sizes, output_offsets, recv_sizes), 
+    ROOT ra2a = s4[4,2]{1,0:E(4)} ragged-all-to-all(input, output,
+      input_offsets, send_sizes, output_offsets, recv_sizes),
       replica_groups={{0,1}}
   })";
 

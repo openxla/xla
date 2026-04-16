@@ -29,6 +29,7 @@ cc_library(
         "//xla/client:local_client",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/service:platform_util",
+        "//xla/stream_executor:memory_space",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/integrations:device_mem_allocator",
@@ -130,6 +131,7 @@ cc_library(
         "//xla/service:shaped_buffer",
         "//xla/service:transfer_manager",
         "//xla/service/gpu:buffer_allocations",
+        "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/service/gpu:gpu_memory_space_assignment",
         "//xla/stream_executor:device_address",
@@ -192,7 +194,6 @@ cc_library(
         # keep sorted
         "//xla:debug_options_flags",
         "//xla/service/gpu:gpu_compiler",
-        "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:gpu_executable",
         "//xla/service/gpu:stream_executor_util",
     ]) + if_cuda([

@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 
-#include <stdlib.h>
-
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -52,6 +50,7 @@ limitations under the License.
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include <stdlib.h>
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
@@ -193,16 +192,9 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
 
   const DebugOptions& options = module->config().debug_options();
 
-  std::optional<BufferValue::Color> color =
-      options.xla_gpu_temp_buffer_use_separate_color()
-          ? std::optional<BufferValue::Color>(
-                (int)MemorySpaceColor::kTempBuffer)
-          : std::nullopt;
-
   BufferAssigner::Options opts;
   opts.allocate_buffers_for_constants = true;
   opts.colorer = CreateColorer(options);
-  opts.temp_buffer_color = color;
   std::unique_ptr<HloOrdering> hlo_ordering;
   switch (options.xla_gpu_command_buffer_scheduling_mode()) {
     case DebugOptions::CONCURRENT:

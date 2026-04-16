@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_H_
 #define XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -117,6 +118,11 @@ class StreamExecutor {
   CreateMemoryAllocator(MemorySpace memory_space) {
     return absl::UnimplementedError("Not Implemented");
   }
+
+  // Returns the minimum alignment for symmetric (collective) memory
+  // allocations (e.g., multicast granularity on CUDA). Returns 1 on platforms
+  // without special alignment requirements.
+  virtual size_t GetSymmetricMemoryAlignment() const { return 1; }
 
   // Obtains metadata about the underlying device.
   // The value is cached on first use.

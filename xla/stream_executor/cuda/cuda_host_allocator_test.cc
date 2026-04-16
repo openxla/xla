@@ -77,7 +77,7 @@ TEST_P(CudaHostAllocatorTest, MemcpyRoundTrip) {
                        executor->CreateStream());
 
   CudaHostAllocator host_allocator(executor, GetParam());
-  CudaDeviceAllocator device_allocator(executor);
+  CudaDeviceAllocator device_allocator(executor, /*options=*/{});
 
   constexpr int kSize = 1024;
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> host_alloc,

@@ -105,7 +105,8 @@ absl::StatusOr<std::vector<RepeatedFlagModifier>> ParseRepeatedEnumModifiers(
 namespace {
 
 template <typename T>
-static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list, T value) {
+static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list,
+                                   T value) {
   for (auto it = list->begin(); it != list->end(); ++it) {
     if (*it == value) {
       return it;
@@ -297,7 +298,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_nccl_comm_splitting(true);
   opts.set_xla_gpu_nccl_init_max_rank_per_root_ratio(0);
 
-  opts.set_xla_gpu_temp_buffer_use_separate_color(false);
   opts.set_xla_gpu_require_exclusive_lock(false);
 
   opts.set_xla_gpu_redzone_padding_bytes(8 * 1024 * 1024);
@@ -1962,15 +1962,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_enable_nvshmem(),
       "Enables NVSHMEM."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_temp_buffer_use_separate_color",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_temp_buffer_use_separate_color),
-      debug_options->xla_gpu_temp_buffer_use_separate_color(),
-      "Enables temp User Buffer Registration. Enable this flag will use a "
-      "separate cuda async memory allocator to allocate temp buffer, this will "
-      "allocate temp buffer to the fixed address on every iteration"));
-
-  flag_list->push_back(tsl::Flag(
       "xla_gpu_require_exclusive_lock",
       bool_setter_for(&DebugOptions::set_xla_gpu_require_exclusive_lock),
       debug_options->xla_gpu_require_exclusive_lock(),
@@ -3221,8 +3212,7 @@ FlagStatus GetFlagStatus(absl::string_view flag_name) {
           "xla_gpu_all_reduce_combine_threshold_bytes",
           "xla_gpu_autotune_level",
           "xla_gpu_collective_permute_decomposer_threshold",
-          "xla_gpu_cublas_fallback",
-          "xla_gpu_dot_merger_threshold_mb",
+          "xla_gpu_cublas_fallback", "xla_gpu_dot_merger_threshold_mb",
           "xla_gpu_enable_dynamic_slice_fusion",
           "xla_gpu_enable_latency_hiding_scheduler",
           "xla_gpu_enable_pipelined_all_gather",

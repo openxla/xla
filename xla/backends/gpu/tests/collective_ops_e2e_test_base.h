@@ -44,7 +44,7 @@ inline constexpr size_t kGB = 1024LL * kMB;
 
 class CollectiveOpsE2ETestBase : public gpu::HloPjRtGpuTestBase {
  public:
-  CollectiveOpsE2ETestBase(size_t memory_size, size_t collectives_memory_size);
+  explicit CollectiveOpsE2ETestBase(size_t memory_size);
 
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options =
@@ -104,9 +104,8 @@ class CollectiveOpsE2ETestBase : public gpu::HloPjRtGpuTestBase {
 class CollectiveOpsWithFlagsBase : public CollectiveOpsE2ETestBase {
  public:
   CollectiveOpsWithFlagsBase(bool enable_async, bool enable_p2p_memcpy,
-                             bool enable_symmetric_buffer, size_t memory_size,
-                             size_t collectives_memory_size)
-      : CollectiveOpsE2ETestBase(memory_size, collectives_memory_size),
+                             bool enable_symmetric_buffer, size_t memory_size)
+      : CollectiveOpsE2ETestBase(memory_size),
         enable_async_(enable_async),
         enable_p2p_memcpy_(enable_p2p_memcpy),
         enable_symmetric_buffer_(enable_symmetric_buffer) {}
