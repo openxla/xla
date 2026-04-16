@@ -294,80 +294,6 @@ TEST_F(TritonBackendTest, AmpereUsesMoreThanTwoStages) {
                           }));
 }
 
-TEST_F(TritonBackendTest, SmallOutputCanUseLargeSplitK) {
-  debug_options_.set_xla_gpu_enable_split_k_autotuning(true);
-  se::CudaComputeCapability ampere_cap{se::CudaComputeCapability::kAmpere,
-                                       /*minor=*/0};
-  target_config_.device_description.set_gpu_compute_capability(
-      se::GpuComputeCapability{ampere_cap});
-  target_config_.device_description.set_core_count(132);
-  target_config_.device_description.set_registers_per_block_limit(64 * 1024);
-  target_config_.device_description.set_threads_per_block_limit(1024);
-  target_config_.device_description.set_threads_per_warp(32);
-  target_config_.device_description.set_shared_memory_per_block_optin(227 *
-                                                                      1024);
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kSimpleGemmFusionHlo));
-
-  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
-      backend_.GetSupportedConfigs(
-          *(module->entry_computation()->root_instruction()));
-  EXPECT_THAT(configs, absl_testing::IsOk());
-  EXPECT_GT(configs.value().size(), 0);
-
-  EXPECT_TRUE(std::any_of(configs.value().begin(), configs.value().end(),
-                          [](const std::unique_ptr<BackendConfig>& config) {
-                            TritonBackendConfig triton_config;
-                            if (!config->UnpackTo(&triton_config)) {
-                              return false;
-                            }
-                            return triton_config.split_k() >= 4;
-                          }));
-}
-
-TEST_F(TritonBackendTest, LargeOutputDoesNotUseLargeSplitK) {
-  const char kLargeGemmFusionHlo[] = R"(
-  HloModule module
-
-  computation {
-    p0 = f32[20480,20480]{1,0} parameter(0)
-    p1 = f32[20480,20480]{1,0} parameter(1)
-    ROOT dot = f32[20480,20480]{1,0} dot(p0, p1),
-        lhs_contracting_dims={1}, rhs_contracting_dims={0}
-  }
-
-  ENTRY main {
-    p0 = f32[20480,20480]{1,0} parameter(0)
-    p1 = f32[20480,20480]{1,0} parameter(1)
-    ROOT fusion = f32[20480,20480]{1,0} fusion(p0, p1),
-      kind=kCustom, calls=computation,
-      backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
-  })";
-
-  se::CudaComputeCapability ampere_cap{se::CudaComputeCapability::kAmpere,
-                                       /*minor=*/0};
-  target_config_.device_description.set_gpu_compute_capability(
-      se::GpuComputeCapability{ampere_cap});
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kLargeGemmFusionHlo));
-
-  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
-      backend_.GetSupportedConfigs(
-          *(module->entry_computation()->root_instruction()));
-  EXPECT_THAT(configs, absl_testing::IsOk());
-
-  EXPECT_FALSE(std::any_of(configs.value().begin(), configs.value().end(),
-                           [](const std::unique_ptr<BackendConfig>& config) {
-                             TritonBackendConfig triton_config;
-                             if (!config->UnpackTo(&triton_config)) {
-                               return false;
-                             }
-                             return triton_config.split_k() > 1;
-                           }));
-}
-
 TEST_F(TritonBackendTest, SplitKIsDisabled) {
   debug_options_.set_xla_gpu_enable_split_k_autotuning(false);
 
@@ -713,71 +639,6 @@ ENTRY e {
   EXPECT_THAT(backend_.Compile(*root, *config), IsOk());
 }
 
-TEST_F(TritonBackendTest, SelectsSplitK) {
-  debug_options_.set_xla_gpu_enable_split_k_autotuning(true);
-  const char kHlo[] = R"(
-HloModule module
-fused_computation {
-  p0 = s8[7,8192]{1,0} parameter(0)
-  p0c = f16[7,8192]{1,0} convert(p0)
-  p1 = f16[8192,18]{1,0} parameter(1)
-  ROOT dot0 = f16[7,18]{1,0} dot(p0c, p1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-}
-ENTRY e {
-  p0 = s8[7,8192]{1,0} parameter(0)
-  p1 = f16[8192,18]{1,0} parameter(1)
-  ROOT fusion = f16[7,18]{1,0} fusion(p0, p1), kind=kCustom, calls=fused_computation, backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
-})";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHlo));
-  HloInstruction* root = module->entry_computation()->root_instruction();
-  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
-      backend_.GetSupportedConfigs(*root);
-  ASSERT_THAT(configs, IsOk());
-  EXPECT_GT(configs.value().size(), 0);
-  EXPECT_TRUE(std::any_of(configs.value().begin(), configs.value().end(),
-                          [](const std::unique_ptr<BackendConfig>& config) {
-                            AutotuneResult::TritonGemmKey triton_config;
-                            if (!config->UnpackTo(&triton_config)) {
-                              return false;
-                            }
-                            return triton_config.split_k() > 1;
-                          }));
-}
-
-TEST_F(TritonBackendTest, UsesSplitKForSmallOuterDimensions) {
-  debug_options_.set_xla_gpu_enable_split_k_autotuning(true);
-  const char kHlo[] = R"(
-HloModule module
-fused_computation {
-  p0 = s8[32,16384]{1,0} parameter(0)
-  c = f16[32,16384]{1,0} convert(p0)
-  p1 = f16[16384,32]{1,0} parameter(1)
-  ROOT out = f16[32,32]{1,0} dot(c, p1),
-                lhs_contracting_dims={1}, rhs_contracting_dims={0}
-}
-ENTRY e {
-  x = s8[32,16384]{1,0} parameter(0)
-  y = f16[16384,32]{1,0} parameter(1)
-  ROOT fusion = f16[32,32]{1,0} fusion(x, y), kind=kCustom, calls=fused_computation, backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
-})";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHlo));
-  HloInstruction* root = module->entry_computation()->root_instruction();
-  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
-      backend_.GetSupportedConfigs(*root);
-  ASSERT_THAT(configs, IsOk());
-  EXPECT_GT(configs.value().size(), 0);
-  EXPECT_TRUE(std::any_of(configs.value().begin(), configs.value().end(),
-                          [](const std::unique_ptr<BackendConfig>& config) {
-                            AutotuneResult::TritonGemmKey triton_config;
-                            if (!config->UnpackTo(&triton_config)) {
-                              return false;
-                            }
-                            return triton_config.split_k() > 1;
-                          }));
-}
 
 TEST_F(TritonBackendTest, FindsValidConfigForSlicedContractingDimension) {
   const char kHlo[] = R"(
@@ -833,7 +694,7 @@ ENTRY entry {
   triton_config_proto.set_block_m(32);
   triton_config_proto.set_block_n(64);
   triton_config_proto.set_block_k(64);
-  triton_config_proto.set_split_k(4);
+  triton_config_proto.set_split_k(1);
   triton_config_proto.set_num_stages(1);
   triton_config_proto.set_num_warps(4);
   triton_config_proto.set_num_ctas(1);
