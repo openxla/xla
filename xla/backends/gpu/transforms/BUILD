@@ -461,6 +461,83 @@ cc_library(
 )
 
 cc_library(
+    name = "conv_fp8_fallback",
+    srcs = ["conv_fp8_fallback.cc"],
+    hdrs = ["conv_fp8_fallback.h"],
+    deps = [
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:cublas_cudnn",
+        "//xla/service/gpu:gpu_conv_runner",
+        "//xla/service/gpu:stream_executor_util",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:dnn",
+        "//xla/stream_executor:engine_options",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_address_allocator",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "conv_fp8_fallback_rewrite_test",
+    srcs = ["conv_fp8_fallback_test.cc"],
+    args = ["--gtest_filter=ConvFp8FallbackRewriteTest.*"],
+    tags = ["no_mac"],
+    deps = [
+        ":conv_fp8_fallback",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:platform_manager",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "conv_fp8_fallback_gpu_test",
+    srcs = ["conv_fp8_fallback_test.cc"],
+    args = ["--gtest_filter=ConvFp8FallbackGpuTest.*"],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "no_mac",
+    ],
+    deps = [
+        ":conv_fp8_fallback",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cuda_platform",
+        "//xla/stream_executor/gpu:gpu_init_impl",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "conv_kind_assignment",
     srcs = ["conv_kind_assignment.cc"],
     hdrs = ["conv_kind_assignment.h"],
@@ -803,6 +880,7 @@ cc_library(
         "//xla/stream_executor:semantic_version",
         "//xla/tests:hlo_test_base_legacy",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:dnn_proto_cc",
         "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -811,7 +889,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -891,11 +968,6 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ]) + [
-        "//xla:status_macros",
-        "//xla/service:matmul_indexing_utils",
-        "//xla/stream_executor:engine_options",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
         "@cudnn_frontend_archive//:cudnn_frontend",
     ],
@@ -1092,10 +1164,6 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ]) + [
-        "//xla:xla_data_proto_cc",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
-        "//xla/tsl/protobuf:dnn_proto_cc",
         "@com_google_absl//absl/container:flat_hash_map",
     ],
 )
@@ -1259,9 +1327,7 @@ xla_test(
             # b/317293391
             "@com_google_googletest//:gtest_main",
         ],
-    ) + [
-        "//xla/tsl/platform:statusor",
-    ],
+    ),
 )
 
 cc_library(
