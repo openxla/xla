@@ -54,10 +54,10 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -135,8 +135,7 @@ absl::Status AllToAllThunk::Initialize(const InitializeParams& params) {
     TF_ASSIGN_OR_RETURN(
         GpuCliqueKey clique_key,
         GetGpuCliqueKey(*params.collective_params, config().replica_groups,
-                        config().group_mode,
-                        CommunicationId(p2p_memcpy_enabled_ ? 1 : 0)));
+                        config().group_mode, communication_id()));
 
     TF_ASSIGN_OR_RETURN(
         Communicator * comm,

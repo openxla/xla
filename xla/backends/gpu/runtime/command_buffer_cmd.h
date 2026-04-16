@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/command.h"
@@ -465,7 +466,8 @@ class CustomCallCmd : public Command {
 
 class CollectiveCmd : public Command {
  public:
-  CollectiveCmd(CommandType cmd_type, CollectiveConfig config);
+  CollectiveCmd(CommandType cmd_type, CollectiveConfig config,
+                CommunicationId communication_id = CommunicationId(0));
 
   absl::Status Prepare(const Thunk::PrepareParams& params) final;
 
@@ -481,9 +483,11 @@ class CollectiveCmd : public Command {
 
  protected:
   const CollectiveConfig& config() const { return config_; }
+  CommunicationId communication_id() const { return communication_id_; }
 
  private:
   CollectiveConfig config_;
+  CommunicationId communication_id_;
 };
 
 //===----------------------------------------------------------------------===//
