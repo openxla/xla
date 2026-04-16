@@ -519,11 +519,15 @@ xla_test(
     data = ["cute_dsl_vector_add.hlo"],
     deps = [
         ":hlo_pjrt_gpu_test_base",
+        "//xla/ffi:ffi",
+        "//xla/ffi:ffi_api",
+        "//xla/ffi/api:api",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+        "@nvidia_cutlass_dsl//:cute_dsl_runtime",
         "@tsl//tsl/platform:path",
     ],
 )

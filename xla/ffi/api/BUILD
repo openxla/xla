@@ -52,7 +52,7 @@ filegroup(
 cc_library(
     name = "api",
     hdrs = [":api_headers"],
-    visibility = ["//visibility:private"],
+    visibility = ["//visibility:public"],
     deps = [":c_api"],
 )
 

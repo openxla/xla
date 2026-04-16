@@ -155,3 +155,18 @@ nightly_timestamp_repo(name = "nightly_timestamp")
 load("//build_tools/pjrt_wheels:release_candidate.bzl", "rc_number_repo")
 
 rc_number_repo(name = "rc_number")
+
+# nvidia-cutlass-dsl: pre-built runtime library installed via pip.
+# Install with: pip install nvidia-cutlass-dsl[cu13]
+new_local_repository(
+    name = "nvidia_cutlass_dsl",
+    path = "/opt/workspace/jax-cute/venv_xla_cutedsl/lib/python3.12/site-packages/nvidia_cutlass_dsl",
+    build_file_content = """
+cc_import(
+    name = "cute_dsl_runtime",
+    hdrs = glob(["include/*.h"]),
+    shared_library = "lib/libcute_dsl_runtime.so",
+    visibility = ["//visibility:public"],
+)
+""",
+)
