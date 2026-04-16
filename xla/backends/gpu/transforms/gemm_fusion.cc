@@ -833,15 +833,8 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
         const Decision decision,
         CreateDotFusion(*Cast<HloDotInstruction>(dot), gpu_version_, builder,
                         fusion_inputs, &fusion_output));
-    if (!decision.CanFuse()) {
+    if (!decision.WantToFuse()) {
       VLOG(3) << "Not fusing: " << decision.Explain();
-      return absl::OkStatus();
-    }
-    // If a GEMM requiring padding for cuBLAS is encountered here this
-    // happened because earlier ShouldTritonHandleGEMM() accepted it and padding
-    // was skipped. Accept it ignoring profitability checks.
-    if (!CublasRequiresPadding(*Cast<HloDotInstruction>(dot), gpu_version_) &&
-        !decision.WantToFuse()) {
       return absl::OkStatus();
     }
 
