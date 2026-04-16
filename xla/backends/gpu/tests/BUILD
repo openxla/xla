@@ -527,7 +527,7 @@ xla_test(
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
-        "@nvidia_cutlass_dsl//:cute_dsl_runtime",
+        "@pypi//nvidia_cutlass_dsl_libs_cu13:cute_dsl_runtime",
         "@tsl//tsl/platform:path",
     ],
 )

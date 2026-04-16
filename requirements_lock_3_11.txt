@@ -113,3 +113,7 @@ ml-dtypes==0.5.4 \
     --hash=sha256:ce756d3a10d0c4067172804c9cc276ba9cc0ff47af9078ad439b075d1abdc29b \
     --hash=sha256:d81fdb088defa30eb37bf390bb7dde35d3a83ec112ac8e33d75ab28cc29dd8b0 \
     --hash=sha256:f21c9219ef48ca5ee78402d5cc831bd58ea27ce89beda894428bc67a52da5328
+
+# Test-only: required to link libcute_dsl_runtime.so in cute_dsl_custom_call_test.
+nvidia-cutlass-dsl-libs-cu13==4.4.2 \
+    --hash=sha256:b3bd6ea3ecc65cf1200a1efd429dd854fcfc27a7e1bc3986f409d5b2f085ff88
