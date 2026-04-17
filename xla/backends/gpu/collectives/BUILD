@@ -451,6 +451,27 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "nccl_types",
+    srcs = ["nccl_types.cc"],
+    hdrs = ["nccl_types.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "no-oneapi",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/core/collectives:reduction_kind",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/tsl/cuda:nccl",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
     name = "nccl_errors",
     srcs = ["nccl_errors.cc"],
     hdrs = ["nccl_errors.h"],
@@ -663,6 +684,7 @@ cc_library(
         ":gpu_communicator",
         ":nccl_errors",
         ":nccl_symmetric_memory",
+        ":nccl_types",
         ":single_threaded_executor",
         "//xla:future",
         "//xla:shape_util",
