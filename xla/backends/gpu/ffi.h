@@ -29,7 +29,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/c_api_internal.h"  // IWYU pragma: keep
-#include "xla/ffi/ffi.h"  // IWYU pragma: export
+#include "xla/ffi/ffi.h"                 // IWYU pragma: export
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/scratch_allocator.h"
@@ -48,8 +48,8 @@ struct ScratchAllocator {};            //  se::OwningScratchAllocator
 struct CollectiveParams {};            //  const xla::gpu::CollectiveParams*
 struct CollectiveCliqueRequests {};    //  xla::gpu::CollectiveCliqueRequests*
 struct CollectiveMemoryRequests {};    //  xla::gpu::CollectiveMemoryRequests*
-struct CollectiveCliques {};           //  const xla::gpu::CollectiveCliques*
-struct CollectiveMemory {};            //  const xla::gpu::CollectiveMemory*
+struct CollectiveCliques {};           //  xla::gpu::CollectiveCliques*
+struct CollectiveMemory {};            //  xla::gpu::CollectiveMemory*
 struct TargetGpuComputeCapability {};  //  const se::GpuComputeCapability*
 struct CpuTargetMachineOptions {};     //  const xla::cpu::TargetMachineOptions*
 
@@ -217,7 +217,7 @@ struct CtxDecoding<CollectiveMemoryRequests> {
 
 template <>
 struct CtxDecoding<CollectiveCliques> {
-  using Type = const xla::gpu::CollectiveCliques*;
+  using Type = xla::gpu::CollectiveCliques*;
 
   static std::optional<Type> Decode(const XLA_FFI_Api* api,
                                     XLA_FFI_ExecutionContext* ctx,
@@ -231,7 +231,7 @@ struct CtxDecoding<CollectiveCliques> {
 
 template <>
 struct CtxDecoding<CollectiveMemory> {
-  using Type = const xla::gpu::CollectiveMemory*;
+  using Type = xla::gpu::CollectiveMemory*;
 
   static std::optional<Type> Decode(const XLA_FFI_Api* api,
                                     XLA_FFI_ExecutionContext* ctx,
