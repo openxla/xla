@@ -12,10 +12,10 @@ cc_library(
     name = "spmd_expander",
     srcs = glob([
         "*spmd_expander.cc",
-    ]),
+    ], allow_empty = True),
     hdrs = glob([
         "*spmd_expander.h",
-    ]),
+    ], allow_empty = True),
     compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla/python/ifrt/ir",
