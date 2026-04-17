@@ -14,17 +14,23 @@ load(
 
 def python_init_pip():
     # Test-only: exposes libcute_dsl_runtime.so from the pip wheel for use by
-    # the CuTeDSL custom-call C++ test (cute_dsl_custom_call_test).
-    cutlass_dsl_annotations = {
-        "nvidia-cutlass-dsl-libs-cu13": package_annotation(
-            additive_build_content = """\
+    # the CuTeDSL custom-call C++ test (cute_dsl_custom_call_test). The CUDA 13
+    # variant comes from the `cu13` extra; the base package provides the
+    # default build (selected for CUDA 12 since no `cu12` extra is published).
+    _cute_dsl_runtime_cc_import = """\
 cc_import(
     name = "cute_dsl_runtime",
     hdrs = glob(["site-packages/nvidia_cutlass_dsl/include/*.h"]),
     shared_library = "site-packages/nvidia_cutlass_dsl/lib/libcute_dsl_runtime.so",
     visibility = ["//visibility:public"],
 )
-""",
+"""
+    cutlass_dsl_annotations = {
+        "nvidia-cutlass-dsl-libs-base": package_annotation(
+            additive_build_content = _cute_dsl_runtime_cc_import,
+        ),
+        "nvidia-cutlass-dsl-libs-cu13": package_annotation(
+            additive_build_content = _cute_dsl_runtime_cc_import,
         ),
     }
 
@@ -79,6 +85,7 @@ cc_library(
         ),
         extra_hub_aliases = {
             "numpy": ["numpy_headers"],
+            "nvidia_cutlass_dsl_libs_base": ["cute_dsl_runtime"],
             "nvidia_cutlass_dsl_libs_cu13": ["cute_dsl_runtime"],
         },
         # NOTE: (Required for rules_python >= 1.7.0)

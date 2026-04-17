@@ -117,3 +117,7 @@ ml-dtypes==0.5.4 \
 # Test-only: required to link libcute_dsl_runtime.so in cute_dsl_custom_call_test.
 nvidia-cutlass-dsl-libs-cu13==4.4.2 \
     --hash=sha256:b3bd6ea3ecc65cf1200a1efd429dd854fcfc27a7e1bc3986f409d5b2f085ff88
+
+# Test-only: CUDA 12 variant of libcute_dsl_runtime.so (selected by cuda_major_version).
+nvidia-cutlass-dsl-libs-base==4.4.2 \
+    --hash=sha256:40c2352b2fcc80789a216cbeb9b2ee10c85c15de839cda8f5c1d18166b8249df

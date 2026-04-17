@@ -1,6 +1,7 @@
 # Description: GPU-specific XLA tests. For example, codegen tests that
 # verify the IR emitted.
 
+load("@cuda_cudart//:version.bzl", cuda_major_version = "VERSION")
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
@@ -512,12 +513,20 @@ xla_test(
     ],
 )
 
+# Select the CuTeDSL runtime wheel that matches the CUDA major version the
+# build is configured for. No `cu12` wheel is published; the base wheel's
+# .so is the CUDA-12 build.
+_cute_dsl_runtime_dep = (
+    "@pypi//nvidia_cutlass_dsl_libs_cu13:cute_dsl_runtime" if cuda_major_version == "13" else "@pypi//nvidia_cutlass_dsl_libs_base:cute_dsl_runtime"
+)
+
 xla_test(
     name = "cute_dsl_custom_call_test",
     srcs = ["cute_dsl_custom_call_test.cc"],
     backends = ["b200"],
     data = ["cute_dsl_vector_add.hlo"],
     deps = [
+        _cute_dsl_runtime_dep,
         ":hlo_pjrt_gpu_test_base",
         "//xla/ffi:ffi",
         "//xla/ffi:ffi_api",
@@ -527,7 +536,6 @@ xla_test(
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
-        "@pypi//nvidia_cutlass_dsl_libs_cu13:cute_dsl_runtime",
         "@tsl//tsl/platform:path",
     ],
 )
