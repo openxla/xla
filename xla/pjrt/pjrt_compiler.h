@@ -63,6 +63,12 @@ inline const char* OneapiName() {
   static constexpr char kOneapiName[] = "oneapi";
   return kOneapiName;
 }
+// Temporarily keep SyclName() as there are references to it in Tensorflow.
+// TODO(intel-tf): Remove this function once Tensorflow is updated to use
+// OneapiName() instead of SyclName()
+inline const char* SyclName() {
+  return OneapiName();
+}
 inline const char* TpuName() {
   static constexpr char kTpuName[] = "tpu";
   return kTpuName;
