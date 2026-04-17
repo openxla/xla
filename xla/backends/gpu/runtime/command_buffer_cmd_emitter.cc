@@ -35,7 +35,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
@@ -129,15 +128,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
   return std::make_unique<WhileCmd>(
       thunk.condition_result_buffer(), std::move(cond_cmds),
       std::move(body_cmds), thunk.trip_count(), options.enable_loop_unroll);
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const CublasLtMatmulThunk& thunk) {
-  if (!thunk.workspace().has_value()) {
-    return absl::InternalError(
-        "Gemm thunk does not contain a workspace buffer");
-  }
-  return std::make_unique<CublasLtCmd>(thunk);
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
@@ -313,8 +303,11 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kGemm:
       cmd_sequence.Append(static_cast<GemmThunk*>(&thunk));
       return absl::OkStatus();
+    // CublasLtMatmulThunk implements TracedCommand directly; append as
+    // borrowed pointer — the thunk outlives the command sequence.
     case Thunk::Kind::kCublasLtMatmul:
-      return append(Convert<CublasLtMatmulThunk>(thunk));
+      cmd_sequence.Append(static_cast<CublasLtMatmulThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kMemzero:
       return append(Convert<MemzeroThunk>(thunk));
     case Thunk::Kind::kAllGather:

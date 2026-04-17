@@ -1168,12 +1168,12 @@ TEST(CommandBufferThunkTest, CublasLtCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<CublasLtCmd>(CublasLtMatmulThunk(
+  commands.Emplace<CublasLtMatmulThunk>(
       Thunk::ThunkInfo(), /*canonical_hlo=*/"", config.value(),
       se::gpu::BlasLt::Epilogue::kDefault, /*algorithm_idx=*/0,
       /*autotune_workspace_size=*/0, slice_a, slice_b, slice_c, slice_d,
       std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
-      std::nullopt, std::nullopt, slice_workspace));
+      std::nullopt, std::nullopt, slice_workspace);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
