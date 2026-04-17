@@ -1,7 +1,9 @@
 """ Downloads clang and configures the crosstool using bazel's autoconf."""
 
-load("@bazel_tools//tools/cpp:cc_configure.bzl", "cc_autoconf_impl")
 load(":download_clang.bzl", "download_clang")
+
+load("@rules_cc//cc/private/toolchain:cc_configure.bzl", "cc_autoconf_impl")
+
 
 _TF_DOWNLOAD_CLANG = "TF_DOWNLOAD_CLANG"
 _TF_NEED_CUDA = "TF_NEED_CUDA"

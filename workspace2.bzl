@@ -255,27 +255,11 @@ def _tf_repositories():
         urls = tf_mirror_urls("https://pypi.python.org/packages/source/s/six/six-1.16.0.tar.gz"),
     )
 
-    filegroup_external(
-        name = "astunparse_license",
-        licenses = ["notice"],  # PSFL
-        sha256_urls = {
-            "92fc0e4f4fa9460558eedf3412b988d433a2dcbb3a9c45402a145a4fab8a6ac6": tf_mirror_urls("https://raw.githubusercontent.com/simonpercivall/astunparse/v1.6.2/LICENSE"),
-        },
-    )
-
     tf_http_archive(
         name = "absl_py",
         sha256 = "8a3d0830e4eb4f66c4fa907c06edf6ce1c719ced811a12e26d9d3162f8471758",
         strip_prefix = "abseil-py-2.1.0",
         urls = tf_mirror_urls("https://github.com/abseil/abseil-py/archive/refs/tags/v2.1.0.tar.gz"),
-    )
-
-    filegroup_external(
-        name = "org_python_license",
-        licenses = ["notice"],  # Python 2.0
-        sha256_urls = {
-            "e76cacdf0bdd265ff074ccca03671c33126f597f39d0ed97bc3e5673d9170cf6": tf_mirror_urls("https://docs.python.org/2.7/_sources/license.rst.txt"),
-        },
     )
 
     # `com_google_protobuf` is initialized in `python_init_rules()`.
