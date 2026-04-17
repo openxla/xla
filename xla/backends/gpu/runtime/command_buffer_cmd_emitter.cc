@@ -68,7 +68,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 
 namespace xla::gpu {
