@@ -799,31 +799,31 @@ StreamExecutorGpuClient::CrossHostTransferBuffers(
 
     // Get the local_device_state and use it to schedule transfers. Fail
     // transfers early if we cannot get the local_device_state.
-    absl::StatusOr<LocalDeviceState*> maybe_local_device_state =
+    absl::StatusOr<LocalDeviceState*> local_device_state =
         tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
             ->GetLocalDeviceState();
-    if (!maybe_local_device_state.ok()) {
-      SetEventAsError(transfer_event, maybe_local_device_state.status());
+    if (!local_device_state.ok()) {
+      SetEventAsError(transfer_event, local_device_state.status());
       continue;
     }
-    LocalDeviceState* local_device_state = *maybe_local_device_state;
 
     // Launch ScheduleTransfersOnLocalDevice on either the async dispatch thread
     // of the calling thread.
-    if (local_device_state->async_dispatch_thread()) {
-      local_device_state->async_dispatch_thread()->Schedule(
-          tsl::WithCurrentContext(
+    if ((*local_device_state)->async_dispatch_thread()) {
+      (*local_device_state)
+          ->async_dispatch_thread()
+          ->Schedule(tsl::WithCurrentContext(
               [this, local_device_state, device_id, transfer_dependency_avs,
                curr_transfer_specs = std::move(curr_transfer_specs),
                transfer_event = std::move(transfer_event)]() mutable {
                 ScheduleTransfersOnLocalDevice(
-                    local_device_state, device_id, std::move(transfer_event),
+                    *local_device_state, device_id, std::move(transfer_event),
                     std::move(transfer_dependency_avs),
                     std::move(curr_transfer_specs));
               }));
     } else {
       ScheduleTransfersOnLocalDevice(
-          local_device_state, device_id, std::move(transfer_event),
+          *local_device_state, device_id, std::move(transfer_event),
           transfer_dependency_avs, std::move(curr_transfer_specs));
     }
   }
