@@ -178,7 +178,7 @@ TEST_F(CudaMemoryReservationTest, SetAccessGrantsLocalDeviceAccess) {
 
   CUmemLocation loc = {};
   loc.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  loc.id = static_cast<int>(executor_->device_ordinal());
+  loc.id = executor_->device_ordinal();
   uint64_t flags = 0;
   CUdeviceptr base_ptr = reinterpret_cast<CUdeviceptr>(res->address().opaque());
   ASSERT_EQ(cuMemGetAccess(reinterpret_cast<unsigned long long*>(&flags), &loc,

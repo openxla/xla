@@ -66,7 +66,7 @@ TEST_F(CudaMemoryReservationTest, SetAccessGrantsPeerDeviceAccess) {
   TF_ASSERT_OK_AND_ASSIGN(auto mapping, res->MapTo(0, 0, alloc_size, *alloc));
 
   CUdeviceptr base_ptr = reinterpret_cast<CUdeviceptr>(res->address().opaque());
-  for (int peer = 0; peer < platform_->VisibleDeviceCount(); ++peer) {
+  for (int32_t peer = 0; peer < platform_->VisibleDeviceCount(); ++peer) {
     if (!executor_->CanEnablePeerAccessTo(peer)) continue;
     CUmemLocation loc = {};
     loc.type = CU_MEM_LOCATION_TYPE_DEVICE;

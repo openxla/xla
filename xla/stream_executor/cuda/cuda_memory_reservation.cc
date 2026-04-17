@@ -102,7 +102,7 @@ absl::Status CudaMemoryReservation::SetAccess(uint64_t reservation_offset,
   // Always grant access to the local device.
   CUmemAccessDesc desc = {};
   desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  desc.location.id = static_cast<int>(executor_->device_ordinal());
+  desc.location.id = executor_->device_ordinal();
   desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
   RETURN_IF_ERROR(
       cuda::ToStatus(cuMemSetAccess(ptr_ + reservation_offset, size, &desc, 1),
@@ -114,7 +114,7 @@ absl::Status CudaMemoryReservation::SetAccess(uint64_t reservation_offset,
   int device_count = 0;
   TF_RETURN_IF_ERROR(
       cuda::ToStatus(cudaGetDeviceCount(&device_count), "cudaGetDeviceCount"));
-  for (int peer = 0; peer < device_count; ++peer) {
+  for (int32_t peer = 0; peer < device_count; ++peer) {
     if (peer == executor_->device_ordinal()) {
       continue;
     }
