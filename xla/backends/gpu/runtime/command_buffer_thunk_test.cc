@@ -226,7 +226,7 @@ TEST(CommandBufferThunkTest, DeviceToDeviceCopy) {
   ASSERT_EQ(dst, std::vector<int32_t>(4, 42));
 }
 
-TEST(CommandBufferThunkTest, MemzeroCmd) {
+TEST(CommandBufferThunkTest, MemzeroThunk) {
   se::StreamExecutor* stream_executor = GpuExecutor();
 
   TF_ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
@@ -246,7 +246,8 @@ TEST(CommandBufferThunkTest, MemzeroCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<MemzeroCmd>(ShapedSlice{slice_a, shape});
+  commands.Emplace<MemzeroThunk>(Thunk::ThunkInfo(),
+                                 ShapedSlice{slice_a, shape});
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));

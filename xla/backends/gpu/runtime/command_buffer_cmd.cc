@@ -45,7 +45,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
@@ -112,6 +111,7 @@ limitations under the License.
 #include "xla/stream_executor/trace_command_buffer_factory.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/types.h"  // IWYU pragma: keep
@@ -304,45 +304,6 @@ Command::BufferUses CustomKernelLaunchCmd::buffer_uses() const {
     buffers.emplace_back(args_[i].slice, args_access_[i], args_[i].shape);
   }
   return buffers;
-}
-
-//===----------------------------------------------------------------------===//
-// MemzeroCmd
-//===----------------------------------------------------------------------===//
-
-MemzeroCmd::MemzeroCmd(ShapedSlice dst)
-    : Command(CommandType::kMemzeroCmd), dst_(dst) {}
-
-absl::StatusOr<const se::CommandBuffer::Command*> MemzeroCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  se::DeviceAddressBase dst =
-      execute_params.buffer_allocations->GetDeviceAddress(dst_.slice);
-
-  VLOG(5) << "MemzeroCmd:";
-  VLOG(5) << "  Dst: " << dst_ << " (" << dst.opaque() << ")";
-
-  if (dst_.slice.size() == 0) {
-    VLOG(5) << "Skip recording MemzeroCmd command of 0 bytes";
-    return nullptr;
-  }
-
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateMemset(&dst, uint8_t{0},
-                                            /*num_elements=*/dst_.slice.size(),
-                                            dependencies);
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateMemset(command, &dst, uint8_t{0},
-                                            /*num_elements=*/dst_.slice.size());
-      });
-}
-
-Command::BufferUses MemzeroCmd::buffer_uses() const {
-  return {BufferUse::Write(dst_.slice, dst_.shape)};
 }
 
 //===----------------------------------------------------------------------===//

@@ -35,7 +35,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
@@ -69,6 +68,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 
 namespace xla::gpu {
@@ -110,11 +110,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const DynamicMemcpyThunk& thunk) {
   return std::make_unique<DynamicSliceCopyFusionCmd>(
       thunk.source(), thunk.destination(), thunk.mem_size(), thunk.offsets());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const MemzeroThunk& thunk) {
-  return std::make_unique<MemzeroCmd>(thunk.destination());
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
@@ -316,7 +311,8 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kCublasLtMatmul:
       return append(Convert<CublasLtMatmulThunk>(thunk));
     case Thunk::Kind::kMemzero:
-      return append(Convert<MemzeroThunk>(thunk));
+      cmd_sequence.Append(static_cast<MemzeroThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kAllGather:
       return append(Convert<AllGatherThunk>(thunk));
     case Thunk::Kind::kAllReduce:
