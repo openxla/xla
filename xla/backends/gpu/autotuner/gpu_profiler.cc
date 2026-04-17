@@ -77,17 +77,18 @@ std::vector<ExecutionInput> CreateExecutionInputsFromBuffers(
   return inputs;
 }
 
+// Scratch space is allocated as the second element in the output tuple
+// of the instruction.
+bool IsScratchShapeIndex(const ShapeIndex& index) {
+  return index.size() == 1 && index[0] == 1;
+}
+
 int GetScratchBytes(const Executable* executable) {
   int scratch_bytes = 0;
   for (const auto* allocation : executable->GetAllocations()) {
     if (allocation->IsPreallocatedTempBuffer()) {
       for (const auto& [buffer, offset] : allocation->assigned_buffers()) {
-        // Scratch space is allocated as the second element in the output tuple
-        // of the instruction.
-        const auto& shape_index = buffer->positions().front().index;
-        bool is_second_element_in_output_tuple =
-            !shape_index.empty() && shape_index[0] == 1;
-        if (is_second_element_in_output_tuple) {
+        if (IsScratchShapeIndex(buffer->positions().front().index)) {
           scratch_bytes += offset.size;
         }
       }
@@ -326,12 +327,21 @@ absl::Status GpuProfiler::CheckInputBuffers(InputBuffers& buffers) {
   return absl::InternalError(rz_check_status.RedzoneFailureMsg());
 }
 
+bool HasScratch(const Shape& shape) {
+  return shape.IsTuple() && shape.tuple_shapes().size() == 2 &&
+         shape.tuple_shapes()[1].element_type() == S8;
+}
+
 absl::Status GpuProfiler::CheckOutputBuffer(ScopedShapedBuffer& output,
                                             ScopedShapedBuffer& reference,
                                             float rtol) {
   return ShapeUtil::ForEachLeafShapeWithStatus(
       reference.on_device_shape(),
       [&](const Shape& subshape, const ShapeIndex& index) -> absl::Status {
+        if (HasScratch(output.on_device_shape()) &&
+            IsScratchShapeIndex(index)) {
+          return absl::OkStatus();
+        }
         BufferComparator comparator(subshape, rtol,
                                     /*verbose=*/false);
 

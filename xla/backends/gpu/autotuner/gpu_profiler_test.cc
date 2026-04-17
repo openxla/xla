@@ -104,6 +104,31 @@ absl::StatusOr<ScopedShapedBuffer> CreateTestBuffer(
   return output;
 }
 
+absl::StatusOr<ScopedShapedBuffer> CreateTupleBufferWithWorkspace(
+    se::DeviceAddressAllocator* allocator, se::StreamExecutor* stream_exec,
+    se::Stream* stream, float result_fill, int8_t workspace_fill,
+    int64_t workspace_size) {
+  Shape result_shape = ShapeUtil::MakeShape(F32, {2, 2});
+  Shape workspace_shape = ShapeUtil::MakeShape(S8, {workspace_size});
+  Shape tuple_shape =
+      ShapeUtil::MakeTupleShape({result_shape, workspace_shape});
+  TF_ASSIGN_OR_RETURN(auto* transfer_manager, TransferManager::GetForPlatform(
+                                                  stream_exec->GetPlatform()));
+  TF_ASSIGN_OR_RETURN(
+      ScopedShapedBuffer output,
+      transfer_manager->AllocateScopedShapedBuffer(
+          tuple_shape, allocator, stream_exec->device_ordinal()));
+  Literal result_literal = LiteralUtil::CreateR2<float>(
+      {{result_fill, result_fill}, {result_fill, result_fill}});
+  std::vector<int8_t> ws(workspace_size, workspace_fill);
+  Literal workspace_literal = LiteralUtil::CreateR1<int8_t>(ws);
+  Literal tuple_literal =
+      LiteralUtil::MakeTuple({&result_literal, &workspace_literal});
+  TF_RETURN_IF_ERROR(
+      transfer_manager->TransferLiteralToDevice(stream, tuple_literal, output));
+  return output;
+}
+
 absl::StatusOr<ScopedShapedBuffer> CreateTupleTestBuffer(
     se::DeviceAddressAllocator* allocator, se::StreamExecutor* stream_exec,
     se::Stream* stream, int32_t value1, int32_t value2) {
@@ -287,6 +312,34 @@ TEST_F(GpuProfilerTest, CheckOutputBufferWithTupleShapeAreDifferent) {
   EXPECT_THAT(profiler->CheckOutputBuffer(output_error_in_second_element,
                                           reference, /*rtol=*/0.0),
               StatusIs(absl::StatusCode::kInternal));
+}
+
+TEST_F(GpuProfilerTest, CheckOutputBufferIgnoresWorkspaceContents) {
+  auto profiler =
+      GpuProfiler::Create(stream_exec_, ProfileOptions{}, allocator_.get());
+  TF_ASSERT_OK_AND_ASSIGN(auto stream, stream_exec_->CreateStream());
+  auto allocator =
+      std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
+          stream_exec_);
+
+  constexpr int kWorkspaceSize = 1024;
+  constexpr float kResultFill = 1.0f;
+  TF_ASSERT_OK_AND_ASSIGN(ScopedShapedBuffer reference,
+                          CreateTupleBufferWithWorkspace(
+                              allocator.get(), stream_exec_, stream.get(),
+                              /*result_fill=*/kResultFill,
+                              /*workspace_fill=*/0x00,
+                              /*workspace_size=*/kWorkspaceSize));
+  TF_ASSERT_OK_AND_ASSIGN(ScopedShapedBuffer output_diff_workspace,
+                          CreateTupleBufferWithWorkspace(
+                              allocator.get(), stream_exec_, stream.get(),
+                              /*result_fill=*/kResultFill,
+                              /*workspace_fill=*/static_cast<int8_t>(0xAB),
+                              /*workspace_size=*/kWorkspaceSize));
+
+  EXPECT_THAT(profiler->CheckOutputBuffer(output_diff_workspace, reference,
+                                          /*rtol=*/0.0),
+              StatusIs(absl::StatusCode::kOk));
 }
 
 TEST_F(GpuProfilerTest, CheckScratchBytesArePopulatedUsingBufferAssignment) {
