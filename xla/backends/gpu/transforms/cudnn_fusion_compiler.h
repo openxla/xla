@@ -33,13 +33,17 @@ namespace gpu {
 // compiles them using a cuDNN handle and serializes them.
 class CuDnnFusionCompiler : public HloModulePass {
  public:
-  explicit CuDnnFusionCompiler(se::dnn::DnnSupport& dnn_support,
+  explicit CuDnnFusionCompiler(se::dnn::DnnSupport* dnn_support,
+                               const se::DeviceDescription& gpu_device_info,
                                BinaryMap& compilation_results)
-      : dnn_support_(dnn_support), compilation_results_(compilation_results) {}
+      : dnn_support_(dnn_support),
+        gpu_device_info_(gpu_device_info),
+        compilation_results_(compilation_results) {}
 
   absl::string_view name() const override { return "cudnn-fusion-compiler"; }
 
-  static int GetAvailablePlanCount(se::StreamExecutor& stream_exec,
+  static int GetAvailablePlanCount(se::StreamExecutor* stream_exec,
+                                   const se::DeviceDescription& gpu_device_info,
                                    const HloFusionInstruction& hlo);
 
  protected:
@@ -48,7 +52,8 @@ class CuDnnFusionCompiler : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
-  se::dnn::DnnSupport& dnn_support_;
+  se::dnn::DnnSupport* dnn_support_;
+  const se::DeviceDescription& gpu_device_info_;
   BinaryMap& compilation_results_;
 };
 

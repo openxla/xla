@@ -2853,18 +2853,16 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
 
   RecordGpuCompilerStacktrace();
 
-  BinaryMap dnn_compiled_graphs;
-  if (stream_exec) {
-    se::dnn::DnnSupport* dnn_support = stream_exec->AsDnn();
-    TF_RET_CHECK(dnn_support != nullptr);
-    RETURN_IF_ERROR(RunCudnnCompilerPasses(module.get(), *dnn_support,
-                                           &dnn_compiled_graphs));
-  }
-
   const DebugOptions& debug_opts = module->config().debug_options();
   ASSIGN_OR_RETURN(GpuTopology gpu_topology,
                    InferGpuTopology(module->config(), stream_exec, options,
                                     debug_opts, platform_id_));
+
+  BinaryMap dnn_compiled_graphs;
+  se::dnn::DnnSupport* dnn = stream_exec ? stream_exec->AsDnn() : nullptr;
+  RETURN_IF_ERROR(RunCudnnCompilerPasses(
+      module.get(), dnn, gpu_topology.gpu_target_config().device_description,
+      &dnn_compiled_graphs));
 
   if (DumpingEnabledForHloModule(*module)) {
     std::string textproto;

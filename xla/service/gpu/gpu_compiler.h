@@ -239,9 +239,10 @@ class GpuCompiler : public LLVMCompiler {
       HloCostAnalysis::ShapeSizeFunction shape_size_fn);
 
   // Runs cuDNN fusion and custom call compiler passes.
-  virtual absl::Status RunCudnnCompilerPasses(HloModule* module,
-                                              se::dnn::DnnSupport& dnn_support,
-                                              BinaryMap* dnn_compiled_graphs) {
+  virtual absl::Status RunCudnnCompilerPasses(
+      HloModule* module, se::dnn::DnnSupport* dnn_support,
+      const se::DeviceDescription& gpu_device_info,
+      BinaryMap* dnn_compiled_graphs) {
     return absl::OkStatus();
   }
 

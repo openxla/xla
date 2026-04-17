@@ -244,10 +244,12 @@ absl::StatusOr<std::vector<CudnnBackendConfig>> GetAlgorithms(
 
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
 GetCudnnFusionConfigs(const HloInstruction& instr,
-                      se::StreamExecutor* stream_executor) {
+                      se::StreamExecutor* stream_executor,
+                      const Compiler::GpuTargetConfig& target_config) {
   std::vector<std::unique_ptr<BackendConfig>> configs;
   int plan_count = CuDnnFusionCompiler::GetAvailablePlanCount(
-      *stream_executor, *DynCast<HloFusionInstruction>(&instr));
+      stream_executor, target_config.device_description,
+      *DynCast<HloFusionInstruction>(&instr));
   VLOG(2) << "Found " << plan_count << " plans for cudnn fusion.";
   configs.reserve(plan_count);
   for (int plan_id = 0; plan_id < plan_count; ++plan_id) {
@@ -359,8 +361,9 @@ absl::StatusOr<std::unique_ptr<BackendConfig>> CudnnBackend::GetDefaultConfig(
 
   if (stream_executor() != nullptr && instr.opcode() == HloOpcode::kFusion &&
       IsSupportedCudnnFusion(instr, stream_executor(), debug_options())) {
-    ASSIGN_OR_RETURN(std::vector<std::unique_ptr<BackendConfig>> configs,
-                     GetCudnnFusionConfigs(instr, stream_executor()));
+    ASSIGN_OR_RETURN(
+        std::vector<std::unique_ptr<BackendConfig>> configs,
+        GetCudnnFusionConfigs(instr, stream_executor(), target_config()));
     if (!configs.empty()) {
       return std::move(configs[0]);
     }
@@ -376,7 +379,7 @@ CudnnBackend::GetSupportedConfigs(const HloInstruction& instr) {
     return std::vector<std::unique_ptr<BackendConfig>>();
   }
   if (instr.opcode() == HloOpcode::kFusion) {
-    return GetCudnnFusionConfigs(instr, stream_executor());
+    return GetCudnnFusionConfigs(instr, stream_executor(), target_config());
   }
   if (IsCustomCallToDnnConvolution(instr)) {
     auto custom_call_instr = Cast<HloCustomCallInstruction>(&instr);
