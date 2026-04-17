@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -40,9 +39,11 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
+#include "xla/backends/gpu/runtime/collective_thunk.pb.h"
 #include "xla/backends/gpu/runtime/event_pool.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/core/collectives/communicator.h"

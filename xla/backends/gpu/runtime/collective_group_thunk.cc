@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <memory>
 #include <utility>
-#include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
@@ -27,6 +26,7 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/future.h"
 #include "xla/service/buffer_assignment.h"

@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
@@ -39,6 +40,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/computation_placer.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 
