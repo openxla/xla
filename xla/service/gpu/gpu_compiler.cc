@@ -1071,8 +1071,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*collective_size_threshold_to_delay_sinking=*/INT64_MAX,
         /*delay_sinking_large_collectives=*/true,
         /*unique_channel_id=*/true,
-        /*postprocess_transformed_while_loop=*/
-        host_offload_utils::MarkDynamicVariables,
+        /*postprocess_transformed_while_loop=*/{},
     };
     collectives_pipeline.AddPass<CollectivePipeliner>(config);
   }
@@ -1136,8 +1135,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*collective_size_threshold_to_delay_sinking=*/INT64_MAX,
         /*delay_sinking_large_collectives=*/true,
         /*unique_channel_id=*/true,
-        /*postprocess_transformed_while_loop=*/
-        host_offload_utils::MarkDynamicVariables,
+        /*postprocess_transformed_while_loop=*/{},
     };
 
     collectives_pipeline.AddPass<CollectivePipeliner>(config_backward);
