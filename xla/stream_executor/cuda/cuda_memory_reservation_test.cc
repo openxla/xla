@@ -179,11 +179,12 @@ TEST_F(CudaMemoryReservationTest, SetAccessGrantsLocalDeviceAccess) {
   CUmemLocation loc = {};
   loc.type = CU_MEM_LOCATION_TYPE_DEVICE;
   loc.id = static_cast<int>(executor_->device_ordinal());
-  unsigned long long flags = 0;
+  uint64_t flags = 0;
   CUdeviceptr base_ptr = reinterpret_cast<CUdeviceptr>(res->address().opaque());
-  ASSERT_EQ(cuMemGetAccess(&flags, &loc, base_ptr), CUDA_SUCCESS);
-  EXPECT_EQ(flags, static_cast<unsigned long long>(
-                       CU_MEM_ACCESS_FLAGS_PROT_READWRITE));
+  ASSERT_EQ(cuMemGetAccess(reinterpret_cast<unsigned long long*>(&flags), &loc,
+                           base_ptr),
+            CUDA_SUCCESS);
+  EXPECT_EQ(flags, static_cast<uint64_t>(CU_MEM_ACCESS_FLAGS_PROT_READWRITE));
 }
 
 }  // namespace
