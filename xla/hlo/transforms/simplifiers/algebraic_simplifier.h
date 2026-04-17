@@ -777,6 +777,7 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   absl::StatusOr<HloInstruction*> AssociativeReorderDotOperator(
       HloDotInstruction* dot);
 
+ protected:
   HloComputation* GetOrCreateScalarAddComputation(PrimitiveType type) {
     HloComputation*& scalar_add_computation = scalar_add_computations_[type];
     if (scalar_add_computation) {
@@ -797,6 +798,7 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
     return scalar_add_computation;
   }
 
+ private:
   // Tries to fold a kPad in the input or filter into the convolution
   // instruction's window.
   virtual absl::StatusOr<bool> FoldConvInputPad(HloInstruction* convolution);
