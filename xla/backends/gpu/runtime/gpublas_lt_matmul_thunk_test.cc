@@ -563,9 +563,9 @@ TEST_F(GpuBlasLtMatmulThunkTest, ThunkProtoSerializationGroupedMatmul) {
               IsOkAndHolds(EqualsProto(reference_thunk_proto)));
 }
 
-// ===========================================================================
+//===----------------------------------------------------------------------===//
 // Command buffer tests (Record)
-// ===========================================================================
+//===----------------------------------------------------------------------===//
 
 static se::StreamExecutor* GpuExecutor() {
   auto name =
