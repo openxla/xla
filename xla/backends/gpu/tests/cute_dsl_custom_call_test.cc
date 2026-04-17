@@ -27,8 +27,14 @@ limitations under the License.
 #include "tsl/platform/path.h"
 
 XLA_FFI_DECLARE_HANDLER_SYMBOL(CuteDSLRT_NvJaxCutlassCallExecute);
-XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(), "CuteDSLRT_NvJaxCutlassCall",
-                          "CUDA", CuteDSLRT_NvJaxCutlassCallExecute);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(CuteDSLRT_NvJaxCutlassCallPrepare);
+
+XLA_FFI_REGISTER_HANDLER(
+    xla::ffi::GetXlaFfiApi(), "CuteDSLRT_NvJaxCutlassCall", "CUDA",
+    (XLA_FFI_Handler_Bundle{/*instantiate=*/nullptr,
+                            /*prepare=*/CuteDSLRT_NvJaxCutlassCallPrepare,
+                            /*initialize=*/nullptr,
+                            /*execute=*/CuteDSLRT_NvJaxCutlassCallExecute}));
 
 namespace xla::gpu {
 namespace {
