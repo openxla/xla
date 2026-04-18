@@ -121,19 +121,21 @@ class HloRunnerPjRt : public HloRunnerInterface {
 
   absl::string_view Name() const override;
 
+  PjRtClient* pjrt_client() const { return pjrt_client_.get(); }
+
   int device_count() const override { return pjrt_client_->device_count(); }
 
   bool HasProperty(HloRunnerPropertyTag::Type tag) const override;
 
-  absl::StatusOr<const HloModule* absl_nonnull> HloModuleFromWrapped(
+  absl::StatusOr<const HloModule * absl_nonnull> HloModuleFromWrapped(
       const OpaqueExecutable* wrapped) const override;
 
   // Returns true if the two given OpaqueExecutables originate from the same
   // runner and are equivalent according to some notion specific to that runner.
   // Executables that were created by different runners can never be equivalent.
-  bool ExecutablesAreEquivalent(
-      const OpaqueExecutable* absl_nonnull lhs,
-      const OpaqueExecutable* absl_nonnull rhs) const override;
+  bool ExecutablesAreEquivalent(const OpaqueExecutable* absl_nonnull lhs,
+                                const OpaqueExecutable* absl_nonnull
+                                    rhs) const override;
 
   absl::StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
       int num_replicas, int num_partitions) const override;

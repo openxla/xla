@@ -40,6 +40,8 @@ class HloPjRtGpuTestBase : public HloRunnerAgnosticTestBase,
     return gpu_target_config_;
   }
 
+  PjRtClient* pjrt_client() const;
+
   int device_count() const { return test_runner().device_count(); }
 
   const stream_executor::DeviceDescription& device_description()

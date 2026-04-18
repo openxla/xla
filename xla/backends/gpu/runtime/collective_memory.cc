@@ -24,6 +24,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
@@ -50,7 +51,6 @@ limitations under the License.
 #include "xla/stream_executor/gpu/multicast_memory.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/status_macros.h"
-#include "xla/tsl/util/safe_reinterpret_cast.h"
 #include "xla/tsl/util/tied_ref.h"
 #include "xla/util.h"
 #include "tsl/platform/casts.h"
@@ -60,9 +60,9 @@ namespace xla::gpu {
 
 CollectiveMemory::CollectiveMemory(
     const BufferAllocations& buffers,
-    absl::flat_hash_map<Key, std::shared_ptr<SymmetricMemory>> sym_memories,
-    absl::flat_hash_map<Key, MulticastMemory> mcast_memories,
-    absl::flat_hash_map<Key, PeerMemory> peer_memories)
+    absl::flat_hash_map<Key, SymmetricMemoryEntry> sym_memories,
+    absl::flat_hash_map<Key, MulticastMemoryEntry> mcast_memories,
+    absl::flat_hash_map<Key, PeerMemoryEntry> peer_memories)
     : buffers_(buffers),
       sym_memories_(std::move(sym_memories)),
       mcast_memories_(std::move(mcast_memories)),
@@ -74,7 +74,7 @@ std::pair<SymmetricMemory*, size_t> CollectiveMemory::FindSymmetricMemory(
   if (it == sym_memories_.end()) {
     return std::make_pair(nullptr, 0);
   }
-  return std::make_pair(it->second.get(), 0);
+  return std::make_pair(it->second.symmetric_memory.get(), it->second.offset);
 }
 
 std::pair<SymmetricMemory*, size_t> CollectiveMemory::FindSymmetricMemory(
@@ -92,8 +92,8 @@ std::pair<SymmetricMemory*, size_t> CollectiveMemory::FindSymmetricMemory(
 
   // Find offset from the base allocation.
   se::DeviceAddressBase base = buffers_.GetDeviceAddress(*allocation);
-  size_t offset = tsl::safe_reinterpret_cast<uintptr_t>(addr.opaque()) -
-                  tsl::safe_reinterpret_cast<uintptr_t>(base.opaque());
+  size_t offset = absl::bit_cast<uintptr_t>(addr.opaque()) -
+                  absl::bit_cast<uintptr_t>(base.opaque());
 
   auto [sym, sym_offset] = FindSymmetricMemory(clique, *allocation);
   return std::make_pair(sym, sym_offset + offset);
@@ -124,8 +124,8 @@ std::pair<void*, size_t> CollectiveMemory::FindMultimemAddress(
 
   // Find offset from the base allocation.
   se::DeviceAddressBase base = buffers_.GetDeviceAddress(*allocation);
-  size_t offset = tsl::safe_reinterpret_cast<uintptr_t>(addr.opaque()) -
-                  tsl::safe_reinterpret_cast<uintptr_t>(base.opaque());
+  size_t offset = absl::bit_cast<uintptr_t>(addr.opaque()) -
+                  absl::bit_cast<uintptr_t>(base.opaque());
 
   auto [mmem, mmem_offset] = FindMultimemAddress(clique, *allocation);
   return std::make_pair(mmem, mmem_offset + offset);
@@ -166,8 +166,8 @@ std::optional<se::DeviceAddressBase> CollectiveMemory::FindPeerAddress(
 
   // Find offset from the base allocation.
   se::DeviceAddressBase base = buffers_.GetDeviceAddress(*allocation);
-  size_t offset = tsl::safe_reinterpret_cast<uintptr_t>(addr.opaque()) -
-                  tsl::safe_reinterpret_cast<uintptr_t>(base.opaque());
+  size_t offset = absl::bit_cast<uintptr_t>(addr.opaque()) -
+                  absl::bit_cast<uintptr_t>(base.opaque());
 
   // Find device address for peer allocation.
   auto peer_alloc = FindPeerAddress(clique, rank, *allocation);
@@ -230,16 +230,19 @@ struct RankFormatter {
 // Symmetric memory acquisition.
 //===----------------------------------------------------------------------===//
 
+using SymmetricMemoryMap =
+    absl::flat_hash_map<CollectiveMemory::Key,
+                        CollectiveMemory::SymmetricMemoryEntry>;
+
 // Acquire symmetric memory for all requested allocation.
-static absl::StatusOr<absl::flat_hash_map<CollectiveMemory::Key,
-                                          std::shared_ptr<SymmetricMemory>>>
-AcquireSymmetricMemory(
+static absl::StatusOr<SymmetricMemoryMap> AcquireSymmetricMemory(
     const CollectiveParams& params, CollectiveCliques& cliques,
     const BufferAllocations& buffers,
     absl::Span<const CollectiveMemoryRequests::SymmetricAllocations> allocs,
     CollectiveMemoryCache& memory_cache) {
-  absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
-      sym_memories;
+  int32_t device_ordinal = params.executor->device_ordinal();
+
+  SymmetricMemoryMap sym_memories;
 
   for (const CollectiveMemoryRequests::SymmetricAllocations& r : allocs) {
     std::optional<RankId> rank = r.key.rank(params.global_device_id);
@@ -249,33 +252,73 @@ AcquireSymmetricMemory(
                       params.global_device_id, r.key);
     }
 
-    // TODO(ezhulenev): All of the buffer allocations that we make symmetric
-    // are created from the same underlying memory allocator. We can
-    // significantly improve performance with a few tricks:
-    //
-    // 1. Coalesce adjacent allocations and create one large symmetric region.
-    // 2. Create one big symmetric region from [start, end] addresses, we might
-    //    have unused gaps in the middle, but it doesn't matter, we will ignore
-    //    them.
-    // 3. Cache symmetric memories in a process-level cache.
-    //
-    // Currently it's very simple proof of concept.
-
     ASSIGN_OR_RETURN(GpuCommunicator * comm, cliques.GetComm(r.key, *rank));
+
+    // Map the entire underlying device address range (as seen by the BFC
+    // allocator) to symmetric memory, not just the sub-allocation at each
+    // buffer address. This way all future runs reuse the existing symmetric
+    // window (cache hit on the full allocation range) and we prevent deadlocks
+    // as long as all ranks correctly pre-allocate their physical memory for
+    // collective operations.
+    //
+    // Multiple buffer allocations can be carved out of the same underlying
+    // device address range, so we first resolve all ranges and deduplicate
+    // before making any collective CreateSymmetricMemory calls.
+
+    // First pass: resolve each buffer allocation to the underlying device
+    // address range allocated by the BFC allocator.
+    absl::flat_hash_map<BufferAllocation::Index, se::DeviceAddressBase>
+        alloc_ranges;
     for (BufferAllocation::Index i : r.allocations) {
       se::DeviceAddressBase addr = buffers.GetDeviceAddress(i);
-      CollectiveMemory::Key mem_key = std::make_pair(r.key, i);
-      // Check cache first to avoid redundant collective window registration.
-      if (auto cached = memory_cache.FindSymmetricMemory(r.key, addr)) {
-        sym_memories[mem_key] = std::move(cached);
+      ASSIGN_OR_RETURN(alloc_ranges[i],
+                       params.executor->GetMemoryAddressRange(addr));
+      XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
+          "Resolved buffer allocation #%d: addr=%p size=%d -> "
+          "range=%p size=%d",
+          i, addr.opaque(), addr.size(), alloc_ranges[i].opaque(),
+          alloc_ranges[i].size());
+    }
+
+    // Second pass: acquire symmetric memory for each unique address range.
+    absl::flat_hash_map<se::DeviceAddressBase, std::shared_ptr<SymmetricMemory>>
+        range_to_symm;
+    for (BufferAllocation::Index i : r.allocations) {
+      se::DeviceAddressBase alloc_range = alloc_ranges[i];
+      if (range_to_symm.contains(alloc_range)) {
         continue;
       }
+
+      if (auto cached = memory_cache.FindSymmetricMemory(r.key, alloc_range)) {
+        XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
+            "Found existing symmetric memory for range %p size=%d",
+            alloc_range.opaque(), alloc_range.size());
+        range_to_symm[alloc_range] = std::move(cached);
+        continue;
+      }
+
+      XLA_VLOG_DEVICE(3, device_ordinal)
+          << absl::StreamFormat("Create symmetric memory for range %p size=%d",
+                                alloc_range.opaque(), alloc_range.size());
       ASSIGN_OR_RETURN(std::unique_ptr<SymmetricMemory> symm,
-                       comm->CreateSymmetricMemory(addr));
+                       comm->CreateSymmetricMemory(alloc_range));
       ASSIGN_OR_RETURN(tsl::TiedRef<SymmetricMemory> tied_symm,
                        cliques.Tie(r.key, std::move(symm)));
-      sym_memories[mem_key] =
-          memory_cache.AddSymmetricMemory(r.key, addr, std::move(tied_symm));
+      range_to_symm[alloc_range] = memory_cache.AddSymmetricMemory(
+          r.key, alloc_range, std::move(tied_symm));
+    }
+
+    // Populate the result map with per-allocation offset from the window base.
+    for (BufferAllocation::Index i : r.allocations) {
+      se::DeviceAddressBase addr = buffers.GetDeviceAddress(i);
+      se::DeviceAddressBase alloc_range = alloc_ranges[i];
+      size_t offset = absl::bit_cast<uintptr_t>(addr.opaque()) -
+                      absl::bit_cast<uintptr_t>(alloc_range.opaque());
+      CollectiveMemory::Key mem_key = std::make_pair(r.key, i);
+      sym_memories[mem_key] = {range_to_symm[alloc_range], offset};
+      XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
+          "Buffer allocation #%d: symmetric memory at range %p, offset=%d", i,
+          alloc_range.opaque(), offset);
     }
   }
 
@@ -290,7 +333,7 @@ namespace {
 
 using MulticastMemoryMap =
     absl::flat_hash_map<CollectiveMemory::Key,
-                        CollectiveMemory::MulticastMemory>;
+                        CollectiveMemory::MulticastMemoryEntry>;
 
 struct MappedPtrFormatter {
   void operator()(std::string* out,
@@ -443,12 +486,8 @@ absl::StatusOr<MulticastMemoryMap> AcquireMulticastMemory(
 // Peer memory acquisition.
 //===----------------------------------------------------------------------===//
 
-namespace {
-
-using PeerMemoryMap =
-    absl::flat_hash_map<CollectiveMemory::Key, CollectiveMemory::PeerMemory>;
-
-}  // namespace
+using PeerMemoryMap = absl::flat_hash_map<CollectiveMemory::Key,
+                                          CollectiveMemory::PeerMemoryEntry>;
 
 // Acquire peer memory for all requested allocation.
 absl::StatusOr<PeerMemoryMap> AcquirePeerMemory(
@@ -499,7 +538,7 @@ absl::StatusOr<PeerMemoryMap> AcquirePeerMemory(
           addrs[param->rank] = param->buffers.GetDeviceAddress(i);
         }
         clique_peer_memories[std::make_pair(r.key, i)] =
-            CollectiveMemory::PeerMemory{std::move(addrs)};
+            CollectiveMemory::PeerMemoryEntry{std::move(addrs)};
       }
       return clique_peer_memories;
     };
@@ -549,7 +588,9 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
                             /*mcast_memories=*/{}, /*peer_memories=*/{});
   }
 
-  XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
+  int32_t device_ordinal = params.executor->device_ordinal();
+
+  XLA_VLOG_DEVICE(2, device_ordinal) << absl::StreamFormat(
       " Acquire collective memory for global device id %v: run_id=%v "
       "symmetric=%d multicast=%d peer=%d",
       params.global_device_id, params.run_id, sym_allocs.size(),
@@ -558,7 +599,7 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
 
   for (size_t i = 0; i < sym_allocs.size(); ++i) {
     const CollectiveMemoryRequests::SymmetricAllocations& r = sym_allocs[i];
-    XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
+    XLA_VLOG_DEVICE(2, device_ordinal) << absl::StreamFormat(
         "    symmetric memory #%d (global device %v): id=%d; clique=%v; "
         "allocations=[%s]",
         i, params.global_device_id, r.id, r.key,
@@ -567,7 +608,7 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
 
   for (size_t i = 0; i < mcast_allocs.size(); ++i) {
     const CollectiveMemoryRequests::MulticastAllocations& r = mcast_allocs[i];
-    XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
+    XLA_VLOG_DEVICE(2, device_ordinal) << absl::StreamFormat(
         "    multicast memory #%d (global device %v): id=%d; clique=%v; "
         "allocations=[%s]",
         i, params.global_device_id, r.id, r.key,
@@ -576,7 +617,7 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
 
   for (size_t i = 0; i < peer_allocs.size(); ++i) {
     const CollectiveMemoryRequests::PeerAllocations& r = peer_allocs[i];
-    XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
+    XLA_VLOG_DEVICE(2, device_ordinal) << absl::StreamFormat(
         "    peer memory #%d (global device %v): id=%d; clique=%v; "
         "allocations=[%s]",
         i, params.global_device_id, r.id, r.key,
@@ -602,7 +643,7 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
       auto peer_memories,
       AcquirePeerMemory(params, cliques, requests.buffers(), peer_allocs));
 
-  XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
+  XLA_VLOG_DEVICE(2, device_ordinal) << absl::StreamFormat(
       "Acquired collective memory in %s for global device id %v; "
       "run_id=%v symmetric=%d multicast=%d peer=%d",
       absl::FormatDuration(absl::Now() - start), params.global_device_id,

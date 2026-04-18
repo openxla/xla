@@ -40,10 +40,10 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace {
@@ -107,6 +107,19 @@ CollectiveOpsE2ETestBase::ExecuteReplicated(
                                         arguments, run_hlo_passes));
 
   return execution_result;
+}
+
+absl::StatusOr<std::vector<Literal>>
+CollectiveOpsE2ETestBase::ExecuteReplicated(
+    OpaqueExecutable* executable, const std::vector<Literal*>& arguments,
+    bool run_hlo_passes) {
+  ASSIGN_OR_RETURN(const HloModule* module,
+                   test_runner().HloModuleFromWrapped(executable));
+  int64_t num_devices =
+      module->config().replica_count() * module->config().num_partitions();
+  return ExecuteReplicated(
+      executable, std::vector<std::vector<Literal*>>(num_devices, arguments),
+      run_hlo_passes);
 }
 
 absl::StatusOr<std::vector<Literal>>

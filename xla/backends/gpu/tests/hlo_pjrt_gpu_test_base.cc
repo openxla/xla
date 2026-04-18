@@ -19,6 +19,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/base/casts.h"
 #include "absl/log/check.h"
 #include "absl/memory/memory.h"
 #include "absl/status/statusor.h"
@@ -26,6 +27,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/service/compiler.h"
+#include "xla/service/hlo_runner_pjrt.h"
 #include "xla/service/pjrt_gpu_utils.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.pb.h"
@@ -95,5 +97,9 @@ HloPjRtGpuTestBase::HloPjRtGpuTestBase(
                                 BuildOptions(std::move(options))),
       gpu_target_config_(std::move(gpu_target_config)),
       compiler_(GetGpuCompiler()) {}
+
+PjRtClient* HloPjRtGpuTestBase::pjrt_client() const {
+  return absl::down_cast<HloRunnerPjRt*>(&test_runner())->pjrt_client();
+}
 
 }  // namespace xla::gpu

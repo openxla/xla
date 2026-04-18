@@ -87,7 +87,7 @@ class CudaExecutor : public GpuExecutor {
   HostCallbackRegistry* GetHostCallbackRegistry() const {
     return host_callback_registry_.get();
   }
-  absl::StatusOr<DeviceAddressBase> GetMemoryRange(
+  absl::StatusOr<DeviceAddressBase> GetMemoryAddressRange(
       const DeviceAddressBase& location) const override;
   absl::StatusOr<std::unique_ptr<EventBasedTimer>> CreateEventBasedTimer(
       Stream* stream, bool use_delay_kernel) override;

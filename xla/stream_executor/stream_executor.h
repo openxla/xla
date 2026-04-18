@@ -191,11 +191,13 @@ class StreamExecutor {
   // Synchronizes all activity occurring in the StreamExecutor's context.
   virtual bool SynchronizeAllActivity() = 0;
 
-  // Returns a DeviceAddressBase representing the range [base, base + size)
-  // for the given DeviceAddressBase, such that location is contained within the
-  // returned range.
-  virtual absl::StatusOr<DeviceAddressBase> GetMemoryRange(
-      const DeviceAddressBase& location) const {
+  // Returns the full device address range [base, base + size) of the
+  // underlying memory allocation that contains the given address. When the
+  // address points into a sub-allocation carved out of a larger pre-allocated
+  // buffer (e.g. by a BFC allocator), this returns the range of the entire
+  // pre-allocated buffer
+  virtual absl::StatusOr<DeviceAddressBase> GetMemoryAddressRange(
+      const DeviceAddressBase& addr) const {
     return absl::UnimplementedError("Not implemented for this executor.");
   }
 

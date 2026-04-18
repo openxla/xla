@@ -83,7 +83,7 @@ class RocmExecutor : public GpuExecutor {
   absl::StatusOr<std::shared_ptr<DeviceAddressBase>> CreateOrShareConstant(
       Stream* stream, absl::Span<const uint8_t> content) override;
   DeviceAddressBase Allocate(uint64_t size, int64_t memory_space) override;
-  absl::StatusOr<DeviceAddressBase> GetMemoryRange(
+  absl::StatusOr<DeviceAddressBase> GetMemoryAddressRange(
       const DeviceAddressBase& location) const override;
   void Deallocate(DeviceAddressBase* mem) override;
   bool SynchronizeAllActivity() override;

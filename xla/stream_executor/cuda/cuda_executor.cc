@@ -29,7 +29,6 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
-#include "cub/version.cuh"
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
 #include "absl/base/casts.h"
@@ -51,6 +50,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
 #include "third_party/gpus/cuda/nvml/include/nvml.h"
+#include "cub/version.cuh"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
@@ -106,6 +106,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
@@ -113,7 +114,6 @@ limitations under the License.
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/numa.h"
 #include "tsl/platform/numbers.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace stream_executor {
 namespace gpu {
@@ -711,7 +711,7 @@ static CUdeviceptr AsCudaDevicePtr(DeviceAddressBase* gpu_mem) {
   return AsCudaDevicePtr(*gpu_mem);
 }
 
-absl::StatusOr<DeviceAddressBase> CudaExecutor::GetMemoryRange(
+absl::StatusOr<DeviceAddressBase> CudaExecutor::GetMemoryAddressRange(
     const DeviceAddressBase& location) const {
   CUdeviceptr device_pointer;
   size_t size;
@@ -1937,7 +1937,7 @@ absl::StatusOr<void*> CudaExecutor::CudaMulticastMemory::MapMemory(
       static_cast<CUmemGenericAllocationHandle>(memory_handle.handle());
 
   TF_ASSIGN_OR_RETURN(auto base_address,
-                      cuda_executor->GetMemoryRange(location));
+                      cuda_executor->GetMemoryAddressRange(location));
   uint64_t offset = reinterpret_cast<uint64_t>(location.opaque()) -
                     reinterpret_cast<uint64_t>(base_address.opaque());
 

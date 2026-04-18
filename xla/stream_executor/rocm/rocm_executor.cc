@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/stream_executor/rocm/rocm_executor.h"
 
-#include <unistd.h>
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -48,6 +46,7 @@ limitations under the License.
 #include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/hip/hip_version.h"
 #include "rocm/rocm_config.h"
+#include <unistd.h>
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -519,7 +518,7 @@ bool RocmExecutor::UnloadModule(ModuleHandle module_handle) {
   return UnloadGpuBinary(module_handle);
 }
 
-absl::StatusOr<DeviceAddressBase> RocmExecutor::GetMemoryRange(
+absl::StatusOr<DeviceAddressBase> RocmExecutor::GetMemoryAddressRange(
     const DeviceAddressBase& location) const {
   hipDeviceptr_t device_pointer;
   size_t size;

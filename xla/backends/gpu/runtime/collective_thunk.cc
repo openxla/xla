@@ -248,7 +248,7 @@ absl::Status MaybeRegisterBuffer(se::StreamExecutor* executor,
                                  const se::DeviceAddressBase& buffer,
                                  Communicator* comm,
                                  bool use_symmetric_buffer) {
-  ASSIGN_OR_RETURN(auto range, executor->GetMemoryRange(buffer));
+  ASSIGN_OR_RETURN(auto range, executor->GetMemoryAddressRange(buffer));
   XLA_VLOG_DEVICE(1, executor->device_ordinal())
       << "Registering range: " << range.opaque()
       << " with size: " << range.size() << " for buffer: " << buffer.opaque()

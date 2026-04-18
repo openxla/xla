@@ -26,7 +26,6 @@ limitations under the License.
 #include "absl/strings/substitute.h"
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/synchronization/mutex.h"
-#include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
@@ -49,7 +48,9 @@ limitations under the License.
 #include "xla/ffi/ffi.h"
 #include "xla/future.h"
 #include "xla/literal.h"
+#include "xla/pjrt/pjrt_stream_executor_client.h"
 #include "xla/runtime/device_id.h"
+#include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/rendezvous.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_address.h"
@@ -67,14 +68,18 @@ using ::testing::Values;
 
 struct SynchronizationSignals {
   absl::Mutex mutex;
-  absl::BlockingCounter finished_kernels_counter;
+  std::optional<absl::BlockingCounter> finished_kernels_counter;
 
   explicit SynchronizationSignals(int num_expected_kernels)
       : finished_kernels_counter(num_expected_kernels) {}
 
   void IncrementFinishedKernels() {
     absl::MutexLock lock(mutex);
-    finished_kernels_counter.DecrementCount();
+    finished_kernels_counter->DecrementCount();
+  }
+
+  void Reset(int num_expected_kernels) {
+    finished_kernels_counter.emplace(num_expected_kernels);
   }
 };
 
@@ -735,7 +740,7 @@ TEST_P(AllReduceTest, DeviceAllReduce) {
                         /*arguments=*/std::vector<Literal*>(),
                         /*run_hlo_passes=*/false));
   SynchronizationSignals* signals = global_signals->get();
-  signals->finished_kernels_counter.Wait();
+  signals->finished_kernels_counter->Wait();
 
   absl::Span<const Literal> results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
@@ -745,6 +750,31 @@ TEST_P(AllReduceTest, DeviceAllReduce) {
   for (int i = 0; i < kNumReplicas; ++i) {
     LiteralTestUtil::ExpectR0Equal<uint32_t>(expected, results[i]);
   }
+
+  // Now we make an extra allocation only on device 0 to change the internal
+  // state of BFC allocator and simulate devices "getting out of sync" wrt to
+  // the stat of their BFC allocators. When we execute one more time, different
+  // ranks will get their temp allocation at different offset of the physical
+  // memory allocation, and we check that it doesn't lead to any deadlocks.
+  auto* se_client = dynamic_cast<PjRtStreamExecutorClient*>(pjrt_client());
+  ASSERT_NE(se_client, nullptr);
+
+  // Allocate just enough to force temp be allocated at a new offset.
+  ASSERT_OK_AND_ASSIGN(
+      auto extra_allocation,
+      se_client->allocator()->Allocate(
+          /*device_ordinal=*/0, /*size=*/4096, /*retry_on_failure=*/true,
+          static_cast<int64_t>(MemorySpaceColor::kCollective)));
+
+  // Execute the same executable one more time with new allocators state. We
+  // reuse the executable so that CollectiveMemoryCache has cached symmetric
+  // memory from the first run and the address mismatch is actually detected.
+  signals->Reset(2);
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results2,
+      ExecuteReplicated(execution_result.executable.get(),
+                        /*arguments=*/std::vector<Literal*>()));
+  signals->finished_kernels_counter->Wait();
 }
 
 TEST_P(AllReduceTest, PeerAllReduce) {
@@ -755,7 +785,7 @@ TEST_P(AllReduceTest, PeerAllReduce) {
 
   if (!IsHopperAndHigher()) {
     GTEST_SKIP() << "Test requires Hopper+ since on a previous platforms there "
-                    "are no guarantess that GPUs have direct peer access";
+                    "are no guarantees that GPUs have direct peer access";
   }
 
   std::string hlo_string = absl::Substitute(R"(
@@ -779,7 +809,7 @@ TEST_P(AllReduceTest, PeerAllReduce) {
                         /*arguments=*/std::vector<Literal*>(),
                         /*run_hlo_passes=*/false));
   SynchronizationSignals* signals = global_signals->get();
-  signals->finished_kernels_counter.Wait();
+  signals->finished_kernels_counter->Wait();
 
   absl::Span<const Literal> results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
@@ -823,7 +853,7 @@ TEST_P(AllReduceTest, MulticastAllReduce) {
                         /*arguments=*/std::vector<Literal*>(),
                         /*run_hlo_passes=*/false));
   SynchronizationSignals* signals = global_signals->get();
-  signals->finished_kernels_counter.Wait();
+  signals->finished_kernels_counter->Wait();
 
   absl::Span<const Literal> results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
@@ -882,7 +912,7 @@ TEST_F(CollectiveOpsTestFFI, DeviceAllReduceWithFrontendAttributes) {
                         /*arguments=*/std::vector<Literal*>(),
                         /*run_hlo_passes=*/true));
   SynchronizationSignals* signals = global_signals->get();
-  signals->finished_kernels_counter.Wait();
+  signals->finished_kernels_counter->Wait();
 
   absl::Span<const Literal> results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);

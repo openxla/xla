@@ -75,6 +75,10 @@ class CollectiveOpsE2ETestBase : public gpu::HloPjRtGpuTestBase {
       bool run_hlo_passes = true);
 
   absl::StatusOr<std::vector<Literal>> ExecuteReplicated(
+      OpaqueExecutable* executable, const std::vector<Literal*>& arguments,
+      bool run_hlo_passes = true);
+
+  absl::StatusOr<std::vector<Literal>> ExecuteReplicated(
       OpaqueExecutable* executable,
       const std::vector<std::vector<Literal*>>& arguments,
       bool run_hlo_passes = true);

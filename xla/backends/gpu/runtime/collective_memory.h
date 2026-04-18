@@ -46,23 +46,30 @@ class CollectiveMemory {
   // supported collective memory types.
   using Key = std::pair<GpuCliqueKey, BufferAllocation::Index>;
 
+  // A symmetric memory window and the offset of the buffer allocation within
+  // that window. The window may cover a larger physical allocation.
+  struct SymmetricMemoryEntry {
+    std::shared_ptr<SymmetricMemory> symmetric_memory;
+    size_t offset;
+  };
+
   // A multicast memory (shared ownership by all clique members) and a multimem
   // pointer for the current rank.
-  struct MulticastMemory {
+  struct MulticastMemoryEntry {
     std::shared_ptr<se::gpu::MulticastMemory> multicast_memory;
     void* multimem_ptr;
   };
 
   // Peer memory addresses for all participating ranks.
-  struct PeerMemory {
+  struct PeerMemoryEntry {
     absl::btree_map<RankId, se::DeviceAddressBase> addrs;
   };
 
   CollectiveMemory(
       const BufferAllocations& buffers,
-      absl::flat_hash_map<Key, std::shared_ptr<SymmetricMemory>> sym_memories,
-      absl::flat_hash_map<Key, MulticastMemory> mcast_memories,
-      absl::flat_hash_map<Key, PeerMemory> peer_memories);
+      absl::flat_hash_map<Key, SymmetricMemoryEntry> sym_memories,
+      absl::flat_hash_map<Key, MulticastMemoryEntry> mcast_memories,
+      absl::flat_hash_map<Key, PeerMemoryEntry> peer_memories);
 
   // Returns a symmetric memory and offset in that symmetric memory that
   // corresponds to the given buffer allocation index.
@@ -117,9 +124,9 @@ class CollectiveMemory {
 
  private:
   const BufferAllocations& buffers_;
-  absl::flat_hash_map<Key, std::shared_ptr<SymmetricMemory>> sym_memories_;
-  absl::flat_hash_map<Key, MulticastMemory> mcast_memories_;
-  absl::flat_hash_map<Key, PeerMemory> peer_memories_;
+  absl::flat_hash_map<Key, SymmetricMemoryEntry> sym_memories_;
+  absl::flat_hash_map<Key, MulticastMemoryEntry> mcast_memories_;
+  absl::flat_hash_map<Key, PeerMemoryEntry> peer_memories_;
 };
 
 // Acquires collective memory using the given collective parameters for all
