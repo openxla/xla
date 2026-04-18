@@ -25,7 +25,8 @@ namespace stream_executor::gpu {
 
 // We perform 2 32-way reductions, which means the largest number of threads per
 // block we support is 1024.
-static constexpr size_t kTopKMaxThreadsPerBlock = 1024;
+// TODO(yuriit) - Revert to 1024 after testing.
+static constexpr size_t kTopKMaxThreadsPerBlock = 256;
 
 // Defines a trait for the TopK kernel that can be used to register
 // and look up the kernel in the GPU kernel registry.
