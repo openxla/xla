@@ -184,7 +184,7 @@ class GpuExecutableThunkPassBufferAllocator : public ThunkPassBufferAllocator {
       BufferAllocation::Index start_idx)
       : next_idx_(start_idx) {}
 
-  absl::StatusOr<BufferAllocation* absl_nonnull> NewEmptyAllocation(
+  absl::StatusOr<BufferAllocation * absl_nonnull> NewEmptyAllocation(
       int64_t size) override {
     allocations_.push_back(BufferAllocation(next_idx_++, size, /*color=*/0));
     return &allocations_.back();
@@ -752,8 +752,9 @@ absl::Status ExecuteThunksImpl(const DebugOptions* debug_options,
   }
   ASSIGN_OR_RETURN(
       bool skip_rendezvous_after_init,
-      AllFirstRendezvousCompleted(
-          collective_cliques, collective_clique_requests.RequestedCliques()));
+      AllFirstRendezvousCompleted(collective_cliques,
+                                  collective_clique_requests.RequestedCliques(),
+                                  module_name));
 
   ASSIGN_OR_RETURN(ScratchMemory scratch_memory,
                    AcquireScratchMemory(
@@ -797,7 +798,7 @@ absl::Status ExecuteThunksImpl(const DebugOptions* debug_options,
       *run_options, buffer_allocations, main_stream,
       command_buffer_trace_stream, &collective_params, &collective_cliques,
       &collective_memory, std::move(additional_compute_streams),
-      &execution_scoped_state);
+      &execution_scoped_state, module_name);
 
   XLA_VLOG_DEVICE(1, run_options->device_ordinal())
       << "Start GpuExecutable::ExecuteOnStream module: " << module_name;

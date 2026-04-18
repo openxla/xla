@@ -23,8 +23,10 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/btree_map.h"
+#include "absl/container/node_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -91,10 +93,8 @@ class GpuClique : public Clique {
   // Returns a parent clique iff *this one was created by clique splitting.
   const GpuClique* parent() const { return parent_; }
 
-  std::pair<RendezvousFlag*, RendezvousFlag*> GetFirstRendezvousFlags() {
-    return std::make_pair(&pre_call_rendezvous_flag_,
-                          &post_call_rendezvous_flag_);
-  }
+  std::pair<RendezvousFlag*, RendezvousFlag*> GetFirstRendezvousFlags(
+      absl::string_view module_name);
 
  private:
   friend LockableGpuClique;
@@ -135,6 +135,10 @@ class GpuClique : public Clique {
 
   // Storage for tied objects.
   tsl::TiedAny tied_any_ ABSL_GUARDED_BY(mu_);
+
+  // Module-mapped rendezvous flags
+  absl::node_hash_map<std::string, std::pair<RendezvousFlag, RendezvousFlag>>
+      module_rendezvous_flags_ ABSL_GUARDED_BY(mu_);
 };
 
 template <typename T>
