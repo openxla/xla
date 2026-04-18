@@ -1935,20 +1935,10 @@ ConditionalCodeMotion::Decision ConditionalCodeMotion::ConsiderCodeMotion(
       // at the first entry of the sequence is sufficient to know which
       // direction the move is intended.
       to_move = move_in_or_out.first;
-      Decision::Direction direction =
-          to_move[0].IsInsideBranch() ? Decision::Direction::kMoveOutOfBranch
-                                      : Decision::Direction::kMoveIntoBranch;
-      if (direction == Decision::Direction::kMoveIntoBranch) {
-        for (int i = 1; i < conditional->operand_count(); ++i) {
-          const Shape& shape = conditional->operand(i)->shape();
-          if (shape.IsTuple() && ShapeUtil::TupleElementCount(shape) == 0) {
-            VLOG(1) << "Stop moving operations into conditional because it has "
-                       "an empty tuple operand.";
-            return Decision(Decision::Direction::kNoChange, 0);
-          }
-        }
-      }
-      return Decision(direction, benefit);
+      return Decision(to_move[0].IsInsideBranch()
+                          ? Decision::Direction::kMoveOutOfBranch
+                          : Decision::Direction::kMoveIntoBranch,
+                      benefit);
     }
     connect.clear_recently_visited();
   } else {

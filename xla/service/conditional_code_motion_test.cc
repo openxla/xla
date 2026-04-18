@@ -1093,40 +1093,6 @@ ENTRY main {
   EXPECT_THAT(root, AllOf(op::GetTupleElement(op::Conditional())));
 }
 
-TEST_F(ConditionalCodeMotionTest, MovePowInWithEmptyTupleOperand) {
-  absl::string_view hlo_string =
-      R"(
-HloModule RemoveIdenticalInstruction
-
-on_true {
-  arg_tuple.1 = () parameter(0)
-  constant.1 = f32[10] constant({1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0})
-  ROOT tuple.3 = (f32[10]) tuple(constant.1)
-}
-
-on_false {
-  arg_tuple.2 = (f32[10]) parameter(0)
-  get-tuple-element.2 = f32[10] get-tuple-element(arg_tuple.2), index=0
-  mul.1 = f32[10] multiply(get-tuple-element.2, get-tuple-element.2)
-  ROOT tuple.4 = (f32[10]) tuple(mul.1)
-}
-
-ENTRY main {
-  pred.1 = pred[] parameter(0)
-  tuple.1 = () tuple()
-  tuple.2 = (f32[10]) parameter(1)
-  conditional = (f32[10])
-    conditional(pred.1, tuple.1, tuple.2), true_computation=on_true,
-    false_computation=on_false
-  get-first-index = f32[10] get-tuple-element(conditional), index=0
-  ROOT pow.1 = f32[10] power(get-first-index, get-first-index)
-}
-)";
-  auto module = ParseAndReturnVerifiedModule(hlo_string).value();
-  ConditionalCodeMotion pass(true, true);
-  ASSERT_FALSE(pass.Run(&*module).value());
-}
-
 TEST_F(ConditionalCodeMotionTest, ConditionalArrayOutputMutlipleUsers) {
   absl::string_view hlo_string =
       R"(
