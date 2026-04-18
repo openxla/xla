@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 
-#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <utility>
 #include <variant>
