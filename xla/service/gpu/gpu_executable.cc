@@ -462,6 +462,38 @@ GpuExecutable::GpuExecutable(
 }
 
 GpuExecutable::~GpuExecutable() {
+  // Take reader locks on the per-device GPU mutex for all executors this
+  // executable has initialized modules on. This prevents cuModuleUnload
+  // (triggered by kernel/thunk destruction below) from racing with the
+  // DelayKernel used during autotuning profiling. The profiler holds the
+  // writer lock while the DelayKernel is active; taking reader locks here
+  // ensures we wait for profiling to finish before unloading modules.
+  std::vector<se::StreamExecutor*> executors;
+  {
+    absl::MutexLock lock(&module_handle_mutex_);
+    executors.reserve(module_handles_.size());
+    for (const auto& module_handle : module_handles_) {
+      executors.push_back(module_handle.first);
+    }
+  }
+
+  std::vector<std::unique_ptr<absl::ReaderMutexLock>> gpu_locks;
+  gpu_locks.reserve(executors.size());
+  for (se::StreamExecutor* executor : executors) {
+    gpu_locks.push_back(
+        std::make_unique<absl::ReaderMutexLock>(&GetGpuMutex(executor)));
+  }
+
+  // Explicitly destroy thunks and module handles under the reader locks.
+  // Thunk destruction triggers kernel unloading (CudaExecutor::UnloadKernel ->
+  // cuModuleUnload). This must happen while we hold reader locks to prevent
+  // cuModuleUnload from racing with the DelayKernel on another thread.
+  thunk_executor_.reset();
+  {
+    absl::MutexLock lock(&module_handle_mutex_);
+    module_handles_.clear();
+  }
+
   if (has_module() && enable_debug_info_manager_) {
     XlaDebugInfoManager::Get()->UnregisterModule(module().unique_id());
   }
