@@ -1,5 +1,9 @@
 # PJRT C API changelog
 
+## 0.105
+
+* Added `PJRT_Device_ClearMemoryStats` to `PJRT_Api` to allow resetting peak memory tracking.
+
 ## 0.104
 
 * Added `total_allocation_bytes`, `indefinite_allocations` and `peak_unpadded_heap_bytes` to GetCompiledMemoryStats

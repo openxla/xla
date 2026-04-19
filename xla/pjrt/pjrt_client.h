@@ -262,6 +262,10 @@ class PjRtDevice {
                                                absl::Status error) {
     return absl::UnimplementedError("PoisonExecution is not supported");
   }
+
+  virtual absl::Status ClearMemoryStats() {
+    return absl::UnimplementedError("ClearMemoryStats is not supported");
+  }
 };
 
 // Helper struct for cross host transfers, returned by the callback from a call

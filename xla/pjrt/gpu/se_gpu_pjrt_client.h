@@ -92,6 +92,8 @@ class StreamExecutorGpuDevice : public PjRtStreamExecutorDevice {
 
   absl::StatusOr<PjRtMemorySpace*> default_memory_space() const override;
 
+  absl::Status ClearMemoryStats() override;
+
  private:
   std::string device_vendor_;
 };

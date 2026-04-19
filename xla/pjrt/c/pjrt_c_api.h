@@ -111,7 +111,7 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Extension_Base, next);
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 104
+#define PJRT_API_MINOR 105
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -1490,6 +1490,15 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Device_MemoryStats_Args, peak_pool_bytes_is_set);
 // are optional and may not be returned by all platforms. Implementations may
 // also return PJRT_Error_Code_UNIMPLEMENTED. Intended for diagnostic purposes.
 typedef PJRT_Error* PJRT_Device_MemoryStats(PJRT_Device_MemoryStats_Args* args);
+
+struct PJRT_Device_ClearMemoryStats_Args {
+  size_t struct_size;
+  PJRT_Extension_Base* extension_start;
+  PJRT_Device* device;
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Device_ClearMemoryStats_Args, device);
+
+typedef PJRT_Error* PJRT_Device_ClearMemoryStats(PJRT_Device_ClearMemoryStats_Args* args);
 
 struct PJRT_Device_PoisonExecution_Args {
   size_t struct_size;
@@ -3065,11 +3074,12 @@ typedef struct PJRT_Api {
   _PJRT_API_STRUCT_FIELD(PJRT_Error_ForEachPayload);
   _PJRT_API_STRUCT_FIELD(PJRT_TopologyDescription_Fingerprint);
   _PJRT_API_STRUCT_FIELD(PJRT_Executable_ParameterMemoryKinds);
+  _PJRT_API_STRUCT_FIELD(PJRT_Device_ClearMemoryStats);
 } PJRT_Api;
 
 enum {
   PJRT_Api_STRUCT_SIZE =
-      PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Executable_ParameterMemoryKinds)
+      PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Device_ClearMemoryStats)
 };
 
 #undef _PJRT_API_STRUCT_FIELD

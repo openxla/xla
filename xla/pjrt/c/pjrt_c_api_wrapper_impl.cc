@@ -957,6 +957,15 @@ PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_TransferLiteral(
   return nullptr;
 }
 
+PJRT_Error* PJRT_Device_ClearMemoryStats(
+    PJRT_Device_ClearMemoryStats_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Device_ClearMemoryStats_Args",
+      PJRT_Device_ClearMemoryStats_Args_STRUCT_SIZE, args->struct_size));
+  PJRT_RETURN_IF_ERROR(args->device->device->ClearMemoryStats());
+  return nullptr;
+}
+
 PJRT_Error* PJRT_Device_PoisonExecution(
     PJRT_Device_PoisonExecution_Args* args) {
   // TODO: b/488892533 - Make this check stricter after 12week compatibility
@@ -3836,6 +3845,8 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
       pjrt::PJRT_TopologyDescription_Fingerprint,
       /*PJRT_Executable_ParameterMemoryKinds=*/
       pjrt::PJRT_Executable_ParameterMemoryKinds,
+      /*PJRT_Device_ClearMemoryStats=*/
+      pjrt::PJRT_Device_ClearMemoryStats,
   };
 }
 
