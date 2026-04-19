@@ -16,9 +16,12 @@ limitations under the License.
 #include "xla/backends/autotuner/autotuner.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -148,6 +151,145 @@ class MockAutotunerCache : public AutotunerCacheInterface {
   MOCK_METHOD(CacheStats, GetCacheStats, (), (const, override));
 };
 
+struct SharedSingleFlightState {
+  std::atomic<int> get_supported_configs_calls{0};
+  std::atomic<int> compile_calls{0};
+  std::atomic<int> profile_calls{0};
+  std::atomic<int> apply_best_config_calls{0};
+  std::atomic<int> insert_calls{0};
+
+  std::mutex mu;
+  std::condition_variable cv;
+  int initial_lookup_calls = 0;
+  bool initial_miss_gate_open = false;
+  std::optional<AutotunerCacheInterface::Config> cached_config;
+};
+
+class CountingCodegenBackend : public CodegenBackend {
+ public:
+  explicit CountingCodegenBackend(std::shared_ptr<SharedSingleFlightState> state)
+      : state_(std::move(state)) {}
+
+  absl::string_view name() const override { return "mock_backend"; }
+
+  autotuner::Backend backend() const override {
+    return autotuner::Backend::UNSPECIFIED_BACKEND;
+  }
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> GetSupportedConfigs(
+      const HloInstruction& instr) override {
+    ++state_->get_supported_configs_calls;
+    std::vector<std::unique_ptr<BackendConfig>> configs;
+    configs.push_back(GetTestConfig("slow_config"));
+    configs.push_back(GetTestConfig("best_config"));
+    return configs;
+  }
+
+  absl::StatusOr<std::unique_ptr<BackendConfig>> GetDefaultConfig(
+      const HloInstruction& instr) override {
+    return GetTestConfig("default_config");
+  }
+
+  absl::StatusOr<std::unique_ptr<Executable>> Compile(
+      const HloInstruction& instr, const BackendConfig& config) override {
+    ++state_->compile_calls;
+    return std::unique_ptr<Executable>();
+  }
+
+  absl::Status ApplyConfig(HloInstruction& instr,
+                           const BackendConfig& config) override {
+    TestConfig test_config;
+    CHECK(config.UnpackTo(&test_config));
+    if (test_config.name() == "best_config") {
+      ++state_->apply_best_config_calls;
+    }
+    return absl::OkStatus();
+  }
+
+  bool CanProduceWrongResults() const override { return false; }
+
+ private:
+  std::shared_ptr<SharedSingleFlightState> state_;
+};
+
+class CountingProfiler : public Profiler {
+ public:
+  explicit CountingProfiler(std::shared_ptr<SharedSingleFlightState> state)
+      : state_(std::move(state)) {}
+
+  absl::StatusOr<ProfileResult> Profile(Executable* executable,
+                                        const InputBuffers& buffers) override {
+    int call_index = state_->profile_calls.fetch_add(1);
+    return ProfileResult(
+        {call_index == 0 ? absl::Seconds(2) : absl::Seconds(1)});
+  }
+
+  absl::StatusOr<std::unique_ptr<InputBuffers>> CreateInputBuffers(
+      const Executable* executable, const HloInstruction* instr) override {
+    return std::make_unique<InputBuffers>();
+  }
+
+  absl::Status CheckInputBuffers(InputBuffers& buffers) override {
+    return absl::OkStatus();
+  }
+
+  absl::Status CheckOutputBuffer(ScopedShapedBuffer& output,
+                                 ScopedShapedBuffer& reference,
+                                 float rtol) override {
+    return absl::OkStatus();
+  }
+
+ private:
+  std::shared_ptr<SharedSingleFlightState> state_;
+};
+
+class CoordinatedAutotunerCache : public AutotunerCacheInterface {
+ public:
+  explicit CoordinatedAutotunerCache(
+      std::shared_ptr<SharedSingleFlightState> state)
+      : state_(std::move(state)) {}
+
+  std::optional<AutotunerCacheInterface::Config> Lookup(
+      const HloInstruction* instr) override {
+    std::unique_lock<std::mutex> lock(state_->mu);
+    if (!state_->initial_miss_gate_open && state_->initial_lookup_calls < 2) {
+      ++state_->initial_lookup_calls;
+      if (state_->initial_lookup_calls == 2) {
+        state_->initial_miss_gate_open = true;
+        state_->cv.notify_all();
+      } else {
+        state_->cv.wait(lock,
+                        [&] { return state_->initial_miss_gate_open; });
+      }
+      return std::nullopt;
+    }
+    return state_->cached_config;
+  }
+
+  absl::Status Insert(
+      const HloInstruction* instr,
+      const AutotunerCacheInterface::Config& best_config) override {
+    std::lock_guard<std::mutex> lock(state_->mu);
+    ++state_->insert_calls;
+    state_->cached_config = best_config;
+    return absl::OkStatus();
+  }
+
+  absl::StatusOr<std::string> Serialize(
+      absl::Span<const HloInstruction* const> instructions) override {
+    return "";
+  }
+
+  absl::Status Deserialize(absl::string_view serialized_cache) override {
+    return absl::OkStatus();
+  }
+
+  CacheStats GetCacheStats() const override { return CacheStats(); }
+
+ private:
+  std::shared_ptr<SharedSingleFlightState> state_;
+};
+
 using absl_testing::IsOk;
 using absl_testing::StatusIs;
 using ::testing::_;
@@ -220,6 +362,13 @@ constexpr absl::string_view kHlo = R"(
 class AutotunerTest : public HloHardwareIndependentTestBase {
  public:
   AutotunerTest() { config_ = GetTestAutotuneConfig(); }
+
+  void SetUp() override {
+    // Clear the global in-flight tuning map so tests are independent.
+    absl::MutexLock lock(&InFlightTuningMap::Global()->mu);
+    InFlightTuningMap::Global()->entries.clear();
+  }
+
   AutotuneConfig config_;
 };
 
@@ -495,6 +644,47 @@ TEST_F(AutotunerTest, CacheHit) {
                         std::move(cache_manager)));
   auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
   EXPECT_THAT(autotuner->Autotune(dummy_instr.get()), IsOk());
+}
+
+TEST_F(AutotunerTest, ConcurrentAutotunersSingleFlightTuneSharedFingerprint) {
+  auto shared_state = std::make_shared<SharedSingleFlightState>();
+  auto shared_in_flight = std::make_shared<InFlightTuningMap>();
+
+  auto make_autotuner = [&](std::shared_ptr<SharedSingleFlightState> state)
+      -> absl::StatusOr<std::unique_ptr<Autotuner>> {
+    std::vector<std::unique_ptr<CodegenBackend>> backends;
+    backends.push_back(std::make_unique<CountingCodegenBackend>(state));
+    return Autotuner::Create(std::move(backends),
+                             std::make_unique<CountingProfiler>(state), config_,
+                             std::make_unique<CoordinatedAutotunerCache>(state),
+                             /*thread_pool=*/nullptr, shared_in_flight);
+  };
+
+  ASSERT_OK_AND_ASSIGN(auto autotuner_a, make_autotuner(shared_state));
+  ASSERT_OK_AND_ASSIGN(auto autotuner_b, make_autotuner(shared_state));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module_a,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module_b,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  HloInstruction* instr_a = module_a->entry_computation()->root_instruction();
+  HloInstruction* instr_b = module_b->entry_computation()->root_instruction();
+
+  absl::Status status_a;
+  absl::Status status_b;
+  std::thread thread_a([&] { status_a = autotuner_a->Autotune(instr_a); });
+  std::thread thread_b([&] { status_b = autotuner_b->Autotune(instr_b); });
+  thread_a.join();
+  thread_b.join();
+
+  EXPECT_THAT(status_a, IsOk());
+  EXPECT_THAT(status_b, IsOk());
+  EXPECT_EQ(shared_state->get_supported_configs_calls.load(), 1);
+  EXPECT_EQ(shared_state->compile_calls.load(), 2);
+  EXPECT_EQ(shared_state->profile_calls.load(), 2);
+  EXPECT_EQ(shared_state->insert_calls.load(), 1);
+  EXPECT_EQ(shared_state->apply_best_config_calls.load(), 2);
 }
 
 TEST_F(AutotunerTest, AutotuneWithBufferCheckFiltersWrongResults) {
