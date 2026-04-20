@@ -15,10 +15,8 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/estimate_cub_scratch_size.h"
 
-#include <cstddef>
 #include <cstdint>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
