@@ -98,7 +98,6 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_handle.h"
-#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/multi_gpu_barrier_kernel.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/kernel.h"
@@ -558,73 +557,6 @@ absl::Status WhileCmd::WalkNested(
       [&](Command* cmd) -> absl::Status { return callback(cmd); }));
   return body_commands_.Walk(
       [&](Command* cmd) -> absl::Status { return callback(cmd); });
-}
-
-//===----------------------------------------------------------------------===//
-// CuDnnCmd
-//===----------------------------------------------------------------------===//
-
-CuDnnCmd::CuDnnCmd(absl::Span<const ShapedSlice> args,
-                   const std::shared_ptr<se::dnn::LazyDnnGraph> graph)
-    : TracedCommand(CommandType::kCuDnnCmd),
-      args_(args.cbegin(), args.cend()),
-      graph_(graph) {}
-
-absl::Status CuDnnCmd::Initialize(const Thunk::InitializeParams& params) {
-  if (!params.stream->parent()->AsDnn()) {
-    return absl::InternalError("Failed to initialize DNN support for CuDnnCmd");
-  }
-  return absl::OkStatus();
-}
-
-absl::StatusOr<const se::CommandBuffer::Command*> CuDnnCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  CHECK(graph_ != nullptr);
-  std::vector<se::DeviceAddressBase> operands;
-  operands.reserve(args_.size());
-  for (const ShapedSlice& arg : args_) {
-    se::DeviceAddressBase buf =
-        execute_params.buffer_allocations->GetDeviceAddress(arg.slice);
-    VLOG(5) << "  Arg: " << arg << ": " << buf.opaque();
-    operands.push_back(buf);
-  }
-  TF_ASSIGN_OR_RETURN(
-      const bool supports_explicit,
-      graph_->get()->SupportsExplicitCommandBufferConstruction());
-  if (supports_explicit) {
-    return Handle(
-        std::move(record_action),
-        [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-          return command_buffer->CreateDnnGraphCommand(
-              *graph_->get(), *execute_params.stream,
-              absl::Span<se::DeviceAddressBase>(operands), dependencies);
-        },
-        [&](const se::CommandBuffer::Command* command) {
-          return command_buffer->UpdateDnnGraphCommand(
-              command, *graph_->get(), *execute_params.stream,
-              absl::Span<se::DeviceAddressBase>(operands));
-        });
-  }
-  return RecordTracedCommand(
-      execute_params, record_params, std::move(record_action), command_buffer,
-      [&](se::Stream* stream) {
-        return graph_->get()->Execute(
-            *stream, absl::Span<se::DeviceAddressBase>(operands),
-            execute_params.collective_params->local_device_id.value());
-      });
-}
-
-Command::BufferUses CuDnnCmd::buffer_uses() const {
-  Command::BufferUses buffer_usage;
-  buffer_usage.reserve(args_.size());
-  for (int i = 0; i < args_.size() - 1; ++i) {
-    buffer_usage.push_back(BufferUse::Read(args_[i].slice, args_[i].shape));
-  }
-  buffer_usage.push_back(
-      BufferUse::Write(args_.back().slice, args_.back().shape));
-  return buffer_usage;
 }
 
 //===----------------------------------------------------------------------===//
