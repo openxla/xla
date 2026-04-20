@@ -561,7 +561,15 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
   // simplify-affine has maximally folded expressions to work with.
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
-  pm.addNestedPass<FuncOp>(emitters::CreateSimplifyArithPass());
+  // LLVM SPIR-V backend does not use nan-propagiting float minimum/maximum
+  // (IEEE 754-2019) semantics, so we need to use explicit NaN propagation for
+  // min/max operations on oneAPI platform. This condition is exercised only if
+  // fast_min_max is false.
+  bool use_explicit_nan_propagation =
+      device.gpu_compute_capability().IsOneAPI();
+  pm.addNestedPass<FuncOp>(emitters::CreateSimplifyArithPass(
+      /*fast_min_max=*/false,
+      /*explicit_nan_propagation=*/use_explicit_nan_propagation));
   pm.addPass(emitters::CreateSimplifyAffinePass());
   pm.addPass(CreateConvertIndexTypePass());
   // simplify-affine lowers most affine.apply ops, but if it can't prove a

@@ -215,8 +215,8 @@ static std::unique_ptr<::mlir::Pass> CreateConvertMathToLLVMPass() {
 // their LLVM equivalent.
 static void AddGenericLoweringPasses(mlir::OpPassManager& pm,
                                      bool fast_min_max) {
-  pm.addNestedPass<mlir::func::FuncOp>(
-      emitters::CreateSimplifyArithPass(fast_min_max));
+  pm.addNestedPass<mlir::func::FuncOp>(emitters::CreateSimplifyArithPass(
+      fast_min_max, /*explicit_nan_propagation=*/false));
   pm.addPass(emitters::CreateExpandIntegerPowerPass());
   pm.addPass(emitters::CreateSimplifyAffinePass());
   pm.addPass(mlir::createCanonicalizerPass());
