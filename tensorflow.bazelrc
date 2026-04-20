@@ -298,7 +298,8 @@ common:rocm_clang_hermetic --define=tensorflow_mkldnn_contraction_kernel=0
 # ROCm with hermetic clang but local (system) sysroot
 # Use this when ROCm libraries are built against system libstdc++ to avoid ABI mismatches
 common:rocm_clang_hermetic_local_sysroot --config=rocm_clang_hermetic
-common:rocm_clang_hermetic_local_sysroot --override_repository=sysroot_linux_x86_64=local_sysroot_linux_x86_64
+common:rocm_clang_hermetic_local_sysroot --@rules_ml_toolchain//cc/sysroots:use_local_sysroot=True
+common:rocm_clang_hermetic_local_sysroot --spawn_strategy=local
 
 common:rocm --config=rocm_clang_hermetic_local_sysroot
 common:rocm_ci --config=rocm
