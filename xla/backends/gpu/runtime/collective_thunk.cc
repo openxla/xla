@@ -24,7 +24,6 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
 #include "absl/log/check.h"
-#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -54,7 +53,6 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -202,8 +200,21 @@ CollectiveConfig GetCollectiveConfig(
 }
 
 CollectiveThunk::CollectiveThunk(Kind kind, ThunkInfo thunk_info,
-                                 CommunicationId communication_id)
-    : Thunk(kind, thunk_info), communication_id_(communication_id) {}
+                                 CommunicationId communication_id,
+                                 CollectivesMode collectives_mode)
+    : Thunk(kind, thunk_info),
+      communication_id_(communication_id),
+      collectives_mode_(collectives_mode) {}
+
+bool CollectiveThunk::use_private_memory() const {
+  return collectives_mode_ == DebugOptions::COLLECTIVES_PRIVATE_MEMORY;
+}
+bool CollectiveThunk::use_symmetric_memory() const {
+  return collectives_mode_ == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY;
+}
+bool CollectiveThunk::use_peer_memory() const {
+  return collectives_mode_ == DebugOptions::COLLECTIVES_PEER_MEMORY;
+}
 
 absl::StatusOr<GpuCliqueKey> GetCollectiveGpuCliqueKey(
     const CollectiveParams& params, const CollectiveConfig& collective_config,
@@ -334,8 +345,11 @@ absl::Status CollectiveThunk::Initialize(const InitializeParams& params) {
 }
 
 absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
-  VLOG(1) << absl::StreamFormat(
-      "[%d] Starting %v.", params.stream->parent()->device_ordinal(), kind());
+  int device_ordinal = params.stream->parent()->device_ordinal();
+
+  XLA_VLOG_DEVICE(1, device_ordinal)
+      << "Executing " << kind() << " collectives_mode="
+      << DebugOptions::CollectivesMode_Name(collectives_mode_);
 
   ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,

@@ -38,7 +38,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Instructions.h"
@@ -1631,7 +1630,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectivePermute(
           Thunk::ThunkInfo::WithProfileAnnotation(
               instr, ir_emitter_context_->GetNextThunkId()),
           instr, replica_count, partition_count, buffers,
-          ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
+          ir_emitter_context_->debug_options()
+              .xla_gpu_collective_permute_mode(),
           ir_emitter_context_->debug_options()
               .xla_gpu_collective_permute_connected_components()));
     }
