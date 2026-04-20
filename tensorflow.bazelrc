@@ -284,8 +284,6 @@ common:rocm_clang_local --config=rocm_base
 common:rocm_clang_local --action_env=CLANG_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 common:rocm_clang_local --action_env=HIPCC_COMPILE_FLAGS_APPEND="--offload-compress"
 common:rocm_clang_local --action_env=TF_ROCM_CLANG="1"
-common:rocm_clang_local --linkopt="-fuse-ld=lld"
-common:rocm_clang_local --host_linkopt="-fuse-ld=lld"
 
 # ROCm with hermetic toolchain from rules_ml_toolchain
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_rocm=True
@@ -296,8 +294,6 @@ common:rocm_clang_hermetic --repo_env=TF_NEED_ROCM="1"
 common:rocm_clang_hermetic --repo_env=TF_ROCM_AMDGPU_TARGETS=gfx90a,gfx942
 common:rocm_clang_hermetic --define=using_rocm_hipcc=true
 common:rocm_clang_hermetic --define=tensorflow_mkldnn_contraction_kernel=0
-common:rocm_clang_hermetic --linkopt="-fuse-ld=lld"
-common:rocm_clang_hermetic --host_linkopt="-fuse-ld=lld"
 
 # ROCm with hermetic clang but local (system) sysroot
 # Use this when ROCm libraries are built against system libstdc++ to avoid ABI mismatches
