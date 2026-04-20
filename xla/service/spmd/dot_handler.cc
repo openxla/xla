@@ -161,9 +161,7 @@ class CreateShardedDotFunctor final
 };
 
 absl::Status SpmdPartitioningVisitor::HandleDot(HloInstruction* hlo) {
-  if (!options_.need_resolve_conflicts &&
-      !options_.enable_windowed_einsum_for_all_gather &&
-      !options_.enable_windowed_einsum_for_reduce_scatter) {
+  if (!options_.need_resolve_conflicts) {
     return HandleDotWithoutConflicts(hlo);
   }
 
@@ -591,8 +589,7 @@ std::optional<WindowedEinsumConfig> GetWindowedEinsumConfiguration(
       should_enable_windowed_einsum_with_threshold(options, lhs, rhs,
                                                    rhs_shape_size) &&
       (!rhs || check_users_sharding(rhs)) &&
-      !disable_windowed_einsum(/*lhs_needs_ag=*/false, /*rhs_needs_ag=*/true) &&
-      options.enable_windowed_einsum_for_all_gather) {
+      !disable_windowed_einsum(/*lhs_needs_ag=*/false, /*rhs_needs_ag=*/true)) {
     if (rhs_contracting_partitions == num_partitions) {
       return WindowedEinsumConfig{
           /*windowed_op=*/WindowedEinsumOperand::RHS,
@@ -623,8 +620,7 @@ std::optional<WindowedEinsumConfig> GetWindowedEinsumConfiguration(
       should_enable_windowed_einsum_with_threshold(options, lhs, rhs,
                                                    lhs_shape_size) &&
       (!lhs || check_users_sharding(lhs)) &&
-      !disable_windowed_einsum(/*lhs_needs_ag=*/true, /*rhs_needs_ag=*/false) &&
-      options.enable_windowed_einsum_for_all_gather) {
+      !disable_windowed_einsum(/*lhs_needs_ag=*/true, /*rhs_needs_ag=*/false)) {
     if (lhs_contracting_partitions == num_partitions) {
       return WindowedEinsumConfig{
           /*windowed_op=*/WindowedEinsumOperand::LHS,
@@ -657,8 +653,7 @@ std::optional<WindowedEinsumConfig> GetWindowedEinsumConfiguration(
       should_enable_windowed_einsum_with_threshold(options, lhs, rhs,
                                                    output_shape_size) &&
       !disable_windowed_einsum(/*lhs_needs_ag=*/false,
-                               /*rhs_needs_ag=*/false) &&
-      options.enable_windowed_einsum_for_reduce_scatter) {
+                               /*rhs_needs_ag=*/false)) {
     if (output_lhs_non_contracting_partitions == num_partitions) {
       return WindowedEinsumConfig{/*windowed_op=*/WindowedEinsumOperand::RHS,
                                   /*windowed_at_contracting_dims*/ false,
