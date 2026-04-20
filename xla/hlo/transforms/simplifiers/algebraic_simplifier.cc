@@ -2455,8 +2455,11 @@ absl::Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
   // IEEE-correctly-rounded value. Rewriting silently moves the user's
   // explicit 1/sqrt(x) into the approximate bucket they did not opt into.
   // f32 is unaffected: ML workloads explicitly want the fast rsqrt path.
-  if (Match(divide, m::Divide(m::Op(&a), m::Sqrt(m::Op(&b)).WithOneUse())) &&
-      divide->shape().element_type() != F64) {
+  if (Match(divide,
+            m::Divide(m::Op(&a), m::Sqrt(m::Op(&b)).WithOneUse())
+                .WithPredicate([](const HloInstruction* inst) {
+                  return inst->shape().element_type() != F64;
+                }))) {
     auto* rsqrt = divide->mutable_operand(1)->AddInstruction(
         HloInstruction::CreateUnary(divide->shape(), HloOpcode::kRsqrt, b));
     return ReplaceWithNewInstruction(
