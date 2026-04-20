@@ -292,18 +292,19 @@ common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_rocm=True
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_cuda=False
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_sycl=False
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_hermetic_cc=True
-common:rocm_clang_hermetic --repo_env=ROCM_PATH=
 common:rocm_clang_hermetic --repo_env=TF_NEED_ROCM="1"
-common:rocm_clang_hermetic --repo_env=TF_ROCM_AMDGPU_TARGETS=gfx90a
-common:rocm_clang_hermetic --repo_env=ROCM_DISTRO_URL=https://repo.amd.com/rocm/tarball/therock-dist-linux-gfx90X-dcgpu-7.10.0.tar.gz
-common:rocm_clang_hermetic --repo_env=ROCM_DISTRO_HASH=060a129cb4b2d04ebc596e936addb91ebcd63efd369939998f50708cfa5688d1
-common:rocm_clang_hermetic --repo_env=ROCM_DISTRO_LINKS=lib/llvm/amdgcn:amdgcn
+common:rocm_clang_hermetic --repo_env=TF_ROCM_AMDGPU_TARGETS=gfx90a,gfx942
 common:rocm_clang_hermetic --define=using_rocm_hipcc=true
 common:rocm_clang_hermetic --define=tensorflow_mkldnn_contraction_kernel=0
 common:rocm_clang_hermetic --linkopt="-fuse-ld=lld"
 common:rocm_clang_hermetic --host_linkopt="-fuse-ld=lld"
 
-common:rocm --config=rocm_clang_hermetic
+# ROCm with hermetic clang but local (system) sysroot
+# Use this when ROCm libraries are built against system libstdc++ to avoid ABI mismatches
+common:rocm_clang_hermetic_local_sysroot --config=rocm_clang_hermetic
+common:rocm_clang_hermetic_local_sysroot --override_repository=sysroot_linux_x86_64=local_sysroot_linux_x86_64
+
+common:rocm --config=rocm_clang_hermetic_local_sysroot
 common:rocm_ci --config=rocm
 
 common:rocm_ci_hermetic --dynamic_mode=off
