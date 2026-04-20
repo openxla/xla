@@ -51,8 +51,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
-#include "xla/backends/gpu/runtime/dynamic_memcpy_thunk.h"
-#include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
@@ -105,12 +103,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const CustomKernelThunk& thunk) {
   return std::make_unique<CustomKernelLaunchCmd>(
       thunk.arguments(), ArgsAccess(thunk.written()), thunk.custom_kernel());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const DynamicMemcpyThunk& thunk) {
-  return std::make_unique<DynamicSliceCopyFusionCmd>(
-      thunk.source(), thunk.destination(), thunk.mem_size(), thunk.offsets());
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
@@ -206,25 +198,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const DynamicSliceThunk& thunk, const ConvertToCommandsOptions& options) {
-  ASSIGN_OR_RETURN(
-      CommandExecutor embedded_cmds,
-      ConvertToCommands(thunk.get_embedded_executor().thunks(), options));
-
-  auto& thunk_fake_allocations = thunk.get_fake_allocations();
-  std::vector<BufferAllocation> fake_allocations;
-  for (auto it = thunk_fake_allocations.begin();
-       it != thunk_fake_allocations.end(); ++it) {
-    fake_allocations.push_back(BufferAllocation(*it));
-  }
-  return std::make_unique<DynamicSliceFusionCmd>(
-      std::move(embedded_cmds), thunk.get_arguments(),
-      std::move(fake_allocations), thunk.get_offsets(), thunk.get_orig_shapes(),
-      thunk.get_sliced_shapes(), thunk.offset_primitive_types(),
-      thunk.get_offset_function());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const CustomCallThunk& thunk) {
   if (auto bundle = thunk.bundle(); bundle.has_value()) {
     return std::make_unique<CustomCallCmd>(
@@ -289,9 +262,6 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kConditional:
       return append(Convert<ConditionalThunk>(thunk, options));
     case Thunk::Kind::kCopy:
-      if (dynamic_cast<const DynamicMemcpyThunk*>(&thunk)) {
-        return append(Convert<DynamicMemcpyThunk>(thunk));
-      }
       cmd_sequence.Append(static_cast<DeviceToDeviceCopyThunk*>(&thunk));
       return absl::OkStatus();
     case Thunk::Kind::kCustomCall:
@@ -358,9 +328,6 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return append(Convert<WhileThunk>(thunk, options));
     case Thunk::Kind::kCuDnn:
       return append(Convert<CuDnnThunk>(thunk));
-    case Thunk::Kind::kDynamicSlice:
-      return append(Convert<DynamicSliceThunk>(thunk, options));
-
     // Sequential thunk does not have any special semantics and we simply inline
     // all nested thunks into command buffer.
     case Thunk::Kind::kSequential:
