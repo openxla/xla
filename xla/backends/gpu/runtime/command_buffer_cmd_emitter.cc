@@ -34,7 +34,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
@@ -67,6 +66,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 
 namespace xla::gpu {
@@ -201,11 +201,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
       thunk.results(), thunk.opaque());
 }
 
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const CuDnnThunk& thunk) {
-  return std::make_unique<CuDnnCmd>(thunk.arguments(), thunk.graph());
-}
-
 //===----------------------------------------------------------------------===//
 static absl::StatusOr<std::unique_ptr<Command>> CopyMetadata(
     absl::StatusOr<std::unique_ptr<Command>> cmd, const Thunk& thunk) {
@@ -311,8 +306,11 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return absl::OkStatus();
     case Thunk::Kind::kWhile:
       return append(Convert<WhileThunk>(thunk, options));
+    // CuDnnThunk implements Command (via TracedCommand) directly; append
+    // borrowed pointer.
     case Thunk::Kind::kCuDnn:
-      return append(Convert<CuDnnThunk>(thunk));
+      cmd_sequence.Append(static_cast<CuDnnThunk*>(&thunk));
+      return absl::OkStatus();
     // Sequential thunk does not have any special semantics and we simply inline
     // all nested thunks into command buffer.
     case Thunk::Kind::kSequential:

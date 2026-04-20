@@ -58,7 +58,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
-#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -151,29 +150,6 @@ class WhileCmd : public Command {
   std::optional<int64_t> trip_count_;
   bool enable_loop_unroll_ = false;
   bool is_unrolled_loop_ = false;
-};
-
-//===----------------------------------------------------------------------===//
-// CuDnnCmd
-//===----------------------------------------------------------------------===//
-
-class CuDnnCmd : public TracedCommand {
- public:
-  CuDnnCmd(absl::Span<const ShapedSlice> args,
-           std::shared_ptr<se::dnn::LazyDnnGraph> graph);
-
-  absl::Status Initialize(const Thunk::InitializeParams& params) override;
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override;
-
- private:
-  std::vector<ShapedSlice> args_;
-  const std::shared_ptr<se::dnn::LazyDnnGraph> graph_;
 };
 
 //===----------------------------------------------------------------------===//
