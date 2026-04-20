@@ -72,9 +72,9 @@ TEST_F(CudaMemoryReservationTest, SetAccessGrantsPeerDeviceAccess) {
     loc.type = CU_MEM_LOCATION_TYPE_DEVICE;
     loc.id = peer;
     uint64_t flags = 0;
-    ASSERT_EQ(cuMemGetAccess(reinterpret_cast<unsigned long long*>(&flags),
-                             &loc, base_ptr),
-              CUDA_SUCCESS)
+    ASSERT_EQ(
+        cuMemGetAccess(reinterpret_cast<cuuint64_t*>(&flags), &loc, base_ptr),
+        CUDA_SUCCESS)
         << "cuMemGetAccess failed for peer device " << peer;
     EXPECT_EQ(flags, static_cast<uint64_t>(CU_MEM_ACCESS_FLAGS_PROT_READWRITE))
         << "Expected READWRITE access on peer device " << peer;
