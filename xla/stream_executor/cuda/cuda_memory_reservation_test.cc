@@ -182,7 +182,8 @@ TEST_F(CudaMemoryReservationTest, SetAccessGrantsLocalDeviceAccess) {
   uint64_t flags = 0;
   CUdeviceptr base_ptr = reinterpret_cast<CUdeviceptr>(res->address().opaque());
   ASSERT_EQ(
-      cuMemGetAccess(reinterpret_cast<cuuint64_t*>(&flags), &loc, base_ptr),
+      cuMemGetAccess(reinterpret_cast<unsigned long long*>(&flags),  // NOLINT
+                     &loc, base_ptr),
       CUDA_SUCCESS);
   EXPECT_EQ(flags, static_cast<uint64_t>(CU_MEM_ACCESS_FLAGS_PROT_READWRITE));
 }
