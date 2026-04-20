@@ -737,7 +737,8 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
   CommandSequence outer_seq;
   outer_seq.Emplace<ChildCmd>(std::move(middle_executor));
   // Add another command at the outer level that still doesn't affect `c`.
-  outer_seq.Emplace<MemzeroCmd>(ShapedSlice{slice_b, shape});
+  outer_seq.Emplace<MemzeroThunk>(Thunk::ThunkInfo(),
+                                  ShapedSlice{slice_b, shape});
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor outer_executor,
       CommandExecutor::Create(std::move(outer_seq), serialize));
@@ -772,7 +773,7 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
   //
   // Outer graph (graph_1):
   //   Node 0: ChildCmd (graph_2)  -> depends on nothing
-  //   Node 1: MemzeroCmd (MEMSET) -> depends on Node 0
+  //   Node 1: MemzeroThunk (MEMSET) -> depends on Node 0
   //
   // Middle graph (graph_2, nested in ChildCmd):
   //   Node 0: ChildCmd (graph_3)                           -> depends on
@@ -788,10 +789,10 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
     ASSERT_NE(gpu_cmd_buffer, nullptr)
         << "Expected command buffer to be a GpuCommandBuffer";
 
-    // Verify outer level: 2 commands (ChildCmd, MemzeroCmd)
+    // Verify outer level: 2 commands (ChildCmd, MemzeroThunk)
     auto outer_commands = gpu_cmd_buffer->commands();
     ASSERT_EQ(outer_commands.size(), 2)
-        << "Outer level should have 2 commands: ChildCmd, MemzeroCmd";
+        << "Outer level should have 2 commands: ChildCmd, MemzeroThunk";
 
     // First command: GpuChildCommand (wrapping middle graph)
     auto* outer_child_cmd =
@@ -802,14 +803,14 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
     ASSERT_NE(outer_child_cmd->command_buffer, nullptr)
         << "GpuChildCommand should have a nested command buffer";
 
-    // Second command: GpuCommand (MemzeroCmd)
+    // Second command: GpuCommand (MemzeroThunk)
     auto* outer_memzero_cmd =
         dynamic_cast<const se::gpu::GpuCommandBuffer::GpuCommand*>(
             outer_commands[1].get());
     ASSERT_NE(outer_memzero_cmd, nullptr)
-        << "Second outer command should be GpuCommand (MemzeroCmd)";
+        << "Second outer command should be GpuCommand (MemzeroThunk)";
     ASSERT_NE(outer_memzero_cmd->handle, nullptr)
-        << "MemzeroCmd should have a valid graph node handle";
+        << "MemzeroThunk should have a valid graph node handle";
 
     // Verify middle level (inside first ChildCmd): 3 commands
     auto* middle_gpu_buffer = dynamic_cast<se::gpu::GpuCommandBuffer*>(

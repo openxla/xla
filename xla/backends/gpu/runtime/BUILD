@@ -1777,6 +1777,7 @@ xla_test(
         ":memset_thunk",
         ":thunk",
         ":thunk_proto_cc",
+        "//xla:shape_util",
         "//xla/service:buffer_assignment",
         "//xla/service:executable",
         "//xla/service:platform_util",

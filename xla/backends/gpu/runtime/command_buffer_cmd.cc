@@ -306,45 +306,6 @@ Command::BufferUses CustomKernelLaunchCmd::buffer_uses() const {
 }
 
 //===----------------------------------------------------------------------===//
-// MemzeroCmd
-//===----------------------------------------------------------------------===//
-
-MemzeroCmd::MemzeroCmd(ShapedSlice dst)
-    : Command(CommandType::kMemzeroCmd), dst_(dst) {}
-
-absl::StatusOr<const se::CommandBuffer::Command*> MemzeroCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  se::DeviceAddressBase dst =
-      execute_params.buffer_allocations->GetDeviceAddress(dst_.slice);
-
-  VLOG(5) << "MemzeroCmd:";
-  VLOG(5) << "  Dst: " << dst_ << " (" << dst.opaque() << ")";
-
-  if (dst_.slice.size() == 0) {
-    VLOG(5) << "Skip recording MemzeroCmd command of 0 bytes";
-    return nullptr;
-  }
-
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateMemset(&dst, uint8_t{0},
-                                            /*num_elements=*/dst_.slice.size(),
-                                            dependencies);
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateMemset(command, &dst, uint8_t{0},
-                                            /*num_elements=*/dst_.slice.size());
-      });
-}
-
-Command::BufferUses MemzeroCmd::buffer_uses() const {
-  return {BufferUse::Write(dst_.slice, dst_.shape)};
-}
-
-//===----------------------------------------------------------------------===//
 // ChildCmd
 //===----------------------------------------------------------------------===//
 
