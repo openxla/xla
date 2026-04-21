@@ -39,6 +39,8 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/scratch_memory_requests.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -65,6 +67,7 @@ limitations under the License.
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/xla_data.pb.h"
@@ -674,6 +677,191 @@ TEST(CustomCallThunkTest, PassesCpuTargetMachineOptionsToInstantiate) {
           /*cpu_target_machine_options=*/options));
 
   EXPECT_TRUE(passes_cpu_target_machine_options_instantiate_called);
+}
+
+//===----------------------------------------------------------------------===//
+// Command buffer tests (Record)
+//===----------------------------------------------------------------------===//
+
+// Cmd-buffer-compatible FFI handler that copies `src` to `dst` by issuing a
+// D2D memcpy on the provided stream. Used by the Record tests below so that
+// TracedCommand::Record can trace real device work onto the command buffer.
+static absl::Status CmdBufferMemcpy(se::Stream* stream, ffi::AnyBuffer src,
+                                    ffi::Result<ffi::AnyBuffer> dst) {
+  se::DeviceAddressBase dst_mem = dst->device_memory();
+  se::DeviceAddressBase src_mem = src.device_memory();
+  return stream->MemcpyD2D(&dst_mem, src_mem, src_mem.size());
+}
+
+XLA_FFI_DEFINE_HANDLER(kCmdBufferMemcpy, CmdBufferMemcpy,
+                       ffi::Ffi::Bind()
+                           .Ctx<ffi::Stream>()
+                           .Arg<ffi::AnyBuffer>()
+                           .Ret<ffi::AnyBuffer>(),
+                       {ffi::Traits::kCmdBufferCompatible});
+
+constexpr absl::string_view kCmdBufferMemcpyCustomCallName =
+    "__xla_test$$cmd_buffer_memcpy";
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), kCmdBufferMemcpyCustomCallName,
+                         "CUDA", kCmdBufferMemcpy);
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), kCmdBufferMemcpyCustomCallName,
+                         "ROCM", kCmdBufferMemcpy);
+
+// Builds a CustomCallThunk that copies operand 0 into result 0.
+static absl::StatusOr<std::unique_ptr<CustomCallThunk>> MakeMemcpyCustomCall(
+    se::StreamExecutor* executor, const BufferAllocation& src_alloc,
+    const BufferAllocation& dst_alloc, int64_t byte_length) {
+  ShapedSlice src_slice{BufferAllocation::Slice{&src_alloc, 0, byte_length},
+                        ShapeUtil::MakeShape(U8, {byte_length})};
+  ShapedSlice dst_slice{BufferAllocation::Slice{&dst_alloc, 0, byte_length},
+                        ShapeUtil::MakeShape(U8, {byte_length})};
+  return CustomCallThunk::Create(
+      Thunk::ThunkInfo(),
+      /*target_name=*/std::string(kCmdBufferMemcpyCustomCallName),
+      /*operands=*/{src_slice},
+      /*results=*/{dst_slice}, /*attributes=*/{},
+      /*called_computation=*/nullptr,
+      /*platform_name=*/executor->GetPlatform()->Name(),
+      /*gpu_compute_capability=*/
+      executor->GetDeviceDescription().gpu_compute_capability());
+}
+
+TEST(CustomCallThunkTest, RecordCommandBuffer) {
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                       executor->CreateStream());
+
+  constexpr int64_t kByteLength = 16;
+  se::DeviceAddress<uint8_t> src =
+      executor->AllocateArray<uint8_t>(kByteLength, 0);
+  se::DeviceAddress<uint8_t> dst =
+      executor->AllocateArray<uint8_t>(kByteLength, 0);
+  std::vector<uint8_t> host_src(kByteLength, 0x5A);
+  TF_ASSERT_OK(stream->Memcpy(&src, host_src.data(), kByteLength));
+  TF_ASSERT_OK(stream->MemZero(&dst, kByteLength));
+
+  BufferAllocation src_alloc{0, kByteLength, 0};
+  BufferAllocation dst_alloc{1, kByteLength, 0};
+  ASSERT_OK_AND_ASSIGN(
+      auto thunk,
+      MakeMemcpyCustomCall(executor, src_alloc, dst_alloc, kByteLength));
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations buffer_allocations({src, dst}, 0, &allocator);
+
+  Thunk::InitializeParams init_params;
+  init_params.executor = executor;
+  init_params.stream = stream.get();
+  init_params.buffer_allocations = &buffer_allocations;
+  TF_ASSERT_OK(thunk->Initialize(init_params));
+
+  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
+      ServiceExecutableRunOptions(), buffer_allocations, stream.get(),
+      /*command_buffer_trace_stream=*/stream.get(),
+      /*collective_params=*/nullptr,
+      /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr);
+
+  CommandStateManager state;
+  Command::RecordParams record_params = {state};
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto command_buffer,
+      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
+  TF_ASSERT_OK_AND_ASSIGN(
+      const se::CommandBuffer::Command* cmd,
+      thunk->Record(execute_params, record_params,
+                    Command::RecordCreate{/*dependencies=*/{}},
+                    command_buffer.get()));
+  ASSERT_NE(cmd, nullptr);
+  TF_ASSERT_OK(command_buffer->Finalize());
+  TF_ASSERT_OK(command_buffer->Submit(stream.get()));
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::vector<uint8_t> host_dst(kByteLength, 0);
+  TF_ASSERT_OK(stream->Memcpy(host_dst.data(), dst, kByteLength));
+  EXPECT_EQ(host_dst, host_src);
+}
+
+TEST(CustomCallThunkTest, RecordCommandBufferUpdate) {
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                       executor->CreateStream());
+
+  constexpr int64_t kByteLength = 16;
+  se::DeviceAddress<uint8_t> src =
+      executor->AllocateArray<uint8_t>(kByteLength, 0);
+  se::DeviceAddress<uint8_t> dst_first =
+      executor->AllocateArray<uint8_t>(kByteLength, 0);
+  se::DeviceAddress<uint8_t> dst_second =
+      executor->AllocateArray<uint8_t>(kByteLength, 0);
+  std::vector<uint8_t> host_src(kByteLength, 0x3C);
+  TF_ASSERT_OK(stream->Memcpy(&src, host_src.data(), kByteLength));
+  TF_ASSERT_OK(stream->MemZero(&dst_first, kByteLength));
+  TF_ASSERT_OK(stream->MemZero(&dst_second, kByteLength));
+
+  BufferAllocation src_alloc{0, kByteLength, 0};
+  BufferAllocation dst_alloc{1, kByteLength, 0};
+  ASSERT_OK_AND_ASSIGN(
+      auto thunk,
+      MakeMemcpyCustomCall(executor, src_alloc, dst_alloc, kByteLength));
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+
+  BufferAllocations allocs_first({src, dst_first}, 0, &allocator);
+  Thunk::InitializeParams init_params;
+  init_params.executor = executor;
+  init_params.stream = stream.get();
+  init_params.buffer_allocations = &allocs_first;
+  TF_ASSERT_OK(thunk->Initialize(init_params));
+
+  Thunk::ExecuteParams params_first = Thunk::ExecuteParams::Create(
+      ServiceExecutableRunOptions(), allocs_first, stream.get(),
+      /*command_buffer_trace_stream=*/stream.get(),
+      /*collective_params=*/nullptr,
+      /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr);
+
+  CommandStateManager state;
+  Command::RecordParams record_params = {state};
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto command_buffer,
+      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
+  TF_ASSERT_OK_AND_ASSIGN(
+      const se::CommandBuffer::Command* cmd,
+      thunk->Record(params_first, record_params,
+                    Command::RecordCreate{/*dependencies=*/{}},
+                    command_buffer.get()));
+  ASSERT_NE(cmd, nullptr);
+  TF_ASSERT_OK(command_buffer->Finalize());
+  TF_ASSERT_OK(command_buffer->Submit(stream.get()));
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::vector<uint8_t> host_first(kByteLength, 0);
+  TF_ASSERT_OK(stream->Memcpy(host_first.data(), dst_first, kByteLength));
+  EXPECT_EQ(host_first, host_src);
+
+  // Update with a different destination allocation and re-submit.
+  BufferAllocations allocs_second({src, dst_second}, 0, &allocator);
+  Thunk::ExecuteParams params_second = Thunk::ExecuteParams::Create(
+      ServiceExecutableRunOptions(), allocs_second, stream.get(),
+      /*command_buffer_trace_stream=*/stream.get(),
+      /*collective_params=*/nullptr,
+      /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr);
+
+  TF_ASSERT_OK(command_buffer->Update());
+  TF_ASSERT_OK_AND_ASSIGN(
+      const se::CommandBuffer::Command* updated_cmd,
+      thunk->Record(params_second, record_params, Command::RecordUpdate{cmd},
+                    command_buffer.get()));
+  EXPECT_EQ(updated_cmd, cmd);
+  TF_ASSERT_OK(command_buffer->Finalize());
+  TF_ASSERT_OK(command_buffer->Submit(stream.get()));
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::vector<uint8_t> host_second(kByteLength, 0);
+  TF_ASSERT_OK(stream->Memcpy(host_second.data(), dst_second, kByteLength));
+  EXPECT_EQ(host_second, host_src);
 }
 
 }  // namespace

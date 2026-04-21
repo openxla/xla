@@ -60,7 +60,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
-#include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_memcpy_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
@@ -73,10 +72,6 @@ limitations under the License.
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/executable_run_options.h"
-#include "xla/ffi/call_frame.h"
-#include "xla/ffi/execution_state.h"
-#include "xla/ffi/ffi.h"
-#include "xla/ffi/invoke.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -112,7 +107,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "xla/tsl/util/unique_any.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -697,126 +691,6 @@ absl::StatusOr<const se::CommandBuffer::Command*> LegacyCustomCallCmd::Record(
 }
 
 Command::BufferUses LegacyCustomCallCmd::buffer_uses() const {
-  Command::BufferUses buffer_usage;
-  for (auto& slices : {operands_, results_}) {
-    for (const std::optional<ShapedSlice>& slice : slices) {
-      if (slice.has_value()) {
-        buffer_usage.push_back(BufferUse::Write(slice->slice, slice->shape));
-      }
-    }
-  }
-  return buffer_usage;
-}
-
-//===----------------------------------------------------------------------===//
-// CustomCallCmd (FFI)
-//===----------------------------------------------------------------------===//
-
-absl::StatusOr<const se::CommandBuffer::Command*> CustomCallCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  // TODO(ezhulenev): This is not the most optimal approach, as we'll be doing
-  // a lot of extra allocation on every call. We have to keep attributes
-  // separate from arguments, as they do not change after thunk is
-  // constructed.
-  ffi::CallFrameBuilder builder(operands_.size(), results_.size());
-
-  VLOG(5) << "CustomCallCmd: target_name=" << target_name_;
-
-  absl::InlinedVector<se::DeviceAddressBase, 4> arguments;
-  arguments.reserve(operands_.size());
-
-  for (int i = 0; i < operands_.size(); ++i) {
-    const NullableShapedSlice& slice = operands_[i];
-    if (!slice.has_value()) {
-      arguments.push_back(se::DeviceAddressBase{});
-      continue;
-    }
-
-    se::DeviceAddressBase buffer =
-        execute_params.buffer_allocations->GetDeviceAddress(slice->slice);
-    VLOG(5) << "  Operand " << i << ": " << slice->slice << " ("
-            << buffer.opaque() << ")";
-    arguments.push_back(buffer);
-  }
-
-  absl::InlinedVector<se::DeviceAddressBase, 4> results;
-  results.reserve(results_.size());
-
-  for (int i = 0; i < results_.size(); ++i) {
-    const NullableShapedSlice& slice = results_[i];
-    if (!slice.has_value()) {
-      results.push_back(se::DeviceAddressBase{});
-      continue;
-    }
-
-    se::DeviceAddressBase buffer =
-        execute_params.buffer_allocations->GetDeviceAddress(slice->slice);
-    VLOG(5) << "  Result " << i << ": " << slice->slice << " ("
-            << buffer.opaque() << ")";
-    results.push_back(buffer);
-  }
-
-  // Borrow the FFI call frame from the object pool and update with the actual
-  // device memory addresses.
-  ASSIGN_OR_RETURN(auto call_frame, call_frames_->GetOrCreate());
-  RETURN_IF_ERROR(call_frame->UpdateWithBuffers(arguments, results));
-
-  RunId run_id = execute_params.collective_params->run_id;
-
-  // Lookup per-execution state for prepare and init stages.
-  ffi::ExecutionState* prepare_state = nullptr;
-  ffi::ExecutionState* initialize_state = nullptr;
-  if (execute_params.execution_scoped_state) {
-    auto it = execute_params.execution_scoped_state->find(thunk_id_);
-    if (it != execute_params.execution_scoped_state->end()) {
-      auto& state =
-          tsl::any_cast<CustomCallThunk::PrepareAndInitState>(it->second);
-      prepare_state = &state.prepare;
-      initialize_state = &state.init;
-    }
-  }
-
-  ASSIGN_OR_RETURN(
-      auto nested_cmd,
-      se::TraceCommandBufferFactory::Create(
-          execute_params.stream->parent(),
-          execute_params.command_buffer_trace_stream, [&](se::Stream* stream) {
-            ffi::InvokeContext context = {
-                run_id,
-                execute_params.buffer_allocations->device_ordinal(),
-                ffi::InvokeContext::GpuContext{
-                    stream,
-                    execute_params.buffer_allocations->memory_allocator(),
-                    execute_params.collective_params,
-                    /*collective_clique_requests=*/nullptr,
-                    /*collective_memory_requests=*/nullptr,
-                    /*collective_cliques=*/nullptr,
-                    /*collective_memory=*/execute_params.collective_memory,
-                },
-                ffi::InvokeContext::StateContext{
-                    /*instantiate=*/execution_state_.get(),
-                    /*prepare=*/prepare_state,
-                    /*initialize=*/initialize_state,
-                },
-                /*called_computation=*/nullptr,  // TODO(b/342285364)
-                execute_params.ffi_execution_context};
-            return ffi::Invoke(ffi::GetXlaFfiApi(), handler_, *call_frame,
-                               context);
-          }));
-
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateChildCommand(*nested_cmd, dependencies);
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateChildCommand(command, *nested_cmd);
-      });
-}
-
-Command::BufferUses CustomCallCmd::buffer_uses() const {
   Command::BufferUses buffer_usage;
   for (auto& slices : {operands_, results_}) {
     for (const std::optional<ShapedSlice>& slice : slices) {

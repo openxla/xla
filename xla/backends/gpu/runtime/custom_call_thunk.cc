@@ -41,8 +41,10 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/runtime/traced_command.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/attribute_map.h"
@@ -250,7 +252,8 @@ CustomCallThunk::CustomCallThunk(
     std::unique_ptr<ffi::ExecutionState> execution_state,
     const HloComputation* called_computation,
     std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options)
-    : Thunk(Thunk::kCustomCall, thunk_info),
+    : TracedCommand(CommandType::kCustomCallCmd, Thunk::kCustomCall,
+                    thunk_info),
       target_name_(std::move(target_name)),
       operands_(std::move(operands)),
       results_(std::move(results)),
@@ -331,6 +334,11 @@ InvokeContext CustomCallThunk::BuildInvokeContext(
     initialize_state = &prepare_and_init.init;
   }
 
+  // `called_computation_` is forwarded to the FFI handler both for direct
+  // ExecuteOnStream and for TracedCommand::Record (which traces ExecuteOnStream
+  // onto a command-buffer trace stream). The old CustomCallCmd path hard-coded
+  // nullptr here with a TODO(b/342285364); this unified path resolves that
+  // TODO so handlers see the real called computation under command buffers.
   return InvokeContext{
       run_id,
       device_ordinal,

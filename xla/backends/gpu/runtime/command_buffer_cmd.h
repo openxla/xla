@@ -44,16 +44,9 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
-#include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/traced_command.h"
 #include "xla/core/collectives/reduction_kind.h"
-#include "xla/ffi/api/c_api.h"
-#include "xla/ffi/attribute_map.h"
-#include "xla/ffi/call_frame.h"
-#include "xla/ffi/execution_state.h"
-#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/runtime/buffer_use.h"
-#include "xla/runtime/object_pool.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/launch_dimensions.h"
@@ -208,61 +201,6 @@ class CuDnnCmd : public TracedCommand {
  private:
   std::vector<ShapedSlice> args_;
   const std::shared_ptr<se::dnn::LazyDnnGraph> graph_;
-};
-
-//===----------------------------------------------------------------------===//
-// CustomCallCmd (FFI)
-//===----------------------------------------------------------------------===//
-
-class CustomCallCmd : public Command {
- public:
-  CustomCallCmd(std::string target_name, XLA_FFI_Handler* handler,
-                std::vector<NullableShapedSlice> operands,
-                std::vector<NullableShapedSlice> results,
-                ffi::CallFrame call_frame, ThunkId thunk_id,
-                std::shared_ptr<ffi::ExecutionState> execution_state,
-                const HloComputation* called_computation)
-      : Command(CommandType::kCustomCallCmd),
-        target_name_(std::move(target_name)),
-        handler_(handler),
-        call_frame_(std::move(call_frame)),
-        thunk_id_(thunk_id),
-        execution_state_(std::move(execution_state)),
-        call_frames_([this] { return call_frame_->Copy(); }),
-        called_computation_(called_computation),
-        operands_(std::move(operands)),
-        results_(std::move(results)) {}
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override;
-
- private:
-  std::string target_name_;
-
-  XLA_FFI_Handler* handler_ = nullptr;
-
-  // Reference call frame pre-initialized at construction time.
-  std::optional<ffi::CallFrame> call_frame_;
-
-  // Thunk ID of the thunk this command is associated with.
-  ThunkId thunk_id_;
-
-  // Execution state bound to the FFI handler. It is initialized by the
-  // corresponding Thunk at construction time.
-  std::shared_ptr<ffi::ExecutionState> execution_state_;
-
-  // A pool of call frames used at run time. Newly created call frames are
-  // copied from the reference call frame and updated with buffer addresses.
-  std::optional<ObjectPool<ffi::CallFrame>> call_frames_;
-
-  const HloComputation* called_computation_;
-
-  std::vector<NullableShapedSlice> operands_;
-  std::vector<NullableShapedSlice> results_;
 };
 
 //===----------------------------------------------------------------------===//
