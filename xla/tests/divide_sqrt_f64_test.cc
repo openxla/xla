@@ -41,6 +41,10 @@ limitations under the License.
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
+#include <map>
+#include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -110,25 +114,35 @@ TEST_F(DivideBySqrtF64Test, MatchesIeeeCorrectlyRoundedComposition) {
 // Diagnostic sweep: over a log-uniform sample of regular-range f64
 // inputs, count how often `divide(1, sqrt(x))` through the full XLA
 // pipeline lands on a different bit pattern than the host-computed
-// correctly-rounded composition reference `1.0 / std::sqrt(x)`.
+// correctly-rounded composition reference `1.0 / std::sqrt(x)`, and
+// break the divergences down by ULP distance.
 //
 // This test always passes — it's a measurement, not an assertion. The
-// summary line it prints is the concrete "how often does this happen"
-// number that quantifies the divergence fixed by the guards this test
-// file accompanies.
+// summary line(s) it prints give PR reviewers a reproducible,
+// domain-wide picture of the bug this file's assertions are targeted
+// at.
 //
-// Measured on a local Intel/AMD avx512f host (early 2026):
-//   * With both the simplifier f64 skip and the intrinsic f64
-//     always-fallback applied: 0 / 1000 (0%) divergences, max 0 ULP.
-//   * With both guards reverted: 291 / 1000 (29.1%) divergences,
-//     max 2 ULP.
+// Measured on a local Intel/AMD avx512f host (early 2026) with
+// kNumSamples = 1000 (both guards reverted, i.e. pre-PR emit):
+//
+//    0 ULP : 709 / 1000 (70.9%) — matches reference exactly
+//    1 ULP : 289 / 1000 (28.9%) — rewrite lands on the neighbouring f64
+//    2 ULP :   2 / 1000 (0.2%)  — rare cases where Newton-Raphson
+//                                  refinement compounds with the
+//                                  reference's own rounding to reach
+//                                  the theoretical worst case
+//
+// With both guards applied (current branch), all 1000 samples show
+// 0 ULP — the HLO stays as sqrt+fdiv, which matches the host's
+// libm-based sqrt+fdiv reference exactly.
+//
 // Non-avx512f CPU builds trivially observe 0% regardless of the guards
 // because the intrinsic already falls back; the test is most useful on
 // avx512f hosts.
 //
 // The committed sample size is 100 to keep the test fast (~1s);
-// increase locally for tighter statistics if investigating a
-// regression.
+// increase locally for tighter statistics or to reliably populate the
+// >=2 ULP tail.
 TEST_F(DivideBySqrtF64Test, DiagnosticSweepAgainstReference) {
   constexpr int kNumSamples = 100;
   constexpr double kLogLo = -200.0;
@@ -141,8 +155,13 @@ TEST_F(DivideBySqrtF64Test, DiagnosticSweepAgainstReference) {
     inputs.push_back(std::pow(10.0, e));
   }
 
-  int mismatch_count = 0;
-  int64_t max_ulp_diff = 0;
+  std::map<int64_t, int> ulp_histogram;
+  std::map<int64_t, double> example_input_per_bucket;
+  std::map<int64_t, double> example_got_per_bucket;
+  std::map<int64_t, double> example_ref_per_bucket;
+  // Track every input in the >=2 ULP tail so we can see whether those
+  // rare cases are concentrated or scattered across the domain.
+  std::vector<std::tuple<double, double, double, int64_t>> tail_samples;
 
   for (double x : inputs) {
     TF_ASSERT_OK_AND_ASSIGN(auto module,
@@ -153,30 +172,54 @@ TEST_F(DivideBySqrtF64Test, DiagnosticSweepAgainstReference) {
     double got = result.data<double>()[0];
     double reference = 1.0 / std::sqrt(x);
 
-    if (got != reference) {
-      ++mismatch_count;
-      uint64_t a, b;
-      std::memcpy(&a, &got, sizeof(a));
-      std::memcpy(&b, &reference, sizeof(b));
-      int64_t ulp = a > b ? a - b : b - a;
-      if (ulp > max_ulp_diff) {
-        max_ulp_diff = ulp;
-      }
+    uint64_t a, b;
+    std::memcpy(&a, &got, sizeof(a));
+    std::memcpy(&b, &reference, sizeof(b));
+    int64_t ulp = a > b ? a - b : b - a;
+
+    ulp_histogram[ulp]++;
+    if (example_input_per_bucket.find(ulp) == example_input_per_bucket.end()) {
+      example_input_per_bucket[ulp] = x;
+      example_got_per_bucket[ulp] = got;
+      example_ref_per_bucket[ulp] = reference;
+    }
+    if (ulp >= 2) {
+      tail_samples.emplace_back(x, got, reference, ulp);
     }
   }
 
-  const double pct = 100.0 * mismatch_count / kNumSamples;
-  LOG(INFO) << "DiagnosticSweep: " << mismatch_count << " / " << kNumSamples
-            << " (" << pct << "%) inputs diverged from reference; "
-            << "max ULP diff = " << max_ulp_diff << ".";
+  // Render doubles as hex-floats (%a) so single-ULP and double-ULP
+  // differences are visible at the bit level rather than being hidden
+  // by the default 6-digit printer.
+  auto hex = [](double v) -> std::string {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%a", v);
+    return std::string(buf);
+  };
 
-  // Intentionally not an assertion — this is a measurement.
-  // If the divergence rate is nontrivial (>0) on a branch that claims
-  // to fix this, something is wrong, but we leave that follow-up to
-  // the MatchesIeeeCorrectlyRoundedComposition test for specific
-  // curated inputs.
-  (void)mismatch_count;
-  (void)max_ulp_diff;
+  LOG(INFO) << "DiagnosticSweep histogram over " << kNumSamples
+            << " log-uniform f64 inputs:";
+  for (const auto& [ulp, count] : ulp_histogram) {
+    double pct = 100.0 * count / kNumSamples;
+    if (ulp == 0) {
+      LOG(INFO) << "  " << ulp << " ULP: " << count << " (" << pct
+                << "%) — matches reference exactly.";
+    } else {
+      LOG(INFO) << "  " << ulp << " ULP: " << count << " (" << pct
+                << "%), example x=" << example_input_per_bucket[ulp]
+                << "  got=" << hex(example_got_per_bucket[ulp])
+                << "  ref=" << hex(example_ref_per_bucket[ulp]);
+    }
+  }
+
+  if (!tail_samples.empty()) {
+    LOG(INFO) << "All inputs in the >=2 ULP tail:";
+    for (auto const& [x, got, ref, ulp] : tail_samples) {
+      LOG(INFO) << "  x=" << x << " (" << hex(x) << ")"
+                << "  got=" << hex(got) << "  ref=" << hex(ref)
+                << "  ULP=" << ulp;
+    }
+  }
 }
 
 }  // namespace
