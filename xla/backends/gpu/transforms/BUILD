@@ -56,6 +56,7 @@ xla_cc_test(
     deps = [
         ":dot_algorithm_rewriter",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:hlo_module_config",
@@ -1720,6 +1721,7 @@ xla_test(
     backends = ["gpu"],
     use_legacy_runtime = True,
     deps = [
+        "//xla:xla_proto_cc",
         "//xla/backends/gpu/tests:hlo_legacy_gpu_test_base",
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
@@ -1836,6 +1838,7 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:computation_layout",
+        "//xla/service:hlo_proto_cc",
         "//xla/service:layout_assignment",
         "//xla/service:logical_buffer",
         "//xla/service:matmul_indexing_utils",
@@ -3650,6 +3653,7 @@ xla_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:test",
