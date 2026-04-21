@@ -700,7 +700,7 @@ StreamExecutorGpuClient::CrossHostSendBuffers(
                 [&](PjRtRawBufferRef buf_raw_buffer,
                     std::vector<tsl::RCReference<tsl::AsyncValue>>
                         buf_definition_events) mutable
-                -> absl::StatusOr<PjRtDeviceEventRef> {
+                    -> absl::StatusOr<PjRtDeviceEventRef> {
                   // Keep raw_buffer alive until the usage_event completes,
                   // preventing the allocation from being freed while the
                   // send is in-flight.
@@ -1107,6 +1107,9 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
     TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtBuffer> buffer,
                         DefineBuffer(std::move(on_device_shape), memory_space,
                                      raw_buffer, {definition_event}));
+    // Keep raw_buffer alive until the definition_event completes, preventing
+    // the allocation from being freed while the receive is in-flight.
+    definition_event.AndThen([raw_buffer]() {});
 
     // Store a ref to the allocation event as a transfer dependency so that
     // the NCCL receive waits for the buffer allocation to complete.
