@@ -574,7 +574,6 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
-    linkopts = ["-lamd_comgr_loader"],
     strip_include_prefix = "%{rocm_root}",
     deps = [
         ":rocm_config",
@@ -593,7 +592,6 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
-    linkopts = ["-lamd_comgr"],
     strip_include_prefix = "%{rocm_root}",
     deps = [
         ":rocm_config",
@@ -608,6 +606,7 @@ alias(
         threshold_dict = {
             62000: ":amd_comgr_static",
             71000: ":amd_comgr_dynamic",
+            71200: ":amd_comgr_static",
         },
         value = rocm_version_number(),
     ),
