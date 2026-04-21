@@ -480,6 +480,21 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // time of the parameter instruction, and an output's time would correspond to
   // the time of last use.
   struct RequiredMemoryAssignment {
+    enum class Source {
+      kAliasedUse,
+      kUseNotAllowedInAlternateMemory,
+      kInefficientSite,
+      kLoopOptimizedParameterInWhileLoop,
+      kConditionalPhiOutput,
+      kConditionalComputationOutput,
+      kPositionNotAllowedInAlternateMemory,
+      kProgramOutput,
+      kConstantInstruction,
+      kProgramInput,
+      kBlockPrefetchSourceBuffer,
+      kBlockPrefetchSourceBufferUse,
+    };
+
     MemorySpace memory_space;
     int64_t time;
     AliasedOffset* offset = nullptr;
@@ -487,7 +502,7 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
     // are created for various reasons, this field is used to identify the
     // reason for the required memory assignment. It improves logging and helps
     // debugging.
-    std::string required_assignment_source;
+    Source required_assignment_source;
 
     bool memory_space_and_offset_equal(
         const RequiredMemoryAssignment& other) const {
@@ -507,6 +522,7 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
     }
 
     std::string ToString() const;
+    static std::string SourceToString(Source source);
   };
 
   // A struct that contains a pointer to loop-optimized allocation along with
@@ -743,9 +759,21 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   static Allocation* GetLiveAllocationAt(const AllocationSequence& allocations,
                                          int64_t time);
 
-  // Returns true if the use is allowed in the alternate memory.
-  bool IsUseAllowedInAlternateMemory(const AllocationValue& value,
-                                     const HloUse& use) const;
+  // Returns true if the use is allowed in the alternate memory (hard
+  // constraints).
+  bool IsUseAllowedInAlternateMemory(const HloUse& use) const;
+
+  // Returns true if the use is allowed in alternate memory for while loops.
+  bool IsWhileLoopUseRequiredInDefaultMemory(const HloUse& use) const;
+
+  // Returns true if it is beneficial to have the while loop use in alternate
+  // memory.
+  bool IsWhileLoopUseBeneficialInAlternateMemory(const HloUse& use) const;
+
+  // Returns true if it is beneficial to have the conditional use in alternate
+  // memory.
+  bool IsConditionalUseBeneficialInAlternateMemory(const AllocationValue& value,
+                                                   const HloUse& use) const;
 
   // Adjusts the preferred memory offset for a given use, taking aliasing
   // constraints into account. If the use already has a preferred offset in the
@@ -959,33 +987,31 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
       absl::Span<const MsaBufferInterval* const> colocated_intervals);
 
   // Propagates aliased required assignment for a given position.
-  void AddAliasedRequiredAssignment(const HloInstruction* instruction,
-                                    ShapeIndex index,
-                                    const Allocation* aliased_allocation,
-                                    std::string required_assignment_source);
+  void AddAliasedRequiredAssignment(
+      const HloInstruction* instruction, ShapeIndex index,
+      const Allocation* aliased_allocation,
+      RequiredMemoryAssignment::Source required_assignment_source);
 
   // This sets a required assignment. CHECK fails if there is a conflicting
   // required assignment at the same time.
-  void AddRequiredAssignment(const HloValue* value,
-                             const HloInstruction* instruction,
-                             MemorySpace memory_space, int64_t time,
-                             std::string required_assignment_source,
-                             AliasedOffset* offset = nullptr,
-                             bool add_to_pending = true);
-  void AddRequiredAssignment(const HloInstruction* instruction,
-                             ShapeIndex index, MemorySpace memory_space,
-                             std::string required_assignment_source,
-                             AliasedOffset* offset = nullptr,
-                             bool add_to_pending = true);
-  void AddRequiredAssignment(const HloPosition& position,
-                             MemorySpace memory_space,
-                             std::string required_assignment_source,
-                             AliasedOffset* offset = nullptr,
-                             bool add_to_pending = true);
-  void AddRequiredAssignment(const HloUse& use, MemorySpace memory_space,
-                             std::string required_assignment_source,
-                             AliasedOffset* offset = nullptr,
-                             bool add_to_pending = true);
+  void AddRequiredAssignment(
+      const HloValue* value, const HloInstruction* instruction,
+      MemorySpace memory_space, int64_t time,
+      RequiredMemoryAssignment::Source required_assignment_source,
+      AliasedOffset* offset = nullptr, bool add_to_pending = true);
+  void AddRequiredAssignment(
+      const HloInstruction* instruction, ShapeIndex index,
+      MemorySpace memory_space,
+      RequiredMemoryAssignment::Source required_assignment_source,
+      AliasedOffset* offset = nullptr, bool add_to_pending = true);
+  void AddRequiredAssignment(
+      const HloPosition& position, MemorySpace memory_space,
+      RequiredMemoryAssignment::Source required_assignment_source,
+      AliasedOffset* offset = nullptr, bool add_to_pending = true);
+  void AddRequiredAssignment(
+      const HloUse& use, MemorySpace memory_space,
+      RequiredMemoryAssignment::Source required_assignment_source,
+      AliasedOffset* offset = nullptr, bool add_to_pending = true);
 
   // Adds input and outputs as required assignments.
   void AddInputAndOutputRequiredAssignments();
@@ -1329,6 +1355,16 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // alternate memory.
   void CalculateMemoryPressure(
       const std::vector<MsaBufferInterval>& sorted_buffer_intervals);
+
+  // Marks the given HloValue as finalized, i.e., its allocation values have
+  // been finalized and cannot be uncommitted or changed.
+  void FinalizeValue(const HloValue* value);
+
+  // Returns true if the given HloValue is finalized, i.e., its allocation
+  // values have been finalized and cannot be uncommitted or changed.
+  bool IsValueFinalized(const HloValue* value) const {
+    return finalized_values_.contains(value);
+  }
 
   HloModule* module_ = nullptr;
   AllocationSequence* allocations_;
