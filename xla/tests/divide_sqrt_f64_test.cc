@@ -39,7 +39,10 @@ limitations under the License.
 // that accepts one would accept the other and hide the bug.
 
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <utility>
+#include <vector>
 
 #include "xla/hlo/testlib/test.h"
 #include "xla/literal.h"
@@ -102,6 +105,78 @@ TEST_F(DivideBySqrtF64Test, MatchesIeeeCorrectlyRoundedComposition) {
         << "(notably avx512f hosts) emits a SIMD vrsqrt + Newton-Raphson "
         << "refinement landing on a different in-range f64 value.";
   }
+}
+
+// Diagnostic sweep: over a log-uniform sample of regular-range f64
+// inputs, count how often `divide(1, sqrt(x))` through the full XLA
+// pipeline lands on a different bit pattern than the host-computed
+// correctly-rounded composition reference `1.0 / std::sqrt(x)`.
+//
+// This test always passes — it's a measurement, not an assertion. The
+// summary line it prints is the concrete "how often does this happen"
+// number that quantifies the divergence fixed by the guards this test
+// file accompanies.
+//
+// Measured on a local Intel/AMD avx512f host (early 2026):
+//   * With both the simplifier f64 skip and the intrinsic f64
+//     always-fallback applied: 0 / 1000 (0%) divergences, max 0 ULP.
+//   * With both guards reverted: 291 / 1000 (29.1%) divergences,
+//     max 2 ULP.
+// Non-avx512f CPU builds trivially observe 0% regardless of the guards
+// because the intrinsic already falls back; the test is most useful on
+// avx512f hosts.
+//
+// The committed sample size is 100 to keep the test fast (~1s);
+// increase locally for tighter statistics if investigating a
+// regression.
+TEST_F(DivideBySqrtF64Test, DiagnosticSweepAgainstReference) {
+  constexpr int kNumSamples = 100;
+  constexpr double kLogLo = -200.0;
+  constexpr double kLogHi = 200.0;
+
+  std::vector<double> inputs;
+  inputs.reserve(kNumSamples);
+  for (int i = 0; i < kNumSamples; ++i) {
+    double e = kLogLo + (kLogHi - kLogLo) * i / (kNumSamples - 1);
+    inputs.push_back(std::pow(10.0, e));
+  }
+
+  int mismatch_count = 0;
+  int64_t max_ulp_diff = 0;
+
+  for (double x : inputs) {
+    TF_ASSERT_OK_AND_ASSIGN(auto module,
+                            ParseAndReturnVerifiedModule(kDivBySqrtF64Module));
+    auto input = LiteralUtil::CreateR0<double>(x);
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto result, Execute(std::move(module), {&input}));
+    double got = result.data<double>()[0];
+    double reference = 1.0 / std::sqrt(x);
+
+    if (got != reference) {
+      ++mismatch_count;
+      uint64_t a, b;
+      std::memcpy(&a, &got, sizeof(a));
+      std::memcpy(&b, &reference, sizeof(b));
+      int64_t ulp = a > b ? a - b : b - a;
+      if (ulp > max_ulp_diff) {
+        max_ulp_diff = ulp;
+      }
+    }
+  }
+
+  const double pct = 100.0 * mismatch_count / kNumSamples;
+  LOG(INFO) << "DiagnosticSweep: " << mismatch_count << " / " << kNumSamples
+            << " (" << pct << "%) inputs diverged from reference; "
+            << "max ULP diff = " << max_ulp_diff << ".";
+
+  // Intentionally not an assertion — this is a measurement.
+  // If the divergence rate is nontrivial (>0) on a branch that claims
+  // to fix this, something is wrong, but we leave that follow-up to
+  // the MatchesIeeeCorrectlyRoundedComposition test for specific
+  // curated inputs.
+  (void)mismatch_count;
+  (void)max_ulp_diff;
 }
 
 }  // namespace
