@@ -27,8 +27,10 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/runtime/traced_command.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/custom_call_status.h"
@@ -45,7 +47,11 @@ namespace xla::gpu {
 // legacy custom calls that have not yet migrated to FFI.
 //
 // For the FFI-based custom call thunk, see custom_call_thunk.h.
-class LegacyCustomCallThunk : public Thunk {
+//
+// Also implements TracedCommand so it can be recorded directly into command
+// buffers; the default TracedCommand::Record() traces ExecuteOnStream() on the
+// command-buffer trace stream.
+class LegacyCustomCallThunk : public TracedCommand {
  public:
   using CustomCallTarget =
       std::function<void(stream_executor::Stream*, void**, const char*, size_t,
@@ -85,6 +91,12 @@ class LegacyCustomCallThunk : public Thunk {
         continue;
       }
       res.push_back(BufferUse::Read(shaped_slice->slice, shaped_slice->shape));
+    }
+    for (const NullableShapedSlice& shaped_slice : results_) {
+      if (!shaped_slice.has_value()) {
+        continue;
+      }
+      res.push_back(BufferUse::Write(shaped_slice->slice, shaped_slice->shape));
     }
     return res;
   }
