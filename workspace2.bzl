@@ -5,6 +5,7 @@ load("@bazel_skylib//lib:versions.bzl", "versions")
 load("@bazel_tools//tools/build_defs/repo:java.bzl", "java_import_external")
 load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
 load("@io_bazel_rules_closure//closure:defs.bzl", "filegroup_external")
+load("@rules_ml_toolchain//cc/sysroots:local_sysroot_configure.bzl", "local_sysroot_configure")
 load("@rules_ml_toolchain//gpu/rocm:hipcc_configure.bzl", "hipcc_configure")
 load("@rules_ml_toolchain//gpu/sycl:sycl_configure.bzl", "sycl_configure")
 load("@rules_ml_toolchain//gpu/sycl:sycl_init_repository.bzl", "sycl_init_repository")
@@ -138,6 +139,7 @@ def _tf_toolchains():
         name = "local_config_rocm",
         rocm_dist = "@config_rocm_hipcc//rocm:rocm_dist",
     )
+    local_sysroot_configure(name = "local_sysroot_config")
     sycl_init_repository()
     sycl_configure(name = "local_config_sycl")
     remote_execution_configure(name = "local_config_remote_execution")

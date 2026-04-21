@@ -45,9 +45,9 @@ bazel_dep(name = "rules_ml_toolchain")
 # echo "sha256-${HASH}"
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-coN7R+ar6uGuV749gkAUBKv/9W8RXUFHc4F3FWEvC6k=",
-    strip_prefix = "rules_ml_toolchain-e0505e3b35c8ed6b5fcc5d5c8aee42f3a5f6cd3f",
-    urls = ["https://github.com/alekstheod/rules_ml_toolchain/archive/e0505e3b35c8ed6b5fcc5d5c8aee42f3a5f6cd3f.tar.gz"],
+    integrity = "sha256-gdkUMw4xUZsNl41HlsrkHx+H/N31Jrj7fFqPpQKGX9I=",
+    strip_prefix = "rules_ml_toolchain-364976670b283a4110c625f8e774b4d98039d216",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/364976670b283a4110c625f8e774b4d98039d216.tar.gz"],
 )
 
 # TODO: Upstream the patch?
@@ -219,6 +219,9 @@ use_repo(nccl_configure, "local_config_nccl")
 
 sycl_configure = use_extension("@rules_ml_toolchain//extensions:sycl_configure.bzl", "sycl_configure_ext")
 use_repo(sycl_configure, "local_config_sycl")
+
+local_sysroot = use_extension("@rules_ml_toolchain//extensions:local_sysroot_configure.bzl", "local_sysroot_ext")
+use_repo(local_sysroot, "local_sysroot_config")
 
 cuda_redist_init_ext = use_extension("@rules_ml_toolchain//extensions:cuda_redist_init.bzl", "cuda_redist_init_ext")
 use_repo(cuda_redist_init_ext, "cuda_cudart")
