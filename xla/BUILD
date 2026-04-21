@@ -433,7 +433,10 @@ cc_library(
     name = "future",
     hdrs = ["future.h"],
     visibility = ["//visibility:public"],
-    deps = ["//xla/tsl/concurrency:future"],
+    deps = [
+        "//xla/tsl/concurrency:future",
+        "//xla/tsl/concurrency:interop",
+    ],
 )
 
 cc_library(
@@ -680,6 +683,7 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log:check",
@@ -1271,7 +1275,10 @@ xla_cc_test(
     name = "debug_options_flags_test",
     srcs = ["debug_options_flags_test.cc"],
     deps = [
+        ":debug_options_flags",
+        ":parse_flags_from_env",
         ":xla_proto_cc",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_googletest//:gtest",
@@ -1532,6 +1539,8 @@ bzl_library(
     name = "lit_bzl",
     srcs = ["lit.bzl"],
     deps = [
+        ":native_test_bzl",
+        ":platform_native_rule_bzl",
         "//xla/tests:build_defs_bzl",
         "@rules_cc//cc/common",
         # copybara:uncomment "@rules_python//python:defs_bzl",
@@ -1541,6 +1550,29 @@ bzl_library(
         "//xla/tsl:tsl_default_bzl",
         "//xla/tsl/platform/default:cuda_build_defs_bzl",
     ],
+)
+
+bzl_library(
+    name = "native_test_bzl",
+    srcs = ["native_test.bzl"],
+    visibility = ["//visibility:private"],
+    deps = ["//xla/tsl:package_groups_bzl"],
+)
+
+bzl_library(
+    name = "platform_native_rule_bzl",
+    srcs = if_google(
+        ["platform_native_rule.google.bzl"],
+        ["platform_native_rule.default.bzl"],
+    ),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":native_test_bzl",
+        "//xla/tsl:package_groups_bzl",
+    ] + if_google([
+        "//third_party/bazel_rules/rules_platform/platform_test:defs_bzl",
+        "//xla/tests:build_defs_bzl",
+    ]),
 )
 
 xla_bzl_library()

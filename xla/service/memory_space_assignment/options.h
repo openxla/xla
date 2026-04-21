@@ -211,7 +211,8 @@ struct Options {
   // Should only be used for testing purposes. This function allows us to
   // modify the AllocationResult after the AllocationRequest has been processed
   // by AllocateSegment().
-  std::function<void(const AllocationRequest&, AllocationResult&)>
+  std::function<void(const AllocationRequest&, AllocationResult&,
+                     int64_t retry_number)>
       allocation_result_modifier_testing_fn = nullptr;
 
   // Should only be used for testing purposes. This function allows us to
@@ -399,6 +400,12 @@ struct Options {
   // and gives MSA more flexibility in choosing the prefetch time and how much
   // data to prefetch.
   bool enable_window_prefetch = false;
+
+  // Max number of window prefetch operands allowed.
+  int64_t window_prefetch_max_operands = 1024;
+
+  // Min span size for window prefetch operands allowed.
+  int64_t window_prefetch_min_span_size = 4096;
 
   // The mode to use for window prefetching.
   WindowPrefetchMode window_prefetch_mode = WindowPrefetchMode::kWindowExposure;

@@ -15,9 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -27,14 +31,16 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
+#include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/collective_broadcast_thunk.h"
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
-#include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
@@ -62,14 +68,15 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
 namespace xla::gpu {
 
 namespace {
 // A context for tracking thunks to commands conversion details.
-struct ConversionContext {};
+struct ConversionContext {
+  std::vector<Command::ResourceUses> extra_resources;
+};
 }  // namespace
 
 // Appends command(s) converted from `sequence` to `cmd_sequence`.
@@ -93,23 +100,9 @@ static auto ArgsAccess(const std::vector<bool>& written) {
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const KernelThunk& thunk) {
-  return std::make_unique<LaunchCmd>(
-      thunk.kernel_name(), thunk.arguments(), ArgsAccess(thunk.written()),
-      thunk.launch_dimensions(), thunk.shmem_bytes(), thunk.tma_metadata(),
-      thunk.use_pdl());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const CustomKernelThunk& thunk) {
   return std::make_unique<CustomKernelLaunchCmd>(
       thunk.arguments(), ArgsAccess(thunk.written()), thunk.custom_kernel());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const DeviceToDeviceCopyThunk& thunk) {
-  return std::make_unique<MemcpyDeviceToDeviceCmd>(
-      thunk.destination(), thunk.source(), thunk.size_bytes());
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
@@ -124,39 +117,17 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const Memset32BitValueThunk& thunk) {
-  return std::make_unique<Memset32Cmd>(thunk.destination(), thunk.value());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const WhileThunk& thunk, const ConvertToCommandsOptions& options) {
   VLOG(1) << "WhileThunk: " << thunk.profile_annotation();
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       CommandExecutor cond_cmds,
       ConvertToCommands(thunk.condition_executor().thunks(), options));
-  TF_ASSIGN_OR_RETURN(
-      CommandExecutor body_cmds,
-      ConvertToCommands(thunk.body_executor().thunks(), options));
+  ASSIGN_OR_RETURN(CommandExecutor body_cmds,
+                   ConvertToCommands(thunk.body_executor().thunks(), options));
 
   return std::make_unique<WhileCmd>(
       thunk.condition_result_buffer(), std::move(cond_cmds),
       std::move(body_cmds), thunk.trip_count(), options.enable_loop_unroll);
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const GemmThunk& thunk) {
-  return std::make_unique<GemmCmd>(thunk.config(), thunk.lhs_buffer(),
-                                   thunk.rhs_buffer(), thunk.output_buffer(),
-                                   thunk.workspace(), thunk.deterministic());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const CublasLtMatmulThunk& thunk) {
-  if (!thunk.workspace().has_value()) {
-    return absl::InternalError(
-        "Gemm thunk does not contain a workspace buffer");
-  }
-  return std::make_unique<CublasLtCmd>(thunk);
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
@@ -167,16 +138,16 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
     // For boolean predicates, we need to convert the branches in reverse order
     // because the first branch is the "false" branch and the second is "true"
     CHECK_EQ(thunk.branch_executors().size(), 2);
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         branch_cmds.emplace_back(),
         ConvertToCommands(thunk.branch_executors()[1].thunks(), options));
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         branch_cmds.emplace_back(),
         ConvertToCommands(thunk.branch_executors()[0].thunks(), options));
   } else {
     for (auto& branch_thunk : thunk.branch_executors()) {
-      TF_ASSIGN_OR_RETURN(CommandExecutor cmds,
-                          ConvertToCommands(branch_thunk.thunks(), options));
+      ASSIGN_OR_RETURN(CommandExecutor cmds,
+                       ConvertToCommands(branch_thunk.thunks(), options));
       branch_cmds.emplace_back(std::move(cmds));
     }
   }
@@ -239,7 +210,7 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const DynamicSliceThunk& thunk, const ConvertToCommandsOptions& options) {
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       CommandExecutor embedded_cmds,
       ConvertToCommands(thunk.get_embedded_executor().thunks(), options));
 
@@ -254,18 +225,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
       std::move(fake_allocations), thunk.get_offsets(), thunk.get_orig_shapes(),
       thunk.get_sliced_shapes(), thunk.offset_primitive_types(),
       thunk.get_offset_function());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const PartitionIdThunk& thunk) {
-  return std::make_unique<ComputationIdCmd>(thunk.dest(),
-                                            ComputationIdCmd::Kind::kPartition);
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const ReplicaIdThunk& thunk) {
-  return std::make_unique<ComputationIdCmd>(thunk.dest(),
-                                            ComputationIdCmd::Kind::kReplica);
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
@@ -297,17 +256,20 @@ static absl::StatusOr<std::unique_ptr<Command>> CopyMetadata(
   return cmd;
 }
 
+// Takes Thunk& (non-const) rather than const Thunk& so that thunks which
+// also implement Command can be appended as borrowed Command* without
+// const_cast (which is banned). The thunks in ThunkSequence are non-const
+// (unique_ptr<Thunk>), so callers always have a non-const reference available.
 template <typename ThunkType, typename... Args>
-static absl::StatusOr<std::unique_ptr<Command>> Convert(const Thunk& thunk,
+static absl::StatusOr<std::unique_ptr<Command>> Convert(Thunk& thunk,
                                                         Args&&... args) {
-  return CopyMetadata(Convert(static_cast<const ThunkType&>(thunk),
-                              std::forward<Args>(args)...),
-                      thunk);
+  return CopyMetadata(
+      Convert(static_cast<ThunkType&>(thunk), std::forward<Args>(args)...),
+      thunk);
 }
 
 static absl::Status AppendCommands(ConversionContext& ctx,
-                                   CommandSequence& cmd_sequence,
-                                   const Thunk& thunk,
+                                   CommandSequence& cmd_sequence, Thunk& thunk,
                                    const ConvertToCommandsOptions& options) {
   auto append =
       [&](absl::StatusOr<std::unique_ptr<Command>> command) -> absl::Status {
@@ -315,7 +277,7 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return command.status();
     }
 
-    cmd_sequence.push_back(std::move(*command));
+    cmd_sequence.Append(std::move(*command));
     return absl::OkStatus();
   };
 
@@ -325,21 +287,27 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kCopy:
       if (dynamic_cast<const DynamicMemcpyThunk*>(&thunk)) {
         return append(Convert<DynamicMemcpyThunk>(thunk));
-      } else {
-        return append(Convert<DeviceToDeviceCopyThunk>(thunk));
       }
+      cmd_sequence.Append(static_cast<DeviceToDeviceCopyThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kCustomCall:
       return append(Convert<CustomCallThunk>(thunk));
     case Thunk::Kind::kCustomKernel:
       return append(Convert<CustomKernelThunk>(thunk));
+    // KernelThunk implements Command directly; append borrowed pointer.
     case Thunk::Kind::kKernel:
-      return append(Convert<KernelThunk>(thunk));
+      cmd_sequence.Append(static_cast<KernelThunk*>(&thunk));
+      return absl::OkStatus();
+    // GemmThunk implements TracedCommand directly; append as borrowed
+    // pointer — the thunk outlives the command sequence.
     case Thunk::Kind::kGemm:
-      return append(Convert<GemmThunk>(thunk));
+      cmd_sequence.Append(static_cast<GemmThunk*>(&thunk));
+      return absl::OkStatus();
+    // CublasLtMatmulThunk implements TracedCommand directly; append as
+    // borrowed pointer — the thunk outlives the command sequence.
     case Thunk::Kind::kCublasLtMatmul:
-      return append(Convert<CublasLtMatmulThunk>(thunk));
-    case Thunk::Kind::kMemset32BitValue:
-      return append(Convert<Memset32BitValueThunk>(thunk));
+      cmd_sequence.Append(static_cast<CublasLtMatmulThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kMemzero:
       return append(Convert<MemzeroThunk>(thunk));
     case Thunk::Kind::kAllGather:
@@ -360,10 +328,20 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return append(Convert<RecvThunk>(thunk));
     case Thunk::Kind::kSend:
       return append(Convert<SendThunk>(thunk));
+    // These thunks implement Command directly; append borrowed pointers.
+    // Note: kCopy also borrows DeviceToDeviceCopyThunk (see case above).
+    case Thunk::Kind::kMemset32BitValue:
+      cmd_sequence.Append(static_cast<Memset32BitValueThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kPartitionId:
-      return append(Convert<PartitionIdThunk>(thunk));
+      cmd_sequence.Append(static_cast<PartitionIdThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kReplicaId:
-      return append(Convert<ReplicaIdThunk>(thunk));
+      cmd_sequence.Append(static_cast<ReplicaIdThunk*>(&thunk));
+      return absl::OkStatus();
+    case Thunk::Kind::kAsyncDone:
+      // Async done thunks are no-ops in command buffers.
+      return absl::OkStatus();
     case Thunk::Kind::kWhile:
       return append(Convert<WhileThunk>(thunk, options));
     case Thunk::Kind::kCuDnn:
@@ -385,25 +363,6 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return AppendCommands(ctx, cmd_sequence, start.thunks(), options);
     }
 
-    // Async done thunks are no-ops in command buffers. Create an empty
-    // command only if needed as a dependency node.
-    case Thunk::Kind::kAsyncDone: {
-      if (thunk.control_predecessors().empty()) {
-        return absl::OkStatus();
-      }
-      return append(absl::StatusOr<std::unique_ptr<Command>>(
-          std::make_unique<EmptyCmd>()));
-    }
-
-    case Thunk::Kind::kWaitForStreams:
-      if (thunk.control_predecessors().empty()) {
-        return absl::OkStatus();
-      }
-      // If there are control dependencies between these thunks, create an
-      // empty command to act as a dependency node.
-      return append(absl::StatusOr<std::unique_ptr<Command>>(
-          std::make_unique<EmptyCmd>()));
-
     case Thunk::Kind::kCommandBuffer:
       return Internal(
           "Error trying to emit command for a CommandBufferThunk. Input HLO "
@@ -419,8 +378,248 @@ static absl::Status AppendCommands(ConversionContext& ctx,
 
 namespace {
 
-void AddResourceDependency(Command* predecessor, Command* successor) {
-  predecessor->add_resource_use(ResourceUse::Read(successor->token()));
+// Simple list scheduler for thunks in a concurrent region. Generates a schedule
+// with two concurrent lanes (kMaxConcurrentOps). That is, at most two thunks
+// are executed concurrently. The schedule may execute thunks out of order to
+// achieve better parallelism.
+class ConcurrentRegionScheduler {
+ public:
+  explicit ConcurrentRegionScheduler(absl::Span<Thunk*> thunks) {
+    InitializeSuccessors(thunks);
+    InitializeInDegrees(thunks);
+    Schedule(thunks);
+  }
+
+  // Returns the scheduled thunks in topological order.
+  std::vector<Thunk*> scheduled_thunks() { return scheduled_thunks_; }
+  // Returns the source nodes of the current region, i.e. the nodes that will
+  // execute first.
+  std::vector<Thunk*> scheduled_source_thunks() {
+    return scheduled_source_thunks_;
+  }
+  // Returns the sink nodes of the current region, i.e. the nodes that will
+  // execute last.
+  std::vector<Thunk*> scheduled_sink_thunks() { return scheduled_sink_thunks_; }
+  // Returns artificial dependencies inserted by the scheduler.
+  absl::flat_hash_map<const Thunk*, std::vector<Thunk*>>
+  scheduled_successors() {
+    return scheduled_successors_;
+  }
+
+ private:
+  // Build map of successors from buffer conflicts among thunks.
+  void InitializeSuccessors(absl::Span<Thunk*> thunks) {
+    // Pre-compute buffer read-write sets for all thunks in this sequence.
+    std::vector<BufferUse::ReadWriteSet> rw_sets(thunks.size());
+    for (size_t i = 0; i < thunks.size(); ++i) {
+      thunks[i]->Walk(
+          [&](auto* thunk) { rw_sets[i].AddAll(thunk->buffer_uses()); });
+    }
+    for (size_t i = 0; i < thunks.size(); ++i) {
+      for (size_t j = i + 1; j < rw_sets.size(); ++j) {
+        if (rw_sets[j].HasConflicts(rw_sets[i])) {
+          thunks_[thunks[i]].successors.push_back(thunks[j]);
+        }
+      }
+    }
+    // TODO(tjoerg): Thunks support resource dependencies. Though they are
+    // currently not used for XLA GPU, support should be added in the future.
+  }
+
+  // Initialize in-degrees of all thunks, based on the successors map.
+  void InitializeInDegrees(absl::Span<Thunk*> thunks) {
+    for (size_t i = 0; i < thunks.size(); ++i) {
+      for (Thunk* successor : thunks_[thunks[i]].successors) {
+        thunks_[successor].in_degree++;
+      }
+    }
+    if (VLOG_IS_ON(5)) {
+      for (Thunk* thunk : thunks) {
+        VLOG(5) << "In-degree of " << thunk->thunk_info().profile_annotation
+                << ": " << thunks_[thunk].in_degree;
+      }
+    }
+  }
+
+  // Insert thunks with in-degree 0 into the ready queue. The queue is divided
+  // into kMaxConcurrentOps lanes for cache locality. For initialization, simply
+  // assign to lanes in a round robin fashion.
+  void InitializeReady(absl::Span<Thunk*> thunks) {
+    for (size_t i = 0; i < thunks.size(); ++i) {
+      if (thunks_[thunks[i]].in_degree == 0) {
+        ready_[i % kMaxConcurrentOps].push_back(thunks[i]);
+        ready_size_++;
+      }
+    }
+  }
+
+  void EnqueueReady(Thunk* thunk, size_t lane_id) {
+    // Insert in the front for cache locality.
+    ready_[lane_id].push_front(thunk);
+    ready_size_++;
+  }
+
+  // Move ready thunks to the active list. Prefer scheduling thunks in the same
+  // lane as their data predecessors.
+  void MoveReadyToActive(std::vector<Thunk*>& active) {
+    size_t num_ops_to_move = std::min(kMaxConcurrentOps, ready_size_);
+    for (size_t i = 0; i < num_ops_to_move; ++i) {
+      // Prefer thunks in the same lane, but use thunks from other lanes if
+      // necessary.
+      if (!ready_[i].empty()) {
+        active.push_back(ready_[i].front());
+        ready_[i].pop_front();
+        ready_size_--;
+      } else {
+        for (size_t j = 0; j < kMaxConcurrentOps; ++j) {
+          if (!ready_[j].empty()) {
+            active.push_back(ready_[j].front());
+            ready_[j].pop_front();
+            ready_size_--;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // Returns the number of thunks in the ready queue.
+  size_t ready_size() const { return ready_size_; }
+
+  // Generate a schedule: While there are thunks in the ready queue, move ready
+  // thunks to the active list, update in-degrees of successors, update the
+  // ready queue, and start over.
+  void Schedule(absl::Span<Thunk*> thunks) {
+    InitializeReady(thunks);
+    std::vector<Thunk*> active;
+    std::vector<Thunk*> previously_active;
+    scheduled_sink_thunks_.resize(kMaxConcurrentOps);
+
+    while (ready_size() > 0) {
+      MoveReadyToActive(active);
+      VLOG(5) << "Active list: "
+              << absl::StrJoin(
+                     active, ", ", [](std::string* out, const Thunk* thunk) {
+                       absl::StrAppend(out,
+                                       thunk->thunk_info().profile_annotation);
+                     });
+      // Record the first active thunks of this region.
+      if (scheduled_source_thunks_.empty()) {
+        scheduled_source_thunks_ = active;
+      }
+      // Update in-degrees of successors and enqueue ready thunks.
+      for (size_t lane_id = 0; lane_id < active.size(); ++lane_id) {
+        Thunk* thunk = active.at(lane_id);
+        for (Thunk* successor : thunks_[thunk].successors) {
+          thunks_[successor].in_degree--;
+          if (thunks_[successor].in_degree == 0) {
+            EnqueueReady(successor, lane_id);
+          }
+        }
+        scheduled_thunks_.push_back(thunk);
+
+        // Add dependencies to previously active ops.
+        if (lane_id < previously_active.size()) {
+          Thunk* previously_active_same_lane = previously_active.at(lane_id);
+          scheduled_successors_[previously_active_same_lane].push_back(thunk);
+        }
+      }
+      previously_active = active;
+      // Record the active thunks as sinks for now. Note that last while loop
+      // iteration may not have all lanes filled, hence do it on each iteration.
+      for (size_t lane_id = 0; lane_id < active.size(); ++lane_id) {
+        scheduled_sink_thunks_[lane_id] = active[lane_id];
+      }
+      active.clear();
+    }
+  }
+
+  // Number of concurrent lanes in the schedule.
+  // Using 2 lanes is a conservative default. Higher degrees of concurrency are
+  // prone to jitter, i.e. variations in the execution time. When multiple GPUs
+  // run in lockstep, the worst case performance determines the overall speed.
+  static constexpr size_t kMaxConcurrentOps = 2;
+  // Ready queue with kMaxConcurrentOps lanes.
+  std::deque<Thunk*> ready_[kMaxConcurrentOps];
+
+  // See comments on the methods above.
+  size_t ready_size_ = 0;
+  struct ThunkState {
+    std::vector<Thunk*> successors;
+    int64_t in_degree = 0;
+  };
+  absl::flat_hash_map<const Thunk*, ThunkState> thunks_;
+  std::vector<Thunk*> scheduled_thunks_;
+  absl::flat_hash_map<const Thunk*, std::vector<Thunk*>> scheduled_successors_;
+  std::vector<Thunk*> scheduled_source_thunks_;
+  std::vector<Thunk*> scheduled_sink_thunks_;
+};
+
+absl::Status AppendCommandsInConcurrentRegions(
+    ConversionContext& ctx, CommandSequence& cmd_sequence,
+    const ThunkSequence& sequence, const ConvertToCommandsOptions& options) {
+  absl::flat_hash_map<int64_t, std::vector<Thunk*>>
+      concurrent_region_id_to_thunks;
+  std::vector<int64_t> concurrent_region_ids;
+  for (const std::unique_ptr<Thunk>& thunk : sequence) {
+    TF_RET_CHECK(thunk->concurrent_region_id().has_value())
+        << "Concurrent region id must be set in scheduling mode "
+           "kConcurrentRegions.";
+    int64_t concurrent_region_id = thunk->concurrent_region_id().value();
+    concurrent_region_id_to_thunks[concurrent_region_id].push_back(thunk.get());
+    if (concurrent_region_ids.empty() ||
+        concurrent_region_id > concurrent_region_ids.back()) {
+      concurrent_region_ids.push_back(concurrent_region_id);
+    }
+    CHECK_GE(concurrent_region_id, concurrent_region_ids.back())
+        << "Concurrent region ids are not monotonic.";
+    VLOG(3) << "Thunk " << thunk->thunk_info().profile_annotation
+            << " is in region " << concurrent_region_id;
+  }
+  std::vector<ConcurrentRegionScheduler> concurrent_region_schedules;
+  absl::flat_hash_map<const Thunk*, int64_t> thunk_to_index;
+  for (int64_t concurrent_region_id : concurrent_region_ids) {
+    std::vector<Thunk*> thunks =
+        concurrent_region_id_to_thunks[concurrent_region_id];
+    ConcurrentRegionScheduler& scheduler =
+        concurrent_region_schedules.emplace_back(absl::MakeSpan(thunks));
+    for (Thunk* thunk : scheduler.scheduled_thunks()) {
+      TF_RETURN_IF_ERROR(AppendCommands(ctx, cmd_sequence, *thunk, options));
+      int64_t index = cmd_sequence.size() - 1;
+      thunk_to_index[thunk] = index;
+    }
+  }
+  // Ensure extra_resources is sized to cover all commands added so far
+  // (including those added by nested AppendCommands calls).
+  ctx.extra_resources.resize(cmd_sequence.size());
+
+  // Add dependencies within concurrent regions.
+  for (auto& scheduler : concurrent_region_schedules) {
+    for (auto& [thunk, successors] : scheduler.scheduled_successors()) {
+      for (Thunk* successor : successors) {
+        ctx.extra_resources[thunk_to_index[thunk]].push_back(ResourceUse::Read(
+            cmd_sequence[thunk_to_index[successor]]->token()));
+      }
+    }
+  }
+  // Add dependencies between concurrent regions. The source nodes of subsequent
+  // regions depend on all sink nodes of prior regions.
+  for (size_t i = 1; i < concurrent_region_schedules.size(); ++i) {
+    for (Thunk* sink :
+         concurrent_region_schedules[i - 1].scheduled_sink_thunks()) {
+      if (sink == nullptr) {
+        continue;
+      }
+      for (Thunk* source :
+           concurrent_region_schedules[i].scheduled_source_thunks()) {
+        // The source nodes of region `i` depend on the sink nodes of region
+        // `i-1` to ensure serialization between regions.
+        ctx.extra_resources[thunk_to_index[source]].push_back(
+            ResourceUse::Read(cmd_sequence[thunk_to_index[sink]]->token()));
+      };
+    }
+  }
+  return absl::OkStatus();
 }
 
 }  // namespace
@@ -429,53 +628,20 @@ static absl::Status AppendCommands(ConversionContext& ctx,
                                    CommandSequence& cmd_sequence,
                                    const ThunkSequence& sequence,
                                    const ConvertToCommandsOptions& options) {
+  if (options.synchronization_mode ==
+      CommandExecutor::SynchronizationMode::kConcurrentRegions) {
+    return AppendCommandsInConcurrentRegions(ctx, cmd_sequence, sequence,
+                                             options);
+  }
   absl::flat_hash_map<const Thunk*, int64_t> thunk_to_index;
-  absl::flat_hash_map<int64_t, std::vector<int64_t>>
-      concurrent_region_id_to_thunk_indices;
-  std::vector<int64_t> concurrent_region_ids;
   for (const std::unique_ptr<Thunk>& thunk : sequence) {
-    TF_RETURN_IF_ERROR(AppendCommands(ctx, cmd_sequence, *thunk, options));
+    RETURN_IF_ERROR(AppendCommands(ctx, cmd_sequence, *thunk, options));
     int64_t index = cmd_sequence.size() - 1;
     thunk_to_index[thunk.get()] = index;
-    if (thunk->concurrent_region_id().has_value()) {
-      int64_t concurrent_region_id = thunk->concurrent_region_id().value();
-      concurrent_region_id_to_thunk_indices[concurrent_region_id].push_back(
-          index);
-      if (concurrent_region_ids.empty() ||
-          concurrent_region_id > concurrent_region_ids.back()) {
-        concurrent_region_ids.push_back(concurrent_region_id);
-      }
-      CHECK_GE(concurrent_region_id, concurrent_region_ids.back())
-          << "Concurrent region ids are not monotonic.";
-    }
-  }
-  // Add dependencies between concurrent regions to serialize them.
-  for (int64_t i = 1; i < concurrent_region_ids.size(); ++i) {
-    int64_t concurrent_region_id = concurrent_region_ids[i - 1];
-    int64_t next_concurrent_region_id = concurrent_region_ids[i];
-    for (int64_t thunk_index :
-         concurrent_region_id_to_thunk_indices[concurrent_region_id]) {
-      for (int64_t next_thunk_index :
-           concurrent_region_id_to_thunk_indices[next_concurrent_region_id]) {
-        AddResourceDependency(cmd_sequence[thunk_index].get(),
-                              cmd_sequence[next_thunk_index].get());
-      }
-    }
-  }
-
-  // Convert thunk control dependencies to token resource dependency, where
-  // the predecessor has the token write, and control successor does the token
-  // read.
-  for (const std::unique_ptr<Thunk>& thunk : sequence) {
-    for (const Thunk* control_predecessor : thunk->control_predecessors()) {
-      AddResourceDependency(
-          cmd_sequence[thunk_to_index[control_predecessor]].get(),
-          cmd_sequence[thunk_to_index[thunk.get()]].get());
-    }
   }
 
   return absl::OkStatus();
-}  // namespace xla::gpu
+}
 
 absl::StatusOr<CommandExecutor> ConvertToCommands(
     const ThunkSequence& sequence, const ConvertToCommandsOptions& options) {
@@ -484,9 +650,10 @@ absl::StatusOr<CommandExecutor> ConvertToCommands(
       options.synchronization_mode);
   ConversionContext ctx;
   CommandSequence cmd_sequence;
-  TF_RETURN_IF_ERROR(AppendCommands(ctx, cmd_sequence, sequence, options));
+  RETURN_IF_ERROR(AppendCommands(ctx, cmd_sequence, sequence, options));
   return CommandExecutor::Create(std::move(cmd_sequence),
-                                 options.synchronization_mode);
+                                 options.synchronization_mode,
+                                 std::move(ctx.extra_resources));
 }
 
 }  // namespace xla::gpu

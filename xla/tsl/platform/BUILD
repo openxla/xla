@@ -353,6 +353,7 @@ tsl_cc_test(
         "//xla/tsl/platform/testdata:test_crash",
         "//xla/tsl/platform/testdata:test_echo",
         "//xla/tsl/platform/testdata:test_echo_argv_1",
+        "//xla/tsl/platform/testdata:test_getenv",
         "//xla/tsl/platform/testdata:test_noop",
         "//xla/tsl/platform/testdata:test_pwd",
         "//xla/tsl/platform/testdata:test_stderr",
@@ -446,14 +447,13 @@ cc_library(
     srcs = ["errors.cc"],
     hdrs = ["errors.h"],
     deps = [
-        ":logging",
         ":macros",
         ":status",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
-        "@tsl//tsl/platform:strcat",
+        "@tsl//tsl/platform",
     ],
 )
 
@@ -480,10 +480,6 @@ cc_library(
         ":env",
         ":errors",
         ":file_statistics",
-        ":macros",
-        ":status",
-        ":statusor",
-        ":types",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
@@ -492,12 +488,9 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform",
         "@tsl//tsl/platform:cord",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:str_util",
-        "@tsl//tsl/platform:stringpiece",
     ],
 )
 
@@ -517,9 +510,6 @@ tsl_cc_test(
 cc_library(
     name = "file_statistics",
     hdrs = ["file_statistics.h"],
-    deps = [
-        ":types",
-    ],
 )
 
 cc_library(
@@ -758,10 +748,7 @@ cc_library(
     name = "threadpool_interface",
     hdrs = ["threadpool_interface.h"],
     compatible_with = get_compatible_with_portable(),
-    deps = [
-        ":types",
-        "@eigen_archive//:eigen3",
-    ],
+    deps = ["@eigen_archive//:eigen3"],
 )
 
 cc_library(
@@ -789,14 +776,6 @@ cc_library(
 # copybara:comment_begin(oss-only)
 cc_library(
     name = "status_macros",
-    hdrs = ["status_macros.h"],
-    compatible_with = get_compatible_with_portable(),
-    visibility = internal_visibility([]),  # The header should be used only in OSS.
-    deps = [":statusor"],
-)
-
-cc_library(
-    name = "gloop_status_macros",
     hdrs = ["status_macros.h"],
     compatible_with = get_compatible_with_portable(),
     visibility = internal_visibility([]),  # The header should be used only in OSS.
@@ -939,9 +918,7 @@ cc_library(
     hdrs = ["ram_file_system.h"],
     deps = [
         ":env",
-        ":errors",
         ":file_statistics",
-        ":types",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",

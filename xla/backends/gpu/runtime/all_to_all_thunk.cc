@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/strings/substitute.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
@@ -57,7 +58,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -81,7 +81,7 @@ struct BufferRendezvousValue {
 AllToAllThunk::AllToAllThunk(ThunkInfo thunk_info, const AllToAllConfig& config,
                              std::vector<CollectiveThunk::Buffer> buffers,
                              bool p2p_memcpy_enabled)
-    : CollectiveThunk(Thunk::kAllToAll, thunk_info, false),
+    : CollectiveThunk(Thunk::kAllToAll, thunk_info),
       config_(config),
       buffers_(std::move(buffers)),
       p2p_memcpy_enabled_(p2p_memcpy_enabled) {
@@ -92,7 +92,7 @@ AllToAllThunk::AllToAllThunk(ThunkInfo thunk_info,
                              const HloAllToAllInstruction* instr,
                              std::vector<CollectiveThunk::Buffer> buffers,
                              bool p2p_memcpy_enabled)
-    : CollectiveThunk(Thunk::kAllToAll, thunk_info, false),
+    : CollectiveThunk(Thunk::kAllToAll, thunk_info),
       config_(GetAllToAllConfig(instr)),
       buffers_(std::move(buffers)),
       p2p_memcpy_enabled_(p2p_memcpy_enabled) {
@@ -135,7 +135,7 @@ absl::Status AllToAllThunk::Initialize(const InitializeParams& params) {
     TF_ASSIGN_OR_RETURN(
         GpuCliqueKey clique_key,
         GetGpuCliqueKey(*params.collective_params, config().replica_groups,
-                        config().group_mode, p2p_memcpy_enabled_));
+                        config().group_mode, communication_id()));
 
     TF_ASSIGN_OR_RETURN(
         Communicator * comm,

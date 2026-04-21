@@ -384,8 +384,8 @@ TEST_F(IndexingMapTest, KnownEmpty_Composition) {
   EXPECT_THAT(known_empty, MatchIndexingMap("KNOWN EMPTY"));
   EXPECT_THAT(indexing_map * known_empty, MatchIndexingMap("KNOWN EMPTY"));
   EXPECT_THAT(known_empty * indexing_map, MatchIndexingMap("KNOWN EMPTY"));
-  EXPECT_EQ((indexing_map * known_empty).GetAffineMap().getNumResults(), 1);
-  EXPECT_EQ((known_empty * indexing_map).GetAffineMap().getNumResults(), 1);
+  EXPECT_EQ((indexing_map * known_empty).GetSymbolicMap().GetNumResults(), 1);
+  EXPECT_EQ((known_empty * indexing_map).GetSymbolicMap().GetNumResults(), 1);
 }
 
 TEST_F(IndexingMapTest,
@@ -621,7 +621,7 @@ TEST_F(IndexingMapTest, ConstraintIntervalSimplification_Sum) {
     d0 mod 8 + 5 in [50, 54]
   )");
   EXPECT_TRUE(indexing_map.Simplify());
-  // TODO(karupayun): This should be infeasible, since d0 mod 8 should be in
+  // TODO: b/459357586 - This should be infeasible, since d0 mod 8 should be in
   // [0, 7].
   EXPECT_THAT(ToString(indexing_map), MatchIndexingString(R"(
                           (d0) -> (d0),
@@ -678,7 +678,7 @@ TEST_F(IndexingMapTest,
     s1 in [0, 2],
     d0 * 6 + s0 * 3 + s1 in [0, 598]
   )");
-  // TODO(karupayun): This should be simplified to
+  // TODO: b/459357586 - This should be simplified to
   // (d0)[s0, s1] -> (d0 * 6 + s0 * 3 + s1),
   // domain:
   // d0 in [0, 99],
@@ -1417,8 +1417,8 @@ TEST_F(IndexingMapTest, RescaleSymbolsKeepsHashmapConsistent) {
   )");
   EXPECT_TRUE(indexing_map.RescaleSymbols());
 
-  for (auto& [expr, interval] : indexing_map.GetConstraints()) {
-    EXPECT_TRUE(indexing_map.GetConstraints().contains(expr))
+  for (auto& [expr, interval] : indexing_map.GetSymbolicConstraints()) {
+    EXPECT_TRUE(indexing_map.GetSymbolicConstraints().contains(expr))
         << "Don't modify the *keys* of the hashmap.";
   }
 }
@@ -1668,6 +1668,56 @@ TEST_F(IndexingMapTest, SymbolicMapGetResultsLvalueIteration) {
   }
 
   ASSERT_EQ(results.size(), 1);
+}
+
+TEST_F(IndexingMapTest, GetUsedParameters) {
+  auto dim0 = CreateDimExpr(0, &mlir_context_);
+  auto dim1 = CreateDimExpr(1, &mlir_context_);
+  auto sym0 = CreateSymbolExpr(0, /*num_dims=*/2, &mlir_context_);
+  auto sym1 = CreateSymbolExpr(1, /*num_dims=*/2, &mlir_context_);
+  auto const42 = CreateSymbolicConstant(42, &mlir_context_);
+
+  // Test with only dimensions.
+  UsedParameters used_params = GetUsedParameters({dim0, dim1}, /*num_dims=*/2);
+  EXPECT_THAT(used_params.dimension_ids, ElementsAre(0, 1));
+  EXPECT_TRUE(used_params.symbol_ids.empty());
+
+  // Test with only symbols.
+  used_params = GetUsedParameters({sym0, sym1}, /*num_dims=*/2);
+  EXPECT_TRUE(used_params.dimension_ids.empty());
+  EXPECT_THAT(used_params.symbol_ids, ElementsAre(0, 1));
+
+  // Test with both dimensions and symbols.
+  used_params = GetUsedParameters({dim0 + sym0, dim1 * sym1}, /*num_dims=*/2);
+  EXPECT_THAT(used_params.dimension_ids, ElementsAre(0, 1));
+  EXPECT_THAT(used_params.symbol_ids, ElementsAre(0, 1));
+
+  // Test with constants and operations.
+  used_params =
+      GetUsedParameters({dim0 * 2 + const42, sym1 - 10}, /*num_dims=*/2);
+  EXPECT_THAT(used_params.dimension_ids, ElementsAre(0));
+  EXPECT_THAT(used_params.symbol_ids, ElementsAre(1));
+
+  // Test with multiple expressions.
+  used_params = GetUsedParameters({dim0, sym0, dim1 + sym1}, /*num_dims=*/2);
+  EXPECT_THAT(used_params.dimension_ids, ElementsAre(0, 1));
+  EXPECT_THAT(used_params.symbol_ids, ElementsAre(0, 1));
+
+  // Test with expressions not using any dims or symbols.
+  used_params = GetUsedParameters({const42, const42 + const42}, /*num_dims=*/2);
+  EXPECT_TRUE(used_params.dimension_ids.empty());
+  EXPECT_TRUE(used_params.symbol_ids.empty());
+
+  // Test with duplicate variables.
+  used_params = GetUsedParameters({dim0, dim0, sym1, sym1}, /*num_dims=*/2);
+  EXPECT_THAT(used_params.dimension_ids, ElementsAre(0));
+  EXPECT_THAT(used_params.symbol_ids, ElementsAre(1));
+
+  // Test with mixed types.
+  used_params = GetUsedParameters({dim0 * sym0 + const42, dim1 % 3},
+                                  /*num_dims=*/2);
+  EXPECT_THAT(used_params.dimension_ids, ElementsAre(0, 1));
+  EXPECT_THAT(used_params.symbol_ids, ElementsAre(0));
 }
 
 }  // namespace

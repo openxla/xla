@@ -145,12 +145,13 @@ class IfrtIrLoadedExecutable
 
   static char ID;  // NOLINT
 
- private:
+ protected:
   IfrtIrLoadedExecutable(Client* client,
                          std::shared_ptr<CompiledIfrtIrProgram> program,
                          DeviceListRef devices,
                          std::unique_ptr<ProgramMemoryTracer> memory_tracer);
 
+ private:
   // Returns the layout of a parameter from the consumer executable. If the
   // parameter is not used by any executable or is used by a transfer
   // (ifrt::CopyArraysOp), then the default device layout is returned.

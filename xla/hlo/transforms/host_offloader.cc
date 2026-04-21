@@ -402,7 +402,9 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
     VLOG(1) << absl::StreamFormat(
         "Inserted copy \"%s\" before custom call \"%s\"",
         copy_to_device->name(), custom_call->name());
-    TF_RETURN_IF_ERROR(custom_call->ReplaceAllUsesWith(copy_to_device));
+    // Update the MoveToDevice input without bypassing the custom call itself;
+    // later traversals rely on MoveToDevice remaining the end-of-path barrier.
+    TF_RETURN_IF_ERROR(custom_call->ReplaceOperandWith(0, copy_to_device));
     changed = true;
   }
 

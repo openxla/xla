@@ -453,6 +453,7 @@ cc_library(
     hdrs = ["rocm_tracer_utils.h"],
     visibility = ["//visibility:public"],
     deps = [
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:node_hash_set",
         "@com_google_absl//absl/log",
@@ -505,10 +506,7 @@ cc_library(
     tags = [
         "gpu",
         "rocm-only",
-    ] + if_google([
-        # TODO(b/360374983): Remove this tag once the target can be built without --config=rocm.
-        "manual",
-    ]),
+    ],
     deps = [
         ":rocm_collector",
         ":rocm_tracer_utils",
@@ -815,6 +813,8 @@ xla_cc_test(
         ":cupti_utils",
         "//xla/tsl/profiler/utils:xplane_builder",
         "//xla/tsl/profiler/utils:xplane_schema",
+        "//xla/tsl/profiler/utils:xplane_utils",
+        "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings:string_view",

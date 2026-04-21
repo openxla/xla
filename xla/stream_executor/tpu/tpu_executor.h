@@ -136,16 +136,12 @@ class TpuExecutor : public tensorflow::tpu::TpuExecutorInterface {
       uint64_t size) override {
     LOG(FATAL) << "not yet implemented";
   }
-  absl::Status SynchronousMemZero(DeviceAddressBase* location,
-                                  uint64_t size) override {
-    LOG(FATAL) << "not yet implemented";
-  }
 
   SE_StreamExecutor* se_executor() { return executor_; }
 
  private:
   tensorflow::tpu::TpuPlatform& tpu_platform() {
-    return *(tensorflow::down_cast<tensorflow::tpu::TpuPlatform*>(platform_));
+    return *(absl::down_cast<tensorflow::tpu::TpuPlatform*>(platform_));
   }
 
   tensorflow::tpu::TpuPlatform::StreamMap& stream_map() {

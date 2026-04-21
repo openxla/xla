@@ -45,6 +45,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
@@ -62,7 +63,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_memcpy_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
-#include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/recv_thunk.h"
@@ -72,7 +72,6 @@ limitations under the License.
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
-#include "xla/debug_options_flags.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_state.h"
@@ -92,7 +91,6 @@ limitations under the License.
 #include "xla/service/custom_call_status_internal.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/shape_util.h"
@@ -119,7 +117,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -228,302 +225,6 @@ static absl::StatusOr<const se::CommandBuffer::Command*> Handle(
 }
 
 //===----------------------------------------------------------------------===//
-// TracedCommandBuffer
-//===----------------------------------------------------------------------===//
-
-TracedCommandBuffer::TracedCommandBuffer(const Command* trace_cmd,
-                                         Command::BufferUses buffers,
-                                         int64_t capacity)
-    : trace_cmd_(trace_cmd), capacity_(capacity), entries_(capacity) {
-  CHECK_GT(capacity, 0) << "capacity must be larger than 0";  // NOLINT
-  // Collect unique buffer allocation indices in a set first and convert to
-  // vector as flat hash set iteration has measurable overheads.
-  absl::flat_hash_set<BufferAllocation::Index> allocs_indices;
-  for (auto& buffer : buffers) {
-    allocs_indices.insert(buffer.slice().index());
-  }
-  allocs_indices_.assign(allocs_indices.begin(), allocs_indices.end());
-}
-
-absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
-    const BufferAllocations* buffer_allocation, se::StreamExecutor* executor,
-    se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace,
-    se::StreamPriority priority) {
-  // Collect memory addresses for relevant allocations.
-  absl::InlinedVector<se::DeviceAddressBase, 4> allocs;
-  allocs.reserve(allocs_indices_.size());
-  for (auto& index : allocs_indices_) {
-    allocs.emplace_back(buffer_allocation->GetDeviceAddress(index));
-  }
-
-  // Moves entry at `i` position to front and moves entries in `[0, i)` range
-  // one element to the right. Returns reference to the first entry.
-  auto shift_right = [&](size_t i) -> Entry& {
-    if (i == 0) {
-      return entries_[0];
-    }
-
-    Entry entry = std::move(entries_[i]);
-    do {
-      entries_[i] = std::move(entries_[i - 1]);
-    } while (--i > 0);
-
-    return entries_[0] = std::move(entry);
-  };
-
-  for (size_t i = 0; i < capacity_; ++i) {
-    // Found entry for a given allocations, move it to front and return a
-    // pointer to cached command buffer.
-    if (ABSL_PREDICT_TRUE(absl::c_equal(entries_[i].recorded_allocs, allocs) &&
-                          entries_[i].command_buffer)) {
-      VLOG(6) << "Command buffer trace cache hit for command "
-              << trace_cmd_->ToString();
-      return shift_right(i).command_buffer.get();
-    }
-
-    // Create a new entry by calling a user-provided tracing function, move it
-    // to front and return a pointer to cached command buffer.
-    if (entries_[i].command_buffer == nullptr) {
-      TF_ASSIGN_OR_RETURN(
-          entries_[i].command_buffer,
-          se::TraceCommandBufferFactory::Create(executor, stream, trace));
-      entries_[i].recorded_allocs.assign(allocs.begin(), allocs.end());
-      if (priority != se::StreamPriority::Default) {
-        TF_RETURN_IF_ERROR(entries_[i].command_buffer->SetPriority(priority));
-      }
-      VLOG(6) << "Command buffer trace cache create new item for command "
-              << trace_cmd_->ToString();
-      return shift_right(i).command_buffer.get();
-    }
-  }
-
-  // Create a new entry by calling a user-provided tracing function, replace
-  // the last entry with it, move it to front and return a pointer to cached
-  // command buffer.
-  TF_ASSIGN_OR_RETURN(
-      entries_[capacity_ - 1].command_buffer,
-      se::TraceCommandBufferFactory::Create(executor, stream, trace));
-  entries_[capacity_ - 1].recorded_allocs.assign(allocs.begin(), allocs.end());
-  VLOG(6) << "Command buffer trace cache does replacement for command "
-          << trace_cmd_->ToString();
-  return shift_right(capacity_ - 1).command_buffer.get();
-}
-
-//===----------------------------------------------------------------------===//
-// TracedCommandBufferCmd
-//===----------------------------------------------------------------------===//
-
-TracedCommandBufferCmd::TracedCommandBufferCmd(CommandType cmd_type)
-    : Command(cmd_type) {}
-
-absl::StatusOr<const se::CommandBuffer::Command*>
-TracedCommandBufferCmd::RecordTracedCommand(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer,
-    absl::FunctionRef<absl::Status(se::Stream*)> trace) {
-  auto traced_cmd = record_params.state.GetOrCreate<TracedCommandBuffer>(
-      this, command_buffer, [&] {
-        const auto& debug_options = xla::GetDebugOptionsFromFlags();
-        return std::make_unique<TracedCommandBuffer>(
-            this, buffer_uses(),
-            debug_options.xla_cmd_buffer_trace_cache_size());
-      });
-
-  TF_ASSIGN_OR_RETURN(
-      auto nested_cmd,
-      traced_cmd->GetOrTraceCommandBuffer(
-          execute_params.buffer_allocations, execute_params.stream->parent(),
-          execute_params.command_buffer_trace_stream, trace, priority()));
-
-  VLOG(5) << "Record traced command into command buffer: " << command_buffer;
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateChildCommand(*nested_cmd, dependencies);
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateChildCommand(command, *nested_cmd);
-      });
-}
-
-//===----------------------------------------------------------------------===//
-// EmptyCmd
-//===----------------------------------------------------------------------===//
-
-EmptyCmd::EmptyCmd() : Command(CommandType::kEmptyCmd) {}
-
-absl::StatusOr<const se::CommandBuffer::Command*> EmptyCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateEmptyCmd(dependencies, priority());
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        // Empty command is not updatable.
-        return absl::OkStatus();
-      });
-}
-
-//===----------------------------------------------------------------------===//
-// ComputationId
-//===----------------------------------------------------------------------===//
-
-ComputationIdCmd::ComputationIdCmd(BufferAllocation::Slice dest, Kind kind)
-    : Command(CommandType::kComputationIdCmd), dest_(dest), kind_(kind) {}
-
-Command::BufferUses ComputationIdCmd::buffer_uses() const {
-  return {BufferUse::Write(dest_, ShapeUtil::MakeShape(S32, {}))};
-}
-
-absl::StatusOr<const se::CommandBuffer::Command*> ComputationIdCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  se::DeviceAddressBase dst =
-      execute_params.buffer_allocations->GetDeviceAddress(dest_);
-
-  GlobalDeviceId global_device_id =
-      execute_params.collective_params->global_device_id;
-  TF_ASSIGN_OR_RETURN(
-      const DeviceAssignment::LogicalID logical_id,
-      execute_params.collective_params->device_assn->LogicalIdForDevice(
-          global_device_id));
-
-  uint32_t value = static_cast<uint32_t>(kind_ == Kind::kReplica
-                                             ? logical_id.replica_id
-                                             : logical_id.computation_id);
-
-  VLOG(5) << "ComputationIdCmd"
-          << ": kind=" << (kind_ == Kind::kReplica ? "replica" : "partition")
-          << "; value=" << value;
-  VLOG(5) << "  Id: " << dest_ << " (" << dst.opaque() << ")";
-
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateMemset(&dst, value, /*num_elements=*/1,
-                                            dependencies);
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateMemset(command, &dst, value,
-                                            /*num_elements=*/1);
-      });
-}
-
-//===----------------------------------------------------------------------===//
-// LaunchCmd
-//===----------------------------------------------------------------------===//
-
-LaunchCmd::LaunchCmd(
-    std::string kernel_name, absl::Span<const ShapedSlice> args,
-    absl::Span<const BufferUse::MemoryAccess> args_access,
-    LaunchDimensions dims, int64_t shmem_bytes,
-    std::optional<stream_executor::gpu::TmaMetadata> tma_metadata, bool use_pdl)
-    : Command(CommandType::kLaunchCmd),
-      kernel_name_(std::move(kernel_name)),
-      args_(args.begin(), args.end()),
-      args_access_(args_access.begin(), args_access.end()),
-      dims_(dims),
-      shmem_bytes_(shmem_bytes),
-      tma_metadata_(std::move(tma_metadata)),
-      use_pdl_(use_pdl) {}
-
-absl::Status LaunchCmd::Initialize(const Thunk::InitializeParams& params) {
-  {
-    absl::MutexLock lock(mutex_);
-    if (kernels_.contains(params.executor)) {
-      return absl::OkStatus();
-    }
-  }
-
-  std::unique_ptr<se::Kernel> kernel;
-  if (!params.src.binary.empty()) {
-    TF_ASSIGN_OR_RETURN(
-        kernel, CreateKernel(kernel_name_, args_.size(), params.src.binary,
-                             params.executor, shmem_bytes_, use_pdl_));
-
-  } else {
-    TF_ASSIGN_OR_RETURN(
-        kernel, CreateKernel(kernel_name_, args_.size(), params.src.text,
-                             params.executor, shmem_bytes_, use_pdl_));
-  }
-
-  absl::MutexLock lock(mutex_);
-  kernels_.emplace(params.executor, std::move(kernel));
-  return absl::OkStatus();
-}
-
-absl::StatusOr<const se::CommandBuffer::Command*> LaunchCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  VLOG(5) << "LaunchCmd: kernel=" << kernel_name_
-          << "; shmem_bytes=" << shmem_bytes_;
-
-  se::StreamExecutor* executor = execute_params.stream->parent();
-  se::Kernel* kernel = [&] {
-    absl::MutexLock lock(mutex_);
-    return kernels_[executor].get();
-  }();
-
-  if (kernel == nullptr) {
-    return absl::InternalError(absl::StrCat(
-        "Kernel not loaded on a command buffer executor: ", kernel_name_));
-  }
-
-  absl::InlinedVector<se::KernelArg, 4> kernel_args_variant;
-  stream_executor::gpu::TmaMetadata tma_metadata =
-      tma_metadata_.value_or(se::gpu::TmaMetadata{});
-  for (int idx = 0; idx < args_.size(); ++idx) {
-    const BufferAllocation::Slice& arg = args_[idx].slice;
-    se::DeviceAddressBase buf =
-        execute_params.buffer_allocations->GetDeviceAddress(arg);
-    VLOG(5) << "  Arg: " << arg << ": " << buf.opaque();
-
-    if (auto it = tma_metadata.arg_index_to_tma_info.find(idx);
-        it != tma_metadata.arg_index_to_tma_info.end()) {
-      // TMA descriptor argument.
-      stream_executor::gpu::TmaDescriptor tma_desc = it->second;
-      TF_ASSIGN_OR_RETURN(se::TensorMap tensor_map,
-                          executor->CreateTensorMap(tma_desc, buf.opaque()));
-      VLOG(5) << "  Using TensorMap for arg #" << idx << ": "
-              << tma_desc.ToString();
-      kernel_args_variant.push_back(std::move(tensor_map));
-    } else {
-      // Buffer argument.
-      kernel_args_variant.push_back(buf);
-    }
-  }
-
-  auto kernel_args = se::PackKernelArgs(kernel_args_variant, shmem_bytes_);
-
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateLaunch(
-            dims_.thread_counts_per_block(), dims_.block_counts(), *kernel,
-            *kernel_args, dependencies, priority());
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateLaunch(
-            command, dims_.thread_counts_per_block(), dims_.block_counts(),
-            *kernel, *kernel_args);
-      });
-}
-
-Command::BufferUses LaunchCmd::buffer_uses() const {
-  BufferUses buffers;
-  for (int32_t i = 0; i < args_.size(); ++i) {
-    buffers.emplace_back(args_[i].slice, args_access_[i], args_[i].shape);
-  }
-  return buffers;
-}
-
-//===----------------------------------------------------------------------===//
 // CustomKernelLaunchCmd
 //===----------------------------------------------------------------------===//
 
@@ -605,59 +306,6 @@ Command::BufferUses CustomKernelLaunchCmd::buffer_uses() const {
 }
 
 //===----------------------------------------------------------------------===//
-// MemcpyDeviceToDeviceCmd
-//===----------------------------------------------------------------------===//
-
-MemcpyDeviceToDeviceCmd::MemcpyDeviceToDeviceCmd(ShapedSlice dst,
-                                                 ShapedSlice src,
-                                                 int64_t num_bytes)
-    : Command(CommandType::kMemcpyDeviceToDeviceCmd),
-      dst_(dst),
-      src_(src),
-      num_bytes_(num_bytes) {
-  CHECK_EQ(ShapeUtil::ByteSizeOfElements(src_.shape),
-           ShapeUtil::ByteSizeOfElements(dst_.shape));
-  CHECK_LE(num_bytes, dst_.slice.size());
-  CHECK_LE(num_bytes, src_.slice.size());
-  CHECK_GE(src_.slice.size(), ShapeUtil::ByteSizeOf(src_.shape));
-}
-
-absl::StatusOr<const se::CommandBuffer::Command*>
-MemcpyDeviceToDeviceCmd::Record(const Thunk::ExecuteParams& execute_params,
-                                const RecordParams& record_params,
-                                RecordAction record_action,
-                                se::CommandBuffer* command_buffer) {
-  se::DeviceAddressBase dst =
-      execute_params.buffer_allocations->GetDeviceAddress(dst_.slice);
-  se::DeviceAddressBase src =
-      execute_params.buffer_allocations->GetDeviceAddress(src_.slice);
-
-  VLOG(5) << "MemcpyDeviceToDeviceCmd: num_bytes = " << num_bytes_;
-  VLOG(5) << "  Dst: " << dst_ << " (" << dst.opaque() << ")";
-  VLOG(5) << "  Src: " << src_ << " (" << src.opaque() << ")";
-
-  if (num_bytes_ == 0) {
-    VLOG(5) << "Skip recording MemcpyDeviceToDeviceCmd command of 0 bytes";
-    return nullptr;
-  }
-
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateMemcpyD2D(&dst, src, num_bytes_,
-                                               dependencies);
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateMemcpyD2D(command, &dst, src, num_bytes_);
-      });
-}
-
-Command::BufferUses MemcpyDeviceToDeviceCmd::buffer_uses() const {
-  return {BufferUse::Write(dst_.slice, dst_.shape),
-          BufferUse::Read(src_.slice, src_.shape)};
-}
-
-//===----------------------------------------------------------------------===//
 // MemzeroCmd
 //===----------------------------------------------------------------------===//
 
@@ -694,48 +342,6 @@ absl::StatusOr<const se::CommandBuffer::Command*> MemzeroCmd::Record(
 
 Command::BufferUses MemzeroCmd::buffer_uses() const {
   return {BufferUse::Write(dst_.slice, dst_.shape)};
-}
-
-//===----------------------------------------------------------------------===//
-// Memset32Cmd
-//===----------------------------------------------------------------------===//
-
-Memset32Cmd::Memset32Cmd(BufferAllocation::Slice dst, uint32_t bit_pattern)
-    : Command(CommandType::kMemset32Cmd),
-      dst_(dst),
-      bit_pattern_(bit_pattern) {}
-
-absl::StatusOr<const se::CommandBuffer::Command*> Memset32Cmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  se::DeviceAddressBase dst =
-      execute_params.buffer_allocations->GetDeviceAddress(dst_);
-
-  VLOG(5) << "Memset32Cmd: bit_pattern=" << bit_pattern_;
-  VLOG(5) << "  Dst: " << dst_ << " (" << dst.opaque() << ")";
-
-  if (dst_.size() == 0) {
-    VLOG(5) << "Skip recording Memset32Cmd command of 0 bytes";
-    return nullptr;
-  }
-
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateMemset(
-            &dst, bit_pattern_,
-            /*num_elements=*/dst_.size() / sizeof(uint32_t), dependencies);
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateMemset(
-            command, &dst, bit_pattern_,
-            /*num_elements=*/dst_.size() / sizeof(uint32_t));
-      });
-}
-
-Command::BufferUses Memset32Cmd::buffer_uses() const {
-  return {BufferUse::Write(dst_, ShapeUtil::MakeShape(U32, {}))};
 }
 
 //===----------------------------------------------------------------------===//
@@ -780,8 +386,9 @@ absl::StatusOr<const se::CommandBuffer::Command*> ChildCmd::Record(
 }
 
 absl::Status ChildCmd::WalkNested(
-    absl::FunctionRef<absl::Status(Command*)> callback) {
-  return child_commands_.Walk(callback);
+    absl::FunctionRef<absl::Status(Thunk*)> callback) {
+  return child_commands_.Walk(
+      [&](Command* cmd) -> absl::Status { return callback(cmd); });
 }
 
 //===----------------------------------------------------------------------===//
@@ -842,9 +449,10 @@ Command::BufferUses CaseCmd::buffer_uses() const {
 }
 
 absl::Status CaseCmd::WalkNested(
-    absl::FunctionRef<absl::Status(Command*)> callback) {
+    absl::FunctionRef<absl::Status(Thunk*)> callback) {
   for (auto& branch : branches_) {
-    RETURN_IF_ERROR(branch.Walk(callback));
+    RETURN_IF_ERROR(branch.Walk(
+        [&](Command* cmd) -> absl::Status { return callback(cmd); }));
   }
   return absl::OkStatus();
 }
@@ -984,163 +592,11 @@ Command::BufferUses WhileCmd::buffer_uses() const {
 }
 
 absl::Status WhileCmd::WalkNested(
-    absl::FunctionRef<absl::Status(Command*)> callback) {
-  RETURN_IF_ERROR(cond_commands_.Walk(callback));
-  return body_commands_.Walk(callback);
-}
-
-//===----------------------------------------------------------------------===//
-// GemmCmd
-//===----------------------------------------------------------------------===//
-
-GemmCmd::GemmCmd(GemmConfig config, const BufferAllocation::Slice& lhs_buffer,
-                 const BufferAllocation::Slice& rhs_buffer,
-                 const BufferAllocation::Slice& output_buffer,
-                 std::optional<BufferAllocation::Slice> workspace,
-                 bool deterministic)
-    : TracedCommandBufferCmd(CommandType::kGemmCmd),
-      config_(std::move(config)),
-      lhs_buffer_(lhs_buffer),
-      rhs_buffer_(rhs_buffer),
-      output_buffer_(output_buffer),
-      workspace_(workspace),
-      deterministic_(deterministic) {}
-
-absl::Status GemmCmd::Initialize(const Thunk::InitializeParams& params) {
-  if (!params.stream->parent()->AsBlas()) {
-    return absl::InternalError("Failed to initialize BLAS support for GemmCmd");
-  }
-  return absl::OkStatus();
-}
-
-absl::StatusOr<const se::CommandBuffer::Command*> GemmCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  se::DeviceAddressBase lhs =
-      execute_params.buffer_allocations->GetDeviceAddress(lhs_buffer_);
-  se::DeviceAddressBase rhs =
-      execute_params.buffer_allocations->GetDeviceAddress(rhs_buffer_);
-  se::DeviceAddressBase out =
-      execute_params.buffer_allocations->GetDeviceAddress(output_buffer_);
-
-  se::DeviceAddressBase workspace(/*opaque=*/nullptr, /*size=*/0);
-  if (workspace_.has_value()) {
-    workspace =
-        execute_params.buffer_allocations->GetDeviceAddress(workspace_.value());
-  }
-
-  VLOG(5) << "GemmCmd: deterministic=" << deterministic_;
-  VLOG(5) << "  Lhs: " << lhs_buffer_ << " (" << lhs.opaque() << ")";
-  VLOG(5) << "  Lhs: " << rhs_buffer_ << " (" << rhs.opaque() << ")";
-  VLOG(5) << "  Out: " << output_buffer_ << " (" << out.opaque() << ")";
-  VLOG(5) << "  Workspace: " << workspace.opaque();
-
-  return RecordTracedCommand(execute_params, record_params,
-                             std::move(record_action), command_buffer,
-                             [&](se::Stream* stream) {
-                               return RunGemm(config_, lhs, rhs, out, workspace,
-                                              deterministic_, stream);
-                             });
-}
-
-Command::BufferUses GemmCmd::buffer_uses() const {
-  Command::BufferUses buffer_uses = {
-      BufferUse::Read(lhs_buffer_, config_.lhs_layout.ToShape()),
-      BufferUse::Read(rhs_buffer_, config_.rhs_layout.ToShape()),
-      BufferUse::Write(output_buffer_, config_.output_layout.ToShape()),
-  };
-  if (workspace_.has_value()) {
-    buffer_uses.push_back(BufferUse::Write(
-        *workspace_, ShapeUtil::MakeShape(S8, {workspace_->size()})));
-  }
-  return buffer_uses;
-}
-
-//===----------------------------------------------------------------------===//
-// CublasLtCmd
-//===----------------------------------------------------------------------===//
-
-CublasLtCmd::CublasLtCmd(const CublasLtMatmulThunk& matmul_thunk)
-    : TracedCommandBufferCmd(CommandType::kCublasLtCmd),
-      CublasLtMatmulThunk(matmul_thunk) {}
-
-absl::StatusOr<const se::CommandBuffer::Command*> CublasLtCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  // This call is required to make sure matmul plan is already created and
-  // cached before recording the command buffer.
-  TF_RETURN_IF_ERROR(GetCachedMatmulPlan(execute_params).status());
-
-  VLOG(5) << "CublasLtCmd:";
-  VLOG(5) << "  a_buffer: " << a_.slice.ToString();
-  VLOG(5) << "  b_buffer: " << b_.slice.ToString();
-  VLOG(5) << "  c_buffer: " << c_.slice.ToString();
-  VLOG(5) << "  d_buffer: " << d_.slice.ToString();
-  if (bias_.has_value()) {
-    VLOG(5) << "  bias_buffer: " << bias_->slice.ToString();
-  }
-  if (aux_.has_value()) {
-    VLOG(5) << "  aux_buffer: " << aux_->slice.ToString();
-  }
-  if (a_scale_.has_value()) {
-    VLOG(5) << "  a_scale_buffer: " << a_scale_->slice.ToString();
-  }
-  if (b_scale_.has_value()) {
-    VLOG(5) << "  b_scale_buffer: " << b_scale_->slice.ToString();
-  }
-  if (c_scale_.has_value()) {
-    VLOG(5) << "  c_scale_buffer: " << c_scale_->slice.ToString();
-  }
-  if (d_scale_.has_value()) {
-    VLOG(5) << "  d_scale_buffer: " << d_scale_->slice.ToString();
-  }
-  if (d_amax_.has_value()) {
-    VLOG(5) << "  d_amax_buffer: " << d_amax_->slice.ToString();
-  }
-  // workspace buffer is guaranteed to be non-null here.
-  VLOG(5) << "  workspace_buffer: " << workspace_->slice.ToString();
-
-  return RecordTracedCommand(
-      execute_params, record_params, std::move(record_action), command_buffer,
-      [&](se::Stream* stream) {
-        return ExecuteOnStreamInternal(stream, execute_params);
-      });
-}
-
-Command::BufferUses CublasLtCmd::buffer_uses() const {
-  BufferUses buffer_usage;
-  buffer_usage.reserve(13);
-  buffer_usage.push_back(BufferUse::Read(a_.slice, a_.shape));
-  buffer_usage.push_back(BufferUse::Read(b_.slice, b_.shape));
-  buffer_usage.push_back(BufferUse::Read(c_.slice, c_.shape));
-  buffer_usage.push_back(BufferUse::Write(d_.slice, d_.shape));
-  buffer_usage.push_back(
-      BufferUse::Write(workspace_->slice, workspace_->shape));
-
-  if (bias_.has_value()) {
-    buffer_usage.push_back(BufferUse::Read(bias_->slice, bias_->shape));
-  }
-  if (a_scale_.has_value()) {
-    buffer_usage.push_back(BufferUse::Read(a_scale_->slice, a_scale_->shape));
-  }
-  if (b_scale_.has_value()) {
-    buffer_usage.push_back(BufferUse::Read(b_scale_->slice, b_scale_->shape));
-  }
-  if (c_scale_.has_value()) {
-    buffer_usage.push_back(BufferUse::Read(c_scale_->slice, c_scale_->shape));
-  }
-  if (d_scale_.has_value()) {
-    buffer_usage.push_back(BufferUse::Read(d_scale_->slice, d_scale_->shape));
-  }
-  if (aux_.has_value()) {
-    buffer_usage.push_back(BufferUse::Write(aux_->slice, aux_->shape));
-  }
-  if (d_amax_.has_value()) {
-    buffer_usage.push_back(BufferUse::Read(d_amax_->slice, d_amax_->shape));
-  }
-  return buffer_usage;
+    absl::FunctionRef<absl::Status(Thunk*)> callback) {
+  RETURN_IF_ERROR(cond_commands_.Walk(
+      [&](Command* cmd) -> absl::Status { return callback(cmd); }));
+  return body_commands_.Walk(
+      [&](Command* cmd) -> absl::Status { return callback(cmd); });
 }
 
 //===----------------------------------------------------------------------===//
@@ -1149,7 +605,7 @@ Command::BufferUses CublasLtCmd::buffer_uses() const {
 
 CuDnnCmd::CuDnnCmd(absl::Span<const ShapedSlice> args,
                    const std::shared_ptr<se::dnn::LazyDnnGraph> graph)
-    : TracedCommandBufferCmd(CommandType::kCuDnnCmd),
+    : TracedCommand(CommandType::kCuDnnCmd),
       args_(args.cbegin(), args.cend()),
       graph_(graph) {}
 
@@ -1414,9 +870,11 @@ Command::BufferUses CustomCallCmd::buffer_uses() const {
 // CollectiveCmd
 //===----------------------------------------------------------------------===//
 
-CollectiveCmd::CollectiveCmd(CommandType cmd_type, CollectiveConfig config)
+CollectiveCmd::CollectiveCmd(CommandType cmd_type, CollectiveConfig config,
+                             CommunicationId communication_id)
     : Command(cmd_type, se::StreamPriority::Highest),
-      config_(std::move(config)) {}
+      config_(std::move(config)),
+      communication_id_(communication_id) {}
 
 absl::Status CollectiveCmd::Prepare(const Thunk::PrepareParams& params) {
   TF_RET_CHECK(params.collective_params &&
@@ -1425,15 +883,19 @@ absl::Status CollectiveCmd::Prepare(const Thunk::PrepareParams& params) {
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(*params.collective_params, config().replica_groups,
-                      config().group_mode, /*is_p2p=*/false));
+                      config().group_mode, communication_id_));
 
   TF_ASSIGN_OR_RETURN(std::vector<std::vector<GlobalDeviceId>> device_groups,
                       GetParticipatingDevicesGroups(
                           *params.collective_params->device_assn,
                           config().replica_groups, config().group_mode));
 
-  return params.collective_clique_requests->RequestClique(
-      clique_key, std::move(device_groups));
+  // Sort device groups: RequestClique expects pre-sorted groups.
+  absl::c_for_each(device_groups, [](auto& group) { absl::c_sort(group); });
+  absl::c_sort(device_groups);
+
+  return params.collective_clique_requests->RequestClique(clique_key,
+                                                          device_groups);
 }
 
 absl::StatusOr<const se::CommandBuffer::Command*>
@@ -1499,11 +961,10 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllReduceCmd::Record(
         "AllReduceCmd requires collective parameters and cliques");
   }
 
-  TF_ASSIGN_OR_RETURN(
-      GpuCliqueKey clique_key,
-      GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
+                      GetGpuCliqueKey(*execute_params.collective_params,
+                                      config().replica_groups,
+                                      config().group_mode, communication_id()));
 
   TF_ASSIGN_OR_RETURN(
       Communicator * comm,
@@ -1567,11 +1028,10 @@ absl::StatusOr<const se::CommandBuffer::Command*> ReduceScatterCmd::Record(
         "ReduceScatterCmd requires collective parameters and cliques");
   }
 
-  TF_ASSIGN_OR_RETURN(
-      GpuCliqueKey clique_key,
-      GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
+                      GetGpuCliqueKey(*execute_params.collective_params,
+                                      config().replica_groups,
+                                      config().group_mode, communication_id()));
 
   TF_ASSIGN_OR_RETURN(
       Communicator * comm,
@@ -1634,18 +1094,17 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllToAllCmd::Record(
         "AllToAllCmd requires collective parameters and cliques");
   }
 
-  TF_ASSIGN_OR_RETURN(
-      GpuCliqueKey clique_key,
-      GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
+                      GetGpuCliqueKey(*execute_params.collective_params,
+                                      config().replica_groups,
+                                      config().group_mode, communication_id()));
 
   TF_ASSIGN_OR_RETURN(
       Communicator * comm,
       execute_params.collective_cliques->GetComm(
           clique_key, execute_params.collective_params->global_device_id));
 
-  // MemCpy case is not currently supported in CommandBuffer.
+  // Memcpy case is not currently supported in CommandBuffer.
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
@@ -1700,11 +1159,10 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllGatherCmd::Record(
         "AllGatherCmd requires collective parameters and cliques");
   }
 
-  TF_ASSIGN_OR_RETURN(
-      GpuCliqueKey clique_key,
-      GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
+                      GetGpuCliqueKey(*execute_params.collective_params,
+                                      config().replica_groups,
+                                      config().group_mode, communication_id()));
 
   TF_ASSIGN_OR_RETURN(
       Communicator * comm,
@@ -1766,11 +1224,10 @@ CollectiveBroadcastCmd::Record(const Thunk::ExecuteParams& execute_params,
         "CollectiveBroadcastCmd requires collective parameters and cliques");
   }
 
-  TF_ASSIGN_OR_RETURN(
-      GpuCliqueKey clique_key,
-      GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
+                      GetGpuCliqueKey(*execute_params.collective_params,
+                                      config().replica_groups,
+                                      config().group_mode, communication_id()));
 
   TF_ASSIGN_OR_RETURN(
       Communicator * comm,
@@ -1801,7 +1258,8 @@ Command::BufferUses CollectiveBroadcastCmd::buffer_uses() const {
 
 RecvCmd::RecvCmd(CollectiveConfig config, P2PConfig p2p_config,
                  const CollectiveThunk::Buffer& buffer)
-    : CollectiveCmd(CommandType::kRecvCmd, std::move(config)),
+    : CollectiveCmd(CommandType::kRecvCmd, std::move(config),
+                    CommunicationId(1)),
       p2p_config_(std::move(p2p_config)),
       buffer_(buffer) {}
 
@@ -1834,11 +1292,10 @@ absl::StatusOr<const se::CommandBuffer::Command*> RecvCmd::Record(
         "RecvCmd requires collective parameters and cliques");
   }
 
-  TF_ASSIGN_OR_RETURN(
-      GpuCliqueKey clique_key,
-      GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
+                      GetGpuCliqueKey(*execute_params.collective_params,
+                                      config().replica_groups,
+                                      config().group_mode, communication_id()));
 
   TF_ASSIGN_OR_RETURN(
       Communicator * comm,
@@ -1889,7 +1346,8 @@ Command::BufferUses RecvCmd::buffer_uses() const {
 
 SendCmd::SendCmd(CollectiveConfig config, P2PConfig p2p_config,
                  const CollectiveThunk::Buffer& buffer)
-    : CollectiveCmd(CommandType::kSendCmd, std::move(config)),
+    : CollectiveCmd(CommandType::kSendCmd, std::move(config),
+                    CommunicationId(1)),
       p2p_config_(std::move(p2p_config)),
       buffer_(buffer) {}
 
@@ -1922,11 +1380,10 @@ absl::StatusOr<const se::CommandBuffer::Command*> SendCmd::Record(
         "SendCmd requires collective parameters and cliques");
   }
 
-  TF_ASSIGN_OR_RETURN(
-      GpuCliqueKey clique_key,
-      GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
+                      GetGpuCliqueKey(*execute_params.collective_params,
+                                      config().replica_groups,
+                                      config().group_mode, communication_id()));
 
   TF_ASSIGN_OR_RETURN(
       Communicator * comm,
@@ -1983,7 +1440,8 @@ Command::BufferUses SendCmd::buffer_uses() const {
 CollectivePermuteCmd::CollectivePermuteCmd(
     CollectiveConfig config, P2PConfig p2p_config,
     absl::Span<const CollectiveThunk::Buffer> buffers)
-    : CollectiveCmd(CommandType::kCollectivePermuteCmd, std::move(config)),
+    : CollectiveCmd(CommandType::kCollectivePermuteCmd, std::move(config),
+                    CommunicationId(1)),
       p2p_config_(std::move(p2p_config)),
       buffers_(buffers.begin(), buffers.end()) {}
 
@@ -2013,11 +1471,10 @@ absl::StatusOr<const se::CommandBuffer::Command*> CollectivePermuteCmd::Record(
         "CollectivePermuteCmd requires collective parameters and cliques");
   }
 
-  TF_ASSIGN_OR_RETURN(
-      GpuCliqueKey clique_key,
-      GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
+                      GetGpuCliqueKey(*execute_params.collective_params,
+                                      config().replica_groups,
+                                      config().group_mode, communication_id()));
 
   TF_ASSIGN_OR_RETURN(
       Communicator * comm,
@@ -2035,14 +1492,21 @@ absl::StatusOr<const se::CommandBuffer::Command*> CollectivePermuteCmd::Record(
   const P2PConfig::SourceTargetMapEntry source_target =
       P2PConfig::GetSourceTarget(p2p_config_.id_to_source_target, current_id);
 
+  // Convert logical source/target IDs to communicator-local ranks.
+  P2PConfig::SourceTargetRanks source_target_ranks;
+  if (source_target.source) {
+    source_target_ranks.source = RankId(*source_target.source);
+  }
+  if (source_target.target) {
+    source_target_ranks.target = RankId(*source_target.target);
+  }
+
   // MemCpy case is not currently supported in CommandBuffer.
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
-        return RunCollectivePermute(source_target, device_buffers, *stream,
-                                    *comm, device_string, current_id,
-                                    /*use_memcpy=*/false,
-                                    /*recv_ptr_map=*/nullptr,
+        return RunCollectivePermute(source_target_ranks, device_buffers,
+                                    *stream, *comm, device_string, current_id,
                                     use_symmetric_buffer);
       });
 }
@@ -2363,8 +1827,9 @@ absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceFusionCmd::Record(
 }
 
 absl::Status DynamicSliceFusionCmd::WalkNested(
-    absl::FunctionRef<absl::Status(Command*)> callback) {
-  return embedded_commands_.Walk(callback);
+    absl::FunctionRef<absl::Status(Thunk*)> callback) {
+  return embedded_commands_.Walk(
+      [&](Command* cmd) -> absl::Status { return callback(cmd); });
 }
 
 //===----------------------------------------------------------------------===//
@@ -2485,11 +1950,10 @@ absl::StatusOr<const se::CommandBuffer::Command*> RaggedAllToAllCmd::Record(
   }
 
   // 1. Resolve Clique Key
-  TF_ASSIGN_OR_RETURN(
-      GpuCliqueKey clique_key,
-      GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
+                      GetGpuCliqueKey(*execute_params.collective_params,
+                                      config().replica_groups,
+                                      config().group_mode, communication_id()));
 
   // 2. Prepare Local Data
   auto device_ordinal = execute_params.stream->parent()->device_ordinal();
@@ -2536,14 +2000,19 @@ absl::StatusOr<const se::CommandBuffer::Command*> RaggedAllToAllCmd::Record(
             }
 
             // Zero buffers synchronously (Safe during graph construction)
-            state_status = executor->SynchronousMemZero(
+            state_status = execute_params.stream->MemZero(
                 state->barrier_signal_buffer.address_ptr(), signal_buf_bytes);
             if (!state_status.ok()) {
               return nullptr;
             }
 
-            state_status = executor->SynchronousMemZero(
+            state_status = execute_params.stream->MemZero(
                 state->barrier_signal_value.address_ptr(), sizeof(uint32_t));
+            if (!state_status.ok()) {
+              return nullptr;
+            }
+
+            state_status = execute_params.stream->BlockHostUntilDone();
             if (!state_status.ok()) {
               return nullptr;
             }

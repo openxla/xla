@@ -826,12 +826,6 @@ void AsyncTracker::SetConcurrentResourceLimits(
        resource_type <
        GetTargetDefinedResourceTypeBegin() + GetNumTargetDefinedResources();
        ++resource_type) {
-    CHECK_GT(GetNumAvailableResources(resource_type), 0)
-        << "Target-defined resource " << GetResourceName(resource_type)
-        << " with id " << resource_type
-        << " has a concurrency limit of 0. Please set it to a positive value "
-           "by making sure GetNumTargetDefinedResources returns the correct "
-           "limit.";
     max_concurrent_resource[resource_type] =
         GetNumAvailableResources(resource_type);
   }
@@ -1574,6 +1568,7 @@ class ReadySetLt {
       CMP_EXPLICIT(ShouldScheduleAsyncDone(a, an),
                    ShouldScheduleAsyncDone(b, bn), "kScheduleDone");
     }
+
     // The following rule targets the async ops using resources that should
     // be released right after the op's estimated time cost has past. It
     // prevents increasing the overlaps of such async ops more than

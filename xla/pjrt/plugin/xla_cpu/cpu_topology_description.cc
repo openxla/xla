@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -39,7 +40,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "tsl/platform/fingerprint.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 

@@ -127,6 +127,9 @@ absl::Status CombineCollectivePermutes(
             source_target_pairs, to_combine.front()->channel_id()));
   }
 
+  combined->set_metadata(MergeMetadata(to_combine));
+  combined->set_frontend_attributes(MergeFrontendAttributes(to_combine));
+
   // Replace all the smaller CollectivePermutes with either the combined
   // CollectivePermute or elements of the tuple output.
   for (int64_t i = 0; i < to_combine.size(); ++i) {

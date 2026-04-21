@@ -126,6 +126,7 @@ xla_cc_test(
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service:computation_layout",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -137,9 +138,7 @@ xla_cc_binary(
         "//xla/mlir_hlo:hlo_dialect_registration",
         "//xla/mlir_hlo:stablehlo_extension_passes",
         "//xla/service/spmd/shardy/extensions:mhlo_extensions",
-        "//xla/service/spmd/shardy/round_trip_common:export_named_computations",
         "//xla/service/spmd/shardy/round_trip_common:import_constants",
-        "//xla/service/spmd/shardy/round_trip_common:import_func_calls",
         "//xla/service/spmd/shardy/round_trip_common:import_sdy_custom_calls",
         "//xla/service/spmd/shardy/round_trip_common:open_while_free_vars_sharding",
         "//xla/service/spmd/shardy/sdy_round_trip:dedup_meshes",

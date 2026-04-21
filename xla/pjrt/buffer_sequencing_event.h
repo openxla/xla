@@ -17,6 +17,8 @@ limitations under the License.
 #define XLA_PJRT_BUFFER_SEQUENCING_EVENT_H_
 
 #include <cstdint>
+#include <string>
+#include <utility>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/inlined_vector.h"
@@ -96,6 +98,16 @@ class BufferSequencingEvent : tsl::AsyncPayload::KeepOnError {
   // called, blocks the calling thread until the event has been recorded.
   void WaitForEventOnStream(se::Stream* stream);
 
+  // Sets the context for the event. Use to wrap the underlying error status
+  // with additional information.
+  void SetErrorContext(std::string error_context) {
+    error_context_ = std::move(error_context);
+  }
+
+  // Appends the error context to the error status if a context is set.
+  // This should only be called when the underlying event is already complete.
+  absl::Status AppendErrorContext(absl::Status status) const;
+
   // Same as WaitForEventOnStream, but takes a raw platform-specific
   // stream. Currently on implemented for CUDA and ROCM GPU, where stream is a
   // GpuStreamHandle (e.g. a cudaStream_t).
@@ -161,6 +173,7 @@ class BufferSequencingEvent : tsl::AsyncPayload::KeepOnError {
   // Indicates if the buffer is in an error status. And error status is used to
   // propagate the error to the buffer consumers.
   tsl::AsyncValueRef<EventState> event_;
+  std::string error_context_ = "";
 };
 
 using BufferSequencingEventRef = tsl::AsyncValueRef<BufferSequencingEvent>;

@@ -280,6 +280,17 @@ bool GpuScheduleCrossesOverlapLimit(
               ? curr_hlo_inst.operand(0)->async_wrapped_instruction()
               : curr_hlo_inst.operand(0);
 
+      auto get_replica_groups = [](const HloInstruction* inst) {
+        if (inst->opcode() != HloOpcode::kCollectivePermuteStart)
+          return inst->device_list()->flattened_replica_groups();
+        std::vector<std::vector<int64_t>> g;
+        absl::c_transform(inst->source_target_pairs(), std::back_inserter(g),
+                          [](auto& p) -> std::vector<int64_t> {
+                            return {p.first, p.second};
+                          });
+        return g;
+      };
+
       // If candidate can be overlapped with in-flight collectives
       bool can_overlap = true;
       for (const auto async_occupier :
@@ -290,15 +301,9 @@ bool GpuScheduleCrossesOverlapLimit(
                   ? async_occupier->async_wrapped_instruction()
                   : async_occupier;
 
-          // Number of overlapping ranks between this occupier and candidate
-          auto curr_start_replica_group =
-              GetAsyncReplicaGroups(curr_start_inst);
-          CHECK_OK(curr_start_replica_group);
-          auto occupier_replica_group = GetAsyncReplicaGroups(occupier);
-          CHECK_OK(occupier_replica_group);
-          size_t overlapping_count = CountOverlappingRanks(
-              (*curr_start_replica_group)->flattened_replica_groups(),
-              (*occupier_replica_group)->flattened_replica_groups());
+          size_t overlapping_count =
+              CountOverlappingRanks(get_replica_groups(curr_start_inst),
+                                    get_replica_groups(occupier));
           if (overlapping_count > 1) {
             can_overlap = false;
             VLOG(3) << "Collectives have " << overlapping_count

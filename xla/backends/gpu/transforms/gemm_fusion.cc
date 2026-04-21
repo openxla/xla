@@ -718,7 +718,7 @@ absl::StatusOr<Decision> CreateDotFusion(
     HloInstruction** fusion_output_ptr) {
   VLOG(5) << dot.ToString();
   if (CodegenDecision is_supported =
-          legacy_triton::IsTritonSupportedInstruction(dot, gpu_version);
+          IsTritonSupportedInstruction(dot, gpu_version);
       !is_supported) {
     VLOG(3) << is_supported.Explain();
     return Decision::Deny(is_supported.Explain());
@@ -951,8 +951,11 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
                                        gpu_version_, builder, fusion_inputs));
     hlos_and_reqs.push_back(rhs_scale_hlos_and_reqs);
 
-    FuseDot(*scaled_dot, hlos_and_reqs, builder);
+    HloInstruction& fused_dot = FuseDot(*scaled_dot, hlos_and_reqs, builder);
 
+    HlosAndRequirements fused_output_and_reqs =
+        FuseDotOutput(*scaled_dot, fused_dot, gpu_version_,
+                      lhs_hlos_and_reqs.requirements, builder, fusion_inputs);
     HloComputation* computation =
         scaled_dot->GetModule()->AddComputationAndUnifyNamesAndIds(
             builder.Build(),
@@ -969,7 +972,9 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
         *gpu_config.mutable_fusion_backend_config();
     backend_config.set_kind(kTritonGemmFusionKind);
     TF_RETURN_IF_ERROR(fusion->set_backend_config(gpu_config));
-    TF_RETURN_IF_ERROR(ReplaceInstruction(scaled_dot, fusion));
+    HloInstruction* fusion_output =
+        const_cast<HloInstruction*>(fused_output_and_reqs.original_hlo);
+    TF_RETURN_IF_ERROR(ReplaceInstruction(fusion_output, fusion));
     MarkAsChanged();
     return absl::OkStatus();
   }
@@ -989,6 +994,9 @@ absl::StatusOr<bool> RunOnComputation(
 
 bool ShouldTritonHandleGEMM(HloDotInstruction& dot,
                             const se::GpuComputeCapability& gpu_version) {
+  if (!EnsureTritonSupportsComputeCapability(gpu_version).ok()) {
+    return false;
+  }
   std::vector<HloInstruction*> fusion_inputs;
   HloComputation::Builder builder("disposable");
   return CreateDotFusion(dot, gpu_version, builder, fusion_inputs,

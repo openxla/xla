@@ -246,7 +246,7 @@ class PjRtCpuClient final : public CommonPjRtClient {
       std::shared_ptr<const Shape> on_device_shape,
       PjRtMemorySpace* memory_space,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
-      absl::InlinedVector<PjRtDeviceEventRef, 4> definition_device_events)
+      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_device_events)
       override;
 
   using CommonPjRtClient::GetOnDeviceBytesCount;
@@ -346,12 +346,6 @@ class PjRtCpuClient final : public CommonPjRtClient {
       launch_events_;
   tsl::AsyncValueRef<CpuEvent> last_collective_launch_event_
       ABSL_GUARDED_BY(mu_);
-
-  // A cache for transpose plans. We use transposes to convert
-  // (possibly strided) buffers provided to BufferFromHostBuffer into dense
-  // major-to-minor layout.
-  absl::Mutex transpose_mu_;
-  TransposePlanCache transpose_cache_ ABSL_GUARDED_BY(transpose_mu_);
 
   std::shared_ptr<cpu::CpuCollectives> collectives_;
 
@@ -565,7 +559,8 @@ class PjRtCpuLoadedExecutable final : public CommonPjRtLoadedExecutable {
 
   absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>> LoadRawExecutable(
       const ExecuteOptions& options, size_t host_callback_idx,
-      xla::RunId run_id, DeviceAndAssignment device_and_assign) const override;
+      xla::RunId run_id, DeviceAndAssignment device_and_assign,
+      int attempt) const override;
 
   absl::StatusOr<Result> ExecuteHelper(
       absl::Span<PjRtBuffer* const> argument_handles, int replica,

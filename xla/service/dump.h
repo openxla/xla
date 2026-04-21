@@ -38,6 +38,8 @@ limitations under the License.
 
 namespace xla {
 
+struct DumpOptions;
+
 // Argument used when calling DumpHloModuleIfEnabled before optimizations are
 // performed on an HloModule.
 constexpr char kBeforeOptimizationsDumpName[] = "before_optimizations";
@@ -104,7 +106,8 @@ void DumpProtobufToFile(const tsl::protobuf::Message& proto,
                         absl::string_view filename,
                         absl::AnyInvocable<absl::StatusOr<std::string>(
                             tsl::Env*, const tsl::protobuf::Message&)>
-                            text_formatter = nullptr);
+                            text_formatter = nullptr,
+                        const DumpOptions* override_opts = nullptr);
 
 // Render graph in a given format.
 std::string RenderGraph(absl::string_view label, const HloModule& module,

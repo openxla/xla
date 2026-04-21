@@ -24,7 +24,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/base/attributes.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
@@ -396,6 +395,8 @@ inline bool IsCpuId(PjRtPlatformId platform_id) {
   return platform_id == xla::CpuId();
 }
 
+class PjRtPhaseCompiler;
+
 // Abstract interface that all registered compilers must implement.
 class PjRtCompiler {
  public:
@@ -425,6 +426,10 @@ class PjRtCompiler {
     return absl::UnimplementedError(
         "GetTargetRuntimeAbiVersion is not implemented.");
   }
+
+  // Allow fallible downcasting to PjRtPhaseCompiler.
+  virtual PjRtPhaseCompiler* AsPhaseCompiler() { return nullptr; }
+  virtual const PjRtPhaseCompiler* AsPhaseCompiler() const { return nullptr; }
 };
 
 // Registers a compiler to compile programs for 'platform_name' with
@@ -531,6 +536,9 @@ class PjRtPhaseCompiler : public PjRtCompiler {
         "DeserializePjRtTopologyDescription is not implemented.");
   }
 
+  PjRtPhaseCompiler* AsPhaseCompiler() override { return this; }
+  const PjRtPhaseCompiler* AsPhaseCompiler() const override { return this; }
+
  protected:
   // Registers a new compilation phase with its corresponding compiler and
   // validator functions encapsulated in a CompilationPhaseFunctions struct.
@@ -547,6 +555,12 @@ class PjRtPhaseCompiler : public PjRtCompiler {
   // The names of all registered phases in the order they were registered.
   std::vector<std::string> phase_names_;
 };
+
+// Thread-safe. Returns a pointer to the registered phase compiler for the given
+// platform and a default compiler variant.
+// Initializes the compiler using the factory if necessary.
+absl::StatusOr<PjRtPhaseCompiler*> GetDefaultPjRtPhaseCompiler(
+    absl::string_view platform);
 
 }  // namespace xla
 

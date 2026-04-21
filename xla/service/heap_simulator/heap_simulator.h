@@ -981,6 +981,11 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
   SliceTimePermutationIterator::Ty slice_time_permutation_iteration_type_ =
       SliceTimePermutationIterator::Ty::kAll;
 
+  // Temporary buffers used by MakeFreeChunks to avoid reallocating memory.
+  mutable std::vector<Chunk> used_chunks_;
+  mutable std::vector<Chunk> disjoint_used_chunks_;
+  mutable std::vector<std::pair<int64_t, int64_t>> free_chunks_list_;
+
  protected:
   // Returns all transitive colocated buffers of this buffer interval. I.e., If
   // a buffer A is colocated with B and B is colocated with C, this function

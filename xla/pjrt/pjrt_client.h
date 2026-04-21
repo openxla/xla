@@ -265,13 +265,12 @@ class PjRtDevice {
 };
 
 // Helper struct for cross host transfers, returned by the callback from a call
-// to PjRtBuffer::MakeCrossHostReceiveBuffers or
-// PjRtBuffer::MakeCrossHostReceiveBuffersForGather.
+// to PjRtBuffer::MakeCrossHostReceiveBuffers.
 struct PjRtCrossHostRecvDescriptors {
-  // There is one serialized_descriptor per sub-buffer being gathered (i.e. a
-  // single descriptor if the buffer is returned from a call to
-  // MakeCrossHostReceiveBuffers). The descriptor should be transmitted to the
-  // sender(s) and passed to a call to src_buffer->CopyToRemoteDevice.
+  // This vector contains one serialized descriptor. (For usages outside of
+  // MakeCrossHostReceiveBuffers, serialized_descriptors may have length > 1).
+  // The descriptor should be transmitted to the sender and passed to a call to
+  // src_buffer->CopyToRemoteDevice.
   absl::InlinedVector<std::string, 1> serialized_descriptors;
 };
 // Function that the client should call at the receiver if it needs to cancel a

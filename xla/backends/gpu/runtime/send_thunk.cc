@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
@@ -46,7 +47,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -61,7 +61,7 @@ SendThunk::SendThunk(ThunkInfo thunk_info, const HloSendInstruction* instr,
 
 SendThunk::SendThunk(ThunkInfo thunk_info, const P2PConfig& config,
                      const Buffer& buffer, absl::string_view instr_name)
-    : CollectiveThunk(Thunk::kSend, thunk_info, /*is_p2p=*/true),
+    : CollectiveThunk(Thunk::kSend, thunk_info, CommunicationId(1)),
       config_(config),
       buffer_(buffer),
       hlo_name_(instr_name) {}

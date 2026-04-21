@@ -265,7 +265,6 @@ HloModule module
       custom_call_target="__cublas$lt$matmul",
       backend_config={
         "operation_queue_id":"0",
-        "wait_on_operation_queues":[],
         "gemm_backend_config":{
           "alpha_real":1,
           "beta":0,

@@ -543,6 +543,7 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
@@ -789,6 +790,8 @@ cc_library(
         "@tsl//tsl/platform:platform_port",
     ] + if_cuda([
         "//xla/stream_executor:cuda_platform",
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor:rocm_platform",
     ]),
 )
 
@@ -835,6 +838,7 @@ cc_library(
     tags = [
         "no_mac",
     ],
+    target_compatible_with = if_rocm(["@platforms//cpu:x86_64"]),
     deps = [
         ":collective_perf_table_gen",
         "//xla/hlo/ir:hlo",
@@ -858,6 +862,9 @@ cc_library(
     ] + if_cuda([
         "//xla/service:gpu_plugin",
         "//xla/stream_executor:cuda_platform",
+    ]) + if_rocm([
+        "//xla/service:gpu_plugin",
+        "//xla/stream_executor:rocm_platform",
     ]),
     alwayslink = True,
 )
@@ -1372,6 +1379,7 @@ cc_binary(
         "//xla/hlo/utils:hlo_query",
         "//xla/service:hlo_graph_dumper",
         "//xla/service:hlo_module_config",
+        "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_proto_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",

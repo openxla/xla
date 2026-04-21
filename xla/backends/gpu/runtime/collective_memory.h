@@ -60,7 +60,7 @@ class CollectiveMemory {
 
   CollectiveMemory(
       const BufferAllocations& buffers,
-      absl::flat_hash_map<Key, std::unique_ptr<SymmetricMemory>> sym_memories,
+      absl::flat_hash_map<Key, std::shared_ptr<SymmetricMemory>> sym_memories,
       absl::flat_hash_map<Key, MulticastMemory> mcast_memories,
       absl::flat_hash_map<Key, PeerMemory> peer_memories);
 
@@ -101,7 +101,7 @@ class CollectiveMemory {
 
  private:
   const BufferAllocations& buffers_;
-  absl::flat_hash_map<Key, std::unique_ptr<SymmetricMemory>> sym_memories_;
+  absl::flat_hash_map<Key, std::shared_ptr<SymmetricMemory>> sym_memories_;
   absl::flat_hash_map<Key, MulticastMemory> mcast_memories_;
   absl::flat_hash_map<Key, PeerMemory> peer_memories_;
 };

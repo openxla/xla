@@ -110,6 +110,7 @@ cc_library(
         "//xla:sort_json",
         "//xla:xla_proto_cc",
         "//xla/service:hlo_proto_cc",
+        "//xla/service:hlo_proto_util",
         "//xla/service/gpu:gpu_executable_proto_cc",
         "//xla/tsl/platform:errors",
         "@com_google_absl//absl/status",

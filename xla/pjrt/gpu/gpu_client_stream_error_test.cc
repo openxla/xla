@@ -43,6 +43,8 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::absl_testing::StatusIs;
+using ::testing::AllOf;
 using ::testing::HasSubstr;
 
 absl::StatusOr<std::unique_ptr<xla::PjRtLoadedExecutable>> CompileExecutable(
@@ -132,8 +134,9 @@ TEST_P(PjRtGpuClientStreamErrorTest, AbortsOnStreamError) {
   auto result = result_buffers[0]->ToLiteral().Await();
   // Execution should both exit with an error and not hang.
   EXPECT_THAT(result,
-              absl_testing::StatusIs(absl::StatusCode::kInternal,
-                                     HasSubstr("CUDA_ERROR_ILLEGAL_ADDRESS")));
+              StatusIs(absl::StatusCode::kInternal,
+                       AllOf(HasSubstr("CUDA_ERROR_ILLEGAL_ADDRESS"),
+                             HasSubstr("executable_name: illegal_access"))));
 }
 
 }  // namespace

@@ -23,6 +23,7 @@ limitations under the License.*/
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -180,8 +181,7 @@ absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
 
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
-      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_,
-                                /*is_p2p=*/false));
+      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_));
 
   TF_ASSIGN_OR_RETURN(
       bool use_collective_kernel,
@@ -197,8 +197,12 @@ absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
                                     collective_config_.replica_groups,
                                     collective_config_.group_mode));
 
+  // Sort device groups: RequestClique expects pre-sorted groups.
+  absl::c_for_each(device_groups, [](auto& group) { absl::c_sort(group); });
+  absl::c_sort(device_groups);
+
   TF_RETURN_IF_ERROR(params.collective_clique_requests->RequestClique(
-      clique_key, std::move(device_groups)));
+      clique_key, device_groups));
 
   absl::MutexLock lock(mutex_);
   if (!per_stream_memory_.contains(params.executor)) {
@@ -262,8 +266,7 @@ int64_t CollectiveKernelThunk::GetInputSizeBytes() const {
 absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
-      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_,
-                                /*is_p2p=*/false));
+      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_));
   const std::optional<RankId> rank =
       clique_key.rank(params.collective_params->global_device_id);
   TF_RET_CHECK(rank.has_value())
@@ -281,9 +284,10 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
       // the buffer. The kernel will take care of leaving the buffer in
       // correct state after use, so we don't need to zero out after
       // initialization.
-      TF_RETURN_IF_ERROR(params.executor->SynchronousMemZero(
+      TF_RETURN_IF_ERROR(params.stream->MemZero(
           memory_state->signal_buffers_handle.address_ptr(),
           memory_state->signal_buffers_handle.address().size()));
+      TF_RETURN_IF_ERROR(params.stream->BlockHostUntilDone());
       // Create a kernel for execution.
       std::unique_ptr<se::Kernel> kernel = nullptr;
       if (!kernel_name_.empty()) {
@@ -427,8 +431,7 @@ absl::Status CollectiveKernelThunk::ExecuteOnStream(
 
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
-      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_,
-                                /*is_p2p=*/false));
+      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_));
   const int32_t num_devices = clique_key.num_devices();
 
   // TODO(b/407736956): Support variadic all-reduce.

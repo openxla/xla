@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -513,6 +514,94 @@ TEST_F(CallInlinerTest, InlineCallWithOverriddenAttributeInlineableFalse) {
   EXPECT_EQ(call, nullptr);
 }
 
+TEST_F(CallInlinerTest, UseShardyMhloToHloShmapBodyNotInlined) {
+  const char* const hloString = R"(
+    HloModule jit_f, entry_computation_layout={(f32[8,8]{1,0})->f32[8,8]{1,0}}
+
+    %prefix_shmap_body_suffix.4 (Arg_0.5: f32[1,8]) -> f32[1,8] {
+      %Arg_0.5 = f32[1,8]{1,0} parameter(0)
+      ROOT %add.6 = f32[1,8]{1,0} add(f32[1,8]{1,0} %Arg_0.5, f32[1,8]{1,0} %Arg_0.5), metadata={source_file="-" source_line=11}
+    }
+
+    ENTRY %main.10 (Arg_0.1: f32[8,8]) -> f32[8,8] {
+      %Arg_0.1 = f32[8,8]{1,0} parameter(0)
+      %custom-call.2 = f32[8,8]{1,0} custom-call(f32[8,8]{1,0} %Arg_0.1), custom_call_target="Sharding", sharding={devices=[8,1]<=[8]}, metadata={source_file="-" source_line=3}
+      %custom-call.3 = f32[1,8]{1,0} custom-call(f32[8,8]{1,0} %custom-call.2), custom_call_target="SPMDFullToShardShape", sharding={manual}, metadata={source_file="-" source_line=4}
+      %call.7 = f32[1,8]{1,0} call(f32[1,8]{1,0} %custom-call.3), to_apply=%prefix_shmap_body_suffix.4
+      %custom-call.8 = f32[1,8]{1,0} custom-call(f32[1,8]{1,0} %call.7), custom_call_target="Sharding", sharding={manual}, metadata={source_file="-" source_line=6}
+      ROOT %custom-call.9 = f32[8,8]{1,0} custom-call(f32[1,8]{1,0} %custom-call.8), custom_call_target="SPMDShardToFullShape", sharding={devices=[8,1]<=[8]}, metadata={source_file="-" source_line=7}
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hloString));
+  module->mutable_config().set_use_shardy_partitioner(true);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, CallInliner().Run(module.get()));
+  VLOG(1) << module->ToString();
+  // The single call in the module is not inlined.
+  EXPECT_FALSE(changed);
+
+  HloInstruction* call = FindInstruction(module.get(), xla::HloOpcode::kCall);
+  EXPECT_NE(call, nullptr);
+  EXPECT_TRUE(call->has_to_apply());
+  EXPECT_EQ(call->to_apply()->name(), "prefix_shmap_body_suffix.4");
+}
+
+// Don't inline when the name starts with "xla.sdy.manual_computation_body".
+TEST_F(CallInlinerTest, UseShardManualComputationBodyNotInlined) {
+  const char* const hloString = R"(
+    HloModule jit_f, entry_computation_layout={(f32[8,8]{1,0})->f32[8,8]{1,0}}
+
+    %xla.sdy.manual_computation_body.4 (Arg_0.5: f32[1,8]) -> f32[1,8] {
+      %Arg_0.5 = f32[1,8]{1,0} parameter(0)
+      ROOT %add.6 = f32[1,8]{1,0} add(f32[1,8]{1,0} %Arg_0.5, f32[1,8]{1,0} %Arg_0.5), metadata={source_file="-" source_line=11}
+    }
+
+    ENTRY %main.10 (Arg_0.1: f32[8,8]) -> f32[8,8] {
+      %Arg_0.1 = f32[8,8]{1,0} parameter(0)
+      %custom-call.3 = f32[1,8]{1,0} custom-call(f32[8,8]{1,0} %Arg_0.1), custom_call_target="SPMDFullToShardShape", sharding={manual}, metadata={source_file="-" source_line=4}
+      %call.7 = f32[1,8]{1,0} call(f32[1,8]{1,0} %custom-call.3), to_apply=%xla.sdy.manual_computation_body.4
+      ROOT %custom-call.9 = f32[8,8]{1,0} custom-call(f32[1,8]{1,0} %call.7), custom_call_target="SPMDShardToFullShape", sharding={devices=[8,1]<=[8]}, metadata={source_file="-" source_line=7}
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hloString));
+  module->mutable_config().set_use_shardy_partitioner(true);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, CallInliner().Run(module.get()));
+  // The single call in the module is not inlined.
+  EXPECT_FALSE(changed);
+
+  HloInstruction* call = FindInstruction(module.get(), xla::HloOpcode::kCall);
+  EXPECT_NE(call, nullptr);
+  EXPECT_TRUE(call->has_to_apply());
+  EXPECT_EQ(call->to_apply()->name(), "xla.sdy.manual_computation_body.4");
+}
+
+// Make sure we check the name of the called function contains the string, not
+// just the prefix/suffix.
+TEST_F(CallInlinerTest, UseShardManualComputationBodySurroundedNotInlined) {
+  const char* const hloString = R"(
+    HloModule jit_f, entry_computation_layout={(f32[8,8]{1,0})->f32[8,8]{1,0}}
+
+    %my_model.___call__.fwd.xla.sdy.manual_computation_body_14.1234 (Arg_0.5: f32[1,8]) -> f32[1,8] {
+      %Arg_0.5 = f32[1,8]{1,0} parameter(0)
+      ROOT %add.6 = f32[1,8]{1,0} add(f32[1,8]{1,0} %Arg_0.5, f32[1,8]{1,0} %Arg_0.5), metadata={source_file="-" source_line=11}
+    }
+
+    ENTRY %main.10 (Arg_0.1: f32[8,8]) -> f32[8,8] {
+      %Arg_0.1 = f32[8,8]{1,0} parameter(0)
+      %custom-call.3 = f32[1,8]{1,0} custom-call(f32[8,8]{1,0} %Arg_0.1), custom_call_target="SPMDFullToShardShape", sharding={manual}, metadata={source_file="-" source_line=4}
+      %call.7 = f32[1,8]{1,0} call(f32[1,8]{1,0} %custom-call.3), to_apply=%my_model.___call__.fwd.xla.sdy.manual_computation_body_14.1234
+      ROOT %custom-call.9 = f32[8,8]{1,0} custom-call(f32[1,8]{1,0} %call.7), custom_call_target="SPMDShardToFullShape", sharding={devices=[8,1]<=[8]}, metadata={source_file="-" source_line=7}
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hloString));
+  module->mutable_config().set_use_shardy_partitioner(true);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, CallInliner().Run(module.get()));
+  // The single call in the module is not inlined.
+  EXPECT_FALSE(changed);
+
+  HloInstruction* call = FindInstruction(module.get(), xla::HloOpcode::kCall);
+  EXPECT_NE(call, nullptr);
+  EXPECT_TRUE(call->has_to_apply());
+  EXPECT_EQ(call->to_apply()->name(),
+            "my_model.___call__.fwd.xla.sdy.manual_computation_body_14.1234");
+}
+
 TEST_F(CallInlinerTest, ControlDepsPropagateToRootOfInlinedInstructions) {
   const char* hlo = R"(
   HloModule test
@@ -743,74 +832,6 @@ ENTRY main {
             expected_module->ToFingerprint(options));
 }
 
-TEST_F(CallInlinerTest, InliningMergesOpMetadataRecursively) {
-  const char* hlo = R"(
-
-cond {
-  input = f32[128,32] parameter(0)
-  ROOT c0 = pred[] constant(0), metadata={op_name="while/cond"}
-}
-
-body {
-  input = f32[128,32] parameter(0)
-  ROOT convert = f32[128,32] convert(input), metadata={op_name="while/body"}
-}
-
-callee {
-  input = f32[128,32] parameter(0)
-  ROOT while = f32[128,32] while(input), metadata={op_name="while"},
-    condition=cond, body=body
-}
-
-ENTRY main {
-  input = f32[128,32] parameter(0)
-  ROOT result = f32[128,32] call(input), to_apply=callee, metadata={op_name="x"}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                          ParseAndReturnVerifiedModule(hlo));
-  ASSERT_THAT(CallInliner().Run(m.get()), absl_testing::IsOkAndHolds(true));
-
-  auto root = m->entry_computation()->root_instruction();
-  EXPECT_THAT(root, op::While());
-  EXPECT_EQ(root->metadata().op_name(), "x/while");
-  EXPECT_EQ(root->while_condition()->root_instruction()->metadata().op_name(),
-            "x/while/cond");
-  EXPECT_EQ(root->while_body()->root_instruction()->metadata().op_name(),
-            "x/while/body");
-}
-
-TEST_F(CallInlinerTest, InliningMergesOpNoEmbeddedRecursion) {
-  const char* hlo = R"(
-
-reducer {
-  x = f32[] parameter(0)
-  y = f32[] parameter(1)
-  ROOT add = f32[] add(x, y)
-}
-
-callee {
-  input = f32[128,32] parameter(0)
-  const = f32[] constant(0)
-  ROOT reduce = f32[128] reduce(input, const), dimensions={1}, to_apply=reducer, metadata={op_name="reduce"}
-}
-
-ENTRY main {
-  input = f32[128,32] parameter(0)
-  ROOT result = f32[128] call(input), to_apply=callee, metadata={op_name="x"}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                          ParseAndReturnVerifiedModule(hlo));
-  CallInliner call_inliner;
-  EXPECT_THAT(call_inliner.Run(m.get()), absl_testing::IsOkAndHolds(true));
-
-  auto root = m->entry_computation()->root_instruction();
-  EXPECT_THAT(root, op::Reduce());
-  EXPECT_EQ(root->metadata().op_name(), "x/reduce");
-  EXPECT_EQ(root->to_apply()->root_instruction()->metadata().op_name(), "");
-}
-
 TEST_F(CallInlinerTest, GetInlinedModule) {
   const char* hlo = R"(
 
@@ -823,12 +844,12 @@ reducer {
 callee {
   input = f32[128,32] parameter(0)
   const = f32[] constant(0)
-  ROOT reduce = f32[128] reduce(input, const), dimensions={1}, to_apply=reducer, metadata={op_name="reduce"}
+  ROOT reduce = f32[128] reduce(input, const), dimensions={1}, to_apply=reducer
 }
 
 ENTRY main {
   input = f32[128,32] parameter(0)
-  ROOT result = f32[128] call(input), to_apply=callee, metadata={op_name="x"}
+  ROOT result = f32[128] call(input), to_apply=callee
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
@@ -837,34 +858,6 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(auto inlined_module, GetInlinedModule(m.get()));
   auto root = inlined_module.module->entry_computation()->root_instruction();
   EXPECT_THAT(root, op::Reduce());
-  EXPECT_EQ(root->metadata().op_name(), "x/reduce");
-  EXPECT_EQ(root->to_apply()->root_instruction()->metadata().op_name(), "");
-}
-
-TEST_F(CallInlinerTest, InliningDoesNotDuplicateLongOpNames) {
-  const char* hlo = R"(
-callee {
-  input = f32[128,32] parameter(0)
-  ROOT y = f32[128,32] negate(input), metadata={op_name="y"}
-}
-
-ENTRY main {
-  input = f32[128,32] parameter(0)
-  ROOT result = f32[128,32] call(input), to_apply=callee
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                          ParseAndReturnVerifiedModule(hlo));
-  auto root = m->entry_computation()->root_instruction();
-  ASSERT_THAT(root, op::Call());
-  OpMetadata metadata = root->metadata();
-  metadata.set_op_name(std::string(CallInliner::kMaxOpNameSize, 'x'));
-  root->set_metadata(metadata);
-  ASSERT_THAT(CallInliner().Run(m.get()), absl_testing::IsOkAndHolds(true));
-
-  root = m->entry_computation()->root_instruction();
-  EXPECT_THAT(root, op::Negate());
-  EXPECT_EQ(root->metadata().op_name(), "y");
 }
 
 TEST_F(CallInlinerTest, InliningCallBack) {
@@ -907,115 +900,100 @@ ENTRY main {
               op::Subtract(op::Call(op::Parameter(0)), op::Parameter(0)));
 }
 
-struct ModuleWithCall {
-  std::unique_ptr<HloModule> module;
-  HloInstruction* call;
-  HloInstruction* neg;
-};
+TEST_F(CallInlinerTest, ReproduceDanglingPointerWithSchedule) {
+  auto module = std::make_unique<HloModule>(TestName(), HloModuleConfig());
 
-ModuleWithCall CreateModuleWithCall(const std::string& module_name) {
-  auto module = std::make_unique<HloModule>(module_name, HloModuleConfig());
-  HloComputation::Builder inner_builder("inner");
-  auto* p0 = inner_builder.AddInstruction(
+  // Callee ignores parameter
+  HloComputation::Builder callee_builder("callee");
+  auto* p = callee_builder.AddInstruction(
+      HloInstruction::CreateParameter(0, ShapeUtil::MakeShape(F32, {}), "p"));
+  auto* const_val = callee_builder.AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(42.0f)));
+  HloComputation* callee =
+      module->AddEmbeddedComputation(callee_builder.Build(const_val));
+
+  // Caller
+  HloComputation::Builder caller_builder("caller");
+  auto* p0 = caller_builder.AddInstruction(
       HloInstruction::CreateParameter(0, ShapeUtil::MakeShape(F32, {}), "p0"));
-  auto* neg = inner_builder.AddInstruction(HloInstruction::CreateUnary(
+
+  auto* op = caller_builder.AddInstruction(HloInstruction::CreateUnary(
       ShapeUtil::MakeShape(F32, {}), HloOpcode::kNegate, p0));
-  HloComputation* inner = module->AddEmbeddedComputation(inner_builder.Build());
 
-  HloComputation::Builder outer_builder("outer");
-  auto* constant = outer_builder.AddInstruction(
-      HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(1.0f)));
-  auto* call = outer_builder.AddInstruction(HloInstruction::CreateCall(
-      ShapeUtil::MakeShape(F32, {}), {constant}, inner));
-  module->AddEntryComputation(outer_builder.Build());
+  auto* call = caller_builder.AddInstruction(
+      HloInstruction::CreateCall(ShapeUtil::MakeShape(F32, {}), {op}, callee));
 
-  return {std::move(module), call, neg};
+  HloComputation* caller =
+      module->AddEntryComputation(caller_builder.Build(call));
+
+  // Set a VALID schedule first.
+  HloSchedule schedule(module.get());
+
+  std::vector<HloInstruction*> caller_seq_valid;
+  caller_seq_valid.push_back(p0);
+  caller_seq_valid.push_back(op);
+  caller_seq_valid.push_back(call);
+  schedule.set_sequence(caller, HloInstructionSequence(caller_seq_valid));
+
+  std::vector<HloInstruction*> callee_seq;
+  callee_seq.push_back(p);
+  callee_seq.push_back(const_val);
+  schedule.set_sequence(callee, HloInstructionSequence(callee_seq));
+
+  TF_ASSERT_OK(module->set_schedule(std::move(schedule)));
+
+  // Now modify the schedule to be INVALID (call before op).
+  std::vector<HloInstruction*> caller_seq_invalid;
+  caller_seq_invalid.push_back(p0);
+  caller_seq_invalid.push_back(call);
+  caller_seq_invalid.push_back(op);
+
+  module->schedule().set_sequence(caller,
+                                  HloInstructionSequence(caller_seq_invalid));
+
+  CallInliner call_inliner;
+  TF_ASSERT_OK_AND_ASSIGN(bool mutated, call_inliner.Run(module.get()));
+  EXPECT_TRUE(mutated);
 }
+TEST_F(CallInlinerTest, InlinedOperandsAreCleanedUp) {
+  auto module = std::make_unique<HloModule>(TestName(), HloModuleConfig());
 
-TEST_F(CallInlinerTest, InlinedStackFrameConcatenation) {
-  ModuleWithCall m = CreateModuleWithCall(TestName());
+  // Callee ignores parameter
+  HloComputation::Builder callee_builder("callee");
+  callee_builder.AddInstruction(
+      HloInstruction::CreateParameter(0, ShapeUtil::MakeShape(F32, {}), "p"));
+  auto* const_val = callee_builder.AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(42.0f)));
+  HloComputation* callee =
+      module->AddEmbeddedComputation(callee_builder.Build(const_val));
 
-  HloStackFrame frame1;
-  frame1.file_name = "file1.py";
-  frame1.function_name = "func1";
-  frame1.line = 10;
-  frame1.parent_frame_id = StackFrameId{0};
-  StackFrameId id1 = m.module->mutable_stack_frames().AddStackFrame(frame1);
+  // Caller
+  HloComputation::Builder caller_builder("caller");
+  auto* p0 = caller_builder.AddInstruction(
+      HloInstruction::CreateParameter(0, ShapeUtil::MakeShape(F32, {}), "p0"));
 
-  HloStackFrame frame2;
-  frame2.file_name = "file2.py";
-  frame2.function_name = "func2";
-  frame2.line = 20;
-  frame2.parent_frame_id = StackFrameId{0};
-  StackFrameId id2 = m.module->mutable_stack_frames().AddStackFrame(frame2);
+  auto* op = caller_builder.AddInstruction(HloInstruction::CreateUnary(
+      ShapeUtil::MakeShape(F32, {}), HloOpcode::kNegate, p0));
 
-  OpMetadata neg_metadata;
-  neg_metadata.set_stack_frame_id(id2.value);
-  m.neg->set_metadata(neg_metadata);
+  auto* call = caller_builder.AddInstruction(
+      HloInstruction::CreateCall(ShapeUtil::MakeShape(F32, {}), {op}, callee));
 
-  OpMetadata call_metadata;
-  call_metadata.set_stack_frame_id(id1.value);
-  m.call->set_metadata(call_metadata);
+  HloComputation* caller =
+      module->AddEntryComputation(caller_builder.Build(call));
 
-  TF_ASSERT_OK(CallInliner::Inline(m.call).status());
+  CallInliner call_inliner;
+  TF_ASSERT_OK_AND_ASSIGN(bool mutated, call_inliner.Run(module.get()));
+  ASSERT_TRUE(mutated);
 
-  HloInstruction* inlined_neg = nullptr;
-  for (auto* inst : m.module->entry_computation()->instructions()) {
+  // Verify that `op` (Negate) is gone.
+  bool found_negate = false;
+  for (auto* inst : caller->instructions()) {
     if (inst->opcode() == HloOpcode::kNegate) {
-      inlined_neg = inst;
+      found_negate = true;
       break;
     }
   }
-  ASSERT_NE(inlined_neg, nullptr);
-
-  StackFrameId new_frame_id{inlined_neg->metadata().stack_frame_id()};
-  EXPECT_NE(new_frame_id, id1);
-  EXPECT_NE(new_frame_id, id2);
-  EXPECT_TRUE(new_frame_id.valid());
-
-  HloStackFrame new_frame =
-      m.module->stack_frames().GetStackFrame(new_frame_id);
-  EXPECT_EQ(new_frame.file_name, "file2.py");
-  EXPECT_EQ(new_frame.function_name, "func2");
-  EXPECT_EQ(new_frame.parent_frame_id, id1);
-}
-
-TEST_F(CallInlinerTest, InlinedStackFrameRedundantPrefixSkipsConcatenation) {
-  ModuleWithCall m = CreateModuleWithCall(TestName());
-
-  HloStackFrame frame1;
-  frame1.file_name = "file1.py";
-  frame1.function_name = "func1";
-  frame1.line = 10;
-  frame1.parent_frame_id = StackFrameId{0};
-  StackFrameId id1 = m.module->mutable_stack_frames().AddStackFrame(frame1);
-
-  HloStackFrame frame2;
-  frame2.file_name = "file2.py";
-  frame2.function_name = "func2";
-  frame2.line = 20;
-  frame2.parent_frame_id = id1;
-  StackFrameId id2 = m.module->mutable_stack_frames().AddStackFrame(frame2);
-
-  OpMetadata call_metadata;
-  call_metadata.set_stack_frame_id(id1.value);
-  m.call->set_metadata(call_metadata);
-
-  OpMetadata neg_metadata;
-  neg_metadata.set_stack_frame_id(id2.value);
-  m.neg->set_metadata(neg_metadata);
-
-  TF_ASSERT_OK(CallInliner::Inline(m.call).status());
-
-  HloInstruction* inlined_neg = nullptr;
-  for (auto* inst : m.module->entry_computation()->instructions()) {
-    if (inst->opcode() == HloOpcode::kNegate) {
-      inlined_neg = inst;
-      break;
-    }
-  }
-  ASSERT_NE(inlined_neg, nullptr);
-  EXPECT_EQ(inlined_neg->metadata().stack_frame_id(), id2.value);
+  EXPECT_FALSE(found_negate);
 }
 
 }  // namespace

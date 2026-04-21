@@ -4785,6 +4785,113 @@ ENTRY main {
   EXPECT_FALSE(HaveRemainingOffloadAnnotations(module.get()));
 }
 
+// Two chained MoveToHost values feed chained DynamicUpdateSlices, then a
+// slice/bitcast tail moves the result back to device before downstream compute.
+TEST_F(HostOffloaderTest, TwoChainedDusWithMoveToDeviceAndDeviceCompute) {
+  const absl::string_view hlo_string = R"(
+HloModule two_chained_dus_device_compute
+ENTRY main {
+  param_0 = f32[1,4] parameter(0)
+  param_1 = f32[1,4] parameter(1)
+  constant_f32_0 = f32[] constant(0)
+  broadcast = f32[2,4] broadcast(constant_f32_0), dimensions={}
+  index_0 = s32[] constant(0)
+  index_1 = s32[] constant(1)
+  mth_0 = f32[1,4] custom-call(param_0), custom_call_target="MoveToHost"
+  dus_0 = f32[2,4] dynamic-update-slice(broadcast, mth_0, index_0, index_0)
+  mth_1 = f32[1,4] custom-call(param_1), custom_call_target="MoveToHost"
+  dus_1 = f32[2,4] dynamic-update-slice(dus_0, mth_1, index_1, index_0)
+  slice = f32[1,4] slice(dus_1), slice={[1:2], [0:4]}
+  bitcast = f32[4] bitcast(slice)
+  mtd = f32[4] custom-call(bitcast), custom_call_target="MoveToDevice"
+  ROOT square = f32[4] multiply(mtd, mtd)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloader(module.get()));
+  EXPECT_TRUE(changed);
+
+  // All MoveToHost/MoveToDevice annotations should have been processed.
+  EXPECT_FALSE(HaveRemainingOffloadAnnotations(module.get()));
+
+  // The ROOT (square) is device compute; its shape must have device memory.
+  TestShapeHasMemorySpace(
+      module->entry_computation()->root_instruction()->shape(),
+      Layout::kDefaultMemorySpace);
+
+  // Both DUS operations should have been set to host memory.
+  HloInstruction* dus_0_instr = FindInstruction(module.get(), "dus_0");
+  HloInstruction* dus_1_instr = FindInstruction(module.get(), "dus_1");
+  ASSERT_NE(dus_0_instr, nullptr);
+  ASSERT_NE(dus_1_instr, nullptr);
+  TestShapeHasMemorySpace(dus_0_instr->shape(), Layout::kHostMemorySpace);
+  TestShapeHasMemorySpace(dus_1_instr->shape(), Layout::kHostMemorySpace);
+
+  // The host buffer (AllocateBuffer) should exist and have host memory.
+  HloInstruction* allocate_buffer = nullptr;
+  for (HloInstruction* instr : module->entry_computation()->instructions()) {
+    if (instr->IsCustomCall("AllocateBuffer")) {
+      allocate_buffer = instr;
+      break;
+    }
+  }
+  ASSERT_NE(allocate_buffer, nullptr);
+  TestShapeHasMemorySpace(allocate_buffer->shape(), Layout::kHostMemorySpace);
+}
+
+// Same pattern as TwoChainedDusWithMoveToDeviceAndDeviceCompute but with the
+// ROOT result as a tuple containing device values.
+TEST_F(HostOffloaderTest,
+       TwoChainedDusWithMoveToDeviceAndDeviceComputeInTuple) {
+  const absl::string_view hlo_string = R"(
+HloModule two_chained_dus_device_compute_tuple
+ENTRY main {
+  param_0 = f32[1,4] parameter(0)
+  param_1 = f32[1,4] parameter(1)
+  param_device = f32[4] parameter(2)
+  constant_f32_0 = f32[] constant(0)
+  broadcast = f32[2,4] broadcast(constant_f32_0), dimensions={}
+  index_0 = s32[] constant(0)
+  index_1 = s32[] constant(1)
+  mth_0 = f32[1,4] custom-call(param_0), custom_call_target="MoveToHost"
+  dus_0 = f32[2,4] dynamic-update-slice(broadcast, mth_0, index_0, index_0)
+  mth_1 = f32[1,4] custom-call(param_1), custom_call_target="MoveToHost"
+  dus_1 = f32[2,4] dynamic-update-slice(dus_0, mth_1, index_1, index_0)
+  slice = f32[1,4] slice(dus_1), slice={[1:2], [0:4]}
+  bitcast = f32[4] bitcast(slice)
+  mtd = f32[4] custom-call(bitcast), custom_call_target="MoveToDevice"
+  square = f32[4] multiply(mtd, mtd)
+  ROOT result = (f32[4], f32[4]) tuple(square, param_device)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloader(module.get()));
+  EXPECT_TRUE(changed);
+
+  EXPECT_FALSE(HaveRemainingOffloadAnnotations(module.get()));
+
+  // Both elements of the ROOT tuple are device tensors.
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  TestShapeHasMemorySpace(ShapeUtil::GetSubshape(root->shape(), {0}),
+                          Layout::kDefaultMemorySpace);
+  TestShapeHasMemorySpace(ShapeUtil::GetSubshape(root->shape(), {1}),
+                          Layout::kDefaultMemorySpace);
+
+  // Both DUS operations should reside in host memory.
+  HloInstruction* dus_0_instr = FindInstruction(module.get(), "dus_0");
+  HloInstruction* dus_1_instr = FindInstruction(module.get(), "dus_1");
+  ASSERT_NE(dus_0_instr, nullptr);
+  ASSERT_NE(dus_1_instr, nullptr);
+  TestShapeHasMemorySpace(dus_0_instr->shape(), Layout::kHostMemorySpace);
+  TestShapeHasMemorySpace(dus_1_instr->shape(), Layout::kHostMemorySpace);
+}
+
 }  // namespace
 
 }  // namespace xla

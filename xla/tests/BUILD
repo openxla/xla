@@ -1087,14 +1087,13 @@ xla_test(
 
 xla_test(
     name = "dot_operation_test",
-    timeout = "long",
     srcs = ["dot_operation_test.cc"],
     aot_compile_test = False,
     backend_tags = {
         # TODO(b/445172709): Re-enable once fixed.
         "b200": ["broken"],
     },
-    shard_count = 20,
+    shard_count = 50,
     tags = ["optonly"],
     deps = [
         ":client_library_test_runner_mixin",
@@ -1257,6 +1256,53 @@ xla_test(
     ]),
 )
 
+# Repeat dot_operation_test for the CPU backend with single-threaded eigen.
+xla_test(
+    name = "dot_operation_single_threaded_runtime_test",
+    srcs = ["dot_operation_test.cc"],
+    aot_compile_test = False,
+    args = ["--xla_cpu_multi_thread_eigen=false"],
+    backends = ["cpu"],
+    shard_count = 20,
+    tags = ["optonly"],
+    deps = [
+        ":client_library_test_runner_mixin",
+        ":hlo_pjrt_interpreter_reference_mixin",
+        ":hlo_pjrt_test_base",
+        ":xla_internal_test_main",
+        "//xla:array2d",
+        "//xla:array3d",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:reference_util",
+        "//xla:shape_util",
+        "//xla/client:client_library",
+        "//xla/client:local_client",
+        "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/builder/lib:arithmetic",
+        "//xla/hlo/builder/lib:matrix",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/service:hlo_runner_interface",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:stream_executor_memory_allocator",
+        "//xla/tests:xla_test_backend_predicates",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:ml_dtypes",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
+)
+
 xla_test(
     name = "gather_operation_test",
     srcs = ["gather_operation_test.cc"],
@@ -1356,61 +1402,6 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],
-)
-
-# Repeat dot_operation_runtime_test with single-threaded eigen.
-xla_test(
-    name = "dot_operation_single_threaded_runtime_test",
-    timeout = "long",
-    srcs = ["dot_operation_test.cc"],
-    aot_compile_test = False,
-    backend_args = {
-        "cpu": [
-            "--xla_cpu_multi_thread_eigen=false",
-        ],
-    },
-    backend_tags = {
-        # TODO(b/445172709): Re-enable once fixed.
-        "b200": ["broken"],
-    },
-    shard_count = 50,
-    tags = ["optonly"],
-    deps = [
-        ":client_library_test_runner_mixin",
-        ":hlo_pjrt_interpreter_reference_mixin",
-        ":hlo_pjrt_test_base",
-        ":xla_internal_test_main",
-        "//xla:array2d",
-        "//xla:array3d",
-        "//xla:error_spec",
-        "//xla:literal",
-        "//xla:literal_util",
-        "//xla:reference_util",
-        "//xla:shape_util",
-        "//xla/client:client_library",
-        "//xla/client:local_client",
-        "//xla/hlo/builder:xla_builder",
-        "//xla/hlo/builder/lib:arithmetic",
-        "//xla/hlo/builder/lib:matrix",
-        "//xla/hlo/parser:hlo_parser",
-        "//xla/service:hlo_runner_interface",
-        "//xla/service:platform_util",
-        "//xla/stream_executor:stream_executor_memory_allocator",
-        "//xla/tests:xla_test_backend_predicates",
-        "//xla/tsl/platform:statusor",
-        "//xla/tsl/platform:test",
-        "//xla/tsl/platform:test_benchmark",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:ml_dtypes",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-    ] + if_rocm_is_configured([
-        # keep sorted
-        "@local_config_rocm//rocm:rocm_headers",
-    ]),
 )
 
 xla_test(
@@ -2415,7 +2406,6 @@ xla_test(
 
 xla_test(
     name = "prng_test",
-    timeout = "long",
     srcs = ["prng_test.cc"],
     shard_count = 20,
     # TODO(b/148276347) The test fails on macOS.
@@ -2672,11 +2662,11 @@ xla_test(
         "gpu",
         "cpu",
     ],
-    tags = ["pjrt_migration_candidate"],
-    use_legacy_runtime = True,
     deps = [
-        ":hlo_test_base",
+        ":aot_utils",
+        ":hlo_pjrt_test_base",
         ":literal_test_util",
+        ":pjrt_client_registry",
         ":test_utils",
         ":xla_internal_test_main",
         "//xla:literal",
@@ -2686,6 +2676,7 @@ xla_test(
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service:computation_placer",
         "//xla/service:hlo_module_config",
+        "//xla/service:hlo_runner_interface",
         "//xla/tests:xla_test_backend_predicates",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
@@ -2763,24 +2754,22 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    tags = ["pjrt_migration_candidate"],
-    use_legacy_runtime = True,
     deps = [
-        ":hlo_test_base",
+        ":aot_utils",
+        ":pjrt_client_registry",
         ":xla_internal_test_main",
-        "//xla:literal",
-        "//xla:literal_util",
-        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test",
-        "//xla/hlo/testlib:test_helpers",
+        "//xla/pjrt:pjrt_client",
+        "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_runner_interface",
-        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 

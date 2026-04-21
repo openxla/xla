@@ -19,6 +19,7 @@ limitations under the License.
 #ifndef XLA_HLO_IR_HLO_SHARDING_H_
 #define XLA_HLO_IR_HLO_SHARDING_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -30,6 +31,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/functional/function_ref.h"
+#include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -342,6 +344,9 @@ class HloSharding {
   // Returns whether the sharding represents manual subgroup sharding.
   bool IsManualSubgroup() const {
     if (!IsTuple()) {
+      if (UseNamedShardingLeaf()) {
+        return !named_sharding_->manual_axes().empty();
+      }
       return absl::c_linear_search(subgroup_types_, OpSharding::MANUAL);
     }
     return absl::c_all_of(tuple_elements_, [](const HloSharding& s) {
@@ -352,6 +357,9 @@ class HloSharding {
   // Returns whether the sharding represents unreduced subgroup sharding.
   bool IsUnreducedSubgroup() const {
     if (!IsTuple()) {
+      if (UseNamedShardingLeaf()) {
+        return !named_sharding_->unreduced_axes().empty();
+      }
       return absl::c_linear_search(subgroup_types_, OpSharding::UNREDUCED);
     }
     return absl::c_all_of(tuple_elements_, [](const HloSharding& s) {
@@ -552,6 +560,53 @@ class HloSharding {
         sharding.replicate_on_last_tile_dim_, sharding.shard_group_.ToString());
   }
 
+  struct HashV2Wrapper {
+    const HloSharding& sharding;
+
+    template <typename H>
+    friend H AbslHashValue(H h, const HashV2Wrapper& wrapper) {
+      const auto& sharding = wrapper.sharding;
+      if (sharding.tuple_) {
+        h = H::combine(std::move(h), sharding.tuple_elements_.size());
+        for (const auto& element : sharding.tuple_elements_) {
+          h = H::combine(std::move(h), HashV2Wrapper{element});
+        }
+        return h;
+      }
+      if (sharding.UseNamedShardingLeaf()) {
+        HloSharding v2 = V3ToV2Sharding(*sharding.named_sharding_);
+        return AbslHashValue(std::move(h), HashV2Wrapper{v2});
+      }
+      if (sharding.replicated_ || sharding.manual_ || sharding.unknown_ ||
+          sharding.unreduced_ || sharding.single_device_) {
+        return H::combine(
+            std::move(h), sharding.replicated_, sharding.single_device_,
+            sharding.manual_, sharding.unknown_, sharding.unreduced_,
+            sharding.tile_assignment_.array(),
+            sharding.replicate_on_last_tile_dim_, sharding.subgroup_types_,
+            sharding.shard_group_.ToString());
+      }
+      CHECK(sharding.tile_assignment_.iota().has_value());
+      const IotaTileAssignment& iota = *sharding.tile_assignment_.iota();
+      return H::combine(
+          std::move(h), sharding.replicated_, sharding.single_device_,
+          sharding.manual_, sharding.unknown_, sharding.unreduced_, iota.dims(),
+          iota.reshape_dims(), iota.transpose_perm(),
+          sharding.replicate_on_last_tile_dim_, sharding.subgroup_types_,
+          sharding.shard_group_.ToString());
+    }
+  };
+
+  template <typename H>
+  friend H AbslHashValue(H h, const HashV2Wrapper& wrapper);
+
+  // Faster alternative hasher when the user knows the sharding is V2.
+  struct HasherV2 {
+    size_t operator()(const HloSharding& sharding) const {
+      return absl::Hash<HashV2Wrapper>()(HashV2Wrapper{sharding});
+    }
+  };
+
   // Gets the tile assignment tensor.
   // REQUIRES: !IsReplicated() && !IsTuple()
   const TileAssignment& tile_assignment() const { return tile_assignment_; }
@@ -581,7 +636,7 @@ class HloSharding {
   // Returns number of shards in the given dimension.
   int64_t dimension(int64_t dim_index) const {
     if (UseNamedShardingLeaf()) {
-      return named_sharding_->dimension(dim_index);
+      return IsReplicated() ? 1 : named_sharding_->dimension(dim_index);
     }
     // If the sharding is replicated, the tile assignment is invalid.
     return IsReplicated() ? 1 : tile_assignment().dim(dim_index);
@@ -652,6 +707,9 @@ class HloSharding {
 
   // Returns the manual subgroup dim, or -1 if it doesn't exist.
   int64_t SubgroupManualDim() const {
+    CHECK(!UseNamedShardingLeaf())
+        << "SubgroupManualDim should not be called for HloShardingV3 as all "
+           "relevant use cases are handled separately.";
     auto it = absl::c_find(subgroup_types_, OpSharding::MANUAL);
     if (it != subgroup_types_.end()) {
       return (it - subgroup_types_.begin()) + TiledDataRank();
@@ -661,6 +719,9 @@ class HloSharding {
 
   // Returns the unreduced subgroup dim, or -1 if it doesn't exist.
   int64_t SubgroupUnreducedDim() const {
+    CHECK(!UseNamedShardingLeaf())
+        << "SubgroupUnreducedDim should not be called for HloShardingV3 as all "
+           "relevant use cases are handled separately.";
     auto it = absl::c_find(subgroup_types_, OpSharding::UNREDUCED);
     if (it != subgroup_types_.end()) {
       return (it - subgroup_types_.begin()) + TiledDataRank();

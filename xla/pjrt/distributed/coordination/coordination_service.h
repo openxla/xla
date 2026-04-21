@@ -116,7 +116,7 @@ class CoordinationService {
   CoordinationService(CoordinationService&&) = default;
   CoordinationService& operator=(CoordinationService&&) = default;
 
-  IncarnationId GetServiceIncarnation() { return service_incarnation_; }
+  IncarnationId GetServiceIncarnation() const { return incarnation_; }
 
   // Register a task to the service.
   // Possible service errors:
@@ -143,6 +143,10 @@ class CoordinationService {
   //   - Internal: Service has shut down.
   //   - InvalidArgument: Unexpected task request.
   //   - FailedPrecondition: task has already disconnected.
+  //
+  // This method is for testing only.
+  //
+  // TODO(mwhittaker): Remove this method.
   absl::Status ResetTask(TaskId task);
 
   // Update the heartbeat timestamp of a task. This should only be invoked on
@@ -156,10 +160,9 @@ class CoordinationService {
   absl::Status ReportTaskError(TaskId task, const absl::Status& error);
 
   // Watches the state and the error status of the job.
-  using WatchJobStateCallback = absl::AnyInvocable<void(
+  using WatchTasksCallback = absl::AnyInvocable<void(
       std::vector<xla::coordination::TaskInfo>, int64_t)>;
-  void WatchJobState(std::optional<int64_t> version_number,
-                     WatchJobStateCallback);
+  void WatchTasks(std::optional<int64_t> version_number, WatchTasksCallback);
 
   // Insert a configuration key-value in the coordination service.
   // For now, a key-value can only be inserted once and cannot be updated.
@@ -286,6 +289,10 @@ class CoordinationService {
   void PollForErrorAsync(TaskId task, tsl::StatusCallback done);
 
  private:
+  std::string LogPrefix() const {
+    return absl::StrCat("[", incarnation_, "] ");
+  }
+
   void LogConnectStatusLocked() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   void BarrierAsyncLocked(absl::string_view barrier_id, int64_t counter,
                           absl::Duration timeout, TaskId task,
@@ -300,9 +307,9 @@ class CoordinationService {
   void ConnectTask(TaskId task, IncarnationId incarnation)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Checks if any task has stopped sending heartbeats.
-  void CheckHeartbeatTimeout();
+  void CheckHeartbeatTimeout() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Checks if any barrier has timed out.
-  void CheckBarrierTimeout();
+  void CheckBarrierTimeout() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Checks both heartbeat and barrier timeouts. Use a single function so they
   // can be run in the same thread as threads are a constrained resource.
   void CheckStaleness();
@@ -550,26 +557,26 @@ class CoordinationService {
   std::vector<xla::coordination::TaskInfo> GetJobState()
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
 
-  // Notifies all callbacks registered via WatchJobState.
-  void NotifyWatchJobStateCallbacks() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
+  // Notifies all callbacks registered via WatchTasks.
+  void NotifyWatchTasksCallbacks() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
 
   // This method should be called whenever the cluster state changes in a way
-  // such that NotifyWatchJobStateCallbacks should be called.
+  // such that NotifyWatchTasksCallbacks should be called.
   void ClusterStateUpdated() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
 
   tsl::Env& env_;
-  const IncarnationId service_incarnation_{tsl::random::New64()};
+  const IncarnationId incarnation_{tsl::random::New64()};
   const Config config_;
 
   const std::string shutdown_barrier_id_ =
-      absl::StrCat("Shutdown::", service_incarnation_.value());
+      absl::StrCat("Shutdown::", incarnation_.value());
   std::vector<TaskId> shutdown_barrier_tasks_ ABSL_GUARDED_BY(state_mu_);
 
   absl::Mutex state_mu_;
   absl::flat_hash_map<TaskId, std::unique_ptr<TaskState>> cluster_state_
       ABSL_GUARDED_BY(state_mu_);
   int64_t cluster_state_version_number_ ABSL_GUARDED_BY(state_mu_) = 0;
-  std::vector<WatchJobStateCallback> watch_job_state_callbacks_
+  std::vector<WatchTasksCallback> watch_job_state_callbacks_
       ABSL_GUARDED_BY(state_mu_);
 
   KeyValueStore store_;
@@ -589,7 +596,6 @@ class CoordinationService {
   bool client_polling_for_error_ ABSL_GUARDED_BY(state_mu_) = false;
   ErrorPollingState error_polling_state_ ABSL_GUARDED_BY(state_mu_);
 
-  absl::CondVar check_staleness_thread_cv_;
   bool shutting_down_ ABSL_GUARDED_BY(state_mu_) = false;
   // Note: sequence matters here, we must destroy the staleness thread before
   // the other state related to barriers and heartbeats to prevent illegal

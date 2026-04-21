@@ -63,10 +63,6 @@ struct CompiledIfrtIrProgram {
   // The input program.
   std::unique_ptr<IfrtIRProgram> program;
 
-  // Mapping from logical device ids in IFRT IR MLIR module to runtime device
-  // ids obtained from IFRT client.
-  std::vector<DeviceId> device_assignments;
-
   // The compile options used to compile the program.
   std::shared_ptr<IfrtIRCompileOptions> compile_options;
 

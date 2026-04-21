@@ -90,7 +90,7 @@ ENTRY entry {
   block_level_parameters.num_warps = 0;
 
   EXPECT_THAT(TritonWrapper(
-                  "test_fn", triton_fusion,
+                  "test_fn", *triton_fusion,
                   se::GpuComputeCapability{se::CudaComputeCapability::Hopper()},
                   dev_info, block_level_parameters, triple, data_layout,
                   llvm_ctx, mlir_context),
@@ -141,7 +141,7 @@ ENTRY entry {
   RegisterSymbolicExprStorage(&mlir_context);
 
   EXPECT_OK(
-      CreateTritonModule("test_fn", triton_fusion, dev_info,
+      CreateTritonModule("test_fn", *triton_fusion, dev_info,
                          BlockLevelParameters::FromBlockLevelFusionConfig(
                              triton_fusion->backend_config<GpuBackendConfig>()
                                  ->fusion_backend_config()
@@ -190,7 +190,7 @@ ENTRY entry {
   RegisterSymbolicExprStorage(&mlir_context);
   TF_ASSERT_OK_AND_ASSIGN(
       TritonWrapperResult result,
-      TritonWrapper("test_fn", fusion, se::CudaComputeCapability::Blackwell(),
+      TritonWrapper("test_fn", *fusion, se::CudaComputeCapability::Blackwell(),
                     dev_info,
                     BlockLevelParameters::FromBlockLevelFusionConfig(
                         fusion->backend_config<GpuBackendConfig>()

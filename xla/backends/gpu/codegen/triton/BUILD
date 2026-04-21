@@ -25,6 +25,7 @@ cc_library(
         "//xla/service/gpu:__subpackages__",
     ],
     deps = [
+        ":triton_kernel_source",
         ":xtile_compiler",
         "//xla:shape_util",
         "//xla:util",
@@ -45,6 +46,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:launch_dim",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
@@ -97,6 +99,7 @@ cc_library(
         "//xla/codegen/emitters/ir:xla",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/analysis:interval",
+        "//xla/hlo/analysis:symbolic_map",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor/gpu:tma_metadata",
         "//xla/tsl/platform:statusor",
@@ -214,6 +217,7 @@ cc_library(
         ":collective_emitter",
         ":compilation_pipeline",
         ":lowering_util",
+        ":triton_kernel_source",
         "//xla:autotuning_proto_cc",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -254,6 +258,7 @@ cc_library(
         "//xla/tools:hlo_decomposer_lib",
         "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/functional:any_invocable",
@@ -421,6 +426,7 @@ cc_library(
     srcs = ["test_utils.cc"],
     hdrs = ["test_utils.h"],
     deps = [
+        ":triton_kernel_source",
         ":xtile_compiler",
         "//xla:status_macros",
         "//xla:util",
@@ -439,6 +445,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log:check",
@@ -623,6 +630,44 @@ xla_test(
 )
 
 cc_library(
+    name = "extern_function_helper",
+    srcs = ["extern_function_helper.cc"],
+    hdrs = ["extern_function_helper.h"],
+    deps = [
+        "//xla/backends/gpu/codegen/triton/ir:triton_xla",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/functional:overload",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LLVMDialect",
+        "@llvm-project//mlir:Support",
+        "@triton//:TritonDialects",
+    ],
+)
+
+xla_cc_test(
+    name = "extern_function_helper_test",
+    srcs = ["extern_function_helper_test.cc"],
+    deps = [
+        ":extern_function_helper",
+        "//xla/backends/gpu/codegen/triton/ir:triton_xla",
+        "//xla/service/llvm_ir:llvm_util",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LLVMDialect",
+        "@llvm-project//mlir:Support",
+        "@triton//:TritonDialects",
+    ],
+)
+
+cc_library(
     name = "tma_utils",
     srcs = ["tma_utils.cc"],
     hdrs = ["tma_utils.h"],
@@ -683,6 +728,18 @@ cc_library(
         "@llvm-project//mlir:TensorDialect",
         "@stablehlo//:stablehlo_ops",
         "@triton//:TritonDialects",
+    ],
+)
+
+cc_library(
+    name = "triton_kernel_source",
+    hdrs = ["triton_kernel_source.h"],
+    deps = [
+        "//xla/codegen:kernel_source",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log:check",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )
 

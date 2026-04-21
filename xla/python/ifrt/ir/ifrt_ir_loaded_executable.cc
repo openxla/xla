@@ -24,7 +24,6 @@ limitations under the License.
 
 #include "absl/base/call_once.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -49,6 +48,7 @@ limitations under the License.
 #include "xla/python/ifrt/ir/program_memory_tracer.h"
 #include "xla/python/ifrt/ir/serialization_utils.h"
 #include "xla/python/ifrt/ir/transforms/utils.h"
+#include "xla/python/ifrt/ir/utils.h"
 #include "xla/python/ifrt/ir/version.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/user_context.h"
@@ -71,24 +71,13 @@ namespace {
 using DeviceIdToLogicalDeviceIdMap =
     absl::flat_hash_map<DeviceId, IfrtIrLogicalDeviceId>;
 
-// Returns a DeviceList for the given device ids.
-absl::StatusOr<DeviceListRef> LookUpDevices(Client* client,
-                                            absl::Span<const DeviceId> ids) {
-  absl::InlinedVector<Device*, 1> devices;
-  devices.reserve(ids.size());
-  for (DeviceId id : ids) {
-    TF_ASSIGN_OR_RETURN(Device * device, client->LookupDevice(id));
-    devices.push_back(device);
-  }
-  return client->MakeDeviceList(devices);
-}
-
 // Create a map from runtime device id to logical device id.
 absl::StatusOr<DeviceIdToLogicalDeviceIdMap> CreateDeviceIdToLogicalDeviceIdMap(
     std::shared_ptr<CompiledIfrtIrProgram> program) {
   DeviceIdToLogicalDeviceIdMap device_id_to_logical_device_id;
-  for (int i = 0; i < program->device_assignments.size(); ++i) {
-    const DeviceId device_id = program->device_assignments[i];
+  for (int i = 0; i < program->compile_options->device_assignments.size();
+       ++i) {
+    const DeviceId device_id = program->compile_options->device_assignments[i];
     auto [_, inserted] = device_id_to_logical_device_id.insert(
         {device_id, IfrtIrLogicalDeviceId(i)});
     if (!inserted) {
@@ -156,7 +145,8 @@ IfrtIrLoadedExecutable::executable_version() const {
       }
 
       return std::make_unique<IfrtIrExecutableVersion>(
-          Version::getCurrentVersion(), program_->device_assignments,
+          Version::getCurrentVersion(),
+          program_->compile_options->device_assignments,
           std::move(runtime_abi_versions));
     }();
   });
@@ -379,8 +369,9 @@ absl::StatusOr<LoadedExecutableRef> IfrtIrLoadedExecutable::Create(
     Client* client, std::shared_ptr<CompiledIfrtIrProgram> program) {
   tsl::profiler::TraceMe traceme("IfrtIrLoadedExecutable::Create");
 
-  TF_ASSIGN_OR_RETURN(DeviceListRef device_list,
-                      LookUpDevices(client, program->device_assignments));
+  TF_ASSIGN_OR_RETURN(
+      DeviceListRef device_list,
+      LookUpDevices(client, program->compile_options->device_assignments));
   TF_ASSIGN_OR_RETURN(auto memory_tracer, ProgramMemoryTracer::Create(
                                               program, client, device_list));
   return std::unique_ptr<IfrtIrLoadedExecutable>(new IfrtIrLoadedExecutable(

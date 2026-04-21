@@ -513,6 +513,22 @@ xla_test(
 )
 
 xla_test(
+    name = "cute_dsl_custom_call_test",
+    srcs = ["cute_dsl_custom_call_test.cc"],
+    backends = ["b200"],
+    data = ["cute_dsl_vector_add.hlo"],
+    deps = [
+        ":hlo_pjrt_gpu_test_base",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:path",
+    ],
+)
+
+xla_test(
     name = "gpu_ftz_test",
     srcs = ["gpu_ftz_test.cc"],
     backends = ["gpu"],
@@ -620,7 +636,10 @@ xla_test(
         ":gpu_pjrt_codegen_test",
         "//xla:debug_options_flags",
         "//xla/service:hlo_module_config",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
         "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -767,6 +786,7 @@ lit_test_suite_for_gpus(
         include = [
             "*.hlo",
         ],
+        exclude = ["cute_dsl_vector_add.hlo"],
     ),
     cfg = "//xla:lit.cfg.py",
     default_tags = ["gpu"],  # Needs to run in a build with a gpu configured.
@@ -1279,6 +1299,7 @@ xla_test(
         "gpu",
     ],
     deps = [
+        ":collective_ops_e2e_test_base",
         "//xla:array",
         "//xla:error_spec",
         "//xla:literal",
@@ -1286,7 +1307,6 @@ xla_test(
         "//xla:shape_util",
         "//xla:types",
         "//xla:xla_data_proto_cc",
-        "//xla/backends/gpu/tests:collective_ops_e2e_test_base",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:pattern_matcher_gmock",
@@ -1438,6 +1458,7 @@ xla_test(
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
@@ -1630,6 +1651,38 @@ xla_test(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "host_cross_compilation_test",
+    srcs = ["host_cross_compilation_test.cc"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        "//xla/backends/cpu:target_machine_options",
+        "//xla/backends/gpu:ffi",
+        "//xla/backends/gpu/target_config",
+        "//xla/ffi",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:compiler",
+        "//xla/service:gpu_plugin",
+        "//xla/service:gpu_topology",
+        "//xla/service:hlo_module_config",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:device_description_proto_cc",
+        "//xla/stream_executor:platform_id",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )

@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/Bitcode/BitcodeReader.h"
@@ -52,7 +53,8 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "xla/backends/cpu/target_machine_options.h"
-#include "xla/backends/gpu/codegen/llvm/llvm_ir_compiler.h"
+#include "xla/backends/gpu/codegen/kernel_compiler.h"
+#include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
@@ -86,7 +88,6 @@ limitations under the License.
 #include "tsl/platform/path.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 namespace {
@@ -106,7 +107,17 @@ CompileModuleResults InitializeResults(const HloModule* hlo_module) {
   results.module_name = hlo_module->name();
   results.use_original_allocations = true;
   results.execution_stream_assignment =
-      std::make_unique<ExecutionStreamAssignment>(hlo_module);
+      std::make_unique<ExecutionStreamAssignment>(
+          hlo_module,
+          ExecutionStreamAssignment::Options{
+              kDefaultNumComputeStreams,
+              /*number_of_collective_execution_streams=*/
+              hlo_module->config()
+                      .debug_options()
+                      .xla_gpu_experimental_enable_collective_multi_streaming()
+                  ? kDefaultNumCommunicationStreams
+                  : 1,
+          });
   return results;
 }
 
@@ -226,8 +237,8 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     const GpuAliasInfo* alias_info,
     BufferValue::SizeFunction buffer_size_bytes_function,
     llvm_ir::LLVMCommandLineOptionsReleasableLock& llvm_options_lock,
-    LlvmIrCompiler compiler,
-    const xla::cpu::TargetMachineOptions* cpu_target_machine_options) {
+    KernelCompiler* compiler,
+    xla::cpu::TargetMachineOptions cpu_target_machine_options) {
   tsl::profiler::TraceMe traceme("CompileModuleToLlvmIr");
   const bool use_cache = UseCache(hlo_module->config().debug_options());
 
@@ -254,8 +265,8 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
       hlo_module, results.buffer_assignment.get(),
       results.execution_stream_assignment.get(), platform_id->ToName(),
       device_desc, mlir_context.get(), llvm_context, /*emit_kernels=*/true,
-      llvm::Triple(target_triple), data_layout, std::move(compiler),
-      cpu_target_machine_options);
+      llvm::Triple(target_triple), data_layout, compiler,
+      std::move(cpu_target_machine_options));
   ThunkEmitter thunk_emitter(&ir_emitter_context, &llvm_options_lock);
 
   const DebugOptions& options = hlo_module->config().debug_options();

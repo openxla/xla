@@ -16,10 +16,15 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_memory_cache.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <memory>
+#include <optional>
 #include <utility>
 
 #include "absl/synchronization/mutex.h"
+#include "xla/core/collectives/symmetric_memory.h"
 #include "xla/stream_executor/gpu/multicast_memory.h"
+#include "xla/stream_executor/memory_allocation.h"
 #include "xla/tsl/util/tied_ref.h"
 
 namespace xla::gpu {
@@ -34,6 +39,38 @@ void CollectiveMemoryCache::AddMulticastMemory(
                  multicast_memory) { return multicast_memory.Expired(); }),
       multicast_memories_.end());
   multicast_memories_.push_back(std::move(multicast_memory));
+}
+
+void CollectiveMemoryCache::AddSymmetricMemory(
+    tsl::TiedRef<SymmetricMemory> sym_memory) {
+  absl::MutexLock lock(mutex_);
+  sym_memories_.erase(
+      std::remove_if(sym_memories_.begin(), sym_memories_.end(),
+                     [](tsl::TiedRef<SymmetricMemory>& sym_memory) {
+                       return sym_memory.Expired();
+                     }),
+      sym_memories_.end());
+  sym_memories_.push_back(std::move(sym_memory));
+}
+
+std::optional<std::pair<std::shared_ptr<stream_executor::MemoryAllocation>,
+                        std::shared_ptr<SymmetricMemory>>>
+CollectiveMemoryCache::GetScratchMemory(int64_t device_ordinal) {
+  absl::MutexLock lock(mutex_);
+  if (!scratch_memory_allocations_.contains(device_ordinal)) {
+    return std::nullopt;
+  }
+  return std::make_pair(scratch_memory_allocations_[device_ordinal].Lock(),
+                        scratch_symmetric_memories_[device_ordinal].Lock());
+}
+
+void CollectiveMemoryCache::AddScratchMemory(
+    int64_t device_ordinal,
+    tsl::TiedRef<stream_executor::MemoryAllocation> memory_allocation,
+    tsl::TiedRef<SymmetricMemory> symmetric_memory) {
+  absl::MutexLock lock(mutex_);
+  scratch_memory_allocations_[device_ordinal] = std::move(memory_allocation);
+  scratch_symmetric_memories_[device_ordinal] = std::move(symmetric_memory);
 }
 
 }  // namespace xla::gpu

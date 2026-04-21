@@ -152,41 +152,43 @@ std::optional<Literal> GetReductionIdentity(ReductionKind kind,
 absl::StatusOr<std::vector<int>> GetParticipatingIDs(
     CollectiveOpGroupMode group_mode, int current_id,
     std::optional<int> total_participant_count,
-    const CollectiveDeviceListBase& groups) {
-  // Empty replica_groups() means that all replicas participate.
-  if (groups.num_replica_groups() == 0) {
+    absl::Span<const ReplicaGroup> replica_groups) {
+  // Empty replica_groups means that all replicas participate.
+  if (replica_groups.empty()) {
     TF_RET_CHECK(total_participant_count.has_value());
     std::vector<int> all_participants(*total_participant_count);
     absl::c_iota(all_participants, 0);
     return all_participants;
   }
 
-  // Formatter for printing replica groups in StrJoin.
+  // Find the replica group containing current_id.
+  for (const ReplicaGroup& g : replica_groups) {
+    if (absl::c_linear_search(g.replica_ids(), current_id)) {
+      return std::vector<int>(g.replica_ids().begin(), g.replica_ids().end());
+    }
+  }
+
+  // Formatter for printing replica groups in error messages.
   auto group_formatter = [](std::string* out, const ReplicaGroup& group) {
     out->append("[");
     out->append(absl::StrJoin(group.replica_ids(), ", "));
     out->append("]");
   };
 
-  // Figure out the other replicas that go together with this one.
-  std::optional<ReplicaGroup> group;
-  for (const ReplicaGroup& g : groups.replica_groups()) {
-    if (absl::c_linear_search(g.replica_ids(), current_id)) {
-      TF_RET_CHECK(!group.has_value())
-          << "Replica ID " << current_id << " appears twice in replica groups"
-          << "; group_mode=" << CollectiveOpGroupModeToString(group_mode)
-          << "; groups_size=" << groups.num_replica_groups() << "; groups= "
-          << absl::StrJoin(groups.replica_groups(), ", ", group_formatter);
-      group = g;
-    }
-  }
-  TF_RET_CHECK(group.has_value())
-      << "Replica ID " << current_id << " doesn't appear in replica groups"
-      << "; group_mode=" << CollectiveOpGroupModeToString(group_mode)
-      << "; groups_size=" << groups.num_replica_groups() << "; groups= "
-      << absl::StrJoin(groups.replica_groups(), ", ", group_formatter);
-  return std::vector<int>(group->replica_ids().begin(),
-                          group->replica_ids().end());
+  return Internal(
+      "Replica ID %d doesn't appear in replica groups; group_mode=%s; "
+      "groups_size=%d; groups= %s",
+      current_id, CollectiveOpGroupModeToString(group_mode),
+      replica_groups.size(),
+      absl::StrJoin(replica_groups, ", ", group_formatter));
+}
+
+absl::StatusOr<std::vector<int>> GetParticipatingIDs(
+    CollectiveOpGroupMode group_mode, int current_id,
+    std::optional<int> total_participant_count,
+    const CollectiveDeviceListBase& groups) {
+  return GetParticipatingIDs(group_mode, current_id, total_participant_count,
+                             groups.replica_groups());
 }
 
 absl::StatusOr<std::unique_ptr<CollectiveDeviceListBase>> GetAsyncReplicaGroups(
@@ -481,8 +483,6 @@ absl::StatusOr<std::vector<GlobalDeviceId>> GetParticipatingDevices(
       << current_partition_id << " " << partition_count;
 
   std::vector<GlobalDeviceId> participants;
-  CollectiveDeviceList device_list(
-      std::vector<ReplicaGroup>(replica_groups.begin(), replica_groups.end()));
   switch (group_mode) {
     case CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA: {
       // This is a cross replica operation. replica group contains replica id.
@@ -490,7 +490,7 @@ absl::StatusOr<std::vector<GlobalDeviceId>> GetParticipatingDevices(
       // replica groups are empty, assume a group with all replicas.
       TF_ASSIGN_OR_RETURN(std::vector<int> participating_replicas,
                           GetParticipatingIDs(group_mode, current_replica_id,
-                                              replica_count, device_list));
+                                              replica_count, replica_groups));
 
       // The set of participating devices is the replicas from the current
       // partition.
@@ -509,7 +509,7 @@ absl::StatusOr<std::vector<GlobalDeviceId>> GetParticipatingDevices(
       // the current replica.
       TF_ASSIGN_OR_RETURN(std::vector<int> participating_partitions,
                           GetParticipatingIDs(group_mode, current_partition_id,
-                                              partition_count, device_list));
+                                              partition_count, replica_groups));
       participants.reserve(participating_partitions.size());
       for (int partition_id : participating_partitions) {
         TF_RET_CHECK(0 <= partition_id && partition_id < partition_count)
@@ -526,7 +526,7 @@ absl::StatusOr<std::vector<GlobalDeviceId>> GetParticipatingDevices(
       // partitions.
       TF_ASSIGN_OR_RETURN(std::vector<int> participating_replicas,
                           GetParticipatingIDs(group_mode, current_replica_id,
-                                              replica_count, device_list));
+                                              replica_count, replica_groups));
       participants.reserve(participating_replicas.size() * partition_count);
       for (int replica_id : participating_replicas) {
         TF_RET_CHECK(0 <= replica_id && replica_id < replica_count)
@@ -554,7 +554,7 @@ absl::StatusOr<std::vector<GlobalDeviceId>> GetParticipatingDevices(
           std::vector<int> participating_flattened_ids,
           GetParticipatingIDs(group_mode, current_flattened_id,
                               /*total_participant_count=*/std::nullopt,
-                              device_list));
+                              replica_groups));
 
       participants.reserve(participating_flattened_ids.size());
       for (int flattened_id : participating_flattened_ids) {

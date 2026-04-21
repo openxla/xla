@@ -523,6 +523,38 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "propagate_call_metadata",
+    srcs = ["propagate_call_metadata.cc"],
+    hdrs = ["propagate_call_metadata.h"],
+    deps = [
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "propagate_call_metadata_test",
+    size = "small",
+    srcs = ["propagate_call_metadata_test.cc"],
+    deps = [
+        ":propagate_call_metadata",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "add_original_value",
     srcs = ["add_original_value.cc"],
     hdrs = ["add_original_value.h"],

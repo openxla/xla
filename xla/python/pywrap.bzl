@@ -36,7 +36,11 @@ def nanobind_pywrap_extension(
         pytype_deps = [],  # @unused
         copts = [],
         linkopts = [],
-        visibility = None):
+        visibility = None,
+        enable_stub_generation = True,  # @unused
+        stub_replacement_patterns = {},  # @unused
+        additional_stubgen_deps = [],  # @unused
+        postprocess_stubgen = None):  # @unused
     # buildifier: disable=function-docstring-args
     "Python extension rule using nanobind and the pywrap rules."
     module_name = name

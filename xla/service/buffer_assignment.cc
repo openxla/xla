@@ -991,11 +991,18 @@ std::string BufferAssignment::StatsString(const AliasInfo* alias_info) const {
 std::string BufferAssignment::ToString() const {
   std::string output;
   absl::StrAppend(&output, "BufferAssignment:\n");
+  for (auto& allocation : allocations_) {
+    absl::StrAppend(&output, allocation.ToString());
+  }
+  return output;
+}
+
+std::string BufferAssignment::ValuesToString() const {
+  std::string output;
   std::vector<const HloValue*> used_values;
   int64_t total_size = 0;
   for (auto& allocation : allocations_) {
     total_size += allocation.size();
-    absl::StrAppend(&output, allocation.ToString());
     for (const auto& p : allocation.assigned_buffers()) {
       used_values.push_back(p.first);
     }
@@ -1310,6 +1317,12 @@ void BufferAssignment::ToProto(BufferAssignmentProto* proto) const {
     for (const HeapSimulatorTrace& heap_trace : allocation.HeapTraces()) {
       *proto->add_heap_simulator_traces() = heap_trace;
     }
+    BufferAssignmentProto::PeakBuffers* proto_peak_buffers =
+        proto->add_peak_buffers();
+    proto_peak_buffers->set_index(allocation.index_);
+    for (const auto& buffer : allocation.peak_buffers_) {
+      proto_peak_buffers->add_logical_buffer_ids(buffer->id());
+    }
   }
 }
 
@@ -1457,6 +1470,19 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssignment::FromProto(
     // buffer assignment when we call `AddAssignment` above.
     CHECK_EQ(allocation->maybe_live_out(), alloc_proto.maybe_live_out())
         << "Dataflow analysis differs from proto.";
+  }
+
+  // Populate peak buffers.
+  for (const auto& peak_buffers_proto : proto.peak_buffers()) {
+    int64_t i = peak_buffers_proto.index();
+    TF_RET_CHECK(i >= 0 && i < buffer_assignment->Allocations().size());
+    BufferAllocation* allocation = &buffer_assignment->allocations_[i];
+
+    for (const auto& id : peak_buffers_proto.logical_buffer_ids()) {
+      auto it = id_to_logical_buffer.find(id);
+      TF_RET_CHECK(it != id_to_logical_buffer.end());
+      allocation->peak_buffers_.push_back(it->second);
+    }
   }
 
   // Ensure each buffer in the proto has an allocation assigned.
@@ -2598,6 +2624,8 @@ PeakMemorySizes AllocateStaticBuffers(BufferMap& buffers,
   return {padded_memory, unpadded_memory};
 }
 
+}  // namespace
+
 absl::StatusOr<absl::flat_hash_map<int64_t, int64_t>>
 ComputeLogicalBufferUnpaddedSizes(
     const HloModuleProto& hlo_module_proto,
@@ -2636,8 +2664,6 @@ ComputeLogicalBufferUnpaddedSizes(
   }
   return logical_buffer_unpadded_sizes;
 }
-
-}  // namespace
 
 int64_t ComputeTotalAllocationBytes(const BufferAssignmentProto& proto,
                                     int64_t memory_color) {

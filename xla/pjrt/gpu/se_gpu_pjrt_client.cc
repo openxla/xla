@@ -28,7 +28,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/base/no_destructor.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
@@ -45,7 +44,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "xla/backends/cpu/target_machine_options.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
@@ -126,7 +125,6 @@ limitations under the License.
 #include "tsl/platform/protobuf.h"
 #include "tsl/profiler/lib/nvtx_utils.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
 #include "xla/debug_options_flags.h"
@@ -209,15 +207,6 @@ static absl::flat_hash_map<std::string, PjRtDeviceAttribute> GetAttrsForDevices(
       attrs["target_config"] = std::move(attr);
     }
   }
-
-  std::string host_target_machine_options;
-  if (tsl::protobuf::TextFormat::PrintToString(
-          xla::cpu::TargetMachineOptions().ToProto(),
-          &host_target_machine_options)) {
-    attrs["host_target_machine_options"] =
-        std::move(host_target_machine_options);
-  }
-
   return attrs;
 }
 
@@ -429,91 +418,43 @@ using AcquiredCliqueAndCommunicator =
     std::pair<std::shared_ptr<gpu::LockableGpuClique::Lock>,
               gpu::GpuCommunicator*>;
 
-class PreparedSend {
+class PreparedTransfer {
  public:
   StreamExecutorGpuClient* client_;
   gpu::GpuCliqueKey clique_key_;
-  tsl::RCReference<CommonPjRtRawBuffer> raw_buffer_;
-  std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events_;
-  tsl::RCReference<PjRtStreamExecutorDeviceEvent> usage_event_;
+  tsl::RCReference<PjRtRawBuffer> raw_buffer_;
+  tsl::AsyncValueRef<BufferSequencingEvent> transfer_event_;
   AcquiredCliqueAndCommunicator clique_and_communicator_;
-  std::shared_ptr<Promise<>> promise_;
+  bool is_sender_;
 
-  PreparedSend(StreamExecutorGpuClient* client, gpu::GpuCliqueKey clique_key,
-               tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
-               std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events,
-               tsl::RCReference<PjRtStreamExecutorDeviceEvent> usage_event,
-               AcquiredCliqueAndCommunicator clique_and_communicator,
-               std::shared_ptr<Promise<>> promise)
+  PreparedTransfer(StreamExecutorGpuClient* client,
+                   gpu::GpuCliqueKey clique_key,
+                   tsl::RCReference<PjRtRawBuffer> raw_buffer,
+                   tsl::AsyncValueRef<BufferSequencingEvent> transfer_event,
+                   AcquiredCliqueAndCommunicator clique_and_communicator,
+                   bool is_sender)
       : client_(client),
         clique_key_(std::move(clique_key)),
         raw_buffer_(std::move(raw_buffer)),
-        definition_events_(std::move(definition_events)),
-        usage_event_(std::move(usage_event)),
+        transfer_event_(std::move(transfer_event)),
         clique_and_communicator_(std::move(clique_and_communicator)),
-        promise_(std::move(promise)) {}
+        is_sender_(is_sender) {}
 
-  PreparedSend(PreparedSend&&) = default;
-  PreparedSend& operator=(PreparedSend&&) = default;
+  PreparedTransfer(PreparedTransfer&&) = default;
+  PreparedTransfer& operator=(PreparedTransfer&&) = default;
 
-  ~PreparedSend() {
-    if (!usage_event_ || usage_event_->event()->IsDefined()) {
-      return;
-    }
-    LOG(WARNING) << "PreparedSend destroyed with unfulfilled usage_event";
-    client_->SetEventAsError(
-        usage_event_->event(),
-        absl::InternalError("PreparedSend destroyed without fulfilling "
-                            "usage_event"));
-  }
-};
-
-class PreparedReceive {
- public:
-  StreamExecutorGpuClient* client_;
-  gpu::GpuCliqueKey clique_key_;
-  std::unique_ptr<PjRtBuffer> buffer_;
-  tsl::RCReference<CommonPjRtRawBuffer> raw_buffer_;
-  tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event_;
-  AcquiredCliqueAndCommunicator clique_and_communicator_;
-
-  PreparedReceive(
-      StreamExecutorGpuClient* client, gpu::GpuCliqueKey clique_key,
-      std::unique_ptr<PjRtBuffer> buffer,
-      tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
-      tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event,
-      AcquiredCliqueAndCommunicator clique_and_communicator)
-      : client_(client),
-        clique_key_(std::move(clique_key)),
-        buffer_(std::move(buffer)),
-        raw_buffer_(std::move(raw_buffer)),
-        definition_event_(std::move(definition_event)),
-        clique_and_communicator_(std::move(clique_and_communicator)) {}
-
-  PreparedReceive(PreparedReceive&&) = default;
-  PreparedReceive& operator=(PreparedReceive&&) = default;
-
-  ~PreparedReceive() {
-    if (!definition_event_ || definition_event_->event()->IsDefined()) {
+  ~PreparedTransfer() {
+    if (!transfer_event_ || transfer_event_->IsDefined()) {
       return;
     }
     LOG(WARNING)
-        << "PreparedReceive destroyed with unfulfilled definition_event";
+        << "PreparedTransfer destroyed with unfulfilled transfer_event.";
     client_->SetEventAsError(
-        definition_event_->event(),
-        absl::InternalError("PreparedReceive destroyed without fulfilling "
-                            "definition_event"));
+        transfer_event_,
+        absl::InternalError(
+            "PreparedTransfer destroyed without fulfilling transfer_event."));
   }
 };
-
-// Hang watchdog for GPU clique acquisition in the PjRt client. Clique
-// acquisition can block indefinitely inside ncclCommInit if remote nodes are
-// unreachable.
-static HangWatchdog& PjRtClientHangWatchdog() {
-  static absl::NoDestructor<HangWatchdog> watchdog(
-      tsl::Env::Default(), "pjrt-gpu-client", /*num_threads=*/2);
-  return *watchdog;
-}
 
 static absl::Duration PjRtClientWatchdogTimeout() {
   const auto& debug_options = GetDebugOptionsFromFlags();
@@ -555,7 +496,7 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
       std::string watchdog_name =
           absl::StrFormat("[%d] PjRt GPU client AcquireGpuClique for %v",
                           device_ordinal, clique_key);
-      guard = PjRtClientHangWatchdog().Watch(
+      guard = HangWatchdog::Global().Watch(
           watchdog_name, watchdog_timeout,
           HangWatchdog::Abort(watchdog_name, watchdog_timeout));
     }
@@ -584,167 +525,88 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
       tsl::down_cast<gpu::GpuCommunicator*>(*maybe_communicator)};
 }
 
-// Create a `PreparedSend` object bundling together state needed to perform a
-// send.
-absl::StatusOr<PreparedSend> PrepareSend(
+// Create a `PreparedTransfer` object bundling together state needed to perform
+// a transfer.
+absl::StatusOr<PreparedTransfer> PrepareTransfer(
     StreamExecutorGpuClient* client, gpu::GpuCollectives* gpu_collectives,
-    se::Stream* stream, PjRtBuffer* buffer, GlobalDeviceId dst_global_device_id,
-    CrossHostTransferKey transfer_key,
+    se::Stream* stream, GlobalDeviceId src_global_device_id,
+    GlobalDeviceId dst_global_device_id,
+    tsl::RCReference<PjRtRawBuffer> raw_buffer,
     gpu::AcquiredCliquesMap& acquired_cliques_map,
-    std::shared_ptr<Promise<>> promise,
-    tsl::RCReference<PjRtStreamExecutorDeviceEvent> usage_event) {
-  GlobalDeviceId src_device(buffer->device()->global_device_id().value());
+    tsl::AsyncValueRef<BufferSequencingEvent> transfer_event, bool is_sender) {
+  GlobalDeviceId src_device(src_global_device_id.value());
   GlobalDeviceId dst_device(dst_global_device_id.value());
 
   tsl::profiler::TraceMe trace([&] {
-    return tsl::profiler::TraceMeEncode(
-        absl::StrFormat("PrepareSend: src=%v dst=%v", src_device, dst_device),
-        {{"transfer_key", transfer_key}});
+    return absl::StrFormat("PrepareTransfer: src=%v dst=%v", src_device,
+                           dst_device);
   });
 
   // Form the GPU clique key.
   // TODO(asrao, mwhittaker): Supply correct incarnations when creating the
   // clique key.
-  gpu::GpuCliqueKey clique_key = gpu::GpuCliqueKey(
+  const gpu::GpuCliqueKey clique_key = gpu::GpuCliqueKey(
       /*devices=*/{src_device, dst_device},
       /*num_local_participants=*/1);
 
-  // Get the clique and communicator for the send.
+  // Get the clique and communicator for the transfer.
   TF_ASSIGN_OR_RETURN(
       AcquiredCliqueAndCommunicator clique_and_communicator,
       AcquireCliqueAndCommunicator(client, gpu_collectives, clique_key,
                                    /*device_groups=*/{{src_device, dst_device}},
-                                   acquired_cliques_map, RankId(0), stream));
-
-  // Acquire a hold on this buffer. The hold is held as long as usage_event is
-  // not fulfilled; this behavior is achieved by registering a 'dummy' closure
-  // capturing raw_buffer that executes after usage_event is fulfilled.
-  // definition_events can be used to track when the buffer data is ready.
-  tsl::RCReference<CommonPjRtRawBuffer> raw_buffer;
-  std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events;
-
-  TF_RETURN_IF_ERROR(
-      tensorflow::down_cast<CommonPjRtBufferImpl*>(buffer)
-          ->AcquireScopedRawBuffer(
-              [&](tsl::RCReference<CommonPjRtRawBuffer> buf_raw_buffer,
-                  std::vector<tsl::RCReference<tsl::AsyncValue>>
-                      buf_definition_events) mutable
-                  -> absl::StatusOr<PjRtDeviceEventRef> {
-                raw_buffer = std::move(buf_raw_buffer);
-                usage_event->AndThen([raw_buffer]() {});
-                definition_events = std::move(buf_definition_events);
-                return usage_event;
-              },
-              "PrepareSend"));
+                                   acquired_cliques_map,
+                                   RankId(is_sender ? 0 : 1), stream));
 
   // Return the result.
-  return PreparedSend(client, std::move(clique_key), std::move(raw_buffer),
-                      std::move(definition_events), std::move(usage_event),
-                      std::move(clique_and_communicator), std::move(promise));
+  return PreparedTransfer(client, std::move(clique_key), std::move(raw_buffer),
+                          std::move(transfer_event),
+                          std::move(clique_and_communicator), is_sender);
 }
 
-// Create a `PreparedReceive` object bundling together state needed to perform a
-// receive.
-absl::StatusOr<PreparedReceive> PrepareReceive(
-    StreamExecutorGpuClient* client, gpu::GpuCollectives* gpu_collectives,
-    se::Stream* stream, PjRtDevice* device, PjRtMemorySpace* memory_space,
-    GlobalDeviceId src_global_device_id, CrossHostTransferKey transfer_key,
-    Shape shape, gpu::AcquiredCliquesMap& acquired_cliques_map,
-    tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event) {
-  GlobalDeviceId src_device(src_global_device_id.value());
-  GlobalDeviceId dst_device(device->global_device_id().value());
-
-  tsl::profiler::TraceMe trace([&] {
-    return tsl::profiler::TraceMeEncode(
-        absl::StrFormat("PrepareReceive: src=%v dst=%v", src_device,
-                        dst_device),
-        {{"transfer_key", transfer_key}});
-  });
-
-  // Form the GPU clique key.
-  // TODO(asrao, mwhittaker): Supply correct incarnations when creating the
-  // clique key.
-  gpu::GpuCliqueKey clique_key = gpu::GpuCliqueKey(
-      /*devices=*/{src_device, dst_device},
-      /*num_local_participants=*/1);
-
-  // Get the clique and communicator for the receive.
-  TF_ASSIGN_OR_RETURN(
-      AcquiredCliqueAndCommunicator clique_and_communicator,
-      AcquireCliqueAndCommunicator(client, gpu_collectives, clique_key,
-                                   /*device_groups=*/{{src_device, dst_device}},
-                                   acquired_cliques_map, RankId(1), stream));
-
-  // Allocate an uninitialized buffer. The buffer will be populated with data
-  // received from the sending process.
-  TF_ASSIGN_OR_RETURN(
-      Shape on_device_shape,
-      client->MakeDefaultShapeForMemorySpace(
-          memory_space, shape, shape.has_layout() ? &shape.layout() : nullptr));
-  TF_ASSIGN_OR_RETURN(
-      size_t on_device_bytes_count,
-      client->GetOnDeviceBytesCount(memory_space, on_device_shape));
-  TF_ASSIGN_OR_RETURN(
-      tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
-      client->AllocateRawBuffer(memory_space, on_device_bytes_count,
-                                /*retry_on_oom=*/true,
-                                /*allocate_after=*/{}));
-
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<PjRtBuffer> buffer,
-      client->DefineBuffer(std::move(on_device_shape), memory_space, raw_buffer,
-                           {definition_event}));
-  definition_event->AndThen([raw_buffer]() {});
-
-  return PreparedReceive(client, std::move(clique_key), std::move(buffer),
-                         std::move(raw_buffer), std::move(definition_event),
-                         std::move(clique_and_communicator));
-}
-
-absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedSend>>
-GroupSendsByCliqueKey(std::vector<PreparedSend>&& prepared_sends) {
-  absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedSend>> grouped;
-  grouped.reserve(prepared_sends.size());
-  for (auto&& prepared_send : prepared_sends) {
-    grouped[prepared_send.clique_key_].push_back(std::move(prepared_send));
+absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>
+GroupTransfersByCliqueKey(std::vector<PreparedTransfer>&& prepared_transfers) {
+  absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>> grouped;
+  grouped.reserve(prepared_transfers.size());
+  for (auto&& prepared_transfer : prepared_transfers) {
+    grouped[prepared_transfer.clique_key_].push_back(
+        std::move(prepared_transfer));
   }
   return grouped;
 }
 
-absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedReceive>>
-GroupReceivesByCliqueKey(std::vector<PreparedReceive>&& prepared_receives) {
-  absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedReceive>> grouped;
-  grouped.reserve(prepared_receives.size());
-  for (auto&& prepared_receive : prepared_receives) {
-    grouped[prepared_receive.clique_key_].push_back(
-        std::move(prepared_receive));
-  }
-  return grouped;
-}
-
-absl::Status FulfillDeviceEvent(
-    PjRtStreamExecutorClient* client, LocalDeviceState* local_device_state,
-    se::Stream* stream,
-    tsl::RCReference<PjRtStreamExecutorDeviceEvent> device_event,
-    const absl::Status& status) {
+void FulfillDeviceEvent(PjRtStreamExecutorClient* client,
+                        LocalDeviceState* local_device_state,
+                        se::Stream* stream,
+                        tsl::AsyncValueRef<BufferSequencingEvent> device_event,
+                        const absl::Status& status) {
   if (!status.ok()) {
-    client->SetEventAsError(device_event->event(), status);
-    return absl::OkStatus();
+    client->SetEventAsError(device_event, status);
+    return;
   }
-  absl::Status s = client->AllocateAndRecordEvent(device_event->event(),
-                                                  local_device_state, stream);
+  absl::Status s =
+      client->AllocateAndRecordEvent(device_event, local_device_state, stream);
   if (!s.ok()) {
-    client->SetEventAsError(device_event->event(), s);
+    client->SetEventAsError(device_event, s);
   }
-  return s;
 }
 
-void FulfillPromises(std::vector<std::shared_ptr<Promise<>>>& promises,
-                     absl::Status status) {
-  for (std::shared_ptr<Promise<>>& promise : promises) {
-    promise->Set(status);
+absl::Status WaitForAsyncValueRefsOnStream(
+    absl::Span<const tsl::RCReference<tsl::AsyncValue>> async_value_refs,
+    se::Stream* stream) {
+  for (const auto& event : async_value_refs) {
+    if (event->IsType<BufferSequencingEvent>()) {
+      tsl::AsyncValueRef<BufferSequencingEvent> event_ref(event);
+      event_ref->WaitForEventOnStream(stream);
+    } else {
+      tsl::BlockUntilReady(event.get());
+    }
+    if (auto* status = event->GetErrorIfPresent(); status != nullptr) {
+      return *status;
+    }
   }
+  return absl::OkStatus();
 }
+
 }  // namespace
 
 // Send functionality for second cross-host transfers API.
@@ -796,190 +658,249 @@ StreamExecutorGpuClient::CrossHostSendBuffers(
     promises.push_back(std::move(promise).ToShared());
   }
 
+  // Extract the raw buffers and definition events for each of the input send
+  // buffers.
+  std::vector<tsl::RCReference<PjRtRawBuffer>> raw_buffers;
+  raw_buffers.reserve(buffers.size());
+
+  std::vector<std::vector<tsl::RCReference<tsl::AsyncValue>>>
+      transfer_dependency_avs;
+  transfer_dependency_avs.reserve(buffers.size());
+
+  std::vector<tsl::RCReference<PjRtDeviceEventPromise>> usage_event_promises;
+  usage_event_promises.reserve(buffers.size());
+
+  for (int i = 0; i < buffers.size(); ++i) {
+    tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise;
+    PjRtDeviceEventRef usage_event;
+    TF_ASSIGN_OR_RETURN(
+        std::tie(usage_event_promise, usage_event),
+        CreateLinkedEventPromise(
+            buffers[i]->memory_space(),
+            absl::StrFormat("CrossHostSendBuffers buffer %i", i)));
+    usage_event_promises.push_back(std::move(usage_event_promise));
+    usage_event.AndThen([promise = std::move(promises[i]), usage_event]() {
+      CHECK(usage_event.async_value()->IsAvailable());
+      if (usage_event.async_value()->IsError()) {
+        promise->Set(usage_event.async_value()->GetError());
+      } else {
+        promise->Set(absl::OkStatus());
+      }
+    });
+    TF_RETURN_IF_ERROR(
+        tensorflow::down_cast<CommonPjRtBufferImpl*>(buffers[i])
+            ->AcquireScopedRawBuffer(
+                [&](tsl::RCReference<CommonPjRtRawBuffer> buf_raw_buffer,
+                    std::vector<tsl::RCReference<tsl::AsyncValue>>
+                        buf_definition_events) mutable
+                    -> absl::StatusOr<PjRtDeviceEventRef> {
+                  // Keep raw_buffer alive until the usage_event completes,
+                  // preventing the allocation from being freed while the
+                  // send is in-flight.
+                  usage_event.AndThen([buf_raw_buffer]() {});
+                  raw_buffers.push_back(std::move(buf_raw_buffer));
+                  transfer_dependency_avs.push_back(
+                      std::move(buf_definition_events));
+                  return PjRtDeviceEventRef(usage_event);
+                },
+                "CrossHostSendBuffers"));
+  }
+
   // Group the sends by local device.
   absl::flat_hash_map<PjRtDevice*, std::vector<int>> sends_by_device;
   for (int i = 0; i < buffers.size(); ++i) {
     sends_by_device[buffers[i]->device()].push_back(i);
   }
 
-  // Execute sends for each local device.
-  for (auto& [device, send_idxs] : sends_by_device) {
-    // Execute sends.
-    std::vector<PjRtBuffer*> curr_buffers;
-    std::vector<GlobalDeviceId> curr_dst_ids;
-    std::vector<CrossHostTransferKey> curr_transfer_keys;
-    std::vector<std::shared_ptr<Promise<>>> curr_promises;
+  // Schedule sends.
+  for (const auto& [device, send_idxs] : sends_by_device) {
+    const GlobalDeviceId src_global_device_id = device->global_device_id();
+
+    // Create a transfer event for transfers on this device.
+    tsl::AsyncValueRef<BufferSequencingEvent> transfer_event =
+        BufferSequencingEvent::Create(this->async_work_runner());
+
+    // Extract transfer dependencies, form transfer specs, and fulfill
+    // usage_event_promises.
+    std::vector<tsl::RCReference<tsl::AsyncValue>> curr_transfer_dependency_avs;
+    std::vector<CrossHostTransferSpec> transfer_specs;
+    transfer_specs.reserve(send_idxs.size());
+
     for (int idx : send_idxs) {
-      curr_buffers.push_back(buffers[idx]);
-      curr_dst_ids.push_back(dst_global_device_ids[idx]);
-      curr_transfer_keys.push_back(transfer_keys[idx]);
-      curr_promises.push_back(promises[idx]);
+      for (tsl::RCReference<tsl::AsyncValue>& event :
+           transfer_dependency_avs[idx]) {
+        curr_transfer_dependency_avs.push_back(std::move(event));
+      }
+      transfer_specs.push_back(CrossHostTransferSpec{
+          src_global_device_id, dst_global_device_ids[idx],
+          std::move(raw_buffers[idx])});
+
+      usage_event_promises[idx]->Set(PjRtDeviceEventRef(transfer_event));
     }
 
-    ScheduleSendsOnLocalDevice(
-        device, std::move(curr_buffers), std::move(curr_dst_ids),
-        std::move(curr_transfer_keys), std::move(curr_promises));
+    // Get the local_device_state and use it to schedule transfers. Fail
+    // transfers early if we cannot get the local_device_state.
+    absl::StatusOr<LocalDeviceState*> local_device_state =
+        tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
+            ->GetLocalDeviceState();
+    if (!local_device_state.ok()) {
+      SetEventAsError(transfer_event, local_device_state.status());
+      continue;
+    }
+
+    ScheduleTransfersOnLocalDevice(
+        *local_device_state, src_global_device_id, std::move(transfer_event),
+        std::move(curr_transfer_dependency_avs), std::move(transfer_specs));
   }
 
   return futures;
 }
 
-void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
-    PjRtDevice* device, std::vector<PjRtBuffer*> buffers,
-    const std::vector<GlobalDeviceId> dst_global_device_ids,
-    const std::vector<CrossHostTransferKey> transfer_keys,
-    std::vector<std::shared_ptr<Promise<>>> promises) {
-  // Get the local device state, transfer stream, and prepare the send
-  // buffers. We associate the group of sends with a single usage_event.
-  LocalDeviceState* local_device_state;
-  se::Stream* stream;
-  std::vector<PreparedSend> prepared_sends;
-  prepared_sends.reserve(buffers.size());
-  tsl::RCReference<PjRtStreamExecutorDeviceEvent> usage_event;
-
+void StreamExecutorGpuClient::ScheduleTransfersOnLocalDevice(
+    LocalDeviceState* local_device_state, GlobalDeviceId device_id,
+    tsl::AsyncValueRef<BufferSequencingEvent> transfer_event,
+    std::vector<tsl::RCReference<tsl::AsyncValue>> transfer_dependency_avs,
+    std::vector<CrossHostTransferSpec> transfer_specs) {
   tsl::profiler::TraceMe trace([&] {
     return tsl::profiler::TraceMeEncode(
         absl::StrFormat(
-            "[%v] StreamExecutorGpuClient::ScheduleSendsOnLocalDevice",
-            device->local_device_id()),
-        {{"num_buffers", buffers.size()}});
+            "[%v] StreamExecutorGpuClient::ScheduleTransfersOnLocalDevice",
+            local_device_state->local_device_id()),
+        {{"num_buffers", transfer_specs.size()}});
   });
 
-  auto setup_sends = [&]() -> absl::Status {
-    TF_ASSIGN_OR_RETURN(local_device_state, GetLocalDeviceState(device));
-    stream = local_device_state->GetDeviceToDeviceStream();
+  se::Stream* stream = local_device_state->GetDeviceToDeviceStream();
+  std::vector<PreparedTransfer> prepared_transfers;
+  prepared_transfers.reserve(transfer_specs.size());
+
+  auto prepare_transfers = [&]() -> absl::Status {
     gpu::GpuCollectives* gpu_collectives =
         gpu::GpuCollectives::Default(stream->parent()->GetPlatform()->Name());
-    usage_event = tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(
-        BufferSequencingEvent::Create(this->async_work_runner()));
 
     gpu::AcquiredCliquesMap acquired_cliques_map;
-    for (int i = 0; i < buffers.size(); ++i) {
-      absl::StatusOr<PreparedSend> prepared_send = PrepareSend(
-          this, gpu_collectives, stream, buffers[i], dst_global_device_ids[i],
-          transfer_keys[i], acquired_cliques_map, promises[i], usage_event);
+    for (int i = 0; i < transfer_specs.size(); ++i) {
+      const bool is_sender =
+          device_id == transfer_specs[i].src_global_device_id;
+      TF_ASSIGN_OR_RETURN(
+          PreparedTransfer prepared_transfer,
+          PrepareTransfer(this, gpu_collectives, stream,
+                          transfer_specs[i].src_global_device_id,
+                          transfer_specs[i].dst_global_device_id,
+                          std::move(transfer_specs[i].raw_buffer),
+                          acquired_cliques_map, transfer_event, is_sender));
 
-      if (!prepared_send.ok()) {
-        SetEventAsError(usage_event->event(), prepared_send.status());
-        return prepared_send.status();
-      }
-
-      prepared_sends.push_back(*std::move(prepared_send));
+      prepared_transfers.push_back(std::move(prepared_transfer));
     }
 
     return absl::OkStatus();
   };
 
-  if (absl::Status status = setup_sends(); !status.ok()) {
-    FulfillPromises(promises, status);
+  if (absl::Status status = prepare_transfers(); !status.ok()) {
+    FulfillDeviceEvent(this, local_device_state, stream, transfer_event,
+                       status);
     return;
   }
 
-  // Form the closure called for each group of sends.
-  auto launch_send_group = [](gpu::GpuCommunicator* gpu_communicator,
-                              absl::Span<PreparedSend> prepared_sends,
-                              se::Stream* stream) -> absl::Status {
-    for (PreparedSend& prepared_send : prepared_sends) {
-      // Wait until the buffer we want to send is fully materialized.
-      for (const auto& event : prepared_send.definition_events_) {
-        if (event->IsType<BufferSequencingEvent>()) {
-          tsl::AsyncValueRef<BufferSequencingEvent> event_ref(event);
-          event_ref->WaitForEventOnStream(stream);
-        } else {
-          tsl::BlockUntilReady(event.get());
-        }
-        if (auto* status = event->GetErrorIfPresent(); status != nullptr) {
-          return *status;
-        }
-      }
-      // Launch the send.
+  // Form the closure called for each group of transfers.
+  auto launch_transfer_group =
+      [](gpu::GpuCommunicator* gpu_communicator,
+         absl::Span<PreparedTransfer> prepared_transfers,
+         se::Stream* stream) -> absl::Status {
+    for (PreparedTransfer& prepared_transfer : prepared_transfers) {
+      // Launch the transfer.
       auto mem = tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
-                     prepared_send.raw_buffer_.get())
+                     prepared_transfer.raw_buffer_.get())
                      ->device_buffer();
-      TF_RETURN_IF_ERROR(gpu_communicator->LaunchSend(
-          /*send_buffer=*/mem->mem(),
-          /*dtype=*/U8,
-          /*count=*/mem->mem().size(),
-          /*peer=*/RankId(1),
-          /*executor=*/gpu::GpuCollectives::On(*stream)));
+
+      // We always set `peer` to RankId(1) if we are the sender, and RankId(0)
+      // if we are the receiver. This is because `PrepareTransfer()` always
+      // acquires a GPU clique where the sender is rank 0 and the receiver is
+      // rank 1.
+      if (prepared_transfer.is_sender_) {
+        TF_RETURN_IF_ERROR(gpu_communicator->LaunchSend(
+            /*send_buffer=*/mem->mem(),
+            /*dtype=*/U8,
+            /*count=*/mem->mem().size(),
+            /*peer=*/RankId(1),
+            /*executor=*/gpu::GpuCollectives::On(*stream)));
+      } else {
+        TF_RETURN_IF_ERROR(gpu_communicator->LaunchRecv(
+            /*send_buffer=*/mem->mem(),
+            /*dtype=*/U8,
+            /*count=*/mem->mem().size(),
+            /*peer=*/RankId(0),
+            /*executor=*/gpu::GpuCollectives::On(*stream)));
+      }
     }
     return absl::OkStatus();
   };
 
   // Form the closure to schedule on the device's execute thread.
-  auto execute_sends_fn = [this, local_device_state, stream,
-                           promises = std::move(promises),
-                           prepared_sends = std::move(prepared_sends),
-                           launch_send_group = std::move(launch_send_group),
-                           usage_event = std::move(usage_event)]() mutable {
-    // Group transfers by GPU clique.
-    absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedSend>>
-        grouped_sends = GroupSendsByCliqueKey(std::move(prepared_sends));
+  auto execute_transfers_fn =
+      [this, local_device_state, stream,
+       transfer_dependency_avs = std::move(transfer_dependency_avs),
+       prepared_transfers = std::move(prepared_transfers),
+       launch_transfer_group = std::move(launch_transfer_group),
+       transfer_event = std::move(transfer_event)]() mutable {
+        // Wait for transfer dependencies.
+        if (auto status =
+                WaitForAsyncValueRefsOnStream(transfer_dependency_avs, stream);
+            !status.ok()) {
+          FulfillDeviceEvent(this, local_device_state, stream, transfer_event,
+                             status);
+          return;
+        }
 
-    // Transfers for a particular clique are executed as a group. This vector
-    // holds group futures for each clique_key in grouped_sends.
-    std::vector<Future<>> group_futures;
-    group_futures.reserve(grouped_sends.size());
+        // Group transfers by GPU clique.
+        absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>
+            grouped_transfers =
+                GroupTransfersByCliqueKey(std::move(prepared_transfers));
 
-    for (auto& [clique_key, curr_sends] : grouped_sends) {
-      tsl::profiler::TraceMe trace([&k = clique_key] {
-        return tsl::profiler::TraceMeEncode("LaunchSend", {{"clique", k}});
-      });
+        // Transfers for a particular clique are executed as a group. This
+        // vector holds group futures for each clique_key in grouped_sends.
+        std::vector<Future<>> group_futures;
+        group_futures.reserve(grouped_transfers.size());
 
-      // Get the communicator on which we will execute this group of
-      // transfers. We assume each clique key is associated with a unique
-      // communicator, so we just take the communicator of the first
-      // transfer_idx of this clique key.
-      gpu::GpuCommunicator* gpu_communicator =
-          curr_sends[0].clique_and_communicator_.second;
+        for (auto& [clique_key, curr_transfers] : grouped_transfers) {
+          tsl::profiler::TraceMe trace([&k = clique_key] {
+            return tsl::profiler::TraceMeEncode("LaunchTransfer",
+                                                {{"clique", k}});
+          });
 
-      // Launch the group of transfers.
-      group_futures.push_back(gpu_communicator->GroupExecute(
-          [&launch_send_group, &curr_sends = curr_sends,
-           stream](gpu::GpuCommunicator* gpu_comm) -> absl::Status {
-            return launch_send_group(gpu_comm, absl::MakeSpan(curr_sends),
-                                     stream);
-          }));
-    }
+          // Get the communicator on which we will execute this group of
+          // transfers. We assume each clique key is associated with a unique
+          // communicator, so we just take the communicator of the first
+          // transfer_idx of this clique key.
+          gpu::GpuCommunicator* gpu_communicator =
+              curr_transfers[0].clique_and_communicator_.second;
 
-    // On a separate thread pool, await group futures and fulfill buffer
-    // sequencing events and promises.
-    Future<> all_sends_future = JoinFutures(group_futures);
+          // Launch the group of transfers.
+          group_futures.push_back(gpu_communicator->GroupExecute(
+              [&launch_transfer_group, &curr_transfers = curr_transfers,
+               stream](gpu::GpuCommunicator* gpu_comm) -> absl::Status {
+                return launch_transfer_group(
+                    gpu_comm, absl::MakeSpan(curr_transfers), stream);
+              }));
+        }
 
-    all_sends_future.OnReady(
-        *async_work_runner(),
-        [this, local_device_state, stream, promises = std::move(promises),
-         usage_event, grouped_sends = std::move(grouped_sends)](
-            const absl::Status& status) mutable {
-          // Add usage_event onto the stream.
-          absl::Status fulfill_status = FulfillDeviceEvent(
-              this, local_device_state, stream, usage_event, status);
+        // On a separate thread pool, await group futures and fulfill buffer
+        // sequencing events and promises.
+        Future<> all_transfers_future = JoinFutures(group_futures);
 
-          // Fail promises early if there was an issue.
-          if (!status.ok() || !fulfill_status.ok()) {
-            FulfillPromises(promises, status);
-            return;
-          }
-
-          // Asynchronously fulfill promises via a host callback, failing them
-          // early if there is an issue registering the callback.
-          absl::Status callback_status = RunCallbackOnStream(
-              stream, this->async_work_runner(),
-              [promises]() mutable {
-                FulfillPromises(promises, absl::OkStatus());
-              },
-              [promises](absl::Status status) mutable {
-                FulfillPromises(promises, status);
-              });
-
-          if (!callback_status.ok()) {
-            FulfillPromises(promises, callback_status);
-          }
-        });
-  };
+        all_transfers_future.OnReady(
+            *async_work_runner(),
+            [this, local_device_state, stream, transfer_event,
+             grouped_transfers = std::move(grouped_transfers)](
+                const absl::Status& status) mutable {
+              // Add transfer_event onto the stream.
+              FulfillDeviceEvent(this, local_device_state, stream,
+                                 transfer_event, status);
+            });
+      };
 
   // Schedule transfers on the execute thread.
-  local_device_state->execute_thread()->Schedule(std::move(execute_sends_fn));
+  local_device_state->execute_thread()->Schedule(
+      std::move(execute_transfers_fn));
 }
 
 // Prepare a receive buffer on a given device for receiving data as part of a
@@ -1012,9 +933,8 @@ StreamExecutorGpuClient::PrepareReceiveBuffer(PjRtDevice* device, Shape shape) {
       BufferSequencingEvent::Create(this->async_work_runner());
   TF_ASSIGN_OR_RETURN(
       auto buffer,
-      DefineBuffer(
-          std::move(on_device_shape), memory_space, raw_buffer,
-          {tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(definition_event)}));
+      DefineBuffer(std::move(on_device_shape), memory_space, raw_buffer,
+                   {PjRtDeviceEventRef(std::move(definition_event))}));
 
   return PrepareReceiveBufferResult{std::move(buffer), std::move(raw_buffer),
                                     local_device, stream,
@@ -1067,9 +987,10 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
   se::Stream* stream;
   std::vector<std::unique_ptr<PjRtBuffer>> buffers;
   buffers.reserve(shapes.size());
-  std::vector<PreparedReceive> prepared_receives;
+  std::vector<PreparedTransfer> prepared_receives;
   prepared_receives.reserve(shapes.size());
-  tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event;
+  tsl::AsyncValueRef<BufferSequencingEvent> definition_event;
+  std::vector<tsl::RCReference<tsl::AsyncValue>> transfer_dependency_avs;
 
   tsl::profiler::TraceMe trace([&] {
     return tsl::profiler::TraceMeEncode(
@@ -1085,39 +1006,68 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
                         device->default_memory_space());
     gpu::GpuCollectives* gpu_collectives =
         gpu::GpuCollectives::Default(stream->parent()->GetPlatform()->Name());
-    definition_event = tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(
-        BufferSequencingEvent::Create(this->async_work_runner()));
+    definition_event = BufferSequencingEvent::Create(this->async_work_runner());
 
     gpu::AcquiredCliquesMap acquired_cliques_map;
     for (int i = 0; i < shapes.size(); ++i) {
-      absl::StatusOr<PreparedReceive> prepared_receive =
-          PrepareReceive(this, gpu_collectives, stream, device, memory_space,
-                         src_global_device_ids[i], transfer_keys[i], shapes[i],
-                         acquired_cliques_map, definition_event);
+      // Allocate the raw buffer and define its owning PjRtBuffer.
+      TF_ASSIGN_OR_RETURN(
+          Shape on_device_shape,
+          MakeDefaultShapeForMemorySpace(
+              memory_space, shapes[i],
+              shapes[i].has_layout() ? &shapes[i].layout() : nullptr));
+      TF_ASSIGN_OR_RETURN(size_t on_device_bytes_count,
+                          GetOnDeviceBytesCount(memory_space, on_device_shape));
+      TF_ASSIGN_OR_RETURN(tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+                          AllocateRawBuffer(memory_space, on_device_bytes_count,
+                                            /*retry_on_oom=*/true,
+                                            /*allocate_after=*/{}));
+      TF_ASSIGN_OR_RETURN(
+          std::unique_ptr<PjRtBuffer> buffer,
+          DefineBuffer(std::move(on_device_shape), memory_space, raw_buffer,
+                       {PjRtDeviceEventRef(definition_event)}));
+      // Keep raw_buffer alive until the definition_event completes, preventing
+      // the allocation from being freed while the receive is in-flight.
+      definition_event.AndThen([raw_buffer]() {});
 
-      if (!prepared_receive.ok()) {
-        SetEventAsError(definition_event->event(), prepared_receive.status());
-        return prepared_receive.status();
+      // Store a ref to the allocation event as a transfer dependency so that
+      // the NCCL receive waits for the buffer allocation to complete.
+      TF_ASSIGN_OR_RETURN(
+          BufferSequencingEventRef allocation_event,
+          tensorflow::down_cast<const PjRtStreamExecutorRawBuffer*>(
+              raw_buffer.get())
+              ->device_buffer()
+              ->GetDefinitionEvent(async_work_runner(),
+                                   /*nullptr_if_past=*/true));
+      if (allocation_event) {
+        transfer_dependency_avs.push_back(allocation_event.CopyRCRef());
       }
 
-      buffers.push_back(std::move(prepared_receive->buffer_));
-      prepared_receives.push_back(*std::move(prepared_receive));
+      TF_ASSIGN_OR_RETURN(
+          PreparedTransfer prepared_receive,
+          PrepareTransfer(this, gpu_collectives, stream,
+                          src_global_device_ids[i], device->global_device_id(),
+                          std::move(raw_buffer), acquired_cliques_map,
+                          definition_event,
+                          /*is_sender=*/false));
+
+      buffers.push_back(std::move(buffer));
+      prepared_receives.push_back(std::move(prepared_receive));
     }
 
     return absl::OkStatus();
   };
-  TF_RETURN_IF_ERROR(setup_receives());
+
+  if (absl::Status status = setup_receives(); !status.ok()) {
+    SetEventAsError(definition_event, status);
+    return status;
+  }
 
   // Form the closure called for each group of receives.
-  auto launch_receive_group = [this](
-                                  gpu::GpuCommunicator* gpu_communicator,
-                                  absl::Span<PreparedReceive> prepared_receives,
-                                  se::Stream* stream) -> absl::Status {
-    for (PreparedReceive& prepared_receive : prepared_receives) {
-      // Wait until the receive buffer is allocated.
-      TF_RETURN_IF_ERROR(
-          WaitForAllocation(stream, *prepared_receive.raw_buffer_));
-
+  auto launch_receive_group = [](gpu::GpuCommunicator* gpu_communicator,
+                                 absl::Span<PreparedTransfer> prepared_receives,
+                                 se::Stream* stream) -> absl::Status {
+    for (PreparedTransfer& prepared_receive : prepared_receives) {
       // Launch the receive.
       auto mem = tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
                      prepared_receive.raw_buffer_.get())
@@ -1133,56 +1083,66 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
   };
 
   // Form the closure to schedule on the device's execute thread.
-  auto execute_receives_fn = [this, local_device_state, stream,
-                              prepared_receives = std::move(prepared_receives),
-                              launch_receive_group =
-                                  std::move(launch_receive_group),
-                              definition_event =
-                                  std::move(definition_event)]() mutable {
-    // Group transfers by GPU clique.
-    absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedReceive>>
-        grouped_receives =
-            GroupReceivesByCliqueKey(std::move(prepared_receives));
+  auto execute_receives_fn =
+      [this, local_device_state, stream,
+       transfer_dependency_avs = std::move(transfer_dependency_avs),
+       prepared_receives = std::move(prepared_receives),
+       launch_receive_group = std::move(launch_receive_group),
+       definition_event = std::move(definition_event)]() mutable {
+        // Wait for transfer dependencies.
+        if (auto status =
+                WaitForAsyncValueRefsOnStream(transfer_dependency_avs, stream);
+            !status.ok()) {
+          FulfillDeviceEvent(this, local_device_state, stream, definition_event,
+                             status);
+          return;
+        }
 
-    // Transfers for a particular clique are executed as a group. This
-    // vector holds group futures for each clique_key in grouped_receives.
-    std::vector<Future<>> group_futures;
-    group_futures.reserve(grouped_receives.size());
+        // Group transfers by GPU clique.
+        absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>
+            grouped_receives =
+                GroupTransfersByCliqueKey(std::move(prepared_receives));
 
-    for (auto& [clique_key, curr_receives] : grouped_receives) {
-      tsl::profiler::TraceMe trace([&k = clique_key] {
-        return tsl::profiler::TraceMeEncode("LaunchRecv", {{"clique", k}});
-      });
+        // Transfers for a particular clique are executed as a group. This
+        // vector holds group futures for each clique_key in grouped_receives.
+        std::vector<Future<>> group_futures;
+        group_futures.reserve(grouped_receives.size());
 
-      // Get the communicator on which we will execute this group of
-      // transfers. We assume each clique key is associated with a unique
-      // communicator, so we just take the communicator of the first
-      // transfer_idx of this clique key.
-      gpu::GpuCommunicator* gpu_communicator =
-          curr_receives[0].clique_and_communicator_.second;
+        for (auto& [clique_key, curr_receives] : grouped_receives) {
+          tsl::profiler::TraceMe trace([&k = clique_key] {
+            return tsl::profiler::TraceMeEncode("LaunchRecv", {{"clique", k}});
+          });
 
-      // Launch the group of transfers.
-      group_futures.push_back(gpu_communicator->GroupExecute(
-          [&launch_receive_group, &curr_receives = curr_receives,
-           stream](gpu::GpuCommunicator* gpu_comm) -> absl::Status {
-            return launch_receive_group(gpu_comm, absl::MakeSpan(curr_receives),
-                                        stream);
-          }));
-    }
+          // Get the communicator on which we will execute this group of
+          // transfers. We assume each clique key is associated with a unique
+          // communicator, so we just take the communicator of the first
+          // transfer_idx of this clique key.
+          gpu::GpuCommunicator* gpu_communicator =
+              curr_receives[0].clique_and_communicator_.second;
 
-    // On a separate thread pool, await group futures and fulfill buffer
-    // sequencing events and promises.
-    Future<> all_receives_future = JoinFutures(group_futures);
+          // Launch the group of transfers.
+          group_futures.push_back(gpu_communicator->GroupExecute(
+              [&launch_receive_group, &curr_receives = curr_receives,
+               stream](gpu::GpuCommunicator* gpu_comm) -> absl::Status {
+                return launch_receive_group(
+                    gpu_comm, absl::MakeSpan(curr_receives), stream);
+              }));
+        }
 
-    all_receives_future.OnReady(
-        *async_work_runner(), [this, local_device_state, stream,
-                               grouped_receives = std::move(grouped_receives),
-                               definition_event = std::move(definition_event)](
-                                  const absl::Status& status) mutable {
-          CHECK_OK(FulfillDeviceEvent(this, local_device_state, stream,
-                                      definition_event, status));
-        });
-  };
+        // On a separate thread pool, await group futures and fulfill buffer
+        // sequencing events and promises.
+        Future<> all_receives_future = JoinFutures(group_futures);
+
+        all_receives_future.OnReady(
+            *async_work_runner(),
+            [this, local_device_state, stream,
+             grouped_receives = std::move(grouped_receives),
+             definition_event = std::move(definition_event)](
+                const absl::Status& status) mutable {
+              FulfillDeviceEvent(this, local_device_state, stream,
+                                 definition_event, status);
+            });
+      };
 
   // Schedule transfers on the execute thread.
   local_device_state->execute_thread()->Schedule(
@@ -1279,8 +1239,7 @@ void StreamExecutorGpuClient::ScheduleRemoteSend(
               }
             });
       });
-  usage_event_promise->Set(
-      tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(std::move(usage_event)));
+  usage_event_promise->Set(PjRtDeviceEventRef(std::move(usage_event)));
 }
 
 // Receive functionality for original cross-host transfers API.
@@ -1539,7 +1498,15 @@ GetStreamExecutorGpuDeviceAllocator(
     const std::map<int, std::unique_ptr<LocalDeviceState>>&
         addressable_devices) {
   std::vector<se::MultiDeviceAdapter::AllocatorInfo> allocators;
-  switch (allocator_config.kind) {
+  GpuAllocatorConfig::Kind effective_kind = allocator_config.kind;
+  if (GetDebugOptionsFromFlags().xla_gpu_command_buffer_update_mode() !=
+          DebugOptions::ALWAYS_UPDATE &&
+      effective_kind != GpuAllocatorConfig::Kind::kVmm) {
+    LOG(WARNING) << "xla_gpu_command_buffer_update_mode requires the "
+                    "VMM allocator. Overriding allocator kind to kVmm.";
+    effective_kind = GpuAllocatorConfig::Kind::kVmm;
+  }
+  switch (effective_kind) {
     case GpuAllocatorConfig::Kind::kCudaAsync: {
       for (const auto& ordinal_and_device : addressable_devices) {
         TF_ASSIGN_OR_RETURN(
@@ -1711,14 +1678,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     LOG(INFO) << "Failed to get network nodes: " << network_nodes.status();
   }
 
-  std::optional<gpu::GpuTargetConfig> gpu_target_config;
-
   for (const auto& [ordinal, device] : local_device_states) {
-    // We expect all devices on a host to have the same target config, so we
-    // only need to get the target config for the first device.
-    if (!gpu_target_config.has_value()) {
-      gpu_target_config.emplace(device->executor());
-    }
     const se::Platform* platform = device->executor()->GetPlatform();
     TF_ASSIGN_OR_RETURN(
         std::unique_ptr<xla::se::DeviceDescription> desc,
@@ -1739,16 +1699,6 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
       device_proto->set_fabric_uuid(
           absl::StrCat(info.cluster_uuid, "/", info.clique_id));
     }
-  }
-
-  if (!gpu_target_config.has_value()) {
-    // A PjRtClient without any devices makes no sense, but we need to support
-    // it for compatibility with Tensorflow. So we create an empty GPU target
-    // config.
-    stream_executor::GpuTargetConfigProto gpu_target_config_proto;
-    gpu_target_config_proto.set_platform_name(platform_name);
-    ASSIGN_OR_RETURN(gpu_target_config,
-                     gpu::GpuTargetConfig::FromProto(gpu_target_config_proto));
   }
 
   GlobalTopologyProto global_topology;
@@ -1899,8 +1849,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   }
 
   TF_ASSIGN_OR_RETURN(GpuTopologyProto gpu_topology,
-                      BuildGpuTopology(global_topology, *gpu_target_config,
-                                       cpu::TargetMachineOptions()));
+                      BuildGpuTopology(global_topology));
   return std::make_pair(std::move(devices), gpu_topology);
 }
 
@@ -2017,7 +1966,9 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
         local_device_states.begin()->second->compute_stream()->parent();
     HostMemoryAllocator::Options allocator_options;
     allocator_options.alignment = tsl::Allocator::kAllocatorAlignment;
-    allocator_options.map_fn = [stream_executor](void* data, size_t size) {
+    allocator_options.map_fn = [stream_executor](
+                                   std::optional<LocalDeviceId> local_device_id,
+                                   void* data, size_t size) {
       bool success = stream_executor->HostMemoryRegister(data, size);
       if (!success) {
         return absl::InternalError(absl::StrFormat(
@@ -2025,14 +1976,16 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
       }
       return absl::OkStatus();
     };
-    allocator_options.unmap_fn = [stream_executor](void* data) {
-      bool success = stream_executor->HostMemoryUnregister(data);
-      if (!success) {
-        return absl::InternalError(absl::StrFormat(
-            "Failed to unregister host memory at address: %ps", data));
-      }
-      return absl::OkStatus();
-    };
+    allocator_options.unmap_fn =
+        [stream_executor](std::optional<LocalDeviceId> local_device_id,
+                          void* data) {
+          bool success = stream_executor->HostMemoryUnregister(data);
+          if (!success) {
+            return absl::InternalError(absl::StrFormat(
+                "Failed to unregister host memory at address: %ps", data));
+          }
+          return absl::OkStatus();
+        };
     TF_ASSIGN_OR_RETURN(
         host_memory_allocator,
         options.host_memory_allocator_factory(std::move(allocator_options)));
@@ -2195,6 +2148,19 @@ StreamExecutorGpuClient::RunAsync(
   absl::Span<const BufferAllocation* const> allocations =
       gpu_exec->GetAllocations();
 
+  // Build a map of per-color allocation granularity. Collective memory requires
+  // larger alignment than the BFC allocator guarantees (256 bytes).
+  absl::flat_hash_map<LogicalBuffer::Color, int64_t> allocate_granularity;
+  if (auto* collectives =
+          gpu::GpuCollectives::Default(executor->GetPlatform()->Name())) {
+    const int64_t collective_memory_alignment =
+        collectives->SymmetricMemoryAlignment();
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "Using collective memory alignment: " << collective_memory_alignment;
+    allocate_granularity[static_cast<LogicalBuffer::Color>(
+        gpu::MemorySpaceColor::kCollective)] = collective_memory_alignment;
+  }
+
   std::vector<se::DeviceAddressBase> buffers(allocations.size());
   {
     tsl::profiler::TraceMe hlo_module_activity(
@@ -2239,7 +2205,11 @@ StreamExecutorGpuClient::RunAsync(
         // Allocate each allocation that might escape, or is the temp buffer.
         CHECK(allocation.maybe_live_out() ||
               allocation.IsPreallocatedTempBuffer());
-        const int64_t buffer_size = allocation.size();
+        int64_t buffer_size = allocation.size();
+        if (auto it = allocate_granularity.find(allocation.color());
+            it != allocate_granularity.end()) {
+          buffer_size = RoundUpTo(buffer_size, it->second);
+        }
         if (buffer_size > 0) {
           TF_ASSIGN_OR_RETURN(
               se::ScopedDeviceAddress<uint8_t> owning_buffer,

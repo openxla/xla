@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
@@ -54,13 +55,12 @@ limitations under the License.
 #include "xla/util.h"
 #include "tsl/platform/casts.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
 CollectiveMemory::CollectiveMemory(
     const BufferAllocations& buffers,
-    absl::flat_hash_map<Key, std::unique_ptr<SymmetricMemory>> sym_memories,
+    absl::flat_hash_map<Key, std::shared_ptr<SymmetricMemory>> sym_memories,
     absl::flat_hash_map<Key, MulticastMemory> mcast_memories,
     absl::flat_hash_map<Key, PeerMemory> peer_memories)
     : buffers_(buffers),
@@ -210,12 +210,13 @@ struct RankFormatter {
 
 // Acquire symmetric memory for all requested allocation.
 static absl::StatusOr<absl::flat_hash_map<CollectiveMemory::Key,
-                                          std::unique_ptr<SymmetricMemory>>>
+                                          std::shared_ptr<SymmetricMemory>>>
 AcquireSymmetricMemory(
-    const CollectiveParams& params, const CollectiveCliques& cliques,
+    const CollectiveParams& params, CollectiveCliques& cliques,
     const BufferAllocations& buffers,
-    absl::Span<const CollectiveMemoryRequests::SymmetricAllocations> allocs) {
-  absl::flat_hash_map<CollectiveMemory::Key, std::unique_ptr<SymmetricMemory>>
+    absl::Span<const CollectiveMemoryRequests::SymmetricAllocations> allocs,
+    CollectiveMemoryCache& collective_memory_cache) {
+  absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
       sym_memories;
 
   for (const CollectiveMemoryRequests::SymmetricAllocations& r : allocs) {
@@ -243,7 +244,10 @@ AcquireSymmetricMemory(
       ASSIGN_OR_RETURN(
           std::unique_ptr<SymmetricMemory> symm,
           comm->CreateSymmetricMemory(buffers.GetDeviceAddress(i)));
-      sym_memories[std::make_pair(r.key, i)] = std::move(symm);
+      ASSIGN_OR_RETURN(tsl::TiedRef<SymmetricMemory> tied_symm,
+                       cliques.Tie(r.key, std::move(symm)));
+      sym_memories[std::make_pair(r.key, i)] = tied_symm.Lock();
+      collective_memory_cache.AddSymmetricMemory(std::move(tied_symm));
     }
   }
 
@@ -318,7 +322,7 @@ absl::StatusOr<MulticastMemoryMap> AcquireMulticastMemory(
 
     // A callback for rendezvous to allocate and map the multicast memory. We
     // do one round of rendezvous for each clique.
-    auto allocate = [&](absl::Span<const RendezvousParams*> params)
+    auto allocate = [&](absl::Span<RendezvousParams*> params)
         -> absl::StatusOr<MappedMulticastMemoryMap> {
       // Sort all participants by rank to get deterministic execution.
       absl::c_sort(params, RankCmp{});
@@ -344,16 +348,7 @@ absl::StatusOr<MulticastMemoryMap> AcquireMulticastMemory(
         // Allocate a multicast object for all participating devices.
         size_t multicast_size;
 
-        // TODO(b/486104046): Add a separate API for range mapped allocations,
-        // instead of using the size of the range mapped allocation.
-        if (r.range_mapped) {
-          ASSIGN_OR_RETURN(se::DeviceAddressBase address_range,
-                           gpu_executor->GetMemoryRange(
-                               params[0]->buffers.GetDeviceAddress(i)));
-          multicast_size = address_range.size();
-        } else {
-          multicast_size = params[0]->buffers.GetDeviceAddress(i).size();
-        }
+        multicast_size = params[0]->buffers.GetDeviceAddress(i).size();
         ASSIGN_OR_RETURN(
             std::unique_ptr<se::gpu::MulticastMemory> multicast_memory,
             gpu_executor->CreateMulticastMemory(multicast_size, params.size()));
@@ -456,7 +451,7 @@ absl::StatusOr<PeerMemoryMap> AcquirePeerMemory(
 
     // A callback for rendezvous to exchange peer allocation addresses with
     // all participating ranks.
-    auto exchange = [&](absl::Span<const RendezvousParams*> params)
+    auto exchange = [&](absl::Span<RendezvousParams*> params)
         -> absl::StatusOr<PeerMemoryMap> {
       // Sort all participants by rank to get deterministic execution.
       absl::c_sort(params, RankCmp{});
@@ -565,9 +560,9 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
                                          {"peer_allocs", peer_allocs.size()}});
   });
 
-  ASSIGN_OR_RETURN(
-      auto sym_memories,
-      AcquireSymmetricMemory(params, cliques, requests.buffers(), sym_allocs));
+  ASSIGN_OR_RETURN(auto sym_memories,
+                   AcquireSymmetricMemory(params, cliques, requests.buffers(),
+                                          sym_allocs, collective_memory_cache));
 
   ASSIGN_OR_RETURN(
       MulticastMemoryMap mcast_memories,

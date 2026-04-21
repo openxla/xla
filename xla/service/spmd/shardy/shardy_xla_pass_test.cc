@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/log/log.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -183,6 +184,7 @@ TEST_F(ShardyXLATest, NonFlatGraphForcedDifferentShardingsOnSharedFunc) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
   runShardyWithStablehloImport(module.get());
+  VLOG(10) << "module: " << module->ToString();
   // Computations refer to: %foo, %bar (x2), %entry.
   EXPECT_EQ(module->computation_count(), 4);
 }
@@ -1114,6 +1116,7 @@ TEST_F(ShardyXLATest, UpdateInlineableAttr) {
   HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_EQ(root->opcode(), HloOpcode::kCall);
   EXPECT_FALSE(root->has_frontend_attributes());
+  EXPECT_EQ(root->to_apply()->name(), "inlineable_callee");
 }
 
 TEST_F(ShardyXLATest, ManualComputationCallOpWithToken) {

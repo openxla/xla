@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_compiler.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/dnn.h"
@@ -110,7 +111,6 @@ class GpuCompiler : public LLVMCompiler {
 
   int64_t GetPointerSize() const { return pointer_size_; }
 
-
   mlir::MLIRContext* mlir_context() { return &mlir_context_; }
 
   virtual std::unique_ptr<GpuAliasInfo> GetAliasInfo(
@@ -149,6 +149,7 @@ class GpuCompiler : public LLVMCompiler {
 
   absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
   GetAutotunerBackends(se::StreamExecutor* stream_exec,
+                       se::DeviceAddressAllocator* device_allocator,
                        const Compiler::GpuTargetConfig* target_config,
                        const AliasInfo* alias_info,
                        const DebugOptions& debug_options,
@@ -217,8 +218,7 @@ class GpuCompiler : public LLVMCompiler {
   // Schedule and compile the module.
   absl::StatusOr<CompileResultWithMetadata> CompileToBackendResult(
       HloModule* module, llvm::LLVMContext* llvm_context,
-      const CompileOptions& options,
-      const se::DeviceDescription& gpu_device_info,
+      const GpuTopology& gpu_topology, const CompileOptions& options,
       se::StreamExecutor* absl_nullable stream_exec);
 
   absl::StatusOr<BackendCompileResult> CompileAndLink(
@@ -232,8 +232,7 @@ class GpuCompiler : public LLVMCompiler {
       const HloModuleConfig& module_config,
       const stream_executor::DeviceDescription& device_description,
       const HloModule* debug_module, llvm::Module* llvm_module,
-      bool relocatable, const CompileOptions& options,
-      std::optional<int> shard_number);
+      bool relocatable, std::optional<int> shard_number);
 
   absl::Status LoadAutotuneResultsFromFile(const DebugOptions& debug_options);
   absl::Status SerializeAutotuneResultsToFile(
@@ -268,7 +267,7 @@ class GpuCompiler : public LLVMCompiler {
       const HloModuleConfig& module_config, llvm::Module* llvm_module,
       const stream_executor::DeviceDescription& device_description,
       bool relocatable, const HloModule* debug_module,
-      const CompileOptions& options, std::optional<int> shard_number) = 0;
+      std::optional<int> shard_number) = 0;
 
   // Inserts and optimizes mandatory copies. Necessary for correctness.
   absl::Status RunPreSchedulingCopyInsertion(

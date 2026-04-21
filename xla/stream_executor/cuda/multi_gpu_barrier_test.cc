@@ -23,6 +23,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/statusor.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/nccl_symmetric_memory.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
@@ -41,7 +42,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "xla/tsl/platform/status_macros.h"
 
 // Include NCCL after XLA headers.
 #include "third_party/nccl/nccl.h"

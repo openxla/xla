@@ -191,11 +191,6 @@ class StreamExecutor {
   // Synchronizes all activity occurring in the StreamExecutor's context.
   virtual bool SynchronizeAllActivity() = 0;
 
-  // Blocks the caller while "size" bytes are zeroed out (in POD fashion) at the
-  // given location in device memory.
-  virtual absl::Status SynchronousMemZero(DeviceAddressBase* location,
-                                          uint64_t size) = 0;
-
   // Returns a DeviceAddressBase representing the range [base, base + size)
   // for the given DeviceAddressBase, such that location is contained within the
   // returned range.
