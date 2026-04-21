@@ -26,7 +26,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -90,22 +89,6 @@ static absl::Status AppendCommands(ConversionContext& ctx,
 //===----------------------------------------------------------------------===//
 // Conversions from Thunk to Command
 //===----------------------------------------------------------------------===//
-
-static auto ArgsAccess(const std::vector<bool>& written) {
-  absl::InlinedVector<BufferUse::MemoryAccess, 4> args_access;
-  args_access.reserve(written.size());
-  for (bool w : written) {
-    args_access.push_back(w ? BufferUse::MemoryAccess::kWrite
-                            : BufferUse::MemoryAccess::kRead);
-  }
-  return args_access;
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const CustomKernelThunk& thunk) {
-  return std::make_unique<CustomKernelLaunchCmd>(
-      thunk.arguments(), ArgsAccess(thunk.written()), thunk.custom_kernel());
-}
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const DynamicMemcpyThunk& thunk) {
@@ -303,8 +286,10 @@ static absl::Status AppendCommands(ConversionContext& ctx,
         return append(Convert(*legacy_thunk));
       }
       return absl::InternalError("Unknown custom call thunk type");
+    // CustomKernelThunk implements Command directly; append borrowed pointer.
     case Thunk::Kind::kCustomKernel:
-      return append(Convert<CustomKernelThunk>(thunk));
+      cmd_sequence.Append(static_cast<CustomKernelThunk*>(&thunk));
+      return absl::OkStatus();
     // KernelThunk implements Command directly; append borrowed pointer.
     case Thunk::Kind::kKernel:
       cmd_sequence.Append(static_cast<KernelThunk*>(&thunk));

@@ -31,7 +31,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
@@ -71,37 +70,6 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
-
-//===----------------------------------------------------------------------===//
-// CustomKernelLaunchCmd
-//===----------------------------------------------------------------------===//
-
-class CustomKernelLaunchCmd : public Command {
- public:
-  CustomKernelLaunchCmd(absl::Span<const ShapedSlice> args,
-                        absl::Span<const BufferUse::MemoryAccess> args_access,
-                        CustomKernel custom_kernel);
-
-  absl::Status Initialize(const Thunk::InitializeParams& params) override;
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override;
-
- private:
-  std::vector<ShapedSlice> args_;
-  std::vector<BufferUse::MemoryAccess> args_access_;
-  CustomKernel custom_kernel_;
-
-  // Command sequence can be recorded concurrently for multiple command buffers
-  // on different stream executors and we need to synchronize mutable state.
-  absl::Mutex mutex_;
-  absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<se::Kernel>> kernels_
-      ABSL_GUARDED_BY(mutex_);
-};
 
 //===----------------------------------------------------------------------===//
 // ChildCmd

@@ -46,7 +46,6 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
-#include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
@@ -222,87 +221,6 @@ static absl::StatusOr<const se::CommandBuffer::Command*> Handle(
   }
 
   return Internal("Invalid record action");
-}
-
-//===----------------------------------------------------------------------===//
-// CustomKernelLaunchCmd
-//===----------------------------------------------------------------------===//
-
-CustomKernelLaunchCmd::CustomKernelLaunchCmd(
-    absl::Span<const ShapedSlice> args,
-    absl::Span<const BufferUse::MemoryAccess> args_access,
-    CustomKernel custom_kernel)
-    : Command(CommandType::kCustomKernelLaunchCmd),
-      args_(args.begin(), args.end()),
-      args_access_(args_access.begin(), args_access.end()),
-      custom_kernel_(std::move(custom_kernel)) {}
-
-absl::Status CustomKernelLaunchCmd::Initialize(
-    const Thunk::InitializeParams& params) {
-  {
-    absl::MutexLock lock(mutex_);
-    if (kernels_.contains(params.executor)) {
-      return absl::OkStatus();
-    }
-  }
-
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<se::Kernel> kernel,
-      params.executor->LoadKernel(custom_kernel_.kernel_spec()));
-
-  absl::MutexLock lock(mutex_);
-  kernels_.emplace(params.executor, std::move(kernel));
-  return absl::OkStatus();
-}
-
-absl::StatusOr<const se::CommandBuffer::Command*> CustomKernelLaunchCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  VLOG(5) << "CustomKernelLaunchCmd: custom_kernel=" << custom_kernel_.name();
-
-  se::Kernel* kernel = [&] {
-    absl::MutexLock lock(mutex_);
-    return kernels_[execute_params.stream->parent()].get();
-  }();
-
-  if (kernel == nullptr) {
-    return absl::InternalError(
-        absl::StrCat("Custom kernel not loaded on a command buffer executor: ",
-                     custom_kernel_.name()));
-  }
-
-  absl::InlinedVector<se::DeviceAddressBase, 4> buffers;
-  for (const ShapedSlice& arg : args_) {
-    se::DeviceAddressBase buf =
-        execute_params.buffer_allocations->GetDeviceAddress(arg.slice);
-    VLOG(5) << "  Arg: " << arg << ": " << buf.opaque();
-    buffers.push_back(buf);
-  }
-
-  se::KernelArgsDeviceAddressArray kernel_args(
-      buffers, custom_kernel_.shared_memory_bytes());
-
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateLaunch(
-            custom_kernel_.thread_dims(), custom_kernel_.block_dims(), *kernel,
-            kernel_args, dependencies, priority());
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateLaunch(
-            command, custom_kernel_.thread_dims(), custom_kernel_.block_dims(),
-            *kernel, kernel_args);
-      });
-}
-
-Command::BufferUses CustomKernelLaunchCmd::buffer_uses() const {
-  BufferUses buffers;
-  for (int32_t i = 0; i < args_.size(); ++i) {
-    buffers.emplace_back(args_[i].slice, args_access_[i], args_[i].shape);
-  }
-  return buffers;
 }
 
 //===----------------------------------------------------------------------===//
