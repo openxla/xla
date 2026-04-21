@@ -293,6 +293,7 @@ common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_rocm=True
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_cuda=False
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_sycl=False
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_hermetic_cc=True
+common:rocm_clang_hermetic --@local_config_rocm//rocm:rocm_path_type=hermetic
 common:rocm_clang_hermetic --repo_env=TF_ROCM_AMDGPU_TARGETS=gfx90a,gfx942
 
 # ROCm with hermetic clang but local (system) sysroot
