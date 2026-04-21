@@ -1099,7 +1099,7 @@ def _impl(ctx):
                 actions = all_compile_actions + all_link_actions,
                 env_entries = [
                     env_entry(
-                        key = "CLANG_COMPILER_PATH",
+                        key = "HOST_COMPILER",
                         value = ctx.attr.clang_compiler_path,
                     ),
                 ],

@@ -24,14 +24,6 @@ load(
 
 cc_toolchain_deps()
 
-# Initialize local clang configuration
-load(
-    "@rules_ml_toolchain//cc/llvms/local:local_clang_configure.bzl",
-    "local_clang_configure",
-)
-
-local_clang_configure(name = "local_config_clang")
-
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
