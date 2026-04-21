@@ -40,7 +40,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/dynamic_memcpy_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
-#include "xla/backends/gpu/runtime/legacy_custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -260,42 +259,6 @@ class CustomCallCmd : public Command {
   std::optional<ObjectPool<ffi::CallFrame>> call_frames_;
 
   const HloComputation* called_computation_;
-
-  std::vector<NullableShapedSlice> operands_;
-  std::vector<NullableShapedSlice> results_;
-};
-
-//===----------------------------------------------------------------------===//
-// LegacyCustomCallCmd
-//===----------------------------------------------------------------------===//
-
-class LegacyCustomCallCmd : public Command {
- public:
-  using CustomCallTarget = LegacyCustomCallThunk::CustomCallTarget;
-
-  LegacyCustomCallCmd(std::string target_name, CustomCallTarget call_target,
-                      std::vector<NullableShapedSlice> operands,
-                      std::vector<NullableShapedSlice> results,
-                      absl::string_view opaque)
-      : Command(CommandType::kCustomCallCmd),
-        target_name_(std::move(target_name)),
-        call_target_(std::move(call_target)),
-        opaque_(opaque),
-        operands_(std::move(operands)),
-        results_(std::move(results)) {}
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override;
-
- private:
-  std::string target_name_;
-
-  CustomCallTarget call_target_;
-  std::string opaque_;
 
   std::vector<NullableShapedSlice> operands_;
   std::vector<NullableShapedSlice> results_;

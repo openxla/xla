@@ -87,8 +87,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/computation_placer.h"
-#include "xla/service/custom_call_status.h"
-#include "xla/service/custom_call_status_internal.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/stream_executor_util.h"
@@ -624,87 +622,6 @@ Command::BufferUses CuDnnCmd::buffer_uses() const {
   }
   buffer_usage.push_back(
       BufferUse::Write(args_.back().slice, args_.back().shape));
-  return buffer_usage;
-}
-
-//===----------------------------------------------------------------------===//
-// LegacyCustomCallCmd
-//===----------------------------------------------------------------------===//
-
-namespace {
-// Records each buffer associated with each slice into the provided vector.
-// Returns an error if any of the slices is missing a buffer allocation.
-static absl::Status GetBuffers(const Thunk::ExecuteParams& execute_params,
-                               absl::Span<const NullableShapedSlice> slices,
-                               std::vector<void*>& buffers,
-                               absl::string_view label) {
-  for (int i = 0; i < slices.size(); ++i) {
-    if (!slices[i].has_value()) {
-      buffers.push_back(nullptr);
-      VLOG(5) << label << i << ": null";
-      continue;
-    }
-
-    if (!slices[i]->slice.allocation()) {
-      return absl::InternalError("custom call input missing buffer allocation");
-    }
-
-    auto buffer =
-        execute_params.buffer_allocations->GetDeviceAddress(slices[i]->slice)
-            .opaque();
-    VLOG(5) << label << i << ": " << slices[i]->slice << " (" << buffer << ")";
-    buffers.push_back(buffer);
-  }
-  return absl::OkStatus();
-}
-}  // namespace
-
-absl::StatusOr<const se::CommandBuffer::Command*> LegacyCustomCallCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  std::vector<void*> buffers;
-  buffers.reserve(operands_.size() + results_.size());
-
-  VLOG(5) << "LegacyCustomCallCmd: target_name=" << target_name_;
-  RETURN_IF_ERROR(GetBuffers(execute_params, operands_, buffers, "  Operand "));
-  RETURN_IF_ERROR(GetBuffers(execute_params, results_, buffers, "  Result "));
-
-  ASSIGN_OR_RETURN(
-      auto nested_cmd,
-      se::TraceCommandBufferFactory::Create(
-          execute_params.stream->parent(),
-          execute_params.command_buffer_trace_stream, [&](se::Stream* stream) {
-            XlaCustomCallStatus custom_call_status;
-            call_target_(stream, buffers.data(), opaque_.data(), opaque_.size(),
-                         &custom_call_status);
-            auto message = CustomCallStatusGetMessage(&custom_call_status);
-            if (message) {
-              return absl::InternalError(
-                  absl::StrCat("CustomCall failed: ", *message));
-            }
-            return absl::OkStatus();
-          }));
-
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateChildCommand(*nested_cmd, dependencies);
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateChildCommand(command, *nested_cmd);
-      });
-}
-
-Command::BufferUses LegacyCustomCallCmd::buffer_uses() const {
-  Command::BufferUses buffer_usage;
-  for (auto& slices : {operands_, results_}) {
-    for (const std::optional<ShapedSlice>& slice : slices) {
-      if (slice.has_value()) {
-        buffer_usage.push_back(BufferUse::Write(slice->slice, slice->shape));
-      }
-    }
-  }
   return buffer_usage;
 }
 
