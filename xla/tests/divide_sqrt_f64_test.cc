@@ -123,22 +123,24 @@ TEST_F(DivideBySqrtF64Test, MatchesIeeeCorrectlyRoundedComposition) {
 // at.
 //
 // Measured on a local Intel/AMD avx512f host (early 2026) with
-// kNumSamples = 1000 (both guards reverted, i.e. pre-PR emit):
+// kNumSamples = 1000 and the simplifier guard reverted (i.e. the
+// pre-PR rewrite is active):
 //
 //    0 ULP : 709 / 1000 (70.9%) — matches reference exactly
 //    1 ULP : 289 / 1000 (28.9%) — rewrite lands on the neighbouring f64
-//    2 ULP :   2 / 1000 (0.2%)  — rare cases where Newton-Raphson
-//                                  refinement compounds with the
-//                                  reference's own rounding to reach
-//                                  the theoretical worst case
+//    2 ULP :   2 / 1000 (0.2%)  — rare cases where the rsqrt emit's
+//                                  Newton-Raphson refinement compounds
+//                                  with the reference's own rounding
+//                                  to reach the theoretical worst case
 //
-// With both guards applied (current branch), all 1000 samples show
-// 0 ULP — the HLO stays as sqrt+fdiv, which matches the host's
-// libm-based sqrt+fdiv reference exactly.
+// With the simplifier guard applied (current branch), all 1000 samples
+// show 0 ULP — the HLO stays as `divide(1, sqrt(x))`, which lowers to
+// sqrt+fdiv and matches the host's libm-based sqrt+fdiv reference
+// exactly.
 //
-// Non-avx512f CPU builds trivially observe 0% regardless of the guards
-// because the intrinsic already falls back; the test is most useful on
-// avx512f hosts.
+// Non-avx512f CPU builds trivially observe 0% regardless of the guard
+// because the rsqrt intrinsic already falls back on those targets; the
+// test is most useful on avx512f hosts.
 //
 // The committed sample size is 100 to keep the test fast (~1s);
 // increase locally for tighter statistics or to reliably populate the
