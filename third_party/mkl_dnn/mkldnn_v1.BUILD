@@ -101,7 +101,7 @@ expand_template(
     substitutions = {
         "@DNNL_VERSION_MAJOR@": "3",
         "@DNNL_VERSION_MINOR@": "11",
-        "@DNNL_VERSION_PATCH@": "0",
+        "@DNNL_VERSION_PATCH@": "3",
         "@DNNL_VERSION_HASH@": "N/A",
     },
     template = "include/oneapi/dnnl/dnnl_version.h.in",
@@ -111,7 +111,7 @@ expand_template(
     name = "dnnl_version_hash_h",
     out = "include/oneapi/dnnl/dnnl_version_hash.h",
     substitutions = {
-        "@DNNL_VERSION_HASH@": "04df98b18300daf6c3aa7cc2d5e7ce8a8f430fed1787151daed0254d8dd4e64e",
+        "@DNNL_VERSION_HASH@": "74d04752d9eaefff6a9ff62466c4d20b155e5bca",
     },
     template = "include/oneapi/dnnl/dnnl_version_hash.h.in",
 )
