@@ -31,6 +31,8 @@ class MetadataXPlaneBuilder {
       : plane_(raw_plane),
         hlo_proto_stat_(plane_.GetOrCreateStatMetadata(
             GetStatTypeStr(tsl::profiler::StatType::kHloProto))),
+        original_hlo_proto_stat_(plane_.GetOrCreateStatMetadata(
+            GetStatTypeStr(tsl::profiler::StatType::kOriginalHloProto))),
         program_id_stat_(plane_.GetOrCreateStatMetadata(
             GetStatTypeStr(tsl::profiler::StatType::kProgramId))) {}
 
@@ -41,9 +43,32 @@ class MetadataXPlaneBuilder {
         plane_.GetOrCreateEventMetadata(name);
     if (event_metadata->display_name().empty()) {
       event_metadata->set_display_name(name);
-      tsl::profiler::XStatsBuilder<tsl::profiler::XEventMetadata> event_stats(
-          event_metadata, &plane_);
+    }
+    tsl::profiler::XStatsBuilder<tsl::profiler::XEventMetadata> event_stats(
+        event_metadata, &plane_);
+    if (event_stats.GetStat(*hlo_proto_stat_) == nullptr) {
       event_stats.AddStatValue(*hlo_proto_stat_, hlo_proto);
+    }
+    if (event_stats.GetStat(*program_id_stat_) == nullptr) {
+      event_stats.AddStatValue(*program_id_stat_, program_id);
+    }
+  }
+
+  void AddOriginalHloProto(uint64_t program_id,
+                           const xla::HloProto& hlo_proto) {
+    auto name = tsl::profiler::HloModuleNameWithProgramId(
+        hlo_proto.hlo_module().name(), program_id);
+    tsl::profiler::XEventMetadata* event_metadata =
+        plane_.GetOrCreateEventMetadata(name);
+    if (event_metadata->display_name().empty()) {
+      event_metadata->set_display_name(name);
+    }
+    tsl::profiler::XStatsBuilder<tsl::profiler::XEventMetadata> event_stats(
+        event_metadata, &plane_);
+    if (event_stats.GetStat(*original_hlo_proto_stat_) == nullptr) {
+      event_stats.AddStatValue(*original_hlo_proto_stat_, hlo_proto);
+    }
+    if (event_stats.GetStat(*program_id_stat_) == nullptr) {
       event_stats.AddStatValue(*program_id_stat_, program_id);
     }
   }
@@ -51,6 +76,7 @@ class MetadataXPlaneBuilder {
  private:
   tsl::profiler::XPlaneBuilder plane_;
   const tsl::profiler::XStatMetadata* hlo_proto_stat_ = nullptr;
+  const tsl::profiler::XStatMetadata* original_hlo_proto_stat_ = nullptr;
   const tsl::profiler::XStatMetadata* program_id_stat_ = nullptr;
 };
 
