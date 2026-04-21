@@ -3449,6 +3449,19 @@ xla_test(
     ],
 )
 
+xla_test(
+    name = "divide_sqrt_f64_test",
+    srcs = ["divide_sqrt_f64_test.cc"],
+    deps = [
+        ":hlo_pjrt_test_base",
+        ":xla_internal_test_main",  # fixdeps: keep
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/hlo/testlib:test",
+        "//xla/tsl/platform:statusor",
+    ],
+)
+
 bzl_library(
     name = "plugin_bzl",
     srcs = ["plugin.bzl"],
