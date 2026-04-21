@@ -16,7 +16,7 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara: uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = internal_visibility(["//xla:internal"]),
     licenses = ["notice"],
 )
@@ -1040,7 +1040,7 @@ cc_library(
     ],
 )
 
-# Transitional forwarding target. Use pjrt/plugin/xla_cpu:xla_cpu_pjrt_client instead.
+# Transitional forwarding target.Use pjrt / plugin / xla_cpu:xla_cpu_pjrt_client instead.
 cc_library(
     name = "tfrt_cpu_pjrt_client",
     hdrs = ["tfrt_cpu_pjrt_client.h"],
@@ -1752,28 +1752,5 @@ cc_library(
         "//xla/service:hlo_value",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
-    ],
-)
-
-xla_cc_test(
-    name = "pjrt_memory_stats_test",
-    srcs = ["pjrt_memory_stats_test.cc"],
-    tags = ["gpu"],
-    deps = [
-        ":pjrt_client",
-        ":pjrt_stream_executor_client",
-        "//xla:future",
-        "//xla:shape_util",
-        "//xla/pjrt/gpu:se_gpu_pjrt_client",
-        "//xla/pjrt/cpu:cpu_client",
-        "//xla/pjrt/c:pjrt_c_api_wrapper_impl",
-        "//xla/pjrt/c:pjrt_c_api_status_utils",
-        "//xla/tsl/lib/core:status_test_util",
-        "//xla/stream_executor/cuda:cuda_platform",
-        "//xla/service:gpu_plugin",
-        "//xla/tsl/platform:test_main",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
     ],
 )

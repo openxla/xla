@@ -716,5 +716,58 @@ ENTRY DuplicateDonationError() -> (f32[2, 2], f32[2, 2]) {
 
 TEST(PjRtClientTest, GetDefaultLayout) {}
 
+TEST(PjRtClientTest, ClearPeakMemory) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetClient());
+  PjRtDevice* device = client->addressable_devices()[0];
+
+  if (device->GetAllocatorStats().status().code() ==
+      absl::StatusCode::kUnimplemented) {
+    GTEST_SKIP() << "Allocator stats not supported on this platform.";
+  }
+
+  auto get_stats = [&]() -> tsl::AllocatorStats {
+    absl::StatusOr<tsl::AllocatorStats> stats = device->GetAllocatorStats();
+    EXPECT_TRUE(stats.ok());
+    return *stats;
+  };
+
+  auto initial_stats = get_stats();
+
+  // alloc
+  int64_t num_elements = 1024 / sizeof(float);
+  std::vector<float> data(num_elements, 1.0f);
+  Shape shape = ShapeUtil::MakeShape(F32, {num_elements});
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
+          /*on_done_with_host_buffer=*/nullptr,
+          device->default_memory_space().value(),
+          /*device_layout=*/nullptr));
+
+  TF_ASSERT_OK(buffer->GetReadyFuture().Await());
+
+  auto alloc_stats = get_stats();
+  EXPECT_EQ(alloc_stats.bytes_in_use, initial_stats.bytes_in_use + 1024);
+  EXPECT_EQ(alloc_stats.peak_bytes_in_use,
+            initial_stats.peak_bytes_in_use + 1024);
+  EXPECT_EQ(alloc_stats.bytes_in_use, alloc_stats.peak_bytes_in_use);
+
+  // dealloc
+  buffer.reset();
+
+  auto dealloc_stats = get_stats();
+  EXPECT_EQ(initial_stats.bytes_in_use, dealloc_stats.bytes_in_use);
+  EXPECT_EQ(dealloc_stats.peak_bytes_in_use, alloc_stats.peak_bytes_in_use);
+
+  if (device->ClearMemoryStats().ok()) {
+    auto clear_stats = get_stats();
+    EXPECT_EQ(clear_stats.bytes_in_use, dealloc_stats.bytes_in_use);
+    EXPECT_EQ(clear_stats.peak_bytes_in_use, dealloc_stats.bytes_in_use);
+  }
+}
 }  // namespace
 }  // namespace xla
