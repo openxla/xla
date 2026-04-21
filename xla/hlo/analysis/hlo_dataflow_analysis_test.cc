@@ -1186,6 +1186,65 @@ ENTRY %main {
       UnorderedElementsAre(&analysis.GetValueDefinedAt(async_start, {1})));
 }
 
+TEST_P(HloDataflowAnalysisTest, AsyncCallExcludedThread) {
+  std::string hlo_str = R"(
+HloModule AsyncCall
+
+%called_computation {
+  %param_0 = f32[4096] parameter(0)
+  %param_1 = f32[4096] parameter(1)
+  %negate_0 = f32[4096] negate(%param_0)
+  %negate_1 = f32[4096] negate(%param_1)
+  ROOT %result.1 = f32[4096] add(%negate_0, %negate_1)
+}
+
+ENTRY %main {
+  %a = f32[4096] parameter(0)
+  %b = f32[4096] parameter(1)
+  %async-start = ((f32[4096], f32[4096]), f32[4096], u32[]) call-start(%a, %b),
+    to_apply=%called_computation, async_execution_thread="excluded_thread"
+  %negate_2 = f32[4096] negate(f32[4096] %a)
+  %async-update = ((f32[4096], f32[4096]), f32[4096], u32[]) call-update(%async-start)
+  %async-done = f32[4096] call-done(%async-update)
+  ROOT %add_1 = f32[4096] add(%negate_2, %async-done)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(
+      module_, ParseAndReturnVerifiedModule(hlo_str, GetModuleConfigForTest()));
+
+  bool ssa_form = GetParam();
+
+  // Run analysis with excluded thread.
+  auto analysis_or = HloDataflowAnalysis::Run(
+      *module_, ssa_form, /*bitcast_defines_value=*/false, {"main"});
+  TF_ASSERT_OK(analysis_or.status());
+  analysis_ = std::move(analysis_or).value();
+  const HloDataflowAnalysis& analysis = *analysis_;
+
+  const HloInstruction* async_start =
+      FindInstruction(module_.get(), "async-start");
+  const HloInstruction* async_update =
+      FindInstruction(module_.get(), "async-update");
+  const HloInstruction* async_done =
+      FindInstruction(module_.get(), "async-done");
+
+  // AsyncStart defines a new value at {1} because the thread is excluded.
+  EXPECT_TRUE(analysis.ValueIsDefinedAt(async_start, {1}));
+
+  // AsyncUpdate at {1} should contain that new value (it forwards it).
+  EXPECT_FALSE(analysis.ValueIsDefinedAt(async_update, {1}));
+  EXPECT_THAT(
+      HloValuesAt(async_update, {1}),
+      UnorderedElementsAre(&analysis.GetValueDefinedAt(async_start, {1})));
+
+  // AsyncDone output should contain that new value (it forwards it from
+  // AsyncUpdate at {1}).
+  EXPECT_FALSE(analysis.ValueIsDefinedAt(async_done, {}));
+  EXPECT_THAT(
+      HloValuesAt(async_done, {}),
+      UnorderedElementsAre(&analysis.GetValueDefinedAt(async_start, {1})));
+}
+
 TEST_P(HloDataflowAnalysisTest, AsyncCallWithConditional) {
   std::string hlo_str = R"(
 HloModule AsyncCall
