@@ -30,8 +30,10 @@ limitations under the License.
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
+#include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/runtime/traced_command.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/attribute_map.h"
@@ -65,7 +67,11 @@ namespace xla::gpu {
 // ConvolutionThunk, not CustomCallThunk.  There's no ambiguity because they
 // have special call target names (e.g. "__cudnn$convForward") that only the
 // compiler is allowed to create.
-class CustomCallThunk : public Thunk {
+//
+// Also implements TracedCommand so it can be recorded directly into command
+// buffers; the default TracedCommand::Record() traces ExecuteOnStream() on the
+// command-buffer trace stream, reusing the FFI invocation logic.
+class CustomCallThunk : public TracedCommand {
  public:
   // An owning equivalent of XLA_FFI_Handler_Bundle that allows using lambdas
   // with captures.
@@ -155,6 +161,12 @@ class CustomCallThunk : public Thunk {
         continue;
       }
       res.push_back(BufferUse::Read(shaped_slice->slice, shaped_slice->shape));
+    }
+    for (const NullableShapedSlice& shaped_slice : results_) {
+      if (!shaped_slice.has_value()) {
+        continue;
+      }
+      res.push_back(BufferUse::Write(shaped_slice->slice, shaped_slice->shape));
     }
     return res;
   }

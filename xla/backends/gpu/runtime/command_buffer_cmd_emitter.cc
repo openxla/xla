@@ -34,7 +34,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
@@ -67,6 +66,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 
 namespace xla::gpu {
@@ -181,20 +181,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const CustomCallThunk& thunk) {
-  if (auto bundle = thunk.bundle(); bundle.has_value()) {
-    return std::make_unique<CustomCallCmd>(
-        thunk.target_name(), bundle->execute, thunk.operands(), thunk.results(),
-        *thunk.call_frame(), thunk.thunk_info().thunk_id,
-        thunk.execution_state(),
-        /*called_computation=*/nullptr);  // TODO(b/342285364)
-  }
-  return absl::InternalError(
-      "CustomCallThunk without FFI handler bundle cannot be converted to a "
-      "command buffer command");
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const LegacyCustomCallThunk& thunk) {
   return std::make_unique<LegacyCustomCallCmd>(
       thunk.target_name(), thunk.call_target(), thunk.operands(),
@@ -247,9 +233,12 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kCopy:
       cmd_sequence.Append(static_cast<DeviceToDeviceCopyThunk*>(&thunk));
       return absl::OkStatus();
+    // CustomCallThunk implements TracedCommand directly; append as borrowed
+    // pointer — the thunk outlives the command sequence.
     case Thunk::Kind::kCustomCall:
-      if (auto* ffi_thunk = dynamic_cast<const CustomCallThunk*>(&thunk)) {
-        return append(Convert(*ffi_thunk));
+      if (auto* ffi_thunk = dynamic_cast<CustomCallThunk*>(&thunk)) {
+        cmd_sequence.Append(ffi_thunk);
+        return absl::OkStatus();
       }
       if (auto* legacy_thunk =
               dynamic_cast<const LegacyCustomCallThunk*>(&thunk)) {
