@@ -30,50 +30,57 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla {
-
+namespace {
+absl::Status ConvertToMhlo(mlir::ModuleOp module) {
+  mlir::PassManager pm(module.getContext());
+  pm.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
+  if (failed(pm.run(module))) {
+    return absl::InternalError("Failed to convert to MHLO");
+  }
+  return absl::OkStatus();
+}
+}  // namespace
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertHloToMlirHlo(
     mlir::MLIRContext& ctx, xla::HloModuleProto const* hlo_module,
-    bool import_all_computations, bool flatten_computation_args_result,
-    bool emit_stablehlo) {
+    bool import_all_computations, bool flatten_computation_args_result) {
   mlir::OwningOpRef<mlir::ModuleOp> module =
       llvm_ir::CreateMlirModuleOp(mlir::UnknownLoc::get(&ctx));
-  TF_RETURN_IF_ERROR(
-      ConvertHloToMlirHlo(*module, hlo_module, import_all_computations,
-                          flatten_computation_args_result, emit_stablehlo));
+  TF_RETURN_IF_ERROR(ConvertHloToMlirHlo(*module, hlo_module,
+                                         import_all_computations,
+                                         flatten_computation_args_result));
   return module;
 }
 
 absl::Status ConvertHloToMlirHlo(mlir::ModuleOp module,
                                  xla::HloModuleProto const* hlo_module_proto,
                                  bool import_all_computations,
-                                 bool flatten_computation_args_result,
-                                 bool emit_stablehlo) {
+                                 bool flatten_computation_args_result) {
   mlir::BaseScopedDiagnosticHandler diag_handler(module.getContext());
-  return HloModuleImporter(module, import_all_computations,
-                           flatten_computation_args_result, emit_stablehlo)
-      .Import(*hlo_module_proto);
+  TF_RETURN_IF_ERROR(HloModuleImporter(module, import_all_computations,
+                                       flatten_computation_args_result)
+                         .Import(*hlo_module_proto));
+  return ConvertToMhlo(module);
 }
 
 absl::Status ConvertHloToMlirHlo(mlir::ModuleOp module,
                                  const xla::HloModule* hlo_module,
                                  bool import_all_computations,
-                                 bool flatten_computation_args_result,
-                                 bool emit_stablehlo) {
+                                 bool flatten_computation_args_result) {
   mlir::BaseScopedDiagnosticHandler diag_handler(module.getContext());
-  return HloModuleImporter(module, import_all_computations,
-                           flatten_computation_args_result, emit_stablehlo)
-      .Import(*hlo_module);
+  TF_RETURN_IF_ERROR(HloModuleImporter(module, import_all_computations,
+                                       flatten_computation_args_result)
+                         .Import(*hlo_module));
+  return ConvertToMhlo(module);
 }
 
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertHloToMlirHlo(
     mlir::MLIRContext& ctx, const xla::HloModule* hlo_module,
-    bool import_all_computations, bool flatten_computation_args_result,
-    bool emit_stablehlo) {
+    bool import_all_computations, bool flatten_computation_args_result) {
   mlir::OwningOpRef<mlir::ModuleOp> module =
       llvm_ir::CreateMlirModuleOp(mlir::UnknownLoc::get(&ctx));
-  TF_RETURN_IF_ERROR(
-      ConvertHloToMlirHlo(*module, hlo_module, import_all_computations,
-                          flatten_computation_args_result, emit_stablehlo));
+  TF_RETURN_IF_ERROR(ConvertHloToMlirHlo(*module, hlo_module,
+                                         import_all_computations,
+                                         flatten_computation_args_result));
   return module;
 }
 

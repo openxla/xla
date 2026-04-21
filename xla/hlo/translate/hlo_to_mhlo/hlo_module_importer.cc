@@ -27,6 +27,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/PassManager.h"
+#include "shardy/dialect/sdy/ir/dialect.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -46,30 +47,18 @@ namespace xla {
 
 HloModuleImporter::HloModuleImporter(mlir::ModuleOp module,
                                      bool import_all_computation,
-                                     bool flatten_computation_args_result,
-                                     bool emit_stablehlo)
+                                     bool flatten_computation_args_result)
     : import_all_computation_(import_all_computation),
       flatten_computation_args_result_(flatten_computation_args_result),
       symbol_table_(module),
-      emit_stablehlo_(emit_stablehlo),
       builder_(module.getContext()) {
   module.getContext()->loadDialect<mlir::arith::ArithDialect>();
   module.getContext()->loadDialect<mlir::func::FuncDialect>();
   module.getContext()->loadDialect<mlir::mhlo::MhloDialect>();
   module.getContext()->loadDialect<mlir::stablehlo::StablehloDialect>();
+  module.getContext()->loadDialect<mlir::sdy::SdyDialect>();
   module.getContext()->loadDialect<mlir::quant::QuantDialect>();
 }
-
-namespace {
-absl::Status ConvertToMhlo(mlir::ModuleOp module) {
-  mlir::PassManager pm(module.getContext());
-  pm.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
-  if (failed(pm.run(module))) {
-    return absl::InternalError("Failed to convert to MHLO");
-  }
-  return absl::OkStatus();
-}
-}  // namespace
 
 absl::Status HloModuleImporter::Import(const HloModule& hlo_module) {
   auto module = llvm::cast<mlir::ModuleOp>(symbol_table_.getOp());
@@ -96,11 +85,6 @@ absl::Status HloModuleImporter::Import(const HloModule& hlo_module) {
                            /*is_main*/ true, flatten_computation_args_result_)
                            .status());
 
-    // Convert all ops to MHLO
-    LLVM_DEBUG(llvm::dbgs() << "Emit StableHLO: " << emit_stablehlo_ << "\n");
-    if (!emit_stablehlo_) {
-      TF_RETURN_IF_ERROR(ConvertToMhlo(module));
-    }
     return absl::OkStatus();
   }
 
@@ -119,11 +103,6 @@ absl::Status HloModuleImporter::Import(const HloModule& hlo_module) {
   TF_RETURN_IF_ERROR(ImportLayoutModes(
       hlo_module, module, flatten_computation_args_result_, builder_));
 
-  // Convert all ops to MHLO
-  LLVM_DEBUG(llvm::dbgs() << "Emit StableHLO: " << emit_stablehlo_ << "\n");
-  if (!emit_stablehlo_) {
-    TF_RETURN_IF_ERROR(ConvertToMhlo(module));
-  }
   return absl::OkStatus();
 }
 
