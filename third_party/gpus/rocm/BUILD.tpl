@@ -563,7 +563,9 @@ cc_library(
 
 cc_library(
     name = "amd_comgr_dynamic",
-    srcs = ["%{rocm_root}/lib/libamd_comgr_stub.a"],
+    srcs = [
+        "%{rocm_root}/lib/libamd_comgr_stub.a",
+    ],
     hdrs = glob(["%{rocm_root}/include/amd_comgr/**"]),
     data = glob([
         "%{rocm_root}/lib/libamd_comgr_loader.so*",
@@ -574,7 +576,6 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
-    linkopts = ["-lamd_comgr_loader"],
     strip_include_prefix = "%{rocm_root}",
     deps = [
         ":rocm_config",
@@ -586,18 +587,16 @@ cc_library(
 cc_library(
     name = "amd_comgr_static",
     hdrs = glob(["%{rocm_root}/include/amd_comgr/**"]),
-    data = glob([
+    srcs = glob([
         "%{rocm_root}/lib/libamd_comgr.so*",
     ]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
     ],
-    linkopts = ["-lamd_comgr"],
     strip_include_prefix = "%{rocm_root}",
     deps = [
         ":rocm_config",
-        ":rocm_rpath",
         ":system_libs",
     ],
 )
