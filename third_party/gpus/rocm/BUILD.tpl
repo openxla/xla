@@ -574,6 +574,7 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
+    linkopts = ["-lamd_comgr_loader"],
     strip_include_prefix = "%{rocm_root}",
     deps = [
         ":rocm_config",
@@ -592,6 +593,7 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
+    linkopts = ["-lamd_comgr"],
     strip_include_prefix = "%{rocm_root}",
     deps = [
         ":rocm_config",
