@@ -355,6 +355,9 @@ class DeviceDescription {
   // host and device.)
   int64_t memory_bandwidth() const { return memory_bandwidth_; }
 
+  // Returns the device's memory clock rate in GHz.
+  float mem_clock_ghz() const { return mem_clock_ghz_; }
+
   // Returns the PCIe memory bandwidth in bytes/sec.
   int64_t pcie_bandwidth() const { return pcie_bandwidth_; }
 
@@ -525,6 +528,7 @@ class DeviceDescription {
   void set_l2_cache_size(int64_t value) { l2_cache_size_ = value; }
   void set_memory_bandwidth(int64_t value) { memory_bandwidth_ = value; }
   void set_pcie_bandwidth(int64_t value) { pcie_bandwidth_ = value; }
+  void set_mem_clock_ghz(float value) { mem_clock_ghz_ = value; }
 
   void set_shared_memory_per_core(int64_t value) {
     shared_memory_per_core_ = value;
@@ -617,6 +621,7 @@ class DeviceDescription {
 
   int64_t memory_bandwidth_ = kUninitialized<int64_t>;
   int64_t pcie_bandwidth_ = kUninitialized<int64_t>;
+  float mem_clock_ghz_ = kUninitialized<float>;
 
   // Shared memory limits on a given device.
   int64_t shared_memory_per_core_ = kUninitialized<int64_t>;

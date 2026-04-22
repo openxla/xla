@@ -77,6 +77,19 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "cudnn_device_props",
+    srcs = ["cudnn_device_props.cc"],
+    hdrs = ["cudnn_device_props.h"],
+    deps = [
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cudnn_frontend_helpers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@cudnn_frontend_archive//:cudnn_frontend",
+    ],
+)
+
+cc_library(
     name = "gpu_topology_utils",
     srcs = ["gpu_topology_utils.cc"],
     hdrs = ["gpu_topology_utils.h"],

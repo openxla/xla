@@ -94,6 +94,7 @@ absl::StatusOr<DeviceDescription> DeviceDescription::FromProto(
   device_description.l2_cache_size_ = proto.l2_cache_size();
   device_description.memory_bandwidth_ = proto.memory_bandwidth();
   device_description.pcie_bandwidth_ = proto.pcie_bandwidth();
+  device_description.mem_clock_ghz_ = proto.mem_clock_ghz();
   device_description.ecc_enabled_ = proto.ecc_enabled();
   device_description.shared_memory_per_core_ = proto.shared_memory_per_core();
   device_description.shared_memory_per_block_ = proto.shared_memory_per_block();
@@ -194,6 +195,7 @@ GpuDeviceInfoProto DeviceDescription::ToProto() const {
   proto.set_block_dim_limit_z(block_dim_limit().z);
   proto.set_memory_bandwidth(memory_bandwidth_);
   proto.set_pcie_bandwidth(pcie_bandwidth_);
+  proto.set_mem_clock_ghz(mem_clock_ghz_);
   proto.set_l2_cache_size(l2_cache_size_);
   proto.set_clock_rate_ghz(clock_rate_ghz_);
   proto.set_device_memory_size(device_memory_size_);
@@ -306,6 +308,7 @@ bool DeviceDescription::EqualsTo(
          l2_cache_size_ == other.l2_cache_size_ &&
          memory_bandwidth_ == other.memory_bandwidth_ &&
          pcie_bandwidth_ == other.pcie_bandwidth_ &&
+         mem_clock_ghz_ == other.mem_clock_ghz_ &&
          clock_rate_ghz_ == other.clock_rate_ghz_ &&
          ecc_enabled_ == other.ecc_enabled_ &&
          gpu_compute_capability_ == other.gpu_compute_capability_ &&

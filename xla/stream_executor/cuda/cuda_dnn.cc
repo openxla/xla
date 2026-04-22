@@ -52,6 +52,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
+#include "xla/backends/gpu/target_config/cudnn_device_props.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
@@ -6814,38 +6815,23 @@ absl::StatusOr<std::unique_ptr<dnn::DnnGraph>> CudnnSupport::DeserializeGraph(
   return std::make_unique<CudnnGraph>(std::move(graph));
 }
 
-std::string BuildCudnnDevicePropsJson(const DeviceDescription& desc) {
-  const auto* cc = desc.gpu_compute_capability().cuda_compute_capability();
-  int device_ver = cc ? (cc->major * 100 + cc->minor * 10) : 0;
-  int driver_ver =
-      desc.driver_version().major() * 1000 + desc.driver_version().minor() * 10;
-  return absl::StrFormat(
-      R"({"deviceVer":%d,"multiProcessorCount":%d,"warpSize":%d,)"
-      R"("maxSharedMemoryPerBlock":%d,"maxSharedMemoryPerBlockOptin":%d,)"
-      R"("reservedSharedMemoryPerBlock":%d,"maxRegistersPerSM":%d,)"
-      R"("maxCtasPerSM":%d,"maxThreadsPerBlock":%d,"maxThreadsPerSM":%d,)"
-      R"("regsPerBlock":%d,"totalGlobalMem":%d,"smClockRateKHz":%d,)"
-      R"("l2CacheSize":%d,"maxBlockSize":[%d,%d,%d],"memClockRateKHz":%d,)"
-      R"("maxGridSize":[%d,%d,%d],)"
-      R"("supportCoopLaunch":%d,"pciDeviceId":0,"isTccDriver":0,)"
-      R"("cudaDeviceId":0,"driverVer":%d,"deviceName":"%s"})",
-      device_ver, desc.core_count(), desc.threads_per_warp(),
-      desc.shared_memory_per_block(), desc.shared_memory_per_block_optin(),
-      /*desc.reserved_shared_memory_per_block()*/ 1024,
-      desc.registers_per_core_limit(),
-      /*desc.max_blocks_per_multiprocessor()*/ 32,
-      desc.threads_per_block_limit(), desc.threads_per_core_limit(),
-      desc.registers_per_block_limit(), desc.device_memory_size(),
-      static_cast<int64_t>(desc.clock_rate_ghz() * 1e6), desc.l2_cache_size(),
-      desc.thread_dim_limit_x(), desc.thread_dim_limit_y(),
-      desc.thread_dim_limit_z(), 3996000, desc.block_dim_limit_x(),
-      desc.block_dim_limit_y(), desc.block_dim_limit_z(),
-      /*desc.supports_coop_launch()*/ 1, driver_ver, desc.name());
-}
-
 absl::Status CudnnGraph::Prepare(dnn::DnnSupport* dnn_support,
                                  const DeviceDescription& gpu_device_info,
                                  const EngineOptions& engine_options) {
+  auto create_and_filter_plans = [&]() -> absl::Status {
+    RETURN_IF_CUDNN_FRONTEND_ERROR(
+        graph_.create_execution_plans({cudnn_frontend::HeurMode_t::A}));
+    if (engine_options.require_determinism) {
+      graph_.deselect_numeric_notes(
+          {cudnn_frontend::NumericalNote_t::NONDETERMINISTIC});
+    }
+    if (engine_options.require_command_buffer) {
+      graph_.select_behavior_notes(
+          {cudnn_frontend::BehaviorNote_t::SUPPORTS_CUDA_GRAPH_NATIVE_API});
+    }
+    return absl::OkStatus();
+  };
+
   if (dnn_support) {
     const CudnnSupport& cudnn_support =
         static_cast<CudnnSupport&>(*dnn_support);
@@ -6853,37 +6839,16 @@ absl::Status CudnnGraph::Prepare(dnn::DnnSupport* dnn_support,
                         cudnn_support.cudnn_->GetCompilationHandle());
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.validate());
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.build_operation_graph(cudnn_handle));
-    RETURN_IF_CUDNN_FRONTEND_ERROR(
-        graph_.create_execution_plans({cudnn_frontend::HeurMode_t::A}));
-    if (engine_options.require_determinism) {
-      graph_.deselect_numeric_notes(
-          {cudnn_frontend::NumericalNote_t::NONDETERMINISTIC});
-    }
-    if (engine_options.require_command_buffer) {
-      graph_.select_behavior_notes(
-          {cudnn_frontend::BehaviorNote_t::SUPPORTS_CUDA_GRAPH_NATIVE_API});
-    }
+    TF_RETURN_IF_ERROR(create_and_filter_plans());
     RETURN_CUDNN_FRONTEND_STATUS(graph_.check_support(cudnn_handle));
   } else {
     // deviceless mode
-    auto device_prop = std::make_shared<cudnn_frontend::DeviceProperties>();
-    std::string json = BuildCudnnDevicePropsJson(gpu_device_info);
-    RETURN_IF_CUDNN_FRONTEND_ERROR(device_prop->deserialize(
-        std::vector<uint8_t>(json.begin(), json.end())));
-    graph_.set_device_properties(device_prop);
-
+    TF_ASSIGN_OR_RETURN(auto device_props,
+                        xla::gpu::BuildDeviceProperties(gpu_device_info));
+    graph_.set_device_properties(device_props);
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.validate());
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.build_operation_graph());
-    RETURN_IF_CUDNN_FRONTEND_ERROR(
-        graph_.create_execution_plans({cudnn_frontend::HeurMode_t::A}));
-    if (engine_options.require_determinism) {
-      graph_.deselect_numeric_notes(
-          {cudnn_frontend::NumericalNote_t::NONDETERMINISTIC});
-    }
-    if (engine_options.require_command_buffer) {
-      graph_.select_behavior_notes(
-          {cudnn_frontend::BehaviorNote_t::SUPPORTS_CUDA_GRAPH_NATIVE_API});
-    }
+    TF_RETURN_IF_ERROR(create_and_filter_plans());
     RETURN_CUDNN_FRONTEND_STATUS(graph_.check_support());
   }
 }
