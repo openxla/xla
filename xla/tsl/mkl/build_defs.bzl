@@ -45,6 +45,20 @@ def if_mkl(if_true, if_false = []):
 # XLA in the future.
 if_onednn = if_mkl
 
+def if_onednn_async(if_true, if_false = []):
+    """Returns `if_true` if building oneDNN with async runtime support.
+
+    Returns:
+      A select statement which evaluates to if_true if we're building oneDNN
+      with the async runtime support.
+      Otherwise, the select statement evaluates to if_false.
+    """
+    return select({
+        Label("//xla/tsl:linux_x86_64"): if_true,
+        Label("//xla/tsl:windows"): if_true,
+        "//conditions:default": if_false,
+    })
+
 def if_mkl_ml(if_true, if_false = []):
     """Shorthand for select()'ing on whether we're building with MKL-ML.
 
