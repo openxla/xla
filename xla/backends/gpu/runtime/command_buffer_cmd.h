@@ -61,28 +61,6 @@ limitations under the License.
 namespace xla::gpu {
 
 //===----------------------------------------------------------------------===//
-// ChildCmd
-//===----------------------------------------------------------------------===//
-
-class ChildCmd : public Command {
- public:
-  explicit ChildCmd(CommandExecutor child_commands);
-
-  absl::Status Initialize(const Thunk::InitializeParams& params) override;
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-
-  absl::Status WalkNested(
-      absl::FunctionRef<absl::Status(Thunk*)> callback) override;
-
- private:
-  CommandExecutor child_commands_;
-};
-
-//===----------------------------------------------------------------------===//
 // CaseCmd
 //===----------------------------------------------------------------------===//
 
