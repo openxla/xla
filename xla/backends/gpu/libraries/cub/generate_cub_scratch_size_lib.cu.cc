@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -150,6 +151,13 @@ absl::StatusOr<CubScratchSizeEntry> GenerateDataForKeySegemented(
                      sizes);
 }
 
+// Returns the max number of items to be sorted that we are generating data for.
+int64_t GetMaxNumOfItems(const cudaDeviceProp& prop, size_t element_size) {
+  // Limit to 1 billion otherwise we might get integer overflows for small
+  // Keys/Values types.
+  return std::min<int64_t>(prop.totalGlobalMem / element_size, 1'000'000'000LL);
+}
+
 // Create a list of numbers that grows geometrically up to max_items.
 std::vector<int64_t> CreateNumItemsList(int64_t max_items) {
   // Needed for the first few steps when n * kGrowthFactor rounds down to n.
@@ -168,8 +176,8 @@ template <typename KeyT>
 absl::Status GenerateDataForKeyOnlySort(CubScratchSizeLookupTable& lookup_table,
                                         absl::string_view device_name,
                                         const cudaDeviceProp& prop) {
-  const int64_t kMaxItems = prop.totalGlobalMem / sizeof(KeyT);
-  std::vector<int64_t> num_items_list = CreateNumItemsList(kMaxItems);
+  std::vector<int64_t> num_items_list =
+      CreateNumItemsList(GetMaxNumOfItems(prop, sizeof(KeyT)));
 
   ASSIGN_OR_RETURN(
       *lookup_table.add_entries(),
@@ -210,9 +218,8 @@ template <typename KeyT, typename ValueT>
 absl::Status GenerateDataForKeyValueSort(
     CubScratchSizeLookupTable& lookup_table, absl::string_view device_name,
     const cudaDeviceProp& prop) {
-  const int64_t kMaxItems =
-      prop.totalGlobalMem / (sizeof(KeyT) + sizeof(ValueT));
-  std::vector<int64_t> num_items_list = CreateNumItemsList(kMaxItems);
+  std::vector<int64_t> num_items_list =
+      CreateNumItemsList(GetMaxNumOfItems(prop, sizeof(KeyT) + sizeof(ValueT)));
 
   ASSIGN_OR_RETURN(*lookup_table.add_entries(),
                    (GenerateDataForKeyValueSegemented<KeyT, ValueT>(

@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/libraries/cub/cub_sort_utils.h"
+#include "xla/backends/gpu/libraries/cub/scratch_space_lookup_table.pb.h"
 #include "xla/stream_executor/semantic_version.h"
 
 namespace xla::gpu {
