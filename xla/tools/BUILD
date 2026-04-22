@@ -1233,7 +1233,6 @@ xla_test(
         "//xla/tsl/protobuf:status_proto_cc",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform:path",
     ],
 )
