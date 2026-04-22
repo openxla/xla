@@ -6825,8 +6825,8 @@ std::string BuildCudnnDevicePropsJson(const DeviceDescription& desc) {
       R"("reservedSharedMemoryPerBlock":%d,"maxRegistersPerSM":%d,)"
       R"("maxCtasPerSM":%d,"maxThreadsPerBlock":%d,"maxThreadsPerSM":%d,)"
       R"("regsPerBlock":%d,"totalGlobalMem":%d,"smClockRateKHz":%d,)"
-      R"("l2CacheSize":%d,"maxBlockSize":[1024,1024,64],"memClockRateKHz":%d,)"
-      R"("maxGridSize":[2147483647,65535,65535],)"
+      R"("l2CacheSize":%d,"maxBlockSize":[%d,%d,%d],"memClockRateKHz":%d,)"
+      R"("maxGridSize":[%d,%d,%d],)"
       R"("supportCoopLaunch":%d,"pciDeviceId":0,"isTccDriver":0,)"
       R"("cudaDeviceId":0,"driverVer":%d,"deviceName":"%s"})",
       device_ver, desc.core_count(), desc.threads_per_warp(),
@@ -6837,7 +6837,10 @@ std::string BuildCudnnDevicePropsJson(const DeviceDescription& desc) {
       desc.threads_per_block_limit(), desc.threads_per_core_limit(),
       desc.registers_per_block_limit(), desc.device_memory_size(),
       static_cast<int64_t>(desc.clock_rate_ghz() * 1e6), desc.l2_cache_size(),
-      3996000, /*desc.supports_coop_launch()*/ 1, driver_ver, desc.name());
+      desc.thread_dim_limit_x(), desc.thread_dim_limit_y(),
+      desc.thread_dim_limit_z(), 3996000, desc.block_dim_limit_x(),
+      desc.block_dim_limit_y(), desc.block_dim_limit_z(),
+      /*desc.supports_coop_launch()*/ 1, driver_ver, desc.name());
 }
 
 absl::Status CudnnGraph::Prepare(dnn::DnnSupport* dnn_support,

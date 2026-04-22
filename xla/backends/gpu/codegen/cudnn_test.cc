@@ -495,7 +495,7 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module_live,
                           ParseAndReturnVerifiedModule(kHlo));
   BinaryMap binary_map_live;
-  CuDnnFusionCompiler live_compiler(executor->AsDnn(), device_description,
+  CuDnnFusionCompiler live_compiler(executor->AsDnn(), se::DeviceDescription(),
                                     binary_map_live);
   TF_ASSERT_OK_AND_ASSIGN(bool changed_live,
                           live_compiler.Run(module_live.get()));
