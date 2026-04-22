@@ -42,9 +42,13 @@ std::vector<std::string> CandidateCudaRoots() {
 #if !defined(PLATFORM_GOOGLE)
   auto roots = std::vector<std::string>{};
   std::string runfiles_suffix = "runfiles";
-  std::vector<std::string> cuda_dir_names = {"cuda_nvcc", "cuda_nvdisasm",
-                                             "nvidia_nvshmem", "cuda_nvvm",
-                                             "cuda_cudart"};
+  std::vector<std::string> cuda_dir_names = {
+      "cuda_nvcc", "rules_ml_toolchain++cuda_redist_init_ext+cuda_nvcc",
+      "cuda_nvdisasm", "rules_ml_toolchain++cuda_redist_init_ext+cuda_nvdisasm",
+      "nvidia_nvshmem", "rules_ml_toolchain++nvshmem_redist_ext+nvidia_nvshmem",
+      "cuda_nvvm", "rules_ml_toolchain++cuda_redist_init_ext+cuda_nvvm",
+      "cuda_cudart", "rules_ml_toolchain++cuda_redist_init_ext+cuda_cudart"
+  };
 
   // The CUDA candidate root for c++ targets.
   std::string executable_path = tsl::Env::Default()->GetExecutablePath();

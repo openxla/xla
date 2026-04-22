@@ -377,6 +377,7 @@ def xla_test(
             this_backend_kwargs[k] = v
         this_backend_data = []
         backend_deps = []
+        this_backend_env = dict(env)
         if backend == "cpu":
             device_type_for_env = "cpu"
             backend_deps.append("//xla/service:cpu_plugin")
@@ -395,6 +396,10 @@ def xla_test(
                     "//xla/stream_executor/cuda:gpu_test_kernels_cuda",
                     "//xla/stream_executor/cuda:stream_executor_cuda",
                 ]
+                this_backend_data.append("@cuda_nvcc//:nvvm")
+                xla_flags = this_backend_env.get("XLA_FLAGS", "")
+                cuda_data_dir = "external/" + Label("@cuda_nvcc").workspace_name
+                this_backend_env["XLA_FLAGS"] = xla_flags + " --xla_gpu_cuda_data_dir=" + cuda_data_dir
             if backend in AMD_GPU_DEFAULT_BACKENDS:
                 this_backend_tags.append("gpu")
                 if "multi_gpu" in this_backend_tags:
@@ -440,7 +445,6 @@ def xla_test(
         modifiers = backend.split("_")
         device = modifiers.pop(0)
 
-        this_backend_env = dict(env)
         for k, v in {
             "XLA_TEST_DEVICE": device,
             "XLA_TEST_DEVICE_TYPE": device_type_for_env,
