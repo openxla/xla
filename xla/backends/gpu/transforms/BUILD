@@ -1385,6 +1385,32 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "dynamic_slice_defuser",
+    srcs = ["dynamic_slice_defuser.cc"],
+    hdrs = ["dynamic_slice_defuser.h"],
+    tags = ["gpu"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "dynamic_slice_defuser_test",
+    srcs = ["dynamic_slice_defuser_test.cc"],
+    tags = ["gpu"],
+    deps = [
+        ":dynamic_slice_defuser",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "explicit_collectives_group_async_wrapper",
     srcs = ["explicit_collectives_group_async_wrapper.cc"],
     hdrs = ["explicit_collectives_group_async_wrapper.h"],
