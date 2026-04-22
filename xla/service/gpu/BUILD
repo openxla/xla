@@ -2627,7 +2627,6 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/rocm:rocm_compute_capability",
         "//xla/stream_executor/rocm:rocm_platform_id",
-        "//xla/stream_executor/rocm:rocm_solver_context",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
