@@ -763,7 +763,9 @@ TEST(PjRtClientTest, ClearPeakMemory) {
   EXPECT_EQ(initial_stats.bytes_in_use, dealloc_stats.bytes_in_use);
   EXPECT_EQ(dealloc_stats.peak_bytes_in_use, alloc_stats.peak_bytes_in_use);
 
-  if (device->ClearMemoryStats().ok()) {
+  absl::Status clear_status = device->ClearMemoryStats();
+  if (!absl::IsUnimplemented(clear_status)) {
+    TF_EXPECT_OK(clear_status);
     auto clear_stats = get_stats();
     EXPECT_EQ(clear_stats.bytes_in_use, dealloc_stats.bytes_in_use);
     EXPECT_EQ(clear_stats.peak_bytes_in_use, dealloc_stats.bytes_in_use);
