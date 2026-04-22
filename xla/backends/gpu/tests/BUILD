@@ -10,6 +10,7 @@ load(
 # copybara:uncomment load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:lit.bzl", "enforce_glob", "lit_test_suite_for_gpus")
+load("//xla/backends/gpu/tests:helper.bzl", "get_canonical_repo_name")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
@@ -19,6 +20,7 @@ load(
     "//xla/tsl/platform:build_config_root.bzl",
     "tf_gpu_tests_tags",
 )
+
 load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
@@ -826,7 +828,7 @@ lit_test_suite_for_gpus(
         "p100",
         "v100",
     ],
-    hermetic_cuda_data_dir = "%S/../../../../../cuda_nvcc",
+    hermetic_cuda_data_dir = "%S/../../../../../" + get_canonical_repo_name("cuda_nvcc"),
     tags = ["no-oneapi"],
     tools = [
         "//xla/tools:hlo-opt",
