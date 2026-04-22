@@ -84,14 +84,18 @@ cc_library(
     srcs = ["while_loop_trip_count_annotator.cc"],
     hdrs = ["while_loop_trip_count_annotator.h"],
     deps = [
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:while_loop_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/platform:errors",
+        "//xla/tsl/platform:status_macros",
     ],
 )
 
@@ -101,11 +105,11 @@ xla_cc_test(
     deps = [
         ":while_loop_trip_count_annotator",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",  # fixdeps: keep
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
