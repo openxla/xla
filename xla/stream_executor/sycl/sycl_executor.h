@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/sycl/sycl_kernel.h"
 #include "xla/stream_executor/sycl/sycl_stream.h"
+#include "xla/stream_executor/sycl/sycl_timer.h"
 
 namespace stream_executor::sycl {
 
@@ -84,9 +85,11 @@ class SyclExecutor : public gpu::GpuExecutor {
   // Synchronizes all device activity.
   bool SynchronizeAllActivity() override;
 
-  // Sets the specified device memory to zero synchronously.
-  absl::Status SynchronousMemZero(DeviceMemoryBase* location,
-                                  uint64_t size) override;
+  // Creates an EventBasedTimer (i.e. SyclTimer) for timing operations in the
+  // given stream using SYCL events.
+  // TODO(intel-tf): Support delay kernel based timing.
+  absl::StatusOr<std::unique_ptr<EventBasedTimer>> CreateEventBasedTimer(
+      Stream* stream, bool use_delay_kernel) override;
 
   // Copies memory from host to device synchronously.
   absl::Status SynchronousMemcpy(DeviceMemoryBase* gpu_dst,

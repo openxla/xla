@@ -23,6 +23,7 @@ limitations under the License.*/
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -196,8 +197,12 @@ absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
                                     collective_config_.replica_groups,
                                     collective_config_.group_mode));
 
+  // Sort device groups: RequestClique expects pre-sorted groups.
+  absl::c_for_each(device_groups, [](auto& group) { absl::c_sort(group); });
+  absl::c_sort(device_groups);
+
   TF_RETURN_IF_ERROR(params.collective_clique_requests->RequestClique(
-      clique_key, std::move(device_groups)));
+      clique_key, device_groups));
 
   absl::MutexLock lock(mutex_);
   if (!per_stream_memory_.contains(params.executor)) {
@@ -279,9 +284,10 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
       // the buffer. The kernel will take care of leaving the buffer in
       // correct state after use, so we don't need to zero out after
       // initialization.
-      TF_RETURN_IF_ERROR(params.executor->SynchronousMemZero(
+      TF_RETURN_IF_ERROR(params.stream->MemZero(
           memory_state->signal_buffers_handle.address_ptr(),
           memory_state->signal_buffers_handle.address().size()));
+      TF_RETURN_IF_ERROR(params.stream->BlockHostUntilDone());
       // Create a kernel for execution.
       std::unique_ptr<se::Kernel> kernel = nullptr;
       if (!kernel_name_.empty()) {

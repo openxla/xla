@@ -2670,8 +2670,20 @@ GatherScatterOperandsShardedAcrossParallelDims(
   if (indices_parallel_dims.size() != operand_parallel_dims.size()) {
     return std::nullopt;
   }
-  auto new_index_shard = indices.sharding();
-  auto new_operand_shard = operand.sharding();
+  const HloSharding& idx_sharding = indices.sharding();
+  const HloSharding& op_sharding = operand.sharding();
+
+  // AlignShardingOnDims is called for these shardings later on where conversion
+  // happens anyway.
+  HloSharding new_index_shard =
+      idx_sharding.UseNamedShardingLeaf()
+          ? HloSharding::V3ToV2Sharding(idx_sharding.named_sharding())
+          : idx_sharding;
+  HloSharding new_operand_shard =
+      op_sharding.UseNamedShardingLeaf()
+          ? HloSharding::V3ToV2Sharding(op_sharding.named_sharding())
+          : op_sharding;
+
   int idx_parallel_tiles_num = new_index_shard.NumTiles(indices_parallel_dims);
   int op_parallel_tiles_num = new_operand_shard.NumTiles(operand_parallel_dims);
   if (idx_parallel_tiles_num == 1 && op_parallel_tiles_num == 1) {
@@ -3115,6 +3127,9 @@ GetMeshAxesPartitionGroupsForReplication(
     for (int64_t dim : replication_dims) {
       axis_refs.push_back(AxisRef(dim));
     }
+  }
+  if (axis_refs.empty()) {
+    return std::nullopt;
   }
   SortAndMergeAxes(axis_refs, *mesh);
   return MeshAxesReplicaGroupList(*mesh, axis_refs);

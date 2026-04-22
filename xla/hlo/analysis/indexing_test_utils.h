@@ -90,17 +90,7 @@ class IndexingTestBase : public HloHardwareIndependentTestBase {
   std::unique_ptr<VerifiedHloModule> module_;
 };
 
-// TODO(b/446858351): Remove this function once we migrate constraint_expression
-// to use SymbolicExpr.
-mlir::AffineExpr ParseAffineExpr(absl::string_view serialized_affine_expr,
-                                 mlir::MLIRContext* mlir_context);
 
-// Safely evaluates the given expression, returning nullopt if the result is
-// undefined (due to undefined behavior, e.g. division by zero or overflow).
-// TODO(b/446858351): Move this function to symbolic_expr.h.
-std::optional<int64_t> SafeEvaluateSymbolicExpr(SymbolicExpr expr,
-                                                absl::Span<int64_t const> dims,
-                                                absl::Span<int64_t const> syms);
 
 // Enumerates all the points in the domain of the given indexing map: points
 // within the bounds of the dimensions and symbols that do not violate any of

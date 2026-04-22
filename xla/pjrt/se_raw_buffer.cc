@@ -26,8 +26,6 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
-#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/future.h"
 #include "xla/layout.h"
@@ -69,9 +67,7 @@ PjRtStreamExecutorDeviceEventPromise::PjRtStreamExecutorDeviceEventPromise(
           tsl::AsyncValueRef<BufferSequencingEvent::EventState>(av_))) {}
 
 void PjRtStreamExecutorDeviceEventPromise::Set(PjRtDeviceEventRef event) {
-  SetFromSEEvent(
-      tensorflow::down_cast<PjRtStreamExecutorDeviceEvent*>(event.get())
-          ->event());
+  SetFromSEEvent(std::move(event).down_cast<BufferSequencingEvent>());
 }
 
 void PjRtStreamExecutorDeviceEventPromise::SetFromSEEvent(
@@ -153,7 +149,7 @@ PjRtStreamExecutorRawBuffer::CopyRawHostToDeviceAndReturnEvent(
       client->SetEventAsError(device_event, status);
     }
   });
-  return tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(std::move(device_event));
+  return PjRtDeviceEventRef(std::move(device_event));
 }
 
 absl::StatusOr<PjRtDeviceEventRef>
@@ -208,7 +204,7 @@ PjRtStreamExecutorRawBuffer::CopyRawDeviceToHostAndReturnEvent(
       client->SetEventAsError(device_event, status);
     }
   });
-  return tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(std::move(device_event));
+  return PjRtDeviceEventRef(std::move(device_event));
 }
 
 ShapedBuffer PjRtStreamExecutorRawBuffer::AsShapedBuffer(
@@ -368,8 +364,7 @@ void PjRtStreamExecutorRawBuffer::CopyToLiteralAsync(
                                 std::move(event_or).value(), stream);
       });
 
-  device_promise->Set(
-      tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(std::move(usage_event)));
+  device_promise->Set(PjRtDeviceEventRef(std::move(usage_event)));
 }
 
 absl::StatusOr<PjRtDeviceEventRef>
@@ -387,7 +382,7 @@ PjRtStreamExecutorRawBuffer::MakeAllocationReadyEvent() {
     local_device_->ReturnStreamToPool(std::move(stream));
     TF_RETURN_IF_ERROR(status);
   }
-  return tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(std::move(result));
+  return PjRtDeviceEventRef(std::move(result));
 }
 
 void PjRtStreamExecutorRawBuffer::CopyTo(
@@ -414,8 +409,8 @@ void PjRtStreamExecutorRawBuffer::CopyTo(
       return;
     }
     (*h2d_event)
-        ->AndThen([src_usage_event_promise = std::move(src_usage_event_promise),
-                   src_buffer = tsl::FormRef(this)]() {
+        .AndThen([src_usage_event_promise = std::move(src_usage_event_promise),
+                  src_buffer = tsl::FormRef(this)]() {
           src_usage_event_promise->SetReady();
         });
     definition_event_promise->Set(*std::move(h2d_event));
@@ -429,11 +424,11 @@ void PjRtStreamExecutorRawBuffer::CopyTo(
       return;
     }
     (*d2h_event)
-        ->AndThen(
+        .AndThen(
             [definition_event_promise = std::move(definition_event_promise),
              d2h_event = *d2h_event, dst_buffer = dst_raw_buffer]() {
               if (const absl::Status* error =
-                      d2h_event->async_value()->GetErrorIfPresent()) {
+                      d2h_event.async_value()->GetErrorIfPresent()) {
                 definition_event_promise->SetError(*error);
               } else {
                 definition_event_promise->SetReady();
@@ -456,12 +451,12 @@ void PjRtStreamExecutorRawBuffer::CopyTo(
       return;
     }
     (*d2h_event)
-        ->AndThen([staging_buffer, dst_raw_buffer,
-                   definition_event_promise =
-                       std::move(definition_event_promise),
-                   d2h_event = *d2h_event]() {
+        .AndThen([staging_buffer, dst_raw_buffer,
+                  definition_event_promise =
+                      std::move(definition_event_promise),
+                  d2h_event = *d2h_event]() {
           if (const absl::Status* error =
-                  d2h_event->async_value()->GetErrorIfPresent()) {
+                  d2h_event.async_value()->GetErrorIfPresent()) {
             definition_event_promise->SetError(*error);
           } else {
             auto h2d_event = dst_raw_buffer->CopyRawHostToDeviceAndReturnEvent(
@@ -470,7 +465,7 @@ void PjRtStreamExecutorRawBuffer::CopyTo(
             if (!h2d_event.ok()) {
               definition_event_promise->SetError(*error);
             } else {
-              (*h2d_event)->AndThen([staging_buffer]() {});
+              (*h2d_event).AndThen([staging_buffer]() {});
               definition_event_promise->Set(*std::move(h2d_event));
             }
           }
@@ -609,10 +604,8 @@ void PjRtStreamExecutorRawBuffer::IntraClientCopyToWithDependencies(
         usage_event.AndThen([src_buffer, dst_buffer]() {});
       });
 
-  definition_event_promise->Set(
-      tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(usage_event));
-  src_usage_event_promise->Set(
-      tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(std::move(usage_event)));
+  definition_event_promise->Set(PjRtDeviceEventRef(usage_event));
+  src_usage_event_promise->Set(PjRtDeviceEventRef(std::move(usage_event)));
 }
 
 }  // namespace xla

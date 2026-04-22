@@ -467,8 +467,14 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
     absl::string_view name, HloModule* module, bool use_fusion_emitters,
     bool use_onednn_custom_call) {
   // Run the following passes to a fixed point.
+  const bool fast_compile =
+      module->config().debug_options().xla_cpu_opt_preset() ==
+      xla::DebugOptions::CPU_OPT_PRESET_FAST_COMPILE;
+
+  const int iteration_limit = fast_compile ? 4 : 25;
+
   auto pipeline =
-      std::make_unique<HloPassFix<HloPassPipeline>>(std::string(name));
+      HloPassFix<HloPassPipeline>::Create(iteration_limit, std::string(name));
   AddHloVerifier(pipeline.get(), HloVerifierOpts{},
                  /*debug_only=*/true);
 
@@ -1691,8 +1697,14 @@ CpuCompiler::CompileCpuExecutable(
   ModuleHook pre_optimization_ir_hook;
   ModuleHook post_optimization_ir_hook;
   std::tie(pre_optimization_ir_hook, post_optimization_ir_hook) =
-      GetIRModuleHooks(*module, user_pre_optimization_hook_,
-                       user_post_optimization_hook_);
+      GetIRModuleHooks(
+          *module,
+          [this](const llvm::Module& module) {
+            CallUserPreOptimizationHook(module);
+          },
+          [this](const llvm::Module& module) {
+            CallUserPostOptimizationHook(module);
+          });
 
   // Compile must be thread-safe so create a new LLVM context for the module.
   mlir::MLIRContext mlir_context;
@@ -2340,7 +2352,7 @@ HloCostAnalysis::ShapeSizeFunction CpuCompiler::ShapeSizeBytesFunction() const {
 
 absl::StatusOr<std::unique_ptr<CompiledModule>> CpuCompiler::Export(
     Executable* executable) {
-  auto* cpu_executable = tensorflow::down_cast<CpuExecutable*>(executable);
+  auto* cpu_executable = absl::down_cast<CpuExecutable*>(executable);
   if (!cpu_executable)
     return Internal("Could not downcast Executable to CpuExecutable");
 

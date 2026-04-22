@@ -1631,10 +1631,14 @@ HloComputation* HloModule::GetComputationWithName(
 }
 
 std::string HloModule::GetFingerprint128(const HloPrintOptions& options) const {
-  const tsl::Fprint128 fingerprint = tsl::Fingerprint128(ToString(options));
-  absl::string_view fp_bytes(reinterpret_cast<const char*>(&fingerprint),
-                             sizeof(tsl::Fprint128));
-  return absl::BytesToHexString(fp_bytes);
+  // Use HighwayHashPrinter to compute the fingerprint by streaming HLO text
+  // directly into the hasher, avoiding materialization of the full module text
+  // as a string. For large modules this avoids multi-GB string allocations.
+  HighwayHashPrinter printer;
+  Print(&printer, options);
+  tsl::Fprint128 fingerprint = printer.ToFingerprint128();
+  return absl::StrCat(absl::Hex(fingerprint.low64, absl::kZeroPad16),
+                      absl::Hex(fingerprint.high64, absl::kZeroPad16));
 }
 
 struct OriginalArrayComparator {

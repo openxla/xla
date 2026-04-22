@@ -30,7 +30,6 @@ limitations under the License.
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/IR/Types.h"
 #include "mlir/Pass/PassManager.h"
-#include "mlir/Support/DebugStringHelper.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/python/ifrt/dtype.h"
@@ -133,9 +132,7 @@ MultiThreadedAtomProgramCompiler::CompileMpmdReshard(mlir::ModuleOp module_op) {
   in_arrays_types.reserve(main_func.getArgumentTypes().size());
   out_arrays_types.reserve(main_func.getResultTypes().size());
   for (const mlir::Type arg_type : main_func.getArgumentTypes()) {
-    auto array_type = mlir::dyn_cast<IfrtArrayType>(arg_type);
-    TF_RET_CHECK(array_type != nullptr)
-        << "Unsupported argument type `" << mlir::debugString(arg_type) << "`";
+    IfrtArrayType array_type = GetArrayType(arg_type);
     TF_ASSIGN_OR_RETURN(DType dtype,
                         ToIfrtDType(array_type.getShape().getElementType()));
     dtypes.push_back(std::move(dtype));
@@ -143,10 +140,7 @@ MultiThreadedAtomProgramCompiler::CompileMpmdReshard(mlir::ModuleOp module_op) {
     in_arrays_types.push_back(array_type);
   }
   for (const mlir::Type result_type : main_func.getResultTypes()) {
-    auto array_type = mlir::dyn_cast<IfrtArrayType>(result_type);
-    TF_RET_CHECK(array_type != nullptr)
-        << "Unsupported return type `" << mlir::debugString(result_type) << "`";
-    out_arrays_types.push_back(array_type);
+    out_arrays_types.push_back(GetArrayType(result_type));
   }
   AtomProgramCompileResult result;
   result.name = absl::StrCat("mpmd_reshard.", tsl::random::ThreadLocalNew64());

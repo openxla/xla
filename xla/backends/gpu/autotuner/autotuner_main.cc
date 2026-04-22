@@ -187,7 +187,11 @@ int main(int argc, char* argv[]) {
   tsl::port::InitMain(usage_string.c_str(), &argc, &argv);
   auto module = xla::gpu::GetModule(hlo_file);
   CHECK_OK(module.status());
-  CHECK_OK(xla::gpu::Autotune(*module.value()));
+  auto status = xla::gpu::Autotune(*module.value());
+  if (!status.ok()) {
+    std::cerr << "Error: " << status.ToString() << std::endl;
+    return 1;
+  }
   std::cout << module.value()->ToString() << std::endl;
   return 0;
 }

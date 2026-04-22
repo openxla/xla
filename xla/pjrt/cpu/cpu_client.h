@@ -246,7 +246,7 @@ class PjRtCpuClient final : public CommonPjRtClient {
       std::shared_ptr<const Shape> on_device_shape,
       PjRtMemorySpace* memory_space,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
-      absl::InlinedVector<PjRtDeviceEventRef, 4> definition_device_events)
+      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_device_events)
       override;
 
   using CommonPjRtClient::GetOnDeviceBytesCount;

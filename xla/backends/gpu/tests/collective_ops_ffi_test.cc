@@ -20,9 +20,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/no_destructor.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
+#include "absl/synchronization/blocking_counter.h"
+#include "absl/synchronization/mutex.h"
+#include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
@@ -61,11 +65,36 @@ limitations under the License.
 namespace xla::gpu {
 using ::testing::Values;
 
+struct SynchronizationSignals {
+  absl::Mutex mutex;
+  absl::BlockingCounter finished_kernels_counter;
+
+  explicit SynchronizationSignals(int num_expected_kernels)
+      : finished_kernels_counter(num_expected_kernels) {}
+
+  void IncrementFinishedKernels() {
+    absl::MutexLock lock(mutex);
+    finished_kernels_counter.DecrementCount();
+  }
+};
+
+absl::NoDestructor<std::unique_ptr<SynchronizationSignals>> global_signals;
+
 class CollectiveOpsTestFFI : public CollectiveOpsE2ETestBase {
  public:
   CollectiveOpsTestFFI()
       : CollectiveOpsE2ETestBase(/*memory_size=*/1 * kMB,
                                  /*collectives_memory_size=*/1 * kMB) {}
+  void SetUp() override {
+    CollectiveOpsE2ETestBase::SetUp();
+    *global_signals =
+        std::make_unique<SynchronizationSignals>(/*num_expected_kernels=*/2);
+  }
+
+  void TearDown() override {
+    CollectiveOpsE2ETestBase::TearDown();
+    global_signals->reset();
+  }
 };
 
 static constexpr int64_t kNumReplicas = 2;
@@ -205,8 +234,11 @@ static absl::Status PreparePeerAllReduce(
 
 // FFI handler that uses XLA:GPU collectives API to perform an all reduce. This
 // is just a test that demonstrates how to use XLA:GPU collectives API in an FFI
-// handler, builtin all-reduce is a much better option.
-static absl::Status AllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
+// handler, builtin all-reduce is a much better option. This version
+// demonstrates requesting a communication stream and synchronizing it with the
+// main stream.
+static absl::Status AllReduce(se::Stream* stream, se::Stream* comm_stream,
+                              ffi::BufferR0<U32> src,
                               ffi::Result<ffi::BufferR0<U32>> dst,
                               const CollectiveParams* collective_params,
                               const CollectiveCliques* collective_cliques) {
@@ -223,10 +255,22 @@ static absl::Status AllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
                       collective_cliques->GetComm(
                           clique_key, collective_params->global_device_id));
 
-  Future<> future = comm->AllReduce(
-      src.device_memory(), dst->device_memory(), src.element_type(),
-      src.element_count(), ReductionKind::SUM, GpuCollectives::On(*stream));
-  return future.Await();
+  // Synchronize communication stream with the main stream: make the
+  // communication stream wait for all prior work on the main stream.
+  TF_RETURN_IF_ERROR(comm_stream->WaitFor(stream));
+
+  // Launch all-reduce on the communication stream.
+  Future<> future =
+      comm->AllReduce(src.device_memory(), dst->device_memory(),
+                      src.element_type(), src.element_count(),
+                      ReductionKind::SUM, GpuCollectives::On(*comm_stream));
+  TF_RETURN_IF_ERROR(future.Await());
+
+  // Synchronize main stream with the communication stream: make the main
+  // stream wait for the all-reduce to complete.
+  TF_RETURN_IF_ERROR(stream->WaitFor(comm_stream));
+
+  return absl::OkStatus();
 }
 
 // FFI handler that launches device kernel that does all-reduce using NCCL
@@ -270,6 +314,9 @@ static absl::Status DeviceAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
   TF_RETURN_IF_ERROR(kernel.Launch(thread_dims, block_dims, stream, dev_comm,
                                    sym_src, sym_dst, src_offset, dst_offset,
                                    src.element_count()));
+  TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
+  SynchronizationSignals* signals = global_signals->get();
+  signals->IncrementFinishedKernels();
   return absl::OkStatus();
 }
 
@@ -292,10 +339,10 @@ static absl::Status DelayedDeviceAllReduce(
     const CollectiveParams* collective_params,
     const CollectiveCliques* collective_cliques,
     const CollectiveMemory* collective_memory) {
+  TF_RETURN_IF_ERROR(
+      stream->DoHostCallback([]() { absl::SleepFor(absl::Seconds(1)); }));
   TF_RETURN_IF_ERROR(DeviceAllReduce(stream, src, dst, collective_params,
                                      collective_cliques, collective_memory));
-  TF_RETURN_IF_ERROR(
-      stream->DoHostCallback([]() { absl::SleepFor(absl::Seconds(2)); }));
   return absl::OkStatus();
 }
 
@@ -342,6 +389,9 @@ static absl::Status MulticastAllReduce(
   TF_RETURN_IF_ERROR(kernel.Launch(thread_dims, block_dims, stream, src_addr,
                                    dst->device_memory(), src_offset,
                                    src.element_count()));
+  TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
+  SynchronizationSignals* signals = global_signals->get();
+  signals->IncrementFinishedKernels();
   return absl::OkStatus();
 }
 
@@ -352,10 +402,10 @@ static absl::Status DelayedMulticastAllReduce(
     ffi::Result<ffi::BufferR0<U32>> dst,
     const CollectiveParams* collective_params,
     const CollectiveMemory* collective_memory) {
+  TF_RETURN_IF_ERROR(
+      stream->DoHostCallback([]() { absl::SleepFor(absl::Seconds(1)); }));
   TF_RETURN_IF_ERROR(MulticastAllReduce(stream, src, dst, collective_params,
                                         collective_memory));
-  TF_RETURN_IF_ERROR(
-      stream->DoHostCallback([]() { absl::SleepFor(absl::Seconds(2)); }));
   return absl::OkStatus();
 }
 
@@ -413,6 +463,9 @@ static absl::Status PeerAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
   TF_RETURN_IF_ERROR(kernel.Launch(thread_dims, block_dims, stream, *src0,
                                    *src1, dst->device_memory(),
                                    src.element_count()));
+  TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
+  SynchronizationSignals* signals = global_signals->get();
+  signals->IncrementFinishedKernels();
   return absl::OkStatus();
 }
 
@@ -446,6 +499,7 @@ XLA_FFI_DEFINE_HANDLER(kPrepareAllReduce, PrepareAllReduce,
 XLA_FFI_DEFINE_HANDLER(kAllReduce, AllReduce,
                        ffi::Ffi::Bind()
                            .Ctx<ffi::Stream>()
+                           .Ctx<ffi::CommunicationStream<0>>()
                            .Arg<ffi::BufferR0<U32>>()  // src
                            .Ret<ffi::BufferR0<U32>>()  // dst
                            .Ctx<ffi::CollectiveParams>()
@@ -680,6 +734,8 @@ TEST_P(AllReduceTest, DeviceAllReduce) {
       ExecuteReplicated(std::move(module),
                         /*arguments=*/std::vector<Literal*>(),
                         /*run_hlo_passes=*/false));
+  SynchronizationSignals* signals = global_signals->get();
+  signals->finished_kernels_counter.Wait();
 
   absl::Span<const Literal> results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
@@ -722,6 +778,8 @@ TEST_P(AllReduceTest, PeerAllReduce) {
       ExecuteReplicated(std::move(module),
                         /*arguments=*/std::vector<Literal*>(),
                         /*run_hlo_passes=*/false));
+  SynchronizationSignals* signals = global_signals->get();
+  signals->finished_kernels_counter.Wait();
 
   absl::Span<const Literal> results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
@@ -764,6 +822,8 @@ TEST_P(AllReduceTest, MulticastAllReduce) {
       ExecuteReplicated(std::move(module),
                         /*arguments=*/std::vector<Literal*>(),
                         /*run_hlo_passes=*/false));
+  SynchronizationSignals* signals = global_signals->get();
+  signals->finished_kernels_counter.Wait();
 
   absl::Span<const Literal> results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
@@ -821,6 +881,8 @@ TEST_F(CollectiveOpsTestFFI, DeviceAllReduceWithFrontendAttributes) {
       ExecuteReplicated(std::move(module),
                         /*arguments=*/std::vector<Literal*>(),
                         /*run_hlo_passes=*/true));
+  SynchronizationSignals* signals = global_signals->get();
+  signals->finished_kernels_counter.Wait();
 
   absl::Span<const Literal> results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);

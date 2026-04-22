@@ -144,15 +144,10 @@ func.func @reshape_0d_to_2d_splats(%arg0: tensor<f32>) -> tensor<1x1xf32> {
 
 // CHECK-LABEL: @reshape_2d_to_0d_reduces(%arg0: tensor<1x1xf32>)
 func.func @reshape_2d_to_0d_reduces(%arg0: tensor<1x1xf32>) -> tensor<f32> {
-  // CHECK: %[[RESHAPE:.*]] = tt.reshape %arg0 allow_reorder : tensor<1x1xf32> -> tensor<1xf32>
-  // CHECK: %[[REDUCE:.*]] = "tt.reduce"(%[[RESHAPE]]) <{axis = 0 : i32}> ({
-  // CHECK:  ^bb0(%arg1: f32, %arg2: f32):
-  // CHECK:    %[[ADD:.*]] = arith.addf %arg1, %arg2 : f32
-  // CHECK:    tt.reduce.return %[[ADD]] : f32
-  // CHECK:  }) : (tensor<1xf32>) -> f32
-  // CHECK:  %[[REDUCE_TENSOR:.*]] = tensor.from_elements %[[REDUCE]] : tensor<f32>
+  // CHECK: %[[UNSPLAT:.*]] = tt.unsplat %arg0 : tensor<1x1xf32>
+  // CHECK: %[[RES:.*]] = tensor.from_elements %[[UNSPLAT]] : tensor<f32>
   %0 = stablehlo.reshape %arg0 : (tensor<1x1xf32>) -> tensor<f32>
-  // CHECK: return %[[REDUCE_TENSOR]]
+  // CHECK: return %[[RES]]
   return %0 : tensor<f32>
 }
 

@@ -355,6 +355,20 @@ CheckStoreIntoSliceIsCompatible(
                            HloOpcode::kReduceScatter>(i)) {
         return false;
       }
+      // Allow DynamicUpdateSlice as a formatting op if it inserts in a
+      // dimension other than the pipeline's sliced dimension (dim 0).
+      // This enables sinking patterns where an intermediate DUS inserts
+      // a value into a small buffer before the final DUS inserts into the
+      // loop's output buffer. The intermediate DUS will be converted to a
+      // scatter when the batch dimension is added.
+      if (i->opcode() == HloOpcode::kDynamicUpdateSlice) {
+        auto* dus = Cast<HloDynamicUpdateSliceInstruction>(i);
+        auto sliced_dim = GetSlicedDimension(dus);
+        // GetSlicedDimension checks that only one index is non-constant
+        // and all constant indices are 0. The non-constant dimension must
+        // not be dimension 0 (the pipeline's batch/sliced dimension).
+        return sliced_dim.has_value() && *sliced_dim != 0;
+      }
     }
     return HloPredicateIsOp<HloOpcode::kSlice, HloOpcode::kDynamicSlice,
                             HloOpcode::kPad, HloOpcode::kCollectivePermute,
@@ -1150,9 +1164,15 @@ WhileLoopAnalysis::IsSupportedDynamicUpdateSlice(
     }
   }
   const HloInstruction* to_insert_into = dyn_update->operand(0);
+  // Look through an optimization barrier wrapping a single GTE from the
+  // loop parameter. Pattern: param -> GTE -> opt-barrier -> DUS.
+  const HloInstruction* gte_for_insert = to_insert_into;
+  if (to_insert_into->opcode() == HloOpcode::kOptimizationBarrier) {
+    gte_for_insert = to_insert_into->operand(0);
+  }
   if (level_to_operate_on == 0 &&
-      (to_insert_into->opcode() != HloOpcode::kGetTupleElement ||
-       to_insert_into->operand(0) != loop_parameter)) {
+      (gte_for_insert->opcode() != HloOpcode::kGetTupleElement ||
+       gte_for_insert->operand(0) != loop_parameter)) {
     VLOG(5) << "Skipping " << instr->name()
             << " because slice to insert into is not a GTE from input "
                "parameter "
@@ -1162,10 +1182,10 @@ WhileLoopAnalysis::IsSupportedDynamicUpdateSlice(
   // If Level is > 0 then we already did our analysis in the previous
   // iteration for safeness of this index to transform.
   if (level_to_operate_on == 0) {
-    if (to_insert_into->opcode() == HloOpcode::kGetTupleElement) {
+    if (gte_for_insert->opcode() == HloOpcode::kGetTupleElement) {
       // GTE for this parameter is not CSEd. Abort because we don't analyze
       // every single use from other GTEs.
-      if (parameter_gtes_count.at(to_insert_into->tuple_index()) != 1) {
+      if (parameter_gtes_count.at(gte_for_insert->tuple_index()) != 1) {
         VLOG(5) << "Skipping " << instr->name()
                 << " because there are multiple parameter GTEs for this slice";
         return std::nullopt;
@@ -1173,6 +1193,8 @@ WhileLoopAnalysis::IsSupportedDynamicUpdateSlice(
     }
     const HloInstruction* dyn_update_idx = dyn_update->operand(
         dyn_update->first_index_operand_number() + *sliced_dim);
+    // Check parameter usage on to_insert_into (which may be an opt-barrier).
+    // Its users should only be the DUS itself.
     if (level_to_operate_on == 0 &&
         !CheckParameterUsageIsCompatible(to_insert_into, dyn_update,
                                          dyn_update_idx, *sliced_dim)) {
@@ -2546,6 +2568,103 @@ absl::Status TransformFormattingOp(
             collect_operands(formatting_op),
             concat->concatenate_dimension() + 1));
     pipelined_map[formatting_op] = expanded_concat;
+    return absl::OkStatus();
+  }
+  if (formatting_op->opcode() == HloOpcode::kDynamicUpdateSlice) {
+    VLOG(1) << "Transforming DUS: " << formatting_op->ToString()
+            << " to scatter.";
+    // Convert an intermediate DUS formatting op to a scatter when adding
+    // the batch dimension. The DUS inserts a value into a small buffer at
+    // a position determined by a single non-constant index. After batching,
+    // each batch element independently performs its own insertion, which is
+    // naturally expressed as a scatter with explicit batch indexing.
+    auto* dus = Cast<HloDynamicUpdateSliceInstruction>(formatting_op);
+    auto sliced_dim = GetSlicedDimension(dus);
+    CHECK(sliced_dim.has_value() && *sliced_dim != to_move.sliced_idx)
+        << "DUS formatting op should have been validated in "
+           "is_acceptable_user";
+    auto operands = collect_operands(formatting_op);
+    CHECK_GE(operands.size(), 2);
+    HloInstruction* expanded_base = operands[0];
+    HloInstruction* expanded_update = operands[1];
+    // Reshape the update to remove the DUS insert dimension. In scatter,
+    // inserted_window_dims means those operand dims are NOT present in
+    // the update tensor. The DUS update has size 1 in the insert dimension,
+    // so we squeeze it out.
+    std::vector<int64_t> squeezed_dims;
+    for (int64_t i = 0; i < expanded_update->shape().dimensions_size(); ++i) {
+      if (i != *sliced_dim + 1) {
+        squeezed_dims.push_back(expanded_update->shape().dimensions(i));
+      }
+    }
+    Shape squeezed_update_shape = ShapeUtil::MakeShape(
+        expanded_update->shape().element_type(), squeezed_dims);
+    expanded_update = loop_computation->AddInstruction(
+        HloInstruction::CreateReshape(squeezed_update_shape, expanded_update));
+    // The non-constant index (insertion position).
+    // In collect_operands, operands[0] is base, operands[1] is update,
+    // and operands[2+] are index operands.
+    int64_t non_const_index_operand =
+        *sliced_dim + dus->first_index_operand_number();
+    HloInstruction* insert_index = operands[non_const_index_operand];
+    // insert_index shape is [N] (batched scalar).
+    int64_t num_iterations = insert_index->shape().dimensions(0);
+    // Create an iota for batch indexing: [0, 1, 2, ..., N-1]
+    HloInstruction* batch_iota =
+        loop_computation->AddInstruction(HloInstruction::CreateIota(
+            ShapeUtil::MakeShape(insert_index->shape().element_type(),
+                                 {num_iterations}),
+            0));
+    // Reshape both to [N, 1] and concatenate to [N, 2]:
+    //   column 0 = batch index (iota)
+    //   column 1 = insertion position
+    Shape col_shape = ShapeUtil::MakeShape(insert_index->shape().element_type(),
+                                           {num_iterations, 1});
+    HloInstruction* batch_col = loop_computation->AddInstruction(
+        HloInstruction::CreateReshape(col_shape, batch_iota));
+    HloInstruction* insert_col = loop_computation->AddInstruction(
+        HloInstruction::CreateReshape(col_shape, insert_index));
+    Shape indices_shape = ShapeUtil::MakeShape(
+        insert_index->shape().element_type(), {num_iterations, 2});
+    HloInstruction* scatter_indices =
+        loop_computation->AddInstruction(HloInstruction::CreateConcatenate(
+            indices_shape, {batch_col, insert_col}, 1));
+    // Build the scatter dimension numbers.
+    // After batching, the operand shape is [N, d0, d1, ...].
+    // The DUS inserts along original dim *sliced_dim, which is now
+    // dim (*sliced_dim + 1) in the batched operand. Dim 0 is the batch dim.
+    ScatterDimensionNumbers scatter_dims;
+    // update_window_dims: all dims of the squeezed update except dim 0
+    // (which is the scatter dim, iterating over the N scatter index rows).
+    // The insert dimension has already been removed from the update by
+    // the reshape above.
+    for (int64_t i = 1; i < expanded_update->shape().dimensions_size(); ++i) {
+      scatter_dims.add_update_window_dims(i);
+    }
+    scatter_dims.add_inserted_window_dims(0);
+    scatter_dims.add_inserted_window_dims(*sliced_dim + 1);
+    scatter_dims.add_scatter_dims_to_operand_dims(0);
+    scatter_dims.add_scatter_dims_to_operand_dims(*sliced_dim + 1);
+    scatter_dims.set_index_vector_dim(1);
+    // Create an "assign" computation: (a, b) -> b, since DUS overwrites.
+    PrimitiveType element_type = expanded_base->shape().element_type();
+    HloComputation::Builder assign_builder("dus_assign");
+    assign_builder.AddInstruction(HloInstruction::CreateParameter(
+        0, ShapeUtil::MakeShape(element_type, {}), "lhs"));
+    auto assign_rhs =
+        assign_builder.AddInstruction(HloInstruction::CreateParameter(
+            1, ShapeUtil::MakeShape(element_type, {}), "rhs"));
+    HloComputation* assign_computation =
+        loop_computation->parent()->AddEmbeddedComputation(
+            assign_builder.Build(assign_rhs));
+    HloInstruction* expanded_scatter =
+        loop_computation->AddInstruction(HloInstruction::CreateScatter(
+            expanded_base->shape(), expanded_base, scatter_indices,
+            expanded_update, assign_computation, scatter_dims,
+            /*indices_are_sorted=*/true,
+            /*unique_indices=*/true));
+    VLOG(1) << "Expanded scatter: " << expanded_scatter->ToString();
+    pipelined_map[formatting_op] = expanded_scatter;
     return absl::OkStatus();
   }
   return absl::InvalidArgumentError(

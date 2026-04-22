@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/rocm_collector.h"
 
 #include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <sstream>

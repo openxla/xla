@@ -61,6 +61,18 @@ bool IsBitcastOpSupportedByYnn(const HloInstruction* hlo);
 // Returns true if the reshape op is supported by YNNPACK.
 bool IsReshapeOpSupportedByYnn(const HloInstruction* hlo);
 
+// Returns true if the transpose op is supported by YNNPACK.
+bool IsTransposeOpSupportedByYnn(const HloInstruction* hlo);
+
+// Returns true if the broadcast op is supported by YNNPACK.
+bool IsBroadcastOpSupportedByYnn(const HloInstruction* hlo);
+
+// Returns true if the concatenate op is supported by YNNPACK.
+bool IsConcatenateOpSupportedByYnn(const HloInstruction* hlo);
+
+// Returns true if the slice op is supported by YNNPACK.
+bool IsSliceOpSupportedByYnn(const HloInstruction* hlo);
+
 // Returns true if the constant is supported by YNNPACK.
 bool IsConstantSupportedByYnn(const HloInstruction* hlo);
 

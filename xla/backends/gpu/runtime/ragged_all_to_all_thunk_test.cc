@@ -73,7 +73,7 @@ TEST_F(GpuRaggedAllToAllTest, TestConvertToCommands) {
   ENTRY main {
       p0 = f32[8] parameter(0)
       id = u32[] replica-id()
-      output = f32[8] constant({-1, -1, -1, -1, -1, -1, -1, -1})
+      output = f32[8] constant({0, 0, 0, 0, 0, 0, 0, 0})
       send_sizes = s32[2] constant({4, 4})
       recv_sizes = s32[2] constant({4, 4})
       input_offsets = s32[2] constant({0, 4})
@@ -148,7 +148,7 @@ TEST_F(GpuRaggedAllToAllTest, TestConvertToCommands) {
   ConvertToCommandsOptions conv_options;
   // Use LHS synchronization mode to append Done command
   conv_options.synchronization_mode =
-      CommandBufferCmdExecutor::SynchronizationMode::kLHS;
+      CommandExecutor::SynchronizationMode::kLHS;
   TF_ASSERT_OK_AND_ASSIGN(CommandExecutor cb_cmd_executor,
                           ConvertToCommands(thunk_sequence, conv_options));
 
@@ -164,7 +164,7 @@ TEST_F(GpuRaggedAllToAllTest, TestCommandBufferThunkContainsCorrectThunks) {
 
   ENTRY entry {
     p0 = f32[8] parameter(0)
-    output = f32[8] constant({-1, -1, -1, -1, -1, -1, -1, -1})
+    output = f32[8] constant({0, 0, 0, 0, 0, 0, 0, 0})
     send_sizes = s32[2] constant({4, 4})
     recv_sizes = s32[2] constant({4, 4})
     input_offsets = s32[2] constant({0, 4})

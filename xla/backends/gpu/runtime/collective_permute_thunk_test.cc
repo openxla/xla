@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -60,7 +61,6 @@ limitations under the License.
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/util.h"
-#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 
@@ -92,8 +92,8 @@ ENTRY test_computation {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
   config.set_debug_options(debug_options);
 
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                       ParseAndReturnVerifiedModule(hlo_text, config));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
 
   // Get CollectivePermute Instruction
   const HloInstruction* root_instr =
@@ -139,7 +139,8 @@ ENTRY test_computation {
   auto cp_start_thunk = std::make_unique<CollectivePermuteThunk>(
       Thunk::ThunkInfo{}, cp_instr, /*replica_count=*/2,
       /*partition_count=*/1, std::move(buffers),
-      /*p2p_memcpy_enabled=*/false);
+      /*p2p_memcpy_enabled=*/false,
+      /*connected_components_enabled=*/false);
 
   ThunkSequence start_sequence;
   start_sequence.push_back(std::move(cp_start_thunk));
@@ -157,8 +158,8 @@ ENTRY test_computation {
   // Use LHS synchronization mode to append Done command
   conv_options.synchronization_mode =
       CommandExecutor::SynchronizationMode::kLHS;
-  ASSERT_OK_AND_ASSIGN(CommandExecutor cb_cmd_executor,
-                       ConvertToCommands(thunk_sequence, conv_options));
+  TF_ASSERT_OK_AND_ASSIGN(CommandExecutor cb_cmd_executor,
+                          ConvertToCommands(thunk_sequence, conv_options));
 
   // AsyncStart inlines its nested thunk as a command, and AsyncDone
   // with no control predecessors is a no-op, so we get 1 command.
@@ -184,17 +185,17 @@ ENTRY test_computation {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
   config.set_debug_options(debug_options);
 
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                       ParseAndReturnVerifiedModule(hlo_text, config));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
 
   se::StreamExecutor* executor = backend().default_stream_executor();
 
-  ASSERT_OK_AND_ASSIGN(
+  TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> compiled_module,
       backend().compiler()->RunHloPasses(module->Clone(), executor,
                                          /*device_allocator=*/nullptr));
 
-  ASSERT_OK_AND_ASSIGN(
+  TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Executable> executable,
       backend().compiler()->RunBackend(std::move(compiled_module), executor,
                                        /*device_allocator=*/nullptr));
@@ -376,9 +377,9 @@ TEST(RemapSourceTargetToCliqueRanksTest, CrossPartitionRemapsToCliqueRanks) {
           GlobalDeviceId(3)));
 
   // Partition 2 -> GlobalDeviceId 2 -> clique rank 0.
-  EXPECT_EQ(remapped.source, 0);
+  EXPECT_EQ(remapped.source, RankId(0));
   // Partition 3 -> GlobalDeviceId 3 -> clique rank 1.
-  EXPECT_EQ(remapped.target, 1);
+  EXPECT_EQ(remapped.target, RankId(1));
 }
 
 TEST(RemapSourceTargetToCliqueRanksTest, NoSourceOrTarget) {

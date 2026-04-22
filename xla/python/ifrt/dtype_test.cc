@@ -20,6 +20,7 @@
 
 #include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
+#include "absl/strings/str_cat.h"
 #include "xla/python/ifrt/dtype.pb.h"
 #include "xla/python/ifrt/serdes_test_util.h"
 #include "xla/python/ifrt/serdes_version.h"
@@ -66,7 +67,10 @@ TEST_P(DTypeSerDesTest, FromToFromProto) {
 
 INSTANTIATE_TEST_SUITE_P(
     SerDesVersion, DTypeSerDesTest,
-    testing::ValuesIn(test_util::AllSupportedSerDesVersions()));
+    testing::ValuesIn(test_util::AllSupportedSerDesVersions()),
+    [](const testing::TestParamInfo<SerDesVersion>& info) {
+      return absl::StrCat(info.param.version_number().value());
+    });
 
 TEST(DTypeTest, ByteSize) {
   for (const auto& [kind, byte_size] :

@@ -34,12 +34,16 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
+#include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
+#include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
+#include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -154,7 +158,7 @@ static constexpr auto serialize =
 
 }  // namespace
 
-TEST(CommandBufferThunkTest, MemcpyCmd) {
+TEST(CommandBufferThunkTest, DeviceToDeviceCopy) {
   se::StreamExecutor* stream_executor = GpuExecutor();
 
   TF_ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
@@ -180,8 +184,9 @@ TEST(CommandBufferThunkTest, MemcpyCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<MemcpyDeviceToDeviceCmd>(
-      ShapedSlice{slice_b, shape}, ShapedSlice{slice_a, shape}, byte_length);
+  commands.Emplace<DeviceToDeviceCopyThunk>(
+      Thunk::ThunkInfo(), ShapedSlice{slice_a, shape},
+      ShapedSlice{slice_b, shape}, byte_length);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -221,7 +226,7 @@ TEST(CommandBufferThunkTest, MemcpyCmd) {
   ASSERT_EQ(dst, std::vector<int32_t>(4, 42));
 }
 
-TEST(CommandBufferThunkTest, MemzeroCmd) {
+TEST(CommandBufferThunkTest, MemzeroThunk) {
   se::StreamExecutor* stream_executor = GpuExecutor();
 
   TF_ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
@@ -241,7 +246,8 @@ TEST(CommandBufferThunkTest, MemzeroCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<MemzeroCmd>(ShapedSlice{slice_a, shape});
+  commands.Emplace<MemzeroThunk>(Thunk::ThunkInfo(),
+                                 ShapedSlice{slice_a, shape});
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -287,8 +293,9 @@ TEST(CommandBufferThunkTest, Memset32Cmd) {
   BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
 
   // Prepare commands sequence for constructing command buffer.
+  Memset32BitValueThunk memset_thunk(Thunk::ThunkInfo(), /*value=*/84, slice_a);
   CommandSequence commands;
-  commands.Emplace<Memset32Cmd>(slice_a, int32_t{84});
+  commands.Append(&memset_thunk);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -333,16 +340,17 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersDisabledDuringProfiling) {
   BufferAllocation alloc_a(/*index=*/0, byte_length, /*color=*/0);
   BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
 
+  // Memset32BitValueThunk implements Command directly, so the same thunk is
+  // used for both the fallback ThunkSequence and the CommandSequence.
   auto memset_thunk =
       std::make_unique<Memset32BitValueThunk>(Thunk::ThunkInfo(), 84, slice_a);
+  Memset32BitValueThunk* memset_thunk_ptr = memset_thunk.get();
   ThunkSequence thunks;
   thunks.push_back(std::move(memset_thunk));
   auto seq_thunks =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
-  // Prepare commands sequence for constructing command buffer that should not
-  // be used.
   CommandSequence commands;
-  commands.Emplace<Memset32Cmd>(slice_a, int32_t{12});
+  commands.Append(memset_thunk_ptr);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -392,16 +400,17 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersEnabledDuringProfiling) {
   BufferAllocation alloc_a(/*index=*/0, byte_length, /*color=*/0);
   BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
 
+  // Memset32BitValueThunk implements Command directly, so the same thunk is
+  // used for both the fallback ThunkSequence and the CommandSequence.
   auto memset_thunk =
       std::make_unique<Memset32BitValueThunk>(Thunk::ThunkInfo(), 84, slice_a);
+  Memset32BitValueThunk* memset_thunk_ptr = memset_thunk.get();
   ThunkSequence thunks;
   thunks.push_back(std::move(memset_thunk));
   auto seq_thunks =
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
-  // Prepare commands sequence for constructing command buffer that should not
-  // be used.
   CommandSequence commands;
-  commands.Emplace<Memset32Cmd>(slice_a, int32_t{12});
+  commands.Append(memset_thunk_ptr);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -435,7 +444,7 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersEnabledDuringProfiling) {
   std::vector<int32_t> dst(4, 0);
   TF_ASSERT_OK(stream->Memcpy(dst.data(), a, byte_length));
 
-  ASSERT_EQ(dst, std::vector<int32_t>(4, 12));
+  ASSERT_EQ(dst, std::vector<int32_t>(4, 84));
 }
 
 TEST(CommandBufferThunkTest, Memset32CmdOnDifferentStreams) {
@@ -452,9 +461,11 @@ TEST(CommandBufferThunkTest, Memset32CmdOnDifferentStreams) {
   BufferAllocation::Slice slice1(&alloc, 1 * sizeof(int32_t), sizeof(int32_t));
 
   // Prepare commands sequence for constructing command buffer.
+  Memset32BitValueThunk memset_thunk0(Thunk::ThunkInfo(), /*value=*/12, slice0);
+  Memset32BitValueThunk memset_thunk1(Thunk::ThunkInfo(), /*value=*/34, slice1);
   CommandSequence commands;
-  commands.Emplace<Memset32Cmd>(slice0, int32_t{12});
-  commands.Emplace<Memset32Cmd>(slice1, int32_t{34});
+  commands.Append(&memset_thunk0);
+  commands.Append(&memset_thunk1);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -513,9 +524,9 @@ TEST(CommandBufferThunkTest, LaunchCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<LaunchCmd>("AddI32", args, args_access,
-                              LaunchDimensions(1, 4),
-                              /*shmem_bytes=*/0);
+  commands.Append(KernelThunk::MakeKernelThunk("AddI32", args, args_access,
+                                               LaunchDimensions(1, 4),
+                                               /*shmem_bytes=*/0));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -620,9 +631,9 @@ TEST(CommandBufferThunkTest, CustomAddKernelLaunchCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<LaunchCmd>("AddI32", args, args_access,
-                              LaunchDimensions(1, 4),
-                              /*shmem_bytes=*/0);
+  commands.Append(KernelThunk::MakeKernelThunk("AddI32", args, args_access,
+                                               LaunchDimensions(1, 4),
+                                               /*shmem_bytes=*/0));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -743,9 +754,10 @@ TEST(CommandBufferThunkTest, GemmCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<GemmCmd>(config.value(), slice_lhs, slice_rhs, slice_out,
-                            slice_workspace,
-                            /*deterministic=*/true);
+  commands.Append(
+      std::make_unique<GemmThunk>(Thunk::ThunkInfo{}, config.value(), slice_lhs,
+                                  slice_rhs, slice_out, slice_workspace,
+                                  /*deterministic=*/true));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -866,9 +878,9 @@ TEST(CommandBufferThunkTest, ChildGemmCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence child_commands;
-  child_commands.Emplace<GemmCmd>(config.value(), slice_lhs, slice_rhs,
-                                  slice_out, slice_workspace,
-                                  /*deterministic=*/true);
+  child_commands.Append(std::make_unique<GemmThunk>(
+      Thunk::ThunkInfo{}, config.value(), slice_lhs, slice_rhs, slice_out,
+      slice_workspace, /*deterministic=*/true));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor child_executor,
       CommandExecutor::Create(std::move(child_commands), serialize));
@@ -1004,9 +1016,9 @@ TEST(CommandBufferThunkTest, DISABLED_DynamicSliceFusionCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence embed_commands;
-  embed_commands.Emplace<GemmCmd>(config.value(), fake_slice_lhs, slice_rhs,
-                                  slice_out, slice_workspace,
-                                  /*deterministic=*/true);
+  embed_commands.Append(std::make_unique<GemmThunk>(
+      Thunk::ThunkInfo{}, config.value(), fake_slice_lhs, slice_rhs, slice_out,
+      slice_workspace, /*deterministic=*/true));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor embed_executor,
       CommandExecutor::Create(std::move(embed_commands), serialize));
@@ -1157,12 +1169,12 @@ TEST(CommandBufferThunkTest, CublasLtCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<CublasLtCmd>(CublasLtMatmulThunk(
+  commands.Emplace<CublasLtMatmulThunk>(
       Thunk::ThunkInfo(), /*canonical_hlo=*/"", config.value(),
       se::gpu::BlasLt::Epilogue::kDefault, /*algorithm_idx=*/0,
       /*autotune_workspace_size=*/0, slice_a, slice_b, slice_c, slice_d,
       std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
-      std::nullopt, std::nullopt, slice_workspace));
+      std::nullopt, std::nullopt, slice_workspace);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -1302,12 +1314,12 @@ TEST(CommandBufferThunkTest, MultipleLaunchCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<LaunchCmd>("AddI32", args, args_access,
-                              LaunchDimensions(1, 4),
-                              /*shmem_bytes=*/0);
-  commands.Emplace<LaunchCmd>("AddI32", args_1, args_access,
-                              LaunchDimensions(1, 4),
-                              /*shmem_bytes=*/0);
+  commands.Append(KernelThunk::MakeKernelThunk("AddI32", args, args_access,
+                                               LaunchDimensions(1, 4),
+                                               /*shmem_bytes=*/0));
+  commands.Append(KernelThunk::MakeKernelThunk("AddI32", args_1, args_access,
+                                               LaunchDimensions(1, 4),
+                                               /*shmem_bytes=*/0));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -1430,17 +1442,17 @@ TEST(CommandBufferThunkTest, CaseCmd) {
   {  // Case 0: b = a + a
     std::vector<ShapedSlice> args{
         {slice_a, shape}, {slice_a, shape}, {slice_b, shape}};
-    branches_sequence[0].Emplace<LaunchCmd>("AddI32", args, args_access,
-                                            LaunchDimensions(1, 4),
-                                            /*shmem_bytes=*/0);
+    branches_sequence[0].Append(KernelThunk::MakeKernelThunk(
+        "AddI32", args, args_access, LaunchDimensions(1, 4),
+        /*shmem_bytes=*/0));
   }
 
   {  // Case 1: b = b + b
     std::vector<ShapedSlice> args{
         {slice_b, shape}, {slice_b, shape}, {slice_b, shape}};
-    branches_sequence[1].Emplace<LaunchCmd>("AddI32", args, args_access,
-                                            LaunchDimensions(1, 4),
-                                            /*shmem_bytes=*/0);
+    branches_sequence[1].Append(KernelThunk::MakeKernelThunk(
+        "AddI32", args, args_access, LaunchDimensions(1, 4),
+        /*shmem_bytes=*/0));
   }
 
   std::vector<CommandExecutor> branches(2);
@@ -1548,18 +1560,18 @@ TEST(CommandBufferThunkTest, WhileCmd) {
 
   // Prepare commands sequence for loop `cond`.
   CommandSequence cond_commands;
-  cond_commands.Emplace<LaunchCmd>("IncAndCmp", cond_args, cond_args_access,
-                                   LaunchDimensions(1, 1),
-                                   /*shmem_bytes=*/0);
+  cond_commands.Append(KernelThunk::MakeKernelThunk(
+      "IncAndCmp", cond_args, cond_args_access, LaunchDimensions(1, 1),
+      /*shmem_bytes=*/0));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor cond_executor,
       CommandExecutor::Create(std::move(cond_commands), serialize));
 
   // Prepare commands sequence for loop `body`.
   CommandSequence body_commands;
-  body_commands.Emplace<LaunchCmd>("AddI32", body_args, body_args_access,
-                                   LaunchDimensions(1, 4),
-                                   /*shmem_bytes=*/0);
+  body_commands.Append(KernelThunk::MakeKernelThunk(
+      "AddI32", body_args, body_args_access, LaunchDimensions(1, 4),
+      /*shmem_bytes=*/0));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor body_executor,
       CommandExecutor::Create(std::move(body_commands), serialize));
@@ -1612,14 +1624,16 @@ TEST(CommandBufferThunkTest, WhileCmd) {
 TEST(CommandBufferThunkTest, ToStringPrintsNestedThunks) {
   BufferAllocation alloc_a(/*index=*/0, /*size=*/4, /*color=*/0);
   BufferAllocation::Slice slice_a(&alloc_a, /*offset=*/0, /*size=*/4);
+  auto memset_thunk =
+      std::make_unique<Memset32BitValueThunk>(Thunk::ThunkInfo(), 42, slice_a);
+  Memset32BitValueThunk* memset_thunk_ptr = memset_thunk.get();
   CommandSequence commands;
-  commands.Emplace<Memset32Cmd>(slice_a, int32_t{42});
+  commands.Append(memset_thunk_ptr);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
   ThunkSequence thunks;
-  thunks.emplace_back(
-      std::make_unique<Memset32BitValueThunk>(Thunk::ThunkInfo(), 42, slice_a));
+  thunks.push_back(std::move(memset_thunk));
   CommandBufferThunk thunk(
       std::move(executor), Thunk::ThunkInfo(),
       std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks)));

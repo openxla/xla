@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
@@ -50,7 +51,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -158,6 +158,8 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_COLLECTIVE_METADATA;
     case kCollectivePermute:
       return THUNK_KIND_COLLECTIVE_PERMUTE;
+    case kCommand:
+      return THUNK_KIND_UNSPECIFIED;
     case kCommandBuffer:
       return THUNK_KIND_COMMAND_BUFFER;
     case kConditional:
@@ -371,6 +373,7 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kCollectiveKernel);
     CASE(kCollectiveMetadata);
     CASE(kCollectivePermute);
+    CASE(kCommand);
     CASE(kCommandBuffer);
     CASE(kConditional);
     CASE(kConvolution);

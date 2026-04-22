@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -78,6 +79,159 @@ TEST_P(YnnFusionTest, AddAndMultiply) {
   RunTest(kModuleStr);
 }
 
+TEST_P(YnnFusionTest, Transpose) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule transpose
+
+    ynn_fusion {
+      %input = $dtype[8, 10] parameter(0)
+      ROOT %transpose = $dtype[10, 8] transpose(%input), dimensions={1, 0}
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[8, 10] parameter(0)
+      ROOT %fusion = $dtype[10, 8] fusion(%p0), kind=kCustom, calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
+TEST_P(YnnFusionTest, Broadcast) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule broadcast
+
+    ynn_fusion {
+      %input = $dtype[10] parameter(0)
+      ROOT %broadcast = $dtype[8, 10] broadcast(%input), dimensions={1}
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[10] parameter(0)
+      ROOT %fusion = $dtype[8, 10] fusion(%p0), kind=kCustom, calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
+TEST_P(YnnFusionTest, Concatenate) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule concatenate
+
+    ynn_fusion {
+      %p0 = $dtype[8, 10] parameter(0)
+      %p1 = $dtype[8, 10] parameter(1)
+      ROOT %concatenate = $dtype[16, 10] concatenate(%p0, %p1), dimensions={0}
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[8, 10] parameter(0)
+      %p1 = $dtype[8, 10] parameter(1)
+      ROOT %fusion = $dtype[16, 10] fusion(%p0, %p1), kind=kCustom,
+        calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
+TEST_P(YnnFusionTest, Slice) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule slice
+
+    ynn_fusion {
+      %input = $dtype[16, 16] parameter(0)
+      ROOT %slice = $dtype[8, 8] slice(%input), slice={[4:12], [4:12]}
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[16, 16] parameter(0)
+      ROOT %fusion = $dtype[8, 8] fusion(%p0), kind=kCustom, calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
+TEST_P(YnnFusionTest, ConcatenateAddMul) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule concatenate_add_mul
+
+    ynn_fusion {
+      %p0 = $dtype[8, 10] parameter(0)
+      %p1 = $dtype[8, 10] parameter(1)
+      %add = $dtype[8, 10] add(%p0, %p1)
+      %mul = $dtype[8, 10] multiply(%p0, %p1)
+      ROOT %concatenate = $dtype[16, 10] concatenate(%add, %mul), dimensions={0}
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[8, 10] parameter(0)
+      %p1 = $dtype[8, 10] parameter(1)
+      ROOT %fusion = $dtype[16, 10] fusion(%p0, %p1), kind=kCustom,
+        calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
+struct AddWithBroadcastConfig {
+  std::string operand_shape;
+  std::string broadcast_dims;
+};
+
+class AddWithBroadcastTest
+    : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>,
+      public ::testing::WithParamInterface<
+          std::tuple<YnnFusionTestParams, AddWithBroadcastConfig>> {
+ public:
+  static std::string Name(
+      const ::testing::TestParamInfo<
+          std::tuple<YnnFusionTestParams, AddWithBroadcastConfig>>& info) {
+    const auto& [type_params, config] = info.param;
+    std::string dims_str =
+        config.broadcast_dims.empty() ? "all" : config.broadcast_dims;
+    return absl::StrCat(type_params.in_dtype, "_dims_", dims_str);
+  }
+
+ protected:
+  void RunTest(absl::string_view hlo_template) {
+    const auto& [type_params, config] = GetParam();
+    std::string hlo_text = absl::StrReplaceAll(
+        hlo_template, {{"$dtype", type_params.in_dtype},
+                       {"$operand_shape", config.operand_shape},
+                       {"$broadcast_dims", config.broadcast_dims}});
+    bool bf16_compute = absl::StrContains(hlo_text, "bf16");
+    double tolerance = bf16_compute ? 1e-2 : 1e-7;
+    EXPECT_TRUE(RunAndCompareNoHloPasses(
+        hlo_text, ErrorSpec{/*aabs=*/tolerance, /*arel=*/tolerance}));
+  }
+};
+
+TEST_P(AddWithBroadcastTest, Run) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule add_with_broadcast
+
+    ynn_fusion {
+      %lhs = $dtype[8, 10] parameter(0)
+      %rhs = $dtype[$operand_shape] parameter(1)
+      %broadcast = $dtype[8, 10] broadcast(%rhs), dimensions={$broadcast_dims}
+      ROOT %add = $dtype[8, 10] add(%lhs, %broadcast)
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[8, 10] parameter(0)
+      %p1 = $dtype[$operand_shape] parameter(1)
+      ROOT %fusion = $dtype[8, 10] fusion(%p0, %p1), kind=kCustom,
+        calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
 std::vector<YnnFusionTestParams> GetSameTypeTestCases() {
   return std::vector<YnnFusionTestParams>({
       YnnFusionTestParams{"bf16", "bf16"},
@@ -88,6 +242,14 @@ std::vector<YnnFusionTestParams> GetSameTypeTestCases() {
 INSTANTIATE_TEST_SUITE_P(YnnFusionTestInstantiation, YnnFusionTest,
                          ::testing::ValuesIn(GetSameTypeTestCases()),
                          YnnFusionTest::Name);
+
+INSTANTIATE_TEST_SUITE_P(
+    AddWithBroadcastTestInstantiation, AddWithBroadcastTest,
+    ::testing::Combine(::testing::ValuesIn(GetSameTypeTestCases()),
+                       ::testing::Values(AddWithBroadcastConfig{"8", "0"},
+                                         AddWithBroadcastConfig{"10", "1"},
+                                         AddWithBroadcastConfig{"", ""})),
+    AddWithBroadcastTest::Name);
 
 using YnnFusionReduceWindowTest = YnnFusionTest;
 

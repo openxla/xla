@@ -179,7 +179,7 @@ class BlasLt : public gpu::BlasLt {
     std::optional<gpu::GroupedGemmConfig> cfg_;
     std::unique_ptr<hipblaslt_ext::GroupedGemm> grouped_gemm_;
     mutable bool algorithm_must_be_initialized_ = false;
-    mutable DeviceMemoryBase saved_address_workspace_{};
+    mutable DeviceAddressBase saved_address_workspace_{};
   };  // class MatmulPlan
 
   explicit BlasLt(StreamExecutor* parent)

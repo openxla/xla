@@ -1,7 +1,7 @@
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform:build_config.bzl", "tsl_cc_test")
 load("//xla/tsl/platform:build_config_root.bzl", "if_static")
-load("//xla/tsl/platform:rules_cc.bzl", "cc_binary", "cc_library")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
@@ -172,10 +172,11 @@ cc_library(
     ]),
 )
 
-cc_binary(
+cc_library(
     name = "traceme_encode_benchmark",
     testonly = True,
     srcs = ["traceme_encode_benchmark.cc"],
+    visibility = ["//xla/backends/profiler/cpu:__pkg__"],
     deps = [
         "@com_google_absl//absl/log:flags",
         "@com_google_absl//absl/strings",
@@ -183,12 +184,14 @@ cc_binary(
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/profiler/lib:traceme_encode",
     ],
+    alwayslink = True,
 )
 
-cc_binary(
+cc_library(
     name = "traceme_benchmark",
     testonly = True,
     srcs = ["traceme_benchmark.cc"],
+    visibility = ["//xla/backends/profiler/cpu:__pkg__"],
     deps = [
         "//xla/tsl/profiler/utils:trace_filter_utils",
         "@com_google_absl//absl/log:check",
@@ -202,12 +205,14 @@ cc_binary(
         "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
+    alwayslink = True,
 )
 
-cc_binary(
+cc_library(
     name = "connected_traceme_benchmark",
     testonly = True,
     srcs = ["connected_traceme_benchmark.cc"],
+    visibility = ["//xla/backends/profiler/cpu:__pkg__"],
     deps = [
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/log:die_if_null",
@@ -220,4 +225,5 @@ cc_binary(
         "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
+    alwayslink = True,
 )

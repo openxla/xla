@@ -176,13 +176,14 @@ std::vector<AxisRef> GetOrderedAxisRefs(const NamedSharding& sharding) {
   std::vector<AxisRef> axis_refs;
   for (int64_t i = 0; i < mesh.axis_sizes().size(); ++i) {
     std::vector<int64_t>& pre_sizes = axis_index_to_pre_sizes[i];
-    absl::c_sort(pre_sizes);
-    pre_sizes.erase(std::unique(pre_sizes.begin(), pre_sizes.end()),
-                    pre_sizes.end());
     if (pre_sizes.size() == 2) {
+      // Full axis
       axis_refs.push_back(AxisRef(i));
       continue;
     }
+    absl::c_sort(pre_sizes);
+    pre_sizes.erase(std::unique(pre_sizes.begin(), pre_sizes.end()),
+                    pre_sizes.end());
     for (int64_t j = 0; j < pre_sizes.size() - 1; ++j) {
       int64_t pre_size = pre_sizes[j];
       int64_t size = pre_sizes[j + 1] / pre_size;

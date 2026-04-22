@@ -99,8 +99,8 @@ XTileTestBase::CreateXTileIrAndFileCheck(
 
   TF_ASSIGN_OR_RETURN(
       mlir::OwningOpRef<mlir::ModuleOp> xtile_dialect_module,
-      xtile::EmitXTileModule("xtile_dialect_fn", fusion, symbolic_tile_analysis,
-                             tiling, *mlir_context()));
+      xtile::EmitXTileModule("xtile_dialect_fn", *fusion,
+                             symbolic_tile_analysis, tiling, *mlir_context()));
 
   std::string out;
   llvm::raw_string_ostream os(out);
@@ -109,7 +109,7 @@ XTileTestBase::CreateXTileIrAndFileCheck(
   if (!succeeded) {
     return absl::InternalError("FileCheck failed.");
   }
-  return xtile_dialect_module;
+  return std::move(xtile_dialect_module);
 }
 
 absl::Status XTileTestBase::LowerXTileIrToTritonAndFileCheck(

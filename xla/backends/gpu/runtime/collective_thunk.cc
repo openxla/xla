@@ -17,14 +17,12 @@ limitations under the License.
 
 #include <cstdint>
 #include <cstdlib>
-#include <memory>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_set.h"
+#include "absl/base/call_once.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -33,6 +31,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
@@ -55,10 +54,10 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 namespace {
@@ -300,18 +299,38 @@ absl::Status CollectiveThunk::Prepare(const PrepareParams& params) {
       << "Collective parameters and device assignment are required for "
          "collective thunk execution";
 
+  // Device groups depend only on device assignment and replica groups, both
+  // constant for the thunk's lifetime (device assignment is owned by
+  // PjRtExecutable and never changes between executions). Compute once.
+  absl::call_once(device_groups_once_, [&] {
+    device_groups_ = GetParticipatingDevicesGroups(
+        *params.collective_params->device_assn, config().replica_groups,
+        config().group_mode);
+    if (device_groups_.ok()) {
+      absl::c_for_each(*device_groups_, [](auto& g) { absl::c_sort(g); });
+      absl::c_sort(*device_groups_);
+    }
+  });
+
+  RETURN_IF_ERROR(device_groups_.status());
+
   ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(*params.collective_params, config().replica_groups,
                       config().group_mode, communication_id_));
 
-  ASSIGN_OR_RETURN(std::vector<std::vector<GlobalDeviceId>> device_groups,
-                   GetParticipatingDevicesGroups(
-                       *params.collective_params->device_assn,
-                       config().replica_groups, config().group_mode));
+  RETURN_IF_ERROR(params.collective_clique_requests->RequestClique(
+      clique_key, *device_groups_, GetCliqueRequirements(clique_key)));
 
-  return params.collective_clique_requests->RequestClique(
-      clique_key, std::move(device_groups), GetCliqueRequirements(clique_key));
+  return PrepareCollective(params, clique_key);
+}
+
+absl::Status CollectiveThunk::Initialize(const InitializeParams& params) {
+  ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetGpuCliqueKey(*params.collective_params, config().replica_groups,
+                      config().group_mode, communication_id_));
+  return InitializeCollective(params, clique_key);
 }
 
 absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
@@ -322,7 +341,6 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(*params.collective_params, config().replica_groups,
                       config().group_mode, communication_id_));
-
   ASSIGN_OR_RETURN(Communicator * comm,
                    params.collective_cliques->GetComm(
                        clique_key, params.collective_params->global_device_id));

@@ -43,6 +43,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "unsupported/Eigen/CXX11/Tensor"
+#include "xla/tsl/platform/status_macros.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "riegeli/bytes/string_reader.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
@@ -119,7 +120,6 @@ limitations under the License.
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/unbounded_work_queue.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
@@ -1125,31 +1125,30 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuClient::BufferFromHostBuffer(
       }
 
       // Copy the data from the staging buffer to GPU.
-      blocking_thread_pool_->Schedule(
+      blocking_thread_pool_->Execute(
           [h2d_do_copy(std::move(h2d_do_copy)),
            staging_buffer(std::move(staging_buffer))]() {
             h2d_do_copy(staging_buffer.get());
           });
     } else {
-      blocking_thread_pool_->Schedule(
-          [h2d_do_copy(std::move(h2d_do_copy)), data,
-           on_done_with_host_buffer =
-               std::move(on_done_with_host_buffer)]() mutable {
-            // Copy the data directly to GPU.
-            h2d_do_copy(data);
+      blocking_thread_pool_->Execute([h2d_do_copy(std::move(h2d_do_copy)), data,
+                                      on_done_with_host_buffer = std::move(
+                                          on_done_with_host_buffer)]() mutable {
+        // Copy the data directly to GPU.
+        h2d_do_copy(data);
 
-            // Call on_done_with_host_buffer to release the data buffer.
-            if (on_done_with_host_buffer) {
-              std::move(on_done_with_host_buffer)();
-            }
-          });
+        // Call on_done_with_host_buffer to release the data buffer.
+        if (on_done_with_host_buffer) {
+          std::move(on_done_with_host_buffer)();
+        }
+      });
     }
   };
 
   if (host_buffer_semantics == HostBufferSemantics::kImmutableOnlyDuringCall) {
     h2d_copy();
   } else {
-    non_blocking_thread_pool_->Schedule(std::move(h2d_copy));
+    non_blocking_thread_pool_->Execute(std::move(h2d_copy));
   }
 
   return output_buffer;
@@ -1207,7 +1206,7 @@ TfrtGpuClient::BufferFromHostLiteral(const LiteralSlice& literal,
   // It is OK to capture `buffer` pointer because the `output_buffer` can't
   // be deleted until all the usage holds have gone away.
   VLOG(4) << "BufferFromHostLiteral for device_buffer: " << device_buffer;
-  non_blocking_thread_pool_->Schedule(
+  non_blocking_thread_pool_->Execute(
       [literal, definition_event, device_buffer, shape, this,
        device = tsl::down_cast<TfrtGpuDevice*>(device),
        usage_event = std::move(usage_event)]() mutable {

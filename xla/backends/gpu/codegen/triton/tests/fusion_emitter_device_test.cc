@@ -80,7 +80,6 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/path.h"
 
-// TODO(b/446827313): update names of the tests.
 namespace xla {
 namespace gpu {
 namespace {
@@ -572,14 +571,14 @@ ENTRY entry {
   const HloFusionInstruction* triton_fusion = Cast<HloFusionInstruction>(
       hlo_module->entry_computation()->root_instruction());
   const se::DeviceDescription dev_info =
-      TestGpuDeviceInfo::RTXA6000DeviceInfo();
+      TestGpuDeviceInfo::RTXA6000DeviceInfo(se::CudaComputeCapability(7, 0));
   llvm::LLVMContext llvm_ctx;
   mlir::MLIRContext mlir_context;
   llvm::Triple target_triple(nvptx::TargetTriple());
   std::string data_layout(nvptx::DataLayout());
 
   EXPECT_THAT(
-      TritonWrapper("test_fn", triton_fusion,
+      TritonWrapper("test_fn", *triton_fusion,
                     se::CudaComputeCapability{se::CudaComputeCapability::kVolta,
                                               /*minor=*/0},
                     dev_info, BlockLevelParameters(), target_triple,
@@ -646,7 +645,7 @@ ENTRY entry_computation {
   // will be 1024 * 65536 = 67108864 elements, that is larger than the limit of
   // 1048576.
   EXPECT_THAT(
-      TritonWrapper("test_fn", triton_fusion, compute_capability, dev_info,
+      TritonWrapper("test_fn", *triton_fusion, compute_capability, dev_info,
                     block_level_parameters, target_triple, data_layout,
                     llvm_ctx, mlir_context),
       absl_testing::StatusIs(
@@ -2036,7 +2035,7 @@ TEST_F(TritonEmitterTest, RocmWarpSizeIsSetCorrectly) {
   // https://github.com/openxla/xla/blob/c8b710f1b70f890c9ee4b8756bc53f3a599a0ed5/xla/backends/gpu/codegen/triton/fusion_emitter.cc#L1863-L1867
   dev_info.set_shared_memory_per_block_optin(64 * 1024);
   TF_ASSERT_OK(TritonWrapper(
-      "test_fn", triton_fusion,
+      "test_fn", *triton_fusion,
       se::GpuComputeCapability{se::RocmComputeCapability("gfx942")}, dev_info,
       block_level_parameters, target_triple, data_layout, llvm_ctx,
       mlir_context));
@@ -2057,7 +2056,7 @@ TEST_F(TritonEmitterTest, RocmWarpSizeIsSetCorrectly) {
   // https://github.com/openxla/xla/blob/c8b710f1b70f890c9ee4b8756bc53f3a599a0ed5/xla/backends/gpu/codegen/triton/fusion_emitter.cc#L1863-L1867
   dev_info_n.set_shared_memory_per_block_optin(64 * 1024);
   TF_ASSERT_OK(TritonWrapper(
-      "test_fn", triton_fusion,
+      "test_fn", *triton_fusion,
       se::GpuComputeCapability{se::RocmComputeCapability("gfx1100")},
       dev_info_n, block_level_parameters, target_triple, data_layout, llvm_ctx,
       mlir_context));
@@ -2070,6 +2069,87 @@ TEST_F(TritonEmitterTest, RocmWarpSizeIsSetCorrectly) {
       // CHECK: "ttg.threads-per-warp" = 32
     )";
   EXPECT_THAT(RunFileCheck(triton_passes_log, kPattern_n), true);
+}
+
+TEST_F(TritonEmitterTest, RocmWavesPerEuAttributeIsSet) {
+  if (GpuComputeCapability().IsCuda()) {
+    GTEST_SKIP() << "waves_per_eu is ROCm-specific";
+  }
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> verified_module,
+                          ParseAndReturnVerifiedModule(GetDotAlgorithmHlo(
+                              F16, F16, PrecisionConfig::ALG_UNSET)));
+
+  const HloFusionInstruction* triton_fusion = Cast<HloFusionInstruction>(
+      verified_module->entry_computation()->root_instruction());
+
+  llvm::LLVMContext llvm_ctx;
+  mlir::MLIRContext mlir_context;
+  llvm::Triple target_triple(amdgpu::TargetTriple());
+  std::string data_layout(amdgpu::DataLayout());
+
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {{16, 64}};
+  block_level_parameters.num_warps = 1;
+  block_level_parameters.waves_per_eu = 4;
+
+  se::DeviceDescription dev_info = TestGpuDeviceInfo::AMDMI210DeviceInfo();
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      TritonWrapperResult result,
+      TritonWrapper(
+          "test_fn", *triton_fusion,
+          se::GpuComputeCapability{se::RocmComputeCapability("gfx90a")},
+          dev_info, block_level_parameters, target_triple, data_layout,
+          llvm_ctx, mlir_context));
+
+  ASSERT_NE(result.llvm_module, nullptr);
+  auto* fn = result.llvm_module->getFunction("test_fn");
+  ASSERT_NE(fn, nullptr)
+      << "Kernel function 'test_fn' not found in LLVM module";
+  auto attr = fn->getFnAttribute("amdgpu-waves-per-eu");
+  ASSERT_TRUE(attr.isStringAttribute());
+  EXPECT_EQ(attr.getValueAsString().str(), "4, 4");
+}
+
+TEST_F(TritonEmitterTest, RocmWavesPerEuZeroOmitsAttribute) {
+  if (GpuComputeCapability().IsCuda()) {
+    GTEST_SKIP() << "waves_per_eu is ROCm-specific";
+  }
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> verified_module,
+                          ParseAndReturnVerifiedModule(GetDotAlgorithmHlo(
+                              F16, F16, PrecisionConfig::ALG_UNSET)));
+
+  const HloFusionInstruction* triton_fusion = Cast<HloFusionInstruction>(
+      verified_module->entry_computation()->root_instruction());
+
+  llvm::LLVMContext llvm_ctx;
+  mlir::MLIRContext mlir_context;
+  llvm::Triple target_triple(amdgpu::TargetTriple());
+  std::string data_layout(amdgpu::DataLayout());
+
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {{16, 64}};
+  block_level_parameters.num_warps = 1;
+  block_level_parameters.waves_per_eu = 0;
+
+  se::DeviceDescription dev_info = TestGpuDeviceInfo::AMDMI210DeviceInfo();
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      TritonWrapperResult result,
+      TritonWrapper(
+          "test_fn", *triton_fusion,
+          se::GpuComputeCapability{se::RocmComputeCapability("gfx90a")},
+          dev_info, block_level_parameters, target_triple, data_layout,
+          llvm_ctx, mlir_context));
+
+  ASSERT_NE(result.llvm_module, nullptr);
+  auto* fn = result.llvm_module->getFunction("test_fn");
+  ASSERT_NE(fn, nullptr)
+      << "Kernel function 'test_fn' not found in LLVM module";
+  EXPECT_FALSE(fn->hasFnAttribute("amdgpu-waves-per-eu"))
+      << "waves_per_eu=0 should not set amdgpu-waves-per-eu attribute";
 }
 
 struct ScaleDotTestParams {

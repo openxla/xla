@@ -25,7 +25,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
+#include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/traced_command.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -36,13 +39,12 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
 
 CublasLtMatmulThunk::CublasLtMatmulThunk(const CublasLtMatmulThunk& rhs)
-    : Thunk(Kind::kCublasLtMatmul, {}),
+    : TracedCommand(CommandType::kCublasLtCmd, Kind::kCublasLtMatmul, {}),
       gemm_config_(rhs.gemm_config_),
       epilogue_(rhs.epilogue_),
       algorithm_idx_(rhs.algorithm_idx_),
@@ -72,7 +74,8 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
     std::optional<ShapedSlice> c_scale, std::optional<ShapedSlice> d_scale,
     std::optional<ShapedSlice> d_amax,
     std::optional<const ShapedSlice> workspace)
-    : Thunk(Kind::kCublasLtMatmul, std::move(thunk_info)),
+    : TracedCommand(CommandType::kCublasLtCmd, Kind::kCublasLtMatmul,
+                    std::move(thunk_info)),
       gemm_config_(std::move(gemm_config)),
       epilogue_(epilogue),
       algorithm_idx_(algorithm_idx),
@@ -103,7 +106,8 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
     std::optional<ShapedSlice> c_scale, std::optional<ShapedSlice> d_scale,
     std::optional<ShapedSlice> d_amax,
     std::optional<const ShapedSlice> workspace)
-    : Thunk(Kind::kCublasLtMatmul, std::move(thunk_info)),
+    : TracedCommand(CommandType::kCublasLtCmd, Kind::kCublasLtMatmul,
+                    std::move(thunk_info)),
       gemm_config_(std::move(gemm_config)),
       epilogue_(epilogue),
       algorithm_idx_(algorithm_idx),
@@ -207,6 +211,10 @@ CublasLtMatmulThunk::GetCachedMatmulPlan(const ExecuteParams& params) {
         auto algorithms,
         plan->GetAlgorithms(params.stream, num_algorithms, max_workspace));
 
+    if (algorithms.empty()) {
+      return absl::InternalError(
+          "Failed to get a MatmulPlan: no valid algorithm found.");
+    }
     TF_RETURN_IF_ERROR(plan->SetAlgorithm(algorithms[algorithm_idx_]));
     return std::move(plan);
   };

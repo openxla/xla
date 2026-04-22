@@ -77,8 +77,8 @@ using ::xla::complex128;
 using ::xla::complex64;
 
 void GroupGemmUpdateArgs(
-    hipStream_t stream, DeviceMemoryBase args, DeviceMemoryBase a,
-    DeviceMemoryBase b, DeviceMemoryBase d, DeviceMemoryBase group_sizes,
+    hipStream_t stream, DeviceAddressBase args, DeviceAddressBase a,
+    DeviceAddressBase b, DeviceAddressBase d, DeviceAddressBase group_sizes,
     uint8_t group_size_bytewidth, uint8_t log2_byte_width_elem_a,
     uint8_t log2_byte_width_elem_b, uint8_t log2_byte_width_elem_d,
     uint32_t stride_ragged_dim, uint32_t stride_group_dim,
@@ -915,9 +915,9 @@ absl::Status BlasLt::MatmulPlan::ExecuteGroupedMatmul(
     }
   };
 
-  DeviceMemoryBase a = cfg_->must_swap_operands ? args.b : args.a;
-  DeviceMemoryBase b = cfg_->must_swap_operands ? args.a : args.b;
-  const DeviceMemoryBase& d_userArgs = args.workspace;
+  DeviceAddressBase a = cfg_->must_swap_operands ? args.b : args.a;
+  DeviceAddressBase b = cfg_->must_swap_operands ? args.a : args.b;
+  const DeviceAddressBase& d_userArgs = args.workspace;
 
   uint8_t log2_byte_width_elem_a = Log2ByteWidth(cfg_->type_a);
   uint8_t log2_byte_width_elem_b = Log2ByteWidth(cfg_->type_b);

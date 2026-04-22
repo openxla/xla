@@ -76,7 +76,7 @@ class HloProgram : public llvm::RTTIExtends<HloProgram, Program> {
 
   // Returns a fingerprint of the HLO program. Two HLO programs are equivalent
   // if their fingerprints are the same. May ignore debug info.
-  uint64_t Fingerprint() const;
+  absl::StatusOr<uint64_t> Fingerprint() const;
 
   // Destructively converts this HloProgram into a MaybeOwningMlirModule.
   xla::MaybeOwningMlirModule ToMaybeOwningMlirModule() &&;

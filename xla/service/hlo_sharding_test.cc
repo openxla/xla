@@ -1227,6 +1227,25 @@ TEST(V3ToV2Sharding, MultipleSubgroups) {
                                    OpSharding::REPLICATED}));
 }
 
+TEST(V3ToV2Sharding, AxisSize1) {
+  Mesh mesh({1, 2}, {"a", "b"});
+  NamedSharding ns = test_utils::FromAxisNames(mesh, {{"a"}, {"b"}});
+  EXPECT_EQ(HloSharding::V3ToV2Sharding(ns), HloSharding::IotaTile({1, 2}));
+}
+
+TEST(V3ToV2Sharding, UnreducedAxisSize1) {
+  Mesh mesh({1, 2}, {"a", "b"});
+  NamedSharding ns = test_utils::FromAxisNames(mesh, {{}, {}}, {}, {"a", "b"});
+  EXPECT_EQ(HloSharding::V3ToV2Sharding(ns), HloSharding::Unreduced());
+}
+
+TEST(V3ToV2Sharding, ManualAxisSize1) {
+  Mesh mesh({1, 2}, {"a", "b"});
+  NamedSharding ns = test_utils::FromAxisNames(mesh, {{}, {}}, {}, {},
+                                               /*manual_axes=*/{"a", "b"});
+  EXPECT_EQ(HloSharding::V3ToV2Sharding(ns), HloSharding::Manual());
+}
+
 class V3ToV2ShardingSplitAxesTest : public ::testing::Test {
  protected:
   Mesh mesh_{{16, 4}, {"a", "b"}};

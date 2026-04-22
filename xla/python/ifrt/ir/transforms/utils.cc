@@ -48,7 +48,6 @@ limitations under the License.
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
-#include "mlir/Support/DebugStringHelper.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/mlir/utils/type_util.h"
@@ -383,11 +382,7 @@ absl::StatusOr<ShardingRef> ShardingFromIfrtArrayType(
                         client->MakeDeviceList(std::move(array_devices)));
   }
 
-  auto sharding_attr =
-      mlir::dyn_cast<IfrtShardingParamAttr>(array_type.getShardingAttr());
-  TF_RET_CHECK(sharding_attr != nullptr)
-      << "Array type sharding attribute: " << mlir::debugString(array_type)
-      << " if not of type `IfrtShardingParamAttr`";
+  IfrtShardingParamAttr sharding_attr = GetShardingParamAttr(array_type);
 
   TF_ASSIGN_OR_RETURN(
       xla::HloSharding hlo_sharding,
@@ -399,9 +394,7 @@ absl::StatusOr<ShardingRef> ShardingFromIfrtArrayType(
 
 absl::StatusOr<ArraySpec> ArraySpecFromMlirType(
     mlir::Type array_type, Client* client, const DeviceListRef& device_list) {
-  auto ifrt_array_type = mlir::dyn_cast<IfrtArrayType>(array_type);
-  TF_RET_CHECK(array_type != nullptr)
-      << "Unsupported type `" << mlir::debugString(array_type) << "`";
+  IfrtArrayType ifrt_array_type = GetArrayType(array_type);
 
   TF_ASSIGN_OR_RETURN(DType dtype,
                       ToIfrtDType(ifrt_array_type.getShape().getElementType()));

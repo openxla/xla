@@ -80,7 +80,8 @@ absl::StatusOr<CollectiveParams> CollectiveParams::Create(
     const ServiceExecutableRunOptions& run_options,
     absl::Span<se::Stream* const> async_streams, LocalDeviceId local_device_id,
     std::optional<std::string> implementation_name,
-    int64_t collective_max_nchannels, int64_t p2p_max_nchannels) {
+    int64_t collective_max_nchannels, int64_t p2p_max_nchannels,
+    bool collective_use_minimal_resource) {
   const GpuExecutableRunOptions* gpu_options =
       run_options.run_options().gpu_executable_run_options();
 
@@ -109,7 +110,8 @@ absl::StatusOr<CollectiveParams> CollectiveParams::Create(
       run_options.run_options().run_id(), async_streams, local_device_id,
       global_device_id, run_options.run_options().device_assignment(),
       device_id_map, clique_id_callback, incarnations, collective_max_nchannels,
-      p2p_max_nchannels, run_options.run_options().local_device_count());
+      p2p_max_nchannels, run_options.run_options().local_device_count(),
+      collective_use_minimal_resource);
 }
 
 CollectiveParams::CollectiveParams(
@@ -120,7 +122,7 @@ CollectiveParams::CollectiveParams(
     const CliqueIdCallback* clique_id_callback,
     const absl::flat_hash_map<GlobalDeviceId, IncarnationId>* incarnations,
     int64_t collective_max_nchannels, int64_t p2p_max_nchannels,
-    int local_device_count)
+    int local_device_count, bool collective_use_minimal_resource)
     : collectives(collectives),
       executor(executor),
       run_id(run_id),
@@ -133,6 +135,7 @@ CollectiveParams::CollectiveParams(
       incarnations(incarnations),
       collective_max_nchannels(collective_max_nchannels),
       p2p_max_nchannels(p2p_max_nchannels),
-      local_device_count(local_device_count) {}
+      local_device_count(local_device_count),
+      collective_use_minimal_resource(collective_use_minimal_resource) {}
 
 }  // namespace xla::gpu

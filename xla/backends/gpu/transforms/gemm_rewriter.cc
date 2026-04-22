@@ -2439,6 +2439,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
          PrimitiveType::F64, DataType::kDouble},
         {ComputationType::kF64, DataType::kComplexDouble, PrimitiveType::C128,
          PrimitiveType::C128, DataType::kComplexDouble},
+
+        {ComputationType::kF32, DataType::kFloat, PrimitiveType::S8,
+         PrimitiveType::S8, DataType::kFloat},
     };
     if (gpu_version_.IsCuda() &&
         absl::c_linear_search(supported_cublas_type_combinations,
@@ -2535,8 +2538,6 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
          PrimitiveType::BF16, DataType::kBF16},
         {ComputationType::kF32, DataType::kFloat, PrimitiveType::F16,
          PrimitiveType::F16, DataType::kHalf},
-        {ComputationType::kF32, DataType::kFloat, PrimitiveType::S8,
-         PrimitiveType::S8, DataType::kFloat},
         {ComputationType::kF32, DataType::kFloat, PrimitiveType::F32,
          PrimitiveType::F32, DataType::kFloat},
     };

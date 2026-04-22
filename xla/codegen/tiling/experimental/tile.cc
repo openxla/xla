@@ -143,12 +143,12 @@ std::string Tile::ToString(bool print_variables) const {
   ss << "] upper bounds [";
   llvm::interleaveComma(upper_bounds(), ss, print_expr);
   ss << ']';
-  return s;
+  return ss.str();
 }
 
 SmallVector<SymbolicExpr> Tile::offsets() const {
   SmallVector<SymbolicExpr> offsets;
-  offsets.reserve(offsets.size());
+  offsets.reserve(dim_tiles_.size());
   for (const DimTile& dim_tile : dim_tiles_) {
     offsets.push_back(dim_tile.offset);
   }
@@ -157,7 +157,7 @@ SmallVector<SymbolicExpr> Tile::offsets() const {
 
 SmallVector<SymbolicExpr> Tile::sizes() const {
   SmallVector<SymbolicExpr> sizes;
-  sizes.reserve(sizes.size());
+  sizes.reserve(dim_tiles_.size());
   for (const DimTile& dim_tile : dim_tiles_) {
     sizes.push_back(dim_tile.size);
   }
@@ -166,7 +166,7 @@ SmallVector<SymbolicExpr> Tile::sizes() const {
 
 SmallVector<SymbolicExpr> Tile::strides() const {
   SmallVector<SymbolicExpr> strides;
-  strides.reserve(strides.size());
+  strides.reserve(dim_tiles_.size());
   for (const DimTile& dim_tile : dim_tiles_) {
     strides.push_back(dim_tile.stride);
   }
@@ -175,7 +175,7 @@ SmallVector<SymbolicExpr> Tile::strides() const {
 
 SmallVector<SymbolicExpr> Tile::upper_bounds() const {
   SmallVector<SymbolicExpr> upper_bounds;
-  upper_bounds.reserve(upper_bounds.size());
+  upper_bounds.reserve(dim_tiles_.size());
   for (const DimTile& dim_tile : dim_tiles_) {
     upper_bounds.push_back(dim_tile.upper_bound);
   }

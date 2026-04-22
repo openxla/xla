@@ -17,13 +17,13 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_THUNK_H_
 
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
+#include "absl/base/call_once.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/core/collectives/communicator.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/llvm_ir/llvm_util.h"
@@ -111,7 +112,7 @@ class CollectiveThunk : public Thunk {
   }
 
   absl::Status Prepare(const PrepareParams& params) override;
-
+  absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
   absl::StatusOr<std::vector<Communicator*>> GetCommunicators(
@@ -120,6 +121,11 @@ class CollectiveThunk : public Thunk {
   CommunicationId communication_id() const { return communication_id_; }
 
  protected:
+  virtual absl::Status PrepareCollective(const PrepareParams& params,
+                                         const GpuCliqueKey& clique_key) {
+    return absl::OkStatus();
+  }
+
   // Returns true if the first call to this collective operation has to be
   // guarded with a rendezvous synchronization with other local participants
   // before and after running the collective operation itself.
@@ -128,6 +134,15 @@ class CollectiveThunk : public Thunk {
   // NCCL kernel execution races with a thunk before or after the collective
   // one that calls CUDA APIs that trigger a deadlock.
   virtual bool RequiresRendezvous() const = 0;
+
+  // Initializes collective operation for execution.
+  //
+  // At this stage it is possible to resolve buffer slices from a buffer
+  // assignment, but the content of all buffers is undefined.
+  virtual absl::Status InitializeCollective(const InitializeParams& params,
+                                            const GpuCliqueKey& clique_key) {
+    return absl::OkStatus();
+  }
 
   // Run collective operation on a given stream.
   //
@@ -158,6 +173,12 @@ class CollectiveThunk : public Thunk {
   RendezvousFlag post_call_rendezvous_flag_;
 
   CommunicationId communication_id_;
+
+  // Device assignment is owned by PjRtExecutable and never changes between
+  // thunk executions, and replica groups are baked into the thunk at compile
+  // time. Device groups are the same for all devices, so computed once.
+  absl::once_flag device_groups_once_;
+  absl::StatusOr<std::vector<std::vector<GlobalDeviceId>>> device_groups_;
 };
 
 //===----------------------------------------------------------------------===//

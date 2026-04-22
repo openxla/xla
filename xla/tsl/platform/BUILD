@@ -353,6 +353,7 @@ tsl_cc_test(
         "//xla/tsl/platform/testdata:test_crash",
         "//xla/tsl/platform/testdata:test_echo",
         "//xla/tsl/platform/testdata:test_echo_argv_1",
+        "//xla/tsl/platform/testdata:test_getenv",
         "//xla/tsl/platform/testdata:test_noop",
         "//xla/tsl/platform/testdata:test_pwd",
         "//xla/tsl/platform/testdata:test_stderr",
@@ -775,14 +776,6 @@ cc_library(
 # copybara:comment_begin(oss-only)
 cc_library(
     name = "status_macros",
-    hdrs = ["status_macros.h"],
-    compatible_with = get_compatible_with_portable(),
-    visibility = internal_visibility([]),  # The header should be used only in OSS.
-    deps = [":statusor"],
-)
-
-cc_library(
-    name = "gloop_status_macros",
     hdrs = ["status_macros.h"],
     compatible_with = get_compatible_with_portable(),
     visibility = internal_visibility([]),  # The header should be used only in OSS.

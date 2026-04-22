@@ -60,8 +60,9 @@ namespace gpu {
       return absl::StrCat(profile_name, "_", full_name.back());
     }
     return profile_name;
-  } else if (auto* ptr = device_info.gpu_compute_capability()
-                             .rocm_compute_capability()) {
+  }
+  if (auto* ptr =
+          device_info.gpu_compute_capability().rocm_compute_capability()) {
     return ptr->gfx_version();
   }
   return "<unknown>";
@@ -90,7 +91,9 @@ namespace gpu {
 const HloOpProfiles::HloOpProfile& HloOpProfiles::GetProfile(
     const se::DeviceDescription& device_info) const {
   auto it = profiles_.find(GetProfileName(device_info));
-  if (it != profiles_.end()) return it->second;
+  if (it != profiles_.end()) {
+    return it->second;
+  }
   return default_profile_;
 }
 

@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_phase_compile_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_profiler_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_shardings_extension.h"
+#include "xla/pjrt/c/pjrt_c_api_status_utils.h"
 #include "xla/pjrt/c/pjrt_c_api_stream_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_tpu_topology_extension.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_multi_slice_config.h"
@@ -72,6 +73,9 @@ limitations under the License.
 #include "xla/pjrt/extensions/executable_metadata/executable_metadata_extension.h"
 #include "xla/pjrt/extensions/host_allocator/host_allocator_extension.h"
 #include "xla/pjrt/extensions/host_allocator/host_allocator_interface_impl.h"
+#include "xla/pjrt/extensions/host_allocator/host_memory_allocator/host_memory_allocator_extension.h"
+#include "xla/pjrt/extensions/host_allocator/host_memory_allocator/host_memory_allocator_interface_impl.h"
+#include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_abi_version.h"
@@ -159,6 +163,17 @@ InitHostAllocator(const PJRT_Api* c_api, PJRT_Client* c_client) {
   return std::make_unique<HostAllocatorInterfaceImpl>(c_client, extension);
 }
 
+static std::unique_ptr<HostMemoryAllocator> InitHostMemoryAllocator(
+    const PJRT_Api* c_api, PJRT_Client* c_client) {
+  PJRT_HostMemoryAllocator_Extension* extension =
+      pjrt::FindExtension<PJRT_HostMemoryAllocator_Extension>(
+          c_api, PJRT_Extension_Type::PJRT_Extension_Type_HostMemoryAllocator);
+  if (extension == nullptr) {
+    return nullptr;
+  }
+  return pjrt::CreateHostMemoryAllocatorWrapper(c_client, extension, c_api);
+}
+
 PjRtCApiClient::PjRtCApiClient(
     const PJRT_Api* c_api, PJRT_Client* c_client,
     std::unique_ptr<pjrt::PJRT_KeyValueCallbackData> kv_callback_data)
@@ -169,6 +184,7 @@ PjRtCApiClient::PjRtCApiClient(
       topo_desc_(InitClientTopoDesc(c_api, c_client)),
       extensions_(InitExtensions(c_api)),
       host_allocator_(InitHostAllocator(c_api, c_client)),
+      host_memory_allocator_(InitHostMemoryAllocator(c_api, c_client)),
       // Example platform version string:
       //   PJRT C API
       //   TFRT TPU v2
@@ -996,6 +1012,10 @@ absl::StatusOr<PjRtClient::HostAllocator*> PjRtCApiClient::GetHostAllocator()
     return host_allocator_.status();
   }
   return host_allocator_->get();
+}
+
+HostMemoryAllocator* PjRtCApiClient::GetHostMemoryAllocator() const {
+  return host_memory_allocator_.get();
 }
 
 absl::StatusOr<std::uintptr_t> PjRtCApiClient::UnsafeBufferPointer(
@@ -3973,6 +3993,15 @@ void PjRtCApiBuffer::CopyToRemoteDevice(
   PJRT_Transfers_CrossHostRemoteSendCallbackInfo on_done_info =
       pjrt::CppCrossHostRemoteSendCallbackToC(pjrt_c_api(), std::move(on_done));
   args.on_done = on_done_info;
+
+#if PJRT_API_CROSS_HOST_TRANSFERS_EXTENSION_VERSION >= 6
+  // Destructor callback for freeing descriptor data
+  args.descriptor_destructor = [](char** descriptor_data,
+                                  size_t* descriptor_size) {
+    delete descriptor_data;
+    delete descriptor_size;
+  };
+#endif
 
 #if PJRT_API_CROSS_HOST_TRANSFERS_EXTENSION_VERSION < 5
   absl::StatusOr<std::string> descriptor = serialized_descriptor.Await();

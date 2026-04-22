@@ -2454,7 +2454,8 @@ SpmdPartitioningVisitor::CreateReplicaGroups(
 std::unique_ptr<CollectiveDeviceListBase>
 SpmdPartitioningVisitor::CreateReplicaGroups(
     const hlo_sharding_util::DeviceGroupTileAssignment& groups) {
-  if (groups.has_iota()) {
+  if (groups.has_iota() &&
+      groups.num_groups() * groups.num_devices_per_group() == num_partitions_) {
     IotaReplicaGroupList iota_list(
         groups.num_groups(), groups.num_devices_per_group(), *groups.iota());
     return std::make_unique<IotaReplicaGroupList>(
@@ -3582,14 +3583,18 @@ absl::Status SpmdPartitioningVisitor::HandleAllReduce(HloInstruction* hlo) {
         << "Cross-partition allreduce in partial manual partitioning mode must "
            "use global device IDs.";
     std::vector<int64_t> partition_to_group_id(hlo->sharding().num_devices());
-    hlo->sharding().EachTile(
+    HloSharding tile_based_sharding =
+        hlo->sharding().UseNamedShardingLeaf()
+            ? HloSharding::V3ToV2Sharding(hlo->sharding().named_sharding())
+            : hlo->sharding();
+    tile_based_sharding.EachTile(
         [&](absl::Span<const int64_t> indices, int64_t partition) {
           int64_t group_id = 0;
           for (int64_t i = 0; i < indices.size(); ++i) {
-            if (i == hlo->sharding().SubgroupManualDim()) {
+            if (i == tile_based_sharding.SubgroupManualDim()) {
               continue;
             }
-            group_id *= hlo->sharding().dimension(i);
+            group_id *= tile_based_sharding.dimension(i);
             group_id += indices[i];
           }
           partition_to_group_id[partition] = group_id;
@@ -3902,309 +3907,632 @@ SpmdPartitioningVisitor::HandleDUSAllPartitionedSliceDimsHaveConstantIndices(
   auto add_hlo = [&](std::unique_ptr<HloInstruction> to_add) {
     return b_.AddInstruction(std::move(to_add));
   };
-  PaddingConfig padding_config;
-  for (int64_t input_tensor_dim = 0;
-       input_tensor_dim < hlo->shape().dimensions().size();
-       ++input_tensor_dim) {
-    auto padding_dim = padding_config.add_dimensions();
-    padding_dim->set_interior_padding(0);
 
-    const HloInstruction* dus_index = hlo->operand(input_tensor_dim + 2);
-    CHECK(dus_index->IsConstant());
+  auto process_update_piece =
+      [&](const HloInstruction* piece_update_tensor,
+          const std::vector<int64_t>& piece_dus_starts,
+          HloInstruction* current_input) -> absl::StatusOr<HloInstruction*> {
+    PaddingConfig padding_config;
+    for (int64_t input_tensor_dim = 0;
+         input_tensor_dim < hlo->shape().dimensions().size();
+         ++input_tensor_dim) {
+      auto padding_dim = padding_config.add_dimensions();
+      padding_dim->set_interior_padding(0);
 
-    int64_t start_index = dus_index->literal().GetIntegralAsS64({}).value();
-    int64_t end_index =
-        start_index + update_tensor->shape().dimensions(input_tensor_dim);
-    int64_t padding_high =
-        hlo->shape().dimensions(input_tensor_dim) - end_index;
-    padding_dim->set_edge_padding_low(start_index);
-    padding_dim->set_edge_padding_high(padding_high);
-  }
-
-  const Shape operand_pred_shape =
-      ShapeUtil::ChangeElementType(hlo->shape(), PRED);
-  const Shape update_pred_shape =
-      ShapeUtil::ChangeElementType(update_tensor->shape(), PRED);
-  const Shape sharded_update_pred_shape =
-      MakePartitionedShape(update_pred_shape, hlo->sharding());
-
-  HloInstruction* zeroOperand = CreateZero(update_pred_shape, &b_);
-  zeroOperand->set_sharding(HloSharding::Replicate());
-
-  HloInstruction* paddingValue = CreateOne(Shape(PRED, {}), &b_);
-  HloInstruction* maskOp = PadHelper(
-      *this,
-      PartitionedHlo(zeroOperand, update_pred_shape, MakePartitioningState()),
-      paddingValue, padding_config, operand_pred_shape, hlo->sharding());
-  if (!maskOp) {
-    maskOp = add_hlo(HloInstruction::CreatePad(operand_pred_shape, zeroOperand,
-                                               paddingValue, padding_config));
-    maskOp->set_sharding(hlo->sharding());
-  }
-
-  auto zeroElemOp = add_hlo(HloInstruction::CreateConstant(
-      LiteralUtil::Zero(hlo->shape().element_type())));
-
-  HloInstruction* newOperand = nullptr;
-
-  if (update_tensor->opcode() == HloOpcode::kBroadcast) {
-    // Check if we are broadcasting a scalar, in which case we can simply
-    // broadcast the operand to the output shape instead of padding.
-    bool enableBroadcastOptimization =
-        update_tensor->operand(0)->shape().dimensions().empty();
-    if (enableBroadcastOptimization) {
-      newOperand = add_hlo(HloInstruction::CreateBroadcast(
-          GetPartitionedHlo(input_tensor).hlo()->shape(),
-          GetPartitionedHlo(update_tensor->operand(0)).hlo(), {}));
-      newOperand->set_sharding(hlo->sharding());
+      int64_t start_index = piece_dus_starts[input_tensor_dim];
+      int64_t end_index = start_index + piece_update_tensor->shape().dimensions(
+                                            input_tensor_dim);
+      int64_t padding_high =
+          hlo->shape().dimensions(input_tensor_dim) - end_index;
+      padding_dim->set_edge_padding_low(start_index);
+      padding_dim->set_edge_padding_high(padding_high);
     }
-  } else if (update_tensor->opcode() == HloOpcode::kSlice) {
-    bool slice_expand_eligible = true;
-    const xla::HloSliceInstruction* slice =
-        DynCast<HloSliceInstruction>(update_tensor);
-    const xla::HloDynamicUpdateSliceInstruction* dus =
-        DynCast<HloDynamicUpdateSliceInstruction>(hlo);
 
-    bool needs_slice = false;
-    bool needs_pad = false;
+    const Shape operand_pred_shape =
+        ShapeUtil::ChangeElementType(hlo->shape(), PRED);
+    const Shape update_pred_shape =
+        ShapeUtil::ChangeElementType(piece_update_tensor->shape(), PRED);
 
-    std::vector<int64_t> new_slice_starts(hlo->shape().dimensions().size(), 0);
-    std::vector<int64_t> new_slice_limits(hlo->shape().dimensions().size(), 0);
-    std::vector<int64_t> new_slice_strides(hlo->shape().dimensions().size(), 1);
+    HloInstruction* zeroOperand = CreateZero(update_pred_shape, &b_);
+    zeroOperand->set_sharding(HloSharding::Replicate());
 
-    PaddingConfig padding_config2;
-    for (int64_t i = 0; i < hlo->shape().dimensions().size(); ++i) {
-      // for all dimensions, check
-      //   the slice start <= the dus start
-      //   the end of the slice operand - the slice start <= the end of the dus
-      //      operand - the dus start
-      //   strides are all 1
-      int64_t slice_start = slice->slice_starts(i);
-      int64_t slice_stride = slice->slice_strides(i);
-      int64_t dus_start =
-          dus->operand(i + 2)->literal().GetIntegralAsS64({}).value();
-      int64_t dus_limit = dus->operand(0)->shape().dimensions(i);
+    HloInstruction* paddingValue = CreateOne(Shape(PRED, {}), &b_);
+    HloInstruction* maskOp = PadHelper(
+        *this,
+        PartitionedHlo(zeroOperand, update_pred_shape, MakePartitioningState()),
+        paddingValue, padding_config, operand_pred_shape, hlo->sharding());
+    if (!maskOp) {
+      maskOp = add_hlo(HloInstruction::CreatePad(
+          operand_pred_shape, zeroOperand, paddingValue, padding_config));
+      maskOp->set_sharding(hlo->sharding());
+    }
 
-      if (slice_stride != 1) {
-        slice_expand_eligible = false;
+    auto zeroElemOp = add_hlo(HloInstruction::CreateConstant(
+        LiteralUtil::Zero(hlo->shape().element_type())));
+
+    std::vector<int64_t> accumulated_offsets(hlo->shape().dimensions().size(),
+                                             0);
+    const HloInstruction* actual_update = piece_update_tensor;
+    std::optional<ShapeUtil::ShapeEqualityDescriptor> reshape_desc;
+    while (actual_update->user_count() == 1) {
+      if (actual_update->has_sharding() &&
+          actual_update->sharding().IsReplicated()) {
         break;
       }
-
-      new_slice_limits[i] = slice->operand(0)->shape().dimensions(i);
-
-      // The length of the operand we will pass to the pad op.
-      int64_t length_of_operand_to_pad =
-          slice->operand(0)->shape().dimensions(i);
-      PaddingConfig::PaddingConfigDimension* padding_dim =
-          padding_config2.add_dimensions();
-      if (slice_start > dus_start) {
-        needs_slice = true;
-        new_slice_starts[i] = slice_start - dus_start;
-        length_of_operand_to_pad -= new_slice_starts[i];
-        padding_dim->set_edge_padding_low(0);
-      } else {
-        padding_dim->set_edge_padding_low(dus_start - slice_start);
-        needs_pad |= slice_start != dus_start;
-      }
-
-      int64_t new_ending =
-          padding_dim->edge_padding_low() + length_of_operand_to_pad;
-
-      if (new_ending > dus_limit) {
-        needs_slice = true;
-        new_slice_limits[i] -= (new_ending - dus_limit);
-        padding_dim->set_edge_padding_high(0);
-      } else {
-        if (new_ending != dus_limit) {
-          needs_pad = true;
-        }
-        padding_dim->set_edge_padding_high(dus_limit - new_ending);
-      }
-    }
-    if (slice_expand_eligible) {
-      PartitionedHlo replacement = GetPartitionedHlo(slice->operand(0));
-
-      bool is_communication_free = replacement.sharding() == hlo->sharding();
-      std::vector<int64_t> local_starts_comms_free = new_slice_starts;
-      std::vector<int64_t> local_limits_comms_free = new_slice_limits;
-      PaddingConfig local_pc_comms_free = padding_config2;
-
-      for (int64_t i = 0; i < hlo->shape().dimensions().size(); ++i) {
-        if (!is_communication_free) {
+      if (actual_update->opcode() == HloOpcode::kCopy) {
+        actual_update = actual_update->operand(0);
+      } else if (actual_update->opcode() == HloOpcode::kReshape &&
+                 !reshape_desc.has_value()) {
+        auto desc = ShapeUtil::InsertedOrDeleted1SizedDimensions(
+            actual_update->operand(0)->shape(), actual_update->shape());
+        if (desc.has_value()) {
+          reshape_desc = desc;
+          actual_update = actual_update->operand(0);
+        } else {
           break;
         }
-        if (ShardCountAtDim(hlo->sharding(), i) > 1) {
-          int64_t dus_start =
-              dus->operand(i + 2)->literal().GetIntegralAsS64({}).value();
-          int64_t slice_start = slice->slice_starts(i);
-          int64_t slice_size = update_tensor->shape().dimensions(i);
+      } else if (actual_update->opcode() == HloOpcode::kDynamicUpdateSlice &&
+                 !reshape_desc.has_value()) {
+        bool all_constant = true;
+        for (int i = 2; i < actual_update->operand_count(); ++i) {
+          if (actual_update->operand(i)->opcode() != HloOpcode::kConstant) {
+            all_constant = false;
+            break;
+          }
+        }
+        if (all_constant) {
+          for (int i = 0; i < actual_update->shape().dimensions().size(); ++i) {
+            auto const_op =
+                DynCast<HloConstantInstruction>(actual_update->operand(2 + i));
+            auto val = const_op->literal().GetIntegralAsS64({});
+            if (val.has_value()) {
+              accumulated_offsets[i] += *val;
+            } else {
+              all_constant = false;
+              break;
+            }
+          }
+          if (all_constant) {
+            actual_update = actual_update->operand(1);
+          } else {
+            break;
+          }
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
 
-          bool perfectly_aligned = (slice_start == dus_start) &&
-                                   (slice->operand(0)->shape().dimensions(i) ==
-                                    hlo->shape().dimensions(i));
+    HloInstruction* newOperand = nullptr;
 
-          int64_t operand_shard_size =
-              MakePartitionedShape(slice->operand(0)->shape(), hlo->sharding())
-                  .dimensions(i);
-          int64_t input_shard_size =
-              MakePartitionedShape(hlo->shape(), hlo->sharding()).dimensions(i);
+    if (actual_update->opcode() == HloOpcode::kBroadcast) {
+      // Check if we are broadcasting a scalar, in which case we can simply
+      // broadcast the operand to the output shape instead of padding.
+      bool enableBroadcastOptimization =
+          actual_update->operand(0)->shape().dimensions().empty();
+      if (enableBroadcastOptimization) {
+        newOperand = add_hlo(HloInstruction::CreateBroadcast(
+            GetPartitionedHlo(input_tensor).hlo()->shape(),
+            GetPartitionedHlo(actual_update->operand(0)).hlo(), {}));
+        newOperand->set_sharding(hlo->sharding());
+      }
+    } else if (actual_update->opcode() == HloOpcode::kSlice) {
+      bool slice_expand_eligible = true;
+      const xla::HloSliceInstruction* slice =
+          DynCast<HloSliceInstruction>(actual_update);
+      const xla::HloDynamicUpdateSliceInstruction* dus =
+          DynCast<HloDynamicUpdateSliceInstruction>(hlo);
 
-          bool single_matching_shard = false;
-          int64_t local_slice_start_val = 0;
-          int64_t local_slice_limit_val = operand_shard_size;
-          int64_t local_pad_low_val = 0;
-          int64_t local_pad_high_val = 0;
+      bool needs_slice = false;
+      bool needs_pad = false;
 
-          if (!perfectly_aligned && operand_shard_size > 0 &&
-              input_shard_size > 0) {
-            int64_t S_other_start = slice_start / operand_shard_size;
-            int64_t S_other_end =
-                (slice_start + slice_size - 1) / operand_shard_size;
-            int64_t S_input_start = dus_start / input_shard_size;
-            int64_t S_input_end =
-                (dus_start + slice_size - 1) / input_shard_size;
+      std::vector<int64_t> post_to_pre;
+      if (reshape_desc.has_value()) {
+        post_to_pre.resize(hlo->shape().dimensions().size());
+        int64_t pre_idx = 0;
+        int64_t post_idx = 0;
+        while (post_idx < hlo->shape().dimensions().size()) {
+          if (std::find(reshape_desc->deleted_dimensions.begin(),
+                        reshape_desc->deleted_dimensions.end(),
+                        pre_idx) != reshape_desc->deleted_dimensions.end()) {
+            pre_idx++;
+          } else if (std::find(reshape_desc->inserted_dimensions.begin(),
+                               reshape_desc->inserted_dimensions.end(),
+                               post_idx) !=
+                     reshape_desc->inserted_dimensions.end()) {
+            post_to_pre[post_idx] = -1;
+            post_idx++;
+          } else {
+            post_to_pre[post_idx] = pre_idx;
+            post_idx++;
+            pre_idx++;
+          }
+        }
+      } else {
+        post_to_pre.resize(hlo->shape().dimensions().size());
+        for (int i = 0; i < hlo->shape().dimensions().size(); ++i) {
+          post_to_pre[i] = i;
+        }
+      }
 
-            if (S_other_start == S_other_end && S_input_start == S_input_end &&
-                S_other_start == S_input_start) {
-              single_matching_shard = true;
-              local_slice_start_val = slice_start % operand_shard_size;
-              local_slice_limit_val = local_slice_start_val + slice_size;
-              local_pad_low_val = dus_start % input_shard_size;
-              local_pad_high_val =
-                  input_shard_size - (local_pad_low_val + slice_size);
+      std::vector<int64_t> pre_to_post(slice->shape().dimensions().size(), -1);
+      for (int64_t i = 0; i < hlo->shape().dimensions().size(); ++i) {
+        if (post_to_pre[i] != -1) {
+          pre_to_post[post_to_pre[i]] = i;
+        }
+      }
+
+      std::vector<int64_t> new_slice_starts(slice->shape().dimensions().size(),
+                                            0);
+      std::vector<int64_t> new_slice_limits(slice->shape().dimensions().size(),
+                                            0);
+      std::vector<int64_t> new_slice_strides(slice->shape().dimensions().size(),
+                                             1);
+
+      PaddingConfig padding_config2;
+      for (int64_t i = 0; i < slice->shape().dimensions().size(); ++i) {
+        int64_t slice_start = slice->slice_starts(i);
+        int64_t slice_stride = slice->slice_strides(i);
+
+        if (slice_stride != 1) {
+          slice_expand_eligible = false;
+          break;
+        }
+
+        new_slice_limits[i] = slice->operand(0)->shape().dimensions(i);
+        auto* padding_dim = padding_config2.add_dimensions();
+        padding_dim->set_interior_padding(0);
+
+        int64_t dus_dim = pre_to_post[i];
+        if (dus_dim != -1) {
+          int64_t dus_start = piece_dus_starts[dus_dim];
+          int64_t dus_limit = hlo->shape().dimensions(dus_dim);
+
+          int64_t length_of_operand_to_pad =
+              slice->operand(0)->shape().dimensions(i);
+          if (slice_start > dus_start) {
+            needs_slice = true;
+            new_slice_starts[i] = slice_start - dus_start;
+            length_of_operand_to_pad -= new_slice_starts[i];
+            padding_dim->set_edge_padding_low(0);
+          } else {
+            padding_dim->set_edge_padding_low(dus_start - slice_start);
+            needs_pad |= slice_start != dus_start;
+          }
+
+          int64_t new_ending =
+              padding_dim->edge_padding_low() + length_of_operand_to_pad;
+
+          if (new_ending > dus_limit) {
+            needs_slice = true;
+            new_slice_limits[i] -= (new_ending - dus_limit);
+            padding_dim->set_edge_padding_high(0);
+          } else {
+            if (new_ending != dus_limit) {
+              needs_pad = true;
+            }
+            padding_dim->set_edge_padding_high(dus_limit - new_ending);
+          }
+        } else {
+          // Deleted dimension
+          new_slice_starts[i] = slice_start;
+          new_slice_limits[i] = slice->slice_limits(i);
+          padding_dim->set_edge_padding_low(0);
+          padding_dim->set_edge_padding_high(0);
+          if (new_slice_limits[i] - new_slice_starts[i] <
+              slice->operand(0)->shape().dimensions(i)) {
+            needs_slice = true;
+          }
+        }
+      }
+      if (slice_expand_eligible) {
+        PartitionedHlo replacement = GetPartitionedHlo(slice->operand(0));
+
+        if (reshape_desc.has_value()) {
+          // Fallback path for rank-changing reshapes
+          bool is_communication_free = true;
+          const HloSharding& rep_sharding = replacement.sharding();
+          const HloSharding& hlo_sharding = hlo->sharding();
+
+          if (!rep_sharding.IsTiled() || !hlo_sharding.IsTiled()) {
+            is_communication_free = false;
+          } else {
+            for (int64_t i = 0; i < hlo->shape().dimensions().size(); ++i) {
+              int64_t pre_dim = post_to_pre[i];
+              if (pre_dim != -1) {
+                if (ShardCountAtDim(hlo_sharding, i) !=
+                    ShardCountAtDim(rep_sharding, pre_dim)) {
+                  is_communication_free = false;
+                  break;
+                }
+              }
+            }
+            if (is_communication_free) {
+              for (int64_t i = 0;
+                   i < rep_sharding.tile_assignment().dimensions().size();
+                   ++i) {
+                if (std::find(post_to_pre.begin(), post_to_pre.end(), i) ==
+                    post_to_pre.end()) {
+                  if (rep_sharding.tile_assignment().dimensions()[i] > 1) {
+                    is_communication_free = false;
+                    break;
+                  }
+                }
+              }
             }
           }
 
-          if (perfectly_aligned) {
-            local_starts_comms_free[i] = 0;
-            local_limits_comms_free[i] = operand_shard_size;
-            auto* dims = local_pc_comms_free.mutable_dimensions(i);
-            dims->set_edge_padding_low(0);
-            dims->set_edge_padding_high(0);
-            dims->set_interior_padding(0);
-          } else if (single_matching_shard) {
-            local_starts_comms_free[i] = local_slice_start_val;
-            local_limits_comms_free[i] = local_slice_limit_val;
-            auto* dims = local_pc_comms_free.mutable_dimensions(i);
-            dims->set_edge_padding_low(local_pad_low_val);
-            dims->set_edge_padding_high(local_pad_high_val);
-            dims->set_interior_padding(0);
+          std::vector<int64_t> local_starts_comms_free = new_slice_starts;
+          std::vector<int64_t> local_limits_comms_free = new_slice_limits;
+          PaddingConfig local_pc_comms_free = padding_config2;
+
+          if (is_communication_free) {
+            for (int64_t i = 0; i < hlo->shape().dimensions().size(); ++i) {
+              int64_t pre_dim = post_to_pre[i];
+              if (pre_dim != -1 && ShardCountAtDim(hlo_sharding, i) > 1) {
+                int64_t dus_start =
+                    piece_dus_starts[i] + accumulated_offsets[i];
+                int64_t slice_start = slice->slice_starts(pre_dim);
+                int64_t slice_size = slice->shape().dimensions(pre_dim);
+                if (dus_start != slice_start) {
+                  is_communication_free = false;
+                  break;
+                }
+                int64_t shard_size = hlo->shape().dimensions(i) /
+                                     ShardCountAtDim(hlo_sharding, i);
+                local_starts_comms_free[pre_dim] = slice_start % shard_size;
+                local_limits_comms_free[pre_dim] =
+                    local_starts_comms_free[pre_dim] + slice_size;
+                local_pc_comms_free.mutable_dimensions(pre_dim)
+                    ->set_edge_padding_low(0);
+                local_pc_comms_free.mutable_dimensions(pre_dim)
+                    ->set_edge_padding_high(0);
+              }
+            }
+          }
+
+          if (is_communication_free) {
+            new_slice_starts = local_starts_comms_free;
+            new_slice_limits = local_limits_comms_free;
+            padding_config2 = local_pc_comms_free;
+            needs_slice = true;
+            needs_pad = false;
+          }
+
+          if (needs_slice) {
+            TF_ASSIGN_OR_RETURN(
+                Shape new_shape,
+                ShapeInference::InferSliceShape(
+                    slice->operand(0)->shape(), new_slice_starts,
+                    new_slice_limits, new_slice_strides));
+
+            const HloSharding& operand_sharding = slice->operand(0)->sharding();
+            const HloSharding& result_sharding = slice->sharding();
+            std::pair<HloInstruction*, PartitionedHlo> final_operand{
+                nullptr, replacement};
+            if (operand_sharding.NumTiles() > result_sharding.NumTiles()) {
+              TF_ASSIGN_OR_RETURN(
+                  final_operand,
+                  HandleSliceHelper(new_shape, new_slice_starts,
+                                    new_slice_limits, new_slice_strides,
+                                    result_sharding, replacement,
+                                    operand_sharding, &b_));
+            }
+            if (final_operand.first == nullptr) {
+              TF_ASSIGN_OR_RETURN(
+                  final_operand,
+                  HandleSliceHelper(new_shape, new_slice_starts,
+                                    new_slice_limits, new_slice_strides,
+                                    result_sharding, replacement,
+                                    result_sharding, &b_));
+            }
+
+            CHECK_NE(final_operand.first, nullptr);
+            replacement = final_operand.second;
+          }
+
+          if (needs_pad) {
+            Shape base_padded_shape = replacement.base_shape();
+            for (int i = 0; i < slice->shape().dimensions().size(); ++i) {
+              base_padded_shape.set_dimensions(
+                  i, padding_config2.dimensions(i).edge_padding_low() +
+                         base_padded_shape.dimensions(i) +
+                         padding_config2.dimensions(i).edge_padding_high());
+            }
+
+            newOperand =
+                PadHelper(*this, replacement, zeroElemOp, padding_config2,
+                          base_padded_shape, replacement.sharding());
+            if (!newOperand) {
+              TF_ASSIGN_OR_RETURN(Shape padded_shape,
+                                  ShapeInference::InferPadShape(
+                                      replacement.hlo()->shape(),
+                                      zeroElemOp->shape(), padding_config2));
+              newOperand = add_hlo(
+                  HloInstruction::CreatePad(padded_shape, replacement.hlo(),
+                                            zeroElemOp, padding_config2));
+              newOperand->set_sharding(replacement.sharding());
+            }
           } else {
-            is_communication_free = false;
-          }
-        }
-      }
-
-      if (is_communication_free) {
-        newOperand = replacement.hlo();
-
-        bool local_needs_slice = false;
-        for (int64_t i = 0; i < hlo->shape().dimensions().size(); ++i) {
-          if (local_starts_comms_free[i] > 0 ||
-              local_limits_comms_free[i] < newOperand->shape().dimensions(i)) {
-            local_needs_slice = true;
-            break;
-          }
-        }
-
-        if (local_needs_slice) {
-          TF_ASSIGN_OR_RETURN(Shape local_shape,
-                              ShapeInference::InferSliceShape(
-                                  newOperand->shape(), local_starts_comms_free,
-                                  local_limits_comms_free, new_slice_strides));
-          newOperand = add_hlo(HloInstruction::CreateSlice(
-              local_shape, newOperand, local_starts_comms_free,
-              local_limits_comms_free, new_slice_strides));
-        }
-
-        bool local_needs_pad = false;
-        for (int64_t i = 0; i < hlo->shape().dimensions().size(); ++i) {
-          if (local_pc_comms_free.dimensions(i).edge_padding_low() > 0 ||
-              local_pc_comms_free.dimensions(i).edge_padding_high() > 0) {
-            local_needs_pad = true;
-            break;
-          }
-        }
-
-        if (local_needs_pad || needs_pad) {
-          // If unpartitioned dims needed padding, needs_pad is true.
-          // local_pc_comms_free has the unpartitioned pad configs from
-          // padding_config2.
-          newOperand = add_hlo(HloInstruction::CreatePad(
-              MakePartitionedShape(hlo->shape(), hlo->sharding()), newOperand,
-              zeroElemOp, local_pc_comms_free));
-        }
-      } else {
-        if (needs_slice) {
-          TF_ASSIGN_OR_RETURN(Shape new_shape,
-                              ShapeInference::InferSliceShape(
-                                  slice->operand(0)->shape(), new_slice_starts,
-                                  new_slice_limits, new_slice_strides));
-
-          const HloSharding& operand_sharding = slice->operand(0)->sharding();
-          const HloSharding& result_sharding = slice->sharding();
-          std::pair<HloInstruction*, PartitionedHlo> final_operand{nullptr,
-                                                                   replacement};
-          if (operand_sharding.NumTiles() > result_sharding.NumTiles()) {
-            TF_ASSIGN_OR_RETURN(
-                final_operand,
-                HandleSliceHelper(new_shape, new_slice_starts, new_slice_limits,
-                                  new_slice_strides, result_sharding,
-                                  replacement, operand_sharding, &b_));
-            // Note: The original slice handler would make a copy here if
-            // final_operand.second.hlo() == final_operand.first and is
-            // non-null, justified by "so that it will not share the resharding
-            // cache". However, here as we are creating a new slice to begin
-            // with, there should be no sharing of cache entries.
-          }
-          if (final_operand.first == nullptr) {
-            TF_ASSIGN_OR_RETURN(
-                final_operand,
-                HandleSliceHelper(new_shape, new_slice_starts, new_slice_limits,
-                                  new_slice_strides, result_sharding,
-                                  replacement, result_sharding, &b_));
-            // Note: The original slice handler would make a copy here if
-            // final_operand.second.hlo() == final_operand.first and is
-            // non-null, justified by "so that it will not share the resharding
-            // cache". However, here as we are creating a new slice to begin
-            // with, there should be no sharing of cache entries.
+            newOperand = replacement.hlo();
           }
 
-          CHECK_NE(final_operand.first, nullptr);
-          replacement = final_operand.second;
-        }
-
-        if (needs_pad) {
-          newOperand =
-              PadHelper(*this, replacement, zeroElemOp, padding_config2,
-                        hlo->shape(), hlo->sharding());
-          CHECK_NE(newOperand, nullptr);
+          auto partitioned_dus_shape =
+              MakePartitionedShape(hlo->shape(), hlo->sharding());
+          newOperand = add_hlo(
+              HloInstruction::CreateReshape(partitioned_dus_shape, newOperand));
+          newOperand->set_sharding(hlo->sharding());
         } else {
-          newOperand = replacement.hlo();
+          // Original path
+          bool is_communication_free =
+              replacement.sharding() == hlo->sharding();
+          std::vector<int64_t> local_starts_comms_free = new_slice_starts;
+          std::vector<int64_t> local_limits_comms_free = new_slice_limits;
+          PaddingConfig local_pc_comms_free = padding_config2;
+
+          for (int64_t i = 0; i < hlo->shape().dimensions().size(); ++i) {
+            if (!is_communication_free) {
+              break;
+            }
+            if (ShardCountAtDim(hlo->sharding(), i) > 1) {
+              int64_t dus_start =
+                  dus->operand(i + 2)->literal().GetIntegralAsS64({}).value();
+              int64_t slice_start = slice->slice_starts(i);
+              int64_t slice_size = piece_update_tensor->shape().dimensions(i);
+
+              bool perfectly_aligned = (slice_start == dus_start) &&
+                                       (slice->operand(0)->shape().dimensions(
+                                            i) == hlo->shape().dimensions(i));
+
+              int64_t operand_shard_size =
+                  MakePartitionedShape(slice->operand(0)->shape(),
+                                       hlo->sharding())
+                      .dimensions(i);
+              int64_t input_shard_size =
+                  MakePartitionedShape(hlo->shape(), hlo->sharding())
+                      .dimensions(i);
+
+              bool single_matching_shard = false;
+              int64_t local_slice_start_val = 0;
+              int64_t local_slice_limit_val = operand_shard_size;
+              int64_t local_pad_low_val = 0;
+              int64_t local_pad_high_val = 0;
+
+              if (!perfectly_aligned && operand_shard_size > 0 &&
+                  input_shard_size > 0) {
+                int64_t S_other_start = slice_start / operand_shard_size;
+                int64_t S_other_end =
+                    (slice_start + slice_size - 1) / operand_shard_size;
+                int64_t S_input_start = dus_start / input_shard_size;
+                int64_t S_input_end =
+                    (dus_start + slice_size - 1) / input_shard_size;
+
+                if (S_other_start == S_other_end &&
+                    S_input_start == S_input_end &&
+                    S_other_start == S_input_start) {
+                  single_matching_shard = true;
+                  local_slice_start_val = slice_start % operand_shard_size;
+                  local_slice_limit_val = local_slice_start_val + slice_size;
+                  local_pad_low_val = dus_start % input_shard_size;
+                  local_pad_high_val =
+                      input_shard_size - (local_pad_low_val + slice_size);
+                }
+              }
+
+              if (perfectly_aligned) {
+                local_starts_comms_free[i] = 0;
+                local_limits_comms_free[i] = operand_shard_size;
+                auto* dims = local_pc_comms_free.mutable_dimensions(i);
+                dims->set_edge_padding_low(0);
+                dims->set_edge_padding_high(0);
+                dims->set_interior_padding(0);
+              } else if (single_matching_shard) {
+                local_starts_comms_free[i] = local_slice_start_val;
+                local_limits_comms_free[i] = local_slice_limit_val;
+                auto* dims = local_pc_comms_free.mutable_dimensions(i);
+                dims->set_edge_padding_low(local_pad_low_val);
+                dims->set_edge_padding_high(local_pad_high_val);
+                dims->set_interior_padding(0);
+              } else {
+                is_communication_free = false;
+              }
+            }
+          }
+
+          if (is_communication_free) {
+            newOperand = replacement.hlo();
+
+            bool local_needs_slice = false;
+            for (int64_t i = 0; i < hlo->shape().dimensions().size(); ++i) {
+              if (local_starts_comms_free[i] > 0 ||
+                  local_limits_comms_free[i] <
+                      newOperand->shape().dimensions(i)) {
+                local_needs_slice = true;
+                break;
+              }
+            }
+
+            if (local_needs_slice) {
+              TF_ASSIGN_OR_RETURN(
+                  Shape local_shape,
+                  ShapeInference::InferSliceShape(
+                      newOperand->shape(), local_starts_comms_free,
+                      local_limits_comms_free, new_slice_strides));
+              newOperand = add_hlo(HloInstruction::CreateSlice(
+                  local_shape, newOperand, local_starts_comms_free,
+                  local_limits_comms_free, new_slice_strides));
+            }
+
+            bool local_needs_pad = false;
+            for (int64_t i = 0; i < hlo->shape().dimensions().size(); ++i) {
+              if (local_pc_comms_free.dimensions(i).edge_padding_low() > 0 ||
+                  local_pc_comms_free.dimensions(i).edge_padding_high() > 0) {
+                local_needs_pad = true;
+                break;
+              }
+            }
+
+            if (local_needs_pad || needs_pad) {
+              newOperand = add_hlo(HloInstruction::CreatePad(
+                  MakePartitionedShape(hlo->shape(), hlo->sharding()),
+                  newOperand, zeroElemOp, local_pc_comms_free));
+            }
+          } else {
+            if (needs_slice) {
+              TF_ASSIGN_OR_RETURN(
+                  Shape new_shape,
+                  ShapeInference::InferSliceShape(
+                      slice->operand(0)->shape(), new_slice_starts,
+                      new_slice_limits, new_slice_strides));
+
+              const HloSharding& operand_sharding =
+                  slice->operand(0)->sharding();
+              const HloSharding& result_sharding = slice->sharding();
+              std::pair<HloInstruction*, PartitionedHlo> final_operand{
+                  nullptr, replacement};
+              if (operand_sharding.NumTiles() > result_sharding.NumTiles()) {
+                TF_ASSIGN_OR_RETURN(
+                    final_operand,
+                    HandleSliceHelper(new_shape, new_slice_starts,
+                                      new_slice_limits, new_slice_strides,
+                                      result_sharding, replacement,
+                                      operand_sharding, &b_));
+              }
+              if (final_operand.first == nullptr) {
+                TF_ASSIGN_OR_RETURN(
+                    final_operand,
+                    HandleSliceHelper(new_shape, new_slice_starts,
+                                      new_slice_limits, new_slice_strides,
+                                      result_sharding, replacement,
+                                      result_sharding, &b_));
+              }
+
+              CHECK_NE(final_operand.first, nullptr);
+              replacement = final_operand.second;
+            }
+
+            if (needs_pad) {
+              newOperand =
+                  PadHelper(*this, replacement, zeroElemOp, padding_config2,
+                            hlo->shape(), hlo->sharding());
+              CHECK_NE(newOperand, nullptr);
+            } else {
+              newOperand = replacement.hlo();
+            }
+          }
+        }
+        CHECK_EQ(newOperand->shape(), current_input->shape());
+      }
+    }
+
+    if (!newOperand) {
+      newOperand =
+          PadHelper(*this, GetPartitionedHlo(piece_update_tensor), zeroElemOp,
+                    padding_config, hlo->shape(), hlo->sharding());
+    }
+
+    if (!newOperand) {
+      newOperand = add_hlo(HloInstruction::CreatePad(
+          hlo->shape(), GetPartitionedHlo(piece_update_tensor).hlo(),
+          zeroElemOp, padding_config));
+      newOperand->set_sharding(hlo->sharding());
+    }
+
+    auto shard_result_shape =
+        MakePartitionedShape(hlo->shape(), hlo->sharding());
+    auto result = add_hlo(
+        HloInstruction::CreateTernary(shard_result_shape, HloOpcode::kSelect,
+                                      maskOp, current_input, newOperand));
+    return result;
+  };
+
+  std::vector<int64_t> top_dus_starts;
+  const auto* dus = Cast<HloDynamicUpdateSliceInstruction>(hlo);
+  for (const HloInstruction* dus_index : dus->index_operands()) {
+    CHECK(dus_index->IsConstant());
+    top_dus_starts.push_back(dus_index->literal().GetIntegralAsS64({}).value());
+  }
+
+  bool is_concat_of_slices = false;
+  std::vector<std::pair<const HloInstruction*, std::vector<int64_t>>>
+      update_pieces;
+
+  const HloInstruction* source_update = update_tensor;
+  while (source_update->opcode() == HloOpcode::kCopy &&
+         source_update->user_count() == 1) {
+    source_update = source_update->operand(0);
+  }
+
+  if (source_update->opcode() == HloOpcode::kConcatenate &&
+      source_update->user_count() == 1) {
+    bool all_valid = true;
+    int64_t concat_dim = source_update->concatenate_dimension();
+    int64_t offset = 0;
+    bool has_self_update = false;
+
+    for (const HloInstruction* operand : source_update->operands()) {
+      if (operand->opcode() != HloOpcode::kSlice) {
+        all_valid = false;
+        break;
+      }
+      for (int64_t stride : operand->slice_strides()) {
+        if (stride != 1) {
+          all_valid = false;
+          break;
         }
       }
-      CHECK_EQ(newOperand->shape(),
-               GetPartitionedHlo(input_tensor).hlo()->shape());
+      if (!all_valid) {
+        break;
+      }
+
+      bool is_self_update = operand->operand(0) == input_tensor;
+      std::vector<int64_t> piece_starts = top_dus_starts;
+      piece_starts[concat_dim] += offset;
+
+      if (is_self_update) {
+        for (int64_t i = 0; i < hlo->shape().dimensions().size(); ++i) {
+          if (operand->slice_starts(i) != piece_starts[i]) {
+            is_self_update = false;
+            break;
+          }
+        }
+      }
+
+      if (is_self_update) {
+        has_self_update = true;
+      } else {
+        update_pieces.push_back({operand, piece_starts});
+      }
+
+      offset += operand->shape().dimensions(concat_dim);
+    }
+
+    if (all_valid && has_self_update) {
+      is_concat_of_slices = true;
     }
   }
 
-  if (!newOperand) {
-    newOperand = PadHelper(*this, GetPartitionedHlo(update_tensor), zeroElemOp,
-                           padding_config, hlo->shape(), hlo->sharding());
+  if (!is_concat_of_slices) {
+    update_pieces.clear();
+    update_pieces.push_back({source_update, top_dus_starts});
   }
 
-  if (!newOperand) {
-    newOperand = add_hlo(HloInstruction::CreatePad(
-        hlo->shape(), GetPartitionedHlo(update_tensor).hlo(), zeroElemOp,
-        padding_config));
-    newOperand->set_sharding(hlo->sharding());
+  HloInstruction* current_result = GetPartitionedHlo(input_tensor).hlo();
+  if (update_pieces.empty()) {
+    // Everything was a self update, no-op!
+    SetPartitionedHlo(hlo, current_result);
+    return absl::OkStatus();
   }
 
-  auto shard_result_shape = MakePartitionedShape(hlo->shape(), hlo->sharding());
-  auto result = add_hlo(HloInstruction::CreateTernary(
-      shard_result_shape, HloOpcode::kSelect, maskOp,
-      GetPartitionedHlo(input_tensor).hlo(), newOperand));
-  SetPartitionedHlo(hlo, result);
+  for (const auto& piece : update_pieces) {
+    TF_ASSIGN_OR_RETURN(
+        current_result,
+        process_update_piece(piece.first, piece.second, current_result));
+  }
+
+  SetPartitionedHlo(hlo, current_result);
   return absl::OkStatus();
 };
 
@@ -5810,6 +6138,10 @@ absl::StatusOr<bool> SpmdPartitioner::RunImpl(
         // PreprocessCallSites made sure a computation is only used by a single
         // opcode and with a single sharding on the arguments.
         HloInstruction* caller = node.caller_callsites()[0].instruction();
+        if (caller->opcode() == HloOpcode::kAsyncStart) {
+          // TODO: b/501070020 - Handle async start.
+          return absl::OkStatus();
+        }
         switch (caller->opcode()) {
           case HloOpcode::kWhile: {
             bool is_body = (caller->while_body() == computation);
@@ -6047,16 +6379,17 @@ absl::Status SpmdPartitioner::ConvertUnreducedSharding(
         std::vector<HloSharding> subshardings = sharding.tuple_elements();
         bool should_convert = false;
         for (HloSharding& subsharding : subshardings) {
-          if (subsharding.UseNamedShardingLeaf() &&
-              !subsharding.named_sharding().unreduced_axes().empty()) {
-            TF_ASSIGN_OR_RETURN(subsharding, convert_unreduced_named_sharding(
-                                                 hlo, subsharding));
-            should_convert = true;
-          } else if (subsharding.IsUnreducedSubgroup()) {
-            TF_ASSIGN_OR_RETURN(
-                subsharding,
-                convert_unreduced_subgroup_sharding(hlo, subsharding));
-            should_convert = true;
+          if (subsharding.IsUnreducedSubgroup()) {
+            if (subsharding.UseNamedShardingLeaf()) {
+              TF_ASSIGN_OR_RETURN(subsharding, convert_unreduced_named_sharding(
+                                                   hlo, subsharding));
+            } else {
+              TF_ASSIGN_OR_RETURN(
+                  subsharding,
+                  convert_unreduced_subgroup_sharding(hlo, subsharding));
+
+              should_convert = true;
+            }
           } else if (subsharding.IsUnreduced()) {
             subsharding = convert_unreduced_sharding(hlo);
             should_convert = true;
@@ -6066,16 +6399,18 @@ absl::Status SpmdPartitioner::ConvertUnreducedSharding(
           hlo->set_sharding(HloSharding::Tuple(hlo->shape(), subshardings));
         }
       } else {
-        if (sharding.UseNamedShardingLeaf() &&
-            !sharding.named_sharding().unreduced_axes().empty()) {
-          TF_ASSIGN_OR_RETURN(HloSharding new_sharding,
-                              convert_unreduced_named_sharding(hlo, sharding));
-          hlo->set_sharding(new_sharding);
-        } else if (sharding.IsUnreducedSubgroup()) {
-          TF_ASSIGN_OR_RETURN(
-              HloSharding new_sharding,
-              convert_unreduced_subgroup_sharding(hlo, sharding));
-          hlo->set_sharding(new_sharding);
+        if (sharding.IsUnreducedSubgroup()) {
+          if (sharding.UseNamedShardingLeaf()) {
+            TF_ASSIGN_OR_RETURN(
+                HloSharding new_sharding,
+                convert_unreduced_named_sharding(hlo, sharding));
+            hlo->set_sharding(new_sharding);
+          } else {
+            TF_ASSIGN_OR_RETURN(
+                HloSharding new_sharding,
+                convert_unreduced_subgroup_sharding(hlo, sharding));
+            hlo->set_sharding(new_sharding);
+          }
         } else if (sharding.IsUnreduced()) {
           hlo->set_sharding(convert_unreduced_sharding(hlo));
         }
@@ -6378,7 +6713,8 @@ absl::StatusOr<std::vector<CallSiteInfo>> GetCallSiteInfos(
       break;
     }
     default:
-      return absl::InternalError("Unexpected opcode in call context.");
+      return absl::InternalError(absl::StrFormat(
+          "Unexpected opcode in GetCallSiteInfos: %s", caller->ToString()));
   }
   return call_site_infos;
 }
@@ -6435,6 +6771,10 @@ absl::StatusOr<bool> SpmdPartitioner::PreprocessCallSites(
     }
     for (const CallSite& call_site : node.caller_callsites()) {
       HloInstruction* caller = call_site.instruction();
+      if (caller->opcode() == HloOpcode::kAsyncStart) {
+        // TODO: b/501070020 - Handle async start.
+        continue;
+      }
       absl::flat_hash_map<CallSiteInfo, HloComputation*>& info_to_computation =
           canonical_computations[computation];
       TF_ASSIGN_OR_RETURN(std::vector<CallSiteInfo> call_site_infos,
@@ -6476,7 +6816,9 @@ absl::StatusOr<bool> SpmdPartitioner::PreprocessCallSites(
           break;
         }
         default:
-          return absl::InternalError("Unexpected opcode in call context.");
+          return absl::InternalError(
+              absl::StrFormat("Unexpected opcode in PreprocessCallSites: %s",
+                              caller->ToString()));
       }
     }
     return absl::OkStatus();

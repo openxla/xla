@@ -814,10 +814,18 @@ message BufferAssignmentProto {
     LogicalBufferProto.Location location = 2;
   }
 
+  // Set of buffers live at the point of peak memory usage for a
+  // given allocation, represented by its index.
+  message PeakBuffers {
+    int64 index = 1;
+    repeated int64 logical_buffer_ids = 2;
+  }
+
   repeated LogicalBufferProto logical_buffers = 1;
   repeated BufferAlias buffer_aliases = 2;
   repeated BufferAllocationProto buffer_allocations = 3;
   repeated HeapSimulatorTrace heap_simulator_traces = 4;
+  repeated PeakBuffers peak_buffers = 5;
 }
 
 // Grouping message that contains all of the information above.

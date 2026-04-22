@@ -18,6 +18,8 @@ limitations under the License.
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -32,8 +34,12 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
+#include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
+#include "xla/backends/gpu/runtime/kernel_thunk.h"
+#include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/traced_command_buffer.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -97,7 +103,7 @@ static constexpr auto serialize =
 // buffer usage vector to the command buffer cmd commands.
 struct TestOnlyCommandBufferCmd : public Command {
   explicit TestOnlyCommandBufferCmd(Command::BufferUses buffers)
-      : Command(CommandType::kEmptyCmd, {}), buffers(buffers) {}
+      : Command(CommandType::kUnknownCmd, {}), buffers(buffers) {}
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
@@ -112,7 +118,7 @@ struct TestOnlyCommandBufferCmd : public Command {
 
 class FakeCmd : public Command {
  public:
-  explicit FakeCmd() : Command(CommandType::kEmptyCmd, {}) {}
+  explicit FakeCmd() : Command(CommandType::kUnknownCmd, {}) {}
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
@@ -251,64 +257,6 @@ TEST(CommandBufferCmdTest, WriteConflictBarrier) {
   // TODO(ezhulenev): Check that executor correctly infer dependencies.
 }
 
-TEST(CommandBufferCmdTest, MemcpyCmd) {
-  se::StreamExecutor* stream_executor = GpuExecutor();
-
-  auto stream = stream_executor->CreateStream().value();
-  int64_t length = 4;
-  int64_t byte_length = sizeof(int32_t) * length;
-  Shape shape = ShapeUtil::MakeShape(S32, {length});
-
-  // Prepare arguments: a=42, b=0
-  se::DeviceAddress<int32_t> a =
-      stream_executor->AllocateArray<int32_t>(length, 0);
-  se::DeviceAddress<int32_t> b =
-      stream_executor->AllocateArray<int32_t>(length, 0);
-
-  TF_ASSERT_OK(stream->Memset32(&a, 42, byte_length));
-  TF_ASSERT_OK(stream->MemZero(&b, byte_length));
-
-  // Prepare buffer allocations for recording command buffer.
-  BufferAllocation alloc_a(/*index=*/0, byte_length, /*color=*/0);
-  BufferAllocation alloc_b(/*index=*/1, byte_length, /*color=*/0);
-
-  BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
-  BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
-
-  // Prepare commands sequence for constructing command buffer.
-  CommandSequence commands;
-  commands.Emplace<MemcpyDeviceToDeviceCmd>(
-      ShapedSlice{slice_b, shape}, ShapedSlice{slice_a, shape}, byte_length);
-  TF_ASSERT_OK_AND_ASSIGN(
-      CommandExecutor executor,
-      CommandExecutor::Create(std::move(commands), serialize));
-
-  ServiceExecutableRunOptions run_options;
-  se::StreamExecutorAddressAllocator allocator(stream_executor);
-  BufferAllocations allocations({a, b}, 0, &allocator);
-
-  Thunk::ExecuteParams params =
-      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
-                                   stream.get(), nullptr, nullptr, nullptr);
-
-  CommandStateManager state;
-  Command::RecordParams record_params = {state};
-
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto command_buffer,
-      stream_executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK(executor.Record(params, record_params, command_buffer.get()));
-
-  // Execute command buffer and verify that it copied the memory.
-  TF_ASSERT_OK(command_buffer->Submit(stream.get()));
-
-  // Copy `b` data back to host.
-  std::vector<int32_t> dst(4, 0);
-  TF_ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
-
-  ASSERT_EQ(dst, std::vector<int32_t>(4, 42));
-}
-
 TEST(CommandBufferCmdTest, LaunchCmd) {
   se::StreamExecutor* stream_executor = GpuExecutor();
 
@@ -342,9 +290,9 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<LaunchCmd>("AddI32", absl::MakeConstSpan(args), args_access,
-                              LaunchDimensions(1, 4),
-                              /*shmem_bytes=*/0);
+  commands.Append(KernelThunk::MakeKernelThunk(
+      "AddI32", absl::MakeConstSpan(args), args_access, LaunchDimensions(1, 4),
+      /*shmem_bytes=*/0));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -416,9 +364,9 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Emplace<LaunchCmd>("AddI32", absl::MakeConstSpan(args), args_access,
-                              LaunchDimensions(1, 4),
-                              /*shmem_bytes=*/0);
+  commands.Append(KernelThunk::MakeKernelThunk(
+      "AddI32", absl::MakeConstSpan(args), args_access, LaunchDimensions(1, 4),
+      /*shmem_bytes=*/0));
   commands.back()->set_priority(se::StreamPriority::Highest);
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -644,8 +592,10 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
   BufferAllocation::Slice slice_c(&alloc_c, 0, byte_length);
 
   // Executor A: a = 1 (memset)
+  Memset32BitValueThunk memset_a_thunk(Thunk::ThunkInfo(), /*value=*/1,
+                                       slice_a);
   CommandSequence seq_a;
-  seq_a.Emplace<Memset32Cmd>(slice_a, /*bit_pattern=*/1);
+  seq_a.Append(&memset_a_thunk);
   TF_ASSERT_OK_AND_ASSIGN(CommandExecutor exec_a,
                           CommandExecutor::Create(std::move(seq_a), serialize));
 
@@ -657,16 +607,19 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
     auto args_access = {BufferUse::MemoryAccess::kRead,
                         BufferUse::MemoryAccess::kRead,
                         BufferUse::MemoryAccess::kWrite};
-    seq_b.Emplace<LaunchCmd>("AddI32", absl::MakeConstSpan(args), args_access,
-                             LaunchDimensions(1, 4), /*shmem_bytes=*/0);
+    seq_b.Append(
+        KernelThunk::MakeKernelThunk("AddI32", absl::MakeConstSpan(args),
+                                     args_access, LaunchDimensions(1, 4),
+                                     /*shmem_bytes=*/0));
   }
   TF_ASSERT_OK_AND_ASSIGN(CommandExecutor exec_b,
                           CommandExecutor::Create(std::move(seq_b), serialize));
 
   // Executor C: c = b (memcpy)
   CommandSequence seq_c;
-  seq_c.Emplace<MemcpyDeviceToDeviceCmd>(
-      ShapedSlice{slice_c, shape}, ShapedSlice{slice_b, shape}, byte_length);
+  seq_c.Emplace<DeviceToDeviceCopyThunk>(
+      Thunk::ThunkInfo(), ShapedSlice{slice_b, shape},
+      ShapedSlice{slice_c, shape}, byte_length);
   TF_ASSERT_OK_AND_ASSIGN(CommandExecutor exec_c,
                           CommandExecutor::Create(std::move(seq_c), serialize));
 
@@ -759,18 +712,23 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
 
   // Inner child: c = a (device-to-device memcpy)
   CommandSequence inner_seq;
-  inner_seq.Emplace<MemcpyDeviceToDeviceCmd>(
-      ShapedSlice{slice_c, shape}, ShapedSlice{slice_a, shape}, byte_length);
+  inner_seq.Emplace<DeviceToDeviceCopyThunk>(
+      Thunk::ThunkInfo(), ShapedSlice{slice_a, shape},
+      ShapedSlice{slice_c, shape}, byte_length);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor inner_executor,
       CommandExecutor::Create(std::move(inner_seq), serialize));
 
   // Middle child wraps inner.
+  Memset32BitValueThunk memset_b3_thunk(Thunk::ThunkInfo(), /*value=*/3,
+                                        slice_b);
+  Memset32BitValueThunk memset_b5_thunk(Thunk::ThunkInfo(), /*value=*/5,
+                                        slice_b);
   CommandSequence middle_seq;
   middle_seq.Emplace<ChildCmd>(std::move(inner_executor));
   // Add a couple of extra commands that don't affect `c`.
-  middle_seq.Emplace<Memset32Cmd>(slice_b, /*bit_pattern=*/3);
-  middle_seq.Emplace<Memset32Cmd>(slice_b, /*bit_pattern=*/5);
+  middle_seq.Append(&memset_b3_thunk);
+  middle_seq.Append(&memset_b5_thunk);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor middle_executor,
       CommandExecutor::Create(std::move(middle_seq), serialize));
@@ -778,9 +736,9 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
   // Outer child wraps middle.
   CommandSequence outer_seq;
   outer_seq.Emplace<ChildCmd>(std::move(middle_executor));
-  // Add a couple more commands at the outer level that still don't affect `c`.
-  outer_seq.Emplace<MemzeroCmd>(ShapedSlice{slice_b, shape});
-  outer_seq.Emplace<EmptyCmd>();
+  // Add another command at the outer level that still doesn't affect `c`.
+  outer_seq.Emplace<MemzeroThunk>(Thunk::ThunkInfo(),
+                                  ShapedSlice{slice_b, shape});
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor outer_executor,
       CommandExecutor::Create(std::move(outer_seq), serialize));
@@ -815,13 +773,13 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
   //
   // Outer graph (graph_1):
   //   Node 0: ChildCmd (graph_2)  -> depends on nothing
-  //   Node 1: MemzeroCmd (MEMSET) -> depends on Node 0
-  //   Node 2: EmptyCmd (EMPTY)    -> depends on Node 1
+  //   Node 1: MemzeroThunk (MEMSET) -> depends on Node 0
   //
   // Middle graph (graph_2, nested in ChildCmd):
-  //   Node 0: ChildCmd (graph_3)              -> depends on nothing
-  //   Node 1: Memset32Cmd (MEMSET, value=3)   -> depends on Node 0
-  //   Node 2: MemcpyDeviceToDeviceCmd (MEMCPY b->b) -> depends on Node 1
+  //   Node 0: ChildCmd (graph_3)                           -> depends on
+  //   nothing Node 1: Memset32BitValueThunk (MEMSET, value=3)      -> depends
+  //   on Node 0 Node 2: Memset32BitValueThunk (MEMSET, value=5)      -> depends
+  //   on Node 1
   //
   // Inner graph (graph_3, nested in ChildCmd):
   //   Node 0: MemcpyDeviceToDeviceCmd (MEMCPY a->c) -> no dependencies
@@ -831,10 +789,10 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
     ASSERT_NE(gpu_cmd_buffer, nullptr)
         << "Expected command buffer to be a GpuCommandBuffer";
 
-    // Verify outer level: 3 commands (ChildCmd, MemzeroCmd, EmptyCmd)
+    // Verify outer level: 2 commands (ChildCmd, MemzeroThunk)
     auto outer_commands = gpu_cmd_buffer->commands();
-    ASSERT_EQ(outer_commands.size(), 3)
-        << "Outer level should have 3 commands: ChildCmd, MemzeroCmd, EmptyCmd";
+    ASSERT_EQ(outer_commands.size(), 2)
+        << "Outer level should have 2 commands: ChildCmd, MemzeroThunk";
 
     // First command: GpuChildCommand (wrapping middle graph)
     auto* outer_child_cmd =
@@ -845,23 +803,14 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
     ASSERT_NE(outer_child_cmd->command_buffer, nullptr)
         << "GpuChildCommand should have a nested command buffer";
 
-    // Second command: GpuCommand (MemzeroCmd)
+    // Second command: GpuCommand (MemzeroThunk)
     auto* outer_memzero_cmd =
         dynamic_cast<const se::gpu::GpuCommandBuffer::GpuCommand*>(
             outer_commands[1].get());
     ASSERT_NE(outer_memzero_cmd, nullptr)
-        << "Second outer command should be GpuCommand (MemzeroCmd)";
+        << "Second outer command should be GpuCommand (MemzeroThunk)";
     ASSERT_NE(outer_memzero_cmd->handle, nullptr)
-        << "MemzeroCmd should have a valid graph node handle";
-
-    // Third command: GpuCommand (EmptyCmd)
-    auto* outer_empty_cmd =
-        dynamic_cast<const se::gpu::GpuCommandBuffer::GpuCommand*>(
-            outer_commands[2].get());
-    ASSERT_NE(outer_empty_cmd, nullptr)
-        << "Third outer command should be GpuCommand (EmptyCmd)";
-    ASSERT_NE(outer_empty_cmd->handle, nullptr)
-        << "EmptyCmd should have a valid graph node handle";
+        << "MemzeroThunk should have a valid graph node handle";
 
     // Verify middle level (inside first ChildCmd): 3 commands
     auto* middle_gpu_buffer = dynamic_cast<se::gpu::GpuCommandBuffer*>(
@@ -871,8 +820,8 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
 
     auto middle_commands = middle_gpu_buffer->commands();
     ASSERT_EQ(middle_commands.size(), 3)
-        << "Middle level should have 3 commands: ChildCmd, Memset32Cmd, "
-           "MemcpyDeviceToDeviceCmd";
+        << "Middle level should have 3 commands: ChildCmd, "
+           "Memset32BitValueThunk (value=3), Memset32BitValueThunk (value=5)";
 
     // First command: GpuChildCommand (wrapping inner graph)
     auto* middle_child_cmd =
@@ -883,20 +832,21 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
     ASSERT_NE(middle_child_cmd->command_buffer, nullptr)
         << "Middle GpuChildCommand should have a nested command buffer";
 
-    // Second command: GpuCommand (Memset32Cmd)
+    // Second command: GpuCommand (Memset32BitValueThunk, value=3)
     auto* middle_memset_cmd =
         dynamic_cast<const se::gpu::GpuCommandBuffer::GpuCommand*>(
             middle_commands[1].get());
     ASSERT_NE(middle_memset_cmd, nullptr)
-        << "Second middle command should be GpuCommand (Memset32Cmd)";
+        << "Second middle command should be GpuCommand "
+           "(Memset32BitValueThunk, value=3)";
 
-    // Third command: GpuCommand (MemcpyDeviceToDeviceCmd b->b)
-    auto* middle_memcpy_cmd =
+    // Third command: GpuCommand (Memset32BitValueThunk, value=5)
+    auto* middle_memset5_cmd =
         dynamic_cast<const se::gpu::GpuCommandBuffer::GpuCommand*>(
             middle_commands[2].get());
-    ASSERT_NE(middle_memcpy_cmd, nullptr)
+    ASSERT_NE(middle_memset5_cmd, nullptr)
         << "Third middle command should be GpuCommand "
-           "(MemcpyDeviceToDeviceCmd)";
+           "(Memset32BitValueThunk, value=5)";
 
     // Verify inner level (inside middle ChildCmd): 1 command
     auto* inner_gpu_buffer = dynamic_cast<se::gpu::GpuCommandBuffer*>(

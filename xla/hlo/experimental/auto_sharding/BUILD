@@ -37,6 +37,8 @@ cc_library(
     deps = [
         ":auto_sharding_cost_graph",
         ":auto_sharding_device_mesh",
+        # Needed to link during internal builds
+        ":auto_sharding_impl",  # buildcleaner: keep
         ":auto_sharding_iopddl",
         ":auto_sharding_option",
         ":auto_sharding_proto_cc",
@@ -48,7 +50,20 @@ cc_library(
         ":matrix",
         ":metrics",
         ":profiling_result",
-        "//xla:array",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:protobuf_lite",
         "//xla:shape_tree",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -73,28 +88,9 @@ cc_library(
         "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_value",
         "//xla/service:sharding_propagation",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:btree",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/functional:function_ref",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/time",
-        "@com_google_absl//absl/types:span",
-        "@com_google_protobuf//:protobuf_lite",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-    ] + xla_internal(
-        ["experimental/auto_sharding:auto_sharding_impl_internal"],
-        otherwise = ["//xla/hlo/experimental/auto_sharding:auto_sharding_impl"],
-    ),
+    ],
 )
 
 cc_library(
@@ -133,6 +129,7 @@ cc_library(
         ":iopddl_lib",
         "//xla:status_macros",
         "//xla:util",
+        "//xla/hlo/experimental/auto_sharding:auto_sharding_solver_impl",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -150,10 +147,7 @@ cc_library(
         "@tsl//tsl/platform:hash",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:types",
-    ] + xla_internal(
-        ["experimental/auto_sharding:auto_sharding_solver_impl_internal"],
-        otherwise = ["//xla/hlo/experimental/auto_sharding:auto_sharding_solver_impl"],
-    ) + if_google(
+    ] + if_google(
         [
             "@com_google_ortools//ortools/linear_solver:linear_solver_sat",
             "@com_google_ortools//ortools/linear_solver:linear_solver_wrapper",

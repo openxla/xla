@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MathExtras.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -58,7 +59,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::cpu {
 
@@ -269,7 +269,7 @@ absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitTiledFusionKernel(
     const Tiling& tiling) {
   auto constraints_builder = TiledEmitterConstraints::GetBuilder();
   ASSIGN_OR_RETURN(auto module,
-                   xtile::EmitXTileModule(name, &fusion, symbolic_tile_analysis,
+                   xtile::EmitXTileModule(name, fusion, symbolic_tile_analysis,
                                           tiling, context));
   module->setName(absl::StrCat("__compute_module", "_", name));
 

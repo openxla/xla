@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/python/ifrt/ir/transforms/debug.h"
 #include "xla/python/ifrt/ir/transforms/passes.h"
 #include "xla/python/ifrt/ir/transforms/utils.h"
+#include "xla/python/ifrt/ir/utils.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/tsl/concurrency/executor.h"
@@ -261,14 +262,9 @@ CompiledIfrtIrProgram::Create(
   std::shared_ptr<IfrtIRCompileOptions> compile_options =
       std::move(ifrt_ir_compile_options);
 
-  std::vector<Device*> devices;
-  devices.reserve(compile_options->device_assignments.size());
-  for (const auto& device_id : compile_options->device_assignments) {
-    TF_ASSIGN_OR_RETURN(devices.emplace_back(),
-                        client->LookupDevice(device_id));
-  }
-  TF_ASSIGN_OR_RETURN(DeviceListRef device_list,
-                      client->MakeDeviceList(devices));
+  TF_ASSIGN_OR_RETURN(
+      DeviceListRef device_list,
+      LookUpDevices(client, compile_options->device_assignments));
 
   mlir::ModuleOp mlir_module = ifrt_ir_program->mlir_module;
   // Load the dialects necessary to compile the IFRT IR module.
@@ -288,9 +284,6 @@ CompiledIfrtIrProgram::Create(
       std::make_shared<AtomExecutableMap>(
           compile_options->loaded_exec_binding.begin(),
           compile_options->loaded_exec_binding.end());
-
-  std::vector<DeviceId> device_assignments =
-      compile_options->device_assignments;
 
   // Run lowering passes.
   {
@@ -362,7 +355,6 @@ CompiledIfrtIrProgram::Create(
        donatable_input_indices = std::move(donatable_input_indices),
        device_list = std::move(device_list),
        ifrt_ir_program = std::move(ifrt_ir_program),
-       device_assignments = std::move(device_assignments),
        compile_options = std::move(compile_options)]() mutable
       -> absl::StatusOr<std::shared_ptr<CompiledIfrtIrProgram>> {
     auto atom_executable_map = std::make_shared<AtomExecutableMap>();
@@ -384,10 +376,10 @@ CompiledIfrtIrProgram::Create(
       }
     }
 
-    TF_ASSIGN_OR_RETURN(auto interpreter,
-                        ProgramInterpreter::Create(
-                            client, program_name, mlir_module,
-                            atom_executable_map, std::move(device_list)));
+    TF_ASSIGN_OR_RETURN(
+        auto interpreter,
+        ProgramInterpreter::Create(client, program_name, mlir_module,
+                                   atom_executable_map, device_list));
     TF_ASSIGN_OR_RETURN(auto execute_fn, interpreter->BuildExecuteFn());
 
     return std::make_shared<CompiledIfrtIrProgram>(CompiledIfrtIrProgram{
@@ -398,8 +390,8 @@ CompiledIfrtIrProgram::Create(
         /*layout_status=*/layout_status,
         /*donatable_input_indices=*/std::move(donatable_input_indices),
         /*program=*/std::move(ifrt_ir_program),
-        /*device_assignments=*/std::move(device_assignments),
-        /*compile_options=*/compile_options,
+        /*devices=*/std::move(device_list),
+        /*compile_options=*/std::move(compile_options),
         /*execute_fn=*/std::move(execute_fn),
     });
   };

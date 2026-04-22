@@ -156,7 +156,7 @@ class TritonGemmTest : public TritonTest {
     // matching the optimized HLO.
     debug_options.set_xla_gpu_enable_split_k_autotuning(false);
     // Do not split K, instructions reach the fusion pipeline as defined.
-    debug_options.set_xla_gpu_experimental_enable_split_k_rewrite(false);
+    debug_options.add_xla_disable_hlo_passes("splitk-rewriter");
     // Always rewrite Gemms with Triton regardless of size.
     debug_options.set_xla_gpu_gemm_rewrite_size_threshold(0);
     return debug_options;
@@ -503,7 +503,7 @@ ENTRY entry {
   const HloFusionInstruction* fusion1 = Cast<HloFusionInstruction>(
       module1_and_metadata.computation->FusionInstruction());
   EXPECT_THAT(
-      TritonWrapper("test_fn", fusion1, se::GpuComputeCapability{cc},
+      TritonWrapper("test_fn", *fusion1, se::GpuComputeCapability{cc},
                     device_info, module1_and_metadata.block_level_parameters,
                     target_triple, data_layout, llvm_ctx, mlir_context_),
       absl_testing::StatusIs(
@@ -519,7 +519,7 @@ ENTRY entry {
 
   TF_ASSERT_OK_AND_ASSIGN(
       const auto result,
-      TritonWrapper("test_fn", fusion2, se::GpuComputeCapability{cc},
+      TritonWrapper("test_fn", *fusion2, se::GpuComputeCapability{cc},
                     device_info, module2_and_metadata.block_level_parameters,
                     target_triple, data_layout, llvm_ctx, mlir_context_));
   // Use optin shared memory which is > shared_memory_per_block.
@@ -564,7 +564,7 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> verified_module,
                           ParseAndReturnVerifiedModule(kHloText));
   DebugOptions debug_options = verified_module->config().debug_options();
-  debug_options.set_xla_gpu_experimental_enable_split_k_rewrite(true);
+  debug_options.clear_xla_disable_hlo_passes();
   verified_module->mutable_config().set_debug_options(debug_options);
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           GetOptimizedModule(std::move(verified_module)));
@@ -895,7 +895,7 @@ ENTRY entry {
   const HloFusionInstruction* fusion1 = Cast<HloFusionInstruction>(
       module1_and_metadata.computation->FusionInstruction());
   EXPECT_THAT(
-      TritonWrapper("test_fn", fusion1, se::GpuComputeCapability{cc},
+      TritonWrapper("test_fn", *fusion1, se::GpuComputeCapability{cc},
                     device_info, module1_and_metadata.block_level_parameters,
                     target_triple, data_layout, llvm_ctx, mlir_context_),
       absl_testing::StatusIs(tsl::error::RESOURCE_EXHAUSTED,
@@ -910,7 +910,7 @@ ENTRY entry {
       module1_and_metadata.computation->FusionInstruction());
 
   TF_EXPECT_OK(
-      TritonWrapper("test_fn", fusion2, se::GpuComputeCapability{cc},
+      TritonWrapper("test_fn", *fusion2, se::GpuComputeCapability{cc},
                     device_info, module2_and_metadata.block_level_parameters,
                     target_triple, data_layout, llvm_ctx, mlir_context_)
           .status());
@@ -2064,7 +2064,7 @@ ENTRY e {
 
   TF_ASSERT_OK_AND_ASSIGN(
       const auto result,
-      TritonWrapper("test_fn", triton_dot_fusion, GpuComputeCapability(),
+      TritonWrapper("test_fn", *triton_dot_fusion, GpuComputeCapability(),
                     dev_info,
                     optin_shmem_module_and_metadata.block_level_parameters,
                     target_triple, data_layout, llvm_ctx, mlir_context_));

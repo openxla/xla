@@ -38,6 +38,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "unsupported/Eigen/CXX11/Tensor"
+#include "xla/tsl/platform/status_macros.h"
 #include "riegeli/bytes/string_writer.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
@@ -101,7 +102,6 @@ limitations under the License.
 #include "tsl/profiler/lib/connected_traceme.h"
 #include "tsl/profiler/lib/context_types.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
@@ -959,13 +959,13 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtGpuExecutable::ExecuteHelper(
           }
         }
 
-        client->blocking_thread_pool()->ScheduleWhenReady(
+        client->blocking_thread_pool()->ExecuteWhenReady(
             input_deps, [execute_fn(std::move(execute_fn)),
                          inputs(std::move(inputs))]() mutable {
               execute_fn(std::move(inputs));
             });
       };
-  client_->non_blocking_thread_pool()->ScheduleWhenReady(
+  client_->non_blocking_thread_pool()->ExecuteWhenReady(
       prepare_input_deps, std::move(prepare_inputs));
 
   // Create output TFRT buffers.
@@ -1057,7 +1057,7 @@ TfrtGpuExecutable::Execute(
       // launch_id are run at the same time. We conservatively run only one
       // collective at a time, because we may not have enough threads to run
       // arbitrary number of collectives concurrently.
-      client_->non_blocking_thread_pool()->Schedule(
+      client_->non_blocking_thread_pool()->Execute(
           [this, replica, partition, i, &argument_handles, &options,
            &returned_futures, &wrapped_results, &mu, &running, &failed,
            &first_failure_status] {
@@ -1260,8 +1260,16 @@ absl::StatusOr<CompiledMemoryStats> TfrtGpuExecutable::GetCompiledMemoryStats()
       executables_[0]->executable()->buffer_assignment_proto();
   if (proto != nullptr) {
     memory_stats.serialized_buffer_assignment = proto->SerializeAsString();
-    TF_ASSIGN_OR_RETURN(memory_stats.peak_memory_in_bytes,
-                        ComputePeakMemory(*proto));
+    HloModuleProto hlo_module_proto =
+        executables_[0]->executable()->module().ToProto();
+    TF_ASSIGN_OR_RETURN(auto peak_memories,
+                        ComputePeakMemorySizes(*proto, hlo_module_proto));
+    memory_stats.peak_memory_in_bytes = peak_memories.padded;
+    memory_stats.peak_unpadded_heap_bytes = peak_memories.unpadded;
+    memory_stats.total_allocation_bytes =
+        ComputeTotalAllocationBytes(*proto, /*memory_color=*/0);
+    memory_stats.indefinite_allocations =
+        ComputeIndefiniteAllocationsInBytes(*proto, /*memory_color=*/0);
   }
   memory_stats.PopulateBufferStatsFromAllocations(
       executables_[0]->executable()->GetAllocations());

@@ -80,14 +80,14 @@ static const char kNameSeparator = '.';
 // Retrieves the base name of an instruction or computation fully qualified
 // name, using separator as boundary between the initial base name part, and
 // the numeric identification.
-std::string GetBaseName(const std::string& name, char separator) {
+std::string GetBaseName(absl::string_view name, char separator) {
   auto pos = name.rfind(separator);
-  CHECK_NE(pos, std::string::npos) << name;
-  return name.substr(0, pos);
+  CHECK_NE(pos, absl::string_view::npos) << name;
+  return std::string(name.substr(0, pos));
 }
 
 // Generates a fully qualified computation/instruction name.
-std::string GetFullName(const std::string& base_name, char separator,
+std::string GetFullName(absl::string_view base_name, char separator,
                         int64_t id) {
   const char separator_str[] = {separator, '\0'};
   return StrCat(base_name, separator_str, id);
@@ -96,7 +96,7 @@ std::string GetFullName(const std::string& base_name, char separator,
 // Common function to standardize setting name and IDs on computation and
 // instruction proto entities.
 template <typename T>
-void SetProtoIdAndName(T* entry, const std::string& base_name, char separator,
+void SetProtoIdAndName(T* entry, absl::string_view base_name, char separator,
                        int64_t id) {
   entry->set_id(id);
   entry->set_name(GetFullName(base_name, separator, id));

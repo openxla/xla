@@ -540,7 +540,8 @@ NB_MODULE(_ops, m) {
       nb::arg("builder"), nb::arg("call_target_name"), nb::arg("operands"),
       nb::arg("shape_with_layout"), nb::arg("operand_shapes_with_layout"),
       nb::arg("opaque") = nb::bytes(""), nb::arg("has_side_effect") = false,
-      nb::arg("output_operand_aliasing"), nb::arg("literal") = nullptr,
+      nb::arg("output_operand_aliasing") = nb::tuple(),
+      nb::arg("literal") = nullptr,
       nb::arg("schedule") = CustomCallSchedule::SCHEDULE_NONE,
       nb::arg("api_version") = CustomCallApiVersion::API_VERSION_ORIGINAL);
   m.def(
@@ -563,7 +564,8 @@ NB_MODULE(_ops, m) {
       nb::arg("builder"), nb::arg("call_target_name"), nb::arg("operands"),
       nb::arg("computation"), nb::arg("shape"),
       nb::arg("opaque") = nb::bytes(""), nb::arg("has_side_effect") = false,
-      nb::arg("output_operand_aliasing"), nb::arg("literal") = nullptr,
+      nb::arg("output_operand_aliasing") = nb::tuple(),
+      nb::arg("literal") = nullptr,
       nb::arg("schedule") = CustomCallSchedule::SCHEDULE_NONE,
       nb::arg("api_version") = CustomCallApiVersion::API_VERSION_ORIGINAL);
   m.def("Dot", &Dot, nb::arg("lhs"), nb::arg("rhs"),
@@ -629,7 +631,7 @@ NB_MODULE(_ops, m) {
   m.def("MultiCollectivePermute", &MultiCollectivePermute, nb::arg("operands"),
         nb::arg("source_target_pairs"), nb::arg("channel_id") = std::nullopt,
         nb::arg("inplace") = false);
-  m.def("NextAfter", &NextAfter, nb::arg("from"), nb::arg("to"));
+  m.def("NextAfter", &NextAfter, nb::arg("from_"), nb::arg("to"));
   m.def("OutfeedWithToken", &OutfeedWithToken, nb::arg("operand"),
         nb::arg("token"), nb::arg("shape_with_layout"),
         nb::arg("outfeed_config") = "");

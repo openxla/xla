@@ -135,11 +135,13 @@ class ClientServerTest : public ::testing::Test {
     return *std::move(coord_agent);
   }
 
-  void StartService(
-      CoordinationService::Config config = DefaultServiceConfig()) {
+  void StartService(CoordinationService::Config config = DefaultServiceConfig(),
+                    int port = -1) {
     VLOG(1) << "Starting service with config:\n" << DebugString(config);
 
-    int port = tsl::testing::PickUnusedPortOrDie();
+    if (port == -1) {
+      port = tsl::testing::PickUnusedPortOrDie();
+    }
     grpc::ServerBuilder builder;
     service_address_ = absl::StrCat("[::]:", port);
     builder.AddListeningPort(service_address_,
@@ -1307,6 +1309,7 @@ TEST_F(ClientServerTest, RecoverableClient_RestartsAndStartsBarrier) {
       // Restart the client.
       client = nullptr;
       auto restarted_client = GetClient(/*node_id=*/0, agent_config);
+      TF_RETURN_IF_ERROR(restarted_client->Connect());
 
       restarted_client->WaitAtBarrierAsync(
           kBarrierId, absl::Seconds(10), {},
@@ -1334,6 +1337,94 @@ TEST_F(ClientServerTest, RecoverableClient_RestartsAndStartsBarrier) {
   TF_EXPECT_OK(status_0_shutdown);
   TF_EXPECT_OK(status_1);
   TF_EXPECT_OK(status_1_shutdown);
+}
+
+TEST_F(ClientServerTest, ServiceIncarnationMismatch) {
+  const int port = tsl::testing::PickUnusedPortOrDie();
+  const int num_clients = 9;
+  CoordinationService::Config config = DefaultServiceConfig();
+  config.num_tasks = num_clients + 1;
+  config.cluster_register_with_barrier = false;
+  // Set a long heartbeat timeout so that no heartbeat fires during the service
+  // restart and poisons the clients with UNAVAILABLE errors.
+  config.heartbeat_timeout = absl::Seconds(60);
+  StartService(config, port);
+
+  // Create a separate client for each RPC so that error_fn is triggered
+  // independently for each one.
+  std::vector<absl::Status> errors(num_clients);
+  std::vector<std::unique_ptr<CoordinationServiceAgent>> clients(num_clients);
+  CoordinationServiceAgent::Config agent_config = DefaultAgentConfig();
+  agent_config.agent_destruction_without_shutdown = true;
+  agent_config.heartbeat_timeout = absl::Seconds(60);
+  agent_config.poll_for_error_from_service_at_startup = false;
+  for (int i = 0; i < num_clients; ++i) {
+    clients[i] =
+        GetClient(i, agent_config,
+                  [&errors, i](const absl::Status& s) { errors[i] = s; });
+    TF_ASSERT_OK(clients[i]->Connect());
+  }
+
+  // Create a probe client to wait for the channel to reconnect.
+  auto probe = GetClient(num_clients, agent_config);
+  TF_ASSERT_OK(probe->Connect());
+
+  // Restart the service.
+  StopService();
+  StartService(config, port);
+
+  // Wait for the gRPC channel to reconnect by polling with a lightweight RPC.
+  // TryGetKeyValue is a good probe because it returns immediately.
+  while (true) {
+    auto status = probe->TryGetKeyValue("probe");
+    if (status.status().code() != absl::StatusCode::kUnavailable) {
+      break;
+    }
+    absl::SleepFor(absl::Milliseconds(100));
+  }
+
+  // All RPCs should fail because the clients have the old service incarnation.
+  auto has_wrong_service = absl_testing::StatusIs(
+      absl::StatusCode::kInternal, HasSubstr("wrong service incarnation"));
+
+  int i = 0;
+  EXPECT_THAT(clients[i]->GetKeyValue("key").status(), has_wrong_service);
+  EXPECT_THAT(errors[i], has_wrong_service);
+  ++i;
+
+  EXPECT_THAT(clients[i]->TryGetKeyValue("key").status(), has_wrong_service);
+  EXPECT_THAT(errors[i], has_wrong_service);
+  ++i;
+
+  EXPECT_THAT(clients[i]->InsertKeyValue("key", "value"), has_wrong_service);
+  EXPECT_THAT(errors[i], has_wrong_service);
+  ++i;
+
+  EXPECT_THAT(clients[i]->DeleteKeyValue("key"), has_wrong_service);
+  EXPECT_THAT(errors[i], has_wrong_service);
+  ++i;
+
+  EXPECT_THAT(clients[i]->IncrementKeyValue("key", 1).status(),
+              has_wrong_service);
+  EXPECT_THAT(errors[i], has_wrong_service);
+  ++i;
+
+  EXPECT_THAT(clients[i]->GetKeyValueDir("key").status(), has_wrong_service);
+  EXPECT_THAT(errors[i], has_wrong_service);
+  ++i;
+
+  EXPECT_THAT(clients[i]->WaitAtBarrier("barrier", absl::Seconds(1), {}),
+              has_wrong_service);
+  EXPECT_THAT(errors[i], has_wrong_service);
+  ++i;
+
+  EXPECT_THAT(clients[i]->GetAliveTasks({0}).status(), has_wrong_service);
+  EXPECT_THAT(errors[i], has_wrong_service);
+  ++i;
+
+  EXPECT_THAT(clients[i]->WatchTasks({}).status(), has_wrong_service);
+  EXPECT_THAT(errors[i], has_wrong_service);
+  ++i;
 }
 
 struct RecoverableTestParams {

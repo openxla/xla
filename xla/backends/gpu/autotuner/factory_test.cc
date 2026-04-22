@@ -57,7 +57,7 @@ class FactoryTest : public xla::HloHardwareIndependentTestBase,
   se::StreamExecutor* stream_executor_;
   Compiler::GpuTargetConfig target_config_;
   DebugOptions debug_options_;
-  se::StreamExecutorMemoryAllocator allocator_;
+  stream_executor::StreamExecutorAddressAllocator allocator_;
 
   FactoryTest()
       : platform_(se::PlatformManager::PlatformWithName(
@@ -97,7 +97,7 @@ TEST_P(FactoryTest, GetCodegenBackends) {
 INSTANTIATE_TEST_SUITE_P(
     All, FactoryTest,
     ::testing::Values(
-        FactoryTestParams{{}, 7, /*run_on_cuda=*/true, /*run_on_rocm=*/false},
+        FactoryTestParams{{}, 6, /*run_on_cuda=*/true, /*run_on_rocm=*/false},
         FactoryTestParams{{}, 6, /*run_on_cuda=*/false, /*run_on_rocm=*/true},
         FactoryTestParams{{Backend::TRITON}, 1},
         FactoryTestParams{{Backend::TRITON, Backend::CUBLAS},

@@ -31,7 +31,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"  // gloop
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
@@ -228,7 +228,8 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
       get_tile_sizes(dot->shape().dimensions().size());
   VLOG(2) << "FindOutputTileSizesForEpilogue: " << tiled_dot.ToString()
           << "\nConstraints: "
-          << analysis.GetTilingSpecification().constraints().ToString()
+          << analysis.GetTilingSpecification().constraints().ToString(
+                 analysis.GetTilingSpecification().num_parameters())
           << "Expected dot tile sizes: "
           << absl::StrJoin(expected_dot_tile_sizes, " ");
 
@@ -282,6 +283,7 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
       params.is_tma_allowed = config.is_tma_allowed;
       params.is_warp_specialization_allowed =
           config.is_warp_specialization_allowed;
+      params.waves_per_eu = config.waves_per_eu;
       return params;
     }
     VLOG(4) << "mapped_dot_tile_sizes: "

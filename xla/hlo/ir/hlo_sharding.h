@@ -344,6 +344,9 @@ class HloSharding {
   // Returns whether the sharding represents manual subgroup sharding.
   bool IsManualSubgroup() const {
     if (!IsTuple()) {
+      if (UseNamedShardingLeaf()) {
+        return !named_sharding_->manual_axes().empty();
+      }
       return absl::c_linear_search(subgroup_types_, OpSharding::MANUAL);
     }
     return absl::c_all_of(tuple_elements_, [](const HloSharding& s) {
@@ -354,6 +357,9 @@ class HloSharding {
   // Returns whether the sharding represents unreduced subgroup sharding.
   bool IsUnreducedSubgroup() const {
     if (!IsTuple()) {
+      if (UseNamedShardingLeaf()) {
+        return !named_sharding_->unreduced_axes().empty();
+      }
       return absl::c_linear_search(subgroup_types_, OpSharding::UNREDUCED);
     }
     return absl::c_all_of(tuple_elements_, [](const HloSharding& s) {
@@ -630,7 +636,7 @@ class HloSharding {
   // Returns number of shards in the given dimension.
   int64_t dimension(int64_t dim_index) const {
     if (UseNamedShardingLeaf()) {
-      return named_sharding_->dimension(dim_index);
+      return IsReplicated() ? 1 : named_sharding_->dimension(dim_index);
     }
     // If the sharding is replicated, the tile assignment is invalid.
     return IsReplicated() ? 1 : tile_assignment().dim(dim_index);
@@ -701,6 +707,9 @@ class HloSharding {
 
   // Returns the manual subgroup dim, or -1 if it doesn't exist.
   int64_t SubgroupManualDim() const {
+    CHECK(!UseNamedShardingLeaf())
+        << "SubgroupManualDim should not be called for HloShardingV3 as all "
+           "relevant use cases are handled separately.";
     auto it = absl::c_find(subgroup_types_, OpSharding::MANUAL);
     if (it != subgroup_types_.end()) {
       return (it - subgroup_types_.begin()) + TiledDataRank();
@@ -710,6 +719,9 @@ class HloSharding {
 
   // Returns the unreduced subgroup dim, or -1 if it doesn't exist.
   int64_t SubgroupUnreducedDim() const {
+    CHECK(!UseNamedShardingLeaf())
+        << "SubgroupUnreducedDim should not be called for HloShardingV3 as all "
+           "relevant use cases are handled separately.";
     auto it = absl::c_find(subgroup_types_, OpSharding::UNREDUCED);
     if (it != subgroup_types_.end()) {
       return (it - subgroup_types_.begin()) + TiledDataRank();
