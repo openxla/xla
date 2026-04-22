@@ -28,7 +28,6 @@ load("//third_party/FP16:workspace.bzl", FP16 = "repo")
 load("//third_party/fxdiv:workspace.bzl", fxdiv = "repo")
 load("//third_party/gemmlowp:workspace.bzl", gemmlowp = "repo")
 load("//third_party/gloo:workspace.bzl", gloo = "repo")
-load("//third_party/gpus:rocm_configure.bzl", "rocm_configure")
 load("//third_party/gutil:workspace.bzl", gutil = "repo")
 load("//third_party/highwayhash:workspace.bzl", highwayhash = "repo")
 load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
@@ -137,10 +136,6 @@ def _tf_toolchains():
     python_configure(name = "local_config_python")
     local_clang_configure(name = "local_config_clang")
     hipcc_configure(name = "config_rocm_hipcc")
-    rocm_configure(
-        name = "local_config_rocm",
-        rocm_dist = "@config_rocm_hipcc//rocm:rocm_dist",
-    )
     local_sysroot_configure(name = "local_sysroot_config")
     sycl_init_repository()
     sycl_configure(name = "local_config_sycl")
