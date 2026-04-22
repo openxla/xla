@@ -302,7 +302,7 @@ common:rocm_clang_hermetic --strategy=CppLink=local
 common:rocm_clang_hermetic_local_sysroot --config=rocm_clang_hermetic
 common:rocm_clang_hermetic_local_sysroot --@rules_ml_toolchain//cc/sysroots:use_local_sysroot=True
 
-common:rocm --config=rocm_clang_local
+common:rocm --config=rocm_clang_hermetic
 common:rocm_ci --config=rocm
 
 common:rocm_ci_hermetic --dynamic_mode=off
