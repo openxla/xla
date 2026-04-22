@@ -685,12 +685,17 @@ absl::StatusOr<FabricInfo> GetDeviceFabricInfo(nvmlDevice_t device) {
 }
 
 absl::StatusOr<SemanticVersion> GetDeviceDriverVersion() {
-  constexpr int kDriverMaxLen = 100;
-  char version[kDriverMaxLen];
-  nvmlReturn_t result = nvmlSystemGetDriverVersion(version, kDriverMaxLen);
+  char version[NVML_SYSTEM_DRIVER_VERSION_BUFFER_SIZE];
+  nvmlReturn_t result = nvmlSystemGetDriverVersion(
+      version, NVML_SYSTEM_DRIVER_VERSION_BUFFER_SIZE);
   RETURN_IF_ERROR(ToStatus(result));
-
-  return SemanticVersion::ParseFromString(version);
+  std::string version_str{version};
+  // SemanticVersion expects a three-component X.Y.Z version, but NVIDIA driver
+  // versions sometimes only have two; append .0 to fix jax-ml/jax#36564.
+  if (absl::c_count(version_str, '.') == 1) {
+    version_str += ".0";
+  }
+  return SemanticVersion::ParseFromString(version_str);
 }
 
 }  // namespace
