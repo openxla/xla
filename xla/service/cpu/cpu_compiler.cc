@@ -559,9 +559,6 @@ auto LibrarySupportsConvolution(
 
 auto LibrarySupportsDot(HloModule* module,
                         TargetMachineFeatures* target_machine_features) {
-  // TODO(b/468895209): Stop calling YNNPACK from regular Dot thunks. All YNN
-  // Dots should be wrapped in an `__ynn_fusion` fusion region and processed in
-  // `YnnFusionThunk`.
   const bool ynnpack_dot_enabled = absl::c_linear_search(
       module->config().debug_options().xla_cpu_experimental_ynn_fusion_type(),
       DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_DOT);

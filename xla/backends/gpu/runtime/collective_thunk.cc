@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdlib>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -42,6 +43,7 @@ limitations under the License.
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/primitive_util.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
@@ -202,8 +204,11 @@ CollectiveConfig GetCollectiveConfig(
 }
 
 CollectiveThunk::CollectiveThunk(Kind kind, ThunkInfo thunk_info,
+                                 std::vector<Buffer> buffers,
                                  CommunicationId communication_id)
-    : Thunk(kind, thunk_info), communication_id_(communication_id) {}
+    : Thunk(kind, thunk_info),
+      buffers_(std::move(buffers)),
+      communication_id_(communication_id) {}
 
 absl::StatusOr<GpuCliqueKey> GetCollectiveGpuCliqueKey(
     const CollectiveParams& params, const CollectiveConfig& collective_config,
@@ -231,39 +236,6 @@ absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
         buffers[i].source_memory_space, buffers[i].destination_memory_space});
   }
   return device_buffers;
-}
-
-absl::Status MaybeRegisterBuffer(se::StreamExecutor* executor,
-                                 const se::DeviceAddressBase& buffer,
-                                 Communicator* comm,
-                                 bool use_symmetric_buffer) {
-  ASSIGN_OR_RETURN(auto range, executor->GetMemoryRange(buffer));
-  XLA_VLOG_DEVICE(1, executor->device_ordinal())
-      << "Registering range: " << range.opaque()
-      << " with size: " << range.size() << " for buffer: " << buffer.opaque()
-      << " with size: " << buffer.size()
-      << " is symmetric: " << (use_symmetric_buffer ? "true" : "false");
-  // If the collective memory buffer is a slice of a larger preallocated buffer,
-  // we need to register the entire preallocated buffer once.
-  return comm->RegisterBufferOnce(range, executor->device_ordinal(),
-                                  use_symmetric_buffer);
-}
-
-absl::Status MaybeRegisterBuffers(se::StreamExecutor* executor,
-                                  const std::vector<DeviceBufferPair>& buffers,
-                                  Communicator* comm,
-                                  bool use_symmetric_buffer) {
-  for (int i = 0; i < buffers.size(); ++i) {
-    if (buffers[i].source_memory_space == kCollectiveMemorySpaceColor) {
-      RETURN_IF_ERROR(MaybeRegisterBuffer(executor, buffers[i].source_buffer,
-                                          comm, use_symmetric_buffer));
-    }
-    if (buffers[i].destination_memory_space == kCollectiveMemorySpaceColor) {
-      RETURN_IF_ERROR(MaybeRegisterBuffer(
-          executor, buffers[i].destination_buffer, comm, use_symmetric_buffer));
-    }
-  }
-  return absl::OkStatus();
 }
 
 absl::StatusOr<CollectiveBufferProto> CollectiveThunk::Buffer::ToProto() const {
@@ -321,6 +293,22 @@ absl::Status CollectiveThunk::Prepare(const PrepareParams& params) {
 
   RETURN_IF_ERROR(params.collective_clique_requests->RequestClique(
       clique_key, *device_groups_, GetCliqueRequirements(clique_key)));
+
+  if (CanUseSymmetricBuffer() && config().use_symmetric_buffer) {
+    for (const Buffer& buffer : buffers_) {
+      if (buffer.source_memory_space == kCollectiveMemorySpaceColor) {
+        TF_RETURN_IF_ERROR(
+            params.collective_memory_requests->RequestSymmetricAllocation(
+                clique_key, buffer.source_buffer.slice.index()));
+      }
+
+      if (buffer.destination_memory_space == kCollectiveMemorySpaceColor) {
+        TF_RETURN_IF_ERROR(
+            params.collective_memory_requests->RequestSymmetricAllocation(
+                clique_key, buffer.destination_buffer.slice.index()));
+      }
+    }
+  }
 
   return PrepareCollective(params, clique_key);
 }
@@ -406,6 +394,18 @@ absl::StatusOr<std::vector<Communicator*>> CollectiveThunk::GetCommunicators(
                    params.collective_cliques->GetComm(
                        clique_key, params.collective_params->global_device_id));
   return std::vector<Communicator*>{comm};
+}
+
+Thunk::BufferUses CollectiveThunk::buffer_uses() const {
+  BufferUses uses;
+  uses.reserve(buffers_.size() * 2);
+  for (const Buffer& buffer : buffers_) {
+    uses.push_back(BufferUse::Read(buffer.source_buffer.slice,
+                                   buffer.source_buffer.shape));
+    uses.push_back(BufferUse::Write(buffer.destination_buffer.slice,
+                                    buffer.destination_buffer.shape));
+  }
+  return uses;
 }
 
 std::string CollectiveThunk::GetDeviceString(

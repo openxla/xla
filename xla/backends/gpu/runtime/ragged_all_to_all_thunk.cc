@@ -203,10 +203,9 @@ RaggedAllToAllThunk::RaggedAllToAllThunk(
 RaggedAllToAllThunk::RaggedAllToAllThunk(
     ThunkInfo thunk_info, const RaggedAllToAllConfig& config,
     std::vector<CollectiveThunk::Buffer> buffers)
-    : CollectiveThunk(Thunk::kRaggedAllToAll, thunk_info),
-      config_(config),
-      buffers_(std::move(buffers)) {
-  CHECK_EQ(config_.config.operand_element_type.size(), buffers_.size());
+    : CollectiveThunk(Thunk::kRaggedAllToAll, thunk_info, std::move(buffers)),
+      config_(config) {
+  CHECK_EQ(config_.config.operand_element_type.size(), this->buffers().size());
 }
 
 /*static*/ absl::Status RaggedAllToAllThunk::CheckImplementable(
@@ -353,7 +352,7 @@ absl::StatusOr<RaggedAllToAllStreamState*> RaggedAllToAllThunk::InitializeOnce(
 
     ASSIGN_OR_RETURN(
         std::vector<DeviceBufferPair> device_buffers,
-        ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
+        ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                                config_.config.operand_element_type));
   }
 
@@ -404,7 +403,7 @@ absl::Status RaggedAllToAllThunk::Initialize(const InitializeParams& params) {
     // Rendezvous - Exchange output pointers and barrier signal buffers.
     ASSIGN_OR_RETURN(
         std::vector<DeviceBufferPair> device_buffers,
-        ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
+        ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                                config_.config.operand_element_type));
 
     const se::DeviceAddressBase& output_buffer =
@@ -473,7 +472,7 @@ absl::StatusOr<ThunkProto> RaggedAllToAllThunk::ToProto() const {
   RaggedAllToAllStartThunkProto* thunk_proto =
       proto.mutable_ragged_all_to_all_start_thunk();
 
-  for (const Buffer& buffer : buffers_) {
+  for (const Buffer& buffer : buffers()) {
     ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());
   }
 
@@ -496,7 +495,7 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
                                                 se::Stream& stream,
                                                 Communicator& comm) {
   ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
-                   ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
+                   ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                                           config_.config.operand_element_type));
 
   ASSIGN_OR_RETURN(bool peer_access_enabled,

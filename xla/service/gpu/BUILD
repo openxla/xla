@@ -1087,14 +1087,13 @@ cc_library(
         "//xla/hlo/utils:hlo_query",
         "//xla/service:instruction_fusion",
         "//xla/service:matmul_indexing_utils",
+        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -1947,11 +1946,7 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:scoped_annotation",
         "@tsl//tsl/profiler/lib:traceme",
-    ] + xla_internal(["service:export_hlo"]) + if_google([
-        "//xla/hlo/experimental/auto_sharding",
-        "//xla/hlo/experimental/auto_sharding:auto_sharding_option",
-        "//xla/hlo/experimental/auto_sharding:auto_sharding_stablehlo_pass",
-    ]),
+    ] + xla_internal(["service:export_hlo"]),
 )
 
 xla_test(

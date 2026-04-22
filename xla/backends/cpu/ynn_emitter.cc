@@ -860,86 +860,6 @@ absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(const HloComputation* computation,
   return subgraph;
 }
 
-//===----------------------------------------------------------------------===//
-// Emit YNNPACK subgraph for the given HLO dot instruction.
-//===----------------------------------------------------------------------===//
-
-absl::StatusOr<YnnSubgraph> EmitYnnDotSubgraph(
-    const HloDotInstruction* dot, Literals& literals,
-    absl::Span<const se::DeviceAddressBase> arguments_buffers,
-    bool capture_rhs) {
-  TF_ASSIGN_OR_RETURN(
-      YnnSubgraph subgraph, CreateYnnSubgraph([&](ynn_subgraph_t* subgraph) {
-        return ynn_create_subgraph(
-            /*external_value_ids=*/3,
-            YnnFlags(dot->GetModule()->config().debug_options()), subgraph);
-      }));
-
-  TensorIdMap tensor_ids;
-
-  auto define_param = [&](const HloInstruction* instr, uint32_t id,
-                          const void* data = nullptr) -> absl::Status {
-    auto dims = YnnDimensions(instr->shape());
-    TF_ASSIGN_OR_RETURN(auto type, YnnType(instr->shape().element_type()));
-    YNN_RETURN_IF_ERROR(ynn_define_tensor(subgraph.get(), type, dims.size(),
-                                          dims.data(), data,
-                                          YNN_VALUE_FLAG_EXTERNAL_INPUT, &id));
-    tensor_ids[instr] = id;
-    return absl::OkStatus();
-  };
-
-  TF_RETURN_IF_ERROR(define_param(dot->operand(0), 0));
-  TF_RETURN_IF_ERROR(
-      define_param(dot->operand(1), 1,
-                   capture_rhs ? arguments_buffers[1].opaque() : nullptr));
-
-  TF_RETURN_IF_ERROR(
-      DefineDotOp(subgraph.get(), tensor_ids, dot, /*output_id=*/2).status());
-
-  ynn_status status = ynn_optimize_subgraph(
-      subgraph.get(), /*threadpool=*/nullptr, /*flags=*/0);
-  TF_RETURN_IF_ERROR(YnnStatusToStatus(status));
-
-  return subgraph;
-}
-
-absl::StatusOr<YnnSubgraph> EmitYnnConvolutionSubgraph(
-    const HloConvolutionInstruction* conv, Literals& literals,
-    absl::Span<const se::DeviceAddressBase> arguments_buffers) {
-  TF_ASSIGN_OR_RETURN(
-      YnnSubgraph subgraph, CreateYnnSubgraph([&](ynn_subgraph_t* subgraph) {
-        return ynn_create_subgraph(
-            /*external_value_ids=*/3,
-            YnnFlags(conv->GetModule()->config().debug_options()), subgraph);
-      }));
-
-  TensorIdMap tensor_ids;
-
-  auto define_param = [&](const HloInstruction* instr,
-                          uint32_t id) -> absl::Status {
-    auto dims = YnnDimensions(instr->shape());
-    TF_ASSIGN_OR_RETURN(auto type, YnnType(instr->shape().element_type()));
-    YNN_RETURN_IF_ERROR(ynn_define_tensor(subgraph.get(), type, dims.size(),
-                                          dims.data(), /*data=*/nullptr,
-                                          YNN_VALUE_FLAG_EXTERNAL_INPUT, &id));
-    tensor_ids[instr] = id;
-    return absl::OkStatus();
-  };
-
-  TF_RETURN_IF_ERROR(define_param(conv->operand(0), 0));
-  TF_RETURN_IF_ERROR(define_param(conv->operand(1), 1));
-
-  TF_RETURN_IF_ERROR(
-      DefineConvolutionOp(subgraph.get(), tensor_ids, conv, /*output_id=*/2)
-          .status());
-
-  ynn_status status = ynn_optimize_subgraph(
-      subgraph.get(), /*threadpool=*/nullptr, /*flags=*/0);
-  TF_RETURN_IF_ERROR(YnnStatusToStatus(status));
-
-  return subgraph;
-}
-
 }  // namespace
 
 absl::StatusOr<absl::AnyInvocable<absl::StatusOr<YnnSubgraph>(
@@ -964,27 +884,6 @@ EmitYnnFusionBuilder(const HloComputation* computation) {
       [computation, literals = Literals()](
           absl::Span<const se::DeviceAddressBase> arguments_buffers) mutable {
         return EmitYnnSubgraph(computation, literals);
-      };
-}
-
-absl::StatusOr<absl::AnyInvocable<absl::StatusOr<YnnSubgraph>(
-    absl::Span<const se::DeviceAddressBase> arguments_buffers)>>
-EmitYnnDotBuilder(const HloDotInstruction* dot, bool capture_rhs) {
-  return
-      [dot, capture_rhs, literals = Literals()](
-          absl::Span<const se::DeviceAddressBase> arguments_buffers) mutable {
-        return EmitYnnDotSubgraph(dot, literals, arguments_buffers,
-                                  capture_rhs);
-      };
-}
-
-absl::StatusOr<absl::AnyInvocable<absl::StatusOr<YnnSubgraph>(
-    absl::Span<const se::DeviceAddressBase> arguments_buffers)>>
-EmitYnnConvolutionBuilder(const HloConvolutionInstruction* conv) {
-  return
-      [conv, literals = Literals()](
-          absl::Span<const se::DeviceAddressBase> arguments_buffers) mutable {
-        return EmitYnnConvolutionSubgraph(conv, literals, arguments_buffers);
       };
 }
 

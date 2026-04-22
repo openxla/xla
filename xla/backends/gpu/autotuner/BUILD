@@ -449,6 +449,7 @@ xla_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:compiler",
         "//xla/service:executable",
+        "//xla/service:hlo_module_config",
         "//xla/service:platform_util",
         "//xla/service/gpu:alias_info",
         "//xla/stream_executor:device_description",

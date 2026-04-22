@@ -387,6 +387,7 @@ cc_library(
         "//xla/codegen/emitters:kernel_arguments",
         "//xla/service/gpu:launch_dimensions",
         "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status:statusor",

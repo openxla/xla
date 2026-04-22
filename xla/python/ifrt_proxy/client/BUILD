@@ -480,7 +480,7 @@ cc_library(
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/lib:traceme",
-    ],
+    ] + if_google(["//third_party/gloop/strings:cord_bytestream"]),
 )
 
 cc_library(

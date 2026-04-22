@@ -2084,6 +2084,14 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
         return std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
             assignment->multiheap_size_constraint_per_heap(), alignment,
             HeapType::kTemporal);
+      case buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE:
+        return std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
+            assignment->multiheap_size_constraint_per_heap(), alignment,
+            HeapType::kFastMerge);
+      case buffer_assignment::BufferAssignmentAlgorithmProto::FAST_SPLIT:
+        return std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
+            assignment->multiheap_size_constraint_per_heap(), alignment,
+            HeapType::kFastSplit);
       case buffer_assignment::BufferAssignmentAlgorithmProto::
           BEST_OF_SPATIAL_TEMPORAL:
       case buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT:

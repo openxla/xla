@@ -96,9 +96,6 @@ absl::Status RunAllReduce(ReductionKind reduction_kind,
                           bool use_symmetric_buffer) {
   int device_ordinal = stream.parent()->device_ordinal();
   XLA_VLOG_DEVICE(3, device_ordinal) << "Performing all-reduce";
-  TF_RETURN_IF_ERROR(MaybeRegisterBuffers(stream.parent(), buffers, &comm,
-                                          use_symmetric_buffer));
-
   auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(&comm);
   Future<> future =
       gpu_comm->GroupExecute([reduction_kind, &buffers,
@@ -119,10 +116,9 @@ absl::Status RunAllReduce(ReductionKind reduction_kind,
 AllReduceReduceScatterThunkBase::AllReduceReduceScatterThunkBase(
     Thunk::Kind kind, ThunkInfo thunk_info, AllReduceConfig config,
     std::vector<Buffer> buffers)
-    : CollectiveThunk(kind, thunk_info),
-      config_(std::move(config)),
-      buffers_(std::move(buffers)) {
-  CHECK_EQ(config_.config.operand_element_type.size(), buffers_.size());
+    : CollectiveThunk(kind, thunk_info, std::move(buffers)),
+      config_(std::move(config)) {
+  CHECK_EQ(config_.config.operand_element_type.size(), this->buffers().size());
 }
 
 AllReduceThunk::AllReduceThunk(
@@ -187,7 +183,7 @@ absl::Status AllReduceThunk::RunCollective(const ExecuteParams& params,
                                            Communicator& comm) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
-      ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
+      ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                              config_.config.operand_element_type));
 
   TF_ASSIGN_OR_RETURN(
@@ -245,7 +241,7 @@ absl::StatusOr<ThunkProto> AllReduceThunk::ToProto() const {
   AllReduceStartThunkProto* thunk_proto =
       proto.mutable_all_reduce_start_thunk();
 
-  for (const Buffer& buffer : buffers_) {
+  for (const Buffer& buffer : buffers()) {
     ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());
   }
 
@@ -324,7 +320,7 @@ absl::StatusOr<ThunkProto> ReduceScatterThunk::ToProto() const {
 
   ReduceScatterThunkProto* thunk_proto = proto.mutable_reduce_scatter_thunk();
 
-  for (const Buffer& buffer : buffers_) {
+  for (const Buffer& buffer : buffers()) {
     ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());
   }
 
@@ -340,7 +336,7 @@ absl::Status ReduceScatterThunk::RunCollective(const ExecuteParams& params,
                                                Communicator& comm) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
-      ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
+      ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                              config_.config.operand_element_type));
   return RunReduceScatter(config_.reduction_kind, device_buffers, stream, comm,
                           config_.config.use_symmetric_buffer);
@@ -352,8 +348,6 @@ absl::Status RunReduceScatter(ReductionKind reduction_kind,
                               bool use_symmetric_buffer) {
   int device_ordinal = stream.parent()->device_ordinal();
   XLA_VLOG_DEVICE(3, device_ordinal) << "Performing reduce-scatter";
-  TF_RETURN_IF_ERROR(MaybeRegisterBuffers(stream.parent(), buffers, &comm,
-                                          use_symmetric_buffer));
 
   TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm.NumRanks());
 

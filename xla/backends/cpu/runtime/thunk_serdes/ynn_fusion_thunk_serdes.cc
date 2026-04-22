@@ -130,29 +130,10 @@ absl::StatusOr<std::unique_ptr<Thunk>> YnnFusionThunkFromProto(
       absl::Span<const se::DeviceAddressBase> arguments_buffers)>
       builder;
   absl::Span<const int64_t> captured_arguments_ids;
-  if (hlo->opcode() == HloOpcode::kDot) {
-    const HloDotInstruction* dot = Cast<HloDotInstruction>(hlo);
-    // TODO(b/455903737): If we know the RHS is a constant, we should capture it
-    // here.
-    bool capture_rhs = false;
-    // Construct YNNPACK subgraph builder from the dot instruction.
-    TF_ASSIGN_OR_RETURN(builder, EmitYnnDotBuilder(dot, capture_rhs));
-    static constexpr int64_t kCapturedIds[1] = {1};
-    if (capture_rhs) {
-      captured_arguments_ids = kCapturedIds;
-    }
-  } else if (hlo->opcode() == HloOpcode::kConvolution) {
-    const HloConvolutionInstruction* convolution =
-        Cast<HloConvolutionInstruction>(hlo);
-    // Construct YNNPACK subgraph builder from the convolution instruction.
-    TF_ASSIGN_OR_RETURN(builder, EmitYnnConvolutionBuilder(convolution));
-  } else {
-    auto* fusion = Cast<HloFusionInstruction>(hlo);
-    const HloComputation* computation =
-        fusion->fused_instructions_computation();
-    // Construct YNNPACK subgraph builder from the fusion computation.
-    TF_ASSIGN_OR_RETURN(builder, EmitYnnFusionBuilder(computation));
-  }
+  auto* fusion = Cast<HloFusionInstruction>(hlo);
+  const HloComputation* computation = fusion->fused_instructions_computation();
+  // Construct YNNPACK subgraph builder from the fusion computation.
+  TF_ASSIGN_OR_RETURN(builder, EmitYnnFusionBuilder(computation));
 
   return YnnFusionThunk::Create(
       std::move(options), std::move(info), hlo, std::move(arguments),

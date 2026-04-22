@@ -292,12 +292,11 @@ absl::StatusOr<int> GetDeviceAttribute(CUdevice_attribute attribute,
 
 // Returns the name of the device.
 absl::StatusOr<std::string> GetDeviceName(CUdevice device) {
-  static const size_t kCharLimit = 64;
-  absl::InlinedVector<char, 4> chars(kCharLimit);
+  std::array<char, 64> chars;
   TF_RETURN_IF_ERROR(
-      cuda::ToStatus(cuDeviceGetName(chars.begin(), kCharLimit - 1, device),
+      cuda::ToStatus(cuDeviceGetName(chars.begin(), chars.size() - 1, device),
                      "Failed to get device name"));
-  chars[kCharLimit - 1] = '\0';
+  chars[chars.size() - 1] = '\0';
   return chars.begin();
 }
 

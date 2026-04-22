@@ -127,14 +127,18 @@ class CollectiveOpsTestE2E : public CollectiveOpsE2ETestBase {
   }
 };
 
-class AsyncCollectiveOps : public CollectiveOpsWithFlagsBase,
-                           public ::testing::WithParamInterface<bool> {
+class AsyncCollectiveOps
+    : public CollectiveOpsWithFlagsBase,
+      public ::testing::WithParamInterface<std::tuple<bool, bool>> {
  public:
   AsyncCollectiveOps()
-      : CollectiveOpsWithFlagsBase(/*enable_async=*/GetParam(),
-                                   /*enable_p2p_memcpy=*/false,
-                                   /*memory_size=*/8 * kGB,
-                                   /*collectives_memory_size=*/0) {}
+      : CollectiveOpsWithFlagsBase(
+            /*enable_async=*/std::get<0>(GetParam()),
+            /*enable_p2p_memcpy=*/false,
+            /*enable_symmetric_buffer=*/std::get<1>(GetParam()),
+            /*memory_size=*/8 * kGB,
+            /*collectives_memory_size=*/std::get<1>(GetParam()) ? 8 * kGB : 0) {
+  }
 };
 
 class MemcpyCollectiveOps : public CollectiveOpsWithFlagsBase,
@@ -143,6 +147,7 @@ class MemcpyCollectiveOps : public CollectiveOpsWithFlagsBase,
   MemcpyCollectiveOps()
       : CollectiveOpsWithFlagsBase(/*enable_async=*/true,
                                    /*enable_p2p_memcpy=*/GetParam(),
+                                   /*enable_symmetric_buffer=*/false,
                                    /*memory_size=*/32 * kMB,
                                    /*collectives_memory_size=*/0) {}
 };
@@ -155,6 +160,7 @@ class AsyncMemcpyCollectiveOps
       : CollectiveOpsWithFlagsBase(
             /*enable_async=*/std::get<0>(GetParam()),
             /*enable_p2p_memcpy=*/std::get<1>(GetParam()),
+            /*enable_symmetric_buffer=*/false,
             /*memory_size=*/32 * kMB,
             /*collectives_memory_size=*/0) {}
 };
@@ -167,8 +173,13 @@ std::string GetMemcpyTestName(bool is_memcpy) {
   return is_memcpy ? "memcpy" : "nccl";
 }
 
-std::string GetAsyncTestSuiteName(const ::testing::TestParamInfo<bool>& info) {
-  return GetAsyncTestName(info.param);
+std::string GetAsyncTestSuiteName(
+    const ::testing::TestParamInfo<std::tuple<bool, bool>>& info) {
+  std::string test_name = GetAsyncTestName(std::get<0>(info.param));
+  if (std::get<1>(info.param)) {
+    test_name += "_symmetric";
+  }
+  return test_name;
 }
 
 std::string GetMemcpyTestSuiteName(const ::testing::TestParamInfo<bool>& info) {
@@ -202,7 +213,7 @@ TEST_P(AsyncCollectiveOps, AsyncAllReduce) {
       << "Test requires at least " << kNumReplicas << " devices ("
       << device_count() << " available)";
 
-  const bool enable_async_all_reduce = GetParam();
+  const bool enable_async_all_reduce = enable_async_;
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
@@ -245,7 +256,7 @@ TEST_P(AsyncCollectiveOps, AsyncAllGather) {
       << "Test requires at least " << kNumReplicas << " devices ("
       << device_count() << " available)";
 
-  const bool enable_async_all_gather = GetParam();
+  const bool enable_async_all_gather = enable_async_;
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
@@ -291,7 +302,7 @@ TEST_P(AsyncCollectiveOps, AsyncAllGatherMixedTypes) {
       << "Test requires at least " << kNumReplicas << " devices ("
       << device_count() << " available)";
 
-  const bool enable_async_all_gather = GetParam();
+  const bool enable_async_all_gather = enable_async_;
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
@@ -336,7 +347,7 @@ TEST_P(AsyncCollectiveOps, AsyncCollectiveBroadcast) {
       << "Test requires at least " << kNumReplicas << " devices ("
       << device_count() << " available)";
 
-  const bool enable_async_collective_broadcast = GetParam();
+  const bool enable_async_collective_broadcast = enable_async_;
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
 
@@ -520,7 +531,7 @@ TEST_P(AsyncCollectiveOps, AsyncReduceScatter) {
       << "Test requires at least " << kNumReplicas << " devices ("
       << device_count() << " available)";
 
-  const bool enable_async_reduce_scatter = GetParam();
+  const bool enable_async_reduce_scatter = enable_async_;
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
 
@@ -559,7 +570,7 @@ TEST_P(AsyncCollectiveOps, AsyncAllToAllWithSplitDim) {
       << "Test requires at least " << kNumReplicas << " devices ("
       << device_count() << " available)";
 
-  const bool enable_async_all_to_all = GetParam();
+  const bool enable_async_all_to_all = enable_async_;
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
 
@@ -643,7 +654,7 @@ TEST_P(AsyncCollectiveOps, AsyncAllToAllWithoutSplitDim) {
       << "Test requires at least " << kNumReplicas << " devices ("
       << device_count() << " available)";
 
-  const bool enable_async_all_to_all = GetParam();
+  const bool enable_async_all_to_all = enable_async_;
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
 
@@ -719,7 +730,7 @@ TEST_P(AsyncCollectiveOps, AsyncAllToAllNumberOfElementsLargerThanInt32Max) {
       << "Test requires at least " << kNumReplicas << " devices ("
       << device_count() << " available)";
 
-  const bool enable_async_all_to_all = GetParam();
+  const bool enable_async_all_to_all = enable_async_;
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
 
@@ -780,7 +791,7 @@ ENTRY entry {
                           ExecuteReplicated(std::move(module)));
 
   const HloModule* hlo_module = execution_result.optimized_module;
-  const bool enable_async_ragged_all_to_all = GetParam();
+  const bool enable_async_ragged_all_to_all = enable_async_;
   HloInstruction* ra2a_start =
       FindInstruction(hlo_module, HloOpcode::kAsyncStart);
   HloInstruction* ra2a_done =
@@ -979,7 +990,7 @@ TEST_P(AsyncCollectiveOps, MatmulReplicated) {
                  << device_count() << " available)";
   }
 
-  bool enable_cublaslt = GetParam();
+  bool enable_cublaslt = std::get<0>(GetParam());
   VLOG(0) << "Running with CUBLAS enabled: " << enable_cublaslt;
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
@@ -1016,7 +1027,9 @@ TEST_P(AsyncCollectiveOps, MatmulReplicated) {
 }
 
 INSTANTIATE_TEST_SUITE_P(AsyncCollectiveOps, AsyncCollectiveOps,
-                         ::testing::Bool(), GetAsyncTestSuiteName);
+                         ::testing::Combine(::testing::Bool(),
+                                            ::testing::Bool()),
+                         GetAsyncTestSuiteName);
 
 INSTANTIATE_TEST_SUITE_P(MemcpyCollectiveOps, MemcpyCollectiveOps,
                          ::testing::Bool(), GetMemcpyTestSuiteName);

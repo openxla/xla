@@ -1310,4 +1310,3 @@ ENTRY main {
 
 // CHECK-LABEL: source_filename = "sort"
 // CHECK-COUNT-312: xor i64
-// CHECK-GCN: xor i64

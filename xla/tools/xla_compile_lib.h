@@ -67,6 +67,7 @@ struct XlaCompileOptions {
   std::string platform;
   std::string result_output_file;
   bool use_shardy_partitioner = false;
+  bool force_auto_layout = false;
   int32_t num_partitions = 1;
   int32_t num_replicas = 1;
 

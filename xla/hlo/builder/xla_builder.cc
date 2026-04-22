@@ -283,19 +283,17 @@ XlaOp XlaBuilderFriend::BuildCopyDone(XlaBuilder* builder, const XlaOp operand,
 XlaOp XlaBuilderFriend::BuildCollectivePermuteStart(
     XlaBuilder* builder, XlaOp operand,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, const bool inplace) {
+    const std::optional<ChannelHandle>& channel_id) {
   return builder->CollectivePermuteImpl(operand, source_target_pairs,
-                                        channel_id, /*async=*/true, inplace);
+                                        channel_id, /*async=*/true);
 }
 
 XlaOp XlaBuilderFriend::BuildCollectivePermuteStart(
     XlaBuilder* builder, absl::Span<const XlaOp> operands,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, const bool inplace) {
-  // TODO support multi-operand in-place collective permute
-  CHECK(!inplace);
+    const std::optional<ChannelHandle>& channel_id) {
   return builder->CollectivePermuteImpl(operands, source_target_pairs,
-                                        channel_id, /*async=*/true, inplace);
+                                        channel_id, /*async=*/true);
 }
 
 XlaOp XlaBuilderFriend::BuildCollectivePermuteDone(XlaBuilder* builder,
@@ -4476,26 +4474,23 @@ XlaOp XlaBuilder::CollectiveBroadcastImpl(
 XlaOp XlaBuilder::CollectivePermute(
     XlaOp operand,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, const bool inplace) {
+    const std::optional<ChannelHandle>& channel_id) {
   return CollectivePermuteImpl(operand, source_target_pairs, channel_id,
-                               /*async=*/false, inplace);
+                               /*async=*/false);
 }
 
 XlaOp XlaBuilder::CollectivePermute(
     absl::Span<const XlaOp> operands,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, const bool inplace) {
-  // TODO support multi-operand in-place collective permute
-  CHECK(!inplace);
+    const std::optional<ChannelHandle>& channel_id) {
   return CollectivePermuteImpl(operands, source_target_pairs, channel_id,
-                               /*async=*/false, inplace);
+                               /*async=*/false);
 }
 
 XlaOp XlaBuilder::CollectivePermuteImpl(
     XlaOp operand,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, bool async,
-    const bool inplace) {
+    const std::optional<ChannelHandle>& channel_id, bool async) {
   return ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     HloInstructionProto instr;
@@ -4503,10 +4498,10 @@ XlaOp XlaBuilder::CollectivePermuteImpl(
     if (async) {
       TF_ASSIGN_OR_RETURN(shape,
                           ShapeInference::InferCollectivePermuteStartShape(
-                              {operand_shape}, {}, inplace));
+                              {operand_shape}, {}, false));
     } else {
       TF_ASSIGN_OR_RETURN(shape, ShapeInference::InferCollectivePermuteShape(
-                                     {operand_shape}, inplace));
+                                     {operand_shape}, false));
     }
     *instr.mutable_shape() = shape.ToProto();
 
@@ -4529,10 +4524,7 @@ XlaOp XlaBuilder::CollectivePermuteImpl(
 XlaOp XlaBuilder::CollectivePermuteImpl(
     absl::Span<const XlaOp> operands,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, bool async,
-    const bool inplace) {
-  // TODO support multi-operand in-place collective permute
-  CHECK(!inplace);
+    const std::optional<ChannelHandle>& channel_id, bool async) {
   return ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
     std::vector<const Shape*> operand_shapes;
     for (const auto& operand : operands) {
@@ -4545,10 +4537,10 @@ XlaOp XlaBuilder::CollectivePermuteImpl(
     if (async) {
       TF_ASSIGN_OR_RETURN(shape,
                           ShapeInference::InferCollectivePermuteStartShape(
-                              operand_shapes, {}, inplace));
+                              operand_shapes, {}, false));
     } else {
       TF_ASSIGN_OR_RETURN(shape, ShapeInference::InferCollectivePermuteShape(
-                                     operand_shapes, inplace));
+                                     operand_shapes, false));
     }
     *instr.mutable_shape() = shape.ToProto();
 
@@ -6239,19 +6231,17 @@ XlaOp CollectiveBroadcast(const XlaOp operand,
 XlaOp CollectivePermute(
     const XlaOp operand,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, const bool inplace) {
+    const std::optional<ChannelHandle>& channel_id) {
   return operand.builder()->CollectivePermute(operand, source_target_pairs,
-                                              channel_id, inplace);
+                                              channel_id);
 }
 
 XlaOp MultiCollectivePermute(
     absl::Span<const XlaOp> operands,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, const bool inplace) {
-  // TODO support multi-operand in-place collective permute
-  CHECK(!inplace);
+    const std::optional<ChannelHandle>& channel_id) {
   return operands.at(0).builder()->CollectivePermute(
-      operands, source_target_pairs, channel_id, inplace);
+      operands, source_target_pairs, channel_id);
 }
 
 XlaOp ReplicaId(XlaBuilder* builder) { return builder->ReplicaId(); }

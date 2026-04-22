@@ -82,8 +82,6 @@ class CollectivePermuteThunk : public CollectiveThunk {
 
   const CollectiveConfig& config() const override { return config_.config; }
 
-  absl::Span<const Buffer> buffers() const { return buffers_; }
-
   const P2PConfig& p2p_config() const { return config_; }
 
   bool connected_components_enabled() const {
@@ -96,11 +94,11 @@ class CollectivePermuteThunk : public CollectiveThunk {
 
   absl::StatusOr<ThunkProto> ToProto() const override;
 
-  BufferUses buffer_uses() const override;
-
  protected:
   // No rendezvous needed when using P2P memcpy in local mode instead of NCCL.
   bool RequiresRendezvous() const override { return !p2p_memcpy_enabled_; }
+
+  bool CanUseSymmetricBuffer() const override { return buffers().size() == 1; }
 
   absl::Status InitializeCollective(const InitializeParams& params,
                                     const GpuCliqueKey& clique_key) override;
@@ -111,7 +109,6 @@ class CollectivePermuteThunk : public CollectiveThunk {
 
  private:
   const P2PConfig config_;
-  std::vector<Buffer> buffers_;
   bool p2p_memcpy_enabled_ = false;
   bool connected_components_enabled_ = false;
 };

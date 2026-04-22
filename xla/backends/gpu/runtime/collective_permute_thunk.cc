@@ -95,11 +95,10 @@ CollectivePermuteThunk::CollectivePermuteThunk(
     int64_t replica_count, int64_t partition_count,
     const std::vector<Buffer>& buffers, bool p2p_memcpy_enabled,
     bool connected_components_enabled)
-    : CollectiveThunk(Thunk::kCollectivePermute, std::move(thunk_info),
+    : CollectiveThunk(Thunk::kCollectivePermute, std::move(thunk_info), buffers,
                       CommunicationId(1)),
       config_(GetP2PConfig(instr, replica_count, partition_count,
                            connected_components_enabled)),
-      buffers_(buffers),
       p2p_memcpy_enabled_(p2p_memcpy_enabled),
       connected_components_enabled_(connected_components_enabled) {}
 
@@ -107,10 +106,9 @@ CollectivePermuteThunk::CollectivePermuteThunk(
     ThunkInfo thunk_info, const P2PConfig& config,
     const std::vector<Buffer>& buffers, bool p2p_memcpy_enabled,
     bool connected_components_enabled)
-    : CollectiveThunk(Thunk::kCollectivePermute, std::move(thunk_info),
+    : CollectiveThunk(Thunk::kCollectivePermute, std::move(thunk_info), buffers,
                       CommunicationId(1)),
       config_(config),
-      buffers_(buffers),
       p2p_memcpy_enabled_(p2p_memcpy_enabled),
       connected_components_enabled_(connected_components_enabled) {}
 
@@ -205,9 +203,10 @@ absl::Status CollectivePermuteThunk::InitializeCollective(
     return absl::OkStatus();
   }
 
-  ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
-                   ConvertToDeviceBuffers(params.buffer_allocations, {buffers_},
-                                          config_.config.operand_element_type));
+  ASSIGN_OR_RETURN(
+      std::vector<DeviceBufferPair> device_buffers,
+      ConvertToDeviceBuffers(params.buffer_allocations, {buffers()},
+                             config_.config.operand_element_type));
 
   GlobalDeviceId gid = params.collective_params->global_device_id;
   std::optional<RankId> rank = clique_key.rank(gid);
@@ -277,7 +276,7 @@ absl::StatusOr<ThunkProto> CollectivePermuteThunk::ToProto() const {
   CollectivePermuteStartThunkProto* thunk_proto =
       proto.mutable_collective_permute_start_thunk();
 
-  for (const Buffer& buffer : buffers_) {
+  for (const Buffer& buffer : buffers()) {
     ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());
   }
 
@@ -303,25 +302,13 @@ absl::StatusOr<ThunkProto> CollectivePermuteThunk::ToProto() const {
   return proto;
 }
 
-CollectivePermuteThunk::BufferUses CollectivePermuteThunk::buffer_uses() const {
-  BufferUses uses;
-  uses.reserve(buffers_.size() * 2);
-  for (const Buffer& buffer : buffers_) {
-    uses.push_back(BufferUse::Read(buffer.source_buffer.slice,
-                                   buffer.source_buffer.shape));
-    uses.push_back(BufferUse::Write(buffer.destination_buffer.slice,
-                                    buffer.destination_buffer.shape));
-  }
-  return uses;
-}
-
 absl::Status CollectivePermuteThunk::RunCollective(
     const ExecuteParams& params, const GpuCliqueKey& clique_key,
     se::Stream& stream, Communicator& comm) {
   ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params.buffer_allocations,
-                             std::vector<CollectiveThunk::Buffer>(buffers_),
+                             std::vector<CollectiveThunk::Buffer>(buffers()),
                              config_.config.operand_element_type));
   ASSIGN_OR_RETURN(int64_t current_id,
                    GetCollectiveCurrentId(params.collective_params, config_));
@@ -397,8 +384,6 @@ absl::Status RunCollectivePermute(P2PConfig::SourceTargetRanks source_target,
       TF_RETURN_IF_ERROR(future.Await());
     }
   } else {
-    TF_RETURN_IF_ERROR(MaybeRegisterBuffers(stream.parent(), buffers, &comm,
-                                            use_symmetric_buffer));
     auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(&comm);
     auto future = gpu_comm->GroupExecute(
         [&source_target, &buffers, &src_addrs, &dest_addrs, &target_ranks,

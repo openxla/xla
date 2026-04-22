@@ -113,8 +113,19 @@ static absl::StatusOr<std::string> CompileGpuExecutable(
   hlo_module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_aot_compiled_thunks(true);
-  hlo_module->mutable_config().set_replica_count(num_replicas);
-  hlo_module->mutable_config().set_num_partitions(num_partitions);
+  // Set the number of replicas and partitions in the HLO module
+  // config only if they are non-trivial (meaning passed as command line
+  // flags), otherwise the values from the HLO module will be used.
+  if (num_replicas > 1) {
+    hlo_module->mutable_config().set_replica_count(num_replicas);
+  } else {
+    num_replicas = hlo_module->config().replica_count();
+  }
+  if (num_partitions > 1) {
+    hlo_module->mutable_config().set_num_partitions(num_partitions);
+  } else {
+    num_partitions = hlo_module->config().num_partitions();
+  }
 
   if (aot) {
     TF_ASSIGN_OR_RETURN(se::Platform::Id target_platform_id,
@@ -473,6 +484,23 @@ absl::Status XlaCompileMain(const XlaCompileOptions& options) {
   }
   if (options.use_shardy_partitioner) {
     hlo_module->mutable_config().set_use_shardy_partitioner(true);
+  }
+  if (options.force_auto_layout) {
+    // AotCompilationOptions does not support forcing auto layout, so clearing
+    // it on the hlo module level.
+    for (int i = 0;
+         i < hlo_module->mutable_entry_computation_layout()->parameter_count();
+         ++i) {
+      hlo_module->mutable_entry_computation_layout()
+          ->mutable_parameter_layout(i)
+          ->Clear();
+    }
+    hlo_module->mutable_entry_computation_layout()
+        ->mutable_result_layout()
+        ->Clear();
+    hlo_module->mutable_config()
+        .mutable_debug_options()
+        .set_xla_pjrt_allow_auto_layout_in_hlo(true);
   }
 
   if (!options.gpu_options.target_platform_version.empty() &&

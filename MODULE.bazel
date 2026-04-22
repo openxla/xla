@@ -54,7 +54,10 @@ archive_override(
 single_version_override(
     module_name = "grpc",
     patch_strip = 1,
-    patches = ["//third_party/grpc:grpc.patch"],
+    patches = [
+        "//third_party/grpc:grpc.patch",
+        "//third_party/grpc:layering_check_bzlmod.patch",
+    ],
     version = "1.78.0",
 )
 

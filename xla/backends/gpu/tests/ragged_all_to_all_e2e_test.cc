@@ -63,6 +63,7 @@ class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
  public:
   RaggedAllToAllTestBase(bool enable_async, RaggedAllToAllImplType impl_type)
       : CollectiveOpsWithFlagsBase(enable_async, /*enable_p2p_memcpy=*/false,
+                                   /*enable_symmetric_buffer=*/false,
                                    /*memory_size=*/64 * kMB,
                                    /*collectives_memory_size=*/0),
         impl_type_(impl_type) {}

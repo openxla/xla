@@ -164,8 +164,6 @@ class RaggedAllToAllThunk : public CollectiveThunk {
     return config_;
   }
 
-  absl::Span<const Buffer> buffers() const { return buffers_; }
-
   bool is_one_shot_kernel_enabled() const {
     return config_.one_shot_kernel_enabled;
   }
@@ -182,18 +180,6 @@ class RaggedAllToAllThunk : public CollectiveThunk {
       absl::Span<const BufferAllocation> buffer_allocations);
 
   absl::StatusOr<ThunkProto> ToProto() const override;
-
-  BufferUses buffer_uses() const override {
-    BufferUses uses;
-    uses.reserve(buffers_.size() * 2);
-    for (const Buffer& buffer : buffers_) {
-      uses.push_back(BufferUse::Read(buffer.source_buffer.slice,
-                                     buffer.source_buffer.shape));
-      uses.push_back(BufferUse::Write(buffer.destination_buffer.slice,
-                                      buffer.destination_buffer.shape));
-    }
-    return uses;
-  }
 
  protected:
   // No rendezvous needed when using one-shot kernel in local mode instead of
@@ -215,7 +201,6 @@ class RaggedAllToAllThunk : public CollectiveThunk {
   }
 
   const RaggedAllToAllConfig config_;
-  const std::vector<Buffer> buffers_;
 
   mutable absl::Mutex mutex_;
   absl::flat_hash_map<se::StreamExecutor*,

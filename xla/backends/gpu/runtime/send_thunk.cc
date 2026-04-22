@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/computation_placer.h"
-#include "xla/status_macros.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
@@ -61,9 +60,8 @@ SendThunk::SendThunk(ThunkInfo thunk_info, const HloSendInstruction* instr,
 
 SendThunk::SendThunk(ThunkInfo thunk_info, const P2PConfig& config,
                      const Buffer& buffer, absl::string_view instr_name)
-    : CollectiveThunk(Thunk::kSend, thunk_info, CommunicationId(1)),
+    : CollectiveThunk(Thunk::kSend, thunk_info, {buffer}, CommunicationId(1)),
       config_(config),
-      buffer_(buffer),
       hlo_name_(instr_name) {}
 
 absl::Status SendThunk::Initialize(const InitializeParams& params) {
@@ -135,7 +133,6 @@ absl::Status RunSend(DeviceBufferPair& buffer, se::Stream& stream,
   // Send source buffer to target peer if needed.
   VLOG(3) << "[" << device_ordinal << "] target_id: " << target_id
           << ", call comm.Send()";
-  TF_RETURN_IF_ERROR(MaybeRegisterBuffers(stream.parent(), {buffer}, &comm));
   auto future = comm.Send(src_addr, buffer.element_type, buffer.element_count,
                           RankId(target_id), GpuCollectives::On(stream));
   TF_RETURN_IF_ERROR(future.Await());
@@ -145,14 +142,16 @@ absl::Status RunSend(DeviceBufferPair& buffer, se::Stream& stream,
 absl::Status SendThunk::RunCollective(const ExecuteParams& params,
                                       const GpuCliqueKey&, se::Stream& stream,
                                       Communicator& comm) {
+  auto send_buffer = buffers()[0];
   DeviceBufferPair device_buffer_pair{
       config_.config.operand_element_type[0],
-      buffer_.element_count,
-      params.buffer_allocations->GetDeviceAddress(buffer_.source_buffer.slice),
+      send_buffer.element_count,
       params.buffer_allocations->GetDeviceAddress(
-          buffer_.destination_buffer.slice),
-      buffer_.source_memory_space,
-      buffer_.destination_memory_space};
+          send_buffer.source_buffer.slice),
+      params.buffer_allocations->GetDeviceAddress(
+          send_buffer.destination_buffer.slice),
+      send_buffer.source_memory_space,
+      send_buffer.destination_memory_space};
 
   GlobalDeviceId global_device_id = params.collective_params->global_device_id;
 

@@ -15,11 +15,16 @@ message CudnnVersion {
   int32 major = 1;
   int32 minor = 2;
   int32 patch = 3;
+  int32 major_version = 4;
+  int32 minor_version = 5;
+  int32 patch_version = 6;
 }
 
 message ComputeCapability {
   int32 major = 1;
   int32 minor = 2;
+  int32 major_version = 3;
+  int32 minor_version = 4;
 }
 
 message AutotuneResult {

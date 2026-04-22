@@ -86,6 +86,7 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
     auto result = std::make_unique<HloEvaluator>(max_loop_iterations);
     result->set_use_fast_path(use_fast_path_);
     result->set_custom_call_handler(custom_call_handler_);
+    result->set_eval_literal_handler(eval_literal_handler_);
     return result;
   }
 
@@ -241,6 +242,11 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
   // case we want them dumped to a file.
   void set_eval_literal_handler(EvalLiteralHandler handler) {
     eval_literal_handler_ = std::move(handler);
+  }
+
+  // Gets the handler called during evaluation for each literal.
+  EvalLiteralHandler eval_literal_handler() const {
+    return eval_literal_handler_;
   }
 
   // Returns the result of a matrix multiply `lhs x rhs`.

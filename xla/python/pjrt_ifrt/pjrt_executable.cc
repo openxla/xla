@@ -214,16 +214,6 @@ std::vector<ShardingRef> MakeShardings(
       shardings.push_back(ifrt::HloSharding::Create(
           executable_devices, memory_kinds[i], (*hlo_shardings)[i]));
     }
-  } else if (executable_devices->size() == 1 &&
-             executable_devices->devices()[0]->IsAddressable()) {
-    // Prefer SingleDeviceSharding over ConcreteEvenSharding, as it supports
-    // more APIs, like IndexDomains(). The IsAddressable() check is to avoid
-    // breaking test_jit_no_local_devices_single_device_sharding test case in
-    // array_test.py
-    for (int i = 0; i < memory_kinds.size(); ++i) {
-      shardings.push_back(ifrt::SingleDeviceSharding::Create(
-          executable_devices->devices()[0], memory_kinds[i]));
-    }
   } else {
     // Assume a traditional replication computation where tile shapes are the
     // same as global shapes.

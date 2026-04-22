@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -583,6 +584,55 @@ TEST_F(TritonBackendTest, WarpSpecializationConfigsAreGenerated) {
                   }));
 }
 
+// b/456723426: num_stages = 2 is filtered out due to a
+// CUDA_ERROR_MISALIGNED_ADDRESS error that occurs when the kernel also has a
+// broadcast of an input parameter. This is potentially related to b/421858850
+// where TMA-enabled parameters that have a broadcast consumer with num_stages >
+// 2 also run into address misalignment issues. It might be more precise to also
+// check for a broadcast consumer, but that would complicate the implementation
+// in dot_search_space.cc.
+TEST_F(TritonBackendTest, WarpSpecializationConfigsDoNotHaveNumStagesTwo) {
+  if (target_config_.device_description.gpu_compute_capability().IsRocm()) {
+    GTEST_SKIP() << "Not supported on ROCm.";
+  }
+
+  se::CudaComputeCapability blackwell_cap{se::CudaComputeCapability::kBlackwell,
+                                          0};
+  target_config_.device_description.set_gpu_compute_capability(
+      se::GpuComputeCapability{blackwell_cap});
+
+  debug_options_.set_xla_gpu_experimental_enable_triton_warp_specialization(
+      true);
+  debug_options_.set_xla_gpu_exhaustive_tiling_search(true);
+
+  HloModuleConfig config;
+  config.set_debug_options(debug_options_);
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kSimpleGemmFusionHlo, config));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<BackendConfig>> configs,
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction())));
+  EXPECT_GT(configs.size(), 0);
+
+  bool found_warp_spec_config = false;
+  for (const auto& config : configs) {
+    TritonBackendConfig triton_config;
+    if (config->UnpackTo(&triton_config) &&
+        triton_config.is_warp_specialization_allowed()) {
+      found_warp_spec_config = true;
+      EXPECT_NE(triton_config.num_stages(), 2)
+          << "Found config with num_stages = 2 and warp specialization "
+             "enabled: "
+          << triton_config.ShortDebugString();
+    }
+  }
+  EXPECT_TRUE(found_warp_spec_config)
+      << "No warp specialization configs found!";
+}
+
 TEST_F(TritonBackendTest, Int8FusedGemmCompiles) {
   const char kInt8GemmHlo[] = R"(
 HloModule module
@@ -638,7 +688,6 @@ ENTRY e {
                           backend_.GetDefaultConfig(*root));
   EXPECT_THAT(backend_.Compile(*root, *config), IsOk());
 }
-
 
 TEST_F(TritonBackendTest, FindsValidConfigForSlicedContractingDimension) {
   const char kHlo[] = R"(

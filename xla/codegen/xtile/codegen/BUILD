@@ -37,7 +37,6 @@ cc_library(
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/analysis:interval",
         "//xla/hlo/analysis:symbolic_map",
-        "//xla/hlo/analysis:symbolic_map_converter",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:map_mhlo_to_scalar_op",

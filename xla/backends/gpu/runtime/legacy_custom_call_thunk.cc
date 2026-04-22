@@ -29,8 +29,10 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/custom_call_target.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/traced_command.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_status_internal.h"
@@ -132,7 +134,8 @@ LegacyCustomCallThunk::LegacyCustomCallThunk(
     std::vector<NullableShapedSlice> results, std::string opaque,
     CustomCallTarget call_target,
     const std::optional<CustomCallApiVersion>& api_version)
-    : Thunk(Thunk::kCustomCall, thunk_info),
+    : TracedCommand(CommandType::kCustomCallCmd, Thunk::kCustomCall,
+                    thunk_info),
       api_version_(api_version),
       target_name_(std::move(target_name)),
       operands_(std::move(operands)),

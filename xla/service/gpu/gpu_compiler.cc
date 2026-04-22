@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -342,12 +343,6 @@ limitations under the License.
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
 
-#ifdef PLATFORM_GOOGLE
-#include "xla/hlo/experimental/auto_sharding/auto_sharding.h"
-#include "xla/hlo/experimental/auto_sharding/auto_sharding_option.h"
-#include "xla/hlo/experimental/auto_sharding/auto_sharding_stablehlo_pass.h"
-#endif  // PLATFORM_GOOGLE
-
 namespace xla {
 namespace gpu {
 namespace {
@@ -621,12 +616,6 @@ absl::Status RunSPMDPasses(
     const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
     int64_t max_windowed_einsum_iteration,
     CompilationStats* compilation_stats) {
-  bool auto_sharding = hlo_module->config().use_auto_spmd_partitioning();
-#ifndef PLATFORM_GOOGLE
-  if (auto_sharding) {
-    LOG(ERROR) << "GPU autosharding is not yet available in open source.";
-  }
-#endif
 
   const int64_t num_partitions = hlo_module->config().num_partitions();
   if (num_partitions > 1 && hlo_module->config().use_spmd_partitioning()) {
@@ -635,23 +624,7 @@ absl::Status RunSPMDPasses(
         hlo_module, layout_insensitive_algsimp_opts,
         gpu_target_config.device_description.gpu_compute_capability(),
         spmd_pipeline,
-#ifdef PLATFORM_GOOGLE
-        [&](HloPassPipeline& pipeline) {
-          if (!auto_sharding) {
-            return;
-          }
-          if (hlo_module->config().use_shardy_partitioner()) {
-            // Register Alpa auto partitioner if registry is empty.
-            spmd::RegisterAutoShardingIfRegistryEmpty();
-          } else {
-            spmd_pipeline.AddPass<AutoSharding>(
-                DefaultAutoShardingOptionFromModuleConfig(hlo_module->config()),
-                alias_info);
-          }
-        },
-#else
         std::nullopt,
-#endif  // PLATFORM_GOOGLE
         max_windowed_einsum_iteration);
     return spmd_pipeline.Run(hlo_module, {HloInstruction::kMainExecutionThread})
         .status();
@@ -2519,6 +2492,13 @@ GpuCompiler::CompileToBackendResult(
       module, schedule_metadata.scheduler_mem_limit,
       gpu_topology.gpu_target_config().device_description, alias_info.get()));
 
+  MaybeOwningThreadPool thread_pool = CreateMaybeOwningThreadPool(
+      /*parallelism=*/module->config()
+          .debug_options()
+          .xla_gpu_force_compilation_parallelism(),
+      /*default_thread_pool=*/options.thread_pool,
+      /*default_parallelism=*/tsl::port::MaxParallelism());
+
   ASSIGN_OR_RETURN(
       bool can_use_link_modules,
       CanUseLinkModules(module->config(),
@@ -2531,6 +2511,7 @@ GpuCompiler::CompileToBackendResult(
           .xla_gpu_enable_llvm_module_compilation_parallelism();
 
   CompileModuleResults compile_module_results;
+  std::atomic<int> shard_number = 0;
 
   {
     xla::llvm_ir::LLVMCommandLineOptionsReleasableLock llvm_options_lock(
@@ -2541,15 +2522,16 @@ GpuCompiler::CompileToBackendResult(
     auto llvm_compiler =
         [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
             const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
-      ASSIGN_OR_RETURN(BackendCompileResult result,
-                       CompileSingleModule(module->config(), descr, module,
-                                           &llvm_module, false, std::nullopt));
+      ASSIGN_OR_RETURN(
+          BackendCompileResult result,
+          CompileSingleModule(module->config(), descr, module, &llvm_module,
+                              false, shard_number.fetch_add(1)));
       return std::move(result.binary);
     };
     CubinCustomKernelCompiler kernel_compiler(
         std::move(llvm_compiler),
         gpu_topology.gpu_target_config().device_description,
-        module->config().debug_options());
+        module->config().debug_options(), thread_pool.get_mutable());
     kernel_compiler.SetPreOptimizationHook([&](const llvm::Module& module) {
       CallUserPreOptimizationHook(module);
     });
@@ -2571,7 +2553,8 @@ GpuCompiler::CompileToBackendResult(
   for (const std::unique_ptr<llvm::Module>& llvm_module :
        compile_module_results.llvm_modules) {
     llvm_ir::DumpIrIfEnabled(*module, *llvm_module,
-                             /*optimized=*/false);
+                             /*optimized=*/false,
+                             std::to_string(shard_number.fetch_add(1)));
     CallUserPreOptimizationHook(*llvm_module);
   }
   if (compile_module_results.llvm_module_constants != nullptr) {
@@ -2613,7 +2596,7 @@ GpuCompiler::CompileToBackendResult(
                             gpu_topology.gpu_target_config().device_description,
                             module, &*compile_module_results.llvm_modules[0],
                             /*relocatable=*/false,
-                            /*shard_number=*/std::nullopt));
+                            /*shard_number=*/shard_number.fetch_add(1)));
   }
 
   if (!backend_result.asm_text.empty()) {
@@ -3198,13 +3181,14 @@ GpuCompiler::LoadExecutableFromAotResult(
       BufferAssignment::FromProto(proto.buffer_assignment(), hlo_module.get(),
                                   BufferSizeBytesFunction(), alias_info.get()));
 
+  std::atomic<int> shard_number = 0;
   auto llvm_compiler =
       [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
           const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
     ASSIGN_OR_RETURN(
         BackendCompileResult result,
         CompileSingleModule(hlo_module->config(), descr, hlo_module.get(),
-                            &llvm_module, false, std::nullopt));
+                            &llvm_module, false, shard_number.fetch_add(1)));
     return std::move(result.binary);
   };
   CubinCustomKernelCompiler kernel_compiler(
