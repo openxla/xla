@@ -21,6 +21,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 
+#include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/future.h"
