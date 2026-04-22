@@ -823,7 +823,7 @@ PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
     if (!pjrt_array) {
       return InvalidArgument(
           "Only PjRtCompatibleArray is supported, but argument %d is %s", i,
-          pjrt_array->DebugString());
+          args[i]->DebugString());
     }
     int j = 0;
     // TODO(hyeontaek): Check pjrt_array->pjrt_buffers().size() ==
