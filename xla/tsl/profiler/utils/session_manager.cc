@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "google/protobuf/text_format.h"
 #include "xla/tsl/platform/errors.h"
 #include "tsl/profiler/lib/profiler_session.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
@@ -55,6 +56,20 @@ void SetOption(absl::string_view key,
     VLOG(1) << key << " set to " << int_value;
   } else {
     LOG(WARNING) << key << " expects an " << typeid(T).name() << " value.";
+  }
+}
+
+void SetPeriodicCounterSamplingOptions(
+    absl::string_view key, const std::variant<bool, int, std::string>& value,
+    tensorflow::ProfileOptions::PeriodicCounterSamplingOptions*
+        mutable_options) {
+  if (std::holds_alternative<std::string>(value)) {
+    const std::string& options_str = std::get<std::string>(value);
+    if (!google::protobuf::TextFormat::ParseFromString(options_str, mutable_options)) {
+      LOG(WARNING) << "Failed to parse " << key << ": " << options_str;
+    }
+  } else {
+    LOG(WARNING) << key << " expects a string value.";
   }
 }
 
@@ -204,6 +219,36 @@ RemoteProfilerSessionManagerOptions GetRemoteSessionManagerOptionsLocked(
                 .set_int64_value(value);
           },
           options.mutable_profiler_options());
+    } else if (key == "tc_perf_counter_sampling_options") {
+      SetPeriodicCounterSamplingOptions(
+          key, kw.second,
+          options.mutable_profiler_options()
+              ->mutable_tc_perf_counter_sampling_options());
+    } else if (key == "scs_perf_counter_sampling_options") {
+      SetPeriodicCounterSamplingOptions(
+          key, kw.second,
+          options.mutable_profiler_options()
+              ->mutable_scs_perf_counter_sampling_options());
+    } else if (key == "sctc_perf_counter_sampling_options") {
+      SetPeriodicCounterSamplingOptions(
+          key, kw.second,
+          options.mutable_profiler_options()
+              ->mutable_sctc_perf_counter_sampling_options());
+    } else if (key == "sctd_perf_counter_sampling_options") {
+      SetPeriodicCounterSamplingOptions(
+          key, kw.second,
+          options.mutable_profiler_options()
+              ->mutable_sctd_perf_counter_sampling_options());
+    } else if (key == "cmn_perf_counter_sampling_options") {
+      SetPeriodicCounterSamplingOptions(
+          key, kw.second,
+          options.mutable_profiler_options()
+              ->mutable_cmn_perf_counter_sampling_options());
+    } else if (key == "icr_perf_counter_sampling_options") {
+      SetPeriodicCounterSamplingOptions(
+          key, kw.second,
+          options.mutable_profiler_options()
+              ->mutable_icr_perf_counter_sampling_options());
     } else if (absl::StartsWith(key, "tpu_")) {
       std::visit(
           SetAdvancedOption{options.mutable_profiler_options(), kw.first},

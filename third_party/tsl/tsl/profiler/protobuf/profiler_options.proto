@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package tensorflow;
 
-// Next ID: 16
+// Next ID: 22
 message ProfileOptions {
   // Some default value of option are not proto3 default value. Use this version
   // to determine if we should use default option value instead of proto3
@@ -103,6 +103,42 @@ message ProfileOptions {
 
   // If set, this hostname will be used to name the profile file.
   string override_hostname = 15;
+
+  message PeriodicCounterSamplingOptions {
+    oneof sampling_method {
+      // The interval (in ms) for which we configure the gSys HFTC RPC to
+      // stream the sensor readings. 10ms is a reasonable default value to not
+      // flood the trace with perf counter samples.
+      int32 interval_us = 1;
+      // If true, dumps perf counters when a trigger event is detected (e.g.,
+      // trace from tcs/scs etc.).
+      bool is_external_trigger = 2;
+    }
+    // Amount to right shift 64-bit counter values before truncating to
+    // counter_size_bits.
+    // Set to 0 (default) to capture LSBs.
+    // Set to 32 to capture MSBs with 32-bit counter size.
+    // Set to 48 to capture MSBs with 16-bit counter size.
+    // Set to 56 to capture MSBs with 8-bit counter size.
+    int32 scaling = 3;
+    // Size of counters in packed payload.
+    // Supported values: 0=8bits, 1=16bits, 2=32bits, 3=64bits (2^(n+3) bits).
+    int32 counter_size_bits = 4;
+    // The list of counter indices to sample.
+    // To determine the index of a given counter, check the perf counters
+    // for a given XProf session. The index you should use is
+    // ((counter position in the list) - 1).
+    repeated int32 indices = 5;
+  }
+  // GFC+ components supporting periodic perf counter sampling.
+  // Settings apply to all instances of the hardware (e.g., tc is TC0 & TC1, SCS
+  // is SC0..3, SCT is {SC0..3}::{SCT0..15}).
+  PeriodicCounterSamplingOptions tc_perf_counter_sampling_options = 16;
+  PeriodicCounterSamplingOptions scs_perf_counter_sampling_options = 17;
+  PeriodicCounterSamplingOptions sctc_perf_counter_sampling_options = 18;
+  PeriodicCounterSamplingOptions sctd_perf_counter_sampling_options = 19;
+  PeriodicCounterSamplingOptions cmn_perf_counter_sampling_options = 20;
+  PeriodicCounterSamplingOptions icr_perf_counter_sampling_options = 21;
 }
 
 // Options for remote profiler session manager.
