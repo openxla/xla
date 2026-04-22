@@ -193,7 +193,8 @@ NB_MODULE(_profiler, m) {
            })
       .def(
           "stop_and_export",
-          [](ProfilerSessionWrapper* sess, const std::string& tensorboard_dir) {
+          [](ProfilerSessionWrapper* sess,
+             const std::string& tensorboard_dir) -> std::string {
             tensorflow::profiler::XSpace xspace;
             // Disables the ProfilerSession
             xla::ThrowIfError(sess->session->CollectData(&xspace));
@@ -205,6 +206,11 @@ NB_MODULE(_profiler, m) {
                   xspace, tensorboard_dir, sess->session_id,
                   /* also_export_trace_json= */ true));
             }
+            std::string prefix = tensorboard_dir;
+            if (!prefix.empty() && prefix.back() != '/') {
+              prefix += "/";
+            }
+            return prefix + "plugins/profile/" + sess->session_id;
           },
           nb::call_guard<nb::gil_scoped_release>())
       .def("stop",
