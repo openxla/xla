@@ -122,6 +122,9 @@ class GpuPerformanceModelCache {
   void Invalidate(const HloInstruction& instruction)
       ABSL_LOCKS_EXCLUDED(mutex_);
 
+  // Clears all cache entries.
+  void Clear() ABSL_LOCKS_EXCLUDED(mutex_);
+
  private:
   absl::Mutex mutex_;
 

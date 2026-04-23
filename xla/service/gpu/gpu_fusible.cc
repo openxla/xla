@@ -175,7 +175,7 @@ int64_t MaxUnrollFactor(const HloFusionAnalysis* analysis) {
     for (const HloInstructionAdaptor& root : analysis->fusion_roots()) {
       max_dtype_bits = std::max(
           max_dtype_bits, static_cast<int64_t>(primitive_util::StorageBitWidth(
-                              root.instruction().shape().element_type())));
+                              root.shape().element_type())));
     }
 
     int64_t max_unroll_factor =

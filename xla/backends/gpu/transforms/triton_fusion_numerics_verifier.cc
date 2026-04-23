@@ -31,7 +31,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
 #include "xla/backends/gpu/autotuner/gpu_profiler.h"
 #include "xla/backends/gpu/transforms/fusion_wrapper.h"
-#include "xla/backends/gpu/transforms/priority_fusion.h"
+#include "xla/backends/gpu/transforms/gpu_priority_fusion.h"
 #include "xla/backends/gpu/transforms/tree_reduction_rewriter.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
@@ -133,7 +133,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> NewHloModuleFromFusionComputation(
   TF_RETURN_IF_ERROR(InlineModuleFusions(new_module.get()));
   TreeReductionRewriter tree_reduction_rewriter(gpu_device_info);
   TF_RETURN_IF_ERROR(tree_reduction_rewriter.Run(new_module.get()).status());
-  PriorityFusion fusion_pass(
+  GpuPriorityFusion fusion_pass(
       /*thread_pool=*/nullptr, gpu_device_info, alias_info,
       HloCostAnalysis::Options{}, mlir_context);
   TF_RETURN_IF_ERROR(fusion_pass.Run(new_module.get()).status());

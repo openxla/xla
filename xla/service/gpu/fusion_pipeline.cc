@@ -20,8 +20,8 @@ limitations under the License.
 
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/transforms/conv_fusion_rewriter.h"
+#include "xla/backends/gpu/transforms/gpu_priority_fusion.h"
 #include "xla/backends/gpu/transforms/multi_output_fusion.h"
-#include "xla/backends/gpu/transforms/priority_fusion.h"
 #include "xla/backends/gpu/transforms/sort_iota_fusion.h"
 #include "xla/backends/gpu/transforms/variadic_op_splitter.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -73,9 +73,9 @@ HloPassPipeline FusionPipeline(
       /*per_second_rates=*/{},
       /*min_latencies_seconds=*/{},
       /*count_multiple_input_accesses=*/true};
-  fusion.AddPass<PriorityFusion>(thread_pool, gpu_device_info, alias_info,
-                                 std::move(cost_analysis_options),
-                                 mlir_context);
+  fusion.AddPass<GpuPriorityFusion>(thread_pool, gpu_device_info, alias_info,
+                                    std::move(cost_analysis_options),
+                                    mlir_context);
 
   // Running CSE affects how many users an op has. This plays a role in what
   // we detect as a tiled transpose fusion.

@@ -152,6 +152,12 @@ void GpuPerformanceModelCache::Invalidate(const HloInstruction& instruction) {
   }
 }
 
+void GpuPerformanceModelCache::Clear() {
+  absl::MutexLock lock(mutex_);
+  instruction_runtime_data_.clear();
+  fusion_runtime_data_.clear();
+}
+
 /*static*/
 LaunchDimensions GpuPerformanceModelBase::EstimateFusionLaunchDimensions(
     const HloFusionAnalysis& fusion_analysis, mlir::MLIRContext* mlir_context) {

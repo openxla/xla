@@ -24,16 +24,22 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "absl/time/time.h"
+#include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/backends/gpu/transforms/gpu_priority_fusion.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
+#include "xla/hlo/transforms/fusion_cost_model.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/gpu_fusible.h"
@@ -80,11 +86,11 @@ class PriorityFusionTest : public HloHardwareIndependentTestBase {
   se::DeviceDescription device_info_ = TestGpuDeviceInfo::RTXA6000DeviceInfo();
   mlir::MLIRContext mlir_context_;
   AliasInfo alias_info_;
-  PriorityFusion priority_fusion_ = [this] {
+  GpuPriorityFusion priority_fusion_ = [this] {
     GpuHloCostAnalysis::Options options;
     options.count_multiple_input_accesses = true;
-    return PriorityFusion(/*thread_pool=*/nullptr, device_info_, &alias_info_,
-                          options, &mlir_context_);
+    return GpuPriorityFusion(/*thread_pool=*/nullptr, device_info_,
+                             &alias_info_, options, &mlir_context_);
   }();
 };
 
@@ -1205,13 +1211,13 @@ ENTRY main {
   EXPECT_TRUE(verifier().Run(module.get()).status().ok());
 
   HloInstruction* root = module->entry_computation()->root_instruction();
-  HloInstruction *fusion1, *fusion2;
-  EXPECT_THAT(root,
-              GmockMatch(m::Tuple(m::Fusion(&fusion1, m::Log()),
-                                  m::Fusion(&fusion2, m::Log()), m::Log())));
-  EXPECT_NE(fusion1, fusion2);
-  EXPECT_TRUE(IsGenericTritonFusion(*fusion1));
-  EXPECT_TRUE(IsGenericTritonFusion(*fusion2));
+  HloInstruction* mof_fusion;
+  EXPECT_THAT(
+      root, GmockMatch(m::Tuple(m::Exp(m::GetTupleElement(
+                                    m::Fusion(&mof_fusion, m::Parameter()), 0)),
+                                m::Sqrt(m::GetTupleElement(m::Fusion(), 0)),
+                                m::GetTupleElement(m::Fusion(), 1))));
+  EXPECT_TRUE(IsGenericTritonFusion(*mof_fusion));
 }
 
 TEST_F(PriorityFusionTest, TritonProducerNotSupported_DoNotFuse) {
@@ -1500,9 +1506,9 @@ TEST_F(PriorityFusionWithTritonEnabledTest,
   tsl::thread::ThreadPool pool(tsl::Env::Default(), "priority-fusion-test", 8);
   GpuHloCostAnalysis::Options options;
   options.count_multiple_input_accesses = true;
-  PriorityFusion priority_fusion_with_thread_pool{/*thread_pool=*/&pool,
-                                                  device_info_, &alias_info_,
-                                                  options, &mlir_context_};
+  GpuPriorityFusion priority_fusion_with_thread_pool{/*thread_pool=*/&pool,
+                                                     device_info_, &alias_info_,
+                                                     options, &mlir_context_};
   EXPECT_THAT(priority_fusion_with_thread_pool.Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   HloInstruction* root = module->entry_computation()->root_instruction();
@@ -1556,8 +1562,8 @@ ENTRY main.4 {
   // TODO: b/482345867 - The goal is to eventually reduce this to 1.
   GpuHloCostAnalysis::Options options;
   options.count_multiple_input_accesses = true;
-  PriorityFusion priority_fusion(nullptr, device_info_, &alias_info_, options,
-                                 &mlir_context_);
+  GpuPriorityFusion priority_fusion(nullptr, device_info_, &alias_info_,
+                                    options, &mlir_context_);
   HloModuleConfig config;
   config.mutable_debug_options()
       .set_xla_gpu_experimental_enable_triton_heroless_priority_fusion(true);
@@ -1571,6 +1577,49 @@ CHECK: ROOT %{{.*}} = (s8[2,256,512]{2,1,0}, bf16[2,256,4]{2,1,0}) tuple(%[[QUAN
       )",
                             /*after_pass_checks=*/nullptr, &config);
 }
+
+namespace base_pass_test {
+
+class FakeCostModel : public ::xla::FusionCostModel {
+ public:
+  absl::StatusOr<RunTimes> EstimateRunTimes(
+      const HloInstruction* producer,
+      absl::Span<const HloInstruction* const> consumers) override {
+    // Deterministic: fusion always beneficial (unfused > fused),
+    // ordered by unique_id (larger id -> larger benefit -> higher priority).
+    return RunTimes{
+        /*unfused=*/absl::Microseconds(1000 + producer->unique_id()),
+        /*fused=*/absl::Microseconds(500)};
+  }
+  bool WouldExplodeIrSize(const HloInstruction* /*p*/,
+                          const HloInstruction* /*c*/) override {
+    return false;
+  }
+  absl::Status Revisit(const HloInstruction* /*instruction*/) override {
+    return absl::OkStatus();
+  }
+};
+
+TEST_F(PriorityFusionTest, BaseQueueFusesAllFusibleWithFakeCostModel) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule m
+    ENTRY e {
+      p0 = f32[1024] parameter(0)
+      a = f32[1024] add(p0, p0)
+      b = f32[1024] multiply(a, a)
+      ROOT r = f32[1024] subtract(b, p0)
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ::xla::AliasInfo alias_info;
+  // NOTE: uses the bare base PriorityFusion (not GpuPriorityFusion) with
+  // the fake cost model — proves the base pass has no GPU dependency.
+  ::xla::gpu::PriorityFusion pass(
+      /*thread_pool=*/nullptr, &alias_info, std::make_unique<FakeCostModel>());
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
+  EXPECT_TRUE(changed);
+}
+
+}  // namespace base_pass_test
 
 }  // namespace gpu
 }  // namespace xla

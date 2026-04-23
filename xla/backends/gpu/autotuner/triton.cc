@@ -35,7 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/triton/triton_configs.h"
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/backends/gpu/transforms/fusion_wrapper.h"
-#include "xla/backends/gpu/transforms/priority_fusion.h"
+#include "xla/backends/gpu/transforms/gpu_priority_fusion.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -273,7 +273,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonBackend::RunHloPasses(
 
   HloCostAnalysis::Options priority_fusion_options;
   priority_fusion_options.count_multiple_input_accesses = true;
-  PriorityFusion priority_fusion(
+  GpuPriorityFusion priority_fusion(
       /*thread_pool=*/nullptr, gpu_device_info, alias_info_,
       priority_fusion_options, mlir_context_);
   TF_RETURN_IF_ERROR(priority_fusion.Run(hlo_module.get()).status());
