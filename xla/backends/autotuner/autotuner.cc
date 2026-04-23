@@ -19,6 +19,7 @@ limitations under the License.
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -33,6 +34,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -67,10 +69,7 @@ limitations under the License.
 #include "xla/tsl/util/proto/proto_utils.h"
 #include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
-#include "tsl/platform/blocking_counter.h"
 #include "tsl/platform/fingerprint.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 
@@ -391,24 +390,33 @@ tsl::Future<Autotuner::Config> Autotuner::TuneBestConfig(
   return std::move(executables)
       .Map([instr,
             this](std::vector<std::pair<
-                      Config, std::optional<std::unique_ptr<Executable>>>>&&
+                      Config, absl::StatusOr<std::unique_ptr<Executable>>>>&&
                       executables) mutable -> absl::StatusOr<Config> {
         std::vector<ExecutableCandidate> executable_candidates;
-        for (int i = 0; i < executables.size(); ++i) {
-          if (executables[i].second.has_value()) {
-            executable_candidates.push_back(
-                {std::move(executables[i].first),
-                 std::move(executables[i].second.value())});
+        std::vector<ConfigResult> results;
+        for (auto& [config, executable] : executables) {
+          if (!executable.ok()) {
+            VLOG(4) << "Failed to compile config " << config.ToString()
+                    << " with status: " << executable.status();
+            results.push_back({std::move(config),
+                               Failure{FailureKind::kCompilationFailed,
+                                       executable.status().ToString()},
+                               absl::ZeroDuration(), 0});
+            continue;
           }
+          executable_candidates.push_back(
+              {std::move(config), std::move(executable.value())});
         }
 
         if (executable_candidates.empty()) {
+          LogConfigResults(*instr, results);
           return absl::InternalError(
               absl::StrCat("Autotuner failed for HLO: ", instr->ToString(),
                            ". No configs could be compiled."));
         }
         VLOG(1) << "Successfully compiled " << executable_candidates.size()
-                << " configs out of " << executables.size() << " configs.";
+                << " configs out of " << executables.size() << " configs with "
+                << results.size() << " compilation failures.";
 
         bool skip_profiling = executable_candidates.size() == 1 ||
                               autotune_config_.select_first_config;
@@ -416,7 +424,10 @@ tsl::Future<Autotuner::Config> Autotuner::TuneBestConfig(
           VLOG(1) << "Skipping profiling and using the "
                   << (autotune_config_.select_first_config ? "first" : "only")
                   << " config: " << executable_candidates[0].config.ToString();
-          return std::move(executable_candidates[0].config);
+          results.push_back({std::move(executable_candidates[0].config),
+                             std::nullopt, absl::ZeroDuration(), 0});
+          LogConfigResults(*instr, results);
+          return std::move(results.back().config);
         }
 
         auto profile_results_or =
@@ -428,8 +439,11 @@ tsl::Future<Autotuner::Config> Autotuner::TuneBestConfig(
                            ". Failed to profile configs: ",
                            profile_results_or.status().message()));
         }
-        std::vector<ConfigResult> results =
+        std::vector<ConfigResult> profile_results =
             std::move(profile_results_or).value();
+        results.insert(results.end(),
+                       std::make_move_iterator(profile_results.begin()),
+                       std::make_move_iterator(profile_results.end()));
         LogConfigResults(*instr, results);
         absl::StatusOr<ConfigResult> best_result = PickBestConfig(results);
         if (!best_result.ok()) {
@@ -558,7 +572,7 @@ absl::StatusOr<std::vector<Autotuner::Config>> Autotuner::GetSupportedConfigs(
               << per_backend_configs.status();
       continue;
     }
-    VLOG(3) << "Found of " << per_backend_configs->size()
+    VLOG(3) << "Found " << per_backend_configs->size()
             << " supported configs for backend " << codegen_backend->name();
     for (auto& config : *per_backend_configs) {
       configs.push_back({codegen_backend.get(), std::move(config)});
@@ -567,39 +581,34 @@ absl::StatusOr<std::vector<Autotuner::Config>> Autotuner::GetSupportedConfigs(
   return configs;
 }
 
-std::optional<std::unique_ptr<Executable>> Autotuner::Compile(
+absl::StatusOr<std::unique_ptr<Executable>> Autotuner::Compile(
     HloInstruction* instr, const Config& config) {
   if (autotune_config_.exclude_cublas_config &&
       (config.codegen_backend->name() == "CUBLAS_FISSION" ||
        config.codegen_backend->name() == "CUBLASLT_FISSION" ||
        config.codegen_backend->name() == "ROCBLAS_FISSION" ||
        config.codegen_backend->name() == "HIPBLASLT_FISSION")) {
-    VLOG(4) << "Skipping config " << config.ToString()
-            << " as exclude_cublas_config is set.";
-    return std::nullopt;
+    return absl::CancelledError("exclude_cublas_config is set.");
   }
   absl::StatusOr<std::unique_ptr<Executable>> executable =
       config.codegen_backend->Compile(*instr, *config.backend_config);
-
   if (absl::Status status = IsValidExecutable(executable); !status.ok()) {
-    VLOG(4) << "Skipping config " << config.ToString()
-            << " as it could not be compiled successfully. Error: " << status;
-    return std::nullopt;
+    return status;
   }
-  return std::make_optional(std::move(*executable));
+  return executable;
 }
 
 tsl::Future<std::vector<
-    std::pair<Autotuner::Config, std::optional<std::unique_ptr<Executable>>>>>
+    std::pair<Autotuner::Config, absl::StatusOr<std::unique_ptr<Executable>>>>>
 Autotuner::CompileAll(HloInstruction* instr, std::vector<Config>& configs) {
   if (thread_pool_ == nullptr) {
-    std::vector<std::pair<Config, std::optional<std::unique_ptr<Executable>>>>
+    std::vector<std::pair<Config, absl::StatusOr<std::unique_ptr<Executable>>>>
         executables;
     executables.reserve(configs.size());
     for (Config& config : configs) {
       executables.emplace_back(std::move(config), Compile(instr, config));
       if (autotune_config_.select_first_config &&
-          executables.back().second.has_value()) {
+          executables.back().second.ok()) {
         return std::move(executables);
       }
     }
@@ -607,15 +616,14 @@ Autotuner::CompileAll(HloInstruction* instr, std::vector<Config>& configs) {
   }
 
   std::vector<tsl::Future<
-      std::pair<Config, std::optional<std::unique_ptr<Executable>>>>>
+      std::pair<Config, absl::StatusOr<std::unique_ptr<Executable>>>>>
       executables;
   executables.reserve(configs.size());
   for (int i = 0; i < configs.size(); ++i) {
     executables.push_back(tsl::MakeFutureOn(
         *thread_pool_->AsExecutor(),
         [&, instr = instr, config = std::move(configs[i])]() mutable {
-          auto executable = Compile(instr, config);
-          return std::make_pair(std::move(config), std::move(executable));
+          return std::make_pair(std::move(config), Compile(instr, config));
         }));
   }
   return tsl::JoinFutures(absl::MakeSpan(executables));
@@ -623,8 +631,8 @@ Autotuner::CompileAll(HloInstruction* instr, std::vector<Config>& configs) {
 
 absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
     std::vector<ExecutableCandidate> candidates, const HloInstruction* instr) {
-  std::vector<ConfigResult> results_vec;
-  results_vec.reserve(candidates.size());
+  std::vector<ConfigResult> config_results;
+  config_results.reserve(candidates.size());
 
   absl::MutexLock lock(profiler_m_);
 
@@ -664,7 +672,7 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
         }
       }
     }
-    results_vec.push_back(
+    config_results.push_back(
         {std::move(candidates[i].config), failure, duration, scratch_bytes});
   }
   // Clear the candidates while holding the profiler lock
@@ -672,7 +680,7 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
   // not doing this for example causes timeouts of delay kernels used for
   // precise CUDA event-based timing.
   candidates.clear();
-  return results_vec;
+  return config_results;
 }
 
 absl::StatusOr<Autotuner::ConfigResult> Autotuner::PickBestConfig(
@@ -799,17 +807,23 @@ void Autotuner::LogConfigResults(const HloInstruction& instr,
 }
 
 absl::Status Autotuner::DumpLogsToFile() {
-  if (autotune_config_.dump_logs_to.empty()) {
+  if (autotune_config_.dump_logs_to.empty() || logs_.logs_size() == 0) {
     return absl::OkStatus();
   }
-
   std::string textproto;
   tsl::protobuf::TextFormat::PrintToString(logs_, &textproto);
-
-  TF_RETURN_IF_ERROR(tsl::AppendStringToFile(
-      tsl::Env::Default(), autotune_config_.dump_logs_to, textproto));
-  VLOG(1) << "Autotune logs appended to file: "
-          << autotune_config_.dump_logs_to;
+  std::string file_path = autotune_config_.dump_logs_to;
+  if (absl::StrContains(file_path, "._unique_.")) {
+    std::string id = absl::StrCat(".", tsl::Fingerprint64(textproto), ".");
+    file_path = absl::StrReplaceAll(file_path, {{"._unique_.", id}});
+    TF_RETURN_IF_ERROR(
+        tsl::WriteStringToFile(tsl::Env::Default(), file_path, textproto));
+    VLOG(1) << "Autotune logs written to file: " << file_path;
+  } else {
+    TF_RETURN_IF_ERROR(
+        tsl::AppendStringToFile(tsl::Env::Default(), file_path, textproto));
+    VLOG(1) << "Autotune logs appended to file: " << file_path;
+  }
   logs_.Clear();
   return absl::OkStatus();
 }
@@ -848,7 +862,7 @@ AutotuneResult::FailureResult Autotuner::Failure::ToProto() const {
   AutotuneResult::FailureResult failure_proto;
   switch (kind) {
     case FailureKind::kCompilationFailed:
-      failure_proto.set_kind(AutotuneResult::UNKNOWN);
+      failure_proto.set_kind(AutotuneResult::DISQUALIFIED);
       break;
     case FailureKind::kExecutionFailed:
       failure_proto.set_kind(AutotuneResult::DISQUALIFIED);
