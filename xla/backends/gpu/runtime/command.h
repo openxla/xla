@@ -64,7 +64,6 @@ namespace xla::gpu {
   V(kCustomCallCmd, "CustomCallCmd")                         \
   V(kBarrierCmd, "BarrierCmd")                               \
   V(kCollectiveCmd, "CollectiveCmd")                         \
-  V(kAllReduceCmd, "AllReduceCmd")                           \
   V(kReduceScatterCmd, "ReduceScatterCmd")                   \
   V(kAllToAllCmd, "AllToAllCmd")                             \
   V(kAllGatherCmd, "AllGatherCmd")                           \
@@ -183,8 +182,10 @@ class Command : public Thunk {
   // to new buffer allocations).
   using RecordAction = std::variant<RecordCreate, RecordUpdate>;
 
-  // Commands are not executed directly as Thunks; they are recorded into
-  // command buffers via Record(). ExecuteOnStream is not supported.
+  // Default for pure commands: direct execution is unsupported — recording
+  // into a command buffer via Record() is the expected path. Thunk/Command
+  // hybrids (e.g. KernelThunk, CollectiveThunk, CuDnnThunk) may override this
+  // to support eager execution on a stream in addition to recording.
   absl::Status ExecuteOnStream(const ExecuteParams& params) override {
     return absl::UnimplementedError(
         "Command cannot be executed directly as a Thunk; use Record() instead");

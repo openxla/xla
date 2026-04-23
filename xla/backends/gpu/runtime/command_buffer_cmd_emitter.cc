@@ -128,12 +128,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const AllReduceThunk& thunk) {
-  return std::make_unique<AllReduceCmd>(thunk.config(), thunk.reduction_kind(),
-                                        thunk.buffers());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const ReduceScatterThunk& thunk) {
   return std::make_unique<ReduceScatterCmd>(
       thunk.config(), thunk.reduction_kind(), thunk.buffers());
@@ -261,8 +255,11 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return absl::OkStatus();
     case Thunk::Kind::kAllGather:
       return append(Convert<AllGatherThunk>(thunk));
+    // AllReduceThunk implements Command directly; append as borrowed pointer —
+    // the thunk outlives the command sequence.
     case Thunk::Kind::kAllReduce:
-      return append(Convert<AllReduceThunk>(thunk));
+      cmd_sequence.Append(static_cast<AllReduceThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kReduceScatter:
       return append(Convert<ReduceScatterThunk>(thunk));
     case Thunk::Kind::kAllToAll:
