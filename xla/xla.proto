@@ -1519,6 +1519,11 @@ message DebugOptions {
   optional bool xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl =
       462;
 
+  // If true, use the one-sided put path (Put+Signal) for the RaggedAllToAll
+  // thunk. Requires xla_gpu_experimental_enable_nccl_symmetric_buffers to be
+  // true.
+  optional bool xla_gpu_experimental_ragged_all_to_all_use_put_path = 503;
+
   // If true, enable experimental tiling propagation.
   optional bool xla_gpu_experimental_enable_tiling_propagation = 456;
 
