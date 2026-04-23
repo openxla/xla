@@ -109,29 +109,13 @@ absl::StatusOr<Value> ScaledDot(mlir::ImplicitLocOpBuilder& b,
 namespace {
 
 Value EmitStableHloDotAndAdd(mlir::ImplicitLocOpBuilder& b, Value lhs,
-                             Value rhs, Value acc,
-                             PrecisionSpec precision_spec) {
-  auto lhs_type = mlir::cast<ShapedType>(lhs.getType());
-  auto rhs_type = mlir::cast<ShapedType>(rhs.getType());
-
-  CHECK(lhs_type.getRank() <= 2 && rhs_type.getRank() <= 2)
-      << "Unsupported ranks. LHS rank: " << lhs_type.getRank()
-      << " RHS rank: " << rhs_type.getRank();
-
-  llvm::SmallVector<int64_t> array_attr{0};
-  auto dot_dimension_numbers = mlir::stablehlo::DotDimensionNumbersAttr::get(
-      b.getContext(), /*lhsBatchingDimensions=*/{},
-      /*rhsBatchingDimensions=*/{},
-      /*lhsContractingDimensions=*/
-      {lhs_type.getRank() - 1},
-      /*rhsContractingDimensions=*/
-      {0});
-
+                             Value rhs, Value acc, PrecisionSpec precision_spec,
+                             mlir::stablehlo::DotDimensionNumbersAttr dims) {
   auto precision_config = mlir::stablehlo::PrecisionConfigAttr::get(
       b.getContext(), {precision_spec.lhs_operand_precision,
                        precision_spec.rhs_operand_precision});
   auto dot = mlir::stablehlo::DotGeneralOp::create(
-      b, acc.getType(), lhs, rhs, dot_dimension_numbers,
+      b, acc.getType(), lhs, rhs, dims,
       /*precision_config=*/precision_config,
       /*algorithm=*/
       stablehlo::ConvertDotAlgorithm(precision_spec.algorithm, &b));
@@ -295,9 +279,12 @@ absl::StatusOr<Value> EmitSingleTileDot(mlir::ImplicitLocOpBuilder& b,
         Cast(b, dot_operands.accumulator, force_accumulator_type);
   }
 
-  Value result =
-      EmitStableHloDotAndAdd(b, dot_operands.lhs, dot_operands.rhs,
-                             dot_operands.accumulator, precision_spec);
+  auto dot_dimension_numbers = xla::stablehlo::ConvertDotDimensionNumbers(
+      dot.dot_dimension_numbers(), &b);
+
+  Value result = EmitStableHloDotAndAdd(b, dot_operands.lhs, dot_operands.rhs,
+                                        dot_operands.accumulator,
+                                        precision_spec, dot_dimension_numbers);
 
   // TODO(b/393299275): once we've moved on from the legacy emitter, we should
   // make sure that this accumulator type is equal to the one derived here.

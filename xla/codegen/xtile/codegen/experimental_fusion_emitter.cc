@@ -395,18 +395,6 @@ absl::StatusOr<TensorValue> EmitDot(EmitterContext& emitter_ctx,
   ASSIGN_OR_RETURN(SmallVector<int64_t> padded_tile_sizes,
                    tiled_dot.tile().GetStaticTileSizes());
 
-  SmallVector<int64_t, 2> padded_tile_sizes_no_unit_dims =
-      CollapseUnitDims(padded_tile_sizes, padded_tile_sizes).first;
-
-  // Sanity check: Triton historically did not support non-2D dots (and still
-  // doesn't support arbitrary nD dots), so we require that the dot is tiled
-  // with exactly two non-unit tile sizes. This anyway matches the hardware's
-  // expectations, so seems like a reasonable requirement.
-  // TODO(b/393299275): this needs to be enforced in tiling.
-  if (padded_tile_sizes_no_unit_dims.size() != 2) {
-    return absl::FailedPreconditionError(
-        "Expected dot to be tiled with exactly two non-unit tile sizes");
-  }
   auto& b = emitter_ctx.b();
   const auto& dot = *::xla::Cast<HloDotInstruction>(tiled_dot.hlo());
   // The specific accumulator type to use may not correspond to the output type
@@ -414,7 +402,7 @@ absl::StatusOr<TensorValue> EmitDot(EmitterContext& emitter_ctx,
   // and the dot's output type does not match its expectations.
   ASSIGN_OR_RETURN(Type accumulator_type, xtile::GetDotAccumulatorType(b, dot));
   TensorValue accumulator =
-      CreateConst(b, accumulator_type, 0.0f, padded_tile_sizes_no_unit_dims);
+      CreateConst(b, accumulator_type, 0.0f, padded_tile_sizes);
 
   SmallVector<int64_t> sequential_dim_ids =
       GetSequentialDimIds(*tiled_dot.hlo());
@@ -454,9 +442,6 @@ absl::StatusOr<TensorValue> EmitDot(EmitterContext& emitter_ctx,
     ASSIGN_OR_RETURN(lhs_tensor,
                      MaskDotOperand(b, *lhs_operand, lhs_tensor, iv_i32,
                                     lhs_contracting_dim_idx));
-    ASSIGN_OR_RETURN(lhs_tensor, CanonicalizeDotOperand(b, lhs_tensor,
-                                                        lhs_contracting_dim_idx,
-                                                        DotOperandSide::kLhs));
 
     // Canonicalize RHS to match Triton's expectations.
     TensorValue rhs_tensor = results[1];
@@ -465,9 +450,6 @@ absl::StatusOr<TensorValue> EmitDot(EmitterContext& emitter_ctx,
     ASSIGN_OR_RETURN(rhs_tensor,
                      MaskDotOperand(b, *rhs_operand, rhs_tensor, iv_i32,
                                     rhs_contracting_dim_idx));
-    ASSIGN_OR_RETURN(rhs_tensor, CanonicalizeDotOperand(b, rhs_tensor,
-                                                        rhs_contracting_dim_idx,
-                                                        DotOperandSide::kRhs));
 
     // Emit the partial dot.
     Value acc = for_op.getRegionIterArgs().front();
@@ -487,11 +469,7 @@ absl::StatusOr<TensorValue> EmitDot(EmitterContext& emitter_ctx,
   if (dot_output_type != accumulator_type) {
     result = Cast(b, result, dot_output_type);
   }
-  auto tensor_result = mlir::cast<TensorValue>(result);
-  if (padded_tile_sizes.size() != padded_tile_sizes_no_unit_dims.size()) {
-    return EmitTiledReshape(b, padded_tile_sizes, tensor_result);
-  }
-  return tensor_result;
+  return mlir::cast<TensorValue>(result);
 }
 
 // Emits scaled dot instruction that is not nested into the fusion.

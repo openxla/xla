@@ -493,18 +493,6 @@ absl::StatusOr<TensorValue> EmitDot(
   SmallVector<int64_t> padded_tile_sizes =
       GetPaddedTileSizes(tiled_hlo_dot.tile_sizes());
 
-  SmallVector<int64_t, 2> padded_tile_sizes_no_unit_dims =
-      CollapseUnitDims(padded_tile_sizes, padded_tile_sizes).first;
-
-  // Sanity check: Triton historically did not support non-2D dots (and still
-  // doesn't support arbitrary nD dots), so we require that the dot is tiled
-  // with exactly two non-unit tile sizes. This anyway matches the hardware's
-  // expectations, so seems like a reasonable requirement.
-  // TODO(b/393299275): this needs to be enforced in tiling.
-  if (padded_tile_sizes_no_unit_dims.size() != 2) {
-    return absl::FailedPreconditionError(
-        "Expected dot to be tiled with exactly two non-unit tile sizes");
-  }
   const HloDotInstruction& dot =
       *::xla::Cast<HloDotInstruction>(tiled_hlo_dot.hlo());
   // The specific accumulator type to use may not correspond to the output type
@@ -513,7 +501,7 @@ absl::StatusOr<TensorValue> EmitDot(
   TF_ASSIGN_OR_RETURN(Type accumulator_type,
                       xtile::GetDotAccumulatorType(b, dot));
   TensorValue accumulator =
-      CreateConst(b, accumulator_type, 0.0f, padded_tile_sizes_no_unit_dims);
+      CreateConst(b, accumulator_type, 0.0f, padded_tile_sizes);
 
   TF_ASSIGN_OR_RETURN(int64_t loop_iteration_count,
                       GetDotLoopIterationCount(tiled_hlo_dot));
@@ -574,15 +562,6 @@ absl::StatusOr<TensorValue> EmitDot(
         MaskDotOperand(b, *tiled_hlo_dot.operand(1), dot_args[1], ki_i32,
                        rhs_contracting_dim_idx));
 
-    // Canonicalize the dot operands to match Triton's/the hardware's
-    // expectations.
-    TF_ASSIGN_OR_RETURN(lhs,
-                        CanonicalizeDotOperand(b, lhs, lhs_contracting_dim_idx,
-                                               DotOperandSide::kLhs));
-    TF_ASSIGN_OR_RETURN(rhs,
-                        CanonicalizeDotOperand(b, rhs, rhs_contracting_dim_idx,
-                                               DotOperandSide::kRhs));
-
     TF_ASSIGN_OR_RETURN(
         Value acc_next,
         xtile::EmitSingleTileDot(b, dot, xtile::DotOperands{lhs, rhs, acc}));
@@ -599,13 +578,7 @@ absl::StatusOr<TensorValue> EmitDot(
     result = Cast(b, result, dot_output_type);
   }
 
-  auto tensor_result = mlir::cast<TensorValue>(result);
-
-  if (padded_tile_sizes.size() != padded_tile_sizes_no_unit_dims.size()) {
-    return EmitTiledReshape(b, padded_tile_sizes, tensor_result);
-  }
-
-  return tensor_result;
+  return mlir::cast<TensorValue>(result);
 }
 
 // Emits scaled dot instruction that is not nested into the fusion.

@@ -655,39 +655,80 @@ LogicalResult RewriteDotGeneralToTritonDot(mlir::PatternRewriter& rewriter,
                                            mlir::Operation* add_op,
                                            Value accumulator,
                                            bool warp_specialization_allowed) {
-  auto dot_algorithm = op.getAlgorithm();
+  const Location op_loc = op->getLoc();
+  auto notify_failure = [&](const absl::Status& status,
+                            absl::string_view prefix) {
+    return rewriter.notifyMatchFailure(
+        op_loc, absl::StrCat(prefix, ": ", status.message()));
+  };
 
-  auto hlo_algorithm_or_status =
+  auto dot_algorithm = op.getAlgorithm();
+  auto hlo_algorithm_or =
       dot_algorithm.has_value()
           ? ::xla::ConvertDotAlgorithm(dot_algorithm.value())
           : ::xla::PrecisionConfig::ALG_UNSET;
+  if (const auto& status = hlo_algorithm_or.status(); !status.ok()) {
+    return notify_failure(status, "Dot op algorithm must be set");
+  }
+  auto hlo_algorithm = hlo_algorithm_or.value();
 
-  if (!hlo_algorithm_or_status.ok()) {
+  auto algorithm_emitter_or = GetAlgorithmEmitter(hlo_algorithm);
+  if (const auto& status = algorithm_emitter_or.status(); !status.ok()) {
+    return notify_failure(status, "Algorithm emitter not found");
+  }
+  auto algorithm_emitter = algorithm_emitter_or.value();
+
+  auto dot_dimension_numbers = op.getDotDimensionNumbers();
+  if (dot_dimension_numbers.getLhsContractingDimensions().size() != 1 ||
+      dot_dimension_numbers.getRhsContractingDimensions().size() != 1) {
     return rewriter.notifyMatchFailure(
-        op->getLoc(),
-        "Dot op must have algorithm set to be converted to "
-        "triton dot.");
+        op_loc, "Dot op must have exactly one contracting dimension.");
+  }
+  int64_t lhs_contracting_dim =
+      dot_dimension_numbers.getLhsContractingDimensions()[0];
+  int64_t rhs_contracting_dim =
+      dot_dimension_numbers.getRhsContractingDimensions()[0];
+
+  mlir::ImplicitLocOpBuilder builder(op_loc, rewriter);
+  auto lhs = mlir::cast<::xla::xtile::TensorValue>(op.getLhs());
+  auto rhs = mlir::cast<::xla::xtile::TensorValue>(op.getRhs());
+  auto acc = mlir::cast<::xla::xtile::TensorValue>(accumulator);
+
+  auto lhs_canonical_or = ::xla::xtile::CanonicalizeDotOperand(
+      builder, lhs, lhs_contracting_dim, ::xla::xtile::DotOperandSide::kLhs);
+  if (const auto& status = lhs_canonical_or.status(); !status.ok()) {
+    return notify_failure(status, "Failed to canonicalize LHS");
+  }
+  auto lhs_canonical = lhs_canonical_or.value();
+
+  auto rhs_canonical_or = ::xla::xtile::CanonicalizeDotOperand(
+      builder, rhs, rhs_contracting_dim, ::xla::xtile::DotOperandSide::kRhs);
+  if (const auto& status = rhs_canonical_or.status(); !status.ok()) {
+    return notify_failure(status, "Failed to canonicalize RHS");
+  }
+  auto rhs_canonical = rhs_canonical_or.value();
+
+  if (mlir::cast<ShapedType>(lhs_canonical.getType()).getRank() != 2 ||
+      mlir::cast<ShapedType>(rhs_canonical.getType()).getRank() != 2) {
+    return rewriter.notifyMatchFailure(
+        op_loc, "Dot operands must be 2D after squeezing unit dimensions.");
   }
 
-  auto hlo_algorithm = hlo_algorithm_or_status.value();
-  auto algorithm_emitter_or_status = GetAlgorithmEmitter(hlo_algorithm);
-
-  if (!algorithm_emitter_or_status.ok()) {
-    return rewriter.notifyMatchFailure(
-        op->getLoc(),
-        absl::StrCat("Algorithm emitter not found with error: ",
-                     algorithm_emitter_or_status.status().message()));
+  llvm::SmallVector<int64_t, 2> dot_result_shape = {
+      lhs_canonical.getType().getShape()[0],
+      rhs_canonical.getType().getShape()[1]};
+  auto acc_canonical_or =
+      ::xla::xtile::EmitTiledReshape(builder, dot_result_shape, acc);
+  if (const auto& status = acc_canonical_or.status(); !status.ok()) {
+    return notify_failure(status, "Failed to reshape accumulator");
   }
+  auto acc_canonical = acc_canonical_or.value();
 
-  auto algorithm_emitter = algorithm_emitter_or_status.value();
-
-  mlir::ImplicitLocOpBuilder builder(op->getLoc(), rewriter);
-
-  ::xla::xtile::DotOperands dot_operands{op.getLhs(), op.getRhs(), accumulator};
+  ::xla::xtile::DotOperands dot_operands{lhs_canonical, rhs_canonical,
+                                         acc_canonical};
 
   stablehlo::Precision lhs_precision;
   stablehlo::Precision rhs_precision;
-
   if (mlir::failed(PopulateOperandPrecision(rewriter, op, lhs_precision,
                                             rhs_precision))) {
     return mlir::failure();
@@ -699,14 +740,12 @@ LogicalResult RewriteDotGeneralToTritonDot(mlir::PatternRewriter& rewriter,
   TritonPrecisionSpec triton_precision_spec{hlo_algorithm,
                                             InferDotPrecision(precision_spec)};
 
-  auto triton_dot_op_or_result =
+  auto triton_dot_op_or =
       algorithm_emitter(builder, dot_operands, triton_precision_spec);
-
-  if (!triton_dot_op_or_result.ok()) {
-    return rewriter.notifyMatchFailure(
-        op->getLoc(), absl::StrCat("Algorithm emitter failed with error: ",
-                                   triton_dot_op_or_result.status().message()));
+  if (const auto& status = triton_dot_op_or.status(); !status.ok()) {
+    return notify_failure(status, "Algorithm emitter failed");
   }
+  auto triton_dot_op = triton_dot_op_or.value();
 
   if (warp_specialization_allowed) {
     if (auto for_op = mlir::dyn_cast<scf::ForOp>(op->getParentOp())) {
@@ -714,10 +753,21 @@ LogicalResult RewriteDotGeneralToTritonDot(mlir::PatternRewriter& rewriter,
     }
   }
 
-  auto triton_dot_op = triton_dot_op_or_result.value();
+  Value final_result = triton_dot_op;
+  auto target_shape = mlir::cast<ShapedType>(op.getType()).getShape();
+  if (mlir::cast<ShapedType>(final_result.getType()).getShape() !=
+      target_shape) {
+    auto reshaped_result_or = ::xla::xtile::EmitTiledReshape(
+        builder, target_shape,
+        mlir::cast<::xla::xtile::TensorValue>(triton_dot_op));
+    if (const auto& status = reshaped_result_or.status(); !status.ok()) {
+      return notify_failure(status, "Failed to reshape result");
+    }
+    final_result = reshaped_result_or.value();
+  }
 
   rewriter.replaceAllOpUsesWith(add_op, op.getResult());
-  rewriter.replaceOp(op, triton_dot_op);
+  rewriter.replaceOp(op, final_result);
 
   return mlir::success();
 }
