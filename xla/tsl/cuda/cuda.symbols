@@ -606,6 +606,9 @@ cuVDPAUCtxCreate_v2
 cuVDPAUGetDevice
 cuWaitExternalSemaphoresAsync
 cuWaitExternalSemaphoresAsync_ptsz
+cudaLibraryGetKernel
+cudaLibraryLoadData
+cudaLibraryUnload
 cudbgApiAttach
 cudbgApiClientPid
 cudbgApiClientRevision
