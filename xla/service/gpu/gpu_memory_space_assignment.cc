@@ -62,6 +62,7 @@ const absl::NoDestructor<absl::flat_hash_set<HloOpcode>>
         HloOpcode::kCollectivePermuteStart,
         HloOpcode::kCollectivePermuteDone,
         HloOpcode::kAllToAll,
+        HloOpcode::kRaggedAllToAll,
     });
 
 absl::StatusOr<MemorySpaceColor> AsMemorySpaceColor(int64_t memory_space) {
@@ -312,6 +313,11 @@ absl::Status AssignColors(bool use_collective_memory, bool use_nvshmem,
       } else if (HasSymmetricMemoryInstruction(*alias)) {
         // Device-initiated and one-sided collectives require symmetric memory.
         value->set_color((int)MemorySpaceColor::kCollective);
+      } else if (alias->instruction()->opcode() == HloOpcode::kRaggedAllToAll) {
+        // TODO: check
+        // xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl
+        std::cerr << "==== AssignColors8: kRaggedAllToAll" << std::endl;
+        value->set_color((int)MemorySpaceColor::kCollective);
       } else if (((use_collective_memory &&
                    HasCollectiveMemoryInstruction(*alias)) ||
                   (use_nvshmem && HasCollectiveMemoryInstruction(
@@ -337,6 +343,8 @@ BufferAssigner::Colorer CreateColorer(const DebugOptions& option) {
   bool use_nvshmem = option.xla_gpu_experimental_enable_nvshmem();
 
   bool use_collective_memory = nccl_user_buffers || nccl_symmetric_buffers;
+  // TODO Temp fix
+  use_collective_memory = true;
 
   return [use_collective_memory, use_nvshmem](HloAliasAnalysis* alias_analysis,
                                               const HloOrdering&) {

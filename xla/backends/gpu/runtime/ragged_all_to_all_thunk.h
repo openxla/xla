@@ -114,8 +114,12 @@ struct RaggedAllToAllStreamState {
   // Reference to the symmetric memory handler for the pointer storage.
   tsl::TiedRef<xla::SymmetricMemory> output_buffer_ptr_storage_symmetric_memory;
 
-  // Reference to the symmetric memory for the output buffers.
-  std::shared_ptr<xla::SymmetricMemory> output_temporary_symmetric_memory;
+  // // Reference to the symmetric memory for the output buffers.
+  // std::shared_ptr<xla::SymmetricMemory> output_temporary_symmetric_memory;
+
+  // Store the pointer and the offset found during Initialize.
+  xla::SymmetricMemory* output_buffer_symmetric_handle = nullptr;
+  size_t output_buffer_offset = 0;
 
   // Contains the output buffer pointers and barrier signal buffers for all
   // peers.
@@ -267,7 +271,7 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
     const GpuCliqueKey& clique_key, se::Stream& stream, RankId rank,
     std::shared_ptr<xla::SymmetricMemory> barrier_signal_symmetric_memory,
     const se::DeviceAddressBase& barrier_signal_value,
-    std::shared_ptr<xla::SymmetricMemory> output_temporary_symmetric_memory,
+    xla::SymmetricMemory* output_symmetric_memory,
     int64_t num_total_updates, int64_t num_input_rows, int64_t num_row_elements,
     absl::Span<DeviceBufferPair const> buffers);
 

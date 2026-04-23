@@ -391,13 +391,27 @@ absl::Status RaggedAllToAllThunk::Initialize(const InitializeParams& params) {
                            state->clique_key, std::move(symmetric_memory)));
     }
     if (config_.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel) {
-      ASSIGN_OR_RETURN(state->output_temporary_symmetric_memory,
-                       params.scratch_memory->GetSymmetricMemory());
-      XLA_VLOG_DEVICE(3, state->device_ordinal)
-          << "Using temporary symmetric memory for output buffers: (addr="
-          << state->output_temporary_symmetric_memory->addr().opaque()
-          << "; size="
-          << state->output_temporary_symmetric_memory->addr().size() << ")";
+      // ASSIGN_OR_RETURN(state->output_temporary_symmetric_memory,
+      //                  params.scratch_memory->GetSymmetricMemory());
+      // XLA_VLOG_DEVICE(3, state->device_ordinal)
+      //     << "Using temporary symmetric memory for output buffers: (addr="
+      //     << state->output_temporary_symmetric_memory->addr().opaque()
+      //     << "; size="
+      //     << state->output_temporary_symmetric_memory->addr().size() << ")";
+
+      auto [sym_mem, offset] = params.collective_memory->FindSymmetricMemory(
+          state->clique_key, buffers()[1].destination_buffer.slice);
+
+      if (sym_mem == nullptr) {
+        return absl::InternalError(
+            "Symmetric memory not found for output buffer.");
+      }
+      state->output_buffer_symmetric_handle = sym_mem;
+      state->output_buffer_offset = offset;
+      LOG(WARNING) << "====Found symmetric memory for output buffer: (addr="
+                   << sym_mem->addr().opaque()
+                   << "; size=" << sym_mem->addr().size()
+                   << "; offset=" << offset << ")";
     }
   } else if (is_local(params.local_device_count)) {
     // Rendezvous - Exchange output pointers and barrier signal buffers.
@@ -519,11 +533,13 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
 
   if (should_use_one_shot_kernel && state->lsa_size.has_value() &&
       state->lsa_size.value() == clique_key.num_devices()) {
+    // TODO: Add output_buffer_offset param to the function below and use it
+    // instead of hardcoded 0 in ncclGetLsaPointer in RaggedAllToAllKernelImpl
     return RunOneShotRaggedAllToAllWithNccl(
         clique_key, stream, state->rank,
         state->barrier_signal_symmetric_memory.Lock(),
         state->barrier_signal_value->address(),
-        state->output_temporary_symmetric_memory, config_.num_total_updates,
+        state->output_buffer_symmetric_handle, config_.num_total_updates,
         config_.num_input_rows, config_.num_row_elements, device_buffers);
   }
 
@@ -589,10 +605,26 @@ RendezvousResources(int device_ordinal, RankId rank,
 absl::Status RaggedAllToAllThunk::PrepareCollective(
     const PrepareParams& params, const GpuCliqueKey& clique_key) {
   if (config_.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel) {
-    // TODO(patrios): Calculate the size based on output buffer size.
-    constexpr int64_t kScratchMemorySize = 512 * 1024 * 1024;
-    params.scratch_memory_requests->RequestScratchMemory(clique_key,
-                                                         kScratchMemorySize);
+    // // TODO(patrios): Calculate the size based on output buffer size.
+    // constexpr int64_t kScratchMemorySize = 512 * 1024 * 1024;
+    // params.scratch_memory_requests->RequestScratchMemory(clique_key,
+    //                                                      kScratchMemorySize);
+
+    for (const Buffer& buffer : buffers()) {
+      // 1. Get the BufferAllocation index
+      BufferAllocation::Index src_idx = buffer.source_buffer.slice.index();
+      BufferAllocation::Index dst_idx = buffer.destination_buffer.slice.index();
+
+      // 2. Register the output buffer
+      TF_RETURN_IF_ERROR(
+          params.collective_memory_requests->RequestSymmetricAllocation(
+              clique_key, dst_idx));
+
+      // 3. Register the input buffer
+      TF_RETURN_IF_ERROR(
+          params.collective_memory_requests->RequestSymmetricAllocation(
+              clique_key, src_idx));
+    }
   }
   return absl::OkStatus();
 }
@@ -691,10 +723,11 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
     const GpuCliqueKey& clique_key, se::Stream& stream, RankId rank,
     std::shared_ptr<xla::SymmetricMemory> barrier_signal_symmetric_memory,
     const se::DeviceAddressBase& barrier_signal_value,
-    std::shared_ptr<xla::SymmetricMemory> output_temporary_symmetric_memory,
-    int64_t num_total_updates, int64_t num_input_rows, int64_t num_row_elements,
+    xla::SymmetricMemory* output_symmetric_memory, int64_t num_total_updates,
+    int64_t num_input_rows, int64_t num_row_elements,
     absl::Span<DeviceBufferPair const> buffers) {
-  TF_RET_CHECK(output_temporary_symmetric_memory != nullptr)
+  std::cerr << "====RunOneShotRaggedAllToAllWithNccl" << std::endl;
+  TF_RET_CHECK(output_symmetric_memory != nullptr)
       << "Output buffer ptr storage symmetric memory is not supported in "
          "one-shot NCCL kernel.";
   int device_ordinal = stream.parent()->device_ordinal();
@@ -707,29 +740,23 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
   PrimitiveType element_type = buffers[0].element_type;
   se::DeviceAddressBase input_buffer = buffers[0].source_buffer;
   se::DeviceAddressBase output_buffer = buffers[1].destination_buffer;
-  XLA_VLOG_DEVICE(3, device_ordinal)
-      << "Performing one-shot ragged-all-to-all "
-         "with NCCL barrier input buffer: ("
-      << input_buffer.opaque() << ", size=" << input_buffer.size()
-      << ") output buffer: (" << output_buffer.opaque()
-      << ", size=" << output_buffer.size() << ")"
-      << " symmetric temporary output (handle="
-      << output_temporary_symmetric_memory
-      << ", address=" << output_temporary_symmetric_memory->addr().opaque()
-      << ", size=" << output_temporary_symmetric_memory->addr().size() << ")"
-      << " barrier signal symmetric memory (handle="
-      << barrier_signal_symmetric_memory.get()
-      << ", address=" << barrier_signal_symmetric_memory->addr().opaque()
-      << ", size=" << barrier_signal_symmetric_memory->addr().size() << ")";
+  // XLA_VLOG_DEVICE(3, device_ordinal)
+  LOG(WARNING) << "[" << device_ordinal << "] "
+               << "Performing one-shot ragged-all-to-all "
+                  "with NCCL barrier input buffer: ("
+               << input_buffer.opaque() << ", size=" << input_buffer.size()
+               << ") output buffer: (" << output_buffer.opaque()
+               << ", size=" << output_buffer.size() << ")"
+               << " symmetric temporary output (handle="
+               << output_symmetric_memory
+               << ", address=" << output_symmetric_memory->addr().opaque()
+               << ", size=" << output_symmetric_memory->addr().size() << ")"
+               << " barrier signal symmetric memory (handle="
+               << barrier_signal_symmetric_memory.get() << ", address="
+               << barrier_signal_symmetric_memory->addr().opaque()
+               << ", size=" << barrier_signal_symmetric_memory->addr().size()
+               << ")";
 
-  // 0. Initialization Step
-  // Initialize the temporary symmetric memory with initial values from the
-  // actual output buffer. This ensures that any data not explicitly updated by
-  // incoming P2P writes from peers is preserved.
-  se::DeviceAddressBase output_temporary_symmetric_memory_addr =
-      output_temporary_symmetric_memory->addr();
-  TF_RETURN_IF_ERROR(stream.MemcpyD2D(&output_temporary_symmetric_memory_addr,
-                                      output_buffer, output_buffer.size()));
   // 1. Barrier (Pre-Kernel)
   // Global synchronization before P2P writes.
   // Ensures that all peers have reached this point and their output buffers
@@ -744,10 +771,10 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
   const int64_t num_updates_per_replica = num_total_updates / num_ranks;
 
   TF_RETURN_IF_ERROR(RunRaggedAllToAllKernel(
-      &stream, element_type, input_buffer,
-      output_temporary_symmetric_memory.get(), buffers[2].source_buffer,
-      buffers[3].source_buffer, buffers[4].source_buffer, num_ranks,
-      num_updates_per_replica, num_input_rows, num_row_elements));
+      &stream, element_type, input_buffer, output_symmetric_memory,
+      buffers[2].source_buffer, buffers[3].source_buffer,
+      buffers[4].source_buffer, num_ranks, num_updates_per_replica,
+      num_input_rows, num_row_elements));
 
   // 3. Barrier (Post-Kernel)
   // Global synchronization to ensure data consistency.
@@ -757,10 +784,6 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
   TF_RETURN_IF_ERROR(xla::gpu::LaunchMultiGpuBarrierWithNccl(
       &stream, num_ranks, rank, barrier_signal_symmetric_memory.get(),
       barrier_signal_value));
-
-  TF_RETURN_IF_ERROR(stream.MemcpyD2D(&output_buffer,
-                                      output_temporary_symmetric_memory_addr,
-                                      output_buffer.size()));
 
   if (VLOG_IS_ON(6)) {
     TF_RETURN_IF_ERROR(stream.BlockHostUntilDone());
