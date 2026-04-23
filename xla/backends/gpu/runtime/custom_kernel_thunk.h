@@ -24,18 +24,23 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
+#include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/shaped_slice.h"
+#include "xla/stream_executor/command_buffer.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -46,7 +51,9 @@ namespace gpu {
 // CustomKernelThunk loads and executes kernels defined by a custom kernel
 // (which in practice means hand written CUDA C++ kernel), instead of a kernel
 // compiled by XLA and loaded from an executable source.
-class CustomKernelThunk : public Thunk {
+//
+// Also implements Command so it can be recorded directly into command buffers.
+class CustomKernelThunk : public Command {
  public:
   CustomKernelThunk(Thunk::ThunkInfo thunk_info, CustomKernel custom_kernel,
                     const emitters::KernelArguments& kernel_arguments);
@@ -55,6 +62,11 @@ class CustomKernelThunk : public Thunk {
 
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override;
 
   const CustomKernel& custom_kernel() const { return custom_kernel_; }
 
@@ -85,6 +97,19 @@ class CustomKernelThunk : public Thunk {
   // Private constructor for deserialization.
   CustomKernelThunk(Thunk::ThunkInfo thunk_info, CustomKernel custom_kernel,
                     std::vector<ShapedSlice> args, std::vector<bool> written);
+
+  // Holds the loaded kernel and the device addresses of its arguments.
+  struct KernelWithArgs {
+    se::Kernel* kernel;
+    absl::InlinedVector<se::DeviceAddressBase, 4> buffer_args;
+  };
+
+  // Looks up the loaded kernel for the given executor and resolves the device
+  // addresses of `args_`. Returns InternalError if Initialize() was not called
+  // for this executor.
+  absl::StatusOr<KernelWithArgs> GetKernelAndArgs(
+      const BufferAllocations& buffer_allocations,
+      se::StreamExecutor* executor) const;
 
   // Buffer slices passed to the kernel as arguments.
   std::vector<ShapedSlice> args_;

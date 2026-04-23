@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
@@ -37,7 +38,6 @@ limitations under the License.
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
@@ -261,8 +261,11 @@ class LowerReduce : public mlir::OpRewritePattern<stablehlo::ReduceOp> {
     // Check that the reduction is along a single dimension.
     auto dimensions = op.getDimensions();
     if (dimensions.size() != 1) {
-      return rewriter.notifyMatchFailure(
-          op->getLoc(), "tt.reduce only supports single dimension reductions.");
+      absl::string_view error_text =
+          "tt.reduce only supports single dimension reductions.";
+      // Report this as a hard error to abort the compilation.
+      op.emitError(error_text);
+      return rewriter.notifyMatchFailure(op->getLoc(), error_text);
     }
 
     return mlir::success();
@@ -292,9 +295,13 @@ class LowerReshape : public mlir::OpRewritePattern<stablehlo::ReshapeOp> {
     }
 
     if (output_is_0d) {
-      // We know the input dimensions must be all 1s as reshape input-output
-      // must have the same number of elements.
-      return LowerRank0ToReduce(op, rewriter);
+      auto input_tensor_type = op.getOperand().getType();
+      auto element_type = input_tensor_type.getElementType();
+      auto unsplat = ttir::UnsplatOp::create(rewriter, op.getLoc(),
+                                             element_type, op.getOperand());
+      rewriter.replaceOpWithNewOp<mlir::tensor::FromElementsOp>(
+          op, op.getType(), unsplat.getResult());
+      return mlir::success();
     }
 
     // Conservatively prevent Triton from reordering elements within the tile.
@@ -302,50 +309,6 @@ class LowerReshape : public mlir::OpRewritePattern<stablehlo::ReshapeOp> {
     bool allow_reorder = false;
     rewriter.replaceOpWithNewOp<ttir::ReshapeOp>(
         op, op.getResult().getType(), op.getOperand(), allow_reorder);
-    return mlir::success();
-  }
-
-  static mlir::LogicalResult LowerRank0ToReduce(
-      stablehlo::ReshapeOp op, mlir::PatternRewriter& rewriter) {
-    auto input_tensor_type = op.getOperand().getType();
-
-    // First, reshape to a 1D tensor if not already the case. This is needed
-    // because triton::ReduceOp can only reduce 1 dimension at a time.
-    auto single_dim_tensor = op.getOperand();
-    if (input_tensor_type.getRank() > 1) {
-      Type output_tensor_type =
-          mlir::RankedTensorType::get({1}, input_tensor_type.getElementType());
-      single_dim_tensor = ttir::ReshapeOp::create(
-          rewriter, op.getLoc(), output_tensor_type, single_dim_tensor,
-          /*allow_reorder=*/true);
-    }
-
-    // Second, reduce to a scalar.
-    ttir::ReduceOp reduction = ttir::ReduceOp::create(
-        rewriter, op.getLoc(), single_dim_tensor, /*axis=*/0);
-
-    auto element_type = input_tensor_type.getElementType();
-    mlir::Location loc = op.getLoc();
-    mlir::Block* reducer =
-        rewriter.createBlock(&reduction->getRegion(0), /*insertPt=*/{},
-                             /*argTypes=*/
-                             {element_type, element_type},
-                             /*locs=*/{loc, loc});
-
-    rewriter.setInsertionPointToStart(reducer);
-    auto create_binary_op = [&](auto op_type) -> Value {
-      return op_type.create(rewriter, reducer->getArgument(0).getLoc(),
-                            reducer->getArgument(0), reducer->getArgument(1));
-    };
-    Value result = mlir::isa<mlir::IntegerType>(element_type)
-                       ? create_binary_op(arith::AddIOp())
-                       : create_binary_op(arith::AddFOp());
-    ttir::ReduceReturnOp::create(rewriter, result.getLoc(), {result});
-
-    rewriter.setInsertionPointAfter(reduction);
-    rewriter.replaceOpWithNewOp<mlir::tensor::FromElementsOp>(
-        op, op.getType(), reduction.getResult());
-
     return mlir::success();
   }
 };

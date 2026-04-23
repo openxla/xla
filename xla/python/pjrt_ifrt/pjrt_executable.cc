@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/layout_mode.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -55,8 +56,6 @@ limitations under the License.
 #include "xla/pjrt/utils.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/attribute_map.h"
-#include "xla/python/ifrt/basic_device_list.h"
-#include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
@@ -68,6 +67,7 @@ limitations under the License.
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/user_context.h"
+#include "xla/python/pjrt_ifrt/executable_metadata.pb.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
@@ -88,7 +88,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace ifrt {
@@ -223,7 +223,8 @@ std::vector<ShardingRef> MakeShardings(
       shardings.push_back(ifrt::ConcreteEvenSharding::Create(
           executable_devices, memory_kinds[i],
           /*shape=*/shapes[i],
-          /*shard_shape=*/shapes[i]));
+          /*shard_shape=*/shapes[i],
+          /*is_fully_replicated=*/executable_devices->size() == 1));
     }
   }
   return shardings;
@@ -323,48 +324,6 @@ absl::StatusOr<std::vector<xla::Shape>> ResultShapesOfModule(
   return result_shapes;
 }
 
-// Returns a new `DeviceListRef` that contains the addressable devices of the
-// PjRt executable if the supplied `executable_devices` has an incomplete set of
-// devices.
-absl::StatusOr<DeviceListRef> AdjustExecutableDevicesForPmap(
-    PjRtClient* client, const xla::PjRtLoadedExecutable* pjrt_loaded_executable,
-    DeviceListRef executable_devices) {
-  // For jit(pmap(...)), the device assignment (passed as `executable_devices`)
-  // may contain a single device while the PjRt executable has multiple
-  // addressable devices. We check for this condition and replace
-  // `executable_devices` with the executable's addressable devices if
-  // necessary.
-  if (pjrt_loaded_executable->num_replicas() > 1 &&
-      executable_devices->devices().size() == 1) {
-    if (pjrt_loaded_executable->addressable_devices().size() > 1) {
-      BasicDeviceList::Devices ds;
-      ds.reserve(pjrt_loaded_executable->addressable_devices().size());
-      for (xla::PjRtDevice* device :
-           pjrt_loaded_executable->addressable_devices()) {
-        TF_ASSIGN_OR_RETURN(Device * ifrt_device,
-                            client->LookupPjRtDevice(device));
-        ds.push_back(ifrt_device);
-      }
-      executable_devices = BasicDeviceList::Create(std::move(ds));
-    } else if (pjrt_loaded_executable->addressable_devices().size() == 1) {
-      TF_ASSIGN_OR_RETURN(
-          Device * ifrt_device,
-          client->LookupPjRtDevice(
-              pjrt_loaded_executable->addressable_devices().front()));
-      if (ifrt_device != executable_devices->devices().front()) {
-        return FailedPrecondition(
-            "Addressable device does not match sharding device");
-      }
-    }
-  }
-  if (executable_devices->devices().size() <
-      pjrt_loaded_executable->addressable_devices().size()) {
-    return FailedPrecondition(
-        "Sharding devices must be at least as many as addressable devices");
-  }
-  return executable_devices;
-}
-
 // Gathers all `PjRtHostSendAndRecvLoadedHostCallback` from the given list of
 // loaded host callbacks.
 std::vector<PjRtHostSendAndRecvLoadedHostCallback*>
@@ -397,23 +356,25 @@ char PjRtExecutable::ID = 0;
 char PjRtLoadedExecutable::ID = 0;
 
 absl::StatusOr<ExecutableRef> PjRtExecutable::Create(
-    mlir::ModuleOp module, xla::CompileOptions compile_options,
-    const xla::PjRtTopologyDescription& topology) {
+    xla::MaybeOwningMlirModule module, xla::CompileOptions compile_options,
+    const xla::PjRtTopologyDescription& topology,
+    xla::PjRtClient* compile_client) {
   const bool is_portable = compile_options.compile_portable_executable;
 
   // We have to do process the MLIR before the compile call, since the latter
   // will use the MLIR as scratch space, or possibly even deallocate it.
-  TF_ASSIGN_OR_RETURN(std::vector<int> donatable_input_indices,
-                      GetDonatableInputIndicesFromMlirModule(module));
+  TF_ASSIGN_OR_RETURN(
+      std::vector<int> donatable_input_indices,
+      GetDonatableInputIndicesFromMlirModule(module.mlir_module()));
   TF_ASSIGN_OR_RETURN(
       const std::vector<xla::Shape> mlir_module_output_xla_shapes,
-      ResultShapesOfModule(module));
+      ResultShapesOfModule(module.mlir_module()));
   TF_ASSIGN_OR_RETURN(const std::vector<xla::LayoutMode> output_layout_modes,
-                      GetOutputLayoutModes(module));
+                      GetOutputLayoutModes(module.mlir_module()));
 
   TF_ASSIGN_OR_RETURN(auto pjrt_executable,
                       PjRtCompile(std::move(compile_options), std::move(module),
-                                  topology, /*client=*/nullptr));
+                                  topology, compile_client));
 
   TF_ASSIGN_OR_RETURN(auto output_dtypes_and_shapes,
                       GetDTypesAndShapes(mlir_module_output_xla_shapes));
@@ -634,10 +595,9 @@ PjRtExecutable::CommonMetadata::Deserialize(
         *executable_version, *xla_deserialize_executable_options.devices);
     // Handle an `UnimplementedError` gracefully. PjRt-IFRT currently does not
     // track XLA executable versions.
-    if (absl::IsUnimplemented(executable_version_compatible)) {
-      LOG(WARNING) << "Assume version compatibility. PjRt-IFRT does not track "
-                      "XLA executable versions.";
-    } else {
+    // TODO(hyeontaek): Remove this check and always forward the error once
+    // PjRt-IFRT tracks XLA executable versions.
+    if (!absl::IsUnimplemented(executable_version_compatible)) {
       TF_RETURN_IF_ERROR(executable_version_compatible);
     }
   } else {
@@ -726,47 +686,38 @@ absl::StatusOr<LoadedExecutableRef> PjRtLoadedExecutable::Create(
     PjRtExecutable::CommonMetadata common_metadata) {
   VLOG(3) << "PjRtLoadedExecutable::Create";
 
-  TF_ASSIGN_OR_RETURN(
-      executable_devices,
-      AdjustExecutableDevicesForPmap(client, pjrt_loaded_executable.get(),
-                                     std::move(executable_devices)));
-
   return LoadedExecutableRef(new PjRtLoadedExecutable(
       client, std::move(pjrt_loaded_executable), std::move(executable_devices),
       std::move(loaded_host_callbacks), std::move(common_metadata)));
 }
 
 absl::StatusOr<LoadedExecutableRef> PjRtLoadedExecutable::Create(
-    PjRtClient* client, mlir::ModuleOp module,
+    PjRtClient* client, xla::MaybeOwningMlirModule module,
     xla::CompileOptions compile_options,
     std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks,
     DeviceListRef executable_devices) {
   VLOG(3) << "PjRtLoadedExecutable::Create";
   if (VLOG_IS_ON(3)) {
-    module.dump();
+    module.mlir_module().dump();
   }
   VLOG(3) << compile_options.ToProto()->DebugString();
 
   const bool is_portable = compile_options.compile_portable_executable;
   // We have to do process the MLIR before the compile call, since the latter
   // will use the MLIR as scratch space, or possibly even deallocate it.
-  TF_ASSIGN_OR_RETURN(std::vector<int> donatable_input_indices,
-                      GetDonatableInputIndicesFromMlirModule(module));
+  TF_ASSIGN_OR_RETURN(
+      std::vector<int> donatable_input_indices,
+      GetDonatableInputIndicesFromMlirModule(module.mlir_module()));
   TF_ASSIGN_OR_RETURN(
       const std::vector<xla::Shape> mlir_module_output_xla_shapes,
-      ResultShapesOfModule(module));
+      ResultShapesOfModule(module.mlir_module()));
   TF_ASSIGN_OR_RETURN(const std::vector<xla::LayoutMode> output_layout_modes,
-                      GetOutputLayoutModes(module));
+                      GetOutputLayoutModes(module.mlir_module()));
 
   TF_ASSIGN_OR_RETURN(
       std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
       client->pjrt_client()->CompileAndLoad(std::move(module),
                                             std::move(compile_options)));
-
-  TF_ASSIGN_OR_RETURN(
-      executable_devices,
-      AdjustExecutableDevicesForPmap(client, pjrt_loaded_executable.get(),
-                                     std::move(executable_devices)));
 
   TF_ASSIGN_OR_RETURN(auto output_dtypes_and_shapes,
                       GetDTypesAndShapes(mlir_module_output_xla_shapes));

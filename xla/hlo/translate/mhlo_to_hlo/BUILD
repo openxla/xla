@@ -231,6 +231,7 @@ cc_library(
         "@llvm-project//mlir:TransformUtils",
         "@shardy//shardy/dialect/sdy/ir:dialect",
         "@stablehlo//:base",
+        "@stablehlo//:replica_group_utils",
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_passes",
         "@tsl//tsl/platform:ml_dtypes",
@@ -327,6 +328,7 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Support",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 

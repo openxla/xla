@@ -13,6 +13,7 @@ string_flag(
         "hermetic",
         "multiple",
         "system",
+        "link_only",
     ],
 )
 
@@ -27,6 +28,13 @@ config_setting(
     name = "multiple_rocm_paths",
     flag_values = {
         ":rocm_path_type": "multiple",
+    },
+)
+
+config_setting(
+    name = "link_only",
+    flag_values = {
+        ":rocm_path_type": "link_only",
     },
 )
 
@@ -133,15 +141,23 @@ cc_library(
     deps = [":rocm_config"],
 )
 
-# workaround to bring data to the same fs layout as expected in the rocm libs
-# rocblas assumes that miopen db files are located in ../share/miopen/db directory
-# hibplatslt assumes that tensile files are located in ../hipblaslt/library directory
+# Provides -L and -Wl,-rpath flags for ROCm libraries.
+# These must live in a cc_library (not a toolchain feature) because
+# cc_library linkopts propagate transitively through CcInfo to the
+# final linking target, whereas toolchain features do not.
 cc_library(
     name = "rocm_rpath",
     linkopts = select({
         ":build_hermetic": [
             "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib",
             "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib/llvm/lib",
+            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib/rocm_sysdeps/lib",
+            "-Lexternal/local_config_rocm/rocm/%{rocm_root}/lib",
+        ],
+        ":link_only": [
+            "-Wl,-rpath-link,external/local_config_rocm/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath-link,external/local_config_rocm/rocm/%{rocm_root}/lib/llvm/lib",
+            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib/rocm_sysdeps/lib",
             "-Lexternal/local_config_rocm/rocm/%{rocm_root}/lib",
         ],
         ":multiple_rocm_paths": [
@@ -254,7 +270,6 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
-    linkopts = ["-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib"],
     linkstatic = 1,
     visibility = ["//visibility:public"],
     deps = [
@@ -270,7 +285,6 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
-    linkopts = ["-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib"],
     linkstatic = 1,
     visibility = ["//visibility:public"],
     deps = [
@@ -301,11 +315,11 @@ cc_library(
         "%{rocm_root}/lib/libMIOpen*.so*",
         "%{rocm_root}/share/miopen/**",
     ]),
-    linkopts = ["-lMIOpen"],
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
     ],
+    linkopts = ["-lMIOpen"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [
@@ -501,11 +515,9 @@ cc_library(
 
 cc_library(
     name = "hipblaslt",
+    srcs = ["%{rocm_root}/lib/libhipblaslt.so"],
     hdrs = glob(["%{rocm_root}/include/hipblaslt/**"]),
-    data = glob([
-        "%{rocm_root}/lib/hipblaslt/**",
-        "%{rocm_root}/lib/libhipblaslt.so*",
-    ]),
+    data = glob(["%{rocm_root}/lib/hipblaslt/**"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/hipblaslt",
@@ -589,9 +601,11 @@ cc_library(
 alias(
     name = "amd_comgr",
     actual = select_threshold(
-        above_or_eq = ":amd_comgr_dynamic",
-        below = ":amd_comgr_static",
-        threshold = 71000,
+        threshold_dict = {
+            62000: ":amd_comgr_static",
+            71000: ":amd_comgr_dynamic",
+            71200: ":amd_comgr_static",
+        },
         value = rocm_version_number(),
     ),
 )
@@ -672,6 +686,7 @@ platform(
     ],
     exec_properties = {
         "container-image": "docker://%{rocm_rbe_docker_image}",
+        "Pool": "%{rocm_rbe_pool}",
         "OSFamily": "Linux",
     },
 )

@@ -742,6 +742,18 @@ class Future : public internal::FutureBase<absl::StatusOr<T>> {
         executor, std::forward<F>(f));
   }
 
+  // Flattens a `Future<Future<T>>` to `Future<T>`
+  template <typename U = T, std::enable_if_t<internal::IsFuture<U>::value &&
+                                             !is_move_only>* = nullptr>
+  [[nodiscard]] Future<internal::future_type_t<typename U::value_type>>
+  Flatten() const&;
+
+  // Flattens a `Future<Future<T>>` to `Future<T>`
+  template <typename U = T,
+            std::enable_if_t<internal::IsFuture<U>::value>* = nullptr>
+  [[nodiscard]] Future<internal::future_type_t<typename U::value_type>>
+  Flatten() &&;
+
  private:
   friend class FutureHelpers;
   friend class ::tsl::Promise<T>;
@@ -1066,7 +1078,7 @@ template <int&... ExplicitParameterBarrier, typename U,
           std::enable_if_t<!is_move_only && std::is_void_v<U>>*>
 Future<future_type_t<T>> FutureBase<T, is_move_only>::Detach(
     Executor& executor) const& {
-  if (ABSL_PREDICT_FALSE(IsReady())) {
+  if (IsReady()) {
     return Future<future_type_t<T>>(promise_, on_block_start_, on_block_end_);
   }
 
@@ -1089,7 +1101,7 @@ Future<future_type_t<T>> FutureBase<T, is_move_only>::Detach(
 template <typename T, bool is_move_only>
 Future<future_type_t<T>> FutureBase<T, is_move_only>::Detach(
     Executor& executor) && {
-  if (ABSL_PREDICT_FALSE(IsReady())) {
+  if (IsReady()) {
     return Future<future_type_t<T>>(std::move(promise_),
                                     std::move(on_block_start_),
                                     std::move(on_block_end_));
@@ -1139,7 +1151,7 @@ template <typename R, int&... ExplicitParameterBarrier, typename F, typename U,
 [[nodiscard]] ABSL_ATTRIBUTE_ALWAYS_INLINE Future<R> Future<T>::Map(
     F&& f) const& {
   // If `*this` is ready, construct the mapped future immediately.
-  if (ABSL_PREDICT_TRUE(Base::promise().IsAvailable())) {
+  if (Base::promise().IsAvailable()) {
     const absl::StatusOr<T>& value = *Base::promise();
 
     // Short-circuit and forward existing error to the mapped future.
@@ -1192,7 +1204,7 @@ template <typename R, int&... ExplicitParameterBarrier, typename F, typename U,
           internal::Mappable<R, U>*>
 [[nodiscard]] ABSL_ATTRIBUTE_ALWAYS_INLINE Future<R> Future<T>::Map(F&& f) && {
   // If `*this` is ready, construct the mapped future immediately.
-  if (ABSL_PREDICT_TRUE(Base::promise().IsAvailable())) {
+  if (Base::promise().IsAvailable()) {
     // For copyable types bind to const reference, so that we don't
     // accidentally move the value from the underlying async value storage.
     using Value = std::conditional_t<is_move_only, absl::StatusOr<T>&,
@@ -1261,6 +1273,68 @@ template <typename R, int&... ExplicitParameterBarrier, typename F, typename U,
 }
 
 template <typename T>
+template <typename U, std::enable_if_t<internal::IsFuture<U>::value &&
+                                       !Future<T>::is_move_only>*>
+Future<internal::future_type_t<typename U::value_type>> Future<T>::Flatten()
+    const& {
+  using R = internal::future_type_t<typename U::value_type>;
+  auto [promise, future] = MakePromise<R>();
+
+  // For const& API call we always get nested futures and values by reference.
+  using NestedFuture = const absl::StatusOr<Future<R>>&;
+  using Value = const absl::StatusOr<R>&;
+
+  OnReady([promise = std::move(promise)](NestedFuture nested_future) mutable {
+    // Immediately forward error to flatten future.
+    if (ABSL_PREDICT_FALSE(!nested_future.ok())) {
+      promise.Set(nested_future.status());
+      return;
+    }
+
+    // Forward nested value when it becomes ready to the promise.
+    nested_future->OnReady([promise = std::move(promise)](Value value) mutable {
+      promise.Set(value);
+    });
+  });
+
+  return std::move(future);
+}
+
+template <typename T>
+template <typename U, std::enable_if_t<internal::IsFuture<U>::value>*>
+Future<internal::future_type_t<typename U::value_type>>
+Future<T>::Flatten() && {
+  using R = internal::future_type_t<typename U::value_type>;
+  auto [promise, future] = MakePromise<R>();
+
+  // For move-only futures the nested future and the value moved into the
+  // OnReady callback. For copyable futures they are passed by reference,
+  // because we don't know how many futures point to the same payload.
+  using NestedFuture =
+      std::conditional_t<is_move_only, absl::StatusOr<Future<R>>,
+                         const absl::StatusOr<Future<R>>&>;
+  using Value = std::conditional_t<is_move_only, absl::StatusOr<R>,
+                                   const absl::StatusOr<R>&>;
+
+  std::move(*this).OnReady(
+      [promise = std::move(promise)](NestedFuture nested_future) mutable {
+        // Immediately forward error to flatten future.
+        if (ABSL_PREDICT_FALSE(!nested_future.ok())) {
+          promise.Set(nested_future.status());
+          return;
+        }
+
+        // Forward nested value when it becomes ready to the promise.
+        std::move(*nested_future)
+            .OnReady([promise = std::move(promise)](Value value) mutable {
+              promise.Set(std::move(value));
+            });
+      });
+
+  return std::move(future);
+}
+
+template <typename T>
 template <typename R, typename U, bool rvalue, typename F>
 auto Future<T>::SetPromise(Promise<R> promise, F&& f) {
   // For copyable types bind to const reference, so that we don't
@@ -1300,7 +1374,7 @@ template <typename R, int&... ExplicitParameterBarrier, typename F, typename U,
 [[nodiscard]] ABSL_ATTRIBUTE_ALWAYS_INLINE Future<R> Future<void>::Map(
     F&& f) const {
   // If `*this` is ready, construct the mapped future immediately.
-  if (ABSL_PREDICT_TRUE(Base::promise().IsAvailable())) {
+  if (Base::promise().IsAvailable()) {
     // Short-circuit and forward existing error to the mapped future.
     if (ABSL_PREDICT_FALSE(!Base::promise()->ok())) {
       return Future<R>(*Base::promise());

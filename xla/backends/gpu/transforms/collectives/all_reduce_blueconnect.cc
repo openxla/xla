@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -82,14 +83,14 @@ static std::optional<GlobalDeviceId> TryConvertingReplicaIdToDeviceId(
       // devices on different partitions.
       return std::nullopt;
     }
-    return GlobalDeviceId{device_assignment(replica_id, /*computation_id=*/0)};
+    return GlobalDeviceId(device_assignment(replica_id, /*computation_id=*/0));
   }
   if (collective_group_mode ==
       CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID) {
     int partition_count = device_assignment.computation_count();
     int64_t actual_replica_id = replica_id / partition_count;
     int64_t partition_id = replica_id % partition_count;
-    return GlobalDeviceId{device_assignment(actual_replica_id, partition_id)};
+    return GlobalDeviceId(device_assignment(actual_replica_id, partition_id));
   }
 
   // COLLECTIVE_OP_GROUP_MODE_CROSS_PARTITION and
@@ -293,7 +294,8 @@ static absl::StatusOr<bool> TryDecomposeAllReduce(
   HloInstruction* reduce_scatter =
       computation.AddInstruction(HloInstruction::CreateReduceScatter(
           reduce_scatter_shape, flat_operands, all_reduce->to_apply(),
-          CollectiveDeviceList(decomposed_groups->scatter_gather_groups),
+          std::make_shared<CollectiveDeviceList>(
+              decomposed_groups->scatter_gather_groups),
           /*constrain_layout=*/false, get_channel_id(),
           all_reduce->use_global_device_ids(),
           /*scatter_dimension=*/0));
@@ -302,7 +304,8 @@ static absl::StatusOr<bool> TryDecomposeAllReduce(
       computation.AddInstruction(HloInstruction::CreateAllReduce(
           reduce_scatter_shape, GetOutputs(*reduce_scatter),
           all_reduce->to_apply(),
-          CollectiveDeviceList(decomposed_groups->new_all_reduce_groups),
+          std::make_shared<CollectiveDeviceList>(
+              decomposed_groups->new_all_reduce_groups),
           /*constrain_layout=*/false, all_reduce->channel_id(),
           all_reduce->use_global_device_ids()));
 
@@ -312,7 +315,8 @@ static absl::StatusOr<bool> TryDecomposeAllReduce(
       computation.AddInstruction(HloInstruction::CreateAllGather(
           all_gather_shape, GetOutputs(*new_all_reduce),
           /*all_gather_dimension=*/0,
-          CollectiveDeviceList(decomposed_groups->scatter_gather_groups),
+          std::make_shared<CollectiveDeviceList>(
+              decomposed_groups->scatter_gather_groups),
           /*constrain_layout=*/false, get_channel_id(),
           all_reduce->use_global_device_ids()));
 

@@ -59,6 +59,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -419,7 +420,8 @@ class HloComputation {
       const HloComputationProto& proto,
       const absl::flat_hash_map<int64_t, HloComputation*>& computation_map,
       bool prohibit_empty_literal = true, bool preserve_instruction_ids = true,
-      absl::flat_hash_map<int64_t, int64_t>* id_remap_map = nullptr);
+      absl::flat_hash_map<int64_t, int64_t>* id_remap_map = nullptr,
+      const tsl::protobuf::RepeatedPtrField<std::string>* payloads = nullptr);
 
   // Generates a hash value of an HLO computation. Hash considers
   // information on opcode, shape, operands, and typically a root instruction.
@@ -651,12 +653,15 @@ class HloComputation {
   // instruction have sharding that is not compatible, and the function will
   // return false. Otherwise, when the replacement happens, if |new_instruction|
   // doesn't have any sharding information it will receive the sharding
-  // information of |old_instruction|, and function will return true.
-  absl::StatusOr<bool> ReplaceInstruction(HloInstruction* old_instruction,
-                                          HloInstruction* new_instruction,
-                                          bool preserve_sharding,
-                                          bool relay_control_dependency = false,
-                                          bool remove_unused_operands = true);
+  // information of |old_instruction|, and function will return true. If
+  // preserve_frontend_attributes is true and the new instruction does not have
+  // any frontend attributes, the frontend attributes of the old instruction
+  // will be copied over.
+  absl::StatusOr<bool> ReplaceInstruction(
+      HloInstruction* old_instruction, HloInstruction* new_instruction,
+      bool preserve_sharding, bool relay_control_dependency = false,
+      bool remove_unused_operands = true,
+      bool preserve_frontend_attributes = true);
 
   // Same as above, with preserve_sharding=false. Since this replacement always
   // happens, it returns just a absl::Status as opposed to absl::StatusOr<bool>
@@ -668,7 +673,8 @@ class HloComputation {
   absl::StatusOr<bool> ReplaceInstructionWithDifferentShape(
       HloInstruction* old_instruction, HloInstruction* new_instruction,
       bool preserve_sharding, bool relay_control_dependency = false,
-      bool remove_unused_operands = true);
+      bool remove_unused_operands = true,
+      bool preserve_frontend_attributes = true);
   absl::Status ReplaceInstructionWithDifferentShape(
       HloInstruction* old_instruction, HloInstruction* new_instruction);
 

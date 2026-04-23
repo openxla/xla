@@ -91,6 +91,10 @@ class AlgebraicSimplifierOptions {
     conv_is_lowerable_callback_ = std::move(conv_is_lowerable_callback);
   }
 
+  ConvIsLowerableCallback conv_is_lowerable_callback() const {
+    return conv_is_lowerable_callback_;
+  }
+
   // If is_layout_sensitive is true, then the simplifier preserves layout during
   // transformation. Otherwise, layout is ignored.
   void set_is_layout_sensitive(bool is_layout_sensitive) {
@@ -476,6 +480,10 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
 
   absl::Status HandleAllGather(HloInstruction* all_gather) override;
 
+  absl::Status HandleAllReduce(HloInstruction* all_reduce) override;
+
+  absl::Status HandleReduceScatter(HloInstruction* reduce_scatter) override;
+
   absl::Status HandleAllToAll(HloInstruction* all_to_all) override;
 
   absl::Status HandleAnd(HloInstruction* logical_and) override;
@@ -619,9 +627,13 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   }
 
  protected:
-  // Allow backend targets to amend user-guided fusion attributes based on
-  // various criteria.
-  virtual void AmendUserGuidedFusionAttr(HloInstruction* inst) {}
+  // A method that allows various backends to specialize the propagation of
+  // various attributes to the new instruction.
+  virtual void SetupDerivedInstruction(HloInstruction* old_inst,
+                                       HloInstruction* new_inst,
+                                       bool preserve_user_fusion_attr) {
+    old_inst->SetupDerivedInstruction(new_inst);
+  }
 
  protected:
   // The backend-specific options selected for the algebraic simplifier.
@@ -638,6 +650,8 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   // corresponding multiply instructions.
   virtual absl::StatusOr<HloInstruction*> MakeMultiplyForPrecisionAlgorithm(
       HloInstruction* dot, HloInstruction* lhs, HloInstruction* rhs);
+
+  absl::Status HandleAllReduceOrReduceScatter(HloInstruction* collective);
 
   // Rewrite dot as mul(broadcast(transpose(x)),broadcast(transpose(y)))
   absl::Status RewriteAsMultiplyDotWithZeroLhsContractingDim(

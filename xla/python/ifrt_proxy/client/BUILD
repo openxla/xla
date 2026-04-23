@@ -170,6 +170,7 @@ cc_library(
         ":memory",
         ":rpc_helper",
         "//xla:xla_data_proto_cc",
+        "//xla/pjrt:host_memory_spaces",
         "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_layout",
         "//xla/python/ifrt",
@@ -479,7 +480,7 @@ cc_library(
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/lib:traceme",
-    ],
+    ] + if_google(["//third_party/gloop/strings:cord_bytestream"]),
 )
 
 cc_library(

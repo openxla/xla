@@ -80,14 +80,14 @@ static const char kNameSeparator = '.';
 // Retrieves the base name of an instruction or computation fully qualified
 // name, using separator as boundary between the initial base name part, and
 // the numeric identification.
-std::string GetBaseName(const std::string& name, char separator) {
+std::string GetBaseName(absl::string_view name, char separator) {
   auto pos = name.rfind(separator);
-  CHECK_NE(pos, std::string::npos) << name;
-  return name.substr(0, pos);
+  CHECK_NE(pos, absl::string_view::npos) << name;
+  return std::string(name.substr(0, pos));
 }
 
 // Generates a fully qualified computation/instruction name.
-std::string GetFullName(const std::string& base_name, char separator,
+std::string GetFullName(absl::string_view base_name, char separator,
                         int64_t id) {
   const char separator_str[] = {separator, '\0'};
   return StrCat(base_name, separator_str, id);
@@ -96,7 +96,7 @@ std::string GetFullName(const std::string& base_name, char separator,
 // Common function to standardize setting name and IDs on computation and
 // instruction proto entities.
 template <typename T>
-void SetProtoIdAndName(T* entry, const std::string& base_name, char separator,
+void SetProtoIdAndName(T* entry, absl::string_view base_name, char separator,
                        int64_t id) {
   entry->set_id(id);
   entry->set_name(GetFullName(base_name, separator, id));
@@ -283,19 +283,17 @@ XlaOp XlaBuilderFriend::BuildCopyDone(XlaBuilder* builder, const XlaOp operand,
 XlaOp XlaBuilderFriend::BuildCollectivePermuteStart(
     XlaBuilder* builder, XlaOp operand,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, const bool inplace) {
+    const std::optional<ChannelHandle>& channel_id) {
   return builder->CollectivePermuteImpl(operand, source_target_pairs,
-                                        channel_id, /*async=*/true, inplace);
+                                        channel_id, /*async=*/true);
 }
 
 XlaOp XlaBuilderFriend::BuildCollectivePermuteStart(
     XlaBuilder* builder, absl::Span<const XlaOp> operands,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, const bool inplace) {
-  // TODO support multi-operand in-place collective permute
-  CHECK(!inplace);
+    const std::optional<ChannelHandle>& channel_id) {
   return builder->CollectivePermuteImpl(operands, source_target_pairs,
-                                        channel_id, /*async=*/true, inplace);
+                                        channel_id, /*async=*/true);
 }
 
 XlaOp XlaBuilderFriend::BuildCollectivePermuteDone(XlaBuilder* builder,
@@ -2415,11 +2413,12 @@ XlaOp XlaBuilder::ConvGeneralDilated(
                         ShapeInference::InferWindowFromDimensions(
                             window_dimensions, window_strides, padding,
                             lhs_dilation, rhs_dilation, window_reversal));
-    TF_ASSIGN_OR_RETURN(
-        Shape shape,
-        ShapeInference::InferConvolveShape(
-            *lhs_shape, *rhs_shape, feature_group_count, batch_group_count,
-            window, dimension_numbers, preferred_element_type));
+    SparsityConfig sparsity_config;
+    TF_ASSIGN_OR_RETURN(Shape shape,
+                        ShapeInference::InferConvolveShape(
+                            *lhs_shape, *rhs_shape, feature_group_count,
+                            batch_group_count, window, dimension_numbers,
+                            sparsity_config, preferred_element_type));
     return ConvGeneralDilatedInternal(shape, lhs, rhs, window, window_strides,
                                       padding, lhs_dilation, rhs_dilation,
                                       dimension_numbers, feature_group_count,
@@ -2449,11 +2448,12 @@ absl::StatusOr<HloInstructionProto> XlaBuilder::DynamicConvInstruction(
   TF_ASSIGN_OR_RETURN(Window window, ShapeInference::InferWindowFromDimensions(
                                          window_dimensions, window_strides,
                                          padding, lhs_dilation, rhs_dilation));
+  SparsityConfig sparsity_config;
   TF_ASSIGN_OR_RETURN(
       Shape shape,
       ShapeInference::InferConvolveShape(
           *lhs_shape, *rhs_shape, feature_group_count, batch_group_count,
-          window, dimension_numbers, preferred_element_type));
+          window, dimension_numbers, sparsity_config, preferred_element_type));
 
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
@@ -2639,7 +2639,7 @@ XlaOp XlaBuilder::Infeed(const Shape& shape, const std::string& config) {
     };
     if (sharding()) {
       // Arbitrarily assign token to device 0.
-      OpSharding sharding = sharding_builder::AssignDevice(0);
+      OpSharding sharding = sharding_builder::SingleDevice(0);
       XlaScopedShardingAssignment scoped_sharding(this, sharding);
       TF_ASSIGN_OR_RETURN(token, make_token());
     } else {
@@ -2657,7 +2657,7 @@ XlaOp XlaBuilder::Infeed(const Shape& shape, const std::string& config) {
       OpSharding infeed_instruction_sharding = *sharding();
       // Arbitrarily assign the token to device 0.
       *infeed_instruction_sharding.add_tuple_shardings() =
-          sharding_builder::AssignDevice(0);
+          sharding_builder::SingleDevice(0);
       XlaScopedShardingAssignment scoped_sharding(this,
                                                   infeed_instruction_sharding);
       TF_ASSIGN_OR_RETURN(infeed, AddInstruction(std::move(instr),
@@ -2676,7 +2676,7 @@ XlaOp XlaBuilder::Infeed(const Shape& shape, const std::string& config) {
     };
     if (sharding()) {
       // Arbitrarily assign token to device 0.
-      OpSharding sharding = sharding_builder::AssignDevice(0);
+      OpSharding sharding = sharding_builder::SingleDevice(0);
       XlaScopedShardingAssignment scoped_sharding(this, sharding);
       TF_ASSIGN_OR_RETURN(infeed_token_, get_token());
     } else {
@@ -2773,7 +2773,7 @@ void XlaBuilder::Outfeed(XlaOp operand, const Shape& shape_with_layout,
     };
     if (sharding()) {
       XlaScopedShardingAssignment scoped_sharding(
-          this, sharding_builder::AssignDevice(0));
+          this, sharding_builder::SingleDevice(0));
       TF_ASSIGN_OR_RETURN(token, make_token());
     } else {
       TF_ASSIGN_OR_RETURN(token, make_token());
@@ -2784,7 +2784,7 @@ void XlaBuilder::Outfeed(XlaOp operand, const Shape& shape_with_layout,
         tuple_sharding = sharding_builder::Tuple({});
         *tuple_sharding.add_tuple_shardings() = *sharding();
       }
-      *tuple_sharding.add_tuple_shardings() = sharding_builder::AssignDevice(0);
+      *tuple_sharding.add_tuple_shardings() = sharding_builder::SingleDevice(0);
       XlaScopedShardingAssignment scoped_sharding(this, tuple_sharding);
       TF_RETURN_IF_ERROR(make_outfeed(token));
     } else {
@@ -3564,11 +3564,18 @@ XlaOp XlaBuilder::AllGatherImpl(const XlaOp operand,
       operands.push_back(operand);
     }
 
-    TF_ASSIGN_OR_RETURN(Shape inferred_shape,
-                        ShapeInference::InferAllGatherShape(
-                            operand_shapes, all_gather_dimension, shard_count));
+    TF_ASSIGN_OR_RETURN(
+        Shape inferred_shape,
+        async ? ShapeInference::InferAllGatherStartShape(
+                    operand_shapes, all_gather_dimension, shard_count)
+              : ShapeInference::InferAllGatherShape(
+                    operand_shapes, all_gather_dimension, shard_count));
     if (layout) {
-      *inferred_shape.mutable_layout() = *layout;
+      if (async) {
+        *inferred_shape.mutable_tuple_shapes(0)->mutable_layout() = *layout;
+      } else {
+        *inferred_shape.mutable_layout() = *layout;
+      }
       instr.set_constrain_layout(true);
     }
     *instr.mutable_shape() = inferred_shape.ToProto();
@@ -4467,32 +4474,35 @@ XlaOp XlaBuilder::CollectiveBroadcastImpl(
 XlaOp XlaBuilder::CollectivePermute(
     XlaOp operand,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, const bool inplace) {
+    const std::optional<ChannelHandle>& channel_id) {
   return CollectivePermuteImpl(operand, source_target_pairs, channel_id,
-                               /*async=*/false, inplace);
+                               /*async=*/false);
 }
 
 XlaOp XlaBuilder::CollectivePermute(
     absl::Span<const XlaOp> operands,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, const bool inplace) {
-  // TODO support multi-operand in-place collective permute
-  CHECK(!inplace);
+    const std::optional<ChannelHandle>& channel_id) {
   return CollectivePermuteImpl(operands, source_target_pairs, channel_id,
-                               /*async=*/false, inplace);
+                               /*async=*/false);
 }
 
 XlaOp XlaBuilder::CollectivePermuteImpl(
     XlaOp operand,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, bool async,
-    const bool inplace) {
+    const std::optional<ChannelHandle>& channel_id, bool async) {
   return ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     HloInstructionProto instr;
-    TF_ASSIGN_OR_RETURN(
-        Shape shape,
-        ShapeInference::InferCollectivePermuteShape({operand_shape}, inplace));
+    Shape shape;
+    if (async) {
+      TF_ASSIGN_OR_RETURN(shape,
+                          ShapeInference::InferCollectivePermuteStartShape(
+                              {operand_shape}, {}, false));
+    } else {
+      TF_ASSIGN_OR_RETURN(shape, ShapeInference::InferCollectivePermuteShape(
+                                     {operand_shape}, false));
+    }
     *instr.mutable_shape() = shape.ToProto();
 
     for (const auto& pair : source_target_pairs) {
@@ -4514,10 +4524,7 @@ XlaOp XlaBuilder::CollectivePermuteImpl(
 XlaOp XlaBuilder::CollectivePermuteImpl(
     absl::Span<const XlaOp> operands,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, bool async,
-    const bool inplace) {
-  // TODO support multi-operand in-place collective permute
-  CHECK(!inplace);
+    const std::optional<ChannelHandle>& channel_id, bool async) {
   return ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
     std::vector<const Shape*> operand_shapes;
     for (const auto& operand : operands) {
@@ -4526,11 +4533,16 @@ XlaOp XlaBuilder::CollectivePermuteImpl(
     }
     CHECK_GT(operand_shapes.size(), 1);
     HloInstructionProto instr;
-    TF_ASSIGN_OR_RETURN(
-        Shape shape,
-        ShapeInference::InferCollectivePermuteShape(operand_shapes, inplace));
-    *instr.mutable_shape() =
-        ShapeUtil::MakeTupleShapeWithPtrs(operand_shapes).ToProto();
+    Shape shape;
+    if (async) {
+      TF_ASSIGN_OR_RETURN(shape,
+                          ShapeInference::InferCollectivePermuteStartShape(
+                              operand_shapes, {}, false));
+    } else {
+      TF_ASSIGN_OR_RETURN(shape, ShapeInference::InferCollectivePermuteShape(
+                                     operand_shapes, false));
+    }
+    *instr.mutable_shape() = shape.ToProto();
 
     for (const auto& pair : source_target_pairs) {
       auto* proto_pair = instr.add_source_target_pairs();
@@ -6219,19 +6231,17 @@ XlaOp CollectiveBroadcast(const XlaOp operand,
 XlaOp CollectivePermute(
     const XlaOp operand,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, const bool inplace) {
+    const std::optional<ChannelHandle>& channel_id) {
   return operand.builder()->CollectivePermute(operand, source_target_pairs,
-                                              channel_id, inplace);
+                                              channel_id);
 }
 
 XlaOp MultiCollectivePermute(
     absl::Span<const XlaOp> operands,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
-    const std::optional<ChannelHandle>& channel_id, const bool inplace) {
-  // TODO support multi-operand in-place collective permute
-  CHECK(!inplace);
+    const std::optional<ChannelHandle>& channel_id) {
   return operands.at(0).builder()->CollectivePermute(
-      operands, source_target_pairs, channel_id, inplace);
+      operands, source_target_pairs, channel_id);
 }
 
 XlaOp ReplicaId(XlaBuilder* builder) { return builder->ReplicaId(); }

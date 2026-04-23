@@ -47,7 +47,7 @@ absl::Status CollectiveMemoryRequests::RequestSymmetricAllocation(
 
   // XLA compiler guarantees that all collective operations have the same
   // order on all replicas. We rely on this property to assign unique id to
-  // symmetric allocation requests to guarantee detemenistic execution order.
+  // symmetric allocation requests to guarantee deterministic execution order.
   SymmetricAllocations alloc{
       /*id=*/sym_allocations_.size(), clique_key, {allocation}};
 
@@ -80,7 +80,7 @@ absl::Status CollectiveMemoryRequests::RequestMulticastAllocation(
 
   // XLA compiler guarantees that all collective operations have the same
   // order on all replicas. We rely on this property to assign unique id to
-  // multicast allocation requests to guarantee detemenistic execution order.
+  // multicast allocation requests to guarantee deterministic execution order.
   MulticastAllocations alloc{
       /*id=*/mcast_allocations_.size(), clique_key, {allocation}};
 
@@ -95,6 +95,39 @@ absl::Status CollectiveMemoryRequests::RequestMulticastAddress(
 
   if (auto allocation = buffers_.FindAllocationIndex(addr)) {
     return RequestMulticastAllocation(clique_key, *allocation);
+  }
+  return Internal("Can't find buffer allocation index for a device address");
+}
+
+absl::Status CollectiveMemoryRequests::RequestPeerAllocation(
+    const GpuCliqueKey& clique_key, BufferAllocation::Index allocation) {
+  VLOG(5) << "Add peer allocation request: " << clique_key
+          << "; allocation=" << allocation;
+
+  // If peer allocation requests already exists add allocation index to it.
+  if (auto it = peer_allocations_.find(clique_key);
+      it != peer_allocations_.end()) {
+    PeerAllocations& allocs = it->second;
+    allocs.allocations.insert(allocation);
+  }
+
+  // XLA compiler guarantees that all collective operations have the same
+  // order on all replicas. We rely on this property to assign unique id to
+  // peer allocation requests to guarantee deterministic execution order.
+  PeerAllocations alloc{
+      /*id=*/peer_allocations_.size(), clique_key, {allocation}};
+
+  peer_allocations_.try_emplace(clique_key, std::move(alloc));
+  return absl::OkStatus();
+}
+
+absl::Status CollectiveMemoryRequests::RequestPeerAddress(
+    const GpuCliqueKey& clique_key, const se::DeviceAddressBase& addr) {
+  VLOG(5) << "Add peer address request: " << clique_key.ToString()
+          << "; address=" << addr.opaque();
+
+  if (auto allocation = buffers_.FindAllocationIndex(addr)) {
+    return RequestPeerAllocation(clique_key, *allocation);
   }
   return Internal("Can't find buffer allocation index for a device address");
 }
@@ -159,6 +192,32 @@ CollectiveMemoryRequests::OrderedMulticastAllocations() const {
   });
 
   return mcast_allocations;
+}
+
+std::vector<CollectiveMemoryRequests::PeerAllocations>
+CollectiveMemoryRequests::OrderedPeerAllocations() const {
+  std::vector<PeerAllocations> peer_allocations;
+  peer_allocations.reserve(peer_allocations_.size());
+  for (const auto& [_, allocs] : peer_allocations_) {
+    peer_allocations.push_back(allocs);
+  }
+
+  absl::c_sort(peer_allocations,
+               [](const PeerAllocations& a, const PeerAllocations& b) {
+                 // Create multicast memory for larger cliques first.
+                 if (a.key.devices().size() > b.key.devices().size()) {
+                   return true;
+                 }
+                 if (b.key.devices().size() > a.key.devices().size()) {
+                   return false;
+                 }
+
+                 // Prefer cliques with smaller id (comes earlier in execution
+                 // order).
+                 return a.id < b.id;
+               });
+
+  return peer_allocations;
 }
 
 }  // namespace xla::gpu

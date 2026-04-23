@@ -15,11 +15,16 @@ message CudnnVersion {
   int32 major = 1;
   int32 minor = 2;
   int32 patch = 3;
+  int32 major_version = 4;
+  int32 minor_version = 5;
+  int32 patch_version = 6;
 }
 
 message ComputeCapability {
   int32 major = 1;
   int32 minor = 2;
+  int32 major_version = 3;
+  int32 minor_version = 4;
 }
 
 message AutotuneResult {
@@ -85,6 +90,7 @@ message AutotuneResult {
     int64 num_ctas = 7;
     bool is_tma_allowed = 8;
     bool is_warp_specialization_allowed = 9;
+    int64 waves_per_eu = 10;
     // LINT.ThenChange(//tensorflow/compiler/xla/service/gpu/matmul_utils.h)
   }
 

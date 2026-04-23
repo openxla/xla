@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
+#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -47,7 +48,8 @@ namespace {
 namespace m = ::xla::match;
 
 // A test fixture class for tests which are specific to legacy cublas
-class LegacyCublasGemmRewriteTest : public GemmRewriteTestBase {
+class LegacyCublasGemmRewriteTest
+    : public HloPjRtInterpreterReferenceMixin<GemmRewriteTestBase> {
  public:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GemmRewriteTestBase::GetDebugOptionsForTest();
@@ -98,9 +100,10 @@ ENTRY e {
           se::CudaComputeCapability{se::CudaComputeCapability::kAmpere, 0},
           /*toolkit_version=*/stream_executor::SemanticVersion{12, 4, 0}),
       R"(
-; CHECK:  %[[P0:.+]] = f32[10,10,2048]{2,1,0} parameter(0)
-; CHECK:  %[[P1:.+]] = f32[10,10,2048,16384]{3,2,1,0} parameter(1)
-; CHECK:  %[[CUSTOM_CALL:.+]] = (f32[10,10,16384]{2,1,0}, s8[4194304]{0}) custom-call(%[[P0]], %[[P1]]), custom_call_target="__cublas$gemm"
+; CHECK-DAG: %[[LHS_RESHAPE:[a-zA-Z0-9_.-]+]] = f32[100,2048]{{.*}} {{bitcast|reshape}}
+; CHECK-DAG: %[[RHS_RESHAPE:[a-zA-Z0-9_.-]+]] = f32[100,2048,16384]{{.*}} {{bitcast|reshape}}
+; CHECK: = (f32[100,16384]{{.*}}, s8[{{[0-9]+}}]{0}) custom-call(%[[LHS_RESHAPE]], %[[RHS_RESHAPE]]), custom_call_target="__cublas$gemm"
+; CHECK: ROOT {{.*}} = f32[10,10,16384]{{.*}} {{bitcast|reshape}}
 )");
 }
 
@@ -132,7 +135,7 @@ ENTRY AddDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %AddDotsFunc ({{.*}}: f32[2,2], {{.*}}: f32[2,2], {{.*}}: f32[2,2]) -> f32[2,2] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,2], {{.*}}: f32[2,2], {{.*}}: f32[2,2]) -> f32[2,2] {
 ; CHECK-DAG:     [[X:%[^ ]+]] = f32[2,2]{1,0} parameter(0)
 ; CHECK-DAG:     [[Y:%[^ ]+]] = f32[2,2]{1,0} parameter(1)
 ; CHECK:         [[O:%[^ ]+]] = (f32[2,2]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[X]], [[Y]], {{[^,)]+}}),
@@ -179,7 +182,7 @@ ENTRY AddDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %AddDotsFunc ({{.*}}: f32[2,2], {{.*}}: f32[2,2], {{.*}}: f32[2,2]) -> f32[2,2] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,2], {{.*}}: f32[2,2], {{.*}}: f32[2,2]) -> f32[2,2] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,2]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[2,2]{1,0} parameter(1)
 ; CHECK-NEXT:    [[CUSTOM_CALL:%[^ ]+]] = (f32[2,2]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
@@ -219,7 +222,7 @@ ENTRY AddDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %AddDotsFunc ({{.*}}: f32[2,2], {{.*}}: f32[2,2], {{.*}}: f32[2,2]) -> f32[2,2] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,2], {{.*}}: f32[2,2], {{.*}}: f32[2,2]) -> f32[2,2] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,2]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[2,2]{1,0} parameter(1)
 ; CHECK-NEXT:    [[GEMM:%[^ ]+]] = (f32[2,2]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
@@ -242,15 +245,15 @@ ENTRY AddDotsFunc {
 )");
 }
 
-TEST_F(LegacyCublasGemmRewriteTest, BiasTupleParameterOverwrite) {
+TEST_F(LegacyCublasGemmRewriteTest, BiasUserOfParameterNoOverwrite) {
   const char* hlo_text = R"(
 HloModule BiasTupleParameterOverwrite
 
 ENTRY AddDotsFunc {
   x = f32[2,2] parameter(0)
   y = f32[2,2] parameter(1)
-  param_2 = (f32[2,2], f32[3,3]) parameter(2)
-  bias = f32[2,2] get-tuple-element(param_2), index=0
+  p2 = f32[2,2] parameter(2)
+  bias = f32[2,2] negate(p2)
   dot_a = f32[2,2] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
   ROOT out = f32[2,2] add(dot_a, bias)
 }
@@ -259,13 +262,12 @@ ENTRY AddDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %AddDotsFunc ({{.*}}: f32[2,2], {{.*}}: f32[2,2], {{.*}}: (f32[2,2], f32[3,3])) -> f32[2,2] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,2], {{.*}}: f32[2,2], {{.*}}: f32[2,2]) -> f32[2,2] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,2]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[2,2]{1,0} parameter(1)
-; CHECK-DAG:     [[P2:%[^ ]+]] = (f32[2,2]{1,0}, f32[3,3]{1,0}) parameter(2)
-; CHECK-DAG:     [[BIAS:%[^ ]+]] = f32[2,2]{1,0} get-tuple-element([[P2]]), index=0
-; CHECK-DAG:     [[BIAS_COPY:%[^ ]+]] = f32[2,2]{1,0} copy([[BIAS]])
-; CHECK-NEXT:    [[GEMM:%[^ ]+]] = (f32[2,2]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[BIAS_COPY]]),
+; CHECK-DAG:     [[P2:%[^ ]+]] = f32[2,2]{1,0} parameter(2)
+; CHECK-DAG:     [[BIAS:%[^ ]+]] = f32[2,2]{1,0} fusion([[P2]])
+; CHECK:         [[GEMM:%[^ ]+]] = (f32[2,2]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[BIAS]]),
 ; CHECK:           custom_call_target="__cublas$gemm",
 ; CHECK:           output_to_operand_aliasing={
 ; CHECK-SAME:        {0}: (2, {})
@@ -308,7 +310,7 @@ ENTRY AddDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %AddDotsFunc ({{.*}}: f32[2,2], {{.*}}: f32[2,2], {{.*}}: f32[2,2]) -> f32[2,2] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,2], {{.*}}: f32[2,2], {{.*}}: f32[2,2]) -> f32[2,2] {
 ; CHECK-DAG:     [[X:%[^ ]+]] = f32[2,2]{1,0} parameter(0)
 ; CHECK-DAG:     [[Y:%[^ ]+]] = f32[2,2]{1,0} parameter(1)
 ; CHECK-DAG:     [[BIAS:%[^ ]+]] = f32[2,2]{1,0} parameter(2)
@@ -353,7 +355,7 @@ ENTRY AddDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %AddDotsFunc ({{.*}}: f32[1024,1024], {{.*}}: f32[1024,1024], {{.*}}: f32[1024,1024]) -> f32[1024,1024] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[1024,1024], {{.*}}: f32[1024,1024], {{.*}}: f32[1024,1024]) -> f32[1024,1024] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[1024,1024]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[1024,1024]{1,0} parameter(1)
 ; CHECK-NEXT:    [[GEMM:%[^ ]+]] = (f32[1024,1024]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
@@ -404,7 +406,7 @@ ENTRY BF16GemmWithBias {
 
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %BF16GemmWithBias ({{.*}}: bf16[8,8], {{.*}}: bf16[8,8], {{.*}}: bf16[8,8]) -> bf16[8,8] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: bf16[8,8], {{.*}}: bf16[8,8], {{.*}}: bf16[8,8]) -> bf16[8,8] {
 ; CHECK-DAG:    [[X:%[^ ]+]] = bf16[8,8]{1,0} parameter(0)
 ; CHECK-DAG:    [[Y:%[^ ]+]] = bf16[8,8]{1,0} parameter(1)
 ; CHECK:        [[GEMM:%[^ ]+]] = (bf16[8,8]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[X]], [[Y]], {{[^,)]+}}),
@@ -453,7 +455,7 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2,4]) -> f32[2,4] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2,4]) -> f32[2,4] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK:         [[GEMM:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], {{[^,)]+}}),
@@ -498,7 +500,7 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> f32[2,4] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> f32[2,4] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[2,3]{1,0} parameter(2)
@@ -785,7 +787,8 @@ ENTRY test {
 }
 
 // A test fixture class for tests which are specific to cublasLt
-class CublasLtGemmRewriteTest : public GemmRewriteTestBase {
+class CublasLtGemmRewriteTest
+    : public HloPjRtInterpreterReferenceMixin<GemmRewriteTestBase> {
  public:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GemmRewriteTestBase::GetDebugOptionsForTest();
@@ -822,7 +825,7 @@ ENTRY AddDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %AddDotsFunc ({{.*}}: f32[2,2], {{.*}}: f32[2,2], {{.*}}: f32[2,2]) -> f32[2,2] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,2], {{.*}}: f32[2,2], {{.*}}: f32[2,2]) -> f32[2,2] {
 ; CHECK-DAG:     [[X:%[^ ]+]] = f32[2,2]{1,0} parameter(0)
 ; CHECK-DAG:     [[Y:%[^ ]+]] = f32[2,2]{1,0} parameter(1)
 ; CHECK-DAG:     [[BIAS:%[^ ]+]] = f32[2,2]{1,0} parameter(2)
@@ -867,7 +870,7 @@ ENTRY AddDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %AddDotsFunc ({{.*}}: f32[2,2], {{.*}}: f32[2,2], {{.*}}: f32[2,2]) -> f32[2,2] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,2], {{.*}}: f32[2,2], {{.*}}: f32[2,2]) -> f32[2,2] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,2]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[2,2]{1,0} parameter(1)
 ; CHECK-DAG:     [[BIAS:%[^ ]+]] = f32[2,2]{1,0} parameter(2)
@@ -910,7 +913,7 @@ ENTRY AddDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %AddDotsFunc ({{.*}}: f32[1024,1024], {{.*}}: f32[1024,1024], {{.*}}: f32[1024,1024]) -> f32[1024,1024] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[1024,1024], {{.*}}: f32[1024,1024], {{.*}}: f32[1024,1024]) -> f32[1024,1024] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[1024,1024]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[1024,1024]{1,0} parameter(1)
 ; CHECK-DAG:     [[BIAS:%[^ ]+]] = f32[1024,1024]{1,0} parameter(2)
@@ -958,7 +961,7 @@ ENTRY BF16GemmWithBias {
 
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %BF16GemmWithBias ({{.*}}: bf16[8,8], {{.*}}: bf16[8,8], {{.*}}: bf16[8,8]) -> bf16[8,8] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: bf16[8,8], {{.*}}: bf16[8,8], {{.*}}: bf16[8,8]) -> bf16[8,8] {
 ; CHECK-DAG:    [[X:%[^ ]+]] = bf16[8,8]{1,0} parameter(0)
 ; CHECK-DAG:    [[Y:%[^ ]+]] = bf16[8,8]{1,0} parameter(1)
 ; CHECK-DAG:    [[BIAS:%[^ ]+]] = bf16[8,8]{1,0} parameter(2)
@@ -999,11 +1002,11 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2,4]) -> f32[2,4] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[2,4]{1,0} parameter(2)
-; CHECK-NEXT:    [[GEMM:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2,4]) -> f32[2,4] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f32[2,4]{1,0} parameter(2)
+; CHECK:         [[GEMM:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -1042,7 +1045,7 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> f32[2,4] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> f32[2,4] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[2,3]{1,0} parameter(2)
@@ -1106,11 +1109,11 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[4]) -> f32[2,4] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[4]) -> f32[2,4] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
+; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -1155,16 +1158,16 @@ ENTRY test {
                     R"(
 
 ; CHECK:        [[FUSED_COMPUTATION:%[^ ]+]] ([[DUMMY0:[^ ]+]]: f32[4,4], [[DUMMY1:[^ ]+]]: f32[4]) -> f32[4,4] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[4,4]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[4]{0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[4,4]{1,0} broadcast([[P1]]), dimensions={1}
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[4,4]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[4]{0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4,4]{1,0} broadcast([[P1]]), dimensions={1}
 ; CHECK-NEXT:    ROOT [[OUT:%[^ ]+]] = f32[4,4]{1,0} add([[P0]], [[P2]])
 }
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[4,4], {{.*}}: f32[4,4], {{.*}}: f32[4]) -> f32[4,4] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[4,4]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[4,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[MATMUL0_TUPLE:%[^ ]+]] = (f32[4,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[4,4], {{.*}}: f32[4,4], {{.*}}: f32[4]) -> f32[4,4] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[4,4]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[4,4]{1,0} parameter(1)
+; CHECK:         [[MATMUL0_TUPLE:%[^ ]+]] = (f32[4,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -1181,9 +1184,7 @@ ENTRY test {
 ; CHECK-DAG:         }
 ; CHECK-DAG:         "epilogue":"DEFAULT"
 ; CHECK:           }
-; CHECK-NEXT:    [[MATMUL0:%[^ ]+]] = f32[4,4]{1,0} get-tuple-element([[MATMUL0_TUPLE]]), index=0
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
-; CHECK-NEXT:    [[FUSION:%[^ ]+]] = f32[4,4]{1,0} fusion([[MATMUL0]], [[P2]]), kind=kLoop, calls=[[FUSED_COMPUTATION]]
+; CHECK:         [[MATMUL0:%[^ ]+]] = f32[4,4]{1,0} get-tuple-element([[MATMUL0_TUPLE]]), index=0
 ; CHECK:         [[MATMUL1_TUPLE:%[^ ]+]] = (f32[4,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[MATMUL0]]
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
@@ -1202,6 +1203,8 @@ ENTRY test {
 ; CHECK-DAG:         "epilogue":"DEFAULT"
 ; CHECK:           }
 ; CHECK-NEXT:    [[MATMUL1:%[^ ]+]] = f32[4,4]{1,0} get-tuple-element([[MATMUL1_TUPLE]]), index=0
+; CHECK:         [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
+; CHECK:         [[FUSION:%[^ ]+]] = f32[4,4]{1,0} fusion([[MATMUL0]], [[P2]]), kind=kLoop, calls=[[FUSED_COMPUTATION]]
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[4,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[FUSION]], [[MATMUL1]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
@@ -1241,7 +1244,7 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3,4], {{.*}}: f32[4,5,6], {{.*}}: f32[3,5,6]) -> f32[2,3,5,6] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3,4], {{.*}}: f32[4,5,6], {{.*}}: f32[3,5,6]) -> f32[2,3,5,6] {
 ; CHECK:         [[MATMUL_TUPLE:%[^ ]+]] = (f32[6,30]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           output_to_operand_aliasing={
@@ -1286,7 +1289,7 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3,4], {{.*}}: f32[4,5,6], {{.*}}: f32[6]) -> f32[2,3,5,6] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3,4], {{.*}}: f32[4,5,6], {{.*}}: f32[6]) -> f32[2,3,5,6] {
 ; CHECK:         [[MATMUL_TUPLE:%[^ ]+]] = (f32[6,30]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           output_to_operand_aliasing={
@@ -1331,11 +1334,11 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2]) -> f32[4,2] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[2]{0} parameter(2)
-; CHECK-NEXT:    [[MATMUL_TUPLE:%[^ ]+]] = (f32[2,4]{0,1}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2]) -> f32[4,2] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f32[2]{0} parameter(2)
+; CHECK:         [[MATMUL_TUPLE:%[^ ]+]] = (f32[2,4]{0,1}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -1377,11 +1380,11 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[4,3], {{.*}}: f32[3,4], {{.*}}: f32[3]) -> f32[2,3] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[4,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[3]{0} parameter(2)
-; CHECK-NEXT:    [[MATMUL:%[^ ]+]] = (f32[4,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[4,3], {{.*}}: f32[3,4], {{.*}}: f32[3]) -> f32[2,3] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[4,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f32[3]{0} parameter(2)
+; CHECK:         [[MATMUL:%[^ ]+]] = (f32[4,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -1427,11 +1430,11 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2]) -> f32[2,2] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2]) -> f32[2,2] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[2]{0} parameter(2)
-; CHECK-NEXT:    [[MATMUL0_TUPLE:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
+; CHECK:         [[MATMUL0_TUPLE:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -1504,10 +1507,10 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2_BCAST:%[^ ]+]] = f32[2,4]{1,0} parameter(3)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2_BCAST]]),
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK-DAG:     [[P2_BCAST:%[^ ]+]] = f32[2,4]{1,0} parameter(3)
+; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2_BCAST]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -1547,7 +1550,7 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[4], {{.*}}: f32[2,4]) -> f32[2,4] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[4], {{.*}}: f32[2,4]) -> f32[2,4] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[VECTOR_BIAS:%[^ ]+]] = f32[4]{0} parameter(2)
@@ -1597,11 +1600,11 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: bf16[16,24], {{.*}}: bf16[24,32], {{.*}}: bf16[32]) -> bf16[16,32] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = bf16[16,24]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = bf16[24,32]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = bf16[32]{0} parameter(2)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (bf16[16,32]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: bf16[16,24], {{.*}}: bf16[24,32], {{.*}}: bf16[32]) -> bf16[16,32] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = bf16[16,24]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = bf16[24,32]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = bf16[32]{0} parameter(2)
+; CHECK:         [[OUT:%[^ ]+]] = (bf16[16,32]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -1641,13 +1644,13 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
   if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4], {{.*}}: bf16[4]) -> bf16[2,4] {
+    ; CHECK-DAG: ENTRY %{{.*}} ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4], {{.*}}: bf16[4]) -> bf16[2,4] {
     ; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_6x0_5
     ; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_5x0_4
       )");
   } else {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4], {{.*}}: bf16[4]) -> bf16[2,4] {
+    ; CHECK-DAG: ENTRY %{{.*}} ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4], {{.*}}: bf16[4]) -> bf16[2,4] {
     ; CHECK-DAG:    bf16[2,3]{1,0}
     ; CHECK-DAG:    bf16[3,4]{1,0}
     )");
@@ -1673,10 +1676,10 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> f32[2,4] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> f32[2,4] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -1715,12 +1718,12 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3,4], {{.*}}: f32[4,5,6]) -> f32[2,3,5,6] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3,4]{2,1,0} parameter(0)
-; CHECK-NEXT:    [[P0_BITCAST:%[^ ]+]] = f32[6,4]{1,0} bitcast([[P0]])
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[4,5,6]{2,1,0} parameter(1)
-; CHECK-NEXT:    [[P1_BITCAST:%[^ ]+]] = f32[4,30]{1,0}
-; CHECK-NEXT:    [[MATMUL_TUPLE:%[^ ]+]] = (f32[6,30]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_BITCAST]], [[P1_BITCAST]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3,4], {{.*}}: f32[4,5,6]) -> f32[2,3,5,6] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3,4]{2,1,0} parameter(0)
+; CHECK-DAG:     [[P0_BITCAST:%[^ ]+]] = f32[6,4]{1,0} bitcast([[P0]])
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[4,5,6]{2,1,0} parameter(1)
+; CHECK-DAG:     [[P1_BITCAST:%[^ ]+]] = f32[4,30]{1,0} bitcast([[P1]])
+; CHECK:         [[MATMUL_TUPLE:%[^ ]+]] = (f32[6,30]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_BITCAST]], [[P1_BITCAST]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -1762,10 +1765,10 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> f32[2,2] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[MATMUL_TUPLE:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> f32[2,2] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK:         [[MATMUL_TUPLE:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -1808,11 +1811,11 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2,4]) -> f32[2,4] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[2,4]{1,0} parameter(2)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2,4]) -> f32[2,4] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f32[2,4]{1,0} parameter(2)
+; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -1853,11 +1856,11 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[4,4], {{.*}}: f32[4,4], {{.*}}: f32[4,4]) -> f32[4,4] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[4,4]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[4,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[4,4]{1,0} parameter(2)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[4,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[4,4], {{.*}}: f32[4,4], {{.*}}: f32[4,4]) -> f32[4,4] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[4,4]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[4,4]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4,4]{1,0} parameter(2)
+; CHECK:         [[OUT:%[^ ]+]] = (f32[4,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -1899,11 +1902,11 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[4]) -> f32[2,4] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[4]) -> f32[2,4] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
+; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -1945,7 +1948,7 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3,4], {{.*}}: f32[4,5,6], {{.*}}: f32[3,5,6]) -> f32[2,3,5,6] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3,4], {{.*}}: f32[4,5,6], {{.*}}: f32[3,5,6]) -> f32[2,3,5,6] {
 ; CHECK:         [[MATMUL_TUPLE:%[^ ]+]] = (f32[6,30]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
@@ -1991,11 +1994,11 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2]) -> f32[4,2] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[2]{0} parameter(2)
-; CHECK-NEXT:    [[MATMUL_TUPLE:%[^ ]+]] = (f32[2,4]{0,1}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[2]) -> f32[4,2] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f32[2]{0} parameter(2)
+; CHECK:         [[MATMUL_TUPLE:%[^ ]+]] = (f32[2,4]{0,1}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:       "alpha_real":1
@@ -2041,7 +2044,7 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[4], {{.*}}: f32[2,4]) -> f32[2,4] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[4], {{.*}}: f32[2,4]) -> f32[2,4] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
@@ -2099,10 +2102,10 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> f32[2,4] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> f32[2,4] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -2160,7 +2163,7 @@ ENTRY test {
 }
 
 TEST_F(CublasLtGemmRewriteTest, MatrixBiasSwishActivation) {
-  auto runtime_version = GetRuntimeVersion();
+  auto runtime_version = GetToolkitVersion();
   bool rocm_gelu_available =
       IsRocm() &&
       (runtime_version >= stream_executor::SemanticVersion(7, 0, 0));
@@ -2189,10 +2192,10 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> f32[2,4] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> f32[2,4] {
+; CHECK-DAG:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK:        [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -2212,8 +2215,64 @@ ENTRY test {
       )");
 }
 
+// Test Swish/SILU activation with bitcast - expects no-fusion when there are
+// additional users beyond the Swish pattern
+TEST_F(CublasLtGemmRewriteTest, SwishActivationWithBitcastAndAuxiliaryOutput) {
+  auto runtime_version = GetToolkitVersion();
+  bool rocm_swish_available =
+      IsRocm() &&
+      (runtime_version >= stream_executor::SemanticVersion(7, 0, 0));
+  if (!rocm_swish_available) {
+    GTEST_SKIP() << "Swish/SILU activation fusion only available on ROCm 7.0+";
+  }
+
+  const char* hlo_text = R"(
+HloModule test
+
+ENTRY test (x: bf16[49152,11008], y: bf16[11008,11008]) -> (bf16[12,4096,11008], bf16[49152,11008]) {
+  x = bf16[49152,11008]{1,0} parameter(0)
+  y = bf16[11008,11008]{1,0} parameter(1)
+  dot = bf16[49152,11008]{1,0} dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  bitcast = bf16[12,4096,11008]{2,1,0} bitcast(dot)
+
+  one = bf16[] constant(1)
+  one_bcast = bf16[12,4096,11008]{2,1,0} broadcast(one), dimensions={}
+  neg = bf16[12,4096,11008]{2,1,0} negate(bitcast)
+  exp = bf16[12,4096,11008]{2,1,0} exponential(neg)
+  add = bf16[12,4096,11008]{2,1,0} add(exp, one_bcast)
+  sigmoid = bf16[12,4096,11008]{2,1,0} divide(one_bcast, add)
+  swish = bf16[12,4096,11008]{2,1,0} multiply(bitcast, sigmoid)
+
+  extra_user = bf16[49152,11008]{1,0} negate(dot)
+
+  ROOT out = (bf16[12,4096,11008]{2,1,0}, bf16[49152,11008]{1,0}) tuple(swish, extra_user)
+}
+)";
+
+  HloModuleConfig config;
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  config.set_debug_options(debug_options);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
+
+  GemmRewriterOptions options;
+  options.enable_cublaslt = true;
+  GemmRewriter pass(Capability(), GetToolkitVersion(), options);
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
+  EXPECT_TRUE(changed);
+
+  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                          RunFileCheck(module->ToString(), R"(
+; CHECK:           [[GEMM_TUPLE:%[^ ]+]] = {{.*}} custom-call
+; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK-DAG:         "epilogue":"DEFAULT"
+      )"));
+  EXPECT_TRUE(filecheck_result);
+}
+
 TEST_F(CublasLtGemmRewriteTest, VectorBiasThenApproxGeluActivation) {
-  auto runtime_version = GetRuntimeVersion();
+  auto runtime_version = GetToolkitVersion();
   bool rocm_gelu_available =
       IsRocm() &&
       (runtime_version >= stream_executor::SemanticVersion(6, 0, 0));
@@ -2255,11 +2314,11 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[4]) -> f32[2,4] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[4]) -> f32[2,4] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
+; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -2316,10 +2375,10 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> (f32[2,4], f32[2,4]) {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> (f32[2,4], f32[2,4]) {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -2336,6 +2395,143 @@ ENTRY test {
 ; CHECK-DAG:         }
 ; CHECK-DAG:         "epilogue":"GELU_AUX"
 ; CHECK:           }
+      )");
+}
+
+TEST_F(CublasLtGemmRewriteTest,
+       ApproxGeluActivationWithAuxAndBitcastAndExtraBitcastUser) {
+  if (IsRocm()) {
+    GTEST_SKIP() << "TODO: Unsupported blas-lt epilogue on ROCM";
+  }
+  const char* hlo_text = R"(
+HloModule test
+
+ENTRY test {
+  x = f32[2,3] parameter(0)
+  y = f32[3,4] parameter(1)
+  dot = f32[2,4] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  bitcasted_dot = f32[8] bitcast(dot)
+  mul.0 = f32[8] multiply(bitcasted_dot, bitcasted_dot)
+  mul.1 = f32[8] multiply(bitcasted_dot, mul.0)
+  const.0 = f32[] constant(0.044715)
+  bcast.0 = f32[8] broadcast(const.0), dimensions={}
+  mul.2 = f32[8] multiply(mul.1, bcast.0)
+  add.0 = f32[8] add(bitcasted_dot, mul.2)
+  const.1 = f32[] constant(0.797884583)
+  bcast.1 = f32[8] broadcast(const.1), dimensions={}
+  mul.3 = f32[8] multiply(add.0, bcast.1)
+  tanh = f32[8] tanh(mul.3)
+  const.2 = f32[] constant(1)
+  bcast.2 = f32[8] broadcast(const.2), dimensions={}
+  add.2 = f32[8] add(tanh, bcast.2)
+  const.3 = f32[] constant(0.5)
+  bcast.3 = f32[8] broadcast(const.3), dimensions={}
+  mul.4 = f32[8] multiply(add.2, bcast.3)
+  mul.5 = f32[8] multiply(bitcasted_dot, mul.4)
+  ROOT out = (f32[8], f32[8]) tuple(mul.5, bitcasted_dot)
+}
+
+)";
+
+  GemmRewriterOptions options;
+  options.enable_cublaslt = true;
+  GemmRewriter pass(Capability(), GetToolkitVersion(), options);
+  RunAndFilecheckHloRewrite(hlo_text, std::move(pass),
+                            R"(
+
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> (f32[8], f32[8]) {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
+; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           backend_config={
+; CHECK-DAG:         "alpha_real":1
+; CHECK-DAG:         "alpha_imag":0
+; CHECK-DAG:         "beta":0
+; CHECK-DAG:         "dot_dimension_numbers":{
+; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "rhs_contracting_dimensions":["0"]
+; CHECK-DAG:           "lhs_batch_dimensions":[]
+; CHECK-DAG:           "rhs_batch_dimensions":[]
+; CHECK-DAG:         }
+; CHECK-DAG:         "precision_config":{
+; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
+; CHECK-DAG:         }
+; CHECK-DAG:         "epilogue":"GELU_AUX"
+; CHECK:           }
+; CHECK-DAG:     [[GELU_OUTPUT:%[^ ]+]] = f32[2,4]{1,0} get-tuple-element([[OUT]]), index=0
+; CHECK-DAG:     [[DOT_OUTPUT:%[^ ]+]] = f32[2,4]{1,0} get-tuple-element([[OUT]]), index=1
+; CHECK-DAG:     [[GELU_BITCAST:%[^ ]+]] = f32[8]{0} bitcast([[GELU_OUTPUT]])
+; CHECK-DAG:     [[DOT_BITCAST:%[^ ]+]] = f32[8]{0} bitcast([[DOT_OUTPUT]])
+; CHECK-DAG:     ROOT [[RESULT:%[^ ]+]] = (f32[8]{0}, f32[8]{0}) tuple([[GELU_BITCAST]], [[DOT_BITCAST]])
+      )");
+}
+
+TEST_F(CublasLtGemmRewriteTest,
+       ApproxGeluActivationWithAuxAndBitcastAndExtraDotUser) {
+  if (IsRocm()) {
+    GTEST_SKIP() << "TODO: Unsupported blas-lt epilogue on ROCM";
+  }
+  const char* hlo_text = R"(
+HloModule test
+
+ENTRY test {
+  x = f32[2,3] parameter(0)
+  y = f32[3,4] parameter(1)
+  dot = f32[2,4] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  bitcasted_dot = f32[8] bitcast(dot)
+  mul.0 = f32[8] multiply(bitcasted_dot, bitcasted_dot)
+  mul.1 = f32[8] multiply(bitcasted_dot, mul.0)
+  const.0 = f32[] constant(0.044715)
+  bcast.0 = f32[8] broadcast(const.0), dimensions={}
+  mul.2 = f32[8] multiply(mul.1, bcast.0)
+  add.0 = f32[8] add(bitcasted_dot, mul.2)
+  const.1 = f32[] constant(0.797884583)
+  bcast.1 = f32[8] broadcast(const.1), dimensions={}
+  mul.3 = f32[8] multiply(add.0, bcast.1)
+  tanh = f32[8] tanh(mul.3)
+  const.2 = f32[] constant(1)
+  bcast.2 = f32[8] broadcast(const.2), dimensions={}
+  add.2 = f32[8] add(tanh, bcast.2)
+  const.3 = f32[] constant(0.5)
+  bcast.3 = f32[8] broadcast(const.3), dimensions={}
+  mul.4 = f32[8] multiply(add.2, bcast.3)
+  mul.5 = f32[8] multiply(bitcasted_dot, mul.4)
+  ROOT out = (f32[8], f32[2,4]) tuple(mul.5, dot)
+}
+
+)";
+
+  GemmRewriterOptions options;
+  options.enable_cublaslt = true;
+  GemmRewriter pass(Capability(), GetToolkitVersion(), options);
+  RunAndFilecheckHloRewrite(hlo_text, std::move(pass),
+                            R"(
+
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> (f32[8], f32[2,4]) {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
+; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           backend_config={
+; CHECK-DAG:         "alpha_real":1
+; CHECK-DAG:         "alpha_imag":0
+; CHECK-DAG:         "beta":0
+; CHECK-DAG:         "dot_dimension_numbers":{
+; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "rhs_contracting_dimensions":["0"]
+; CHECK-DAG:           "lhs_batch_dimensions":[]
+; CHECK-DAG:           "rhs_batch_dimensions":[]
+; CHECK-DAG:         }
+; CHECK-DAG:         "precision_config":{
+; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
+; CHECK-DAG:         }
+; CHECK-DAG:         "epilogue":"GELU_AUX"
+; CHECK:           }
+; CHECK-DAG:     [[GELU_OUTPUT:%[^ ]+]] = f32[2,4]{1,0} get-tuple-element([[OUT]]), index=0
+; CHECK-DAG:     [[DOT_OUTPUT:%[^ ]+]] = f32[2,4]{1,0} get-tuple-element([[OUT]]), index=1
+; CHECK-DAG:     [[GELU_BITCAST:%[^ ]+]] = f32[8]{0} bitcast([[GELU_OUTPUT]])
+; CHECK-DAG:     ROOT [[RESULT:%[^ ]+]] = (f32[8]{0}, f32[2,4]{1,0}) tuple([[GELU_BITCAST]], [[DOT_OUTPUT]])
       )");
 }
 
@@ -2379,11 +2575,11 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[4]) -> (f32[2,4], f32[2,4]) {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[4]) -> (f32[2,4], f32[2,4]) {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
+; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -2438,13 +2634,13 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{5e-5, 1e-5}));
   if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4]) -> bf16[2,4] {
+    ; CHECK-DAG: ENTRY %{{.*}} ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4]) -> bf16[2,4] {
     ; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_6x0_5
     ; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_5x0_4
       )");
   } else {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4]) -> bf16[2,4] {
+    ; CHECK-DAG: ENTRY %{{.*}} ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4]) -> bf16[2,4] {
     ; CHECK-DAG:    bf16[2,3]{1,0}
     ; CHECK-DAG:    bf16[3,4]{1,0}
     )");
@@ -2520,11 +2716,11 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f16[8,16], {{.*}}: f16[16,8], {{.*}}: f16[8,8]) -> f16[8,8] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f16[8,16]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f16[16,8]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f16[8,8]{1,0} parameter(2)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f16[8,8]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f16[8,16], {{.*}}: f16[16,8], {{.*}}: f16[8,8]) -> f16[8,8] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f16[8,16]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f16[16,8]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f16[8,8]{1,0} parameter(2)
+; CHECK:         [[OUT:%[^ ]+]] = (f16[8,8]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -2624,13 +2820,13 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
   if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
+    ; CHECK-DAG: ENTRY %{{.*}} ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
     ; CHECK-DAG:    f16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
     ; CHECK-DAG:    f16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
   } else {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
+    ; CHECK-DAG: ENTRY %{{.*}} ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
     ; CHECK-DAG:    f16[6,12]{1,0}
     ; CHECK-DAG:    f16[12,6]{1,0}
     )");
@@ -2681,13 +2877,13 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6]) -> f16[6,6] {
+    ; CHECK-DAG: ENTRY %{{.*}} ({{.*}}: f16[6,12], {{.*}}: f16[12,6]) -> f16[6,6] {
     ; CHECK-DAG:    f16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
     ; CHECK-DAG:    f16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
   } else {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6]) -> f16[6,6] {
+    ; CHECK-DAG: ENTRY %{{.*}} ({{.*}}: f16[6,12], {{.*}}: f16[12,6]) -> f16[6,6] {
     ; CHECK-DAG:    f16[6,12]{1,0}
     ; CHECK-DAG:    f16[12,6]{1,0}
     )");
@@ -2715,11 +2911,11 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f16[8,16], {{.*}}: f16[16,8], {{.*}}: f16[8,8]) -> f16[8,8] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f16[8,16]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f16[16,8]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f16[8,8]{1,0} parameter(2)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f16[8,8]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f16[8,16], {{.*}}: f16[16,8], {{.*}}: f16[8,8]) -> f16[8,8] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f16[8,16]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f16[16,8]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f16[8,8]{1,0} parameter(2)
+; CHECK:         [[OUT:%[^ ]+]] = (f16[8,8]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -2789,13 +2985,13 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
   if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
+    ; CHECK-DAG: ENTRY %{{.*}} ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
     ; CHECK-DAG:   f16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
     ; CHECK-DAG:   f16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
   } else {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
+    ; CHECK-DAG: ENTRY %{{.*}} ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
     ; CHECK-DAG:   f16[6,12]{1,0}
     ; CHECK-DAG:   f16[12,6]{1,0}
     )");
@@ -2828,7 +3024,7 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: bf16[8,16], {{.*}}: bf16[16,8], {{.*}}: bf16[8,8]) -> bf16[8,8] {
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: bf16[8,16], {{.*}}: bf16[16,8], {{.*}}: bf16[8,8]) -> bf16[8,8] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = bf16[8,16]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = bf16[16,8]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = bf16[8,8]{1,0} parameter(2)
@@ -2939,13 +3135,13 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
   if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG:  ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
+    ; CHECK-DAG:  ENTRY %{{.*}} ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
     ; CHECK-DAG:    bf16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
     ; CHECK-DAG:    bf16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
   } else {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG:  ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
+    ; CHECK-DAG:  ENTRY %{{.*}} ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
     ; CHECK-DAG:    bf16[6,12]{1,0}
     ; CHECK-DAG:    bf16[12,6]{1,0}
     )");
@@ -3003,13 +3199,13 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6]) -> bf16[6,6] {
+    ; CHECK-DAG: ENTRY %{{.*}} ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6]) -> bf16[6,6] {
     ; CHECK-DAG:     bf16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
     ; CHECK-DAG:     bf16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
   } else {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6]) -> bf16[6,6] {
+    ; CHECK-DAG: ENTRY %{{.*}} ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6]) -> bf16[6,6] {
     ; CHECK-DAG:     bf16[6,12]{1,0}
     ; CHECK-DAG:     bf16[12,6]{1,0}
     )");
@@ -3074,13 +3270,13 @@ ENTRY test {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
   if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
+    ; CHECK-DAG: ENTRY %{{.*}} ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
     ; CHECK-DAG:     bf16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
     ; CHECK-DAG:     bf16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
   } else {
     MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
+    ; CHECK-DAG: ENTRY %{{.*}} ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
     ; CHECK-DAG:     bf16[6,12]{1,0}
     ; CHECK-DAG:     bf16[12,6]{1,0}
     )");
@@ -3112,11 +3308,11 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f64[2,3], {{.*}}: f64[3,4], {{.*}}: f64[4]) -> f64[2,4] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f64[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f64[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f64[4]{0} parameter(2)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f64[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f64[2,3], {{.*}}: f64[3,4], {{.*}}: f64[4]) -> f64[2,4] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f64[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f64[3,4]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f64[4]{0} parameter(2)
+; CHECK:         [[OUT:%[^ ]+]] = (f64[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -3161,11 +3357,11 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[4]) -> f32[2,4] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4], {{.*}}: f32[4]) -> f32[2,4] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
+; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
+; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":3
@@ -3484,7 +3680,7 @@ TEST_F(CublasLtGemmRewriteTest, CublasLtRewriteWithBias) {
   const char* hlo_text = R"(
 HloModule test
 
-ENTRY %test (x: f32[2,3,4], y: f32[4,5,7], z: f32[7]) -> f32[2,3,5,7] {
+ENTRY test (x: f32[2,3,4], y: f32[4,5,7], z: f32[7]) -> f32[2,3,5,7] {
   %x = f32[2,3,4]{2,1,0} parameter(0)
   %bitcast = f32[6,4]{1,0} bitcast(%x)
   %y = f32[4,5,7]{2,1,0} parameter(1)
@@ -3516,6 +3712,673 @@ ENTRY %test (x: f32[2,3,4], y: f32[4,5,7], z: f32[7]) -> f32[2,3,5,7] {
 ; CHECK-DAG:         "epilogue":"DEFAULT"
       )"));
   EXPECT_TRUE(filecheck_result);
+}
+
+using GemmRewriteTest = GemmRewriteTestBase;
+
+class GroupedGemmRewriteTest
+    : public HloPjRtInterpreterReferenceMixin<GemmRewriteTestBase> {
+ public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options = GemmRewriteTest::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_experimental_use_ragged_dot_grouped_gemm(true);
+    debug_options.set_xla_gpu_enable_cublaslt(true);
+    // Disable autotuning by default for grouped GEMM tests
+    debug_options.set_xla_gpu_autotune_level(0);
+    return debug_options;
+  }
+
+ protected:
+  void SetUp() override {
+    if (SkipGroupedGemmTest()) {
+      GTEST_SKIP()
+          << "Grouped GEMM is only supported on ROCm with hipBLASLt on "
+             "gfx942 or gfx950";
+    }
+  }
+};
+
+TEST_F(GroupedGemmRewriteTest, CustomCallTargetGroupedGemm) {
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[64,9]{1,0} parameter(0)
+    p1 = f16[2,9,8]{2,1,0} parameter(1)
+    p2 = s32[2] constant({16, 48})
+    ROOT ragged-dot = f16[64,8]{1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_group_dimensions":["0"]}}})");
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-4, 1e-5}));
+}
+
+TEST_F(GroupedGemmRewriteTest, CustomCallTargetGroupedGemmLargeGroupCount600) {
+  // Test with 600 groups (> 256) to test single batch processing in grid-stride
+  // loop Sum of group sizes: 600 * 4 = 2400 (matches p0 first dim)
+  const char* hlo_text = R"(
+HloModule GroupedGemmLarge600
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[2400,9]{1,0} parameter(0)
+    p1 = f16[600,9,8]{2,1,0} parameter(1)
+    scalar = s32[] constant(4)
+    p2 = s32[600] broadcast(scalar), dimensions={}
+    ROOT ragged-dot = f16[2400,8]{1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)";
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-2, 1e-2}));
+}
+
+TEST_F(GroupedGemmRewriteTest, CustomCallTargetGroupedGemmMulipleGroups) {
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[64,9]{1,0} parameter(0)
+    p1 = f16[4,9,8]{2,1,0} parameter(1)
+    p2 = s64[4] constant({16, 8, 24, 16})
+    ROOT ragged-dot = f16[64,8]{1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_group_dimensions":["0"]}}})");
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-4, 1e-5}));
+}
+
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmMulipleGroupsOutputColumnMajor) {
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[64,9]{1,0} parameter(0)
+    p1 = f16[4,9,8]{2,1,0} parameter(1)
+    p2 = s64[4] constant({16, 8, 24, 16})
+    ROOT ragged-dot = f16[64,8]{0,1} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_group_dimensions":["0"]}}})");
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-4, 1e-5}));
+}
+
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmNonContractingWithBatchDim) {
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[3,16,9]{2,1,0} parameter(0)
+    p1 = f16[3,2,9,8]{3,2,1,0} parameter(1)
+    p2 = s64[3, 2] constant({{4, 12}, {4, 12}, {4, 12}})
+    ROOT ragged-dot = f16[3,16,8]{2,1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={2}, rhs_contracting_dims={2},
+                      lhs_batch_dims={0}, rhs_batch_dims={0},
+                      lhs_ragged_dims={1}, rhs_group_dims={1}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["2"],"lhs_batch_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_batch_dimensions":["0"]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["2"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["2"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_batch_dimensions":["0"]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_group_dimensions":["1"]}}})");
+  // Enable autotuning for RunAndCompare
+  DebugOptions debug_options_with_autotune = GetDebugOptionsForTest();
+  debug_options_with_autotune.set_xla_gpu_autotune_level(4);
+  HloModuleConfig config;
+  config.set_debug_options(debug_options_with_autotune);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
+  EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{1e-4, 1e-5}));
+}
+
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmRaggedDimInContractingDim) {
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[64,9]{1,0} parameter(0)
+    p1 = f16[9,8]{1,0} parameter(1)
+    p2 = s64[2] constant({4, 5})
+    ROOT ragged-dot = f16[2,64,8]{2,1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={1}, rhs_contracting_dims={0},
+                      lhs_ragged_dims={1}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["0"],"lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["0"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_group_dimensions":[]}}})");
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-4, 1e-5}));
+}
+
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmRaggedDimInContractingDimMultipleGroups) {
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[64,16]{1,0} parameter(0)
+    p1 = f16[16,8]{1,0} parameter(1)
+    p2 = s64[4] constant({4, 5, 3, 4})
+    ROOT ragged-dot = f16[4,64,8]{2,1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={1}, rhs_contracting_dims={0},
+                      lhs_ragged_dims={1}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["0"],"lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["0"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_group_dimensions":[]}}})");
+  // Enable autotuning for RunAndCompare
+  DebugOptions debug_options_with_autotune = GetDebugOptionsForTest();
+  debug_options_with_autotune.set_xla_gpu_autotune_level(4);
+  HloModuleConfig config;
+  config.set_debug_options(debug_options_with_autotune);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
+  EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{1e-4, 1e-5}));
+}
+
+TEST_F(
+    GroupedGemmRewriteTest,
+    CustomCallTargetGroupedGemmRaggedDimInContractingDimMultipleGroupsOutputColumnMajor) {  // NOLINT
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[64,16]{1,0} parameter(0)
+    p1 = f16[16,8]{1,0} parameter(1)
+    p2 = s64[4] constant({4, 5, 3, 4})
+    ROOT ragged-dot = f16[4,64,8]{1,2,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={1}, rhs_contracting_dims={0},
+                      lhs_ragged_dims={1}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["0"],"lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["0"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_group_dimensions":[]}}})");
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-4, 1e-5}));
+}
+
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmRaggedDimInContractingDimLargeGroupCount600) {
+  // Test with 600 groups (> 256) for RaggedDimInContractingDim
+  // Sum of group sizes: 600 * 4 = 2400 (matches p1 first dim for contracting)
+  const char* hlo_text = R"(
+HloModule GroupedGemmRaggedContractingLarge600
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[64,2400]{1,0} parameter(0)
+    p1 = f16[2400,8]{1,0} parameter(1)
+    scalar = s64[] constant(4)
+    p2 = s64[600] broadcast(scalar), dimensions={}
+    ROOT ragged-dot = f16[600,64,8]{2,1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={1}, rhs_contracting_dims={0},
+                      lhs_ragged_dims={1}
+}
+)";
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-2, 1e-2}));
+}
+
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmRaggedDimInContractingDimWithBatchDim) {
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[3,64,9]{2,1,0} parameter(0)
+    p1 = f16[3,9,8]{2,1,0} parameter(1)
+    p2 = s64[3,2] constant({{4, 5}, {4, 5}, {4, 5}})
+    ROOT ragged-dot = f16[2,3,64,8]{3,2,1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={2}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={2}, lhs_batch_dims={0}, rhs_batch_dims={0}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_batch_dimensions":["0"]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["2"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_batch_dimensions":["0"]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["2"],
+                    ; CHECK-SAME: "rhs_group_dimensions":[]}}})");
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-4, 1e-5}));
+}
+
+TEST_F(GroupedGemmRewriteTest, CustomCallTargetGroupedGemmRaggedDimInBatchDim) {
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[5,16,9]{2,1,0} parameter(0)
+    p1 = f16[5,9,8]{2,1,0} parameter(1)
+    p2 = s64[2] constant({3, 2})
+    ROOT ragged-dot = f16[5,16,8]{2,1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={2}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={0}, lhs_batch_dims={0}, rhs_batch_dims={0}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_batch_dimensions":["0"]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["2"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_batch_dimensions":["0"]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_group_dimensions":[]}}})");
+  // Enable autotuning for RunAndCompare
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
+}
+
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmRaggedDimInBatchDimMultipleGroups) {
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[16,64,9]{2,1,0} parameter(0)
+    p1 = f16[16,9,8]{2,1,0} parameter(1)
+    p2 = s64[4] constant({4, 2, 6, 4})
+    ROOT ragged-dot = f16[16,64,8]{2,1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={2}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={0}, lhs_batch_dims={0}, rhs_batch_dims={0}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_batch_dimensions":["0"]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["2"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_batch_dimensions":["0"]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_group_dimensions":[]}}})");
+  // Enable autotuning for RunAndCompare
+  DebugOptions debug_options_with_autotune = GetDebugOptionsForTest();
+  debug_options_with_autotune.set_xla_gpu_autotune_level(4);
+  HloModuleConfig config;
+  config.set_debug_options(debug_options_with_autotune);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
+  EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{1e-4, 1e-5}));
+}
+
+TEST_F(
+    GroupedGemmRewriteTest,
+    CustomCallTargetGroupedGemmRaggedDimInBatchDimMultipleGroupsOutputColumnMajor) {  // NOLINT
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[16,64,9]{2,1,0} parameter(0)
+    p1 = f16[16,9,8]{2,1,0} parameter(1)
+    p2 = s64[4] constant({4, 2, 6, 4})
+    ROOT ragged-dot = f16[16,64,8]{1,2,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={2}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={0}, lhs_batch_dims={0}, rhs_batch_dims={0}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_batch_dimensions":["0"]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["2"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_batch_dimensions":["0"]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_group_dimensions":[]}}})");
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-4, 1e-5}));
+}
+
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmRaggedDimInBatchDimLargeGroupCount600) {
+  // Test with 600 groups (> 256) for RaggedDimInBatchDim
+  // Sum of group sizes: 600 * 4 = 2400 (matches p0 first dim for batch)
+  const char* hlo_text = R"(
+HloModule GroupedGemmRaggedBatchLarge600
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[2400,64,9]{2,1,0} parameter(0)
+    p1 = f16[2400,9,8]{2,1,0} parameter(1)
+    scalar = s64[] constant(4)
+    p2 = s64[600] broadcast(scalar), dimensions={}
+    ROOT ragged-dot = f16[2400,64,8]{2,1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={2}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={0}, lhs_batch_dims={0}, rhs_batch_dims={0}
+}
+)";
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-2, 1e-2}));
+}
+
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmRaggedInNonContractingGroupDimNoOuterDim) {
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[128,64]{1,0} parameter(0)
+    p1 = f16[8,64,32]{2,0,1} parameter(1)
+    p2 = s32[8] constant({16, 16, 16, 16, 16, 16, 16, 16})
+    ROOT ragged-dot = f16[128,32]{1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_group_dimensions":["0"]}}})");
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
+}
+
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmRaggedInContractingGroupDimNoOuterDim) {
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[64,1024]{1,0} parameter(0)
+    p1 = f16[1024,256]{1,0} parameter(1)
+    p2 = s32[8] constant({128, 128, 128, 128, 128, 128, 128, 128})
+    ROOT ragged-dot = f16[8,64,256]{2,0,1} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={1}, rhs_contracting_dims={0},
+                      lhs_ragged_dims={1}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["0"],"lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["0"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_group_dimensions":[]}}})");
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-2, 1e-2}));
+}
+
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmRaggedInContractingTranspose) {
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[1024,64]{1,0} parameter(0)
+    p1 = f16[1024,256]{1,0} parameter(1)
+    p2 = s32[8] constant({128, 128, 128, 128, 128, 128, 128, 128})
+    ROOT ragged-dot = f16[8,64,256]{2,0,1} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={0}, rhs_contracting_dims={0},
+                      lhs_ragged_dims={0}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["0"],"lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["0"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_group_dimensions":[]}}})");
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-2, 1e-2}));
+}
+
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmRaggedNonContractingTranspose) {
+  if (IsRocm()) {
+    const auto* rocm_cc = Capability().rocm_compute_capability();
+    if (rocm_cc && rocm_cc->gfx_version() == "gfx950") {
+      GTEST_SKIP()
+          << "Ragged non-contracting transpose not supported on gfx950";
+    }
+  }
+  const char* hlo_text = R"(
+HloModule GroupedGemm
+
+ENTRY AddRaggedDotsFunc {
+    p0 = f16[9,64]{1,0} parameter(0)
+    p1 = f16[4,9,8]{2,1,0} parameter(1)
+    p2 = s64[4] constant({16, 8, 24, 16})
+    ROOT ragged-dot = f16[64,8]{1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={0}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={1}, rhs_group_dims={0}
+}
+)";
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK-SAME: backend_config={"operation_queue_id":"0",
+                    ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
+                    ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
+                    ; CHECK-SAME: "grouped_gemm_backend_config":{
+                    ; CHECK-SAME: "gemm_backend_config":{
+                    ; CHECK-SAME: "dot_dimension_numbers":{"lhs_contracting_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},"alpha_imag":0,"epilogue":"DEFAULT",
+                    ; CHECK-SAME: "grad_x":false,"grad_y":false,
+                    ; CHECK-SAME: "damax_output":false,"autotune_workspace_size":"{{[0-9]+}}",
+                    ; CHECK-SAME: "ragged_dot_dimension_numbers":{"dot_dimension_numbers":{
+                    ; CHECK-SAME: "lhs_contracting_dimensions":["0"],
+                    ; CHECK-SAME: "rhs_contracting_dimensions":["1"],
+                    ; CHECK-SAME: "lhs_batch_dimensions":[],
+                    ; CHECK-SAME: "rhs_batch_dimensions":[]},
+                    ; CHECK-SAME: "lhs_ragged_dimensions":["1"],
+                    ; CHECK-SAME: "rhs_group_dimensions":["0"]}}})");
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-4, 1e-5}));
 }
 
 }  // namespace

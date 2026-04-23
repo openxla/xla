@@ -2269,6 +2269,65 @@ TEST_F(HloDataflowAnalysisTest, AllGatherStartAndDoneWithTuple) {
               UnorderedElementsAre(&analysis.GetValueDefinedAt(start, {1, 1})));
 }
 
+TEST_F(HloDataflowAnalysisTest, OptimizePhiInNonSingletonValueSets) {
+  // We have an identity while loop (i.e. just passes its parameter through),
+  // that creates a phi value.
+  // We then call a subcomputation with the while value and a constant.
+  // The subcomputation therefore has a ValueSet with {phi, constant}.
+  // The phi value should be optimized to the while's input (a constant).
+  // The parameter ValueSet should then contain {constant1, constant2}.
+  // Note that if when optimizing phi values, we skip non-singleton ValueSets,
+  // then the phi value won't be optimized, and we'll try to return a dangling
+  // pointer to the phi value.
+  const char* kModule = R"(
+    HloModule OptimizePhiInNonSingletonValueSets
+
+    subcomp {
+      sub_param = f32[] parameter(0)
+      ROOT negate = f32[] negate(sub_param)
+    }
+
+    body {
+      ROOT body_param = f32[] parameter(0)
+    }
+
+    condition {
+      cond_param = f32[] parameter(0)
+      ROOT cond_root = pred[] constant(false)
+    }
+
+    ENTRY entry {
+      constant1 = f32[] constant(1.0)
+      constant2 = f32[] constant(2.0)
+      while = f32[] while(constant1), condition=condition, body=body
+      call1 = f32[] call(while), to_apply=subcomp
+      call2 = f32[] call(constant2), to_apply=subcomp
+      ROOT tuple = (f32[], f32[]) tuple(call1, call2)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModule));
+
+  // We must not run FlattenCallGraph, otherwise the calls are inlined/cloned
+  // and the parameter won't have two values in its ValueSet. So we call
+  // HloDataflowAnalysis::Run directly.
+  // Note that we can have more complex cases where we still have this situation
+  // after FlattenCallGraph, for example, when calling subcomp from ENTRY as
+  // above, and also from another computation, like another while body.
+  TF_ASSERT_OK_AND_ASSIGN(auto analysis_ptr,
+                          HloDataflowAnalysis::Run(*module, /*ssa_form=*/true));
+  const HloDataflowAnalysis& analysis = *analysis_ptr;
+
+  const HloInstruction* sub_param = FindInstruction(module.get(), "sub_param");
+  const HloInstruction* constant1 = FindInstruction(module.get(), "constant1");
+  const HloInstruction* constant2 = FindInstruction(module.get(), "constant2");
+
+  const HloValueSet& param_set = analysis.GetValueSet(sub_param);
+  const HloValue& val1 = analysis.GetValueDefinedAt(constant1);
+  const HloValue& val2 = analysis.GetValueDefinedAt(constant2);
+
+  EXPECT_THAT(param_set.values(), UnorderedElementsAre(&val1, &val2));
+}
+
 INSTANTIATE_TEST_SUITE_P(HloDataflowAnalysisInstantiation,
                          HloDataflowAnalysisTest,
                          ::testing::Values(false, true));
@@ -3650,6 +3709,30 @@ TEST_F(GetInPlaceInputOutputPairsTest, nvshmem_ar) {
   auto in_place_pairs = alias_info_.GetInPlaceInputOutputPairs(ar_start);
   std::vector<std::pair<HloOperandIndex, ShapeIndex>> expected_pairs;
   // For nvshmem allreduce, we expect no aliasing for input and output buffers
+  // therefore empty inplace pairs.
+  EXPECT_EQ(in_place_pairs, expected_pairs);
+}
+
+TEST_F(GetInPlaceInputOutputPairsTest, CombinedCollectivePermute) {
+  const char* kModule = R"(
+    HloModule test_cp
+    ENTRY test {
+      p0 = f32[2,128]{1,0} parameter(0)
+      p1 = f32[2,128]{1,0} parameter(1)
+      p2 = f32[2,128]{1,0} parameter(2)
+      p3 = f32[2,128]{1,0} parameter(3)
+      collective-permute-start.0 = ((f32[2,128]{1,0}, f32[2,128]{1,0}, f32[2,128]{1,0}, f32[2,128]{1,0}), (f32[2,128]{1,0}, f32[2,128]{1,0}, f32[2,128]{1,0}, f32[2,128]{1,0})) collective-permute-start(p0, p1, p2, p3), channel_id=0, source_target_pairs={{0,2},{2,4},{1,3},{3,5}}, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"collective_backend_config":{"is_sync":false,"is_pipelined":false,"backend":"DEFAULT"},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+      ROOT collective-permute-done.0 = (f32[2,128]{1,0}, f32[2,128]{1,0}, f32[2,128]{1,0}, f32[2,128]{1,0}) collective-permute-done(collective-permute-start.0)
+ 
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModule));
+  const HloInstruction* ar_start =
+      module->entry_computation()->root_instruction()->operand(0);
+
+  auto in_place_pairs = alias_info_.GetInPlaceInputOutputPairs(ar_start);
+  std::vector<std::pair<HloOperandIndex, ShapeIndex>> expected_pairs;
+  // We expect no aliasing for input and output buffers
   // therefore empty inplace pairs.
   EXPECT_EQ(in_place_pairs, expected_pairs);
 }

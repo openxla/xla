@@ -293,6 +293,9 @@ class Ffi {
   // Creates an empty binding for the initialize stage.
   static Binding<ExecutionStage::kInitialize> BindInitialize();
 
+  // Creates an empty binding for the execute stage.
+  static Binding<ExecutionStage::kExecute> BindExecute();
+
   // Automatic FFI binding that does binding specification inference from the
   // `fn` type signature and binds `fn` to it. This enables a more concise FFI
   // handler registration with fully automatic type inference at the cost of
@@ -766,6 +769,10 @@ inline Binding<ExecutionStage::kPrepare> Ffi::BindPrepare() {
 
 inline Binding<ExecutionStage::kInitialize> Ffi::BindInitialize() {
   return Bind<ExecutionStage::kInitialize>();
+}
+
+inline Binding<ExecutionStage::kExecute> Ffi::BindExecute() {
+  return Bind<ExecutionStage::kExecute>();
 }
 
 //===----------------------------------------------------------------------===//
@@ -1610,13 +1617,14 @@ struct FnArgType<internal::CtxTag<T>> {
 template <typename ResultEncoding, typename = void>
 struct IsStateConstructor : std::false_type {};
 
-// Check if the ResultEncoding has a static `state_type_id()` method returning
-// the XLA_FFI_TypeId.
+// Check if the ResultEncoding has a static `state_type_id(const XLA_FFI_Api*)`
+// method returning the XLA_FFI_TypeId.
 template <typename ResultEncoding>
 struct IsStateConstructor<
     ResultEncoding,
     std::enable_if_t<std::is_same_v<XLA_FFI_TypeId,
-                                    decltype(ResultEncoding::state_type_id())>>>
+                                    decltype(ResultEncoding::state_type_id(
+                                        std::declval<const XLA_FFI_Api*>()))>>>
     : std::true_type {};
 
 template <typename ResultEncoding>
@@ -1837,12 +1845,12 @@ class Handler : public Ffi {
     // type id in the metadata.
     using ResultEncoding = ResultEncoding<stage, ResultType>;
     if constexpr (internal::is_state_constructor_v<ResultEncoding>) {
-      if (ResultEncoding::state_type_id() == XLA_FFI_UNKNOWN_TYPE_ID) {
+      if (ResultEncoding::state_type_id(api) == XLA_FFI_UNKNOWN_TYPE_ID) {
         return FailedPrecondition(api,
                                   "Types used by FFI handlers must be "
                                   "registered before the handler registration");
       }
-      extension->metadata->state_type_id = ResultEncoding::state_type_id();
+      extension->metadata->state_type_id = ResultEncoding::state_type_id(api);
     } else {
       extension->metadata->state_type_id = XLA_FFI_UNKNOWN_TYPE_ID;
     }
