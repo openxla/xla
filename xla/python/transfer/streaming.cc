@@ -372,7 +372,7 @@ void PullTable::AwaitPull(uint64_t uuid, tsl::RCReference<Entry> entry,
                           std::optional<absl::Time> timeout) {
   FetchList local_fetches;
   {
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     auto it = paused_fetches_.find(uuid);
     if (it != paused_fetches_.end()) {
       local_fetches.splice(local_fetches.end(), it->second);
@@ -411,7 +411,7 @@ void PullTable::Handle(tsl::RCReference<ConnectionState> state,
   tsl::RCReference<Entry> entry;
   EntryWithTimeout* entry_ptr = nullptr;
   {
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     auto it = entries_.find(req.uuid());
     if (it == entries_.end()) {
       auto& list = paused_fetches_[req.uuid()];
@@ -431,7 +431,7 @@ void PullTable::Handle(tsl::RCReference<ConnectionState> state,
     entry = entry_ptr->entry;
   }
   if (entry->Handle(std::move(state), req, base_req_id)) {
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     auto it = entries_.find(req.uuid());
     if (it != entries_.end() && it->second->entry == entry) {
       if (it->second->timeout.has_value()) {
@@ -446,7 +446,7 @@ void PullTable::DropExpiredPulls(absl::Time t) {
   std::vector<std::unique_ptr<EntryWithTimeout>> expired_entries;
   FetchList expired_fetches;
   {
-    absl::MutexLock l(&mu_);
+    absl::MutexLock l(mu_);
     while (!entry_heap_.empty()) {
       auto* top = entry_heap_.front();
       if (top->timeout.value() < t) {
