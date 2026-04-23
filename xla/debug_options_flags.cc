@@ -2672,6 +2672,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Limit for the number of kernel configurations (plans) to use during "
       "autotuning of cuDNN GEMM fusions."));
 
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_cudnn_deviceless_compilation",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_cudnn_deviceless_compilation),
+      debug_options->xla_gpu_enable_cudnn_deviceless_compilation(),
+      "Enable cuDNN deviceless compilation."));
+
   flag_list->push_back(tsl::Flag("xla_gpu_enable_triton_gemm_int4",
                                  noop_flag_setter<bool>, true,
                                  "[Deprecated, do not use]"));

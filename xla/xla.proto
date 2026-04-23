@@ -591,6 +591,9 @@ message DebugOptions {
   // but potentially higher the performance.
   optional int32 xla_gpu_cudnn_gemm_max_plans = 318;
 
+  // Enable cuDNN deviceless compilation.
+  optional bool xla_gpu_enable_cudnn_deviceless_compilation = 503;
+
   // Allows using the dot precision algorithm `ALG_DOT_BF16_BF16_F32 for f32 dot
   // ops by default. This is expected to improve performance at the expense of
   // numerical accuracy.

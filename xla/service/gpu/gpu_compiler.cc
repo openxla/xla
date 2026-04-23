@@ -2859,10 +2859,13 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
                                     debug_opts, platform_id_));
 
   BinaryMap dnn_compiled_graphs;
-  se::dnn::DnnSupport* dnn = stream_exec ? stream_exec->AsDnn() : nullptr;
-  RETURN_IF_ERROR(RunCudnnCompilerPasses(
-      module.get(), dnn, gpu_topology.gpu_target_config().device_description,
-      &dnn_compiled_graphs));
+  if (stream_exec || debug_opts.xla_gpu_enable_cudnn_deviceless_compilation()) {
+    se::dnn::DnnSupport* dnn = stream_exec ? stream_exec->AsDnn() : nullptr;
+    RETURN_IF_ERROR(RunCudnnCompilerPasses(
+        module.get(), dnn, gpu_topology.gpu_target_config().device_description,
+        &dnn_compiled_graphs));
+
+  }
 
   if (DumpingEnabledForHloModule(*module)) {
     std::string textproto;
