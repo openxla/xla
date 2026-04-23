@@ -105,7 +105,8 @@ absl::StatusOr<std::vector<RepeatedFlagModifier>> ParseRepeatedEnumModifiers(
 namespace {
 
 template <typename T>
-static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list, T value) {
+static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list,
+                                   T value) {
   for (auto it = list->begin(); it != list->end(); ++it) {
     if (*it == value) {
       return it;
@@ -276,6 +277,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_all_gather_combine_by_dim(false);
   opts.set_xla_gpu_collective_permute_mode(
       DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
+  opts.set_xla_gpu_all_gather_mode(DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
   opts.set_xla_gpu_enable_reduce_scatter_combine_by_dim(false);
   opts.set_xla_gpu_enable_approx_costly_collectives(false);
 
@@ -2516,6 +2518,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 std::string("private"),
                 "Memory mode for collective-permute: private, symmetric, peer. "
                 "See CollectivesMode for details."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_all_gather_mode",
+      collectives_mode_setter_for(&DebugOptions::set_xla_gpu_all_gather_mode),
+      std::string("private"),
+      "Memory mode for all-gather: private, symmetric, peer. "
+      "See CollectivesMode for details."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_use_inprocess_lld",
                 bool_setter_for(&DebugOptions::set_xla_gpu_use_inprocess_lld),
