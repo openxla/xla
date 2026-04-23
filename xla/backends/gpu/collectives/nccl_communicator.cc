@@ -77,7 +77,7 @@ CUstream AsCudaStream(se::Stream* stream) {
 }
 
 se::Stream* ToStream(const Communicator::Executor& executor) {
-  return tsl::down_cast<const GpuCollectives::Executor&>(executor).stream();
+  return absl::down_cast<const GpuCollectives::Executor&>(executor).stream();
 }
 
 }  // namespace
@@ -748,7 +748,7 @@ absl::Status NcclCommunicator::LaunchPut(se::DeviceAddressBase send_buffer,
   }
   se::Stream* stream = ToStream(executor);
 
-  auto& peer_win = tsl::down_cast<NcclSymmetricMemory&>(*recv_buffer);
+  auto& peer_win = absl::down_cast<NcclSymmetricMemory&>(*recv_buffer);
 
   VLOG(3) << absl::StreamFormat(
       "[%d] Launch NCCL Put operation; send_buffer=%p; peer_win=%v; "
@@ -781,7 +781,7 @@ absl::Status NcclCommunicator::LaunchSignal(RankId peer,
   }
   se::Stream* stream = ToStream(executor);
 
-  const auto& nccl_desc = tsl::down_cast<const GpuSignalDesc&>(signal_desc);
+  const auto& nccl_desc = absl::down_cast<const GpuSignalDesc&>(signal_desc);
 
   VLOG(3) << absl::StreamFormat(
       "[%d] Launch NCCL Signal operation; peer=%d; sig_idx=%d; ctx=%d; "
@@ -814,7 +814,7 @@ absl::Status NcclCommunicator::LaunchWaitSignal(RankId peer, int op_cnt,
   }
   se::Stream* stream = ToStream(executor);
 
-  const auto& nccl_desc = tsl::down_cast<const GpuSignalDesc&>(signal_desc);
+  const auto& nccl_desc = absl::down_cast<const GpuSignalDesc&>(signal_desc);
 
   VLOG(3) << absl::StreamFormat(
       "[%d] Launch NCCL WaitSignal operation; peer=%d; op_cnt=%d; "
