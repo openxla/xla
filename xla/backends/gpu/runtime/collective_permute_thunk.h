@@ -89,7 +89,7 @@ class CollectivePermuteThunk : public CollectiveThunk {
   }
 
   static absl::StatusOr<std::unique_ptr<CollectivePermuteThunk>> FromProto(
-      ThunkInfo thunk_info, const CollectivePermuteStartThunkProto& thunk_proto,
+      ThunkInfo thunk_info, const CollectivePermuteThunkProto& thunk_proto,
       absl::Span<const BufferAllocation> buffer_allocations);
 
   absl::StatusOr<ThunkProto> ToProto() const override;

@@ -70,7 +70,7 @@ class AllToAllThunk : public CollectiveThunk {
       const HloAllToAllInstruction* instr);
 
   static absl::StatusOr<std::unique_ptr<AllToAllThunk>> FromProto(
-      ThunkInfo thunk_info, const AllToAllStartThunkProto& thunk_proto,
+      ThunkInfo thunk_info, const AllToAllThunkProto& thunk_proto,
       absl::Span<const BufferAllocation> buffer_allocations);
 
   absl::StatusOr<ThunkProto> ToProto() const override;

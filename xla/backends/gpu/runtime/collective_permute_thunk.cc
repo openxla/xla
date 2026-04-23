@@ -241,7 +241,7 @@ absl::Status CollectivePermuteThunk::InitializeCollective(
 
 absl::StatusOr<std::unique_ptr<CollectivePermuteThunk>>
 CollectivePermuteThunk::FromProto(
-    ThunkInfo thunk_info, const CollectivePermuteStartThunkProto& thunk_proto,
+    ThunkInfo thunk_info, const CollectivePermuteThunkProto& thunk_proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   std::vector<CollectiveThunk::Buffer> buffers;
   buffers.reserve(thunk_proto.buffers_size());
@@ -273,8 +273,8 @@ absl::StatusOr<ThunkProto> CollectivePermuteThunk::ToProto() const {
   ThunkProto proto;
   *proto.mutable_thunk_info() = thunk_info().ToProto();
 
-  CollectivePermuteStartThunkProto* thunk_proto =
-      proto.mutable_collective_permute_start_thunk();
+  CollectivePermuteThunkProto* thunk_proto =
+      proto.mutable_collective_permute_thunk();
 
   for (const Buffer& buffer : buffers()) {
     ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());

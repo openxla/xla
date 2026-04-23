@@ -71,7 +71,7 @@ CollectiveBroadcastThunk::CollectiveBroadcastThunk(
 
 absl::StatusOr<std::unique_ptr<CollectiveBroadcastThunk>>
 CollectiveBroadcastThunk::FromProto(
-    ThunkInfo thunk_info, const CollectiveBroadcastStartThunkProto& thunk_proto,
+    ThunkInfo thunk_info, const CollectiveBroadcastThunkProto& thunk_proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   CollectiveConfig config =
       CollectiveConfig::FromProto(thunk_proto.collective_config());
@@ -93,8 +93,8 @@ absl::StatusOr<ThunkProto> CollectiveBroadcastThunk::ToProto() const {
   ThunkProto proto;
   *proto.mutable_thunk_info() = thunk_info().ToProto();
 
-  CollectiveBroadcastStartThunkProto* thunk_proto =
-      proto.mutable_collective_broadcast_start_thunk();
+  CollectiveBroadcastThunkProto* thunk_proto =
+      proto.mutable_collective_broadcast_thunk();
 
   for (const Buffer& buffer : buffers()) {
     ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());

@@ -176,7 +176,7 @@ class RaggedAllToAllThunk : public CollectiveThunk {
   bool IsOneShotKernelSupported() const;
 
   static absl::StatusOr<std::unique_ptr<RaggedAllToAllThunk>> FromProto(
-      ThunkInfo thunk_info, const RaggedAllToAllStartThunkProto& thunk_proto,
+      ThunkInfo thunk_info, const RaggedAllToAllThunkProto& thunk_proto,
       absl::Span<const BufferAllocation> buffer_allocations);
 
   absl::StatusOr<ThunkProto> ToProto() const override;

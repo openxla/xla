@@ -60,8 +60,7 @@ class CollectiveBroadcastThunk : public CollectiveThunk {
                            std::vector<Buffer> buffers);
 
   static absl::StatusOr<std::unique_ptr<CollectiveBroadcastThunk>> FromProto(
-      ThunkInfo thunk_info,
-      const CollectiveBroadcastStartThunkProto& thunk_proto,
+      ThunkInfo thunk_info, const CollectiveBroadcastThunkProto& thunk_proto,
       absl::Span<const BufferAllocation> buffer_allocations);
 
   absl::StatusOr<ThunkProto> ToProto() const override;

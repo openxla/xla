@@ -271,7 +271,7 @@ bool AllToAllThunk::is_local(int device_count) const {
 }
 
 absl::StatusOr<std::unique_ptr<AllToAllThunk>> AllToAllThunk::FromProto(
-    ThunkInfo thunk_info, const AllToAllStartThunkProto& thunk_proto,
+    ThunkInfo thunk_info, const AllToAllThunkProto& thunk_proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   std::vector<CollectiveThunk::Buffer> buffers;
   buffers.reserve(thunk_proto.buffers_size());
@@ -295,7 +295,7 @@ absl::StatusOr<ThunkProto> AllToAllThunk::ToProto() const {
   ThunkProto proto;
   *proto.mutable_thunk_info() = thunk_info().ToProto();
 
-  AllToAllStartThunkProto* thunk_proto = proto.mutable_all_to_all_start_thunk();
+  AllToAllThunkProto* thunk_proto = proto.mutable_all_to_all_thunk();
 
   for (const Buffer& buffer : buffers()) {
     ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());

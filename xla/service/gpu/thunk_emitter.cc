@@ -315,10 +315,9 @@ ThunkSequence FlattenThunkSequence(std::vector<ThunkSequence>&& sequences) {
 
 }  // namespace
 
-ThunkEmitter::ThunkEmitter(
-    IrEmitterContext* absl_nonnull ir_emitter_context,
-    llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
-        llvm_options_lock)
+ThunkEmitter::ThunkEmitter(IrEmitterContext* absl_nonnull ir_emitter_context,
+                           llvm_ir::LLVMCommandLineOptionsReleasableLock*
+                               absl_nonnull llvm_options_lock)
     : ir_emitter_context_(ir_emitter_context),
       send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
       nvshmem_buffer_addresses_(std::make_shared<NvshmemBufferAddresses>()),
@@ -1835,7 +1834,7 @@ AsyncThunkSequence ThunkEmitter::EmitCollectiveGroupStartThunk(
   auto group_thunk = std::make_unique<CollectiveGroupThunk>(
       Thunk::ThunkInfo::WithProfileAnnotation(
           instr, ir_emitter_context_->GetNextThunkId()),
-      Thunk::Kind::kGroupStart, std::move(thunks));
+      Thunk::Kind::kGroup, std::move(thunks));
 
   // For synchronous collectives, emit group thunk directly without async
   // wrapping.

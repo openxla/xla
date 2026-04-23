@@ -200,7 +200,7 @@ absl::Status AllReduceThunk::RunCollective(const ExecuteParams& params,
 }
 
 absl::StatusOr<std::unique_ptr<AllReduceThunk>> AllReduceThunk::FromProto(
-    ThunkInfo thunk_info, const AllReduceStartThunkProto& thunk_proto,
+    ThunkInfo thunk_info, const AllReduceThunkProto& thunk_proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   std::vector<CollectiveThunk::Buffer> buffers;
   buffers.reserve(thunk_proto.buffers_size());
@@ -238,8 +238,7 @@ absl::StatusOr<ThunkProto> AllReduceThunk::ToProto() const {
   ThunkProto proto;
   *proto.mutable_thunk_info() = thunk_info().ToProto();
 
-  AllReduceStartThunkProto* thunk_proto =
-      proto.mutable_all_reduce_start_thunk();
+  AllReduceThunkProto* thunk_proto = proto.mutable_all_reduce_thunk();
 
   for (const Buffer& buffer : buffers()) {
     ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());

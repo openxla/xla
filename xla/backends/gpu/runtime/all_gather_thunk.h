@@ -59,7 +59,7 @@ class AllGatherThunk : public CollectiveThunk {
   const CollectiveConfig& config() const override { return config_.config; }
 
   static absl::StatusOr<std::unique_ptr<AllGatherThunk>> FromProto(
-      ThunkInfo thunk_info, const AllGatherStartThunkProto& thunk_proto,
+      ThunkInfo thunk_info, const AllGatherThunkProto& thunk_proto,
       absl::Span<const BufferAllocation> buffer_allocations);
 
   absl::StatusOr<ThunkProto> ToProto() const override;

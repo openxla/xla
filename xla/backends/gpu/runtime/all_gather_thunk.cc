@@ -98,7 +98,7 @@ AllGatherThunk::AllGatherThunk(ThunkInfo thunk_info, CollectiveConfig config,
 }
 
 absl::StatusOr<std::unique_ptr<AllGatherThunk>> AllGatherThunk::FromProto(
-    ThunkInfo thunk_info, const AllGatherStartThunkProto& thunk_proto,
+    ThunkInfo thunk_info, const AllGatherThunkProto& thunk_proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   std::vector<CollectiveThunk::Buffer> buffers;
   buffers.reserve(thunk_proto.buffers_size());
@@ -119,8 +119,7 @@ absl::StatusOr<ThunkProto> AllGatherThunk::ToProto() const {
   ThunkProto proto;
   *proto.mutable_thunk_info() = thunk_info().ToProto();
 
-  AllGatherStartThunkProto* thunk_proto =
-      proto.mutable_all_gather_start_thunk();
+  AllGatherThunkProto* thunk_proto = proto.mutable_all_gather_thunk();
 
   for (const Buffer& buffer : buffers()) {
     ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());

@@ -90,7 +90,7 @@ class AllReduceThunk : public AllReduceReduceScatterThunkBase {
   absl::Status Initialize(const InitializeParams& params) override;
 
   static absl::StatusOr<std::unique_ptr<AllReduceThunk>> FromProto(
-      ThunkInfo thunk_info, const AllReduceStartThunkProto& thunk_proto,
+      ThunkInfo thunk_info, const AllReduceThunkProto& thunk_proto,
       absl::Span<const BufferAllocation> buffer_allocations);
 
   absl::StatusOr<ThunkProto> ToProto() const override;
