@@ -193,53 +193,6 @@ static absl::StatusOr<const se::CommandBuffer::Command*> Handle(
 }
 
 //===----------------------------------------------------------------------===//
-// ChildCmd
-//===----------------------------------------------------------------------===//
-
-ChildCmd::ChildCmd(CommandExecutor child_commands)
-    : Command(CommandType::kChildCmd),
-      child_commands_(std::move(child_commands)) {}
-
-absl::Status ChildCmd::Initialize(const Thunk::InitializeParams& params) {
-  TF_RETURN_IF_ERROR(child_commands_.Initialize(params));
-  return absl::OkStatus();
-}
-
-absl::StatusOr<const se::CommandBuffer::Command*> ChildCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  VLOG(5) << "Record ChildCmd " << child_commands_.size() << " commands";
-
-  auto record_fn = [&](se::CommandBuffer* command_buffer) {
-    return child_commands_
-        .RecordCreate(execute_params, record_params, command_buffer,
-                      /*dependencies=*/{})
-        .status();
-  };
-
-  auto update_fn = [&](se::CommandBuffer* command_buffer) {
-    return child_commands_.RecordUpdate(execute_params, record_params,
-                                        command_buffer);
-  };
-
-  return Handle(
-      std::move(record_action),
-      [&](absl::Span<const se::CommandBuffer::Command* const> dependencies) {
-        return command_buffer->CreateChildCommand(record_fn, dependencies);
-      },
-      [&](const se::CommandBuffer::Command* command) {
-        return command_buffer->UpdateChildCommand(command, update_fn);
-      });
-}
-
-absl::Status ChildCmd::WalkNested(
-    absl::FunctionRef<absl::Status(Thunk*)> callback) {
-  return child_commands_.Walk(
-      [&](Command* cmd) -> absl::Status { return callback(cmd); });
-}
-
-//===----------------------------------------------------------------------===//
 // CaseCmd
 //===----------------------------------------------------------------------===//
 
