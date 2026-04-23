@@ -1762,6 +1762,7 @@ cc_library(
         "//xla/hlo/transforms:host_offloader",
         "//xla/hlo/transforms:host_offloading_prepare",
         "//xla/hlo/transforms:operand_upcaster",
+        "//xla/hlo/transforms:propagate_call_metadata",
         "//xla/hlo/transforms:while_loop_trip_count_annotator",
         "//xla/hlo/transforms/collectives:all_gather_broadcast_reorder",
         "//xla/hlo/transforms/collectives:all_gather_combiner",
