@@ -720,8 +720,7 @@ TEST(PjRtClientTest, ClearPeakMemory) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetClient());
   PjRtDevice* device = client->addressable_devices()[0];
 
-  if (device->GetAllocatorStats().status().code() ==
-      absl::StatusCode::kUnimplemented) {
+  if (absl::IsUnimplemented(device->GetAllocatorStats().status())) {
     GTEST_SKIP() << "Allocator stats not supported on this platform.";
   }
 
