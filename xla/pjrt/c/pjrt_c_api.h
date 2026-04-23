@@ -111,7 +111,7 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Extension_Base, next);
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 104
+#define PJRT_API_MINOR 105
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -2427,6 +2427,24 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Buffer_CopyRawToHost_Args, event);
 typedef PJRT_Error* PJRT_Buffer_CopyRawToHost(
     PJRT_Buffer_CopyRawToHost_Args* args);
 
+struct PJRT_Buffer_CopyRawFromHost_Args {
+  size_t struct_size;
+  PJRT_Extension_Base* extension_start;
+  PJRT_Buffer* buffer;
+  const void* src;
+  int64_t offset;
+  int64_t transfer_size;
+  PJRT_Event* event;  // out
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Buffer_CopyRawFromHost_Args, event);
+
+// Asynchronously copies data from a host buffer into the device buffer.
+// `src` must point to at least `transfer_size` bytes of host memory.
+// `offset` is the byte offset into the device buffer.
+// `offset + transfer_size` must be <= the on-device size of the buffer.
+typedef PJRT_Error* PJRT_Buffer_CopyRawFromHost(
+    PJRT_Buffer_CopyRawFromHost_Args* args);
+
 struct PJRT_Buffer_CopyRawToHostFuture_Callback_Args {
   size_t struct_size;
 
@@ -3065,11 +3083,12 @@ typedef struct PJRT_Api {
   _PJRT_API_STRUCT_FIELD(PJRT_Error_ForEachPayload);
   _PJRT_API_STRUCT_FIELD(PJRT_TopologyDescription_Fingerprint);
   _PJRT_API_STRUCT_FIELD(PJRT_Executable_ParameterMemoryKinds);
+  _PJRT_API_STRUCT_FIELD(PJRT_Buffer_CopyRawFromHost);
 } PJRT_Api;
 
 enum {
   PJRT_Api_STRUCT_SIZE =
-      PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Executable_ParameterMemoryKinds)
+      PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Buffer_CopyRawFromHost)
 };
 
 #undef _PJRT_API_STRUCT_FIELD

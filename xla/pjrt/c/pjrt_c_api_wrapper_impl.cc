@@ -2713,6 +2713,17 @@ PJRT_Error* PJRT_Buffer_CopyRawToHost(PJRT_Buffer_CopyRawToHost_Args* args) {
   return nullptr;
 }
 
+PJRT_Error* PJRT_Buffer_CopyRawFromHost(
+    PJRT_Buffer_CopyRawFromHost_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Buffer_CopyRawFromHost_Args",
+      PJRT_Buffer_CopyRawFromHost_Args_STRUCT_SIZE, args->struct_size));
+  xla::Future<> future = args->buffer->buffer->CopyRawFromHost(
+      args->src, args->offset, args->transfer_size);
+  args->event = new PJRT_Event{std::move(future)};
+  return nullptr;
+}
+
 PJRT_Error* PJRT_Buffer_CopyRawToHostFuture(
     PJRT_Buffer_CopyRawToHostFuture_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
@@ -3836,6 +3847,8 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
       pjrt::PJRT_TopologyDescription_Fingerprint,
       /*PJRT_Executable_ParameterMemoryKinds=*/
       pjrt::PJRT_Executable_ParameterMemoryKinds,
+      /*PJRT_Buffer_CopyRawFromHost=*/
+      pjrt::PJRT_Buffer_CopyRawFromHost,
   };
 }
 

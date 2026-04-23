@@ -1221,6 +1221,19 @@ class PjRtBuffer {
   virtual Future<> CopyRawToHost(void* dst, int64_t offset,
                                  int64_t transfer_size) = 0;
 
+  // Transfers a sub-range of host data into the on-device representation of
+  // the buffer. offset+transfer_size must be less than
+  // GetOnDeviceSizeInBytes. The returned future transitions to ready on error,
+  // or after the transfer has completed.
+  //
+  // The caller must ensure `src` remains valid until the returned future
+  // becomes ready.
+  virtual Future<> CopyRawFromHost(const void* src, int64_t offset,
+                                   int64_t transfer_size) {
+    return Future<>(absl::UnimplementedError(
+        "CopyRawFromHost not implemented for this backend"));
+  }
+
   // As above, but the transfer will not happen until `dst` is fulfilled with a
   // valid pointer. If `dst` is fulfilled with a non-Ok status, then the
   // transfer will be cancelled. The implementation must ensure that the

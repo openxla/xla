@@ -737,6 +737,83 @@ TEST_F(PjrtCApiBufferTest, OpaqueDeviceMemoryDataPointer) {
   EXPECT_NE(args.device_memory_ptr, nullptr);
 }
 
+TEST_F(PjrtCApiBufferTest, CopyRawRoundTrip) {
+  const std::vector<float> src_data = {1.0f, 2.0f, 3.0f, 4.0f};
+  const int64_t transfer_size =
+      static_cast<int64_t>(src_data.size() * sizeof(float));
+
+  xla::Shape shape = xla::ShapeUtil::MakeShape(xla::F32, {4});
+  auto buffer = create_uninitialized_buffer(shape);
+  ASSERT_NE(buffer, nullptr);
+  PJRT_Buffer_CopyRawFromHost_Args from_args;
+  from_args.struct_size = PJRT_Buffer_CopyRawFromHost_Args_STRUCT_SIZE;
+  from_args.extension_start = nullptr;
+  from_args.buffer = buffer.get();
+  from_args.src = src_data.data();
+  from_args.offset = 0;
+  from_args.transfer_size = transfer_size;
+  from_args.event = nullptr;
+
+  PJRT_Error* from_error = api_->PJRT_Buffer_CopyRawFromHost(&from_args);
+  ASSERT_EQ(from_error, nullptr);
+  ASSERT_NE(from_args.event, nullptr);
+
+  {
+    PJRT_Event_Await_Args await_args;
+    await_args.struct_size = PJRT_Event_Await_Args_STRUCT_SIZE;
+    await_args.extension_start = nullptr;
+    await_args.event = from_args.event;
+    PJRT_Error* await_error = api_->PJRT_Event_Await(&await_args);
+    ASSERT_EQ(await_error, nullptr);
+  }
+  {
+    PJRT_Event_Destroy_Args destroy_args;
+    destroy_args.struct_size = PJRT_Event_Destroy_Args_STRUCT_SIZE;
+    destroy_args.extension_start = nullptr;
+    destroy_args.event = from_args.event;
+    ASSERT_EQ(api_->PJRT_Event_Destroy(&destroy_args), nullptr);
+  }
+
+  std::vector<float> dst_data(src_data.size(), 0.0f);
+
+  PJRT_Buffer_CopyRawToHost_Args to_args;
+  to_args.struct_size = PJRT_Buffer_CopyRawToHost_Args_STRUCT_SIZE;
+  to_args.extension_start = nullptr;
+  to_args.buffer = buffer.get();
+  to_args.dst = dst_data.data();
+  to_args.offset = 0;
+  to_args.transfer_size = transfer_size;
+  to_args.event = nullptr;
+
+  PJRT_Error* to_error = api_->PJRT_Buffer_CopyRawToHost(&to_args);
+  ASSERT_EQ(to_error, nullptr);
+  ASSERT_NE(to_args.event, nullptr);
+
+  // Wait for the device→host transfer to complete.
+  {
+    PJRT_Event_Await_Args await_args;
+    await_args.struct_size = PJRT_Event_Await_Args_STRUCT_SIZE;
+    await_args.extension_start = nullptr;
+    await_args.event = to_args.event;
+    PJRT_Error* await_error = api_->PJRT_Event_Await(&await_args);
+    ASSERT_EQ(await_error, nullptr);
+  }
+  {
+    PJRT_Event_Destroy_Args destroy_args;
+    destroy_args.struct_size = PJRT_Event_Destroy_Args_STRUCT_SIZE;
+    destroy_args.extension_start = nullptr;
+    destroy_args.event = to_args.event;
+    ASSERT_EQ(api_->PJRT_Event_Destroy(&destroy_args), nullptr);
+  }
+
+  ASSERT_EQ(dst_data.size(), src_data.size());
+  for (size_t i = 0; i < src_data.size(); ++i) {
+    EXPECT_EQ(dst_data[i], src_data[i])
+        << "Mismatch at index " << i << ": expected " << src_data[i] << " got "
+        << dst_data[i];
+  }
+}
+
 // --------------------------------- Helpers -----------------------------------
 
 class PjrtCommonCApiHelpersTest : public PjrtCApiTest {};
@@ -992,6 +1069,9 @@ FieldOffsetsAndSizesForVersion(int major_version, int minor_version) {
     }
     if (minor_version >= 102) {
       add_field("PJRT_Executable_ParameterMemoryKinds", kFnPtrSize);
+    }
+    if (minor_version >= 104) {
+      add_field("PJRT_Buffer_CopyRawFromHost", kFnPtrSize);
     }
     return version_offsets_and_sizes;
   }
@@ -1439,6 +1519,9 @@ TEST_F(PjrtCAbiTestBase, FieldOffsetsAndSizes) {
           {"PJRT_Executable_ParameterMemoryKinds",
            {offsetof(PJRT_Api, PJRT_Executable_ParameterMemoryKinds),
             sizeof(PJRT_Api::PJRT_Executable_ParameterMemoryKinds)}},
+          {"PJRT_Buffer_CopyRawFromHost",
+           {offsetof(PJRT_Api, PJRT_Buffer_CopyRawFromHost),
+            sizeof(PJRT_Api::PJRT_Buffer_CopyRawFromHost)}},
       };
   ASSERT_EQ(api_->pjrt_api_version.major_version, PJRT_API_MAJOR);
   ASSERT_EQ(api_->pjrt_api_version.minor_version, PJRT_API_MINOR);

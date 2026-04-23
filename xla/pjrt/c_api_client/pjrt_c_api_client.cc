@@ -3742,6 +3742,27 @@ Future<> PjRtCApiBuffer::CopyRawToHost(void* dst, int64_t offset,
   return pjrt::ConvertCEventToCppFuture(args.event, api);
 }
 
+Future<> PjRtCApiBuffer::CopyRawFromHost(const void* src, int64_t offset,
+                                         int64_t transfer_size) {
+  if (pjrt_c_api()->pjrt_api_version.major_version == 0 &&
+      pjrt_c_api()->pjrt_api_version.minor_version < 104) {
+    return Future<>(absl::UnimplementedError(
+        "PJRT_Buffer_CopyRawFromHost requires PJRT C API version 0.104 or "
+        "higher."));
+  }
+  PJRT_Buffer_CopyRawFromHost_Args args;
+  args.struct_size = PJRT_Buffer_CopyRawFromHost_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.buffer = buffer_.get();
+  args.src = src;
+  args.offset = offset;
+  args.transfer_size = transfer_size;
+  const PJRT_Api* api = pjrt_c_api();
+  RETURN_FUTURE_IF_ERROR(api->PJRT_Buffer_CopyRawFromHost(&args), api);
+  CHECK(args.event != nullptr);
+  return pjrt::ConvertCEventToCppFuture(args.event, api);
+}
+
 Future<> PjRtCApiBuffer::CopyRawToHostFuture(Future<void*> dst, int64_t offset,
                                              int64_t transfer_size) {
   if (pjrt_c_api()->pjrt_api_version.major_version == 0 &&

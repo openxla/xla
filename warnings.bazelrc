@@ -5,10 +5,12 @@
 
 # Treat warnings as errors...
 build:warnings --copt=-Werror --host_copt=-Werror
+build:warnings --host_copt=-Wno-deprecated-declarations
 # ...and silence them outside of the workspace.
 build:warnings --per_file_copt=external/.*@-w
-# ...and silence them on host builds.
+# ...and silence them on host builds outside the workspace.
 build:warnings --host_per_file_copt=external/.*@-w
+build:warnings --host_per_file_copt=xla/tsl/.*@-w
 
 build:warnings --copt=-Wall
 build:warnings --copt=-Werror

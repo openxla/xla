@@ -624,6 +624,9 @@ class PjRtCApiBuffer : public PjRtBuffer {
   Future<> CopyRawToHost(void* dst, int64_t offset,
                          int64_t transfer_size) override;
 
+  Future<> CopyRawFromHost(const void* src, int64_t offset,
+                           int64_t transfer_size) override;
+
   Future<> CopyRawToHostFuture(Future<void*> dst, int64_t offset,
                                int64_t transfer_size) override;
 

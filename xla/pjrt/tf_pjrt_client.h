@@ -91,6 +91,10 @@ class TfPjRtBuffer : public PjRtBuffer {
                          int64_t transfer_size) override {
     return wrapped_->CopyRawToHost(dst, offset, transfer_size);
   }
+  Future<> CopyRawFromHost(const void* src, int64_t offset,
+                           int64_t transfer_size) override {
+    return wrapped_->CopyRawFromHost(src, offset, transfer_size);
+  }
   void Delete() override { wrapped_->Delete(); }
   absl::StatusOr<std::unique_ptr<ExternalReference>>
   ReleaseDeviceMemoryOwnership(bool wait_for_operations_to_complete) override {

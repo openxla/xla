@@ -2163,6 +2163,80 @@ Future<> CommonPjRtBufferImpl::CopyRawToHost(void* dst, int64_t offset,
   return CopyRawToHostFuture(Future<void*>(dst), offset, transfer_size);
 }
 
+Future<> CommonPjRtBufferImpl::CopyRawFromHost(const void* src, int64_t offset,
+                                               int64_t transfer_size) {
+  auto buf_client = tensorflow::down_cast<CommonPjRtClient*>(client());
+  tsl::RCReference<CommonPjRtRawBuffer> raw_buffer;
+  std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events;
+  tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise;
+  PjRtDeviceEventRef usage_event;
+  auto hold_status = AcquireScopedRawBuffer(
+      [&](tsl::RCReference<CommonPjRtRawBuffer> buf_raw_buffer,
+          std::vector<tsl::RCReference<tsl::AsyncValue>> buf_definition_events)
+          -> absl::StatusOr<PjRtDeviceEventRef> {
+        definition_events = std::move(buf_definition_events);
+        if (buf_raw_buffer) {
+          auto on_device_size = buf_raw_buffer->GetOnDeviceSizeInBytes();
+          if (offset < 0 || offset > on_device_size ||
+              on_device_size - offset < transfer_size) {
+            return InvalidArgument(
+                "CopyRawFromHost called on buffer size %lld with "
+                "invalid offset %lld, transfer size %lld",
+                on_device_size, offset, transfer_size);
+          }
+          raw_buffer = std::move(buf_raw_buffer);
+        }
+        TF_ASSIGN_OR_RETURN(
+            std::tie(usage_event_promise, usage_event),
+            buf_client->CreateLinkedEventPromise(memory_space(), [&]() {
+              const auto& current_anno = tsl::profiler::
+                  ScopedMemoryDebugAnnotation::CurrentAnnotation();
+              std::string op_name =
+                  !current_anno.pending_op_name.empty()
+                      ? absl::StrCat(" Op:", current_anno.pending_op_name)
+                      : "";
+              return absl::StrCat("CopyRawFromHost offset:", offset,
+                                  " size:", transfer_size, op_name);
+            }));
+        return usage_event;
+      },
+      "CopyRawFromHost()");
+  if (!hold_status.ok()) {
+    return Future<>(std::move(hold_status));
+  }
+
+  if (buf_client->event_tracking_enabled()) {
+    buf_client->AddEventDependencies(
+        memory_space(), usage_event_promise->async_value(), definition_events);
+  }
+
+  absl::Span<const tsl::RCReference<tsl::AsyncValue>> definition_events_ref =
+      definition_events;
+  buf_client->async_work_runner()->ExecuteWhenReady(
+      definition_events_ref,
+      [src, transfer_size, offset, raw_buffer = std::move(raw_buffer),
+       definition_events = std::move(definition_events),
+       usage_event_promise = std::move(usage_event_promise)]() mutable {
+        for (const auto& av : definition_events) {
+          if (auto* error = av->GetErrorIfPresent()) {
+            usage_event_promise->SetError(*error);
+            return;
+          }
+        }
+        auto h2d_event = raw_buffer->CopyRawHostToDeviceAndReturnEvent(
+            src, offset, transfer_size);
+        if (!h2d_event.ok()) {
+          usage_event_promise->SetError(h2d_event.status());
+        } else {
+          usage_event_promise->Set(*h2d_event);
+        }
+      });
+  return buf_client->MakeTrackedReadyFuture(usage_event.async_value(),
+                                            memory_space(),
+                                            "CommonPjRtBuffer",
+                                            "CopyRawFromHost");
+}
+
 Future<> CommonPjRtBufferImpl::CopyRawToHostFuture(Future<void*> dst,
                                                    int64_t offset,
                                                    int64_t transfer_size) {

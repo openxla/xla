@@ -1,5 +1,12 @@
 # PJRT C API changelog
 
+## 0.105
+
+* Add `PJRT_Buffer_CopyRawFromHost` for asynchronous raw data transfer from a
+  host buffer into a device buffer. The API mirrors `PJRT_Buffer_CopyRawToHost`:
+  callers supply a source pointer, byte offset, and transfer size; an event is
+  returned that becomes ready when the transfer completes.
+
 ## 0.104
 
 * Added `total_allocation_bytes`, `indefinite_allocations` and `peak_unpadded_heap_bytes` to GetCompiledMemoryStats
