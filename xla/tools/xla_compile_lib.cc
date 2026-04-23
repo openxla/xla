@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -68,6 +69,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
+#include "xla/tools/hlo_control_flow_flattening.h"
 #include "xla/tools/hlo_module_loader.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
@@ -493,6 +495,22 @@ absl::Status XlaCompileMain(const XlaCompileOptions& options) {
     hlo_module->mutable_config()
         .mutable_debug_options()
         .set_xla_pjrt_allow_auto_layout_in_hlo(true);
+  }
+
+  if (options.remove_infeed_outfeed) {
+    HloPassPipeline pipeline("control-flow-flattening-pipeline");
+    pipeline.AddPass<HloControlFlowFlattening>(
+        HloControlFlowFlattening::Options{/*while_execution_count=*/0,
+                                          /*max_outer_loop_count=*/0,
+                                          /*max_loop_count=*/0,
+                                          /*remove_infeed_outfeed=*/true,
+                                          /*flatten_while_loop=*/false,
+                                          /*remove_comm=*/false,
+                                          /*remove_host_transfer=*/true,
+                                          /*remove_id=*/false,
+                                          /*flatten_conditional=*/false,
+                                          /*conditional_value=*/false});
+    TF_RETURN_IF_ERROR(pipeline.Run(hlo_module.get()).status());
   }
 
   if (!options.gpu_options.target_platform_version.empty() &&

@@ -280,5 +280,50 @@ ENTRY f {
   EXPECT_TRUE(found_parameter_with_different_layout);
 }
 
+TEST_F(XlaCompileLibTest, MainForGpuRemoveInfeedOutfeed) {
+  static constexpr absl::string_view kHloText = R"(
+HloModule outfeed
+
+ENTRY outfeed {
+  param = (bf16[3]{0}, s32[12,5]{0,1}) parameter(0)
+  after-all = token[] after-all()
+  ROOT outfeed.23 = token[] outfeed(param, after-all)
+})";
+
+  const std::string module_file =
+      tsl::io::JoinPath(tsl::testing::TmpDir(), "module_remove_outfeed.txt");
+  ASSERT_OK(tsl::WriteStringToFile(tsl::Env::Default(), module_file, kHloText));
+
+  const std::string output_file =
+      tsl::io::JoinPath(tsl::testing::TmpDir(), "gpu_output_remove_outfeed");
+  const std::string result_file =
+      tsl::io::JoinPath(tsl::testing::TmpDir(), "gpu_result_remove_outfeed.pb");
+
+  XlaCompileOptions options;
+  options.module_path = module_file;
+  options.output_file = output_file;
+  options.platform = "gpu";
+  options.result_output_file = result_file;
+  options.remove_infeed_outfeed = true;
+  EXPECT_OK(XlaCompileMain(options));
+
+  CompilationResult result;
+  ASSERT_OK(tsl::ReadBinaryProto(tsl::Env::Default(), result_file, &result));
+  EXPECT_TRUE(result.has_status());
+  EXPECT_EQ(result.status().code(), tensorflow::error::OK);
+  EXPECT_TRUE(result.has_hlo_module());
+
+  bool found_outfeed = false;
+  const auto& optimized_hlo = result.hlo_module();
+  for (const auto& computation : optimized_hlo.computations()) {
+    for (const auto& instruction : computation.instructions()) {
+      if (instruction.opcode() == "outfeed") {
+        found_outfeed = true;
+      }
+    }
+  }
+  EXPECT_FALSE(found_outfeed);
+}
+
 }  // namespace
 }  // namespace xla

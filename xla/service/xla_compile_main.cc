@@ -123,6 +123,8 @@ int main(int argc, char* argv[]) {
           "automatically. This flag is expected to be used when "
           "cross-compiling for GPU, to pipe through the correct host target "
           "machine options."),
+      tsl::Flag("remove_infeed_outfeed", &options.remove_infeed_outfeed,
+                "Whether to intercept and remove outfeeds."),
   };
 
   std::string usage = xla::xla_compile::kUsageHeader;

@@ -1087,6 +1087,7 @@ cc_library(
     ]),
     visibility = ["//visibility:public"],
     deps = [
+        ":hlo_control_flow_flattening",
         ":hlo_module_loader",
         ":llvm_targets",  # fixdeps: keep
         "//xla:debug_options_flags",
@@ -1096,6 +1097,7 @@ cc_library(
         "//xla/backends/cpu:target_machine_options",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_compiler",

@@ -70,6 +70,7 @@ struct XlaCompileOptions {
   bool force_auto_layout = false;
   int32_t num_partitions = 1;
   int32_t num_replicas = 1;
+  bool remove_infeed_outfeed = false;
 
   // Options for SymbolRepository lookup.
   struct SymbolRepoOptions {
