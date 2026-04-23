@@ -12170,7 +12170,7 @@ ENTRY main {
   cost_analysis->SetOverrideForGetInstructionElapsed(
       [](const HloInstruction& instruction) -> float { return 10.0; });
   cost_analysis->SetOverrideForGetAsyncCopyElapsed(
-      [](const Shape& shape) -> float { return 20.0; });
+      [](int64_t size_in_bytes) -> float { return 20.0; });
   options.cost_analysis = cost_analysis.get();
   CostAnalysisPrefetchIntervalPicker prefetch_interval_picker(
       CostAnalysisPrefetchIntervalPicker(

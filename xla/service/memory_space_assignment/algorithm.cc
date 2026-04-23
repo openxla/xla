@@ -803,8 +803,11 @@ bool MsaAlgorithm::IsUseAllowedInAlternateMemory(const AllocationValue& value,
     const Shape& shape = parameter_value->shape();
     // Allow the buffer in alternate memory if the buffer has a short live range
     // either at the beginning or end of the while loop body.
+    int64_t shape_size = options_.cost_analysis
+                             ? options_.cost_analysis->GetShapeSizeBytes(shape)
+                             : 0;
     if (!options_.prefetch_interval_picker->CanAllocateInAlternateMemoryNoCopy(
-            shape, parameter_time, min_use_time)) {
+            shape_size, parameter_time, min_use_time)) {
       VLOG(4) << "While allocation not allowed in alternate memory. "
               << "use time = " << min_use_time << ", root time = " << root_time;
       return false;
@@ -855,8 +858,12 @@ bool MsaAlgorithm::IsUseAllowedInAlternateMemory(const AllocationValue& value,
               min_use_time, instruction_schedule.at(parameter_use.instruction));
         }
       }
+      int64_t shape_size = options_.cost_analysis
+                               ? options_.cost_analysis->GetShapeSizeBytes(
+                                     parameter_value->shape())
+                               : 0;
       if (options_.prefetch_interval_picker->CanAllocateInAlternateMemoryNoCopy(
-              parameter_value->shape(), parameter_time, min_use_time)) {
+              shape_size, parameter_time, min_use_time)) {
         VLOG(4) << "Conditional allocation allowed in alternate memory for "
                    "computation = "
                 << called_computation->name()
@@ -1841,7 +1848,8 @@ bool VerifyOperandsInAlternateMemoryMap(
 // GetAsyncCopyElapsed with a default value.
 float CopyResourceForShape(const Options& options, const Shape& shape) {
   return options.cost_analysis
-             ? options.cost_analysis->GetAsyncCopyElapsed(shape)
+             ? options.cost_analysis->GetAsyncCopyElapsed(
+                   options.cost_analysis->GetShapeSizeBytes(shape))
              : 0.1;
 }
 
@@ -5067,9 +5075,10 @@ void MsaAlgorithm::AllocateCrossProgramPrefetchBuffer(
           end_of_program_inclusive_prefetch_start_time,
           end_of_program_prefetch_end_time);
   if (options_.cost_analysis) {
-    buffer_occupied_time = std::max(buffer_occupied_time,
-                                    options_.cost_analysis->GetAsyncCopyElapsed(
-                                        buffer->defining_position().shape()));
+    buffer_occupied_time = std::max(
+        buffer_occupied_time, options_.cost_analysis->GetAsyncCopyElapsed(
+                                  options_.cost_analysis->GetShapeSizeBytes(
+                                      buffer->defining_position().shape())));
   }
   buffer_occupied_time +=
       options_.prefetch_interval_picker->GetLogicalIntervalElapsed(
@@ -6845,8 +6854,10 @@ AllocationResult MsaAlgorithm::AllocateInAlternateMemoryNoCopy(
   if (!request.require_no_copy_alternate_mem_allocation &&
       !request.prefer_no_copy_alternate_mem_allocation &&
       !options_.prefetch_interval_picker->CanAllocateInAlternateMemoryNoCopy(
-          defining_position.shape(), request.inclusive_start_time,
-          request.end_time)) {
+          options_.cost_analysis ? options_.cost_analysis->GetShapeSizeBytes(
+                                       defining_position.shape())
+                                 : 0,
+          request.inclusive_start_time, request.end_time)) {
     VLOG(3) << "Live range is too long.";
     return AllocationResult::kFailLiveRangeTooLong;
   }
@@ -7048,7 +7059,8 @@ AllocationResult MsaAlgorithm::Evict(const AllocationRequest& request,
   float eviction_resource =
       options_.cost_analysis
           ? options_.cost_analysis->GetAsyncCopyElapsed(
-                request.allocation_value->defining_position().shape())
+                options_.cost_analysis->GetShapeSizeBytes(
+                    request.allocation_value->defining_position().shape()))
           : 0.1;
 
   bool eviction_interval_too_short =
@@ -8161,10 +8173,14 @@ std::vector<MsaAlgorithm::Chunk> MsaAlgorithm::FindBestChunkCandidates(
     // copies.
     const Shape& shape =
         request.allocation_value_to_update->defining_position().shape();
+    const int64_t shape_size =
+        options_.cost_analysis
+            ? options_.cost_analysis->GetShapeSizeBytes(shape)
+            : 0;
     for (;
          (use_time_it + 1) != use_times.end() &&
          options_.prefetch_interval_picker->CanAllocateInAlternateMemoryNoCopy(
-             shape, *use_time_it, *(use_time_it + 1));
+             shape_size, *use_time_it, *(use_time_it + 1));
          ++use_time_it) {
     }
     CHECK(use_time_it != use_times.end());
