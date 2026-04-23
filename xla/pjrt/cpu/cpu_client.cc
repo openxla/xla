@@ -633,9 +633,8 @@ absl::StatusOr<std::pair<std::unique_ptr<PjRtCpuExecutable>,
                          std::shared_ptr<DeviceAssignment>>>
 PjRtCpuClient::CompileAndAssignDevices(MaybeOwningMlirModule module,
                                        CompileOptions options) {
-  int module_id = HloModule::GetNextUniqueModuleId();
-  TF_RETURN_IF_ERROR(pjrt::MaybeDumpCompileInputs(options, module.mlir_module(),
-                                                  *topology_, module_id));
+  TF_RETURN_IF_ERROR(
+      pjrt::MaybeDumpCompileInputs(options, module.mlir_module(), *topology_));
 
   XlaComputation xla_computation;
   ExecutableBuildOptions& exec_build_options = options.executable_build_options;
@@ -643,7 +642,6 @@ PjRtCpuClient::CompileAndAssignDevices(MaybeOwningMlirModule module,
       module.mlir_module(), xla_computation,
       /*use_tuple_args=*/options.parameter_is_tupled_arguments,
       /*return_tuple=*/false, &exec_build_options));
-  xla_computation.mutable_proto()->set_pjrt_id(module_id);
 
   if (options.argument_layouts) {
     return CompileAndAssignDevices(xla_computation, options);

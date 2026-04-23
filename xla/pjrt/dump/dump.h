@@ -34,15 +34,13 @@ absl::StatusOr<std::string> ResolveTestingDumpPath(absl::string_view dump_to);
 
 // Returns the dump subdirectory path, including a timestamp.
 absl::StatusOr<std::string> GetDumpSubdirPath(absl::string_view dump_to_path,
-                                              absl::string_view module_name,
-                                              int module_id);
+                                              absl::string_view module_name);
 
 // Dumps the compile inputs (module, options, topology) to the specified path.
 absl::Status DumpCompileInputs(absl::string_view path,
                                xla::CompileOptions options,
                                mlir::ModuleOp module,
-                               const xla::PjRtTopologyDescription& topology,
-                               int module_id);
+                               const xla::PjRtTopologyDescription& topology);
 
 // Dumps the compile inputs (module, options, topology) to the specified
 // path if the compile options specify a dump path via `xla_dump_to`.
@@ -50,7 +48,7 @@ absl::Status DumpCompileInputs(absl::string_view path,
 // Does nothing if the compile options does not set `xla_dump_to`.
 absl::Status MaybeDumpCompileInputs(
     xla::CompileOptions compile_options, mlir::ModuleOp module,
-    const xla::PjRtTopologyDescription& topology, int module_id);
+    const xla::PjRtTopologyDescription& topology);
 
 }  // namespace pjrt
 

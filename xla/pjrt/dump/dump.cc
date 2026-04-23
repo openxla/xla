@@ -27,7 +27,6 @@ limitations under the License.
 #include "xla/pjrt/dump/mlir.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/service/dump.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -49,23 +48,14 @@ absl::StatusOr<std::string> ResolveTestingDumpPath(absl::string_view dump_to) {
 }
 
 absl::StatusOr<std::string> GetDumpSubdirPath(absl::string_view dump_to_path,
-                                              absl::string_view module_name,
-                                              int module_id) {
+                                              absl::string_view module_name) {
   if (dump_to_path.empty()) {
     return "";
   }
-  // Use xla::FilenameFor to generate a dump subdirectory name like
-  // "module_0001.main.cl_891958412" Note: prefix and suffix are left empty to
-  // capture only the identity.
-  std::string dump_subdir_name =
-      xla::FilenameFor(module_id, module_name, /*prefix=*/"", /*suffix=*/"");
-
-  // xla::FilenameFor appends a trailing dot if the suffix is empty; remove it.
-  if (!dump_subdir_name.empty() && dump_subdir_name.back() == '.') {
-    dump_subdir_name.pop_back();
-  }
-
-  std::string dump_subdir = tsl::io::JoinPath(dump_to_path, dump_subdir_name);
+  absl::Time now = absl::Now();
+  std::string timestamp = std::to_string(absl::ToUnixMillis(now));
+  std::string dump_subdir = tsl::io::JoinPath(
+      dump_to_path, absl::StrCat(module_name, "_", timestamp));
   TF_RETURN_IF_ERROR(tsl::Env::Default()->RecursivelyCreateDir(dump_subdir));
   return dump_subdir;
 }
@@ -73,18 +63,13 @@ absl::StatusOr<std::string> GetDumpSubdirPath(absl::string_view dump_to_path,
 absl::Status DumpCompileInputs(absl::string_view dump_to_path,
                                xla::CompileOptions compile_options,
                                mlir::ModuleOp module,
-                               const xla::PjRtTopologyDescription& topology,
-                               int module_id) {
+                               const xla::PjRtTopologyDescription& topology) {
   TF_ASSIGN_OR_RETURN(std::string path, ResolveTestingDumpPath(dump_to_path));
-
-  // Default the name to "main" if no module name is present, mirroring
-  // HloModule dump.
   std::string module_name = module.getName().has_value()
                                 ? std::string(module.getName().value())
-                                : "main";
-
+                                : "unknown_module";
   TF_ASSIGN_OR_RETURN(std::string dump_sub_dir,
-                      GetDumpSubdirPath(path, module_name, module_id));
+                      GetDumpSubdirPath(path, module_name));
 
   if (dump_sub_dir.empty()) {
     return absl::OkStatus();
@@ -119,7 +104,7 @@ absl::Status DumpCompileInputs(absl::string_view dump_to_path,
 
 absl::Status MaybeDumpCompileInputs(
     xla::CompileOptions compile_options, mlir::ModuleOp module,
-    const xla::PjRtTopologyDescription& topology, int module_id) {
+    const xla::PjRtTopologyDescription& topology) {
   VLOG(3) << "[MaybeDumpCompileInputs] Dumping PJRT inputs for module: "
           << module.getName().value_or("unknown_module").str();
 
@@ -136,8 +121,8 @@ absl::Status MaybeDumpCompileInputs(
     return absl::OkStatus();
   }
   VLOG(3) << "  Dumping compile inputs to " << dump_path;
-  auto dump_status = pjrt::DumpCompileInputs(dump_path, compile_options, module,
-                                             topology, module_id);
+  auto dump_status =
+      pjrt::DumpCompileInputs(dump_path, compile_options, module, topology);
   if (!dump_status.ok()) {
     LOG(WARNING) << "  Failed to dump compile inputs: " << dump_status;
   }
