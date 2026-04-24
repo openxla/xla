@@ -118,6 +118,7 @@ cc_library(
         "//xla/service:maybe_owning_device_address",
         "//xla/service:shaped_buffer",
         "//xla/service:transfer_manager",
+        "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",

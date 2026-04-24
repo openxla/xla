@@ -297,7 +297,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_nccl_comm_splitting(true);
   opts.set_xla_gpu_nccl_init_max_rank_per_root_ratio(0);
 
-  opts.set_xla_gpu_temp_buffer_use_separate_color(false);
   opts.set_xla_gpu_require_exclusive_lock(false);
 
   opts.set_xla_gpu_redzone_padding_bytes(8 * 1024 * 1024);
@@ -1957,15 +1956,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_experimental_enable_nvshmem),
       debug_options->xla_gpu_experimental_enable_nvshmem(),
       "Enables NVSHMEM."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_temp_buffer_use_separate_color",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_temp_buffer_use_separate_color),
-      debug_options->xla_gpu_temp_buffer_use_separate_color(),
-      "Enables temp User Buffer Registration. Enable this flag will use a "
-      "separate cuda async memory allocator to allocate temp buffer, this will "
-      "allocate temp buffer to the fixed address on every iteration"));
-
   flag_list->push_back(tsl::Flag(
       "xla_gpu_require_exclusive_lock",
       bool_setter_for(&DebugOptions::set_xla_gpu_require_exclusive_lock),

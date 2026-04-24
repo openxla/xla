@@ -97,6 +97,8 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/gpu/gpu_constants.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/gpu_topology.pb.h"
@@ -107,6 +109,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/device_interconnect_resource.h"
+#include "xla/stream_executor/integrations/tf_allocator_adapter.h"
 #include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
@@ -119,6 +122,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/fingerprint.h"
@@ -132,7 +136,6 @@ limitations under the License.
 #include "xla/pjrt/gpu/gpu_metrics.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/stream_executor_executable.pb.h"
-#include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/xla.pb.h"
@@ -147,10 +150,6 @@ limitations under the License.
 #elif TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"
 #endif
-
-#include "xla/service/gpu/gpu_executable_run_options.h"
-#include "xla/stream_executor/integrations/tf_allocator_adapter.h"
-#include "xla/util.h"
 
 namespace xla {
 
@@ -1505,7 +1504,7 @@ namespace {
 
 #if defined(GOOGLE_CUDA) && CUDA_VERSION >= 11020
 
-absl::StatusOr<std::unique_ptr<se::GpuCudaMallocAsyncAllocator>>
+absl::StatusOr<std::shared_ptr<se::GpuCudaMallocAsyncAllocator>>
 CreateCudaAsyncAllocator(const LocalDeviceState& device, double memory_fraction,
                          bool reserve_memory, bool create_new_pool,
                          bool sync_mode, bool compute_stats = true) {
@@ -1533,7 +1532,7 @@ CreateCudaAsyncAllocator(const LocalDeviceState& device, double memory_fraction,
               << " for CudaAsyncAllocator.";
   }
 
-  auto allocator = std::make_unique<se::GpuCudaMallocAsyncAllocator>(
+  auto allocator = std::make_shared<se::GpuCudaMallocAsyncAllocator>(
       /*platform_device_id*/ tsl::PlatformDeviceId(device_ordinal),
       /*create_new_pool*/ create_new_pool,
       /*new_pool_size*/ allocator_memory,
@@ -1549,7 +1548,7 @@ CreateCudaAsyncAllocator(const LocalDeviceState& device, double memory_fraction,
 }
 
 #else  // defined(GOOGLE_CUDA) && CUDA_VERSION >= 11020
-absl::StatusOr<std::unique_ptr<tsl::Allocator>> CreateCudaAsyncAllocator(
+absl::StatusOr<std::shared_ptr<tsl::Allocator>> CreateCudaAsyncAllocator(
     const LocalDeviceState& device, double memory_fraction, bool reserve_memory,
     bool create_new_pool, bool sync_mode, bool compute_stats = true) {
   return FailedPrecondition("CUDA async allocator requires CUDA >= 11.2");
@@ -1583,6 +1582,8 @@ GetStreamExecutorGpuDeviceAllocator(
     const std::map<int, std::unique_ptr<LocalDeviceState>>&
         addressable_devices) {
   std::vector<se::MultiDeviceAdapter::AllocatorInfo> allocators;
+  absl::btree_map<int, std::shared_ptr<tsl::Allocator>>
+      per_device_default_allocators;
   GpuAllocatorConfig::Kind effective_kind = allocator_config.kind;
   if (GetDebugOptionsFromFlags().xla_gpu_command_buffer_update_mode() !=
           DebugOptions::ALWAYS_UPDATE &&
@@ -1593,16 +1594,19 @@ GetStreamExecutorGpuDeviceAllocator(
   }
   switch (effective_kind) {
     case GpuAllocatorConfig::Kind::kCudaAsync: {
-      for (const auto& ordinal_and_device : addressable_devices) {
+      for (const auto& [ordinal, device] : addressable_devices) {
         TF_ASSIGN_OR_RETURN(
             auto async_allocator,
-            CreateCudaAsyncAllocator(
-                *(ordinal_and_device.second), allocator_config.memory_fraction,
-                allocator_config.preallocate, false, false, true));
-        allocators.emplace_back(
-            std::move(async_allocator),
-            ordinal_and_device.second->compute_stream(),
-            /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kDefault);
+            CreateCudaAsyncAllocator(*device, allocator_config.memory_fraction,
+                                     allocator_config.preallocate, false, false,
+                                     true));
+        per_device_default_allocators[ordinal] = async_allocator;
+        allocators.push_back(
+            {async_allocator, device->compute_stream(),
+             /*memory_space=*/static_cast<int>(gpu::MemorySpaceColor::kDefault),
+             /*device_ordinal=*/std::nullopt,
+             /*platform=*/nullptr,
+             /*min_alignment=*/gpu::kXlaAllocatedBufferAlignBytes});
       }
       break;
     }
@@ -1610,19 +1614,22 @@ GetStreamExecutorGpuDeviceAllocator(
     case GpuAllocatorConfig::Kind::kDefault:
     case GpuAllocatorConfig::Kind::kBFC: {
       LOG(INFO) << "Using BFC allocator.";
-      for (const auto& ordinal_and_device : addressable_devices) {
+      for (const auto& [ordinal, device] : addressable_devices) {
         TF_ASSIGN_OR_RETURN(
             auto bfc_allocator,
-            CreateBFCAllocator(ordinal_and_device.second->executor(),
+            CreateBFCAllocator(device->executor(),
                                allocator_config.memory_fraction,
                                allocator_config.preallocate,
                                allocator_config.gpu_system_memory_size,
                                allocator_config.sub_allocator_alloc_visitors,
                                allocator_config.sub_allocator_free_visitors));
-        allocators.emplace_back(
-            std::move(bfc_allocator),
-            ordinal_and_device.second->compute_stream(),
-            /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kDefault);
+        per_device_default_allocators[ordinal] = bfc_allocator;
+        allocators.push_back(
+            {std::move(bfc_allocator), device->compute_stream(),
+             /*memory_space=*/static_cast<int>(gpu::MemorySpaceColor::kDefault),
+             /*device_ordinal=*/std::nullopt,
+             /*platform=*/nullptr,
+             /*min_alignment=*/gpu::kXlaAllocatedBufferAlignBytes});
       }
       break;
     }
@@ -1656,47 +1663,51 @@ GetStreamExecutorGpuDeviceAllocator(
     }
   }
 
-  // Add any additional allocators for alternate memory spaces.
-  for (const auto& ordinal_and_device : addressable_devices) {
-    TF_ASSIGN_OR_RETURN(
-        auto collective_bfc_allocator,
-        CreateCollectiveBFCAllocator(
-            ordinal_and_device.second->executor(),
-            /*memory_fraction=*/1.0 - allocator_config.memory_fraction,
-            allocator_config.collective_memory_size));
-    allocators.emplace_back(
-        std::move(collective_bfc_allocator),
-        ordinal_and_device.second->compute_stream(),
-        /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kCollective);
-  }
+  // DEPRECATED: NVSHMEM support in XLA is deprecated. When we run with NVSHMEM
+  // enabled, default memory allocator is not compatible with NVSHMEM
+  // requirements and we have to create a separate allocator for it.
+  bool use_nvshmem =
+      GetDebugOptionsFromFlags().xla_gpu_experimental_enable_nvshmem();
 
-  for (const auto& ordinal_and_device : addressable_devices) {
-    TF_ASSIGN_OR_RETURN(
-        auto host_allocator,
-        GetGpuHostAllocator(ordinal_and_device.second->executor()));
-    allocators.emplace_back(std::move(host_allocator),
-                            ordinal_and_device.second->compute_stream(),
-                            /*memory_space=*/
-                            static_cast<int>(se::MemorySpace::kHost));
-  }
-
-#if defined(GOOGLE_CUDA) && CUDA_VERSION >= 11020
-  const auto& debug_options = xla::GetDebugOptionsFromFlags();
-  if (debug_options.xla_gpu_temp_buffer_use_separate_color()) {
-    // Add memory allocator to allocate memory buffers with persistent temp
-    // memory space color.
-    for (const auto& ordinal_and_device : addressable_devices) {
+  if (use_nvshmem) {
+    for (const auto& [ordinal, device] : addressable_devices) {
       TF_ASSIGN_OR_RETURN(
-          auto async_allocator,
-          CreateCudaAsyncAllocator(*(ordinal_and_device.second), 1.0, false,
-                                   true, true, true));
-      allocators.emplace_back(
-          std::move(async_allocator),
-          ordinal_and_device.second->compute_stream(),
-          /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kTempBuffer);
+          auto nvshmem_bfc_allocator,
+          CreateNvshmemBFCAllocator(
+              device->executor(),
+              /*memory_fraction=*/1.0 - allocator_config.memory_fraction,
+              allocator_config.collective_memory_size));
+      allocators.push_back(
+          {std::move(nvshmem_bfc_allocator), device->compute_stream(),
+           /*memory_space=*/
+           static_cast<int>(gpu::MemorySpaceColor::kCollective)});
+    }
+  } else {
+    // Default GPU allocator satisfies symmetric memory requirements and can
+    // be safely used as allocator for collective memory space.
+    for (const auto& [ordinal, device] : addressable_devices) {
+      allocators.push_back(
+          {per_device_default_allocators[ordinal], device->compute_stream(),
+           /*memory_space=*/
+           static_cast<int>(gpu::MemorySpaceColor::kCollective),
+           /*device_ordinal=*/std::nullopt,
+           /*platform=*/nullptr,
+           /*min_alignment=*/
+           device->executor()->GetSymmetricMemoryAlignment()});
     }
   }
-#endif
+
+  // Add allocators for how memory space.
+  for (const auto& [ordinal, device] : addressable_devices) {
+    TF_ASSIGN_OR_RETURN(auto host_allocator_ptr,
+                        GetGpuHostAllocator(device->executor()));
+    std::shared_ptr<tsl::Allocator> host_allocator(
+        std::move(host_allocator_ptr));
+    allocators.push_back({host_allocator, device->compute_stream(),
+                          /*memory_space=*/
+                          static_cast<int>(se::MemorySpace::kHost)});
+  }
+
   return std::make_unique<se::MultiDeviceAdapter>(platform,
                                                   std::move(allocators));
 }
@@ -2139,14 +2150,14 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
     std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states,
     int process_id) {
   std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices;
-  for (auto& ordinal_and_device : local_device_states) {
+  for (auto& [ordinal, local_device_state] : local_device_states) {
     const se::DeviceDescription& desc =
-        ordinal_and_device.second->executor()->GetDeviceDescription();
+        local_device_state->executor()->GetDeviceDescription();
     const se::DeviceInterconnectInfo& info = desc.device_interconnect_info();
-    int local_device_id = ordinal_and_device.second->local_device_id().value();
+    int local_device_id = local_device_state->local_device_id().value();
     auto device = std::make_unique<StreamExecutorGpuDevice>(
-        /*id=*/ordinal_and_device.first,
-        /*local_device_state=*/std::move(ordinal_and_device.second),
+        /*id=*/ordinal,
+        /*local_device_state=*/std::move(local_device_state),
         /*device_kind=*/desc.name(),
         /*device_vendor=*/desc.device_vendor(),
         /*compute_capability=*/MakeComputeCapabilityAttributeString(desc),
@@ -2251,19 +2262,6 @@ StreamExecutorGpuClient::RunAsync(
   absl::Span<const BufferAllocation* const> allocations =
       gpu_exec->GetAllocations();
 
-  // Build a map of per-color allocation granularity. Collective memory requires
-  // larger alignment than the BFC allocator guarantees (256 bytes).
-  absl::flat_hash_map<LogicalBuffer::Color, int64_t> allocate_granularity;
-  if (auto* collectives =
-          gpu::GpuCollectives::Default(executor->GetPlatform()->Name())) {
-    const int64_t collective_memory_alignment =
-        collectives->SymmetricMemoryAlignment();
-    XLA_VLOG_DEVICE(5, device_ordinal)
-        << "Using collective memory alignment: " << collective_memory_alignment;
-    allocate_granularity[static_cast<LogicalBuffer::Color>(
-        gpu::MemorySpaceColor::kCollective)] = collective_memory_alignment;
-  }
-
   std::vector<se::DeviceAddressBase> buffers(allocations.size());
   {
     tsl::profiler::TraceMe hlo_module_activity(
@@ -2309,10 +2307,6 @@ StreamExecutorGpuClient::RunAsync(
         CHECK(allocation.maybe_live_out() ||
               allocation.IsPreallocatedTempBuffer());
         int64_t buffer_size = allocation.size();
-        if (auto it = allocate_granularity.find(allocation.color());
-            it != allocate_granularity.end()) {
-          buffer_size = RoundUpTo(buffer_size, it->second);
-        }
         if (buffer_size > 0) {
           TF_ASSIGN_OR_RETURN(
               se::ScopedDeviceAddress<uint8_t> owning_buffer,

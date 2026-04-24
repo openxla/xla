@@ -68,12 +68,11 @@ absl::StatusOr<MemorySpaceColor> AsMemorySpaceColor(int64_t memory_space) {
   switch (memory_space) {
     case static_cast<int64_t>(MemorySpaceColor::kDefault):
     case static_cast<int64_t>(MemorySpaceColor::kCollective):
-    case static_cast<int64_t>(MemorySpaceColor::kTempBuffer):
       return static_cast<MemorySpaceColor>(memory_space);
     default:
       return InvalidArgument(
-          "Invalid memory space %d. "
-          "Valid values are 0 (default), 1 (collective), 2 (temp).",
+          "Invalid memory space %d. Valid values are 0 (default),"
+          " 1 (collective).",
           memory_space);
   }
 }

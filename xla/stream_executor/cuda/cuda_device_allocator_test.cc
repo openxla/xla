@@ -21,7 +21,9 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/base/casts.h"
 #include "absl/types/span.h"
+#include "xla/stream_executor/cuda/cuda_executor.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/platform.h"
@@ -38,7 +40,8 @@ TEST(CudaDeviceAllocatorTest, AllocateAndFree) {
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
                        platform->ExecutorForDevice(0));
 
-  CudaDeviceAllocator allocator(executor);
+  CudaDeviceAllocator::Options options;
+  CudaDeviceAllocator allocator(executor, options);
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> allocation,
                        allocator.Allocate(1024));
@@ -53,7 +56,8 @@ TEST(CudaDeviceAllocatorTest, AllocateZeroBytes) {
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
                        platform->ExecutorForDevice(0));
 
-  CudaDeviceAllocator allocator(executor);
+  CudaDeviceAllocator::Options options;
+  CudaDeviceAllocator allocator(executor, options);
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> allocation,
                        allocator.Allocate(0));
@@ -69,7 +73,8 @@ TEST(CudaDeviceAllocatorTest, MemcpyRoundTrip) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
                        executor->CreateStream());
 
-  CudaDeviceAllocator allocator(executor);
+  CudaDeviceAllocator::Options options;
+  CudaDeviceAllocator allocator(executor, options);
 
   constexpr int kSize = 1024;
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> allocation,
@@ -88,6 +93,83 @@ TEST(CudaDeviceAllocatorTest, MemcpyRoundTrip) {
   std::vector<uint8_t> host_dst(kSize, 0);
   ASSERT_OK(stream->MemcpyD2H(addr, absl::MakeSpan(host_dst)));
   ASSERT_OK(stream->BlockHostUntilDone());
+
+  EXPECT_EQ(host_src, host_dst);
+}
+
+TEST(CudaDeviceAllocatorTest, AllocateWithFabricHandle) {
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("CUDA"));
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+
+  auto* cuda_executor = absl::down_cast<CudaExecutor*>(executor);
+  if (!cuda_executor->is_fabric_supported()) {
+    GTEST_SKIP() << "Test requires fabric handle support.";
+  }
+
+  CudaDeviceAllocator::Options options;
+  options.enable_fabric_handle = true;
+  options.enable_peer_access = true;
+  CudaDeviceAllocator allocator(executor, options);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> allocation,
+                       allocator.Allocate(4096));
+  ASSERT_NE(allocation, nullptr);
+  EXPECT_NE(allocation->address().opaque(), nullptr);
+  EXPECT_EQ(allocation->address().size(), 4096);
+}
+
+TEST(CudaDeviceAllocatorTest, AllocateWithPeerAccess) {
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("CUDA"));
+  if (platform->VisibleDeviceCount() < 2) {
+    GTEST_SKIP() << "Test requires at least 2 GPUs.";
+  }
+
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor0,
+                       platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor1,
+                       platform->ExecutorForDevice(1));
+
+  if (!executor0->CanEnablePeerAccessTo(1)) {
+    GTEST_SKIP() << "Test requires peer access between GPU 0 and GPU 1.";
+  }
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream0,
+                       executor0->CreateStream());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream1,
+                       executor1->CreateStream());
+
+  CudaDeviceAllocator::Options options;
+  options.enable_peer_access = true;
+  CudaDeviceAllocator allocator0(executor0, options);
+  CudaDeviceAllocator allocator1(executor1, options);
+
+  constexpr int kSize = 1024;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> alloc0,
+                       allocator0.Allocate(kSize));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> alloc1,
+                       allocator1.Allocate(kSize));
+
+  // Write a pattern to GPU 0.
+  std::vector<uint8_t> host_src(kSize);
+  for (int i = 0; i < kSize; i++) {
+    host_src[i] = static_cast<uint8_t>(i);
+  }
+  DeviceAddress<uint8_t> addr0(alloc0->address());
+  ASSERT_OK(stream0->MemcpyH2D(absl::MakeConstSpan(host_src), &addr0));
+  ASSERT_OK(stream0->BlockHostUntilDone());
+
+  // Peer copy from GPU 0 to GPU 1.
+  DeviceAddress<uint8_t> addr1(alloc1->address());
+  ASSERT_OK(stream1->MemcpyD2D(&addr1, addr0, kSize));
+  ASSERT_OK(stream1->BlockHostUntilDone());
+
+  // Read back from GPU 1 and verify.
+  std::vector<uint8_t> host_dst(kSize, 0);
+  ASSERT_OK(stream1->MemcpyD2H(addr1, absl::MakeSpan(host_dst)));
+  ASSERT_OK(stream1->BlockHostUntilDone());
 
   EXPECT_EQ(host_src, host_dst);
 }

@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_CUDA_CUDA_DEVICE_ALLOCATOR_H_
 #define XLA_STREAM_EXECUTOR_CUDA_CUDA_DEVICE_ALLOCATOR_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -26,18 +27,40 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 
-// MemoryAllocator that allocates device memory using the CUDA driver API
-// (cuMemAlloc/cuMemFree). This is the lowest-level device memory allocator
-// that directly talks to the CUDA driver without any caching or pooling.
+// MemoryAllocator that allocates device memory using CUDA Virtual Memory
+// Management (VMM) APIs (cuMemCreate/cuMemAddressReserve/cuMemMap). All
+// allocations use POSIX_FILE_DESCRIPTOR handle type as baseline (matching
+// NCCL's ncclMemAlloc). FABRIC handle support can be optionally requested
+// for NVSwitch-based topologies.
+//
+// IMPORTANT: XLA does not support old CUDA versions that do not have VMM APIs.
 class CudaDeviceAllocator : public MemoryAllocator {
  public:
-  explicit CudaDeviceAllocator(StreamExecutor* executor);
+  struct Options {
+    // Minimum alignment for allocations. The actual alignment is the maximum
+    // of this value and the device-reported VMM granularity.
+    size_t alignment = 4096;
+
+    // Whether to enable peer access from all accessible devices.
+    bool enable_peer_access = false;
+
+    // Whether to additionally request FABRIC handle type on top of the
+    // POSIX_FILE_DESCRIPTOR baseline. Falls back to POSIX_FD if FABRIC
+    // is not supported or permitted.
+    bool enable_fabric_handle = false;
+
+    // Whether to mark allocations as GPUDirect RDMA capable.
+    bool is_rdma_supported = false;
+  };
+
+  CudaDeviceAllocator(StreamExecutor* executor, Options options);
 
   absl::StatusOr<std::unique_ptr<MemoryAllocation>> Allocate(
       uint64_t size) final;
 
  private:
   StreamExecutor* executor_;
+  Options options_;
 };
 
 }  // namespace stream_executor::gpu

@@ -157,19 +157,19 @@ class GpuCollectives : public Collectives {
   // communicator topology supports host RMA at runtime.
   virtual bool SupportsOneSidedComm() const { return false; }
 
-  // Returns minimum alignment requirement for symmetric memory.
-  virtual size_t SymmetricMemoryAlignment() const { return 1; }
-
   // Returns a slice of device memory `buff` containing `count` values of data
   // type `dtype` starting from `offset`.
   static stream_executor::DeviceAddressBase Slice(
       stream_executor::DeviceAddressBase buff, PrimitiveType dtype,
       size_t offset, size_t count);
 
-  // TODO(b/410686553): Use smart wrapper instead of void*.
-  virtual absl::StatusOr<void*> Allocate(uint64_t bytes) = 0;
+  virtual absl::StatusOr<void*> Allocate(uint64_t bytes) {
+    return absl::UnimplementedError("Collectives allocator not available");
+  }
 
-  virtual absl::Status Deallocate(void* buffer) = 0;
+  virtual absl::Status Deallocate(void* buffer) {
+    return absl::UnimplementedError("Collectives deallocator not available");
+  }
 
   // Creates a single communicator.
   virtual absl::StatusOr<std::unique_ptr<Communicator>>

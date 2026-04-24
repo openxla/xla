@@ -147,27 +147,6 @@ TEST(CudaExecutorMultiGpuTest, CudaMulticastMemorySubscribeMoreDevices) {
                        "All devices are already subscribed."));
 }
 
-TEST(CudaExecutorMultiGpuTest, CudaMulticastMemoryUsingNonVmmMemory) {
-  std::vector<CudaExecutor*> executors = {
-      static_cast<CudaExecutor*>(GetGpuExecutor(0)),
-      static_cast<CudaExecutor*>(GetGpuExecutor(1))};
-  if (!executors[0]->is_multicast_supported()) {
-    GTEST_SKIP() << "Test requires multicast support.";
-  }
-  const int64_t kNumDevices = 2;
-  std::unique_ptr<MulticastMemory> multicast_memory;
-  TF_ASSERT_OK_AND_ASSIGN(
-      multicast_memory, executors[0]->CreateMulticastMemory(1024, kNumDevices));
-  EXPECT_THAT(multicast_memory->SubscribeDevice(0), IsOk());
-  EXPECT_THAT(multicast_memory->SubscribeDevice(1), IsOk());
-
-  DeviceAddressBase device_memory = executors[0]->Allocate(8, 0);
-  EXPECT_THAT(
-      multicast_memory->MapMemory(device_memory, executors[0]),
-      StatusIs(absl::StatusCode::kInternal,
-               "CUDA error: : CUDA_ERROR_INVALID_VALUE: invalid argument"));
-}
-
 TEST(CudaExecutorMultiGpuTest, CudaMulticastMemoryUsingVmmMemory) {
   std::vector<CudaExecutor*> executors = {
       static_cast<CudaExecutor*>(GetGpuExecutor(0)),

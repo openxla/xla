@@ -193,16 +193,9 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
 
   const DebugOptions& options = module->config().debug_options();
 
-  std::optional<BufferValue::Color> color =
-      options.xla_gpu_temp_buffer_use_separate_color()
-          ? std::optional<BufferValue::Color>(
-                (int)MemorySpaceColor::kTempBuffer)
-          : std::nullopt;
-
   BufferAssigner::Options opts;
   opts.allocate_buffers_for_constants = true;
   opts.colorer = CreateColorer(options);
-  opts.temp_buffer_color = color;
   std::unique_ptr<HloOrdering> hlo_ordering;
   switch (options.xla_gpu_command_buffer_scheduling_mode()) {
     case DebugOptions::CONCURRENT:

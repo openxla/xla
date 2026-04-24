@@ -75,10 +75,6 @@ class RcclCollectives : public GpuCollectives {
     return absl::UnimplementedError("Not implemented.");
   }
 
-  absl::StatusOr<void*> Allocate(uint64_t bytes) final;
-
-  absl::Status Deallocate(void* location) final;
-
   absl::StatusOr<CliqueIdCallback> InitializeTopology(
       const Topology& topology) final;
 };

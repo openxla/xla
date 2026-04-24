@@ -52,7 +52,6 @@ limitations under the License.
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/logical_buffer.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
@@ -319,9 +318,7 @@ class GpuExecutable : public Executable {
       const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
       const BufferAllocation& allocation,
       se::DeviceAddressAllocator* memory_allocator, int device_ordinal,
-      int64_t arg_idx,
-      const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
-          allocate_granularity);
+      int64_t arg_idx);
 
   // Handles the VA remapping path of ExecuteThunks: reserves or remaps the
   // virtual address range for command buffer allocations, then delegates to

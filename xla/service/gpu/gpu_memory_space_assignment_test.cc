@@ -342,12 +342,12 @@ TEST(ParseIndexMemorySpacePairsTest, SinglePair) {
 }
 
 TEST(ParseIndexMemorySpacePairsTest, MultiplePairs) {
-  TF_ASSERT_OK_AND_ASSIGN(auto pairs, ParseIndexMemorySpacePairs("{0:1,2:2}"));
+  TF_ASSERT_OK_AND_ASSIGN(auto pairs, ParseIndexMemorySpacePairs("{0:1,2:0}"));
   ASSERT_EQ(pairs.size(), 2);
   EXPECT_EQ(pairs[0].first, 0);
   EXPECT_EQ(pairs[0].second, MemorySpaceColor::kCollective);
   EXPECT_EQ(pairs[1].first, 2);
-  EXPECT_EQ(pairs[1].second, MemorySpaceColor::kTempBuffer);
+  EXPECT_EQ(pairs[1].second, MemorySpaceColor::kDefault);
 }
 
 TEST(ParseIndexMemorySpacePairsTest, EmptyBraces) {
