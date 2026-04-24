@@ -19,6 +19,7 @@ load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_newer_than",
 )
+load("//xla/backends/gpu/tests:helper.bzl", "get_canonical_repo_name")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -75,6 +76,13 @@ cc_library(
     srcs = ["cuda_root_path.cc"],
     hdrs = ["@tsl//tsl/platform:cuda_root_path.h"],
     compatible_with = [],
+    local_defines = [
+        "CUDA_NVCC_REPO_NAME=\\\"" + get_canonical_repo_name("cuda_nvcc") + "\\\"",
+        "CUDA_NVDISASM_REPO_NAME=\\\"" + get_canonical_repo_name("cuda_nvdisasm") + "\\\"",
+        "NVIDIA_NVSHMEM_REPO_NAME=\\\"" + get_canonical_repo_name("nvidia_nvshmem") + "\\\"",
+        "CUDA_NVVM_REPO_NAME=\\\"" + get_canonical_repo_name("cuda_nvvm") + "\\\"",
+        "CUDA_CUDART_REPO_NAME=\\\"" + get_canonical_repo_name("cuda_cudart") + "\\\"",
+    ],
     data = if_cuda_tools(if_cuda_newer_than(
         "13_0",
         if_false = ["@cuda_nvcc//:nvvm"],
