@@ -2100,6 +2100,29 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
 }
 
 namespace {
+
+bool UsesCollectiveMemorySpaceFrontendAttr(const HloUse& use) {
+  if (use.instruction->opcode() != HloOpcode::kCustomCall) {
+    return false;
+  }
+  auto attr =
+      use.instruction->get_frontend_attribute(kOperandsMemorySpacesAttr);
+  if (!attr.has_value()) {
+    return false;
+  }
+  auto pairs = ParseIndexMemorySpacePairs(*attr);
+  if (!pairs.ok()) {
+    return false;
+  }
+  for (auto [index, memory_space] : *pairs) {
+    if (index == use.operand_number &&
+        memory_space == MemorySpaceColor::kCollective) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool ShouldAddCopyForCollectiveMemorySpace(const HloValue* value) {
   const HloInstruction* inst = value->defining_instruction();
   const HloModule* module = inst->GetModule();
@@ -2117,7 +2140,8 @@ bool ShouldAddCopyForCollectiveMemorySpace(const HloValue* value) {
     for (auto& use : value->GetUses()) {
       if ((is_nccl_buffers_used && IsCollective(use.instruction)) ||
           RequiresCollectiveSymmetricMemorySpace(use.instruction) ||
-          IsCollectiveMosaicGpuInstruction(*use.instruction)) {
+          IsCollectiveMosaicGpuInstruction(*use.instruction) ||
+          UsesCollectiveMemorySpaceFrontendAttr(use)) {
         return true;
       }
     }
