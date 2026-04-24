@@ -188,6 +188,8 @@ class StreamExecutor {
     return absl::UnimplementedError("Not implemented");
   }
 
+  virtual bool IsVmmMemory(const DeviceAddressBase& address) { return false; }
+
   // Synchronizes all activity occurring in the StreamExecutor's context.
   virtual bool SynchronizeAllActivity() = 0;
 

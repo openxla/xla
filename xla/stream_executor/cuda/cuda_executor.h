@@ -132,6 +132,8 @@ class CudaExecutor : public GpuExecutor {
   bool HostMemoryRegister(void* location, uint64_t size) override;
   bool HostMemoryUnregister(void* location) override;
 
+  bool IsVmmMemory(const DeviceAddressBase& address) override;
+
   absl::StatusOr<MemorySpace> GetPointerMemorySpace(const void* ptr) override;
 
   Stream* FindAllocatedStream(void* gpu_stream) override {

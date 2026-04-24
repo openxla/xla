@@ -1728,6 +1728,14 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   return std::make_unique<DeviceDescription>(std::move(desc));
 }
 
+bool CudaExecutor::IsVmmMemory(const DeviceAddressBase& address) {
+  auto handler_or = RetainVmmMemoryHandle(address.opaque());
+  if (handler_or.ok()) {
+    return true;
+  }
+  return false;
+}
+
 absl::StatusOr<MemorySpace> CudaExecutor::GetPointerMemorySpace(
     const void* ptr) {
   CUdeviceptr pointer = reinterpret_cast<CUdeviceptr>(const_cast<void*>(ptr));

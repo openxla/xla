@@ -74,6 +74,19 @@ NcclSymmetricMemory::multimem_addr() const {
       "Multimem not supported on this NCCL version or device");
 }
 
+absl::StatusOr<stream_executor::DeviceAddressBase>
+NcclSymmetricMemory::peer_addr(int peer_rank) const {
+#if (NCCL_VERSION_CODE >= 22900)
+  void* peer_addr = nullptr;
+  XLA_NCCL_RETURN_IF_ERROR(
+      ncclGetLsaDevicePointer(win_, 0, peer_rank, &peer_addr));
+  if (peer_addr) {
+    return stream_executor::DeviceAddressBase(peer_addr, addr_.size());
+  }
+#endif
+  return stream_executor::DeviceAddressBase();
+}
+
 std::string NcclSymmetricMemory::ToString() const {
   return absl::StrFormat(
       "NcclSymmetricMemory(comm=%p, win=%p, ptr=%p, size=%ld)", comm_, win_,
