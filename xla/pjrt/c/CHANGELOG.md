@@ -2,6 +2,7 @@
 
 ## 0.105
 
+* Added PJRT_Memory_FunctionTable*.
 * Added `PJRT_Device_ClearMemoryStats` to `PJRT_Api` to allow resetting peak memory tracking.
 
 ## 0.104

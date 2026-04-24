@@ -69,6 +69,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/cpu:target_machine_options",
         "//xla/backends/gpu/collectives:gpu_clique",
         "//xla/backends/gpu/collectives:gpu_clique_key",
         "//xla/backends/gpu/collectives:gpu_cliques",
@@ -124,6 +125,7 @@ cc_library(
         "//xla/service:executable",
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
+        "//xla/service:pjrt_gpu_utils",
         "//xla/service:platform_util",
         "//xla/service:shaped_buffer",
         "//xla/service:transfer_manager",
@@ -360,6 +362,11 @@ xla_test(
             "broken",
             "no_oss",
         ],
+        # See b/491475964 for details.
+        "gb200": [
+            "multi_gpu",
+            "broken",
+        ],
     },
     backends = ["gpu"],
     env = {
@@ -496,7 +503,6 @@ cc_library(
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:stream_executor_executable",
         "//xla/pjrt:utils",
-        "//xla/pjrt/gpu/tfrt:tfrt_gpu_client",
         "//xla/service:compiled_module",
         "//xla/service:compiler",
         "//xla/service:dump",
@@ -679,6 +685,7 @@ xla_test(
         "//xla/service:compiler",
         "//xla/tests:literal_test_util",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
@@ -807,7 +814,7 @@ xla_test(
         "nvgpu_any",
     ],
     # Each test case is a separate process since cuda stream errors are sticky.
-    shard_count = 2,
+    shard_count = 4,
     tags = [
         "gpu",
     ],

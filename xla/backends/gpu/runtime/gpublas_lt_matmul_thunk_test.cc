@@ -84,7 +84,6 @@ class GpuBlasLtMatmulThunkTest : public HloTestBaseLegacy {
  public:
   DebugOptions GetDebugOptionsForTest() const override {
     auto debug_options = HloTestBaseLegacy::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_enable_cublaslt(true);
     debug_options.set_xla_gpu_enable_triton_gemm(false);
     debug_options.set_xla_gpu_autotune_level(0);
     return debug_options;
@@ -201,7 +200,6 @@ void GpuBlasLtMatmulThunkTest::CreateExecuteThunksFromHLO(
                           this->ParseAndReturnVerifiedModule(hlo_string));
 
   GemmRewriterOptions options;
-  options.enable_cublaslt = GetDebugOptionsForTest().xla_gpu_enable_cublaslt();
   TF_ASSERT_OK_AND_ASSIGN(
       bool changed,
       RunHloPass(GemmRewriter(gpu_comp(executor),

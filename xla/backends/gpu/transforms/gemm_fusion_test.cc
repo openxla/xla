@@ -1281,6 +1281,26 @@ ENTRY e {
       "foo");
 }
 
+TEST_F(GemmFusionTest, ElementwiseAddIsFusedInEpilogue) {
+  auto module = ParseAndReturnVerifiedModule(R"(
+HloModule m
+ENTRY e {
+  p0 = f16[2,18] parameter(0)
+  p1 = f16[256,2] parameter(1)
+  d = f16[18,256] dot(p0, p1),
+    lhs_contracting_dims={0}, rhs_contracting_dims={1}
+  p2 = f16[] parameter(2)
+  b = f16[18,256] broadcast(f16[] p2)
+  ROOT a = f16[18,256] add(d, b)
+})")
+                    .value();
+  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch((m::Fusion(m::Parameter(), m::Parameter(), m::Parameter())
+                      .WithFusionKind(HloInstruction::FusionKind::kCustom))));
+}
+
 TEST_F(GemmFusionTest, FusesBroadcastOfScalarEpilogues) {
   auto module = ParseAndReturnVerifiedModule(R"(
 HloModule m

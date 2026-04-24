@@ -1544,8 +1544,12 @@ HloInstruction* SelectOperandForScatterIndexPassthroughDimensions(
   // Update partition_id for partial replicate.
   auto partition_id = indices.state().partition_id;
   if (indices.sharding().HasPartialReplication()) {
+    HloSharding tiled_sharding =
+        indices.sharding().UseNamedShardingLeaf()
+            ? HloSharding::V3ToV2Sharding(indices.sharding().named_sharding())
+            : indices.sharding();
     auto sharding_grouped = hlo_sharding_util::GroupShardingOnDims(
-        indices.sharding(), {indices.sharding().SubgroupReplicationDim()});
+        tiled_sharding, {tiled_sharding.SubgroupReplicationDim()});
     partition_id =
         GetInGroupPartitionId(partition_id, sharding_grouped.device_groups, b);
   }

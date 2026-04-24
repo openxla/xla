@@ -30,8 +30,20 @@ namespace xla::gpu {
 // CUB sorts without requiring a GPU.
 class CubScratchSizeDevicelessLookup {
  public:
-  static absl::StatusOr<CubScratchSizeDevicelessLookup> Create(
+  // Not copyable, only movable, since this is a singleton.
+  CubScratchSizeDevicelessLookup(const CubScratchSizeDevicelessLookup&) =
+      delete;
+  CubScratchSizeDevicelessLookup& operator=(
+      const CubScratchSizeDevicelessLookup&) = delete;
+  CubScratchSizeDevicelessLookup(CubScratchSizeDevicelessLookup&&) = default;
+  CubScratchSizeDevicelessLookup& operator=(CubScratchSizeDevicelessLookup&&) =
+      default;
+
+  static absl::StatusOr<CubScratchSizeDevicelessLookup> CreateFromProto(
       CubScratchSizeLookupTable proto);
+
+  // Returns the singleton instance loaded from bundled data.
+  static absl::StatusOr<const CubScratchSizeDevicelessLookup&> GetInstance();
 
   // Looks up the estimated scratch space CUB will need for the given
   // parameters. The estimated space will be >= to the actual space CUB will

@@ -56,6 +56,63 @@ limitations under the License.
 namespace xla {
 namespace {
 
+// Recursively prepends the given prefix to the op name of the given HLO
+// instruction as well as all the instructions in its called computations.
+void RecursivelyUpdateMetadata(HloInstruction* hlo, absl::string_view prefix,
+                               StackFrameId parent_frame_id) {
+  if (prefix.empty() && !parent_frame_id.valid()) {
+    return;
+  }
+
+  // We only want to descend into "control flow" computations, since annotating
+  // embedded computations is wasted effort.
+  //
+  // TODO(b/429017389): We don't want to descend into calls, since this will
+  // produce incorrect metadata for computations with multiple callsites.
+  // However we're still seeing some missing prefix metadata that we'll need to
+  // figure out that recursing into calls does appear to help with.
+  if (GetInstructionCallContext(hlo->opcode()) == CallContext::kControlFlow &&
+      hlo->opcode() != HloOpcode::kCall) {
+    for (HloComputation* computation : hlo->called_computations()) {
+      for (HloInstruction* instruction : computation->instructions()) {
+        RecursivelyUpdateMetadata(instruction, prefix, parent_frame_id);
+      }
+    }
+  }
+
+  // We found that some users are sticking many megabytes of strings into
+  // op_name. Don't form op names that would be too big.
+  OpMetadata metadata = hlo->metadata();
+  bool updated = false;
+  if (!prefix.empty() &&
+      prefix.size() + metadata.op_name().size() < CallInliner::kMaxOpNameSize) {
+    if (metadata.op_name().empty()) {
+      metadata.set_op_name(prefix);
+      updated = true;
+    } else if (!absl::StartsWith(metadata.op_name(), prefix)) {
+      metadata.set_op_name(absl::StrCat(prefix, "/", metadata.op_name()));
+      updated = true;
+    }
+  }
+  HloModule* module = hlo->GetModule();
+  // The IsPrefix test here exists because older serialized HLO from JAX may
+  // include the caller's frames in the callee's frames. We do not want to
+  // duplicate them in that case, since we might rapidly blow up the size of the
+  // HLO. We may lose recursive prefixes but that is the lesser of two evils.
+  if (!module->stack_frames().IsPrefix(
+          parent_frame_id, StackFrameId{metadata.stack_frame_id()})) {
+    metadata.set_stack_frame_id(
+        module->mutable_stack_frames()
+            .Concatenate(parent_frame_id,
+                         StackFrameId{metadata.stack_frame_id()})
+            .value);
+    updated = true;
+  }
+  if (updated) {
+    hlo->set_metadata(metadata);
+  }
+}
+
 // Traverses the callee computation, inlining cloned nodes into the caller
 // computation and connecting them to producers/consumers appropriately.
 // When the traversal has completed, the provided call instruction is entirely
@@ -64,8 +121,13 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
  public:
   // call is the call operation -- it will be replaced with the body of the
   // called computation.
-  explicit SubcomputationInsertionVisitor(HloInstruction* call)
-      : call_(call), outer_(call->parent()) {
+  explicit SubcomputationInsertionVisitor(HloInstruction* call,
+                                          absl::string_view call_op_name,
+                                          StackFrameId call_stack_frame_id)
+      : call_(call),
+        outer_(call->parent()),
+        call_op_name_(call_op_name),
+        call_stack_frame_id_(call_stack_frame_id) {
     CHECK_EQ(HloOpcode::kCall, call_->opcode());
   }
 
@@ -81,6 +143,8 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
     auto new_hlo = hlo->CloneWithNewOperands(hlo->shape(), new_operands);
     HloInstruction* new_hlo_pointer =
         outer_->AddInstruction(std::move(new_hlo));
+    RecursivelyUpdateMetadata(new_hlo_pointer, call_op_name_,
+                              call_stack_frame_id_);
     TF_RETURN_IF_ERROR(NoteMapping(hlo, new_hlo_pointer));
 
     PropagateOriginalValue(new_hlo_pointer, hlo);
@@ -213,6 +277,8 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
   HloInstruction* call_;
   HloComputation* outer_;
   CallInliner::InlinedInstructionMap subcomputation_hlo_to_new_hlo_;
+  absl::string_view call_op_name_;
+  StackFrameId call_stack_frame_id_;
 };
 
 bool InlineComposites(
@@ -284,7 +350,9 @@ CallInliner::Inline(HloInstruction* call) {
   }
 
   // We visit the callee, cloning its body into its caller.
-  SubcomputationInsertionVisitor visitor(call);
+  SubcomputationInsertionVisitor visitor(
+      call, call->metadata().op_name(),
+      StackFrameId{call->metadata().stack_frame_id()});
   TF_RETURN_IF_ERROR(callee->Accept(&visitor));
   return visitor.ConsumeInstructionMap();
 }

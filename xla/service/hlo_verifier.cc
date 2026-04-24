@@ -3461,14 +3461,17 @@ int64_t CountWritersInUser(const HloInstruction* inst,
                            const HloInstruction* user) {
   if (HloCallableInstruction::ClassOf(user) ||
       user->opcode() == HloOpcode::kWhile ||
-      user->opcode() == HloOpcode::kConditional) {
+      user->opcode() == HloOpcode::kConditional ||
+      user->opcode() == HloOpcode::kDynamicUpdateSlice) {
     // For HloCallableInstruction, we may overcount here if we will allow
     // a buffer operand not in results.
     //
     // For other case, Without interprocedural analysis, we assume if a buffer
-    // is passed into a while loop, it is written there.
+    // is passed into a while loop or dynamic-update-slice, it is written
+    // there.
     return 1;
   }
+
   if (user->opcode() == HloOpcode::kGetTupleElement &&
       user->tuple_index() == shape_index[0]) {
     return CountWriters(user, shape_index.subspan(1));
@@ -3776,6 +3779,22 @@ absl::Status VerifyBuffers(const HloModule& module, bool layout_sensitive) {
           TF_RETURN_IF_ERROR(VerifyNoBuffersInContext(inst));
         }
         TF_RETURN_IF_ERROR(CheckBufferHasUniqueWriters(inst));
+      } else if (inst->opcode() == HloOpcode::kDynamicUpdateSlice) {
+        if (inst->operand(0)->shape().IsBuffer()) {
+          TF_RETURN_IF_ERROR(CheckBufferHasUniqueWriters(inst));
+          // Operand 1 and following should not be buffers.
+          for (int i = 1; i < inst->operand_count(); ++i) {
+            TF_RETURN_IF_ERROR(
+                VerifyNoBuffers(inst->operand(i)->shape(), inst));
+          }
+          if (!inst->shape().IsBuffer()) {
+            return InvalidArgument(
+                "DynamicUpdateSlice result must be a buffer if operand 0 is a "
+                "buffer");
+          }
+        } else {
+          TF_RETURN_IF_ERROR(VerifyNoBuffersInContext(inst));
+        }
       } else if (inst->opcode() != HloOpcode::kGetTupleElement &&
                  inst->opcode() != HloOpcode::kTuple) {
         TF_RETURN_IF_ERROR(VerifyNoBuffersInContext(inst));

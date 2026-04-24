@@ -69,6 +69,8 @@ limitations under the License.
 
 // API notes:
 // PjRt stands for "Pretty much Just another RunTime".
+#include "xla/pjrt/c/pjrt_c_api.h"
+
 namespace xla {
 
 class PjRtBuffer;
@@ -81,9 +83,15 @@ struct CompileOptions;
 typedef absl::AnyInvocable<absl::Status(absl::StatusOr<PjRtBuffer*>)>
     PjRtFulfillAliasBufferCallback;
 
+class PjRtMemorySpaceCApiDelegator;
+
 class PjRtMemorySpace {
  public:
   virtual ~PjRtMemorySpace() = default;
+
+  static PjRtMemorySpace* FromC(PJRT_Memory* c_space);
+
+  virtual PJRT_Memory* ToCApiPtr() = 0;
 
   // The owner of this memory space.
   virtual PjRtClient* client() const = 0;
@@ -109,6 +117,31 @@ class PjRtMemorySpace {
 
   // Debug string suitable for reading by end users, should be reasonably terse.
   virtual absl::string_view ToString() const = 0;
+};
+
+// Helper for building a PJRT_Memory from a PjRtMemorySpace.
+class PjRtMemorySpaceCApiDelegator {
+ public:
+  explicit PjRtMemorySpaceCApiDelegator(PjRtMemorySpace* owner);
+  ~PjRtMemorySpaceCApiDelegator();
+
+  PJRT_Memory* ToCApiPtr() { return &c_memory_; }
+
+ private:
+  using CApiDtor = void (*)(void*);
+
+  static void* GetUserDataImpl(PJRT_Memory* memory, const void* key);
+  static void SetUserDataImpl(PJRT_Memory* memory, const void* key, void* data,
+                              CApiDtor dtor);
+  static const PJRT_Memory_FunctionTable kDelegatorVtable;
+  PJRT_Memory c_memory_;
+  PjRtMemorySpace* owner_;
+
+  struct UserData {
+    void* data;
+    CApiDtor dtor;
+  };
+  absl::flat_hash_map<const void*, UserData> user_data_;
 };
 
 class PjRtDevice {

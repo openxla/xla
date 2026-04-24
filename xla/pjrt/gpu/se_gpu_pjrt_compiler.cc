@@ -39,7 +39,6 @@ limitations under the License.
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_runtime_abi_version.h"
 #include "xla/pjrt/gpu/se_gpu_topology_description.h"
-#include "xla/pjrt/gpu/tfrt/tfrt_gpu_client.h"
 #include "xla/pjrt/layout_mode.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/mlir_to_hlo.h"
@@ -115,15 +114,8 @@ absl::StatusOr<stream_executor::StreamExecutor*> GetStreamExecutor(
     return gpu_client->client()->backend().default_stream_executor();
   }
 
-  const TfrtGpuClient* tfrt_gpu_client =
-      dynamic_cast<const TfrtGpuClient*>(client);
-
-  if (tfrt_gpu_client != nullptr) {
-    return tfrt_gpu_client->xla_client()->backend().default_stream_executor();
-  }
-
   return absl::InvalidArgumentError(
-      "Given PjRtClient is not a StreamExecutorGpuClient or TfrtGpuClient.");
+      "Given PjRtClient is not a StreamExecutorGpuClient.");
 }
 
 }  // namespace

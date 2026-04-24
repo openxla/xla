@@ -878,6 +878,24 @@ void HloComputation::Cleanup() {
   next_instruction_unique_id_ = instructions_.size();
 }
 
+void HloComputation::CanonicalizeLocalIds() {
+  auto post_order = MakeInstructionPostOrder();
+  std::vector<HloInstructionInfo> new_instructions;
+  new_instructions.reserve(post_order.size());
+
+  for (size_t i = 0; i < post_order.size(); ++i) {
+    HloInstruction* inst = post_order[i];
+    HloInstructionInfo info;
+    info.inst_ = inst;
+    info.opcode_ = inst->opcode();
+    inst->local_id_ = i;
+    new_instructions.push_back(info);
+  }
+
+  instructions_ = std::move(new_instructions);
+  next_instruction_unique_id_ = instructions_.size();
+}
+
 void HloComputation::set_root_instruction(HloInstruction* new_root_instruction,
                                           bool accept_different_shape) {
   // The shape of the root (ignoring layout) is an invariant of the computation
@@ -1659,6 +1677,11 @@ bool HloComputation::EqualInternal(
     bool ignore_channel_id_values, bool ignore_execution_thread) const {
   if (this == &other) {
     return true;
+  }
+  if (this->num_parameters() != other.num_parameters()) {
+    // There are situations where the number of parameters matters, even if
+    // some of them are unused, and the computations are otherwise equivalent.
+    return false;
   }
   absl::flat_hash_set<std::pair<const HloInstruction*, const HloInstruction*>>
       visited;

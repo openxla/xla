@@ -21,6 +21,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "xla/backends/gpu/libraries/cub/scratch_space_lookup_table.pb.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
@@ -36,19 +37,24 @@ constexpr stream_executor::SemanticVersion kCubVersion1_15_0{1, 15, 0};
 constexpr stream_executor::SemanticVersion kCubVersion1_16_0{1, 16, 0};
 
 TEST(CubScratchSizeDevicelessLookupTest, LookupExactMatch) {
-  ASSERT_OK_AND_ASSIGN(
-      auto lookup,
-      CubScratchSizeDevicelessLookup::Create(ParseTextProtoOrDie<
-                                             CubScratchSizeLookupTable>(R"pb(
-        entries {
-          cub_version: "1.15.0"
-          device_name: "sm_80"
-          key_type_size: 4
-          value_type_size: 4
-          scratch_size_recordings { num_items: 100 scratch_space_bytes: 1024 }
-          scratch_size_recordings { num_items: 200 scratch_space_bytes: 2048 }
-        }
-      )pb")));
+  ASSERT_OK_AND_ASSIGN(auto lookup,
+                       CubScratchSizeDevicelessLookup::CreateFromProto(
+                           ParseTextProtoOrDie<CubScratchSizeLookupTable>(R"pb(
+                             entries {
+                               cub_version: "1.15.0"
+                               device_name: "sm_80"
+                               key_type_size: 4
+                               value_type_size: 4
+                               scratch_size_recordings {
+                                 num_items: 100
+                                 scratch_space_bytes: 1024
+                               }
+                               scratch_size_recordings {
+                                 num_items: 200
+                                 scratch_space_bytes: 2048
+                               }
+                             }
+                           )pb")));
 
   EXPECT_THAT(lookup.Lookup(kCubVersion1_15_0, "sm_80", /*key_type_size=*/4,
                             /*value_type_size=*/4, /*num_items=*/100),
@@ -59,19 +65,24 @@ TEST(CubScratchSizeDevicelessLookupTest, LookupExactMatch) {
 }
 
 TEST(CubScratchSizeDevicelessLookupTest, LookupClosestHigherMatch) {
-  ASSERT_OK_AND_ASSIGN(
-      auto lookup,
-      CubScratchSizeDevicelessLookup::Create(ParseTextProtoOrDie<
-                                             CubScratchSizeLookupTable>(R"pb(
-        entries {
-          cub_version: "1.15.0"
-          device_name: "sm_80"
-          key_type_size: 4
-          value_type_size: 4
-          scratch_size_recordings { num_items: 100 scratch_space_bytes: 1024 }
-          scratch_size_recordings { num_items: 200 scratch_space_bytes: 2048 }
-        }
-      )pb")));
+  ASSERT_OK_AND_ASSIGN(auto lookup,
+                       CubScratchSizeDevicelessLookup::CreateFromProto(
+                           ParseTextProtoOrDie<CubScratchSizeLookupTable>(R"pb(
+                             entries {
+                               cub_version: "1.15.0"
+                               device_name: "sm_80"
+                               key_type_size: 4
+                               value_type_size: 4
+                               scratch_size_recordings {
+                                 num_items: 100
+                                 scratch_space_bytes: 1024
+                               }
+                               scratch_size_recordings {
+                                 num_items: 200
+                                 scratch_space_bytes: 2048
+                               }
+                             }
+                           )pb")));
 
   // Request 50, should give 100's scratch (1024)
   EXPECT_THAT(lookup.Lookup(kCubVersion1_15_0, "sm_80", /*key_type_size=*/4,
@@ -86,7 +97,7 @@ TEST(CubScratchSizeDevicelessLookupTest, LookupClosestHigherMatch) {
 
 TEST(CubScratchSizeDevicelessLookupTest, LookupNoEntryForParams) {
   ASSERT_OK_AND_ASSIGN(auto lookup,
-                       CubScratchSizeDevicelessLookup::Create(
+                       CubScratchSizeDevicelessLookup::CreateFromProto(
                            ParseTextProtoOrDie<CubScratchSizeLookupTable>(R"pb(
                              entries {
                                cub_version: "1.15.0"
@@ -115,20 +126,47 @@ TEST(CubScratchSizeDevicelessLookupTest, LookupNoEntryForParams) {
       lookup.Lookup(kCubVersion1_15_0, "sm_80", 8, 4, 100).has_value());
 }
 
+TEST(CubScratchSizeDevicelessLookupTest, LookupMIGDeviceName) {
+  ASSERT_OK_AND_ASSIGN(auto lookup,
+                       CubScratchSizeDevicelessLookup::CreateFromProto(
+                           ParseTextProtoOrDie<CubScratchSizeLookupTable>(R"pb(
+                             entries {
+                               cub_version: "1.15.0"
+                               device_name: "NVIDIA GB200"
+                               key_type_size: 4
+                               value_type_size: 4
+                               scratch_size_recordings {
+                                 num_items: 100
+                                 scratch_space_bytes: 1024
+                               }
+                             }
+                           )pb")));
+
+  EXPECT_THAT(lookup.Lookup(kCubVersion1_15_0, "NVIDIA GB200 MIG 1g.23gb",
+                            /*key_type_size=*/4, /*value_type_size=*/4,
+                            /*num_items=*/100),
+              Optional(1024));
+}
+
 TEST(CubScratchSizeDevicelessLookupTest, LookupItemsExceedRecordings) {
-  ASSERT_OK_AND_ASSIGN(
-      auto lookup,
-      CubScratchSizeDevicelessLookup::Create(ParseTextProtoOrDie<
-                                             CubScratchSizeLookupTable>(R"pb(
-        entries {
-          cub_version: "1.15.0"
-          device_name: "sm_80"
-          key_type_size: 4
-          value_type_size: 4
-          scratch_size_recordings { num_items: 100 scratch_space_bytes: 1024 }
-          scratch_size_recordings { num_items: 200 scratch_space_bytes: 2048 }
-        }
-      )pb")));
+  ASSERT_OK_AND_ASSIGN(auto lookup,
+                       CubScratchSizeDevicelessLookup::CreateFromProto(
+                           ParseTextProtoOrDie<CubScratchSizeLookupTable>(R"pb(
+                             entries {
+                               cub_version: "1.15.0"
+                               device_name: "sm_80"
+                               key_type_size: 4
+                               value_type_size: 4
+                               scratch_size_recordings {
+                                 num_items: 100
+                                 scratch_space_bytes: 1024
+                               }
+                               scratch_size_recordings {
+                                 num_items: 200
+                                 scratch_space_bytes: 2048
+                               }
+                             }
+                           )pb")));
 
   // Request 300 (greater than all recorded sizes), should return nullopt
   EXPECT_FALSE(lookup
@@ -138,19 +176,24 @@ TEST(CubScratchSizeDevicelessLookupTest, LookupItemsExceedRecordings) {
 }
 
 TEST(CubScratchSizeDevicelessLookupTest, CanLookupTest) {
-  ASSERT_OK_AND_ASSIGN(
-      auto lookup,
-      CubScratchSizeDevicelessLookup::Create(ParseTextProtoOrDie<
-                                             CubScratchSizeLookupTable>(R"pb(
-        entries {
-          cub_version: "1.15.0"
-          device_name: "sm_80"
-          key_type_size: 4
-          value_type_size: 4
-          scratch_size_recordings { num_items: 100 scratch_space_bytes: 1024 }
-          scratch_size_recordings { num_items: 200 scratch_space_bytes: 2048 }
-        }
-      )pb")));
+  ASSERT_OK_AND_ASSIGN(auto lookup,
+                       CubScratchSizeDevicelessLookup::CreateFromProto(
+                           ParseTextProtoOrDie<CubScratchSizeLookupTable>(R"pb(
+                             entries {
+                               cub_version: "1.15.0"
+                               device_name: "sm_80"
+                               key_type_size: 4
+                               value_type_size: 4
+                               scratch_size_recordings {
+                                 num_items: 100
+                                 scratch_space_bytes: 1024
+                               }
+                               scratch_size_recordings {
+                                 num_items: 200
+                                 scratch_space_bytes: 2048
+                               }
+                             }
+                           )pb")));
 
   // Exact match for num_items
   EXPECT_TRUE(lookup.CanLookup(kCubVersion1_15_0, "sm_80", /*key_type_size=*/4,
@@ -178,29 +221,40 @@ TEST(CubScratchSizeDevicelessLookupTest, CanLookupTest) {
 }
 
 TEST(CubScratchSizeDevicelessLookupTest, LookupWithBatchSize) {
-  ASSERT_OK_AND_ASSIGN(
-      auto lookup,
-      CubScratchSizeDevicelessLookup::Create(ParseTextProtoOrDie<
-                                             CubScratchSizeLookupTable>(R"pb(
-        entries {
-          cub_version: "1.15.0"
-          device_name: "sm_80"
-          key_type_size: 4
-          value_type_size: 4
-          is_segmented: true
-          scratch_size_recordings { num_items: 100 scratch_space_bytes: 1024 }
-          scratch_size_recordings { num_items: 200 scratch_space_bytes: 2048 }
-        }
-        entries {
-          cub_version: "1.15.0"
-          device_name: "sm_80"
-          key_type_size: 4
-          value_type_size: 4
-          is_segmented: false
-          scratch_size_recordings { num_items: 100 scratch_space_bytes: 2048 }
-          scratch_size_recordings { num_items: 200 scratch_space_bytes: 4096 }
-        }
-      )pb")));
+  ASSERT_OK_AND_ASSIGN(auto lookup,
+                       CubScratchSizeDevicelessLookup::CreateFromProto(
+                           ParseTextProtoOrDie<CubScratchSizeLookupTable>(R"pb(
+                             entries {
+                               cub_version: "1.15.0"
+                               device_name: "sm_80"
+                               key_type_size: 4
+                               value_type_size: 4
+                               is_segmented: true
+                               scratch_size_recordings {
+                                 num_items: 100
+                                 scratch_space_bytes: 1024
+                               }
+                               scratch_size_recordings {
+                                 num_items: 200
+                                 scratch_space_bytes: 2048
+                               }
+                             }
+                             entries {
+                               cub_version: "1.15.0"
+                               device_name: "sm_80"
+                               key_type_size: 4
+                               value_type_size: 4
+                               is_segmented: false
+                               scratch_size_recordings {
+                                 num_items: 100
+                                 scratch_space_bytes: 2048
+                               }
+                               scratch_size_recordings {
+                                 num_items: 200
+                                 scratch_space_bytes: 4096
+                               }
+                             }
+                           )pb")));
 
   // batch_size = 1 (default), should return exact recorded size
   EXPECT_THAT(lookup.Lookup(kCubVersion1_15_0, "sm_80", /*key_type_size=*/4,
@@ -231,19 +285,30 @@ TEST(CubScratchSizeDevicelessLookupTest, LookupWithBatchSize) {
 }
 
 TEST(CubScratchSizeDevicelessLookupTest, CreateFailsIfRecordingsNotSorted) {
-  EXPECT_THAT(
-      CubScratchSizeDevicelessLookup::Create(ParseTextProtoOrDie<
-                                             CubScratchSizeLookupTable>(R"pb(
-        entries {
-          cub_version: "1.15.0"
-          device_name: "sm_80"
-          key_type_size: 4
-          value_type_size: 4
-          scratch_size_recordings { num_items: 200 scratch_space_bytes: 2048 }
-          scratch_size_recordings { num_items: 100 scratch_space_bytes: 1024 }
-        }
-      )pb")),
-      StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(CubScratchSizeDevicelessLookup::CreateFromProto(
+                  ParseTextProtoOrDie<CubScratchSizeLookupTable>(R"pb(
+                    entries {
+                      cub_version: "1.15.0"
+                      device_name: "sm_80"
+                      key_type_size: 4
+                      value_type_size: 4
+                      scratch_size_recordings {
+                        num_items: 200
+                        scratch_space_bytes: 2048
+                      }
+                      scratch_size_recordings {
+                        num_items: 100
+                        scratch_space_bytes: 1024
+                      }
+                    }
+                  )pb")),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(CubScratchSizeDevicelessLookupTest, CanBeLoadedFromBundledData) {
+  absl::StatusOr<const CubScratchSizeDevicelessLookup&> lookup =
+      CubScratchSizeDevicelessLookup::GetInstance();
+  ASSERT_OK(lookup) << lookup.status().message();
 }
 
 }  // namespace

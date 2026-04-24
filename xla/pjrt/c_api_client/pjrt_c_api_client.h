@@ -127,6 +127,8 @@ class PjRtCApiMemorySpace : public PjRtMemorySpace {
   explicit PjRtCApiMemorySpace(PJRT_Memory* c_memory, PjRtCApiClient* client)
       : client_(client), c_memory_(c_memory) {}
 
+  PJRT_Memory* ToCApiPtr() override { return c_memory_; }
+
   PjRtClient* client() const override;
 
   absl::Span<PjRtDevice* const> devices() const override { return devices_; }
@@ -150,6 +152,7 @@ class PjRtCApiMemorySpace : public PjRtMemorySpace {
   PjRtCApiClient* client_;
   PJRT_Memory* c_memory_;
   std::vector<PjRtDevice*> devices_;
+  std::unique_ptr<PjRtMemorySpaceCApiDelegator> capi_delegator_;
 };
 
 class PjRtCApiDevice : public PjRtDevice {
@@ -391,6 +394,12 @@ class PjRtCApiClient : public PjRtClient {
 
   std::optional<PjRtPluginAttributes> plugin_attributes() const override;
 
+  bool SupportsMemoryUserData() const {
+    return c_api_->pjrt_api_version.minor_version >= 105;
+  }
+
+  static const char kPjRtCApiMemorySpaceKey;
+
   absl::StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
       int num_replicas, int num_partitions) const override;
 
@@ -496,6 +505,14 @@ class PjRtCApiClient : public PjRtClient {
   }
 
   PjRtCApiMemorySpace* GetCppMemory(PJRT_Memory* c_memory) const {
+    if (SupportsMemoryUserData() && c_memory->vtable &&
+        c_memory->vtable->get_user_data) {
+      void* data = c_memory->vtable->get_user_data(
+          c_memory, &PjRtCApiClient::kPjRtCApiMemorySpaceKey);
+      if (data) {
+        return static_cast<PjRtCApiMemorySpace*>(data);
+      }
+    }
     auto it = c_to_cpp_memory_map_.find(c_memory);
     CHECK(it != c_to_cpp_memory_map_.end());
     return it->second;

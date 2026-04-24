@@ -383,6 +383,24 @@ typedef PJRT_Error* PJRT_Event_Set(PJRT_Event_Set_Args* args);
 typedef struct PJRT_Client PJRT_Client;
 typedef struct PJRT_Device PJRT_Device;
 typedef struct PJRT_Memory PJRT_Memory;
+typedef struct PJRT_Memory_FunctionTable PJRT_Memory_FunctionTable;
+
+struct PJRT_Memory_FunctionTable {
+  size_t struct_size;
+  struct PJRT_Extension_Base* extension_start;
+  size_t instance_struct_size; /* = PJRT_Memory_STRUCT_SIZE; */
+  // fetches user data from the PJRT_Memory implementation.
+  void* (*get_user_data)(struct PJRT_Memory* memory, const void* key);
+  // Attaches user data to the PJRT_Memory implementation.
+  void (*set_user_data)(struct PJRT_Memory* memory, const void* key, void* data,
+                        void (*dtor)(void*));
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Memory_FunctionTable, set_user_data);
+
+struct PJRT_Memory {
+  const struct PJRT_Memory_FunctionTable* vtable;
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Memory, vtable);
 typedef struct PJRT_ShapeSpec PJRT_ShapeSpec;
 typedef struct PJRT_DeviceDescription PJRT_DeviceDescription;
 typedef struct PJRT_TopologyDescription PJRT_TopologyDescription;

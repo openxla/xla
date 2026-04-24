@@ -93,10 +93,9 @@ class ThunkEmitter {
 
   AsyncThunkSequence EmitCallComputation(const HloInstruction* hlo);
 
-  absl::StatusOr<ThunkSequence> EmitAsyncComputation(const HloInstruction* hlo);
+  AsyncThunkSequence EmitAsyncComputation(const HloInstruction* instr);
 
-  absl::StatusOr<ThunkSequence> EmitAsyncCustomCallStart(
-      const HloInstruction* instr);
+  AsyncThunkSequence EmitAsyncCustomCallStart(const HloInstruction* instr);
 
   absl::StatusOr<ThunkSequence> EmitAsyncDone(const HloInstruction* hlo);
 
@@ -211,7 +210,7 @@ class ThunkEmitter {
       const HloInstruction* hlo);
 
   absl::StatusOr<ThunkSequence> EmitTritonCustomCall(
-      const HloCustomCallInstruction* hlo);
+      const HloCustomCallInstruction* instr);
 
   AsyncThunkSequence EmitWhile(const HloInstruction* instr);
 

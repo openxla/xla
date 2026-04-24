@@ -590,9 +590,6 @@ HlosAndRequirements FuseTowardUsers(
     return existing_hlos_and_requirements;
   }
   const HloInstruction& user = *hlo.users()[0];
-  if (!legacy_triton::IsDistributiveOverAddition(user)) {
-    return existing_hlos_and_requirements;
-  }
 
   // Get the dim orders for the user.
   auto opt_user_result = GetUserDimOrdersAndCombinedReqsIfProfitable(
@@ -666,8 +663,7 @@ HlosAndRequirements FuseDotOutput(
     HloComputation::Builder& builder,            // append
     std::vector<HloInstruction*>& fusion_params  // append
 ) {
-  const auto context =
-      FusionContext::FromDotOutput(dot, /*split_k=*/1, requirements);
+  const auto context = FusionContext::FromDotOutput(dot, requirements);
   return FuseTowardUsers(dot, fused_dot, context.dim_orders().at(&dot),
                          gpu_version, context.dot_properties(),
                          context.requirements(), builder, fusion_params);

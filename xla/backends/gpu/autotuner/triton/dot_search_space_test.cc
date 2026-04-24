@@ -79,10 +79,7 @@ template <typename MatcherType>
 auto BlockKIs(MatcherType matcher) {
   return Field("block_k", &TritonGemmConfig::block_k, matcher);
 }
-template <typename MatcherType>
-auto SplitKIs(MatcherType matcher) {
-  return Field("split_k", &TritonGemmConfig::split_k, matcher);
-}
+
 template <typename MatcherType>
 auto NumStagesIs(MatcherType matcher) {
   return Field("num_stages", &TritonGemmConfig::num_stages, matcher);
@@ -102,8 +99,7 @@ auto WavesPerEuIs(MatcherType matcher) {
 
 auto IsValidConfig() {
   return AllOf(BlockMIs(Ge(1)), BlockNIs(Ge(1)), BlockKIs(Ge(1)),
-               SplitKIs(Ge(1)), NumStagesIs(Ge(1)), NumWarpsIs(Ge(1)),
-               NumCtasIs(Ge(1)));
+               NumStagesIs(Ge(1)), NumWarpsIs(Ge(1)), NumCtasIs(Ge(1)));
 };
 
 class DefaultDeviceDotSearchSpaceTest : public HloHardwareIndependentTestBase {
@@ -420,7 +416,7 @@ TEST_F(DotSearchSpaceTest, OptimizesEmptyConfigSet) {
                           GetDefaultDotModule());
   TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
   TritonGemmConfig hint = {/*block_m=*/32,   /*block_n=*/32,
-                           /*block_k=*/32,   /*split_k=*/1,
+                           /*block_k=*/32,
                            /*num_stages=*/1, /*num_warps=*/4,
                            /*num_ctas=*/1};
 
@@ -432,16 +428,16 @@ TEST_F(DotSearchSpaceTest, RestrictsConfigsToHints) {
                           GetDefaultDotModule());
   TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
   TritonGemmConfig matching_hint = {
-      /*block_m=*/32, /*block_n=*/32,   /*block_k=*/32,
-      /*split_k=*/1,  /*num_stages=*/1, /*num_warps=*/4,
+      /*block_m=*/32,   /*block_n=*/32,  /*block_k=*/32,
+      /*num_stages=*/1, /*num_warps=*/4,
       /* num_ctas=*/1};
   TritonGemmConfig non_matching_hint = {
-      /*block_m=*/64, /*block_n=*/32,   /*block_k=*/32,
-      /*split_k=*/1,  /*num_stages=*/1, /*num_warps=*/4,
+      /*block_m=*/64,   /*block_n=*/32,  /*block_k=*/32,
+      /*num_stages=*/1, /*num_warps=*/4,
       /*num_ctas=*/1};
   TritonGemmConfig other_config = {
-      /*block_m=*/32, /*block_n=*/64,   /*block_k=*/32,
-      /*split_k=*/1,  /*num_stages=*/1, /*num_warps=*/4,
+      /*block_m=*/32,   /*block_n=*/64,  /*block_k=*/32,
+      /*num_stages=*/1, /*num_warps=*/4,
       /*num_ctas=*/1};
 
   EXPECT_THAT(
@@ -457,7 +453,7 @@ TEST_F(DotSearchSpaceTest, ReturnsNonEmptySetForUnusualHints) {
   TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
 
   TritonGemmConfig hint = {/*block_m=*/1024, /*block_n=*/1024,
-                           /*block_k=*/32,   /*split_k=*/1,
+                           /*block_k=*/32,
                            /*num_stages=*/1, /*num_warps=*/4,
                            /*num_ctas=*/1};
 
@@ -465,12 +461,6 @@ TEST_F(DotSearchSpaceTest, ReturnsNonEmptySetForUnusualHints) {
       search_space.OptimizeConfigSet(search_space.GenerateConfigs(), {hint}),
       Not(IsEmpty()));
 }
-
-// Regression test: Ensures that split_k and block_k combinations are compatible
-// with the validation in MakeSplitKOperand. For a config to be valid:
-//   split_k <= ceil(contracting_size / block_k)
-// This test uses contracting_dim=290 which previously could generate invalid
-// configs like split_k=8, block_k=64 (since 8 > ceil(290/64) = 5).
 
 TEST_F(DotSearchSpaceTest, CudaDoesNotGenerateWavesPerEuConfigs) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,

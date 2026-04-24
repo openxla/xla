@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/flags/flag.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -85,6 +86,16 @@ struct NormShape {
     reduction_shape.DeleteDimensions(reduction_dims);
     return reduction_shape;
   }
+
+  std::vector<int64_t> GetKeptDims() const {
+    std::vector<int64_t> kept_dims;
+    for (int64_t i = 0; i < input_shape.dimensions().size(); ++i) {
+      if (!absl::c_linear_search(reduction_dims, i)) {
+        kept_dims.push_back(i);
+      }
+    }
+    return kept_dims;
+  }
 };
 
 NormShape ParseShape(const Shape& s) {
@@ -138,20 +149,7 @@ void BM_RmsNorm(benchmark::State& state, const NormShape& shape) {
     reduction_size *= shape.input_shape.dimensions(d);
   }
 
-  std::vector<int64_t> kept_dims;
-  for (int64_t i = 0; i < shape.input_shape.dimensions().size(); ++i) {
-    bool is_reduced = false;
-    for (int64_t d : shape.reduction_dims) {
-      if (i == d) {
-        is_reduced = true;
-        break;
-      }
-    }
-    if (!is_reduced) {
-      kept_dims.push_back(i);
-    }
-  }
-  const std::string kept_dims_str = absl::StrJoin(kept_dims, ",");
+  const std::string kept_dims_str = absl::StrJoin(shape.GetKeptDims(), ",");
 
   absl::string_view hlo = R"(
   reducer_add {
@@ -220,20 +218,7 @@ void BM_Softmax(benchmark::State& state, const NormShape& shape) {
       ShapeUtil::ChangeElementType(shape.GetReductionShape(), F32);
   const std::string reduction_shape_f32_str = reduction_shape_f32.ToString();
 
-  std::vector<int64_t> kept_dims;
-  for (int i = 0; i < shape.input_shape.dimensions().size(); ++i) {
-    bool is_reduced = false;
-    for (int64_t d : shape.reduction_dims) {
-      if (i == d) {
-        is_reduced = true;
-        break;
-      }
-    }
-    if (!is_reduced) {
-      kept_dims.push_back(i);
-    }
-  }
-  const std::string kept_dims_str = absl::StrJoin(kept_dims, ",");
+  const std::string kept_dims_str = absl::StrJoin(shape.GetKeptDims(), ",");
 
   absl::string_view hlo = R"(
   HloModule softmax
@@ -290,6 +275,90 @@ void BM_Softmax(benchmark::State& state, const NormShape& shape) {
                            benchmark_options));
 }
 
+void BM_ZScore(benchmark::State& state, const NormShape& shape) {
+  const std::string input_shape_str = shape.input_shape.ToString();
+  const std::string reduction_dims_str =
+      absl::StrJoin(shape.reduction_dims, ",");
+  const std::string dtype_str =
+      primitive_util::LowercasePrimitiveTypeName(shape.GetDType());
+  const std::string reduction_shape_str = shape.GetReductionShape().ToString();
+
+  Shape input_shape_f32 = ShapeUtil::ChangeElementType(shape.input_shape, F32);
+  const std::string input_shape_f32_str = input_shape_f32.ToString();
+
+  Shape reduction_shape_f32 =
+      ShapeUtil::ChangeElementType(shape.GetReductionShape(), F32);
+  const std::string reduction_shape_f32_str = reduction_shape_f32.ToString();
+
+  int64_t reduction_size = 1;
+  for (int64_t d : shape.reduction_dims) {
+    reduction_size *= shape.input_shape.dimensions(d);
+  }
+
+  const std::string kept_dims_str = absl::StrJoin(shape.GetKeptDims(), ",");
+
+  absl::string_view hlo = R"(
+  reducer_add {
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT sum = f32[] add(lhs, rhs)
+  }
+
+  ENTRY main {
+    input = $input_shape parameter(0)
+    input_f32 = $input_shape_f32 convert(input)
+
+    zero_f32 = f32[] constant(0)
+    sum_input = $reduction_shape_f32 reduce(input_f32, zero_f32),
+        dimensions={$reduction_dims}, to_apply=reducer_add
+
+    dim_size_f32 = f32[] constant($reduction_size)
+    dim_size_br = $reduction_shape_f32 broadcast(dim_size_f32), dimensions={}
+    mean = $reduction_shape_f32 divide(sum_input, dim_size_br)
+
+    mean_br = $input_shape_f32 broadcast(mean), dimensions={$kept_dims}
+    input_centered = $input_shape_f32 subtract(input_f32, mean_br)
+
+    input_centered_squared =
+        $input_shape_f32 multiply(input_centered, input_centered)
+    sum_input_centered_squared =
+        $reduction_shape_f32 reduce(input_centered_squared, zero_f32),
+        dimensions={$reduction_dims}, to_apply=reducer_add
+
+    variance =
+        $reduction_shape_f32 divide(sum_input_centered_squared, dim_size_br)
+
+    epsilon_f32 = f32[] constant(1e-6)
+    epsilon_br = $reduction_shape_f32 broadcast(epsilon_f32), dimensions={}
+    variance_eps = $reduction_shape_f32 add(variance, epsilon_br)
+    std_dev = $reduction_shape_f32 sqrt(variance_eps)
+
+    std_dev_br = $input_shape_f32 broadcast(std_dev), dimensions={$kept_dims}
+
+    output_f32 = $input_shape_f32 divide(input_centered, std_dev_br)
+    ROOT output = $input_shape convert(output_f32)
+  }
+  )";
+
+  HloBenchmarkOptions benchmark_options;
+  benchmark_options.num_executions = absl::GetFlag(FLAGS_num_executions);
+  benchmark_options.aot_options = absl::GetFlag(FLAGS_aot_compiled_execution)
+                                      ? GetAotCompilationOptions()
+                                      : nullptr;
+
+  Literal input = GetRandomLiteral(shape.input_shape);
+
+  CHECK_OK(RunHloBenchmark(state, hlo, {&input},
+                           {{"$input_shape", input_shape_str},
+                            {"$input_shape_f32", input_shape_f32_str},
+                            {"$reduction_shape_f32", reduction_shape_f32_str},
+                            {"$reduction_dims", reduction_dims_str},
+                            {"$reduction_size", absl::StrCat(reduction_size)},
+                            {"$kept_dims", kept_dims_str},
+                            {"$dtype", dtype_str}},
+                           benchmark_options));
+}
+
 void RegisterBenchmarks() {
   std::vector<Shape> list = ParseShapeList(absl::GetFlag(FLAGS_shapes)).value();
   for (const auto& s : list) {
@@ -303,6 +372,9 @@ void RegisterBenchmarks() {
         ->MeasureProcessCPUTime();
 
     benchmark::RegisterBenchmark("BM_Softmax/" + shape_str, BM_Softmax, shape)
+        ->MeasureProcessCPUTime();
+
+    benchmark::RegisterBenchmark("BM_ZScore/" + shape_str, BM_ZScore, shape)
         ->MeasureProcessCPUTime();
   }
 }

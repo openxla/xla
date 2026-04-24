@@ -23,14 +23,13 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
-#include "absl/strings/str_format.h"
+#include "absl/strings/cord.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/pjrt/event_pool.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/util.h"
 
 namespace xla {
 
@@ -78,9 +77,11 @@ void BufferSequencingEvent::WaitForEventOnStream(se::Stream* stream) {
 
 absl::Status BufferSequencingEvent::AppendErrorContext(
     absl::Status status) const {
-  if (!error_context_.empty()) {
-    status =
-        AppendStatus(status, absl::StrFormat(" Context(%s)", error_context_));
+  // Order of iteration over the error context map is not guaranteed to be
+  // deterministic, but this only affects the order of error messages in the
+  // final error status, which is not important.
+  for (const auto& [key, value] : error_context_) {  // NOLINT
+    status.SetPayload(key, absl::Cord(value));
   }
   return status;
 }

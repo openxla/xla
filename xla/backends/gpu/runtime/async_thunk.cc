@@ -50,7 +50,7 @@ AsyncStartThunk::AsyncStartThunk(ThunkInfo thunk_info,
     : Thunk(Thunk::kAsyncStart, std::move(thunk_info)),
       execution_stream_id_(execution_stream_id),
       executor_(std::move(thunks)),
-      async_execution_(std::make_shared<AsyncExecution>(this)) {}
+      async_execution_(std::make_shared<AsyncExecution>(this->thunk_info())) {}
 
 AsyncStartThunk::AsyncStartThunk(
     ThunkInfo thunk_info, ExecutionStreamId execution_stream_id,

@@ -22,6 +22,8 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
@@ -31,6 +33,7 @@ limitations under the License.
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Support/WalkResult.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
@@ -53,6 +56,21 @@ class ExternFunctionNameTest : public ::testing::Test {
   mlir::MLIRContext context_;
 };
 
+struct AtomicInstrNameTest : public ExternFunctionNameTest,
+                             ::testing::WithParamInterface<bool> {
+  bool HasMask() const { return GetParam(); }
+
+  std::string GetName(absl::string_view prefix) {
+    return absl::StrCat(prefix, HasMask() ? "_mask" : "_nomask");
+  }
+};
+
+INSTANTIATE_TEST_SUITE_P(AtomicInstrNameTest, AtomicInstrNameTest,
+                         ::testing::Bool(),
+                         [](const ::testing::TestParamInfo<bool>& param) {
+                           return param.param ? "mask" : "nomask";
+                         });
+
 // Test parsing GetThreadId instruction
 TEST_F(ExternFunctionNameTest, ParseGetThreadId) {
   auto result = ParseExternFunctionName("xla_getthreadid");
@@ -61,39 +79,44 @@ TEST_F(ExternFunctionNameTest, ParseGetThreadId) {
 }
 
 // Test parsing AtomicWrite instructions
-TEST_F(ExternFunctionNameTest, ParseAtomicWriteRelaxedGpu) {
-  auto result = ParseExternFunctionName("xla_atomicwrite_relaxed_gpu");
+TEST_P(AtomicInstrNameTest, ParseAtomicWriteRelaxedGpu) {
+  auto result = ParseExternFunctionName(GetName("xla_atomicwrite_relaxed_gpu"));
   ASSERT_THAT(result, IsOk());
 
   ASSERT_TRUE(std::holds_alternative<AtomicWriteInstruction>(*result));
   auto& instruction = std::get<AtomicWriteInstruction>(*result);
   EXPECT_EQ(instruction.semantic, triton::MemSemantic::RELAXED);
   EXPECT_EQ(instruction.scope, triton::MemSyncScope::GPU);
+  EXPECT_EQ(instruction.has_mask, HasMask());
 }
 
-TEST_F(ExternFunctionNameTest, ParseAtomicWriteReleaseSystem) {
-  auto result = ParseExternFunctionName("xla_atomicwrite_release_system");
+TEST_P(AtomicInstrNameTest, ParseAtomicWriteReleaseSystem) {
+  auto result =
+      ParseExternFunctionName(GetName("xla_atomicwrite_release_system"));
   ASSERT_THAT(result, IsOk());
 
   ASSERT_TRUE(std::holds_alternative<AtomicWriteInstruction>(*result));
   auto& instruction = std::get<AtomicWriteInstruction>(*result);
   EXPECT_EQ(instruction.semantic, triton::MemSemantic::RELEASE);
   EXPECT_EQ(instruction.scope, triton::MemSyncScope::SYSTEM);
+  EXPECT_EQ(instruction.has_mask, HasMask());
 }
 
-TEST_F(ExternFunctionNameTest, ParseAtomicWriteAcqRelCta) {
-  auto result = ParseExternFunctionName("xla_atomicwrite_acqrel_cta");
+TEST_P(AtomicInstrNameTest, ParseAtomicWriteAcqRelCta) {
+  auto result = ParseExternFunctionName(GetName("xla_atomicwrite_acqrel_cta"));
   ASSERT_THAT(result, IsOk());
 
   ASSERT_TRUE(std::holds_alternative<AtomicWriteInstruction>(*result));
   auto& instruction = std::get<AtomicWriteInstruction>(*result);
   EXPECT_EQ(instruction.semantic, triton::MemSemantic::ACQUIRE_RELEASE);
   EXPECT_EQ(instruction.scope, triton::MemSyncScope::CTA);
+  EXPECT_EQ(instruction.has_mask, HasMask());
 }
 
 // Test parsing AtomicSpinWait instructions
-TEST_F(ExternFunctionNameTest, ParseAtomicSpinWaitRelaxedGpuEq) {
-  auto result = ParseExternFunctionName("xla_atomicspinwait_relaxed_gpu_eq");
+TEST_P(AtomicInstrNameTest, ParseAtomicSpinWaitRelaxedGpuEq) {
+  auto result =
+      ParseExternFunctionName(GetName("xla_atomicspinwait_relaxed_gpu_eq"));
   ASSERT_THAT(result, IsOk());
 
   ASSERT_TRUE(std::holds_alternative<AtomicSpinWaitInstruction>(*result));
@@ -101,10 +124,12 @@ TEST_F(ExternFunctionNameTest, ParseAtomicSpinWaitRelaxedGpuEq) {
   EXPECT_EQ(instruction.semantic, triton::MemSemantic::RELAXED);
   EXPECT_EQ(instruction.scope, triton::MemSyncScope::GPU);
   EXPECT_EQ(instruction.comparator, Comparator::EQ);
+  EXPECT_EQ(instruction.has_mask, HasMask());
 }
 
-TEST_F(ExternFunctionNameTest, ParseAtomicSpinWaitAcquireSystemLt) {
-  auto result = ParseExternFunctionName("xla_atomicspinwait_acquire_system_lt");
+TEST_P(AtomicInstrNameTest, ParseAtomicSpinWaitAcquireSystemLt) {
+  auto result =
+      ParseExternFunctionName(GetName("xla_atomicspinwait_acquire_system_lt"));
   ASSERT_THAT(result, IsOk());
 
   ASSERT_TRUE(std::holds_alternative<AtomicSpinWaitInstruction>(*result));
@@ -112,10 +137,12 @@ TEST_F(ExternFunctionNameTest, ParseAtomicSpinWaitAcquireSystemLt) {
   EXPECT_EQ(instruction.semantic, triton::MemSemantic::ACQUIRE);
   EXPECT_EQ(instruction.scope, triton::MemSyncScope::SYSTEM);
   EXPECT_EQ(instruction.comparator, Comparator::LT);
+  EXPECT_EQ(instruction.has_mask, HasMask());
 }
 
-TEST_F(ExternFunctionNameTest, ParseAtomicSpinWaitAcqRelCtaEq) {
-  auto result = ParseExternFunctionName("xla_atomicspinwait_acqrel_cta_eq");
+TEST_P(AtomicInstrNameTest, ParseAtomicSpinWaitAcqRelCtaEq) {
+  auto result =
+      ParseExternFunctionName(GetName("xla_atomicspinwait_acqrel_cta_eq"));
   ASSERT_THAT(result, IsOk());
 
   ASSERT_TRUE(std::holds_alternative<AtomicSpinWaitInstruction>(*result));
@@ -132,21 +159,22 @@ TEST_F(ExternFunctionNameTest, ParseInvalidFunctionName) {
                                HasSubstr("Invalid extern function name")));
 }
 
-TEST_F(ExternFunctionNameTest, ParseInvalidAtomicWrite) {
-  auto result = ParseExternFunctionName("xla_atomicwrite_invalid_gpu");
+TEST_P(AtomicInstrNameTest, ParseInvalidAtomicWrite) {
+  auto result = ParseExternFunctionName(GetName("xla_atomicwrite_invalid_gpu"));
   EXPECT_THAT(result, StatusIs(absl::StatusCode::kInvalidArgument,
                                HasSubstr("Unknown memory semantic")));
 }
 
-TEST_F(ExternFunctionNameTest, ParseInvalidScope) {
-  auto result = ParseExternFunctionName("xla_atomicwrite_relaxed_invalid");
+TEST_P(AtomicInstrNameTest, ParseInvalidScope) {
+  auto result =
+      ParseExternFunctionName(GetName("xla_atomicwrite_relaxed_invalid"));
   EXPECT_THAT(result, StatusIs(absl::StatusCode::kInvalidArgument,
                                HasSubstr("Unknown memory sync scope")));
 }
 
-TEST_F(ExternFunctionNameTest, ParseInvalidComparator) {
-  auto result =
-      ParseExternFunctionName("xla_atomicspinwait_relaxed_gpu_invalid");
+TEST_P(AtomicInstrNameTest, ParseInvalidComparator) {
+  auto result = ParseExternFunctionName(
+      GetName("xla_atomicspinwait_relaxed_gpu_invalid"));
   EXPECT_THAT(result, StatusIs(absl::StatusCode::kInvalidArgument,
                                HasSubstr("Unknown comparator")));
 }
@@ -158,29 +186,32 @@ TEST_F(ExternFunctionNameTest, SerializeGetThreadId) {
   EXPECT_EQ(result, "xla_getthreadid");
 }
 
-TEST_F(ExternFunctionNameTest, SerializeAtomicWrite) {
+TEST_P(AtomicInstrNameTest, SerializeAtomicWrite) {
   AtomicWriteInstruction instruction{
       /* .semantic= */ triton::MemSemantic::RELEASE,
-      /* .scope= */ triton::MemSyncScope::GPU};
+      /* .scope= */ triton::MemSyncScope::GPU,
+      /* .has_mask= */ HasMask()};
   std::string result = SerializeExternFunctionName(instruction);
-  EXPECT_EQ(result, "xla_atomicwrite_release_gpu");
+  EXPECT_EQ(result, GetName("xla_atomicwrite_release_gpu"));
 }
 
-TEST_F(ExternFunctionNameTest, SerializeAtomicWriteAcqRel) {
+TEST_P(AtomicInstrNameTest, SerializeAtomicWriteAcqRel) {
   AtomicWriteInstruction instruction{
       /* .semantic= */ triton::MemSemantic::ACQUIRE_RELEASE,
-      /* .scope= */ triton::MemSyncScope::SYSTEM};
+      /* .scope= */ triton::MemSyncScope::SYSTEM,
+      /* .has_mask= */ HasMask()};
   std::string result = SerializeExternFunctionName(instruction);
-  EXPECT_EQ(result, "xla_atomicwrite_acqrel_system");
+  EXPECT_EQ(result, GetName("xla_atomicwrite_acqrel_system"));
 }
 
-TEST_F(ExternFunctionNameTest, SerializeAtomicSpinWait) {
+TEST_P(AtomicInstrNameTest, SerializeAtomicSpinWait) {
   AtomicSpinWaitInstruction instruction{
       /* .semantic= */ triton::MemSemantic::ACQUIRE,
       /* .scope= */ triton::MemSyncScope::CTA,
-      /* .comparator= */ Comparator::LT};
+      /* .comparator= */ Comparator::LT,
+      /* .has_mask= */ HasMask()};
   std::string result = SerializeExternFunctionName(instruction);
-  EXPECT_EQ(result, "xla_atomicspinwait_acquire_cta_lt");
+  EXPECT_EQ(result, GetName("xla_atomicspinwait_acquire_cta_lt"));
 }
 
 // Test round-trip (parse then serialize)
@@ -192,16 +223,16 @@ TEST_F(ExternFunctionNameTest, RoundTripGetThreadId) {
   EXPECT_EQ(original, serialized);
 }
 
-TEST_F(ExternFunctionNameTest, RoundTripAtomicWrite) {
-  std::string original = "xla_atomicwrite_relaxed_gpu";
+TEST_P(AtomicInstrNameTest, RoundTripAtomicWrite) {
+  std::string original = GetName("xla_atomicwrite_relaxed_gpu");
   auto parsed = ParseExternFunctionName(original);
   ASSERT_THAT(parsed, IsOk());
   std::string serialized = SerializeExternFunctionName(*parsed);
   EXPECT_EQ(original, serialized);
 }
 
-TEST_F(ExternFunctionNameTest, RoundTripAtomicSpinWait) {
-  std::string original = "xla_atomicspinwait_acquire_system_lt";
+TEST_P(AtomicInstrNameTest, RoundTripAtomicSpinWait) {
+  std::string original = GetName("xla_atomicspinwait_acquire_system_lt");
   auto parsed = ParseExternFunctionName(original);
   ASSERT_THAT(parsed, IsOk());
   std::string serialized = SerializeExternFunctionName(*parsed);
@@ -217,21 +248,27 @@ TEST_F(ExternFunctionNameTest, ValidateGetThreadIdAlwaysValid) {
 TEST_F(ExternFunctionNameTest, ValidateAtomicWriteRelaxed) {
   AtomicWriteInstruction instruction{
       /* .semantic= */ triton::MemSemantic::RELAXED,
-      /* .scope= */ triton::MemSyncScope::GPU};
+      /* .scope= */ triton::MemSyncScope::GPU,
+      /* .has_mask= */ false,
+  };
   EXPECT_THAT(ValidateMemorySemantic(instruction), IsOk());
 }
 
 TEST_F(ExternFunctionNameTest, ValidateAtomicWriteRelease) {
   AtomicWriteInstruction instruction{
       /* .semantic= */ triton::MemSemantic::RELEASE,
-      /* .scope= */ triton::MemSyncScope::GPU};
+      /* .scope= */ triton::MemSyncScope::GPU,
+      /* .has_mask= */ false,
+  };
   EXPECT_THAT(ValidateMemorySemantic(instruction), IsOk());
 }
 
 TEST_F(ExternFunctionNameTest, ValidateAtomicWriteAcquireInvalid) {
   AtomicWriteInstruction instruction{
       /* .semantic= */ triton::MemSemantic::ACQUIRE,
-      /* .scope= */ triton::MemSyncScope::GPU};
+      /* .scope= */ triton::MemSyncScope::GPU,
+      /* .has_mask= */ false,
+  };
   EXPECT_THAT(ValidateMemorySemantic(instruction),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("RELAXED or RELEASE")));
@@ -241,7 +278,9 @@ TEST_F(ExternFunctionNameTest, ValidateAtomicSpinWaitRelaxed) {
   AtomicSpinWaitInstruction instruction{
       /* .semantic= */ triton::MemSemantic::RELAXED,
       /* .scope= */ triton::MemSyncScope::GPU,
-      /* .comparator= */ Comparator::EQ};
+      /* .comparator= */ Comparator::EQ,
+      /* .has_mask= */ false,
+  };
   EXPECT_THAT(ValidateMemorySemantic(instruction), IsOk());
 }
 
@@ -249,7 +288,9 @@ TEST_F(ExternFunctionNameTest, ValidateAtomicSpinWaitAcquire) {
   AtomicSpinWaitInstruction instruction{
       /* .semantic= */ triton::MemSemantic::ACQUIRE,
       /* .scope= */ triton::MemSyncScope::GPU,
-      /* .comparator= */ Comparator::EQ};
+      /* .comparator= */ Comparator::EQ,
+      /* .has_mask= */ false,
+  };
   EXPECT_THAT(ValidateMemorySemantic(instruction), IsOk());
 }
 
@@ -257,7 +298,9 @@ TEST_F(ExternFunctionNameTest, ValidateAtomicSpinWaitReleaseInvalid) {
   AtomicSpinWaitInstruction instruction{
       /* .semantic= */ triton::MemSemantic::RELEASE,
       /* .scope= */ triton::MemSyncScope::GPU,
-      /* .comparator= */ Comparator::EQ};
+      /* .comparator= */ Comparator::EQ,
+      /* .has_mask= */ false,
+  };
   EXPECT_THAT(ValidateMemorySemantic(instruction),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("RELAXED or ACQUIRE")));
@@ -312,7 +355,9 @@ TEST_F(ExternFunctionNameTest, CreateAtomicWriteOpsVerifyPTXAssembly) {
 
   AtomicWriteInstruction instruction{
       /* .semantic= */ triton::MemSemantic::RELEASE,
-      /* .scope= */ triton::MemSyncScope::GPU};
+      /* .scope= */ triton::MemSyncScope::GPU,
+      /* .has_mask= */ false,
+  };
 
   llvm::SmallVector<mlir::Value> operands = {entry_block->getArgument(0),
                                              entry_block->getArgument(1)};
@@ -325,10 +370,12 @@ TEST_F(ExternFunctionNameTest, CreateAtomicWriteOpsVerifyPTXAssembly) {
   ASSERT_TRUE(result != nullptr);
   EXPECT_TRUE(result.getType().isInteger(32));
 
-  // Verify inline assembly was created with correct PTX instruction
-  auto* defining_op = result.getDefiningOp();
-  ASSERT_TRUE(defining_op != nullptr);
-  auto asm_op = mlir::dyn_cast<LLVM::InlineAsmOp>(defining_op);
+  // Result is a poison value, find the inline assembly in the block
+  LLVM::InlineAsmOp asm_op;
+  entry_block->walk([&](LLVM::InlineAsmOp op) {
+    asm_op = op;
+    return mlir::WalkResult::interrupt();
+  });
   ASSERT_TRUE(asm_op != nullptr);
   EXPECT_THAT(asm_op.getAsmString().str(), HasSubstr("st.global"));
   EXPECT_THAT(asm_op.getAsmString().str(), HasSubstr("gpu"));
@@ -352,7 +399,9 @@ TEST_F(ExternFunctionNameTest, CreateAtomicSpinWaitOpsVerifyPTXAssembly) {
   AtomicSpinWaitInstruction instruction{
       /* .semantic= */ triton::MemSemantic::ACQUIRE,
       /* .scope= */ triton::MemSyncScope::GPU,
-      /* .comparator= */ Comparator::EQ};
+      /* .comparator= */ Comparator::EQ,
+      /* .has_mask= */ false,
+  };
 
   llvm::SmallVector<mlir::Value> operands = {entry_block->getArgument(0),
                                              entry_block->getArgument(1)};
@@ -365,10 +414,12 @@ TEST_F(ExternFunctionNameTest, CreateAtomicSpinWaitOpsVerifyPTXAssembly) {
   ASSERT_TRUE(result != nullptr);
   EXPECT_TRUE(result.getType().isInteger(32));
 
-  // Verify inline assembly was created with correct PTX instructions
-  auto* defining_op = result.getDefiningOp();
-  ASSERT_TRUE(defining_op != nullptr);
-  auto asm_op = mlir::dyn_cast<LLVM::InlineAsmOp>(defining_op);
+  // Result is a poison value, find the inline assembly in the block
+  LLVM::InlineAsmOp asm_op;
+  entry_block->walk([&](LLVM::InlineAsmOp op) {
+    asm_op = op;
+    return mlir::WalkResult::interrupt();
+  });
   ASSERT_TRUE(asm_op != nullptr);
   EXPECT_THAT(asm_op.getAsmString().str(), HasSubstr("ld.global"));
   EXPECT_THAT(asm_op.getAsmString().str(), HasSubstr("gpu"));
@@ -405,10 +456,12 @@ TEST_F(ExternFunctionNameTest, CreateAtomicSpinWaitOpsVerifyComparator) {
   mlir::Value result = CreateLLVMOpsForInstruction(instruction, params);
   ASSERT_TRUE(result != nullptr);
 
-  // Verify inline assembly was created with correct comparator
-  auto* defining_op = result.getDefiningOp();
-  ASSERT_TRUE(defining_op != nullptr);
-  auto asm_op = mlir::dyn_cast<LLVM::InlineAsmOp>(defining_op);
+  // Result is a poison value, find the inline assembly in the block
+  LLVM::InlineAsmOp asm_op;
+  entry_block->walk([&](LLVM::InlineAsmOp op) {
+    asm_op = op;
+    return mlir::WalkResult::interrupt();
+  });
   ASSERT_TRUE(asm_op != nullptr);
   EXPECT_THAT(asm_op.getAsmString().str(), HasSubstr("ld.global"));
   EXPECT_THAT(asm_op.getAsmString().str(), HasSubstr("sys"));

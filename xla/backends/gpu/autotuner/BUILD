@@ -449,6 +449,7 @@ xla_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:compiler",
         "//xla/service:executable",
+        "//xla/service:hlo_module_config",
         "//xla/service:platform_util",
         "//xla/service/gpu:alias_info",
         "//xla/stream_executor:device_description",
@@ -581,7 +582,6 @@ cc_library(
         "gpu",
     ],
     deps = [
-        ":cublas",
         ":cublaslt",
         ":cudnn",
         ":factory",
@@ -787,7 +787,6 @@ cc_library(
         ":fission_backend",
         ":hipblaslt",
         ":miopen",
-        ":rocblas",
         ":triton",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner:backends_proto_cc",
@@ -960,8 +959,10 @@ xla_test(
         "@llvm-project//mlir:IR",
     ] + if_cuda_is_configured([
         ":cublas",
+        ":cublaslt",
     ]) + if_rocm_is_configured([
         ":rocblas",
+        ":hipblaslt",
     ]),
 )
 

@@ -116,6 +116,7 @@ limitations under the License.
 namespace xla {
 
 constexpr int kMaxDims = 4;
+const char PjRtCApiClient::kPjRtCApiMemorySpaceKey = 0;
 
 // Helper macros
 
@@ -259,6 +260,16 @@ void PjRtCApiClient::InitDevicesAndMemorySpaces() {
               std::make_unique<PjRtCApiMemorySpace>(memory, this));
       addressable_memory_spaces_.push_back(cpp_memory.get());
       c_to_cpp_memory_map_[memory] = cpp_memory.get();
+
+      if (SupportsMemoryUserData() && memory->vtable &&
+          memory->vtable->set_user_data) {
+        memory->vtable->set_user_data(memory,
+                                      &PjRtCApiClient::kPjRtCApiMemorySpaceKey,
+                                      cpp_memory.get(), [](void*) {});
+        memory->vtable->set_user_data(
+            memory, reinterpret_cast<void*>(&PjRtMemorySpace::FromC),
+            cpp_memory.get(), [](void*) {});
+      }
     }
   } else if (pjrt::GetErrorCode(client_error.get(), c_api_) !=
              PJRT_Error_Code_UNIMPLEMENTED) {

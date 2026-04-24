@@ -21,10 +21,12 @@ limitations under the License.
 #include <utility>
 
 #include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/event_pool.h"
@@ -98,10 +100,12 @@ class BufferSequencingEvent : tsl::AsyncPayload::KeepOnError {
   // called, blocks the calling thread until the event has been recorded.
   void WaitForEventOnStream(se::Stream* stream);
 
-  // Sets the context for the event. Use to wrap the underlying error status
-  // with additional information.
-  void SetErrorContext(std::string error_context) {
-    error_context_ = std::move(error_context);
+  // Adds a key-value pair to add additional information on error.
+  // Error contexts should be added before the events are started to avoid race
+  // conditions. The key must be a compile time constant string. If the same key
+  // is used multiple times, the last call will overwrite the previous context.
+  void AddErrorContext(absl::string_view key, std::string error_context) {
+    error_context_[key] = std::move(error_context);
   }
 
   // Appends the error context to the error status if a context is set.
@@ -173,7 +177,7 @@ class BufferSequencingEvent : tsl::AsyncPayload::KeepOnError {
   // Indicates if the buffer is in an error status. And error status is used to
   // propagate the error to the buffer consumers.
   tsl::AsyncValueRef<EventState> event_;
-  std::string error_context_ = "";
+  absl::flat_hash_map<absl::string_view, std::string> error_context_;
 };
 
 using BufferSequencingEventRef = tsl::AsyncValueRef<BufferSequencingEvent>;

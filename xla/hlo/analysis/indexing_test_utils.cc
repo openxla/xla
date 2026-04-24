@@ -15,11 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/analysis/indexing_test_utils.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <limits>
 #include <optional>
 #include <string>
 #include <utility>

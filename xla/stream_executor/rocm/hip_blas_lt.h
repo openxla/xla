@@ -55,8 +55,7 @@ class BlasLt : public gpu::BlasLt {
 
    private:
     MatrixLayout(hipblasLtMatrixLayout_t handle, hipDataType datatype)
-        : handle_(handle, wrap::hipblasLtMatrixLayoutDestroy),
-          datatype_(datatype) {}
+        : handle_(handle, hipblasLtMatrixLayoutDestroy), datatype_(datatype) {}
 
     Owned<hipblasLtMatrixLayout_t> handle_;
     hipDataType datatype_;
@@ -85,7 +84,7 @@ class BlasLt : public gpu::BlasLt {
     MatmulDesc(hipblasLtMatmulDesc_t handle, hipblasComputeType_t compute_type,
                hipDataType datatype, bool bias_epilogue,
                gpu::ScaleMode scale_mode)
-        : handle_(handle, wrap::hipblasLtMatmulDescDestroy),
+        : handle_(handle, hipblasLtMatmulDescDestroy),
           compute_type_(compute_type),
           datatype_(datatype),
           has_bias_epilogue_(bias_epilogue),
@@ -183,7 +182,7 @@ class BlasLt : public gpu::BlasLt {
   };  // class MatmulPlan
 
   explicit BlasLt(StreamExecutor* parent)
-      : parent_(parent), blas_lt_(nullptr, wrap::hipblasLtDestroy) {}
+      : parent_(parent), blas_lt_(nullptr, hipblasLtDestroy) {}
 
   absl::Status Init() override;
 

@@ -181,7 +181,6 @@ cc_library(
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/transforms:literal_canonicalizer",
         "//xla/hlo/transforms:operand_upcaster",
-        "//xla/hlo/transforms:propagate_call_metadata",
         "//xla/hlo/transforms:shape_canonicalizer",
         "//xla/hlo/transforms:while_loop_trip_count_annotator",
         "//xla/hlo/transforms/collectives:async_collective_replacer",
@@ -440,6 +439,7 @@ xla_test(
     backends = [
         "cpu",
     ],
+    test_cpu_fast_compile = True,
     deps = [
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/tests:hlo_pjrt_test_base",
@@ -504,6 +504,7 @@ xla_test(
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",

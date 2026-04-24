@@ -5186,17 +5186,21 @@ absl::Status SpmdPartitioningVisitor::HandleRng(HloInstruction* hlo) {
                           MakePartitionedShape(hlo->shape(), hlo->sharding()),
                           hlo->random_distribution(), new_operands)));
   } else {
-    std::vector<int64_t> group_dims(hlo->sharding().num_dimensions());
+    HloSharding tiled_sharding =
+        hlo->sharding().UseNamedShardingLeaf()
+            ? HloSharding::V3ToV2Sharding(hlo->sharding().named_sharding())
+            : hlo->sharding();
+    std::vector<int64_t> group_dims(tiled_sharding.num_dimensions());
     absl::c_iota(group_dims, 0);
-    int64_t replication_dim = hlo->sharding().SubgroupReplicationDim();
+    int64_t replication_dim = tiled_sharding.SubgroupReplicationDim();
     group_dims.erase(group_dims.begin() + replication_dim);
 
     auto sharding_grouped =
-        hlo_sharding_util::GroupShardingOnDims(hlo->sharding(), group_dims);
+        hlo_sharding_util::GroupShardingOnDims(tiled_sharding, group_dims);
     auto per_group_state = CreatePerGroupPartitioningState(
         MakePartitioningState(), sharding_grouped.device_groups, &b_);
     auto rng = b_.AddInstruction(HloInstruction::CreateRng(
-        MakePartitionedShape(hlo->shape(), hlo->sharding()),
+        MakePartitionedShape(hlo->shape(), tiled_sharding),
         hlo->random_distribution(), new_operands));
     rng->set_sharding(HloSharding::SingleDevice(0));
     SetPartitionedHlo(hlo, [&]() {

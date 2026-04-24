@@ -106,7 +106,8 @@ AttrTy parseStringAttr(llvm::StringRef escapedValue,
       absl::string_view(escapedValue.data(), escapedValue.size()),
       &unescapedValue, &error))
       << error;
-  return mlir::cast<AttrTy>(mlir::parseAttribute(unescapedValue, context));
+  return mlir::dyn_cast_or_null<AttrTy>(
+      mlir::parseAttribute(unescapedValue, context));
 }
 
 // Parses `attrName` from `dictAttr` to an attribute of type `AttrTy`.
@@ -114,9 +115,10 @@ template <typename AttrTy>
 AttrTy parseStringAttr(mlir::DictionaryAttr dictAttr,
                        llvm::StringRef attrName) {
   if (mlir::Attribute stringAttr = dictAttr.get(attrName)) {
-    return parseStringAttr<AttrTy>(
-        mlir::cast<mlir::StringAttr>(stringAttr).getValue(),
-        stringAttr.getContext());
+    if (auto stringAttrCasted = mlir::dyn_cast<mlir::StringAttr>(stringAttr)) {
+      return parseStringAttr<AttrTy>(stringAttrCasted.getValue(),
+                                     stringAttr.getContext());
+    }
   }
   return nullptr;
 }
@@ -194,13 +196,6 @@ bool isManualComputation(mlir::func::CallOp callOp);
 // an 'inlineable' manual computation.
 bool isManualComputation(mlir::func::FuncOp funcOp);
 
-// Clones given `funcOp` recursively and returns the (top) cloned funcOp.
-// Overrides the func result sharding as `callOpResultShardings` in case
-// `callOpResultShardings` is non-null.
-mlir::func::FuncOp cloneFuncRecursively(
-    mlir::func::FuncOp funcOp,
-    mlir::sdy::TensorShardingPerValueAttr callOpResultShardings,
-    mlir::SymbolTable& symbolTable);
 
 // Adds reshard/copy operations to resolve conflicts between call argument
 // sharding and func input sharding. The copy operations inserted also have

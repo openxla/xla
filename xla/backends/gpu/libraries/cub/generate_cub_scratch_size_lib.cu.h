@@ -13,23 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_SPMD_SHARDY_SDY_ROUND_TRIP_FLATTEN_CALL_GRAPH_H_
-#define XLA_SERVICE_SPMD_SHARDY_SDY_ROUND_TRIP_FLATTEN_CALL_GRAPH_H_
+#ifndef XLA_BACKENDS_GPU_LIBRARIES_CUB_GENERATE_CUB_SCRATCH_SIZE_LIB_CU_H_
+#define XLA_BACKENDS_GPU_LIBRARIES_CUB_GENERATE_CUB_SCRATCH_SIZE_LIB_CU_H_
 
-#include <memory>
+#include "absl/status/status.h"
 
-#include "mlir/Pass/Pass.h"
+namespace xla::gpu {
 
-namespace xla {
-namespace sdy {
+// Generates CUB scratch sizes and writes the results to a textproto file in
+// the test undeclared outputs dir.
+absl::Status GenerateCubScratchSizeData();
 
-// Creates the pass to flatten graph. It attaches the original func names.
-std::unique_ptr<mlir::Pass> createSdyRoundTripFlattenCallGraphPass();
+}  // namespace xla::gpu
 
-// Registers the xla-sdy-round-trip-flatten-call-graph pass.
-void registerSdyRoundTripFlattenCallGraphPass();
-
-}  // namespace sdy
-}  // namespace xla
-
-#endif  // XLA_SERVICE_SPMD_SHARDY_SDY_ROUND_TRIP_FLATTEN_CALL_GRAPH_H_
+#endif  // XLA_BACKENDS_GPU_LIBRARIES_CUB_GENERATE_CUB_SCRATCH_SIZE_LIB_CU_H_

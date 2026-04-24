@@ -598,7 +598,7 @@ bzl_library(
     # copybara:uncomment parse_tests = False,
     deps = [
         "//xla/tsl:package_groups_bzl",
-        "@xla//third_party/py/rules_pywrap:pywrap_bzl",
+        "@rules_ml_toolchain//py/rules_pywrap:pywrap_bzl",
     ],
 )
 
@@ -610,7 +610,7 @@ bzl_library(
         ":build_config_root_bzl",
         # copybara:uncomment "@rules_cc//cc:core_rules",
         "//xla/tsl:tsl_bzl",
-        "@xla//third_party/py/rules_pywrap:pywrap_bzl",
+        "@rules_ml_toolchain//py/rules_pywrap:pywrap_bzl",
     ],
 )
 

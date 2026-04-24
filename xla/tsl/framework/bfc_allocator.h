@@ -83,6 +83,9 @@ class BFCAllocator : public Allocator {
 
   std::string Name() override { return name_; }
 
+  static constexpr size_t kMinAllocationBits = 8;
+  static constexpr size_t kMinAllocationSize = 1 << kMinAllocationBits;
+
   void* AllocateRaw(size_t alignment, size_t num_bytes) override {
     return AllocateRaw(alignment, num_bytes, AllocationAttributes());
   }
@@ -279,9 +282,6 @@ class BFCAllocator : public Allocator {
     Bin(BFCAllocator* allocator, size_t bs)
         : bin_size(bs), free_chunks(ChunkComparator(allocator)) {}
   };
-
-  static constexpr size_t kMinAllocationBits = 8;
-  static constexpr size_t kMinAllocationSize = 1 << kMinAllocationBits;
 
   // BFCAllocator allocates memory into a collection of disjoint
   // AllocationRegions.  Each AllocationRegion corresponds to one call to

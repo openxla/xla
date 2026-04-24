@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
@@ -175,6 +176,65 @@ TEST(HloModuleTest, SharedConfig) {
   EXPECT_EQ(m1.config().device_memory_size(), m2.config().device_memory_size());
   EXPECT_EQ(m1.shared_config().use_count(), 2);
   EXPECT_EQ(m2.shared_config().use_count(), 2);
+}
+
+TEST(HloModuleTest, CanonicalizeComputationLocalIds) {
+  absl::string_view hlo_string = R"(
+HloModule my_module
+
+comp1 {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  mul0 = f32[] multiply(p0, p1)
+  add0 = f32[] add(p0, p1)
+  ROOT out = f32[] add(add0, mul0)
+}
+
+ENTRY entry {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  mul0 = f32[] multiply(p0, p1)
+  add0 = f32[] add(p0, p1)
+  ROOT out = f32[] add(add0, mul0)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnUnverifiedModule(hlo_string));
+
+  HloComputation* comp1 = module->GetComputationWithName("comp1");
+  HloComputation* entry = module->entry_computation();
+
+  auto get_local_id = [](HloComputation* comp, absl::string_view name) {
+    for (const auto& inst : comp->instructions()) {
+      if (absl::StrContains(inst->name(), name)) {
+        return inst->local_id();
+      }
+    }
+    return -1;
+  };
+
+  // Verify initial IDs reflect construction order (mul0 then add0).
+  EXPECT_EQ(get_local_id(comp1, "mul0"), 2);
+  EXPECT_EQ(get_local_id(comp1, "add0"), 3);
+  EXPECT_EQ(get_local_id(entry, "mul0"), 2);
+  EXPECT_EQ(get_local_id(entry, "add0"), 3);
+
+  module->CanonicalizeComputationLocalIds();
+
+  // We expect the post-order: p0, p1, add0, mul0, out
+  // So IDs should be 0, 1, 2, 3, 4 respectively.
+
+  EXPECT_EQ(get_local_id(comp1, "p0"), 0);
+  EXPECT_EQ(get_local_id(comp1, "p1"), 1);
+  EXPECT_EQ(get_local_id(comp1, "add0"), 2);
+  EXPECT_EQ(get_local_id(comp1, "mul0"), 3);
+  EXPECT_EQ(get_local_id(comp1, "out"), 4);
+
+  EXPECT_EQ(get_local_id(entry, "p0"), 0);
+  EXPECT_EQ(get_local_id(entry, "p1"), 1);
+  EXPECT_EQ(get_local_id(entry, "add0"), 2);
+  EXPECT_EQ(get_local_id(entry, "mul0"), 3);
+  EXPECT_EQ(get_local_id(entry, "out"), 4);
 }
 
 // Common patter across XLA. Besides possibility of a dangling pointer issue

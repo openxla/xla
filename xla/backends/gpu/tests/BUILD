@@ -1307,6 +1307,8 @@ xla_test(
         "//xla:shape_util",
         "//xla:types",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:pattern_matcher_gmock",
@@ -1577,8 +1579,8 @@ xla_test(
         "gpu",
     ],
     deps = [
+        ":hlo_pjrt_gpu_test_base",
         "//xla:error_spec",
-        "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/hlo/testlib:test",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
         "//xla/tests:xla_internal_test_main",
@@ -1623,6 +1625,7 @@ xla_test(
     backends = [
         "gpu",
     ],
+    shard_count = 3,
     deps = [
         ":collective_ops_e2e_test_base",
         "//xla:array",
@@ -1684,5 +1687,28 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_test(
+    name = "p2p_ops_e2e_test",
+    srcs = ["p2p_ops_e2e_test.cc"],
+    backend_tags = {
+        "gpu": [
+            "multi_gpu",
+        ],
+    },
+    backends = [
+        "gpu",
+    ],
+    deps = [
+        ":collective_ops_e2e_test_base",
+        "//xla:literal",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )

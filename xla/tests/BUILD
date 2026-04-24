@@ -611,6 +611,7 @@ xla_test(
         "conv_depthwise_test.cc",
     ],
     shard_count = 30,
+    test_cpu_fast_compile = True,
     deps = [
         ":conv_depthwise_common",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -705,6 +706,7 @@ xla_cc_test(
 xla_test(
     name = "while_test",
     srcs = ["while_test.cc"],
+    test_cpu_fast_compile = True,
     deps = [
         ":aot_utils",
         ":client_library_test_runner_mixin",
@@ -855,6 +857,7 @@ xla_test(
     name = "conditional_test",
     srcs = ["conditional_test.cc"],
     shard_count = 2,
+    test_cpu_fast_compile = True,
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2394,7 +2397,6 @@ xla_test(
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/testlib:test_helpers",
-        "//xla/tests:xla_test_backend_predicates",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -2920,6 +2922,7 @@ xla_test(
         "gpu",
         "interpreter",
     ],
+    test_cpu_fast_compile = True,
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",

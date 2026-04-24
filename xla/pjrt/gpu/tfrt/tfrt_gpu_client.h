@@ -96,6 +96,8 @@ class TfrtGpuMemorySpace : public PjRtMemorySpace {
 
   absl::string_view ToString() const override { return to_string_; }
 
+  PJRT_Memory* ToCApiPtr() override { return capi_delegator_.ToCApiPtr(); }
+
  private:
   int id_;
   PjRtDevice* device_ = nullptr;
@@ -103,6 +105,7 @@ class TfrtGpuMemorySpace : public PjRtMemorySpace {
   int kind_id_;
   std::string debug_string_;
   std::string to_string_;
+  PjRtMemorySpaceCApiDelegator capi_delegator_{this};
 };
 
 class TfrtGpuDeviceMemorySpace : public TfrtGpuMemorySpace {

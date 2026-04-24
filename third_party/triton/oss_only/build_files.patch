@@ -5,7 +5,7 @@ diff --git b/BUILD b/BUILD
 new file mode 100644
 --- /dev/null
 +++ b/BUILD
-@@ -0,0 +1,1259 @@
+@@ -0,0 +1,1264 @@
 +# This package imports OpenAI's Triton (https://github.com/triton-lang/triton).
 +
 +# copybara:uncomment load("@rules:copybara.bzl", "copybara_config_test")
@@ -752,6 +752,7 @@ new file mode 100644
 +        # in TritonGPUTransforms depend on the headers in TritonTransforms, so
 +        # we need to include them here to avoid circular dependency.
 +        "include/triton/Dialect/Triton/Transforms/LoopPeeling.h",
++        "lib/Dialect/TritonGPU/Transforms/WarpSpecialization/PartitionAttrs.h",
 +    ],
 +    copts = select({
 +        ":compiler_is_msvc": [],
@@ -764,6 +765,10 @@ new file mode 100644
 +            "-Wno-implicit-fallthrough",
 +        ],
 +    }),
++    includes = [
++        "include",
++        "lib/Dialect/TritonGPU/Transforms/WarpSpecialization",
++    ],
 +    deps = [
 +        ":GetEnv",
 +        ":TritonDialects",
@@ -2058,7 +2063,7 @@ diff --git b/test/BUILD b/test/BUILD
 new file mode 100644
 --- /dev/null
 +++ b/test/BUILD
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,118 @@
 +# load("@rules_cc//cc:cc_library.bzl", "cc_library")
 +
 +# copybara:uncomment_begin
@@ -2076,6 +2081,7 @@ new file mode 100644
 +#     data = [
 +#         "@llvm-project//llvm:FileCheck",
 +#         "@llvm-project//llvm:llc",
++#         "@llvm-project//llvm:not",
 +#         "@llvm-project//llvm:opt",
 +#         "@llvm-project//llvm:split-file",
 +#         "@llvm-project//mlir:mlir-translate",
@@ -2658,7 +2664,7 @@ diff --git b/third_party/nvidia/BUILD b/third_party/nvidia/BUILD
 new file mode 100644
 --- /dev/null
 +++ b/third_party/nvidia/BUILD
-@@ -0,0 +1,557 @@
+@@ -0,0 +1,558 @@
 +# load("@rules_cc//cc:cc_library.bzl", "cc_library")
 +load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 +# copybara:uncomment load("@pybind11_bazel//:build_defs.bzl", "pybind_library")
@@ -3139,6 +3145,7 @@ new file mode 100644
 +        ],
 +    }),
 +    includes = [
++        "../..",
 +        "include",
 +    ],
 +    deps = [

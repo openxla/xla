@@ -1865,11 +1865,13 @@ cc_library(
         ":compiler",
         ":executable",
         ":stream_pool",
-        "//xla:executable_run_options",
         "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
         "@llvm-project//llvm:Core",
         "@tsl//tsl/platform:denormal",
         "@tsl//tsl/platform:statusor",
@@ -3782,6 +3784,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
     ],
 )
 
@@ -4657,7 +4660,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_protobuf//:protobuf",
+        "@com_google_protobuf//:protobuf_lite",
     ],
 )
 
@@ -4912,13 +4915,9 @@ cc_library(
     hdrs = ["host_offload_utils.h"],
     deps = [
         ":call_graph",
-        ":hlo_buffer",
         ":memory_annotations_hdr",
-        ":pattern_matcher",
-        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:side_effect_util",
-        "//xla:status_macros",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/tsl/platform:errors",
@@ -4929,11 +4928,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -5613,6 +5608,7 @@ xla_test(
     srcs = ["topk_rewriter_test.cc"],
     backends = ["interpreter"],
     deps = [
+        ":hlo_cse",
         ":pattern_matcher",
         ":topk_rewriter",
         "//xla:literal_util",

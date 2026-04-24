@@ -64,6 +64,13 @@ struct PJRT_TopologyDescription {
   std::vector<PJRT_NamedValue> attributes;
 };
 
+struct PJRT_Client;
+
+struct PJRT_Memory_LocalState {
+  std::vector<struct PJRT_Device*> devices;
+  struct PJRT_Client* client;
+};
+
 struct PJRT_Client {
   std::unique_ptr<xla::PjRtClient> client;
   std::vector<PJRT_Device> owned_devices;
@@ -75,16 +82,9 @@ struct PJRT_Client {
   // Map from wrapped C++ devices to C devices. The values are the same as
   // `owned_devices`.
   absl::flat_hash_map<xla::PjRtDevice*, PJRT_Device*> c_device_from_cpp_device;
-  // TODO(yueshengys): Add a `memories` member when global memories are
-  // supported.
-  std::vector<PJRT_Memory> owned_memories;
-  // `addressable_memories` contains pointers to the `owned_memories` that the
+  // `addressable_memories` contains pointers to the `PJRT_Memory` that the
   // client can transfer to and from.
   std::vector<PJRT_Memory*> addressable_memories;
-  // Map from wrapped C++ memories to C memories. The values are the same as
-  // `owned_memories`.
-  absl::flat_hash_map<xla::PjRtMemorySpace*, PJRT_Memory*>
-      c_memory_from_cpp_memory;
   absl::StatusOr<std::unique_ptr<PJRT_TopologyDescription>> topology;
 
   explicit PJRT_Client(std::unique_ptr<xla::PjRtClient> cpp_client);
@@ -117,13 +117,6 @@ struct PJRT_Device {
   xla::PjRtDevice* device;
   PJRT_DeviceDescription description;
   std::vector<PJRT_Memory*> addressable_memories;
-  PJRT_Client* client;
-};
-
-struct PJRT_Memory {
-  // The xla::PjRtMemorySpace* is owned by the corresponding xla::PjRtClient.
-  xla::PjRtMemorySpace* memory_space;
-  std::vector<PJRT_Device*> devices;
   PJRT_Client* client;
 };
 

@@ -113,8 +113,11 @@ class InterpreterMemorySpace final : public PjRtMemorySpace {
     return "InterpreterMemorySpace(id=0)";
   }
 
+  PJRT_Memory* ToCApiPtr() override { return capi_delegator_.ToCApiPtr(); }
+
  private:
   PjRtClient* client_ = nullptr;
+  PjRtMemorySpaceCApiDelegator capi_delegator_{this};
 };
 
 class InterpreterDevice final : public PjRtDevice {

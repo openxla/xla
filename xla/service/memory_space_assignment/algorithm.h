@@ -1,3 +1,4 @@
+#include "absl/container/linked_hash_map.h"
 /* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,6 +38,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/analysis/alias_info.h"
@@ -67,6 +69,15 @@ namespace memory_space_assignment {
 struct UseInterval {
   int64_t first_use_time;
   int64_t last_use_time;
+};
+
+struct TimeInterval {
+  int64_t inclusive_start_time;
+  int64_t inclusive_end_time;
+
+  bool operator<(const TimeInterval& other) const;
+
+  std::string ToString() const;
 };
 
 // A struct representing an asynchronous copy with its logical start and end
@@ -702,6 +713,7 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
     kFailedSatisfyingConstraints = 8,
     kFailedNotProcessed = 16,
     kFailedGaveUp = 32,
+    kAsyncConversionNotAllowedForColoredBuffer = 64,
   };
 
   AsyncConversionResult IsAsyncConversionSliceCandidate(
@@ -1035,6 +1047,23 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // reserved_scoped_memory_fn
   void UpdateReservedScopedAllocationSize();
 
+  // Uncommits the chunk and updates the peak memory. This method keeps other
+  // data structures consistent with the uncommit.
+  //
+  // MSA should not directly update interval_tree_ or directly call other
+  // Uncommit methods. This the definitive uncommit for MSA.
+  bool UncommitChunkAndUpdatePeakMemory(const MsaBufferInterval& interval,
+                                        const Chunk& chunk);
+
+  // Commits the chunk and updates the peak memory. This method keeps other
+  // data structures consistent with the commit.
+  //
+  // MSA should not directly update interval_tree_ or directly call other
+  // Commit methods, e.g., CommitChunkAndInterval(). This the definitive
+  // uncommit for MSA.
+  void CommitChunkAndUpdatePeakMemory(const MsaBufferInterval& buffer_interval,
+                                      const Chunk& chunk);
+
   // Imports repacked allocations and updates the internal data structures
   // consistent with the new packing.
   void ImportRepackedAllocations();
@@ -1218,6 +1247,32 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // of a buffer is also considered as a use that can be colored.
   absl::Status ProcessColoredBuffers();
 
+  // Returns a sorted list of time intervals for which a buffer needs to be
+  // contiguously allocated.
+  absl::StatusOr<std::vector<TimeInterval>> GetContiguousLiveRangesForBuffer(
+      const HloBuffer* buffer) const;
+
+  // Process the buffer colorings for the given buffer and return the time
+  // intervals that are colored in the alternate memory space. Additionally,
+  // update the default_memory_coloring_requirements_ with the default memory
+  // colored intervals for the buffer.
+  absl::StatusOr<std::vector<TimeInterval>>
+  GetAltMemoryColoredIntervalsForBuffer(
+      const HloBuffer* buffer,
+      const std::vector<BufferColoring>& buffer_colorings);
+
+  // Checks if there are any overlapping time intervals between default memory
+  // colorings and alternate memory colorings for the given buffer. Returns an
+  // error if conflicts exist.
+  absl::Status CheckForConflictingColoringRequirements(
+      const HloBuffer* buffer,
+      const std::vector<TimeInterval>& default_mem_intervals,
+      const std::vector<TimeInterval>& alternate_mem_intervals) const;
+
+  // Groups the buffer colorings by the HloBuffer that is colored.
+  absl::linked_hash_map<const HloBuffer*, std::vector<BufferColoring>>
+  GetHloBufferToColoringsMap() const;
+
   // Removes the reserved chunk from the interval_tree_ for the given
   // allocation (if it is still reserved) and removes the corresponding
   // RepackAllocationBlock from repack_allocation_blocks_.
@@ -1363,13 +1418,13 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
 
   // Maps defining HloPositions to the chunk intervals that are reserved for it
   // in alternate memory, in order to satisfy buffer coloring requirements.
-  absl::flat_hash_map<HloPosition,
+  absl::flat_hash_map<const HloBuffer*,
                       std::vector<std::unique_ptr<ReservedAllocation>>>
       reserved_allocations_for_alt_mem_colorings_;
 
-  // Maps defining HloPositions to the list of times it is required to be in
-  // default memory, to meet buffer coloring requirements.
-  absl::flat_hash_map<HloPosition, std::vector<int64_t>>
+  // Maps defining HloBuffers to the list of time intervals it is required to
+  // be in default memory, to meet buffer coloring requirements.
+  absl::flat_hash_map<const HloBuffer*, std::vector<TimeInterval>>
       default_memory_coloring_requirements_;
 
   // Set of HloUses that are in the default memory.

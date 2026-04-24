@@ -1161,7 +1161,7 @@ static GpuCollectives* ResolveGpuCollectives(
     CHECK_OK(collectives)  // Crash OK
         << "Failed to get GPU collectives implementation: "
         << debug_options->xla_gpu_collectives_implementation();
-    return tsl::down_cast<GpuCollectives*>(*collectives);
+    return absl::down_cast<GpuCollectives*>(*collectives);
   }
 
   return GpuCollectives::Default(platform_name);

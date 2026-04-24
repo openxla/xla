@@ -126,7 +126,6 @@ TritonDotFusionSearchSpace::TritonDotFusionSearchSpace(
 std::vector<TritonGemmConfig> TritonDotFusionSearchSpace::GenerateConfigs(
     bool autotune_warp_specialization) const {
   std::vector<ConfigWithNotes> configs(1);
-  configs[0].config.split_k = 1;
 
   ExtendConfigs(configs, &TritonDotFusionSearchSpace::AddOutputTilings);
   EliminateLowOccupancyConfigs(configs);
@@ -550,8 +549,15 @@ void TritonDotFusionSearchSpace::AddWarpSpecializationParameter(
   // 32, which would break with auto warp specialization, because the feature
   // will employ `worker warps` that will mean we exceed the maximum block size
   // of 1024 threads.
+  // - num_stages = 2 is filtered out due to b/456723426. A
+  // CUDA_ERROR_MISALIGNED_ADDRESS error occurs when the kernel also has a
+  // broadcast of an input parameter. This is potentially related to b/421858850
+  // where TMA-enabled parameters that have a broadcast consumer with num_stages
+  // > 2 also run into address misalignment issues. It might be more precise to
+  // also check for a broadcast consumer, but that would complicate the code
+  // here.
   if (config.config.is_tma_allowed && config.config.num_warps <= 16 &&
-      config.config.num_warps % 4 == 0) {
+      config.config.num_warps % 4 == 0 && config.config.num_stages != 2) {
     new_config.config.is_warp_specialization_allowed = true;
     VLOG(10) << "Adding warp specialization parameter: config = "
              << new_config.ToString();

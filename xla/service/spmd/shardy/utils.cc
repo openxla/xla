@@ -139,8 +139,7 @@ void setFrontendAttribute(SmallVector<NamedAttribute>& existingAttributes,
       break;
     }
   }
-  existingAttributes.emplace_back(
-      NamedAttribute(builder.getStringAttr(name), stringValue));
+  existingAttributes.emplace_back(builder.getStringAttr(name), stringValue);
 }
 
 void removeFrontendAttribute(
@@ -549,28 +548,6 @@ bool isManualComputation(CallOp callOp) {
 
 bool isManualComputation(FuncOp funcOp) {
   return funcOp.getName().contains(kManualComputationFuncName);
-}
-
-FuncOp cloneFuncRecursively(FuncOp funcOp,
-                            TensorShardingPerValueAttr callOpResultShardings,
-                            mlir::SymbolTable& symbolTable) {
-  StringAttr originalFuncName = getOriginalFuncName(funcOp);
-  FuncOp clonedFuncOp =
-      symbolTable.lookup<FuncOp>(originalFuncName.getValue()).clone();
-  // TODO(enver): Have a MLIR native error handling, instead of CHECK.
-  CHECK(clonedFuncOp) << "Failed to lookup function: "
-                      << originalFuncName.str();
-  clonedFuncOp->setAttr(mlir::sdy::kOriginalFuncName, originalFuncName);
-  if (callOpResultShardings) {
-    mlir::sdy::setFuncResultShardings(clonedFuncOp, callOpResultShardings);
-  }
-  clonedFuncOp->walk([&](CallOp callOp) {
-    FuncOp funcOp = symbolTable.lookup<FuncOp>(callOp.getCallee());
-    CHECK(funcOp) << "Failed to lookup function: " << callOp.getCallee().str();
-    callOp.setCallee(symbolTable.insert(cloneFuncRecursively(
-        funcOp, mlir::sdy::getShardingPerValue(callOp), symbolTable)));
-  });
-  return clonedFuncOp;
 }
 
 namespace {

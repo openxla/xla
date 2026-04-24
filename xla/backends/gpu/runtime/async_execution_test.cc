@@ -65,7 +65,7 @@ TEST(AsyncExecutionTest, InitializeStartDone) {
   thunk_info.profile_annotation = "test-thunk";
   TestThunk thunk(thunk_info);
 
-  AsyncExecution async_execution(&thunk);
+  AsyncExecution async_execution(thunk_info);
   Thunk::ExecutionScopedState state;
 
   // Initialize creates an event in the execution scoped state.
@@ -90,7 +90,7 @@ TEST(AsyncExecutionTest, DoneWithoutStartFails) {
   thunk_info.profile_annotation = "test-thunk";
   TestThunk thunk(thunk_info);
 
-  AsyncExecution async_execution(&thunk);
+  AsyncExecution async_execution(thunk_info);
   Thunk::ExecutionScopedState state;
 
   // Done without Initialize should fail because event is not in state.
