@@ -35,7 +35,10 @@ class NcclSymmetricMemory final : public SymmetricMemory {
   static absl::StatusOr<std::unique_ptr<NcclSymmetricMemory>> Create(
       ncclComm_t comm, stream_executor::DeviceAddressBase addr);
 
-  stream_executor::DeviceAddressBase addr() const override { return addr_; }
+  stream_executor::DeviceAddressBase addr() const final;
+  absl::StatusOr<stream_executor::DeviceAddressBase> multimem_addr()
+      const final;
+
   ncclWindow_t win() const { return win_; }
 
   std::string ToString() const final;
