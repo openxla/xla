@@ -120,8 +120,14 @@ cc_library(
 
 cc_library(
     name = "cpu_compiler_pure",
-    srcs = ["cpu_compiler.cc"],
-    hdrs = ["cpu_compiler.h"],
+    srcs = [
+        "cpu_compiler.cc",
+        "cpu_multi_module_driver.cc",
+    ],
+    hdrs = [
+        "cpu_compiler.h",
+        "cpu_multi_module_driver.h",
+    ],
     copts = tsl_copts(),
     deps = [
         ":conv_canonicalization",
@@ -129,6 +135,7 @@ cc_library(
         ":cpu_aot_loader",
         ":cpu_executable",
         ":cpu_float_support",
+        ":cpu_hlo_module_splitter",
         ":cpu_instruction_fusion",
         ":cpu_layout_assignment",
         ":cpu_multi_output_fusion",
@@ -140,6 +147,7 @@ cc_library(
         ":ir_emitter",
         ":ir_emitter2",
         ":metrics",
+        ":multi_module_cpu_executable",
         ":parallel_task_assignment",
         ":small_while_loop_hoisting_pass",
         ":thunk_emitter",
@@ -235,6 +243,7 @@ cc_library(
         "//xla/service:call_graph",
         "//xla/service:call_inliner",
         "//xla/service:change_op_data_type",
+        "//xla/service:compiled_module",
         "//xla/service:compiler",
         "//xla/service:conditional_simplifier",
         "//xla/service:conditional_to_select",
@@ -261,6 +270,7 @@ cc_library(
         "//xla/service:scatter_expander",
         "//xla/service:scatter_simplifier",
         "//xla/service:select_and_scatter_expander",
+        "//xla/service:service_executable_run_options",
         "//xla/service:sharding_propagation",
         "//xla/service:sharding_remover",
         "//xla/service:slow_operation_alarm",
@@ -284,6 +294,7 @@ cc_library(
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
+        "//xla/tsl/util:sorted_range",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -404,7 +415,10 @@ cc_library(
     # target if registration is not necessary.
     name = "cpu_compiler",
     srcs = ["cpu_compiler_registerer.cc"],
-    hdrs = ["cpu_compiler.h"],
+    hdrs = [
+        "cpu_compiler.h",
+        "cpu_multi_module_driver.h",
+    ],
     deps = [
         "cpu_compiler_pure",
         ":cpu_aot_compilation_result",
@@ -575,6 +589,57 @@ cc_library(
         "@tsl//tsl/platform:denormal",
         "@tsl//tsl/platform:setround",
         "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+cc_library(
+    name = "multi_module_cpu_executable",
+    srcs = ["multi_module_cpu_executable.cc"],
+    hdrs = ["multi_module_cpu_executable.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:custom_call_status",
+        "//xla/service:custom_call_target_registry",
+        "//xla/service:executable",
+        "//xla/service:maybe_owning_device_address",
+        "//xla/service:service_executable_run_options",
+        "//xla/service:shaped_buffer",
+        "//xla/tsl/util:sorted_range",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "multi_module_cpu_executable_test",
+    srcs = ["multi_module_cpu_executable_test.cc"],
+    deps = [
+        ":multi_module_cpu_executable",
+        "//xla:executable_run_options",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:custom_call_status_internal",
+        "//xla/service:custom_call_status_public_headers",
+        "//xla/service:custom_call_target_registry",
+        "//xla/service:executable",
+        "//xla/service:hlo_module_config",
+        "//xla/service:maybe_owning_device_address",
+        "//xla/service:shaped_buffer",
+        "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:stream",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -1086,6 +1151,40 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "cpu_hlo_module_splitter",
+    srcs = ["cpu_hlo_module_splitter.cc"],
+    hdrs = ["cpu_hlo_module_splitter.h"],
+    deps = [
+        "//xla:shape_tree",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "cpu_hlo_module_splitter_test",
+    srcs = ["cpu_hlo_module_splitter_test.cc"],
+    deps = [
+        ":cpu_hlo_module_splitter",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:hlo_verifier",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -1862,4 +1961,20 @@ cc_library(
     ]) + if_llvm_x86_available([
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
     ]),
+)
+
+xla_test(
+    name = "cpu_multi_module_driver_test",
+    srcs = ["cpu_multi_module_driver_test.cc"],
+    backends = [
+        "cpu",
+    ],
+    deps = [
+        ":cpu_compiler",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+    ],
 )
