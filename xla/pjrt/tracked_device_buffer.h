@@ -173,7 +173,7 @@ class TrackedDeviceBuffer : public AbstractTrackedDeviceBuffer {
   PjRtStreamExecutorUsageEventSet LockUseAndTransferUsageEvents();
 
   TrackedDeviceBuffer(
-      PjRtDevice* device, tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+      PjRtDevice* device, PjRtRawBufferRef raw_buffer,
       absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events);
   ~TrackedDeviceBuffer() override;
 

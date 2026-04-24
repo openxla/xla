@@ -697,7 +697,7 @@ StreamExecutorGpuClient::CrossHostSendBuffers(
     TF_RETURN_IF_ERROR(
         tensorflow::down_cast<CommonPjRtBufferImpl*>(buffers[i])
             ->AcquireScopedRawBuffer(
-                [&](tsl::RCReference<CommonPjRtRawBuffer> buf_raw_buffer,
+                [&](PjRtRawBufferRef buf_raw_buffer,
                     std::vector<tsl::RCReference<tsl::AsyncValue>>
                         buf_definition_events) mutable
                     -> absl::StatusOr<PjRtDeviceEventRef> {
@@ -1004,7 +1004,7 @@ StreamExecutorGpuClient::PrepareReceiveBuffer(PjRtDevice* device, Shape shape) {
 
   // Allocate an uninitialized buffer. The buffer will be populated with data
   // received from the sending process.
-  TF_ASSIGN_OR_RETURN(tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+  TF_ASSIGN_OR_RETURN(PjRtRawBufferRef raw_buffer,
                       AllocateRawBuffer(memory_space, on_device_bytes_count,
                                         /*retry_on_oom=*/true,
                                         /*allocate_after=*/{}));
@@ -1103,7 +1103,7 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
               shapes[i].has_layout() ? &shapes[i].layout() : nullptr));
       TF_ASSIGN_OR_RETURN(size_t on_device_bytes_count,
                           GetOnDeviceBytesCount(memory_space, on_device_shape));
-      TF_ASSIGN_OR_RETURN(tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+      TF_ASSIGN_OR_RETURN(PjRtRawBufferRef raw_buffer,
                           AllocateRawBuffer(memory_space, on_device_bytes_count,
                                             /*retry_on_oom=*/true,
                                             /*allocate_after=*/{}));
@@ -1238,8 +1238,7 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
 
 // Send functionality for original cross-host transfers API.
 void StreamExecutorGpuClient::ScheduleRemoteSend(
-    PjRtMemorySpace* memory_space,
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+    PjRtMemorySpace* memory_space, PjRtRawBufferRef raw_buffer,
     std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events,
     tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise,
     Future<std::string> serialized_descriptor,
@@ -2217,8 +2216,8 @@ static absl::Status CheckAlignment(const BufferAllocation& allocation,
 absl::StatusOr<PjRtStreamExecutorExecutionOutput>
 StreamExecutorGpuClient::RunAsync(
     LocalExecutable& exec, PjRtDevice* device,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> flat_arguments,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> results,
+    absl::Span<const PjRtRawBufferRef> flat_arguments,
+    absl::Span<const PjRtRawBufferRef> results,
     ExecutableRunOptions run_options_inp, bool parameter_is_tupled_arguments,
     absl::Span<const Shape> executable_parameter_shapes) {
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)

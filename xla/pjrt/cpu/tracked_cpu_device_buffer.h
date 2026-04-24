@@ -159,7 +159,7 @@ class CpuUsageEventSet : public PjRtDeviceEventSet {
 class TrackedCpuDeviceBuffer : public AbstractTrackedDeviceBuffer {
  public:
   // Variant with single definition event.
-  TrackedCpuDeviceBuffer(tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+  TrackedCpuDeviceBuffer(PjRtRawBufferRef raw_buffer,
                          tsl::AsyncValueRef<CpuEvent> definition_event);
 
   TrackedCpuDeviceBuffer(TrackedCpuDeviceBuffer&&) noexcept = default;

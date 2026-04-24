@@ -269,7 +269,7 @@ bool CommonPjRtBuffer::IsDeleted() const {
 
 absl::Status CommonPjRtBuffer::AcquireScopedRawBuffer(
     absl::AnyInvocable<absl::StatusOr<PjRtDeviceEventRef>(
-        tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+        PjRtRawBufferRef raw_buffer,
         std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events) &&>
         scoped_acquire,
     const char* caller_name) {

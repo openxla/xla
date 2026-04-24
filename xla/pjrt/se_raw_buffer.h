@@ -136,15 +136,15 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBufferImpl {
   void ReadDynamicShape(tsl::AsyncValueRef<xla::Shape> output_shape,
                         xla::Shape shape) override;
 
-  absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
-  RemoveDynamicShapeMetadataIfPresent(const xla::Shape& logical_shape) override;
+  absl::StatusOr<PjRtRawBufferRef> RemoveDynamicShapeMetadataIfPresent(
+      const xla::Shape& logical_shape) override;
 
   void CopyToLiteralAsync(
       Promise<> promise,
       tsl::RCReference<PjRtDeviceEventPromise> device_promise,
       MutableLiteralBase* literal, xla::Shape shape) override;
 
-  void CopyTo(tsl::RCReference<CommonPjRtRawBuffer> dst_raw_buffer,
+  void CopyTo(PjRtRawBufferRef dst_raw_buffer,
               tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
               tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
               ::tsl::AsyncValueRef<bool> allocation_event) override;
@@ -152,7 +152,7 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBufferImpl {
   void ScheduleCopyTo(
       AsyncWorkRunner* async_work_runner,
       std::vector<tsl::RCReference<tsl::AsyncValue>> transfer_dependency_avs,
-      tsl::RCReference<CommonPjRtRawBuffer> dst_raw_buffer,
+      PjRtRawBufferRef dst_raw_buffer,
       tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
       tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
       ::tsl::AsyncValueRef<bool> allocation_event) override;
@@ -166,7 +166,7 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBufferImpl {
 
   void IntraClientCopyToWithDependencies(
       std::vector<tsl::RCReference<tsl::AsyncValue>> dependencies,
-      tsl::RCReference<CommonPjRtRawBuffer> dst_raw_buffer,
+      PjRtRawBufferRef dst_raw_buffer,
       tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
       tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
       ::tsl::AsyncValueRef<bool> allocation_event);

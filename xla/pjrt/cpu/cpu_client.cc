@@ -935,8 +935,7 @@ static bool IsAlignedData(void* ptr) {
   return (absl::bit_cast<std::uintptr_t>(ptr) & (cpu::MinAlign() - 1)) == 0;
 }
 
-absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
-PjRtCpuClient::ImportForeignMemory(
+absl::StatusOr<PjRtRawBufferRef> PjRtCpuClient::ImportForeignMemory(
     void* device_ptr, absl::AnyInvocable<void() &&> on_delete_callback,
     size_t on_device_bytes_count, PjRtMemorySpace* memory_space,
     bool is_mutable) {
@@ -989,8 +988,7 @@ absl::StatusOr<PjRtDeviceEventRef> PjRtCpuClient::LinearizeHostBufferInto(
     std::optional<absl::Span<int64_t const>> byte_strides,
     HostBufferSemantics host_buffer_semantics,
     absl::AnyInvocable<void() &&> on_done_with_host_buffer,
-    const xla::Shape& device_shape,
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) {
+    const xla::Shape& device_shape, PjRtRawBufferRef raw_buffer) {
   return absl::down_cast<CpuRawBuffer*>(raw_buffer.get())
       ->CopyFromHostBuffer(
           data, type, dims, byte_strides, host_buffer_semantics,
@@ -1000,8 +998,7 @@ absl::StatusOr<PjRtDeviceEventRef> PjRtCpuClient::LinearizeHostBufferInto(
 
 absl::StatusOr<PjRtDeviceEventRef> PjRtCpuClient::LinearizeInto(
     const LiteralSlice& literal, const xla::Shape& device_shape,
-    HostBufferSemantics host_buffer_semantics,
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) {
+    HostBufferSemantics host_buffer_semantics, PjRtRawBufferRef raw_buffer) {
   if (host_buffer_semantics ==
       PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall) {
     return absl::UnimplementedError(
@@ -1052,7 +1049,7 @@ std::unique_ptr<PjRtDeviceEventSet> PjRtCpuClient::CreateDeviceEventSet(
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::DefineBuffer(
     std::shared_ptr<const Shape> on_device_shape, PjRtMemorySpace* memory_space,
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+    PjRtRawBufferRef raw_buffer,
     absl::InlinedVector<PjRtDeviceEventRef, 2> definition_device_events) {
   if (raw_buffer && raw_buffer->memory_space() != memory_space) {
     return absl::InvalidArgumentError(
@@ -1067,28 +1064,25 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::DefineBuffer(
       memory_space));
 }
 
-absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
-PjRtCpuClient::AllocateRawBuffer(PjRtMemorySpace* memory_space,
-                                 size_t on_device_bytes_count,
-                                 bool retry_on_oom,
-                                 tsl::AsyncValueRef<bool> allocate_after) {
+absl::StatusOr<PjRtRawBufferRef> PjRtCpuClient::AllocateRawBuffer(
+    PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
+    bool retry_on_oom, tsl::AsyncValueRef<bool> allocate_after) {
   CHECK(allocate_after == nullptr) << "allocate_after is not supported for "
                                       "PjRtCpuClient.";
   return xla::CpuRawBuffer::Allocate(memory_space, on_device_bytes_count,
                                      *allocator_);
 }
 
-absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
-PjRtCpuClient::AllocateRawBufferForExecute(PjRtMemorySpace* memory_space,
-                                           size_t on_device_bytes_count,
-                                           bool retry_on_oom) {
+absl::StatusOr<PjRtRawBufferRef> PjRtCpuClient::AllocateRawBufferForExecute(
+    PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
+    bool retry_on_oom) {
   return tsl::MakeRef<CpuRawBuffer>(memory_space,
                                     CpuDeviceMemory::CreateDelayedMemory(),
                                     on_device_bytes_count,
                                     /*owns_buffer=*/true);
 }
 
-absl::StatusOr<std::pair<tsl::RCReference<CommonPjRtRawBuffer>,
+absl::StatusOr<std::pair<PjRtRawBufferRef,
                          CommonPjRtClient::PjRtFulfillAliasRawBufferCallback>>
 PjRtCpuClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
                                       size_t on_device_bytes_count) {
@@ -1099,8 +1093,7 @@ PjRtCpuClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
 
   auto buffer_promise_cb =
       [buffer_promise = std::move(buffer_promise), memory_space](
-          absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>> raw_buffer)
-      -> absl::Status {
+          absl::StatusOr<PjRtRawBufferRef> raw_buffer) -> absl::Status {
     if (!raw_buffer.ok()) {
       buffer_promise->SetError(raw_buffer.status());
       return raw_buffer.status();
@@ -1313,10 +1306,10 @@ struct BufferAllocAndCopy {
 static absl::StatusOr<tsl::AsyncValueRef<CpuDeviceMemory>> MemoryForAllocation(
     const BufferAllocation& allocation,
     absl::Span<const cpu::ConstantAllocation> constants,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> input_buffers,
-    BufferAlloc& buffer_alloc, BufferAllocAndCopy& buffer_alloc_and_copy,
+    absl::Span<const PjRtRawBufferRef> input_buffers, BufferAlloc& buffer_alloc,
+    BufferAllocAndCopy& buffer_alloc_and_copy,
     const tsl::AsyncValueRef<CpuDeviceMemory>& tuple_index_table,
-    const tsl::RCReference<CommonPjRtRawBuffer>& allocated_output) {
+    const PjRtRawBufferRef& allocated_output) {
   auto buffer_or_default = [&]() -> tsl::AsyncValueRef<CpuDeviceMemory> {
     if (allocated_output) {
       return absl::down_cast<CpuRawBuffer*>(allocated_output.get())->buffer();
@@ -1378,18 +1371,17 @@ static absl::StatusOr<tsl::AsyncValueRef<CpuDeviceMemory>> MemoryForAllocation(
 }
 
 static absl::StatusOr<std::vector<tsl::AsyncValueRef<CpuDeviceMemory>>>
-CreateBufferTable(
-    const BufferAssignment& assignment,
-    absl::Span<const cpu::ConstantAllocation> constants,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> input_buffers,
-    BufferAlloc& buffer_alloc, BufferAllocAndCopy& buffer_alloc_and_copy,
-    const tsl::AsyncValueRef<CpuDeviceMemory>& tuple_index_table,
-    const absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>>
-        output_buffers,
-    absl::Span<const int64_t> output_indices) {
+CreateBufferTable(const BufferAssignment& assignment,
+                  absl::Span<const cpu::ConstantAllocation> constants,
+                  absl::Span<const PjRtRawBufferRef> input_buffers,
+                  BufferAlloc& buffer_alloc,
+                  BufferAllocAndCopy& buffer_alloc_and_copy,
+                  const tsl::AsyncValueRef<CpuDeviceMemory>& tuple_index_table,
+                  const absl::Span<const PjRtRawBufferRef> output_buffers,
+                  absl::Span<const int64_t> output_indices) {
   std::vector<tsl::AsyncValueRef<CpuDeviceMemory>> buffer_table(
       assignment.Allocations().size());
-  tsl::RCReference<CommonPjRtRawBuffer> null_output;
+  PjRtRawBufferRef null_output;
   for (BufferAllocation::Index i = 0; i < buffer_table.size(); ++i) {
     const BufferAllocation& allocation = assignment.GetAllocation(i);
     int64_t out_index = output_indices[i];
@@ -1472,8 +1464,8 @@ tsl::AsyncValueRef<CpuEvent> PjRtCpuClient::GetCollectiveLaunchEvent(
 
 PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     const ExecuteOptions& options,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> input_buffers,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> output_leaf_buffers,
+    absl::Span<const PjRtRawBufferRef> input_buffers,
+    absl::Span<const PjRtRawBufferRef> output_leaf_buffers,
     std::unique_ptr<PjRtDeviceEventSet> extra_deps,
     std::unique_ptr<PjRtDeviceEventSet> control_deps,
     bool is_predetermined_error, bool fill_future) && {

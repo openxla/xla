@@ -512,8 +512,7 @@ PjRtStreamExecutorClient::MakeDefaultShapeForMemorySpace(
   return on_device_shape;
 }
 
-absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
-PjRtStreamExecutorClient::AllocateRawBuffer(
+absl::StatusOr<PjRtRawBufferRef> PjRtStreamExecutorClient::AllocateRawBuffer(
     PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
     bool retry_on_oom, tsl::AsyncValueRef<bool> allocate_after) {
   CHECK(allocate_after == nullptr)
@@ -547,7 +546,7 @@ PjRtStreamExecutorClient::AllocateRawBuffer(
       this, memory_space, local_device, std::move(mem), on_device_bytes_count);
 }
 
-absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
+absl::StatusOr<PjRtRawBufferRef>
 PjRtStreamExecutorClient::AllocateRawBufferForExecute(
     PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
     bool retry_on_oom) {
@@ -563,7 +562,7 @@ PjRtStreamExecutorClient::AllocateRawBufferForExecute(
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 PjRtStreamExecutorClient::DefineBuffer(
     std::shared_ptr<const Shape> on_device_shape, PjRtMemorySpace* memory_space,
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+    PjRtRawBufferRef raw_buffer,
     absl::InlinedVector<PjRtDeviceEventRef, 2> definition_device_events) {
   if (raw_buffer && raw_buffer->memory_space() != memory_space) {
     return absl::InvalidArgumentError(
@@ -582,7 +581,7 @@ PjRtStreamExecutorClient::DefineBuffer(
   return py_buffer;
 }
 
-absl::StatusOr<std::pair<tsl::RCReference<CommonPjRtRawBuffer>,
+absl::StatusOr<std::pair<PjRtRawBufferRef,
                          CommonPjRtClient::PjRtFulfillAliasRawBufferCallback>>
 PjRtStreamExecutorClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
                                                  size_t on_device_bytes_count) {
@@ -598,8 +597,7 @@ PjRtStreamExecutorClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
 
   auto buffer_promise_cb =
       [buffer_promise = std::move(buffer_promise), memory_space](
-          absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>> raw_buffer)
-      -> absl::Status {
+          absl::StatusOr<PjRtRawBufferRef> raw_buffer) -> absl::Status {
     if (!raw_buffer.ok()) {
       buffer_promise->SetError(raw_buffer.status());
       return raw_buffer.status();
@@ -646,8 +644,7 @@ PjRtStreamExecutorClient::LinearizeHostBufferInto(
     std::optional<absl::Span<int64_t const>> byte_strides,
     HostBufferSemantics host_buffer_semantics,
     absl::AnyInvocable<void() &&> on_done_with_host_buffer,
-    const xla::Shape& device_shape,
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) {
+    const xla::Shape& device_shape, PjRtRawBufferRef raw_buffer) {
   tsl::profiler::TraceMe traceme(
       "PjRtStreamExecutorClient::LinearizeHostBufferInto");
   PjRtMemorySpace* memory_space = raw_buffer->memory_space();
@@ -871,7 +868,7 @@ PjRtStreamExecutorClient::CreateErrorBuffer(absl::Status error,
 
   // Create an empty buffer.
   auto dummy_device_buffer = std::make_unique<TrackedDeviceBuffer>(
-      device, tsl::RCReference<CommonPjRtRawBuffer>(),
+      device, PjRtRawBufferRef(),
       absl::InlinedVector<PjRtDeviceEventRef, 2>(
           {PjRtDeviceEventRef(std::move(definition_event))}));
 
@@ -882,8 +879,7 @@ PjRtStreamExecutorClient::CreateErrorBuffer(absl::Status error,
 
 absl::StatusOr<PjRtDeviceEventRef> PjRtStreamExecutorClient::LinearizeInto(
     const LiteralSlice& literal, const xla::Shape& device_shape,
-    HostBufferSemantics host_buffer_semantics,
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) {
+    HostBufferSemantics host_buffer_semantics, PjRtRawBufferRef raw_buffer) {
   auto* memory_space = raw_buffer->memory_space();
 
   CHECK_EQ(memory_space->devices().size(), 1);
@@ -1480,11 +1476,11 @@ struct PjRtStreamExecutorExecutionInput {
 
 // Makes a tuple from the arguments to an execution.
 static absl::StatusOr<ShapeTree<PjRtStreamExecutorExecutionInput>>
-MakeTupleHelper(
-    PjRtStreamExecutorClient* client, LocalDeviceState* local_device,
-    const Shape& tupled_parameter_shape,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> execution_inputs,
-    int device_ordinal) {
+MakeTupleHelper(PjRtStreamExecutorClient* client,
+                LocalDeviceState* local_device,
+                const Shape& tupled_parameter_shape,
+                absl::Span<const PjRtRawBufferRef> execution_inputs,
+                int device_ordinal) {
   se::DeviceAddressAllocator* allocator = client->allocator();
   TransferManager* transfer_manager =
       client->client()->backend().transfer_manager();
@@ -1515,7 +1511,7 @@ MakeTupleHelper(
                                       local_device, allocator)};
   ++input_iterator;
   // Then set each sub-tuple in turn from the parameters.
-  for (const tsl::RCReference<CommonPjRtRawBuffer>& input : execution_inputs) {
+  for (const PjRtRawBufferRef& input : execution_inputs) {
     input_iterator->second.buf =
         tensorflow::down_cast<const PjRtStreamExecutorRawBuffer*>(input.get())
             ->device_buffer();
@@ -1541,12 +1537,12 @@ MakeTupleHelper(
 }
 
 static absl::StatusOr<std::vector<ShapeTree<PjRtStreamExecutorExecutionInput>>>
-WrapInputsInShapeTree(
-    PjRtStreamExecutorClient* client, LocalDeviceState* device_state,
-    bool parameter_is_tupled_arguments,
-    absl::Span<const Shape> executable_parameter_shapes,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> execution_inputs,
-    int device_ordinal) {
+WrapInputsInShapeTree(PjRtStreamExecutorClient* client,
+                      LocalDeviceState* device_state,
+                      bool parameter_is_tupled_arguments,
+                      absl::Span<const Shape> executable_parameter_shapes,
+                      absl::Span<const PjRtRawBufferRef> execution_inputs,
+                      int device_ordinal) {
   std::vector<ShapeTree<PjRtStreamExecutorExecutionInput>> results;
   results.reserve(executable_parameter_shapes.size());
   if (parameter_is_tupled_arguments) {
@@ -1578,8 +1574,8 @@ WrapInputsInShapeTree(
 absl::StatusOr<PjRtStreamExecutorExecutionOutput>
 PjRtStreamExecutorClient::RunAsync(
     LocalExecutable& exec, PjRtDevice* device,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> flat_arguments,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> results,
+    absl::Span<const PjRtRawBufferRef> flat_arguments,
+    absl::Span<const PjRtRawBufferRef> results,
     ExecutableRunOptions run_options, bool parameter_is_tupled_arguments,
     absl::Span<const Shape> executable_parameter_shapes) {
   TF_ASSIGN_OR_RETURN(
@@ -1714,9 +1710,8 @@ int GetNextCommandBufferVaRangeIdx(const void* executable_key,
 // to initialize `run_options`.
 PjRtRawLoadedExecutable::RawExecuteResult
 PjRtStreamExecutorRawLoadedExecutable::Execute(
-    const ExecuteOptions& options,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> inputs,
-    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> results,
+    const ExecuteOptions& options, absl::Span<const PjRtRawBufferRef> inputs,
+    absl::Span<const PjRtRawBufferRef> results,
     std::unique_ptr<PjRtDeviceEventSet> extra_deps,
     std::unique_ptr<PjRtDeviceEventSet> control_deps,
     bool is_predetermined_error, bool fill_future) && {
@@ -1777,10 +1772,8 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
        compute_reservation = std::move(compute_reservation),
        send_device_memory = std::move(send_device_memory),
        recv_device_memory = std::move(recv_device_memory),
-       inputs = std::vector<tsl::RCReference<CommonPjRtRawBuffer>>(
-           inputs.begin(), inputs.end()),
-       results = std::vector<tsl::RCReference<CommonPjRtRawBuffer>>(
-           results.begin(), results.end()),
+       inputs = std::vector<PjRtRawBufferRef>(inputs.begin(), inputs.end()),
+       results = std::vector<PjRtRawBufferRef>(results.begin(), results.end()),
        device_ordinal, executable = executable_,
        execution_profile = options.execution_profile, is_predetermined_error,
        parameter_is_tupled_arguments = parameter_is_tupled_arguments_,

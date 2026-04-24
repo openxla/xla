@@ -92,8 +92,7 @@ class CommonAsyncHostToDeviceTransferManager
     absl::InlinedVector<tsl::RCReference<PjRtDeviceEventPromise>, 4>
         definition_events;
     absl::InlinedVector<std::shared_ptr<const Shape>, 4> device_shapes;
-    absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>
-        undispatched_buffer_refs;
+    absl::InlinedVector<PjRtRawBufferRef, 4> undispatched_buffer_refs;
     absl::InlinedVector<size_t, 4> buffer_sizes;
     undispatched_buffer_refs.reserve(shape_specs.size());
     buffer_sizes.reserve(shape_specs.size());
@@ -221,7 +220,7 @@ class CommonAsyncHostToDeviceTransferManager
     absl::ReleasableMutexLock l(mu_);
 
     DCHECK_LT(buffer_index, undispatched_buffer_refs_.size());
-    tsl::RCReference<CommonPjRtRawBuffer>& undispatched_buffer_ref =
+    PjRtRawBufferRef& undispatched_buffer_ref =
         undispatched_buffer_refs_[buffer_index];
     if (!undispatched_buffer_ref) {
       return InvalidArgument(
@@ -232,7 +231,7 @@ class CommonAsyncHostToDeviceTransferManager
     // Unblock allocating the underlying memory.
     allocation_events_[buffer_index].reset();
 
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer;
+    PjRtRawBufferRef raw_buffer;
     using std::swap;
     swap(raw_buffer, undispatched_buffer_ref);
     CHECK(raw_buffer);
@@ -325,7 +324,7 @@ class CommonAsyncHostToDeviceTransferManager
       bool is_last_transfer, absl::AnyInvocable<void() &&> on_done) override {
     absl::ReleasableMutexLock l(mu_);
     DCHECK_LT(buffer_index, undispatched_buffer_refs_.size());
-    tsl::RCReference<CommonPjRtRawBuffer> undispatched_buffer_ref;
+    PjRtRawBufferRef undispatched_buffer_ref;
     // Drop reference to the buffer if this is the last transfer.
     if (is_last_transfer) {
       std::swap(undispatched_buffer_ref,
@@ -498,7 +497,7 @@ class CommonAsyncHostToDeviceTransferManager
 
   CommonAsyncHostToDeviceTransferManager(
       absl::InlinedVector<std::unique_ptr<PjRtBuffer>, 4> buffers,
-      absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4> raw_buffers,
+      absl::InlinedVector<PjRtRawBufferRef, 4> raw_buffers,
       absl::InlinedVector<size_t, 4> buffer_sizes,
       absl::InlinedVector<std::unique_ptr<ScopedEvent>, 4> allocation_events,
       absl::InlinedVector<tsl::RCReference<PjRtDeviceEventPromise>, 4>
@@ -541,8 +540,8 @@ class CommonAsyncHostToDeviceTransferManager
   // that the buffers can't be freed before all transfers are dispatched. The
   // reference to each buffer is dropped immediately after the last transfer
   // for that buffer has been dispatched.
-  absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>
-      undispatched_buffer_refs_ ABSL_GUARDED_BY(mu_);
+  absl::InlinedVector<PjRtRawBufferRef, 4> undispatched_buffer_refs_
+      ABSL_GUARDED_BY(mu_);
   // Number of transfers in flight for each buffer. Used to determine when the
   // last transfer has completed, in case the completions arrive out of order.
   absl::InlinedVector<int, 4> buffer_transfers_in_flight_ ABSL_GUARDED_BY(mu_);

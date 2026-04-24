@@ -367,8 +367,8 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
 
   virtual absl::StatusOr<PjRtStreamExecutorExecutionOutput> RunAsync(
       LocalExecutable& exec, PjRtDevice* device,
-      absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> flat_arguments,
-      absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> results,
+      absl::Span<const PjRtRawBufferRef> flat_arguments,
+      absl::Span<const PjRtRawBufferRef> results,
       ExecutableRunOptions run_options, bool parameter_is_tupled_arguments,
       absl::Span<const Shape> executable_parameter_shapes);
 
@@ -402,41 +402,37 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
       PjRtMemorySpace* memory_space, xla::Shape shape,
       const xla::Layout* layout) const override;
 
-  absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>> AllocateRawBuffer(
+  absl::StatusOr<PjRtRawBufferRef> AllocateRawBuffer(
       PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
       bool retry_on_oom, tsl::AsyncValueRef<bool> allocate_after) override;
 
-  absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
-  AllocateRawBufferForExecute(PjRtMemorySpace* memory_space,
-                              size_t on_device_bytes_count,
-                              bool retry_on_oom) override;
+  absl::StatusOr<PjRtRawBufferRef> AllocateRawBufferForExecute(
+      PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
+      bool retry_on_oom) override;
 
   using CommonPjRtClient::DefineBuffer;
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> DefineBuffer(
       std::shared_ptr<const Shape> on_device_shape,
-      PjRtMemorySpace* memory_space,
-      tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+      PjRtMemorySpace* memory_space, PjRtRawBufferRef raw_buffer,
       absl::InlinedVector<PjRtDeviceEventRef, 2> definition_device_events)
       override;
 
-  absl::StatusOr<std::pair<tsl::RCReference<CommonPjRtRawBuffer>,
-                           PjRtFulfillAliasRawBufferCallback>>
+  absl::StatusOr<std::pair<PjRtRawBufferRef, PjRtFulfillAliasRawBufferCallback>>
   CreateRawBufferChannel(PjRtMemorySpace* memory_space,
                          size_t on_device_bytes_count) override;
 
   absl::StatusOr<PjRtDeviceEventRef> LinearizeInto(
       const LiteralSlice& literal, const xla::Shape& device_shape,
       HostBufferSemantics host_buffer_semantics,
-      tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) override;
+      PjRtRawBufferRef raw_buffer) override;
 
   absl::StatusOr<PjRtDeviceEventRef> LinearizeHostBufferInto(
       const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
       std::optional<absl::Span<int64_t const>> byte_strides,
       HostBufferSemantics host_buffer_semantics,
       absl::AnyInvocable<void() &&> on_done_with_host_buffer,
-      const xla::Shape& device_shape,
-      tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) override;
+      const xla::Shape& device_shape, PjRtRawBufferRef raw_buffer) override;
 
   absl::StatusOr<
       std::pair<tsl::RCReference<PjRtDeviceEventPromise>, PjRtDeviceEventRef>>
@@ -566,9 +562,8 @@ class PjRtStreamExecutorRawLoadedExecutable : public PjRtRawLoadedExecutable {
   PjRtDevice* device() override { return device_; }
 
   PjRtRawLoadedExecutable::RawExecuteResult Execute(
-      const ExecuteOptions& options,
-      absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> inputs,
-      absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> results,
+      const ExecuteOptions& options, absl::Span<const PjRtRawBufferRef> inputs,
+      absl::Span<const PjRtRawBufferRef> results,
       std::unique_ptr<PjRtDeviceEventSet> extra_deps,
       std::unique_ptr<PjRtDeviceEventSet> control_deps,
       bool is_predetermined_error, bool fill_future) &&

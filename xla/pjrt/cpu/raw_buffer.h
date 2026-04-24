@@ -165,7 +165,7 @@ class CpuRawBuffer : public CommonPjRtRawBufferImpl {
       tsl::RCReference<PjRtDeviceEventPromise> device_promise,
       MutableLiteralBase* literal, xla::Shape shape) override;
 
-  void CopyTo(tsl::RCReference<CommonPjRtRawBuffer> dst_raw_buffer,
+  void CopyTo(PjRtRawBufferRef dst_raw_buffer,
               tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
               tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
               ::tsl::AsyncValueRef<bool> allocation_event) override;

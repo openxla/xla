@@ -181,7 +181,7 @@ tsl::AsyncValueRef<RawSEDeviceMemory> RawSEDeviceMemory::CreateSlice(
 }
 
 TrackedDeviceBuffer::TrackedDeviceBuffer(
-    PjRtDevice* device, tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+    PjRtDevice* device, PjRtRawBufferRef raw_buffer,
     absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events)
     : AbstractTrackedDeviceBuffer(std::move(raw_buffer),
                                   std::move(definition_events)),

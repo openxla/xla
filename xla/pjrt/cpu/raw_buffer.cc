@@ -416,7 +416,7 @@ void CpuRawBuffer::CopyToLiteralAsync(
 }
 
 void CpuRawBuffer::CopyTo(
-    tsl::RCReference<CommonPjRtRawBuffer> dst_raw_buffer,
+    PjRtRawBufferRef dst_raw_buffer,
     tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
     tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
     ::tsl::AsyncValueRef<bool> allocation_event) {

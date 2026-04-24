@@ -43,7 +43,7 @@ class AbstractTrackedDeviceBuffer {
  public:
   virtual ~AbstractTrackedDeviceBuffer() = default;
   AbstractTrackedDeviceBuffer(
-      tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+      PjRtRawBufferRef raw_buffer,
       absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events)
       : raw_buffer_(std::move(raw_buffer)),
         definition_events_(std::move(definition_events)) {}
@@ -73,9 +73,7 @@ class AbstractTrackedDeviceBuffer {
 
   // Returns a raw buffer which aliases the same
   // underlying memory as this AbstractTrackedDeviceBuffer.
-  const tsl::RCReference<CommonPjRtRawBuffer>& raw_buffer() const {
-    return raw_buffer_;
-  }
+  const PjRtRawBufferRef& raw_buffer() const { return raw_buffer_; }
 
   // Set of all usage events.
   virtual PjRtDeviceEventSet& usage_events() = 0;
@@ -137,12 +135,12 @@ class AbstractTrackedDeviceBuffer {
 
  protected:
   void ReleaseDeviceMemory() {
-    raw_buffer_ = tsl::RCReference<CommonPjRtRawBuffer>();
+    raw_buffer_ = PjRtRawBufferRef();
     definition_events_.clear();
   }
 
  private:
-  tsl::RCReference<CommonPjRtRawBuffer> raw_buffer_;
+  PjRtRawBufferRef raw_buffer_;
   absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events_;
 };
 
@@ -281,7 +279,7 @@ class CommonPjRtBuffer : public PjRtBuffer {
 
   absl::Status AcquireScopedRawBuffer(
       absl::AnyInvocable<absl::StatusOr<PjRtDeviceEventRef>(
-          tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+          PjRtRawBufferRef raw_buffer,
           std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events) &&>
           scoped_acquire,
       const char* caller_name = "AcquireScopedRawBuffer");

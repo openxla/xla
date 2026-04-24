@@ -164,8 +164,7 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   // ScheduleRemoteSend and MakeCrossHostReceiveBuffers are methods implemented
   // to support the legacy cross-host transfers API.
   void ScheduleRemoteSend(
-      PjRtMemorySpace* memory_space,
-      tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+      PjRtMemorySpace* memory_space, PjRtRawBufferRef raw_buffer,
       std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events,
       tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise,
       Future<std::string> serialized_descriptor,
@@ -194,8 +193,8 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
 
   absl::StatusOr<PjRtStreamExecutorExecutionOutput> RunAsync(
       LocalExecutable& exec, PjRtDevice* device,
-      absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> flat_arguments,
-      absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> results,
+      absl::Span<const PjRtRawBufferRef> flat_arguments,
+      absl::Span<const PjRtRawBufferRef> results,
       ExecutableRunOptions run_options_inp, bool parameter_is_tupled_arguments,
       absl::Span<const Shape> executable_parameter_shapes) override;
 
@@ -240,7 +239,7 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
 
   struct PrepareReceiveBufferResult {
     std::unique_ptr<PjRtBuffer> buffer;
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer;
+    PjRtRawBufferRef raw_buffer;
     LocalDeviceState* local_device;
     se::Stream* stream;
     BufferSequencingEventRef definition_event;
