@@ -1871,6 +1871,11 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
     pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 
+    // GemmRewriter pins "__cublas$lt$matmul" output layouts to {n-1,...,1,0},
+    // which can leave a downstream reshape no longer bitcast-compatible.
+    // Decompose any such reshape so LayoutNormalization's ReshapeIsBitcast
+    // precondition holds.
+    pipeline.AddPass<ReshapeDecomposer>();
     pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
     // Remove any redundant operations (such as bitcasts) introduced by layout
     // normalization.
@@ -1941,6 +1946,11 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
   pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 
+  // GemmRewriter pins "__cublas$lt$matmul" output layouts to {n-1,...,1,0},
+  // which can leave a downstream reshape no longer bitcast-compatible.
+  // Decompose any such reshape so LayoutNormalization's ReshapeIsBitcast
+  // precondition holds.
+  pipeline.AddPass<ReshapeDecomposer>();
   pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
 
   // Layout normalization will create scatters that are not simplified and
