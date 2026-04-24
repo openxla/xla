@@ -104,11 +104,10 @@ RaggedAllToAllConfig GetRaggedAllToAllConfig(
           .debug_options()
           .xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl();
 
-  config.use_put_path =
-      instr->GetModule()
-          ->config()
-          .debug_options()
-          .xla_gpu_experimental_ragged_all_to_all_use_put_path();
+  config.collectives_mode = instr->GetModule()
+                                ->config()
+                                .debug_options()
+                                .xla_gpu_ragged_all_to_all_mode();
 
   int64_t fast_interconnect_slice_size_override =
       instr->GetModule()
@@ -211,15 +210,9 @@ RaggedAllToAllThunk::RaggedAllToAllThunk(
     ThunkInfo thunk_info, const RaggedAllToAllConfig& config,
     std::vector<CollectiveThunk::Buffer> buffers)
     : CollectiveThunk(Thunk::kRaggedAllToAll, thunk_info, std::move(buffers),
-                      CommunicationId(0),
-                      config.use_put_path
-                          ? DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY
-                          : DebugOptions::COLLECTIVES_PRIVATE_MEMORY),
+                      CommunicationId(0), config.collectives_mode),
       config_(config) {
   CHECK_EQ(config_.config.operand_element_type.size(), this->buffers().size());
-  VLOG(1) << "RaggedAllToAllThunk: use_put_path=" << config_.use_put_path
-          << " collectives_mode="
-          << (use_symmetric_memory() ? "SYMMETRIC" : "PRIVATE");
 }
 
 /*static*/ absl::Status RaggedAllToAllThunk::CheckImplementable(
@@ -475,7 +468,8 @@ RaggedAllToAllThunk::FromProto(
           config, thunk_proto.num_total_updates(), thunk_proto.num_input_rows(),
           thunk_proto.num_row_elements(), thunk_proto.one_shot_kernel_enabled(),
           thunk_proto.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel(),
-          thunk_proto.use_put_path(), fast_interconnect_slice_size_override},
+          thunk_proto.collectives_mode(),
+          fast_interconnect_slice_size_override},
       std::move(buffers));
 }
 
@@ -498,7 +492,7 @@ absl::StatusOr<ThunkProto> RaggedAllToAllThunk::ToProto() const {
   thunk_proto->set_one_shot_kernel_enabled(is_one_shot_kernel_enabled());
   thunk_proto->set_use_multi_gpu_barrier_with_nccl_in_one_shot_kernel(
       use_multi_gpu_barrier_with_nccl_in_one_shot_kernel());
-  thunk_proto->set_use_put_path(config_.use_put_path);
+  thunk_proto->set_collectives_mode(collectives_mode());
   thunk_proto->set_fast_interconnect_slice_size_override(
       config_.fast_interconnect_slice_size_override.value_or(0));
 
@@ -576,7 +570,7 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
   return RunRaggedAllToAll(config_.num_row_elements, config_.num_total_updates,
                            device_buffers, stream, comm, ragged_metadata_allocs,
                            state->output_offsets_device_buffer.address(),
-                           use_symmetric_memory(), output_sym_mem,
+                           collectives_mode(), output_sym_mem,
                            output_base_offset);
 }
 
@@ -638,8 +632,8 @@ absl::Status RunRaggedAllToAll(
     const std::vector<DeviceBufferPair>& original_buffers, se::Stream& stream,
     Communicator& comm, absl::Span<int64_t* const> ragged_metadata_allocs,
     const se::DeviceAddressBase& output_offsets_device_buffer,
-    bool use_put_path, SymmetricMemory* output_symmetric_memory,
-    size_t output_base_offset) {
+    CollectiveThunk::CollectivesMode collectives_mode,
+    SymmetricMemory* output_symmetric_memory, size_t output_base_offset) {
   int device_ordinal = stream.parent()->device_ordinal();
   XLA_VLOG_DEVICE(3, device_ordinal)
       << "Performing ragged-all-to-all from device ordinal: " << device_ordinal;
@@ -649,7 +643,9 @@ absl::Status RunRaggedAllToAll(
 
   int64_t num_updates_per_replica = num_total_updates / num_ranks;
 
-  use_put_path = use_put_path && output_symmetric_memory != nullptr;
+  bool use_put_path =
+      collectives_mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY &&
+      output_symmetric_memory != nullptr;
 
   if (!use_put_path) {
     // `output_offsets` of the RaggedAllToAll instruction are sharded in a way,
@@ -686,8 +682,8 @@ absl::Status RunRaggedAllToAll(
          element_byte_width, output_base_offset, &input_buffer,
          output_symmetric_memory,
          &stream](GpuCommunicator* comm) -> absl::Status {
-          for (int64_t i = 0; i < num_updates_per_replica; ++i) {
-            for (int peer = 0; peer < num_ranks; ++peer) {
+          for (int peer = 0; peer < num_ranks; ++peer) {
+            for (int64_t i = 0; i < num_updates_per_replica; ++i) {
               int64_t idx = peer * num_updates_per_replica + i;
               int64_t send_count = send_sizes[idx] * ragged_row_element_size;
 

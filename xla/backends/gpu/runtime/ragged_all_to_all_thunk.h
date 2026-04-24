@@ -65,7 +65,8 @@ struct RaggedAllToAllConfig {
   // multiple hosts connected via a fast interconnect (e.g., MNNVL).
   bool use_multi_gpu_barrier_with_nccl_in_one_shot_kernel = false;
 
-  bool use_put_path = false;
+  CollectiveThunk::CollectivesMode collectives_mode =
+      DebugOptions::COLLECTIVES_PRIVATE_MEMORY;
 
   // If set, this will be used to determine if optimized kernels that assume a
   // fast interconnect can be used.
@@ -244,7 +245,8 @@ absl::Status RunRaggedAllToAll(
     const std::vector<DeviceBufferPair>& original_buffers, se::Stream& stream,
     Communicator& comm, absl::Span<int64_t* const> ragged_metadata_allocs,
     const se::DeviceAddressBase& output_offsets_device_buffer,
-    bool use_put_path, SymmetricMemory* output_symmetric_memory = nullptr,
+    CollectiveThunk::CollectivesMode collectives_mode,
+    SymmetricMemory* output_symmetric_memory = nullptr,
     size_t output_base_offset = 0);
 
 // Executes an optimized "One-Shot" Ragged All-to-All collective.

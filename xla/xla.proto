@@ -519,6 +519,10 @@ message DebugOptions {
   // details.
   optional CollectivesMode xla_gpu_collective_permute_mode = 473;
 
+  // Memory mode for the ragged-all-to-all operation. In symmetric mode,
+  // the put/signal path is used. See CollectivesMode for details.
+  optional CollectivesMode xla_gpu_ragged_all_to_all_mode = 476;
+
   // Name of the GPU collectives implementation to use (e.g. "nccl",
   // "loopback"). When empty (the default), the highest-priority registered
   // implementation is used. When set, the named implementation is looked up
@@ -1519,10 +1523,7 @@ message DebugOptions {
   optional bool xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl =
       462;
 
-  // If true, use the one-sided put path (Put+Signal) for the RaggedAllToAll
-  // thunk. Requires xla_gpu_experimental_enable_nccl_symmetric_buffers to be
-  // true.
-  optional bool xla_gpu_experimental_ragged_all_to_all_use_put_path = 503;
+
 
   // If true, enable experimental tiling propagation.
   optional bool xla_gpu_experimental_enable_tiling_propagation = 456;
@@ -1534,7 +1535,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 476
+  // Next id: 477
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
