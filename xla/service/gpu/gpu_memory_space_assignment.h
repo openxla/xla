@@ -37,18 +37,13 @@ inline constexpr absl::string_view kResultsMemorySpacesAttr =
     "results_memory_spaces";
 
 enum class MemorySpaceColor {
-  // Corresponds to stream_executor::MemoryTypes::kDefault or kUnified.
+  // Corresponds to stream_executor::MemorySpace::kDefault or kUnified.
   // This memory can be allocated with any device allocation API.
   kDefault = 0,
 
-  // Corresponds to stream_executor::MemoryTypes::kCollective. This memory
+  // Corresponds to stream_executor::MemorySpace::kCollective. This memory
   // should be compatible with symmetric memory requirements.
   kCollective = 1,
-
-  // Temp buffers can be allocated within separate memory space (if
-  // xla_gpu_temp_buffer_use_separate_color is set). This improves cuda-graphs
-  // performance. See more details in the corresponding flag description.
-  kTempBuffer = 2,
 };
 
 // Converts an integer to a MemorySpaceColor, returning an error if the value

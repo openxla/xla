@@ -82,6 +82,7 @@ limitations under the License.
 #include "xla/runtime/process_id.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/gpu_topology.pb.h"
 #include "xla/service/hlo.pb.h"
@@ -641,7 +642,7 @@ std::vector<std::unique_ptr<PjRtMemorySpace>> InitializeMemorySpaces(
   return memory_spaces;
 }
 
-absl::StatusOr<std::unique_ptr<tsl::Allocator>> CreateAllocatorForDevice(
+absl::StatusOr<std::shared_ptr<tsl::Allocator>> CreateAllocatorForDevice(
     se::StreamExecutor* executor, const GpuAllocatorConfig& allocator_config) {
   switch (allocator_config.kind) {
     case GpuAllocatorConfig::Kind::kCudaAsync:
@@ -710,6 +711,10 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
 #endif  // GOOGLE_CUDA
   }
 
+  // Deprecated: nvshmem backward compatibility path.
+  bool use_nvshmem =
+      GetDebugOptionsFromFlags().xla_gpu_experimental_enable_nvshmem();
+
   std::vector<se::MultiDeviceAdapter::AllocatorInfo> allocators;
   for (const auto& device : devices) {
     se::StreamExecutor* executor = device->executor();
@@ -721,7 +726,7 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
     // The stream in the allocator will be used during compilation.
     se::Stream* stream = device->stream();
 
-    std::unique_ptr<tsl::Allocator> allocator;
+    std::shared_ptr<tsl::Allocator> allocator;
     if ((effective_config.kind == GpuAllocatorConfig::Kind::kDefault ||
          effective_config.kind == GpuAllocatorConfig::Kind::kBFC) &&
         effective_config.preallocate) {
@@ -753,28 +758,38 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
       TF_ASSIGN_OR_RETURN(allocator,
                           CreateAllocatorForDevice(executor, effective_config));
     }
-    allocators.emplace_back(
-        std::move(allocator), stream,
-        /*memory_space=*/
-        static_cast<int>(stream_executor::MemorySpace::kDevice),
-        executor->device_ordinal(), executor->GetPlatform());
+    allocators.push_back(
+        {allocator, stream,
+         /*memory_space=*/
+         static_cast<int>(stream_executor::MemorySpace::kDevice),
+         executor->device_ordinal(), executor->GetPlatform(),
+         /*min_alignment=*/xla::gpu::kXlaAllocatedBufferAlignBytes});
 
-    TF_ASSIGN_OR_RETURN(
-        auto collective_bfc_allocator,
-        CreateCollectiveBFCAllocator(
-            executor,
-            /*memory_fraction=*/1.0 - effective_config.memory_fraction,
-            effective_config.collective_memory_size));
-    allocators.emplace_back(std::move(collective_bfc_allocator), stream,
+    if (use_nvshmem) {
+      TF_ASSIGN_OR_RETURN(
+          auto nvshmem_bfc_allocator,
+          CreateNvshmemBFCAllocator(
+              executor,
+              /*memory_fraction=*/1.0 - effective_config.memory_fraction,
+              effective_config.collective_memory_size));
+      allocators.push_back({std::move(nvshmem_bfc_allocator), stream,
                             /*memory_space=*/1, executor->device_ordinal(),
-                            executor->GetPlatform());
+                            executor->GetPlatform()});
+    } else {
+      allocators.push_back({allocator, stream, /*memory_space=*/1,
+                            executor->device_ordinal(), executor->GetPlatform(),
+                            executor->GetSymmetricMemoryAlignment()});
+    }
 
-    TF_ASSIGN_OR_RETURN(auto host_allocator, GetGpuHostAllocator(executor));
-    allocators.emplace_back(
-        std::move(host_allocator), stream,
-        /*memory_space=*/static_cast<int>(stream_executor::MemorySpace::kHost),
-        executor->device_ordinal(), executor->GetPlatform());
+    TF_ASSIGN_OR_RETURN(auto host_allocator_ptr, GetGpuHostAllocator(executor));
+    std::shared_ptr<tsl::Allocator> host_allocator(
+        std::move(host_allocator_ptr));
+    allocators.push_back(
+        {host_allocator, stream,
+         /*memory_space=*/static_cast<int>(stream_executor::MemorySpace::kHost),
+         executor->device_ordinal(), executor->GetPlatform()});
   }
+
   return MaybeOwning<se::DeviceAddressAllocator>(
       std::make_unique<se::MultiDeviceAdapter>(xla_client->platform(),
                                                std::move(allocators)));

@@ -77,9 +77,8 @@ bool IsAsync(const HloInstruction* inst) {
 
 class CollectiveOpsTestE2E : public CollectiveOpsE2ETestBase {
  public:
-  explicit CollectiveOpsTestE2E(size_t memory_size = 128 * kMB,
-                                size_t collectives_memory_size = 0)
-      : CollectiveOpsE2ETestBase(memory_size, collectives_memory_size) {}
+  explicit CollectiveOpsTestE2E(size_t memory_size = 128 * kMB)
+      : CollectiveOpsE2ETestBase(memory_size) {}
 
   bool HasFp8Support() {
     if (Capability().IsCuda()) {
@@ -138,9 +137,7 @@ class AsyncCollectiveOps
             /*enable_async=*/std::get<0>(GetParam()),
             /*enable_p2p_memcpy=*/false,
             /*enable_symmetric_buffer=*/std::get<1>(GetParam()),
-            /*memory_size=*/8 * kGB,
-            /*collectives_memory_size=*/std::get<1>(GetParam()) ? 8 * kGB : 0) {
-  }
+            /*memory_size=*/8 * kGB) {}
 };
 
 class MemcpyCollectiveOps : public CollectiveOpsWithFlagsBase,
@@ -150,8 +147,7 @@ class MemcpyCollectiveOps : public CollectiveOpsWithFlagsBase,
       : CollectiveOpsWithFlagsBase(/*enable_async=*/true,
                                    /*enable_p2p_memcpy=*/GetParam(),
                                    /*enable_symmetric_buffer=*/false,
-                                   /*memory_size=*/32 * kMB,
-                                   /*collectives_memory_size=*/0) {}
+                                   /*memory_size=*/32 * kMB) {}
 };
 
 class AsyncMemcpyCollectiveOps
@@ -163,8 +159,7 @@ class AsyncMemcpyCollectiveOps
             /*enable_async=*/std::get<0>(GetParam()),
             /*enable_p2p_memcpy=*/std::get<1>(GetParam()),
             /*enable_symmetric_buffer=*/false,
-            /*memory_size=*/32 * kMB,
-            /*collectives_memory_size=*/0) {}
+            /*memory_size=*/32 * kMB) {}
 };
 
 std::string GetAsyncTestName(bool is_async) {
@@ -1534,8 +1529,7 @@ TEST_F(CollectiveOpsTestE2E, HostMemoryOffloadingWithDonation) {
 class CollectiveOpsTestE2EWindowedNonWindowed : public CollectiveOpsTestE2E {
  public:
   CollectiveOpsTestE2EWindowedNonWindowed()
-      : CollectiveOpsTestE2E(/*memory_size=*/4 * kGB,
-                             /*collectives_memory_size=*/0) {}
+      : CollectiveOpsTestE2E(/*memory_size=*/4 * kGB) {}
 
   void CollectiveOpsCompareWindowedNonWindowed(
       absl::string_view hlo_text, bool disable_dot_merger = false,

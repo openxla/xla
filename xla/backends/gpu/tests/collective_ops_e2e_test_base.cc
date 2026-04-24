@@ -48,12 +48,10 @@ limitations under the License.
 namespace xla {
 namespace {
 
-std::unique_ptr<PjRtClient> CreatePjRtClient(size_t memory_size,
-                                             size_t collectives_memory_size) {
+std::unique_ptr<PjRtClient> CreatePjRtClient(size_t memory_size) {
   xla::GpuClientOptions options;
   options.allocator_config.kind = xla::GpuAllocatorConfig::Kind::kBFC;
   options.allocator_config.gpu_system_memory_size = memory_size;
-  options.allocator_config.collective_memory_size = collectives_memory_size;
   options.use_tfrt_gpu_client = true;
 
   absl::StatusOr<std::unique_ptr<xla::PjRtClient>> pjrt_client =
@@ -64,10 +62,8 @@ std::unique_ptr<PjRtClient> CreatePjRtClient(size_t memory_size,
 
 }  // namespace
 
-CollectiveOpsE2ETestBase::CollectiveOpsE2ETestBase(
-    size_t memory_size, size_t collectives_memory_size)
-    : HloPjRtGpuTestBase(
-          CreatePjRtClient(memory_size, collectives_memory_size)) {}
+CollectiveOpsE2ETestBase::CollectiveOpsE2ETestBase(size_t memory_size)
+    : HloPjRtGpuTestBase(CreatePjRtClient(memory_size)) {}
 
 absl::StatusOr<CollectiveOpsE2ETestBase::ExecutionResult>
 CollectiveOpsE2ETestBase::ExecuteReplicated(std::unique_ptr<HloModule> module) {

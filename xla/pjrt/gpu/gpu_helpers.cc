@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/integrations/device_mem_allocator.h"
 #include "xla/stream_executor/integrations/stream_executor_allocator.h"
+#include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/framework/allocator.h"
@@ -88,7 +89,7 @@ void EnablePeerAccess(absl::Span<se::StreamExecutor* const> executors) {
 }
 
 // Builds a BFCAllocator for all local GPUs.
-absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
+absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
     se::StreamExecutor* executor, double memory_fraction, bool preallocate,
     std::optional<int64_t> gpu_system_memory_size,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_alloc_visitors,
@@ -147,13 +148,13 @@ absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
 
   tsl::BFCAllocator::Options opts;
   opts.allow_growth = !preallocate;
-  return std::make_unique<tsl::BFCAllocator>(
+  return std::make_shared<tsl::BFCAllocator>(
       std::move(sub_allocator), allocator_memory,
       absl::StrCat("GPU_", device_ordinal, "_bfc"), opts);
 }
 
-// Builds a BFCAllocator for all local GPUs that uses collective memory.
-absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateCollectiveBFCAllocator(
+// Builds a BFCAllocator backed by nvshmem_malloc for collective memory.
+absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateNvshmemBFCAllocator(
     se::StreamExecutor* executor, double memory_fraction,
     size_t collective_memory_size) {
   int device_ordinal = executor->device_ordinal();
@@ -187,9 +188,9 @@ absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateCollectiveBFCAllocator(
 
   tsl::BFCAllocator::Options opts;
   opts.allow_growth = !preallocate;
-  return std::make_unique<tsl::BFCAllocator>(
+  return std::make_shared<tsl::BFCAllocator>(
       std::move(sub_allocator), allocator_memory,
-      absl::StrCat("GPU_collectivememory_", device_ordinal, "_bfc"), opts);
+      absl::StrCat("GPU_nvshmem_", device_ordinal, "_bfc"), opts);
 }
 
 // Returns a GPU pinned host memory allocator to use when staging host->GPU
