@@ -1516,7 +1516,8 @@ struct PJRT_Device_ClearMemoryStats_Args {
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Device_ClearMemoryStats_Args, device);
 
-typedef PJRT_Error* PJRT_Device_ClearMemoryStats(PJRT_Device_ClearMemoryStats_Args* args);
+typedef PJRT_Error* PJRT_Device_ClearMemoryStats(
+    PJRT_Device_ClearMemoryStats_Args* args);
 
 struct PJRT_Device_PoisonExecution_Args {
   size_t struct_size;

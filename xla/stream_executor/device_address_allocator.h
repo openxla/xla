@@ -101,11 +101,11 @@ class DeviceAddressAllocator {
   // a different stream.
   virtual absl::StatusOr<Stream*> GetStream(int device_ordinal) = 0;
 
-  virtual bool ClearAllocatorStats(int device_ordinal) { return false; }
-
   // TODO(ezhulenev): Make this method private.
   virtual absl::Status Deallocate(int device_ordinal,
                                   DeviceAddressBase mem) = 0;
+
+  virtual bool ClearAllocatorStats(int device_ordinal) { return false; }
 
  private:
   template <typename T>

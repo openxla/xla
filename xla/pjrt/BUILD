@@ -443,6 +443,7 @@ cc_library(
         "//xla/hlo/testlib:test",
         "//xla/tests:literal_test_util",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",

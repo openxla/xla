@@ -2027,18 +2027,21 @@ absl::Status StreamExecutorGpuDevice::ClearMemoryStats() {
       tensorflow::down_cast<PjRtStreamExecutorClient*>(client())->allocator());
   if (!allocator_adapter) {
     return absl::UnimplementedError(
-        "ClearMemoryStats() is only implemented with MultiDeviceAdapter allocator");
+        "ClearMemoryStats() is only implemented with MultiDeviceAdapter "
+        "allocator");
   }
 
   TF_ASSIGN_OR_RETURN(auto allocator, allocator_adapter->GetAllocator(
                                           local_device_id().value()));
 
-  // Call the ClearStats() method on the underlying tsl::Allocator (BFCAllocator)
+  // Call the ClearStats() method on the underlying tsl::Allocator
+  // (BFCAllocator)
   if (allocator->ClearStats()) {
     return absl::OkStatus();
   }
 
-  return absl::UnavailableError("ClearStats not supported by the underlying allocator");
+  return absl::UnavailableError(
+      "ClearStats not supported by the underlying allocator");
 }
 
 absl::Span<int const> StreamExecutorGpuDevice::coords() const {
