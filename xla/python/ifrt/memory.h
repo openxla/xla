@@ -110,13 +110,6 @@ class Memory : public llvm::RTTIExtends<Memory, llvm::RTTIRoot> {
   // Debug string suitable for reading by end users, should be reasonably terse.
   virtual absl::string_view ToString() const = 0;
 
-  // Debug string suitable for logging when errors occur. Should be verbose
-  // enough to describe the current device unambiguously.
-  //
-  // TODO(hyeontaek): Remove this method in favor of AbslStringify.
-  ABSL_DEPRECATED("Memory implements AbslStringify; rely on that instead.")
-  virtual absl::string_view DebugString() const = 0;
-
   // The devices to which this memory space is attached.
   virtual absl::Span<Device* const> Devices() const = 0;
 
@@ -135,6 +128,12 @@ class Memory : public llvm::RTTIExtends<Memory, llvm::RTTIRoot> {
   }
 
   static char ID;  // NOLINT
+
+ protected:
+  // Debug string suitable for logging when errors occur. Should be verbose
+  // enough to describe the current device unambiguously.
+  ABSL_DEPRECATED("Memory implements AbslStringify; rely on that instead.")
+  virtual absl::string_view DebugString() const = 0;
 };
 
 }  // namespace ifrt

@@ -1294,12 +1294,14 @@ class NanoMemory final : public llvm::RTTIExtends<NanoMemory, ifrt::Memory> {
   }
 
   absl::string_view ToString() const override { return "NanoRT CPU Memory"; }
-  absl::string_view DebugString() const override { return ToString(); }
   absl::Span<ifrt::Device* const> Devices() const override {
     return client_->devices();
   }
 
   static char ID;  // NOLINT
+
+ protected:
+  absl::string_view DebugString() const override { return ToString(); }
 
  private:
   NanoMemory() = default;

@@ -53,10 +53,12 @@ class PjRtMemory final
   MemoryId Id() const override;
   const MemoryKind& Kind() const override;
   absl::string_view ToString() const override;
-  absl::string_view DebugString() const override;
   absl::Span<Device* const> Devices() const override;
 
   static char ID;  // NOLINT
+
+ protected:
+  absl::string_view DebugString() const override;
 
  private:
   PjRtClient* client_;

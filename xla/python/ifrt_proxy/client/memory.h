@@ -55,8 +55,10 @@ class Memory : public llvm::RTTIExtends<Memory, xla::ifrt::Memory> {
     return devices_;
   }
 
-  absl::string_view DebugString() const override { return debug_string_; }
   absl::string_view ToString() const override { return to_string_; }
+
+ protected:
+  absl::string_view DebugString() const override { return debug_string_; }
 
  private:
   friend class Client;  // For `devices_` initialization.

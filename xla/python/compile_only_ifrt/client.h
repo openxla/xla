@@ -84,13 +84,15 @@ class CompileOnlyMemory
   const ifrt::MemoryKind& Kind() const override { return kind_; }
 
   absl::string_view ToString() const override { return debug_string_; }
-  absl::string_view DebugString() const override { return debug_string_; }
 
   absl::Span<ifrt::Device* const> Devices() const override {
     return absl::Span<ifrt::Device* const>{&device_, 1};
   }
 
   static char ID;  // NOLINT
+
+ protected:
+  absl::string_view DebugString() const override { return debug_string_; }
 
  private:
   int id_;

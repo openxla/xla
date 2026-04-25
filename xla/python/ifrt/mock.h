@@ -304,6 +304,7 @@ class MockMemory : public Memory {
   MOCK_METHOD(const MemoryKind&, Kind, (), (const, final));
   MOCK_METHOD(absl::string_view, ToString, (), (const, final));
 
+ protected:
   absl::string_view DebugString() const final { return "MockMemory"; }
 };
 
