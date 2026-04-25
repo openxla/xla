@@ -238,7 +238,7 @@ class CudaDeviceMemoryAllocation : public MemoryAllocation {
   }
 
   DeviceAddressBase address() const final {
-    return DeviceAddressBase(ptr_, requested_size_);
+    return DeviceAddressBase(ptr_, padded_size_);
   }
 
   std::string ToString() const final {

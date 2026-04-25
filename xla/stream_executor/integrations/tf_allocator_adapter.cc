@@ -84,6 +84,7 @@ absl::Status TfAllocatorAdapter::Deallocate(int device_ordinal,
 }
 
 absl::StatusOr<Stream*> TfAllocatorAdapter::GetStream(int device_ordinal) {
+  CHECK(stream_ != nullptr) << "GetStream requires a non-null stream";
   CHECK_EQ(stream_->parent()->device_ordinal(), device_ordinal);
   return stream_;
 }
