@@ -1277,7 +1277,7 @@ void StreamExecutorGpuClient::ScheduleRemoteSend(
           SetEventAsError(usage_event, serialized_descriptor.status());
         }
         auto events = absl::MakeSpan(definition_events);
-        async_work_runner()->ScheduleWhenReady(
+        async_work_runner()->ExecuteWhenReady(
             events,
             [this, on_done = std::move(on_done),
              gpu_collectives = std::move(gpu_collectives),
@@ -1414,7 +1414,8 @@ StreamExecutorGpuClient::MakeCrossHostReceiveBuffers(
       SetEventAsError(definition_event, s);
     }
   };
-  async_work_runner()->Schedule(recv);
+  absl::AnyInvocable<void() &&> work = recv;
+  async_work_runner()->Execute(std::move(work));
 
   std::vector<std::unique_ptr<PjRtBuffer>> buffers;
   buffers.push_back(std::move(receive_prep_result.buffer));
