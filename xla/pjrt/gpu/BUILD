@@ -571,6 +571,25 @@ cc_library(
 )
 
 cc_library(
+    name = "se_gpu_pjrt_compiler_sycl_registration",
+    srcs = ["se_gpu_pjrt_compiler_sycl_registration.cc"],
+    compatible_with = [],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":se_gpu_pjrt_compiler_impl",
+        "//xla/pjrt:pjrt_compiler",
+        "//xla/pjrt:stream_executor_platform_id_mapping",
+        "//xla/service/gpu:intel_gpu_compiler",
+        "//xla/stream_executor/platform:initialize",
+        "//xla/stream_executor/sycl:sycl_platform_id",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
     name = "se_gpu_pjrt_compiler",
     hdrs = ["se_gpu_pjrt_compiler.h"],
     # TODO(b/382070262): Migrate users off this target - They should go though the PjRt ABI compatibility layer.
@@ -597,6 +616,8 @@ cc_library(
         ":se_gpu_pjrt_compiler_cuda_registration",
     ]) + if_rocm([
         ":se_gpu_pjrt_compiler_rocm_registration",
+    ]) + if_sycl([
+        ":se_gpu_pjrt_compiler_sycl_registration",
     ]),
 )
 
