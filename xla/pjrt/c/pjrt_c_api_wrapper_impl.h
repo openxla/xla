@@ -45,9 +45,6 @@ limitations under the License.
 #include "xla/pjrt/scoped_async_tracking_event.h"
 #include "xla/shape.h"
 
-struct PJRT_Error {
-  absl::Status status;
-};
 
 struct PJRT_TopologyDescription {
   // nullptr iff the PjRtTopologyDescription isn't owned by the caller. The PJRT
@@ -504,13 +501,12 @@ PJRT_Error* PJRT_Layouts_PJRT_Buffer_MemoryLayout(
 
 // Helper macros and functions
 
-#define PJRT_RETURN_IF_ERROR(expr)                                \
-  do {                                                            \
-    absl::Status _status = (expr);                                \
-    if (!_status.ok()) {                                          \
-      PJRT_Error* _c_status = new PJRT_Error{std::move(_status)}; \
-      return _c_status;                                           \
-    }                                                             \
+#define PJRT_RETURN_IF_ERROR(expr)                          \
+  do {                                                      \
+    absl::Status _status = (expr);                          \
+    if (!_status.ok()) {                                    \
+      return ::pjrt::StatusToPjRtError(std::move(_status)); \
+    }                                                       \
   } while (false)
 
 #define PJRT_ASSIGN_OR_RETURN(lhs, rexpr)                                  \
@@ -521,9 +517,7 @@ PJRT_Error* PJRT_Layouts_PJRT_Buffer_MemoryLayout(
 #define _PJRT_ASSIGN_OR_RETURN_IMPL(statusor, lhs, rexpr, c_status) \
   auto statusor = (rexpr);                                          \
   if (!statusor.ok()) {                                             \
-    PJRT_Error* c_status = new PJRT_Error();                        \
-    c_status->status = statusor.status();                           \
-    return c_status;                                                \
+    return ::pjrt::StatusToPjRtError(statusor.status());            \
   }                                                                 \
   lhs = std::move(*statusor)
 

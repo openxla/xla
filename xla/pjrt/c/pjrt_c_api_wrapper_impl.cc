@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_memory_descriptions_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_multi_slice_internal_types.h"
 #include "xla/pjrt/c/pjrt_c_api_shardings_extension.h"
+#include "xla/pjrt/c/pjrt_c_api_status_utils.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
@@ -441,21 +442,21 @@ class CApiKeyValueStore : public xla::KeyValueStoreInterface {
 
   absl::StatusOr<std::string> Get(absl::string_view key,
                                   absl::Duration timeout) override {
-    PJRT_CallbackError callback_error = [](PJRT_Error_Code code,
-                                           const char* message,
-                                           size_t message_size) {
-      return new PJRT_Error{absl::Status(static_cast<absl::StatusCode>(code),
-                                         std::string(message, message_size))};
-    };
+    PJRT_CallbackError callback_error =
+        [](PJRT_Error_Code code, const char* message, size_t message_size) {
+          return StatusToPjRtError(
+              absl::Status(static_cast<absl::StatusCode>(code),
+                           std::string(message, message_size)));
+        };
     PJRT_KeyValueGetCallback_Args args;
     args.key = key.data();
     args.key_size = key.size();
     args.timeout_in_ms = timeout / absl::Milliseconds(1);
     args.callback_error = &callback_error;
     args.user_arg = get_user_arg_;
-    std::unique_ptr<PJRT_Error> error(c_get_callback_(&args));
+    PJRT_Error* error = c_get_callback_(&args);
     if (error != nullptr) {
-      return error->status;
+      return PjrtErrorToStatus(error);
     }
     auto result = std::string(args.value, args.value_size);
     args.value_deleter_callback(args.value);
@@ -463,20 +464,20 @@ class CApiKeyValueStore : public xla::KeyValueStoreInterface {
   }
 
   absl::StatusOr<std::string> TryGet(absl::string_view key) override {
-    PJRT_CallbackError callback_error = [](PJRT_Error_Code code,
-                                           const char* message,
-                                           size_t message_size) {
-      return new PJRT_Error{absl::Status(static_cast<absl::StatusCode>(code),
-                                         std::string(message, message_size))};
-    };
+    PJRT_CallbackError callback_error =
+        [](PJRT_Error_Code code, const char* message, size_t message_size) {
+          return StatusToPjRtError(
+              absl::Status(static_cast<absl::StatusCode>(code),
+                           std::string(message, message_size)));
+        };
     PJRT_KeyValueTryGetCallback_Args args;
     args.key = key.data();
     args.key_size = key.size();
     args.callback_error = &callback_error;
     args.user_arg = try_get_user_arg_;
-    std::unique_ptr<PJRT_Error> error(c_try_get_callback_(&args));
+    PJRT_Error* error = c_try_get_callback_(&args);
     if (error != nullptr) {
-      return error->status;
+      return PjrtErrorToStatus(error);
     }
     auto result = std::string(args.value, args.value_size);
     args.value_deleter_callback(args.value);
@@ -493,12 +494,12 @@ class CApiKeyValueStore : public xla::KeyValueStoreInterface {
   }
 
   absl::Status Set(absl::string_view key, absl::string_view value) override {
-    PJRT_CallbackError callback_error = [](PJRT_Error_Code code,
-                                           const char* message,
-                                           size_t message_size) {
-      return new PJRT_Error{absl::Status(static_cast<absl::StatusCode>(code),
-                                         std::string(message, message_size))};
-    };
+    PJRT_CallbackError callback_error =
+        [](PJRT_Error_Code code, const char* message, size_t message_size) {
+          return StatusToPjRtError(
+              absl::Status(static_cast<absl::StatusCode>(code),
+                           std::string(message, message_size)));
+        };
     PJRT_KeyValuePutCallback_Args args;
     args.key = key.data();
     args.key_size = key.size();
@@ -506,9 +507,9 @@ class CApiKeyValueStore : public xla::KeyValueStoreInterface {
     args.value_size = value.size();
     args.callback_error = &callback_error;
     args.user_arg = put_user_arg_;
-    std::unique_ptr<PJRT_Error> error(c_put_callback_(&args));
+    PJRT_Error* error = c_put_callback_(&args);
     if (error != nullptr) {
-      return error->status;
+      return PjrtErrorToStatus(error);
     }
     return absl::OkStatus();
   }
@@ -544,8 +545,9 @@ void PJRT_Error_Destroy(PJRT_Error_Destroy_Args* args) {
   if (!struct_size_check.ok()) {
     LOG(ERROR) << struct_size_check.message();
   }
-  if (args->struct_size >= PJRT_STRUCT_SIZE(PJRT_Error_Destroy_Args, error)) {
-    delete args->error;
+  if (args->struct_size >= PJRT_STRUCT_SIZE(PJRT_Error_Destroy_Args, error) &&
+      args->error != nullptr) {
+    args->error->vtable->destroy(args->error);
   }
 }
 
@@ -557,9 +559,8 @@ void PJRT_Error_Message(PJRT_Error_Message_Args* args) {
     LOG(ERROR) << struct_size_check.message();
   }
   if (args->struct_size >= PJRT_STRUCT_SIZE(PJRT_Error_Message_Args, error)) {
-    const absl::Status* status = &args->error->status;
-    args->message = status->message().data();
-    args->message_size = status->message().size();
+    args->error->vtable->message(args->error, &args->message,
+                                 &args->message_size);
   }
 }
 
@@ -567,8 +568,7 @@ PJRT_Error* PJRT_Error_GetCode(PJRT_Error_GetCode_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Error_GetCode_Args", PJRT_Error_GetCode_Args_STRUCT_SIZE,
       args->struct_size));
-  args->code = StatusCodeToPjrtErrorCode(
-      static_cast<absl::StatusCode>(args->error->status.code()));
+  args->code = args->error->vtable->get_code(args->error);
   return nullptr;
 }
 
@@ -577,21 +577,11 @@ PJRT_Error* PJRT_Error_ForEachPayload(PJRT_Error_ForEachPayload_Args* args) {
       "PJRT_Error_ForEachPayload_Args",
       PJRT_Error_ForEachPayload_Args_STRUCT_SIZE, args->struct_size));
   if (!args->visitor) {
-    return new PJRT_Error{
-        absl::InvalidArgumentError("Visitor can not be null.")};
+    return StatusToPjRtError(
+        absl::InvalidArgumentError("Visitor can not be null."));
   }
-  args->error->status.ForEachPayload(
-      [&](absl::string_view key, const absl::Cord& value) {
-        std::optional<absl::string_view> value_view = value.TryFlat();
-        if (value_view.has_value()) {
-          args->visitor(key.data(), key.size(), value_view->data(),
-                        value_view->size(), args->user_arg);
-        } else {
-          std::string value_str(value);
-          args->visitor(key.data(), key.size(), value_str.data(),
-                        value_str.size(), args->user_arg);
-        }
-      });
+  args->error->vtable->for_each_payload(args->error, args->visitor,
+                                        args->user_arg);
   return nullptr;
 }
 
@@ -758,9 +748,9 @@ PJRT_Error* PJRT_Client_UpdateGlobalProcessInfo(
 // until the next major version upgrade.
 PJRT_Error* PJRT_LoadedExecutable_Fingerprint(
     PJRT_LoadedExecutable_Fingerprint_Args* args) {
-  return new PJRT_Error{
+  return StatusToPjRtError(
       xla::Unimplemented("PJRT_LoadedExecutable_Fingerprint is deprecated, use "
-                         "PJRT_Executable_Fingerprint instead.")};
+                         "PJRT_Executable_Fingerprint instead."));
 }
 
 PJRT_Error* PJRT_Client_AddressableMemories(
@@ -990,9 +980,9 @@ PJRT_Error* PJRT_Device_PoisonExecution(
           string_value != nullptr) {
         error.SetPayload(name, absl::Cord(std::move(*string_value)));
       } else {
-        return new PJRT_Error{absl::InvalidArgumentError(
+        return StatusToPjRtError(absl::InvalidArgumentError(
             absl::StrCat("PJRT_Device_PoisonExecution error ", args->error_code,
-                         " payload is not a string"))};
+                         " payload is not a string")));
       }
     }
   }
@@ -1199,7 +1189,7 @@ PJRT_Error* PJRT_Client_Load(PJRT_Client_Load_Args* args) {
   if (args->executable->shared_executable == nullptr) {
     absl::Status status =
         absl::InvalidArgumentError("Missing shared_executable in the input.");
-    return new PJRT_Error{status};
+    return StatusToPjRtError(status);
   }
 
   std::optional<xla::CompileOptions> options;
@@ -1283,7 +1273,7 @@ PJRT_Error* PJRT_Client_DefaultDeviceAssignment(
         absl::StrCat(__func__, ": `default_assignment_size` ", buffer_size,
                      " < `num_replicas * num_partitions`, ", replicas, " * ",
                      partitions, " = ", replicas * partitions));
-    return new PJRT_Error{status};
+    return StatusToPjRtError(status);
   }
 
   PJRT_ASSIGN_OR_RETURN(
@@ -1347,9 +1337,9 @@ PJRT_Error* PJRT_Client_CreateErrorBuffer(
           string_value != nullptr) {
         error.SetPayload(name, absl::Cord(std::move(*string_value)));
       } else {
-        return new PJRT_Error{absl::InvalidArgumentError(
+        return StatusToPjRtError(absl::InvalidArgumentError(
             absl::StrCat("PJRT_Client_CreateErrorBuffer error ",
-                         args->error_code, " payload is not a string"))};
+                         args->error_code, " payload is not a string")));
       }
     }
   }
@@ -1400,8 +1390,8 @@ PJRT_Error* PJRT_Client_FulfillAliasBuffer(
       "PJRT_Client_FulfillAliasBuffer_Args",
       PJRT_Client_FulfillAliasBuffer_Args_STRUCT_SIZE, args->struct_size));
   if (args->fulfill_alias_buffer_cb == nullptr) {
-    return new PJRT_Error{absl::InvalidArgumentError(
-        "PJRT_Client_FulfillAliasBuffer_Args.fulfill_alias_buffer_cb is null")};
+    return StatusToPjRtError(absl::InvalidArgumentError(
+        "PJRT_Client_FulfillAliasBuffer_Args.fulfill_alias_buffer_cb is null"));
   }
   std::unique_ptr<PJRT_FulfillAliasBufferCallback>
       fulfill_alias_buffer_cb_owner(args->fulfill_alias_buffer_cb);
@@ -1411,8 +1401,8 @@ PJRT_Error* PJRT_Client_FulfillAliasBuffer(
   absl::StatusOr<xla::PjRtBuffer*> real_buffer_or;
   if (args->status_code == 0) {  // PJRT_Error_Code_OK
     if (args->buffer == nullptr) {
-      return new PJRT_Error{absl::InvalidArgumentError(
-          "Buffer passed to fulfillment callback is null")};
+      return StatusToPjRtError(absl::InvalidArgumentError(
+          "Buffer passed to fulfillment callback is null"));
     }
     real_buffer_or = args->buffer->buffer.get();
   } else {
@@ -1425,7 +1415,7 @@ PJRT_Error* PJRT_Client_FulfillAliasBuffer(
   if (!status.ok()) {
     LOG(ERROR) << "PJRT_Client_FulfillAliasBuffer: Callback returned error: "
                << status;
-    return new PJRT_Error{status};
+    return StatusToPjRtError(status);
   }
   return nullptr;
 }
@@ -1555,9 +1545,9 @@ PJRT_Error* PJRT_Client_CreateViewOfDeviceBuffer(
     PJRT_ASSIGN_OR_RETURN(memory_space,
                           args->device->device->default_memory_space());
   } else {
-    return new PJRT_Error{
+    return StatusToPjRtError(
         absl::InvalidArgumentError("PJRT_Client_CreateViewOfDeviceBuffer "
-                                   "requires either a device or a memory")};
+                                   "requires either a device or a memory"));
   }
   PJRT_ASSIGN_OR_RETURN(buffer, args->client->client->CreateViewOfDeviceBuffer(
                                     args->device_buffer_ptr, shape,
@@ -1983,25 +1973,22 @@ PJRT_Error* PJRT_Executable_OptimizedProgram(
   if (program->code == nullptr) {
     program->code_size = proto.ByteSizeLong();
     if (program->code_size >= 2ull * 1024 * 1024 * 1024) {
-      return new PJRT_Error{xla::ResourceExhausted(
-          "%s: HLO program serialization would require more than the max "
-          "supported protobuff size of 2 GiB.",
-          __func__)};
+      return StatusToPjRtError(xla::ResourceExhausted(
+          "HLO program serialization would require more than the max "
+          "supported protobuff size of 2 GiB."));
     }
     return nullptr;
   } else {
     if (program->code_size < proto.ByteSizeLong()) {
-      return new PJRT_Error{
+      return StatusToPjRtError(
           xla::InvalidArgument("`program->code_size` %d < required bytes %d",
-                               program->code_size, proto.ByteSizeLong()),
-      };
+                               program->code_size, proto.ByteSizeLong()));
     }
     bool succeeded = proto.SerializeToArray(program->code, program->code_size);
     if (!succeeded) {
-      return new PJRT_Error{
-          xla::ResourceExhausted("%s: HLO program serialization exceeds max "
-                                 "supported protobuff size of 2 GiB.",
-                                 __func__)};
+      return StatusToPjRtError(
+          xla::ResourceExhausted("HLO program serialization exceeds max "
+                                 "supported protobuff size of 2 GiB."));
     }
     return nullptr;
   }
@@ -2203,17 +2190,13 @@ static xla::SendCallback CSendCallbackToCpp(
         // fully managed in the implementation layer.
         PJRT_CallbackError c_callback_error =
             [](PJRT_Error_Code code, const char* message, size_t message_size) {
-              return new PJRT_Error{
+              return StatusToPjRtError(
                   absl::Status(static_cast<absl::StatusCode>(code),
-                               std::string(message, message_size))};
+                               std::string(message, message_size)));
             };
 
-        std::unique_ptr<PJRT_Error> error(callback(
-            &c_chunk, &c_callback_error, total_size_in_bytes, done, user_arg));
-        if (error == nullptr) {
-          return absl::OkStatus();
-        }
-        return error->status;
+        return PjrtErrorToStatus(callback(&c_chunk, &c_callback_error,
+                                          total_size_in_bytes, done, user_arg));
       }};
 }
 
@@ -2396,18 +2379,18 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     }
   } else {
     if (args->num_devices != 1) {
-      return new PJRT_Error{xla::InvalidArgument(
+      return StatusToPjRtError(xla::InvalidArgument(
           "num_devices and corresponding output list sizes must be 1 when "
           "calling PJRT_LoadedExecutable_Execute with non-null "
           "execute_device. "
           "Got "
           "num_devices=%i",
-          args->num_devices)};
+          args->num_devices));
     }
     if (!cpp_send_callbacks->empty() || !cpp_recv_callbacks->empty()) {
-      return new PJRT_Error{xla::Unimplemented(
+      return StatusToPjRtError(xla::Unimplemented(
           "PJRT_Executable_Execute doesn't support using send/recv callbacks "
-          "with `execute_device`.")};
+          "with `execute_device`."));
     }
 
     std::vector<std::unique_ptr<xla::PjRtBuffer>> cpp_buffer_list;
@@ -2452,8 +2435,8 @@ PJRT_Error* PJRT_Executable_Serialize(PJRT_Executable_Serialize_Args* args) {
 
   PJRT_SerializedExecutable* serialized_exec = new PJRT_SerializedExecutable;
   if (serialized_exec == nullptr) {
-    return new PJRT_Error{xla::ResourceExhausted(
-        "Out of memory for `PJRT_Executable_Serialize()`")};
+    return StatusToPjRtError(xla::ResourceExhausted(
+        "Out of memory for `PJRT_Executable_Serialize()`"));
   }
   serialized_exec->serialized = std::move(serialization);
   args->serialized_executable = serialized_exec;
@@ -2697,9 +2680,9 @@ PJRT_Error* PJRT_Buffer_Memory(PJRT_Buffer_Memory_Args* args) {
   args->memory = PJRT_Client_FindMemoryWrapper(
       args->buffer->buffer->memory_space(), args->buffer->client);
   if (args->memory == nullptr) {
-    return new PJRT_Error{xla::Unimplemented(
+    return StatusToPjRtError(xla::Unimplemented(
         "PJRT_Buffer_Memory not implemented for platform '%s'",
-        args->buffer->client->client->platform_name())};
+        args->buffer->client->client->platform_name()));
   }
   return nullptr;
 }
@@ -2839,9 +2822,9 @@ PJRT_Error* PJRT_Buffer_ToHostBuffer(PJRT_Buffer_ToHostBuffer_Args* args) {
   }
 
   if (args->dst_size < host_buffer_size) {
-    return new PJRT_Error{
+    return StatusToPjRtError(
         xla::InvalidArgument("`dst_size` must be >= %zu, got %zu.",
-                             host_buffer_size, args->dst_size)};
+                             host_buffer_size, args->dst_size));
   }
 
   auto literal = std::make_unique<xla::MutableBorrowingLiteral>(
@@ -2912,8 +2895,7 @@ PJRT_Error* PJRT_Buffer_DecreaseExternalReferenceCount(
   absl::Status status = xla::InvalidArgument(
       "Attempting to decrease reference on a buffer with zero reference "
       "count.");
-  PJRT_Error* error = new PJRT_Error{std::move(status)};
-  return error;
+  return StatusToPjRtError(std::move(status));
 }
 
 PJRT_Error* PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
@@ -3069,7 +3051,7 @@ PJRT_Error* PJRT_Event_OnReady(PJRT_Event_OnReady_Args* args) {
   auto impl_callback = [callback, user_arg](absl::Status status) -> void {
     PJRT_Error* error = nullptr;
     if (!status.ok()) {
-      error = new PJRT_Error{status};
+      error = StatusToPjRtError(status);
     }
     callback(error, user_arg);
   };
@@ -3152,8 +3134,8 @@ PJRT_Error* PJRT_TopologyDescription_Serialize(
                         args->topology->topology->ToProto());
   std::string out;
   if (!proto.SerializeToString(&out)) {
-    return new PJRT_Error{absl::InternalError(
-        "Failed to serialize PjRtTopologyDescriptionProto.")};
+    return StatusToPjRtError(absl::InternalError(
+        "Failed to serialize PjRtTopologyDescriptionProto."));
   }
   auto* storage = new PJRT_SerializedTopology{std::move(out)};
   args->serialized_topology = storage;
@@ -3229,10 +3211,10 @@ PJRT_Error* PJRT_TopologyDescription_Deserialize(
   xla::PjRtTopologyDescriptionProto proto;
   if (!proto.ParseFromString(absl::string_view(
           args->serialized_topology, args->serialized_topology_size))) {
-    return new PJRT_Error{xla::InvalidArgument(
+    return StatusToPjRtError(xla::InvalidArgument(
         "Failed to parse PjRtTopologyDescriptionProto at the C API level, "
         "from binary string of size: %d",
-        args->serialized_topology_size)};
+        args->serialized_topology_size));
   }
 
   PJRT_ASSIGN_OR_RETURN(xla::PjRtCompiler * compiler,
@@ -3276,17 +3258,16 @@ PJRT_Error* PJRT_LoadedExecutable_GetDeviceAssignment(
 
   std::string serialized_proto;
   if (!proto.SerializeToString(&serialized_proto)) {
-    return new PJRT_Error{xla::ResourceExhausted(
-        "%s: Device assignment serialization failed, likely due to exceeding "
-        "the max supported protobuf size of 2 GiB.",
-        __func__)};
+    return StatusToPjRtError(xla::ResourceExhausted(
+        "Device assignment serialization failed, likely due to exceeding "
+        "the max supported protobuf size of 2 GiB."));
   }
 
   PJRT_DeviceAssignmentSerialized* serialized_da =
       new PJRT_DeviceAssignmentSerialized;
   if (serialized_da == nullptr) {
-    return new PJRT_Error{xla::ResourceExhausted(
-        "Out of memory for `PJRT_LoadedExecutable_GetDeviceAssignment()`")};
+    return StatusToPjRtError(xla::ResourceExhausted(
+        "Out of memory for `PJRT_LoadedExecutable_GetDeviceAssignment()`"));
   }
   serialized_da->serialized = std::move(serialized_proto);
   args->serialized_device_assignment = serialized_da;

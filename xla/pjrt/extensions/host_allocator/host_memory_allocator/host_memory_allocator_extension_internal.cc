@@ -18,6 +18,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
+#include "xla/pjrt/c/pjrt_c_api_status_utils.h"
 #include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
 #include "xla/pjrt/extensions/host_allocator/host_memory_allocator/host_memory_allocator_extension.h"
 #include "xla/pjrt/host_memory_allocator.h"
@@ -33,14 +34,14 @@ PJRT_Error* HostMemoryAllocator_Allocate(
       "PJRT_HostMemoryAllocator_Allocate_Args",
       PJRT_HostMemoryAllocator_Allocate_Args_STRUCT_SIZE, args->struct_size));
   if (args->client == nullptr) {
-    return new PJRT_Error{absl::InvalidArgumentError(
-        "Received null client in HostMemoryAllocator_Allocate")};
+    return StatusToPjRtError(absl::InvalidArgumentError(
+        "Received null client in HostMemoryAllocator_Allocate"));
   }
   xla::HostMemoryAllocator* host_memory_allocator =
       args->client->client->GetHostMemoryAllocator();
   if (host_memory_allocator == nullptr) {
-    return new PJRT_Error{absl::UnimplementedError(
-        "HostMemoryAllocator not implemented for client")};
+    return StatusToPjRtError(absl::UnimplementedError(
+        "HostMemoryAllocator not implemented for client"));
   }
   xla::HostMemoryAllocator::AllocateOptions options;
   options.numa_node = args->numa_node;

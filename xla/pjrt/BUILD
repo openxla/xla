@@ -1543,6 +1543,7 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_helpers",
         "//xla/pjrt/c:pjrt_c_api_phase_compile_extension_hdrs",
         "//xla/pjrt/c:pjrt_c_api_phase_compile_internal",
+        "//xla/pjrt/c:pjrt_c_api_status_utils",
         "//xla/pjrt/c:pjrt_c_api_wrapper_impl",
         "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
         "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
