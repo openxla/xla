@@ -302,7 +302,7 @@ TEST_F(TripCountAnnotatorTest, InductionVarForwardedToConstant) {
   for (const HloInstruction* instr : entry->instructions()) {
     if (instr->opcode() == HloOpcode::kConstant &&
         instr->shape().element_type() == S32 &&
-        instr->shape().dimensions_size() == 0 &&
+        instr->shape().dimensions().size() == 0 &&
         instr->literal().Get<int32_t>({}) == 10) {
       found_constant = true;
     }
