@@ -25,6 +25,7 @@ ncclDevCommCreate
 ncclDevCommDestroy
 ncclGetErrorString
 ncclGetLastError
+ncclGetLsaMultimemDevicePointer
 ncclGetUniqueId
 ncclGetVersion
 ncclGroupEnd
