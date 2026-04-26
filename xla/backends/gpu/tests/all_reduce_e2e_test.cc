@@ -94,7 +94,8 @@ class AllReduceTestNoParams : public CollectiveOpsWithFlagsBase {
             /*enable_async=*/is_async,
             /*enable_p2p_memcpy=*/false,
             /*enable_symmetric_buffer=*/false,
-            /*memory_size=*/32 * kMB) {}
+            /*memory_size=*/32 * kMB,
+            /*collectives_memory_size=*/0) {}
 
   void SetUp() override {
     CollectiveOpsE2ETestBase::SetUp();

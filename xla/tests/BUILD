@@ -590,6 +590,7 @@ xla_test(
         "//xla/service:shaped_buffer",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tests:xla_test_backend_predicates",

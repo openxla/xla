@@ -54,6 +54,11 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_alloc_visitors,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_free_visitors);
 
+// Builds a separate BFCAllocator for collective memory space (S(1)).
+absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateCollectiveBFCAllocator(
+    se::StreamExecutor* executor, double memory_fraction,
+    size_t collective_memory_size);
+
 // Builds a BFCAllocator backed by nvshmem_malloc for collective memory.
 absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateNvshmemBFCAllocator(
     se::StreamExecutor* executor, double memory_fraction,

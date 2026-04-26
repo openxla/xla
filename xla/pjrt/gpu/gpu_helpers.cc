@@ -153,6 +153,40 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
       absl::StrCat("GPU_", device_ordinal, "_bfc"), opts);
 }
 
+absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateCollectiveBFCAllocator(
+    se::StreamExecutor* executor, double memory_fraction,
+    size_t collective_memory_size) {
+  int device_ordinal = executor->device_ordinal();
+  auto sub_allocator = std::make_unique<se::DeviceMemAllocator>(
+      executor, tsl::PlatformDeviceId(device_ordinal));
+
+  int64_t free_memory;
+  int64_t total_memory;
+  if (!executor->DeviceMemoryUsage(&free_memory, &total_memory)) {
+    return Unavailable("Failed to query available memory from device %i",
+                       device_ordinal);
+  }
+  bool preallocate = collective_memory_size != 0;
+  size_t allocator_memory =
+      preallocate ? collective_memory_size : total_memory * memory_fraction;
+
+  if (preallocate) {
+    LOG(INFO) << "XLA backend allocating " << allocator_memory
+              << " bytes on device " << device_ordinal
+              << " for CollectiveBFCAllocator.";
+  } else {
+    LOG(INFO) << "XLA backend will use up to " << allocator_memory
+              << " bytes on device " << device_ordinal
+              << " for CollectiveBFCAllocator.";
+  }
+
+  tsl::BFCAllocator::Options opts;
+  opts.allow_growth = !preallocate;
+  return std::make_shared<tsl::BFCAllocator>(
+      std::move(sub_allocator), allocator_memory,
+      absl::StrCat("GPU_collectivememory_", device_ordinal, "_bfc"), opts);
+}
+
 // Builds a BFCAllocator backed by nvshmem_malloc for collective memory.
 absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateNvshmemBFCAllocator(
     se::StreamExecutor* executor, double memory_fraction,

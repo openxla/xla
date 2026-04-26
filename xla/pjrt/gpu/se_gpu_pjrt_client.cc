@@ -1582,8 +1582,6 @@ GetStreamExecutorGpuDeviceAllocator(
     const std::map<int, std::unique_ptr<LocalDeviceState>>&
         addressable_devices) {
   std::vector<se::MultiDeviceAdapter::AllocatorInfo> allocators;
-  absl::btree_map<int, std::shared_ptr<tsl::Allocator>>
-      per_device_default_allocators;
   GpuAllocatorConfig::Kind effective_kind = allocator_config.kind;
   if (GetDebugOptionsFromFlags().xla_gpu_command_buffer_update_mode() !=
           DebugOptions::ALWAYS_UPDATE &&
@@ -1600,7 +1598,6 @@ GetStreamExecutorGpuDeviceAllocator(
             CreateCudaAsyncAllocator(*device, allocator_config.memory_fraction,
                                      allocator_config.preallocate, false, false,
                                      true));
-        per_device_default_allocators[ordinal] = async_allocator;
         allocators.push_back(
             {async_allocator, device->compute_stream(),
              /*memory_space=*/static_cast<int>(gpu::MemorySpaceColor::kDefault),
@@ -1623,7 +1620,6 @@ GetStreamExecutorGpuDeviceAllocator(
                                allocator_config.gpu_system_memory_size,
                                allocator_config.sub_allocator_alloc_visitors,
                                allocator_config.sub_allocator_free_visitors));
-        per_device_default_allocators[ordinal] = bfc_allocator;
         allocators.push_back(
             {std::move(bfc_allocator), device->compute_stream(),
              /*memory_space=*/static_cast<int>(gpu::MemorySpaceColor::kDefault),
@@ -1683,11 +1679,17 @@ GetStreamExecutorGpuDeviceAllocator(
            static_cast<int>(gpu::MemorySpaceColor::kCollective)});
     }
   } else {
-    // Default GPU allocator satisfies symmetric memory requirements and can
-    // be safely used as allocator for collective memory space.
+    // Collective memory space requires a separate BFC allocator for pointer
+    // stability requires for creating symmetric memory.
     for (const auto& [ordinal, device] : addressable_devices) {
+      TF_ASSIGN_OR_RETURN(
+          auto collective_bfc_allocator,
+          CreateCollectiveBFCAllocator(
+              device->executor(),
+              /*memory_fraction=*/1.0 - allocator_config.memory_fraction,
+              allocator_config.collective_memory_size));
       allocators.push_back(
-          {per_device_default_allocators[ordinal], device->compute_stream(),
+          {std::move(collective_bfc_allocator), device->compute_stream(),
            /*memory_space=*/
            static_cast<int>(gpu::MemorySpaceColor::kCollective),
            /*device_ordinal=*/std::nullopt,
@@ -1697,7 +1699,7 @@ GetStreamExecutorGpuDeviceAllocator(
     }
   }
 
-  // Add allocators for how memory space.
+  // Add allocators for host memory space.
   for (const auto& [ordinal, device] : addressable_devices) {
     TF_ASSIGN_OR_RETURN(auto host_allocator_ptr,
                         GetGpuHostAllocator(device->executor()));

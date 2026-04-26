@@ -136,8 +136,21 @@ static std::shared_ptr<se::DeviceAddressAllocator> CreateAllocators(
 
     allocators.push_back(
         {bfc, streams[i].get(), /*memory_space=*/0, ordinal, platform});
-    allocators.push_back(
-        {bfc, streams[i].get(), /*memory_space=*/1, ordinal, platform});
+
+    // Collective memory space (S(1)) requires a separate BFC allocator for
+    // pointer stability.
+    auto collective_sub_allocator = std::make_unique<se::DeviceMemAllocator>(
+        executor, tsl::PlatformDeviceId(ordinal));
+
+    tsl::BFCAllocator::Options collective_opts;
+    collective_opts.allow_growth = true;
+    auto collective_bfc = std::make_shared<tsl::BFCAllocator>(
+        std::move(collective_sub_allocator), total_memory,
+        absl::StrCat("XLA_backend_", ordinal, "_collective_bfc"),
+        collective_opts);
+
+    allocators.push_back({collective_bfc, streams[i].get(), /*memory_space=*/1,
+                          ordinal, platform});
   }
 
   return std::make_unique<se::MultiDeviceAdapter>(platform,
