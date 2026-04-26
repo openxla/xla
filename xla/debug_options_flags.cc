@@ -808,7 +808,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
     fuel_ever_consumed->clear();
 
     for (const auto& kv : absl::StrSplit(xla_fuel_value, ',')) {
-      std::vector<std::string> pass_and_fuel = absl::StrSplit(kv, '=');
+      std::vector<absl::string_view> pass_and_fuel = absl::StrSplit(kv, '=');
       if (pass_and_fuel.size() != 2) {
         LOG(ERROR) << absl::StreamFormat(
             "Illegal value for --xla_fuel. Saw %s, but expected token %s to "
