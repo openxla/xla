@@ -3053,7 +3053,7 @@ ENTRY entry {
               AllOf(op::Select(_, rotate1, rotate0), op::Shape("f32[3]")));
 }
 
-TEST_P(SpmdPartitioningTest,
+TEST_P(SpmdPartitioningAllShardingTest,
        PartialReplicateSliceAlongNonPartitionedDimension) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -9083,7 +9083,7 @@ ENTRY entry {
   }
 }
 
-TEST_P(SpmdPartitioningTest,
+TEST_P(SpmdPartitioningAllShardingTest,
        GatherPartitionedOnTrivialSliceDims_PartialReplicate) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -9451,8 +9451,8 @@ ENTRY entry {
   }
 }
 
-// TODO(b/493211767): Enable for v3 when support is added.
-TEST_P(SpmdPartitioningTest, IndexPassthroughScatter_PartialReplicate) {
+TEST_P(SpmdPartitioningAllShardingTest,
+       IndexPassthroughScatter_PartialReplicate) {
   absl::string_view hlo_string = R"(
 HloModule module
 
@@ -10820,7 +10820,7 @@ ENTRY entry {
                                            op::Constant(), op::Reshape())));
 }
 
-TEST_P(SpmdPartitioningTest,
+TEST_P(SpmdPartitioningAllShardingTest,
        ElementwiseTest_PartialReplicateToTiledHaloExchange) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -10872,7 +10872,8 @@ ENTRY entry {
   EXPECT_THAT(root, partially_replicated);
 }
 
-TEST_P(SpmdPartitioningTest, TileToPartialReplicateReshardUnevenPartition) {
+TEST_P(SpmdPartitioningAllShardingTest,
+       TileToPartialReplicateReshardUnevenPartition) {
   absl::string_view hlo_string = R"(
 HloModule module
 
@@ -10958,7 +10959,7 @@ ENTRY entry {
   EXPECT_THAT(root, tiled);
 }
 
-TEST_P(SpmdPartitioningTest,
+TEST_P(SpmdPartitioningAllShardingTest,
        PartialReplicateToPartialReplicateReshard_AllReduce) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -10986,7 +10987,7 @@ ENTRY entry {
   EXPECT_THAT(root, partially_replicated);
 }
 
-TEST_P(SpmdPartitioningTest,
+TEST_P(SpmdPartitioningAllShardingTest,
        PartialReplicateToPartialReplicateReshard_DynamicSlice) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -11014,7 +11015,7 @@ ENTRY entry {
   EXPECT_THAT(root, tiled);
 }
 
-TEST_P(SpmdPartitioningTest,
+TEST_P(SpmdPartitioningAllShardingTest,
        PartialReplicateToPartialReplicateReshardWithCollectivePermute) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -11042,7 +11043,7 @@ ENTRY entry {
   EXPECT_THAT(root, partially_replicated);
 }
 
-TEST_P(SpmdPartitioningTest,
+TEST_P(SpmdPartitioningAllShardingTest,
        PartialReplicateToPartialReplicateReshardCollectivePermute1) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -11070,7 +11071,7 @@ ENTRY entry {
   EXPECT_THAT(root, tiled);
 }
 
-TEST_P(SpmdPartitioningTest,
+TEST_P(SpmdPartitioningAllShardingTest,
        PartialReplicateToPartialReplicateReshardHaloExchange) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -11100,7 +11101,7 @@ ENTRY entry {
   EXPECT_THAT(root, op::Copy(partially_replicated));
 }
 
-TEST_P(SpmdPartitioningTest,
+TEST_P(SpmdPartitioningAllShardingTest,
        PartialReplicateToPartialReplicateReshardHaloExchange1) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -11644,7 +11645,7 @@ ENTRY entry {
                     op::Shape("f32[8,801,1,1024]")));
 }
 
-TEST_P(SpmdPartitioningTest,
+TEST_P(SpmdPartitioningAllShardingTest,
        PartitionConvGroupOnFeatureGroupCount_RHSPartialReplicate) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -11949,7 +11950,7 @@ ENTRY entry {
               op::Tuple(copy_add0, copy_add1, copy_reshape, copy_transpose));
 }
 
-TEST_P(SpmdPartitioningTest,
+TEST_P(SpmdPartitioningAllShardingTest,
        ConvolutionFilterIFOFPartitionedInputPartialReplicate) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -11988,7 +11989,7 @@ ENTRY entry {
             op::Shape("f32[128,56,56,32]")));
 }
 
-TEST_P(SpmdPartitioningTest,
+TEST_P(SpmdPartitioningAllShardingTest,
        ConvolutionInputKernelNonContractingDimPartialReplicate) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -15475,8 +15476,7 @@ ENTRY entry {
       op::Copy(op::Reshape(op::Reshape(op::Transpose(op::AllToAll(_))))));
 }
 
-// TODO(b/498118846): Enable this test for v3 once the bug is fixed.
-TEST_P(SpmdPartitioningTest, ComplexReshardToPartialReplicate) {
+TEST_P(SpmdPartitioningAllShardingTest, ComplexReshardToPartialReplicate) {
   const char* const hlo_string = R"(
 HloModule module
 
