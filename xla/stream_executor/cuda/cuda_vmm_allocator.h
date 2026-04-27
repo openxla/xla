@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_CUDA_CUDA_VMM_ALLOCATOR_H_
 #define XLA_STREAM_EXECUTOR_CUDA_CUDA_VMM_ALLOCATOR_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -26,19 +27,40 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 
-// Device memory allocator using CUDA Virtual Memory Management (VMM) APIs.
-// Returned memory allocations are always mapped to a valid device address range
-// and accessible from the device and its peers.
+// Device memory allocator using CUDA Virtual Memory Management (VMM) APIs
+// (cuMemCreate/cuMemAddressReserve/cuMemMap). All allocations use
+// POSIX_FILE_DESCRIPTOR handle type as baseline (matching NCCL's ncclMemAlloc).
+// FABRIC handle support can be optionally requested for NVSwitch-based
+// topologies.
 class CudaVmmAllocator : public MemoryAllocator {
  public:
-  CudaVmmAllocator(StreamExecutor* executor, bool is_rdma_supported);
+  struct Options {
+    // Minimum alignment for allocations. The actual alignment is the maximum
+    // of this value and the device-reported VMM granularity.
+    size_t alignment = 4096;
+
+    // Whether to enable peer access from all accessible devices.
+    bool enable_peer_access = false;
+
+    // Whether to additionally request FABRIC handle type on top of the
+    // POSIX_FILE_DESCRIPTOR baseline. Falls back to POSIX_FD if FABRIC
+    // is not supported or permitted.
+    bool enable_fabric_handle = false;
+
+    // Whether to mark allocations as GPUDirect RDMA capable.
+    bool is_rdma_supported = false;
+  };
+
+  CudaVmmAllocator(StreamExecutor* executor, Options options);
 
   absl::StatusOr<std::unique_ptr<MemoryAllocation>> Allocate(
       uint64_t size) final;
 
+  const Options& options() const { return options_; }
+
  private:
   StreamExecutor* executor_;
-  bool is_rdma_supported_;
+  Options options_;
 };
 
 }  // namespace stream_executor::gpu
