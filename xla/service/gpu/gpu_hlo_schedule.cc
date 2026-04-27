@@ -481,9 +481,38 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
       ReadPGLEProfile(module.config(), fingerprint);
 
   if (profile.has_value()) {
+    std::unique_ptr<LatencyEstimator> base_estimator;
+    if (SolLatencyEstimator::IsSupportedForModule(module, gpu_device_info)) {
+      auto cost_analysis =
+          std::make_unique<GpuHloCostAnalysis>(GpuHloCostAnalysis::Options{
+              ShapeSizeBytesFunction(pointer_size),
+              /*per_second_rates=*/{},
+              /*min_latencies_seconds=*/{},
+              /*count_multiple_input_accesses=*/true,
+          });
+      if (absl::Status status =
+              module.entry_computation()->Accept(cost_analysis.get());
+          status.ok()) {
+        auto sol = SolLatencyEstimator::Create(
+            config, std::move(gpu_latency_estimator), gpu_device_info,
+            ShapeSizeBytesFunction(pointer_size), module.entry_computation(),
+            mlir_context, std::move(cost_analysis));
+        if (sol.ok()) {
+          base_estimator = std::move(*sol);
+          VLOG(1) << "PGLE fallback: using SolLatencyEstimator";
+        }
+      }
+    }
+    if (base_estimator == nullptr) {
+      base_estimator =
+          gpu_latency_estimator
+              ? std::move(gpu_latency_estimator)
+              : std::make_unique<GpuLatencyEstimator>(pointer_size);
+      VLOG(1) << "PGLE fallback: using GpuLatencyEstimator (T-shirt sizes)";
+    }
     auto aggregator = std::make_unique<GPUProfileStatisticsAggregator>();
     auto pg_latency_estimator = std::make_unique<ProfileGuidedLatencyEstimator>(
-        config, std::move(gpu_latency_estimator), profile.value(),
+        config, std::move(base_estimator), profile.value(),
         std::move(aggregator));
     LOG(INFO) << "Found profile for module " << module.name()
               << ", using profile guided latency estimator";

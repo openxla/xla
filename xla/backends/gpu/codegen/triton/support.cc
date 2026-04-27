@@ -858,5 +858,18 @@ bool IsTritonFusedComputation(const HloComputation& computation) {
                  .kind() == kTritonGemmFusionKind;
 }
 
+bool IsTritonGemm(const HloInstruction& instr) {
+  if (instr.opcode() != HloOpcode::kFusion ||
+      instr.called_computations().size() != 1) {
+    return false;
+  }
+  if (!IsGpuFusionKind(instr, kTritonGemmFusionKind) &&
+      !IsGpuFusionKind(instr, kTritonNestedGemmFusionKind)) {
+    return false;
+  }
+  return absl::c_count_if(instr.fused_instructions(),
+                          HloPredicateIsOp<HloOpcode::kDot>) == 1;
+}
+
 }  // namespace gpu
 }  // namespace xla
