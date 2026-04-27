@@ -43,6 +43,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -60,6 +61,7 @@ cc_library(
         ":gpu_metrics",
         ":se_gpu_pjrt_runtime_abi_version",
         ":se_gpu_topology_description",
+        "@com_google_absl//absl/strings:string_view",
         "//xla:executable_run_options",
         "//xla:future",
         "//xla:literal",
