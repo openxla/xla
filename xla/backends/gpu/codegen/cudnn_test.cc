@@ -476,8 +476,10 @@ TEST_F(CuDnnFusionExecutionTest, DotF32DevicelessBinaryMatchesLive) {
 fusion1 {
   p0 = f32[32,96] parameter(0)
   p1 = f32[96,64] parameter(1)
-  ROOT r = f32[32,64] dot(p0, p1),
+  r = f32[32,64] dot(p0, p1),
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  neg = f32[32,64] negate(r)
+  ROOT a = f32[32,64] add(neg, neg)
 }
 
 ENTRY e {
