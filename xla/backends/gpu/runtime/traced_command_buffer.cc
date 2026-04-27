@@ -18,9 +18,11 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/optimization.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"

@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <memory>
 #include <utility>
+#include <variant>
 
 #include "absl/functional/function_ref.h"
 #include "absl/log/log.h"

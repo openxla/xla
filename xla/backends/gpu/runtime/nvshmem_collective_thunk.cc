@@ -12,9 +12,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 
-#include <cstdint>
-#include <memory>
-#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
