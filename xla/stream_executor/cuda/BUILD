@@ -1274,11 +1274,14 @@ cc_library(
         "//xla/stream_executor:memory_allocator",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//tsl/platform:numbers",
     ],
 )
 
