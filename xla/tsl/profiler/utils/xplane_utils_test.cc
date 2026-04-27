@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/tsl/profiler/utils/xplane_utils.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -990,6 +992,198 @@ TEST(XplaneUtilsTest, MergeSubprocessXSpace_WithoutProcessId) {
 
   ASSERT_EQ(dst_space.planes_size(), 1);
   EXPECT_EQ(dst_space.planes(0).name(), "plane2 [456]");
+}
+
+TEST(XplaneUtilsTest, DestructiveChunkXSpaceTest) {
+  auto space = std::make_unique<XSpace>();
+  space->add_hostnames("host1");
+  space->add_errors("error1");
+  space->add_warnings("warning1");
+
+  {
+    XPlaneBuilder p1(space->add_planes());
+    p1.SetName("p1");
+    auto l1 = p1.GetOrCreateLine(1);
+    auto e1 = l1.AddEvent(*p1.GetOrCreateEventMetadata("e1"));
+    e1.SetOffsetNs(10);
+    e1.SetDurationNs(10);
+  }
+  {
+    XPlaneBuilder p2(space->add_planes());
+    p2.SetName("p2");
+    auto l2 = p2.GetOrCreateLine(2);
+    auto e2 = l2.AddEvent(*p2.GetOrCreateEventMetadata("e2"));
+    e2.SetOffsetNs(20);
+    e2.SetDurationNs(20);
+  }
+
+  // Force multiple chunks by using a very small max_chunk_size.
+  size_t max_chunk_size = 1;
+  auto chunks = DestructiveChunkXSpace(max_chunk_size, std::move(space));
+
+  // Each plane will be split into at least two chunks: one for metadata and one
+  // or more for lines/events.
+  EXPECT_GE(chunks.size(), 5);
+  EXPECT_THAT(chunks[0]->hostnames(), UnorderedElementsAre("host1"));
+  EXPECT_TRUE(chunks[0]->planes().empty());
+
+  absl::flat_hash_set<std::string> plane_names;
+  for (size_t i = 1; i < chunks.size(); ++i) {
+    for (const auto& plane : chunks[i]->planes()) {
+      plane_names.insert(plane.name());
+    }
+  }
+  EXPECT_THAT(plane_names, UnorderedElementsAre("p1", "p2"));
+}
+
+TEST(XplaneUtilsTest, DestructiveMergeXSpaceTest) {
+  auto to = std::make_unique<XSpace>();
+  to->add_hostnames("host1");
+
+  auto from = std::make_unique<XSpace>();
+  from->add_hostnames("host2");
+  from->add_hostnames("host1");  // Duplicate hostname.
+  {
+    XPlaneBuilder p1(from->add_planes());
+    p1.SetName("p1");
+    auto l1 = p1.GetOrCreateLine(1);
+    auto e1 = l1.AddEvent(*p1.GetOrCreateEventMetadata("e1"));
+    e1.SetOffsetNs(10);
+    e1.SetDurationNs(10);
+  }
+
+  DestructiveMergeXSpace(std::move(from), to.get());
+
+  EXPECT_THAT(to->hostnames(), UnorderedElementsAre("host1", "host2"));
+  ASSERT_THAT(to->planes(), SizeIs(1));
+  EXPECT_EQ(to->planes(0).name(), "p1");
+}
+
+TEST(XplaneUtilsTest, DestructiveMergeXSpaceMetadataRemapping) {
+  XSpace to;
+  {
+    XPlaneBuilder p(to.add_planes());
+    p.SetName("p");
+    // Ensure metadata IDs are different from what we'll have in 'from'.
+    p.GetOrCreateEventMetadata("e_to")->set_id(10);
+    p.GetOrCreateStatMetadata("s_to")->set_id(20);
+  }
+
+  auto from = std::make_unique<XSpace>();
+  {
+    XPlaneBuilder p(from->add_planes());
+    p.SetName("p");
+    auto* em = p.GetOrCreateEventMetadata("e_from");
+    em->set_id(1);
+    auto* sm = p.GetOrCreateStatMetadata("s_from");
+    sm->set_id(2);
+
+    auto l = p.GetOrCreateLine(1);
+    auto e = l.AddEvent(*em);
+    e.AddStatValue(*sm, 123);
+  }
+
+  DestructiveMergeXSpace(std::move(from), &to);
+
+  XPlaneVisitor visitor(&to.planes(0));
+  bool found_e_from = false;
+  visitor.ForEachLine([&](const XLineVisitor& line) {
+    line.ForEachEvent([&](const XEventVisitor& event) {
+      if (event.Name() == "e_from") {
+        found_e_from = true;
+        bool found_stat = false;
+        event.ForEachStat([&](const XStatVisitor& stat) {
+          if (stat.Name() == "s_from") {
+            found_stat = true;
+            EXPECT_EQ(stat.IntValue(), 123);
+          }
+        });
+        EXPECT_TRUE(found_stat);
+      }
+    });
+  });
+  EXPECT_TRUE(found_e_from);
+}
+
+TEST(XplaneUtilsTest, DestructiveMergeXSpaceTimestampAlignment) {
+  XSpace to;
+  {
+    XPlaneBuilder p(to.add_planes());
+    p.SetName("p");
+    auto l = p.GetOrCreateLine(1);
+    l.SetTimestampNs(1000);
+    auto e1 = l.AddEvent(*p.GetOrCreateEventMetadata("e1"));
+    e1.SetOffsetPs(0);
+    e1.SetDurationPs(100);
+  }
+
+  auto from = std::make_unique<XSpace>();
+  {
+    XPlaneBuilder p(from->add_planes());
+    p.SetName("p");
+    auto l = p.GetOrCreateLine(1);
+    l.SetTimestampNs(500);  // Earlier than 'to'
+    auto e2 = l.AddEvent(*p.GetOrCreateEventMetadata("e2"));
+    e2.SetOffsetPs(0);
+    e2.SetDurationPs(100);
+  }
+
+  DestructiveMergeXSpace(std::move(from), &to);
+
+  ASSERT_THAT(to.planes(), SizeIs(1));
+  const auto& line = to.planes(0).lines(0);
+  EXPECT_EQ(line.timestamp_ns(), 500);
+  ASSERT_EQ(line.events_size(), 2);
+
+  // e1 (originally in 'to') should now have an offset of 500 ns = 500,000 ps.
+  // e2 (originally in 'from') should still have an offset of 0 ps.
+  XPlaneVisitor v(&to.planes(0));
+  for (const auto& event : line.events()) {
+    if (v.GetEventMetadata(event.metadata_id())->name() == "e1") {
+      EXPECT_EQ(event.offset_ps(), 500000);
+    } else {
+      EXPECT_EQ(event.offset_ps(), 0);
+    }
+  }
+}
+
+TEST(XplaneUtilsTest, DestructiveChunkAndMergeXSpaceTest) {
+  XSpace original;
+  original.add_hostnames("host1");
+  original.add_errors("error1");
+  {
+    XPlaneBuilder p1(original.add_planes());
+    p1.SetName("p1");
+    auto l1 = p1.GetOrCreateLine(1);
+    l1.SetTimestampNs(100);
+    auto e1 = l1.AddEvent(*p1.GetOrCreateEventMetadata("e1"));
+    e1.SetOffsetPs(1000);
+    e1.SetDurationPs(1000);
+    auto e2 = l1.AddEvent(*p1.GetOrCreateEventMetadata("e2"));
+    e2.SetOffsetPs(3000);
+    e2.SetDurationPs(1000);
+
+    auto l2 = p1.GetOrCreateLine(2);
+    l2.SetTimestampNs(200);
+    auto e3 = l2.AddEvent(*p1.GetOrCreateEventMetadata("e3"));
+    e3.SetOffsetPs(1000);
+    e3.SetDurationPs(1000);
+  }
+
+  auto space_ptr = std::make_unique<XSpace>(original);
+  // Using a small chunk size to trigger internal splits of lines and events.
+  size_t max_chunk_size = 100;
+  auto chunks = DestructiveChunkXSpace(max_chunk_size, std::move(space_ptr));
+
+  XSpace merged;
+  for (auto& chunk : chunks) {
+    DestructiveMergeXSpace(std::move(chunk), &merged);
+  }
+
+#if defined(PLATFORM_GOOGLE)
+  // Check that the merged XSpace is essentially the same as the original.
+  EXPECT_THAT(merged, IgnoringRepeatedFieldOrdering(EqualsProto(original)));
+#endif
 }
 
 }  // namespace

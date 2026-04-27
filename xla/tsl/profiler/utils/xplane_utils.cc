@@ -15,8 +15,10 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/xplane_utils.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -28,8 +30,8 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/strings/match.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "google/protobuf/repeated_ptr_field.h"
 #include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/utils/math_utils.h"
 #include "xla/tsl/profiler/utils/tf_xplane_visitor.h"
@@ -37,6 +39,7 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_visitor.h"
+#include "xla/tsl/util/sorted_range.h"
 #include "xla/tsl/util/stats_calculator.h"
 #include "tsl/platform/fingerprint.h"
 #include "tsl/profiler/lib/context_types.h"
@@ -163,6 +166,145 @@ void CopyEvent(const XEventVisitor& src_event, const XPlaneVisitor& src,
     dst_event.AddStat(*dst_plane.GetOrCreateStatMetadata(stat.Name()),
                       stat.RawStat(), src_plane);
   });
+}
+
+std::vector<std::unique_ptr<tensorflow::profiler::XLine>>
+DestructiveChunkXLineEvents(size_t max_chunk_size,
+                            std::unique_ptr<tensorflow::profiler::XLine> line) {
+  std::vector<std::unique_ptr<tensorflow::profiler::XLine>> chunks;
+  if (line == nullptr) {
+    return chunks;
+  }
+
+  if (line->ByteSizeLong() <= max_chunk_size || line->events().empty()) {
+    chunks.push_back(std::move(line));
+    return chunks;
+  }
+
+  // Extract events efficiently by destructively moving them
+  std::vector<std::unique_ptr<tensorflow::profiler::XEvent>> extracted_events;
+  while (!line->events().empty()) {
+    extracted_events.push_back(std::unique_ptr<tensorflow::profiler::XEvent>(
+        line->mutable_events()->ReleaseLast()));
+  }
+  std::reverse(extracted_events.begin(), extracted_events.end());
+
+  int64_t line_id = line->id();
+  std::string name = line->name();
+  std::string display_name = line->display_name();
+  int64_t display_id = line->display_id();
+  int64_t timestamp_ns = line->timestamp_ns();
+  int64_t duration_ps = line->duration_ps();
+
+  // We keep the original line carrying the name and display_name.
+  chunks.push_back(std::move(line));
+
+  // Base line for subsequent chunks copies essential headers
+  auto base_line = std::make_unique<tensorflow::profiler::XLine>();
+  base_line->set_id(line_id);
+  base_line->set_name(std::move(name));
+  base_line->set_display_name(std::move(display_name));
+  base_line->set_display_id(display_id);
+  base_line->set_timestamp_ns(timestamp_ns);
+  base_line->set_duration_ps(duration_ps);
+  size_t base_line_size = base_line->ByteSizeLong();
+
+  auto current_chunk =
+      std::make_unique<tensorflow::profiler::XLine>(*base_line);
+  size_t current_chunk_size = base_line_size;
+
+  // Redistribute
+  for (auto& event : extracted_events) {
+    size_t event_size = event->ByteSizeLong();
+    if (current_chunk_size + event_size > max_chunk_size &&
+        !current_chunk->events().empty()) {
+      chunks.push_back(std::move(current_chunk));
+      current_chunk = std::make_unique<tensorflow::profiler::XLine>(*base_line);
+      current_chunk_size = base_line_size;
+    }
+    current_chunk_size += event_size;
+    current_chunk->mutable_events()->AddAllocated(event.release());
+  }
+
+  if (current_chunk != nullptr && !current_chunk->events().empty()) {
+    chunks.push_back(std::move(current_chunk));
+  }
+  return chunks;
+}
+
+std::vector<std::unique_ptr<tensorflow::profiler::XPlane>>
+DestructiveChunkXPlaneLines(
+    size_t max_chunk_size,
+    std::unique_ptr<tensorflow::profiler::XPlane> plane) {
+  std::vector<std::unique_ptr<tensorflow::profiler::XPlane>> chunks;
+  if (plane == nullptr) {
+    return chunks;
+  }
+
+  if (plane->ByteSizeLong() <= max_chunk_size || plane->lines().empty()) {
+    chunks.push_back(std::move(plane));
+    return chunks;
+  }
+
+  // Destructively extract lines to prevent deep-copy RAM spikes
+  std::vector<std::unique_ptr<tensorflow::profiler::XLine>> extracted_lines;
+  while (!plane->lines().empty()) {
+    extracted_lines.push_back(std::unique_ptr<tensorflow::profiler::XLine>(
+        plane->mutable_lines()->ReleaseLast()));
+  }
+  std::reverse(extracted_lines.begin(), extracted_lines.end());
+
+  chunks.push_back(std::move(plane));
+
+  // Base plane copies metadata maps so chunks are self-contained
+  auto base_plane = std::make_unique<tensorflow::profiler::XPlane>();
+  base_plane->set_id(chunks[0]->id());
+  base_plane->set_name(chunks[0]->name());
+  *base_plane->mutable_event_metadata() = chunks[0]->event_metadata();
+  *base_plane->mutable_stat_metadata() = chunks[0]->stat_metadata();
+  *base_plane->mutable_stats() = chunks[0]->stats();
+  size_t base_plane_size = base_plane->ByteSizeLong();
+
+  auto current_chunk =
+      std::make_unique<tensorflow::profiler::XPlane>(*base_plane);
+  size_t current_chunk_size = base_plane_size;
+
+  // Distribute
+  for (auto& line : extracted_lines) {
+    size_t line_size = line->ByteSizeLong();
+
+    if (line_size + base_plane_size > max_chunk_size) {
+      if (!current_chunk->lines().empty()) {
+        chunks.push_back(std::move(current_chunk));
+        current_chunk =
+            std::make_unique<tensorflow::profiler::XPlane>(*base_plane);
+        current_chunk_size = base_plane_size;
+      }
+
+      auto line_chunks = DestructiveChunkXLineEvents(
+          max_chunk_size - base_plane_size, std::move(line));
+      for (auto& line_chunk : line_chunks) {
+        auto new_plane_chunk =
+            std::make_unique<tensorflow::profiler::XPlane>(*base_plane);
+        new_plane_chunk->mutable_lines()->AddAllocated(line_chunk.release());
+        chunks.push_back(std::move(new_plane_chunk));
+      }
+    } else {
+      if (current_chunk_size + line_size > max_chunk_size) {
+        chunks.push_back(std::move(current_chunk));
+        current_chunk =
+            std::make_unique<tensorflow::profiler::XPlane>(*base_plane);
+        current_chunk_size = base_plane_size;
+      }
+      current_chunk->mutable_lines()->AddAllocated(line.release());
+      current_chunk_size += line_size;
+    }
+  }
+
+  if (current_chunk != nullptr && !current_chunk->lines().empty()) {
+    chunks.push_back(std::move(current_chunk));
+  }
+  return chunks;
 }
 
 }  // namespace
@@ -747,6 +889,249 @@ bool IsDevicePlane(const XPlane& plane) {
   return absl::StartsWith(plane.name(), "/device") ||
          absl::StartsWith(plane.name(), kTpuNonCorePlaneNamePrefix) ||
          IsCustomPlane(plane);
+}
+
+std::vector<std::unique_ptr<tensorflow::profiler::XSpace>>
+DestructiveChunkXSpace(size_t max_chunk_size,
+                       std::unique_ptr<tensorflow::profiler::XSpace> space) {
+  LOG(INFO) << "DestructiveChunkXSpace";
+  std::vector<std::unique_ptr<tensorflow::profiler::XSpace>> chunks;
+  if (space == nullptr) return chunks;
+
+  if (space->ByteSizeLong() <= max_chunk_size) {
+    chunks.push_back(std::move(space));
+    return chunks;
+  }
+
+  // 1. Destructively extract planes
+  std::vector<std::unique_ptr<tensorflow::profiler::XPlane>> extracted_planes;
+  while (!space->planes().empty()) {
+    extracted_planes.push_back(std::unique_ptr<tensorflow::profiler::XPlane>(
+        space->mutable_planes()->ReleaseLast()));
+  }
+  std::reverse(extracted_planes.begin(), extracted_planes.end());
+
+  // 2. The first chunk now contains root metadata (hostnames, warnings, etc.)
+  std::vector<std::string> hostnames(space->hostnames().begin(),
+                                     space->hostnames().end());
+  std::vector<std::string> errors(space->errors().begin(),
+                                  space->errors().end());
+  std::vector<std::string> warnings(space->warnings().begin(),
+                                    space->warnings().end());
+  chunks.push_back(std::move(space));
+
+  // 3. Process the extracted planes
+  for (auto& plane : extracted_planes) {
+    auto plane_chunks =
+        DestructiveChunkXPlaneLines(max_chunk_size, std::move(plane));
+
+    for (auto& plane_chunk : plane_chunks) {
+      if (plane_chunk == nullptr) continue;
+      auto chunk_space = std::make_unique<tensorflow::profiler::XSpace>();
+      for (const auto& h : hostnames) chunk_space->add_hostnames(h);
+      for (const auto& e : errors) chunk_space->add_errors(e);
+      for (const auto& w : warnings) chunk_space->add_warnings(w);
+      chunk_space->mutable_planes()->AddAllocated(plane_chunk.release());
+      chunks.push_back(std::move(chunk_space));
+    }
+  }
+
+  return chunks;
+}
+
+void DestructiveMergeXSpace(std::unique_ptr<tensorflow::profiler::XSpace> from,
+                            tensorflow::profiler::XSpace* to) {
+  LOG(INFO) << "DestructiveMergeXSpace";
+  if (!from) {
+    return;
+  }
+
+  // Merge top-level metadata safely (deduplicating)
+  absl::flat_hash_set<absl::string_view> existing_hostnames;
+  for (const auto& h : to->hostnames()) {
+    existing_hostnames.insert(h);
+  }
+
+  for (const auto& h : from->hostnames()) {
+    if (existing_hostnames.insert(h).second) {
+      to->add_hostnames(h);
+    }
+  }
+
+  absl::flat_hash_set<absl::string_view> existing_errors;
+  for (const auto& e : to->errors()) {
+    existing_errors.insert(e);
+  }
+  for (const auto& e : from->errors()) {
+    if (existing_errors.insert(e).second) {
+      to->add_errors(e);
+    }
+  }
+
+  absl::flat_hash_set<absl::string_view> existing_warnings;
+  for (const auto& w : to->warnings()) {
+    existing_warnings.insert(w);
+  }
+
+  for (const auto& w : from->warnings()) {
+    if (existing_warnings.insert(w).second) {
+      to->add_warnings(w);
+    }
+  }
+
+  // Map existing planes in 'to' for fast lookup
+  absl::flat_hash_map<absl::string_view, tensorflow::profiler::XPlane*>
+      to_planes;
+  for (int i = 0; i < to->planes_size(); ++i) {
+    tensorflow::profiler::XPlane* p = to->mutable_planes(i);
+    to_planes[p->name()] = p;
+  }
+
+  // Destructively merge planes and lines
+  while (!from->planes().empty()) {
+    std::unique_ptr<tensorflow::profiler::XPlane> from_plane(
+        from->mutable_planes()->ReleaseLast());
+    auto it = to_planes.find(from_plane->name());
+
+    if (it == to_planes.end()) {
+      // The plane doesn't exist yet, simply move it entirely
+      to->mutable_planes()->AddAllocated(from_plane.release());
+    } else {
+      // The plane exists, so we must merge its lines destructively
+      tensorflow::profiler::XPlane* to_plane = it->second;
+
+      // a. Metadata remapping maps (from_id -> to_id).
+      // We map by name if names exist, otherwise we fallback to ID equality.
+      absl::flat_hash_map<int64_t, int64_t> event_metadata_id_map;
+      auto* to_event_metadata = to_plane->mutable_event_metadata();
+      absl::flat_hash_map<absl::string_view, int64_t> to_event_metadata_by_name;
+      int64_t next_event_metadata_id = 0;
+      for (const auto& [id, metadata] : *to_event_metadata) {
+        if (!metadata.name().empty()) {
+          to_event_metadata_by_name[metadata.name()] = id;
+        }
+        next_event_metadata_id = std::max(next_event_metadata_id, id + 1);
+      }
+      for (const auto& [from_id, from_metadata] :
+           tsl::KeySortedRange(from_plane->event_metadata())) {
+        if (from_metadata.name().empty()) {
+          event_metadata_id_map[from_id] = from_id;
+          continue;
+        }
+        auto [it_meta, inserted] = to_event_metadata_by_name.try_emplace(
+            from_metadata.name(), next_event_metadata_id);
+        if (inserted) {
+          (*to_event_metadata)[next_event_metadata_id] = from_metadata;
+          next_event_metadata_id++;
+        }
+        event_metadata_id_map[from_id] = it_meta->second;
+      }
+
+      absl::flat_hash_map<int64_t, int64_t> stat_metadata_id_map;
+      auto* to_stat_metadata = to_plane->mutable_stat_metadata();
+      absl::flat_hash_map<absl::string_view, int64_t> to_stat_metadata_by_name;
+      int64_t next_stat_metadata_id = 0;
+      for (const auto& [id, metadata] : *to_stat_metadata) {
+        if (!metadata.name().empty()) {
+          to_stat_metadata_by_name[metadata.name()] = id;
+        }
+        next_stat_metadata_id = std::max(next_stat_metadata_id, id + 1);
+      }
+      for (const auto& [from_id, from_metadata] : from_plane->stat_metadata()) {
+        if (from_metadata.name().empty()) {
+          stat_metadata_id_map[from_id] = from_id;
+          continue;
+        }
+        auto [it_meta, inserted] = to_stat_metadata_by_name.try_emplace(
+            from_metadata.name(), next_stat_metadata_id);
+        if (inserted) {
+          (*to_stat_metadata)[next_stat_metadata_id] = from_metadata;
+          next_stat_metadata_id++;
+        }
+        stat_metadata_id_map[from_id] = it_meta->second;
+      }
+
+      auto remap_event = [&](tensorflow::profiler::XEvent* event) {
+        auto it_remap = event_metadata_id_map.find(event->metadata_id());
+        if (it_remap != event_metadata_id_map.end()) {
+          event->set_metadata_id(it_remap->second);
+        }
+        for (auto& stat : *event->mutable_stats()) {
+          auto it_stat = stat_metadata_id_map.find(stat.metadata_id());
+          if (it_stat != stat_metadata_id_map.end()) {
+            stat.set_metadata_id(it_stat->second);
+          }
+        }
+      };
+
+      // b. Map existing lines in 'to_plane' for fast lookup
+      absl::flat_hash_map<int64_t, tensorflow::profiler::XLine*> to_lines;
+      for (int i = 0; i < to_plane->lines_size(); ++i) {
+        tensorflow::profiler::XLine* l = to_plane->mutable_lines(i);
+        to_lines[l->id()] = l;
+      }
+
+      while (!from_plane->lines().empty()) {
+        std::unique_ptr<tensorflow::profiler::XLine> from_line(
+            from_plane->mutable_lines()->ReleaseLast());
+        auto line_it = to_lines.find(from_line->id());
+
+        if (line_it == to_lines.end()) {
+          // New line, remap internal IDs and move
+          for (auto& event : *from_line->mutable_events()) {
+            remap_event(&event);
+          }
+          to_plane->mutable_lines()->AddAllocated(from_line.release());
+        } else {
+          tensorflow::profiler::XLine* to_line = line_it->second;
+
+          // Align timestamps and adjust event offsets if necessary
+          int64_t to_start = to_line->timestamp_ns();
+          int64_t from_start = from_line->timestamp_ns();
+
+          if (from_start < to_start) {
+            int64_t offset_ps = (to_start - from_start) * 1000;
+            for (auto& event : *to_line->mutable_events()) {
+              event.set_offset_ps(event.offset_ps() + offset_ps);
+            }
+            to_line->set_timestamp_ns(from_start);
+          } else if (from_start > to_start) {
+            int64_t offset_ps = (from_start - to_start) * 1000;
+            for (auto& event : *from_line->mutable_events()) {
+              event.set_offset_ps(event.offset_ps() + offset_ps);
+            }
+          }
+
+          // Merge events destructively while remapping IDs
+          while (!from_line->events().empty()) {
+            auto* event = from_line->mutable_events()->ReleaseLast();
+            remap_event(event);
+            to_line->mutable_events()->AddAllocated(event);
+          }
+
+          to_line->set_duration_ps(
+              std::max(to_line->duration_ps(), from_line->duration_ps()));
+        }
+      }
+
+      // c. Merge plane-level stats with deduplication and remapping
+      absl::flat_hash_set<int64_t> existing_plane_stats;
+      for (const auto& stat : to_plane->stats()) {
+        existing_plane_stats.insert(stat.metadata_id());
+      }
+      for (const auto& stat : from_plane->stats()) {
+        auto it_stat_meta = stat_metadata_id_map.find(stat.metadata_id());
+        int64_t remapped_id = (it_stat_meta != stat_metadata_id_map.end())
+                                  ? it_stat_meta->second
+                                  : stat.metadata_id();
+        if (existing_plane_stats.insert(remapped_id).second) {
+          auto* new_stat = to_plane->add_stats();
+          *new_stat = stat;
+          new_stat->set_metadata_id(remapped_id);
+        }
+      }
+    }
+  }
 }
 
 }  // namespace profiler
