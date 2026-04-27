@@ -37,9 +37,6 @@ limitations under the License.
 #include "shardy/dialect/sdy/ir/constants.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "shardy/dialect/sdy/ir/utils.h"
-#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
-#include "xla/service/spmd/shardy/constants.h"
-#include "xla/service/spmd/shardy/utils.h"
 
 namespace xla {
 namespace sdy {
@@ -180,8 +177,10 @@ class UnflattenCallGraphPass
           callOp, symbolTable, /*ignoreShardings=*/dedupFunctionsFully);
       FuncOp funcOp = funcCache[funcCacheKey];
       callOp.setCallee(funcOp.getName());
-      insertReshardsOnFuncArguments(funcOp, callOp, symbolTable, rewriter);
-      insertReshardsOnFuncResults(funcOp, callOp, symbolTable, rewriter);
+      mlir::sdy::insertReshardsOnFuncArguments(funcOp, callOp, symbolTable,
+                                               rewriter);
+      mlir::sdy::insertReshardsOnFuncResults(funcOp, callOp, symbolTable,
+                                             rewriter);
     });
 
     moduleOp.walk([&](FuncOp funcOp) {
@@ -199,7 +198,7 @@ class UnflattenCallGraphPass
   }
 
   void getDependentDialects(mlir::DialectRegistry& registry) const final {
-    registry.insert<SdyDialect, mlir::mhlo::MhloDialect>();
+    registry.insert<SdyDialect>();
   }
 
   Option<bool> dedupFunctionsFully{

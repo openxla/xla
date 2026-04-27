@@ -163,13 +163,6 @@ bool hasGspmdAttrsOrOps(mlir::ModuleOp module);
 // TODO(b/420837831): delete this once we don't fall back to GSPMD.
 bool hasShardyMesh(mlir::ModuleOp module);
 
-// Returns `TensorShardingPerValueAttr` that is fully closed at each tensor
-// sharding and like the given `shardings`. Assumes `shardings` is non-empty. A
-// `TensorShardingAttr` is fully closed when all dim shardings being empty and
-// closed that is, cannot be further replicated/sharded.
-mlir::sdy::TensorShardingPerValueAttr getFullyClosedLike(
-    mlir::sdy::TensorShardingPerValueAttr shardings);
-
 // Converts an XLA Mesh to an SDY MeshAttr.
 mlir::sdy::MeshAttr toSdyMeshAttr(const Mesh& mesh, mlir::MLIRContext* context);
 
@@ -186,37 +179,14 @@ mlir::sdy::TensorShardingAttr convertToSdyShardingAttr(
 mlir::sdy::TensorShardingPerValueAttr convertToSdySharding(
     const HloSharding& hloSharding, mlir::MLIRContext* context);
 
-// TODO(enver): Add a parameter on how to handle 'inlineable' manual
-// computations func names, that is, either hard-fail, or accept as a manual
-// computation.
-// Returns whether the call is on a manual computation. Returns false for
-// an 'inlineable' manual computation.
-bool isManualComputation(mlir::func::CallOp callOp);
-// Returns whether the func is a manual computation. Returns false for
-// an 'inlineable' manual computation.
-bool isManualComputation(mlir::func::FuncOp funcOp);
-
-
-// Adds reshard/copy operations to resolve conflicts between call argument
-// sharding and func input sharding. The copy operations inserted also have
-// manual axes if `callOp` and `funcOp` do have one. Assumes `callOp` and
-// `funcOp` has identical manual axes or the lack thereof.
-void insertReshardsOnFuncArguments(mlir::func::FuncOp funcOp,
-                                   mlir::func::CallOp callOp,
-                                   const mlir::SymbolTable& symbolTable,
-                                   mlir::IRRewriter& rewriter);
-
-// Adds reshard/copy operations to resolve conflicts between call result
-// sharding and func result sharding. Sets the call result sharding to the func
-// result shardings. The copy operations inserted also have manual axes if
-// `callOp` and `funcOp` do have one. Assumes `callOp` and `funcOp` has
-// identical manual axes or the lack thereof. Assumes `callOp` has non-empty
-// `TensorShardingPerValueAttr` result-sharding if `funcOp` has non-empty result
-// shardings.
-void insertReshardsOnFuncResults(mlir::func::FuncOp funcOp,
-                                 mlir::func::CallOp callOp,
-                                 const mlir::SymbolTable& symbolTable,
-                                 mlir::IRRewriter& rewriter);
+// Returns whether the call is on a manual computation. Returns false for an
+// 'inlineable' manual computation if `isInlineable` is false. Returns whether
+// the call is on an 'inlineable' manual computation if `isInlineable` is true.
+bool isManualComputation(mlir::func::CallOp callOp, bool isInlineable = false);
+// Returns whether the func is a manual computation. Returns false for an
+// 'inlineable' manual computation if `isInlineable` is false. Returns whether
+// the func is an 'inlineable' manual computation if `isInlineable` is true.
+bool isManualComputation(mlir::func::FuncOp funcOp, bool isInlineable = false);
 
 }  // namespace sdy
 }  // namespace xla
