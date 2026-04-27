@@ -17,13 +17,19 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <utility>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/cord.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/pjrt/event_pool.h"
 #include "xla/stream_executor/event.h"
@@ -75,13 +81,32 @@ void BufferSequencingEvent::WaitForEventOnStream(se::Stream* stream) {
   streams_defined_on_.push_back(stream);
 }
 
+void BufferSequencingEvent::AddErrorContext(absl::string_view key,
+                                            std::string error_context) {
+  absl::MutexLock lock(mu_);
+  error_context_.push_back({key, std::move(error_context)});
+}
+
 absl::Status BufferSequencingEvent::AppendErrorContext(
     absl::Status status) const {
-  // Order of iteration over the error context map is not guaranteed to be
-  // deterministic, but this only affects the order of error messages in the
-  // final error status, which is not important.
-  for (const auto& [key, value] : error_context_) {  // NOLINT
-    status.SetPayload(key, absl::Cord(value));
+  auto snapshot = [&]() {
+    absl::MutexLock lock(mu_);
+    return error_context_;
+  }();
+  static constexpr int kMaxErrorContextSize = 256;
+  for (auto& [key, value] : snapshot) {
+    auto existing = status.GetPayload(key);
+    if (existing.has_value()) {
+      existing->Append(";");
+      existing->Append(std::move(value));
+    } else {
+      existing = std::move(value);
+    }
+    if (existing->size() > kMaxErrorContextSize) {
+      existing = existing->Subcord(0, kMaxErrorContextSize);
+      existing->Append("...[truncated]");
+    }
+    status.SetPayload(key, std::move(*existing));
   }
   return status;
 }
