@@ -3812,6 +3812,11 @@ TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingGemmOps) {
   EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
                             ::testing::HasSubstr("VA remapping: Mapped")))
       .Times(::testing::AtLeast(1));
+  // The skip-or-coalesce summary must fire on every Execute call: it
+  // confirms the new Remap path replaced the old full-MapTo path.
+  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
+                            ::testing::HasSubstr("allocations skipped")))
+      .Times(::testing::AtLeast(3));
   mock_log.StartCapturingLogs();
   for (int run = 0; run < 3; ++run) {
     float s = static_cast<float>(run + 1);

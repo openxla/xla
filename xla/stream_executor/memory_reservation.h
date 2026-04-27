@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_MEMORY_RESERVATION_H_
 
 #include <cstddef>
+#include <optional>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -75,6 +76,12 @@ class MemoryReservation {
     static void UnmapAndLogIfError(MemoryReservation* reservation,
                                    size_t reservation_offset, size_t size);
 
+    // Detaches the underlying reservation from this ScopedMapping without
+    // unmapping. After Release, the destructor is a no-op. Used by Remap
+    // to transfer ownership of an existing range to a freshly constructed
+    // ScopedMapping when only sub-ranges have been re-mapped.
+    void Release() { reservation_ = nullptr; }
+
     friend class MemoryReservation;
     ScopedMapping(MemoryReservation* reservation, size_t reservation_offset,
                   size_t size);
@@ -98,6 +105,33 @@ class MemoryReservation {
   // For non-contiguous mappings, use separate MapTo calls instead.
   absl::StatusOr<ScopedMapping> MapTo(
       absl::Span<const MappingDescriptor> mappings);
+
+  // Describes a desired post-Remap mapping for a slice of the reservation
+  // together with whatever was previously mapped at that slice.
+  struct RemapDescriptor {
+    size_t reservation_offset;
+    size_t allocation_offset;
+    size_t size;
+    MemoryAllocation* new_allocation;  // current physical handle, never null
+    MemoryAllocation* old_allocation;  // previous handle, null if first time
+  };
+
+  // Re-maps a contiguous reservation range described by `descriptors`. For
+  // each descriptor where `new_allocation == old_allocation` and
+  // `old_allocation != nullptr`, the existing mapping is preserved (no
+  // UnMap/Map/SetAccess driver calls are issued). For other descriptors the
+  // slice is unmapped (if previously mapped) and re-mapped with the new
+  // allocation; SetAccess is invoked once per maximal run of consecutive
+  // changed descriptors. `existing` must be the ScopedMapping returned by
+  // the prior Remap/MapTo call covering the same range, or std::nullopt on
+  // first use; when provided it is consumed without invoking its
+  // destructor (the per-slice unmaps above replace the full-range unmap
+  // the destructor would have performed). On first use (existing ==
+  // std::nullopt and every old_allocation == nullptr), Remap is
+  // semantically equivalent to MapTo over the same contiguous range.
+  absl::StatusOr<ScopedMapping> Remap(
+      absl::Span<const RemapDescriptor> descriptors,
+      std::optional<ScopedMapping> existing);
 
  private:
   virtual absl::Status Map(size_t reservation_offset, size_t allocation_offset,

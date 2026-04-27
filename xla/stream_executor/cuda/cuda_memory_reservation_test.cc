@@ -18,6 +18,10 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -52,6 +56,50 @@ class FakeAllocation : public MemoryAllocation {
  public:
   DeviceAddressBase address() const override { return DeviceAddressBase(); }
 };
+
+// A MemoryReservation that records Map/UnMap/SetAccess calls without
+// touching real CUDA. Used to verify the skip + coalesce logic in Remap
+// without depending on driver-side state.
+class CountingReservation : public MemoryReservation {
+ public:
+  struct Call {
+    const char* kind;  // "Map", "UnMap", or "SetAccess"
+    size_t reservation_offset;
+    size_t size;
+    MemoryAllocation* allocation;  // populated for "Map" only
+  };
+
+  DeviceAddressBase address() const override {
+    return DeviceAddressBase(reinterpret_cast<void*>(0x1000), 1 << 20);
+  }
+  std::vector<Call> calls;
+
+ private:
+  absl::Status Map(size_t reservation_offset, size_t /*allocation_offset*/,
+                   size_t size, MemoryAllocation& allocation) override {
+    calls.push_back({"Map", reservation_offset, size, &allocation});
+    return absl::OkStatus();
+  }
+  absl::Status SetAccess(uint64_t reservation_offset, size_t size) override {
+    calls.push_back({"SetAccess", reservation_offset, size, nullptr});
+    return absl::OkStatus();
+  }
+  absl::Status UnMap(size_t reservation_offset, size_t size) override {
+    calls.push_back({"UnMap", reservation_offset, size, nullptr});
+    return absl::OkStatus();
+  }
+};
+
+int CountKind(const std::vector<CountingReservation::Call>& calls,
+              const char* kind) {
+  int n = 0;
+  for (const auto& c : calls) {
+    if (std::string_view(c.kind) == kind) {
+      ++n;
+    }
+  }
+  return n;
+}
 
 class CudaMemoryReservationTest : public ::testing::Test {
  protected:
@@ -186,6 +234,174 @@ TEST_F(CudaMemoryReservationTest, SetAccessGrantsLocalDeviceAccess) {
                      &loc, base_ptr),
       CUDA_SUCCESS);
   EXPECT_EQ(flags, static_cast<uint64_t>(CU_MEM_ACCESS_FLAGS_PROT_READWRITE));
+}
+
+// ---- Remap tests (use CountingReservation, no real CUDA needed) ----
+
+// Tag types used as MemoryAllocation* identity tokens. The descriptors only
+// dereference `new_allocation` when a Map is issued; CountingReservation::Map
+// records the pointer without touching it, so these need no behavior.
+class TagAllocation : public MemoryAllocation {
+ public:
+  DeviceAddressBase address() const override { return DeviceAddressBase(); }
+};
+
+// On first call (existing == nullopt, all old_allocation == nullptr), Remap
+// behaves like MapTo: one Map per descriptor, one SetAccess for the full
+// contiguous range, no UnMap.
+TEST(MemoryReservationRemap, FirstCallBehavesLikeMapTo) {
+  CountingReservation res;
+  TagAllocation a, b, c;
+
+  MemoryReservation::RemapDescriptor descs[] = {
+      {0, 0, 100, &a, nullptr},
+      {100, 0, 200, &b, nullptr},
+      {300, 0, 50, &c, nullptr},
+  };
+
+  TF_ASSERT_OK_AND_ASSIGN(auto mapping,
+                          res.Remap(absl::MakeSpan(descs), std::nullopt));
+
+  EXPECT_EQ(CountKind(res.calls, "UnMap"), 0);
+  EXPECT_EQ(CountKind(res.calls, "Map"), 3);
+  // All three changed -> single coalesced run -> one SetAccess covering
+  // [0, 350).
+  ASSERT_EQ(CountKind(res.calls, "SetAccess"), 1);
+  for (const auto& call : res.calls) {
+    if (std::string_view(call.kind) == "SetAccess") {
+      EXPECT_EQ(call.reservation_offset, 0u);
+      EXPECT_EQ(call.size, 350u);
+    }
+  }
+
+  EXPECT_EQ(mapping.mapped_address().opaque(), res.address().opaque());
+}
+
+// When every descriptor has new_allocation == old_allocation (and not null),
+// Remap must issue zero driver calls.
+TEST(MemoryReservationRemap, AllUnchangedNoDriverCalls) {
+  CountingReservation res;
+  TagAllocation a, b, c;
+
+  MemoryReservation::RemapDescriptor first[] = {
+      {0, 0, 100, &a, nullptr},
+      {100, 0, 200, &b, nullptr},
+      {300, 0, 50, &c, nullptr},
+  };
+  TF_ASSERT_OK_AND_ASSIGN(auto mapping1,
+                          res.Remap(absl::MakeSpan(first), std::nullopt));
+  res.calls.clear();
+
+  MemoryReservation::RemapDescriptor second[] = {
+      {0, 0, 100, &a, &a},
+      {100, 0, 200, &b, &b},
+      {300, 0, 50, &c, &c},
+  };
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapping2, res.Remap(absl::MakeSpan(second), std::move(mapping1)));
+
+  EXPECT_TRUE(res.calls.empty())
+      << "expected zero driver calls when all slices unchanged, got "
+      << res.calls.size();
+  EXPECT_EQ(mapping2.mapped_address().opaque(), res.address().opaque());
+}
+
+// Middle slice unchanged, outer two changed -> two separate runs, each gets
+// its own SetAccess; only the changed slices are unmapped + remapped.
+TEST(MemoryReservationRemap, PartialChangeSplitsRuns) {
+  CountingReservation res;
+  TagAllocation a, b, c, a2, c2;
+
+  MemoryReservation::RemapDescriptor first[] = {
+      {0, 0, 100, &a, nullptr},
+      {100, 0, 200, &b, nullptr},
+      {300, 0, 50, &c, nullptr},
+  };
+  TF_ASSERT_OK_AND_ASSIGN(auto mapping1,
+                          res.Remap(absl::MakeSpan(first), std::nullopt));
+  res.calls.clear();
+
+  MemoryReservation::RemapDescriptor second[] = {
+      {0, 0, 100, &a2, &a},   // changed
+      {100, 0, 200, &b, &b},  // unchanged
+      {300, 0, 50, &c2, &c},  // changed
+  };
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapping2, res.Remap(absl::MakeSpan(second), std::move(mapping1)));
+
+  // Two changed slices -> 2 UnMap, 2 Map, 2 SetAccess (one per run).
+  EXPECT_EQ(CountKind(res.calls, "UnMap"), 2);
+  EXPECT_EQ(CountKind(res.calls, "Map"), 2);
+  EXPECT_EQ(CountKind(res.calls, "SetAccess"), 2);
+
+  // Verify the SetAccess ranges match the two runs (offset 0 size 100,
+  // offset 300 size 50) — middle slice was skipped.
+  std::vector<std::pair<size_t, size_t>> set_access_ranges;
+  for (const auto& call : res.calls) {
+    if (std::string_view(call.kind) == "SetAccess") {
+      set_access_ranges.emplace_back(call.reservation_offset, call.size);
+    }
+  }
+  EXPECT_THAT(set_access_ranges,
+              ::testing::UnorderedElementsAre(::testing::Pair(0u, 100u),
+                                              ::testing::Pair(300u, 50u)));
+}
+
+// All three slices changed -> single coalesced run -> exactly one SetAccess
+// over the full range.
+TEST(MemoryReservationRemap, AdjacentChangesSingleSetAccess) {
+  CountingReservation res;
+  TagAllocation a, b, c, a2, b2, c2;
+
+  MemoryReservation::RemapDescriptor first[] = {
+      {0, 0, 100, &a, nullptr},
+      {100, 0, 200, &b, nullptr},
+      {300, 0, 50, &c, nullptr},
+  };
+  TF_ASSERT_OK_AND_ASSIGN(auto mapping1,
+                          res.Remap(absl::MakeSpan(first), std::nullopt));
+  res.calls.clear();
+
+  MemoryReservation::RemapDescriptor second[] = {
+      {0, 0, 100, &a2, &a},
+      {100, 0, 200, &b2, &b},
+      {300, 0, 50, &c2, &c},
+  };
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapping2, res.Remap(absl::MakeSpan(second), std::move(mapping1)));
+
+  EXPECT_EQ(CountKind(res.calls, "UnMap"), 3);
+  EXPECT_EQ(CountKind(res.calls, "Map"), 3);
+  ASSERT_EQ(CountKind(res.calls, "SetAccess"), 1);
+  for (const auto& call : res.calls) {
+    if (std::string_view(call.kind) == "SetAccess") {
+      EXPECT_EQ(call.reservation_offset, 0u);
+      EXPECT_EQ(call.size, 350u);
+    }
+  }
+}
+
+// Non-contiguous descriptors are rejected.
+TEST(MemoryReservationRemap, NonContiguousIsRejected) {
+  CountingReservation res;
+  TagAllocation a, b;
+
+  MemoryReservation::RemapDescriptor descs[] = {
+      {0, 0, 100, &a, nullptr},
+      {200, 0, 100, &b, nullptr},  // gap at [100, 200)
+  };
+  EXPECT_THAT(res.Remap(absl::MakeSpan(descs), std::nullopt),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+// nullptr new_allocation is rejected.
+TEST(MemoryReservationRemap, NullNewAllocationIsRejected) {
+  CountingReservation res;
+  MemoryReservation::RemapDescriptor descs[] = {
+      {0, 0, 100, nullptr, nullptr},
+  };
+  EXPECT_THAT(res.Remap(absl::MakeSpan(descs), std::nullopt),
+              StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 }  // namespace

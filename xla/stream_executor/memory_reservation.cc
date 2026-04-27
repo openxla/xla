@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/stream_executor/memory_reservation.h"
 
 #include <cstddef>
+#include <optional>
+#include <utility>
 
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/log.h"
@@ -140,6 +142,80 @@ absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::MapTo(
   TF_RETURN_IF_ERROR(SetAccess(start_offset, total_size));
 
   std::move(cleanup).Cancel();
+  return ScopedMapping(this, start_offset, total_size);
+}
+
+// MemoryReservation::Remap
+
+absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::Remap(
+    absl::Span<const RemapDescriptor> descriptors,
+    std::optional<ScopedMapping> existing) {
+  if (descriptors.empty()) {
+    return absl::InvalidArgumentError("Remap: descriptors must not be empty");
+  }
+
+  const size_t start_offset = descriptors[0].reservation_offset;
+  size_t expected_offset = start_offset;
+  for (const RemapDescriptor& desc : descriptors) {
+    if (desc.reservation_offset != expected_offset) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Remap: descriptors are not contiguous. Expected "
+                          "reservation_offset=%zu but got %zu",
+                          expected_offset, desc.reservation_offset));
+    }
+    if (desc.new_allocation == nullptr) {
+      return absl::InvalidArgumentError(
+          "Remap: new_allocation must not be null");
+    }
+    expected_offset += desc.size;
+  }
+  const size_t total_size = expected_offset - start_offset;
+
+  // Detach the prior ScopedMapping without invoking its destructor; the
+  // per-slice unmaps below replace the full-range unmap it would do.
+  if (existing.has_value()) {
+    existing->Release();
+    existing.reset();
+  }
+
+  // Walk descriptors in order, processing maximal contiguous runs of slices
+  // whose physical handle has changed. For each run we issue per-slice
+  // UnMap (only where there was a prior mapping) and per-slice Map, then a
+  // single SetAccess covering the whole run.
+  size_t i = 0;
+  while (i < descriptors.size()) {
+    const auto& d = descriptors[i];
+    const bool changed =
+        d.old_allocation == nullptr || d.new_allocation != d.old_allocation;
+    if (!changed) {
+      ++i;
+      continue;
+    }
+    // Coalesce: extend this run as long as the next descriptor is also
+    // "changed". Map/UnMap stay per-slice (cuMemMap requires per-handle
+    // calls); SetAccess is the expensive call to coalesce.
+    const size_t run_start = d.reservation_offset;
+    size_t run_size = 0;
+    size_t j = i;
+    while (j < descriptors.size()) {
+      const auto& dj = descriptors[j];
+      const bool j_changed = dj.old_allocation == nullptr ||
+                             dj.new_allocation != dj.old_allocation;
+      if (!j_changed) {
+        break;
+      }
+      if (dj.old_allocation != nullptr) {
+        TF_RETURN_IF_ERROR(UnMap(dj.reservation_offset, dj.size));
+      }
+      TF_RETURN_IF_ERROR(Map(dj.reservation_offset, dj.allocation_offset,
+                             dj.size, *dj.new_allocation));
+      run_size += dj.size;
+      ++j;
+    }
+    TF_RETURN_IF_ERROR(SetAccess(run_start, run_size));
+    i = j;
+  }
+
   return ScopedMapping(this, start_offset, total_size);
 }
 
