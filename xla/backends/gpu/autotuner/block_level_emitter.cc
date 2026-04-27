@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/block_level_emitter.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <utility>

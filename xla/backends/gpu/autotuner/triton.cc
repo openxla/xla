@@ -15,9 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/triton.h"
 
-#include <algorithm>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
