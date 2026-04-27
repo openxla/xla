@@ -18,12 +18,13 @@ limitations under the License.
 
 #include <sys/types.h>
 
-#include <memory>
-#include <string>
+#include <cstdint>
+#include <optional>
 #include <vector>
 
-#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "third_party/gloop/util/functional/auto_function_runner.h"
 #include "tsl/profiler/protobuf/profiler_service.grpc.pb.h"
 
 namespace xla {
@@ -32,7 +33,7 @@ namespace subprocess {
 
 // Information about a registered subprocess.
 struct SubprocessInfo {
-  uint32_t pid;
+  int32_t pid;
   std::string address;
   std::shared_ptr<tensorflow::grpc::ProfilerService::Stub> profiler_stub;
 
@@ -60,13 +61,9 @@ struct SubprocessInfo {
 // may block for a while until the stub is ready or connection times out.
 // RETURNS: an error if the subprocess is already registered or if the
 // subprocess stub cannot be created.
-absl::Status RegisterSubprocess(uint32_t pid, int port);
-absl::Status RegisterSubprocess(uint32_t pid,
-                                absl::string_view unix_domain_socket);
-
-// Unregisters a subprocess by just erasing it from the registry. If there are
-// in-flight profiling sessions, they will NOT be cancelled.
-absl::Status UnregisterSubprocess(uint32_t pid);
+absl::StatusOr<util::functional::AutoFunctionRunner> RegisterSubprocess(
+    int32_t pid, std::optional<int> port,
+    std::optional<absl::string_view> unix_domain_socket);
 
 // Returns all currently registered subprocesses.
 std::vector<SubprocessInfo> GetRegisteredSubprocesses();
