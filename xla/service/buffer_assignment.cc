@@ -461,6 +461,28 @@ static const HloInstruction* GetOutputInstruction(
   return nullptr;
 }
 
+absl::string_view BufferAllocation::AllocationTypeLabel() const {
+  if (is_constant()) {
+    return "constant";
+  }
+  if (is_entry_computation_parameter()) {
+    return "parameter";
+  }
+  if (is_thread_local()) {
+    return "thread_local";
+  }
+  if (is_tuple()) {
+    return "tuple";
+  }
+  if (maybe_live_out()) {
+    return "maybe_live_out";
+  }
+  if (IsPreallocatedTempBuffer()) {
+    return "temp";
+  }
+  return "other";
+}
+
 std::string BufferAllocation::ToShortString(bool human_readable_size) const {
   std::string output;
   if (human_readable_size) {

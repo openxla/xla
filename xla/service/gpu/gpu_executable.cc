@@ -143,30 +143,6 @@ namespace gpu {
 
 namespace {
 
-// Short, human-readable label for a BufferAllocation, used when logging
-// VA remapping skip/remap decisions per allocation.
-absl::string_view AllocationTypeLabel(const BufferAllocation& alloc) {
-  if (alloc.is_constant()) {
-    return "constant";
-  }
-  if (alloc.is_entry_computation_parameter()) {
-    return "parameter";
-  }
-  if (alloc.is_thread_local()) {
-    return "thread_local";
-  }
-  if (alloc.is_tuple()) {
-    return "tuple";
-  }
-  if (alloc.maybe_live_out()) {
-    return "maybe_live_out";
-  }
-  if (alloc.IsPreallocatedTempBuffer()) {
-    return "temp";
-  }
-  return "other";
-}
-
 // Chooses the correct allocations to be used within the GpuExecutable code.
 std::vector<const BufferAllocation*> GatherAllocationPtrs(
     const std::optional<std::vector<BufferAllocation>>& mlir_allocations,
@@ -1628,7 +1604,7 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
             "id %d -> %d",
             i,
             buffer_assignment_ != nullptr
-                ? AllocationTypeLabel(buffer_assignment_->GetAllocation(i))
+                ? buffer_assignment_->GetAllocation(i).AllocationTypeLabel()
                 : absl::string_view("unknown"),
             mapping_size, old_allocation_id, allocation_info->allocation_id);
       } else {
@@ -1638,7 +1614,7 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
             "(unchanged)",
             i,
             buffer_assignment_ != nullptr
-                ? AllocationTypeLabel(buffer_assignment_->GetAllocation(i))
+                ? buffer_assignment_->GetAllocation(i).AllocationTypeLabel()
                 : absl::string_view("unknown"),
             mapping_size, allocation_info->allocation_id);
       }
