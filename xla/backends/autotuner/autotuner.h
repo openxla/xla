@@ -163,6 +163,15 @@ class Autotuner {
     std::string ToString(bool verbose = false) const;
     AutotuneResult ToProto() const;
   };
+  // A group of configs whose profiled outputs agree within
+  // autotune_config_.relative_tolerance.
+  struct OutputCluster {
+    ScopedShapedBuffer representative;
+    int count = 0;
+    // True iff at least one member comes from a backend that declares
+    // CanProduceWrongResults()==false.
+    bool has_trusted_member = false;
+  };
 
   Autotuner(std::vector<std::unique_ptr<CodegenBackend>> codegen_backends,
             std::unique_ptr<Profiler> profiler, AutotuneConfig autotune_config,
@@ -220,14 +229,24 @@ class Autotuner {
   absl::StatusOr<ConfigResult> PickBestConfig(
       std::vector<ConfigResult>& results);
 
-  std::optional<ScopedShapedBuffer> GetReferenceOutput(
-      std::vector<ExecutableCandidate>& candidates, InputBuffers& input_buffers)
+  // Assigns `output` to the first cluster whose representative matches within
+  // autotune_config_.relative_tolerance; creates a new cluster if no match.
+  // `is_trusted_config` marks the cluster as having a trustworthy-backend
+  // member (propagates through the OR of member trust flags). Returns the
+  // assigned cluster index.
+  int AssignToOutputCluster(std::vector<OutputCluster>& clusters,
+                            ScopedShapedBuffer& output, bool is_trusted_config)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(profiler_m_);
 
-  std::optional<Failure> CheckBuffers(InputBuffers& input_buffers,
-                                      ScopedShapedBuffer& output,
-                                      ScopedShapedBuffer& reference)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(profiler_m_);
+  // Stamps kWrongResults on every successful result that is not in the
+  // winning cluster. Winner: if any cluster has a trustworthy member, the
+  // largest among those; otherwise the largest overall. Earliest insertion
+  // wins on tie. `cluster_of_result[i]` is the cluster index of `results[i]`,
+  // or -1 if the config was not clustered (failed or check_buffers off).
+  void DemoteNonWinningClusterConfigs(
+      std::vector<ConfigResult>& results,
+      const std::vector<OutputCluster>& clusters,
+      const std::vector<int>& cluster_of_result);
   absl::Status IsValidExecutable(
       const absl::StatusOr<std::unique_ptr<Executable>>& executable) const;
 

@@ -632,13 +632,15 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
       std::unique_ptr<InputBuffers> input_buffers,
       profiler_->CreateInputBuffers(candidates[0].executable.get(), instr));
 
-  std::optional<ScopedShapedBuffer> reference_output;
   if (autotune_config_.check_buffers) {
-    VLOG(2) << "Checking buffers";
-    reference_output = GetReferenceOutput(candidates, *input_buffers);
-    if (!reference_output.has_value()) {
-      LOG(WARNING) << "No reference output found even though buffer checking ";
-    }
+    VLOG(2) << "Validating outputs via clustering across " << candidates.size()
+            << " config(s).";
+  }
+
+  std::vector<OutputCluster> clusters;
+  std::vector<int> cluster_of_result;
+  if (autotune_config_.check_buffers) {
+    cluster_of_result.reserve(candidates.size());
   }
 
   for (int i = 0; i < candidates.size(); ++i) {
@@ -648,24 +650,50 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
     std::optional<Failure> failure = std::nullopt;
     absl::Duration duration = absl::ZeroDuration();
     int scratch_bytes = 0;
+    int assigned_cluster = -1;
     if (!profile_result.ok()) {
       failure = Failure{FailureKind::kExecutionFailed,
                         profile_result.status().ToString()};
     } else {
       duration = profile_result->duration;
       scratch_bytes = profile_result->scratch_bytes;
-      if (autotune_config_.check_buffers && reference_output.has_value()) {
-        CHECK(profile_result->output_buffer.has_value());
-        failure =
-            CheckBuffers(*input_buffers, profile_result->output_buffer.value(),
-                         reference_output.value());
-        if (failure.has_value()) {
-          CHECK(!autotune_config_.crash_on_check_failure);
+      if (autotune_config_.check_buffers) {
+        // Input buffers are shared across candidates; CheckInputBuffers both
+        // verifies redzone canaries and refreshes the buffers so the next
+        // candidate starts from a clean state.
+        absl::Status redzone = profiler_->CheckInputBuffers(*input_buffers);
+        if (!redzone.ok()) {
+          failure =
+              Failure{FailureKind::kRedzoneCheckFailed, redzone.ToString()};
+        } else {
+          CHECK(profile_result->output_buffer.has_value());
+          const bool is_trusted =
+              !candidates[i].config.codegen_backend->CanProduceWrongResults();
+          assigned_cluster = AssignToOutputCluster(
+              clusters, profile_result->output_buffer.value(), is_trusted);
         }
       }
     }
     results_vec.push_back(
         {std::move(candidates[i].config), failure, duration, scratch_bytes});
+    if (autotune_config_.check_buffers) {
+      cluster_of_result.push_back(assigned_cluster);
+    }
+  }
+
+  if (autotune_config_.check_buffers) {
+    DemoteNonWinningClusterConfigs(results_vec, clusters, cluster_of_result);
+    if (autotune_config_.crash_on_check_failure) {
+      // Only correctness-check failures are fatal here. kCompilationFailed and
+      // kExecutionFailed are expected outcomes during autotuning and silently
+      // discarding them is the intended behavior.
+      for (const ConfigResult& r : results_vec) {
+        CHECK(!r.failure.has_value() ||
+              (r.failure->kind != FailureKind::kRedzoneCheckFailed &&
+               r.failure->kind != FailureKind::kWrongResults))
+            << "crash_on_check_failure: " << r.failure->ToString();
+      }
+    }
   }
   // Clear the candidates while holding the profiler lock
   // to unload their CUDA modules before any other thread starts profiling;
@@ -747,40 +775,57 @@ absl::Status Autotuner::DumpHlo(HloInstruction* instr, const Config& config) {
   return absl::OkStatus();
 }
 
-std::optional<ScopedShapedBuffer> Autotuner::GetReferenceOutput(
-    std::vector<ExecutableCandidate>& candidates, InputBuffers& input_buffers) {
-  for (auto& candidate : candidates) {
-    if (candidate.config.codegen_backend->CanProduceWrongResults()) {
-      continue;
-    }
-    absl::StatusOr<ProfileResult> profile_result =
-        profiler_->Profile(candidate.executable.get(), input_buffers);
-    if (!profile_result.ok()) {
-      VLOG(2) << "Failed to profile executable: " << profile_result.status();
-      continue;
-    }
-    if (profile_result.value().output_buffer.has_value()) {
-      VLOG(2) << "Found reference output for config: "
-              << candidate.config.ToString();
-      return std::move(profile_result.value().output_buffer.value());
+int Autotuner::AssignToOutputCluster(std::vector<OutputCluster>& clusters,
+                                     ScopedShapedBuffer& output,
+                                     bool is_trusted_config) {
+  for (int c = 0; c < clusters.size(); ++c) {
+    if (profiler_
+            ->CheckOutputBuffer(output, clusters[c].representative,
+                                autotune_config_.relative_tolerance)
+            .ok()) {
+      clusters[c].count++;
+      clusters[c].has_trusted_member |= is_trusted_config;
+      return c;
     }
   }
-  return std::nullopt;
+  int new_idx = clusters.size();
+  clusters.push_back(OutputCluster{std::move(output), /*count=*/1,
+                                   /*has_trusted_member=*/is_trusted_config});
+  return new_idx;
 }
 
-std::optional<Autotuner::Failure> Autotuner::CheckBuffers(
-    InputBuffers& input_buffers, ScopedShapedBuffer& output_buffer,
-    ScopedShapedBuffer& reference_output) {
-  absl::Status status = profiler_->CheckInputBuffers(input_buffers);
-  if (!status.ok()) {
-    return Failure{FailureKind::kRedzoneCheckFailed, status.ToString()};
+void Autotuner::DemoteNonWinningClusterConfigs(
+    std::vector<ConfigResult>& results,
+    const std::vector<OutputCluster>& clusters,
+    const std::vector<int>& cluster_of_result) {
+  if (clusters.empty()) return;
+  // Prefer clusters with a trusted member; among the preferred set, pick the
+  // largest count (earliest insertion wins on tie).
+  const bool any_trusted = absl::c_any_of(
+      clusters, [](const OutputCluster& c) { return c.has_trusted_member; });
+  int winner = -1;
+  for (int c = 0; c < clusters.size(); ++c) {
+    if (any_trusted && !clusters[c].has_trusted_member) continue;
+    if (winner < 0 || clusters[c].count > clusters[winner].count) winner = c;
   }
-  status = profiler_->CheckOutputBuffer(output_buffer, reference_output,
-                                        autotune_config_.relative_tolerance);
-  if (!status.ok()) {
-    return Failure{FailureKind::kWrongResults, status.ToString()};
+  VLOG(2) << "Output clustering formed " << clusters.size()
+          << " cluster(s); selected cluster " << winner << " with "
+          << clusters[winner].count
+          << " member(s), trusted=" << clusters[winner].has_trusted_member;
+  for (int i = 0; i < results.size(); ++i) {
+    if (!results[i].failure.has_value() && cluster_of_result[i] != winner) {
+      results[i].failure = Failure{
+          FailureKind::kWrongResults,
+          absl::StrCat("Output disagrees with winning cluster (member of "
+                       "cluster ",
+                       cluster_of_result[i], " of ", clusters.size(),
+                       "; winning cluster has ", clusters[winner].count,
+                       " member(s), trusted=",
+                       clusters[winner].has_trusted_member, ").")};
+      VLOG(3) << "Demoted config " << results[i].config.ToString()
+              << " (cluster " << cluster_of_result[i] << ").";
+    }
   }
-  return std::nullopt;
 }
 
 void Autotuner::LogConfigResults(const HloInstruction& instr,
