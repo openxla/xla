@@ -114,10 +114,11 @@ class MemoryReservation {
     size_t size;
     MemoryAllocation* new_allocation;  // current physical handle, never null
     MemoryAllocation* old_allocation;  // previous handle, null if first time
-    // Whether this slice needs to be remapped. When false the existing
-    // mapping is preserved (no driver calls). The caller must determine
-    // this via a stable identity (e.g. MemoryAllocation::unique_id())
-    // rather than raw pointer comparison to avoid ABA issues.
+    // Whether this slice needs to be remapped. When false, old_allocation
+    // must be non-null and the existing mapping is preserved (no driver
+    // calls). The caller must determine this via a stable identity (e.g.
+    // MemoryAllocation::unique_id()) rather than raw pointer comparison to
+    // avoid ABA issues.
     bool changed;
   };
 
@@ -127,12 +128,14 @@ class MemoryReservation {
   // descriptors the slice is unmapped (if previously mapped) and re-mapped
   // with the new allocation; SetAccess is invoked once per maximal run of
   // consecutive changed descriptors. `existing` must be the ScopedMapping
-  // returned by the prior Remap/MapTo call covering the same range, or
-  // std::nullopt on first use; when provided it is consumed without
-  // invoking its destructor (the per-slice unmaps above replace the
-  // full-range unmap the destructor would have performed). On first use
-  // (existing == std::nullopt and every old_allocation == nullptr), Remap
-  // is semantically equivalent to MapTo over the same contiguous range.
+  // returned by the prior Remap/MapTo call covering the same full range, or
+  // std::nullopt on first use. When `existing` is provided, every descriptor
+  // must have a non-null old_allocation; when `existing` is std::nullopt,
+  // every descriptor must have old_allocation == nullptr and changed == true.
+  // When provided, `existing` is consumed without invoking its destructor
+  // (the per-slice unmaps above replace the full-range unmap the destructor
+  // would have performed). On first use, Remap is semantically equivalent to
+  // MapTo over the same contiguous range.
   absl::StatusOr<ScopedMapping> Remap(
       absl::Span<const RemapDescriptor> descriptors,
       std::optional<ScopedMapping> existing);

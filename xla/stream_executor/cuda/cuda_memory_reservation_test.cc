@@ -404,5 +404,52 @@ TEST(MemoryReservationRemap, NullNewAllocationIsRejected) {
               StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
+// Unchanged slices must refer to an existing mapping.
+TEST(MemoryReservationRemap, UnchangedWithoutOldAllocationIsRejected) {
+  CountingReservation res;
+  TagAllocation a;
+  MemoryReservation::RemapDescriptor descs[] = {
+      {0, 0, 100, &a, nullptr, /*changed=*/false},
+  };
+
+  EXPECT_THAT(res.Remap(absl::MakeSpan(descs), std::nullopt),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_TRUE(res.calls.empty());
+}
+
+// First-use Remap has no prior mapping, so old_allocation must be null.
+TEST(MemoryReservationRemap, FirstUseRejectsNonNullOldAllocation) {
+  CountingReservation res;
+  TagAllocation a;
+  MemoryReservation::RemapDescriptor descs[] = {
+      {0, 0, 100, &a, &a, /*changed=*/false},
+  };
+
+  EXPECT_THAT(res.Remap(absl::MakeSpan(descs), std::nullopt),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_TRUE(res.calls.empty());
+}
+
+// If an existing full-range mapping is provided, every descriptor must describe
+// what is currently mapped at its slice.
+TEST(MemoryReservationRemap, ExistingMappingRequiresOldAllocation) {
+  CountingReservation res;
+  TagAllocation a, b;
+  MemoryReservation::RemapDescriptor first[] = {
+      {0, 0, 100, &a, nullptr, /*changed=*/true},
+  };
+  TF_ASSERT_OK_AND_ASSIGN(auto mapping,
+                          res.Remap(absl::MakeSpan(first), std::nullopt));
+  res.calls.clear();
+
+  MemoryReservation::RemapDescriptor second[] = {
+      {0, 0, 100, &b, nullptr, /*changed=*/true},
+  };
+  EXPECT_THAT(res.Remap(absl::MakeSpan(second), std::move(mapping)),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_EQ(CountKind(res.calls, "Map"), 0);
+  EXPECT_EQ(CountKind(res.calls, "SetAccess"), 0);
+}
+
 }  // namespace
 }  // namespace stream_executor::gpu

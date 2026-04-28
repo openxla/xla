@@ -155,6 +155,7 @@ absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::Remap(
     return absl::InvalidArgumentError("Remap: descriptors must not be empty");
   }
 
+  const bool has_existing_mapping = existing.has_value();
   const size_t start_offset = descriptors[0].reservation_offset;
   size_t expected_offset = start_offset;
   for (const RemapDescriptor& desc : descriptors) {
@@ -167,6 +168,19 @@ absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::Remap(
     if (desc.new_allocation == nullptr) {
       return absl::InvalidArgumentError(
           "Remap: new_allocation must not be null");
+    }
+    if (!desc.changed && desc.old_allocation == nullptr) {
+      return absl::InvalidArgumentError(
+          "Remap: unchanged descriptor must have old_allocation");
+    }
+    if (has_existing_mapping && desc.old_allocation == nullptr) {
+      return absl::InvalidArgumentError(
+          "Remap: existing mapping requires old_allocation for every "
+          "descriptor");
+    }
+    if (!has_existing_mapping && desc.old_allocation != nullptr) {
+      return absl::InvalidArgumentError(
+          "Remap: first-use descriptor must not have old_allocation");
     }
     expected_offset += desc.size;
   }
