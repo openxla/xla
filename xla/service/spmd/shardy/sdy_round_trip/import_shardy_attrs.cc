@@ -408,7 +408,13 @@ class SdyRoundTripImportShardyAttrsPass
                                  : mlir::ArrayRef<NamedAttribute>();
 
       for (NamedAttribute mesh : sdyMeshes) {
-        auto meshAttr = mlir::cast<MeshAttr>(mesh.getValue());
+        auto meshAttr = mlir::dyn_cast<MeshAttr>(mesh.getValue());
+        if (!meshAttr) {
+          moduleOp.emitError()
+              << "Expected MeshAttr for mesh " << mesh.getName();
+          signalPassFailure();
+          return;
+        }
         symbolTable.insert(mlir::sdy::MeshOp::create(
             rewriter, moduleOp.getLoc(), mesh.getName(), meshAttr));
       }

@@ -371,8 +371,12 @@ void replaceManualAxes(sdy::ManualComputationOp manualComputation,
     // Skip manual computation with inlined meshes.
     return;
   }
-  auto meshNameAndAxisMap = duplicateMeshesToAxisMap.find(
-      mlir::cast<mlir::FlatSymbolRefAttr>(meshOrRef).getValue());
+  auto meshRefAttr = mlir::dyn_cast<mlir::FlatSymbolRefAttr>(meshOrRef);
+  if (!meshRefAttr) {
+    return;
+  }
+  auto meshNameAndAxisMap =
+      duplicateMeshesToAxisMap.find(meshRefAttr.getValue());
   // Exit early since this is the main mesh that will be used.
   if (meshNameAndAxisMap == duplicateMeshesToAxisMap.end()) {
     return;

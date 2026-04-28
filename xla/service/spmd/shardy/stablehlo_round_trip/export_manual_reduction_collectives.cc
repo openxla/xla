@@ -151,9 +151,11 @@ void convertAllReduce(sdy::AllReduceOp op, int64_t channelId,
             /*use_global_device_ids=*/true);
         // No need to add a sharding to the all-reduce, since it's inside a
         // fully manual computation.
+        auto shapedArgType = mlir::dyn_cast<mlir::ShapedType>(arg.getType());
+        CHECK(shapedArgType);
         stablehlo::buildReduceBody<stablehlo::AddOp>(
-            mlir::cast<mlir::ShapedType>(arg.getType()).getElementType(),
-            newAllReduce.getComputation(), blockBuilder);
+            shapedArgType.getElementType(), newAllReduce.getComputation(),
+            blockBuilder);
         return newAllReduce.getResult(0);
       });
   rewriter.replaceOp(op, manualComputation);
@@ -167,7 +169,8 @@ int64_t convertReduceScatter(sdy::ReduceScatterOp op, int64_t nextChannelId,
       op.getLoc(), op.getTensor(), op.getOutSharding(), mesh, rewriter,
       [&](mlir::BlockArgument arg, OpBuilder& blockBuilder) {
         Value curInput = arg;
-        auto inputType = mlir::cast<RankedTensorType>(curInput.getType());
+        auto inputType = mlir::dyn_cast<RankedTensorType>(curInput.getType());
+        CHECK(inputType);
         SmallVector<int64_t> curShape = llvm::to_vector(inputType.getShape());
         for (auto [dim, reductionAxes] :
              llvm::enumerate(op.getReduceScatterAxes())) {
@@ -191,9 +194,11 @@ int64_t convertReduceScatter(sdy::ReduceScatterOp op, int64_t nextChannelId,
               /*use_global_device_ids=*/true);
           // No need to add a sharding to the reduce-scatter, since it's inside
           // a fully manual computation.
+          auto shapedArgType = mlir::dyn_cast<mlir::ShapedType>(arg.getType());
+          CHECK(shapedArgType);
           stablehlo::buildReduceBody<stablehlo::AddOp>(
-              mlir::cast<mlir::ShapedType>(arg.getType()).getElementType(),
-              newReduceScatter.getComputation(), blockBuilder);
+              shapedArgType.getElementType(), newReduceScatter.getComputation(),
+              blockBuilder);
           curInput = newReduceScatter.getResult();
         }
         return curInput;
@@ -235,12 +240,12 @@ void convertShardedToUnreduced(sdy::ShardedToUnreducedOp op,
   ManualComputationOp manualComputation = createFullyManualComputation(
       loc, op.getTensor(), outSharding, mesh, rewriter,
       [&](mlir::BlockArgument arg, OpBuilder& blockBuilder) {
-        RankedTensorType fullType =
-            mlir::cast<RankedTensorType>(op.getResult().getType());
-        RankedTensorType inputType =
-            sdy::getSharding(op.getTensor())
-                .getLocalTensorType(fullType, mesh,
-                                    /*allowNonDivisible=*/false);
+        auto fullType =
+            mlir::dyn_cast<RankedTensorType>(op.getResult().getType());
+        CHECK(fullType);
+        auto inputType = sdy::getSharding(op.getTensor())
+                             .getLocalTensorType(fullType, mesh,
+                                                 /*allowNonDivisible=*/false);
         CHECK(inputType) << kNonDivisibleShardingError;
         RankedTensorType outputType =
             outSharding.getLocalTensorType(fullType, mesh);
@@ -326,7 +331,8 @@ void convertReplicatedToUnreduced(sdy::ReplicatedToUnreducedOp op,
         }
         CHECK(pred != nullptr) << "No replicated-to-unreduced axes.";
 
-        RankedTensorType type = mlir::cast<RankedTensorType>(arg.getType());
+        auto type = mlir::dyn_cast<RankedTensorType>(arg.getType());
+        CHECK(type);
         Value zeroVal = stablehlo::ConstantOp::create(
             blockBuilder, loc, blockBuilder.getZeroAttr(type.getElementType()));
         Value zeroBroadcast = stablehlo::BroadcastOp::create(
