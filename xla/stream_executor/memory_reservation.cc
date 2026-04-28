@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/stream_executor/memory_reservation.h"
 
 #include <cstddef>
-#include <optional>
 #include <utility>
 #include <vector>
 
@@ -149,99 +148,73 @@ absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::MapTo(
 // MemoryReservation::Remap
 
 absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::Remap(
-    absl::Span<const RemapDescriptor> descriptors,
-    std::optional<ScopedMapping> existing) {
-  if (descriptors.empty()) {
-    return absl::InvalidArgumentError("Remap: descriptors must not be empty");
+    absl::Span<const RemapDescriptor> mappings, ScopedMapping existing) {
+  if (mappings.empty()) {
+    return absl::InvalidArgumentError("Remap: mappings must not be empty");
   }
 
-  const bool has_existing_mapping = existing.has_value();
-  const size_t start_offset = descriptors[0].reservation_offset;
+  const size_t start_offset = mappings[0].reservation_offset;
   size_t expected_offset = start_offset;
-  for (const RemapDescriptor& desc : descriptors) {
+  for (const RemapDescriptor& desc : mappings) {
     if (desc.reservation_offset != expected_offset) {
       return absl::InvalidArgumentError(
-          absl::StrFormat("Remap: descriptors are not contiguous. Expected "
+          absl::StrFormat("Remap: mappings are not contiguous. Expected "
                           "reservation_offset=%zu but got %zu",
                           expected_offset, desc.reservation_offset));
     }
-    if (desc.new_allocation == nullptr) {
-      return absl::InvalidArgumentError(
-          "Remap: new_allocation must not be null");
-    }
-    if (!desc.changed && desc.old_allocation == nullptr) {
-      return absl::InvalidArgumentError(
-          "Remap: unchanged descriptor must have old_allocation");
-    }
-    if (has_existing_mapping && desc.old_allocation == nullptr) {
-      return absl::InvalidArgumentError(
-          "Remap: existing mapping requires old_allocation for every "
-          "descriptor");
-    }
-    if (!has_existing_mapping && desc.old_allocation != nullptr) {
-      return absl::InvalidArgumentError(
-          "Remap: first-use descriptor must not have old_allocation");
+    if (desc.allocation == nullptr) {
+      return absl::InvalidArgumentError("Remap: allocation must not be null");
     }
     expected_offset += desc.size;
   }
   const size_t total_size = expected_offset - start_offset;
 
-  // Track per-slice mapped state for cleanup on failure. A slice is
-  // "mapped" if it currently has a VA->physical mapping in the driver
-  // (either retained from the prior step or freshly created below).
-  std::vector<bool> slice_mapped(descriptors.size());
-  for (size_t k = 0; k < descriptors.size(); ++k) {
-    slice_mapped[k] = (descriptors[k].old_allocation != nullptr);
-  }
+  // Track per-slice mapped state for cleanup on failure. Every slice starts
+  // mapped because `existing` owns the full range. Changed slices are
+  // temporarily unmapped before being mapped to their new allocation.
+  std::vector<bool> slice_mapped(mappings.size(), true);
 
   // Detach the prior ScopedMapping without invoking its destructor; the
   // per-slice unmaps below replace the full-range unmap it would do.
-  if (existing.has_value()) {
-    existing->Release();
-    existing.reset();
-  }
+  existing.Release();
 
   // On failure, unmap every slice that is still mapped so the reservation
   // is left in a clean (fully unmapped) state rather than partially mapped
   // with no RAII owner.
   auto cleanup = absl::MakeCleanup([&] {
-    for (size_t k = 0; k < descriptors.size(); ++k) {
+    for (size_t k = 0; k < mappings.size(); ++k) {
       if (slice_mapped[k]) {
         absl::Status s =
-            UnMap(descriptors[k].reservation_offset, descriptors[k].size);
+            UnMap(mappings[k].reservation_offset, mappings[k].size);
         if (!s.ok()) {
           LOG(ERROR) << "Remap: cleanup failed to unmap slice at offset "
-                     << descriptors[k].reservation_offset << ": "
-                     << s.message();
+                     << mappings[k].reservation_offset << ": " << s.message();
         }
       }
     }
   });
 
   // Walk descriptors in order, processing maximal contiguous runs of slices
-  // whose physical handle has changed. For each run we issue per-slice
-  // UnMap (only where there was a prior mapping) and per-slice Map, then a
-  // single SetAccess covering the whole run.
+  // that require remapping. For each run we issue per-slice UnMap and Map,
+  // then a single SetAccess covering the whole run.
   size_t i = 0;
-  while (i < descriptors.size()) {
-    if (!descriptors[i].changed) {
+  while (i < mappings.size()) {
+    if (!mappings[i].remap_required) {
       ++i;
       continue;
     }
     // Coalesce: extend this run as long as the next descriptor is also
-    // "changed". Map/UnMap stay per-slice (cuMemMap requires per-handle
+    // being remapped. Map/UnMap stay per-slice (cuMemMap requires per-handle
     // calls); SetAccess is the expensive call to coalesce.
-    const size_t run_start = descriptors[i].reservation_offset;
+    const size_t run_start = mappings[i].reservation_offset;
     size_t run_size = 0;
     size_t j = i;
-    while (j < descriptors.size() && descriptors[j].changed) {
-      const auto& dj = descriptors[j];
-      if (dj.old_allocation != nullptr) {
-        TF_RETURN_IF_ERROR(UnMap(dj.reservation_offset, dj.size));
-        slice_mapped[j] = false;
-      }
+    while (j < mappings.size() && mappings[j].remap_required) {
+      const auto& dj = mappings[j];
+      TF_RETURN_IF_ERROR(UnMap(dj.reservation_offset, dj.size));
+      slice_mapped[j] = false;
       TF_RETURN_IF_ERROR(Map(dj.reservation_offset, dj.allocation_offset,
-                             dj.size, *dj.new_allocation));
+                             dj.size, *dj.allocation));
       slice_mapped[j] = true;
       run_size += dj.size;
       ++j;

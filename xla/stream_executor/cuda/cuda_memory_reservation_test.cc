@@ -18,7 +18,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -73,6 +72,7 @@ class CountingReservation : public MemoryReservation {
     return DeviceAddressBase(reinterpret_cast<void*>(0x1000), 1 << 20);
   }
   std::vector<Call> calls;
+  bool fail_set_access = false;
 
  private:
   absl::Status Map(size_t reservation_offset, size_t /*allocation_offset*/,
@@ -82,6 +82,9 @@ class CountingReservation : public MemoryReservation {
   }
   absl::Status SetAccess(uint64_t reservation_offset, size_t size) override {
     calls.push_back({"SetAccess", reservation_offset, size, nullptr});
+    if (fail_set_access) {
+      return absl::InternalError("injected SetAccess failure");
+    }
     return absl::OkStatus();
   }
   absl::Status UnMap(size_t reservation_offset, size_t size) override {
@@ -238,64 +241,30 @@ TEST_F(CudaMemoryReservationTest, SetAccessGrantsLocalDeviceAccess) {
 
 // ---- Remap tests (use CountingReservation, no real CUDA needed) ----
 
-// Tag types used as MemoryAllocation* identity tokens. The descriptors only
-// dereference `new_allocation` when a Map is issued; CountingReservation::Map
+// Tag types used as MemoryAllocation* identity tokens. CountingReservation::Map
 // records the pointer without touching it, so these need no behavior.
 class TagAllocation : public MemoryAllocation {
  public:
   DeviceAddressBase address() const override { return DeviceAddressBase(); }
 };
 
-// On first call (existing == nullopt, all old_allocation == nullptr), Remap
-// behaves like MapTo: one Map per descriptor, one SetAccess for the full
-// contiguous range, no UnMap.
-TEST(MemoryReservationRemap, FirstCallBehavesLikeMapTo) {
-  CountingReservation res;
-  TagAllocation a, b, c;
-
-  MemoryReservation::RemapDescriptor descs[] = {
-      {0, 0, 100, &a, nullptr, /*changed=*/true},
-      {100, 0, 200, &b, nullptr, /*changed=*/true},
-      {300, 0, 50, &c, nullptr, /*changed=*/true},
-  };
-
-  TF_ASSERT_OK_AND_ASSIGN(auto mapping,
-                          res.Remap(absl::MakeSpan(descs), std::nullopt));
-
-  EXPECT_EQ(CountKind(res.calls, "UnMap"), 0);
-  EXPECT_EQ(CountKind(res.calls, "Map"), 3);
-  // All three changed -> single coalesced run -> one SetAccess covering
-  // [0, 350).
-  ASSERT_EQ(CountKind(res.calls, "SetAccess"), 1);
-  for (const auto& call : res.calls) {
-    if (std::string_view(call.kind) == "SetAccess") {
-      EXPECT_EQ(call.reservation_offset, 0u);
-      EXPECT_EQ(call.size, 350u);
-    }
-  }
-
-  EXPECT_EQ(mapping.mapped_address().opaque(), res.address().opaque());
-}
-
-// When every descriptor has new_allocation == old_allocation (and not null),
-// Remap must issue zero driver calls.
+// When every descriptor is unchanged, Remap must issue zero driver calls.
 TEST(MemoryReservationRemap, AllUnchangedNoDriverCalls) {
   CountingReservation res;
   TagAllocation a, b, c;
 
-  MemoryReservation::RemapDescriptor first[] = {
-      {0, 0, 100, &a, nullptr, /*changed=*/true},
-      {100, 0, 200, &b, nullptr, /*changed=*/true},
-      {300, 0, 50, &c, nullptr, /*changed=*/true},
+  MemoryReservation::MappingDescriptor first[] = {
+      {0, 0, 100, &a},
+      {100, 0, 200, &b},
+      {300, 0, 50, &c},
   };
-  TF_ASSERT_OK_AND_ASSIGN(auto mapping1,
-                          res.Remap(absl::MakeSpan(first), std::nullopt));
+  TF_ASSERT_OK_AND_ASSIGN(auto mapping1, res.MapTo(absl::MakeSpan(first)));
   res.calls.clear();
 
   MemoryReservation::RemapDescriptor second[] = {
-      {0, 0, 100, &a, &a, /*changed=*/false},
-      {100, 0, 200, &b, &b, /*changed=*/false},
-      {300, 0, 50, &c, &c, /*changed=*/false},
+      {0, 0, 100, &a, /*remap_required=*/false},
+      {100, 0, 200, &b, /*remap_required=*/false},
+      {300, 0, 50, &c, /*remap_required=*/false},
   };
   TF_ASSERT_OK_AND_ASSIGN(
       auto mapping2, res.Remap(absl::MakeSpan(second), std::move(mapping1)));
@@ -312,19 +281,18 @@ TEST(MemoryReservationRemap, PartialChangeSplitsRuns) {
   CountingReservation res;
   TagAllocation a, b, c, a2, c2;
 
-  MemoryReservation::RemapDescriptor first[] = {
-      {0, 0, 100, &a, nullptr, /*changed=*/true},
-      {100, 0, 200, &b, nullptr, /*changed=*/true},
-      {300, 0, 50, &c, nullptr, /*changed=*/true},
+  MemoryReservation::MappingDescriptor first[] = {
+      {0, 0, 100, &a},
+      {100, 0, 200, &b},
+      {300, 0, 50, &c},
   };
-  TF_ASSERT_OK_AND_ASSIGN(auto mapping1,
-                          res.Remap(absl::MakeSpan(first), std::nullopt));
+  TF_ASSERT_OK_AND_ASSIGN(auto mapping1, res.MapTo(absl::MakeSpan(first)));
   res.calls.clear();
 
   MemoryReservation::RemapDescriptor second[] = {
-      {0, 0, 100, &a2, &a, /*changed=*/true},    // changed
-      {100, 0, 200, &b, &b, /*changed=*/false},  // unchanged
-      {300, 0, 50, &c2, &c, /*changed=*/true},   // changed
+      {0, 0, 100, &a2, /*remap_required=*/true},
+      {100, 0, 200, &b, /*remap_required=*/false},
+      {300, 0, 50, &c2, /*remap_required=*/true},
   };
   TF_ASSERT_OK_AND_ASSIGN(
       auto mapping2, res.Remap(absl::MakeSpan(second), std::move(mapping1)));
@@ -335,7 +303,7 @@ TEST(MemoryReservationRemap, PartialChangeSplitsRuns) {
   EXPECT_EQ(CountKind(res.calls, "SetAccess"), 2);
 
   // Verify the SetAccess ranges match the two runs (offset 0 size 100,
-  // offset 300 size 50) — middle slice was skipped.
+  // offset 300 size 50); the middle slice was skipped.
   std::vector<std::pair<size_t, size_t>> set_access_ranges;
   for (const auto& call : res.calls) {
     if (std::string_view(call.kind) == "SetAccess") {
@@ -353,19 +321,18 @@ TEST(MemoryReservationRemap, AdjacentChangesSingleSetAccess) {
   CountingReservation res;
   TagAllocation a, b, c, a2, b2, c2;
 
-  MemoryReservation::RemapDescriptor first[] = {
-      {0, 0, 100, &a, nullptr, /*changed=*/true},
-      {100, 0, 200, &b, nullptr, /*changed=*/true},
-      {300, 0, 50, &c, nullptr, /*changed=*/true},
+  MemoryReservation::MappingDescriptor first[] = {
+      {0, 0, 100, &a},
+      {100, 0, 200, &b},
+      {300, 0, 50, &c},
   };
-  TF_ASSERT_OK_AND_ASSIGN(auto mapping1,
-                          res.Remap(absl::MakeSpan(first), std::nullopt));
+  TF_ASSERT_OK_AND_ASSIGN(auto mapping1, res.MapTo(absl::MakeSpan(first)));
   res.calls.clear();
 
   MemoryReservation::RemapDescriptor second[] = {
-      {0, 0, 100, &a2, &a, /*changed=*/true},
-      {100, 0, 200, &b2, &b, /*changed=*/true},
-      {300, 0, 50, &c2, &c, /*changed=*/true},
+      {0, 0, 100, &a2, /*remap_required=*/true},
+      {100, 0, 200, &b2, /*remap_required=*/true},
+      {300, 0, 50, &c2, /*remap_required=*/true},
   };
   TF_ASSERT_OK_AND_ASSIGN(
       auto mapping2, res.Remap(absl::MakeSpan(second), std::move(mapping1)));
@@ -386,69 +353,72 @@ TEST(MemoryReservationRemap, NonContiguousIsRejected) {
   CountingReservation res;
   TagAllocation a, b;
 
-  MemoryReservation::RemapDescriptor descs[] = {
-      {0, 0, 100, &a, nullptr, /*changed=*/true},
-      {200, 0, 100, &b, nullptr, /*changed=*/true},  // gap at [100, 200)
+  MemoryReservation::MappingDescriptor initial[] = {
+      {0, 0, 300, &a},
   };
-  EXPECT_THAT(res.Remap(absl::MakeSpan(descs), std::nullopt),
-              StatusIs(absl::StatusCode::kInvalidArgument));
-}
-
-// nullptr new_allocation is rejected.
-TEST(MemoryReservationRemap, NullNewAllocationIsRejected) {
-  CountingReservation res;
-  MemoryReservation::RemapDescriptor descs[] = {
-      {0, 0, 100, nullptr, nullptr, /*changed=*/true},
-  };
-  EXPECT_THAT(res.Remap(absl::MakeSpan(descs), std::nullopt),
-              StatusIs(absl::StatusCode::kInvalidArgument));
-}
-
-// Unchanged slices must refer to an existing mapping.
-TEST(MemoryReservationRemap, UnchangedWithoutOldAllocationIsRejected) {
-  CountingReservation res;
-  TagAllocation a;
-  MemoryReservation::RemapDescriptor descs[] = {
-      {0, 0, 100, &a, nullptr, /*changed=*/false},
-  };
-
-  EXPECT_THAT(res.Remap(absl::MakeSpan(descs), std::nullopt),
-              StatusIs(absl::StatusCode::kInvalidArgument));
-  EXPECT_TRUE(res.calls.empty());
-}
-
-// First-use Remap has no prior mapping, so old_allocation must be null.
-TEST(MemoryReservationRemap, FirstUseRejectsNonNullOldAllocation) {
-  CountingReservation res;
-  TagAllocation a;
-  MemoryReservation::RemapDescriptor descs[] = {
-      {0, 0, 100, &a, &a, /*changed=*/false},
-  };
-
-  EXPECT_THAT(res.Remap(absl::MakeSpan(descs), std::nullopt),
-              StatusIs(absl::StatusCode::kInvalidArgument));
-  EXPECT_TRUE(res.calls.empty());
-}
-
-// If an existing full-range mapping is provided, every descriptor must describe
-// what is currently mapped at its slice.
-TEST(MemoryReservationRemap, ExistingMappingRequiresOldAllocation) {
-  CountingReservation res;
-  TagAllocation a, b;
-  MemoryReservation::RemapDescriptor first[] = {
-      {0, 0, 100, &a, nullptr, /*changed=*/true},
-  };
-  TF_ASSERT_OK_AND_ASSIGN(auto mapping,
-                          res.Remap(absl::MakeSpan(first), std::nullopt));
+  TF_ASSERT_OK_AND_ASSIGN(auto mapping, res.MapTo(absl::MakeSpan(initial)));
   res.calls.clear();
 
-  MemoryReservation::RemapDescriptor second[] = {
-      {0, 0, 100, &b, nullptr, /*changed=*/true},
+  MemoryReservation::RemapDescriptor descs[] = {
+      {0, 0, 100, &a, /*remap_required=*/true},
+      {200, 0, 100, &b, /*remap_required=*/true},  // gap at [100, 200)
   };
-  EXPECT_THAT(res.Remap(absl::MakeSpan(second), std::move(mapping)),
+  EXPECT_THAT(res.Remap(absl::MakeSpan(descs), std::move(mapping)),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+// nullptr allocation is rejected.
+TEST(MemoryReservationRemap, NullAllocationIsRejected) {
+  CountingReservation res;
+  TagAllocation a;
+
+  MemoryReservation::MappingDescriptor initial[] = {
+      {0, 0, 100, &a},
+  };
+  TF_ASSERT_OK_AND_ASSIGN(auto mapping, res.MapTo(absl::MakeSpan(initial)));
+  res.calls.clear();
+
+  MemoryReservation::RemapDescriptor descs[] = {
+      {0, 0, 100, nullptr, /*remap_required=*/true},
+  };
+  EXPECT_THAT(res.Remap(absl::MakeSpan(descs), std::move(mapping)),
               StatusIs(absl::StatusCode::kInvalidArgument));
   EXPECT_EQ(CountKind(res.calls, "Map"), 0);
   EXPECT_EQ(CountKind(res.calls, "SetAccess"), 0);
+}
+
+// On failure, Remap consumes the prior mapping and unmaps all slices so callers
+// can recover by building a fresh full mapping.
+TEST(MemoryReservationRemap, FailureUnmapsAllSlices) {
+  CountingReservation res;
+  TagAllocation a, b, c, a2, c2;
+
+  MemoryReservation::MappingDescriptor first[] = {
+      {0, 0, 100, &a},
+      {100, 0, 200, &b},
+      {300, 0, 50, &c},
+  };
+  TF_ASSERT_OK_AND_ASSIGN(auto mapping, res.MapTo(absl::MakeSpan(first)));
+  res.calls.clear();
+  res.fail_set_access = true;
+
+  MemoryReservation::RemapDescriptor second[] = {
+      {0, 0, 100, &a2, /*remap_required=*/true},
+      {100, 0, 200, &b, /*remap_required=*/false},
+      {300, 0, 50, &c2, /*remap_required=*/true},
+  };
+  EXPECT_THAT(res.Remap(absl::MakeSpan(second), std::move(mapping)),
+              StatusIs(absl::StatusCode::kInternal));
+
+  std::vector<std::pair<size_t, size_t>> unmap_ranges;
+  for (const auto& call : res.calls) {
+    if (std::string_view(call.kind) == "UnMap") {
+      unmap_ranges.emplace_back(call.reservation_offset, call.size);
+    }
+  }
+  EXPECT_THAT(unmap_ranges, ::testing::Contains(::testing::Pair(0u, 100u)));
+  EXPECT_THAT(unmap_ranges, ::testing::Contains(::testing::Pair(100u, 200u)));
+  EXPECT_THAT(unmap_ranges, ::testing::Contains(::testing::Pair(300u, 50u)));
 }
 
 }  // namespace

@@ -286,20 +286,17 @@ class GpuExecutable : public Executable {
     // unmap happens at executable destruction (ScopedMapping dtor).
     std::optional<se::MemoryReservation::ScopedMapping> scoped_mapping;
 
-    // Per-allocation mapping state from the most recent step. Sorted by
-    // reservation_offset (matches command_buffer_allocation_indexes_
-    // iteration order). On the next step, Remap compares each entry's
-    // physical_allocation_id against the freshly-resolved handle's
-    // unique_id() to decide whether the slice can be skipped. We store
-    // the unique_id rather than the raw pointer to avoid ABA problems
-    // when the VMM allocator frees and reallocates a MemoryAllocation
-    // at the same heap address. Empty before the first execution.
+    // Per-allocation mapping state from the most recent successful step.
+    // Sorted by reservation_offset (matches command_buffer_allocation_indexes_
+    // iteration order). On the next step, allocation_id and mapping_size are
+    // compared against the current VMM allocator entry to decide whether the
+    // slice can be skipped. Empty before the first execution or after a remap
+    // failure that invalidates the VA range mapping.
     struct AllocationMappingState {
       BufferAllocation::Index alloc_index;
       size_t reservation_offset;
       size_t mapping_size;
-      se::MemoryAllocation* physical_allocation;
-      uint64_t physical_allocation_id;  // MemoryAllocation::unique_id()
+      uint64_t allocation_id;
     };
     std::vector<AllocationMappingState> last_mapping_state;
   };

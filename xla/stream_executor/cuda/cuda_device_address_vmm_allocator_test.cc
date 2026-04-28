@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -92,6 +93,14 @@ TEST_F(DeviceAddressVmmAllocatorTest, AllocateAndDeallocate) {
   EXPECT_NE(
       allocator->GetRawAllocation(executor_->device_ordinal(), *scoped_address),
       nullptr);
+  std::optional<DeviceAddressVmmAllocator::AllocationInfo> info =
+      allocator->GetAllocationInfo(executor_->device_ordinal(),
+                                   *scoped_address);
+  ASSERT_TRUE(info.has_value());
+  EXPECT_EQ(info->allocation,
+            allocator->GetRawAllocation(executor_->device_ordinal(),
+                                        *scoped_address));
+  EXPECT_GE(info->mapped_size, scoped_address->size());
   EXPECT_NE(
       allocator->GetReservation(executor_->device_ordinal(), *scoped_address),
       nullptr);
@@ -284,6 +293,40 @@ TEST_F(DeviceAddressVmmAllocatorTest,
 
   // Sync to drain all pending GPU timeline writes before the allocator
   // is destroyed.
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       AllocationInfoIdStableAcrossPendingDeallocationReuse) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  constexpr uint64_t kSize = 1024;
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr1, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
+                                      static_cast<int64_t>(MemorySpace::kP2P)));
+  std::optional<DeviceAddressVmmAllocator::AllocationInfo> info1 =
+      allocator->GetAllocationInfo(ordinal, *addr1);
+  ASSERT_TRUE(info1.has_value());
+
+  DeviceAddressBase raw = addr1.cref();
+  addr1.Release();
+  ASSERT_THAT(allocator->Deallocate(ordinal, raw), IsOk());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr2, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
+                                      static_cast<int64_t>(MemorySpace::kP2P)));
+  std::optional<DeviceAddressVmmAllocator::AllocationInfo> info2 =
+      allocator->GetAllocationInfo(ordinal, *addr2);
+  ASSERT_TRUE(info2.has_value());
+
+  EXPECT_EQ(addr2->opaque(), raw.opaque());
+  EXPECT_EQ(info2->allocation_id, info1->allocation_id);
+  EXPECT_EQ(info2->allocation, info1->allocation);
+
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 

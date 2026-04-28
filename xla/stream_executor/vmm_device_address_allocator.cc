@@ -211,6 +211,7 @@ void DeviceAddressVmmAllocator::DoDeallocate(PerDeviceState& state,
   state.scoped_mappings.erase(mem.opaque());
   // Erase the reservation next: its destructor frees the virtual address range.
   state.reservations.erase(mem.opaque());
+  state.allocation_ids.erase(mem.opaque());
   // Erase the raw allocation last: its destructor releases the physical memory.
   state.raw_allocations.erase(mem.opaque());
 
@@ -247,7 +248,9 @@ absl::StatusOr<DeviceAddressBase> DeviceAddressVmmAllocator::AllocateWithBudget(
 
   // Store tracking entries. Destruction order matters: scoped_mappings must
   // be erased before reservations, which must be erased before raw_allocations.
+  const uint64_t allocation_id = state.next_allocation_id++;
   state.raw_allocations.emplace(va_ptr, std::move(raw_alloc));
+  state.allocation_ids.emplace(va_ptr, allocation_id);
   state.reservations.emplace(va_ptr, std::move(reservation));
   state.scoped_mappings.emplace(va_ptr, std::move(scoped_mapping));
 
@@ -396,16 +399,29 @@ absl::StatusOr<StreamExecutor*> DeviceAddressVmmAllocator::GetStreamExecutor(
 
 MemoryAllocation* DeviceAddressVmmAllocator::GetRawAllocation(
     int device_ordinal, DeviceAddressBase addr) const {
+  std::optional<AllocationInfo> info = GetAllocationInfo(device_ordinal, addr);
+  return info.has_value() ? info->allocation : nullptr;
+}
+
+std::optional<DeviceAddressVmmAllocator::AllocationInfo>
+DeviceAddressVmmAllocator::GetAllocationInfo(int device_ordinal,
+                                             DeviceAddressBase addr) const {
   PerDeviceState* state = GetPerDeviceState(device_ordinal);
   if (state == nullptr) {
-    return nullptr;
+    return std::nullopt;
   }
   absl::MutexLock lock(state->mu);
   auto it = state->raw_allocations.find(addr.opaque());
   if (it == state->raw_allocations.end()) {
-    return nullptr;
+    return std::nullopt;
   }
-  return it->second.get();
+  auto id_it = state->allocation_ids.find(addr.opaque());
+  if (id_it == state->allocation_ids.end()) {
+    return std::nullopt;
+  }
+  return AllocationInfo{/*allocation=*/it->second.get(),
+                        /*allocation_id=*/id_it->second,
+                        /*mapped_size=*/it->second->address().size()};
 }
 
 MemoryReservation* DeviceAddressVmmAllocator::GetReservation(

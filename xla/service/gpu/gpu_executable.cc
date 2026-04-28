@@ -1554,16 +1554,22 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
                              module_name_);
     });
 
-    // Build remap descriptors in reservation_offset order, parallel to
+    // Build mapping descriptors in reservation_offset order, parallel to
     // command_buffer_allocation_indexes_ (btree_set iteration order). The
     // i-th descriptor describes the same allocation as the i-th entry of
     // last_mapping_state from the previous step (if it exists).
+    std::vector<se::MemoryReservation::MappingDescriptor> mapping_descriptors;
+    mapping_descriptors.reserve(command_buffer_allocation_indexes_.size());
+
     std::vector<se::MemoryReservation::RemapDescriptor> remap_descriptors;
     remap_descriptors.reserve(command_buffer_allocation_indexes_.size());
 
     std::vector<VaRanges::AllocationMappingState> new_mapping_state;
     new_mapping_state.reserve(command_buffer_allocation_indexes_.size());
 
+    if (!va_ranges->scoped_mapping.has_value()) {
+      va_ranges->last_mapping_state.clear();
+    }
     const bool have_prev_state = !va_ranges->last_mapping_state.empty();
     if (have_prev_state) {
       DCHECK_EQ(va_ranges->last_mapping_state.size(),
@@ -1584,31 +1590,32 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
         return Internal("Command buffer allocation %d has null address", i);
       }
 
-      se::MemoryAllocation* raw_alloc = vmm_allocator->GetRawAllocation(
-          executor->device_ordinal(), original_buffer);
-      if (raw_alloc == nullptr) {
+      std::optional<se::DeviceAddressVmmAllocator::AllocationInfo>
+          allocation_info = vmm_allocator->GetAllocationInfo(
+              executor->device_ordinal(), original_buffer);
+      if (!allocation_info.has_value()) {
         return Internal(
             "No raw allocation found for command buffer allocation %d", i);
       }
-      const uint64_t mapping_size = raw_alloc->address().size();
+      se::MemoryAllocation* raw_alloc = allocation_info->allocation;
+      const uint64_t mapping_size = allocation_info->mapped_size;
 
       // allocation_va_offsets was built from command_buffer_allocation_indexes_
       // (the same set we're iterating), so the key is guaranteed to exist.
       const uint64_t va_offset = allocation_va_offsets[i];
 
       // Determine whether this slice's physical allocation changed since
-      // the prior step. Compare by unique_id rather than raw pointer to
-      // avoid ABA problems (the VMM allocator may free and reallocate a
-      // MemoryAllocation at the same heap address). A size mismatch also
+      // the prior step. Compare by the VMM allocator's stable allocation_id
+      // rather than raw pointer to avoid ABA problems. A size mismatch also
       // counts as a change.
-      se::MemoryAllocation* old_alloc = nullptr;
+      uint64_t old_allocation_id = 0;
       bool changed = true;
       if (have_prev_state) {
         const auto& prev = va_ranges->last_mapping_state[prev_idx];
         DCHECK_EQ(prev.alloc_index, i);
         DCHECK_EQ(prev.reservation_offset, va_offset);
-        old_alloc = prev.physical_allocation;
-        changed = prev.physical_allocation_id != raw_alloc->unique_id() ||
+        old_allocation_id = prev.allocation_id;
+        changed = prev.allocation_id != allocation_info->allocation_id ||
                   prev.mapping_size != mapping_size;
       }
       ++prev_idx;
@@ -1618,30 +1625,31 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
         }
         XLA_VLOG_DEVICE(3, executor->device_ordinal()) << absl::StreamFormat(
             "VA remapping remap: allocation[%d] type=%s size=%d "
-            "handle %p -> %p",
+            "id %d -> %d",
             i,
             buffer_assignment_ != nullptr
                 ? AllocationTypeLabel(buffer_assignment_->GetAllocation(i))
                 : absl::string_view("unknown"),
-            mapping_size, old_alloc, raw_alloc);
+            mapping_size, old_allocation_id, allocation_info->allocation_id);
       } else {
         ++skip_count;
         XLA_VLOG_DEVICE(3, executor->device_ordinal()) << absl::StreamFormat(
-            "VA remapping skip: allocation[%d] type=%s size=%d handle=%p "
+            "VA remapping skip: allocation[%d] type=%s size=%d id=%d "
             "(unchanged)",
             i,
             buffer_assignment_ != nullptr
                 ? AllocationTypeLabel(buffer_assignment_->GetAllocation(i))
                 : absl::string_view("unknown"),
-            mapping_size, raw_alloc);
+            mapping_size, allocation_info->allocation_id);
       }
       prev_was_changed = changed;
 
+      mapping_descriptors.push_back(
+          {va_offset, /*allocation_offset=*/0, mapping_size, raw_alloc});
       remap_descriptors.push_back({va_offset, /*allocation_offset=*/0,
-                                   mapping_size, raw_alloc, old_alloc,
-                                   changed});
+                                   mapping_size, raw_alloc, changed});
       new_mapping_state.push_back(
-          {i, va_offset, mapping_size, raw_alloc, raw_alloc->unique_id()});
+          {i, va_offset, mapping_size, allocation_info->allocation_id});
     }
 
     // Build mapped_buffers in buffer_allocations index order. For
@@ -1666,18 +1674,30 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
           se::DeviceAddressBase(sub_range_ptr, original_buffer.size()));
     }
 
-    // Apply the remap. For first-call (have_prev_state == false), all
-    // old_alloc values are nullptr so Remap behaves like MapTo. On
-    // subsequent calls, only changed slices incur driver round-trips; the
-    // existing ScopedMapping is consumed (without unmapping) and replaced.
-    if (!remap_descriptors.empty()) {
-      TF_ASSIGN_OR_RETURN(se::MemoryReservation::ScopedMapping scoped_mapping,
-                          va_ranges->va_reservation->Remap(
-                              absl::MakeSpan(remap_descriptors),
-                              std::move(va_ranges->scoped_mapping)));
-      va_ranges->scoped_mapping = std::move(scoped_mapping);
+    // Apply the mapping. The first successful execution uses MapTo; subsequent
+    // executions transfer the existing ScopedMapping through Remap so only
+    // changed slices incur driver round-trips.
+    if (!mapping_descriptors.empty()) {
+      if (!va_ranges->scoped_mapping.has_value()) {
+        TF_ASSIGN_OR_RETURN(se::MemoryReservation::ScopedMapping scoped_mapping,
+                            va_ranges->va_reservation->MapTo(
+                                absl::MakeSpan(mapping_descriptors)));
+        va_ranges->scoped_mapping = std::move(scoped_mapping);
+      } else {
+        std::optional<se::MemoryReservation::ScopedMapping> existing_mapping =
+            std::move(va_ranges->scoped_mapping);
+        va_ranges->scoped_mapping.reset();
+        absl::StatusOr<se::MemoryReservation::ScopedMapping> remap_result =
+            va_ranges->va_reservation->Remap(absl::MakeSpan(remap_descriptors),
+                                             std::move(*existing_mapping));
+        if (!remap_result.ok()) {
+          va_ranges->last_mapping_state.clear();
+          return remap_result.status();
+        }
+        va_ranges->scoped_mapping = std::move(*remap_result);
+      }
+      va_ranges->last_mapping_state = std::move(new_mapping_state);
     }
-    va_ranges->last_mapping_state = std::move(new_mapping_state);
 
     XLA_VLOG_DEVICE(3, executor->device_ordinal()) << absl::StreamFormat(
         "VA remapping: %d/%d allocations skipped, %d remap runs coalesced",
