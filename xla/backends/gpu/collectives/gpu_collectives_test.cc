@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
 #include "xla/runtime/device_id.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_allocator.h"
@@ -461,9 +462,14 @@ TEST(GpuCollectivesTest, PutAndWaitSignal) {
 
   ASSERT_OK_AND_ASSIGN(std::vector<se::StreamExecutor*> executors,
                        CreateExecutors(platform, 2));
-
   if (!executors[0]->CanEnablePeerAccessTo(executors[1])) {
     GTEST_SKIP() << "Test requires peer access between devices";
+  }
+  if (!executors[0]
+           ->GetDeviceDescription()
+           .cuda_compute_capability()
+           .IsAtLeastHopper()) {
+    GTEST_SKIP() << "Test requires at least Hopper architecture";
   }
 
   GpuCollectives* collectives = GpuCollectives::Default("GPU");

@@ -312,6 +312,7 @@ xla_cc_test(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/cuda:cuda_platform",
         "//xla/tsl/concurrency:executor",
         "//xla/tsl/platform:env",
