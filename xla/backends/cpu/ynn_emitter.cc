@@ -287,7 +287,7 @@ absl::StatusOr<uint32_t> DefineSliceOp(ynn_subgraph_t subgraph,
   const std::vector<int64_t>& limits = instr->slice_limits();
   const std::vector<int64_t>& strides = instr->slice_strides();
 
-  int rank = input->shape().dimensions_size();
+  int rank = input->shape().dimensions().size();
   std::vector<int32_t> axes(rank);
   absl::c_iota(axes, 0);
 
