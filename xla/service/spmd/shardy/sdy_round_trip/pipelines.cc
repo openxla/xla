@@ -109,7 +109,6 @@ void addSdyRoundTripImportPipeline(mlir::OpPassManager& pm,
           .setRegionSimplificationLevel(mlir::GreedySimplifyRegionLevel::Normal)
           .enableFolding(false)
           .enableConstantCSE(false)));
-  pm.addPass(mlir::sdy::createFlattenCallGraphPass());
 }
 
 namespace {

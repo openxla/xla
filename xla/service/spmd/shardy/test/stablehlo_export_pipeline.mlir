@@ -786,14 +786,18 @@ sdy.mesh @mesh = <["a"=2, "b"=2, "c"=2]>
 
 // CHECK-LABEL: func @calls_with_same_original_same_different_shardings_manual_computations
 // CHECK-NEXT:    %[[CALL0:.*]] = call @foo(%arg0)
-// CHECK-NEXT:    %[[CALL1:.*]] = call @foo(%arg0)
+// CHECK-NEXT:    %[[CALL1:.*]] = call @foo_0(%arg0)
 // CHECK-NEXT:    return %[[CALL0]], %[[CALL1]]
 // CHECK-LABEL: func private @foo(
 // CHECK:         call @xla.sdy.inlinable_manual_computation_body(
 // CHECK:         return
+// CHECK-LABEL: func private @foo_0(
+// CHECK:         call @xla.sdy.inlinable_manual_computation_body_0(
+// CHECK:         return
 // CHECK-LABEL: func private @xla.sdy.inlinable_manual_computation_body(
 // CHECK:         return
-// CHECK-NOT:   @xla.sdy.inlinable_manual_computation_body_0(
+// CHECK-LABEL: func private @xla.sdy.inlinable_manual_computation_body_0(
+// CHECK:         return
 func.func @calls_with_same_original_same_different_shardings_manual_computations(%arg0: tensor<8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"c"}]>}) -> (tensor<8xf32>, tensor<8xf32>) {
   %0 = call @foo(%arg0) : (tensor<8xf32>) -> tensor<8xf32>
   %1 = call @foo_0(%arg0) : (tensor<8xf32>) -> tensor<8xf32>
@@ -821,8 +825,7 @@ sdy.mesh @mesh = <["a"=2, "b"=2, "c"=2]>
 
 // CHECK-LABEL: func @calls_with_same_original_with_different_shardings_manual_computations
 // CHECK-NEXT:    %[[CALL0:.*]] = call @foo(%arg0)
-// CHECK-NEXT:    %[[COPY:.*]] = mhlo.copy %arg0
-// CHECK-NEXT:    %[[CALL1:.*]] = call @foo_0(%[[COPY]])
+// CHECK-NEXT:    %[[CALL1:.*]] = call @foo_0(%arg0)
 // CHECK-NEXT:    return %[[CALL0]], %[[CALL1]]
 // CHECK-LABEL: func private @foo(
 // CHECK:         call @xla.sdy.inlinable_manual_computation_body(
@@ -861,10 +864,8 @@ sdy.mesh @mesh = <["a"=2, "b"=2, "c"=2]>
 
 // CHECK-LABEL: func @calls_with_same_original_with_different_shardings_manual_computations_twice_calls_to_unsharded
 // CHECK-NEXT:    %[[CALL0:.*]] = call @foo(%arg0)
-// CHECK-NEXT:    %[[COPY0:.*]] = mhlo.copy %arg0
-// CHECK-NEXT:    %[[CALL1:.*]] = call @foo_0(%[[COPY0]])
-// CHECK-NEXT:    %[[COPY1:.*]] = mhlo.copy %arg0
-// CHECK-NEXT:    %[[CALL2:.*]] = call @foo_0(%[[COPY1]])
+// CHECK-NEXT:    %[[CALL1:.*]] = call @foo_0(%arg0)
+// CHECK-NEXT:    %[[CALL2:.*]] = call @foo_0(%arg0)
 // CHECK-NEXT:    return %[[CALL0]], %[[CALL1]]
 // CHECK-LABEL: func private @foo(
 // CHECK:         call @xla.sdy.inlinable_manual_computation_body(
