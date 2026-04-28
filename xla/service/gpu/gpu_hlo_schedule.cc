@@ -500,14 +500,15 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
         if (sol.ok()) {
           base_estimator = std::move(*sol);
           VLOG(1) << "PGLE fallback: using SolLatencyEstimator";
+        } else {
+          base_estimator = std::make_unique<GpuLatencyEstimator>(pointer_size);
+          VLOG(1) << "PGLE fallback: using GpuLatencyEstimator (T-shirt sizes),"
+                  << " SolLatencyEstimator creation failed: " << sol.status();
         }
       }
     }
     if (base_estimator == nullptr) {
-      base_estimator =
-          gpu_latency_estimator
-              ? std::move(gpu_latency_estimator)
-              : std::make_unique<GpuLatencyEstimator>(pointer_size);
+      base_estimator = std::move(gpu_latency_estimator);
       VLOG(1) << "PGLE fallback: using GpuLatencyEstimator (T-shirt sizes)";
     }
     auto aggregator = std::make_unique<GPUProfileStatisticsAggregator>();
