@@ -2110,7 +2110,6 @@ xla_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/collectives:gpu_clique_key",
-        "//xla/backends/gpu/runtime:collective_execution",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:reduction_kind",
         "//xla/hlo/ir:collective_op_group_mode",
