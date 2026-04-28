@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_MEMORY_ALLOCATION_H_
 #define XLA_STREAM_EXECUTOR_MEMORY_ALLOCATION_H_
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 
@@ -37,8 +38,15 @@ namespace stream_executor {
 // mapped to the same MemoryAllocation.
 class MemoryAllocation {
  public:
-  MemoryAllocation() = default;
+  MemoryAllocation() : unique_id_(next_id_.fetch_add(1)) {}
   virtual ~MemoryAllocation() = default;
+
+  // Returns a process-wide unique ID for this allocation instance. Two
+  // distinct MemoryAllocation objects are guaranteed to have different IDs
+  // even if one is destroyed and a new one is allocated at the same C++
+  // heap address. Use this for identity comparison instead of raw
+  // pointers to avoid ABA problems.
+  uint64_t unique_id() const { return unique_id_; }
 
   MemoryAllocation(MemoryAllocation&&) = delete;
   MemoryAllocation& operator=(MemoryAllocation&&) = delete;
@@ -62,6 +70,10 @@ class MemoryAllocation {
 
   ABSL_DEPRECATE_AND_INLINE()
   uint64_t size() const { return address().size(); }
+
+ private:
+  static std::atomic<uint64_t> next_id_;
+  const uint64_t unique_id_;
 };
 
 }  // namespace stream_executor

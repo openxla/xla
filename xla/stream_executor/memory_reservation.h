@@ -114,21 +114,25 @@ class MemoryReservation {
     size_t size;
     MemoryAllocation* new_allocation;  // current physical handle, never null
     MemoryAllocation* old_allocation;  // previous handle, null if first time
+    // Whether this slice needs to be remapped. When false the existing
+    // mapping is preserved (no driver calls). The caller must determine
+    // this via a stable identity (e.g. MemoryAllocation::unique_id())
+    // rather than raw pointer comparison to avoid ABA issues.
+    bool changed;
   };
 
   // Re-maps a contiguous reservation range described by `descriptors`. For
-  // each descriptor where `new_allocation == old_allocation` and
-  // `old_allocation != nullptr`, the existing mapping is preserved (no
-  // UnMap/Map/SetAccess driver calls are issued). For other descriptors the
-  // slice is unmapped (if previously mapped) and re-mapped with the new
-  // allocation; SetAccess is invoked once per maximal run of consecutive
-  // changed descriptors. `existing` must be the ScopedMapping returned by
-  // the prior Remap/MapTo call covering the same range, or std::nullopt on
-  // first use; when provided it is consumed without invoking its
-  // destructor (the per-slice unmaps above replace the full-range unmap
-  // the destructor would have performed). On first use (existing ==
-  // std::nullopt and every old_allocation == nullptr), Remap is
-  // semantically equivalent to MapTo over the same contiguous range.
+  // each descriptor where `changed` is false, the existing mapping is
+  // preserved (no UnMap/Map/SetAccess driver calls are issued). For other
+  // descriptors the slice is unmapped (if previously mapped) and re-mapped
+  // with the new allocation; SetAccess is invoked once per maximal run of
+  // consecutive changed descriptors. `existing` must be the ScopedMapping
+  // returned by the prior Remap/MapTo call covering the same range, or
+  // std::nullopt on first use; when provided it is consumed without
+  // invoking its destructor (the per-slice unmaps above replace the
+  // full-range unmap the destructor would have performed). On first use
+  // (existing == std::nullopt and every old_allocation == nullptr), Remap
+  // is semantically equivalent to MapTo over the same contiguous range.
   absl::StatusOr<ScopedMapping> Remap(
       absl::Span<const RemapDescriptor> descriptors,
       std::optional<ScopedMapping> existing);

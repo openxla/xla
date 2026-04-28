@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstddef>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/log.h"
@@ -171,6 +172,14 @@ absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::Remap(
   }
   const size_t total_size = expected_offset - start_offset;
 
+  // Track per-slice mapped state for cleanup on failure. A slice is
+  // "mapped" if it currently has a VA->physical mapping in the driver
+  // (either retained from the prior step or freshly created below).
+  std::vector<bool> slice_mapped(descriptors.size());
+  for (size_t k = 0; k < descriptors.size(); ++k) {
+    slice_mapped[k] = (descriptors[k].old_allocation != nullptr);
+  }
+
   // Detach the prior ScopedMapping without invoking its destructor; the
   // per-slice unmaps below replace the full-range unmap it would do.
   if (existing.has_value()) {
@@ -178,37 +187,48 @@ absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::Remap(
     existing.reset();
   }
 
+  // On failure, unmap every slice that is still mapped so the reservation
+  // is left in a clean (fully unmapped) state rather than partially mapped
+  // with no RAII owner.
+  auto cleanup = absl::MakeCleanup([&] {
+    for (size_t k = 0; k < descriptors.size(); ++k) {
+      if (slice_mapped[k]) {
+        absl::Status s =
+            UnMap(descriptors[k].reservation_offset, descriptors[k].size);
+        if (!s.ok()) {
+          LOG(ERROR) << "Remap: cleanup failed to unmap slice at offset "
+                     << descriptors[k].reservation_offset << ": "
+                     << s.message();
+        }
+      }
+    }
+  });
+
   // Walk descriptors in order, processing maximal contiguous runs of slices
   // whose physical handle has changed. For each run we issue per-slice
   // UnMap (only where there was a prior mapping) and per-slice Map, then a
   // single SetAccess covering the whole run.
   size_t i = 0;
   while (i < descriptors.size()) {
-    const auto& d = descriptors[i];
-    const bool changed =
-        d.old_allocation == nullptr || d.new_allocation != d.old_allocation;
-    if (!changed) {
+    if (!descriptors[i].changed) {
       ++i;
       continue;
     }
     // Coalesce: extend this run as long as the next descriptor is also
     // "changed". Map/UnMap stay per-slice (cuMemMap requires per-handle
     // calls); SetAccess is the expensive call to coalesce.
-    const size_t run_start = d.reservation_offset;
+    const size_t run_start = descriptors[i].reservation_offset;
     size_t run_size = 0;
     size_t j = i;
-    while (j < descriptors.size()) {
+    while (j < descriptors.size() && descriptors[j].changed) {
       const auto& dj = descriptors[j];
-      const bool j_changed = dj.old_allocation == nullptr ||
-                             dj.new_allocation != dj.old_allocation;
-      if (!j_changed) {
-        break;
-      }
       if (dj.old_allocation != nullptr) {
         TF_RETURN_IF_ERROR(UnMap(dj.reservation_offset, dj.size));
+        slice_mapped[j] = false;
       }
       TF_RETURN_IF_ERROR(Map(dj.reservation_offset, dj.allocation_offset,
                              dj.size, *dj.new_allocation));
+      slice_mapped[j] = true;
       run_size += dj.size;
       ++j;
     }
@@ -216,6 +236,7 @@ absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::Remap(
     i = j;
   }
 
+  std::move(cleanup).Cancel();
   return ScopedMapping(this, start_offset, total_size);
 }
 

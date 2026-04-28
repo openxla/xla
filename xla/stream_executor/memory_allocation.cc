@@ -15,11 +15,15 @@ limitations under the License.
 
 #include "xla/stream_executor/memory_allocation.h"
 
+#include <atomic>
+#include <cstdint>
 #include <string>
 
 #include "absl/strings/str_format.h"
 
 namespace stream_executor {
+
+std::atomic<uint64_t> MemoryAllocation::next_id_{0};
 
 std::string MemoryAllocation::ToString() const {
   return absl::StrFormat("MemoryAllocation[ptr=%p, size=%d]",

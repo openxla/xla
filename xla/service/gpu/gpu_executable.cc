@@ -1592,32 +1592,26 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
       }
       const uint64_t mapping_size = raw_alloc->address().size();
 
-      auto offset_it = allocation_va_offsets.find(i);
-      if (offset_it == allocation_va_offsets.end()) {
-        return Internal(
-            "Command buffer allocation %d missing from allocation_va_offsets",
-            i);
-      }
-      const uint64_t va_offset = offset_it->second;
+      // allocation_va_offsets was built from command_buffer_allocation_indexes_
+      // (the same set we're iterating), so the key is guaranteed to exist.
+      const uint64_t va_offset = allocation_va_offsets[i];
 
+      // Determine whether this slice's physical allocation changed since
+      // the prior step. Compare by unique_id rather than raw pointer to
+      // avoid ABA problems (the VMM allocator may free and reallocate a
+      // MemoryAllocation at the same heap address). A size mismatch also
+      // counts as a change.
       se::MemoryAllocation* old_alloc = nullptr;
+      bool changed = true;
       if (have_prev_state) {
         const auto& prev = va_ranges->last_mapping_state[prev_idx];
         DCHECK_EQ(prev.alloc_index, i);
         DCHECK_EQ(prev.reservation_offset, va_offset);
-        // Treat a size mismatch as a change (forces unmap+map at the new
-        // size). This is defensive; in practice the granularity-rounded
-        // size is stable for a given allocation index.
-        if (prev.physical_allocation == raw_alloc &&
-            prev.mapping_size == mapping_size) {
-          old_alloc = raw_alloc;
-        } else {
-          old_alloc = prev.physical_allocation;
-        }
+        old_alloc = prev.physical_allocation;
+        changed = prev.physical_allocation_id != raw_alloc->unique_id() ||
+                  prev.mapping_size != mapping_size;
       }
       ++prev_idx;
-
-      const bool changed = (old_alloc != raw_alloc);
       if (changed) {
         if (!prev_was_changed) {
           ++run_count;
@@ -1644,8 +1638,10 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
       prev_was_changed = changed;
 
       remap_descriptors.push_back({va_offset, /*allocation_offset=*/0,
-                                   mapping_size, raw_alloc, old_alloc});
-      new_mapping_state.push_back({i, va_offset, mapping_size, raw_alloc});
+                                   mapping_size, raw_alloc, old_alloc,
+                                   changed});
+      new_mapping_state.push_back(
+          {i, va_offset, mapping_size, raw_alloc, raw_alloc->unique_id()});
     }
 
     // Build mapped_buffers in buffer_allocations index order. For

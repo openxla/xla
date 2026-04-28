@@ -254,9 +254,9 @@ TEST(MemoryReservationRemap, FirstCallBehavesLikeMapTo) {
   TagAllocation a, b, c;
 
   MemoryReservation::RemapDescriptor descs[] = {
-      {0, 0, 100, &a, nullptr},
-      {100, 0, 200, &b, nullptr},
-      {300, 0, 50, &c, nullptr},
+      {0, 0, 100, &a, nullptr, /*changed=*/true},
+      {100, 0, 200, &b, nullptr, /*changed=*/true},
+      {300, 0, 50, &c, nullptr, /*changed=*/true},
   };
 
   TF_ASSERT_OK_AND_ASSIGN(auto mapping,
@@ -284,18 +284,18 @@ TEST(MemoryReservationRemap, AllUnchangedNoDriverCalls) {
   TagAllocation a, b, c;
 
   MemoryReservation::RemapDescriptor first[] = {
-      {0, 0, 100, &a, nullptr},
-      {100, 0, 200, &b, nullptr},
-      {300, 0, 50, &c, nullptr},
+      {0, 0, 100, &a, nullptr, /*changed=*/true},
+      {100, 0, 200, &b, nullptr, /*changed=*/true},
+      {300, 0, 50, &c, nullptr, /*changed=*/true},
   };
   TF_ASSERT_OK_AND_ASSIGN(auto mapping1,
                           res.Remap(absl::MakeSpan(first), std::nullopt));
   res.calls.clear();
 
   MemoryReservation::RemapDescriptor second[] = {
-      {0, 0, 100, &a, &a},
-      {100, 0, 200, &b, &b},
-      {300, 0, 50, &c, &c},
+      {0, 0, 100, &a, &a, /*changed=*/false},
+      {100, 0, 200, &b, &b, /*changed=*/false},
+      {300, 0, 50, &c, &c, /*changed=*/false},
   };
   TF_ASSERT_OK_AND_ASSIGN(
       auto mapping2, res.Remap(absl::MakeSpan(second), std::move(mapping1)));
@@ -313,18 +313,18 @@ TEST(MemoryReservationRemap, PartialChangeSplitsRuns) {
   TagAllocation a, b, c, a2, c2;
 
   MemoryReservation::RemapDescriptor first[] = {
-      {0, 0, 100, &a, nullptr},
-      {100, 0, 200, &b, nullptr},
-      {300, 0, 50, &c, nullptr},
+      {0, 0, 100, &a, nullptr, /*changed=*/true},
+      {100, 0, 200, &b, nullptr, /*changed=*/true},
+      {300, 0, 50, &c, nullptr, /*changed=*/true},
   };
   TF_ASSERT_OK_AND_ASSIGN(auto mapping1,
                           res.Remap(absl::MakeSpan(first), std::nullopt));
   res.calls.clear();
 
   MemoryReservation::RemapDescriptor second[] = {
-      {0, 0, 100, &a2, &a},   // changed
-      {100, 0, 200, &b, &b},  // unchanged
-      {300, 0, 50, &c2, &c},  // changed
+      {0, 0, 100, &a2, &a, /*changed=*/true},    // changed
+      {100, 0, 200, &b, &b, /*changed=*/false},  // unchanged
+      {300, 0, 50, &c2, &c, /*changed=*/true},   // changed
   };
   TF_ASSERT_OK_AND_ASSIGN(
       auto mapping2, res.Remap(absl::MakeSpan(second), std::move(mapping1)));
@@ -354,18 +354,18 @@ TEST(MemoryReservationRemap, AdjacentChangesSingleSetAccess) {
   TagAllocation a, b, c, a2, b2, c2;
 
   MemoryReservation::RemapDescriptor first[] = {
-      {0, 0, 100, &a, nullptr},
-      {100, 0, 200, &b, nullptr},
-      {300, 0, 50, &c, nullptr},
+      {0, 0, 100, &a, nullptr, /*changed=*/true},
+      {100, 0, 200, &b, nullptr, /*changed=*/true},
+      {300, 0, 50, &c, nullptr, /*changed=*/true},
   };
   TF_ASSERT_OK_AND_ASSIGN(auto mapping1,
                           res.Remap(absl::MakeSpan(first), std::nullopt));
   res.calls.clear();
 
   MemoryReservation::RemapDescriptor second[] = {
-      {0, 0, 100, &a2, &a},
-      {100, 0, 200, &b2, &b},
-      {300, 0, 50, &c2, &c},
+      {0, 0, 100, &a2, &a, /*changed=*/true},
+      {100, 0, 200, &b2, &b, /*changed=*/true},
+      {300, 0, 50, &c2, &c, /*changed=*/true},
   };
   TF_ASSERT_OK_AND_ASSIGN(
       auto mapping2, res.Remap(absl::MakeSpan(second), std::move(mapping1)));
@@ -387,8 +387,8 @@ TEST(MemoryReservationRemap, NonContiguousIsRejected) {
   TagAllocation a, b;
 
   MemoryReservation::RemapDescriptor descs[] = {
-      {0, 0, 100, &a, nullptr},
-      {200, 0, 100, &b, nullptr},  // gap at [100, 200)
+      {0, 0, 100, &a, nullptr, /*changed=*/true},
+      {200, 0, 100, &b, nullptr, /*changed=*/true},  // gap at [100, 200)
   };
   EXPECT_THAT(res.Remap(absl::MakeSpan(descs), std::nullopt),
               StatusIs(absl::StatusCode::kInvalidArgument));
@@ -398,7 +398,7 @@ TEST(MemoryReservationRemap, NonContiguousIsRejected) {
 TEST(MemoryReservationRemap, NullNewAllocationIsRejected) {
   CountingReservation res;
   MemoryReservation::RemapDescriptor descs[] = {
-      {0, 0, 100, nullptr, nullptr},
+      {0, 0, 100, nullptr, nullptr, /*changed=*/true},
   };
   EXPECT_THAT(res.Remap(absl::MakeSpan(descs), std::nullopt),
               StatusIs(absl::StatusCode::kInvalidArgument));
