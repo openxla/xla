@@ -47,3 +47,8 @@ sh_binary(
     name = "parallel_gpu_execute",
     srcs = ["parallel_gpu_execute.sh"],
 )
+
+sh_binary(
+    name = "run_clang_tidy",
+    srcs = ["run_clang_tidy.sh"],
+)

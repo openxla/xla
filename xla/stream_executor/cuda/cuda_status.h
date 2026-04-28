@@ -24,6 +24,8 @@ limitations under the License.
 
 namespace stream_executor::cuda {
 
+using x = std::optional<std::string>;
+
 namespace internal {
 // Helper method to handle the slow path of ToStatus.  Assumes a non-successful
 // result code.

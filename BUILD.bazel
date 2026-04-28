@@ -13,6 +13,16 @@ license(
     license_kinds = ["@rules_license//licenses/spdx:Apache-2.0"],
 )
 
+genrule(
+    name = "clang_tidy_bin",
+    srcs = ["@llvm18_linux_x86_64//:all"],
+    outs = ["clang-tidy"],
+    # TODO: When upstream rules expose clang-tidy use that instead of explicitly creating one.
+    cmd = "cp external/llvm18_linux_x86_64/bin/clang-tidy $@",
+    executable = True,
+    visibility = ["//visibility:public"],
+)
+
 filegroup(
     name = "clang_tidy_config",
     srcs = [".clang-tidy"],
