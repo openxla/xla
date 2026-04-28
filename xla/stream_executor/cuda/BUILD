@@ -1258,6 +1258,50 @@ xla_test(
 )
 
 cc_library(
+    name = "cuda_unified_allocator",
+    srcs = ["cuda_unified_allocator.cc"],
+    hdrs = ["cuda_unified_allocator.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        ":cuda_status",
+        "//xla:util",
+        "//xla/stream_executor:activate_context",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:memory_allocation",
+        "//xla/stream_executor:memory_allocator",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@tsl//tsl/platform:numbers",
+    ],
+)
+
+xla_test(
+    name = "cuda_unified_allocator_test",
+    srcs = ["cuda_unified_allocator_test.cc"],
+    backends = ["gpu"],
+    tags = ["cuda-only"],
+    deps = [
+        ":cuda_device_allocator",
+        ":cuda_platform",
+        ":cuda_unified_allocator",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:memory_allocation",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "cuda_vmm_allocator",
     srcs = ["cuda_vmm_allocator.cc"],
     hdrs = ["cuda_vmm_allocator.h"],
@@ -1550,6 +1594,7 @@ cc_library(
         ":cuda_device_allocator",
         ":cuda_host_allocator",
         ":cuda_kernel",
+        ":cuda_unified_allocator",
         ":cuda_vmm_allocator",
         ":host_callback_registry",
         "//xla/stream_executor:activate_context",
@@ -1609,6 +1654,7 @@ cc_library(
         ":cuda_status",
         ":cuda_stream",
         ":cuda_timer",
+        ":cuda_unified_allocator",
         ":cuda_version_parser",
         ":cuda_vmm_allocator",
         ":cudnn_api_wrappers",
