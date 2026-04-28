@@ -314,8 +314,8 @@ PJRT_Error* PJRT_GpuDeviceTopology_Create(
       platform_id = xla::RocmId();
       platform_name = xla::RocmName();
   } else if (plugin_platform == "ONEAPI") {
-      platform_id = xla::OneapiId();    // Assuming this is defined in XLA
-      platform_name = xla::OneapiName(); // Assuming this is defined in XLA
+      platform_id = xla::OneapiId();    
+      platform_name = xla::OneapiName(); 
   } else {
       platform_id = xla::CudaId();
       platform_name = xla::CudaName();
