@@ -396,9 +396,7 @@ CudnnSupport::CudnnSupport(StreamExecutor* parent) : parent_(parent) {}
 
 absl::Status CudnnSupport::Init() {
   if (parent_ == nullptr) {
-    LOG(INFO) << "No steam executor provided, initialize cudnnSupport with "
-              << "deviceless mode.";
-    return absl::OkStatus();
+    return absl::InternalError("No steam executor provided.");
   }
   std::unique_ptr<ActivateContext> context = parent_->Activate();
 

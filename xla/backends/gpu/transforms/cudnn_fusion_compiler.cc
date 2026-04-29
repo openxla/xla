@@ -1192,8 +1192,13 @@ class CuDnnFusionVisitor : public DfsHloRewriteVisitor {
       const int64_t workspace_size = graph.Graph().get_workspace_size();
       workspace_sizes_.insert(workspace_size_it,
                               {fingerprint_without_workspace, workspace_size});
+<<<<<<< HEAD
       RETURN_IF_ERROR(add_workspace(workspace_size));
       ASSIGN_OR_RETURN(const std::string serialized, serialize_graph(graph));
+=======
+      RETURN_IF_ERROR(add_workspace(workspace_size));
+      ASSIGN_OR_RETURN(const std::string serialized, serialize_graph(graph));
+>>>>>>> 3fc0f1044e (add cudnn 9.8.0 guard & addressed some comments)
       compilation_results_[emitters::GetComputationFingerprint(
           hlo->fused_instructions_computation(), {})] = serialized;
     } else {

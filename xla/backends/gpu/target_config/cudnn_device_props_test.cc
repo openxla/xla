@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "json/json.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"
 #include "xla/service/platform_util.h"
@@ -42,7 +43,7 @@ namespace se = ::stream_executor;
 
 // Fields that BuildDeviceProperties() hardcodes (or that don't affect cuDNN
 // plan selection), so they are not expected to match the live device.
-constexpr const char* kIgnoredFields[] = {
+absl::string_view kIgnoredFields[] = {
     "pciDeviceId",   // hardcoded to 0 in synthesized output
     "cudaDeviceId",  // hardcoded to 0 in synthesized output
     "isTccDriver",   // hardcoded to 0 in synthesized output
@@ -52,7 +53,7 @@ constexpr const char* kIgnoredFields[] = {
 
 // Clock-rate fields where small drift is expected because XLA stores them as
 // float GHz and converts back to int KHz, while cuDNN reads int KHz directly.
-constexpr const char* kClockFields[] = {
+absl::string_view kClockFields[] = {
     "smClockRateKHz",
     "memClockRateKHz",
 };
@@ -82,16 +83,16 @@ Json::Value ParseProps(
 }
 
 void StripIgnoredFields(Json::Value& v) {
-  for (const char* field : kIgnoredFields) {
-    v.removeMember(field);
+  for (absl::string_view field : kIgnoredFields) {
+    v.removeMember(field.data());
   }
 }
 
 void ExpectClockFieldsClose(const Json::Value& live, const Json::Value& synth) {
-  for (const char* field : kClockFields) {
-    if (!live.isMember(field) || !synth.isMember(field)) continue;
-    int64_t live_val = live[field].asInt64();
-    int64_t synth_val = synth[field].asInt64();
+  for (absl::string_view field : kClockFields) {
+    if (!live.isMember(field.data()) || !synth.isMember(field.data())) continue;
+    int64_t live_val = live[field.data()].asInt64();
+    int64_t synth_val = synth[field.data()].asInt64();
     EXPECT_LE(std::abs(live_val - synth_val), kClockToleranceKHz)
         << field << ": live=" << live_val << " synth=" << synth_val;
   }
@@ -136,9 +137,9 @@ TEST(CudnnDevicePropsTest, MatchesLiveDevice) {
     StripIgnoredFields(live_json);
     StripIgnoredFields(synth_json);
     ExpectClockFieldsClose(live_json, synth_json);
-    for (const char* field : kClockFields) {
-      live_json.removeMember(field);
-      synth_json.removeMember(field);
+    for (absl::string_view field : kClockFields) {
+      live_json.removeMember(field.data());
+      synth_json.removeMember(field.data());
     }
 
     EXPECT_EQ(live_json, synth_json) << "live:\n"

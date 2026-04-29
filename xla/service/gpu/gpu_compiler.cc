@@ -2859,12 +2859,25 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
                                     debug_opts, platform_id_));
 
   BinaryMap dnn_compiled_graphs;
-  if (stream_exec || debug_opts.xla_gpu_enable_cudnn_deviceless_compilation()) {
-    se::dnn::DnnSupport* dnn = stream_exec ? stream_exec->AsDnn() : nullptr;
+  const bool deviceless_cudnn_enabled =
+      debug_opts.xla_gpu_enable_cudnn_deviceless_compilation();
+  // Deviceless cuDNN compilation relies on DeviceProperties JSON
+  // serialization, added in cuDNN 9.8.
+  if (deviceless_cudnn_enabled &&
+      gpu_topology.gpu_target_config().dnn_version_info <
+          se::dnn::VersionInfo(9, 8, 0)) {
+    return absl::FailedPreconditionError(
+        "Deviceless cuDNN compilation requires cuDNN >= 9.8.");
+  }
+  if (stream_exec || deviceless_cudnn_enabled) {
+    // If the flag is on, do deviceless cuDNN even if we have a device.
+    se::dnn::DnnSupport* dnn =
+        (deviceless_cudnn_enabled || stream_exec == nullptr)
+            ? nullptr
+            : stream_exec->AsDnn();
     RETURN_IF_ERROR(RunCudnnCompilerPasses(
         module.get(), dnn, gpu_topology.gpu_target_config().device_description,
         &dnn_compiled_graphs));
-
   }
 
   if (DumpingEnabledForHloModule(*module)) {
