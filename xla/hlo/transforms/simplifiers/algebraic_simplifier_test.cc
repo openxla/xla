@@ -10810,6 +10810,39 @@ TEST_F(AlgebraicSimplifierTest, AbsEliminationMultiply) {
               GmockMatch(m::Multiply(m::Parameter(0), m::Parameter(0))));
 }
 
+TEST_F(AlgebraicSimplifierTest, NoAbsEliminationSignedIntegerMultiply) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+    test {
+      p = s8[32]{0} parameter(0)
+      m = s8[32]{0} multiply(p, p)
+      ROOT a = s8[32]{0} abs(m)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  EXPECT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Abs(m::Multiply(m::Parameter(0), m::Parameter(0)))));
+}
+
+TEST_F(AlgebraicSimplifierTest, NoCompareLtZeroFoldSignedIntegerMultiply) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+    test {
+      p = s8[32]{0} parameter(0)
+      m = s8[32]{0} multiply(p, p)
+      z = s8[] constant(0)
+      b = s8[32]{0} broadcast(z), dimensions={}
+      ROOT r = pred[32]{0} compare(m, b), direction=LT
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  EXPECT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Compare(m::Multiply(m::Parameter(0), m::Parameter(0)),
+                                    m::Broadcast(m::ConstantScalar(0)))));
+}
+
 TEST_F(AlgebraicSimplifierTest, AbsEliminationPower2) {
   constexpr absl::string_view kModuleStr = R"(
     HloModule m

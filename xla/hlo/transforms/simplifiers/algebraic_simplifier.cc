@@ -535,7 +535,8 @@ bool AlgebraicSimplifierVisitor::IsNonNegative(
   }
   switch (hlo->opcode()) {
     case HloOpcode::kMultiply: {
-      return hlo->operand(0) == hlo->operand(1);
+      return hlo->operand(0) == hlo->operand(1) &&
+             !primitive_util::IsSignedIntegralType(hlo->shape().element_type());
     }
     case HloOpcode::kAbs:
     case HloOpcode::kExp:
