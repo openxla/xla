@@ -1537,7 +1537,7 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
     std::vector<se::MemoryReservation::MappingDescriptor> mapping_descriptors;
     mapping_descriptors.reserve(command_buffer_allocation_indexes_.size());
 
-    std::vector<se::MemoryReservation::RemapDescriptor> remap_descriptors;
+    std::vector<se::MemoryReservation::RemappingDescriptor> remap_descriptors;
     remap_descriptors.reserve(command_buffer_allocation_indexes_.size());
 
     std::vector<VaRanges::AllocationMappingState> new_mapping_state;
@@ -1664,8 +1664,8 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
             std::move(va_ranges->scoped_mapping);
         va_ranges->scoped_mapping.reset();
         absl::StatusOr<se::MemoryReservation::ScopedMapping> remap_result =
-            va_ranges->va_reservation->Remap(absl::MakeSpan(remap_descriptors),
-                                             std::move(*existing_mapping));
+            std::move(*existing_mapping)
+                .Remap(absl::MakeSpan(remap_descriptors));
         if (!remap_result.ok()) {
           va_ranges->last_mapping_state.clear();
           return remap_result.status();

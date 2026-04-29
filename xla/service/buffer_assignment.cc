@@ -464,20 +464,15 @@ static const HloInstruction* GetOutputInstruction(
 absl::string_view BufferAllocation::AllocationTypeLabel() const {
   if (is_constant()) {
     return "constant";
-  }
-  if (is_entry_computation_parameter()) {
+  } else if (is_entry_computation_parameter()) {
     return "parameter";
-  }
-  if (is_thread_local()) {
+  } else if (is_thread_local()) {
     return "thread_local";
-  }
-  if (is_tuple()) {
+  } else if (is_tuple()) {
     return "tuple";
-  }
-  if (maybe_live_out()) {
+  } else if (maybe_live_out()) {
     return "maybe_live_out";
-  }
-  if (IsPreallocatedTempBuffer()) {
+  } else if (IsPreallocatedTempBuffer()) {
     return "temp";
   }
   return "other";

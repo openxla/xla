@@ -55,6 +55,17 @@ class MemoryReservation {
     MemoryAllocation* allocation;
   };
 
+  // Describes a desired post-Remap mapping for a slice of the reservation.
+  struct RemappingDescriptor {
+    size_t reservation_offset;
+    size_t allocation_offset;
+    size_t size;
+    MemoryAllocation* allocation;  // current physical handle, never null
+    // Whether this slice needs UnMap/Map/SetAccess calls. When false, the
+    // existing mapping is preserved.
+    bool remap_required;
+  };
+
   // An RAII wrapper that gives access to a contiguous slice of a memory
   // reservation backed by one or more physical memory allocations.
   // Unmaps the mapped range from the reservation on destruction.
@@ -70,15 +81,20 @@ class MemoryReservation {
     // allocation(s) and can be accessed from the device.
     DeviceAddressBase mapped_address() const;
 
+    // Re-maps this mapping's reservation range as described by `mappings`.
+    // The descriptors must cover the same full range. For each mapping where
+    // remap_required is false, the current mapping is preserved. For the rest,
+    // the slice is unmapped and mapped to `allocation`; SetAccess is invoked
+    // once per maximal run of consecutive remapped mappings. On failure after
+    // remapping starts, Remap unmaps all slices described by `mappings`,
+    // leaving the reservation with no active mapping for the range.
+    absl::StatusOr<ScopedMapping> Remap(
+        absl::Span<const RemappingDescriptor> mappings) &&;
+
    private:
     // Unmaps the given range on the reservation and logs on failure.
     static void UnmapAndLogIfError(MemoryReservation* reservation,
                                    size_t reservation_offset, size_t size);
-
-    // Detaches the underlying reservation from this ScopedMapping without
-    // unmapping. After Release, the destructor is a no-op. Used by Remap to
-    // replace the RAII owner after selectively re-mapping sub-ranges.
-    void Release() { reservation_ = nullptr; }
 
     friend class MemoryReservation;
     ScopedMapping(MemoryReservation* reservation, size_t reservation_offset,
@@ -103,27 +119,6 @@ class MemoryReservation {
   // For non-contiguous mappings, use separate MapTo calls instead.
   absl::StatusOr<ScopedMapping> MapTo(
       absl::Span<const MappingDescriptor> mappings);
-
-  // Describes a desired post-Remap mapping for a slice of the reservation.
-  struct RemapDescriptor {
-    size_t reservation_offset;
-    size_t allocation_offset;
-    size_t size;
-    MemoryAllocation* allocation;  // current physical handle, never null
-    // Whether this slice needs UnMap/Map/SetAccess calls. When false, the
-    // existing mapping is preserved.
-    bool remap_required;
-  };
-
-  // Re-maps a contiguous reservation range described by `mappings`.
-  // `existing` must cover the same full range. For each mapping where
-  // remap_required is false, the current mapping is preserved. For the rest,
-  // the slice is unmapped and mapped to `allocation`; SetAccess is invoked
-  // once per maximal run of consecutive remapped mappings. On failure,
-  // Remap unmaps all slices described by `mappings`, leaving the reservation
-  // with no active mapping for the range.
-  absl::StatusOr<ScopedMapping> Remap(
-      absl::Span<const RemapDescriptor> mappings, ScopedMapping existing);
 
  private:
   virtual absl::Status Map(size_t reservation_offset, size_t allocation_offset,

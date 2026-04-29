@@ -280,10 +280,10 @@ class GpuExecutable : public Executable {
     std::unique_ptr<se::Event> unmap_event;
 
     // RAII wrapper that keeps the full VA->physical mapping active across
-    // steps. On each step it is consumed by MemoryReservation::Remap, which
-    // returns a fresh ScopedMapping covering the same range; only slices
-    // whose physical handle changed are unmapped/remapped. The full-range
-    // unmap happens at executable destruction (ScopedMapping dtor).
+    // steps. On each step it is consumed by ScopedMapping::Remap, which returns
+    // a fresh ScopedMapping covering the same range; only slices whose physical
+    // handle changed are unmapped/remapped. The full-range unmap happens at
+    // executable destruction (ScopedMapping dtor).
     std::optional<se::MemoryReservation::ScopedMapping> scoped_mapping;
 
     // Per-allocation mapping state from the most recent successful step.
