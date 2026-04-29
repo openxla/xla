@@ -313,12 +313,10 @@ std::string getShardyDirIfShouldDump(const DebugOptions& debugOptions,
   return shardyDir;
 }
 
-absl::Status runShardingPropagation(HloModule* hloModule,
-                                    mlir::ModuleOp mlirModule,
-                                    bool importMhloShardings,
-                                    mlir::sdy::PropagationOptions options,
-                                    bool enableNativeNonFlatSupport,
-                                    absl::string_view passName) {
+absl::Status runShardingPropagation(
+    HloModule* hloModule, mlir::ModuleOp mlirModule, bool importMhloShardings,
+    mlir::sdy::PropagationOptions options, bool dedupFunctionsFully,
+    bool enableNativeNonFlatSupport, absl::string_view passName) {
   VLOG(1) << "Using Shardy for XLA SPMD propagation.";
 
   const DebugOptions& debugOptions = hloModule->config().debug_options();
@@ -394,6 +392,7 @@ absl::Status runShardingPropagation(HloModule* hloModule,
   mlir::sdy::addPropagationPipeline(pm, dumpIndex, options);
 
   xla::sdy::StablehloExportPipelineOptions stablehloExportPipelineOptions;
+  stablehloExportPipelineOptions.dedupFunctionsFully = dedupFunctionsFully;
   stablehloExportPipelineOptions.enableHloShardingV3 =
       debugOptions.xla_enable_hlo_sharding_v3();
   addStablehloExportPipeline(pm, stablehloExportPipelineOptions);
@@ -480,7 +479,7 @@ absl::StatusOr<bool> ShardyXLA::RunImpl(
   if (runSdyShardingPropagation) {
     TF_RETURN_IF_ERROR(runShardingPropagation(
         hloModule, mlirModule.get(), importMhloShardings, propagationOptions,
-        enableNativeNonFlatSupport, name()));
+        dedupFunctionsFully, enableNativeNonFlatSupport, name()));
   }
 
   // TODO(b/431836696): Remove once issue is fixed.

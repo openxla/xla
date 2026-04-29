@@ -100,7 +100,7 @@ module @send_with_sdy_sharding_module {
 func.func @non_flat_call_graph_all_inlineable(%arg0: tensor<8xf32>) -> tensor<8xf32> {
   // CHECK: %0 = call @foo(%arg0)
   // CHECK: %1 = stablehlo.negate %0
-  // CHECK: %2 = call @bar(%1)
+  // CHECK: %2 = call @bar_0(%1)
   // CHECK: return %2 : tensor<8xf32>
   %0 = call @foo(%arg0) {mhlo.frontend_attributes = {inlineable = "true"}} : (tensor<8xf32>) -> tensor<8xf32>
   %1 = stablehlo.negate %0 : tensor<8xf32>
@@ -111,7 +111,6 @@ func.func @non_flat_call_graph_all_inlineable(%arg0: tensor<8xf32>) -> tensor<8x
 // CHECK-LABEL: func private @foo
 func.func private @foo(%arg0: tensor<8xf32>) -> tensor<8xf32> {
   %0 = stablehlo.add %arg0, %arg0 : tensor<8xf32>
-  // CHECK: call @bar(
   %1 = call @bar(%0) {mhlo.frontend_attributes = {inlineable = "true"}} : (tensor<8xf32>) -> tensor<8xf32>
   return %1 : tensor<8xf32>
 }
@@ -122,7 +121,7 @@ func.func private @bar(%arg0: tensor<8xf32>) -> tensor<8xf32> {
   return %0 : tensor<8xf32>
 }
 
-// CHECK-NOT: func private @bar_0
+// CHECK-LABEL: func private @bar_0
 
 // -----
 // CHECK-LABEL: func @uninlineable_call
