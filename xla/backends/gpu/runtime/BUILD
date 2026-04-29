@@ -222,7 +222,6 @@ cc_library(
     hdrs = ["command_buffer_cmd.h"],
     deps = [
         ":all_gather_thunk",
-        ":all_reduce_thunk",
         ":all_to_all_thunk",
         ":annotation",
         ":collective_broadcast_thunk",

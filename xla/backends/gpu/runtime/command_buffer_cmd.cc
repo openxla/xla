@@ -48,7 +48,6 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
-#include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/collective_broadcast_thunk.h"
@@ -67,7 +66,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/while_loop.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
-#include "xla/core/collectives/reduction_kind.h"
 #include "xla/executable_run_options.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/device_id.h"
@@ -104,19 +102,6 @@ limitations under the License.
 #include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla::gpu {
-
-static absl::string_view ReductionKindString(ReductionKind kind) {
-  switch (kind) {
-    case ReductionKind::MAX:
-      return "max";
-    case ReductionKind::MIN:
-      return "min";
-    case ReductionKind::PRODUCT:
-      return "product";
-    case ReductionKind::SUM:
-      return "sum";
-  }
-}
 
 // Create a callback to create a command buffer from a command sequence.
 static se::CommandBuffer::CreateCommands CreateCommands(
@@ -455,73 +440,6 @@ CollectiveCmd::RecordTracedCommand(
       [&](const se::CommandBuffer::Command* command) {
         return command_buffer->UpdateChildCommand(command, *nested_cmd);
       });
-}
-
-//===----------------------------------------------------------------------===//
-// ReduceScatterCmd
-//===----------------------------------------------------------------------===//
-
-ReduceScatterCmd::ReduceScatterCmd(
-    CollectiveConfig config, ReductionKind reduction_kind,
-    absl::Span<const CollectiveThunk::Buffer> buffers)
-    : CollectiveCmd(CommandType::kReduceScatterCmd, std::move(config)),
-      reduction_kind_(reduction_kind),
-      buffers_(buffers.begin(), buffers.end()) {}
-
-absl::StatusOr<const se::CommandBuffer::Command*> ReduceScatterCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  TF_ASSIGN_OR_RETURN(
-      std::vector<DeviceBufferPair> device_buffers,
-      ConvertToDeviceBuffers(execute_params.buffer_allocations, buffers_,
-                             config().operand_element_type));
-
-  int device_ordinal = execute_params.stream->parent()->device_ordinal();
-  XLA_VLOG_DEVICE(5, device_ordinal)
-      << "ReduceScatterCmd: reduction=" << ReductionKindString(reduction_kind_);
-
-  for (size_t i = 0; i < device_buffers.size(); ++i) {
-    XLA_VLOG_DEVICE(5, device_ordinal)
-        << "  Src: " << buffers_[i].source_buffer << " ("
-        << device_buffers[i].source_buffer.opaque() << ")";
-    XLA_VLOG_DEVICE(5, device_ordinal)
-        << "  Dst: " << buffers_[i].destination_buffer << " ("
-        << device_buffers[i].destination_buffer.opaque() << ")";
-  }
-
-  if (!execute_params.collective_params || !execute_params.collective_cliques) {
-    return absl::InvalidArgumentError(
-        "ReduceScatterCmd requires collective parameters and cliques");
-  }
-
-  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
-                      GetGpuCliqueKey(*execute_params.collective_params,
-                                      config().replica_groups,
-                                      config().group_mode, communication_id()));
-
-  TF_ASSIGN_OR_RETURN(
-      Communicator * comm,
-      execute_params.collective_cliques->GetComm(
-          clique_key, execute_params.collective_params->global_device_id));
-
-  return RecordTracedCommand(execute_params, record_params, record_action,
-                             command_buffer, [&](se::Stream* stream) {
-                               return RunReduceScatter(
-                                   reduction_kind_, device_buffers, *stream,
-                                   *comm, config().use_symmetric_buffer);
-                             });
-}
-
-Command::BufferUses ReduceScatterCmd::buffer_uses() const {
-  BufferUses buffer_usage;
-  for (auto& buffer : buffers_) {
-    buffer_usage.emplace_back(BufferUse::Read(buffer.source_buffer.slice,
-                                              buffer.source_buffer.shape));
-    buffer_usage.emplace_back(BufferUse::Write(
-        buffer.destination_buffer.slice, buffer.destination_buffer.shape));
-  }
-  return buffer_usage;
 }
 
 //===----------------------------------------------------------------------===//

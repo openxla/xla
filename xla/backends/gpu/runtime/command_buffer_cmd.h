@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/traced_command.h"
-#include "xla/core/collectives/reduction_kind.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -150,27 +149,6 @@ class CollectiveCmd : public Command {
  private:
   CollectiveConfig config_;
   CommunicationId communication_id_;
-};
-
-//===----------------------------------------------------------------------===//
-// ReduceScatterCmd
-//===----------------------------------------------------------------------===//
-
-class ReduceScatterCmd : public CollectiveCmd {
- public:
-  ReduceScatterCmd(CollectiveConfig config, ReductionKind reduction_kind,
-                   absl::Span<const CollectiveThunk::Buffer> buffers);
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override;
-
- private:
-  ReductionKind reduction_kind_;
-  std::vector<CollectiveThunk::Buffer> buffers_;
 };
 
 //===----------------------------------------------------------------------===//
