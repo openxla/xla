@@ -220,6 +220,8 @@ class CudaExecutor : public GpuExecutor {
     return is_multicast_supported_;
   }
 
+  bool is_fabric_supported() const { return is_fabric_supported_; }
+
  private:
   // Allocates memory using the given allocator and tracks the resulting
   // allocation. Returns an empty DeviceAddressBase on failure.
@@ -240,11 +242,19 @@ class CudaExecutor : public GpuExecutor {
   // Returns true if a delay kernel is supported.
   absl::StatusOr<bool> DelayKernelIsSupported();
 
-  bool is_vmm_supported_ = false;
+  // Device-reported VMM recommended allocation granularity, cached at Init()
+  // time. Also used as the alignment for symmetric/collective memory buffers
+  // (NCCL NVLS UB requires virtual address alignment to this granularity).
+  size_t vmm_granularity_ = 0;
 
+  // Whether GPUDirect RDMA over VMM is supported by this device.
   bool is_rdma_supported_ = false;
 
+  // Whether multicast objects are supported by this device.
   bool is_multicast_supported_ = false;
+
+  // Whether fabric handle type is supported by this device.
+  bool is_fabric_supported_ = false;
 
   // Guards the in-memory-module mapping.
   absl::Mutex in_memory_modules_mu_;
