@@ -139,6 +139,7 @@ cc_library(
     name = "symmetric_memory",
     hdrs = ["symmetric_memory.h"],
     deps = [
+        ":rank_id",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel_args",
         "@com_google_absl//absl/status",

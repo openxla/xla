@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/kernel_args.h"
 
@@ -49,7 +50,7 @@ class SymmetricMemory {
   // Useful for clients who need to pass peer addresses directly as a kernel
   // arguments instead of calculating a peer address from the kernel itself.
   virtual absl::StatusOr<stream_executor::DeviceAddressBase> peer_addr(
-      int peer_rank) const {
+      RankId rank) const {
     return absl::UnimplementedError("Peer address not supported");
   }
 

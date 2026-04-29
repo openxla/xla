@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "third_party/nccl/nccl.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/stream_executor/device_address.h"
 
@@ -40,7 +41,7 @@ class NcclSymmetricMemory final : public SymmetricMemory {
       const final;
 
   absl::StatusOr<stream_executor::DeviceAddressBase> peer_addr(
-      int peer_rank) const final;
+      RankId peer) const final;
 
   ncclWindow_t win() const { return win_; }
 

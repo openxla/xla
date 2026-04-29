@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "xla/backends/gpu/collectives/nccl_errors.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/stream_executor/device_address.h"
 
 // Include NCCL after XLA headers.
@@ -76,11 +77,11 @@ NcclSymmetricMemory::multimem_addr() const {
 }
 
 absl::StatusOr<stream_executor::DeviceAddressBase>
-NcclSymmetricMemory::peer_addr(int peer_rank) const {
+NcclSymmetricMemory::peer_addr(RankId peer) const {
 #if (NCCL_VERSION_CODE >= 22900)
   void* peer_addr = nullptr;
   XLA_NCCL_RETURN_IF_ERROR(
-      ncclGetLsaDevicePointer(win_, 0, peer_rank, &peer_addr));
+      ncclGetLsaDevicePointer(win_, 0, peer.value(), &peer_addr));
   if (peer_addr) {
     return stream_executor::DeviceAddressBase(peer_addr, addr_.size());
   }

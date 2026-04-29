@@ -579,8 +579,8 @@ static absl::Status SymPeerAllReduce(
           .LoadKernel<Peer2AllReduce>(collective_params->executor));
 
   // Get peer addresses for src buffer.
-  TF_ASSIGN_OR_RETURN(auto src0, sym_src->peer_addr(0));
-  TF_ASSIGN_OR_RETURN(auto src1, sym_src->peer_addr(1));
+  TF_ASSIGN_OR_RETURN(auto src0, sym_src->peer_addr(RankId(0)));
+  TF_ASSIGN_OR_RETURN(auto src1, sym_src->peer_addr(RankId(1)));
 
   if (!src0 || !src1) {
     return absl::InternalError("Peer address can't be resolved");
