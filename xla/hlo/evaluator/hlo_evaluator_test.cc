@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
+#include "xla/hlo/testlib/test_helpers.h"
 #include "xla/hlo/transforms/simplifiers/hlo_element_type_converter.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -6444,6 +6445,120 @@ TEST_F(HloEvaluatorTest, ZeroSizedIotaWithHugeDimension) {
       Literal actual_literal,
       HloEvaluator().Evaluate(*m_->entry_computation(), {}));
   EXPECT_THAT(actual_literal.data<float>(), ::testing::IsEmpty());
+}
+
+TEST_F(HloEvaluatorTest, ReduceIota) {
+  m_ = CreateNewVerifiedModule();
+  HloComputation::Builder b(TestName());
+
+  Shape shape = ShapeUtil::MakeShape(F32, {4, 4});
+  HloInstruction* iota =
+      b.AddInstruction(HloInstruction::CreateIota(shape, /*iota_dimension=*/1));
+
+  HloInstruction* init_value = b.AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(0.f)));
+
+  HloComputation::Builder add_computation("add");
+  Shape scalar_shape = ShapeUtil::MakeShape(F32, {});
+  HloInstruction* param_lhs = add_computation.AddInstruction(
+      HloInstruction::CreateParameter(0, scalar_shape, "lhs"));
+  HloInstruction* param_rhs = add_computation.AddInstruction(
+      HloInstruction::CreateParameter(1, scalar_shape, "rhs"));
+  add_computation.AddInstruction(HloInstruction::CreateBinary(
+      scalar_shape, HloOpcode::kAdd, param_lhs, param_rhs));
+  HloComputation* add_func =
+      m_->AddEmbeddedComputation(add_computation.Build());
+
+  Shape reduce_shape = ShapeUtil::MakeShape(F32, {4});
+  b.AddInstruction(HloInstruction::CreateReduce(reduce_shape, iota, init_value,
+                                                /*dimensions_to_reduce=*/{1},
+                                                add_func));
+  m_->AddEntryComputation(b.Build());
+
+  TF_ASSERT_OK_AND_ASSIGN(Literal result, Evaluate());
+
+  Literal expected = LiteralUtil::CreateR1<float>({6, 6, 6, 6});
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
+}
+
+TEST_F(HloEvaluatorTest, ReduceWindowIota) {
+  m_ = CreateNewVerifiedModule();
+  HloComputation::Builder b(TestName());
+
+  Shape shape = ShapeUtil::MakeShape(F32, {4, 4});
+  HloInstruction* iota =
+      b.AddInstruction(HloInstruction::CreateIota(shape, /*iota_dimension=*/1));
+
+  HloInstruction* init_value = b.AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(0.f)));
+  HloComputation* max_func =
+      m_->AddEmbeddedComputation(MaxComputationScalarF32());
+
+  Window window;
+  WindowDimension dim;
+  dim.set_size(2);
+  dim.set_stride(1);
+  dim.set_padding_low(0);
+  dim.set_padding_high(0);
+  dim.set_window_dilation(1);
+  dim.set_base_dilation(1);
+  *window.add_dimensions() = dim;
+  *window.add_dimensions() = dim;
+
+  Shape reduce_window_shape = ShapeUtil::MakeShape(F32, {3, 3});
+  b.AddInstruction(HloInstruction::CreateReduceWindow(
+      reduce_window_shape, iota, init_value, window, max_func));
+  m_->AddEntryComputation(b.Build());
+
+  TF_ASSERT_OK_AND_ASSIGN(Literal result, Evaluate());
+
+  auto expected =
+      LiteralUtil::CreateR2<float>({{1, 2, 3}, {1, 2, 3}, {1, 2, 3}});
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
+}
+
+TEST_F(HloEvaluatorTest, LazyIotaMaterialization) {
+  m_ = CreateNewVerifiedModule();
+  HloComputation::Builder b(TestName());
+
+  Shape shape = ShapeUtil::MakeShape(F32, {2, 2});
+  HloInstruction* iota =
+      b.AddInstruction(HloInstruction::CreateIota(shape, /*iota_dimension=*/1));
+
+  b.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, iota));
+  m_->AddEntryComputation(b.Build());
+
+  TF_ASSERT_OK_AND_ASSIGN(Literal result, Evaluate());
+
+  auto expected =
+      LiteralUtil::CreateR2<float>({{-0.0f, -1.0f}, {-0.0f, -1.0f}});
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
+}
+
+// This test verifies that HloEvaluator can evaluate ReduceWindow with an Iota
+// operand on the fly.
+TEST_F(HloEvaluatorTest, ReduceWindowIotaLazyMaterialization) {
+  const absl::string_view hlo_text = R"(
+  HloModule test
+
+  max_func {
+    lhs = f64[] parameter(0)
+    rhs = f64[] parameter(1)
+    ROOT max = f64[] maximum(lhs, rhs)
+  }
+
+  ENTRY test {
+    iota = f64[4] iota(), iota_dimension=0
+    init = f64[] constant(0.0)
+    ROOT reduce_window = f64[2] reduce-window(iota, init), window={size=2 stride=2}, to_apply=max_func
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+  TF_ASSERT_OK_AND_ASSIGN(
+      Literal result, HloEvaluator().Evaluate(*m_->entry_computation(), {}));
+  Literal expected = LiteralUtil::CreateR1<double>({1.0, 3.0});
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
 }
 
 TEST_F(HloEvaluatorTest, CopyStartCopyDone) {

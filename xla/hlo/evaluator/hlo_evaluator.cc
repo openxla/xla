@@ -99,6 +99,20 @@ namespace {
 
 using primitive_util::NativeTypeOf;
 
+template <typename F>
+absl::Status IotaTypeSwitch(PrimitiveType element_type, F&& f) {
+  return primitive_util::PrimitiveTypeSwitch<absl::Status>(
+      [&](auto primitive_type_constant) -> absl::Status {
+        if constexpr (primitive_util::IsArrayType(primitive_type_constant)) {
+          return f(primitive_type_constant);
+        }
+        return absl::InvalidArgumentError(absl::StrCat(
+            "Unsupported element type: ",
+            primitive_util::LowercasePrimitiveTypeName(element_type)));
+      },
+      element_type);
+}
+
 template <typename OperandT>
 absl::StatusOr<Literal> Compare(const Shape& shape, Comparison comparison,
                                 LiteralSlice lhs_literal,
@@ -4441,8 +4455,10 @@ static bool IsScalarAdd(HloComputation* computation) {
 static absl::StatusOr<bool> PerformReductionStep(
     bool is_tuple, absl::Span<const int64_t> input_index,
     absl::Span<const int64_t> output_index,
-    absl::Span<const Literal* const> input_args, absl::Span<Literal> results,
-    HloComputation* computation, HloEvaluator* embedded_evaluator) {
+    absl::Span<const Literal* const> input_args,
+    absl::Span<const HloInstruction* const> input_instructions,
+    absl::Span<Literal> results, HloComputation* computation,
+    HloEvaluator* embedded_evaluator) {
   int num_args = results.size();
 
   absl::InlinedVector<Literal, 1> arg_values;
@@ -4450,12 +4466,23 @@ static absl::StatusOr<bool> PerformReductionStep(
   absl::InlinedVector<Literal, 1> accumulators;
   accumulators.reserve(num_args);
   for (int64_t i = 0; i < num_args; ++i) {
-    arg_values.emplace_back(
-        ShapeUtil::MakeShape(input_args[i]->shape().element_type(), {}));
-    accumulators.emplace_back(
-        ShapeUtil::MakeShape(input_args[i]->shape().element_type(), {}));
+    PrimitiveType element_type = input_instructions[i]->shape().element_type();
+    arg_values.emplace_back(ShapeUtil::MakeShape(element_type, {}));
+    accumulators.emplace_back(ShapeUtil::MakeShape(element_type, {}));
 
-    arg_values[i].CopyElementFrom(*input_args[i], input_index, {});
+    if (input_args[i] == nullptr) {
+      auto* iota = Cast<HloIotaInstruction>(input_instructions[i]);
+      int64_t val = input_index[iota->iota_dimension()];
+      // Compute Iota value on the fly for the current index to avoid
+      // materialization.
+      TF_RETURN_IF_ERROR(IotaTypeSwitch(element_type, [&](auto pt_const) {
+        using NativeT = primitive_util::NativeTypeOf<decltype(pt_const)::value>;
+        arg_values[i].Set<NativeT>({}, static_cast<NativeT>(val));
+        return absl::OkStatus();
+      }));
+    } else {
+      arg_values[i].CopyElementFrom(*input_args[i], input_index, {});
+    }
     accumulators[i].CopyElementFrom(results[i], output_index, {});
   }
 
@@ -4492,18 +4519,20 @@ static absl::StatusOr<bool> GenerateReduceOutputElement(
     bool is_tuple, bool use_fast_path, absl::Span<const int64_t> output_index,
 
     absl::Span<const Literal* const> init_values,
-    absl::Span<const Literal* const> input_args, absl::Span<Literal> results,
+    absl::Span<const Literal* const> input_args,
+    absl::Span<const HloInstruction* const> input_instructions,
+    absl::Span<Literal> results,
 
     HloComputation* function, HloEvaluator* embedded_evaluator,
 
     absl::Span<const int64_t> arg_dim_steps,
     absl::Span<const int64_t> arg_dim_counts,
     absl::Span<const int64_t> result_to_arg_index) {
-  bool use_fast_add = use_fast_path &&
+  bool use_fast_add = use_fast_path && input_args[0] != nullptr &&
                       ShapeUtil::ElementIsFloating(init_values[0]->shape()) &&
                       IsScalarAdd(function) && !is_tuple;
 
-  const Shape& arg_shape = input_args[0]->shape();
+  const Shape& arg_shape = input_instructions[0]->shape();
   absl::Span<const int64_t> arg_dimensions = arg_shape.dimensions();
   std::vector<int64_t> base(arg_dimensions.size());
   for (int64_t i = 0; i < output_index.size(); ++i) {
@@ -4517,7 +4546,7 @@ static absl::StatusOr<bool> GenerateReduceOutputElement(
   if (use_fast_add) {
     double computed_result = *init_values[0]->GetAsDouble({});
     const Literal* input_arg0 = input_args[0];
-    const Shape& shape = input_arg0->shape();
+    const Shape& shape = arg_shape;
     absl::Span<const int64_t> minor_to_major = LayoutUtil::MinorToMajor(shape);
 
     static constexpr int kChunkSize = 512;
@@ -4554,10 +4583,22 @@ static absl::StatusOr<bool> GenerateReduceOutputElement(
       arg_shape, base, arg_dim_counts, arg_dim_steps,
       [&](absl::Span<const int64_t> input_index) {
         return PerformReductionStep(is_tuple, input_index, output_index,
-                                    input_args, results, function,
-                                    embedded_evaluator);
+                                    input_args, input_instructions, results,
+                                    function, embedded_evaluator);
       }));
   return true;
+}
+
+absl::Status HloEvaluator::HandleIota(const HloInstruction* instruction) {
+  auto* iota = Cast<HloIotaInstruction>(instruction);
+  PrimitiveType type = iota->shape().element_type();
+  if (primitive_util::IsArrayType(type)) {
+    state().set_evaluated_iota(instruction);
+    return absl::OkStatus();
+  }
+  return absl::InvalidArgumentError(
+      absl::StrCat("Unsupported type for Iota: ",
+                   primitive_util::LowercasePrimitiveTypeName(type)));
 }
 
 absl::Status HloEvaluator::HandleReduce(const HloInstruction* hlo) {
@@ -4582,16 +4623,26 @@ absl::Status HloEvaluator::HandleReduce(const HloInstruction* hlo) {
 
   absl::InlinedVector<const Literal*, 1> input_args(num_args);
   absl::InlinedVector<const Literal*, 1> init_values(num_args);
+  absl::InlinedVector<const HloInstruction*, 1> input_instructions(num_args);
   for (int64_t i = 0; i < num_args; ++i) {
-    input_args[i] = &GetEvaluatedLiteralFor(reduce->inputs()[i]);
-    VLOG(3) << "HandleReduce arg_literal: " << input_args[i]->ToString();
+    const HloInstruction* input = reduce->inputs()[i];
+    input_instructions[i] = input;
+    if (state_.is_evaluated_iota(input)) {
+      // Avoid materializing Iota when it feeds a reduction. We will compute its
+      // values on the fly.
+      input_args[i] = nullptr;
+      VLOG(3) << "HandleReduce arg_literal: [Unmaterialized Iota]";
+    } else {
+      input_args[i] = &GetEvaluatedLiteralFor(input);
+      VLOG(3) << "HandleReduce arg_literal: " << input_args[i]->ToString();
+    }
     init_values[i] = &GetEvaluatedLiteralFor(reduce->init_values()[i]);
     VLOG(3) << "HandleReduce init_literal: " << init_values[i]->ToString();
     TF_RET_CHECK(ShapeUtil::IsScalar(init_values[i]->shape()));
   }
 
   // All args and results have the same dimensions, so pick an arbitrary one.
-  const Shape& arg_shape = input_args[0]->shape();
+  const Shape& arg_shape = input_instructions[0]->shape();
   const Shape& out_shape = inferred_return_shape;
   bool is_tuple = out_shape.IsTuple();
   const Shape& output_shape = inferred_return_shape.IsTuple()
@@ -4635,12 +4686,19 @@ absl::Status HloEvaluator::HandleReduce(const HloInstruction* hlo) {
     results[i] = Literal(is_tuple ? out_shape.tuple_shapes(i) : out_shape);
   }
 
+  Shape output_shape_with_layout = output_shape;
+  if (!output_shape_with_layout.has_layout()) {
+    output_shape_with_layout = ShapeUtil::MakeShapeWithDescendingLayout(
+        output_shape.element_type(), output_shape.dimensions());
+  }
+
   TF_RETURN_IF_ERROR(ShapeUtil::ForEachIndexParallelWithStatus(
-      output_shape, [&](absl::Span<const int64_t> output_index, int thread_id) {
+      output_shape_with_layout,
+      [&](absl::Span<const int64_t> output_index, int thread_id) {
         return GenerateReduceOutputElement(
             is_tuple, use_fast_path_reduce_, output_index, init_values,
-            input_args, absl::Span<Literal>(results), function,
-            embedded_evaluators[thread_id + 1].get(), arg_dim_steps,
+            input_args, input_instructions, absl::Span<Literal>(results),
+            function, embedded_evaluators[thread_id + 1].get(), arg_dim_steps,
             arg_dim_counts, result_to_arg_index);
       }));
 
@@ -4684,9 +4742,15 @@ absl::Status HloEvaluator::HandleReduceWindow(const HloInstruction* hlo) {
   auto init_values = reduce_window->init_values();
   int64_t num_args = input_arrays.size();
   for (int i = 0; i < num_args; ++i) {
-    const Literal& input_literal = GetEvaluatedLiteralFor(input_arrays[i]);
-    VLOG(3) << "HandleReduceWindow arg_literal: " << input_literal.ToString();
-    input_literal_vec.push_back(&input_literal);
+    const HloInstruction* input = input_arrays[i];
+    if (state_.is_evaluated_iota(input)) {
+      input_literal_vec.push_back(nullptr);
+      VLOG(3) << "HandleReduceWindow arg_literal: " << input->ToString();
+    } else {
+      const Literal& input_literal = GetEvaluatedLiteralFor(input);
+      VLOG(3) << "HandleReduceWindow arg_literal: " << input_literal.ToString();
+      input_literal_vec.push_back(&input_literal);
+    }
     const Literal& init_literal = GetEvaluatedLiteralFor(init_values[i]);
     VLOG(3) << "HandleReduceWindow init_literal: " << init_literal.ToString();
     TF_RET_CHECK(ShapeUtil::IsScalar(init_literal.shape()));
@@ -4710,7 +4774,7 @@ absl::Status HloEvaluator::HandleReduceWindow(const HloInstruction* hlo) {
   // For each resulting dimension, calculate and assign computed value.
   auto evaluate_impl = [&init_literal_vec, &window_shape, &window,
                         &input_literal_vec, &embedded_evaluators, function,
-                        &inferred_return_shape](
+                        &inferred_return_shape, input_arrays](
                            absl::Span<const int64_t> output_index,
                            int thread_id) -> absl::InlinedVector<Literal, 2> {
     const int embedded_evaluator_index = thread_id + 1;
@@ -4725,13 +4789,13 @@ absl::Status HloEvaluator::HandleReduceWindow(const HloInstruction* hlo) {
     }
     absl::InlinedVector<Literal, 2> curr_val_literal_vec;
     curr_val_literal_vec.reserve(input_literal_vec.size());
-    for (const auto* input_literal : input_literal_vec) {
+    for (size_t i = 0; i < input_literal_vec.size(); ++i) {
       curr_val_literal_vec.push_back(Literal(
-          ShapeUtil::MakeShape(input_literal->shape().element_type(), {})));
+          ShapeUtil::MakeShape(input_arrays[i]->shape().element_type(), {})));
     }
     absl::InlinedVector<const Literal*, 2> args;
     IterateThroughWindow(
-        window_shape, window, input_literal_vec[0]->shape(), output_index,
+        window_shape, window, input_arrays[0]->shape(), output_index,
         [&](absl::Span<const int64_t> operand_index) -> void {
           args.clear();
           for (auto& curr_result_val : computed_result) {
@@ -4739,8 +4803,21 @@ absl::Status HloEvaluator::HandleReduceWindow(const HloInstruction* hlo) {
             args.push_back(&curr_result_val);
           }
           for (size_t i = 0; i < input_literal_vec.size(); ++i) {
-            curr_val_literal_vec[i].CopyElementFrom(*input_literal_vec[i],
-                                                    operand_index, {});
+            if (input_literal_vec[i] == nullptr) {
+              auto* iota = Cast<HloIotaInstruction>(input_arrays[i]);
+              int64_t val = operand_index[iota->iota_dimension()];
+              PrimitiveType element_type = iota->shape().element_type();
+              CHECK_OK(IotaTypeSwitch(element_type, [&](auto pt_const) {
+                using NativeT =
+                    primitive_util::NativeTypeOf<decltype(pt_const)::value>;
+                curr_val_literal_vec[i].Set<NativeT>({},
+                                                     static_cast<NativeT>(val));
+                return absl::OkStatus();
+              }));
+            } else {
+              curr_val_literal_vec[i].CopyElementFrom(*input_literal_vec[i],
+                                                      operand_index, {});
+            }
             VLOG(2) << "Pushing:" << curr_val_literal_vec[i].ToString() << "\n";
             args.push_back(&curr_val_literal_vec[i]);
           }
@@ -4858,10 +4935,35 @@ absl::Status HloEvaluator::HandleCustomCall(const HloInstruction* custom_call) {
   return absl::OkStatus();
 }
 
+// Materialize Iota on demand when requested by operations that need the full
+// literal.
+void HloEvaluator::MaterializeIota(const HloInstruction* instruction) {
+  auto* iota = Cast<HloIotaInstruction>(instruction);
+  Shape iota_shape = iota->shape();
+  if (!iota_shape.has_layout()) {
+    LayoutUtil::SetToDefaultLayout(&iota_shape);
+  }
+  Literal result(iota_shape);
+  int64_t iota_dim = iota->iota_dimension();
+
+  CHECK_OK(IotaTypeSwitch(iota->shape().element_type(), [&](auto pt_const) {
+    using NativeT = primitive_util::NativeTypeOf<decltype(pt_const)::value>;
+    return result.PopulateParallel<NativeT>(
+        [&](absl::Span<const int64_t> idx, int /*thread_id*/) {
+          return static_cast<NativeT>(idx[iota_dim]);
+        });
+  }));
+  SetEvaluatedLiteralFor(iota, std::move(result));
+  state().remove_evaluated_iota(iota);
+}
+
 absl::Status HloEvaluator::Preprocess(const HloInstruction* hlo) {
   VLOG(3) << "About to visit HLO: " << hlo->ToString();
   if (!enable_partial_evaluation_) {
     for (const HloInstruction* operand : hlo->operands()) {
+      if (state_.is_evaluated_iota(operand)) {
+        continue;
+      }
       if (!IsAlreadyEvaluated(operand) ||
           !GetEvaluatedLiteralFor(operand).IsKnown()) {
         return absl::FailedPreconditionError(
@@ -4874,6 +4976,9 @@ absl::Status HloEvaluator::Preprocess(const HloInstruction* hlo) {
 }
 
 absl::Status HloEvaluator::Postprocess(const HloInstruction* hlo) {
+  if (state_.is_evaluated_iota(hlo)) {
+    return absl::OkStatus();
+  }
   VLOG(3) << "Finished visiting " << hlo->ToString()
           << "; evaluated value is: " << GetEvaluatedLiteralFor(hlo).ToString();
 

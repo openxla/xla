@@ -2222,24 +2222,6 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
     return HandleReducePrecision<ElementwiseT>(reduce_precision);
   }
 
-  absl::Status HandleIota(const HloInstruction* instruction) override {
-    auto* iota = Cast<HloIotaInstruction>(instruction);
-    if constexpr (std::is_integral_v<ElementwiseT> ||
-                  is_complex_v<ElementwiseT> ||
-                  std::is_floating_point_v<ElementwiseT>) {
-      auto iota_shape = GetShapeWithLayout(iota->shape());
-      Literal result(iota_shape);
-      ShapeUtil::ForEachIndexNoStatus(
-          iota_shape, [&](absl::Span<const int64_t> idx) {
-            result.Set(idx, static_cast<ReturnT>(idx[iota->iota_dimension()]));
-            return true;
-          });
-      parent_->SetEvaluatedLiteralFor(iota, std::move(result));
-      return absl::OkStatus();
-    }
-    return UnsupportedTypeError(iota);
-  }
-
   absl::Status HandleRng(const HloInstruction* random) override {
     RandomDistribution distribution = random->random_distribution();
     Shape result_shape = GetShapeWithLayout(random->shape());

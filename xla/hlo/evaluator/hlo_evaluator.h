@@ -16,9 +16,6 @@ limitations under the License.
 #ifndef XLA_HLO_EVALUATOR_HLO_EVALUATOR_H_
 #define XLA_HLO_EVALUATOR_HLO_EVALUATOR_H_
 
-#include "absl/log/log.h"
-#define _USE_MATH_DEFINES
-
 #include <complex>
 #include <cstdint>
 #include <functional>
@@ -28,7 +25,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/log/log.h"
+#include "xla/layout_util.h"
+#define _USE_MATH_DEFINES
+
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/container/node_hash_map.h"
 #include "absl/log/check.h"
@@ -324,6 +326,8 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
   template <typename ReturnT, typename ElementwiseT>
   friend class HloEvaluatorTypedVisitor;
 
+  void MaterializeIota(const HloInstruction* instruction);
+
   // Wraps around instruction handling to infer types before dispatching to
   // the corresponding typed Visitor.
   absl::Status DefaultAction(const HloInstruction* hlo) override {
@@ -384,6 +388,7 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
   absl::Status HandleReal(const HloInstruction* real) override;
   absl::Status HandleImag(const HloInstruction* imag) override;
   absl::Status HandleComplex(const HloInstruction* complex) override;
+  absl::Status HandleIota(const HloInstruction* iota) override;
   absl::Status HandleReduce(const HloInstruction* hlo) override;
   absl::Status HandleReduceWindow(const HloInstruction* hlo) override;
   absl::Status HandleMap(const HloInstruction* map) override;
@@ -432,6 +437,12 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
     }
 
     const Literal* literal = state_.find_evaluated(hlo);
+    if (literal == nullptr && state_.is_evaluated_iota(hlo)) {
+      // Lazily materialize Iota if it is requested by an operation that hasn't
+      // been optimized to compute it on the fly.
+      MaterializeIota(hlo);
+      literal = state_.find_evaluated(hlo);
+    }
     CHECK(literal != nullptr)
         << "could not find evaluated value for: " << hlo->ToString();
     return *literal;
@@ -449,6 +460,10 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
     if (hlo->opcode() == HloOpcode::kParameter && state_.has_args()) {
       return state_.arg(hlo->parameter_number())->Clone();
     }
+    if (state_.is_evaluated_iota(hlo)) {
+      MaterializeIota(hlo);
+      return state_.extract_evaluated(hlo);
+    }
 
     LOG(FATAL) << "could not find evaluated value for: " << hlo->ToString();
   }
@@ -460,6 +475,9 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
       return true;
     }
     if (hlo->opcode() == HloOpcode::kParameter && state_.has_args()) {
+      return true;
+    }
+    if (state_.is_evaluated_iota(hlo)) {
       return true;
     }
 
@@ -498,13 +516,15 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
     void Reset(absl::Span<const Literal* const> args) {
       args_.clear();
       args_.insert(args_.end(), args.begin(), args.end());
-      evaluated_.erase(evaluated_.begin(), evaluated_.end());
+      evaluated_.clear();
+      evaluated_iotas_.clear();
     }
 
     // Resets the state of the evaluation.
     void Reset() {
       args_.clear();
-      evaluated_.erase(evaluated_.begin(), evaluated_.end());
+      evaluated_.clear();
+      evaluated_iotas_.clear();
     }
 
     // Returns the argument literals set for the evaluation.
@@ -533,7 +553,26 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
 
     // Extracts the evaluated literal for the given instruction and returns it.
     Literal extract_evaluated(const HloInstruction* hlo) {
+      evaluated_iotas_.erase(hlo);
       return std::move(evaluated_.extract(hlo).mapped());
+    }
+
+    void set_evaluated_iota(const HloInstruction* hlo) {
+      CHECK(hlo->opcode() == HloOpcode::kIota);
+      evaluated_iotas_.insert(hlo);
+    }
+
+    // Removes the instruction from evaluated_iotas_. Unlike extract_evaluated,
+    // this does not return anything as iotas are not stored as literals.
+    void remove_evaluated_iota(const HloInstruction* hlo) {
+      if (hlo->opcode() == HloOpcode::kIota) {
+        evaluated_iotas_.erase(hlo);
+      }
+    }
+
+    bool is_evaluated_iota(const HloInstruction* hlo) const {
+      return hlo->opcode() == HloOpcode::kIota &&
+             evaluated_iotas_.contains(hlo);
     }
 
    private:
@@ -552,6 +591,9 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
     // that are no longer a parent for any other subsequent instruction in
     // post-ordering.
     absl::node_hash_map<const HloInstruction*, Literal> evaluated_;
+    // Track iotas that have been visited and conceptually evaluated but not
+    // materialized to avoid memory overhead.
+    absl::flat_hash_set<const HloInstruction*> evaluated_iotas_;
   };
 
   EvaluationState& state() { return state_; }
