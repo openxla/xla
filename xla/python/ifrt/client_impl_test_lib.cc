@@ -107,6 +107,18 @@ TEST(ClientImplTest, DefaultDeviceAssignment) {
   }
 }
 
+TEST(ClientImplTest, ClearMemoryStats) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+  ASSERT_GT(client->devices().size(), 0);
+  Device* device = client->devices()[0];
+
+  absl::Status clear_status = device->ClearMemoryStats();
+
+  if (!clear_status.ok()) {
+    EXPECT_TRUE(absl::IsUnimplemented(clear_status));
+  }
+}
+
 }  // namespace
 }  // namespace ifrt
 }  // namespace xla
