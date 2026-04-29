@@ -220,7 +220,6 @@ cc_library(
     srcs = ["command_buffer_cmd.cc"],
     hdrs = ["command_buffer_cmd.h"],
     deps = [
-        ":all_gather_thunk",
         ":collective_execution",
         ":collective_permute_thunk",
         ":collective_thunk",
