@@ -245,8 +245,16 @@ absl::StatusOr<std::vector<CudnnBackendConfig>> GetAlgorithms(
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
 GetCudnnFusionConfigs(const HloInstruction& instr,
                       se::StreamExecutor* stream_executor,
-                      const Compiler::GpuTargetConfig& target_config) {
+                      const Compiler::GpuTargetConfig& target_config,
+                      const DebugOptions& debug_options) {
   std::vector<std::unique_ptr<BackendConfig>> configs;
+  if (debug_options.xla_gpu_enable_cudnn_deviceless_compilation()) {
+    if (target_config.dnn_version_info < se::dnn::VersionInfo(9, 8, 0)) {
+      return absl::FailedPreconditionError(
+          "Deviceless cuDNN compilation requires cuDNN >= 9.8.");
+    }
+    stream_executor = nullptr;
+  }
   int plan_count = CuDnnFusionCompiler::GetAvailablePlanCount(
       stream_executor, target_config.device_description,
       *DynCast<HloFusionInstruction>(&instr));
@@ -363,7 +371,8 @@ absl::StatusOr<std::unique_ptr<BackendConfig>> CudnnBackend::GetDefaultConfig(
       IsSupportedCudnnFusion(instr, stream_executor(), debug_options())) {
     ASSIGN_OR_RETURN(
         std::vector<std::unique_ptr<BackendConfig>> configs,
-        GetCudnnFusionConfigs(instr, stream_executor(), target_config()));
+        GetCudnnFusionConfigs(instr, stream_executor(), target_config(),
+                              debug_options()));
     if (!configs.empty()) {
       return std::move(configs[0]);
     }
@@ -379,7 +388,8 @@ CudnnBackend::GetSupportedConfigs(const HloInstruction& instr) {
     return std::vector<std::unique_ptr<BackendConfig>>();
   }
   if (instr.opcode() == HloOpcode::kFusion) {
-    return GetCudnnFusionConfigs(instr, stream_executor(), target_config());
+    return GetCudnnFusionConfigs(instr, stream_executor(), target_config(),
+                                 debug_options());
   }
   if (IsCustomCallToDnnConvolution(instr)) {
     auto custom_call_instr = Cast<HloCustomCallInstruction>(&instr);
