@@ -229,8 +229,6 @@ cc_library(
         ":command_executor",
         ":command_state",
         ":p2p_thunk_common",
-        ":recv_thunk",
-        ":send_thunk",
         ":thunk",
         ":while_loop",
         "//xla:executable_run_options",
