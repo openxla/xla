@@ -24,6 +24,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
@@ -39,6 +40,7 @@ limitations under the License.
 #include "xla/service/shaped_buffer.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/threadpool.h"
+#include "tsl/platform/fingerprint.h"
 
 using InstructionFilterFn = std::function<bool(const xla::HloInstruction&)>;
 
@@ -94,13 +96,36 @@ struct AutotuneConfig {
   std::string ToString() const;
 };
 
+// Per-fingerprint entry that serialises concurrent tuning requests for the
+// same HLO across Autotuner instances sharing the same map.
+struct InFlightEntry {
+  enum class State { CREATED, TUNING, FINISHED, ERROR };
+
+  absl::Mutex mu;
+  State state ABSL_GUARDED_BY(mu) = State::CREATED;
+  absl::CondVar cond_var;
+};
+
+// Map from HLO fingerprint to in-flight tuning state. Shared across Autotuner
+// instances to deduplicate concurrent tuning of the same HLO.
+struct InFlightTuningMap {
+  absl::Mutex mu;
+  absl::flat_hash_map<tsl::Fprint128, std::shared_ptr<InFlightEntry>,
+                      tsl::Fprint128Hasher>
+      entries ABSL_GUARDED_BY(mu);
+
+  // Returns the process-global singleton instance.
+  static std::shared_ptr<InFlightTuningMap> Global();
+};
+
 class Autotuner {
  public:
   static absl::StatusOr<std::unique_ptr<Autotuner>> Create(
       std::vector<std::unique_ptr<CodegenBackend>> codegen_backends,
       std::unique_ptr<Profiler> profiler, AutotuneConfig autotune_config,
       std::unique_ptr<AutotunerCacheInterface> cache,
-      tsl::thread::ThreadPool* thread_pool = nullptr);
+      tsl::thread::ThreadPool* thread_pool = nullptr,
+      std::shared_ptr<InFlightTuningMap> in_flight_tuning = nullptr);
 
   // Autotune the given HLO instruction. If a cache is provided, the cached
   // config will be used if the instruction is in the cache. Otherwise, the
@@ -167,12 +192,14 @@ class Autotuner {
   Autotuner(std::vector<std::unique_ptr<CodegenBackend>> codegen_backends,
             std::unique_ptr<Profiler> profiler, AutotuneConfig autotune_config,
             std::unique_ptr<AutotunerCacheInterface> cache,
-            tsl::thread::ThreadPool* thread_pool)
+            tsl::thread::ThreadPool* thread_pool,
+            std::shared_ptr<InFlightTuningMap> in_flight_tuning)
       : codegen_backends_(std::move(codegen_backends)),
         profiler_(std::move(profiler)),
         autotune_config_(autotune_config),
         cache_(std::move(cache)),
-        thread_pool_(thread_pool) {}
+        thread_pool_(thread_pool),
+        in_flight_tuning_(std::move(in_flight_tuning)) {}
 
   // Returns a list of instruction groups that can be autotuned. Each group
   // contains a set of instructions that are equivalent as they have the same
@@ -242,6 +269,7 @@ class Autotuner {
   AutotuneConfig autotune_config_;
   std::unique_ptr<AutotunerCacheInterface> cache_;
   tsl::thread::ThreadPool* thread_pool_;
+  std::shared_ptr<InFlightTuningMap> in_flight_tuning_;
   AutotuningLogs logs_;
   int dump_counter_ = 0;
 

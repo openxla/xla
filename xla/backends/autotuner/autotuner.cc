@@ -74,6 +74,12 @@ limitations under the License.
 
 namespace xla {
 
+/*static*/ std::shared_ptr<InFlightTuningMap> InFlightTuningMap::Global() {
+  static auto* global = new std::shared_ptr<InFlightTuningMap>(
+      std::make_shared<InFlightTuningMap>());
+  return *global;
+}
+
 namespace {
 
 tsl::Fprint128 GetFingerprint(const HloInstruction* instr) {
@@ -161,7 +167,8 @@ absl::StatusOr<std::unique_ptr<Autotuner>> Autotuner::Create(
     std::vector<std::unique_ptr<CodegenBackend>> codegen_backends,
     std::unique_ptr<Profiler> profiler, AutotuneConfig autotune_config,
     std::unique_ptr<AutotunerCacheInterface> cache,
-    tsl::thread::ThreadPool* thread_pool) {
+    tsl::thread::ThreadPool* thread_pool,
+    std::shared_ptr<InFlightTuningMap> in_flight_tuning) {
   if (codegen_backends.empty()) {
     return absl::InvalidArgumentError(
         "Autotuner initialization failed. No codegen backends provided.");
@@ -169,9 +176,13 @@ absl::StatusOr<std::unique_ptr<Autotuner>> Autotuner::Create(
   for (const auto& backend : codegen_backends) {
     VLOG(1) << "Registered backend: " << backend->name();
   }
+  if (!in_flight_tuning) {
+    in_flight_tuning = InFlightTuningMap::Global();
+  }
   return absl::WrapUnique(
       new Autotuner(std::move(codegen_backends), std::move(profiler),
-                    std::move(autotune_config), std::move(cache), thread_pool));
+                    std::move(autotune_config), std::move(cache), thread_pool,
+                    std::move(in_flight_tuning)));
 }
 
 absl::Status Autotuner::Autotune(HloModule* module,
@@ -344,12 +355,97 @@ tsl::Future<Autotuner::Config> Autotuner::GetConfig(HloInstruction* instr) {
     return default_config;
   }
 
-  VLOG(1) << "Autotuning the HLO instruction to find best config.";
-  return TuneBestConfig(instr).Map(
-      [&, instr](Autotuner::Config best_config) -> absl::StatusOr<Config> {
-        RETURN_IF_ERROR(Insert(instr, best_config));
-        return best_config;
-      });
+  // Look up (or create) an in-flight entry for this fingerprint.
+  // the first thread to see CREATED becomes the leader (transitions to TUNING),
+  // performs the work, and signals all waiters via cond_var.
+  const tsl::Fprint128 fingerprint = GetFingerprint(instr);
+  std::shared_ptr<InFlightEntry> entry;
+  {
+    absl::MutexLock lock(&in_flight_tuning_->mu);
+    auto [it, inserted] = in_flight_tuning_->entries.try_emplace(fingerprint);
+    if (inserted) {
+      it->second = std::make_shared<InFlightEntry>();
+    }
+    entry = it->second;
+  }
+
+  // Lock is managed manually because the CREATED/ERROR branch unlocks before
+  // returning a future (the async callback re-acquires when it completes).
+  entry->mu.Lock();
+  while (true) {
+    switch (entry->state) {
+      case InFlightEntry::State::ERROR:
+        TF_FALLTHROUGH_INTENDED;
+      case InFlightEntry::State::CREATED: {
+        // We are the leader — transition to TUNING and release the lock
+        // while doing the expensive GPU work.
+        entry->state = InFlightEntry::State::TUNING;
+        entry->mu.Unlock();
+
+        VLOG(1) << "Autotuning the HLO instruction to find best config.";
+        auto [promise, future] = tsl::MakePromise<Config>();
+        std::move(TuneBestConfig(instr))
+            .OnReady([this, instr, fingerprint, entry,
+                      promise = std::move(promise)](
+                         absl::StatusOr<Autotuner::Config> config_or) mutable {
+              auto finish =
+                  [&](absl::StatusOr<Autotuner::Config> result) mutable {
+                    absl::MutexLock l(&entry->mu);
+                    entry->state = result.ok() ? InFlightEntry::State::FINISHED
+                                               : InFlightEntry::State::ERROR;
+                    entry->cond_var.SignalAll();
+                    promise.Set(std::move(result));
+                  };
+
+              if (!config_or.ok()) {
+                finish(config_or.status());
+                return;
+              }
+
+              Config best_config = std::move(config_or).value();
+              absl::Status insert_status = Insert(instr, best_config);
+              if (!insert_status.ok()) {
+                finish(insert_status);
+                return;
+              }
+
+              finish(std::move(best_config));
+            });
+        // Do not re-acquire entry->mu; we return the future directly.
+        return std::move(future);
+      }
+      case InFlightEntry::State::TUNING:
+        // Another thread is tuning. Wait for it to finish.
+        entry->cond_var.WaitWithTimeout(&entry->mu, absl::Seconds(120));
+        if (entry->state == InFlightEntry::State::TUNING) {
+          // Timed out — still tuning. Treat as error so this thread retries
+          // as a new leader.
+          LOG(WARNING) << "Timed out waiting for concurrent autotuning to "
+                          "finish; retrying as leader.";
+          entry->state = InFlightEntry::State::ERROR;
+        }
+        // Re-loop to check the new state (FINISHED or ERROR).
+        break;
+      case InFlightEntry::State::FINISHED: {
+        // A concurrent leader already tuned successfully. Read from cache.
+        // Hold the lock while reading so no other thread can flip the state
+        // to ERROR concurrently (avoids multiple threads becoming leader).
+        std::optional<Config> concurrent_config = LookUp(instr);
+        if (concurrent_config.has_value()) {
+          VLOG(1) << "Using config from concurrent tuning: "
+                  << concurrent_config->ToString();
+          entry->mu.Unlock();
+          return std::move(*concurrent_config);
+        }
+        // Cache miss despite FINISHED state (should not happen). Retry as
+        // ERROR so the next iteration becomes the leader.
+        LOG(WARNING) << "In-flight entry marked FINISHED but cache lookup "
+                        "failed; retrying.";
+        entry->state = InFlightEntry::State::ERROR;
+        break;
+      }
+    }
+  }
 }
 
 absl::Status Autotuner::IsValidExecutable(
