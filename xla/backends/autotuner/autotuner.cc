@@ -651,10 +651,6 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
   }
 
   std::vector<OutputCluster> clusters;
-  std::vector<int> cluster_of_result;
-  if (autotune_config_.check_buffers) {
-    cluster_of_result.reserve(candidates.size());
-  }
 
   for (int i = 0; i < candidates.size(); ++i) {
     absl::StatusOr<ProfileResult> profile_result =
@@ -687,15 +683,12 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
         }
       }
     }
-    config_results.push_back(
-        {std::move(candidates[i].config), failure, duration, scratch_bytes});
-    if (autotune_config_.check_buffers) {
-      cluster_of_result.push_back(assigned_cluster);
-    }
+    config_results.push_back({std::move(candidates[i].config), failure,
+                              duration, scratch_bytes, assigned_cluster});
   }
 
   if (autotune_config_.check_buffers) {
-    DemoteNonWinningClusterConfigs(config_results, clusters, cluster_of_result);
+    DemoteNonWinningClusterConfigs(config_results, clusters);
     if (autotune_config_.crash_on_check_failure) {
       // Only correctness-check failures are fatal here. kCompilationFailed and
       // kExecutionFailed are expected outcomes during autotuning and silently
@@ -809,8 +802,7 @@ int Autotuner::AssignToOutputCluster(std::vector<OutputCluster>& clusters,
 
 void Autotuner::DemoteNonWinningClusterConfigs(
     std::vector<ConfigResult>& results,
-    const std::vector<OutputCluster>& clusters,
-    const std::vector<int>& cluster_of_result) {
+    const std::vector<OutputCluster>& clusters) {
   if (clusters.empty()) return;
   // Prefer clusters with a trusted member; among the preferred set, pick the
   // largest count (earliest insertion wins on tie).
@@ -825,18 +817,18 @@ void Autotuner::DemoteNonWinningClusterConfigs(
           << " cluster(s); selected cluster " << winner << " with "
           << clusters[winner].count << " member(s), trusted="
           << clusters[winner].has_trusted_member;
-  for (int i = 0; i < results.size(); ++i) {
-    if (!results[i].failure.has_value() && cluster_of_result[i] != winner) {
-      results[i].failure = Failure{
+  for (ConfigResult& result : results) {
+    if (!result.failure.has_value() && result.cluster_index != winner) {
+      result.failure = Failure{
           FailureKind::kWrongResults,
           absl::StrCat("Output disagrees with winning cluster (member of "
                        "cluster ",
-                       cluster_of_result[i], " of ", clusters.size(),
+                       result.cluster_index, " of ", clusters.size(),
                        "; winning cluster has ", clusters[winner].count,
                        " member(s), trusted=",
                        clusters[winner].has_trusted_member, ").")};
-      VLOG(3) << "Demoted config " << results[i].config.ToString()
-              << " (cluster " << cluster_of_result[i] << ").";
+      VLOG(3) << "Demoted config " << result.config.ToString() << " (cluster "
+              << result.cluster_index << ").";
     }
   }
 }

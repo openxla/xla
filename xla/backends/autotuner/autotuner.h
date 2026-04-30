@@ -159,6 +159,10 @@ class Autotuner {
     std::optional<Failure> failure;
     absl::Duration duration = absl::ZeroDuration();
     int scratch_bytes = 0;
+    // Index into the OutputCluster vector built by ProfileAll, or -1 if the
+    // config was not clustered (output check disabled, or profiling failed
+    // before reaching the cluster assignment step).
+    int cluster_index = -1;
 
     std::string ToString(bool verbose = false) const;
     AutotuneResult ToProto() const;
@@ -246,12 +250,11 @@ class Autotuner {
   // Stamps kWrongResults on every successful result that is not in the
   // winning cluster. Winner: if any cluster has a trustworthy member, the
   // largest among those; otherwise the largest overall. Earliest insertion
-  // wins on tie. `cluster_of_result[i]` is the cluster index of `results[i]`,
-  // or -1 if the config was not clustered (failed or check_buffers off).
+  // wins on tie. Reads `ConfigResult::cluster_index` to find each result's
+  // cluster.
   void DemoteNonWinningClusterConfigs(
       std::vector<ConfigResult>& results,
-      const std::vector<OutputCluster>& clusters,
-      const std::vector<int>& cluster_of_result);
+      const std::vector<OutputCluster>& clusters);
   absl::Status IsValidExecutable(
       const absl::StatusOr<std::unique_ptr<Executable>>& executable) const;
 
