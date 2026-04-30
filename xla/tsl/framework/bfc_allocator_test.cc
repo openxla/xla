@@ -25,8 +25,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/casts.h"
+#include "absl/synchronization/blocking_counter.h"
 #include "xla/tsl/framework/allocator.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/tsl/platform/test_benchmark.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "tsl/platform/mem.h"
 
 namespace tsl {
@@ -220,6 +224,79 @@ TEST(BFCAllocatorTest, AlignmentWithGpuLikeSubAllocator) {
 
   alloc.DeallocateRaw(filler);
 }
+
+//===----------------------------------------------------------------------===//
+// Performance benchmarks.
+//===----------------------------------------------------------------------===//
+
+static constexpr size_t kBenchAllocSize = 1024;
+static constexpr size_t kBenchAlignment = Allocator::kAllocatorAlignment;
+
+static void BM_AllocAndFree(benchmark::State& state) {
+  BFCAllocator alloc(std::make_unique<MallocSubAllocator>(),
+                     /*total_memory=*/256 << 20, /*name=*/"bench",
+                     BFCAllocator::Options{});
+
+  for (auto _ : state) {
+    void* ptr = alloc.AllocateRaw(kBenchAlignment, kBenchAllocSize);
+    alloc.DeallocateRaw(ptr);
+  }
+  state.SetItemsProcessed(state.iterations());
+}
+
+BENCHMARK(BM_AllocAndFree);
+
+static void BM_AllocBatchThenFree(benchmark::State& state) {
+  int batch = state.range(0);
+  BFCAllocator alloc(std::make_unique<MallocSubAllocator>(),
+                     /*total_memory=*/256 << 20, /*name=*/"bench",
+                     BFCAllocator::Options{});
+
+  std::vector<void*> ptrs(batch);
+  for (auto _ : state) {
+    for (int i = 0; i < batch; ++i) {
+      ptrs[i] = alloc.AllocateRaw(kBenchAlignment, kBenchAllocSize);
+    }
+    for (int i = 0; i < batch; ++i) {
+      alloc.DeallocateRaw(ptrs[i]);
+    }
+  }
+  state.SetItemsProcessed(state.iterations() * batch);
+}
+
+BENCHMARK(BM_AllocBatchThenFree)->Arg(100)->Arg(1000);
+
+static void BM_AllocAndFreeUnderContention(benchmark::State& state) {
+  size_t num_threads = state.range(0);
+  static constexpr int kItersPerThread = 10000;
+
+  BFCAllocator alloc(std::make_unique<MallocSubAllocator>(),
+                     /*total_memory=*/256 << 20, /*name=*/"bench",
+                     BFCAllocator::Options{});
+  tsl::thread::ThreadPool threads(tsl::Env::Default(), "bench", num_threads);
+
+  for (auto _ : state) {
+    absl::BlockingCounter counter(num_threads);
+    for (int t = 0; t < num_threads; ++t) {
+      threads.Schedule([&] {
+        for (int i = 0; i < kItersPerThread; ++i) {
+          void* ptr = alloc.AllocateRaw(kBenchAlignment, kBenchAllocSize);
+          alloc.DeallocateRaw(ptr);
+        }
+        counter.DecrementCount();
+      });
+    }
+    counter.Wait();
+  }
+  state.SetItemsProcessed(state.iterations() * num_threads * kItersPerThread);
+}
+
+BENCHMARK(BM_AllocAndFreeUnderContention)
+    ->MeasureProcessCPUTime()
+    ->Arg(2)
+    ->Arg(4)
+    ->Arg(8)
+    ->Arg(16);
 
 }  // namespace
 }  // namespace tsl
