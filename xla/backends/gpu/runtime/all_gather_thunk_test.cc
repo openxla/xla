@@ -24,10 +24,10 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_state.h"
@@ -47,8 +47,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/stream_executor/trace_command_buffer_factory.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla_data.pb.h"
