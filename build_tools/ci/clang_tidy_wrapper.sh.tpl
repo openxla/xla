@@ -1,9 +1,15 @@
 #!/bin/bash
 set -e
-SEARCH_DIR="$PWD/../../external/%LLVM_REPO_NAME%/bin"
-REAL_BIN=$(find $SEARCH_DIR -path "*clang-tidy" -type f -print -quit 2>/dev/null)
-if [ -z "$REAL_BIN" ]; then
-  echo "Error: Failed to locate clang-tidy inside action workspace. Searched directory: $SEARCH_DIR" >&2
+
+echoerr() {
+  RED='\033[1;31m'
+  NOCOLOR='\033[0m'
+  printf "${RED}ERROR:${NOCOLOR} %s\n" "$*" >&2
+}
+
+REAL_BIN="$PWD/external/%LLVM_REPO_NAME%/bin/clang-tidy"
+if [ ! -f "$REAL_BIN" ]; then
+  echoerr "Failed to locate clang-tidy binary at: $REAL_BIN"
   exit 1
 fi
 echo "Using clang-tidy at: " $REAL_BIN

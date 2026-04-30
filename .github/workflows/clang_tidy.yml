@@ -27,6 +27,9 @@ jobs:
         shell: bash
     timeout-minutes: 30
     continue-on-error: true
+    if: |
+      github.event.sender.type == 'User' ||
+      contains(github.event.pull_request.body, 'FORCE_TEST_ACTIONS')
     steps:
       - name: "Checking out repository"
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -46,6 +49,7 @@ jobs:
           set -euo pipefail
           ./configure.py --backend=CUDA --cuda_compute_capabilities="9.0"
           echo "common --config cuda_nvcc" >> xla_configure.bazelrc
+          echo "common --config rbe_linux_cpu" >> xla_configure.bazelrc
       - name: "Run Clang Tidy"
         env:
           TARGET_REF: "origin/${{ github.base_ref || 'main' }}"
