@@ -333,11 +333,23 @@ absl::StatusOr<PerDeviceLiteralVecType> LoadAndRun(
     InputFormat input_format, const PerDeviceLiteralVecType& arguments = {},
     std::minstd_rand0* engine = nullptr);
 
+// Loads an HLO module from hlo_file according to input_format and compiles it.
+// The compiled executable is dumped to the specified path if the path is not
+// empty.
+absl::Status LoadAndCompileAndDump(
+    PjRtClient& client, const DebugOptions& debug_options,
+    const xla::FunctionalHloRunner::PreprocessingOptions& preproc_options,
+    const xla::FunctionalHloRunner::RawCompileOptions& raw_compile_options,
+    absl::string_view hlo_file, InputFormat input_format,
+    std::string dump_executable_to = "", int task_id = 0, int num_nodes = 1,
+    std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr,
+    bool use_gpu_count_workaround = true);
+
 // Loads and compiles an HLO for debugging purposes.
 //
 // This function allows compiling multi-device HLOs on machines with fewer
 // devices.
-absl::Status LoadAndCompile(
+absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadAndCompile(
     PjRtClient& client, const DebugOptions& debug_options,
     const PreprocessingOptions& preproc_options,
     const RawCompileOptions& raw_compile_options, absl::string_view hlo_file,
