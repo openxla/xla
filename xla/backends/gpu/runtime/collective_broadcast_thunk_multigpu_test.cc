@@ -15,7 +15,8 @@ limitations under the License.
 
 // Multi-GPU integration tests for CollectiveBroadcastThunk through NCCL.
 // Requires at least kNumDevices GPUs. Command-buffer tests additionally require
-// CUDA 12.9+ driver/toolkit for CreateChildCommand / UpdateChildCommand support.
+// CUDA 12.9+ driver/toolkit for CreateChildCommand / UpdateChildCommand
+// support.
 
 #include <algorithm>
 #include <cstdint>
@@ -29,6 +30,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/collective_broadcast_thunk.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
@@ -58,7 +60,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/xla_data.pb.h"
 
