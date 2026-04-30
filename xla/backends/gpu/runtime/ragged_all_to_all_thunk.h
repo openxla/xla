@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_handle.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -157,6 +158,10 @@ class RaggedAllToAllThunk : public CollectiveThunk {
       const GpuCliqueKey& clique_key) override;
 
   absl::Status Initialize(const InitializeParams& params) override;
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const ExecuteParams& execute_params, const RecordParams& record_params,
+      RecordAction record_action, se::CommandBuffer* command_buffer) override;
 
   static absl::string_view GetHloOpName() { return "ragged-all-to-all-start"; }
 

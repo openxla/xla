@@ -30,7 +30,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
-#include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/shaped_slice.h"
@@ -234,29 +233,6 @@ class SendCmd : public CollectiveCmd {
  private:
   P2PConfig p2p_config_;
   CollectiveThunk::Buffer buffer_;
-};
-
-//===----------------------------------------------------------------------===//
-// RaggedAllToAllCmd
-//===----------------------------------------------------------------------===//
-
-class RaggedAllToAllCmd : public CollectiveCmd {
- public:
-  RaggedAllToAllCmd(RaggedAllToAllConfig ragged_all_to_all_config,
-                    absl::Span<const CollectiveThunk::Buffer> buffers);
-
-  absl::Status Initialize(const Thunk::InitializeParams& params) override;
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override;
-
- private:
-  RaggedAllToAllConfig ragged_all_to_all_config_;
-  std::vector<CollectiveThunk::Buffer> buffers_;
 };
 
 }  // namespace xla::gpu
