@@ -709,9 +709,8 @@ HostOffloader::GetStartingInstructions(
       // Found the start of "normal" memory offloading.
       result.push_back(instruction_and_shape);
       continue;
-    } else {
-      // Is a logical bitcast/reshape, we won't offload this yet.
     }
+    // Is a logical bitcast/reshape, we won't offload this yet.
     TF_ASSIGN_OR_RETURN(
         const std::vector<InstructionAndShapeIndex> successors,
         host_offload_utils::GetSuccessors(instruction_and_shape));
@@ -773,7 +772,7 @@ absl::Status HostOffloader::CreateAllocateBufferForDynamicUpdateSlice(
     return absl::OkStatus();
   }
   VLOG(2) << absl::StreamFormat(
-      "Creating a AllocateBuffer in host memory space for \"%s\"",
+      "Possibly creating an AllocateBuffer in host memory space for \"%s\"",
       dynamic_update_slice->name());
   // Walk the graph up. We expect to find a broadcast. Also, while walking up
   // the graph, set host memory space on everything between the AllocateBuffer
@@ -809,7 +808,8 @@ absl::Status HostOffloader::CreateAllocateBufferForDynamicUpdateSlice(
                 shape_index)
                 .layout()
                 .memory_space() == Layout::kHostMemorySpace) {
-          continue;
+          // Buffer comes from one parameter. Stop the process.
+          return absl::OkStatus();
         }
         return absl::InvalidArgumentError(
             absl::StrFormat("Entry computation parameter \"%s\" (shape index "
@@ -933,6 +933,7 @@ absl::Status HostOffloader::CreateAllocateBufferForDynamicUpdateSlice(
           break;
         }
       }
+      // Buffer is already from AllocateBuffer, stop the process.
       return absl::OkStatus();
     }
     previous_instruction_and_shape = instruction_and_shape;
