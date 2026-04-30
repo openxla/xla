@@ -23,10 +23,10 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
-#include "xla/backends/gpu/libraries/cub/cub_sort_utils.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_state.h"
@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
@@ -136,8 +137,24 @@ absl::Status EstimateCubSortScratchSize::RunOnSortInstruction(
       int64_t scratch_size,
       InvokeInstantiateHandlerAndGetScratchSize(registration, builder.Build()));
 
-  return CreateCubSortCustomCall(custom_call, scratch_size, ffi_target,
-                                 sort_options.descending(), batch_size);
+  // Create the FFI custom call with correct scratch size and MLIR dict
+  // backend config for the FFI handler attributes.
+  Shape new_shape = custom_call->shape();
+  new_shape.mutable_tuple_shapes()->back() =
+      ShapeUtil::MakeShape(U8, {scratch_size});
+  HloInstruction* new_custom_call =
+      custom_call->AddInstruction(HloInstruction::CreateCustomCall(
+          new_shape, absl::MakeSpan(custom_call->operands()), ffi_target));
+  auto* new_cc = Cast<HloCustomCallInstruction>(new_custom_call);
+  new_cc->set_api_version(CustomCallApiVersion::API_VERSION_TYPED_FFI);
+  std::string backend_config =
+      absl::StrFormat("{descending = %s, batch_size = %d : i64}",
+                      sort_options.descending() ? "true" : "false", batch_size);
+  new_custom_call->set_raw_backend_config_string(backend_config);
+  new_custom_call->SetupDerivedInstruction(custom_call);
+  RETURN_IF_ERROR(custom_call->parent()->ReplaceInstructionWithDifferentShape(
+      custom_call, new_custom_call));
+  return absl::OkStatus();
 }
 
 absl::StatusOr<bool> EstimateCubSortScratchSize::RunOnComputation(
