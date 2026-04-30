@@ -16,23 +16,42 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/container/btree_map.h"
+#include "absl/container/inlined_vector.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
+#include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
+#include "xla/backends/gpu/collectives/cancellation_token.h"
+#include "xla/backends/gpu/collectives/gpu_clique.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_communicator.h"
+#include "xla/backends/gpu/runtime/collective_cliques.h"
+#include "xla/backends/gpu/runtime/collective_execution.h"
+#include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/core/collectives/communicator.h"
+#include "xla/core/collectives/rank_id.h"
+#include "xla/future.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/computation_placer.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
@@ -45,9 +64,6 @@ limitations under the License.
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
-#include "xla/stream_executor/trace_command_buffer_factory.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla_data.pb.h"
@@ -76,45 +92,137 @@ static bool IsAtLeastCuda12900(const se::StreamExecutor* executor) {
          se::SemanticVersion(12, 9, 0);
 }
 
-// Test-only subclass whose ExecuteOnStream and Record both bypass NCCL so the
-// command-buffer wiring can be exercised without a live communicator. Record
-// traces a trivial memset into a nested command buffer and attaches it as a
-// child command, mirroring the structure produced by the production Record.
-class NoOpAllToAllThunk : public AllToAllThunk {
+class FakeGpuCommunicator : public GpuCommunicator {
  public:
-  NoOpAllToAllThunk(Thunk::ThunkInfo thunk_info, AllToAllConfig config,
-                    std::vector<CollectiveThunk::Buffer> buffers)
+  Future<> GroupExecute(
+      absl::AnyInvocable<absl::Status(GpuCommunicator*)> f) override {
+    return f(this);
+  }
+
+  absl::Status LaunchAllReduce(se::DeviceAddressBase, se::DeviceAddressBase,
+                               PrimitiveType, size_t, ReductionKind,
+                               const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  absl::Status LaunchBroadcast(se::DeviceAddressBase, se::DeviceAddressBase,
+                               PrimitiveType, size_t, RankId,
+                               const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  absl::Status LaunchReduceScatter(se::DeviceAddressBase, se::DeviceAddressBase,
+                                   PrimitiveType, size_t, ReductionKind,
+                                   const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  absl::Status LaunchAllGather(se::DeviceAddressBase, se::DeviceAddressBase,
+                               PrimitiveType, size_t,
+                               const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  absl::Status LaunchAllToAll(absl::InlinedVector<se::DeviceAddressBase, 4>,
+                              absl::InlinedVector<se::DeviceAddressBase, 4>,
+                              PrimitiveType, size_t, const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  absl::Status LaunchCollectivePermute(se::DeviceAddressBase,
+                                       se::DeviceAddressBase, PrimitiveType,
+                                       size_t, std::optional<RankId>,
+                                       absl::Span<const RankId>,
+                                       const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  absl::Status LaunchSend(se::DeviceAddressBase, PrimitiveType, size_t, RankId,
+                          const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  absl::Status LaunchRecv(se::DeviceAddressBase, PrimitiveType, size_t, RankId,
+                          const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  Future<> AllReduce(se::DeviceAddressBase, se::DeviceAddressBase,
+                     PrimitiveType, size_t, ReductionKind,
+                     const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  Future<> Broadcast(se::DeviceAddressBase, se::DeviceAddressBase,
+                     PrimitiveType, size_t, RankId, const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  Future<> ReduceScatter(se::DeviceAddressBase, se::DeviceAddressBase,
+                         PrimitiveType, size_t, ReductionKind,
+                         const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  Future<> AllGather(se::DeviceAddressBase, se::DeviceAddressBase,
+                     PrimitiveType, size_t, const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  Future<> CollectivePermute(se::DeviceAddressBase, se::DeviceAddressBase,
+                             PrimitiveType, size_t, std::optional<RankId>,
+                             absl::Span<const RankId>,
+                             const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  Future<> AllToAll(absl::InlinedVector<se::DeviceAddressBase, 4>,
+                    absl::InlinedVector<se::DeviceAddressBase, 4>,
+                    PrimitiveType, size_t, const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  Future<> Send(se::DeviceAddressBase, PrimitiveType, size_t, RankId,
+                const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  Future<> Recv(se::DeviceAddressBase, PrimitiveType, size_t, RankId,
+                const Executor&) override {
+    return absl::UnimplementedError("unused");
+  }
+
+  absl::StatusOr<size_t> NumRanks() const override { return size_t{1}; }
+  absl::StatusOr<size_t> CurrentRank() override { return size_t{0}; }
+  std::string ToString() const override { return "fake gpu communicator"; }
+};
+
+// Test-only subclass that bypasses NCCL in RunCollective only. The command
+// buffer tests still exercise the production CollectiveThunk::Record path.
+class MemzeroAllToAllThunk : public AllToAllThunk {
+ public:
+  MemzeroAllToAllThunk(Thunk::ThunkInfo thunk_info, AllToAllConfig config,
+                       std::vector<CollectiveThunk::Buffer> buffers)
       : AllToAllThunk(std::move(thunk_info), config, std::move(buffers),
                       /*p2p_memcpy_enabled=*/false) {}
 
-  absl::Status ExecuteOnStream(const ExecuteParams&) override {
-    return absl::OkStatus();
-  }
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const ExecuteParams& execute_params, const RecordParams&,
-      RecordAction record_action, se::CommandBuffer* command_buffer) override {
+ protected:
+  absl::Status RunCollective(const ExecuteParams& params, const GpuCliqueKey&,
+                             se::Stream& stream, Communicator&) override {
+    const BufferAllocation::Slice& dst_slice =
+        buffers()[0].destination_buffer.slice;
     se::DeviceMemoryBase dst =
-        execute_params.buffer_allocations->GetDeviceAddress(
-            buffers()[0].destination_buffer.slice);
-    ASSIGN_OR_RETURN(
-        std::unique_ptr<se::CommandBuffer> nested_cmd,
-        se::TraceCommandBufferFactory::Create(
-            execute_params.stream->parent(),
-            execute_params.command_buffer_trace_stream,
-            [&](se::Stream* stream) { return stream->MemZero(&dst, 4); }));
-
-    if (auto* create = std::get_if<RecordCreate>(&record_action)) {
-      return command_buffer->CreateChildCommand(*nested_cmd,
-                                                create->dependencies);
-    }
-    if (auto* update = std::get_if<RecordUpdate>(&record_action)) {
-      RETURN_IF_ERROR(
-          command_buffer->UpdateChildCommand(update->command, *nested_cmd));
-      return update->command;
-    }
-    return absl::InternalError("Invalid record action");
+        params.buffer_allocations->GetDeviceAddress(dst_slice);
+    return stream.MemZero(&dst, dst_slice.size());
   }
+};
+
+struct CollectiveTestState {
+  DeviceAssignment device_assignment;
+  ServiceExecutableRunOptions run_options;
+  std::optional<CollectiveParams> collective_params;
+  std::shared_ptr<LockableGpuClique> clique;
+  CollectiveCliques collective_cliques;
 };
 
 TEST(CollectiveThunkTest, ProtoRoundTrip) {
@@ -144,10 +252,10 @@ TEST(CollectiveThunkTest, ProtoRoundTrip) {
   EXPECT_THAT(round_trip_proto, EqualsProto(proto));
 }
 
-// Builds a NoOpAllToAllThunk with one F32[length] src->dst buffer pair.
-static NoOpAllToAllThunk MakeNoOpThunk(const BufferAllocation& alloc_src,
-                                       const BufferAllocation& alloc_dst,
-                                       int64_t length) {
+// Builds a MemzeroAllToAllThunk with one F32[length] src->dst buffer pair.
+static MemzeroAllToAllThunk MakeThunk(const BufferAllocation& alloc_src,
+                                      const BufferAllocation& alloc_dst,
+                                      int64_t length) {
   int64_t byte_length = sizeof(float) * length;
   ShapedSlice src_slice{BufferAllocation::Slice(&alloc_src, 0, byte_length),
                         ShapeUtil::MakeShape(F32, {length})};
@@ -163,7 +271,56 @@ static NoOpAllToAllThunk MakeNoOpThunk(const BufferAllocation& alloc_src,
   config.config.operand_element_type = {F32};
   config.has_split_dimension = false;
 
-  return NoOpAllToAllThunk(Thunk::ThunkInfo(), config, {buffer});
+  return MemzeroAllToAllThunk(Thunk::ThunkInfo(), config, {buffer});
+}
+
+static absl::Status InitCollectiveTestState(se::Stream* stream,
+                                            const AllToAllThunk& thunk,
+                                            CollectiveTestState* state) {
+  state->device_assignment = DeviceAssignment(/*replica_count=*/1,
+                                              /*computation_count=*/1);
+  state->device_assignment(0, 0) = 0;
+  state->run_options.mutable_run_options()->set_stream(stream);
+  state->run_options.mutable_run_options()->set_device_assignment(
+      &state->device_assignment);
+
+  ASSIGN_OR_RETURN(
+      CollectiveParams collective_params,
+      CollectiveParams::Create(state->run_options,
+                               /*async_streams=*/{}, LocalDeviceId(0)));
+  ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetGpuCliqueKey(collective_params, thunk.config().replica_groups,
+                      thunk.config().group_mode, thunk.communication_id()));
+
+  absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators;
+  communicators.emplace(RankId(0), std::make_unique<FakeGpuCommunicator>());
+  state->clique = std::make_shared<LockableGpuClique>(
+      clique_key, std::nullopt, std::move(communicators),
+      /*peer_access_enabled=*/true, std::make_shared<CancellationToken>());
+
+  AcquiredCliquesMap cliques_map;
+  cliques_map.emplace(clique_key, std::make_shared<LockableGpuClique::Lock>(
+                                      state->clique->Acquire()));
+  state->collective_cliques = CollectiveCliques(std::move(cliques_map));
+  state->collective_params.emplace(std::move(collective_params));
+  return absl::OkStatus();
+}
+
+static absl::Status FillDeviceBuffer(se::Stream& stream,
+                                     se::DeviceAddressBase buffer,
+                                     int64_t length, float value) {
+  std::vector<float> data(length, value);
+  RETURN_IF_ERROR(stream.Memcpy(&buffer, data.data(), sizeof(float) * length));
+  return stream.BlockHostUntilDone();
+}
+
+static absl::StatusOr<std::vector<float>> ReadDeviceBuffer(
+    se::Stream& stream, se::DeviceAddressBase buffer, int64_t length) {
+  std::vector<float> data(length);
+  RETURN_IF_ERROR(stream.Memcpy(data.data(), buffer, sizeof(float) * length));
+  RETURN_IF_ERROR(stream.BlockHostUntilDone());
+  return data;
 }
 
 // Records AllToAllThunk into a primary command buffer (create phase) and
@@ -185,18 +342,20 @@ TEST(AllToAllThunkTest, RecordCommandBufferCreate) {
   BufferAllocation alloc_src(/*index=*/0, byte_length, /*color=*/0);
   BufferAllocation alloc_dst(/*index=*/1, byte_length, /*color=*/0);
 
-  NoOpAllToAllThunk thunk = MakeNoOpThunk(alloc_src, alloc_dst, length);
+  MemzeroAllToAllThunk thunk = MakeThunk(alloc_src, alloc_dst, length);
+  CollectiveTestState collective_state;
+  ASSERT_OK(InitCollectiveTestState(stream.get(), thunk, &collective_state));
 
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations allocations({src, dst}, 0, &allocator);
 
-  ServiceExecutableRunOptions run_options;
-  Thunk::ExecuteParams execute_params =
-      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
-                                   /*command_buffer_trace_stream=*/stream.get(),
-                                   /*collective_params=*/nullptr,
-                                   /*collective_cliques=*/nullptr,
-                                   /*collective_memory=*/nullptr);
+  ASSERT_OK(FillDeviceBuffer(*stream, dst, length, 1.0f));
+  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
+      collective_state.run_options, allocations, stream.get(),
+      /*command_buffer_trace_stream=*/stream.get(),
+      &*collective_state.collective_params,
+      &collective_state.collective_cliques,
+      /*collective_memory=*/nullptr);
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -213,6 +372,10 @@ TEST(AllToAllThunkTest, RecordCommandBufferCreate) {
   ASSERT_OK(command_buffer->Finalize());
   ASSERT_OK(command_buffer->Submit(stream.get()));
   ASSERT_OK(stream->BlockHostUntilDone());
+
+  ASSERT_OK_AND_ASSIGN(std::vector<float> output,
+                       ReadDeviceBuffer(*stream, dst, length));
+  EXPECT_THAT(output, ::testing::Each(0.0f));
 }
 
 // Records AllToAllThunk twice into the same command buffer: first as a create,
@@ -238,18 +401,20 @@ TEST(AllToAllThunkTest, RecordCommandBufferUpdate) {
   BufferAllocation alloc_src(/*index=*/0, byte_length, /*color=*/0);
   BufferAllocation alloc_dst(/*index=*/1, byte_length, /*color=*/0);
 
-  NoOpAllToAllThunk thunk = MakeNoOpThunk(alloc_src, alloc_dst, length);
+  MemzeroAllToAllThunk thunk = MakeThunk(alloc_src, alloc_dst, length);
+  CollectiveTestState collective_state;
+  ASSERT_OK(InitCollectiveTestState(stream.get(), thunk, &collective_state));
 
   se::StreamExecutorAddressAllocator allocator(executor);
-  ServiceExecutableRunOptions run_options;
 
+  ASSERT_OK(FillDeviceBuffer(*stream, dst1, length, 1.0f));
   BufferAllocations allocations1({src1, dst1}, 0, &allocator);
-  Thunk::ExecuteParams params1 =
-      Thunk::ExecuteParams::Create(run_options, allocations1, stream.get(),
-                                   /*command_buffer_trace_stream=*/stream.get(),
-                                   /*collective_params=*/nullptr,
-                                   /*collective_cliques=*/nullptr,
-                                   /*collective_memory=*/nullptr);
+  Thunk::ExecuteParams params1 = Thunk::ExecuteParams::Create(
+      collective_state.run_options, allocations1, stream.get(),
+      /*command_buffer_trace_stream=*/stream.get(),
+      &*collective_state.collective_params,
+      &collective_state.collective_cliques,
+      /*collective_memory=*/nullptr);
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -266,14 +431,18 @@ TEST(AllToAllThunkTest, RecordCommandBufferUpdate) {
   ASSERT_OK(command_buffer->Finalize());
   ASSERT_OK(command_buffer->Submit(stream.get()));
   ASSERT_OK(stream->BlockHostUntilDone());
+  ASSERT_OK_AND_ASSIGN(std::vector<float> output1,
+                       ReadDeviceBuffer(*stream, dst1, length));
+  EXPECT_THAT(output1, ::testing::Each(0.0f));
 
+  ASSERT_OK(FillDeviceBuffer(*stream, dst2, length, 2.0f));
   BufferAllocations allocations2({src2, dst2}, 0, &allocator);
-  Thunk::ExecuteParams params2 =
-      Thunk::ExecuteParams::Create(run_options, allocations2, stream.get(),
-                                   /*command_buffer_trace_stream=*/stream.get(),
-                                   /*collective_params=*/nullptr,
-                                   /*collective_cliques=*/nullptr,
-                                   /*collective_memory=*/nullptr);
+  Thunk::ExecuteParams params2 = Thunk::ExecuteParams::Create(
+      collective_state.run_options, allocations2, stream.get(),
+      /*command_buffer_trace_stream=*/stream.get(),
+      &*collective_state.collective_params,
+      &collective_state.collective_cliques,
+      /*collective_memory=*/nullptr);
 
   std::vector<BufferAllocation::Index> updated_allocs = {0, 1};
   Command::RecordParams record_params2 = {state, std::move(updated_allocs)};
@@ -288,6 +457,9 @@ TEST(AllToAllThunkTest, RecordCommandBufferUpdate) {
   ASSERT_OK(command_buffer->Finalize());
   ASSERT_OK(command_buffer->Submit(stream.get()));
   ASSERT_OK(stream->BlockHostUntilDone());
+  ASSERT_OK_AND_ASSIGN(std::vector<float> output2,
+                       ReadDeviceBuffer(*stream, dst2, length));
+  EXPECT_THAT(output2, ::testing::Each(0.0f));
 }
 
 }  // namespace
