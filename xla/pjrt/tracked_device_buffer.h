@@ -111,8 +111,6 @@ class PjRtStreamExecutorUsageEventSet : public PjRtDeviceEventSet {
 
   void AppendTo(PjRtDeviceEventSet& events) override;
 
-  std::unique_ptr<PjRtDeviceEventSet> Clone() const override;
-
  private:
   // Helper object to keep track of usage of the buffer on streams.
   struct StreamAndEvent {
@@ -132,11 +130,60 @@ class PjRtStreamExecutorUsageEventSet : public PjRtDeviceEventSet {
 // of memory under all of the allocation model semantics.
 class TrackedDeviceBuffer : public AbstractTrackedDeviceBuffer {
  public:
+  // Adds the owned device buffers in order to 'iterator'. Used to add the
+  // buffers to an ExecutionInput. We require but do not verify that 'iterator'
+  // when passed in is pointing to a sub-tuple of the ExecutionInput whose
+  // on_device_shape matches that of the TrackedDeviceBuffer. 'end' is used to
+  // check that 'iterator' doesn't run out of bounds.
+  void AddToInputAsImmutable(
+      ShapeTree<MaybeOwningDeviceAddress>::iterator* iterator,
+      const ShapeTree<MaybeOwningDeviceAddress>::iterator& end) const;
+
+  // Adds the owned device buffers in order to 'iterator', marking them as
+  // available to be donated. If donation succeeds, i.e., execution_input is
+  // subsequently successfully enqueued to a computation,
+  // this->ReleaseDeviceMemory() must be called to avoid freeing the device
+  // memory twice. We require but do not verify that 'iterator' when passed in
+  // is pointing to a sub-tuple of execution_input whose on_device_shape matches
+  // that of the TrackedDeviceBuffer. 'end' is used to check that 'iterator'
+  // doesn't run out of bounds.
+  void AddToInputAsDonated(
+      ShapeTree<MaybeOwningDeviceAddress>::iterator* iterator,
+      const ShapeTree<MaybeOwningDeviceAddress>::iterator& end,
+      ExecutionInput* execution_input,
+      se::DeviceAddressAllocator* allocator) const;
+
+  // Only to be called by ScopedHold to mark a successful donation.
+  void ConfirmDonation() override;
+
+  // Indicates that the buffer has been used on a stream.
+  //
+  //   usage_stream:   a stream that the buffer was used on.
+  //   event:          an event that has been recorded on usage_stream after the
+  //                   buffer was used.
+  //   reference_held: true if and only if the caller has caused a memory
+  //                   reference to *this to stay live until after the host
+  //                   is sure that the usage (transfer or execution) has
+  //                   completed.
+
+  // Returns the set of streams that the buffer was used on, and for each stream
+  // an event later than the last use of the buffer. After
+  // LockUseAndTransferUsageEvents is called it is illegal to use the buffer on
+  // any stream and, e.g. AddUsageHold will CHECK fail.
+  PjRtStreamExecutorUsageEventSet LockUseAndTransferUsageEvents();
+
   TrackedDeviceBuffer(
       PjRtDevice* device, PjRtRawBufferRef raw_buffer,
-      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events,
-      std::unique_ptr<PjRtDeviceEventSet> usage_events = nullptr);
+      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events);
   ~TrackedDeviceBuffer() override;
+
+
+  std::vector<tsl::RCReference<tsl::AsyncValue>>
+  GetAsyncValueDefinitionAndUsageEvents() override;
+
+  PjRtStreamExecutorUsageEventSet& usage_events() override {
+    return usage_events_;
+  }
 
   void Delete(PjRtMemorySpace* memory_space) override;
 
@@ -148,13 +195,16 @@ class TrackedDeviceBuffer : public AbstractTrackedDeviceBuffer {
     return absl::OkStatus();
   }
 
-  std::unique_ptr<AbstractTrackedDeviceBuffer> Clone(
-      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events,
-      std::unique_ptr<PjRtDeviceEventSet> usage_events) const override {
-    return std::make_unique<TrackedDeviceBuffer>(device_, raw_buffer(),
-                                                 std::move(definition_events),
-                                                 std::move(usage_events));
-  }
+  absl::StatusOr<std::unique_ptr<AbstractTrackedDeviceBuffer>>
+  CloneWithControlDependency(PjRtMemorySpace* memory_space,
+                             Future<> dependency) override;
+
+  Future<> GetReadyFuture(PjRtMemorySpace* memory_space) override;
+
+  absl::StatusOr<PjRtDeviceEventRef> GetDefinitionEvent(
+      PjRtMemorySpace* memory_space) override;
+
+  bool AddDefinitionEventsToSet(PjRtDeviceEventSet& events) override;
 
  private:
   PjRtDevice* device_;
@@ -162,6 +212,7 @@ class TrackedDeviceBuffer : public AbstractTrackedDeviceBuffer {
   // from its owning PjRtBuffer. Once in_use_ is false, the buffer may no
   // longer be used on any stream.
   bool in_use_;
+  PjRtStreamExecutorUsageEventSet usage_events_;
 };
 
 // Waits for all of the definition events in a buffer on 'stream'.

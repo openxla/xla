@@ -83,8 +83,6 @@ class CpuTrackedDeviceEventSet : public PjRtDeviceEventSet {
       std::vector<tsl::RCReference<tsl::AsyncValue>>& events) override;
   void AppendTo(PjRtDeviceEventSet& events) override;
 
-  std::unique_ptr<PjRtDeviceEventSet> Clone() const override;
-
   absl::Span<const tsl::RCReference<tsl::AsyncValue>> events() const {
     return events_;
   }
@@ -172,8 +170,9 @@ class CpuRawBuffer : public CommonPjRtRawBufferImpl {
               tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
               ::tsl::AsyncValueRef<bool> allocation_event) override;
 
-  tsl::AsyncValue* GetRawBufferAsyncValue() override {
-    return buffer_.GetAsyncValue();
+  absl::StatusOr<tsl::RCReference<tsl::AsyncValue>> GetRawBufferAsyncValue()
+      override {
+    return buffer_.CopyRCRef();
   }
 
  private:

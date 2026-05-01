@@ -439,9 +439,6 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   CreateLinkedEventPromise(PjRtMemorySpace* memory_space,
                            absl::string_view debug_info) override;
 
-  absl::StatusOr<PjRtDeviceEventRef> CreateDeviceEvent(
-      PjRtMemorySpace* memory_space, Future<> dependency) override;
-
   absl::Status WaitForAllocation(se::Stream* stream,
                                  const CommonPjRtRawBuffer& raw_buffer);
 

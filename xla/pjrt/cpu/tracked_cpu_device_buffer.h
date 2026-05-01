@@ -148,8 +148,6 @@ class CpuUsageEventSet : public PjRtDeviceEventSet {
       std::vector<tsl::RCReference<tsl::AsyncValue>>& events) override;
   void AppendTo(PjRtDeviceEventSet& events) override;
 
-  std::unique_ptr<PjRtDeviceEventSet> Clone() const override;
-
  private:
   absl::InlinedVector<tsl::AsyncValueRef<CpuEvent>, 4> usage_events_;
 };
@@ -160,15 +158,9 @@ class CpuUsageEventSet : public PjRtDeviceEventSet {
 // memory. This class is thread-compatible.
 class TrackedCpuDeviceBuffer : public AbstractTrackedDeviceBuffer {
  public:
-  TrackedCpuDeviceBuffer(
-      PjRtRawBufferRef raw_buffer,
-      tsl::AsyncValueRef<CpuEvent> definition_event,
-      std::unique_ptr<PjRtDeviceEventSet> usage_events = nullptr);
-
-  TrackedCpuDeviceBuffer(
-      PjRtRawBufferRef raw_buffer,
-      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events,
-      std::unique_ptr<PjRtDeviceEventSet> usage_events = nullptr);
+  // Variant with single definition event.
+  TrackedCpuDeviceBuffer(PjRtRawBufferRef raw_buffer,
+                         tsl::AsyncValueRef<CpuEvent> definition_event);
 
   TrackedCpuDeviceBuffer(TrackedCpuDeviceBuffer&&) noexcept = default;
   TrackedCpuDeviceBuffer& operator=(TrackedCpuDeviceBuffer&&) noexcept =
@@ -176,15 +168,48 @@ class TrackedCpuDeviceBuffer : public AbstractTrackedDeviceBuffer {
 
   ~TrackedCpuDeviceBuffer();
 
+  const tsl::AsyncValueRef<CpuDeviceMemory>& buffer();
+
+  size_t BufferSize();
+
+  tsl::AsyncValueRef<CpuEvent> definition_event() const {
+    if (definition_events().empty()) {
+      return nullptr;
+    }
+    return definition_events()[0].down_cast<CpuEvent>();
+  }
+
+  void AddUsageEvents(absl::Span<tsl::AsyncValueRef<CpuEvent>> events);
+
+  // Return the usage events for the buffers. After
+  // LockUseAndTransferUsageEvents is called, it is illegal to AddUsageEvent.
+  CpuUsageEventSet LockUseAndTransferUsageEvents();
+
+  std::vector<tsl::RCReference<tsl::AsyncValue>>
+  GetAsyncValueDefinitionAndUsageEvents() override;
+
+  absl::StatusOr<PjRtDeviceEventRef> GetDefinitionEvent(
+      PjRtMemorySpace* memory_space) override;
+
+  CpuUsageEventSet& usage_events() override { return usage_events_; }
+
   void Delete(PjRtMemorySpace* memory_space) override;
 
+  Future<> GetReadyFuture(PjRtMemorySpace* memory_space) override;
+
+  absl::Status BlockForOperationsToComplete(
+      PjRtMemorySpace* memory_space) override;
+
+  bool AddDefinitionEventsToSet(PjRtDeviceEventSet& events) override;
+
+
  private:
-  std::unique_ptr<AbstractTrackedDeviceBuffer> Clone(
-      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events,
-      std::unique_ptr<PjRtDeviceEventSet> usage_events) const override {
-    return std::make_unique<TrackedCpuDeviceBuffer>(
-        raw_buffer(), std::move(definition_events), std::move(usage_events));
-  }
+  void ConfirmDonation() override;
+
+  // The definition event are associated with CPU operations that write to the
+  // buffers.
+  // Usage events are associated with CPU operations that read from the buffers.
+  CpuUsageEventSet usage_events_;
 };
 }  // namespace xla
 

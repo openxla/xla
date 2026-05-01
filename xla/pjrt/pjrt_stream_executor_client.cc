@@ -877,27 +877,6 @@ PjRtStreamExecutorClient::CreateErrorBuffer(absl::Status error,
       memory);
 }
 
-absl::StatusOr<PjRtDeviceEventRef> PjRtStreamExecutorClient::CreateDeviceEvent(
-    PjRtMemorySpace* memory_space, Future<> dependency) {
-  auto definition_event = BufferSequencingEvent::Create(async_work_runner());
-  auto* device = tensorflow::down_cast<PjRtStreamExecutorDevice*>(
-      memory_space->devices()[0]);
-  LocalDeviceState* local_device = device->local_device_state();
-  dependency.OnReady([definition_event = definition_event.CopyRef(),
-                      local_device, this](absl::Status status) mutable {
-    if (!status.ok()) {
-      SetEventAsError(definition_event, status);
-      return;
-    }
-    auto stream = local_device->BorrowStreamFromPool();
-    CHECK_OK(
-        AllocateAndRecordEvent(definition_event, local_device, stream.get(),
-                               "PjRtStreamExecutorClient::CreateDeviceEvent"));
-    local_device->ReturnStreamToPool(std::move(stream));
-  });
-  return PjRtDeviceEventRef(definition_event);
-}
-
 absl::StatusOr<PjRtDeviceEventRef> PjRtStreamExecutorClient::LinearizeInto(
     const LiteralSlice& literal, const xla::Shape& device_shape,
     HostBufferSemantics host_buffer_semantics, PjRtRawBufferRef raw_buffer) {

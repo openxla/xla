@@ -638,9 +638,4 @@ void PjRtStreamExecutorDeviceEventSet::AppendTo(PjRtDeviceEventSet& events) {
   }
 }
 
-std::unique_ptr<PjRtDeviceEventSet> PjRtStreamExecutorDeviceEventSet::Clone()
-    const {
-  return std::make_unique<PjRtStreamExecutorDeviceEventSet>(*this);
-}
-
 }  // namespace xla

@@ -1396,6 +1396,30 @@ CreateBufferTable(const BufferAssignment& assignment,
   return std::move(buffer_table);
 }
 
+absl::Status PjRtCpuLoadedExecutable::CheckBufferCompatibilities(
+    absl::Span<const CommonPjRtBuffer::ScopedHold> input_buffers,
+    absl::Span<PjRtBuffer* const> argument_handles) const {
+  if (input_buffers.size() !=
+      executable_->input_buffer_sizes_in_bytes_.size()) {
+    return InvalidArgument(
+        "Execution supplied %lld buffers but compiled program expected %lld "
+        "buffers",
+        input_buffers.size(), executable_->input_buffer_sizes_in_bytes_.size());
+  }
+  for (int i = 0; i < input_buffers.size(); ++i) {
+    auto* buffer =
+        absl::down_cast<TrackedCpuDeviceBuffer*>(input_buffers[i].buffer());
+    if (executable_->input_buffer_sizes_in_bytes_[i] != buffer->BufferSize()) {
+      return InvalidArgument(
+          "Executable expected parameter %d of size %lld but got buffer with "
+          "incompatible size %lld",
+          i, executable_->input_buffer_sizes_in_bytes_[i],
+          buffer->BufferSize());
+    }
+  }
+  return absl::OkStatus();
+}
+
 absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>>
 PjRtCpuLoadedExecutable::LoadRawExecutable(
     const ExecuteOptions& options, size_t host_callback_idx, xla::RunId run_id,

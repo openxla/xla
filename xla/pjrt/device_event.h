@@ -267,8 +267,6 @@ class PjRtDeviceEventSet {
   virtual void AppendTo(
       std::vector<tsl::RCReference<tsl::AsyncValue>>& events) = 0;
   virtual void AppendTo(PjRtDeviceEventSet& events) = 0;
-
-  virtual std::unique_ptr<PjRtDeviceEventSet> Clone() const = 0;
 };
 
 }  // namespace xla

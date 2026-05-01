@@ -79,8 +79,6 @@ class PjRtStreamExecutorDeviceEventSet : public PjRtDeviceEventSet {
       std::vector<tsl::RCReference<tsl::AsyncValue>>& events) override;
   void AppendTo(PjRtDeviceEventSet& events) override;
 
-  std::unique_ptr<PjRtDeviceEventSet> Clone() const override;
-
   const absl::flat_hash_set<BufferSequencingEvent*>& events() const {
     return events_;
   }
@@ -158,9 +156,6 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBufferImpl {
       tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
       tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
       ::tsl::AsyncValueRef<bool> allocation_event) override;
-  tsl::AsyncValue* GetRawBufferAsyncValue() override {
-    return device_buffer_.GetAsyncValue();
-  }
 
  private:
   PjRtStreamExecutorClient* client_;

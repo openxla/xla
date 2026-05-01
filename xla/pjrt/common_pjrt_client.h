@@ -70,8 +70,6 @@ class CommonPjRtClient : public PjRtClient {
   virtual bool allows_execute_recursion() const { return allows_recursion(); }
   virtual bool allow_fallback_for_donation() const { return false; }
   virtual bool supports_two_phase_launch() const { return true; }
-  // TODO(parkers): Properly support error buffers on GPU and CPU.
-  virtual bool include_raw_buffer_in_ready_event() const { return false; }
 
   // Backend specific handlers for when an oom is detected during execute.
   virtual void CallOomHandlers() const {}
@@ -212,11 +210,6 @@ class CommonPjRtClient : public PjRtClient {
                                        PjRtMemorySpace* memory_space,
                                        const char* callee_type,
                                        const char* callee_method);
-
-  virtual absl::StatusOr<PjRtDeviceEventRef> CreateDeviceEvent(
-      PjRtMemorySpace* memory_space, Future<> dependency) {
-    return absl::UnimplementedError("CreateDeviceEvent is not supported");
-  }
 
   // Registers the necessary debug information for an allocation event.
   // TODO(parkers): Once everything is unified this should be controlled

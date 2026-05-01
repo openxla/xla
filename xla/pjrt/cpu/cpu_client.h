@@ -546,6 +546,12 @@ class PjRtCpuLoadedExecutable final : public CommonPjRtLoadedExecutable {
 
   absl::Status SetUpDonation(bool tuple_inputs);
 
+  // Checks that the input buffers passed in by the user have the correct size
+  // on device for the compiled program.
+  absl::Status CheckBufferCompatibilities(
+      absl::Span<const CommonPjRtBuffer::ScopedHold> input_buffers,
+      absl::Span<PjRtBuffer* const> argument_handles) const;
+
   absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>> LoadRawExecutable(
       const ExecuteOptions& options, size_t host_callback_idx,
       xla::RunId run_id, DeviceAndAssignment device_and_assign,

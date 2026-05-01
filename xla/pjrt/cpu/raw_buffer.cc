@@ -463,8 +463,4 @@ void CpuTrackedDeviceEventSet::AppendTo(PjRtDeviceEventSet& events) {
   }
 }
 
-std::unique_ptr<PjRtDeviceEventSet> CpuTrackedDeviceEventSet::Clone() const {
-  return std::make_unique<CpuTrackedDeviceEventSet>(*this);
-}
-
 }  // namespace xla

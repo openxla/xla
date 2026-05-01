@@ -66,6 +66,7 @@ cc_library(
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo:mhlo_passes",
+        "//xla/pjrt:abstract_tracked_device_buffer",
         "//xla/pjrt:async_work_runner",
         "//xla/pjrt:compiled_memory_stats",
         "//xla/pjrt:device_event",

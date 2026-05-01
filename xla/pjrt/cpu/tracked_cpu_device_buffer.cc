@@ -190,36 +190,34 @@ absl::Status CpuDeviceMemory::AllocateInto(
 //===----------------------------------------------------------------------===//
 
 TrackedCpuDeviceBuffer::TrackedCpuDeviceBuffer(
-    PjRtRawBufferRef raw_buffer, tsl::AsyncValueRef<CpuEvent> definition_event,
-    std::unique_ptr<PjRtDeviceEventSet> usage_events)
-    : AbstractTrackedDeviceBuffer(
-          std::move(raw_buffer),
-          [definition_event]() {
-            absl::InlinedVector<PjRtDeviceEventRef, 2> events;
-            if (definition_event) {
-              events.push_back(PjRtDeviceEventRef(std::move(definition_event)));
-            }
-            return events;
-          }(),
-          usage_events ? std::move(usage_events)
-                       : std::make_unique<CpuUsageEventSet>()) {
+    PjRtRawBufferRef raw_buffer, tsl::AsyncValueRef<CpuEvent> definition_event)
+    : AbstractTrackedDeviceBuffer(std::move(raw_buffer), [definition_event]() {
+        absl::InlinedVector<PjRtDeviceEventRef, 2> events;
+        if (definition_event) {
+          events.push_back(PjRtDeviceEventRef(std::move(definition_event)));
+        }
+        return events;
+      }()) {
   DCHECK(!definition_events().empty());
 }
 
-TrackedCpuDeviceBuffer::TrackedCpuDeviceBuffer(
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
-    absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events,
-    std::unique_ptr<PjRtDeviceEventSet> usage_events)
-    : AbstractTrackedDeviceBuffer(
-          std::move(raw_buffer), std::move(definition_events),
-          usage_events ? std::move(usage_events)
-                       : std::make_unique<CpuUsageEventSet>()) {}
-
 TrackedCpuDeviceBuffer::~TrackedCpuDeviceBuffer() = default;
+
+const tsl::AsyncValueRef<CpuDeviceMemory>& TrackedCpuDeviceBuffer::buffer() {
+  if (raw_buffer()) {
+    return absl::down_cast<CpuRawBuffer*>(this->raw_buffer().get())->buffer();
+  }
+  static absl::NoDestructor<tsl::AsyncValueRef<CpuDeviceMemory>> missing_buffer;
+  return *missing_buffer;
+}
+
+size_t TrackedCpuDeviceBuffer::BufferSize() {
+  return raw_buffer() ? raw_buffer()->GetOnDeviceSizeInBytes() : 0;
+}
 
 void CpuUsageEventSet::AddEvent(PjRtDeviceEventRef event) {
   if (event) {
-    usage_events_.push_back(event.down_cast<CpuEvent>());
+    AddEvent(event.down_cast<CpuEvent>());
   }
 }
 
@@ -243,6 +241,7 @@ void CpuUsageEventSet::AddEvent(tsl::AsyncValueRef<CpuEvent> event) {
 
 void CpuUsageEventSet::AppendTo(
     std::vector<tsl::RCReference<tsl::AsyncValue>>& events) {
+  events.reserve(events.size() + usage_events_.size());
   for (const auto& ev : usage_events_) {
     events.push_back(ev.CopyRef());
   }
@@ -254,15 +253,43 @@ void CpuUsageEventSet::AppendTo(PjRtDeviceEventSet& events) {
   }
 }
 
-std::unique_ptr<PjRtDeviceEventSet> CpuUsageEventSet::Clone() const {
-  return std::make_unique<CpuUsageEventSet>(*this);
+void TrackedCpuDeviceBuffer::AddUsageEvents(
+    absl::Span<tsl::AsyncValueRef<CpuEvent>> events) {
+  for (auto& ev : events) {
+    usage_events_.AddEvent(std::move(ev));
+  }
 }
+
+CpuUsageEventSet TrackedCpuDeviceBuffer::LockUseAndTransferUsageEvents() {
+  return std::move(usage_events_);
+}
+
+void TrackedCpuDeviceBuffer::ConfirmDonation() {
+  ReleaseDeviceMemory();
+  usage_events_ = CpuUsageEventSet();
+}
+
+
+std::vector<tsl::RCReference<tsl::AsyncValue>>
+TrackedCpuDeviceBuffer::GetAsyncValueDefinitionAndUsageEvents() {
+  std::vector<tsl::RCReference<tsl::AsyncValue>> result;
+  if (auto ev = definition_event()) {
+    result.push_back(ev.CopyRef());
+  }
+  usage_events_.AppendTo(result);
+  return result;
+}
+
 
 void TrackedCpuDeviceBuffer::Delete(PjRtMemorySpace* memory_space) {
   std::unique_ptr<TrackedCpuDeviceBuffer> device_buffer(this);
-  std::vector<tsl::RCReference<tsl::AsyncValue>> avs =
-      device_buffer->GetAsyncValueDefinitionAndUsageEvents();
-  auto usage_event = device_buffer->LockUseAndTransferUsageEvents();
+  CpuUsageEventSet usage_events =
+      device_buffer->LockUseAndTransferUsageEvents();
+
+  std::vector<tsl::RCReference<tsl::AsyncValue>> avs;
+  usage_events.AppendTo(avs);
+  avs.push_back(device_buffer->definition_event().CopyRef());
+
   std::vector<tsl::AsyncValue*> event_avs;
   event_avs.reserve(avs.size());
   for (auto& av : avs) {
@@ -272,6 +299,64 @@ void TrackedCpuDeviceBuffer::Delete(PjRtMemorySpace* memory_space) {
   RunWhenReady(event_avs, [device_buffer = std::move(device_buffer)]() mutable {
     device_buffer.reset();
   });
+}
+
+Future<> TrackedCpuDeviceBuffer::GetReadyFuture(PjRtMemorySpace* memory_space) {
+  auto [promise, future] = MakePromise<>();
+
+  absl::down_cast<CommonPjRtClient*>(memory_space->client())
+      ->TrackFuture(memory_space, "BufferDefinitionEvent", future);
+
+  definition_event().AndThen([definition_event = definition_event().AsPtr(),
+                              promise = std::move(promise)]() mutable {
+    if (definition_event.IsError()) {
+      const absl::Status& s = definition_event.GetError();
+      promise.Set(tsl::errors::CreateWithUpdatedMessage(
+          s, absl::StrCat("Buffer Definition Event: ", s.message())));
+    } else {
+      promise.Set();
+    }
+  });
+
+  return future;
+}
+
+absl::StatusOr<PjRtDeviceEventRef> TrackedCpuDeviceBuffer::GetDefinitionEvent(
+    PjRtMemorySpace* memory_space) {
+  if (auto ev = definition_event()) {
+    return PjRtDeviceEventRef(ev);
+  }
+  return absl::InternalError(
+      "GetDefinitionEvent only supported on CPU for buffers with "
+      "exactly 1 definition event.");
+}
+
+absl::Status TrackedCpuDeviceBuffer::BlockForOperationsToComplete(
+    PjRtMemorySpace* memory_space) {
+  std::vector<tsl::RCReference<tsl::AsyncValue>> avs;
+  usage_events_.AppendTo(avs);
+  for (const auto& av : avs) {
+    BlockUntilReady(av.get());
+  }
+
+  if (auto ev = definition_event()) {
+    BlockUntilReady(ev.GetAsyncValue());
+    if (auto* error = ev.GetErrorIfPresent()) {
+      return absl::InternalError(
+          absl::StrFormat("Error Execute: %s", error->message()));
+    }
+  }
+  return absl::OkStatus();
+}
+
+bool TrackedCpuDeviceBuffer::AddDefinitionEventsToSet(
+    PjRtDeviceEventSet& events) {
+  if (auto ev = definition_event()) {
+    if (!ev.IsAvailable() || ev.IsError()) {
+      events.AddEvent(PjRtDeviceEventRef(ev));
+    }
+  }
+  return false;
 }
 
 }  // namespace xla
