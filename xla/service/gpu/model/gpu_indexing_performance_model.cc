@@ -829,10 +829,10 @@ GpuPerformanceModelWithIndexingAnalysis::TryFindTopKBestTilingsForFusion(
         TiledRunTimeData{estimate_run_time_data, block_level_parameters});
   }
 
-  absl::c_sort(candidates,
-               [](const TiledRunTimeData& a, const TiledRunTimeData& b) {
-                 return a.runtime_data.exec_time < b.runtime_data.exec_time;
-               });
+  absl::c_stable_sort(
+      candidates, [](const TiledRunTimeData& a, const TiledRunTimeData& b) {
+        return a.runtime_data.exec_time < b.runtime_data.exec_time;
+      });
 
   if (candidates.size() > top_k) {
     candidates.resize(top_k);
