@@ -135,13 +135,21 @@ class CollectiveCmd : public Command {
 
   bool IsTracedCommand() const override { return true; }
 
+  // Recording on every Initialize() ensures all local participants reach the
+  // Rendezvous in RecordTracedCommand together, preserving NCCL call symmetry.
   bool requires_initialization() const final { return true; }
 
+  // `clique_key` is used to coordinate the per-rank cache decision across all
+  // local participants via a process-local Rendezvous: either every rank uses
+  // its cached graph, or every rank re-traces together. This is required
+  // because NCCL collectives must be called symmetrically across ranks during
+  // stream capture.
   absl::StatusOr<const se::CommandBuffer::Command*> RecordTracedCommand(
       const Thunk::ExecuteParams& execute_params,
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer,
-      absl::FunctionRef<absl::Status(se::Stream*)> trace);
+      absl::FunctionRef<absl::Status(se::Stream*)> trace,
+      const GpuCliqueKey& clique_key);
 
  protected:
   const CollectiveConfig& config() const { return config_; }
