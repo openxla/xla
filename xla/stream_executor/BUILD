@@ -1222,7 +1222,9 @@ xla_cc_test(
     srcs = ["device_description_test.cc"],
     deps = [
         ":device_description",
+        ":device_description_proto_cc",
         ":semantic_version",
+        "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/target_config",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/rocm:rocm_compute_capability",

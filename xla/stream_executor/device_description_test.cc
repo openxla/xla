@@ -21,9 +21,11 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace stream_executor {
 namespace {
