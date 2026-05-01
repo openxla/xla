@@ -15,7 +15,7 @@ It allows XLA to perform symbolic algebra on tensor shapes, and enables calculat
 
 Supported operations: `add`, `multiply`, `mod`, `floordiv`, `ceildiv`, `min`, `max`.
 
-*Note: `ceildiv`, `min`, and `max` do not have `AffineExpr` counterparts.*
+*Note: `min`, and `max` do not have `AffineExpr` counterparts.*
 
 ## `SymbolicMap`
 
