@@ -279,7 +279,7 @@ std::invoke_result_t<F, Command*> Command::Walk(F&& callback) {
     // WalkNested. The down_cast is safe because WalkNested only visits
     // Commands in a Command context.
     return WalkNested([&callback](Thunk* thunk) -> absl::Status {
-      return callback(tsl::down_cast<Command*>(thunk));
+      return callback(absl::down_cast<Command*>(thunk));
     });
   }
 }

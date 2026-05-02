@@ -388,7 +388,7 @@ absl::Status RunCollectivePermute(P2PConfig::SourceTargetRanks source_target,
       TF_RETURN_IF_ERROR(future.Await());
     }
   } else {
-    auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(&comm);
+    auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
     auto future = gpu_comm->GroupExecute(
         [&source_target, &buffers, &src_addrs, &dest_addrs, &target_ranks,
          &stream](GpuCommunicator* comm) -> absl::Status {
@@ -578,7 +578,7 @@ static absl::Status RunOneSidedPermute(
       return absl::OkStatus();
     };
 
-    auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(&comm);
+    auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
     RETURN_IF_ERROR(gpu_comm->GroupExecute(put_all).Await());
   }
 
