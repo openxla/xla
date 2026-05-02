@@ -89,8 +89,7 @@ ENTRY test_computation {
       module->entry_computation()->root_instruction();
   ASSERT_EQ(root_instr->opcode(), HloOpcode::kCollectiveBroadcast);
   const HloCollectiveBroadcastInstruction* cb_instr =
-      tensorflow::down_cast<const HloCollectiveBroadcastInstruction*>(
-          root_instr);
+      absl::down_cast<const HloCollectiveBroadcastInstruction*>(root_instr);
   ASSERT_NE(cb_instr, nullptr);
 
   // Buffer and Allocation Setup
