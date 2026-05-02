@@ -185,6 +185,7 @@ cc_library(
         ":split_proto_cc",
         ":split_proto_riegeli_options",
         ":split_proto_write_record",
+        "//google/protobuf:field_mask_cc_proto",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/status",
