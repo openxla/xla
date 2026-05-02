@@ -20,6 +20,7 @@ limitations under the License.
 #include <tuple>
 
 #include "ynnpack/include/ynnpack.h"
+#include "absl/algorithm/container.h"
 #include "absl/base/no_destructor.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
