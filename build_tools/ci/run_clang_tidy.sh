@@ -21,18 +21,29 @@ cd "$BUILD_WORKSPACE_DIRECTORY"
 BAZEL_CMD=${BAZEL_CMD:-bazelisk}
 
 if ! git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+  set +x
   echo "Error: This script must be run inside a Git repository."
   exit 1
 fi
-TARGET_REF=${TARGET_REF:-origin/main}
+REMOTE=${REMOTE:-$(git remote -v | awk '/openxla\/xla/ { print $1; exit }')}
+if [ -z "$REMOTE" ]; then
+  set +x
+  echo "Could not find a git remote pointing to openxla/xla. Please add it as a remote." >&2
+  echo "Example: git remote add upstream https://github.com/openxla/xla.git" >&2
+  exit 1
+fi
+TARGET_REF=${TARGET_REF:-${REMOTE}/main}
 MERGE_BASE=$(git merge-base "$TARGET_REF" HEAD || true)
 if [ -z "$MERGE_BASE" ]; then
-  echo "Could not find a common ancestor with $TARGET_REF. Please rebase on upstream main." >&2
+  set +x
+  echo "Could not find a common ancestor with $TARGET_REF. Please rebase on $REMOTE main." >&2
+  echo "Example: git pull --rebase $REMOTE main" >&2
   exit 1
 fi
 CHANGED_FILES=$(git diff --name-only "$MERGE_BASE" | grep -E '\.(cc|h)$' || true)
 # Always exit with 0 if no C++ files are changed.
 if [ -z "$CHANGED_FILES" ]; then
+  set +x
   echo "No C++ files changed."
   exit 0
 fi
@@ -41,12 +52,14 @@ PACKAGES=$(echo "$CHANGED_FILES" | while read -r file; do
 done | sort -u | tr '\n' ' ')
 BASE_QUERY="kind('cc_(library|binary|test)', rdeps(set($PACKAGES), set($CHANGED_FILES), 1))"
 if [ -n "$TAGS_TO_IGNORE" ]; then
-  QUERY="(${BASE_QUERY} except attr('tags', '${TAGS_TO_IGNORE}', //xla/...))"
+  QUERY="(${BASE_QUERY} except attr('tags', '${TAGS_TO_IGNORE}', (${BASE_QUERY})))"
 else
   QUERY="${BASE_QUERY}"
 fi
-TARGETS=$($BAZEL_CMD query --config=clang-tidy "$QUERY")
+# --output=label prints a hash that we want to avoid, hence using --output=starlark to print only the target labels.
+TARGETS=$($BAZEL_CMD cquery --output=starlark --starlark:expr="target.label" --config=clang-tidy "$QUERY")
 if [ -z "$TARGETS" ]; then
+  set +x
   echo "No relevant targets found for changed files."
   exit 0
 fi
