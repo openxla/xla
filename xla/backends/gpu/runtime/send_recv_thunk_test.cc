@@ -279,6 +279,11 @@ ENTRY computation {
                           ParseAndReturnVerifiedModule(hlo_text, config));
 
   se::StreamExecutor* executor = backend().default_stream_executor();
+  //TODO(Intel-tf): To remove this check once command buffer is implemented.
+  if (executor->GetPlatform()->id() == se::sycl::kSyclPlatformId) {
+    GTEST_SKIP() << "Command buffer is not supported on SYCL platform yet.";
+  }
+
 
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> compiled_module,
