@@ -778,6 +778,47 @@ MovableAllReduceContext IsAllReduceMovable(
           }
           break;
         }
+        case HloOpcode::kMultiply: {
+          if (is_reduce_scatter) {
+            is_all_reduce_movable = false;
+            break;
+          }
+          HloInstruction* other_operand =
+              user->mutable_operand(1 - user->operand_index(instruction));
+          HloInstruction* unwrapped_other = other_operand;
+          bool other_is_broadcast = false;
+          while (unwrapped_other->opcode() == HloOpcode::kBroadcast ||
+                 unwrapped_other->opcode() == HloOpcode::kConvert) {
+            if (unwrapped_other->opcode() == HloOpcode::kBroadcast) {
+              other_is_broadcast = true;
+            }
+            unwrapped_other = unwrapped_other->mutable_operand(0);
+          }
+          const bool current_is_scalar =
+              ShapeUtil::IsScalar(all_reduce->shape());
+          const bool other_is_all_reduce =
+              unwrapped_other->opcode() == HloOpcode::kAllReduce ||
+              unwrapped_other->opcode() == HloOpcode::kReduceScatter;
+
+          if (current_is_scalar && other_is_all_reduce) {
+            VLOG(4) << "Scalar all-reduce " << all_reduce->name()
+                    << " is used as a factor of a multiply with another "
+                       "all-reduce ("
+                    << unwrapped_other->name()
+                    << "); marking it unmovable so it stays in the loop body "
+                       "and preserves the math of the hoisted all-reduce.";
+            is_all_reduce_movable = false;
+          } else if (other_is_all_reduce && other_is_broadcast) {
+            to_visit.push(user);
+          } else {
+            is_all_reduce_movable = false;
+          }
+          break;
+        }
+        case HloOpcode::kBroadcast: {
+          to_visit.push(user);
+          break;
+        }
         case HloOpcode::kAdd: {
           int64_t buffer_index = 1 - user->operand_index(instruction);
           HloInstruction* accumulation_buffer =
