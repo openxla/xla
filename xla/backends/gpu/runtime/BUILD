@@ -3897,6 +3897,7 @@ xla_test(
         "//xla/tsl/concurrency:future",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/algorithm:container",
