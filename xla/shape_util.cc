@@ -306,6 +306,15 @@ static std::vector<bool> MakeDynamicDimensions(
         dynamic_dimensions.size(), dimensions.size());
   }
 
+  if (element_type == TOKEN) {
+    if (!dimensions.empty()) {
+      return InvalidArgument(
+          "TOKEN shape must have 0 dimensions, but was given (%s)",
+          absl::StrJoin(dimensions, ", "));
+    }
+    return MakeTokenShape();
+  }
+
   Shape shape;
   int64_t dense_shape_size = primitive_util::IsArrayType(element_type)
                                  ? primitive_util::ByteWidth(element_type)

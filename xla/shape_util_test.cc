@@ -45,7 +45,9 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::absl_testing::IsOk;
 using ::testing::ElementsAre;
+using ::testing::Not;
 
 TEST(ShapeUtilTest, GetDimensionHelperCanNegativeIndex) {
   Shape matrix = ShapeUtil::MakeShape(F32, {2, 3});
@@ -99,6 +101,14 @@ TEST(ShapeUtilTest, CompatibleIdenticalShapes) {
   Shape shape1 = ShapeUtil::MakeShape(F32, {3, 2});
   Shape shape2 = ShapeUtil::MakeShape(F32, {3, 2});
   ASSERT_TRUE(ShapeUtil::Compatible(shape1, shape2));
+}
+
+TEST(ShapeUtilTest, TokenShapes) {
+  Shape shape1 = ShapeUtil::MakeTokenShape();
+  ASSERT_OK_AND_ASSIGN(Shape shape2, ShapeUtil::MakeValidatedShape(TOKEN, {}));
+  EXPECT_TRUE(ShapeUtil::Compatible(shape1, shape2));
+
+  EXPECT_THAT(ShapeUtil::MakeValidatedShape(TOKEN, {1}), Not(IsOk()));
 }
 
 TEST(ShapeUtilTest, TokenCompatibility) {
