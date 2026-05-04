@@ -1736,6 +1736,10 @@ xla_test(
     name = "gemm_rewriter_fp8_test",
     srcs = ["gemm_rewriter_fp8_test.cc"],
     backends = ["gpu"],
+    # TODO(intel-tf): Enable for SYCL when support for FP8 is added.
+    tags = [
+        "no-oneapi",
+    ],
     shard_count = 5,
     deps = [
         ":gemm_rewriter",
