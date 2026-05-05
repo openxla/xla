@@ -1016,7 +1016,7 @@ After the composition of indexing maps and their simplification we will get the 
 Indexing map simplification also simplifies the constraints.
 
 1. Constraints of type
-`lower_bound <= symbolic_expr (floordiv, +, -, *) constant <= upper_bound` are
+`lower_bound <= symbolic_expr (floordiv, ceildiv, +, -, *, mod, min, max) constant <= upper_bound` are
 rewritten as `updated_lower_bound <= symbolic_expr <= updated_upped_bound`.
 2. Constraints that are always satisfied, e.g. `d0 + s0 in [0, 20]`
 for `d0 in [0, 5]` and `s0 in [1, 3]` are eliminated.
