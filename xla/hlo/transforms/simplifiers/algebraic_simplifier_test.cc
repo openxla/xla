@@ -9538,27 +9538,6 @@ TEST_F(AlgebraicSimplifierTest, RecipRsqrt) {
                                              m::Sqrt(m::Parameter(0)))));
 }
 
-// Test that A/broadcast(B) is simplified to A*broadcast(1/B).
-TEST_F(AlgebraicSimplifierTest, DivideByBroadcast) {
-  constexpr absl::string_view kModuleStr = R"(
-    HloModule m
-    test {
-      p0 = f32[] parameter(0)
-      p1 = f32[8] parameter(1)
-      broadcast_p0 = f32[8] broadcast(p0)
-      ROOT div = f32[8] divide(p1, broadcast_p0)
-    }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  AlgebraicSimplifierOptions options = default_options_;
-  options.set_executing_on_cpu(true);
-  ASSERT_TRUE(AlgebraicSimplifier(options).Run(m.get()).value());
-  EXPECT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::MultiplyAnyOrder(
-                  m::Parameter(1), m::Broadcast(m::Divide(m::ConstantScalar(1),
-                                                          m::Parameter(0))))));
-}
-
 TEST_F(AlgebraicSimplifierTest, CopyReshape) {
   constexpr absl::string_view kModuleStr = R"(
     HloModule m

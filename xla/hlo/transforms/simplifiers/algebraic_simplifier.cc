@@ -2550,28 +2550,6 @@ absl::Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
         result_shape.element_type());
   }
 
-  // A / broadcast(B) => A * broadcast(1 / B)
-  // This simplification allows many of the other simplifications here to apply
-  // when they otherwise would not have, because e.g. A / broadcast(rsqrt(B))
-  // does not match the A / rsqrt(B) rule above.
-  // This rewrite does not preserve Inf/NaN for complex types, so we only use
-  // this rewrite if the type is not complex, or fast math is enabled.
-  // TODO: b/504985408 - This rewrite should apply to any device.
-  if (options_.executing_on_cpu() && options_.enable_sink_broadcast() &&
-      (!primitive_util::IsComplexType(divide->shape().element_type()) ||
-       options_.enable_fast_math()) &&
-      Match(divide,
-            m::Divide(m::Op(&a), m::Broadcast(m::Op(&b).WithOneUse())))) {
-    HloInstruction* bcast = divide->mutable_operand(1);
-    auto* recip = bcast->AddInstruction(HloInstruction::CreateBinary(
-        b->shape(), HloOpcode::kDivide, MakeScalarLike(b, 1), b));
-    auto* recip_bcast = bcast->AddInstruction(HloInstruction::CreateBroadcast(
-        divide->shape(), recip, bcast->dimensions()));
-    return ReplaceWithNewInstruction(
-        divide, HloInstruction::CreateBinary(
-                    divide->shape(), HloOpcode::kMultiply, a, recip_bcast));
-  }
-
   // (A / B) / (C / D)  =>  (A / B)*(D / C) => (A * D) / (B * C)
   if (Match(divide, m::Divide(m::Divide(m::Op(&a), m::Op(&b)),
                               m::Divide(m::Op(&c), m::Op(&d))))) {
