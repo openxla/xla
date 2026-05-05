@@ -281,13 +281,60 @@ std::unique_ptr<HloInstruction> HloFftInstruction::CloneWithNewOperandsImpl(
                                              fft_length_);
 }
 
+absl::StatusOr<bool> HloAsyncInstruction::AreOperandsAndOutputFullyBound(
+    const ShapeIndex& index) const {
+  std::cout << "AreOperandsAndOutputFullyBound: " << index.ToString() << "\n";
+  // std::cout << "async_wrapped_computation: \n" <<
+  // async_wrapped_computation()->ToString() << "\n";
+
+  const Shape& async_tuple_shape =
+      (opcode() == HloOpcode::kAsyncDone) ? operand(0)->shape() : shape();
+  CHECK(async_tuple_shape.IsTuple() &&
+        async_tuple_shape.tuple_shapes().size() >= 2);
+
+  const ProgramShape called_computation_shape =
+      async_wrapped_computation()->ComputeProgramShape();
+  const Shape expected_shape = ShapeUtil::MakeTupleShape(
+      {ShapeUtil::MakeTupleShape(called_computation_shape.parameters()),
+       called_computation_shape.result()});
+
+  if (index.front() > 1 || !ShapeUtil::IndexIsValid(expected_shape, index)) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Invalid index: ", index.ToString(),
+        ", note that the index must start with 0 or 1, or be empty."));
+  }
+
+  if (!ShapeUtil::IndexIsValid(async_tuple_shape, index)) {
+    return false;
+  }
+
+  const Shape& expected_subshape =
+      ShapeUtil::GetSubshape(expected_shape, index);
+  const Shape& async_tuple_subshape =
+      ShapeUtil::GetSubshape(async_tuple_shape, index);
+
+  std::cout << "expected_subshape: " << expected_subshape.ToString() << "\n";
+  std::cout << "actual_subshape: " << async_tuple_subshape.ToString() << "\n";
+
+  return ShapeUtil::Equal(expected_subshape, async_tuple_subshape);
+}
+
 HloAsyncInstruction::HloAsyncInstruction(
     HloOpcode opcode, const Shape& shape,
     absl::Span<HloInstruction* const> operands, HloOpcode async_wrapped_opcode)
     : HloInstruction(opcode, shape) {
-  CHECK(opcode == HloOpcode::kAsyncStart || operands.size() == 1);
+  CHECK(opcode == HloOpcode::kAsyncStart || opcode == HloOpcode::kAsyncUpdate ||
+        opcode == HloOpcode::kAsyncDone);
+  // AsyncDone has only one operand.
+  CHECK(opcode != HloOpcode::kAsyncDone || operands.size() == 1);
+
   for (auto operand : operands) {
     AppendOperand(operand);
+  }
+
+  if (opcode == HloOpcode::kAsyncUpdate || opcode == HloOpcode::kAsyncDone) {
+    HloAsyncInstruction* prev = Cast<HloAsyncInstruction>(operands[0]);
+    prev->async_chain_next_ = this;
   }
 
   // Drop 'async' from async-{start/update/done} to get the suffix.
@@ -363,7 +410,7 @@ void HloAsyncInstruction::UpdateAsyncChain() {
     }
   };
   auto update_operand_chain = [this]() {
-    CHECK_EQ(this->operand_count(), 1);
+    CHECK_GE(this->operand_count(), 1);
     CHECK(this->operand(0)->opcode() == HloOpcode::kAsyncStart ||
           this->operand(0)->opcode() == HloOpcode::kAsyncUpdate);
     Cast<HloAsyncInstruction>(this->mutable_operand(0))->async_chain_next_ =
@@ -425,8 +472,8 @@ bool HloAsyncInstruction::IdenticalSlowPath(
 std::unique_ptr<HloInstruction> HloAsyncInstruction::CloneWithNewOperandsImpl(
     const Shape& shape, absl::Span<HloInstruction* const> new_operands,
     HloCloneContext* context) const {
-  return std::make_unique<HloAsyncInstruction>(opcode(), shape,
-                                               new_operands[0]);
+  return std::make_unique<HloAsyncInstruction>(opcode(), shape, new_operands,
+                                               async_wrapped_opcode());
 }
 
 HloAsyncStartInstruction::HloAsyncStartInstruction(
@@ -443,8 +490,8 @@ HloAsyncStartInstruction::HloAsyncStartInstruction(
 
 HloInstruction* HloAsyncStartInstruction::AddCallOperand(
     HloInstruction* new_operand) {
-  CHECK_EQ(operand_count(),
-           async_wrapped_computation()->parameter_instructions().size());
+  CHECK_GE(async_wrapped_computation()->parameter_instructions().size(),
+           operand_count());
   const int64_t param_no = operand_count();
   std::string param_name = StrCat("param_", param_no);
   HloInstruction* called_computation_parameter =
@@ -453,7 +500,7 @@ HloInstruction* HloAsyncStartInstruction::AddCallOperand(
   AppendOperand(new_operand);
   mutable_shape()->mutable_tuple_shapes(0)->mutable_tuple_shapes()->push_back(
       new_operand->shape());
-  UpdateChainShapes();
+  // UpdateChainShapes();
   return called_computation_parameter;
 }
 

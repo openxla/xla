@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/analysis/alias_info.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <tuple>
@@ -22,7 +23,9 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
 #include "xla/hlo/analysis/hlo_operand_index.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -40,6 +43,8 @@ namespace xla {
 std::vector<std::pair<HloOperandIndex, ShapeIndex>>
 AliasInfo::GetFusionInstructionInPlaceInputOutputPairs(
     const HloFusionInstruction* fusion) const {
+  VLOG(1) << absl::StrCat(
+      "AliasInfo::GetFusionInstructionInPlaceInputOutputPairs", fusion->name());
   std::vector<std::pair<HloOperandIndex, ShapeIndex>>
       in_place_input_output_pairs;
 
@@ -122,6 +127,10 @@ bool AliasInfo::MustAlias(const HloInstruction* operand,
                           const ShapeIndex& operand_index,
                           const HloInstruction* user,
                           const ShapeIndex& user_index) const {
+  VLOG(1) << absl::StrCat("AliasInfo::MustAlias on user ", user->name(),
+                          " operand ", operand->name(), " operand_index ",
+                          operand_index.ToString(), " user_index ",
+                          user_index.ToString());
   for (const auto& [hlo_operand_index, user_shape_index] :
        GetInPlaceInputOutputPairs(user)) {
     if (user->operand(hlo_operand_index.operand_number) == operand &&
@@ -135,6 +144,9 @@ bool AliasInfo::MustAlias(const HloInstruction* operand,
 
 std::vector<std::pair<HloOperandIndex, ShapeIndex>>
 AliasInfo::GetInPlaceInputOutputPairs(const HloInstruction* user) const {
+  VLOG(1) << absl::StrCat("AliasInfo::GetInPlaceInputOutputPairs on user ",
+                          user->name());
+
   if (std::optional<std::vector<std::pair<HloOperandIndex, ShapeIndex>>> hint =
           GetNonDefaultInPlaceInputOutputPairs(user)) {
     return *hint;
@@ -273,6 +285,9 @@ AliasInfo::GetInPlaceInputOutputPairs(const HloInstruction* user) const {
 
 std::pair<const HloInstruction*, ShapeIndex> FollowTupleIndirection(
     const HloInstruction* instruction, ShapeIndex operand_index) {
+  VLOG(1) << absl::StrCat("FollowTupleIndirection on instruction ",
+                          instruction->name(), " operand_index ",
+                          operand_index.ToString());
   while (instruction->opcode() == HloOpcode::kTuple && !operand_index.empty()) {
     instruction = instruction->operand(operand_index.front());
     operand_index.pop_front();
