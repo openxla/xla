@@ -42,7 +42,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "Eigen/Core"
-#include "hwy//highway.h"
 #include "xla/index_util.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -1985,41 +1984,15 @@ bool LiteralBase::Piece::EqualElements(const LiteralBase::Piece& other) const {
     int64_t size_bytes = size_bytes_dense();
     CHECK_EQ(size_bytes, other.size_bytes_dense());
     if (primitive_util::IsSubByteNonPredType(subshape().element_type())) {
-      auto one_array = reinterpret_cast<const uint8_t*>(buffer());
-      auto two_array = reinterpret_cast<const uint8_t*>(other.buffer());
+      auto one_array = buffer();
+      auto two_array = other.buffer();
       const int bits_per_element =
           primitive_util::BitWidth(subshape().element_type());
       const uint8_t mask = LsbMask<uint8_t>(bits_per_element);
-
-      namespace hn = hwy::HWY_NAMESPACE;
-      const hn::ScalableTag<uint8_t> d;
-      const size_t lanes = hn::Lanes(d);
-      const auto v_mask = hn::Set(d, mask);
-
-      int64_t idx = 0;
-      for (; idx + lanes <= size_bytes; idx += lanes) {
-        auto va = hn::LoadU(d, one_array + idx);
-        auto vb = hn::LoadU(d, two_array + idx);
-        auto va_masked = hn::And(va, v_mask);
-        auto vb_masked = hn::And(vb, v_mask);
-        if (!hn::AllTrue(d, hn::Eq(va_masked, vb_masked))) {
-          return false;
-        }
+      for (int64_t i = 0; i < size_bytes; ++i) {
+        if ((one_array[i] & mask) != (two_array[i] & mask)) return false;
       }
-
-      // `size_bytes` was a multiple of the vector length: already done.
-      if (HWY_UNLIKELY(idx == size_bytes)) {
-        return true;
-      }
-
-      const size_t remaining = size_bytes - idx;
-      DCHECK_GT(remaining, 0);
-      DCHECK_LT(remaining, lanes);
-      auto va = hn::LoadN(d, one_array + idx, remaining);
-      auto vb = hn::LoadN(d, two_array + idx, remaining);
-      auto va_masked = hn::And(va, v_mask);
-      auto vb_masked = hn::And(vb, v_mask);
-      return hn::AllTrue(d, hn::Eq(va_masked, vb_masked));
+      return true;
     }
     return memcmp(buffer(), other.buffer(), size_bytes) == 0;
   }
