@@ -849,10 +849,6 @@ CudaExecutor::VmmMemoryHandle& CudaExecutor::VmmMemoryHandle::operator=(
 
 absl::StatusOr<CudaExecutor::VmmMemoryHandle>
 CudaExecutor::RetainVmmMemoryHandle(void* ptr) const {
-  if (vmm_options_.alignment == 0) {
-    return absl::InternalError("VMM is not supported on this device.");
-  }
-
   CUmemGenericAllocationHandle handle;
   TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemRetainAllocationHandle(&handle, ptr)));
 
@@ -1299,8 +1295,7 @@ DeviceAddressBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
     return AllocateAndTrack(*host_allocator_, size, "host");
   }
 
-  if (memory_space == static_cast<int64_t>(MemorySpace::kP2P) &&
-      vmm_options_.alignment > 0) {
+  if (memory_space == static_cast<int64_t>(MemorySpace::kP2P)) {
     return AllocateAndTrack(*vmm_allocator_, size, "vmm");
   }
 
