@@ -28,10 +28,7 @@ limitations under the License.
 namespace stream_executor::gpu {
 
 // Device memory allocator using CUDA Virtual Memory Management (VMM) APIs
-// (cuMemCreate/cuMemAddressReserve/cuMemMap). All allocations use
-// POSIX_FILE_DESCRIPTOR handle type as baseline (matching NCCL's ncclMemAlloc).
-// FABRIC handle support can be optionally requested for NVSwitch-based
-// topologies.
+// (cuMemCreate/cuMemAddressReserve/cuMemMap).
 class CudaVmmAllocator : public MemoryAllocator {
  public:
   struct Options {
@@ -42,13 +39,14 @@ class CudaVmmAllocator : public MemoryAllocator {
     // Whether to enable peer access from all accessible devices.
     bool enable_peer_access = false;
 
-    // Whether to additionally request FABRIC handle type on top of the
-    // POSIX_FILE_DESCRIPTOR baseline. Falls back to POSIX_FD if FABRIC
-    // is not supported or permitted.
+    // Whether to request POSIX_FILE_DESCRIPTOR handle type.
+    bool enable_posix_fd_handle = true;
+
+    // Whether to request FABRIC handle type.
     bool enable_fabric_handle = false;
 
     // Whether to mark allocations as GPUDirect RDMA capable.
-    bool is_rdma_supported = false;
+    bool enable_rdma = false;
   };
 
   CudaVmmAllocator(StreamExecutor* executor, Options options);

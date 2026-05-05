@@ -32,9 +32,9 @@ limitations under the License.
 namespace stream_executor::gpu {
 namespace {
 
-CudaVmmAllocator::Options MakeTestOptions(bool is_rdma_supported) {
+CudaVmmAllocator::Options MakeTestOptions(bool enable_rdma) {
   CudaVmmAllocator::Options options;
-  options.is_rdma_supported = is_rdma_supported;
+  options.enable_rdma = enable_rdma;
   return options;
 }
 

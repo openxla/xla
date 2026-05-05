@@ -19,13 +19,13 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
 
 #include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
-#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -41,18 +41,18 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 
-// Builds CUmemAllocationProp matching NCCL's ncclMemAlloc: always
-// POSIX_FILE_DESCRIPTOR baseline, plus FABRIC if the device supports it.
 static CUmemAllocationProp GetAllocationProperties(
     CUdevice device, const CudaVmmAllocator::Options& options) {
   CUmemAllocationProp properties = {};
   properties.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   properties.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   properties.location.id = device;
-  properties.allocFlags.gpuDirectRDMACapable =
-      options.is_rdma_supported ? 1 : 0;
+  properties.allocFlags.gpuDirectRDMACapable = options.enable_rdma ? 1 : 0;
 
-  int handle_types = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+  int handle_types = CU_MEM_HANDLE_TYPE_NONE;
+  if (options.enable_posix_fd_handle) {
+    handle_types |= CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+  }
   if (options.enable_fabric_handle) {
     handle_types |= CU_MEM_HANDLE_TYPE_FABRIC;
   }
@@ -61,25 +61,49 @@ static CUmemAllocationProp GetAllocationProperties(
   return properties;
 }
 
-// Creates a physical VMM allocation (matching NCCL's ncclMemAlloc). Tries
-// cuMemCreate with the given properties; if FABRIC handle is included and
-// fails with NOT_PERMITTED/NOT_SUPPORTED, falls back to POSIX_FD alone.
+// Creates a physical VMM allocation. Tries cuMemCreate with the given
+// properties and falls back through progressively simpler handle types:
+//   FABRIC+POSIX_FD -> POSIX_FD -> NONE
 static absl::StatusOr<CUmemGenericAllocationHandle> CreatePhysicalAllocation(
     CUmemAllocationProp properties, uint64_t padded_size) {
   CUmemGenericAllocationHandle handle;
 
-  bool has_fabric = properties.requestedHandleTypes & CU_MEM_HANDLE_TYPE_FABRIC;
-  if (has_fabric) {
+  auto try_create = [&](const char* description)
+      -> std::optional<absl::StatusOr<CUmemGenericAllocationHandle>> {
     CUresult result = cuMemCreate(&handle, padded_size, &properties, 0);
-    if (result != CUDA_ERROR_NOT_PERMITTED &&
-        result != CUDA_ERROR_NOT_SUPPORTED) {
-      RETURN_IF_ERROR(cuda::ToStatus(result));
+    if (result == CUDA_SUCCESS) {
       return handle;
     }
-    VLOG(3) << "Fabric memory handle requested but not supported or "
-               "permitted, falling back to non-fabric allocation.";
+    if (result == CUDA_ERROR_NOT_PERMITTED ||
+        result == CUDA_ERROR_NOT_SUPPORTED ||
+        result == CUDA_ERROR_INVALID_VALUE) {
+      XLA_LOG_DEVICE(WARNING, properties.location.id)
+          << "VMM cuMemCreate with " << description
+          << " handle types failed: " << cuda::ToStatus(result)
+          << "; will retry with simpler handle types.";
+      return std::nullopt;
+    }
+    return cuda::ToStatus(result);
+  };
+
+  bool has_fabric = properties.requestedHandleTypes & CU_MEM_HANDLE_TYPE_FABRIC;
+  bool has_posix_fd = properties.requestedHandleTypes &
+                      CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+
+  if (has_fabric) {
+    if (auto r = try_create("FABRIC+POSIX_FD")) {
+      return *r;
+    }
     properties.requestedHandleTypes = static_cast<CUmemAllocationHandleType>(
         properties.requestedHandleTypes & ~CU_MEM_HANDLE_TYPE_FABRIC);
+  }
+
+  if (has_posix_fd) {
+    if (auto r = try_create("POSIX_FD")) {
+      return *r;
+    }
+    properties.requestedHandleTypes =
+        static_cast<CUmemAllocationHandleType>(CU_MEM_HANDLE_TYPE_NONE);
   }
 
   RETURN_IF_ERROR(

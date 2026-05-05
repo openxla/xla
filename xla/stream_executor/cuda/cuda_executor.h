@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -220,7 +221,7 @@ class CudaExecutor : public GpuExecutor {
     return is_multicast_supported_;
   }
 
-  bool is_fabric_supported() const { return is_fabric_supported_; }
+  bool is_fabric_supported() const { return vmm_options_.enable_fabric_handle; }
 
  private:
   // Allocates memory using the given allocator and tracks the resulting
@@ -242,19 +243,12 @@ class CudaExecutor : public GpuExecutor {
   // Returns true if a delay kernel is supported.
   absl::StatusOr<bool> DelayKernelIsSupported();
 
-  // Device-reported VMM recommended allocation granularity, cached at Init()
-  // time. Also used as the alignment for symmetric/collective memory buffers
-  // (NCCL NVLS UB requires virtual address alignment to this granularity).
-  size_t vmm_granularity_ = 0;
-
-  // Whether GPUDirect RDMA over VMM is supported by this device.
-  bool is_rdma_supported_ = false;
-
   // Whether multicast objects are supported by this device.
   bool is_multicast_supported_ = false;
 
-  // Whether fabric handle type is supported by this device.
-  bool is_fabric_supported_ = false;
+  // VMM allocator options, probed during Init() with fallback. The handle-type
+  // flags may differ from device-reported caps (e.g. in MIG or containers).
+  CudaVmmAllocator::Options vmm_options_;
 
   // Guards the in-memory-module mapping.
   absl::Mutex in_memory_modules_mu_;
