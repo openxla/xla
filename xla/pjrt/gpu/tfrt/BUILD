@@ -190,7 +190,7 @@ xla_test(
     name = "tfrt_gpu_client_test",
     srcs = ["tfrt_gpu_client_test.cc"],
     backends = [
-        "nvgpu_any",
+        "gpu",
     ],
     tags = [
         "multi_gpu",
