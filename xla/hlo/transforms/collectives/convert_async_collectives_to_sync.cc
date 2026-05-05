@@ -166,11 +166,8 @@ ConvertAsyncCollectivesToSync::ReplaceAsyncInstructionsWithSync(
     replaced_ops[async_done] = sync;
   }
 
-  // Update schedule, if there is one.
+  // Update schedule.
   HloModule* module = computation->parent();
-  if (!module->has_schedule()) {
-    return absl::OkStatus();
-  }
   const HloInstructionSequence& sequence =
       module->schedule().sequence(computation);
   std::vector<HloInstruction*> new_sequence;
