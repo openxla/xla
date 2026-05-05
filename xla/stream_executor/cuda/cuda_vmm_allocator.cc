@@ -41,7 +41,7 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 
-static CUmemAllocationProp GetAllocationProperties(
+static CUmemAllocationProp GetAllocationProp(
     CUdevice device, const CudaVmmAllocator::Options& options) {
   CUmemAllocationProp properties = {};
   properties.type = CU_MEM_ALLOCATION_TYPE_PINNED;
@@ -111,7 +111,7 @@ static absl::StatusOr<CUmemGenericAllocationHandle> CreatePhysicalAllocation(
   return handle;
 }
 
-static CUmemAccessDesc GetAccessDescriptor(int device) {
+static CUmemAccessDesc GetAccessDesc(int device) {
   CUmemAccessDesc descriptor = {};
   descriptor.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   descriptor.location.id = device;
@@ -131,7 +131,7 @@ VmmAllocate(StreamExecutor* executor, const CudaVmmAllocator::Options& options,
       cuda::ToStatus(cuDeviceGet(&device, executor->device_ordinal())));
 
   // Query VMM allocation granularity and pad size to alignment boundary.
-  CUmemAllocationProp properties = GetAllocationProperties(device, options);
+  CUmemAllocationProp properties = GetAllocationProp(device, options);
   size_t granularity = 0;
   RETURN_IF_ERROR(cuda::ToStatus(cuMemGetAllocationGranularity(
       &granularity, &properties, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED)));
@@ -178,14 +178,13 @@ VmmAllocate(StreamExecutor* executor, const CudaVmmAllocator::Options& options,
           executor->CanEnablePeerAccessTo(peer)) {
         XLA_VLOG_DEVICE(5, executor->device_ordinal())
             << "Setting VMM access for peer device " << peer;
-        CUmemAccessDesc access_desc = GetAccessDescriptor(peer);
+        CUmemAccessDesc access_desc = GetAccessDesc(peer);
         RETURN_IF_ERROR(
             cuda::ToStatus(cuMemSetAccess(ptr, padded_size, &access_desc, 1)));
       }
     }
   } else {
-    CUmemAccessDesc access_desc =
-        GetAccessDescriptor(executor->device_ordinal());
+    CUmemAccessDesc access_desc = GetAccessDesc(executor->device_ordinal());
     RETURN_IF_ERROR(
         cuda::ToStatus(cuMemSetAccess(ptr, padded_size, &access_desc, 1)));
   }

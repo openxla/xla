@@ -561,10 +561,20 @@ absl::StatusOr<bool> IsMulticastSupported(CUdevice device) {
 
 absl::StatusOr<bool> IsFabricSupported(CUdevice device) {
   int fabric_supported = 0;
-  TF_RETURN_IF_ERROR(cuda::ToStatus(cuDeviceGetAttribute(
+  CUresult result = cuDeviceGetAttribute(
       &fabric_supported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED,
-      device)));
-  return fabric_supported;
+      device);
+
+  // Older drivers return INVALID_VALUE when they don't recognize the attribute.
+  if (result == CUDA_ERROR_INVALID_VALUE) {
+    XLA_VLOG_DEVICE(1, device)
+        << "CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED not supported "
+           "by driver.";
+    return false;
+  }
+
+  TF_RETURN_IF_ERROR(cuda::ToStatus(result));
+  return fabric_supported > 0;
 }
 
 // Queries device VMM capabilities and allocation granularity, falling back to
