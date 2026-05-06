@@ -49,7 +49,7 @@ class KernelReuseCache {
     LaunchDimensions launch_dimensions;
     std::optional<se::ClusterDim> cluster_dim;
     int64_t shmem_bytes = 0;
-    std::vector<uint8_t> binary;
+    std::string binary;
     stream_executor::gpu::TmaMetadata tma_metadata;
     bool use_pdl = false;
   };

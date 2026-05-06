@@ -2533,19 +2533,19 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
         }
         const uint8_t* binary =
             reinterpret_cast<const uint8_t*>(entry.binary().data());
-        if (entry.link_binary()) {
-          binaries_to_link.push_back(
-              std::vector<uint8_t>(binary, binary + entry.binary().size()));
-        }
+        binaries_to_link.push_back(
+            std::vector<uint8_t>(binary, binary + entry.binary().size()));
         VLOG(5) << "Using " << name << " from cache: " << entry.binary().size();
         ++loaded_kernel_count;
       }
       VLOG(2) << "Using " << loaded_kernel_count << " / "
               << current_cache.entries_size() << " cached kernels.";
     }
-    RETURN_IF_ERROR(UpdateDiskKernelCache(resolved_path,
-                                          /*do_append=*/cache_file_exists,
-                                          current_cache, binaries_to_cache));
+    if (!binaries_to_cache.empty()) {
+      RETURN_IF_ERROR(UpdateDiskKernelCache(resolved_path,
+                                            /*do_append=*/cache_file_exists,
+                                            current_cache, binaries_to_cache));
+    }
   }
 
   auto maybe_backend_result =

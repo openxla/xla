@@ -27,13 +27,13 @@ limitations under the License.
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/executable.h"
-#include "xla/service/gpu/gpu_compiler.h"
+#include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 
-namespace xla::gpu {
+namespace xla {
+namespace gpu {
 
 std::unique_ptr<VerifiedHloModule>
 GpuCodegenTest::CreateNewVerifiedModuleWithFTZ(bool ftz) {
@@ -53,16 +53,10 @@ GpuCodegenTest::CreateNewVerifiedModuleWithFTZ(bool ftz) {
 void GpuCodegenTest::CompileAndOptionallyVerifyPtx(
     std::unique_ptr<VerifiedHloModule> hlo_module, absl::string_view pattern,
     bool run_optimization_passes) {
-  GpuCompiler* compiler = dynamic_cast<GpuCompiler*>(backend().compiler());
-  CHECK_NOTNULL(compiler);
-
-  std::string ptx_str;
-  compiler->SetAsmHook([&](absl::string_view ptx) { ptx_str += ptx; });
-
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Executable> executable,
       CompileToExecutable(std::move(hlo_module), run_optimization_passes));
-  compiler->RemoveAsmHook();
+  std::string ptx_str(static_cast<GpuExecutable*>(executable.get())->text());
 
   // On the ROCM platform the "ptx" string is not populated for the compiled
   // executable, and hence the "ptx_str" will be empty. So disabling the
@@ -97,4 +91,5 @@ std::string GpuCodegenTest::MakePlatformSpecificLlvm(absl::string_view input) {
                                       : "br i1 %[[LOGICAL_T0]]"}});
 }
 
-}  // namespace xla::gpu
+}  // namespace gpu
+}  // namespace xla

@@ -314,7 +314,7 @@ ENTRY computation {
     kinds.push_back(thunk->kind());
   }
   // Verify that the inner Thunks match the expected sequence from the HLO
-  EXPECT_THAT(kinds, UnorderedElementsAre(Kind::kReplicaId, Kind::kCustomKernel,
+  EXPECT_THAT(kinds, UnorderedElementsAre(Kind::kReplicaId, Kind::kKernel,
                                           Kind::kAsyncStart, Kind::kAsyncDone,
                                           Kind::kAsyncStart, Kind::kAsyncDone));
 }

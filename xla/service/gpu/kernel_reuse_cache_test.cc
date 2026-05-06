@@ -64,10 +64,8 @@ TEST_F(KernelReuseTest, ExportAndLoadWork) {
                   value {
                     fingerprint: "fingerprint1"
                     launch_dimensions { num_blocks: 1 num_threads_per_block: 1 }
-                    link_binary: true
                   }
                 }
-                compatibility_version: 1
               )pb"));
 
   TF_EXPECT_OK(cache.Load(proto));

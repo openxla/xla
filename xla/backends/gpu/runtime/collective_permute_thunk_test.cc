@@ -225,7 +225,7 @@ ENTRY test_computation {
   }
   // Verify that the inner Thunks match the expected sequence from the HLO.
   // The collective is sync (single device), so no AsyncStart/Done wrapping.
-  EXPECT_THAT(kinds, ElementsAre(Kind::kReplicaId, Kind::kCustomKernel,
+  EXPECT_THAT(kinds, ElementsAre(Kind::kReplicaId, Kind::kKernel,
                                  Kind::kCollectivePermute));
 }
 
