@@ -233,18 +233,27 @@ class Autotuner {
   absl::StatusOr<std::vector<ConfigResult>> ProfileAll(
       std::vector<ExecutableCandidate> candidates,
       const HloInstruction* instr = nullptr);
+
+  ConfigResult ProfileCandidate(ExecutableCandidate& candidate,
+                                InputBuffers& input_buffers,
+                                std::vector<OutputCluster>& clusters,
+                                bool is_trusted_config, bool allow_new_cluster)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(profiler_m_);
+
   // Picks the best config from the given results.
   // Result is moved from the input vector.
   absl::StatusOr<ConfigResult> PickBestConfig(
       std::vector<ConfigResult>& results);
 
   // Assigns `output` to the first cluster whose representative matches within
-  // autotune_config_.relative_tolerance; creates a new cluster if no match.
+  // autotune_config_.relative_tolerance. If `allow_new_cluster` is true,
+  // creates a new cluster if no match is found; otherwise returns -1.
   // `is_trusted_config` marks the cluster as having a trustworthy-backend
   // member (propagates through the OR of member trust flags). Returns the
   // assigned cluster index.
   int AssignToOutputCluster(std::vector<OutputCluster>& clusters,
-                            ScopedShapedBuffer& output, bool is_trusted_config)
+                            ScopedShapedBuffer& output, bool is_trusted_config,
+                            bool allow_new_cluster)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(profiler_m_);
 
   // Stamps kWrongResults on every successful result that is not in the

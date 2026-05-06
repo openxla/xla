@@ -532,7 +532,7 @@ TEST_F(AutotunerTest, AutotuneWithBufferCheckFiltersWrongResults) {
       .WillOnce(Return(ProfileResult({absl::Seconds(2), std::move(output_1)})))
       .WillOnce(Return(ProfileResult({absl::Seconds(1), std::move(output_2)})));
   // One CheckOutputBuffer call: untrusted's output vs the trusted cluster's
-  // representative. Mismatch -> own (untrusted) cluster -> demoted.
+  // representative. Mismatch -> no cluster -> demoted.
   EXPECT_CALL(*profiler, CheckOutputBuffer(_, _, _))
       .WillOnce(Return(absl::InternalError("Don't match")));
 
@@ -635,21 +635,196 @@ TEST_F(AutotunerTest, AutotuneTrustedClusterWinsOverLargerUntrustedCluster) {
       .WillOnce(Return(ProfileResult({absl::Seconds(1), std::move(out_u1)})))
       .WillOnce(Return(ProfileResult({absl::Seconds(1), std::move(out_u2)})))
       .WillOnce(Return(ProfileResult({absl::Seconds(1), std::move(out_u3)})));
-  // Cluster assignment compares (in order):
-  //   trusted -> creates cluster 0 (no call).
-  //   u1 vs cluster 0 -> mismatch -> creates cluster 1.           [call 1]
-  //   u2 vs cluster 0 -> mismatch; vs cluster 1 -> match.         [calls 2,3]
-  //   u3 vs cluster 0 -> mismatch; vs cluster 1 -> match.         [calls 4,5]
+  // Once a trusted cluster exists, untrusted outputs only compare against
+  // trusted-backed clusters and cannot create loser clusters.
   EXPECT_CALL(*profiler, CheckOutputBuffer(_, _, _))
       .WillOnce(Return(absl::InternalError("u1 vs c0")))
       .WillOnce(Return(absl::InternalError("u2 vs c0")))
-      .WillOnce(Return(absl::OkStatus()))
-      .WillOnce(Return(absl::InternalError("u3 vs c0")))
-      .WillOnce(Return(absl::OkStatus()));
+      .WillOnce(Return(absl::InternalError("u3 vs c0")));
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(backend_1));
   backends.push_back(std::move(backend_2));
+  ASSERT_OK_AND_ASSIGN(
+      auto autotuner,
+      Autotuner::Create(std::move(backends), std::move(profiler), config_,
+                        std::make_unique<MockAutotunerCache>()));
+  auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  EXPECT_THAT(autotuner->Autotune(dummy_instr.get()), IsOk());
+}
+
+TEST_F(AutotunerTest, AutotuneProfilesTrustedFirstPreservesCandidateOrder) {
+  config_.check_buffers = true;
+
+  std::vector<std::unique_ptr<BackendConfig>> untrusted_configs;
+  untrusted_configs.push_back(GetTestConfig("untrusted_first"));
+  auto untrusted_backend =
+      std::make_unique<MockCodegenBackendWithWrongResults>();
+  EXPECT_CALL(*untrusted_backend, GetSupportedConfigs)
+      .WillOnce(Return(std::move(untrusted_configs)));
+  std::unique_ptr<Executable> untrusted_executable =
+      RegisterSpillingExecutable(0);
+  Executable* untrusted_exec = untrusted_executable.get();
+  EXPECT_CALL(*untrusted_backend, Compile(_, _))
+      .WillOnce(Return(std::move(untrusted_executable)));
+
+  std::vector<std::unique_ptr<BackendConfig>> trusted_configs;
+  trusted_configs.push_back(GetTestConfig("trusted_second"));
+  auto trusted_backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*trusted_backend, GetSupportedConfigs)
+      .WillOnce(Return(std::move(trusted_configs)));
+  EXPECT_CALL(*trusted_backend, CanProduceWrongResults())
+      .WillRepeatedly(Return(false));
+  std::unique_ptr<Executable> trusted_executable =
+      RegisterSpillingExecutable(0);
+  Executable* trusted_exec = trusted_executable.get();
+  EXPECT_CALL(*trusted_backend, Compile(_, _))
+      .WillOnce(Return(std::move(trusted_executable)));
+
+  // The untrusted config is first in candidate order. It still wins the tie
+  // after both outputs join the trusted cluster, proving that profiling order
+  // does not leak into PickBestConfig tie-breaking.
+  EXPECT_CALL(*untrusted_backend,
+              ApplyConfig(_, ConfigMatcher("untrusted_first")))
+      .WillOnce(Return(absl::OkStatus()));
+  EXPECT_CALL(*trusted_backend, ApplyConfig(_, _)).Times(0);
+
+  auto profiler = std::make_unique<MockProfiler>();
+  ScopedShapedBuffer out_trusted(Shape(), nullptr, 0),
+      out_untrusted(Shape(), nullptr, 0);
+  EXPECT_CALL(*profiler, CreateInputBuffers(_, _))
+      .WillOnce(Return(std::make_unique<InputBuffers>()));
+  {
+    ::testing::InSequence sequence;
+    EXPECT_CALL(*profiler, Profile(testing::Pointer(trusted_exec), _))
+        .WillOnce(
+            Return(ProfileResult({absl::Seconds(1), std::move(out_trusted)})));
+    EXPECT_CALL(*profiler, Profile(testing::Pointer(untrusted_exec), _))
+        .WillOnce(Return(
+            ProfileResult({absl::Seconds(1), std::move(out_untrusted)})));
+  }
+  EXPECT_CALL(*profiler, CheckOutputBuffer(_, _, _))
+      .WillOnce(Return(absl::OkStatus()));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(untrusted_backend));
+  backends.push_back(std::move(trusted_backend));
+  ASSERT_OK_AND_ASSIGN(
+      auto autotuner,
+      Autotuner::Create(std::move(backends), std::move(profiler), config_,
+                        std::make_unique<MockAutotunerCache>()));
+  auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  EXPECT_THAT(autotuner->Autotune(dummy_instr.get()), IsOk());
+}
+
+TEST_F(AutotunerTest, AutotuneUntrustedVotesForTrustedCluster) {
+  config_.check_buffers = true;
+
+  std::vector<std::unique_ptr<BackendConfig>> trusted_configs;
+  trusted_configs.push_back(GetTestConfig("trusted_a"));
+  trusted_configs.push_back(GetTestConfig("trusted_b"));
+  auto trusted_backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*trusted_backend, GetSupportedConfigs)
+      .WillOnce(Return(std::move(trusted_configs)));
+  EXPECT_CALL(*trusted_backend, Compile(_, _)).Times(2).WillRepeatedly([] {
+    return std::unique_ptr<Executable>();
+  });
+
+  std::vector<std::unique_ptr<BackendConfig>> untrusted_configs;
+  untrusted_configs.push_back(GetTestConfig("untrusted_matches_b"));
+  untrusted_configs.push_back(GetTestConfig("untrusted_matches_none"));
+  auto untrusted_backend =
+      std::make_unique<MockCodegenBackendWithWrongResults>();
+  EXPECT_CALL(*untrusted_backend, GetSupportedConfigs)
+      .WillOnce(Return(std::move(untrusted_configs)));
+  EXPECT_CALL(*untrusted_backend, Compile(_, _)).Times(2).WillRepeatedly([] {
+    return std::unique_ptr<Executable>();
+  });
+
+  EXPECT_CALL(*untrusted_backend,
+              ApplyConfig(_, ConfigMatcher("untrusted_matches_b")))
+      .WillOnce(Return(absl::OkStatus()));
+
+  auto profiler = std::make_unique<MockProfiler>();
+  ScopedShapedBuffer out_trusted_a(Shape(), nullptr, 0),
+      out_trusted_b(Shape(), nullptr, 0), out_untrusted_b(Shape(), nullptr, 0),
+      out_untrusted_none(Shape(), nullptr, 0);
+  EXPECT_CALL(*profiler, CreateInputBuffers(_, _))
+      .WillOnce(Return(std::make_unique<InputBuffers>()));
+  EXPECT_CALL(*profiler, Profile(_, _))
+      .WillOnce(
+          Return(ProfileResult({absl::Seconds(10), std::move(out_trusted_a)})))
+      .WillOnce(
+          Return(ProfileResult({absl::Seconds(9), std::move(out_trusted_b)})))
+      .WillOnce(
+          Return(ProfileResult({absl::Seconds(1), std::move(out_untrusted_b)})))
+      .WillOnce(Return(
+          ProfileResult({absl::Seconds(1), std::move(out_untrusted_none)})));
+  // trusted_b creates the second trusted cluster. The first untrusted config
+  // votes for it, making it the largest trusted-backed cluster. The second
+  // untrusted config matches no trusted cluster and is demoted.
+  EXPECT_CALL(*profiler, CheckOutputBuffer(_, _, _))
+      .WillOnce(Return(absl::InternalError("trusted_b vs trusted_a")))
+      .WillOnce(Return(absl::InternalError("untrusted_b vs trusted_a")))
+      .WillOnce(Return(absl::OkStatus()))
+      .WillOnce(Return(absl::InternalError("untrusted_none vs trusted_a")))
+      .WillOnce(Return(absl::InternalError("untrusted_none vs trusted_b")));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(trusted_backend));
+  backends.push_back(std::move(untrusted_backend));
+  ASSERT_OK_AND_ASSIGN(
+      auto autotuner,
+      Autotuner::Create(std::move(backends), std::move(profiler), config_,
+                        std::make_unique<MockAutotunerCache>()));
+  auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  EXPECT_THAT(autotuner->Autotune(dummy_instr.get()), IsOk());
+}
+
+TEST_F(AutotunerTest, AutotuneClustersUntrustedWhenTrustedReferenceFails) {
+  config_.check_buffers = true;
+
+  std::vector<std::unique_ptr<BackendConfig>> trusted_configs;
+  trusted_configs.push_back(GetTestConfig("trusted_fails"));
+  auto trusted_backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*trusted_backend, GetSupportedConfigs)
+      .WillOnce(Return(std::move(trusted_configs)));
+  EXPECT_CALL(*trusted_backend, Compile(_, _))
+      .WillOnce(Return(std::unique_ptr<Executable>()));
+
+  std::vector<std::unique_ptr<BackendConfig>> untrusted_configs;
+  untrusted_configs.push_back(GetTestConfig("majority_slow"));
+  untrusted_configs.push_back(GetTestConfig("majority_fast"));
+  untrusted_configs.push_back(GetTestConfig("minority_fastest"));
+  auto untrusted_backend =
+      std::make_unique<MockCodegenBackendWithWrongResults>();
+  EXPECT_CALL(*untrusted_backend, GetSupportedConfigs)
+      .WillOnce(Return(std::move(untrusted_configs)));
+  EXPECT_CALL(*untrusted_backend, Compile(_, _)).Times(3).WillRepeatedly([] {
+    return std::unique_ptr<Executable>();
+  });
+
+  EXPECT_CALL(*untrusted_backend,
+              ApplyConfig(_, ConfigMatcher("majority_fast")))
+      .WillOnce(Return(absl::OkStatus()));
+
+  auto profiler = std::make_unique<MockProfiler>();
+  ScopedShapedBuffer out_a1(Shape(), nullptr, 0), out_a2(Shape(), nullptr, 0),
+      out_b(Shape(), nullptr, 0);
+  EXPECT_CALL(*profiler, CreateInputBuffers(_, _))
+      .WillOnce(Return(std::make_unique<InputBuffers>()));
+  EXPECT_CALL(*profiler, Profile(_, _))
+      .WillOnce(Return(absl::InternalError("trusted failed")))
+      .WillOnce(Return(ProfileResult({absl::Seconds(3), std::move(out_a1)})))
+      .WillOnce(Return(ProfileResult({absl::Seconds(2), std::move(out_a2)})))
+      .WillOnce(Return(ProfileResult({absl::Seconds(1), std::move(out_b)})));
+  EXPECT_CALL(*profiler, CheckOutputBuffer(_, _, _))
+      .WillOnce(Return(absl::OkStatus()))
+      .WillOnce(Return(absl::InternalError("minority")));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(trusted_backend));
+  backends.push_back(std::move(untrusted_backend));
   ASSERT_OK_AND_ASSIGN(
       auto autotuner,
       Autotuner::Create(std::move(backends), std::move(profiler), config_,

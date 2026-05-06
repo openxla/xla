@@ -22,6 +22,7 @@ limitations under the License.
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <utility>
@@ -636,8 +637,7 @@ Autotuner::CompileAll(const HloInstruction* instr,
 
 absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
     std::vector<ExecutableCandidate> candidates, const HloInstruction* instr) {
-  std::vector<ConfigResult> config_results;
-  config_results.reserve(candidates.size());
+  std::vector<ConfigResult> config_results(candidates.size());
 
   absl::MutexLock lock(profiler_m_);
 
@@ -645,46 +645,40 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
       std::unique_ptr<InputBuffers> input_buffers,
       profiler_->CreateInputBuffers(candidates[0].executable.get(), instr));
 
+  const auto is_trusted = [](const ExecutableCandidate& candidate) {
+    return !candidate.config.codegen_backend->CanProduceWrongResults();
+  };
+
+  std::vector<OutputCluster> clusters;
+  std::vector<int> profile_order(candidates.size());
+  std::iota(profile_order.begin(), profile_order.end(), 0);
+
+  auto first_untrusted = profile_order.begin();
   if (autotune_config_.check_buffers) {
+    first_untrusted =
+        std::stable_partition(profile_order.begin(), profile_order.end(),
+                              [&](int i) { return is_trusted(candidates[i]); });
+
     VLOG(2) << "Validating outputs via clustering across " << candidates.size()
             << " config(s).";
   }
 
-  std::vector<OutputCluster> clusters;
+  for (auto it = profile_order.begin(); it != first_untrusted; ++it) {
+    const int i = *it;
+    config_results[i] =
+        ProfileCandidate(candidates[i], *input_buffers, clusters,
+                         /*is_trusted_config=*/true,
+                         /*allow_new_cluster=*/true);
+  }
 
-  for (int i = 0; i < candidates.size(); ++i) {
-    absl::StatusOr<ProfileResult> profile_result =
-        profiler_->Profile(candidates[i].executable.get(), *input_buffers);
-
-    std::optional<Failure> failure = std::nullopt;
-    absl::Duration duration = absl::ZeroDuration();
-    int scratch_bytes = 0;
-    int assigned_cluster = -1;
-    if (!profile_result.ok()) {
-      failure = Failure{FailureKind::kExecutionFailed,
-                        profile_result.status().ToString()};
-    } else {
-      duration = profile_result->duration;
-      scratch_bytes = profile_result->scratch_bytes;
-      if (autotune_config_.check_buffers) {
-        // Input buffers are shared across candidates; CheckInputBuffers both
-        // verifies redzone canaries and refreshes the buffers so the next
-        // candidate starts from a clean state.
-        absl::Status redzone = profiler_->CheckInputBuffers(*input_buffers);
-        if (!redzone.ok()) {
-          failure =
-              Failure{FailureKind::kRedzoneCheckFailed, redzone.ToString()};
-        } else {
-          CHECK(profile_result->output_buffer.has_value());
-          const bool is_trusted =
-              !candidates[i].config.codegen_backend->CanProduceWrongResults();
-          assigned_cluster = AssignToOutputCluster(
-              clusters, profile_result->output_buffer.value(), is_trusted);
-        }
-      }
-    }
-    config_results.push_back({std::move(candidates[i].config), failure,
-                              duration, scratch_bytes, assigned_cluster});
+  // Untrusted configs create consensus clusters only if the trusted phase
+  // found no usable reference.
+  const bool has_trusted_reference = !clusters.empty();
+  for (auto it = first_untrusted; it != profile_order.end(); ++it) {
+    const int i = *it;
+    config_results[i] = ProfileCandidate(
+        candidates[i], *input_buffers, clusters, /*is_trusted_config=*/false,
+        /*allow_new_cluster=*/!has_trusted_reference);
   }
 
   if (autotune_config_.check_buffers) {
@@ -707,6 +701,42 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
   // precise CUDA event-based timing.
   candidates.clear();
   return config_results;
+}
+
+Autotuner::ConfigResult Autotuner::ProfileCandidate(
+    ExecutableCandidate& candidate, InputBuffers& input_buffers,
+    std::vector<OutputCluster>& clusters, bool is_trusted_config,
+    bool allow_new_cluster) {
+  absl::StatusOr<ProfileResult> profile_result =
+      profiler_->Profile(candidate.executable.get(), input_buffers);
+
+  std::optional<Failure> failure = std::nullopt;
+  absl::Duration duration = absl::ZeroDuration();
+  int scratch_bytes = 0;
+  int assigned_cluster = -1;
+  if (!profile_result.ok()) {
+    failure = Failure{FailureKind::kExecutionFailed,
+                      profile_result.status().ToString()};
+  } else {
+    duration = profile_result->duration;
+    scratch_bytes = profile_result->scratch_bytes;
+    if (autotune_config_.check_buffers) {
+      // Input buffers are shared across candidates; CheckInputBuffers both
+      // verifies redzone canaries and refreshes the buffers so the next
+      // candidate starts from a clean state.
+      absl::Status redzone = profiler_->CheckInputBuffers(input_buffers);
+      if (!redzone.ok()) {
+        failure = Failure{FailureKind::kRedzoneCheckFailed, redzone.ToString()};
+      } else {
+        CHECK(profile_result->output_buffer.has_value());
+        assigned_cluster = AssignToOutputCluster(
+            clusters, profile_result->output_buffer.value(), is_trusted_config,
+            allow_new_cluster);
+      }
+    }
+  }
+  return ConfigResult{std::move(candidate.config), failure, duration,
+                      scratch_bytes, assigned_cluster};
 }
 
 absl::StatusOr<Autotuner::ConfigResult> Autotuner::PickBestConfig(
@@ -783,7 +813,8 @@ absl::Status Autotuner::DumpHlo(HloInstruction* instr, const Config& config) {
 
 int Autotuner::AssignToOutputCluster(std::vector<OutputCluster>& clusters,
                                      ScopedShapedBuffer& output,
-                                     bool is_trusted_config) {
+                                     bool is_trusted_config,
+                                     bool allow_new_cluster) {
   for (int c = 0; c < clusters.size(); ++c) {
     if (profiler_
             ->CheckOutputBuffer(output, clusters[c].representative,
@@ -794,6 +825,7 @@ int Autotuner::AssignToOutputCluster(std::vector<OutputCluster>& clusters,
       return c;
     }
   }
+  if (!allow_new_cluster) return -1;
   int new_idx = clusters.size();
   clusters.push_back(OutputCluster{std::move(output), /*count=*/1,
                                    /*has_trusted_member=*/is_trusted_config});
