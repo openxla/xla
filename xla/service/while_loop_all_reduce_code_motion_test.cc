@@ -2450,6 +2450,80 @@ TEST_F(WhileLoopAllReduceCodeMotionTest,
 }
 
 TEST_F(WhileLoopAllReduceCodeMotionTest,
+       NonScalarAllReducesMultipliedTogetherStayInBody) {
+  constexpr absl::string_view kHloModule = R"(
+    HloModule non_scalar_ar_multiply_correctness
+
+    %reduction {
+      %x = f32[] parameter(0)
+      %y = f32[] parameter(1)
+      ROOT %add = f32[] add(f32[] %x, f32[] %y)
+    }
+
+    %while_condition {
+      %param = (s32[], s32[], f32[128], f32[128], f32[128,128]) parameter(0)
+      %gte.0 = s32[] get-tuple-element(%param), index=0
+      %gte.1 = s32[] get-tuple-element(%param), index=1
+      ROOT result = pred[] compare(%gte.0, %gte.1), direction=LT
+    }
+
+    %while_body {
+      %param = (s32[], s32[], f32[128], f32[128], f32[128,128]) parameter(0)
+      %gte.0 = s32[] get-tuple-element(%param), index=0
+      %gte.1 = s32[] get-tuple-element(%param), index=1
+      %gte.2 = f32[128] get-tuple-element(%param), index=2
+      %gte.3 = f32[128] get-tuple-element(%param), index=3
+      %gte.4 = f32[128,128] get-tuple-element(%param), index=4
+      %row = f32[128] add(f32[128] %gte.2, f32[128] %gte.2)
+      %col = f32[128] add(f32[128] %gte.3, f32[128] %gte.3)
+      %all-reduce.row = f32[128] all-reduce(f32[128] %row), channel_id=1, replica_groups={{0,1,2,3}}, use_global_device_ids=true, to_apply=%reduction
+      %all-reduce.col = f32[128] all-reduce(f32[128] %col), channel_id=2, replica_groups={{0,1,2,3}}, use_global_device_ids=true, to_apply=%reduction
+      %row.bcast = f32[128,128] broadcast(f32[128] %all-reduce.row), dimensions={0}
+      %col.bcast = f32[128,128] broadcast(f32[128] %all-reduce.col), dimensions={1}
+      %product = f32[128,128] multiply(f32[128,128] %row.bcast, f32[128,128] %col.bcast)
+      %accumulation = f32[128,128] add(f32[128,128] %product, f32[128,128] %gte.4)
+      %constant.1 = s32[] constant(1)
+      %increment_iteration = s32[] add(s32[] %gte.0, s32[] %constant.1)
+      ROOT %loop_result = (s32[], s32[], f32[128], f32[128], f32[128,128]) tuple(%increment_iteration, %gte.1, %gte.2, %gte.3, %accumulation)
+    }
+
+    ENTRY non_scalar_ar_multiply_correctness {
+      %param.0 = s32[] parameter(0)
+      %param.1 = f32[128] parameter(1)
+      %param.2 = f32[128] parameter(2)
+      %constant.0 = s32[] constant(1)
+      %zero = f32[] constant(0)
+      %accumulation_buffer = f32[128,128] broadcast(f32[] %zero), dimensions={}
+      %while_init = (s32[], s32[], f32[128], f32[128], f32[128,128]) tuple(%constant.0, %param.0, %param.1, %param.2, %accumulation_buffer)
+      ROOT %while = (s32[], s32[], f32[128], f32[128], f32[128,128]) while(%while_init), condition=%while_condition, body=%while_body
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHloModule));
+  TF_ASSERT_OK_AND_ASSIGN(bool simplified_loop,
+                          WhileLoopAllReduceCodeMotion{}.Run(module.get()));
+  EXPECT_FALSE(simplified_loop);
+  TF_ASSERT_OK(
+      HloVerifier(/*layout_sensitive=*/false, /*allow_mixed_precision=*/true)
+          .Run(module.get())
+          .status());
+  HloComputation* entry = module->entry_computation();
+  HloInstruction* transformed_while = find_op<HloOpcode::kWhile>(entry);
+  ASSERT_THAT(transformed_while, NotNull());
+  HloComputation* body = transformed_while->while_body();
+  std::vector<HloInstruction*> body_all_reduces;
+  absl::c_copy_if(body->instructions(), std::back_inserter(body_all_reduces),
+                  HloPredicateIsOp<HloOpcode::kAllReduce>);
+  ASSERT_THAT(body_all_reduces, SizeIs(2));
+  EXPECT_THAT(body_all_reduces[0], op::Shape("f32[128]"));
+  EXPECT_THAT(body_all_reduces[1], op::Shape("f32[128]"));
+  std::vector<HloInstruction*> entry_all_reduces;
+  absl::c_copy_if(entry->instructions(), std::back_inserter(entry_all_reduces),
+                  HloPredicateIsOp<HloOpcode::kAllReduce>);
+  EXPECT_THAT(entry_all_reduces, SizeIs(0));
+}
+
+TEST_F(WhileLoopAllReduceCodeMotionTest,
        ScalarAllReduceWithOnlyMultiplyUseIsNotDeleted) {
   constexpr absl::string_view kHloModule = R"(
     HloModule scalar_ar_only_multiply_use

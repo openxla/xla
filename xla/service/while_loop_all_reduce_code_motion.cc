@@ -801,6 +801,8 @@ MovableAllReduceContext IsAllReduceMovable(
               ShapeUtil::IsScalar(all_reduce->shape());
           const bool unwrapped_other_is_all_reduce =
               unwrapped_other->opcode() == HloOpcode::kAllReduce;
+          const bool unwrapped_other_is_scalar =
+              ShapeUtil::IsScalar(unwrapped_other->shape());
 
           if (current_is_scalar && unwrapped_other_is_all_reduce) {
             // Scalar side of the ZeRO-1 weight-normalization pattern
@@ -822,12 +824,19 @@ MovableAllReduceContext IsAllReduceMovable(
                     << "); marking it unmovable so it stays in the loop body "
                        "and preserves the math of the hoisted all-reduce.";
             is_all_reduce_movable = false;
-          } else if (unwrapped_other_is_all_reduce && other_is_broadcast) {
+          } else if (unwrapped_other_is_all_reduce && other_is_broadcast &&
+                     unwrapped_other_is_scalar) {
             // Gradient (non-scalar) side of the same pattern. The other
             // operand is a broadcasted scalar all-reduce acting as a
             // per-iteration scaling factor; it is pinned in the body by
             // the branch above when it is itself analyzed, so hoisting
-            // the current all-reduce is safe.
+            // the current all-reduce is safe. Requiring the unwrapped
+            // other operand to be scalar excludes non-scaling shapes such
+            // as multiply(broadcast(all-reduce(a)), broadcast(all-reduce(b)))
+            // where both all-reduces are non-scalar; hoisting either
+            // all-reduce in that pattern would scale the other side by a
+            // pre-all-reduce local value, producing an accumulation off
+            // by a factor of num_replicas.
             to_visit.push(user);
           } else {
             is_all_reduce_movable = false;
