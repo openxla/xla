@@ -34,7 +34,9 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/utils/hlo_stack_trace.h"
@@ -111,15 +113,21 @@ void HloLiveRange::FlattenSchedule(const HloComputation& computation,
       // mode.
       if (instruction->opcode() == HloOpcode::kCall ||
           instruction->opcode() == HloOpcode::kConditional ||
-          instruction->opcode() == HloOpcode::kAsyncStart) {
+          instruction->opcode() == HloOpcode::kAsyncStart ||
+          instruction->opcode() == HloOpcode::kAsyncUpdate) {
         for (const HloComputation* called_computation :
              instruction->called_computations()) {
-          // AsyncStart starts an async context. Other ops that call
-          // computations just propagate the existing one, if any.
-          FlattenSchedule(*called_computation,
-                          instruction->opcode() == HloOpcode::kAsyncStart
-                              ? called_computation
-                              : async_context);
+          // AsyncStart and AsyncUpdate both define or participate in an async
+          // context.
+          const HloComputation* next_async_context = async_context;
+          if (instruction->opcode() == HloOpcode::kAsyncStart) {
+            next_async_context = called_computation;
+          } else if (instruction->opcode() == HloOpcode::kAsyncUpdate) {
+            next_async_context = Cast<HloAsyncInstruction>(instruction)
+                                     ->async_chain_start()
+                                     ->async_wrapped_computation();
+          }
+          FlattenSchedule(*called_computation, next_async_context);
         }
       } else if (instruction->opcode() == HloOpcode::kWhile) {
         // Order of flattening matters here: for while loops, the condition
