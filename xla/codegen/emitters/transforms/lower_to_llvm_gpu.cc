@@ -38,8 +38,8 @@ limitations under the License.
 #include "mlir/Dialect/AMDGPU/Utils/Chipset.h"
 #include "mlir/Dialect/Arith/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // IWYU pragma: keep
-#include "mlir/Dialect/LLVMIR/NVVMDialect.h"  // IWYU pragma: keep
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"   // IWYU pragma: keep
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"   // IWYU pragma: keep
 #include "mlir/Dialect/LLVMIR/ROCDLDialect.h"  // IWYU pragma: keep
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
@@ -117,6 +117,8 @@ class LowerToLLVMGPUPass
           });
         }
         populateGpuToLLVMSPVConversionPatterns(converter, patterns);
+        spirv::populateMathToLLVMSPVConversionPatterns(spirv::getSPIRVMathOps(),
+                                                       converter, patterns);
         populateGpuMemorySpaceAttributeConversions(converter);
       } else {
         mlir::populateGpuToNVVMConversionPatterns(converter, patterns);
@@ -125,12 +127,7 @@ class LowerToLLVMGPUPass
       return mlir::success();
     };
 
-    // NVVM and ROCDL lower math.log1p directly via their GPU pattern sets, but
-    // the SPIR-V pipeline does not. For Intel GPUs we therefore fall back to
-    // the generic MathToLLVM conversion, hence enabling approximate log1p.
-    bool lower_math_log1p = device_spec_.IsIntelGpu();
-    if (mlir::failed(
-            LowerToLLVM(getOperation(), populate_patterns, lower_math_log1p))) {
+    if (mlir::failed(LowerToLLVM(getOperation(), populate_patterns))) {
       signalPassFailure();
       return;
     }
