@@ -188,10 +188,13 @@ FuncOp cloneFuncRecursively(
     mlir::sdy::setFuncResultShardings(clonedFuncOp, callOpResultShardings);
   }
   clonedFuncOp->walk([&](CallOp callOp) {
-    FuncOp funcOp = symbolTable.lookup<FuncOp>(callOp.getCallee());
-    CHECK(funcOp) << "Failed to lookup function: " << callOp.getCallee().str();
-    callOp.setCallee(symbolTable.insert(cloneFuncRecursively(
-        funcOp, mlir::sdy::getShardingPerValue(callOp), symbolTable)));
+    if (isManualComputation(callOp)) {
+      FuncOp funcOp = symbolTable.lookup<FuncOp>(callOp.getCallee());
+      CHECK(funcOp) << "Failed to lookup function: "
+                    << callOp.getCallee().str();
+      callOp.setCallee(symbolTable.insert(cloneFuncRecursively(
+          funcOp, mlir::sdy::getShardingPerValue(callOp), symbolTable)));
+    }
   });
   return clonedFuncOp;
 }

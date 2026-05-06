@@ -154,7 +154,6 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
-        "@shardy//shardy/dialect/sdy/transforms/export:passes",
         "@shardy//shardy/dialect/sdy/transforms/import:passes",
     ],
 )
