@@ -3011,9 +3011,9 @@ xla_test(
     ],
     tags = [
         "cuda-only",
-        "manual",
         "no_oss",  # We don't generate data for the devices used in the OSS CI.
-        "notap",  # Test is failing in -c opt
+        # Scratch space is smaller in debug mode. So we only test in opt mode.
+        "optonly",
     ],
     deps = [
         ":deviceless_estimate_cub_sort_scratch_size",
