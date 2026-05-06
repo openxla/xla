@@ -24,7 +24,7 @@ limitations under the License.
 #include "mlir/Transforms/Passes.h"
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
-#include "triton/Conversion/TritonGPUToLLVM/Passes.h"
+#include "third_party/triton/Conversion/TritonGPUToLLVM/Passes.h"
 #include "triton/Conversion/TritonToTritonGPU/Passes.h"
 #include "triton/Dialect/Gluon/Transforms/Passes.h"
 #include "triton/Dialect/Triton/Transforms/Passes.h"
