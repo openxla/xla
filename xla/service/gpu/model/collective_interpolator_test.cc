@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -28,6 +27,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
+#include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -36,7 +36,6 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/model/hlo_op_profile.pb.h"
-#include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -1032,7 +1031,9 @@ class CollectiveInterpolationWithDefaultProfileTest
 
 TEST_P(CollectiveInterpolationWithDefaultProfileTest, LoadsDefaultProfile) {
   const auto& [test_name, cc, expected_duration] = GetParam();
-  auto device_info = TestGpuDeviceInfo::RTXA6000DeviceInfo(cc);
+  auto device_info = test_name == "B200"
+                         ? TestGpuDeviceInfo::B200SXMDeviceInfo(cc)
+                         : TestGpuDeviceInfo::RTXA6000DeviceInfo(cc);
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<CollectiveInterpolator> interpolator,
       CollectiveInterpolator::Create(kNumGpusPerHost, device_info));
