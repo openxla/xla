@@ -15,9 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/triton.h"
 
-#include <algorithm>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -26,18 +24,23 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "google/protobuf/text_format.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/backends/gpu/autotuner/triton/cost_model_config_optimization.h"
 #include "xla/backends/gpu/autotuner/triton/dot_search_space.h"
 #include "xla/backends/gpu/autotuner/triton/triton_configs.h"
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/backends/gpu/transforms/fusion_wrapper.h"
 #include "xla/backends/gpu/transforms/priority_fusion.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
+#include "xla/codegen/tiling/tiling_specification.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -147,9 +150,19 @@ TritonBackend::GetSupportedConfigsForDot(const HloInstruction* instr) {
 
   if (!debug_options().xla_gpu_exhaustive_tiling_search()) {
     VLOG(1) << "Restricting configs to the default set.";
+    std::vector<TritonGemmConfig> all_configs = gemm_configs;
     gemm_configs = search_space.OptimizeConfigSet(
         gemm_configs, /*hints=*/GetDefaultTritonConfigs(
             target_config().device_description.gpu_compute_capability()));
+
+    if (!debug_options()
+             .xla_gpu_experimental_cost_model_gemm_tiling_options()
+             .empty()) {
+      TF_ASSIGN_OR_RETURN(gemm_configs, OptimizeConfigsWithCostModel(
+                                            dot, all_configs, gemm_configs,
+                                            target_config().device_description,
+                                            debug_options(), mlir_context_));
+    }
   }
   configs.reserve(gemm_configs.size());
   for (const auto& config : gemm_configs) {

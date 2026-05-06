@@ -633,15 +633,18 @@ void PjRtStreamExecutorDeviceEventSet::AppendTo(
   }
 }
 
+void PjRtStreamExecutorDeviceEventSet::AppendTo(
+    std::vector<PjRtDeviceEventRef>& events) {
+  events.reserve(events.size() + event_refs_.size());
+  for (const auto& ev : event_refs_) {
+    events.push_back(PjRtDeviceEventRef(ev));
+  }
+}
+
 void PjRtStreamExecutorDeviceEventSet::AppendTo(PjRtDeviceEventSet& events) {
   for (const auto& ev : event_refs_) {
     events.AddEvent(PjRtDeviceEventRef(ev));
   }
-}
-
-std::unique_ptr<PjRtDeviceEventSet> PjRtStreamExecutorDeviceEventSet::Clone()
-    const {
-  return std::make_unique<PjRtStreamExecutorDeviceEventSet>(*this);
 }
 
 absl::StatusOr<PjRtDeviceEventRef>

@@ -95,36 +95,7 @@ class RawSEDeviceMemory {
   se::DeviceAddressBase value_;
 };
 
-// PjRtDeviceEventSet that coalesces events to try and maintain the minimal
-// wait set for all added events. For stream based events it inspects the
-// stream id to determine if a new event is redundant or not.
-class PjRtStreamExecutorUsageEventSet : public PjRtDeviceEventSet {
- public:
-  PjRtStreamExecutorUsageEventSet() = default;
 
-  void AddEvent(PjRtDeviceEventRef event) override;
-
-  void AddEvent(BufferSequencingEventRef event, bool reference_held);
-
-  void AppendTo(
-      std::vector<tsl::RCReference<tsl::AsyncValue>>& events) override;
-
-  void AppendTo(PjRtDeviceEventSet& events) override;
-
-  std::unique_ptr<PjRtDeviceEventSet> Clone() const override;
-
- private:
-  // Helper object to keep track of usage of the buffer on streams.
-  struct StreamAndEvent {
-    BufferSequencingEventRef event;
-    bool reference_held;
-  };
-
-  using StreamAndEventContainer = absl::InlinedVector<StreamAndEvent, 3>;
-  // Set of streams that the buffer has ever been used on, see comment on
-  // StreamAndEvent.
-  StreamAndEventContainer usage_events_;
-};
 
 }  // namespace xla
 

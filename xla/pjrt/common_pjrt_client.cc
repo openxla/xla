@@ -89,11 +89,6 @@ absl::Status CommonPjRtClient::WaitOnStream(PjRtMemorySpace* memory_space,
       "WaitUntilBufferReadyOnStream is only implemented for GPU.");
 }
 
-absl::StatusOr<std::unique_ptr<PjRtDeviceEventSet>>
-CommonPjRtClient::CreateUsageEventSet(PjRtMemorySpace* memory_space) const {
-  return std::make_unique<DefaultUsageEventSet>();
-}
-
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> CommonPjRtClient::DefineBuffer(
     std::shared_ptr<const Shape> on_device_shape, PjRtMemorySpace* memory_space,
     PjRtRawBufferRef raw_buffer,
@@ -108,12 +103,11 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> CommonPjRtClient::DefineBuffer(
                         raw_buffer->memory_space()->DebugString(),
                         memory_space->DebugString()));
   }
-  TF_ASSIGN_OR_RETURN(auto usage_events, CreateUsageEventSet(memory_space));
   return std::make_unique<CommonPjRtBufferImpl>(
       std::move(on_device_shape),
       std::make_unique<AbstractTrackedDeviceBuffer>(
           std::move(raw_buffer), std::move(definition_device_events),
-          std::move(usage_events)),
+          use_stream_based_compaction()),
       memory_space);
 }
 
@@ -2498,25 +2492,20 @@ CommonPjRtBufferImpl::ReleaseDeviceMemoryOwnership(
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 CommonPjRtBufferImpl::DonateWithControlDependency(Future<> dependency) {
-  auto hold = GetBufferWithHold(CommonPjRtBuffer::ScopedHold::kDonation);
-  if (!hold.ok()) {
+  TF_ASSIGN_OR_RETURN(auto extra_definition_event,
+                      client()->CreateDeviceEvent(memory_space(), dependency));
+  absl::StatusOr<std::unique_ptr<AbstractTrackedDeviceBuffer>> tracked_buffer =
+      DonateTrackedBuffer();
+  if (!tracked_buffer.ok()) {
     return InvalidArgument(
         "Invalid buffer passed to DonateWithControlDependency: %s",
-        hold.status().ToString());
+        tracked_buffer.status().ToString());
   }
-  // Make the new buffer which is identical to the old, except for the new
-  // definition event.
-  TF_ASSIGN_OR_RETURN(auto new_tracked_buffer,
-                      hold.buffer()->CloneWithControlDependency(
-                          memory_space(), std::move(dependency)));
-  hold.ConfirmDonation();
+  (*tracked_buffer)
+      ->UnsafePrependDefinitionEvent(std::move(extra_definition_event));
 
   return std::make_unique<CommonPjRtBufferImpl>(
-      on_device_shape_,
-      std::unique_ptr<AbstractTrackedDeviceBuffer>(
-          tensorflow::down_cast<AbstractTrackedDeviceBuffer*>(
-              new_tracked_buffer.release())),
-      memory_space());
+      on_device_shape_, std::move(*tracked_buffer), memory_space());
 }
 
 Future<> CommonPjRtBufferImpl::GetReadyFuture() {

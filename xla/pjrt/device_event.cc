@@ -129,6 +129,20 @@ PJRT_DeviceEvent_State PjRtDeviceEventPtr::state() const {
   return event_.vtable->get_state(event_.device_event);
 }
 
+std::optional<PjRtDeviceEventPtr::DefinitionStreamInfo>
+PjRtDeviceEventPtr::GetDefinitionStream() const {
+  if (event_.device_event == nullptr || event_.vtable == nullptr) {
+    return std::nullopt;
+  }
+  uint64_t sequence_number = 0;
+  intptr_t stream = event_.vtable->get_definition_stream(event_.device_event,
+                                                         &sequence_number);
+  if (stream == 0) {
+    return std::nullopt;
+  }
+  return DefinitionStreamInfo{stream, sequence_number};
+}
+
 tsl::AsyncValue* PjRtDeviceEventPtr::async_value() const {
   if (event_.device_event == nullptr || !IsCompatibleWithLocalAsyncValue()) {
     return nullptr;

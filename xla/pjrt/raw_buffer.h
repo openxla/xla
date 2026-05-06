@@ -190,7 +190,7 @@ class CommonPjRtRawBuffer : public PjRtRawBuffer {
 
   // TODO(parkers): This should not be needed, but some backends
   // require deleting after all events.
-  virtual void DecrefAfter(std::vector<tsl::RCReference<tsl::AsyncValue>> avs);
+  virtual void DecrefAfter(std::vector<PjRtDeviceEventRef> avs);
 };
 
 class RegisterRawBufferFactory {

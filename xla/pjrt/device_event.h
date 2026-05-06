@@ -41,8 +41,8 @@ const PJRT_DeviceEvent_FunctionTable* GetBuiltinAsyncValueCApiFunctionTable();
 PJRT_DeviceEvent_State ToPjrtDeviceEventState(tsl::AsyncValue::State state);
 
 template <typename T>
-const PJRT_DeviceEvent_FunctionTable* GetBuiltinDeviceEventCApiFunctionTable() {
-  static const PJRT_DeviceEvent_FunctionTable device_event_vtable = {
+PJRT_DeviceEvent_FunctionTable BuildBuiltinDeviceEventCApiFunctionTable() {
+  return PJRT_DeviceEvent_FunctionTable{
       /*struct_size=*/sizeof(PJRT_DeviceEvent_FunctionTable),
       /*extension_start=*/nullptr,
       /*inc_ref=*/
@@ -78,7 +78,17 @@ const PJRT_DeviceEvent_FunctionTable* GetBuiltinDeviceEventCApiFunctionTable() {
       +[](void* device_event) -> PJRT_DeviceEvent_State {
         auto* async_value = reinterpret_cast<tsl::AsyncValue*>(device_event);
         return ToPjrtDeviceEventState(async_value->state());
+      },
+      /*get_definition_stream=*/
+      +[](void* device_event, uint64_t* sequence_number) -> intptr_t {
+        return 0;
       }};
+}
+
+template <typename T>
+const PJRT_DeviceEvent_FunctionTable* GetBuiltinDeviceEventCApiFunctionTable() {
+  static const PJRT_DeviceEvent_FunctionTable device_event_vtable =
+      BuildBuiltinDeviceEventCApiFunctionTable<T>();
   return &device_event_vtable;
 }
 
@@ -175,6 +185,14 @@ class PjRtDeviceEventPtr {
   std::optional<absl::Status> GetErrorIfPresent() const;
 
   PJRT_DeviceEvent_State state() const;
+
+  // opaque stream and sequence information for this event (if available).
+  // If the streams are the same, events can be compared by sequence_id.
+  struct DefinitionStreamInfo {
+    intptr_t stream;
+    uint64_t sequence_id;
+  };
+  std::optional<DefinitionStreamInfo> GetDefinitionStream() const;
 
   PJRT_DeviceEvent ToC() const { return event_; }
 
@@ -301,9 +319,8 @@ class PjRtDeviceEventSet {
 
   virtual void AppendTo(
       std::vector<tsl::RCReference<tsl::AsyncValue>>& events) = 0;
+  virtual void AppendTo(std::vector<PjRtDeviceEventRef>& events) = 0;
   virtual void AppendTo(PjRtDeviceEventSet& events) = 0;
-
-  virtual std::unique_ptr<PjRtDeviceEventSet> Clone() const = 0;
 };
 
 }  // namespace xla

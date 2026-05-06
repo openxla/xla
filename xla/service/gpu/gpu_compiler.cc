@@ -1607,6 +1607,7 @@ absl::Status GpuCompiler::AutotunerAndPostCleanup(
       target_config, key_value_store, toolkit_version, alias_info,
       debug_options, mlir_context, shape_size_fn));
   pipeline.AddPass<ConvertTritonGemmConfig>(device_description, mlir_context);
+  pipeline.AddPass<ReshapeDecomposer>();
   pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
   auto simplifier_options = GetAlgebraicSimplifierOptions(
       AlgebraicSimplifierMode::kLayoutNormalization, debug_options,

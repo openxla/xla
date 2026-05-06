@@ -235,9 +235,10 @@ TEST_F(GpuAotCompilationResultTest, LoadExecutable) {
 
   EnsureCudaSymbolIsRegistered();
 
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
-                       std::move(*result).LoadExecutable(
-                           platform_.id(), GetDeviceDescription()));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      std::move(*result).LoadExecutable(platform_.id(), GetDeviceDescription(),
+                                        DebugOptions()));
 
   {
     ASSERT_OK_AND_ASSIGN(

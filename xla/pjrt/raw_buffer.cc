@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/device_event.h"
+#include "xla/pjrt/device_event_utils.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/async_value.h"
@@ -90,9 +91,8 @@ void CommonPjRtRawBuffer::ScheduleCopyTo(
                });
 }
 
-void CommonPjRtRawBuffer::DecrefAfter(
-    std::vector<tsl::RCReference<tsl::AsyncValue>> avs) {
-  tsl::RunWhenReady(avs, [this]() { DropRef(); });
+void CommonPjRtRawBuffer::DecrefAfter(std::vector<PjRtDeviceEventRef> events) {
+  xla::RunWhenReady(events, [this]() { DropRef(); });
 }
 
 absl::StatusOr<tsl::RCReference<PjRtRawBuffer>>

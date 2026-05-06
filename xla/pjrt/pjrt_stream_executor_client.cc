@@ -563,12 +563,6 @@ PjRtStreamExecutorClient::AllocateRawBufferForExecute(
       this, memory_space, local_device, std::move(mem), on_device_bytes_count);
 }
 
-absl::StatusOr<std::unique_ptr<PjRtDeviceEventSet>>
-PjRtStreamExecutorClient::CreateUsageEventSet(
-    PjRtMemorySpace* memory_space) const {
-  return std::make_unique<PjRtStreamExecutorUsageEventSet>();
-}
-
 absl::StatusOr<std::pair<PjRtRawBufferRef,
                          CommonPjRtClient::PjRtFulfillAliasRawBufferCallback>>
 PjRtStreamExecutorClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,

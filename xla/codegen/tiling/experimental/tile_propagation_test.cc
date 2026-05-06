@@ -637,7 +637,7 @@ TEST_F(TilePropagationTest,
 }
 
 TEST_F(TilePropagationTest,
-       CanNotPropagateToInputsOfConcatenateOpWithNonConstantUpperBound) {
+       CanPropagateToInputsOfConcatenateOpWithNonConstantUpperBound) {
   HloInstruction* root = ParseAndGetRoot(R"(
     HloModule m
     ENTRY e {
@@ -654,8 +654,25 @@ TEST_F(TilePropagationTest,
       CreateDimExpr(0, &mlir_context_) * 30};
   tile = Tile{*tiling_space, tile.offsets(), tile.sizes(), tile.strides(),
               upper_bounds};
-  EXPECT_THAT(PropagateTileToInput(*tiling_space, *root, tile, 0),
-              StatusIs(absl::StatusCode::kUnimplemented));
+  ASSERT_OK_AND_ASSIGN(auto tiled_operands,
+                       PropagateTileToInput(*tiling_space, *root, tile, 0));
+  EXPECT_THAT(tiled_operands, MatchToString(R"(
+    0) (tid_0)
+      -> offsets [tid_0 * ts_0]
+         sizes [ts_0]
+         strides [1]
+         upper bounds [max(min(tid_0 * 30, 10), 0)]
+    1) (tid_0)
+      -> offsets [tid_0 * ts_0 - 10]
+         sizes [ts_0]
+         strides [1]
+         upper bounds [max(min(tid_0 * 30 - 10, 20), 0)]
+    2) (tid_0)
+      -> offsets [tid_0 * ts_0 - 30]
+         sizes [ts_0]
+         strides [1]
+         upper bounds [max(min(tid_0 * 30 - 30, 30), 0)]
+  )"));
 }
 
 TEST_F(TilePropagationTest, CanPropagateToInputsOfPadOpWithEdgePadding) {

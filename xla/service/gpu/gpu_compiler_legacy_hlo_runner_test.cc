@@ -123,7 +123,8 @@ TEST_P(AotCompilationTest, CompileAndLoadAotResult) {
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Executable> executable,
       std::move(*aot_result)
-          .LoadExecutable(compiler()->PlatformId(), device_description()));
+          .LoadExecutable(compiler()->PlatformId(), device_description(),
+                          GetDebugOptionsForTest()));
   auto hlo_runner = std::make_unique<HloRunnerLegacy>(GpuPlatform());
   std::unique_ptr<OpaqueExecutable> wrapped_executable =
       hlo_runner->WrapExecutable(std::move(executable));
@@ -165,7 +166,8 @@ TEST_P(AotCompilationTest, ExportAndImportAotResult) {
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Executable> new_executable,
       std::move(*aot_result)
-          .LoadExecutable(compiler()->PlatformId(), device_description()));
+          .LoadExecutable(compiler()->PlatformId(), device_description(),
+                          GetDebugOptionsForTest()));
   auto hlo_runner = std::make_unique<HloRunnerLegacy>(GpuPlatform());
   std::unique_ptr<OpaqueExecutable> wrapped_executable =
       hlo_runner->WrapExecutable(std::move(new_executable));
@@ -354,7 +356,8 @@ ENTRY e {
     ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Executable> executable,
         std::move(*aot_result)
-            .LoadExecutable(compiler()->PlatformId(), device_description()));
+            .LoadExecutable(compiler()->PlatformId(), device_description(),
+                            GetDebugOptionsForTest()));
     auto hlo_runner = std::make_unique<HloRunnerLegacy>(GpuPlatform());
     std::unique_ptr<OpaqueExecutable> wrapped_executable =
         hlo_runner->WrapExecutable(std::move(executable));

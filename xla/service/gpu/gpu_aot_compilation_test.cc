@@ -108,7 +108,7 @@ TEST_P(GpuAotCompilationTest, ExportAndLoadExecutable) {
       std::unique_ptr<Executable> executable,
       std::move(*aot_result)
           .LoadExecutable(compiler->PlatformId(),
-                          stream_exec->GetDeviceDescription()));
+                          stream_exec->GetDeviceDescription(), debug_options_));
 }
 
 TEST_P(GpuAotCompilationTest, AotCompilationWithoutGpuDevice) {
@@ -153,7 +153,7 @@ TEST_P(GpuAotCompilationTest, AotCompilationWithoutGpuDevice) {
       std::unique_ptr<Executable> executable,
       std::move(*aot_result)
           .LoadExecutable(compiler->PlatformId(),
-                          stream_exec->GetDeviceDescription()));
+                          stream_exec->GetDeviceDescription(), debug_options_));
 }
 
 namespace {
@@ -268,7 +268,7 @@ TEST_P(GpuAotCompilationTest, ExportAndLoadExecutableWithTriton) {
       std::unique_ptr<Executable> executable,
       std::move(*aot_result)
           .LoadExecutable(compiler->PlatformId(),
-                          stream_exec->GetDeviceDescription()));
+                          stream_exec->GetDeviceDescription(), debug_options_));
   std::unique_ptr<OpaqueExecutable> wrapped_executable =
       test_runner_as_hlo_runner().WrapExecutable(std::move(executable));
 

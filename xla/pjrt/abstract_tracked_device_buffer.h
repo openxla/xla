@@ -45,12 +45,7 @@ class AbstractTrackedDeviceBuffer {
   AbstractTrackedDeviceBuffer(
       PjRtRawBufferRef raw_buffer,
       absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events,
-      std::unique_ptr<PjRtDeviceEventSet> usage_events)
-      : raw_buffer_(std::move(raw_buffer)),
-        definition_events_(std::move(definition_events)),
-        usage_events_(std::move(usage_events)) {
-    CHECK(usage_events_ != nullptr);
-  }
+      bool use_stream_based_compaction = false);
 
   absl::Span<const PjRtDeviceEventRef> definition_events() const {
     return definition_events_;
@@ -115,14 +110,9 @@ class AbstractTrackedDeviceBuffer {
   // Asynchronously frees all memory.
   void Delete(PjRtMemorySpace* memory_space);
 
-  // Clones an abstract buffer with an additional control dependency.
-  std::unique_ptr<AbstractTrackedDeviceBuffer> Clone(
-      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events,
-      std::unique_ptr<PjRtDeviceEventSet> usage_events) const;
-
-  absl::StatusOr<std::unique_ptr<AbstractTrackedDeviceBuffer>>
-  CloneWithControlDependency(PjRtMemorySpace* memory_space,
-                             Future<> dependency);
+  // Prepends a definition event. Unsafe because it assumes unique ownership
+  // of this buffer object (e.g. after donation).
+  void UnsafePrependDefinitionEvent(PjRtDeviceEventRef extra_definition_event);
 
   // Returns a future that becomes available when all definition events are
   // complete.
@@ -357,6 +347,9 @@ class CommonPjRtBuffer : public PjRtBuffer {
   absl::StatusOr<std::unique_ptr<AbstractTrackedDeviceBuffer>>
   GetBufferForDonationHoldLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
+  absl::StatusOr<std::unique_ptr<AbstractTrackedDeviceBuffer>>
+  DonateTrackedBuffer();
+
   // Adds a hold of usage or external reference and returns non-owning
   // device_buffer_. Returns an error if device_buffer_ is null.
   // Requires holds_[kDonation] == 0 (i.e., WaitForOutstandingDonationHolds()
@@ -414,17 +407,18 @@ class CommonPjRtBuffer : public PjRtBuffer {
 // removes stale usage events to prevent the event set from growing unbounded.
 class DefaultUsageEventSet : public PjRtDeviceEventSet {
  public:
-  DefaultUsageEventSet() = default;
+  explicit DefaultUsageEventSet(bool stream_based_compaction = false)
+      : stream_based_compaction_(stream_based_compaction) {}
 
   void AddEvent(PjRtDeviceEventRef event) override;
 
   void AppendTo(
       std::vector<tsl::RCReference<tsl::AsyncValue>>& events) override;
+  void AppendTo(std::vector<PjRtDeviceEventRef>& events) override;
   void AppendTo(PjRtDeviceEventSet& events) override;
 
-  std::unique_ptr<PjRtDeviceEventSet> Clone() const override;
-
  private:
+  bool stream_based_compaction_;
   absl::InlinedVector<PjRtDeviceEventRef, 4> usage_events_;
 };
 

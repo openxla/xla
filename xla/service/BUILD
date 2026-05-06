@@ -1762,6 +1762,8 @@ cc_library(
     name = "compiled_module",
     hdrs = ["compiled_module.h"],
     deps = [
+        ":executable",
+        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt:compiled_memory_stats",
         "//xla/stream_executor:platform",

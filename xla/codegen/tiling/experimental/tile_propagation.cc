@@ -126,14 +126,28 @@ absl::StatusOr<Tiles> PropagateTileToInputForConcatenateOp(
   // For concatenate, we need to adjust the offsets and the bounds in the
   // concatenate dimension.
   int64_t concat_dim = concatenate.concatenate_dimension();
-  auto upper_bound = output_tile.upper_bounds()[concat_dim];
-  if (upper_bound.GetType() != SymbolicExprType::kConstant) {
-    // TODO(b/422677091): Also support non-constant symbolic expressions for
-    // upper bound.
-    return absl::UnimplementedError(
-        "Can't propagate tile to input of concatenate op with "
-        "non-constant upper bound.");
+
+  auto offset_expr = output_tile.dim_tiles()[concat_dim].offset;
+  auto size_expr = output_tile.dim_tiles()[concat_dim].size;
+
+  // If the tile size is still a non-constant symbolic expression, skip the
+  // alignment check for now. It will be validated later when concrete sizes are
+  // assigned.
+  if (size_expr.GetType() == SymbolicExprType::kConstant) {
+    int64_t concat_dim_tile_size = size_expr.GetValue();
+
+    if (!offset_expr.IsMultipleOf(concat_dim_tile_size)) {
+      return absl::FailedPreconditionError(absl::StrCat(
+          "Tiling propagation rejected for Concatenate: The tile offset "
+          "expression '",
+          offset_expr.ToString(),
+          "' must be a clean multiple of its tile size ", concat_dim_tile_size,
+          " to prevent correctness bugs from tiles covering multiple concat "
+          "operands."));
+    }
   }
+
+  auto upper_bound = output_tile.upper_bounds()[concat_dim];
   int64_t offset = 0;
   for (const HloInstruction* operand : concatenate.operands()) {
     SmallVector<DimTile> dim_tiles(output_tile.dim_tiles());
@@ -141,10 +155,8 @@ absl::StatusOr<Tiles> PropagateTileToInputForConcatenateOp(
     CHECK_LT(concat_dim, operand->shape().dimensions().size());
     int64_t operand_dim_size = operand->shape().dimensions(concat_dim);
 
-    dim_tiles[concat_dim].upper_bound = CreateSymbolicConstant(
-        std::max(int64_t{0},
-                 std::min(upper_bound.GetValue() - offset, operand_dim_size)),
-        output_tile.mlir_context());
+    dim_tiles[concat_dim].upper_bound =
+        (upper_bound - offset).min(operand_dim_size).max(0);
     Tile operand_tile{output_tile.tiling_space(), std::move(dim_tiles)};
     tiles.push_back(operand_tile);
     offset += operand_dim_size;

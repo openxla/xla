@@ -127,36 +127,36 @@ absl::Status AbstractTrackedDeviceBuffer::WaitUntilBufferReadyOnStream(
   return absl::OkStatus();
 }
 
+AbstractTrackedDeviceBuffer::AbstractTrackedDeviceBuffer(
+    PjRtRawBufferRef raw_buffer,
+    absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events,
+    bool use_stream_based_compaction)
+    : raw_buffer_(std::move(raw_buffer)),
+      definition_events_(std::move(definition_events)),
+      usage_events_(
+          std::make_unique<DefaultUsageEventSet>(use_stream_based_compaction)) {
+}
+
 void AbstractTrackedDeviceBuffer::Delete(PjRtMemorySpace* memory_space) {
   std::unique_ptr<AbstractTrackedDeviceBuffer> device_buffer(this);
-  std::vector<tsl::RCReference<tsl::AsyncValue>> avs =
-      device_buffer->GetAsyncValueDefinitionAndUsageEvents();
+  std::vector<PjRtDeviceEventRef> events;
+  for (const auto& ev : device_buffer->definition_events()) {
+    events.push_back(ev);
+  }
+  device_buffer->usage_events().AppendTo(events);
+
   device_buffer->LockUseAndTransferUsageEvents();
   auto raw_buffer = device_buffer->raw_buffer();
   device_buffer.reset();
   if (raw_buffer) {
-    raw_buffer.release()->DecrefAfter(std::move(avs));
+    raw_buffer.release()->DecrefAfter(std::move(events));
   }
 }
 
-std::unique_ptr<AbstractTrackedDeviceBuffer> AbstractTrackedDeviceBuffer::Clone(
-    absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events,
-    std::unique_ptr<PjRtDeviceEventSet> usage_events) const {
-  return std::make_unique<AbstractTrackedDeviceBuffer>(
-      raw_buffer(), std::move(definition_events), std::move(usage_events));
-}
-
-absl::StatusOr<std::unique_ptr<AbstractTrackedDeviceBuffer>>
-AbstractTrackedDeviceBuffer::CloneWithControlDependency(
-    PjRtMemorySpace* memory_space, Future<> dependency) {
-  auto* client = absl::down_cast<CommonPjRtClient*>(memory_space->client());
-  TF_ASSIGN_OR_RETURN(auto extra_definition_event,
-                      client->CreateDeviceEvent(memory_space, dependency));
-  absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events;
-  definition_events.push_back(std::move(extra_definition_event));
-  definition_events.insert(definition_events.end(), definition_events_.begin(),
-                           definition_events_.end());
-  return Clone(std::move(definition_events), usage_events_->Clone());
+void AbstractTrackedDeviceBuffer::UnsafePrependDefinitionEvent(
+    PjRtDeviceEventRef extra_definition_event) {
+  definition_events_.insert(definition_events_.begin(),
+                            std::move(extra_definition_event));
 }
 
 CommonPjRtBuffer::CommonPjRtBuffer(
@@ -221,6 +221,22 @@ CommonPjRtBuffer::GetBufferForDonationHoldLocked() {
   // we were waiting.
   CHECK(device_buffer_ != nullptr);
   return std::move(device_buffer_);
+}
+
+absl::StatusOr<std::unique_ptr<AbstractTrackedDeviceBuffer>>
+CommonPjRtBuffer::DonateTrackedBuffer() {
+  absl::MutexLock lock(&mu_);
+  WaitForOutstandingDonationHold();
+
+  auto buffer_or = GetBufferForDonationHoldLocked();
+  if (!buffer_or.ok()) {
+    return buffer_or.status();
+  }
+
+  auto buffer = std::move(buffer_or).value();
+  CHECK_EQ(holds_[ScopedHold::kDonation], 1);
+  holds_[ScopedHold::kDonation] = 0;
+  return buffer;
 }
 
 void CommonPjRtBuffer::AcquireHoldLocked(ScopedHold* hold) {
@@ -459,6 +475,28 @@ void DefaultUsageEventSet::AddEvent(PjRtDeviceEventRef event) {
   if (!event) {
     return;
   }
+
+  if (stream_based_compaction_) {
+    if (event.state() == PJRT_DeviceEvent_State_Error) return;
+
+    auto def_info = event.ptr().GetDefinitionStream();
+    if (def_info.has_value()) {
+      for (auto& existing : usage_events_) {
+        auto existing_def_info = existing.ptr().GetDefinitionStream();
+        if (!existing_def_info.has_value()) continue;
+
+        if (existing_def_info->stream == def_info->stream) {
+          if (existing_def_info->sequence_id < def_info->sequence_id) {
+            existing = event;
+          }
+          return;
+        }
+      }
+    }
+    usage_events_.push_back(event);
+    return;
+  }
+
   // Trim ready events in order to avoid dynamic allocation as much as possible.
   // The cost will be amortized because a typical vector implementation grows
   // the capacity superlinearly.
@@ -486,14 +524,17 @@ void DefaultUsageEventSet::AppendTo(
   }
 }
 
+void DefaultUsageEventSet::AppendTo(std::vector<PjRtDeviceEventRef>& events) {
+  events.reserve(events.size() + usage_events_.size());
+  for (const auto& ev : usage_events_) {
+    events.push_back(ev);
+  }
+}
+
 void DefaultUsageEventSet::AppendTo(PjRtDeviceEventSet& events) {
   for (const auto& ev : usage_events_) {
     events.AddEvent(ev);
   }
-}
-
-std::unique_ptr<PjRtDeviceEventSet> DefaultUsageEventSet::Clone() const {
-  return std::make_unique<DefaultUsageEventSet>(*this);
 }
 
 }  // namespace xla

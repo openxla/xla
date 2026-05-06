@@ -100,7 +100,8 @@ absl::StatusOr<std::string> LegacyGpuAotCompilationResult::SerializeAsString()
 absl::StatusOr<std::unique_ptr<Executable>>
 LegacyGpuAotCompilationResult::LoadExecutable(
     se::Platform::Id platform_id,
-    const se::DeviceDescription& device_description) && {
+    const se::DeviceDescription& device_description,
+    const DebugOptions& debug_options) && {
   return compiler_->LoadExecutableFromAotResult(*this, device_description);
 }
 

@@ -63,8 +63,7 @@ TEST(TrackedCpuDeviceBufferTest, Basic) {
   absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events;
   definition_events.push_back(PjRtDeviceEventRef(definition_event));
   AbstractTrackedDeviceBuffer tracked_buffer(
-      buffer, std::move(definition_events),
-      std::make_unique<DefaultUsageEventSet>());
+      buffer, std::move(definition_events), true);
 
   ABSL_ASSERT_OK(tracked_buffer.BlockForOperationsToComplete(memory_space));
 
@@ -96,8 +95,7 @@ TEST(TrackedCpuDeviceBufferTest, BasicError) {
   absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events;
   definition_events.push_back(PjRtDeviceEventRef(definition_event));
   AbstractTrackedDeviceBuffer tracked_buffer(
-      buffer, std::move(definition_events),
-      std::make_unique<DefaultUsageEventSet>());
+      buffer, std::move(definition_events), true);
 
   EXPECT_FALSE(tracked_buffer.BlockForOperationsToComplete(memory_space).ok());
 
@@ -123,7 +121,7 @@ TEST(TrackedCpuDeviceBufferTest, DelayedAllocation) {
   AbstractTrackedDeviceBuffer tracked_buffer(
       tsl::MakeRef<CpuRawBuffer>(memory_space, buffer, expected.size(),
                                  /*is_mutable=*/true),
-      std::move(definition_events), std::make_unique<DefaultUsageEventSet>());
+      std::move(definition_events), true);
 
   auto result =
       absl::down_cast<CpuRawBuffer*>(tracked_buffer.raw_buffer().get())

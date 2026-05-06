@@ -202,8 +202,7 @@ void convertShardyAttrsWithHloShardingV3(FuncOp funcOp) {
           convertToSdyShardingAttr(parseShardingFromString(oldSharding),
                                    funcOp.getContext()));
     }
-    funcOp.removeResultAttr(
-        resNum, StringAttr::get(funcOp.getContext(), kXlaShardingAttr));
+    funcOp.removeResultAttr(resNum, kXlaShardingAttr);
   }
 
   // Extract the round-tripped shardy attributes from the operations.
@@ -274,8 +273,7 @@ void convertShardyAttrsWithoutHloShardingV3(FuncOp funcOp,
   // Due to `SdyRoundTripExportShardingsPass` keeping `kXlaShardingAttr`, remove
   // them purely for cleanliness of the module.
   for (int64_t resNum = 0; resNum < funcOp.getNumResults(); ++resNum) {
-    funcOp.removeResultAttr(
-        resNum, StringAttr::get(funcOp.getContext(), kXlaShardingAttr));
+    funcOp.removeResultAttr(resNum, kXlaShardingAttr);
   }
 
   // Extract the round-tripped shardy attributes from the operations.

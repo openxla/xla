@@ -460,14 +460,19 @@ void CpuTrackedDeviceEventSet::AppendTo(
   }
 }
 
+void CpuTrackedDeviceEventSet::AppendTo(
+    std::vector<PjRtDeviceEventRef>& events) {
+  events.reserve(events.size() + events_.size());
+  for (const auto& ev : events_) {
+    events.push_back(
+        PjRtDeviceEventRef(tsl::AsyncValueRef<tsl::AsyncValue>(ev)));
+  }
+}
+
 void CpuTrackedDeviceEventSet::AppendTo(PjRtDeviceEventSet& events) {
   for (const auto& ev : events_) {
     events.AddEvent(PjRtDeviceEventRef(tsl::AsyncValueRef<CpuEvent>(ev)));
   }
-}
-
-std::unique_ptr<PjRtDeviceEventSet> CpuTrackedDeviceEventSet::Clone() const {
-  return std::make_unique<CpuTrackedDeviceEventSet>(*this);
 }
 
 absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyRawToRemoteDevice(

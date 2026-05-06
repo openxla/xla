@@ -1283,6 +1283,7 @@ xla_cc_test(
     srcs = ["gpu_norm_runner_test.cc"],
     deps = [
         ":gpu_norm_runner",
+        ":gpu_norm_runner_proto_cc",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/util/proto:parse_text_proto",

@@ -247,6 +247,7 @@ cc_library(
     ],
     deps = [
         ":async_work_runner",
+        ":device_event",
         ":event_pool",
         ":pjrt_common",
         ":semaphore",

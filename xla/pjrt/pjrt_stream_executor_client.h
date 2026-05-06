@@ -410,9 +410,6 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
       PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
       bool retry_on_oom) override;
 
-  absl::StatusOr<std::unique_ptr<PjRtDeviceEventSet>> CreateUsageEventSet(
-      PjRtMemorySpace* memory_space) const override;
-
   absl::StatusOr<std::pair<PjRtRawBufferRef, PjRtFulfillAliasRawBufferCallback>>
   CreateRawBufferChannel(PjRtMemorySpace* memory_space,
                          size_t on_device_bytes_count) override;

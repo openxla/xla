@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/pjrt/tracked_device_buffer.h"
 
 #include <cstddef>
-#include <iterator>
 #include <limits>
 #include <memory>
 #include <utility>
@@ -180,57 +179,6 @@ tsl::AsyncValueRef<RawSEDeviceMemory> RawSEDeviceMemory::CreateSlice(
                       offset + size, src_size)));
 }
 
-void PjRtStreamExecutorUsageEventSet::AddEvent(PjRtDeviceEventRef event) {
-  if (event) {
-    AddEvent(event.down_cast<BufferSequencingEvent>(), true);
-  }
-}
 
-std::unique_ptr<PjRtDeviceEventSet> PjRtStreamExecutorUsageEventSet::Clone()
-    const {
-  return std::make_unique<PjRtStreamExecutorUsageEventSet>(*this);
-}
-
-void PjRtStreamExecutorUsageEventSet::AddEvent(BufferSequencingEventRef event,
-                                               bool reference_held) {
-  // If the event is 0, it means that the event is not recorded yet and the task
-  // related to this event is deferred, so just add it.
-  auto state = event->event().GetAsyncValue()->state();
-  if (state == tsl::AsyncValue::State::kConcrete) {
-  } else if (state == tsl::AsyncValue::State::kError) {
-    return;
-  } else {
-    usage_events_.push_back({event, reference_held});
-    return;
-  }
-  auto* usage_stream = event->definition_stream();
-
-  for (auto& existing : usage_events_) {
-    // If the existing event is 0, it means that the event is not recorded yet
-    // and the task related to this event is deferred, so don't replace it.
-    if (!existing.event->IsDefined()) continue;
-    if (existing.event->definition_stream() == usage_stream) {
-      if (*existing.event < *event) {
-        existing.event = event;
-        existing.reference_held = reference_held;
-      }
-      return;
-    }
-  }
-  usage_events_.push_back({event, reference_held});
-}
-
-void PjRtStreamExecutorUsageEventSet::AppendTo(
-    std::vector<tsl::RCReference<tsl::AsyncValue>>& events) {
-  for (const auto& ev : usage_events_) {
-    events.push_back(ev.event.CopyRCRef());
-  }
-}
-
-void PjRtStreamExecutorUsageEventSet::AppendTo(PjRtDeviceEventSet& events) {
-  for (const auto& ev : usage_events_) {
-    events.AddEvent(PjRtDeviceEventRef(ev.event));
-  }
-}
 
 }  // namespace xla

@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/triton.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <memory>
 #include <set>
 #include <string>
@@ -60,6 +61,7 @@ namespace {
 using absl_testing::IsOk;
 using absl_testing::StatusIs;
 using TritonBackendConfig = AutotuneResult::TritonGemmKey;
+using ::testing::SizeIs;
 using ::tsl::proto_testing::EqualsProto;
 
 const char kHlo[] = R"(
@@ -721,6 +723,106 @@ ENTRY entry_computation {
       EXPECT_THAT(backend_.Compile(*root, *config), IsOk());
     }
   }
+}
+
+TEST_F(TritonBackendTest, CostModelOptions_Top) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHlo));
+
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())["top"] =
+      "2";
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+
+  ASSERT_THAT(configs, IsOk());
+  EXPECT_THAT(configs.value(), SizeIs(2));
+}
+
+TEST_F(TritonBackendTest, CostModelOptions_TopFromDefault) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHlo));
+
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())["top"] =
+      "2";
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())
+      ["top_from_default"] = "1";
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+
+  ASSERT_THAT(configs, IsOk());
+  EXPECT_THAT(configs.value(), SizeIs(2));
+}
+
+TEST_F(TritonBackendTest, CostModelOptions_Mixin) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHlo));
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> default_configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+  ASSERT_THAT(default_configs, IsOk());
+  size_t default_size = default_configs.value().size();
+
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())
+      ["mixin"] = "2";
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+
+  ASSERT_THAT(configs, IsOk());
+  EXPECT_THAT(configs.value(), SizeIs(default_size + 2));
+}
+
+TEST_F(TritonBackendTest, CostModelOptions_Filter) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHlo));
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> default_configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+  ASSERT_THAT(default_configs, IsOk());
+
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())
+      ["filter"] = "0.0";
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+
+  ASSERT_THAT(configs, IsOk());
+  EXPECT_LT(configs.value().size(), default_configs.value().size());
+}
+
+TEST_F(TritonBackendTest, CostModelOptions_Combination) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHlo));
+
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())["top"] =
+      "2";
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())
+      ["top_from_default"] = "1";
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())
+      ["mixin"] = "5";
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+
+  ASSERT_THAT(configs, IsOk());
+  EXPECT_THAT(configs.value(), SizeIs(7));
 }
 
 }  // namespace

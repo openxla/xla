@@ -208,9 +208,6 @@ class CommonPjRtClient : public PjRtClient {
     LOG(FATAL) << "Implement";
   }
 
-  virtual absl::StatusOr<std::unique_ptr<PjRtDeviceEventSet>>
-  CreateUsageEventSet(PjRtMemorySpace* memory_space) const;
-
   tsl::Future<> MakeTrackedReadyFuture(PjRtDeviceEventPtr device_event,
                                        PjRtMemorySpace* memory_space,
                                        const char* callee_type,
@@ -236,6 +233,7 @@ class CommonPjRtClient : public PjRtClient {
       PjRtMemorySpace* dst_memory_space);
 
   virtual bool IsOnCpu(PjRtMemorySpace* memory_space) { return false; }
+  virtual bool use_stream_based_compaction() const { return false; }
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBuffer(
       const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
