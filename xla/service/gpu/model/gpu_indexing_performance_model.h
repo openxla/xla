@@ -73,11 +73,6 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
             *device_info_),
         mlir_context_(mlir_context) {}
 
-  // Returns the launch dimensions for the given tiled HLO computation.
-  static LaunchDimensions GetLaunchDimensionsForTiledFusion(
-      const TiledHloComputation& tiled_hlo_computation,
-      const se::DeviceDescription& device_info);
-
   EstimateRunTimeData EstimateRunTimeForFusion(
       const HloFusionAnalysis& fusion_analysis, bool is_coalesced = true);
 
@@ -90,11 +85,6 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
   RunTimes EstimateRunTimes(
       const HloInstruction* producer,
       absl::Span<const HloInstruction* const> fused_consumers = {});
-
-  absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputation(
-      const HloFusionAdaptor& fusion_adaptor,
-      const TiledHloComputation& tiled_hlo_computation,
-      const LaunchDimensions& launch_dimensions);
 
   // Estimate the run time of the fusion with the given launch dimensions and
   // output tile sizes.
@@ -135,6 +125,11 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
 
  private:
   int64_t GetShapeSizeRecursive(const Shape& shape) const;
+
+  absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputation(
+      const HloFusionAdaptor& fusion_adaptor,
+      const TiledHloComputation& tiled_hlo_computation,
+      const LaunchDimensions& launch_dimensions);
 
   const HloOpProfiles::HloOpProfile* hlo_op_profile_;
   const se::DeviceDescription* device_info_;
