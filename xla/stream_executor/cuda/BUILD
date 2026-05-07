@@ -1661,6 +1661,7 @@ cc_library(
         ":cudnn_api_wrappers",
         ":host_callback_registry",
         ":tma_util",
+        "//xla:debug_options_flags",
         "//xla:util",
         "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/core/collectives",
