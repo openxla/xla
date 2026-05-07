@@ -18,6 +18,9 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -33,8 +36,6 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
 
 namespace stream_executor::gpu {
@@ -53,12 +54,60 @@ class FakeAllocation : public MemoryAllocation {
   DeviceAddressBase address() const override { return DeviceAddressBase(); }
 };
 
+// A MemoryReservation that records Map/UnMap/SetAccess calls without
+// touching real CUDA. Used to verify the skip + coalesce logic in Remap
+// without depending on driver-side state.
+class CountingReservation : public MemoryReservation {
+ public:
+  struct Call {
+    const char* kind;  // "Map", "UnMap", or "SetAccess"
+    size_t reservation_offset;
+    size_t size;
+    MemoryAllocation* allocation;  // populated for "Map" only
+  };
+
+  DeviceAddressBase address() const override {
+    return DeviceAddressBase(reinterpret_cast<void*>(0x1000), 1 << 20);
+  }
+  std::vector<Call> calls;
+  bool fail_set_access = false;
+
+ private:
+  absl::Status Map(size_t reservation_offset, size_t /*allocation_offset*/,
+                   size_t size, MemoryAllocation& allocation) override {
+    calls.push_back({"Map", reservation_offset, size, &allocation});
+    return absl::OkStatus();
+  }
+  absl::Status SetAccess(uint64_t reservation_offset, size_t size) override {
+    calls.push_back({"SetAccess", reservation_offset, size, nullptr});
+    if (fail_set_access) {
+      return absl::InternalError("injected SetAccess failure");
+    }
+    return absl::OkStatus();
+  }
+  absl::Status UnMap(size_t reservation_offset, size_t size) override {
+    calls.push_back({"UnMap", reservation_offset, size, nullptr});
+    return absl::OkStatus();
+  }
+};
+
+int CountKind(const std::vector<CountingReservation::Call>& calls,
+              const char* kind) {
+  int n = 0;
+  for (const auto& c : calls) {
+    if (std::string_view(c.kind) == kind) {
+      ++n;
+    }
+  }
+  return n;
+}
+
 class CudaMemoryReservationTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(
         platform_, PlatformManager::PlatformWithId(cuda::kCudaPlatformId));
-    TF_ASSERT_OK_AND_ASSIGN(executor_, platform_->ExecutorForDevice(0));
+    ASSERT_OK_AND_ASSIGN(executor_, platform_->ExecutorForDevice(0));
   }
 
   Platform* platform_ = nullptr;
@@ -68,8 +117,8 @@ class CudaMemoryReservationTest : public ::testing::Test {
 // Verifies that Create reserves a non-null virtual address range of at least
 // the requested size.
 TEST_F(CudaMemoryReservationTest, CreateReservation) {
-  TF_ASSERT_OK_AND_ASSIGN(auto res,
-                          CudaMemoryReservation::Create(executor_, kTestSize));
+  ASSERT_OK_AND_ASSIGN(auto res,
+                       CudaMemoryReservation::Create(executor_, kTestSize));
 
   EXPECT_NE(res->address().opaque(), nullptr);
   EXPECT_GE(res->address().size(), kTestSize);
@@ -78,8 +127,8 @@ TEST_F(CudaMemoryReservationTest, CreateReservation) {
 // Verifies that passing a non-CudaRawMemoryAllocation to MapTo returns an
 // InvalidArgument error.
 TEST_F(CudaMemoryReservationTest, MapToWrongType) {
-  TF_ASSERT_OK_AND_ASSIGN(auto res,
-                          CudaMemoryReservation::Create(executor_, kTestSize));
+  ASSERT_OK_AND_ASSIGN(auto res,
+                       CudaMemoryReservation::Create(executor_, kTestSize));
 
   FakeAllocation fake;
   EXPECT_THAT(res->MapTo(0, 0, kTestSize, fake),
@@ -89,13 +138,13 @@ TEST_F(CudaMemoryReservationTest, MapToWrongType) {
 // Verifies the full MapTo workflow. The ScopedMapping is destroyed first,
 // unmapping the reservation range, then the allocation is released.
 TEST_F(CudaMemoryReservationTest, MapToSingleAllocation) {
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto alloc, CudaRawMemoryAllocation::Create(executor_, kTestSize));
-  TF_ASSERT_OK_AND_ASSIGN(auto res,
-                          CudaMemoryReservation::Create(executor_, kTestSize));
+  ASSERT_OK_AND_ASSIGN(auto alloc,
+                       CudaRawMemoryAllocation::Create(executor_, kTestSize));
+  ASSERT_OK_AND_ASSIGN(auto res,
+                       CudaMemoryReservation::Create(executor_, kTestSize));
 
   const size_t alloc_size = alloc->address().size();
-  TF_ASSERT_OK_AND_ASSIGN(auto mapping, res->MapTo(0, 0, alloc_size, *alloc));
+  ASSERT_OK_AND_ASSIGN(auto mapping, res->MapTo(0, 0, alloc_size, *alloc));
 
   // The mapped address starts at the reservation base (offset 0) and spans
   // the full allocation size.
@@ -109,37 +158,37 @@ TEST_F(CudaMemoryReservationTest, MapToSingleAllocation) {
 // Verifies that ScopedMapping unmaps the range on destruction, allowing a
 // second mapping into the same reservation range.
 TEST_F(CudaMemoryReservationTest, ScopedMappingUnmapsOnDestruction) {
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto alloc, CudaRawMemoryAllocation::Create(executor_, kTestSize));
-  TF_ASSERT_OK_AND_ASSIGN(auto res,
-                          CudaMemoryReservation::Create(executor_, kTestSize));
+  ASSERT_OK_AND_ASSIGN(auto alloc,
+                       CudaRawMemoryAllocation::Create(executor_, kTestSize));
+  ASSERT_OK_AND_ASSIGN(auto res,
+                       CudaMemoryReservation::Create(executor_, kTestSize));
 
   const size_t alloc_size = alloc->address().size();
   {
-    TF_ASSERT_OK_AND_ASSIGN(auto mapping, res->MapTo(0, 0, alloc_size, *alloc));
+    ASSERT_OK_AND_ASSIGN(auto mapping, res->MapTo(0, 0, alloc_size, *alloc));
     // mapping goes out of scope here, triggering cuMemUnmap.
   }
 
   // After the ScopedMapping is destroyed, the range is unmapped and can be
   // remapped.
-  TF_ASSERT_OK_AND_ASSIGN(auto mapping2, res->MapTo(0, 0, alloc_size, *alloc));
+  ASSERT_OK_AND_ASSIGN(auto mapping2, res->MapTo(0, 0, alloc_size, *alloc));
   EXPECT_NE(mapping2.mapped_address().opaque(), nullptr);
 }
 
 // Verifies that multiple physical allocations can be mapped into a contiguous
 // reservation range via the span-based MapTo overload.
 TEST_F(CudaMemoryReservationTest, MapToMultipleAllocations) {
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto alloc1, CudaRawMemoryAllocation::Create(executor_, kTestSize));
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto alloc2, CudaRawMemoryAllocation::Create(executor_, kTestSize));
+  ASSERT_OK_AND_ASSIGN(auto alloc1,
+                       CudaRawMemoryAllocation::Create(executor_, kTestSize));
+  ASSERT_OK_AND_ASSIGN(auto alloc2,
+                       CudaRawMemoryAllocation::Create(executor_, kTestSize));
 
   const size_t size1 = alloc1->address().size();
   const size_t size2 = alloc2->address().size();
 
   // Reserve enough virtual space for both allocations.
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto res, CudaMemoryReservation::Create(executor_, size1 + size2));
+  ASSERT_OK_AND_ASSIGN(auto res,
+                       CudaMemoryReservation::Create(executor_, size1 + size2));
   ASSERT_GE(res->address().size(), size1 + size2);
 
   MemoryReservation::MappingDescriptor descs[] = {
@@ -147,7 +196,7 @@ TEST_F(CudaMemoryReservationTest, MapToMultipleAllocations) {
       {/*reservation_offset=*/size1, /*allocation_offset=*/0, size2,
        alloc2.get()},
   };
-  TF_ASSERT_OK_AND_ASSIGN(auto mapping, res->MapTo(absl::MakeSpan(descs)));
+  ASSERT_OK_AND_ASSIGN(auto mapping, res->MapTo(absl::MakeSpan(descs)));
 
   // The contiguous mapping starts at the reservation base and spans both
   // allocations.
@@ -157,10 +206,10 @@ TEST_F(CudaMemoryReservationTest, MapToMultipleAllocations) {
 
 // Verifies that a second reservation does not alias the first.
 TEST_F(CudaMemoryReservationTest, TwoReservationsDifferentAddresses) {
-  TF_ASSERT_OK_AND_ASSIGN(auto res1,
-                          CudaMemoryReservation::Create(executor_, kTestSize));
-  TF_ASSERT_OK_AND_ASSIGN(auto res2,
-                          CudaMemoryReservation::Create(executor_, kTestSize));
+  ASSERT_OK_AND_ASSIGN(auto res1,
+                       CudaMemoryReservation::Create(executor_, kTestSize));
+  ASSERT_OK_AND_ASSIGN(auto res2,
+                       CudaMemoryReservation::Create(executor_, kTestSize));
 
   EXPECT_NE(res1->address().opaque(), res2->address().opaque());
 }
@@ -168,13 +217,13 @@ TEST_F(CudaMemoryReservationTest, TwoReservationsDifferentAddresses) {
 // Verifies that MapTo grants read/write access to the local device via
 // cuMemSetAccess, readable back via cuMemGetAccess.
 TEST_F(CudaMemoryReservationTest, SetAccessGrantsLocalDeviceAccess) {
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto alloc, CudaRawMemoryAllocation::Create(executor_, kTestSize));
-  TF_ASSERT_OK_AND_ASSIGN(auto res,
-                          CudaMemoryReservation::Create(executor_, kTestSize));
+  ASSERT_OK_AND_ASSIGN(auto alloc,
+                       CudaRawMemoryAllocation::Create(executor_, kTestSize));
+  ASSERT_OK_AND_ASSIGN(auto res,
+                       CudaMemoryReservation::Create(executor_, kTestSize));
 
   const size_t alloc_size = alloc->address().size();
-  TF_ASSERT_OK_AND_ASSIGN(auto mapping, res->MapTo(0, 0, alloc_size, *alloc));
+  ASSERT_OK_AND_ASSIGN(auto mapping, res->MapTo(0, 0, alloc_size, *alloc));
 
   CUmemLocation loc = {};
   loc.type = CU_MEM_LOCATION_TYPE_DEVICE;
@@ -186,6 +235,188 @@ TEST_F(CudaMemoryReservationTest, SetAccessGrantsLocalDeviceAccess) {
                      &loc, base_ptr),
       CUDA_SUCCESS);
   EXPECT_EQ(flags, static_cast<uint64_t>(CU_MEM_ACCESS_FLAGS_PROT_READWRITE));
+}
+
+// ---- Remap tests (use CountingReservation, no real CUDA needed) ----
+
+// Tag types used as MemoryAllocation* identity tokens. CountingReservation::Map
+// records the pointer without touching it, so these need no behavior.
+class TagAllocation : public MemoryAllocation {
+ public:
+  DeviceAddressBase address() const override { return DeviceAddressBase(); }
+};
+
+// When every descriptor is unchanged, Remap must issue zero driver calls.
+TEST(MemoryReservationRemap, AllUnchangedNoDriverCalls) {
+  CountingReservation res;
+  TagAllocation a, b, c;
+
+  MemoryReservation::MappingDescriptor first[] = {
+      {0, 0, 100, &a},
+      {100, 0, 200, &b},
+      {300, 0, 50, &c},
+  };
+  ASSERT_OK_AND_ASSIGN(auto mapping1, res.MapTo(absl::MakeSpan(first)));
+  res.calls.clear();
+
+  MemoryReservation::RemappingDescriptor second[] = {
+      {0, 0, 100, &a, /*remap_required=*/false},
+      {100, 0, 200, &b, /*remap_required=*/false},
+      {300, 0, 50, &c, /*remap_required=*/false},
+  };
+  ASSERT_OK_AND_ASSIGN(auto mapping2,
+                       std::move(mapping1).Remap(absl::MakeSpan(second)));
+
+  EXPECT_TRUE(res.calls.empty())
+      << "expected zero driver calls when all slices unchanged, got "
+      << res.calls.size();
+  EXPECT_EQ(mapping2.mapped_address().opaque(), res.address().opaque());
+}
+
+// Middle slice unchanged, outer two changed -> two separate runs, each gets
+// its own SetAccess; only the changed slices are unmapped + remapped.
+TEST(MemoryReservationRemap, PartialChangeSplitsRuns) {
+  CountingReservation res;
+  TagAllocation a, b, c, a2, c2;
+
+  MemoryReservation::MappingDescriptor first[] = {
+      {0, 0, 100, &a},
+      {100, 0, 200, &b},
+      {300, 0, 50, &c},
+  };
+  ASSERT_OK_AND_ASSIGN(auto mapping1, res.MapTo(absl::MakeSpan(first)));
+  res.calls.clear();
+
+  MemoryReservation::RemappingDescriptor second[] = {
+      {0, 0, 100, &a2, /*remap_required=*/true},
+      {100, 0, 200, &b, /*remap_required=*/false},
+      {300, 0, 50, &c2, /*remap_required=*/true},
+  };
+  ASSERT_OK_AND_ASSIGN(auto mapping2,
+                       std::move(mapping1).Remap(absl::MakeSpan(second)));
+
+  // Two changed slices -> 2 UnMap, 2 Map, 2 SetAccess (one per run).
+  EXPECT_EQ(CountKind(res.calls, "UnMap"), 2);
+  EXPECT_EQ(CountKind(res.calls, "Map"), 2);
+  EXPECT_EQ(CountKind(res.calls, "SetAccess"), 2);
+
+  // Verify the SetAccess ranges match the two runs (offset 0 size 100,
+  // offset 300 size 50); the middle slice was skipped.
+  std::vector<std::pair<size_t, size_t>> set_access_ranges;
+  for (const auto& call : res.calls) {
+    if (std::string_view(call.kind) == "SetAccess") {
+      set_access_ranges.emplace_back(call.reservation_offset, call.size);
+    }
+  }
+  EXPECT_THAT(set_access_ranges,
+              ::testing::UnorderedElementsAre(::testing::Pair(0u, 100u),
+                                              ::testing::Pair(300u, 50u)));
+}
+
+// All three slices changed -> single coalesced run -> exactly one SetAccess
+// over the full range.
+TEST(MemoryReservationRemap, AdjacentChangesSingleSetAccess) {
+  CountingReservation res;
+  TagAllocation a, b, c, a2, b2, c2;
+
+  MemoryReservation::MappingDescriptor first[] = {
+      {0, 0, 100, &a},
+      {100, 0, 200, &b},
+      {300, 0, 50, &c},
+  };
+  ASSERT_OK_AND_ASSIGN(auto mapping1, res.MapTo(absl::MakeSpan(first)));
+  res.calls.clear();
+
+  MemoryReservation::RemappingDescriptor second[] = {
+      {0, 0, 100, &a2, /*remap_required=*/true},
+      {100, 0, 200, &b2, /*remap_required=*/true},
+      {300, 0, 50, &c2, /*remap_required=*/true},
+  };
+  ASSERT_OK_AND_ASSIGN(auto mapping2,
+                       std::move(mapping1).Remap(absl::MakeSpan(second)));
+
+  EXPECT_EQ(CountKind(res.calls, "UnMap"), 3);
+  EXPECT_EQ(CountKind(res.calls, "Map"), 3);
+  ASSERT_EQ(CountKind(res.calls, "SetAccess"), 1);
+  for (const auto& call : res.calls) {
+    if (std::string_view(call.kind) == "SetAccess") {
+      EXPECT_EQ(call.reservation_offset, 0u);
+      EXPECT_EQ(call.size, 350u);
+    }
+  }
+}
+
+// Non-contiguous descriptors are rejected.
+TEST(MemoryReservationRemap, NonContiguousIsRejected) {
+  CountingReservation res;
+  TagAllocation a, b;
+
+  MemoryReservation::MappingDescriptor initial[] = {
+      {0, 0, 300, &a},
+  };
+  ASSERT_OK_AND_ASSIGN(auto mapping, res.MapTo(absl::MakeSpan(initial)));
+  res.calls.clear();
+
+  MemoryReservation::RemappingDescriptor descs[] = {
+      {0, 0, 100, &a, /*remap_required=*/true},
+      {200, 0, 100, &b, /*remap_required=*/true},  // gap at [100, 200)
+  };
+  EXPECT_THAT(std::move(mapping).Remap(absl::MakeSpan(descs)),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+// nullptr allocation is rejected.
+TEST(MemoryReservationRemap, NullAllocationIsRejected) {
+  CountingReservation res;
+  TagAllocation a;
+
+  MemoryReservation::MappingDescriptor initial[] = {
+      {0, 0, 100, &a},
+  };
+  ASSERT_OK_AND_ASSIGN(auto mapping, res.MapTo(absl::MakeSpan(initial)));
+  res.calls.clear();
+
+  MemoryReservation::RemappingDescriptor descs[] = {
+      {0, 0, 100, nullptr, /*remap_required=*/true},
+  };
+  EXPECT_THAT(std::move(mapping).Remap(absl::MakeSpan(descs)),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_EQ(CountKind(res.calls, "Map"), 0);
+  EXPECT_EQ(CountKind(res.calls, "SetAccess"), 0);
+}
+
+// On failure, Remap consumes the prior mapping and unmaps all slices so callers
+// can recover by building a fresh full mapping.
+TEST(MemoryReservationRemap, FailureUnmapsAllSlices) {
+  CountingReservation res;
+  TagAllocation a, b, c, a2, c2;
+
+  MemoryReservation::MappingDescriptor first[] = {
+      {0, 0, 100, &a},
+      {100, 0, 200, &b},
+      {300, 0, 50, &c},
+  };
+  ASSERT_OK_AND_ASSIGN(auto mapping, res.MapTo(absl::MakeSpan(first)));
+  res.calls.clear();
+  res.fail_set_access = true;
+
+  MemoryReservation::RemappingDescriptor second[] = {
+      {0, 0, 100, &a2, /*remap_required=*/true},
+      {100, 0, 200, &b, /*remap_required=*/false},
+      {300, 0, 50, &c2, /*remap_required=*/true},
+  };
+  EXPECT_THAT(std::move(mapping).Remap(absl::MakeSpan(second)),
+              StatusIs(absl::StatusCode::kInternal));
+
+  std::vector<std::pair<size_t, size_t>> unmap_ranges;
+  for (const auto& call : res.calls) {
+    if (std::string_view(call.kind) == "UnMap") {
+      unmap_ranges.emplace_back(call.reservation_offset, call.size);
+    }
+  }
+  EXPECT_THAT(unmap_ranges, ::testing::Contains(::testing::Pair(0u, 100u)));
+  EXPECT_THAT(unmap_ranges, ::testing::Contains(::testing::Pair(100u, 200u)));
+  EXPECT_THAT(unmap_ranges, ::testing::Contains(::testing::Pair(300u, 50u)));
 }
 
 }  // namespace

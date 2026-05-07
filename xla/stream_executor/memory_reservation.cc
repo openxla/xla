@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/stream_executor/memory_reservation.h"
 
 #include <cstddef>
+#include <utility>
+#include <vector>
 
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/log.h"
@@ -141,6 +143,106 @@ absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::MapTo(
 
   std::move(cleanup).Cancel();
   return ScopedMapping(this, start_offset, total_size);
+}
+
+// ScopedMapping::Remap
+
+absl::StatusOr<MemoryReservation::ScopedMapping>
+MemoryReservation::ScopedMapping::Remap(
+    absl::Span<const MemoryReservation::RemappingDescriptor> mappings) && {
+  if (reservation_ == nullptr) {
+    return absl::FailedPreconditionError("Remap: mapping is empty");
+  }
+  if (mappings.empty()) {
+    return absl::InvalidArgumentError("Remap: mappings must not be empty");
+  }
+
+  MemoryReservation* reservation = reservation_;
+  const size_t existing_reservation_offset = reservation_offset_;
+  const size_t existing_size = size_;
+
+  const size_t start_offset = mappings[0].reservation_offset;
+  size_t expected_offset = start_offset;
+  for (const MemoryReservation::RemappingDescriptor& desc : mappings) {
+    if (desc.reservation_offset != expected_offset) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Remap: mappings are not contiguous. Expected "
+                          "reservation_offset=%zu but got %zu",
+                          expected_offset, desc.reservation_offset));
+    }
+    if (desc.allocation == nullptr) {
+      return absl::InvalidArgumentError("Remap: allocation must not be null");
+    }
+    expected_offset += desc.size;
+  }
+  const size_t total_size = expected_offset - start_offset;
+  if (start_offset != existing_reservation_offset ||
+      total_size != existing_size) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Remap: mappings must cover the existing mapping range [%zu, %zu), got "
+        "[%zu, %zu)",
+        existing_reservation_offset,
+        existing_reservation_offset + existing_size, start_offset,
+        start_offset + total_size));
+  }
+
+  // Track per-slice mapped state for cleanup on failure. Every slice starts
+  // mapped because this ScopedMapping owns the full range. Changed slices are
+  // temporarily unmapped before being mapped to their new allocation.
+  std::vector<bool> slice_mapped(mappings.size(), true);
+
+  // Detach the prior ScopedMapping without invoking its destructor; the
+  // per-slice unmaps below replace the full-range unmap it would do.
+  reservation_ = nullptr;
+
+  // On failure, unmap every slice that is still mapped so the reservation
+  // is left in a clean (fully unmapped) state rather than partially mapped
+  // with no RAII owner.
+  auto cleanup = absl::MakeCleanup([&] {
+    for (size_t k = 0; k < mappings.size(); ++k) {
+      if (slice_mapped[k]) {
+        absl::Status s = reservation->UnMap(mappings[k].reservation_offset,
+                                            mappings[k].size);
+        if (!s.ok()) {
+          LOG(ERROR) << "Remap: cleanup failed to unmap slice at offset "
+                     << mappings[k].reservation_offset << ": " << s.message();
+        }
+      }
+    }
+  });
+
+  // Walk descriptors in order, processing maximal contiguous runs of slices
+  // that require remapping. For each run we issue per-slice UnMap and Map,
+  // then a single SetAccess covering the whole run.
+  size_t i = 0;
+  while (i < mappings.size()) {
+    if (!mappings[i].remap_required) {
+      ++i;
+      continue;
+    }
+    // Coalesce: extend this run as long as the next descriptor is also
+    // being remapped. Map/UnMap stay per-slice (cuMemMap requires per-handle
+    // calls); SetAccess is the expensive call to coalesce.
+    const size_t run_start = mappings[i].reservation_offset;
+    size_t run_size = 0;
+    size_t j = i;
+    while (j < mappings.size() && mappings[j].remap_required) {
+      const auto& dj = mappings[j];
+      TF_RETURN_IF_ERROR(reservation->UnMap(dj.reservation_offset, dj.size));
+      slice_mapped[j] = false;
+      TF_RETURN_IF_ERROR(reservation->Map(dj.reservation_offset,
+                                          dj.allocation_offset, dj.size,
+                                          *dj.allocation));
+      slice_mapped[j] = true;
+      run_size += dj.size;
+      ++j;
+    }
+    TF_RETURN_IF_ERROR(reservation->SetAccess(run_start, run_size));
+    i = j;
+  }
+
+  std::move(cleanup).Cancel();
+  return ScopedMapping(reservation, start_offset, total_size);
 }
 
 }  // namespace stream_executor

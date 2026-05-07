@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
@@ -275,6 +276,9 @@ class BufferAllocation {
   std::string ToString() const;
   std::string ToShortString(bool human_readable_size = false) const;
   std::string ValuesToString() const;
+
+  // Short, human-readable label for this allocation's role.
+  absl::string_view AllocationTypeLabel() const;
 
   // The function returns memory usage report for the values belonging to the
   // buffer allocation. The values are grouped by their offset in the

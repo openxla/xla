@@ -196,7 +196,7 @@ class GpuExecutable : public Executable {
       const ServiceExecutableRunOptions* run_options,
       VariantArguments arguments);
 
-  absl::Span<const BufferAllocation* absl_nonnull const> GetAllocations()
+  absl::Span<const BufferAllocation * absl_nonnull const> GetAllocations()
       const override {
     return allocation_ptrs_;
   }
@@ -279,9 +279,26 @@ class GpuExecutable : public Executable {
     // know the VA range can be remapped to other physical addresses.
     std::unique_ptr<se::Event> unmap_event;
 
-    // RAII wrapper that keeps the VA->physical mapping active.
-    // Reset (auto-unmapping) before each re-use of the VA range.
+    // RAII wrapper that keeps the full VA->physical mapping active across
+    // steps. On each step it is consumed by ScopedMapping::Remap, which returns
+    // a fresh ScopedMapping covering the same range; only slices whose physical
+    // handle changed are unmapped/remapped. The full-range unmap happens at
+    // executable destruction (ScopedMapping dtor).
     std::optional<se::MemoryReservation::ScopedMapping> scoped_mapping;
+
+    // Per-allocation mapping state from the most recent successful step.
+    // Sorted by reservation_offset (matches command_buffer_allocation_indexes_
+    // iteration order). On the next step, allocation_id and mapping_size are
+    // compared against the current VMM allocator entry to decide whether the
+    // slice can be skipped. Empty before the first execution or after a remap
+    // failure that invalidates the VA range mapping.
+    struct AllocationMappingState {
+      BufferAllocation::Index alloc_index;
+      size_t reservation_offset;
+      size_t mapping_size;
+      uint64_t allocation_id;
+    };
+    std::vector<AllocationMappingState> last_mapping_state;
   };
 
   // Use GpuExecutable::Create() to create an instance.
@@ -323,8 +340,11 @@ class GpuExecutable : public Executable {
       const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
           allocate_granularity);
 
-  // Handles the VA remapping path of ExecuteThunks: reserves or remaps the
-  // virtual address range for command buffer allocations, then delegates to
+  // Handles the VA remapping path of ExecuteThunks: reserves the virtual
+  // address range on first use, then on each subsequent step issues
+  // per-slice cuMemUnmap/cuMemMap/cuMemSetAccess only for command-buffer
+  // allocations whose physical handle changed since the prior step
+  // (coalescing SetAccess across consecutive changed slices). Delegates to
   // ExecuteThunksImpl with the remapped BufferAllocations.
   absl::Status ExecuteThunksWithVaRemapping(
       const BufferAllocations& buffer_allocations,
