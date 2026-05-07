@@ -115,8 +115,9 @@ class LocalDeviceState {
   // physical device ordinal if they share the same physical device.
   LocalDeviceState(se::StreamExecutor* executor, LocalClient* client,
                    AllocationModel allocation_model,
-                   int max_inflight_computations, bool allow_event_reuse,
-                   bool use_callback_stream, int device_ordinal = -1,
+                   std::optional<int> max_inflight_computations,
+                   bool allow_event_reuse, bool use_callback_stream,
+                   int device_ordinal = -1,
                    std::optional<StreamOptions> stream_options = std::nullopt,
                    bool schedule_async = false);
   virtual ~LocalDeviceState();
@@ -212,7 +213,7 @@ class LocalDeviceState {
         nullptr, "ThenRelease");
   }
 
-  Semaphore& compute_semaphore() { return compute_semaphore_; }
+  std::optional<Semaphore>& compute_semaphore() { return compute_semaphore_; }
 
   // Returns a fresh, PRNG-generated random seed for an XLA computation.
   int GetNewPrngSeed();
@@ -247,7 +248,7 @@ class LocalDeviceState {
 
   // Semaphore used to limit how many programs can be enqueued on the compute
   // stream by the host ahead of the device.
-  Semaphore compute_semaphore_;
+  std::optional<Semaphore> compute_semaphore_;
 
   LocalDeviceId local_device_id_;
   LocalChipId local_hardware_id_;

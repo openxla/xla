@@ -134,58 +134,6 @@ class CpuDeviceMemory {
   CpuDeviceMemory() = default;
 };
 
-// CpuUsageEventSet is a PjRtDeviceEventSet that coalesces events and removes
-// stale usage events to prevent the event set from growing unbounded.
-class CpuUsageEventSet : public PjRtDeviceEventSet {
- public:
-  CpuUsageEventSet() = default;
-
-  void AddEvent(PjRtDeviceEventRef event) override;
-
-  void AddEvent(tsl::AsyncValueRef<CpuEvent> event);
-
-  void AppendTo(
-      std::vector<tsl::RCReference<tsl::AsyncValue>>& events) override;
-  void AppendTo(PjRtDeviceEventSet& events) override;
-
-  std::unique_ptr<PjRtDeviceEventSet> Clone() const override;
-
- private:
-  absl::InlinedVector<tsl::AsyncValueRef<CpuEvent>, 4> usage_events_;
-};
-
-// A class that represents a CPU device buffer: it can be a single memory region
-// or multiple memory regions for a tuple buffers. It also tracks the definition
-// and usage of the memory to allow for synchronized usage and deletion of CPU
-// memory. This class is thread-compatible.
-class TrackedCpuDeviceBuffer : public AbstractTrackedDeviceBuffer {
- public:
-  TrackedCpuDeviceBuffer(
-      PjRtRawBufferRef raw_buffer,
-      tsl::AsyncValueRef<CpuEvent> definition_event,
-      std::unique_ptr<PjRtDeviceEventSet> usage_events = nullptr);
-
-  TrackedCpuDeviceBuffer(
-      PjRtRawBufferRef raw_buffer,
-      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events,
-      std::unique_ptr<PjRtDeviceEventSet> usage_events = nullptr);
-
-  TrackedCpuDeviceBuffer(TrackedCpuDeviceBuffer&&) noexcept = default;
-  TrackedCpuDeviceBuffer& operator=(TrackedCpuDeviceBuffer&&) noexcept =
-      default;
-
-  ~TrackedCpuDeviceBuffer();
-
-  void Delete(PjRtMemorySpace* memory_space) override;
-
- private:
-  std::unique_ptr<AbstractTrackedDeviceBuffer> Clone(
-      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events,
-      std::unique_ptr<PjRtDeviceEventSet> usage_events) const override {
-    return std::make_unique<TrackedCpuDeviceBuffer>(
-        raw_buffer(), std::move(definition_events), std::move(usage_events));
-  }
-};
 }  // namespace xla
 
 #endif  // XLA_PJRT_CPU_TRACKED_CPU_DEVICE_BUFFER_H_

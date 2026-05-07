@@ -54,6 +54,7 @@ limitations under the License.
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/backends/gpu/codegen/triton/collective_emitter.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"  // IWYU pragma: keep
+#include "xla/backends/gpu/codegen/triton/transforms/lowering_utils.h"
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/codegen/xtile/codegen/dot_algorithms.h"
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
@@ -272,46 +273,7 @@ class LowerReduce : public mlir::OpRewritePattern<stablehlo::ReduceOp> {
   }
 };
 
-class LowerReshape : public mlir::OpRewritePattern<stablehlo::ReshapeOp> {
- public:
-  using OpRewritePattern::OpRewritePattern;
-
- private:
-  mlir::LogicalResult matchAndRewrite(
-      stablehlo::ReshapeOp op, mlir::PatternRewriter& rewriter) const override {
-    bool input_is_0d = op.getOperand().getType().getRank() == 0;
-    bool output_is_0d = op.getType().getRank() == 0;
-
-    if (input_is_0d && output_is_0d) {
-      rewriter.replaceAllUsesWith(op, op.getOperand());
-      return mlir::success();
-    }
-
-    if (input_is_0d) {
-      auto to_scalar = mlir::tensor::ExtractOp::create(rewriter, op->getLoc(),
-                                                       op.getOperand());
-      rewriter.replaceOpWithNewOp<ttir::SplatOp>(op, op.getType(), to_scalar);
-      return mlir::success();
-    }
-
-    if (output_is_0d) {
-      auto input_tensor_type = op.getOperand().getType();
-      auto element_type = input_tensor_type.getElementType();
-      auto unsplat = ttir::UnsplatOp::create(rewriter, op.getLoc(),
-                                             element_type, op.getOperand());
-      rewriter.replaceOpWithNewOp<mlir::tensor::FromElementsOp>(
-          op, op.getType(), unsplat.getResult());
-      return mlir::success();
-    }
-
-    // Conservatively prevent Triton from reordering elements within the tile.
-    // TODO(b/353637689): see if this restriction can be lifted.
-    bool allow_reorder = false;
-    rewriter.replaceOpWithNewOp<ttir::ReshapeOp>(
-        op, op.getResult().getType(), op.getOperand(), allow_reorder);
-    return mlir::success();
-  }
-};
+// LowerReshape is now defined in lowering_utils.h
 
 namespace {
 
@@ -650,43 +612,10 @@ ttir::InputPrecision InferDotPrecision(
                                        : ttir::InputPrecision::IEEE;
 }
 
-bool IsDotHasOneContractingDimension(stablehlo::DotGeneralOp op) {
-  const stablehlo::DotDimensionNumbersAttr& dims = op.getDotDimensionNumbers();
-  return dims.getLhsContractingDimensions().size() == 1 &&
-         dims.getRhsContractingDimensions().size() == 1;
-}
-
 bool IsDotCanonical(stablehlo::DotGeneralOp op) {
-  const stablehlo::DotDimensionNumbersAttr& dims = op.getDotDimensionNumbers();
-  return IsDotHasOneContractingDimension(op) &&
+  return IsDotDimensionNumbersCanonical(op.getDotDimensionNumbers()) &&
          mlir::cast<ShapedType>(op.getLhs().getType()).getRank() == 2 &&
-         mlir::cast<ShapedType>(op.getRhs().getType()).getRank() == 2 &&
-         dims.getLhsBatchingDimensions().empty() &&
-         dims.getRhsBatchingDimensions().empty() &&
-         dims.getLhsContractingDimensions()[0] == 1 &&
-         dims.getRhsContractingDimensions()[0] == 0;
-}
-
-LogicalResult GetDotFusedAddUnit(stablehlo::DotGeneralOp op,
-                                 mlir::PatternRewriter& rewriter,
-                                 mlir::Operation*& add_op, Value& accumulator) {
-  const Location op_loc = op->getLoc();
-  if (!op->hasOneUse()) {
-    return rewriter.notifyMatchFailure(
-        op_loc,
-        "Dot op must have exactly one user in order to be lowered to triton.");
-  }
-
-  add_op = *op->getUsers().begin();
-  if (!mlir::isa<mlir::arith::AddFOp, mlir::arith::AddIOp>(add_op)) {
-    return rewriter.notifyMatchFailure(
-        op_loc,
-        "Dot op must be consumed by an AddOp to be convertible to triton dot.");
-  }
-
-  accumulator = add_op->getOperand(0) == op.getResult() ? add_op->getOperand(1)
-                                                        : add_op->getOperand(0);
-  return mlir::success();
+         mlir::cast<ShapedType>(op.getRhs().getType()).getRank() == 2;
 }
 
 LogicalResult CanonicalDotGeneral(stablehlo::DotGeneralOp op,
@@ -698,7 +627,7 @@ LogicalResult CanonicalDotGeneral(stablehlo::DotGeneralOp op,
                                        "Dot op is already canonicalized.");
   }
 
-  if (!IsDotHasOneContractingDimension(op)) {
+  if (!IsDotHasOneContractingDimension(op.getDotDimensionNumbers())) {
     return rewriter.notifyMatchFailure(
         op_loc, "Dot op must have exactly one contracting dimension.");
   }
@@ -706,36 +635,24 @@ LogicalResult CanonicalDotGeneral(stablehlo::DotGeneralOp op,
   mlir::ImplicitLocOpBuilder builder(op_loc, rewriter);
   const stablehlo::DotDimensionNumbersAttr& dims = op.getDotDimensionNumbers();
 
-  auto lhs = mlir::cast<::xla::xtile::TensorValue>(op.getLhs());
-  int64_t lhs_contracting_dim = dims.getLhsContractingDimensions()[0];
-  absl::StatusOr<::xla::xtile::TensorValue> lhs_canonical_or =
-      ::xla::xtile::CanonicalizeDotOperand(builder, lhs, lhs_contracting_dim,
-                                           ::xla::xtile::DotOperandSide::kLhs);
-  if (!lhs_canonical_or.ok()) {
+  Value lhs = op.getLhs();
+  if (mlir::failed(CanonicalizeOperand(builder, lhs,
+                                       dims.getLhsContractingDimensions()[0],
+                                       ::xla::xtile::DotOperandSide::kLhs))) {
     return rewriter.notifyMatchFailure(op_loc, "Failed to canonicalize LHS.");
   }
-  ::xla::xtile::TensorValue lhs_canonical = lhs_canonical_or.value();
-  if (mlir::cast<ShapedType>(lhs_canonical.getType()).getRank() != 2) {
-    return rewriter.notifyMatchFailure(op_loc, "Failed to squeeze LHS to 2D.");
-  }
 
-  auto rhs = mlir::cast<::xla::xtile::TensorValue>(op.getRhs());
-  int64_t rhs_contracting_dim = dims.getRhsContractingDimensions()[0];
-  absl::StatusOr<::xla::xtile::TensorValue> rhs_canonical_or =
-      ::xla::xtile::CanonicalizeDotOperand(builder, rhs, rhs_contracting_dim,
-                                           ::xla::xtile::DotOperandSide::kRhs);
-  if (!rhs_canonical_or.ok()) {
+  Value rhs = op.getRhs();
+  if (mlir::failed(CanonicalizeOperand(builder, rhs,
+                                       dims.getRhsContractingDimensions()[0],
+                                       ::xla::xtile::DotOperandSide::kRhs))) {
     return rewriter.notifyMatchFailure(op_loc, "Failed to canonicalize RHS.");
   }
-  ::xla::xtile::TensorValue rhs_canonical = rhs_canonical_or.value();
-  if (mlir::cast<ShapedType>(rhs_canonical.getType()).getRank() != 2) {
-    return rewriter.notifyMatchFailure(op_loc, "Failed to squeeze RHS to 2D.");
-  }
 
-  auto result_type = mlir::cast<ShapedType>(op.getType());
+  RankedTensorType result_type = mlir::cast<RankedTensorType>(op.getType());
   RankedTensorType new_result_type = RankedTensorType::get(
-      {mlir::cast<ShapedType>(lhs_canonical.getType()).getShape()[0],
-       mlir::cast<ShapedType>(rhs_canonical.getType()).getShape()[1]},
+      {mlir::cast<ShapedType>(lhs.getType()).getShape()[0],
+       mlir::cast<ShapedType>(rhs.getType()).getShape()[1]},
       result_type.getElementType());
 
   stablehlo::DotDimensionNumbersAttr new_dims =
@@ -743,47 +660,8 @@ LogicalResult CanonicalDotGeneral(stablehlo::DotGeneralOp op,
                                               {1}, {0});
 
   canonical_dot = stablehlo::DotGeneralOp::create(
-      builder, new_result_type, lhs_canonical, rhs_canonical, new_dims,
-      op.getPrecisionConfigAttr(), op.getAlgorithmAttr());
-  return mlir::success();
-}
-
-LogicalResult CanonicalizeDotFusedAdd(stablehlo::DotGeneralOp new_dot,
-                                      mlir::Operation* add_op, Value acc,
-                                      mlir::PatternRewriter& rewriter) {
-  auto new_result_type = mlir::cast<ShapedType>(new_dot.getType());
-  const Location op_loc = add_op->getLoc();
-
-  mlir::ImplicitLocOpBuilder builder(op_loc, rewriter);
-
-  absl::StatusOr<::xla::xtile::TensorValue> acc_canonical_or =
-      ::xla::xtile::EmitTiledReshape(
-          builder, new_result_type.getShape(),
-          mlir::cast<::xla::xtile::TensorValue>(acc));
-  if (!acc_canonical_or.ok()) {
-    return rewriter.notifyMatchFailure(op_loc,
-                                       "Failed to canonicalize accumulator.");
-  }
-  ::xla::xtile::TensorValue acc_canonical = acc_canonical_or.value();
-
-  Value new_add;
-  if (mlir::isa<mlir::IntegerType>(new_result_type.getElementType())) {
-    new_add = mlir::arith::AddIOp::create(builder, new_dot, acc_canonical);
-  } else {
-    new_add = mlir::arith::AddFOp::create(builder, new_dot, acc_canonical);
-  }
-
-  ArrayRef<int64_t> result_shape =
-      mlir::cast<ShapedType>(add_op->getResult(0).getType()).getShape();
-  absl::StatusOr<::xla::xtile::TensorValue> reshape_or =
-      ::xla::xtile::EmitTiledReshape(
-          builder, result_shape,
-          mlir::cast<::xla::xtile::TensorValue>(new_add));
-  if (!reshape_or.ok()) {
-    return rewriter.notifyMatchFailure(op_loc, "Failed to reshape result.");
-  }
-
-  rewriter.replaceOp(add_op, *reshape_or);
+      builder, new_result_type, lhs, rhs, new_dims, op.getPrecisionConfigAttr(),
+      op.getAlgorithmAttr());
   return mlir::success();
 }
 
@@ -798,25 +676,23 @@ LogicalResult RewriteDotGeneralToTritonDot(mlir::PatternRewriter& rewriter,
   }
 
   std::optional<stablehlo::DotAlgorithmAttr> dot_algorithm = op.getAlgorithm();
-  absl::StatusOr<::xla::PrecisionConfig::Algorithm> hlo_algorithm_or =
+  absl::StatusOr<::xla::PrecisionConfig::Algorithm> hlo_algorithm =
       dot_algorithm.has_value()
           ? ::xla::ConvertDotAlgorithm(dot_algorithm.value())
           : ::xla::PrecisionConfig::ALG_UNSET;
-  if (!hlo_algorithm_or.ok()) {
+  if (!hlo_algorithm.ok()) {
     return rewriter.notifyMatchFailure(
         op_loc,
         "Dot op must have algorithm set to be converted to triton dot.");
   }
-  ::xla::PrecisionConfig::Algorithm hlo_algorithm = hlo_algorithm_or.value();
 
-  absl::StatusOr<AlgorithmEmitter> algorithm_emitter_or =
-      GetAlgorithmEmitter(hlo_algorithm);
-  if (!algorithm_emitter_or.ok()) {
+  absl::StatusOr<AlgorithmEmitter> algorithm_emitter =
+      GetAlgorithmEmitter(*hlo_algorithm);
+  if (!algorithm_emitter.ok()) {
     return rewriter.notifyMatchFailure(
         op_loc, absl::StrCat("Algorithm emitter not found with error: ",
-                             algorithm_emitter_or.status().message()));
+                             algorithm_emitter.status().message()));
   }
-  AlgorithmEmitter algorithm_emitter = algorithm_emitter_or.value();
 
   mlir::ImplicitLocOpBuilder builder(op_loc, rewriter);
   // Set the insertion point to the AddOp to ensure that all operands dominate
@@ -833,19 +709,18 @@ LogicalResult RewriteDotGeneralToTritonDot(mlir::PatternRewriter& rewriter,
     return mlir::failure();
   }
 
-  ::xla::xtile::PrecisionSpec precision_spec{hlo_algorithm, lhs_precision,
+  ::xla::xtile::PrecisionSpec precision_spec{*hlo_algorithm, lhs_precision,
                                              rhs_precision};
 
-  TritonPrecisionSpec triton_precision_spec{hlo_algorithm,
+  TritonPrecisionSpec triton_precision_spec{*hlo_algorithm,
                                             InferDotPrecision(precision_spec)};
-  absl::StatusOr<Value> triton_dot_op_or =
+  absl::StatusOr<Value> triton_dot_op =
       (*algorithm_emitter)(builder, dot_operands, triton_precision_spec);
-  if (!triton_dot_op_or.ok()) {
+  if (!triton_dot_op.ok()) {
     return rewriter.notifyMatchFailure(
         op_loc, absl::StrCat("Algorithm emitter failed with error: ",
-                             triton_dot_op_or.status().message()));
+                             triton_dot_op.status().message()));
   }
-  Value triton_dot_op = triton_dot_op_or.value();
 
   if (warp_specialization_allowed) {
     if (auto for_op = op->getParentOfType<scf::ForOp>()) {
@@ -853,7 +728,7 @@ LogicalResult RewriteDotGeneralToTritonDot(mlir::PatternRewriter& rewriter,
     }
   }
 
-  rewriter.replaceOp(add_op, triton_dot_op);
+  rewriter.replaceOp(add_op, *triton_dot_op);
 
   return mlir::success();
 }
@@ -875,11 +750,11 @@ class CanonicalizeDotGeneral
 
     mlir::Operation* add_op;
     Value acc;
-    if (mlir::failed(GetDotFusedAddUnit(op, rewriter, add_op, acc))) {
+    if (mlir::failed(GetFusedAddUnit(op, rewriter, add_op, acc))) {
       return mlir::failure();
     }
 
-    return CanonicalizeDotFusedAdd(new_dot, add_op, acc, rewriter);
+    return CanonicalizeFusedAddUnit(add_op, new_dot, acc, rewriter);
   }
 };
 
@@ -895,7 +770,7 @@ class LowerDotGeneral : public mlir::OpRewritePattern<stablehlo::DotGeneralOp> {
       mlir::PatternRewriter& rewriter) const override {
     mlir::Operation* add_op;
     Value accumulator;
-    if (mlir::failed(GetDotFusedAddUnit(op, rewriter, add_op, accumulator))) {
+    if (mlir::failed(GetFusedAddUnit(op, rewriter, add_op, accumulator))) {
       return mlir::failure();
     }
 
@@ -921,55 +796,6 @@ class LowerAllReduce : public mlir::OpRewritePattern<stablehlo::AllReduceOp> {
   }
 };
 
-class FoldReshapeAroundForLoop : public mlir::OpRewritePattern<scf::ForOp> {
- public:
-  using OpRewritePattern::OpRewritePattern;
-
-  mlir::LogicalResult matchAndRewrite(
-      scf::ForOp for_op, mlir::PatternRewriter& rewriter) const override {
-    auto yield_op = mlir::cast<scf::YieldOp>(for_op.getBody()->getTerminator());
-    auto yield_operands = yield_op.getOperands();
-
-    for (auto it :
-         llvm::zip(for_op.getInitArgsMutable(), for_op.getResults())) {
-      OpOperand& iter_op_operand = std::get<0>(it);
-      unsigned i =
-          iter_op_operand.getOperandNumber() - for_op.getNumControlOperands();
-
-      auto reshape_op = yield_operands[i].getDefiningOp<ttir::ReshapeOp>();
-      if (!reshape_op ||
-          (reshape_op.getOperand().getType() == yield_operands[i].getType())) {
-        continue;
-      }
-
-      Value inner_yield_val = reshape_op.getOperand();
-      const Location op_loc = for_op.getLoc();
-
-      // Sink rank reduction for initialization.
-      Value new_init = ttir::ReshapeOp::create(
-          rewriter, op_loc, inner_yield_val.getType(), iter_op_operand.get());
-
-      // Update the yield of the original loop to provide the un-reshaped value.
-      // This prevents 'replaceAndCastForOpIterArg' from cloning the original
-      // reshape into the new loop body, which would otherwise cause the
-      // rewriter to recursively trigger on the same pattern in the new loop.
-      rewriter.modifyOpInPlace(
-          yield_op, [&]() { yield_op->setOperand(i, inner_yield_val); });
-
-      // Use the SCF utility to handle structural rewrite and cast injection.
-      SmallVector<Value> new_results = mlir::scf::replaceAndCastForOpIterArg(
-          rewriter, for_op, iter_op_operand, new_init,
-          [](OpBuilder& b, Location loc, Type type, Value val) -> Value {
-            return ttir::ReshapeOp::create(b, loc, type, val);
-          });
-
-      rewriter.replaceOp(for_op, new_results);
-      return mlir::success();
-    }
-    return mlir::failure();
-  }
-};
-
 class StableHLOLowerToTritonPass
     : public impl::StableHLOLowerToTritonPassBase<StableHLOLowerToTritonPass> {
  public:
@@ -985,16 +811,6 @@ class StableHLOLowerToTritonPass
                    LowerReduce, LowerReshape, LowerAllReduce>(mlir_context);
       patterns.add<CanonicalizeDotGeneral>(mlir_context);
       patterns.add<LowerDotGeneral>(mlir_context, warp_specialization_allowed_);
-      if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),
-                                                   std::move(patterns)))) {
-        return signalPassFailure();
-      }
-    }
-
-    // Stage 2: Post-lowering Cleanup and Optimization.
-    {
-      mlir::RewritePatternSet patterns(mlir_context);
-      patterns.add<FoldReshapeAroundForLoop>(mlir_context);
       if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),
                                                    std::move(patterns)))) {
         return signalPassFailure();

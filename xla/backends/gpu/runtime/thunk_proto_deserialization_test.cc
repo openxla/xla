@@ -1077,6 +1077,7 @@ TEST(ThunkProtoDeserializationTest, CustomKernelThunkRoundTrip) {
             }
           }
           written: true
+          tma_metadata {}
         }
       )pb");
 

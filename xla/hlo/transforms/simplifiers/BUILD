@@ -1629,6 +1629,7 @@ xla_cc_test(
         ":reduce_window_rewriter",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],

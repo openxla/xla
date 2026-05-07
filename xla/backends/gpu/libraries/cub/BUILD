@@ -36,6 +36,7 @@ cc_library(
     name = "cub_scratch_size_deviceless_lookup",
     srcs = ["cub_scratch_size_deviceless_lookup.cc"],
     hdrs = ["cub_scratch_size_deviceless_lookup.h"],
+    visibility = ["//xla:internal"],
     deps = [
         ":cub_sort_utils",
         ":embed_cub_scratch_size_lookup_table",
@@ -55,9 +56,19 @@ cc_library(
 
 cc_library(
     name = "cub_sort_utils",
+    srcs = ["cub_sort_utils.cc"],
     hdrs = ["cub_sort_utils.h"],
     visibility = ["//xla:internal"],
-    deps = [],
+    deps = [
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+    ],
 )
 
 xla_cc_test(
@@ -80,6 +91,10 @@ xla_cc_test(
     srcs = ["cub_sort_utils_test.cc"],
     deps = [
         ":cub_sort_utils",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -110,9 +125,15 @@ xla_test(
         "h100": ["full"],
         "b200": ["full"],
         "gb200": ["full"],
-        "gb300": ["full"],
     },
-    backends = ["gpu"],
+    backends = [
+        "h100",
+        "a100",
+        "b200",
+        "gb200",
+        "v100",
+        "p100",
+    ],
     tags = [
         "cuda-only",
         "no_oss",  # Stop this test from being run in OSS presubmits

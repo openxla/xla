@@ -379,6 +379,7 @@ cc_library(
     deps = [
         ":kernel_compiler",
         "//xla:future",
+        "//xla:xla_proto_cc",
         "//xla/backends/gpu/codegen/kernels:custom_kernel",
         "//xla/backends/gpu/codegen/kernels:ptx_custom_kernel",
         "//xla/backends/gpu/runtime:custom_kernel_thunk",
@@ -401,6 +402,7 @@ xla_cc_test(
     srcs = ["cubin_custom_kernel_compiler_test.cc"],
     deps = [
         ":cubin_custom_kernel_compiler",
+        "//xla:xla_proto_cc",
         "//xla/backends/gpu/runtime:thunk",
         "//xla/codegen:llvm_kernel_source",
         "//xla/codegen/emitters:kernel_arguments",

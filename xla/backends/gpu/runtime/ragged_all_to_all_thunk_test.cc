@@ -103,7 +103,7 @@ TEST_F(GpuRaggedAllToAllTest, TestConvertToCommands) {
       module->entry_computation()->root_instruction();
   ASSERT_EQ(root_instr->opcode(), HloOpcode::kRaggedAllToAll);
   const HloRaggedAllToAllInstruction* ra2a_instr =
-      tensorflow::down_cast<const HloRaggedAllToAllInstruction*>(root_instr);
+      absl::down_cast<const HloRaggedAllToAllInstruction*>(root_instr);
   ASSERT_NE(ra2a_instr, nullptr);
 
   // Buffer and Allocation Setup
@@ -199,7 +199,7 @@ TEST_F(GpuRaggedAllToAllTest, TestCommandBufferThunkContainsCorrectThunks) {
 
   // Downcast to GPU executable
   xla::gpu::GpuExecutable* gpu_executable =
-      tensorflow::down_cast<xla::gpu::GpuExecutable*>(executable.get());
+      absl::down_cast<GpuExecutable*>(executable.get());
   ASSERT_NE(gpu_executable, nullptr);
 
   // Get the thunk sequence and check its size and type
@@ -210,7 +210,7 @@ TEST_F(GpuRaggedAllToAllTest, TestCommandBufferThunkContainsCorrectThunks) {
   ASSERT_EQ(thunk->kind(), Thunk::kCommandBuffer);
 
   CommandBufferThunk* cmd_buffer_thunk =
-      tensorflow::down_cast<CommandBufferThunk*>(thunk.get());
+      absl::down_cast<CommandBufferThunk*>(thunk.get());
   ASSERT_NE(cmd_buffer_thunk, nullptr);
 
   std::vector<Kind> kinds;
@@ -221,8 +221,9 @@ TEST_F(GpuRaggedAllToAllTest, TestCommandBufferThunkContainsCorrectThunks) {
   }
 
   // The collective is sync (single device), so no AsyncStart/Done wrapping.
-  EXPECT_THAT(kinds, ElementsAre(Kind::kKernel, Kind::kKernel, Kind::kKernel,
-                                 Kind::kKernel, Kind::kRaggedAllToAll));
+  EXPECT_THAT(kinds, ElementsAre(Kind::kCustomKernel, Kind::kCustomKernel,
+                                 Kind::kCustomKernel, Kind::kCustomKernel,
+                                 Kind::kRaggedAllToAll));
 }
 
 TEST(CollectiveThunkTest, ProtoRoundTrip) {

@@ -84,6 +84,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
+#include "xla/hlo/translate/hlo_to_mhlo/attribute_importer.h"
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_function_importer.h"
 #include "xla/layout.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
@@ -604,18 +605,6 @@ absl::StatusOr<TensorValue> EmitScaledDot(
   SmallVector<int64_t> padded_tile_sizes =
       GetPaddedTileSizes(tiled_hlo_dot.tile_sizes());
 
-  SmallVector<int64_t, 2> padded_tile_sizes_no_unit_dims =
-      CollapseUnitDims(padded_tile_sizes, padded_tile_sizes).first;
-
-  // Sanity check: Triton historically did not support non-2D dots (and still
-  // doesn't support arbitrary nD dots), so we require that the dot is tiled
-  // with exactly two non-unit tile sizes. This anyway matches the hardware's
-  // expectations, so seems like a reasonable requirement.
-  // TODO(b/393299275): this needs to be enforced in tiling.
-  if (padded_tile_sizes_no_unit_dims.size() != 2) {
-    return absl::FailedPreconditionError(
-        "Expected dot to be tiled with exactly two non-unit tile sizes");
-  }
   const HloScaledDotInstruction& dot =
       *::xla::Cast<HloScaledDotInstruction>(tiled_hlo_dot.hlo());
   // The specific accumulator type to use may not correspond to the output type
@@ -623,7 +612,7 @@ absl::StatusOr<TensorValue> EmitScaledDot(
   // and the dot's output type does not match its expectations.
   Type accumulator_type = b.getF32Type();
   TensorValue accumulator =
-      CreateConst(b, accumulator_type, 0.0f, padded_tile_sizes_no_unit_dims);
+      CreateConst(b, accumulator_type, 0.0f, padded_tile_sizes);
 
   TF_ASSIGN_OR_RETURN(int64_t loop_iteration_count,
                       GetDotLoopIterationCount(tiled_hlo_dot));
@@ -665,52 +654,15 @@ absl::StatusOr<TensorValue> EmitScaledDot(
     }
 
     Value acc = for_op.getRegionIterArgs().front();
-    int64_t lhs_contracting_dim_idx =
-        dot.dot_dimension_numbers().lhs_contracting_dimensions(0);
-
-    int64_t rhs_contracting_dim_idx =
-        dot.dot_dimension_numbers().rhs_contracting_dimensions(0);
-
-    Value ki_i32 = Cast(b, ki, b.getI32Type());
-    TF_ASSIGN_OR_RETURN(
-        TensorValue lhs,
-        MaskDotOperand(b, *tiled_hlo_dot.operand(0), dot_args[0], ki_i32,
-                       lhs_contracting_dim_idx));
-    TF_ASSIGN_OR_RETURN(
-        TensorValue rhs,
-        MaskDotOperand(b, *tiled_hlo_dot.operand(1), dot_args[1], ki_i32,
-                       rhs_contracting_dim_idx));
-
-    TF_ASSIGN_OR_RETURN(
-        TensorValue lhs_scale,
-        MaskDotOperand(b, *tiled_hlo_dot.operand(2), dot_args[2], ki_i32,
-                       lhs_contracting_dim_idx));
-
-    TF_ASSIGN_OR_RETURN(
-        TensorValue rhs_scale,
-        MaskDotOperand(b, *tiled_hlo_dot.operand(3), dot_args[3], ki_i32,
-                       rhs_contracting_dim_idx));
-
-    // Canonicalize the dot operands to match Triton's/the hardware's
-    // expectations.
-    TF_ASSIGN_OR_RETURN(
-        lhs_scale, CanonicalizeDotOperand(b, lhs_scale, lhs_contracting_dim_idx,
-                                          DotOperandSide::kLhs, lhs));
-    TF_ASSIGN_OR_RETURN(
-        rhs_scale, CanonicalizeDotOperand(b, rhs_scale, rhs_contracting_dim_idx,
-                                          DotOperandSide::kRhs, rhs));
-    TF_ASSIGN_OR_RETURN(lhs,
-                        CanonicalizeDotOperand(b, lhs, lhs_contracting_dim_idx,
-                                               DotOperandSide::kLhs));
-    TF_ASSIGN_OR_RETURN(rhs,
-                        CanonicalizeDotOperand(b, rhs, rhs_contracting_dim_idx,
-                                               DotOperandSide::kRhs));
 
     TF_ASSIGN_OR_RETURN(
         Value acc_next,
         xtile::EmitSingleTileScaledDot(
             b, dot,
-            xtile::ScaledDotOperands{lhs, rhs, lhs_scale, rhs_scale, acc}));
+            xtile::ScaledDotOperands{
+                dot_args[0], dot_args[1], dot_args[2], dot_args[3], acc,
+                ::xla::stablehlo::ConvertDotDimensionNumbers(
+                    dot.dot_dimension_numbers(), &b)}));
     mlir::scf::YieldOp::create(b, acc_next);
   }
 
@@ -725,11 +677,6 @@ absl::StatusOr<TensorValue> EmitScaledDot(
   }
 
   auto tensor_result = mlir::cast<TensorValue>(result);
-
-  if (padded_tile_sizes.size() != padded_tile_sizes_no_unit_dims.size()) {
-    return EmitTiledReshape(b, padded_tile_sizes, tensor_result);
-  }
-
   return tensor_result;
 }
 

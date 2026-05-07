@@ -1607,6 +1607,7 @@ absl::Status GpuCompiler::AutotunerAndPostCleanup(
       target_config, key_value_store, toolkit_version, alias_info,
       debug_options, mlir_context, shape_size_fn));
   pipeline.AddPass<ConvertTritonGemmConfig>(device_description, mlir_context);
+  pipeline.AddPass<ReshapeDecomposer>();
   pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
   auto simplifier_options = GetAlgebraicSimplifierOptions(
       AlgebraicSimplifierMode::kLayoutNormalization, debug_options,
@@ -2214,7 +2215,8 @@ bool UsesCollectiveMemorySpaceFrontendAttr(const HloUse& use) {
   return false;
 }
 
-bool ShouldAddCopyForCollectiveMemorySpace(const HloValue* value) {
+bool ShouldAddCopyForCollectiveMemorySpace(const HloValue* value,
+                                           const GpuTopology& gpu_topology) {
   const HloInstruction* inst = value->defining_instruction();
   const HloModule* module = inst->GetModule();
   const bool is_nccl_buffers_used =
@@ -2232,6 +2234,8 @@ bool ShouldAddCopyForCollectiveMemorySpace(const HloValue* value) {
       if ((is_nccl_buffers_used && IsCollective(use.instruction)) ||
           RequiresCollectiveSymmetricMemorySpace(use.instruction) ||
           IsCollectiveMosaicGpuInstruction(*use.instruction) ||
+          (gpu_topology.number_of_hosts() > 1 &&
+           IsMosaicWithCollectiveMetadata(*use.instruction)) ||
           UsesCollectiveMemorySpaceFrontendAttr(use)) {
         return true;
       }
@@ -2241,7 +2245,8 @@ bool ShouldAddCopyForCollectiveMemorySpace(const HloValue* value) {
 }
 
 absl::Status RunPostSchedulingCopyInsertion(HloModule* module,
-                                            const GpuAliasInfo* alias_info) {
+                                            const GpuAliasInfo* alias_info,
+                                            const GpuTopology& gpu_topology) {
   // We run a separate pass of copy elision here because the sequential ordering
   // from the HLO schedule potentially allows for more copies to be eliminated.
   constexpr int64_t kRegionBasedLiveRangeAnalysisLimit = -1;
@@ -2264,7 +2269,9 @@ absl::Status RunPostSchedulingCopyInsertion(HloModule* module,
   // necessary for other reason such as preventing a constant from being live
   // out of the graph. So run AddSpecialCaseCopies to re-insert these copies.
   RETURN_IF_ERROR(copy_insertion.CopyInsertion::AddSpecialCaseCopies(
-      module, /*execution_threads=*/{}, ShouldAddCopyForCollectiveMemorySpace));
+      module, /*execution_threads=*/{}, [&gpu_topology](const HloValue* value) {
+        return ShouldAddCopyForCollectiveMemorySpace(value, gpu_topology);
+      }));
 
   RETURN_IF_ERROR(HloDCE().Run(module).status());
 
@@ -2526,19 +2533,19 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
         }
         const uint8_t* binary =
             reinterpret_cast<const uint8_t*>(entry.binary().data());
-        binaries_to_link.push_back(
-            std::vector<uint8_t>(binary, binary + entry.binary().size()));
+        if (entry.link_binary()) {
+          binaries_to_link.push_back(
+              std::vector<uint8_t>(binary, binary + entry.binary().size()));
+        }
         VLOG(5) << "Using " << name << " from cache: " << entry.binary().size();
         ++loaded_kernel_count;
       }
       VLOG(2) << "Using " << loaded_kernel_count << " / "
               << current_cache.entries_size() << " cached kernels.";
     }
-    if (!binaries_to_cache.empty()) {
-      RETURN_IF_ERROR(UpdateDiskKernelCache(resolved_path,
-                                            /*do_append=*/cache_file_exists,
-                                            current_cache, binaries_to_cache));
-    }
+    RETURN_IF_ERROR(UpdateDiskKernelCache(resolved_path,
+                                          /*do_append=*/cache_file_exists,
+                                          current_cache, binaries_to_cache));
   }
 
   auto maybe_backend_result =
@@ -2596,9 +2603,9 @@ GpuCompiler::CompileToBackendResult(
   HloPassPipeline pipeline("scheduled-gpu-module");
   AddHloVerifier(&pipeline);
   RETURN_IF_ERROR(pipeline.Run(module).status());
-  RETURN_IF_ERROR(RunPostSchedulingPipelines(
-      module, schedule_metadata.scheduler_mem_limit,
-      gpu_topology.gpu_target_config().device_description, alias_info.get()));
+  RETURN_IF_ERROR(
+      RunPostSchedulingPipelines(module, schedule_metadata.scheduler_mem_limit,
+                                 gpu_topology, alias_info.get()));
 
   MaybeOwningThreadPool thread_pool = CreateMaybeOwningThreadPool(
       /*parallelism=*/module->config()
@@ -2652,10 +2659,9 @@ GpuCompiler::CompileToBackendResult(
         compile_module_results,
         CompileModuleToLlvmIr(
             module, llvm_context, target_triple_, data_layout_, PlatformId(),
-            gpu_topology.gpu_target_config().device_description,
-            alias_info.get(), std::move(buffer_size_bytes_function),
-            llvm_options_lock, &kernel_compiler,
-            std::move(cpu_target_machine_options)));
+            gpu_topology, alias_info.get(),
+            std::move(buffer_size_bytes_function), llvm_options_lock,
+            &kernel_compiler, std::move(cpu_target_machine_options)));
   }
 
   for (const std::unique_ptr<llvm::Module>& llvm_module :
@@ -3120,10 +3126,10 @@ HloRematerialization::Options CreateRematOpts(
 
 absl::Status GpuCompiler::RunPostSchedulingPipelines(
     HloModule* module, int64_t scheduler_mem_limit,
-    const se::DeviceDescription& gpu_device_info,
-    const GpuAliasInfo* alias_info) {
+    const GpuTopology& gpu_topology, const GpuAliasInfo* alias_info) {
   tsl::profiler::TraceMe traceme("RunPostSchedulingPipelines");
-  RETURN_IF_ERROR(RunPostSchedulingCopyInsertion(module, alias_info));
+  RETURN_IF_ERROR(
+      RunPostSchedulingCopyInsertion(module, alias_info, gpu_topology));
   HloPassPipeline main_pipeline("post-scheduling-passes");
 
   // Pipeline for async -> sync conversion on for non-overlapped async ops.
@@ -3136,6 +3142,8 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
   // Pipeline rematerialization passes with optional host offloading.
   HloRematerialization::RematerializationSizes sizes;
   // `HloCostAnalysis` initialization.
+  const se::DeviceDescription& gpu_device_info =
+      gpu_topology.gpu_target_config().device_description;
   HloCostAnalysis::Options hlo_cost_analysis_opts =
       CreateHloAnalysisOpts(*module, gpu_device_info, ShapeSizeBytesFunction());
   HloCostAnalysis hlo_cost_analysis(hlo_cost_analysis_opts);

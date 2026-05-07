@@ -737,7 +737,7 @@ cc_library(
     srcs = ["program_interpreter.cc"],
     hdrs = ["program_interpreter.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//visibility:private"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":atom_program_compiler",
         ":ifrt_ir_program",

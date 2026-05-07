@@ -95,79 +95,7 @@ class RawSEDeviceMemory {
   se::DeviceAddressBase value_;
 };
 
-// PjRtDeviceEventSet that coalesces events to try and maintain the minimal
-// wait set for all added events. For stream based events it inspects the
-// stream id to determine if a new event is redundant or not.
-class PjRtStreamExecutorUsageEventSet : public PjRtDeviceEventSet {
- public:
-  PjRtStreamExecutorUsageEventSet() = default;
 
-  void AddEvent(PjRtDeviceEventRef event) override;
-
-  void AddEvent(BufferSequencingEventRef event, bool reference_held);
-
-  void AppendTo(
-      std::vector<tsl::RCReference<tsl::AsyncValue>>& events) override;
-
-  void AppendTo(PjRtDeviceEventSet& events) override;
-
-  std::unique_ptr<PjRtDeviceEventSet> Clone() const override;
-
- private:
-  // Helper object to keep track of usage of the buffer on streams.
-  struct StreamAndEvent {
-    BufferSequencingEventRef event;
-    bool reference_held;
-  };
-
-  using StreamAndEventContainer = absl::InlinedVector<StreamAndEvent, 3>;
-  // Set of streams that the buffer has ever been used on, see comment on
-  // StreamAndEvent.
-  StreamAndEventContainer usage_events_;
-};
-
-// Class that represents a tuple of device buffers. Like a ScopedShapedBuffer it
-// owns all of the device memory in the tuple. It also tracks the definition and
-// usage of the memory on streams, to allow for synchronized usage and deletion
-// of memory under all of the allocation model semantics.
-class TrackedDeviceBuffer : public AbstractTrackedDeviceBuffer {
- public:
-  TrackedDeviceBuffer(
-      PjRtDevice* device, PjRtRawBufferRef raw_buffer,
-      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events,
-      std::unique_ptr<PjRtDeviceEventSet> usage_events = nullptr);
-  ~TrackedDeviceBuffer() override;
-
-  void Delete(PjRtMemorySpace* memory_space) override;
-
-  absl::Status WaitUntilBufferReadyOnStream(std::intptr_t stream) override {
-    for (const auto& event : definition_events()) {
-      TF_RETURN_IF_ERROR(event.down_cast<BufferSequencingEvent>()
-                             ->WaitForEventOnExternalStream(stream));
-    }
-    return absl::OkStatus();
-  }
-
-  std::unique_ptr<AbstractTrackedDeviceBuffer> Clone(
-      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events,
-      std::unique_ptr<PjRtDeviceEventSet> usage_events) const override {
-    return std::make_unique<TrackedDeviceBuffer>(device_, raw_buffer(),
-                                                 std::move(definition_events),
-                                                 std::move(usage_events));
-  }
-
- private:
-  PjRtDevice* device_;
-  // in_use_ starts out true, and is set to false when the buffer is released
-  // from its owning PjRtBuffer. Once in_use_ is false, the buffer may no
-  // longer be used on any stream.
-  bool in_use_;
-};
-
-// Waits for all of the definition events in a buffer on 'stream'.
-void WaitForBufferDefinitionEventsOnStream(
-    absl::Span<const BufferSequencingEventRef> definition_events,
-    se::Stream* stream);
 
 }  // namespace xla
 

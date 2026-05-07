@@ -30,6 +30,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/casts.h"
+#include "absl/base/optimization.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/numeric/bits.h"
@@ -239,11 +240,10 @@ BFCAllocator::ChunkHandle BFCAllocator::AllocateChunk() {
     Chunk* c = ChunkFromHandle(h);
     free_chunks_list_ = c->next;
     return h;
-  } else {
-    ChunkHandle h = chunks_.size();
-    chunks_.resize(h + 1);
-    return h;
   }
+  ChunkHandle h = chunks_.size();
+  chunks_.resize(h + 1);
+  return h;
 }
 
 void BFCAllocator::DeallocateChunk(ChunkHandle h) {
@@ -262,22 +262,23 @@ void* BFCAllocator::AllocateRawInternalWithRetry(
   if (allocation_attr.freed_by_func != nullptr) {
     freed_by_count = (*allocation_attr.freed_by_func)();
   }
+
   void* r = AllocateRawInternal(alignment, num_bytes, false, freed_by_count);
-  if (r != nullptr) {
-    return r;
-  } else {
-    static const int64_t kMaxMillisToWait = 10000;  // 10 seconds
-    r = retry_helper_.AllocateRaw(
-        [this, &allocation_attr](size_t a, size_t nb, bool v) {
-          uint64_t freed_by_count = 0;
-          if (allocation_attr.freed_by_func != nullptr) {
-            freed_by_count = (*allocation_attr.freed_by_func)();
-          }
-          return AllocateRawInternal(a, nb, v, freed_by_count);
-        },
-        kMaxMillisToWait, alignment, num_bytes);
+  if (ABSL_PREDICT_TRUE(r != nullptr)) {
     return r;
   }
+
+  static const int64_t kMaxMillisToWait = 10000;  // 10 seconds
+  r = retry_helper_.AllocateRaw(
+      [this, &allocation_attr](size_t a, size_t nb, bool v) {
+        uint64_t freed_by_count = 0;
+        if (allocation_attr.freed_by_func != nullptr) {
+          freed_by_count = (*allocation_attr.freed_by_func)();
+        }
+        return AllocateRawInternal(a, nb, v, freed_by_count);
+      },
+      kMaxMillisToWait, alignment, num_bytes);
+  return r;
 }
 
 void* BFCAllocator::AllocateRaw(size_t alignment, size_t num_bytes,
@@ -325,10 +326,8 @@ void* BFCAllocator::AllocateRaw(size_t alignment, size_t num_bytes,
         }
       }
       return res;
-    } else {
-      return AllocateRawInternalWithRetry(alignment, num_bytes,
-                                          allocation_attr);
     }
+    return AllocateRawInternalWithRetry(alignment, num_bytes, allocation_attr);
   }();
   VLOG(3) << "AllocateRaw " << Name() << "  " << num_bytes << " " << result;
   VLOG(4) << "[mem-debug] AllocateRaw," << Name() << "," << num_bytes << ","
@@ -439,7 +438,7 @@ void BFCAllocator::DeallocateRegions(
 void* BFCAllocator::AllocateRawInternal(size_t alignment, size_t num_bytes,
                                         bool dump_log_on_failure,
                                         uint64_t freed_before) {
-  if (num_bytes == 0) {
+  if (ABSL_PREDICT_FALSE(num_bytes == 0)) {
     VLOG(2) << "tried to allocate 0 bytes";
     return nullptr;
   }
@@ -457,13 +456,13 @@ void* BFCAllocator::AllocateRawInternal(size_t alignment, size_t num_bytes,
   BinNum bin_num = BinNumForSize(rounded_bytes);
 
   absl::MutexLock l(mutex_);
-  if (!timestamped_chunks_.empty()) {
+  if (ABSL_PREDICT_FALSE(!timestamped_chunks_.empty())) {
     // Merge timestamped chunks whose counts have become safe for general use.
     MergeTimestampedChunks(0);
   }
   void* ptr =
       FindChunkPtr(bin_num, rounded_bytes, num_bytes, alignment, freed_before);
-  if (ptr != nullptr) {
+  if (ABSL_PREDICT_TRUE(ptr != nullptr)) {
     AddTraceMe("MemoryAllocation", ptr);
     return ptr;
   }
@@ -592,7 +591,8 @@ void* BFCAllocator::FindChunkPtr(BinNum bin_num, size_t rounded_bytes,
       BFCAllocator::ChunkHandle h = (*citer);
       BFCAllocator::Chunk* chunk = ChunkFromHandle(h);
       DCHECK(!chunk->in_use());
-      if (freed_before > 0 && freed_before < chunk->freed_at_count) {
+      if (ABSL_PREDICT_FALSE(freed_before > 0) &&
+          freed_before < chunk->freed_at_count) {
         continue;
       }
 
@@ -758,7 +758,7 @@ void BFCAllocator::DeallocateRawInternal(void* ptr) {
   MarkFree(h);
 
   // Consider coalescing it.
-  if (timing_counter_) {
+  if (ABSL_PREDICT_FALSE(timing_counter_ != nullptr)) {
     InsertFreeChunkIntoBin(h);
     timestamped_chunks_.push_back(h);
   } else {
@@ -851,7 +851,7 @@ void BFCAllocator::MarkFree(BFCAllocator::ChunkHandle h) {
   c->allocation_id = -1;
 
   // Optionally record the free time.
-  if (timing_counter_) {
+  if (ABSL_PREDICT_FALSE(timing_counter_ != nullptr)) {
     c->freed_at_count = timing_counter_->next();
   }
 
@@ -870,7 +870,9 @@ void BFCAllocator::MarkFree(BFCAllocator::ChunkHandle h) {
 BFCAllocator::ChunkHandle BFCAllocator::TryToCoalesce(ChunkHandle h,
                                                       bool ignore_freed_at) {
   Chunk* c = ChunkFromHandle(h);
-  if ((!ignore_freed_at) && c->freed_at_count > 0) return h;
+  if ((!ignore_freed_at) && c->freed_at_count > 0) {
+    return h;
+  }
   ChunkHandle coalesced_chunk = h;
 
   // If the next chunk is free, merge it into c and delete it.
@@ -903,9 +905,8 @@ void BFCAllocator::SetSafeFrontier(uint64_t count) {
     if (safe_frontier_.compare_exchange_strong(current, count)) {
       retry_helper_.NotifyDealloc();
       return;
-    } else {
-      current = safe_frontier_.load(std::memory_order_relaxed);
     }
+    current = safe_frontier_.load(std::memory_order_relaxed);
   }
 }
 
@@ -958,7 +959,9 @@ bool BFCAllocator::MergeTimestampedChunks(size_t required_bytes) {
     // merged and deallocated in a prior iteration so refetch the handle and
     // retest.
     ChunkHandle h = region_manager_.get_handle(ptr);
-    if (h == kInvalidChunkHandle) continue;
+    if (h == kInvalidChunkHandle) {
+      continue;
+    }
     if (required_bytes == 0 || !satisfied) {
       Chunk* c = ChunkFromHandle(h);
       DCHECK_NE(c->bin_num, kInvalidBinNum);

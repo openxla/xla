@@ -149,6 +149,52 @@ TEST_F(ConvFusionRewriterUnitTest, TestConvInt8ToFloat) {
                   .WithShape(F32, {1, 32, 9, 9}));
 }
 
+TEST_F(ConvFusionRewriterUnitTest, AsymmetricConvertPrologueNotFused) {
+  // Only one of the conv inputs is preceded by a convert. The rewriter must
+  // leave that convert outside the fusion: cuDNN's conv requires both inputs
+  // to share a dtype, and the compiler's consume-convert path would otherwise
+  // feed the conv mismatched f32 / f16 inputs.
+  RunAndMatch(
+      R"(
+    HloModule Test
+
+    ENTRY Test {
+      input_f32 = f32[4,48,96,64] parameter(0)
+      input_f16 = f16[4,48,96,64] convert(input_f32)
+      filter = f16[128,3,3,64] parameter(1)
+      bias = f16[4,24,48,128] parameter(2)
+      conv = f16[4,24,48,128] convolution(input_f16, filter),
+               window={size=3x3 stride=2x2 pad=0_1x0_1},
+               dim_labels=b01f_o01i->b01f
+      ROOT add = f16[4,24,48,128] add(conv, bias)
+    })",
+      m::Fusion(m::Convert(m::Parameter(0)), m::Parameter(1), m::Parameter(2))
+          .WithFusionKind(HloInstruction::FusionKind::kCustom)
+          .WithShape(F16, {4, 24, 48, 128}));
+}
+
+TEST_F(ConvFusionRewriterUnitTest, MismatchedConvertSourceTypesNotFused) {
+  // Both conv inputs are converts, but the source types differ (fp8e4m3 vs.
+  // fp8e5m2). Consuming both converts would still leave the conv with
+  // mismatched input dtypes, so neither should be fused into the prologue.
+  RunAndMatch(
+      R"(
+    HloModule Test
+
+    ENTRY Test {
+      input_f8e4m3 = f8e4m3fn[1,17,9,9] parameter(0)
+      input_f16 = f16[1,17,9,9] convert(input_f8e4m3)
+      filter_f8e5m2 = f8e5m2[3,3,17,32] parameter(1)
+      filter_f16 = f16[3,3,17,32] convert(filter_f8e5m2)
+      ROOT conv = f16[1,32,9,9] convolution(input_f16, filter_f16),
+                    window={size=3x3 pad=1_1x1_1},
+                    dim_labels=bf01_01io->bf01
+    })",
+      m::Fusion(m::Convert(m::Parameter(0)), m::Convert(m::Parameter(1)))
+          .WithFusionKind(HloInstruction::FusionKind::kCustom)
+          .WithShape(F16, {1, 32, 9, 9}));
+}
+
 TEST_F(ConvFusionRewriterUnitTest, TestConvInt8ToInt8BiasSideInput) {
   MAYBE_SKIP_TEST("I8");
   RunAndMatch(R"(

@@ -152,9 +152,6 @@ class TritonGemmTest : public TritonTest {
     // Do not fall back to cuBLAS and disable cuDNN; we are testing Triton.
     debug_options.set_xla_gpu_cublas_fallback(false);
     debug_options.set_xla_gpu_cudnn_gemm_fusion_level(0);
-    // Do not autotune split-k by default, since this prevents deterministically
-    // matching the optimized HLO.
-    debug_options.set_xla_gpu_enable_split_k_autotuning(false);
     // Do not split K, instructions reach the fusion pipeline as defined.
     debug_options.add_xla_disable_hlo_passes("splitk-rewriter");
     // Always rewrite Gemms with Triton regardless of size.

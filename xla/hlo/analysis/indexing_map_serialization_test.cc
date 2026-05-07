@@ -170,6 +170,16 @@ TEST_F(IndexingMapSerializationTest, AffineExprsWithParens) {
   )");
 }
 
+TEST_F(IndexingMapSerializationTest, MinMaxExpressions) {
+  ParseAndCheck(R"(
+    (d0, d1)[s0] -> (min(d0, 5), max(d1, s0)),
+    domain:
+    d0 in [0, 9],
+    d1 in [0, 9],
+    s0 in [0, 9]
+  )");
+}
+
 // This test will be updated when the printing uses types of variables.
 TEST_F(IndexingMapSerializationTest, CustomNames) {
   ParseAndCheck(R"(

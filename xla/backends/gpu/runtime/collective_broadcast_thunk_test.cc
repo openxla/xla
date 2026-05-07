@@ -89,8 +89,7 @@ ENTRY test_computation {
       module->entry_computation()->root_instruction();
   ASSERT_EQ(root_instr->opcode(), HloOpcode::kCollectiveBroadcast);
   const HloCollectiveBroadcastInstruction* cb_instr =
-      tensorflow::down_cast<const HloCollectiveBroadcastInstruction*>(
-          root_instr);
+      absl::down_cast<const HloCollectiveBroadcastInstruction*>(root_instr);
   ASSERT_NE(cb_instr, nullptr);
 
   // Buffer and Allocation Setup
@@ -210,7 +209,7 @@ ENTRY test_computation {
     kinds.push_back(thunk->kind());
   }
   // The collective is sync (single device), so no AsyncStart/Done wrapping.
-  EXPECT_THAT(kinds, ElementsAre(Kind::kReplicaId, Kind::kKernel,
+  EXPECT_THAT(kinds, ElementsAre(Kind::kReplicaId, Kind::kCustomKernel,
                                  Kind::kCollectiveBroadcast));
 }
 

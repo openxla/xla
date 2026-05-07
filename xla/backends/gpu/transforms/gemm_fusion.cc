@@ -46,7 +46,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/cublas_padding_requirements.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
@@ -683,6 +682,94 @@ struct Fusion {
   HloInstruction* output = nullptr;
 };
 
+// Some instructions can be codegened by Triton, but we don't allow them in
+// GEMM fusions specifically or it doesn't make sense to fuse.
+bool AllowedInGemmFusion(const HloInstruction& instr) {
+  if (!instr.IsFusible()) {
+    return false;
+  }
+  return HloPredicateIsNotOp<HloOpcode::kFusion, HloOpcode::kDot,
+                             HloOpcode::kParameter, HloOpcode::kReduce>(&instr);
+}
+
+// Returns true if we should consider fusing the instruction into the GEMM
+// fusion.
+bool IncludeInSearchSpace(const HloInstruction& instr,
+                          const se::GpuComputeCapability& gpu_version) {
+  return AllowedInGemmFusion(instr) &&
+         IsTritonSupportedInstruction(instr, gpu_version);
+}
+
+// Recursive DFS to create maximum possible fusion.
+HloInstruction* FuseOperandsRecursively(
+    HloInstruction* instr, const HloInstruction& dot,
+    HloComputation::Builder& builder,
+    absl::flat_hash_map<HloInstruction*, HloInstruction*>& original_to_fused,
+    const se::GpuComputeCapability& gpu_version,
+    std::vector<HloInstruction*>& fusion_inputs) {
+  if (auto it = original_to_fused.find(instr); it != original_to_fused.end()) {
+    // We have already processed this instruction. Return the corresponding
+    // instruction within the fusion space.
+    return it->second;
+  }
+
+  if (instr == &dot || IncludeInSearchSpace(*instr, gpu_version)) {
+    // Found a candidate to fuse - recurse on its operands.
+    std::vector<HloInstruction*> new_operands;
+    new_operands.reserve(instr->operand_count());
+    for (HloInstruction* operand : instr->operands()) {
+      new_operands.push_back(
+          FuseOperandsRecursively(operand, dot, builder, original_to_fused,
+                                  gpu_version, fusion_inputs));
+    }
+    HloInstruction* cloned = builder.AddInstruction(
+        instr->CloneWithNewOperands(instr->shape(), new_operands));
+    original_to_fused[instr] = cloned;
+    return cloned;
+  }
+
+  // Boundary reached: create a parameter.
+  HloInstruction* param =
+      builder.AddInstruction(HloInstruction::CreateParameter(
+          fusion_inputs.size(), instr->shape(),
+          absl::StrCat("parameter_", fusion_inputs.size())));
+  fusion_inputs.push_back(instr);
+  original_to_fused[instr] = param;
+  return param;
+}
+
+Fusion CreateFusionSpace(HloDotInstruction& dot,
+                         const se::GpuComputeCapability& gpu_version,
+                         absl::string_view name) {
+  HloComputation::Builder builder(absl::StrCat(name, "_fusion_space"));
+  // Map from original HLOs to the ones in the fusion space.
+  absl::flat_hash_map<HloInstruction*, HloInstruction*> original_to_fused;
+  std::vector<HloInstruction*> fusion_inputs;
+
+  // Find the highest suitable user of the dot to be the root of the fusion.
+  HloInstruction* fusion_output = &dot;
+  while (fusion_output->user_count() == 1 &&
+         IncludeInSearchSpace(*fusion_output->users()[0], gpu_version)) {
+    fusion_output = fusion_output->users()[0];
+  }
+
+  // Starting from the root of the fusion, fuse upwards.
+  HloInstruction* cloned_output =
+      FuseOperandsRecursively(fusion_output, dot, builder, original_to_fused,
+                              gpu_version, fusion_inputs);
+  std::unique_ptr<HloComputation> computation = builder.Build(cloned_output);
+  VLOG(10) << "Fusion space computation:\n" << computation->ToString();
+
+  return Fusion{std::move(fusion_inputs), std::move(computation),
+                fusion_output};
+}
+
+absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateDotFusionV2(
+    HloDotInstruction& dot, const se::GpuComputeCapability gpu_version,
+    absl::string_view name) {
+  return CreateFusionSpace(dot, gpu_version, name);
+}
+
 }  // namespace
 
 // Fuses dot and the compatible and profitable to fuse operations around it
@@ -695,6 +782,13 @@ absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateDotFusion(
           IsTritonSupportedInstruction(dot, gpu_version);
       !is_supported) {
     return is_supported;
+  }
+
+  if (dot.GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_experimental_gemm_fusion_v2()) {
+    return CreateDotFusionV2(dot, gpu_version, name);
   }
 
   HloComputation::Builder builder(name);

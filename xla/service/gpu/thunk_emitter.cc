@@ -1291,7 +1291,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitTritonCustomCall(
 
     kernel_modules_.push_back(std::move(result.llvm_module));
     return {{kernel_name, launch_dimensions, /*cluster_dim=*/std::nullopt,
-             result.shmem_bytes, /*binary=*/"", /*tma_metadata=*/{},
+             result.shmem_bytes, /*binary=*/{}, /*tma_metadata=*/{},
              result.use_pdl}};
   };
 

@@ -437,9 +437,16 @@ std::optional<WindowedEinsumConfig> GetWindowedEinsumConfiguration(
     if (!original_ideal_sharding) {
       return true;
     }
-    for (const HloInstruction* user : to_loop_over->users()) {
+    for (HloInstruction* user : to_loop_over->users()) {
       if (user == original_hlo) {
         continue;
+      }
+      // Sharding conversion not required if tuple sharding as
+      // GetShardingFromUser() just returns leaf sharding.
+      if (user->has_sharding() && !user->sharding().IsTuple() &&
+          user->sharding().UseNamedShardingLeaf()) {
+        user->set_sharding(
+            HloSharding::V3ToV2Sharding(user->sharding().named_sharding()));
       }
       std::optional<HloSharding> from_user =
           ShardingPropagation::GetShardingFromUser(
@@ -4298,6 +4305,19 @@ absl::Status SpmdPartitioningVisitor::HandleDotHelper(
   if (hlo->sharding().IsSingleDevice()) {
     return DefaultAction(hlo);
   }
+
+  if (hlo->has_sharding() && hlo->sharding().UseNamedShardingLeaf()) {
+    hlo->set_sharding(
+        HloSharding::V3ToV2Sharding(hlo->sharding().named_sharding()));
+  }
+  for (int i = 0; i < hlo->operand_count(); ++i) {
+    if (hlo->operand(i)->has_sharding() &&
+        hlo->operand(i)->sharding().UseNamedShardingLeaf()) {
+      hlo->mutable_operand(i)->set_sharding(HloSharding::V3ToV2Sharding(
+          hlo->operand(i)->sharding().named_sharding()));
+    }
+  }
+
   HloInstruction* partitioned_dot;
   Window conv_window;
   if constexpr (std::is_same_v<CreateShardedFunctor,

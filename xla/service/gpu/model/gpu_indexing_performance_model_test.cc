@@ -74,116 +74,6 @@ class GpuIndexingPerformanceModelTest : public HloHardwareIndependentTestBase {
   size_t WarpSize() const { return ::xla::gpu::WarpSize(device_info_); }
 };
 
-TEST_F(GpuIndexingPerformanceModelTest, BroadcastElementwise) {
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
-                                           R"(
-HloModule extracted
-
-ENTRY entry_computation {
-  param_0 = f32[32]{0} parameter(0)
-  broadcast = f32[32,1,768]{2,1,0} broadcast(param_0), dimensions={0}
-  param_1 = f32[32,1,768]{2,1,0} parameter(1)
-  ROOT multiply = f32[32,1,768]{2,1,0} multiply(broadcast, param_1)
-}
-)"));
-
-  auto producer =
-      module->entry_computation()->GetInstructionWithName("broadcast");
-  auto consumer =
-      module->entry_computation()->GetInstructionWithName("multiply");
-
-  auto runtime_data = indexing_cost_model_.EstimateRunTimeForProducerConsumer(
-      producer, consumer);
-  EXPECT_EQ(runtime_data.flops, 73728);
-  EXPECT_EQ(runtime_data.bytes_written, 98304);
-  EXPECT_NEAR(absl::ToInt64Nanoseconds(runtime_data.write_time), 128, 2);
-  EXPECT_NEAR(absl::ToInt64Nanoseconds(runtime_data.exec_time), 267, 2);
-}
-
-TEST_F(GpuIndexingPerformanceModelTest, Bitcast) {
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
-                                           R"(
-HloModule m
-
-ENTRY entry_computation {
-  param_0 = bf16[4,8,65,128]{3,2,1,0} parameter(0)
-  ROOT bitcast = bf16[8,4,65,128]{3,2,0,1} bitcast(param_0)
-}
-)"));
-
-  auto instruction =
-      module->entry_computation()->GetInstructionWithName("bitcast");
-
-  auto runtime_data =
-      indexing_cost_model_.EstimateRunTimeForInstruction(instruction);
-  EXPECT_EQ(runtime_data.flops, 0);
-  EXPECT_EQ(runtime_data.bytes_written, 0);
-  EXPECT_EQ(runtime_data.write_time, absl::ZeroDuration());
-  EXPECT_EQ(runtime_data.exec_time, absl::ZeroDuration());
-}
-
-TEST_F(GpuIndexingPerformanceModelTest, Reduce) {
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
-                                           R"(
-HloModule m
-
-add {
-  param_0 = f32[] parameter(0)
-  param_1 = f32[] parameter(1)
-  ROOT add.0 = f32[] add(param_0, param_1)
-}
-
-ENTRY entry_computation {
-  param_0.3 = f32[32,40]{1,0} parameter(0)
-  constant = f32[] constant(0)
-  ROOT reduce = f32[32]{0} reduce(param_0.3, constant), dimensions={1}, to_apply=add
-}
-)"));
-
-  auto instruction = module->entry_computation()->root_instruction();
-
-  auto runtime_data =
-      indexing_cost_model_.EstimateRunTimeForInstruction(instruction);
-  EXPECT_EQ(runtime_data.flops, 3744);
-  EXPECT_EQ(runtime_data.bytes_written, 128);
-  EXPECT_NEAR(absl::ToDoubleNanoseconds(runtime_data.write_time), 0, 1);
-  EXPECT_NEAR(absl::ToDoubleNanoseconds(runtime_data.exec_time), 29, 1);
-}
-
-TEST_F(GpuIndexingPerformanceModelTest, VariadicReduce) {
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
-                                           R"(
-HloModule m
-
-add {
-  param_0 = f32[] parameter(0)
-  param_1 = f32[] parameter(1)
-  param_2 = f32[] parameter(2)
-  param_3 = f32[] parameter(3)
-  add.0 = f32[] add(param_0, param_2)
-  add.1 = f32[] add(param_1, param_3)
-  ROOT t = (f32[], f32[]) tuple(add.0, add.1)
-}
-
-ENTRY entry_computation {
-  param_0.3 = f32[32,40]{1,0} parameter(0)
-  param_1.3 = f32[32,40]{1,0} parameter(1)
-  param_2.2 = f32[] parameter(2)
-  constant = f32[] constant(0)
-  ROOT reduce = (f32[32]{0}, f32[32]{0}) reduce(param_0.3, param_1.3, param_2.2, constant), dimensions={1}, to_apply=add
-}
-)"));
-
-  auto instruction = module->entry_computation()->root_instruction();
-
-  auto runtime_data =
-      indexing_cost_model_.EstimateRunTimeForInstruction(instruction);
-  EXPECT_EQ(runtime_data.flops, 7488);
-  EXPECT_EQ(runtime_data.bytes_written, 256);
-  EXPECT_NEAR(absl::ToDoubleNanoseconds(runtime_data.write_time), 0, 1);
-  EXPECT_NEAR(absl::ToDoubleNanoseconds(runtime_data.exec_time), 58, 1);
-}
-
 TEST_F(GpuIndexingPerformanceModelTest, TritonGemm) {
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
@@ -257,60 +147,6 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(auto runtime_data,
                           indexing_cost_model_.EstimateRunTimeForTriton(
                               module->entry_computation()->root_instruction()));
-
-  constexpr int64_t kParam0SizeBytes = 512 * 911 * 4;
-  constexpr int64_t kParam1SizeBytes = 911 * 4;
-  constexpr int64_t kOutputSizeBytes = 512 * 911 * 4;
-
-  // Each block reads 1 tile of shape [1, 911] from param_0 and full param_1.
-  // In total param_0 is read once and param_1 is read 512 times.
-  constexpr int64_t kExpectedBytesRead =
-      kParam0SizeBytes + 512 * kParam1SizeBytes;
-
-  EXPECT_EQ(runtime_data.bytes_read, kExpectedBytesRead);
-  EXPECT_EQ(runtime_data.bytes_written, kOutputSizeBytes);
-  EXPECT_NEAR(absl::ToDoubleMicroseconds(runtime_data.exec_time), 5, 1);
-}
-
-TEST_F(GpuIndexingPerformanceModelTest,
-       TritonSoftmaxProducerConsumerFusionIsSupported) {
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
-HloModule m
-
-add {
-  Arg_0 = f32[] parameter(0)
-  Arg_1 = f32[] parameter(1)
-  ROOT add = f32[] add(Arg_0, Arg_1)
-}
-
-fusion {
-  param_0 = f32[512,911] parameter(0)
-  param_1 = f32[911] parameter(1)
-  broadcast = f32[512,911] broadcast(param_1), dimensions={1}
-  ROOT multiply = f32[512,911] multiply(param_0, broadcast)
-}
-
-triton_softmax_computation {
-  param_0 = f32[512,911] parameter(0)
-  constant_0 = f32[] constant(0)
-  reduce_0 = f32[512] reduce(param_0, constant_0), dimensions={1}, to_apply=add
-  broadcast_4 = f32[512,911] broadcast(reduce_0), dimensions={0}
-  ROOT multiply = f32[512,911] multiply(param_0, broadcast_4)
-}
-
-ENTRY main {
-  param_0 = f32[512,911] parameter(0)
-  param_1 = f32[911] parameter(1)
-  fusion.1 = f32[512,911] fusion(param_0, param_1), kind=kLoop, calls=fusion
-  ROOT triton_softmax = f32[512,911] fusion(fusion.1), kind=kCustom, calls=triton_softmax_computation, backend_config={"fusion_backend_config": {"kind":"__triton","block_level_fusion_config":{"output_tiles":[{"sizes":["1","911"]}],"num_warps":"2"}}}
-}
-)"));
-  auto consumer = module->entry_computation()->root_instruction();
-  auto producer = consumer->operand(0);
-
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto runtime_data,
-      indexing_cost_model_.EstimateRunTimeForTriton(producer, consumer));
 
   constexpr int64_t kParam0SizeBytes = 512 * 911 * 4;
   constexpr int64_t kParam1SizeBytes = 911 * 4;
@@ -647,24 +483,27 @@ ENTRY main {
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
       module->entry_computation()->root_instruction());
 
-  LaunchDimensions launch_dimensions{16, 1024};
+  uint64_t num_blocks = 8;
+  int64_t num_warps = 32;
 
   auto result = indexing_cost_model_.EstimateRunTimeForTiledFusion(
-      *fusion_adaptor, launch_dimensions,
-      BlockLevelParameters{/*output_tile_sizes=*/{{64, 32, 32}}});
+      *fusion_adaptor, LaunchDimensions{num_blocks, num_warps * WarpSize()},
+      BlockLevelParameters{/*output_tile_sizes=*/{{64, 32, 32}},
+                           /*num_warps=*/num_warps});
 
   TF_ASSERT_OK(result.status());
   // The flops contribution for a single instruction is calculated as:
   // flops_per_element * padded_tile_size * num_blocks_cur_hlo
   EXPECT_EQ(result->flops,
-            514 * 1024 * 16                                // ==> %dot
-                + 86 * 2048 * (16 * CeilOfRatio(257, 64))  // ==> %exp
+            514 * 1024 * num_blocks                                // ==> %dot
+                + 86 * 2048 * (num_blocks * CeilOfRatio(257, 64))  // ==> %exp
   );
   // The bytes read contribution for a single instruction is calculated as:
   // element_type_size * tile_size * num_blocks_cur_hlo
-  EXPECT_EQ(result->bytes_read,
-            4 * (64 * 32) * (16 * CeilOfRatio(257, 64))        // ==> %p1
-                + 4 * (64 * 32) * (16 * CeilOfRatio(257, 64))  // ==> %p0
+  EXPECT_EQ(
+      result->bytes_read,
+      4 * (64 * 32) * (num_blocks * CeilOfRatio(257, 64))        // ==> %p1
+          + 4 * (64 * 32) * (num_blocks * CeilOfRatio(257, 64))  // ==> %p0
   );
 }
 
@@ -695,16 +534,20 @@ ENTRY main {
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
       module->entry_computation()->root_instruction());
 
+  int64_t num_warps = 1;
+
   TF_ASSERT_OK_AND_ASSIGN(
-      auto res1, indexing_cost_model_.EstimateRunTimeForTiledFusion(
-                     *fusion_adaptor, /*launch_dimensions=*/{16, 32},
-                     BlockLevelParameters{/*output_tile_sizes=*/{{1, 16000}}}));
+      auto res1,
+      indexing_cost_model_.EstimateRunTimeForTiledFusion(
+          *fusion_adaptor, /*launch_dimensions=*/{16, num_warps * WarpSize()},
+          BlockLevelParameters{/*output_tile_sizes=*/{{1, 16000}}}));
   EXPECT_NEAR(absl::ToDoubleMicroseconds(res1.exec_time), 3, 1);
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto res2, indexing_cost_model_.EstimateRunTimeForTiledFusion(
-                     *fusion_adaptor, /*launch_dimensions=*/{8, 32},
-                     BlockLevelParameters{/*output_tile_sizes=*/{{2, 16000}}}));
+      auto res2,
+      indexing_cost_model_.EstimateRunTimeForTiledFusion(
+          *fusion_adaptor, /*launch_dimensions=*/{8, num_warps * WarpSize()},
+          BlockLevelParameters{/*output_tile_sizes=*/{{2, 16000}}}));
   EXPECT_TRUE(res2.IsInfinite());
 }
 
@@ -743,21 +586,24 @@ ENTRY main {
       module->entry_computation()->root_instruction());
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto res1, indexing_cost_model_.EstimateRunTimeForTiledFusion(
-                     *fusion_adaptor, /*launch_dimensions=*/{1024, 8},
-                     BlockLevelParameters{/*output_tile_sizes=*/{{4, 4}}}));
-  EXPECT_NEAR(absl::ToDoubleMicroseconds(res1.exec_time), 292, 1);
+      auto res1,
+      indexing_cost_model_.EstimateRunTimeForTiledFusion(
+          *fusion_adaptor, /*launch_dimensions=*/{8192, 8 * WarpSize()},
+          BlockLevelParameters{/*output_tile_sizes=*/{{4, 4}}}));
+  EXPECT_NEAR(absl::ToDoubleMicroseconds(res1.exec_time), 147, 1);
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto res2, indexing_cost_model_.EstimateRunTimeForTiledFusion(
-                     *fusion_adaptor, /*launch_dimensions=*/{512, 8},
-                     BlockLevelParameters{/*output_tile_sizes=*/{{8, 4}}}));
+      auto res2,
+      indexing_cost_model_.EstimateRunTimeForTiledFusion(
+          *fusion_adaptor, /*launch_dimensions=*/{4096, 8 * WarpSize()},
+          BlockLevelParameters{/*output_tile_sizes=*/{{8, 4}}}));
   EXPECT_TRUE(res2.IsInfinite());
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto res3, indexing_cost_model_.EstimateRunTimeForTiledFusion(
-                     *fusion_adaptor, /*launch_dimensions=*/{1024, 4},
-                     BlockLevelParameters{/*output_tile_sizes=*/{{4, 8}}}));
+      auto res3,
+      indexing_cost_model_.EstimateRunTimeForTiledFusion(
+          *fusion_adaptor, /*launch_dimensions=*/{4096, 4 * WarpSize()},
+          BlockLevelParameters{/*output_tile_sizes=*/{{4, 8}}}));
   EXPECT_TRUE(res3.IsInfinite());
 }
 

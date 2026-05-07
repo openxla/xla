@@ -3140,10 +3140,14 @@ LogicalResult ExportXlaOp(AsyncStartOp op, OpLoweringContext ctx) {
     auto all_gather_dim = all_gather.getAllGatherDim();
     int64_t shard_count = result_type.getDimSize(all_gather_dim) /
                           operand_type.getDimSize(all_gather_dim);
+    auto replica_groups =
+        Convert_replica_groups(all_gather.getReplicaGroups(), all_gather);
+    if (!replica_groups.ok() || !*replica_groups) {
+      return op.emitOpError(replica_groups.status().ToString());
+    }
     (*ctx.values)[op.getResult()] =
         xla::internal::XlaBuilderFriend::BuildAllGatherStart(
-            ctx.builder, operand, all_gather_dim, shard_count,
-            Convert_replica_groups(all_gather.getReplicaGroups()),
+            ctx.builder, operand, all_gather_dim, shard_count, **replica_groups,
             Convert_channel_handle(all_gather.getChannelHandle()),
             ExtractLayout(all_gather,
                           mlir::cast<RankedTensorType>(result_type).getRank()),
@@ -3158,10 +3162,14 @@ LogicalResult ExportXlaOp(AsyncStartOp op, OpLoweringContext ctx) {
             &all_reduce.getComputation(), computation))) {
       return failure();
     }
+    auto replica_groups =
+        Convert_replica_groups(all_reduce.getReplicaGroups(), all_reduce);
+    if (!replica_groups.ok() || !*replica_groups) {
+      return op.emitOpError(replica_groups.status().ToString());
+    }
     (*ctx.values)[op.getResult()] =
         xla::internal::XlaBuilderFriend::BuildAllReduceStart(
-            ctx.builder, operand, computation,
-            Convert_replica_groups(all_reduce.getReplicaGroups()),
+            ctx.builder, operand, computation, **replica_groups,
             Convert_channel_handle(all_reduce.getChannelHandle()), std::nullopt,
             Convert_use_global_device_ids(all_reduce.getUseGlobalDeviceIds()));
     return success();
@@ -4194,7 +4202,6 @@ LogicalResult ExportXlaOp(XlaRngGetAndUpdateStateOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(ScanOp op, OpLoweringContext ctx) {
-  auto& value_map = *ctx.values;
   xla::XlaComputationId body;
   if (failed(ctx.converter->LowerRegionAsComputation(&op.getBody(), body))) {
     return failure();
@@ -4233,11 +4240,12 @@ LogicalResult ExportXlaOp(ScanOp op, OpLoweringContext ctx) {
       xla::Scan(inputs, inits, body, op.getDimension(), scan_dimension_size,
                 op.getIsReverse(), is_associative);
 
-  for (int i = 0; i < op.getNumResults(); ++i) {
-    if (!op.getResult(i).use_empty()) {
-      value_map[op.getResult(i)] = xla::GetTupleElement(result, i);
-    }
-  }
+  // The HLO `kScan` instruction always produces a tuple, even with a single
+  // result. Use `BuildGetTupleElementsForTupleResults` so per-result shardings
+  // (e.g. propagated by Shardy) are applied to each get-tuple-element rather
+  // than the tuple as a whole, which would otherwise fail validation against
+  // the single-tensor element shape.
+  BuildGetTupleElementsForTupleResults(op, result, ctx);
   return success();
 }
 

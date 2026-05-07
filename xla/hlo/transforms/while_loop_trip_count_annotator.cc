@@ -55,13 +55,8 @@ static bool ForwardInductionVarToConstants(HloInstruction* while_instr,
 
   for (HloInstruction* gte : indvar_gtes) {
     HloComputation* comp = gte->parent();
-    Literal literal;
-    if (gte->shape().element_type() == S32) {
-      literal =
-          LiteralUtil::CreateR0<int32_t>(static_cast<int32_t>(final_value));
-    } else {
-      literal = LiteralUtil::CreateR0<int64_t>(final_value);
-    }
+    Literal literal =
+        LiteralUtil::CreateR0(gte->shape().element_type(), final_value);
     HloInstruction* constant = comp->AddInstruction(
         HloInstruction::CreateConstant(std::move(literal)));
     CHECK_OK(gte->ReplaceAllUsesWith(constant));

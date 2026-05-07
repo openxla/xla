@@ -19,6 +19,7 @@ limitations under the License.
 #include <sys/types.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 #include "xla/core/collectives/symmetric_memory.h"
@@ -50,6 +51,7 @@ struct RaggedAllToAllWithSymmetricMemoryKernel {
   using KernelType = stream_executor::TypedKernel<
       /*input_ptr=*/stream_executor::DeviceAddressBase,
       /*output_ptrs=*/xla::SymmetricMemory*,
+      /*output_sym_offset=*/size_t,
       /*input_offsets_ptr=*/stream_executor::DeviceAddressBase,
       /*send_sizes_ptr=*/stream_executor::DeviceAddressBase,
       /*output_offsets_ptr=*/stream_executor::DeviceAddressBase,

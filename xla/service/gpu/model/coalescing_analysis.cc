@@ -150,45 +150,6 @@ double BandwidthUtilizationRateHeuristicForTiledMemoryAccess(
   return 1.0 * contiguous_bytes_accessed / effective_bytes_accessed;
 }
 
-bool IsTiledReadCoalescedHeuristic(const TiledHloInstruction& operand,
-                                   const se::DeviceDescription& device_info) {
-  const Shape& shape = operand.hlo()->shape();
-
-  // Compute the number of elements in the contiguous part of the tile.
-  int64_t contiguous_read_elements = 1;
-  for (const auto dim_idx : shape.layout().minor_to_major()) {
-    // This dimension is strided, so it's not contiguous.
-    if (operand.tile_stride(dim_idx) != 1) {
-      break;
-    }
-
-    int64_t tile_size = operand.tile_size(dim_idx);
-    int64_t dim_size = shape.dimensions(dim_idx);
-
-    // Make sure to ignore the mask if there is one.
-    contiguous_read_elements *= std::min(tile_size, dim_size);
-
-    // This dimension is only partially captured, so more major dimensions are
-    // necessarily not captured contiguously.
-    if (tile_size < dim_size) {
-      break;
-    }
-  }
-
-  // Compute the size of the contiguous part of the tile in bytes.
-  int64_t contiguous_bytes_accessed =
-      contiguous_read_elements *
-      ShapeUtil::ByteSizeOfPrimitiveType(operand.hlo()->shape().element_type());
-
-  // We consider a read coalesced if the contiguous part of the read covers the
-  // whole DRAM->L2 cache line.
-  //
-  // TODO(b/332714755): note that we don't check that we fully exploit all the
-  // cache lines we read from if we happen to read through several of them.
-  return contiguous_bytes_accessed >=
-         device_info.dram_to_l2_transaction_size_bytes();
-}
-
 namespace {
 
 using ::mlir::MLIRContext;

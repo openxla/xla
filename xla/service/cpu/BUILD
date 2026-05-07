@@ -179,8 +179,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
-        "//xla/hlo/transforms:convert_memory_placement_to_internal_annotations",
-        "//xla/hlo/transforms:host_offloader",
         "//xla/hlo/transforms:literal_canonicalizer",
         "//xla/hlo/transforms:operand_upcaster",
         "//xla/hlo/transforms:propagate_call_metadata",

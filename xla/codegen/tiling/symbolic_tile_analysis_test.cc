@@ -2622,6 +2622,44 @@ ENTRY main {
                                          num_m_tiles, num_n_tiles, kTileN)));
 }
 
+TEST_F(SymbolicTileAnalysisTest, ComputeTilingForRegionsWithReduceDimension) {
+  // Concatenation will introduce regions that will have a reduce dimension from
+  // the reduce operation.
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"hlo(
+HloModule m
+
+add_fn {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT sum = f32[] add(lhs, rhs)
+}
+
+fused_multiply {
+  param_0 = f32[4,2]{1,0} parameter(0)
+  param_1 = f32[4,2]{1,0} parameter(1)
+  concat = f32[4,4]{1,0} concatenate(param_0, param_1), dimensions={1}
+  zero = f32[] constant(0)
+  ROOT sum = f32[4]{0} reduce(concat, zero), dimensions={0}, to_apply=add_fn
+}
+
+ENTRY main {
+  param_0.1 = f32[4,2]{1,0} parameter(0)
+  param_1.1 = f32[4,2]{1,0} parameter(1)
+  ROOT fusion = f32[4]{0} fusion(param_0.1, param_1.1), kind=kLoop, calls=fused_multiply
+}
+)hlo"));
+  std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
+  ASSERT_TRUE(analysis.has_value());
+  const HloInstruction* fusion_root =
+      module->entry_computation()->root_instruction()->fused_expression_root();
+  auto tiled_hlo_computation = analysis->ComputeTiledComputation(
+      Tiling({{fusion_root, {2}}}), default_schedule_builder_,
+      /*constraints_are_known_satisfied=*/false,
+      /*compute_all_tile_offset_indexing_maps=*/true);
+  TF_ASSERT_OK(tiled_hlo_computation.status());
+}
+
 // Check that we don't hit the exponential complexity edge case (it will timeout
 // if we do).
 TEST_F(SymbolicTileAnalysisTest, FibonacciSucceeds) {

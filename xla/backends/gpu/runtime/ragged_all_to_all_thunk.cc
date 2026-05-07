@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -523,8 +524,9 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
         clique_key, stream, state->rank,
         state->barrier_signal_symmetric_memory.Lock(),
         state->barrier_signal_value->address(),
-        state->output_temporary_symmetric_memory, config_.num_total_updates,
-        config_.num_input_rows, config_.num_row_elements, device_buffers);
+        state->output_temporary_symmetric_memory, /*output_sym_offset=*/0,
+        config_.num_total_updates, config_.num_input_rows,
+        config_.num_row_elements, device_buffers);
   }
 
   if (should_use_one_shot_kernel && peer_access_enabled &&
@@ -692,8 +694,8 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
     std::shared_ptr<xla::SymmetricMemory> barrier_signal_symmetric_memory,
     const se::DeviceAddressBase& barrier_signal_value,
     std::shared_ptr<xla::SymmetricMemory> output_temporary_symmetric_memory,
-    int64_t num_total_updates, int64_t num_input_rows, int64_t num_row_elements,
-    absl::Span<DeviceBufferPair const> buffers) {
+    size_t output_sym_offset, int64_t num_total_updates, int64_t num_input_rows,
+    int64_t num_row_elements, absl::Span<DeviceBufferPair const> buffers) {
   TF_RET_CHECK(output_temporary_symmetric_memory != nullptr)
       << "Output buffer ptr storage symmetric memory is not supported in "
          "one-shot NCCL kernel.";
@@ -716,7 +718,8 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
       << " symmetric temporary output (handle="
       << output_temporary_symmetric_memory
       << ", address=" << output_temporary_symmetric_memory->addr().opaque()
-      << ", size=" << output_temporary_symmetric_memory->addr().size() << ")"
+      << ", size=" << output_temporary_symmetric_memory->addr().size()
+      << ", sym_offset=" << output_sym_offset << ")"
       << " barrier signal symmetric memory (handle="
       << barrier_signal_symmetric_memory.get()
       << ", address=" << barrier_signal_symmetric_memory->addr().opaque()
@@ -745,9 +748,10 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
 
   TF_RETURN_IF_ERROR(RunRaggedAllToAllWithSymmetricMemoryKernel(
       &stream, element_type, input_buffer,
-      output_temporary_symmetric_memory.get(), buffers[2].source_buffer,
-      buffers[3].source_buffer, buffers[4].source_buffer, num_ranks,
-      num_updates_per_replica, num_input_rows, num_row_elements));
+      output_temporary_symmetric_memory.get(), output_sym_offset,
+      buffers[2].source_buffer, buffers[3].source_buffer,
+      buffers[4].source_buffer, num_ranks, num_updates_per_replica,
+      num_input_rows, num_row_elements));
 
   // 3. Barrier (Post-Kernel)
   // Global synchronization to ensure data consistency.

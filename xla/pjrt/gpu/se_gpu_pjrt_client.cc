@@ -1559,7 +1559,8 @@ absl::StatusOr<std::shared_ptr<tsl::Allocator>> CreateCudaAsyncAllocator(
 
 // Builds a LocalDeviceState for each GPU present.
 absl::StatusOr<std::map<int, std::unique_ptr<LocalDeviceState>>>
-BuildLocalDeviceStates(LocalClient* xla_client, bool schedule_async) {
+BuildLocalDeviceStates(LocalClient* xla_client, bool schedule_async,
+                       std::optional<int> max_inflight_computations) {
   std::map<int, std::unique_ptr<LocalDeviceState>> addressable_devices;
   for (se::StreamExecutor* executor :
        xla_client->backend().stream_executors()) {
@@ -1567,10 +1568,9 @@ BuildLocalDeviceStates(LocalClient* xla_client, bool schedule_async) {
         executor->device_ordinal(),
         std::make_unique<LocalDeviceState>(
             executor, xla_client, LocalDeviceState::kComputeSynchronized,
-            /*max_inflight_computations=*/32,
-            /*allow_event_reuse=*/true, /*use_callback_stream=*/true,
-            /*device_ordinal=*/-1, /*stream_options=*/std::nullopt,
-            /*schedule_async=*/schedule_async));
+            max_inflight_computations, /*allow_event_reuse=*/true,
+            /*use_callback_stream=*/true, /*device_ordinal=*/-1,
+            /*stream_options=*/std::nullopt, schedule_async));
   }
   return std::move(addressable_devices);
 }
@@ -1834,6 +1834,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
         int process_id = i * sizes.num_hosts_per_partition + j;
         local_topologies[process_id].set_process_id(process_id);
         local_topologies[process_id].set_boot_id(absl::StrCat(i));
+        local_topologies[process_id].set_partition_index(i);
       }
     }
     TF_ASSIGN_OR_RETURN(global_topology,
@@ -2082,8 +2083,10 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
       LocalClient * xla_client,
       GetGpuXlaClient(options.platform_name, options.allowed_devices));
   std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states;
-  TF_ASSIGN_OR_RETURN(local_device_states,
-                      BuildLocalDeviceStates(xla_client, use_async_dispatch));
+  TF_ASSIGN_OR_RETURN(
+      local_device_states,
+      BuildLocalDeviceStates(xla_client, use_async_dispatch,
+                             options.max_inflight_computations));
   EnablePeerAccess(xla_client->backend().stream_executors());
   TF_ASSIGN_OR_RETURN(auto allocator,
                       GetStreamExecutorGpuDeviceAllocator(

@@ -1,6 +1,7 @@
 # Tensorflow default + linux implementations of tensorflow/core/platform libraries.
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
+load("//xla/backends/gpu/tests:helper.bzl", "get_canonical_repo_name")
 load(
     "//xla/tsl:tsl.bzl",
     "if_not_fuchsia",
@@ -80,6 +81,13 @@ cc_library(
         if_false = ["@cuda_nvcc//:nvvm"],
         if_true = ["@cuda_nvvm//:nvvm"],
     )),
+    local_defines = [
+        "CUDA_NVCC_REPO_NAME=\\\"" + get_canonical_repo_name("cuda_nvcc") + "\\\"",
+        "CUDA_NVDISASM_REPO_NAME=\\\"" + get_canonical_repo_name("cuda_nvdisasm") + "\\\"",
+        "NVIDIA_NVSHMEM_REPO_NAME=\\\"" + get_canonical_repo_name("nvidia_nvshmem") + "\\\"",
+        "CUDA_NVVM_REPO_NAME=\\\"" + get_canonical_repo_name("cuda_nvvm") + "\\\"",
+        "CUDA_CUDART_REPO_NAME=\\\"" + get_canonical_repo_name("cuda_cudart") + "\\\"",
+    ],
     tags = [
         "manual",
         "no_oss",

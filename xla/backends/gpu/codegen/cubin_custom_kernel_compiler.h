@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/threadpool.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 
@@ -67,7 +68,13 @@ class CubinCustomKernelCompiler : public KernelCompiler {
       const emitters::KernelArguments& kernel_arguments,
       const LaunchDimensions& launch_dimensions) override;
 
+  xla::Future<std::vector<uint8_t>> CompileToPtx(
+      LlvmKernelSource kernel_source) override;
+
  private:
+  absl::StatusOr<std::vector<uint8_t>> CompileToPtxImpl(
+      LlvmKernelSource kernel_source);
+
   absl::StatusOr<std::unique_ptr<Thunk>> CompileImpl(
       Thunk::ThunkInfo thunk_info, LlvmKernelSource kernel_source,
       const std::string& sanitized_kernel_name,

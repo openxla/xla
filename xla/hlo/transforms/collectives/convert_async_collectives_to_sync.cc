@@ -74,10 +74,19 @@ ConvertAsyncCollectivesToSync::ReplaceWithSyncVariant(
     }
     case HloOpcode::kCollectivePermuteStart: {
       auto* async_cp = Cast<HloCollectivePermuteInstruction>(async_start);
-      sync_instruction =
-          computation->AddInstruction(HloInstruction::CreateCollectivePermute(
-              async_done->shape(), async_cp->operands(),
-              async_cp->source_target_pairs(), async_cp->channel_id()));
+      if (async_cp->inplace()) {
+        sync_instruction =
+            computation->AddInstruction(HloInstruction::CreateCollectivePermute(
+                async_done->shape(), async_cp->mutable_operand(0),
+                async_cp->mutable_operand(1), async_cp->mutable_operand(2),
+                async_cp->mutable_operand(3), async_cp->source_target_pairs(),
+                async_cp->dynamic_slice_sizes_list(), async_cp->channel_id()));
+      } else {
+        sync_instruction =
+            computation->AddInstruction(HloInstruction::CreateCollectivePermute(
+                async_done->shape(), async_cp->operands(),
+                async_cp->source_target_pairs(), async_cp->channel_id()));
+      }
       break;
     }
     case HloOpcode::kAsyncStart: {
@@ -166,8 +175,11 @@ ConvertAsyncCollectivesToSync::ReplaceAsyncInstructionsWithSync(
     replaced_ops[async_done] = sync;
   }
 
-  // Update schedule.
+  // Update schedule, if there is one.
   HloModule* module = computation->parent();
+  if (!module->has_schedule()) {
+    return absl::OkStatus();
+  }
   const HloInstructionSequence& sequence =
       module->schedule().sequence(computation);
   std::vector<HloInstruction*> new_sequence;

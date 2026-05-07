@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/util.h"
@@ -282,11 +283,13 @@ class LatencyHidingSchedulerTest : public HloHardwareIndependentTestBase {
   }
 
  protected:
-  absl::StatusOr<std::unique_ptr<LatencyHidingScheduler>> SetupScheduler(
-      HloModule* module, SchedulerConfig sched_config = GetDefaultSchedConfig(),
-      std::unique_ptr<LatencyEstimator> latency_estimator =
-          std::make_unique<ApproximateLatencyEstimator>(),
-      std::unique_ptr<AsyncTracker> async_tracker = nullptr) {
+  absl::StatusOr<std::pair<std::unique_ptr<LatencyHidingScheduler>,
+                           std::shared_ptr<SchedulerCore>>>
+  SetupScheduler(HloModule* module,
+                 SchedulerConfig sched_config = GetDefaultSchedConfig(),
+                 std::unique_ptr<LatencyEstimator> latency_estimator =
+                     std::make_unique<ApproximateLatencyEstimator>(),
+                 std::unique_ptr<AsyncTracker> async_tracker = nullptr) {
     AsyncCollectiveCreator::CollectiveCreatorConfig config{
         /*convert_all_reduce=*/HloPredicateTrue,
         /*convert_all_gather=*/HloPredicateTrue,
@@ -305,10 +308,11 @@ class LatencyHidingSchedulerTest : public HloHardwareIndependentTestBase {
         std::make_shared<const SchedulingContext>(
             module, std::move(latency_estimator), std::move(async_tracker),
             &alias_info_, ShapeSizeBytes);
-    auto scheduler_core = std::make_unique<DefaultSchedulerCore>(
+    auto scheduler_core = std::make_shared<DefaultSchedulerCore>(
         scheduling_context, sched_config);
-    return std::make_unique<LatencyHidingScheduler>(scheduling_context,
-                                                    std::move(scheduler_core));
+    auto scheduler = std::make_unique<LatencyHidingScheduler>(
+        scheduling_context, scheduler_core);
+    return std::make_pair(std::move(scheduler), std::move(scheduler_core));
   }
   AliasInfo alias_info_;
 };
@@ -4969,8 +4973,7 @@ TEST_F(LatencyHidingSchedulerTest, ValidScheduleWithRandomPreferences) {
   )";
 
   TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
-  std::unique_ptr<LatencyHidingScheduler> scheduler =
-      SetupScheduler(hlo_module.get()).value();
+  auto [scheduler, scheduler_core] = SetupScheduler(hlo_module.get()).value();
 
   // Save the old schedule before running the LHS.
   HloComputation* computation = hlo_module->entry_computation();
@@ -4991,8 +4994,11 @@ TEST_F(LatencyHidingSchedulerTest, ValidScheduleWithRandomPreferences) {
   // Restore original order.
   hlo_module->schedule().set_sequence(computation, original_order);
 
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto sched_state,
+      scheduler_core->MakeSchedulingState(hlo_module->entry_computation()));
   auto result = scheduler->ScheduleWithPreferences(
-      hlo_module.get(), random_preferences, computation);
+      hlo_module.get(), random_preferences, computation, sched_state);
 
   // Set the new schedule.
   hlo_module->schedule().set_sequence(computation, result->first);
@@ -5001,6 +5007,79 @@ TEST_F(LatencyHidingSchedulerTest, ValidScheduleWithRandomPreferences) {
   // schedule.
   TF_EXPECT_OK(hlo_module->schedule().Verify());
 }
+
+TEST_F(LatencyHidingSchedulerTest, MultipleAttemptsConsistentResults) {
+  constexpr absl::string_view hlo_string = R"(
+    HloModule module, is_scheduled=true
+    ENTRY %module {
+      %constant.19 = u32[] constant(1)
+      %replica_id = u32[]{:T(128)} replica-id()
+      %add.1 = u32[]{:T(128)} add(replica_id, constant.19)
+      %convert = f32[]{:T(128)} convert(u32[]{:T(128)} %replica_id)
+      %convert.1 = f32[]{:T(128)} convert(u32[]{:T(128)} %add.1)
+      %color_operand.1 = f32[8,256,256]{2,1,0:T(8,128)} broadcast(f32[]{:T(128)} %convert), dimensions={}
+      %color_operand.2 = f32[8,256,256]{2,1,0:T(8,128)} broadcast(f32[]{:T(128)} %convert.1), dimensions={}
+      %ag-start = (f32[8,256,256], f32[16,256,256]) all-gather-start(f32[8,256,256] %color_operand.1), replica_groups={{0,1}}, dimensions={0},
+        metadata={op_type="AllGather" op_name="ag0"}
+      %ag-start.2 = (f32[8,256,256], f32[16,256,256]) all-gather-start(f32[8,256,256] %color_operand.2), replica_groups={{0,1}}, dimensions={0},
+        metadata={op_type="AllGather" op_name="ag1"}
+      %ag-done = f32[16,256,256] all-gather-done((f32[8,256,256], f32[16,256,256]) %ag-start),
+        metadata={op_type="AllGather" op_name="ag0"}
+      %ag-done.2 = f32[16,256,256] all-gather-done((f32[8,256,256], f32[16,256,256]) %ag-start.2),
+        metadata={op_type="AllGather" op_name="ag1"}
+      p0 = f32[16,64,256]{2,1,0} parameter(0)
+      p1 = f32[16,64,256]{2,1,0} parameter(1)
+      p2 = f32[16,256,256]{2,1,0} parameter(2)
+      p3 = f32[16,256,256]{2,1,0} parameter(3)
+      c0 = f32[16,256,256]{2,1,0} convolution(p0, p1),
+        window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb
+      c1 = f32[16,256,256]{2,1,0} convolution(p0, p1),
+        window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb
+      ROOT a2 = f32[16,256,256]{2,1,0} add(%ag-done, %ag-done.2)
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  auto [scheduler, scheduler_core] = SetupScheduler(hlo_module.get()).value();
+
+  HloComputation* computation = hlo_module->entry_computation();
+  uint64_t instruction_count = computation->instruction_count();
+
+  std::vector<HloInstruction*> original_order =
+      hlo_module->schedule().sequence(computation).instructions();
+
+  // We need to run the scheduler once to initialize some of the global state.
+  TF_EXPECT_OK(scheduler->Run(hlo_module.get()));
+
+  std::vector<double> random_preferences(instruction_count, 0.0);
+  std::srand(static_cast<unsigned int>(std::time(nullptr)));
+  for (size_t i = 0; i < instruction_count; ++i) {
+    random_preferences[i] = static_cast<double>(std::rand()) / RAND_MAX;
+  }
+
+  // Restore original order.
+  hlo_module->schedule().set_sequence(computation, original_order);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto sched_state,
+                          scheduler_core->MakeSchedulingState(computation));
+
+  // First attempt
+  auto result1 = scheduler->ScheduleWithPreferences(
+      hlo_module.get(), random_preferences, computation, sched_state);
+  TF_ASSERT_OK(result1.status());
+
+  // Second attempt with the SAME preferences and SAME sched_state
+  auto result2 = scheduler->ScheduleWithPreferences(
+      hlo_module.get(), random_preferences, computation, sched_state);
+  TF_ASSERT_OK(result2.status());
+
+  // Verify that both attempts produced identical schedules
+  EXPECT_EQ(result1->first, result2->first);
+  EXPECT_EQ(result1->second.peak_memory, result2->second.peak_memory);
+  EXPECT_EQ(result1->second.total_wasted_cycles,
+            result2->second.total_wasted_cycles);
+}
+
 // Check that "keep_original_sequence_order_in_group" frontend attribute takes
 // effect.
 TEST_F(LatencyHidingSchedulerTest, FlexibleSchedulingAnnotationScheduling) {

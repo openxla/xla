@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_verifier.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -3297,6 +3298,35 @@ ENTRY main {
       GemmRewriter(se::CudaComputeCapability{},
                    stream_executor::SemanticVersion{0, 0, 0}),
       std::nullopt);
+}
+
+TEST_F(GemmRewriteTest, UnsupportedGemmFusionF16) {
+  const char* hlo_text = R"(
+HloModule module
+
+ENTRY main {
+  p0 = f16[100,200,300,512]{1,3,2,0} parameter(0)
+  p1 = f16[100,400,300,512]{1,3,2,0} parameter(1)
+  ROOT dot = f16[100,300,200,400]{3,2,1,0} dot(p0, p1),
+      lhs_batch_dims={0,2}, lhs_contracting_dims={3},
+      rhs_batch_dims={0,2}, rhs_contracting_dims={3}
+}
+)";
+
+  auto module_status = ParseAndReturnVerifiedModule(hlo_text);
+  ASSERT_TRUE(module_status.ok());
+  auto module = std::move(module_status.value());
+
+  GemmRewriter pass(se::CudaComputeCapability{},
+                    stream_executor::SemanticVersion{0, 0, 0});
+  auto changed_status = pass.Run(module.get());
+  ASSERT_TRUE(changed_status.ok());
+  EXPECT_TRUE(changed_status.value());
+
+  HloVerifier verifier(/*layout_sensitive=*/false,
+                       /*allow_mixed_precision=*/false);
+  auto verify_status = verifier.Run(module.get());
+  EXPECT_TRUE(verify_status.ok());
 }
 
 }  // namespace

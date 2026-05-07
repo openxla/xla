@@ -52,20 +52,25 @@ limitations under the License.
 
 namespace xla {
 
-LocalDeviceState::LocalDeviceState(
-    se::StreamExecutor* executor, LocalClient* client,
-    AllocationModel allocation_model, int max_inflight_computations,
-    bool allow_event_reuse, bool use_callback_stream, int device_ordinal,
-    std::optional<StreamOptions> stream_options, bool schedule_async)
+LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
+                                   LocalClient* client,
+                                   AllocationModel allocation_model,
+                                   std::optional<int> max_inflight_computations,
+                                   bool allow_event_reuse,
+                                   bool use_callback_stream, int device_ordinal,
+                                   std::optional<StreamOptions> stream_options,
+                                   bool schedule_async)
     : allocation_model_(allocation_model),
       event_pool_(allow_event_reuse),
-      compute_semaphore_(
-          /*capacity=*/max_inflight_computations),
       executor_(executor),
       client_(client),
       prng_seed_generator_(prng_seed_device_()),
       prng_seed_distribution_(std::numeric_limits<int>::min(),
                               std::numeric_limits<int>::max()) {
+  if (max_inflight_computations.has_value()) {
+    compute_semaphore_.emplace(*max_inflight_computations);
+  }
+
   // Setting XLA_PJRT_GPU_ALLOW_DELETE_BEFORE_FULFILL to false will:
   // 1. disallow the host to schedule `create buffer -> use -> delete ->
   // fulfill`, which is a use case unit tested in

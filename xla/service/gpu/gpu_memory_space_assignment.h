@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu_topology.h"
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {
@@ -73,7 +74,8 @@ bool RequiresCollectiveSymmetricMemorySpace(const HloInstruction* inst);
 //  - Custom call `operands_memory_spaces` / `results_memory_spaces` frontend
 //    attributes → requested memory space
 //  - Everything else → kDefault
-BufferAssigner::Colorer CreateColorer(const DebugOptions& option);
+BufferAssigner::Colorer CreateColorer(const DebugOptions& option,
+                                      const GpuTopology& gpu_topology);
 
 }  // namespace xla::gpu
 

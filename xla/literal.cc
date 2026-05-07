@@ -65,6 +65,10 @@ limitations under the License.
 #include "tsl/platform/mem.h"
 #include "tsl/platform/ml_dtypes.h"
 
+#if defined(PLATFORM_GOOGLE)
+#include "hwy//highway.h"
+#endif  // defined(PLATFORM_GOOGLE)
+
 namespace xla {
 namespace {
 
@@ -1984,6 +1988,45 @@ bool LiteralBase::Piece::EqualElements(const LiteralBase::Piece& other) const {
     int64_t size_bytes = size_bytes_dense();
     CHECK_EQ(size_bytes, other.size_bytes_dense());
     if (primitive_util::IsSubByteNonPredType(subshape().element_type())) {
+      // TODO(b/507052779): JAX CI is currently unhappy with highway, re-enable
+      // this when it's fixed.
+#if defined(PLATFORM_GOOGLE)
+      auto one_array = reinterpret_cast<const uint8_t*>(buffer());
+      auto two_array = reinterpret_cast<const uint8_t*>(other.buffer());
+      const int bits_per_element =
+          primitive_util::BitWidth(subshape().element_type());
+      const uint8_t mask = LsbMask<uint8_t>(bits_per_element);
+
+      namespace hn = hwy::HWY_NAMESPACE;
+      const hn::ScalableTag<uint8_t> d;
+      const size_t lanes = hn::Lanes(d);
+      const auto v_mask = hn::Set(d, mask);
+
+      int64_t idx = 0;
+      for (; idx + lanes <= size_bytes; idx += lanes) {
+        auto va = hn::LoadU(d, one_array + idx);
+        auto vb = hn::LoadU(d, two_array + idx);
+        auto va_masked = hn::And(va, v_mask);
+        auto vb_masked = hn::And(vb, v_mask);
+        if (!hn::AllTrue(d, hn::Eq(va_masked, vb_masked))) {
+          return false;
+        }
+      }
+
+      // `size_bytes` was a multiple of the vector length: already done.
+      if (HWY_UNLIKELY(idx == size_bytes)) {
+        return true;
+      }
+
+      const size_t remaining = size_bytes - idx;
+      DCHECK_GT(remaining, 0);
+      DCHECK_LT(remaining, lanes);
+      auto va = hn::LoadN(d, one_array + idx, remaining);
+      auto vb = hn::LoadN(d, two_array + idx, remaining);
+      auto va_masked = hn::And(va, v_mask);
+      auto vb_masked = hn::And(vb, v_mask);
+      return hn::AllTrue(d, hn::Eq(va_masked, vb_masked));
+#else
       auto one_array = buffer();
       auto two_array = other.buffer();
       const int bits_per_element =
@@ -1993,6 +2036,7 @@ bool LiteralBase::Piece::EqualElements(const LiteralBase::Piece& other) const {
         if ((one_array[i] & mask) != (two_array[i] & mask)) return false;
       }
       return true;
+#endif
     }
     return memcmp(buffer(), other.buffer(), size_bytes) == 0;
   }

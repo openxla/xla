@@ -3,7 +3,7 @@ load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_nccl", "internal_visibility")
+load("//xla/tsl:tsl.bzl", "if_google", "if_nccl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
@@ -509,6 +509,7 @@ cc_library(
         "//xla/tsl/cuda:nccl",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/time",
     ],
@@ -518,6 +519,7 @@ cc_library(
     name = "nccl_symmetric_memory",
     srcs = ["nccl_symmetric_memory.cc"],
     hdrs = ["nccl_symmetric_memory.h"],
+    local_defines = if_google(["USE_NCCL_HOST_API"]),
     tags = [
         "cuda-only",
         "gpu",

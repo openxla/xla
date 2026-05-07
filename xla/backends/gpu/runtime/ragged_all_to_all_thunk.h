@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_RAGGED_ALL_TO_ALL_THUNK_H_
 #define XLA_BACKENDS_GPU_RUNTIME_RAGGED_ALL_TO_ALL_THUNK_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -268,8 +269,8 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
     std::shared_ptr<xla::SymmetricMemory> barrier_signal_symmetric_memory,
     const se::DeviceAddressBase& barrier_signal_value,
     std::shared_ptr<xla::SymmetricMemory> output_temporary_symmetric_memory,
-    int64_t num_total_updates, int64_t num_input_rows, int64_t num_row_elements,
-    absl::Span<DeviceBufferPair const> buffers);
+    size_t output_sym_offset, int64_t num_total_updates, int64_t num_input_rows,
+    int64_t num_row_elements, absl::Span<DeviceBufferPair const> buffers);
 
 }  // namespace gpu
 }  // namespace xla

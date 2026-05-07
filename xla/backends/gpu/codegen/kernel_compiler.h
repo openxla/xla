@@ -16,9 +16,11 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_CODEGEN_KERNEL_COMPILER_H_
 #define XLA_BACKENDS_GPU_CODEGEN_KERNEL_COMPILER_H_
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/functional/any_invocable.h"
 #include "llvm/IR/Module.h"
@@ -60,6 +62,9 @@ class KernelCompiler {
       const std::string& sanitized_kernel_name,
       const emitters::KernelArguments& kernel_arguments,
       const LaunchDimensions& launch_dimensions) = 0;
+
+  virtual xla::Future<std::vector<uint8_t>> CompileToPtx(
+      LlvmKernelSource kernel_source) = 0;
 
   // Sets a callback to be called prior to llvm::Module compilation.
   void SetPreOptimizationHook(ModuleHook hook) {

@@ -65,7 +65,7 @@ absl::Status LaunchTypedKernelWithSymmetricMemory(
     se::Stream* stream, const se::ThreadDim& thread_dims,
     const se::BlockDim& block_dims, se::DeviceAddressBase input_buffer,
     xla::SymmetricMemory* output_ptrs_symmetric_memory,
-    se::DeviceAddressBase input_offsets_buffer,
+    size_t output_sym_offset, se::DeviceAddressBase input_offsets_buffer,
     se::DeviceAddressBase send_sizes_buffer,
     se::DeviceAddressBase output_offsets_buffer, int64_t num_updates_per_output,
     int64_t num_row_elements) {
@@ -78,9 +78,10 @@ absl::Status LaunchTypedKernelWithSymmetricMemory(
           stream->parent()));
 
   return kernel.Launch(thread_dims, block_dims, stream, input_buffer,
-                       output_ptrs_symmetric_memory, input_offsets_buffer,
-                       send_sizes_buffer, output_offsets_buffer,
-                       num_updates_per_output, num_row_elements);
+                       output_ptrs_symmetric_memory, output_sym_offset,
+                       input_offsets_buffer, send_sizes_buffer,
+                       output_offsets_buffer, num_updates_per_output,
+                       num_row_elements);
 }
 
 template <typename Fn>
@@ -188,7 +189,7 @@ absl::Status RunRaggedAllToAllWithSymmetricMemoryKernel(
     se::Stream* stream, PrimitiveType element_type,
     se::DeviceAddressBase input_buffer,
     xla::SymmetricMemory* output_ptrs_symmetric_memory,
-    se::DeviceAddressBase input_offsets_buffer,
+    size_t output_sym_offset, se::DeviceAddressBase input_offsets_buffer,
     se::DeviceAddressBase send_sizes_buffer,
     se::DeviceAddressBase output_offsets_buffer, int64_t num_outputs,
     int64_t num_updates_per_output, int64_t num_input_rows,
@@ -201,8 +202,8 @@ absl::Status RunRaggedAllToAllWithSymmetricMemoryKernel(
 
     return LaunchTypedKernelWithSymmetricMemory<T::value>(
         stream, thread_dims, block_dims, input_buffer,
-        output_ptrs_symmetric_memory, input_offsets_buffer, send_sizes_buffer,
-        output_offsets_buffer, num_updates_per_output,
+        output_ptrs_symmetric_memory, output_sym_offset, input_offsets_buffer,
+        send_sizes_buffer, output_offsets_buffer, num_updates_per_output,
         num_vectorized_row_elements);
   };
 

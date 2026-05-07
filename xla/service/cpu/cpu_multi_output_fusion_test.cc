@@ -119,5 +119,45 @@ TEST_F(MultiOutputFusionTest, DoesNotFuseInsideScanBody) {
   }
 }
 
+TEST_F(MultiOutputFusionTest, DoesNotFuseInsideSortComparator) {
+  static constexpr absl::string_view kHloModule = R"(
+    HloModule module
+
+    %cmp {
+      %a = f32[] parameter(0)
+      %b = f32[] parameter(1)
+      %abs_a = f32[] abs(%a)
+      %abs_b = f32[] abs(%b)
+      %sum_a = f32[] add(%abs_a, %abs_a)
+      %sum_b = f32[] add(%abs_b, %abs_b)
+      ROOT %lt = pred[] compare(%sum_a, %sum_b), direction=LT
+    }
+
+    ENTRY %main (input: f32[128]) -> f32[128] {
+      %input = f32[128]{0} parameter(0)
+      ROOT %sorted = f32[128]{0} sort(%input), dimensions={0}, to_apply=%cmp
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
+                          ParseAndReturnVerifiedModule(kHloModule));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed, CpuMultiOutputFusion(&alias_info_).Run(hlo_module.get()));
+  EXPECT_FALSE(changed) << hlo_module->ToString();
+
+  HloComputation* body = nullptr;
+  for (HloComputation* c : hlo_module->MakeNonfusionComputations()) {
+    if (c->name() == "cmp") {
+      body = c;
+      break;
+    }
+  }
+  ASSERT_NE(body, nullptr) << "Sort comparator computation not found";
+  for (const HloInstruction* instr : body->instructions()) {
+    EXPECT_NE(instr->opcode(), HloOpcode::kFusion)
+        << "Found a kFusion inside a sort comparator: " << instr->ToString();
+  }
+}
+
 }  // namespace
 }  // namespace xla::cpu

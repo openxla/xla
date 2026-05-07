@@ -917,9 +917,11 @@ class PjRtClient {
     absl::InlinedVector<PjRtClient::ShapeSpec, 4> shape_specs;
     shape_specs.reserve(shapes.size());
     for (const auto& shape : shapes) {
-      shape_specs.emplace_back(ShapeSpec{
-          shape.element_type(), DimensionVector(shape.dimensions().begin(),
-                                                shape.dimensions().end())});
+      ShapeSpec& spec = shape_specs.emplace_back();
+      spec.element_type = shape.element_type();
+      if (shape.IsArray()) {
+        spec.dims.assign(shape.dimensions().begin(), shape.dimensions().end());
+      }
     }
     return CreateBuffersForAsyncHostToDevice(
         shape_specs, /*device_layouts=*/std::nullopt, memory_space);

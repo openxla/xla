@@ -27,6 +27,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/attributes.h"
+#include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
@@ -72,6 +73,7 @@ class CommonPjRtClient : public PjRtClient {
   virtual bool supports_two_phase_launch() const { return true; }
   // TODO(parkers): Properly support error buffers on GPU and CPU.
   virtual bool include_raw_buffer_in_ready_event() const { return false; }
+  virtual bool supports_predetermined_error() const { return true; }
 
   // Backend specific handlers for when an oom is detected during execute.
   virtual void CallOomHandlers() const {}
@@ -145,9 +147,7 @@ class CommonPjRtClient : public PjRtClient {
   virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> DefineBuffer(
       std::shared_ptr<const Shape> on_device_shape,
       PjRtMemorySpace* memory_space, PjRtRawBufferRef raw_buffer,
-      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_device_events) {
-    return absl::UnimplementedError("DefineBuffer is not supported");
-  }
+      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_device_events);
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> DefineBuffer(
       Shape on_device_shape, PjRtMemorySpace* memory_space,
@@ -208,7 +208,7 @@ class CommonPjRtClient : public PjRtClient {
     LOG(FATAL) << "Implement";
   }
 
-  tsl::Future<> MakeTrackedReadyFuture(tsl::AsyncValue* async_value,
+  tsl::Future<> MakeTrackedReadyFuture(PjRtDeviceEventPtr device_event,
                                        PjRtMemorySpace* memory_space,
                                        const char* callee_type,
                                        const char* callee_method);
@@ -233,6 +233,7 @@ class CommonPjRtClient : public PjRtClient {
       PjRtMemorySpace* dst_memory_space);
 
   virtual bool IsOnCpu(PjRtMemorySpace* memory_space) { return false; }
+  virtual bool use_stream_based_compaction() const { return false; }
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBuffer(
       const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
@@ -309,6 +310,25 @@ class CommonPjRtClient : public PjRtClient {
       Future<std::string> serialized_descriptor,
       PjRtBuffer::RemoteSendCallback on_done);
 
+  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+  MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
+                              PjRtDevice* absl_nonnull device,
+                              PjRtCrossHostRecvNotifier notifier) override;
+
+  // Similar to PjRtClient::MakeCrossHostReceiveBuffers, but uses PjRtRawBuffer
+  // instead of PjRtBuffer.
+  // Takes raw buffers, a notifier, and the transfer dependency AVs that must
+  // be ready before the receive can complete. Returns a vector of definition
+  // events that will be fulfilled once the receive operation completes.
+  virtual absl::StatusOr<std::vector<PjRtDeviceEventRef>>
+  CrossHostReceiveBuffersInto(
+      absl::Span<const tsl::RCReference<PjRtRawBuffer>> buffers,
+      PjRtCrossHostRecvNotifier notifier,
+      std::vector<tsl::RCReference<tsl::AsyncValue>> transfer_dependency_avs) {
+    return absl::UnimplementedError(
+        "CrossHostReceiveBuffersInto is not implemented.");
+  }
+
   static absl::Status PrepareArguments(
       const ExecuteOptions& options,
       absl::Span<PjRtBuffer* const> argument_handles,
@@ -337,17 +357,21 @@ class CommonPjRtClient : public PjRtClient {
   absl::Mutex& gang_scheduler() const { return gang_scheduler_mu_; }
 
   virtual void AppendDescriptionToEvent(
-      PjRtMemorySpace* memory_space, tsl::AsyncValue* device_async_value,
+      PjRtMemorySpace* memory_space, PjRtDeviceEventPtr device_event,
       absl::string_view description,
-      absl::Span<tsl::AsyncValue* const> waiters) {}
+      absl::Span<const PjRtDeviceEventPtr> waiters) {}
 
   virtual void AddEventDependencies(
-      PjRtMemorySpace* memory_space, tsl::AsyncValue* device_async_value,
+      PjRtMemorySpace* memory_space, PjRtDeviceEventPtr device_event,
       absl::Span<const tsl::RCReference<tsl::AsyncValue>> dependencies) {}
 
   virtual void RegisterClientThreadWait(PjRtMemorySpace* memory_space,
-                                        tsl::AsyncValue* device_async_value,
+                                        PjRtDeviceEventPtr device_event,
                                         absl::string_view description) {}
+
+  virtual absl::Status WaitOnStream(PjRtMemorySpace* memory_space,
+                                    PjRtDeviceEventRef event,
+                                    std::intptr_t stream);
 
  private:
   mutable absl::Mutex gang_scheduler_mu_;

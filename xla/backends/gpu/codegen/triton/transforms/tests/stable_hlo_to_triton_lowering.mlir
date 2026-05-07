@@ -1,8 +1,10 @@
 // RUN: xla-opt %s -split-input-file \
 // RUN: -stablehlo-lower-to-triton="warp_specialization_allowed=false" \
+// RUN: -triton-xla-fold-reshape-around-for-loop \
 // RUN: | FileCheck %s
 // RUN: xla-opt %s -split-input-file \
 // RUN: -stablehlo-lower-to-triton="warp_specialization_allowed=true" \
+// RUN: -triton-xla-fold-reshape-around-for-loop \
 // RUN: | FileCheck %s --check-prefix=WARP
 
 // CHECK: func @lower_transpose(%[[ARG:.*]]: tensor<2x4x8xf32>) -> tensor<8x2x4xf32>

@@ -293,7 +293,9 @@ common:rocm_clang_official --linkopt="-fuse-ld=lld"
 common:rocm_clang_official --host_linkopt="-fuse-ld=lld"
 
 common:rocm --config=rocm_clang_official
+
 common:rocm_ci --config=rocm
+common:rocm_ci --@local_config_rocm//rocm:rocm_path_type=hermetic
 
 common:rocm_ci_hermetic --dynamic_mode=off
 common:rocm_ci_hermetic --config=rocm_clang_official

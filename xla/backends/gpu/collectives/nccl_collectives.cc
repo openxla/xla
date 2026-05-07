@@ -447,7 +447,7 @@ NcclCollectives::SplitCommunicatorsWithCancel(
   ASSIGN_OR_RETURN(auto stream_executors, GetStreamExecutors(ranks));
 
   const auto& gpu_config =
-      tsl::down_cast<const GpuCollectives::Config&>(config);
+      absl::down_cast<const GpuCollectives::Config&>(config);
 
   auto make_comm = [&](int i) -> absl::StatusOr<ncclComm_t> {
     int32_t device_ordinal = DeviceOrdinal(ranks[i]);

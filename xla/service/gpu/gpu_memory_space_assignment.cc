@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu_topology.h"
 #include "xla/service/hlo_value.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -204,6 +205,10 @@ bool HasMosaicWithMultimemInstruction(const HloValue& input_alias) {
   return HasMosaicInstruction(input_alias, IsMosaicWithMultimem);
 }
 
+bool HasMosaicWithCollectiveMetadataInstruction(const HloValue& input_alias) {
+  return HasMosaicInstruction(input_alias, IsMosaicWithCollectiveMetadata);
+}
+
 // Returns the memory space requested for the given custom call use, or
 // MemorySpaceColor::kDefault if none is specified.
 static absl::StatusOr<MemorySpaceColor> GetCustomCallOperandMemorySpace(
@@ -262,7 +267,8 @@ static absl::StatusOr<MemorySpaceColor> GetCustomCallResultMemorySpace(
 // Also assigns memory space colors for custom call operands and results based
 // on `operands_memory_spaces` and `results_memory_spaces` frontend attributes.
 absl::Status AssignColors(bool use_collective_memory, bool use_nvshmem,
-                          HloAliasAnalysis* alias_analysis) {
+                          HloAliasAnalysis* alias_analysis,
+                          const GpuTopology& gpu_topology) {
   for (HloValue* value : alias_analysis->dataflow_analysis().values()) {
     // If the value has a layout with non-default memory space, use the memory
     // space from the layout.
@@ -304,8 +310,12 @@ absl::Status AssignColors(bool use_collective_memory, bool use_nvshmem,
 
       // TODO(479768130): Mark only buffers used with multimem instructions
       // instead of marking all buffers.
+      // TODO(508106498): We need to start to respect replica groups once
+      // mosaic will support them.
       if ((HasMosaicWithNvshmemInstruction(*alias) && use_nvshmem) ||
-          HasMosaicWithMultimemInstruction(*alias)) {
+          HasMosaicWithMultimemInstruction(*alias) ||
+          (HasMosaicWithCollectiveMetadataInstruction(*alias) &&
+           gpu_topology.number_of_hosts() > 1)) {
         // This is a temporary solution until a separate BFC allocator will be
         // added for the symmetric memory space.
         value->set_color((int)MemorySpaceColor::kCollective);
@@ -329,7 +339,8 @@ absl::Status AssignColors(bool use_collective_memory, bool use_nvshmem,
   return absl::OkStatus();
 }
 
-BufferAssigner::Colorer CreateColorer(const DebugOptions& option) {
+BufferAssigner::Colorer CreateColorer(const DebugOptions& option,
+                                      const GpuTopology& gpu_topology) {
   // NCCL old registered buffers.
   bool nccl_user_buffers = option.xla_gpu_enable_nccl_user_buffers();
   bool nccl_symmetric_buffers =
@@ -338,9 +349,10 @@ BufferAssigner::Colorer CreateColorer(const DebugOptions& option) {
 
   bool use_collective_memory = nccl_user_buffers || nccl_symmetric_buffers;
 
-  return [use_collective_memory, use_nvshmem](HloAliasAnalysis* alias_analysis,
-                                              const HloOrdering&) {
-    return AssignColors(use_collective_memory, use_nvshmem, alias_analysis);
+  return [use_collective_memory, use_nvshmem, gpu_topology](
+             HloAliasAnalysis* alias_analysis, const HloOrdering&) {
+    return AssignColors(use_collective_memory, use_nvshmem, alias_analysis,
+                        gpu_topology);
   };
 }
 }  // namespace xla::gpu

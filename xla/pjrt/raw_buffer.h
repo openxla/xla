@@ -18,7 +18,9 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -112,6 +114,19 @@ class CommonPjRtRawBuffer : public PjRtRawBuffer {
   virtual absl::StatusOr<PjRtDeviceEventRef> CopyRawDeviceToHostAndReturnEvent(
       void* dst, int64_t offset, int64_t transfer_size) = 0;
 
+  // Copies the buffer to a remote device.
+  // The serialized_descriptor contains metadata about the buffer on the remote
+  // device. The on_done callback is called when the transfer is complete or
+  // on error. The transfer_dependency_avs are dependencies that must be
+  // ready before the transfer can start. The returned PjRtDeviceEventRef is
+  // ready when the transfer is complete or on error.
+  using RemoteSendCallback =
+      std::function<void(absl::Status status, bool sends_were_enqueued)>;
+  virtual absl::StatusOr<PjRtDeviceEventRef> CopyRawToRemoteDevice(
+      Future<std::string> serialized_descriptor, RemoteSendCallback on_done,
+      std::vector<tsl::RCReference<tsl::AsyncValue>>
+          transfer_dependency_avs) = 0;
+
   // A sliced buffer is a view into the offset and range of this buffer.
   //
   // Note that the underlying driver may have requirements
@@ -172,6 +187,10 @@ class CommonPjRtRawBuffer : public PjRtRawBuffer {
   virtual tsl::AsyncValue* GetRawBufferAsyncValue() = 0;
 
   virtual bool is_mutable() const { return true; }
+
+  // TODO(parkers): This should not be needed, but some backends
+  // require deleting after all events.
+  virtual void DecrefAfter(std::vector<PjRtDeviceEventRef> avs);
 };
 
 class RegisterRawBufferFactory {

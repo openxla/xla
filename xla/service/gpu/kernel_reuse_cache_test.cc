@@ -20,6 +20,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "xla/service/gpu/kernel_reuse_cache.pb.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
@@ -63,8 +64,10 @@ TEST_F(KernelReuseTest, ExportAndLoadWork) {
                   value {
                     fingerprint: "fingerprint1"
                     launch_dimensions { num_blocks: 1 num_threads_per_block: 1 }
+                    link_binary: true
                   }
                 }
+                compatibility_version: 1
               )pb"));
 
   TF_EXPECT_OK(cache.Load(proto));

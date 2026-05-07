@@ -138,8 +138,7 @@ void exportFunc(FuncOp funcOp, const SymbolTable& symbolTable,
           resNum, kXlaShardingAttr,
           getStringAttr(convertToHloSharding(sdySharding, getMeshAttr,
                                              manualAxes, enableHloShardingV3)));
-      funcOp.removeResultAttr(
-          resNum, StringAttr::get(funcOp.getContext(), kShardingAttr));
+      funcOp.removeResultAttr(resNum, kShardingAttr);
     }
   }
 

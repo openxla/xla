@@ -101,6 +101,7 @@ cc_library(
         "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/translate/hlo_to_mhlo:attribute_importer",
         "//xla/hlo/translate/hlo_to_mhlo:hlo_function_importer",
         "//xla/mlir_hlo",
         "//xla/service:hlo_module_config",

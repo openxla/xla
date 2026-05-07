@@ -41,8 +41,8 @@ const PJRT_DeviceEvent_FunctionTable* GetBuiltinAsyncValueCApiFunctionTable();
 PJRT_DeviceEvent_State ToPjrtDeviceEventState(tsl::AsyncValue::State state);
 
 template <typename T>
-const PJRT_DeviceEvent_FunctionTable* GetBuiltinDeviceEventCApiFunctionTable() {
-  static const PJRT_DeviceEvent_FunctionTable device_event_vtable = {
+PJRT_DeviceEvent_FunctionTable BuildBuiltinDeviceEventCApiFunctionTable() {
+  return PJRT_DeviceEvent_FunctionTable{
       /*struct_size=*/sizeof(PJRT_DeviceEvent_FunctionTable),
       /*extension_start=*/nullptr,
       /*inc_ref=*/
@@ -78,7 +78,17 @@ const PJRT_DeviceEvent_FunctionTable* GetBuiltinDeviceEventCApiFunctionTable() {
       +[](void* device_event) -> PJRT_DeviceEvent_State {
         auto* async_value = reinterpret_cast<tsl::AsyncValue*>(device_event);
         return ToPjrtDeviceEventState(async_value->state());
+      },
+      /*get_definition_stream=*/
+      +[](void* device_event, uint64_t* sequence_number) -> intptr_t {
+        return 0;
       }};
+}
+
+template <typename T>
+const PJRT_DeviceEvent_FunctionTable* GetBuiltinDeviceEventCApiFunctionTable() {
+  static const PJRT_DeviceEvent_FunctionTable device_event_vtable =
+      BuildBuiltinDeviceEventCApiFunctionTable<T>();
   return &device_event_vtable;
 }
 
@@ -91,6 +101,16 @@ class PjRtDeviceEventPtr {
  public:
   PjRtDeviceEventPtr() = default;
   explicit PjRtDeviceEventPtr(PJRT_DeviceEvent event) : event_(event) {}
+
+  template <typename T>
+  explicit PjRtDeviceEventPtr(tsl::AsyncValuePtr<T> value)
+      : event_({internal::GetBuiltinDeviceEventCApiFunctionTable<T>(),
+                value.value()}) {}
+
+  static PjRtDeviceEventPtr FromAsyncValue(tsl::AsyncValue* value) {
+    return PjRtDeviceEventPtr(
+        {internal::GetBuiltinAsyncValueCApiFunctionTable(), value});
+  }
 
   // Runs a callback when the event becomes ready.
   template <typename Waiter>
@@ -117,7 +137,29 @@ class PjRtDeviceEventPtr {
   }
 
   template <typename T>
-  tsl::AsyncValueRef<T> down_cast() const {
+  void DeleteWhenReady(const tsl::RCReference<T>& ref) {
+    if (event_.device_event == nullptr || event_.vtable == nullptr) {
+      return;
+    }
+    event_.vtable->and_then(
+        event_.device_event,
+        +[](void* user_arg) { static_cast<T*>(user_arg)->DropRef(); },
+        tsl::RCReference<T>(ref).release());
+  }
+
+  template <typename T>
+  tsl::AsyncValuePtr<T> down_cast() const {
+    if (event_.device_event == nullptr ||
+        event_.vtable !=
+            internal::GetBuiltinDeviceEventCApiFunctionTable<T>()) {
+      return tsl::AsyncValuePtr<T>(nullptr);
+    }
+    return tsl::AsyncValuePtr<T>(
+        reinterpret_cast<tsl::AsyncValue*>(event_.device_event));
+  }
+
+  template <typename T>
+  tsl::AsyncValueRef<T> copy_down_cast() const {
     if (event_.device_event == nullptr ||
         event_.vtable !=
             internal::GetBuiltinDeviceEventCApiFunctionTable<T>()) {
@@ -142,15 +184,24 @@ class PjRtDeviceEventPtr {
 
   std::optional<absl::Status> GetErrorIfPresent() const;
 
+  PJRT_DeviceEvent_State state() const;
+
+  // opaque stream and sequence information for this event (if available).
+  // If the streams are the same, events can be compared by sequence_id.
+  struct DefinitionStreamInfo {
+    intptr_t stream;
+    uint64_t sequence_id;
+  };
+  std::optional<DefinitionStreamInfo> GetDefinitionStream() const;
+
   PJRT_DeviceEvent ToC() const { return event_; }
-
-  // TODO(parkers): Remove direct async_value usages.
-  tsl::AsyncValue* async_value() const;
-
-  explicit operator bool() const { return event_.device_event != nullptr; }
 
   PjRtDeviceEventRef CopyRef() const;
   void DecRef() const;
+
+  tsl::AsyncValue* async_value() const;
+
+  explicit operator bool() const { return event_.device_event != nullptr; }
 
  private:
   void IncRef() const;
@@ -202,7 +253,7 @@ class PjRtDeviceEventRef {
 
   template <typename T>
   tsl::AsyncValueRef<T> down_cast() const& {
-    return ptr_.down_cast<T>();
+    return ptr_.copy_down_cast<T>();
   }
 
   template <typename T>
@@ -213,6 +264,8 @@ class PjRtDeviceEventRef {
   std::optional<absl::Status> GetErrorIfPresent() const {
     return ptr_.GetErrorIfPresent();
   }
+
+  PJRT_DeviceEvent_State state() const { return ptr_.state(); }
 
   // TODO(parkers): Remove direct async_value usages.
   tsl::AsyncValue* async_value() const { return ptr_.async_value(); }
@@ -244,7 +297,7 @@ class PjRtDeviceEventPromise
   virtual ~PjRtDeviceEventPromise() = default;
 
   // The underlying AsyncValue.
-  virtual tsl::AsyncValue* async_value() const = 0;
+  virtual PjRtDeviceEventPtr event() const = 0;
 
   // Fulfill the promise.
   virtual void Set(PjRtDeviceEventRef event) = 0;
@@ -266,9 +319,8 @@ class PjRtDeviceEventSet {
 
   virtual void AppendTo(
       std::vector<tsl::RCReference<tsl::AsyncValue>>& events) = 0;
+  virtual void AppendTo(std::vector<PjRtDeviceEventRef>& events) = 0;
   virtual void AppendTo(PjRtDeviceEventSet& events) = 0;
-
-  virtual std::unique_ptr<PjRtDeviceEventSet> Clone() const = 0;
 };
 
 }  // namespace xla

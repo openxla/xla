@@ -38,7 +38,8 @@ absl::StatusOr<std::string> EarlyExitCompilationResult::SerializeAsString()
 absl::StatusOr<std::unique_ptr<Executable>>
 EarlyExitCompilationResult::LoadExecutable(
     se::Platform::Id platform_id,
-    const se::DeviceDescription& device_description) && {
+    const se::DeviceDescription& device_description,
+    const DebugOptions& debug_options) && {
   return Unavailable(
       "LoadExecutable() is not supported by EarlyExitCompilationResult.");
 }

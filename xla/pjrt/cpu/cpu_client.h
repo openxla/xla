@@ -90,6 +90,8 @@ class PjRtCpuClient final : public CommonPjRtClient {
   // This is needed because CPU currently doesn't have per-device dispatching
   // threads for Execute() so two-phase launch can run into thread starvation.
   bool supports_two_phase_launch() const override { return false; }
+  // TODO(parkers): implement proper predetermined error support.
+  bool supports_predetermined_error() const override { return false; }
 
   int process_index() const override { return process_index_; }
 
@@ -238,14 +240,6 @@ class PjRtCpuClient final : public CommonPjRtClient {
   std::unique_ptr<PjRtDeviceEventSet> CreateDeviceEventSet(
       size_t preallocated_size) const override;
 
-  using CommonPjRtClient::DefineBuffer;
-
-  absl::StatusOr<std::unique_ptr<PjRtBuffer>> DefineBuffer(
-      std::shared_ptr<const Shape> on_device_shape,
-      PjRtMemorySpace* memory_space, PjRtRawBufferRef raw_buffer,
-      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_device_events)
-      override;
-
   using CommonPjRtClient::GetOnDeviceBytesCount;
   absl::StatusOr<int64_t> GetOnDeviceBytesCount(
       int memory_space_kind, const xla::Shape& shape) const override;
@@ -294,9 +288,7 @@ class PjRtCpuClient final : public CommonPjRtClient {
       const std::vector<const Shape*>& argument_layout_pointers,
       LayoutCanonicalizationCallback layout_canonicalization_callback,
       CompileOptions options,
-      const AotCompilationOptions* absl_nullable aot_options = nullptr,
-      std::optional<std::vector<std::vector<absl::string_view>>>
-          requested_output_memory_kinds = std::nullopt);
+      const AotCompilationOptions* absl_nullable aot_options = nullptr);
 
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadInternal(
       std::shared_ptr<PjRtCpuExecutable> cpu_executable,
@@ -404,9 +396,7 @@ class PjRtCpuExecutable final : public PjRtExecutable {
       CompileOptions compile_options,
       std::unique_ptr<Executable> cpu_executable,
       absl::InlinedVector<BufferAllocation::Index, 4> result_buffer_indices,
-      std::unique_ptr<HloModule> unoptimized_hlo_module,
-      std::vector<std::vector<absl::string_view>>
-          requested_output_memory_kinds = {});
+      std::unique_ptr<HloModule> unoptimized_hlo_module);
 
   ~PjRtCpuExecutable() override = default;
 
@@ -429,10 +419,14 @@ class PjRtCpuExecutable final : public PjRtExecutable {
   }
 
   absl::StatusOr<std::vector<std::vector<absl::string_view>>>
-  GetParameterMemoryKinds() const override;
+  GetParameterMemoryKinds() const override {
+    return Unimplemented("GetParameterMemoryKinds is not supported.");
+  }
 
   absl::StatusOr<std::vector<std::vector<absl::string_view>>>
-  GetOutputMemoryKinds() const override;
+  GetOutputMemoryKinds() const override {
+    return Unimplemented("GetOutputMemoryKinds is not supported.");
+  }
 
   absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override;
 
@@ -495,7 +489,6 @@ class PjRtCpuExecutable final : public PjRtExecutable {
 
   std::string fingerprint_;
 
-  std::vector<std::vector<absl::string_view>> requested_output_memory_kinds_;
   std::unique_ptr<HloModule> unoptimized_hlo_module_;
 };
 

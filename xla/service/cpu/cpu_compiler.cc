@@ -113,7 +113,6 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/collectives/async_collective_replacer.h"
 #include "xla/hlo/transforms/collectives/collective_permute_cse.h"
-#include "xla/hlo/transforms/convert_memory_placement_to_internal_annotations.h"
 #include "xla/hlo/transforms/expanders/bitcast_dtypes_expander.h"
 #include "xla/hlo/transforms/expanders/cholesky_expander.h"
 #include "xla/hlo/transforms/expanders/comparison_expander.h"
@@ -128,7 +127,6 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/rng_bit_generator_expander.h"
 #include "xla/hlo/transforms/expanders/rng_expander.h"
 #include "xla/hlo/transforms/expanders/stochastic_convert_decomposer.h"
-#include "xla/hlo/transforms/host_offloader.h"
 #include "xla/hlo/transforms/literal_canonicalizer.h"
 #include "xla/hlo/transforms/operand_upcaster.h"
 #include "xla/hlo/transforms/propagate_call_metadata.h"
@@ -597,12 +595,6 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   async_collective_pipeline.AddPass<AsyncCollectiveReplacer>(acr_config);
   TF_RETURN_IF_ERROR(async_collective_pipeline.Run(module).status());
 
-  {
-    HloPassPipeline pre_spmd_pipeline("pre-spmd-partitioner");
-    pre_spmd_pipeline.AddPass<ConvertMemoryPlacementToInternalAnnotations>();
-    TF_RETURN_IF_ERROR(pre_spmd_pipeline.Run(module).status());
-  }
-
   if (num_partitions > 1) {
     if (!module->config().use_spmd_partitioning()) {
       return InvalidArgument(
@@ -674,9 +666,6 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
 
   HloPassPipeline pipeline("HLO passes through layout assignment");
   AddHloVerifier(&pipeline);
-  // TODO(b/506959289): Investigate replacing with a simpler pass
-  const AliasInfo default_alias_info;
-  pipeline.AddPass<HostOffloader>(&default_alias_info);
   pipeline.AddPass<BatchedGatherScatterNormalizer>();
   pipeline.AddPass<ResultCaster>();
 

@@ -1,10 +1,21 @@
 # PJRT C API changelog
 
+## 0.108
+
+*   Added use_major_to_minor_data_layout_for_callbacks to PJRT_ExecuteOptions.
+
+## 0.107
+
+*   Added PJRT_Error_FunctionTable*.
+
+## 0.106
+
+*   Added `PJRT_Device_ClearMemoryStats` to `PJRT_Api` to allow resetting peak
+    memory tracking.
+
 ## 0.105
 
 *   Added PJRT_Memory_FunctionTable*.
-*   Added `PJRT_Device_ClearMemoryStats` to `PJRT_Api` to allow resetting peak
-    memory tracking.
 
 ## 0.104
 

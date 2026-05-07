@@ -5724,8 +5724,6 @@ int64_t HloInstruction::unique_id() const {
   return CalculateUniqueId(parent_->unique_id(), local_id_);
 }
 
-int32_t HloInstruction::local_id() const { return local_id_; }
-
 int64_t HloInstruction::CalculateUniqueId(int32_t computation_unique_id,
                                           int32_t instruction_local_id) {
   return ((static_cast<int64_t>(computation_unique_id) << 32) |
@@ -6159,10 +6157,6 @@ const DomainMetadata& HloInstruction::operand_side_metadata() const {
 
 const DomainMetadata& HloInstruction::user_side_metadata() const {
   return Cast<HloDomainInstruction>(this)->user_side_metadata();
-}
-
-bool HloInstruction::IsAsynchronous() const {
-  return HloOpcodeIsAsync(opcode());
 }
 
 HloInstruction* HloInstruction::async_chain_start() const {

@@ -21,12 +21,10 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "absl/status/statusor.h"
-#include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/codegen/tiling/tiled_hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/utils/hlo_traversal.h"
-#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
@@ -78,19 +76,6 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
       const TiledHloComputation& tiled_hlo_computation,
       const se::DeviceDescription& device_info);
 
-  EstimateRunTimeData EstimateRunTimeForFusion(
-      const HloFusionAnalysis& fusion_analysis, bool is_coalesced = true);
-
-  EstimateRunTimeData EstimateRunTimeForInstruction(
-      const HloInstruction* producer);
-
-  EstimateRunTimeData EstimateRunTimeForProducerConsumer(
-      const HloInstruction* producer, const HloInstruction* consumer);
-
-  RunTimes EstimateRunTimes(
-      const HloInstruction* producer,
-      absl::Span<const HloInstruction* const> fused_consumers = {});
-
   absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputation(
       const HloFusionAdaptor& fusion_adaptor,
       const TiledHloComputation& tiled_hlo_computation,
@@ -107,11 +92,10 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
       const LaunchDimensions& launch_dimensions,
       const BlockLevelParameters& block_level_parameters);
 
-  // Estimate the run time of producer and consumer fused together, assuming
-  // that they will be emitted with Triton.
-  // If consumer is nullptr, estimate run time of the producer alone.
+  // Estimate the run time of an Hlo instruction assuming it is emitted by
+  // Triton.
   absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTriton(
-      const HloInstruction* producer, const HloInstruction* consumer = nullptr);
+      const HloInstruction* instr);
 
   // Estimates the best tile sizes for the given fusion. Iterates over all the
   // good tile sizes provided by SymbolicTileAnalysis, estimates the run time

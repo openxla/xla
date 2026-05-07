@@ -15,11 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/reduce_window_rewriter.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 
+#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -380,6 +383,48 @@ ENTRY entry (arg: f32[128]) -> f32[128] {
 })";
 
   CheckReduceWindowRewrite(hlo, std::nullopt);
+}
+
+// ----------------------------------------------------------------------------
+// Coverage for the DecomposeAssociativeScan() hook. A subclass that returns
+// false skips the kScan -> tree-reduce decomposition (the path TPU uses with
+// the native ScanEmitter enabled).
+// ----------------------------------------------------------------------------
+
+class ScanPreservingReduceWindowRewriter : public ReduceWindowRewriter {
+ public:
+  explicit ScanPreservingReduceWindowRewriter(int64_t base_length)
+      : ReduceWindowRewriter(base_length) {}
+
+ protected:
+  bool DecomposeAssociativeScan() const override { return false; }
+};
+
+using ReduceWindowRewriterScanPreserveTest = HloHardwareIndependentTestBase;
+
+TEST_F(ReduceWindowRewriterScanPreserveTest, AssociativeScanLeftIntact) {
+  // With DecomposeAssociativeScan() == false the kScan must survive the pass
+  // and the module must be returned unchanged.
+  constexpr absl::string_view kHlo = R"(
+HloModule m
+
+add_float {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  add = f32[] add(lhs, rhs)
+  ROOT tuple = (f32[], f32[]) tuple(add, add)
+}
+
+ENTRY entry (arg: f32[46592]) -> f32[46592] {
+  arg = f32[46592]{0} parameter(0)
+  constant = f32[] constant(0)
+  scan = (f32[46592]{0}, f32[]) scan(f32[46592]{0} %arg, f32[] %constant), dimensions={0}, num_carries=1, to_apply=%add_float, is_associative=true
+  ROOT result = f32[46592]{0} get-tuple-element(scan), index=0
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ScanPreservingReduceWindowRewriter pass{128};
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
+  EXPECT_FALSE(changed);
 }
 
 }  // namespace

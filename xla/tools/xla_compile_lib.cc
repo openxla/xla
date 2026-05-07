@@ -110,9 +110,6 @@ static absl::StatusOr<std::string> CompileGpuExecutable(
       se::Platform::Id platform_id,
       xla::PlatformUtil::GetPlatformIdFromCanonicalName(platform_name));
   TF_ASSIGN_OR_RETURN(auto gpu_compiler, Compiler::GetForPlatform(platform_id));
-  hlo_module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_experimental_aot_compiled_thunks(true);
   // Set the number of replicas and partitions in the HLO module
   // config only if they are non-trivial (meaning passed as command line
   // flags), otherwise the values from the HLO module will be used.

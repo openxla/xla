@@ -1057,6 +1057,82 @@ TEST_F(ShardyXLATest, RaggedDotMode1) {
               op::Sharding("{devices=[2,2,1,2]<=[8] last_tile_dim_replicate}"));
 }
 
+namespace {
+
+// End-to-end check: an associative scan exposes its non-scan dims as
+// pass-through factors and its scan dim as a permutation factor, so an input
+// sharded along the non-scan dim propagates through Shardy and reaches the
+// scan output. The scan-dim sharding is preserved as well (associative scans
+// allow it via parallel-prefix evaluation). The scan tuple is exported back
+// as an HLO `kScan` followed by `get-tuple-element`, which is what gets
+// inspected here.
+//
+// The scan body sees per-iteration slices: input is `f32[16,32]` with scan
+// dim 0, so the body input parameter is `f32[32]` and the carry init is
+// `f32[32]`.
+TEST_F(ShardyXLATest, ScanAssociative) {
+  const char* const hloString = R"(
+  HloModule scan_associative, allow_spmd_sharding_propagation_to_parameters={true,true}, allow_spmd_sharding_propagation_to_output={true}, frontend_attributes={xla.sdy.meshes={mesh = #sdy.mesh<["a"=2, "b"=2]>}}
+    %scan_combiner {
+      %lhs = f32[32] parameter(0)
+      %rhs = f32[32] parameter(1)
+      %add = f32[32] add(%lhs, %rhs)
+      ROOT %t = (f32[32], f32[32]) tuple(%add, %add)
+    }
+    ENTRY %entry {
+      %p0 = f32[16,32] parameter(0), frontend_attributes={xla.sdy.sharding="#sdy.sharding<@mesh, [{\"a\", ?}, {\"b\", ?}]>"}
+      %init_scalar = f32[] constant(0)
+      %init = f32[32] broadcast(%init_scalar), dimensions={}
+      %scan = (f32[16,32], f32[32]) scan(%p0, %init), dimensions={0}, num_carries=1, is_associative=true, to_apply=%scan_combiner
+      ROOT %result = f32[16,32] get-tuple-element(%scan), index=0
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hloString));
+  runShardyWithSdyImport(module.get());
+
+  HloComputation* entry = module->entry_computation();
+  EXPECT_THAT(entry->parameter_instruction(0),
+              op::Sharding("{devices=[2,2]<=[4]}"));
+  EXPECT_THAT(entry->root_instruction(), op::Sharding("{devices=[2,2]<=[4]}"));
+}
+
+// Same as above, but non-associative: the scan-dim factor in the rule is
+// `kNeedReplication` instead of `kPermutation`. With an open scan dim
+// sharding (user only pins the non-scan dim to `b`), propagation must NOT
+// introduce a sharding axis on the scan dim — the partitioner can't shard a
+// non-associative scan dim. The non-scan dim's `b` axis still flows from
+// input to output through the rule's pass-through factor.
+TEST_F(ShardyXLATest, ScanNonAssociative) {
+  const char* const hloString = R"(
+  HloModule scan_non_associative, allow_spmd_sharding_propagation_to_parameters={true,true}, allow_spmd_sharding_propagation_to_output={true}, frontend_attributes={xla.sdy.meshes={mesh = #sdy.mesh<["a"=2, "b"=2]>}}
+    %scan_combiner {
+      %lhs = f32[32] parameter(0)
+      %rhs = f32[32] parameter(1)
+      %add = f32[32] add(%lhs, %rhs)
+      ROOT %t = (f32[32], f32[32]) tuple(%add, %add)
+    }
+    ENTRY %entry {
+      %p0 = f32[16,32] parameter(0), frontend_attributes={xla.sdy.sharding="#sdy.sharding<@mesh, [{?}, {\"b\", ?}]>"}
+      %init_scalar = f32[] constant(0)
+      %init = f32[32] broadcast(%init_scalar), dimensions={}
+      %scan = (f32[16,32], f32[32]) scan(%p0, %init), dimensions={0}, num_carries=1, is_associative=false, to_apply=%scan_combiner
+      ROOT %result = f32[16,32] get-tuple-element(%scan), index=0
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hloString));
+  runShardyWithSdyImport(module.get());
+
+  HloComputation* entry = module->entry_computation();
+  EXPECT_THAT(
+      entry->parameter_instruction(0),
+      op::Sharding("{devices=[1,2,2]<=[2,2]T(1,0) last_tile_dim_replicate}"));
+  EXPECT_THAT(
+      entry->root_instruction(),
+      op::Sharding("{devices=[1,2,2]<=[2,2]T(1,0) last_tile_dim_replicate}"));
+}
+
+}  // namespace
+
 TEST_F(ShardyXLATest, PreserveOriginalValueRecoveryTable) {
   const char* const hloString = R"(
   HloModule test, entry_computation_layout={(f32[6,3], f32[6,3])->f32[6,3]}, origin_recovery_table={

@@ -182,11 +182,11 @@ absl::StatusOr<bool> ConvertTritonGemmConfig::RunImpl(
 }
 
 absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
-    HloInstruction* dot, const TritonGemmConfig& config,
+    const HloInstruction* dot, const TritonGemmConfig& config,
     MLIRContext* mlir_context,
     const se::DeviceDescription& device_description) {
   RETURN_IF_ERROR(IsDot(*dot));
-  HloComputation* computation = dot->parent();
+  const HloComputation* computation = dot->parent();
   VLOG(3) << "FindOutputTileSizesForEpilogue of computation: "
           << computation->ToString();
   SymbolicTileAnalysisOrError analysis_or =

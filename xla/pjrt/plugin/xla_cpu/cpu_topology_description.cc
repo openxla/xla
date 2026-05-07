@@ -35,10 +35,12 @@ limitations under the License.
 #include "xla/pjrt/pjrt_device_dimensions.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_device_description.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology.h"
+#include "xla/primitive_util.h"
 #include "xla/runtime/device_id.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
+#include "xla/util.h"
 #include "tsl/platform/fingerprint.h"
 
 namespace xla {
@@ -59,6 +61,10 @@ CpuTopologyDescription::CpuTopologyDescription(
 
 absl::StatusOr<Layout> CpuTopologyDescription::GetDefaultLayout(
     PrimitiveType element_type, absl::Span<const int64_t> dims) const {
+  if (!primitive_util::IsArrayType(element_type)) {
+    return InvalidArgument("Element type %s does not support layout",
+                           PrimitiveType_Name(element_type));
+  }
   Shape shape = ShapeUtil::MakeShape(element_type, dims);
   return LayoutUtil::GetWithDefaultLayout(shape).layout();
 }

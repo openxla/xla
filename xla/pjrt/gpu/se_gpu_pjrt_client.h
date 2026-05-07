@@ -137,6 +137,7 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   absl::string_view platform_version() const override;
 
   std::optional<PjRtPluginAttributes> plugin_attributes() const override;
+  bool use_stream_based_compaction() const override { return true; }
 
   void UpdateGlobalProcessInfo(
       absl::Span<xla::coordination::TaskInfo> infos) override;

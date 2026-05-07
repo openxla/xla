@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/pjrt/async_work_runner.h"
+#include "xla/pjrt/device_event.h"
 #include "xla/pjrt/event_pool.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/concurrency/async_value.h"
@@ -162,9 +163,9 @@ class BufferSequencingEvent : tsl::AsyncPayload::KeepOnError {
 
   const tsl::AsyncValueRef<EventState>& event() { return event_; }
 
- private:
   uint64_t sequence_number() const;
 
+ private:
   mutable absl::Mutex mu_;
   // A list of all streams for which the buffer's content is known to be defined
   // at the tail of the queue, i.e., for any newly enqueued command.
@@ -180,6 +181,12 @@ class BufferSequencingEvent : tsl::AsyncPayload::KeepOnError {
 };
 
 using BufferSequencingEventRef = tsl::AsyncValueRef<BufferSequencingEvent>;
+
+namespace internal {
+template <>
+const PJRT_DeviceEvent_FunctionTable*
+GetBuiltinDeviceEventCApiFunctionTable<BufferSequencingEvent>();
+}  // namespace internal
 
 }  // namespace xla
 

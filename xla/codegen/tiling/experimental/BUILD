@@ -81,6 +81,7 @@ xla_cc_test(
     deps = [
         ":reshape_analysis",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/tsl/platform:test_main",
         "@com_google_googletest//:gtest",
     ],
@@ -123,6 +124,7 @@ xla_cc_test(
         ":tile",
         ":tile_propagation",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:indexing_test_utils",
         "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
@@ -132,6 +134,7 @@ xla_cc_test(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",

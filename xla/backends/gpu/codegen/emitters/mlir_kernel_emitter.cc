@@ -83,7 +83,9 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
-#include "xla/backends/gpu/runtime/kernel_thunk.h"
+#include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
+#include "xla/backends/gpu/codegen/kernels/ptx_custom_kernel.h"
+#include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/emitters/ir/xla_dialect.h"
@@ -94,6 +96,9 @@ limitations under the License.
 #include "xla/codegen/emitters/transforms/pass_pipelines.h"
 #include "xla/codegen/emitters/transforms/passes.h"
 #include "xla/codegen/ir_printing.h"
+#include "xla/codegen/kernel_definition.h"
+#include "xla/codegen/kernel_spec.h"
+#include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/mlir_kernel_source.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
@@ -117,8 +122,8 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/semantic_version.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -304,76 +309,107 @@ llvm::SmallVector<Value> MlirKernelEmitter::EmitThreadAndBlockIds(
           EmitBlockId(b, 0),  EmitBlockId(b, 1),  EmitBlockId(b, 2)};
 }
 
+absl::StatusOr<KernelDefinition<LlvmKernelSource>>
+MlirKernelFusion::EmitLlvmModule(const HloFusionInstruction& fusion,
+                                 const std::string& kernel_name,
+                                 IrEmitterContext& parent_context) const {
+  auto llvm_context = std::make_unique<llvm::LLVMContext>();
+  std::unique_ptr<IrEmitterContext> ir_emitter_context =
+      parent_context.SubContext(llvm_context.get());
+
+  mlir::MLIRContext& mlir_context = *ir_emitter_context->mlir_context();
+
+  LaunchDimensions launch_dims = launch_dimensions();
+
+  mlir_context.appendDialectRegistry(MlirKernelEmitter::GetDialectRegistry());
+  mlir_context.loadAllAvailableDialects();
+  RegisterSymbolicExprStorage(&mlir_context);
+  ASSIGN_OR_RETURN(
+      std::unique_ptr<llvm::Module> module,
+      CreateLLVMModule(mlir_context, *ir_emitter_context->llvm_context(),
+                       ir_emitter_context->gpu_device_info(), fusion,
+                       kernel_name, &ir_emitter_context->buffer_assignment()));
+  auto* kernel_func = module->getFunction(kernel_name);
+  AddRanges(kernel_func, launch_dims, module.get());
+
+  module->setDataLayout(ir_emitter_context->data_layout());
+  module->setTargetTriple(ir_emitter_context->target_triple());
+
+  llvm::IRBuilder<> builder(module->getContext());
+  AnnotateFunctionAsGpuKernel(module.get(), kernel_func, &builder);
+  RETURN_IF_ERROR(
+      AnnotateKernelLaunchDimensions(ir_emitter_context->gpu_device_info(),
+                                     launch_dims, kernel_func, module.get()));
+
+  ASSIGN_OR_RETURN(
+      KernelSpec kernel_spec,
+      emitters::GetKernelSpec(kernel_name, fusion,
+                              &ir_emitter_context->buffer_assignment(),
+                              launch_dims.AsWorkDimensions()));
+  return KernelDefinition<LlvmKernelSource>(
+      std::move(kernel_spec),
+      LlvmKernelSource{std::move(llvm_context), std::move(module)});
+}
+
 absl::StatusOr<FusionEmissionResult> MlirKernelFusion::Emit(
     IrEmitterContext& ir_emitter_context,
     const HloFusionInstruction& fusion) const {
   VLOG(4) << "Fusion: " << fusion.fused_instructions_computation()->ToString();
-  TF_ASSIGN_OR_RETURN(auto args, emitters::KernelArguments::Create(
-                                     ir_emitter_context.buffer_assignment(),
-                                     GetDefaultBufferAlignment(), &fusion));
-  auto launch_dims = launch_dimensions();
-  std::unique_ptr<llvm::Module> module;
-  mlir::MLIRContext& mlir_context = *ir_emitter_context.mlir_context();
-  auto [future_entry, cached] =
-      ir_emitter_context.kernel_cache().GetWithStatus(
-          fusion.fused_instructions_computation(), args.args(),
-          /*discriminator=*/"",
-          [&]() -> absl::StatusOr<KernelReuseCache::Entry> {
-            std::string kernel_name = ir_emitter_context.GetSanitizedUniqueName(
-                std::string(fusion.name()));
-            if (ir_emitter_context.emit_kernels()) {
-              mlir_context.appendDialectRegistry(
-                  MlirKernelEmitter::GetDialectRegistry());
-              mlir_context.loadAllAvailableDialects();
-              RegisterSymbolicExprStorage(&mlir_context);
-              ASSIGN_OR_RETURN(
-                  module,
-                  CreateLLVMModule(
-                      mlir_context, *ir_emitter_context.llvm_context(),
-                      ir_emitter_context.gpu_device_info(), fusion, kernel_name,
-                      &ir_emitter_context.buffer_assignment()));
-              auto* kernel_func = module->getFunction(kernel_name);
-              AddRanges(kernel_func, launch_dims, module.get());
+  ASSIGN_OR_RETURN(auto args, emitters::KernelArguments::Create(
+                                  ir_emitter_context.buffer_assignment(),
+                                  GetDefaultBufferAlignment(), &fusion));
+  auto [future_entry, cached] = ir_emitter_context.kernel_cache().GetWithStatus(
+      fusion.fused_instructions_computation(), args.args(),
+      /*discriminator=*/"", [&]() -> tsl::Future<KernelReuseCache::Entry> {
+        std::string kernel_name = ir_emitter_context.GetSanitizedUniqueName(
+            std::string(fusion.name()));
+        ASSIGN_OR_RETURN(
+            KernelDefinition<LlvmKernelSource> kernel_def,
+            EmitLlvmModule(fusion, kernel_name, ir_emitter_context));
 
-              module->setDataLayout(ir_emitter_context.data_layout());
-              module->setTargetTriple(ir_emitter_context.target_triple());
+        KernelSpec spec = kernel_def.spec();
+        ASSIGN_OR_RETURN(
+            LaunchDimensions launch_dims,
+            LaunchDimensions::FromWorkDimensions(spec.work_dimensions()));
 
-              llvm::IRBuilder<> builder(module->getContext());
-              AnnotateFunctionAsGpuKernel(module.get(), kernel_func, &builder);
-              RETURN_IF_ERROR(AnnotateKernelLaunchDimensions(
-                  ir_emitter_context.gpu_device_info(), launch_dims,
-                  kernel_func, module.get()));
-            } else {
-              VLOG(3) << "Skipped kernel compilation.";
-            }
+        bool use_pdl = EnablePDL(*fusion.GetModule(),
+                                 ir_emitter_context.gpu_device_info());
 
-            KernelReuseCache::Entry entry{kernel_name, launch_dims,
-                                          std::nullopt,
-                                          /*shmem_bytes=*/0};
-            entry.use_pdl = EnablePDL(*fusion.GetModule(),
-                                      ir_emitter_context.gpu_device_info());
-            return entry;
-          });
+        return ir_emitter_context.kernel_compiler()
+            ->CompileToPtx(std::move(kernel_def).TakeSource())
+            .Map([kernel_name = std::move(kernel_name),
+                  launch_dims = std::move(launch_dims),
+                  use_pdl](const std::vector<uint8_t>& cubin) {
+              KernelReuseCache::Entry entry{kernel_name, launch_dims,
+                                            std::nullopt,
+                                            /*shmem_bytes=*/0, cubin};
+
+              entry.use_pdl = use_pdl;
+              return entry;
+            });
+      });
   FusionEmissionResult result;
-  result.module = std::move(module);
 
   Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
       &fusion, ir_emitter_context.GetNextThunkId());
   bool kernel_cached = cached;
-  result.thunks = future_entry.Map(
-      [&fusion, thunk_info = std::move(thunk_info), args = std::move(args),
-       launch_dims = std::move(launch_dims),
-       kernel_cached](const KernelReuseCache::Entry* entry) {
-        if (kernel_cached) {
-          VLOG(3) << "Reuse: " << fusion.name() << " -> " << entry->kernel_name;
-        }
-        return ThunkSequence::Of(std::make_unique<KernelThunk>(
-            thunk_info, entry->kernel_name, args, launch_dims,
-            entry->cluster_dim, entry->shmem_bytes,
-            /*tma_metadata=*/se::gpu::TmaMetadata(),
-            /*zeroed_output_buffer_indices=*/std::vector<int64_t>{},
-            entry->use_pdl));
-      });
+  result.thunks = future_entry.Map([&fusion, thunk_info = std::move(thunk_info),
+                                    args = std::move(args), kernel_cached](
+                                       const KernelReuseCache::Entry* entry)
+                                       -> absl::StatusOr<ThunkSequence> {
+    if (kernel_cached) {
+      VLOG(3) << "Reuse: " << fusion.name() << " -> " << entry->kernel_name;
+    }
+    ASSIGN_OR_RETURN(CustomKernel custom_kernel,
+                     kernel::CreateOwnedCubinCustomKernel(
+                         entry->kernel_name, entry->binary, args.args().size(),
+                         entry->launch_dimensions.block_counts(),
+                         entry->launch_dimensions.thread_counts_per_block(),
+                         entry->shmem_bytes));
+
+    return ThunkSequence::Of(std::make_unique<CustomKernelThunk>(
+        thunk_info, std::move(custom_kernel), args, entry->use_pdl));
+  });
 
   return result;
 }

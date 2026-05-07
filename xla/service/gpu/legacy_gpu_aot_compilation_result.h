@@ -74,8 +74,9 @@ class LegacyGpuAotCompilationResult : public CompiledModule {
 
   absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable(
       se::Platform::Id platform_id,
-      const se::DeviceDescription& device_description) &&
-      override;
+      const se::DeviceDescription& device_description,
+      const DebugOptions& debug_options) &&
+      final;
 
   const HloModule* optimized_module() const override { return module_.get(); }
   std::shared_ptr<HloModule> shared_optimized_module() override {

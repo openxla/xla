@@ -1009,6 +1009,59 @@ TEST(ArrayImplTest, HostBufferInt4) {
   }
 }
 
+TEST(ArrayMemoryKindTest, HostBufferTokens) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      DeviceListRef device_list,
+      client->MakeDeviceList(client->addressable_devices()));
+  ASSERT_GT(device_list->size(), 1);
+
+  xla::ifrt::DType dtype(xla::ifrt::DType::kToken);
+  xla::ifrt::Shape shape({});
+
+  for (Memory* const memory : device_list->devices().front()->Memories()) {
+    SCOPED_TRACE(absl::StrCat(memory->Kind()));
+
+    ShardingRef sharding = ConcreteEvenSharding::Create(
+        device_list, memory->Kind(), shape, /*shard_shape=*/shape,
+        /*is_fully_replicated=*/true);
+
+    {
+      ASSERT_OK_AND_ASSIGN(
+          auto array,
+          client->MakeArrayFromHostBuffer(
+              nullptr, dtype, shape, /*byte_strides=*/std::nullopt, sharding,
+              /*layout=*/nullptr,
+              xla::ifrt::Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+              /*on_done_with_host_buffer=*/nullptr));
+
+      tsl::Future<> future =
+          array->CopyToHostBuffer(nullptr, /*byte_strides=*/std::nullopt,
+                                  xla::ifrt::ArrayCopySemantics::kReuseInput);
+      ASSERT_OK(future.Await());
+    }
+
+    {
+      const absl::Status status = absl::InternalError("injected error");
+      const xla::ifrt::ArraySpec array_spec = {
+          /*dtype=*/dtype,
+          /*shape=*/shape,
+          /*sharding=*/sharding,
+      };
+      ASSERT_OK_AND_ASSIGN(auto arrays,
+                           client->MakeErrorArrays(status, {array_spec}));
+      ASSERT_EQ(arrays.size(), 1);
+
+      tsl::Future<> future = arrays[0]->CopyToHostBuffer(
+          nullptr, /*byte_strides=*/std::nullopt,
+          xla::ifrt::ArrayCopySemantics::kReuseInput);
+      EXPECT_THAT(future.Await(),
+                  StatusIs(status.code(), HasSubstr(status.message())));
+    }
+  }
+}
+
 TEST(ArrayImplTest, MakeErrorArrays) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
   TF_ASSERT_OK_AND_ASSIGN(

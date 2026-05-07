@@ -81,6 +81,7 @@ cc_library(
         ":cpu_device_description",
         ":cpu_topology",
         "//xla:shape_util",
+        "//xla:util",
         "//xla/backends/cpu:target_machine_options",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_common",

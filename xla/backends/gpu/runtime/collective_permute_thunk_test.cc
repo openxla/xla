@@ -213,7 +213,7 @@ ENTRY test_computation {
 
   // Downcast to the specific CommandBufferThunk type for inspection.
   CommandBufferThunk* cmd_buffer_thunk =
-      tensorflow::down_cast<CommandBufferThunk*>(thunk.get());
+      absl::down_cast<CommandBufferThunk*>(thunk.get());
   ASSERT_NE(cmd_buffer_thunk, nullptr);
 
   // Inspect the Thunk kinds
@@ -225,7 +225,7 @@ ENTRY test_computation {
   }
   // Verify that the inner Thunks match the expected sequence from the HLO.
   // The collective is sync (single device), so no AsyncStart/Done wrapping.
-  EXPECT_THAT(kinds, ElementsAre(Kind::kReplicaId, Kind::kKernel,
+  EXPECT_THAT(kinds, ElementsAre(Kind::kReplicaId, Kind::kCustomKernel,
                                  Kind::kCollectivePermute));
 }
 

@@ -6389,5 +6389,155 @@ TEST_F(HloParserTest, SparsityConfig_Both) {
   EXPECT_EQ(config.rhs().stride(), 1);
 }
 
+TEST_F(HloParserTest, DesugarParsingTest_DotStart) {
+  const char* const hlo = R"(
+HloModule async_dot_example
+
+ENTRY main {
+  %lhs = f32[128,128] parameter(0)
+  %rhs = f32[128,128] parameter(1)
+
+  %dot-start = ((f32[128,128], f32[128,128]), f32[128,128], u32[])
+    dot-start(%lhs, %rhs)
+  %dot-update = ((f32[128,128], f32[128,128]), f32[128,128], u32[])
+    dot-update(%dot-start)
+  ROOT %result = f32[128,128] dot-done(%dot-update)
+}
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+}
+
+// negative tests
+TEST_F(HloParserTest, DesugarParsingTest_AllReduceUpdate_Invalid) {
+  const char* const hlo = R"(
+HloModule test
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  p0 = f32[128] parameter(0)
+  start = ((f32[128]), f32[128], u32[]) all-reduce-start(p0), to_apply=add
+  update = ((f32[128]), f32[128], u32[]) all-reduce-update(start)
+  ROOT done = f32[128] all-reduce-done(update)
+}
+  )";
+  auto module_or_status = ParseAndReturnUnverifiedModule(hlo);
+  EXPECT_FALSE(module_or_status.ok());
+  EXPECT_THAT(module_or_status.status().message(),
+              HasSubstr("expects opcode but sees: all-reduce-update"));
+  EXPECT_THAT(module_or_status.status().message(),
+              HasSubstr("Unknown opcode: all-reduce-update"));
+}
+
+TEST_F(HloParserTest, DesugarParsingTest_AllGatherUpdate_Invalid) {
+  const char* const hlo = R"(
+HloModule test
+ENTRY main {
+  p0 = f32[128] parameter(0)
+  start = ((f32[128]), f32[256], u32[]) all-gather-start(p0), dimensions={0}
+  update = ((f32[128]), f32[256], u32[]) all-gather-update(start)
+  ROOT done = f32[256] all-gather-done(update)
+}
+  )";
+  auto status = ParseAndReturnUnverifiedModule(hlo).status();
+  EXPECT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("Unknown opcode: all-gather-update"));
+}
+
+TEST_F(HloParserTest, DesugarParsingTest_CollectivePermuteUpdate_Invalid) {
+  const char* const hlo = R"(
+HloModule test
+ENTRY main {
+  p0 = f32[128] parameter(0)
+  start = ((f32[128]), f32[128], u32[]) collective-permute-start(p0), source_target_pairs={{0,1}}
+  update = ((f32[128]), f32[128], u32[]) collective-permute-update(start)
+  ROOT done = f32[128] collective-permute-done(update)
+}
+  )";
+  auto status = ParseAndReturnUnverifiedModule(hlo).status();
+  EXPECT_FALSE(status.ok());
+  EXPECT_THAT(status.message(),
+              HasSubstr("Unknown opcode: collective-permute-update"));
+}
+
+TEST_F(HloParserTest, DesugarParsingTest_CopyUpdate_Invalid) {
+  const char* const hlo = R"(
+HloModule test
+ENTRY main {
+  p0 = f32[128] parameter(0)
+  start = (f32[128], f32[128], u32[]) copy-start(p0)
+  update = (f32[128], f32[128], u32[]) copy-update(start)
+  ROOT done = f32[128] copy-done(update)
+}
+  )";
+  auto status = ParseAndReturnUnverifiedModule(hlo).status();
+  EXPECT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("Unknown opcode: copy-update"));
+}
+
+TEST_F(HloParserTest, DesugarParsingTest_SendStart_Invalid) {
+  const char* const hlo = R"(
+HloModule test
+ENTRY main {
+  p0 = f32[128] parameter(0)
+  t = token[] after-all()
+  start = (f32[128], u32[], token[]) send-start(p0, t), channel_id=1
+  ROOT done = token[] send-done(start)
+}
+  )";
+  auto status = ParseAndReturnUnverifiedModule(hlo).status();
+  EXPECT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("Unknown opcode: send-start"));
+}
+
+TEST_F(HloParserTest, DesugarParsingTest_SendUpdate_Invalid) {
+  const char* const hlo = R"(
+HloModule test
+ENTRY main {
+  p0 = f32[128] parameter(0)
+  t = token[] after-all()
+  start = (f32[128], u32[], token[]) send(p0, t), channel_id=1
+  update = (f32[128], u32[], token[]) send-update(start)
+  ROOT done = token[] send-done(update), channel_id=1
+}
+  )";
+  auto status = ParseAndReturnUnverifiedModule(hlo).status();
+  EXPECT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("Unknown opcode: send-update"));
+}
+
+TEST_F(HloParserTest, DesugarParsingTest_RecvStart_Invalid) {
+  const char* const hlo = R"(
+HloModule test
+ENTRY main {
+  t = token[] after-all()
+  start = (f32[128], u32[], token[]) recv-start(t), channel_id=1
+  ROOT done = (f32[128], token[]) recv-done(start), channel_id=1
+}
+  )";
+  auto status = ParseAndReturnUnverifiedModule(hlo).status();
+  EXPECT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("Unknown opcode: recv-start"));
+}
+
+TEST_F(HloParserTest, DesugarParsingTest_RecvUpdate_Invalid) {
+  const char* const hlo = R"(
+HloModule test
+ENTRY main {
+  t = token[] after-all()
+  start = (f32[128], u32[], token[]) recv(t), channel_id=1
+  update = (f32[128], u32[], token[]) recv-update(start)
+  ROOT done = (f32[128], token[]) recv-done(update), channel_id=1
+}
+  )";
+  auto status = ParseAndReturnUnverifiedModule(hlo).status();
+  EXPECT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("Unknown opcode: recv-update"));
+}
+
 }  // namespace
 }  // namespace xla

@@ -63,13 +63,14 @@ std::string MemoryKind::ToString() const {
 
 MemoryKind CanonicalizeMemoryKind(MemoryKind memory_kind,
                                   const Device* device) {
-  return CanonicalizeMemoryKindWithDefault(memory_kind, [device]() {
-    auto default_memory = device->DefaultMemory();
-    if (default_memory.ok()) {
-      return (*default_memory)->Kind();
-    }
-    return MemoryKind();
-  });
+  if (memory_kind.memory_kind().has_value()) {
+    return memory_kind;
+  }
+  auto default_memory = device->DefaultMemory();
+  if (default_memory.ok()) {
+    return (*default_memory)->Kind();
+  }
+  return MemoryKind();
 }
 
 char Memory::ID = 0;

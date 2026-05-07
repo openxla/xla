@@ -599,11 +599,11 @@ absl::StatusOr<HloInstruction*> NormalizeBatchDimensions(HloInstruction* dot) {
 
   TF_ASSIGN_OR_RETURN(DotDimensionNumbers new_dnums,
                       DotOperandDims::CreateDotDimensionNumbers(dims));
-  PrimitiveType accumulator_type = GetGemmAccumulatorType(dot_instr);
-  TF_ASSIGN_OR_RETURN(HloInstruction * new_dot,
-                      MakeDotHlo(operands[0], operands[1], new_dnums,
-                                 dot_instr->precision_config(),
-                                 accumulator_type, &dot_instr->metadata()));
+  TF_ASSIGN_OR_RETURN(
+      HloInstruction * new_dot,
+      MakeDotHlo(operands[0], operands[1], new_dnums,
+                 dot_instr->precision_config(),
+                 dot_instr->shape().element_type(), &dot_instr->metadata()));
 
   TF_ASSIGN_OR_RETURN(HloInstruction * reshape,
                       MakeReshapeHlo(dot->shape(), new_dot));

@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
@@ -1897,7 +1898,6 @@ class PrecisionTests
     TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
                         ParseAndReturnVerifiedModule(hlo_text));
     auto debug_options = module->config().debug_options();
-    debug_options.set_xla_gpu_enable_split_k_autotuning(false);
     if (algorithm == PC::ALG_UNSET) {
       // Here we test that the default algorithm for f32 dots is
       // ALG_DOT_BF16_BF16_F32 if the flag is set.

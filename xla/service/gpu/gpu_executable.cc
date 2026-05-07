@@ -28,6 +28,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -42,6 +43,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "riegeli/bytes/string_writer.h"
 #include "riegeli/bytes/writer.h"
 #include "xla/backends/cpu/target_machine_options.h"
@@ -133,6 +135,7 @@ limitations under the License.
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"

@@ -694,7 +694,7 @@ cc_library(
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:platform_port",
-    ],
+    ] + if_google(["@com_google_highway//:hwy"]),
 )
 
 xla_cc_test(

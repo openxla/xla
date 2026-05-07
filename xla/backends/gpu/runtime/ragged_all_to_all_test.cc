@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/ragged_all_to_all.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -26,6 +27,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "third_party/nccl/nccl.h"
 #include "xla/backends/gpu/collectives/nccl_symmetric_memory.h"
@@ -116,15 +118,17 @@ template <typename T>
 std::vector<std::vector<T>> CopyDeviceToHost2D(
     const std::vector<std::unique_ptr<se::Stream>>& streams,
     const std::vector<std::unique_ptr<se::MemoryAllocation>>& device_buffers,
-    int64_t num_elements) {
+    size_t offset_bytes, int64_t num_elements) {
+  const size_t copy_size = num_elements * sizeof(T);
   std::vector<std::vector<T>> host_buffers;
   host_buffers.reserve(device_buffers.size());
   CHECK_EQ(streams.size(), device_buffers.size());
   for (int i = 0; i < device_buffers.size(); ++i) {
-    auto& device_buffer = device_buffers[i];
+    se::DeviceAddressBase full_buffer = device_buffers[i]->address();
+    se::DeviceAddressBase sliced_address =
+        full_buffer.GetByteSlice(offset_bytes, copy_size);
     std::vector<T> host_buffer(num_elements);
-    CHECK_OK(streams[i]->Memcpy(host_buffer.data(), device_buffer->address(),
-                                num_elements * sizeof(T)));
+    CHECK_OK(streams[i]->Memcpy(host_buffer.data(), sliced_address, copy_size));
     CHECK_OK(streams[i]->BlockHostUntilDone());
     host_buffers.push_back(std::move(host_buffer));
   }
@@ -290,6 +294,7 @@ TEST_F(RaggedAllToAllKernelTest, KernelWithSymmetricMemory) {
   constexpr int64_t num_update_per_output = 2;
   constexpr int64_t num_input_rows = 8;
   constexpr int64_t num_row_elements = 2;
+  constexpr size_t output_sym_offset = 1024;  // 1KB padding for output buffers
   constexpr int64_t n = num_input_rows * num_row_elements;
 
   ASSERT_OK_AND_ASSIGN(
@@ -335,12 +340,13 @@ TEST_F(RaggedAllToAllKernelTest, KernelWithSymmetricMemory) {
 
   std::vector<std::unique_ptr<se::MemoryAllocation>> output_buffers;
   for (int64_t i = 0; i < num_outputs; ++i) {
+    size_t total_bytes = output_sym_offset + (n * sizeof(T));
     ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::MemoryAllocation> output_buffer,
-                         collective_allocators[i]->Allocate(n * sizeof(T)));
+                         collective_allocators[i]->Allocate(total_bytes));
     se::DeviceAddressBase output_buffer_address = output_buffer->address();
     ASSERT_TRUE(!output_buffer_address.is_null());
 
-    TF_ASSERT_OK(streams[i]->MemZero(&output_buffer_address, n * sizeof(T)));
+    TF_ASSERT_OK(streams[i]->MemZero(&output_buffer_address, total_bytes));
 
     output_buffers.push_back(std::move(output_buffer));
   }
@@ -377,12 +383,12 @@ TEST_F(RaggedAllToAllKernelTest, KernelWithSymmetricMemory) {
   TF_ASSERT_OK(RunRaggedAllToAllWithSymmetricMemoryKernel(
       streams[0].get(), primitive_util::NativeToPrimitiveType<T>(),
       input_buffer.address(), output_buffers_symmetric_memory[0].get(),
-      input_offsets_buffer.address(), send_sizes_buffer.address(),
-      output_offsets_buffer.address(), num_outputs, num_update_per_output,
-      num_input_rows, num_row_elements));
+      output_sym_offset, input_offsets_buffer.address(),
+      send_sizes_buffer.address(), output_offsets_buffer.address(), num_outputs,
+      num_update_per_output, num_input_rows, num_row_elements));
 
   std::vector<std::vector<T>> output_results =
-      CopyDeviceToHost2D<T>(streams, output_buffers, n);
+      CopyDeviceToHost2D<T>(streams, output_buffers, output_sym_offset, n);
 
   std::vector<std::vector<T>> expected_output_results =
       GetExpectedOutputResults<T>(

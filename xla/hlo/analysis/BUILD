@@ -59,7 +59,6 @@ cc_library(
     srcs = ["hlo_reachability.cc"],
     hdrs = ["hlo_reachability.h"],
     deps = [
-        "//xla:types",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",

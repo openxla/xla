@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/pjrt/device_event.h"
 #include "xla/pjrt/event_pool.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
@@ -146,5 +147,33 @@ bool BufferSequencingEvent::IsComplete() {
 
   return event_->event.event()->PollForStatus() == se::Event::Status::kComplete;
 }
+
+namespace internal {
+template <>
+const PJRT_DeviceEvent_FunctionTable*
+GetBuiltinDeviceEventCApiFunctionTable<BufferSequencingEvent>() {
+  static const PJRT_DeviceEvent_FunctionTable vtable = []() {
+    PJRT_DeviceEvent_FunctionTable t =
+        BuildBuiltinDeviceEventCApiFunctionTable<BufferSequencingEvent>();
+    t.get_definition_stream =
+        +[](void* device_event, uint64_t* sequence_number) -> intptr_t {
+      auto& ev = reinterpret_cast<tsl::AsyncValue*>(device_event)
+                     ->get<BufferSequencingEvent>();
+      if (!ev.event().IsConcrete()) {
+        return 0;
+      }
+      *sequence_number = ev.sequence_number();
+      se::Stream* stream = ev.definition_stream();
+      if (stream == nullptr) {
+        return 0;
+      }
+      return reinterpret_cast<intptr_t>(
+          stream->platform_specific_handle().stream);
+    };
+    return t;
+  }();
+  return &vtable;
+}
+}  // namespace internal
 
 }  // namespace xla

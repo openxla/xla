@@ -491,6 +491,8 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
       kProgramOutput,
       kConstantInstruction,
       kProgramInput,
+      kBlockPrefetchSourceBuffer,
+      kBlockPrefetchSourceBufferUse,
     };
 
     MemorySpace memory_space;
@@ -1353,6 +1355,16 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // alternate memory.
   void CalculateMemoryPressure(
       const std::vector<MsaBufferInterval>& sorted_buffer_intervals);
+
+  // Marks the given HloValue as finalized, i.e., its allocation values have
+  // been finalized and cannot be uncommitted or changed.
+  void FinalizeValue(const HloValue* value);
+
+  // Returns true if the given HloValue is finalized, i.e., its allocation
+  // values have been finalized and cannot be uncommitted or changed.
+  bool IsValueFinalized(const HloValue* value) const {
+    return finalized_values_.contains(value);
+  }
 
   HloModule* module_ = nullptr;
   AllocationSequence* allocations_;

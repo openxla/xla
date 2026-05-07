@@ -410,14 +410,6 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
       PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
       bool retry_on_oom) override;
 
-  using CommonPjRtClient::DefineBuffer;
-
-  absl::StatusOr<std::unique_ptr<PjRtBuffer>> DefineBuffer(
-      std::shared_ptr<const Shape> on_device_shape,
-      PjRtMemorySpace* memory_space, PjRtRawBufferRef raw_buffer,
-      absl::InlinedVector<PjRtDeviceEventRef, 2> definition_device_events)
-      override;
-
   absl::StatusOr<std::pair<PjRtRawBufferRef, PjRtFulfillAliasRawBufferCallback>>
   CreateRawBufferChannel(PjRtMemorySpace* memory_space,
                          size_t on_device_bytes_count) override;
@@ -441,6 +433,10 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
 
   absl::StatusOr<PjRtDeviceEventRef> CreateDeviceEvent(
       PjRtMemorySpace* memory_space, Future<> dependency) override;
+
+  absl::Status WaitOnStream(PjRtMemorySpace* memory_space,
+                            PjRtDeviceEventRef event,
+                            std::intptr_t stream) override;
 
   absl::Status WaitForAllocation(se::Stream* stream,
                                  const CommonPjRtRawBuffer& raw_buffer);

@@ -742,6 +742,7 @@ cc_library(
     ]),
     deps = [
         "//xla:shape_util",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_compiler",

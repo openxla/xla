@@ -210,7 +210,7 @@ absl::StatusOr<TritonFusion::EmitResult> TritonFusion::Emit(
 
     return {{kernel->getName().str(), launch_dimensions,
              /*cluster_dim=*/std::nullopt, triton_wrapper_result.shmem_bytes,
-             /*binary=*/"", triton_wrapper_result.tma_metadata, /*use_pdl=*/
+             /*binary=*/{}, triton_wrapper_result.tma_metadata, /*use_pdl=*/
              triton_wrapper_result.use_pdl}};
   };
 

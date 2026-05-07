@@ -1546,6 +1546,33 @@ add {
   ROOT %Arg_0.1 = f32[] parameter(0)
 }
 
+// Test scan: HLO `kScan` should import as `mhlo.scan` with multi-results
+// rather than as `mhlo.unknown` with a tuple result. The wrapper
+// `stablehlo.tuple` preserves the original HLO tuple shape so downstream
+// `get-tuple-element` users keep working.
+%scan_combiner {
+  %lhs = f32[] parameter(0)
+  %rhs = f32[] parameter(1)
+  %add = f32[] add(f32[] %lhs, f32[] %rhs)
+  ROOT %t = (f32[], f32[]) tuple(f32[] %add, f32[] %add)
+}
+
+// CHECK-LABEL:  func private @test_scan
+// CHECK-SAME:   ([[ARG0:%.*]]: tensor<10xf32>) -> tensor<10xf32>
+%test_scan (Arg_0.1: f32[10]) -> f32[10] {
+  %Arg_0.1 = f32[10] parameter(0)
+  // CHECK-DAG: [[INIT:%.*]] = mhlo.constant dense<0.000000e+00>
+  %init = f32[] constant(0)
+  // CHECK: [[RESULT:%.*]]:2 = mhlo.scan([[ARG0]]) inits ([[INIT]]) dimension=0
+  // CHECK-SAME: attributes {is_associative = true, is_reverse = false}
+  // CHECK:   [[BADD:%.*]] = mhlo.add %{{.*}}, %{{.*}}
+  // CHECK:   mhlo.return [[BADD]], [[BADD]]
+  // CHECK: } : (tensor<10xf32>, tensor<f32>) -> (tensor<10xf32>, tensor<f32>)
+  // CHECK: return [[RESULT]]#0 : tensor<10xf32>
+  %scan = (f32[10], f32[]) scan(f32[10] %Arg_0.1, f32[] %init), dimensions={0}, num_carries=1, is_associative=true, to_apply=%scan_combiner
+  ROOT %get-tuple-element = f32[10] get-tuple-element((f32[10], f32[]) %scan), index=0
+}
+
 // Test scatter
 %update_computation {
   %lhs = f32[] parameter(0)

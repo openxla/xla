@@ -279,7 +279,7 @@ RcclCollectives::SplitCommunicatorsWithCancel(
   }
 
   const auto& gpu_config =
-      tsl::down_cast<const GpuCollectives::Config&>(config);
+      absl::down_cast<const GpuCollectives::Config&>(config);
 
 #if !defined(TENSORFLOW_USE_ROCM) || TF_ROCM_VERSION >= 60000
   auto make_comm = [&](int i) -> absl::StatusOr<ncclComm_t> {

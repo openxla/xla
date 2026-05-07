@@ -73,8 +73,8 @@ limitations under the License.
 #include "xla/pjrt/extensions/executable_metadata/executable_metadata_extension.h"
 #include "xla/pjrt/extensions/host_allocator/host_allocator_extension.h"
 #include "xla/pjrt/extensions/host_allocator/host_allocator_interface_impl.h"
-#include "xla/pjrt/extensions/host_allocator/host_memory_allocator/host_memory_allocator_extension.h"
-#include "xla/pjrt/extensions/host_allocator/host_memory_allocator/host_memory_allocator_interface_impl.h"
+#include "xla/pjrt/extensions/host_memory_allocator/host_memory_allocator_extension.h"
+#include "xla/pjrt/extensions/host_memory_allocator/host_memory_allocator_interface_impl.h"
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/mlir_to_hlo.h"
@@ -2927,7 +2927,7 @@ PJRT_SendCallbackInfo CppSendCallbackToC(
       [&send_callback = cpp_send_callback.callback](
           PJRT_Chunk* chunk, PJRT_CallbackError* callback_error,
           size_t total_size_in_bytes, bool done) -> PJRT_Error* {
-    // PJRT C API doesn't support
+    // PJRT C API doesn't fully support
     // use_major_to_minor_data_layout_for_callbacks = false
     xla::Shape dummy_shape;
     absl::Status status = send_callback(xla::PjRtTransferMetadata{dummy_shape},
@@ -3037,7 +3037,7 @@ PJRT_RecvCallbackInfo CppRecvCallbackToC(
     PjRtCApiLoadedExecutable::RecvCallbackFunction* recv_callback_function) {
   *recv_callback_function = [&recv_callback = cpp_recv_callback.callback,
                              c_api](PJRT_CopyToDeviceStream* stream) {
-    // PJRT C API doesn't support
+    // PJRT C API doesn't fully support
     // use_major_to_minor_data_layout_for_callbacks = false
     xla::Shape dummy_shape;
     recv_callback(xla::PjRtTransferMetadata{dummy_shape},
@@ -3146,19 +3146,14 @@ PjRtCApiLoadedExecutable::GetCommonExecuteArgs(
     std::vector<int64_t>& incarnation_ids_storage) const {
   bool using_host_callbacks =
       !options.send_callbacks.empty() || !options.recv_callbacks.empty();
-  if (using_host_callbacks &&
-      !options.use_major_to_minor_data_layout_for_callbacks) {
-    return Unimplemented(
-        "PJRT C API doesn't support "
-        "ExecuteOptions::use_major_to_minor_data_layout_for_callbacks = false");
-  }
-
   PJRT_LoadedExecutable_Execute_Args args;
   args.struct_size = PJRT_LoadedExecutable_Execute_Args_STRUCT_SIZE;
   args.executable = c_loaded_executable();
   args.options = &c_options;
   args.options->struct_size = PJRT_ExecuteOptions_STRUCT_SIZE;
   args.options->launch_id = options.launch_id;
+  args.options->use_major_to_minor_data_layout_for_callbacks =
+      options.use_major_to_minor_data_layout_for_callbacks;
   args.options->multi_slice_config = nullptr;
   if (options.multi_slice_config != nullptr) {
     args.options->multi_slice_config =

@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_RAGGED_ALL_TO_ALL_H_
 #define XLA_BACKENDS_GPU_RUNTIME_RAGGED_ALL_TO_ALL_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <variant>
 
@@ -65,7 +66,7 @@ absl::Status RunRaggedAllToAllWithSymmetricMemoryKernel(
     se::Stream* stream, PrimitiveType element_type,
     se::DeviceAddressBase input_buffer,
     xla::SymmetricMemory* output_ptrs_symmetric_memory,
-    se::DeviceAddressBase input_offsets_buffer,
+    size_t output_sym_offset, se::DeviceAddressBase input_offsets_buffer,
     se::DeviceAddressBase send_sizes_buffer,
     se::DeviceAddressBase output_offsets_buffer, int64_t num_outputs,
     int64_t num_updates_per_output, int64_t num_input_rows,

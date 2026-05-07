@@ -86,18 +86,6 @@ class MemoryKind {
 // canonicalization.
 MemoryKind CanonicalizeMemoryKind(MemoryKind memory_kind, const Device* device);
 
-// Generic helper: returns `memory_kind` as-is when it has a value, otherwise
-// invokes `default_memory_kind_getter()` to obtain a fallback.
-template <typename DefaultMemoryKindGetter>
-MemoryKind CanonicalizeMemoryKindWithDefault(
-    MemoryKind memory_kind,
-    DefaultMemoryKindGetter default_memory_kind_getter) {
-  if (memory_kind.memory_kind().has_value()) {
-    return memory_kind;
-  }
-  return default_memory_kind_getter();
-}
-
 TSL_LIB_GTL_DEFINE_INT_TYPE(MemoryId, int32_t);
 
 // `Memory` represents a memory space that one or more devices can be attached
