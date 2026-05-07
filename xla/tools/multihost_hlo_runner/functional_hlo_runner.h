@@ -44,6 +44,7 @@ limitations under the License.
 #include "tsl/profiler/lib/profiler_session.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
+// Test change.
 namespace xla {
 // Interface that may optionally returns an XSpace proto after UploadSession()
 // is called. This can be used by caller to get a programmatic handler of the
