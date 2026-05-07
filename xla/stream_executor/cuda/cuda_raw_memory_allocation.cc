@@ -65,6 +65,9 @@ CudaRawMemoryAllocation::Create(StreamExecutor* executor, uint64_t size) {
   }
 #endif
   RETURN_IF_ERROR(cuda::ToStatus(err, "cuMemCreate"));
+  VLOG(3) << "CUDA VMM cuMemCreate completed: device_ordinal="
+          << executor->device_ordinal() << " handle=" << handle
+          << " padded_size=" << padded_size;
 
   return std::unique_ptr<CudaRawMemoryAllocation>(
       new CudaRawMemoryAllocation(executor, handle, padded_size));
@@ -85,6 +88,9 @@ CudaRawMemoryAllocation::~CudaRawMemoryAllocation() {
     return;
   }
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
+  VLOG(3) << "CUDA VMM cuMemRelease: device_ordinal="
+          << executor_->device_ordinal() << " handle=" << handle_
+          << " size=" << size_;
   auto status =
       cuda::ToStatus(cuMemRelease(handle_), "Error releasing CUDA memory");
   if (!status.ok()) {
