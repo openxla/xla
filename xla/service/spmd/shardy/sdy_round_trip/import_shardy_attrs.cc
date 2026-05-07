@@ -160,7 +160,10 @@ void handleFuncResultSharding(CustomCallOp funcResultSharding, FuncOp funcOp,
   bool hasNonFuncReturnUses = false;
   for (mlir::OpOperand& use : llvm::make_early_inc_range(resultUses)) {
     if (mlir::isa<mlir::func::ReturnOp>(use.getOwner())) {
-      funcOp.setResultAttr(use.getOperandNumber(), kShardingAttr, sharding);
+      int64_t resNum = use.getOperandNumber();
+      if (!isSizeOfOne(funcOp.getFunctionType().getResult(resNum))) {
+        funcOp.setResultAttr(resNum, kShardingAttr, sharding);
+      }
     } else if (use.getOwner() != funcResultSharding &&
                !dynCastX64CombineCustomCall(use.getOwner())) {
       hasNonFuncReturnUses = true;
@@ -436,7 +439,9 @@ class SdyRoundTripImportShardyAttrsPass
 
       auto resultShardingSetter = [](FuncOp funcOp, int64_t resultNum,
                                      TensorShardingAttr resultSharding) {
-        setFuncResultSharding(funcOp, resultNum, resultSharding);
+        if (!isSizeOfOne(funcOp.getFunctionType().getResult(resultNum))) {
+          setFuncResultSharding(funcOp, resultNum, resultSharding);
+        }
       };
       if (mlir::failed(handleFuncTupleInOutShardings(
               moduleOp, mainFunc, kOutTupleShardings, resultShardingSetter,
