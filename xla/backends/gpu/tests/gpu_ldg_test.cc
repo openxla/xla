@@ -21,7 +21,7 @@ limitations under the License.
 #include <utility>
 
 #include <gtest/gtest.h>
-#include "xla/backends/gpu/tests/gpu_codegen_test.h"
+#include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -33,7 +33,7 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-class GpuLdgTest : public GpuCodegenTest {};
+class GpuLdgTest : public GpuPjRtCodegenTest {};
 
 // Parameters are never overwritten, so parameter reads should get ld.global.nc
 // reads.

@@ -17,7 +17,8 @@ limitations under the License.
 #include <utility>
 
 #include <gtest/gtest.h>
-#include "xla/backends/gpu/tests/gpu_codegen_test.h"
+#include "absl/status/status_matchers.h"
+#include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/shape_util.h"
@@ -27,7 +28,10 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-class GpuNoAliasTest : public GpuCodegenTest {};
+class GpuNoAliasTest : public GpuPjRtCodegenTest {
+ protected:
+  bool is_built_with_sycl_ = false;
+};
 
 TEST_F(GpuNoAliasTest, Concat) {
   HloComputation::Builder builder(TestName());
@@ -63,8 +67,8 @@ CHECK: define amdgpu_kernel void @{{[a-zA-Z0-9_]+}}(ptr noalias align 16 derefer
 CHECK: define ptx_kernel void @{{[a-zA-Z0-9_]+}}(ptr noalias align 16 dereferenceable(16) %{{[a-zA-Z0-9_]+}}, ptr noalias align 16 dereferenceable(16) %{{[a-zA-Z0-9_]+}}, ptr noalias align 256 dereferenceable(48) %{{[a-zA-Z0-9_]+}})
   )";
   }
-  CompileAndVerifyIr(std::move(hlo_module), expected_ir,
-                     /*match_optimized_ir=*/false);
+  EXPECT_OK(CompileAndVerifyIr(std::move(hlo_module), expected_ir,
+                               /*match_optimized_ir=*/false));
 }
 
 }  // namespace gpu

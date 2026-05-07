@@ -15,31 +15,26 @@ limitations under the License.
 
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 
-#include <memory>
-#include <string>
-#include <utility>
-
-#include <gtest/gtest.h>
+#include <gmock/gmock.h>
+#include "absl/base/thread_annotations.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/executable.h"
-#include "xla/service/gpu/gpu_executable.h"
+#include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_compiler.h"
 #include "xla/shape_util.h"
 #include "xla/tests/codegen_utils.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/casts.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 
 std::unique_ptr<VerifiedHloModule>
 GpuPjRtCodegenTest::CreateNewVerifiedModuleWithFTZ(bool ftz) {
@@ -58,11 +53,24 @@ GpuPjRtCodegenTest::CreateNewVerifiedModuleWithFTZ(bool ftz) {
 void GpuPjRtCodegenTest::CompileAndOptionallyVerifyPtx(
     std::unique_ptr<VerifiedHloModule> hlo_module, absl::string_view pattern,
     bool run_optimization_passes) {
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Executable> executable,
-      CompileToExecutable(std::move(hlo_module), run_optimization_passes));
-  std::string ptx_str(
-      absl::down_cast<GpuExecutable*>(executable.get())->text());
+  GpuCompiler* gpu_compiler = dynamic_cast<GpuCompiler*>(compiler());
+  CHECK_NOTNULL(gpu_compiler);
+
+  absl::Mutex ptx_str_mu;
+  std::string ptx_str ABSL_GUARDED_BY(ptx_str_mu);
+  gpu_compiler->SetAsmHook([&](absl::string_view ptx) {
+    absl::MutexLock lock(&ptx_str_mu);
+    ptx_str += ptx;
+  });
+
+  auto status_or_executable =
+      CompileToExecutable(std::move(hlo_module), run_optimization_passes);
+  gpu_compiler->RemoveAsmHook();
+
+  absl::MutexLock lock(&ptx_str_mu);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
+                       std::move(status_or_executable));
 
   // On the ROCM platform the "ptx" string is not populated for the compiled
   // executable, and hence the "ptx_str" will be empty. So disabling the
@@ -118,11 +126,10 @@ absl::Status GpuPjRtCodegenTest::CompileAndVerifyIr(
 absl::Status GpuPjRtCodegenTest::CompileAndVerifyIr(
     absl::string_view hlo_text, absl::string_view expected_llvm_ir,
     bool match_optimized_ir, bool run_optimization_passes) {
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
-                      ParseAndReturnVerifiedModule(hlo_text));
+  ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
+                   ParseAndReturnVerifiedModule(hlo_text));
   return CompileAndVerifyIr(std::move(hlo_module), expected_llvm_ir,
                             match_optimized_ir, run_optimization_passes);
 }
 
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu

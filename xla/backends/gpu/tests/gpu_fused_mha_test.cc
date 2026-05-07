@@ -23,7 +23,7 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "xla/array4d.h"
-#include "xla/backends/gpu/tests/gpu_codegen_test.h"
+#include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
@@ -45,23 +46,20 @@ limitations under the License.
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 namespace {
 
-class MultiHeadedAttentionTest : public GpuCodegenTest {
+class MultiHeadedAttentionTest
+    : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase> {
  public:
   MultiHeadedAttentionTest() {
-    if (backend().platform()->id() != stream_executor::cuda::kCudaPlatformId ||
-        backend()
-                .default_stream_executor()
-                ->GetDeviceDescription()
-                .runtime_version() <
+    if (!device_description().gpu_compute_capability().IsCuda() ||
+        device_description().runtime_version() <
             stream_executor::SemanticVersion{12, 0, 0}) {
       skip_reason_ = "cuDNN Fused MHA requires CUDA 12 or later.";
       return;
     }
-    stream_executor::CudaComputeCapability cc = GetCudaComputeCapability();
+    se::CudaComputeCapability cc = GetCudaComputeCapability();
     // Enforce capability minor == 0 because hardware with a non-zero minor
     // number typically has insufficient shared memory for cuDNN FMHA.
     if (!cc.IsAtLeastAmpere() || cc.minor != 0) {
@@ -73,15 +71,13 @@ class MultiHeadedAttentionTest : public GpuCodegenTest {
   }
 
   se::CudaComputeCapability GetCudaComputeCapability() {
-    return backend()
-        .default_stream_executor()
-        ->GetDeviceDescription()
-        .cuda_compute_capability();
+    return device_description().cuda_compute_capability();
   }
 
  protected:
   DebugOptions GetDebugOptionsForTest() const override {
-    auto debug_options = GpuCodegenTest::GetDebugOptionsForTest();
+    auto debug_options = HloPjRtInterpreterReferenceMixin<
+        GpuPjRtCodegenTest>::GetDebugOptionsForTest();
     return debug_options;
   }
 
@@ -325,8 +321,8 @@ class FlashAttentionBMMScaleCausalMaskSoftmaxBMM
 
   void TestImpl_Flash_Attention_BMM1_CausalMask_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(9, 0, 0)) {
+    if (device_description().dnn_version() <
+        stream_executor::SemanticVersion(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
     std::string hlo_string =
@@ -340,8 +336,8 @@ class FlashAttentionBMMScaleCausalMaskSoftmaxBMM
 
   void TestImpl_Flash_Attention_Training_BMM1_CausalMask_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(9, 0, 0)) {
+    if (device_description().dnn_version() <
+        stream_executor::SemanticVersion(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
     std::string hlo_string =
@@ -735,8 +731,8 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
 
   void TestImpl_Flash_Attention_BMM1_Bias_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(9, 0, 0)) {
+    if (device_description().dnn_version() <
+        stream_executor::SemanticVersion(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
     std::string hlo_string =
@@ -744,8 +740,8 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
     std::string hlo_string_ref =
         GetModuleFlash_Attention_CuDNN_BMM1_Bias_Softmax_BMM2_HloString_BF16();
 
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) >=
-        se::dnn::VersionInfo(9, 13, 0)) {
+    if (device_description().dnn_version() >=
+        stream_executor::SemanticVersion(9, 13, 0)) {
       // fp32 bias is supported to cudnn 9.13 and above
       std::string f32_bias_hlo_string =
           absl::StrReplaceAll(hlo_string, {{"$bias_type", "f32"}});
@@ -765,8 +761,8 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
 
   void TestImpl_Flash_Attention_Training_BMM1_Bias_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(9, 0, 0)) {
+    if (device_description().dnn_version() <
+        stream_executor::SemanticVersion(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
     std::string hlo_string =
@@ -779,8 +775,8 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
 
   void TestImpl_Flash_Attention_BMM1_Bias_Softmax_BMM2_Cross_Attention() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(9, 0, 0)) {
+    if (device_description().dnn_version() <
+        stream_executor::SemanticVersion(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention cross attention requires "
                       "cuDNN >= 9.0.0.";
     }
@@ -795,8 +791,8 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
   void TestImpl_Flash_Attention_BMM1_Bias_Softmax_BMM2_Dbias() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
     auto cc = GetCudaComputeCapability();
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-            se::dnn::VersionInfo(9, 0, 0) ||
+    if (device_description().dnn_version() <
+            stream_executor::SemanticVersion(9, 0, 0) ||
         !cc.IsAtLeastHopper() || cc.minor != 0) {
       GTEST_SKIP()
           << "Flash Attention dbias requires cuDNN >= 9.0.0 and Hopper arch.";
@@ -960,8 +956,8 @@ class FlashAttentionBMMScaleSoftmaxBMM : public MultiHeadedAttentionTest {
 
   void TestImpl_Flash_Attention_Training_BMM1_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(9, 0, 0)) {
+    if (device_description().dnn_version() <
+        stream_executor::SemanticVersion(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
     std::string hlo_string =
@@ -975,8 +971,8 @@ class FlashAttentionBMMScaleSoftmaxBMM : public MultiHeadedAttentionTest {
   void TestImpl_Flash_Attention_Training_BMM1_Softmax_BMM2_Deterministic() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
     auto cc = GetCudaComputeCapability();
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-            se::dnn::VersionInfo(9, 0, 0) ||
+    if (device_description().dnn_version() <
+            stream_executor::SemanticVersion(9, 0, 0) ||
         !cc.IsAtLeastHopper() || cc.minor != 0) {
       GTEST_SKIP() << "Flash Attention deterministic kernels requires cuDNN >= "
                       "9.0.0 and Hopper arch.";
@@ -1081,8 +1077,8 @@ class FlashAttentionBMMScalePaddingMaskSoftmaxBMM
 
   void TestImpl_Flash_Attention_Training_BMM1_PaddingMask_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(9, 0, 0)) {
+    if (device_description().dnn_version() <
+        stream_executor::SemanticVersion(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
     // pass padding mask as bias
@@ -1188,8 +1184,8 @@ class FlashAttentionBMMScaleSlidingWindowMaskSoftmaxBMM
 
   void TestImpl_Flash_Attention_Training_BMM1_SlidingWindowMask_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(9, 2, 0)) {
+    if (device_description().dnn_version() <
+        stream_executor::SemanticVersion(9, 2, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.2.0.";
     }
     // pass sliding window mask as bias
@@ -1318,8 +1314,8 @@ class FlashAttentionBMMScaleSegmentMaskSoftmaxBMM
   template <typename T>
   void TestImpl_Flash_Attention_Training_BMM1_SegmentMask_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(9, 6, 0)) {
+    if (device_description().dnn_version() <
+        stream_executor::SemanticVersion(9, 6, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.6.0.";
     }
     auto cc = GetCudaComputeCapability();
@@ -1382,8 +1378,8 @@ class FlashAttentionPagedAttention : public MultiHeadedAttentionTest {
   template <typename T>
   void TestImpl_Flash_Attention_Paged_Attention() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(9, 5, 0)) {
+    if (device_description().dnn_version() <
+        stream_executor::SemanticVersion(9, 5, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.5.0.";
     }
     // Cudnn paged attention where kv is converted to kv blocks with paged table
@@ -1486,8 +1482,8 @@ class FlashAttentionFlexAttention : public MultiHeadedAttentionTest {
   template <typename T>
   void TestImpl_Flash_Attention_Flex_Attention() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(9, 7, 0)) {
+    if (device_description().dnn_version() <
+        stream_executor::SemanticVersion(9, 7, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.7.0.";
     }
     // Extend cudnn sdpa soft capping using flex attention
@@ -1536,8 +1532,8 @@ class FlashAttentionBMMScaleSoftmaxDropoutBMM
 
   void TestImpl_Flash_Attention_Training_BMM1_Softmax_Dropout_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(9, 0, 0)) {
+    if (device_description().dnn_version() <
+        stream_executor::SemanticVersion(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
 
@@ -1716,12 +1712,12 @@ TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
   if (skip_reason_) {
     GTEST_SKIP() << *skip_reason_;
   }
-  if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-      se::dnn::VersionInfo(9, 1, 0)) {
+  if (device_description().dnn_version() <
+      stream_executor::SemanticVersion(9, 1, 0)) {
     GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.1.0.";
   }
-  if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) ==
-      se::dnn::VersionInfo(9, 10, 0)) {
+  if (device_description().dnn_version() ==
+      stream_executor::SemanticVersion(9, 10, 0)) {
     GTEST_SKIP() << "Flash Attention is not supported in cuDNN 9.10.0.";
   }
   auto cc = GetCudaComputeCapability();
@@ -1895,12 +1891,12 @@ TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
   if (skip_reason_) {
     GTEST_SKIP() << *skip_reason_;
   }
-  if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-      se::dnn::VersionInfo(9, 1, 0)) {
+  if (device_description().dnn_version() <
+      stream_executor::SemanticVersion(9, 1, 0)) {
     GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.1.0.";
   }
-  if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) ==
-      se::dnn::VersionInfo(9, 10, 0)) {
+  if (device_description().dnn_version() ==
+      stream_executor::SemanticVersion(9, 10, 0)) {
     GTEST_SKIP() << "Flash Attention is not supported in cuDNN 9.10.0.";
   }
   auto cc = GetCudaComputeCapability();
@@ -2077,8 +2073,8 @@ TEST_F(FlashAttentionBMMScaleSoftmaxDropoutBMM,
 TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
        Flash_Attention_Bwd_BMM1_NoMask_Softmax_BMM2_F8) {
   if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-      se::dnn::VersionInfo(9, 1, 0)) {
+  if (device_description().dnn_version() <
+      stream_executor::SemanticVersion(9, 1, 0)) {
     GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.1.0.";
   }
   auto cc = GetCudaComputeCapability();
@@ -2330,5 +2326,4 @@ TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
                                       ErrorSpec{2e-1, 2e-1}));
 }
 }  // namespace
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu

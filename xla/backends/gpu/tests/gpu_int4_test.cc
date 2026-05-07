@@ -18,15 +18,18 @@ limitations under the License.
 #include <utility>
 
 #include <gtest/gtest.h>
+#include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
-#include "xla/backends/gpu/tests/gpu_codegen_test.h"
+#include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
+#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {
 namespace {
 
-class GpuInt4Test : public GpuCodegenTest {};
+class GpuInt4Test
+    : public HloPjRtInterpreterReferenceMixin<GpuPjRtCodegenTest> {};
 
 TEST_F(GpuInt4Test, TestInt4ParameterSize) {
   const std::string hlo_text = R"(
@@ -42,9 +45,9 @@ TEST_F(GpuInt4Test, TestInt4ParameterSize) {
   auto expected_ir = R"(
 ; CHECK: define KERNEL_ANNOTATION {{.*}} dereferenceable(2){{.*}} dereferenceable(4)
 )";
-  CompileAndVerifyIr(std::move(hlo_module),
-                     MakePlatformSpecificLlvm(expected_ir),
-                     /*match_optimized_ir=*/true);
+  EXPECT_OK(CompileAndVerifyIr(std::move(hlo_module),
+                               MakePlatformSpecificLlvm(expected_ir),
+                               /*match_optimized_ir=*/true));
   EXPECT_TRUE(RunAndCompare(hlo_text, /*error=*/std::nullopt));
 }
 
@@ -62,9 +65,9 @@ TEST_F(GpuInt4Test, TestInt4OutputSize) {
   auto expected_ir = R"(
 ; CHECK: define KERNEL_ANNOTATION {{.*}} dereferenceable(4){{.*}} dereferenceable(2)
 )";
-  CompileAndVerifyIr(std::move(hlo_module),
-                     MakePlatformSpecificLlvm(expected_ir),
-                     /*match_optimized_ir=*/true);
+  EXPECT_OK(CompileAndVerifyIr(std::move(hlo_module),
+                               MakePlatformSpecificLlvm(expected_ir),
+                               /*match_optimized_ir=*/true));
   EXPECT_TRUE(RunAndCompare(hlo_text, /*error=*/std::nullopt));
 }
 
@@ -82,9 +85,9 @@ TEST_F(GpuInt4Test, TestConstantSize) {
   auto expected_ir = R"(
 ; CHECK: define KERNEL_ANNOTATION {{.*}} dereferenceable(2){{.*}} dereferenceable(4)
 )";
-  CompileAndVerifyIr(std::move(hlo_module),
-                     MakePlatformSpecificLlvm(expected_ir),
-                     /*match_optimized_ir=*/true);
+  EXPECT_OK(CompileAndVerifyIr(std::move(hlo_module),
+                               MakePlatformSpecificLlvm(expected_ir),
+                               /*match_optimized_ir=*/true));
   EXPECT_TRUE(RunAndCompare(hlo_text, /*error=*/std::nullopt));
 }
 
@@ -109,9 +112,9 @@ TEST_F(GpuInt4Test, TestOddElements) {
       ; CHECK: br label %[[in_bounds_after]]
       ; CHECK: [[in_bounds_after]]:
       ; CHECK-NEXT: ret void)";
-  CompileAndVerifyIr(std::move(hlo_module),
-                     MakePlatformSpecificLlvm(expected_ir),
-                     /*match_optimized_ir=*/false);
+  EXPECT_OK(CompileAndVerifyIr(std::move(hlo_module),
+                               MakePlatformSpecificLlvm(expected_ir),
+                               /*match_optimized_ir=*/false));
   EXPECT_TRUE(RunAndCompare(hlo_text, /*error=*/std::nullopt));
 }
 

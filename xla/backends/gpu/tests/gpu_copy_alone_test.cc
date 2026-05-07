@@ -17,9 +17,10 @@ limitations under the License.
 #include <utility>
 
 #include <gtest/gtest.h>
-#include "xla/backends/gpu/tests/gpu_codegen_test.h"
+#include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -30,8 +31,8 @@ namespace {
 // WARNING: This tests must be alone in its file!  Otherwise, the
 // error isn't caught. We expect and CUDA_ERROR_ILLEGAL_ADDRESS to be
 // thrown with the old buggy code.
-class CopyAloneNoOptTest : public GpuCodegenTest {
-};
+class CopyAloneNoOptTest
+    : public HloPjRtInterpreterReferenceMixin<GpuPjRtCodegenTest> {};
 
 TEST_F(CopyAloneNoOptTest, CopyTranspose) {
   const char* hlo_text = R"(

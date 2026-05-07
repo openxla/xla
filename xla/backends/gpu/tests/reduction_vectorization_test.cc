@@ -18,10 +18,11 @@ limitations under the License.
 #include <utility>
 
 #include <gtest/gtest.h>
-#include "xla/backends/gpu/tests/gpu_codegen_test.h"
+#include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
@@ -31,11 +32,14 @@ namespace gpu {
 
 namespace {
 
-class ReductionVectorizationTest : public GpuCodegenTest {};
+class ReductionVectorizationTest
+    : public HloPjRtInterpreterReferenceMixin<GpuPjRtCodegenTest> {};
 
-class ReductionVectorizationNoOptTest : public GpuCodegenTest {
+class ReductionVectorizationNoOptTest
+    : public HloPjRtInterpreterReferenceMixin<GpuPjRtCodegenTest> {
   DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
+    DebugOptions debug_options = HloPjRtInterpreterReferenceMixin<
+        GpuPjRtCodegenTest>::GetDebugOptionsForTest();
     // The test MultiOutputStore contain a MOF fusion and XLA optimizer pass
     // doesn't like this.
     debug_options.set_xla_disable_all_hlo_passes(true);
@@ -44,10 +48,7 @@ class ReductionVectorizationNoOptTest : public GpuCodegenTest {
 
  public:
   se::CudaComputeCapability GetCudaComputeCapability() {
-    return backend()
-        .default_stream_executor()
-        ->GetDeviceDescription()
-        .cuda_compute_capability();
+    return device_description().cuda_compute_capability();
   }
 };
 

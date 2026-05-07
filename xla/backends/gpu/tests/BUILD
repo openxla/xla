@@ -87,6 +87,7 @@ cc_library(
     testonly = True,
     srcs = ["gpu_pjrt_codegen_test.cc"],
     hdrs = ["gpu_pjrt_codegen_test.h"],
+    tags = tf_gpu_tests_tags(),
     deps = [
         ":hlo_pjrt_gpu_test_base",
         "//xla:shape_util",
@@ -101,14 +102,14 @@ cc_library(
         "//xla/service:gpu_topology",
         "//xla/service:hlo_module_config",
         "//xla/service:llvm_compiler",
-        "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu:gpu_compiler",
         "//xla/tests:codegen_utils",
-        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest_for_library",
-        "@tsl//tsl/platform:casts",
     ],
 )
 
@@ -204,12 +205,11 @@ xla_test(
     name = "pred_arithmetic_test",
     srcs = ["pred_arithmetic_test.cc"],
     backends = ["gpu"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
         "//xla:literal_util",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_pjrt_test_base",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -313,20 +313,19 @@ xla_test(
     timeout = "moderate",
     srcs = ["gpu_spmd_e2e_compile_test.cc"],
     backends = ["gpu"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
+        ":gpu_pjrt_codegen_test",
         "//xla:debug_options_flags",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
+        "//xla/service:computation_placer",
         "//xla/service:executable",
         "//xla/service:hlo_module_config",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -349,12 +348,16 @@ xla_test(
     ],
     backends = ["gpu"],
     tags = ["cuda-only"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
+        ":gpu_pjrt_codegen_test",
         "//xla:error_spec",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
         "//xla/stream_executor:device_description",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_pjrt_test_base",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
@@ -367,13 +370,13 @@ xla_test(
         "reduction_vectorization_test.cc",
     ],
     backends = ["gpu"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
+        ":gpu_pjrt_codegen_test",
         "//xla:error_spec",
         "//xla:xla_proto_cc",
         "//xla/hlo/parser:hlo_parser",
         "//xla/stream_executor:device_description",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
@@ -403,9 +406,7 @@ xla_test(
 
 xla_test(
     name = "gpu_compilation_parallelism_test",
-    srcs = [
-        "gpu_compilation_parallelism_test.cc",
-    ],
+    srcs = ["gpu_compilation_parallelism_test.cc"],
     backend_tags = {
         # TODO(b/445172709): Re-enable once fixed.
         "b200": ["broken"],
@@ -413,14 +414,12 @@ xla_test(
         "gb300": ["broken"],  # TODO(b/505574653): re-enable when fixed.
     },
     backends = ["gpu"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
-        "//xla:error_spec",
+        ":gpu_pjrt_codegen_test",
         "//xla:xla_proto_cc",
         "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -450,11 +449,11 @@ xla_test(
         "gpu_copy_alone_test.cc",
     ],
     backends = ["gpu"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
+        ":gpu_pjrt_codegen_test",
         "//xla:error_spec",
         "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
     ],
@@ -464,12 +463,12 @@ xla_test(
     name = "gpu_dyn_shape_test",
     srcs = ["gpu_dyn_shape_test.cc"],
     backends = ["gpu"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
+        ":gpu_pjrt_codegen_test",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -511,9 +510,8 @@ xla_test(
     name = "gpu_ftz_test",
     srcs = ["gpu_ftz_test.cc"],
     backends = ["gpu"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
+        ":gpu_pjrt_codegen_test",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -580,9 +578,8 @@ xla_test(
     name = "gpu_ldg_test",
     srcs = ["gpu_ldg_test.cc"],
     backends = ["gpu"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
+        ":gpu_pjrt_codegen_test",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -596,12 +593,12 @@ xla_test(
     name = "gpu_noalias_test",
     srcs = ["gpu_noalias_test.cc"],
     backends = ["gpu"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
+        ":gpu_pjrt_codegen_test",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
     ],
@@ -627,9 +624,9 @@ xla_test(
     name = "gpu_alignment_test",
     srcs = ["gpu_alignment_test.cc"],
     backends = ["gpu"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
+        ":gpu_pjrt_codegen_test",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
     ],
@@ -674,10 +671,10 @@ xla_test(
     name = "select_and_scatter_test",
     srcs = ["select_and_scatter_test.cc"],
     backends = ["gpu"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
         "//xla:error_spec",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_pjrt_test_base",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -848,10 +845,10 @@ xla_test(
     name = "kernel_launch_test",
     srcs = ["kernel_launch_test.cc"],
     backends = ["gpu"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
         "//xla:error_spec",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_pjrt_test_base",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -972,9 +969,8 @@ xla_test(
         "amdgpu_any",
     ],
     shard_count = 2,
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
+        ":gpu_pjrt_codegen_test",
         "//xla:array4d",
         "//xla:error_spec",
         "//xla:literal",
@@ -992,6 +988,7 @@ xla_test(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/cuda:cuda_platform_id",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
@@ -1081,9 +1078,10 @@ xla_test(
     name = "gpu_int4_test",
     srcs = ["gpu_int4_test.cc"],
     backends = ["gpu"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
+        ":gpu_pjrt_codegen_test",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
