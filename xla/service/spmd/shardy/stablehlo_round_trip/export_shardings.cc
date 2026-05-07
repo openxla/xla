@@ -132,13 +132,11 @@ void exportFunc(FuncOp funcOp, const SymbolTable& symbolTable,
       if (ManualAxesAttr manualAxesAttr =
               funcOp.getResultAttrOfType<ManualAxesAttr>(resNum, kManualAxes)) {
         manualAxes = manualAxesAttr.getValue();
-        funcOp.removeResultAttr(resNum, kManualAxes);
       }
       funcOp.setResultAttr(
           resNum, kXlaShardingAttr,
           getStringAttr(convertToHloSharding(sdySharding, getMeshAttr,
                                              manualAxes, enableHloShardingV3)));
-      funcOp.removeResultAttr(resNum, kShardingAttr);
     }
   }
 
