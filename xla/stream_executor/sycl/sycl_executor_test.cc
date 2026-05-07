@@ -15,12 +15,17 @@ limitations under the License.
 
 #include "xla/stream_executor/sycl/sycl_executor.h"
 
+#include <cstdint>
 #include <fstream>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
+#include "xla/stream_executor/kernel_spec.h"
 #include "xla/debug_options_flags.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.h"
@@ -77,20 +82,18 @@ TEST_F(SyclExecutorTest, GetSyclKernel) {
 
   const xla::gpu::Thunk* thunk = thunk_exec.thunks().at(0).get();
   ASSERT_NE(thunk, nullptr);
-  EXPECT_EQ(thunk->kind(), xla::gpu::Thunk::Kind::kKernel);
+  EXPECT_EQ(thunk->kind(), xla::gpu::Thunk::Kind::kCustomKernel);
 
-  const auto* kernel_thunk = dynamic_cast<const xla::gpu::KernelThunk*>(thunk);
+  const auto* kernel_thunk =
+      dynamic_cast<const xla::gpu::CustomKernelThunk*>(thunk);
   ASSERT_NE(kernel_thunk, nullptr);
 
-  std::string kernel_name = kernel_thunk->kernel_name();
-
-  std::vector<uint8_t> spv_bin(gpu_exec->binary());
-
-  // Load the module and get the symbols for the constants to verify that they
-  // are correctly loaded.
+  // Load the top-level module and get the symbols for the constants to verify
+  // that they are correctly loaded.
+  std::vector<uint8_t> top_level_bin(gpu_exec->binary());
   MultiModuleLoaderSpec module_spec;
   ModuleHandle module_handle;
-  module_spec.AddCudaCubinInMemory(spv_bin);
+  module_spec.AddCudaCubinInMemory(top_level_bin);
   TF_ASSERT_OK_AND_ASSIGN(module_handle, executor->LoadModule(module_spec));
   auto global_consts = gpu_exec->constants();
   EXPECT_EQ(global_consts.size(), 1);
@@ -101,11 +104,12 @@ TEST_F(SyclExecutorTest, GetSyclKernel) {
         executor->GetSymbol(const_info.symbol_name, module_handle));
   }
 
-  KernelLoaderSpec spec =
-      KernelLoaderSpec::CreateCudaCubinInMemorySpec(spv_bin, kernel_name, 3);
-
+  // The per-fusion kernel binary is stored inside the CustomKernel's loader
+  // spec. Load the kernel directly from that spec.
+  const KernelLoaderSpec& kernel_spec =
+      kernel_thunk->custom_kernel().kernel_spec();
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Kernel> kernel,
-                          executor->LoadKernel(spec));
+                          executor->LoadKernel(kernel_spec));
 
   auto sycl_executor = dynamic_cast<SyclExecutor*>(executor);
   ASSERT_NE(sycl_executor, nullptr);
