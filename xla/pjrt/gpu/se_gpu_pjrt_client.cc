@@ -22,6 +22,7 @@ limitations under the License.
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <variant>
@@ -30,6 +31,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -42,6 +44,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
@@ -2220,6 +2223,25 @@ StreamExecutorGpuClient::RunAsync(
         gpu::MemorySpaceColor::kCollective)] = collective_memory_alignment;
   }
 
+  absl::flat_hash_set<BufferAllocation::Index> output_allocations;
+  for (const auto& [_, output_info] : gpu_exec->output_info()) {
+    output_allocations.insert(output_info.allocation_index);
+  }
+
+  std::optional<gpu::GpuExecutable::VaRemapExecutionState>
+      va_remap_execution_state_storage;
+  gpu::GpuExecutable::VaRemapExecutionState* va_remap_execution_state =
+      nullptr;
+  std::unique_ptr<absl::MutexLock> command_buffer_va_remap_lock;
+  ASSIGN_OR_RETURN(va_remap_execution_state,
+                   gpu_exec->MaybeCreateVaRemapExecutionState(
+                       run_options, memory_allocator, device_ordinal,
+                       va_remap_execution_state_storage,
+                       command_buffer_va_remap_lock));
+  RETURN_IF_ERROR(gpu_exec->PrepareVaRemapReservation(
+      run_options, device_ordinal, allocate_granularity,
+      va_remap_execution_state));
+
   std::vector<se::DeviceAddressBase> buffers(allocations.size());
   {
     tsl::profiler::TraceMe hlo_module_activity(
@@ -2270,11 +2292,23 @@ StreamExecutorGpuClient::RunAsync(
           buffer_size = RoundUpTo(buffer_size, it->second);
         }
         if (buffer_size > 0) {
-          ASSIGN_OR_RETURN(
-              se::ScopedDeviceAddress<uint8_t> owning_buffer,
-              memory_allocator->Allocate(device_ordinal, buffer_size,
-                                         /*retry_on_failure=*/true,
-                                         /*memory_space=*/allocation.color()));
+          absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> owning_buffer_or;
+          if (va_remap_execution_state != nullptr &&
+              gpu_exec->command_buffer_allocation_indexes().contains(
+                  allocation.index())) {
+            bool allocate_va_address =
+                allocation.maybe_live_out() &&
+                output_allocations.contains(allocation.index());
+            owning_buffer_or = gpu_exec->AllocateVaRemappedBuffer(
+                device_ordinal, allocation, buffer_size, allocate_va_address,
+                *va_remap_execution_state);
+          } else {
+            owning_buffer_or = memory_allocator->Allocate(
+                device_ordinal, buffer_size, /*retry_on_failure=*/true,
+                /*memory_space=*/allocation.color());
+          }
+          ASSIGN_OR_RETURN(se::ScopedDeviceAddress<uint8_t> owning_buffer,
+                           std::move(owning_buffer_or));
           buffer = owning_buffer.Release();
         }
       }
@@ -2334,10 +2368,18 @@ StreamExecutorGpuClient::RunAsync(
                "buffer is not donated; allocating a fresh buffer";
         int64_t allocation_size = ShapeUtil::ByteSizeOf(
             ShapeUtil::GetSubshape(gpu_exec->result_shape(), index));
-        absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> allocated_buffer =
-            memory_allocator->Allocate(device_ordinal, allocation_size,
-                                       /*retry_on_failure=*/true,
-                                       /*memory_space=*/allocation->color());
+        absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> allocated_buffer;
+        if (va_remap_execution_state != nullptr &&
+            gpu_exec->command_buffer_allocation_indexes().contains(
+                output_info.allocation_index)) {
+          allocated_buffer = gpu_exec->AllocateVaRemappedBuffer(
+              device_ordinal, *allocation, allocation_size,
+              /*allocate_va_address=*/true, *va_remap_execution_state);
+        } else {
+          allocated_buffer = memory_allocator->Allocate(
+              device_ordinal, allocation_size, /*retry_on_failure=*/true,
+              /*memory_space=*/allocation->color());
+        }
         if (!allocated_buffer.ok()) {
           return gpu_exec->VerboseAllocationError(allocated_buffer.status());
         }
@@ -2377,10 +2419,48 @@ StreamExecutorGpuClient::RunAsync(
     RETURN_IF_ERROR(set_result({}, 0));
   }
 
-  RETURN_IF_ERROR(gpu_exec->ExecuteThunks(buffer_allocations, run_options));
+  std::optional<gpu::BufferAllocations> execution_buffer_allocations;
+  const gpu::BufferAllocations* execution_buffers = &buffer_allocations;
+  if (va_remap_execution_state != nullptr) {
+    absl::StatusOr<gpu::BufferAllocations> execution_buffer_allocations_or =
+        gpu_exec->BuildVaRemapBufferAllocations(buffer_allocations,
+                                                device_ordinal,
+                                                *va_remap_execution_state);
+    if (!execution_buffer_allocations_or.ok()) {
+      absl::Status build_status = execution_buffer_allocations_or.status();
+      absl::Status cleanup_status =
+          gpu_exec->UnMapMemoryReservationAliases(device_ordinal,
+                                                  *va_remap_execution_state);
+      absl::Status teardown_status =
+          buffer_allocations.TearDown(buffers_in_result,
+                                      gpu_exec->GetAllocations());
+      RETURN_IF_ERROR(build_status);
+      RETURN_IF_ERROR(cleanup_status);
+      RETURN_IF_ERROR(teardown_status);
+    }
+    execution_buffer_allocations =
+        std::move(execution_buffer_allocations_or).value();
+    execution_buffers = &*execution_buffer_allocations;
+    XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
+        "VA remapping: module %s executing with %d command buffer "
+        "allocation(s)",
+        gpu_exec->name(),
+        gpu_exec->command_buffer_allocation_indexes().size());
+  }
 
-  RETURN_IF_ERROR(buffer_allocations.TearDown(buffers_in_result,
-                                              gpu_exec->GetAllocations()));
+  absl::Status execute_status =
+      gpu_exec->ExecuteThunks(*execution_buffers, run_options);
+  absl::Status unmap_status =
+      va_remap_execution_state == nullptr
+          ? absl::OkStatus()
+          : gpu_exec->UnMapMemoryReservationAliases(
+                device_ordinal, *va_remap_execution_state);
+  absl::Status teardown_status =
+      buffer_allocations.TearDown(buffers_in_result, gpu_exec->GetAllocations());
+
+  RETURN_IF_ERROR(execute_status);
+  RETURN_IF_ERROR(unmap_status);
+  RETURN_IF_ERROR(teardown_status);
 
   std::vector<tsl::AsyncValueRef<RawSEDeviceMemory>> to_be_released;
 

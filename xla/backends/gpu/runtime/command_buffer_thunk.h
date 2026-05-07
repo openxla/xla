@@ -138,9 +138,10 @@ class CommandBufferThunk : public Thunk {
     bool warmup_done ABSL_GUARDED_BY(mutex) = false;
   };
 
-  // Command buffer thunk owns commands buffers instantiated on all executors.
-  // When VA remapping is enabled, the key includes the first allocation's VA
-  // address to distinguish between command buffers for different VA ranges.
+  // Command buffer thunk owns command buffers instantiated on all executors.
+  // The key includes a representative allocation address when command-buffer
+  // recording depends on stable allocation addresses, such as VA-remapped
+  // execution.
   struct State {
     absl::Mutex mutex;
     absl::flat_hash_map<std::pair<se::StreamExecutor*, void*>,
@@ -149,9 +150,9 @@ class CommandBufferThunk : public Thunk {
   };
 
   // Returns a command buffer for (executor, buffer_allocations) or creates a
-  // new one. When VA remapping is enabled the key includes the first
-  // allocation's device address to distinguish per-VA-range command buffers;
-  // otherwise the key uses nullptr.
+  // new one. When command-buffer recording depends on stable allocation
+  // addresses the key includes a representative device address; otherwise the
+  // key uses nullptr.
   absl::StatusOr<std::shared_ptr<ExecutorCommandBuffer>>
   GetOrCreateCommandBuffer(se::StreamExecutor* executor,
                            const BufferAllocations& buffer_allocations);

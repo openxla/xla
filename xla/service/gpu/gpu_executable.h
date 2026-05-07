@@ -69,6 +69,10 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/xla.pb.h"
 
+namespace stream_executor {
+class DeviceAddressVmmAllocator;
+}  // namespace stream_executor
+
 namespace xla {
 namespace gpu {
 
@@ -264,27 +268,103 @@ class GpuExecutable : public Executable {
     return cpu_target_machine_options_;
   }
 
- private:
-  // State for VA remapping of command buffer allocations on a single executor.
-  struct VaRanges {
-    // Mutex to protect VA range operations (map/execute/unmap) for this
-    // executor. This ensures only one thread can use the VA ranges at a time.
+  struct MemoryReservationAlias {
+    uint64_t reservation_offset = 0;
+    uint64_t size = 0;
+    se::DeviceAddressBase reservation_address;
+  };
+
+  // Persistent VA remapping state for command buffer allocations on one
+  // executor. A GpuExecutable owns one instance per executor for its lifetime,
+  // so repeated ExecuteAsyncOnStream calls reuse the same VA reservation.
+  struct VaRemaping {
+    // Mutex to protect VA reservation operations (map/execute/unmap) for this
+    // executor. This ensures only one execution can use the VA range at a time.
     absl::Mutex mutex;
+
+    // VMM allocation granularity used to compute the layout below.
+    uint64_t granularity = 0;
+
+    // Total size of the VA reservation and deterministic offsets for command
+    // buffer allocations within it. Kept per executor because the layout
+    // depends on the executor's VMM granularity.
+    uint64_t total_size = 0;
+    absl::flat_hash_map<BufferAllocation::Index, uint64_t>
+        allocation_to_reservation_offset;
 
     // Single large virtual address reservation covering all command buffer
     // allocations. nullptr until first use.
     std::unique_ptr<se::MemoryReservation> va_reservation;
 
-    // Event used to synchronize VA range reuse. When the device has completed
-    // the task that uses the VA range, it marks the event, letting the host
-    // know the VA range can be remapped to other physical addresses.
-    std::unique_ptr<se::Event> unmap_event;
+    // VMM allocator that owns deferred mappings into `va_reservation`.
+    se::DeviceAddressVmmAllocator* vmm_allocator = nullptr;
 
-    // RAII wrapper that keeps the VA->physical mapping active.
-    // Reset (auto-unmapping) before each re-use of the VA range.
-    std::optional<se::MemoryReservation::ScopedMapping> scoped_mapping;
+    // Returns the reservation offset recorded for `idx` in
+    // `allocation_to_reservation_offset`, or an Internal error if `idx` is not
+    // tracked.
+    absl::StatusOr<uint64_t> GetReservationOffset(
+        BufferAllocation::Index idx) const;
   };
 
+  // Per-execution state for command-buffer VA remapping. Access is serialized
+  // by VaRemaping::mutex, which is held for the full execution.
+  struct VaRemapExecutionState {
+    VaRemapExecutionState(VaRemaping& remapping,
+                          se::DeviceAddressVmmAllocator& vmm_allocator)
+        : remapping(remapping), vmm_allocator(vmm_allocator) {}
+
+    // Persistent remapping state for this executable/executor.
+    VaRemaping& remapping;
+
+    // VMM allocator used to reserve, map and unmap command buffer allocations.
+    se::DeviceAddressVmmAllocator& vmm_allocator;
+
+    // Allocation indexes that already have a reservation alias because they
+    // were created with Allocate(..., allocate_va_address=true).
+    absl::flat_hash_map<BufferAllocation::Index, MemoryReservationAlias>
+        allocation_to_reservation_aliases;
+
+    // Reservation aliases that must be UnMap()'d after command-buffer work is
+    // enqueued. Deduplicated source mappings are recorded only once.
+    std::vector<MemoryReservationAlias> aliases_to_unmap;
+
+    // Returns the reservation alias recorded for `idx` in
+    // `allocation_to_reservation_aliases`, or an Internal error if `idx` is not
+    // tracked.
+    absl::StatusOr<MemoryReservationAlias> GetReservationAlias(
+        BufferAllocation::Index idx) const;
+  };
+
+  const absl::btree_set<BufferAllocation::Index>&
+  command_buffer_allocation_indexes() const {
+    return command_buffer_allocation_indexes_;
+  }
+
+  absl::StatusOr<VaRemapExecutionState*> MaybeCreateVaRemapExecutionState(
+      const ServiceExecutableRunOptions* run_options,
+      se::DeviceAddressAllocator* memory_allocator, int device_ordinal,
+      std::optional<VaRemapExecutionState>& state_storage,
+      std::unique_ptr<absl::MutexLock>& va_remap_lock);
+
+  absl::Status PrepareVaRemapReservation(
+      const ServiceExecutableRunOptions* run_options, int device_ordinal,
+      const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
+          allocate_granularity,
+      VaRemapExecutionState* va_remap_execution_state);
+
+  absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> AllocateVaRemappedBuffer(
+      int device_ordinal, const BufferAllocation& allocation,
+      int64_t buffer_size, bool allocate_va_address,
+      VaRemapExecutionState& va_remap_execution_state);
+
+  absl::StatusOr<BufferAllocations> BuildVaRemapBufferAllocations(
+      const BufferAllocations& owning_buffer_allocations, int device_ordinal,
+      VaRemapExecutionState& va_remap_execution_state);
+
+  absl::Status UnMapMemoryReservationAliases(int device_ordinal,
+                                             VaRemapExecutionState& state);
+
+ private:
   // Use GpuExecutable::Create() to create an instance.
   explicit GpuExecutable(
       std::unique_ptr<HloModule> debug_module, std::string asm_text,
@@ -313,7 +393,9 @@ class GpuExecutable : public Executable {
       const ServiceExecutableRunOptions* run_options,
       VariantArguments arguments,
       const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
-      se::DeviceAddressAllocator* memory_allocator, int device_ordinal);
+      se::DeviceAddressAllocator* memory_allocator, int device_ordinal,
+      const absl::flat_hash_set<BufferAllocation::Index>& output_allocations,
+      VaRemapExecutionState* va_remap_execution_state);
 
   absl::StatusOr<se::DeviceAddressBase> BufferForAllocation(
       VariantArguments arguments,
@@ -322,17 +404,9 @@ class GpuExecutable : public Executable {
       se::DeviceAddressAllocator* memory_allocator, int device_ordinal,
       int64_t arg_idx,
       const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
-          allocate_granularity);
-
-  // Handles the VA remapping path of ExecuteThunks: reserves or remaps the
-  // virtual address range for command buffer allocations, then delegates to
-  // ExecuteThunksImpl with the remapped BufferAllocations.
-  absl::Status ExecuteThunksWithVaRemapping(
-      const BufferAllocations& buffer_allocations,
-      const ServiceExecutableRunOptions* run_options,
-      stream_executor::StreamExecutor* executor, int64_t unique_id,
-      Thunk::ExecutableSource executable_source, bool block_host_until_done,
-      bool collective_use_minimal_resource);
+          allocate_granularity,
+      const absl::flat_hash_set<BufferAllocation::Index>& output_allocations,
+      VaRemapExecutionState* va_remap_execution_state);
 
   // The LLVM IR, in string format, of the unoptimized module generated for
   // this GpuExecutable. We save a string instead of an llvm::Module* because
@@ -442,13 +516,15 @@ class GpuExecutable : public Executable {
   // btree_set for deterministic iteration order.
   absl::btree_set<BufferAllocation::Index> command_buffer_allocation_indexes_;
 
-  // Separate mutex for VA ranges to avoid contention with module_handle_mutex_
-  // during VA remapping operations which may involve GPU synchronization.
-  absl::Mutex va_ranges_mutex_;
-  absl::node_hash_map<std::pair<stream_executor::StreamExecutor*, int>,
-                      VaRanges>
-      module_va_ranges_ ABSL_GUARDED_BY(va_ranges_mutex_);
+  // Persistent command-buffer VA remapping state, keyed by executor. A single
+  // GpuExecutable can run on multiple executors, but each executor reuses its
+  // own VA reservation across ExecuteAsyncOnStream calls.
+  absl::Mutex va_remaps_mutex_;
+  absl::node_hash_map<stream_executor::StreamExecutor*, VaRemaping> va_remaps_
+      ABSL_GUARDED_BY(va_remaps_mutex_);
+
   RendezvousFlag post_init_rendezvous_flag_;
+
   GpuExecutable(const GpuExecutable&) = delete;
   GpuExecutable& operator=(const GpuExecutable&) = delete;
 

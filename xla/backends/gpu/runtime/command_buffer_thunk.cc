@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 
-#include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -388,17 +386,12 @@ CommandBufferThunk::GetOrCreateCommandBuffer(
   } else if (command_buffer_update_mode_ ==
              DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
     // Use the cached minimum allocation index of the first traced command
-    // (computed once at construction time) to look up the physical address of
-    // its buffer allocation. This address serves as the key to identify which
-    // VA reservation set is active for the current execution.
-    //
-    // This works because the VMM allocator assigns each VA reservation set a
-    // distinct physical memory region: when execution alternates between two
-    // VA ranges (indices 0 and 1), the physical address backing
-    // first_traced_cmd_alloc_idx_ will differ between the two sets, uniquely
-    // identifying the active VA range. Constants and zero-size allocations are
-    // excluded (at construction time) to ensure the chosen index maps to a
-    // real, varying physical address.
+    // (computed once at construction time) to look up a representative device
+    // address for the current execution. In VA-remapping mode this is the fixed
+    // address in the executable's single VA reservation, so remapped executions
+    // reuse the same command buffer. Constants and zero-size allocations are
+    // excluded at construction time to ensure the chosen index maps to a real
+    // allocation.
     if (first_traced_cmd_alloc_idx_.has_value()) {
       first_alloc_address =
           buffer_allocations.GetDeviceAddress(*first_traced_cmd_alloc_idx_)
@@ -419,17 +412,6 @@ CommandBufferThunk::GetOrCreateCommandBuffer(
       executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
   auto emplaced = state_->command_buffers.emplace(
       key, std::make_shared<ExecutorCommandBuffer>(std::move(command_buffer)));
-  // With kNumVaReservationSets=2, at most 2 command buffers should exist per
-  // executor (one per VA reservation set). A CommandBufferThunk may be shared
-  // across replicas (multiple executors), so count only entries for this
-  // executor rather than the total map size.
-  size_t count_for_executor = std::count_if(
-      state_->command_buffers.begin(), state_->command_buffers.end(),
-      [executor](const auto& entry) { return entry.first.first == executor; });
-  DCHECK_LE(count_for_executor, static_cast<size_t>(2))
-      << "command_buffers map has more entries than expected VA reservation "
-      << "sets for executor " << executor;
-
   return emplaced.first->second;
 }
 
