@@ -509,7 +509,6 @@ TEST(StreamExecutorGpuClientTest, ForwardUserDataToFfiHandler) {
       *result_literal));
 }
 
-
 TEST(StreamExecutorGpuClientTest, PassAttrToFfiHandler) {
   static constexpr char const* kProgram = R"(
     HloModule ffi_handler
@@ -1209,7 +1208,6 @@ TEST(StreamExecutorGpuClientTest, GpuDeviceSharedMemoryInfo) {
   }
 }
 
-
 TEST(PjRtCpuClientTest, CopyToMemorySpace) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
@@ -1482,7 +1480,6 @@ TEST(StreamExecutorGpuClientTest, OpaqueDeviceMemoryDataPointer) {
 }
 
 namespace {
-
 
 constexpr char const* kD2HProgram = R"(
   HloModule f
@@ -1870,7 +1867,6 @@ TEST(StreamExecutorGpuClientTest, MlirParameterLayoutFromOptionsIsSetInHlo) {
   EXPECT_EQ(first_param_layout, Layout({0, 2, 1}));
 }
 
-
 TEST(StreamExecutorGpuClientTest, GetDefaultLayout) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
@@ -1985,7 +1981,6 @@ TEST(StreamExecutorGpuClientTest, NonZeroGPUDeviceTimeMeasurementSingleGPU) {
       measurement0->GetTotalDuration(DeviceTimeMeasurement::DeviceType::kGpu),
       absl::ZeroDuration());
 }
-
 
 TEST(StreamExecutorGpuClientTest, DmaMapUnmap) {
   TF_ASSERT_OK_AND_ASSIGN(
@@ -2393,7 +2388,7 @@ CompileOptions CmdBufVaRemappingOptions() {
 
 // Tests that element-wise fusion operations (FUSION command type) produce
 // correct results under command buffer VA remapping across multiple runs,
-// exercising both VA reservation sets (indices 0, 1, 0).
+// reusing one VA reservation.
 TEST_F(VmmTest, CommandBufferVaRemappingFusionOps) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(VmmClientOptions()));
@@ -2413,7 +2408,7 @@ TEST_F(VmmTest, CommandBufferVaRemappingFusionOps) {
   auto* device = client->addressable_devices()[0];
   TF_ASSERT_OK_AND_ASSIGN(auto* mem, device->default_memory_space());
 
-  // 3 runs cover VA reservation set indices 0, 1, 0.
+  // 3 runs reuse the same VA reservation with different physical allocations.
   int old_vlog = absl::SetVLogLevel("gpu_executable", 3);
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
   EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
@@ -2535,7 +2530,7 @@ TEST_F(VmmTest, CommandBufferVaRemappingConditional) {
   auto* device = client->addressable_devices()[0];
   TF_ASSERT_OK_AND_ASSIGN(auto* mem, device->default_memory_space());
 
-  // Alternate true/false to exercise both VA reservation sets.
+  // Alternate true/false to exercise repeated VA remapping.
   struct RunConfig {
     bool cond;
     float val;
@@ -2697,16 +2692,16 @@ TEST_F(VmmTest, CommandBufferVaRemappingDynamicSliceFusion) {
   absl::SetVLogLevel("gpu_executable", old_vlog);
 }
 
-// Tests the kNumVaReservationSets=2 multiplexing: runs 6 iterations so the
-// VA range index cycles 0,1,0,1,0,1. Verifies no memory corruption from the
-// alternating remapping across all runs.
-TEST_F(VmmTest, CommandBufferVaRemappingMultiplexing) {
+// Tests repeated reuse of the single command-buffer VA range across multiple
+// executions. Verifies no memory corruption from remapping new physical
+// allocations into the same reserved VA addresses.
+TEST_F(VmmTest, CommandBufferVaRemappingSingleRangeReuse) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(VmmClientOptions()));
 
   // add-constant: expected = input + {1,2,3,4}.
   static constexpr char kHlo[] = R"(
-    HloModule multiplexing_va_remapping_test
+    HloModule single_range_va_remapping_test
     ENTRY main {
       x = f32[4] parameter(0)
       c = f32[4] constant({1.0, 2.0, 3.0, 4.0})
@@ -2720,7 +2715,7 @@ TEST_F(VmmTest, CommandBufferVaRemappingMultiplexing) {
   auto* device = client->addressable_devices()[0];
   TF_ASSERT_OK_AND_ASSIGN(auto* mem, device->default_memory_space());
 
-  // 6 runs → VA range indices: 0, 1, 0, 1, 0, 1.
+  // Reuse the same VA range across multiple remaps.
   int old_vlog = absl::SetVLogLevel("gpu_executable", 3);
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
   EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
@@ -2739,7 +2734,7 @@ TEST_F(VmmTest, CommandBufferVaRemappingMultiplexing) {
     EXPECT_TRUE(LiteralTestUtil::Equal(
         LiteralUtil::CreateR1<float>({base + 1, base + 2, base + 3, base + 4}),
         *result_lit))
-        << "Mismatch on run " << run << " (VA range index " << (run % 2) << ")";
+        << "Mismatch on run " << run;
   }
   mock_log.StopCapturingLogs();
   absl::SetVLogLevel("gpu_executable", old_vlog);
@@ -2749,7 +2744,7 @@ TEST_F(VmmTest, CommandBufferVaRemappingMultiplexing) {
 // multiple runs. The GEMM is routed through cuBLAS (GemmCmd/CublasLtCmd), which
 // are traced commands. In CAPTURE_CMD_NEVER_UPDATE mode only traced commands
 // populate command_buffer_allocation_indexes_, activating VA remapping so that
-// traced commands skip command buffer updates across alternating VA ranges.
+// traced commands skip command buffer updates across single-range remaps.
 TEST_F(VmmTest, CommandBufferVaRemappingCustomLibraryUpdateFree) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(VmmClientOptions()));
@@ -2800,7 +2795,7 @@ TEST_F(VmmTest, CommandBufferVaRemappingCustomLibraryUpdateFree) {
       .Times(::testing::AtLeast(1));
   mock_log.StartCapturingLogs();
 
-  // 3 runs cover VA reservation set indices 0, 1, 0.
+  // 3 runs reuse the same VA reservation with different physical allocations.
   for (int run = 0; run < 3; ++run) {
     float s = static_cast<float>(run + 1);
     // lhs = s * identity → s * identity * identity = s * identity.
@@ -2822,10 +2817,10 @@ TEST_F(VmmTest, CommandBufferVaRemappingCustomLibraryUpdateFree) {
   absl::SetVLogLevel("gpu_executable", old_vlog);
 }
 
-// Tests that two different executables using NEVER_UPDATE can coexist
-// and interleave executions without interfering with each other's VA ranges.
-// Each executable maintains its own per-(executable, device) VA reservation,
-// so remapping in one does not corrupt the other.
+// Tests that two different executables using NEVER_UPDATE can coexist and
+// interleave executions without interfering with each other's VA range.
+// Each executable maintains its own per-executor VA reservation, so remapping
+// in one does not corrupt the other.
 TEST_F(VmmTest, CommandBufferVaRemappingTwoExecutables) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(VmmClientOptions()));
@@ -2861,60 +2856,37 @@ TEST_F(VmmTest, CommandBufferVaRemappingTwoExecutables) {
   auto ones = LiteralUtil::CreateR1<float>({1, 1, 1, 1, 1, 1, 1, 1});
   auto twos = LiteralUtil::CreateR1<float>({2, 2, 2, 2, 2, 2, 2, 2});
 
-  // --- Assertions for VA range index cycling and command buffer separation ---
+  // --- Assertions for single VA range reuse and executable separation ---
   //
-  // VA range index per-executable: GetNextCommandBufferVaRangeIdx is keyed by
-  // (executable_ptr, device_ordinal), so exec1 and exec2 cycle independently:
-  //   run 0: exec1→idx=0, exec2→idx=0
-  //   run 1: exec1→idx=1, exec2→idx=1
-  //   run 2: exec1→idx=0, exec2→idx=0  (wraps)
-  //
-  // Separate command buffers per (exec, VA range): GetOrCreateCommandBuffer
-  // keys by (executor, physical_address_of_first_alloc). The VMM allocator
-  // gives each VA reservation set a distinct physical region, so VA range 0
-  // and VA range 1 for the same executable get different physical addresses
-  // → different map entries → different CUDA graphs.
-  //
-  // On first use of each (exec, va_range_idx) pair, state==kCreate triggers
-  // "Initialize command buffer" (records the graph).  On run 2 both execs
-  // reuse the existing VA range 0 command buffer — no re-initialization.
-  // 2 execs × 2 VA range indices = 4 initializations total.
+  // Each executable owns one VA reservation per executor. On first use, the
+  // command buffer is initialized for the fixed VA addresses. Later runs remap
+  // new physical allocations into the same VA reservation and reuse the
+  // existing command buffer.
   int old_vlog_exec = absl::SetVLogLevel("gpu_executable", 3);
   int old_vlog_cbt = absl::SetVLogLevel("command_buffer_thunk", 3);
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
 
-  // exec1 independently cycles va_range_idx: 0 (run 0), 1 (run 1), 0 (run 2).
-  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
-                            AllOf(HasSubstr("exec1_va_remapping"),
-                                  HasSubstr("va_range_idx=0"))))
-      .Times(2);
-  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
-                            AllOf(HasSubstr("exec1_va_remapping"),
-                                  HasSubstr("va_range_idx=1"))))
-      .Times(1);
+  // Each run remaps two command-buffer allocations for each executable.
+  EXPECT_CALL(mock_log,
+              Log(absl::LogSeverity::kInfo, ::testing::_,
+                  AllOf(HasSubstr("exec1_va_remapping"),
+                        HasSubstr("VA remapping: Mapped allocation"))))
+      .Times(6);
+  EXPECT_CALL(mock_log,
+              Log(absl::LogSeverity::kInfo, ::testing::_,
+                  AllOf(HasSubstr("exec2_va_remapping"),
+                        HasSubstr("VA remapping: Mapped allocation"))))
+      .Times(6);
 
-  // exec2 independently cycles va_range_idx the same way.
-  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
-                            AllOf(HasSubstr("exec2_va_remapping"),
-                                  HasSubstr("va_range_idx=0"))))
-      .Times(2);
-  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
-                            AllOf(HasSubstr("exec2_va_remapping"),
-                                  HasSubstr("va_range_idx=1"))))
-      .Times(1);
-
-  // Each (exec, va_range_idx) pair creates its own CUDA graph (command buffer).
-  // Initialization fires once per new graph: 2 execs × 2 VA ranges = 4 times.
-  // Run 2 reuses the existing VA range 0 graphs → no additional initialization.
+  // Each executable initializes one command buffer for its single VA range.
   EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
                             HasSubstr("Initialize command buffer on device")))
-      .Times(4);
+      .Times(2);
 
   mock_log.StartCapturingLogs();
 
-  // 3 runs interleaved: each executable cycles VA range indices 0, 1, 0
-  // independently. Interleaving stresses that the two executables' VA ranges
-  // do not alias or corrupt each other.
+  // 3 interleaved runs stress that each executable's VA range is independent
+  // and remapping one executable does not corrupt the other.
   for (int run = 0; run < 3; ++run) {
     float base = static_cast<float>(run + 1);
     auto x = LiteralUtil::CreateR1<float>(
