@@ -56,14 +56,26 @@ CudaRawMemoryAllocation::Create(StreamExecutor* executor, uint64_t size) {
   CUmemAllocationProp props = BuildAllocationProperties(device);
 
   size_t granularity = 0;
+  VLOG(3) << "CUDA VMM cuMemGetAllocationGranularity: device_ordinal="
+          << executor->device_ordinal() << " cu_device=" << device
+          << " requested_size=" << size;
   TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemGetAllocationGranularity(
       &granularity, &props, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED)));
 
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, granularity);
+  VLOG(3) << "CUDA VMM cuMemGetAllocationGranularity completed: "
+          << "device_ordinal=" << executor->device_ordinal()
+          << " granularity=" << granularity << " padded_size=" << padded_size;
 
   CUmemGenericAllocationHandle handle;
+  VLOG(3) << "CUDA VMM cuMemCreate: device_ordinal="
+          << executor->device_ordinal() << " cu_device=" << device
+          << " requested_size=" << size << " padded_size=" << padded_size;
   TF_RETURN_IF_ERROR(
       cuda::ToStatus(cuMemCreate(&handle, padded_size, &props, 0)));
+  VLOG(3) << "CUDA VMM cuMemCreate completed: device_ordinal="
+          << executor->device_ordinal() << " handle=" << handle
+          << " padded_size=" << padded_size;
 
   return std::unique_ptr<CudaRawMemoryAllocation>(
       new CudaRawMemoryAllocation(executor, handle, padded_size));
@@ -84,6 +96,9 @@ CudaRawMemoryAllocation::~CudaRawMemoryAllocation() {
     return;
   }
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
+  VLOG(3) << "CUDA VMM cuMemRelease: device_ordinal="
+          << executor_->device_ordinal() << " handle=" << handle_
+          << " size=" << size_;
   auto status =
       cuda::ToStatus(cuMemRelease(handle_), "Error releasing CUDA memory");
   if (!status.ok()) {

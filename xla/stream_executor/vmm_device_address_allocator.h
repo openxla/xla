@@ -21,6 +21,7 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
@@ -39,41 +40,37 @@ limitations under the License.
 namespace stream_executor {
 
 // Abstract base class for virtual memory map (VMM) allocators that separate
-// virtual address reservation from physical memory allocation. It can be bound
-// to one or more GPU devices at construction time and routes
-// Allocate/Deallocate calls to per-device state based on device_ordinal.
+// physical memory allocation, virtual address reservation, and mapping. A
+// concrete subclass owns per-device VMM state and implements the platform
+// operations used to allocate physical memory, reserve virtual addresses, map
+// ranges, and enqueue deferred-free timeline updates.
 //
-// Concurrency model: each device has its own absl::Mutex, so operations on
-// different devices run fully in parallel. The per-device map is populated
-// entirely at construction and never modified afterward, so lookups require no
-// global lock.
+// The allocator supports several mapping shapes:
+//  1. Allocate()/Deallocate() create an owned virtual reservation, allocate
+//     physical memory, map the allocation into that reservation, and later
+//     defer both unmap and release.
+//  2. AllocateRawAndMap()/DeallocateRawAndUnMap() allocate physical memory and
+//     map it into a caller-owned MemoryReservation range.
+//  3. AllocateAndMap()/DeallocateAndUnMap() create an owned allocation and also
+//     map the same physical allocation into a caller-owned reservation range.
+//  4. MapToRaw()/UnMapToRaw() temporarily map an already tracked physical
+//     allocation into additional caller-owned reservation ranges.
 //
-// For each device the allocator:
-//  1. Allocates physical memory via MemoryAllocation (e.g. cuMemCreate).
-//  2. Reserves virtual address space via MemoryReservation
-//     (e.g. cuMemAddressReserve).
-//  3. Maps physical memory to virtual address via
-//     MemoryReservation::ScopedMapping (e.g. cuMemMap + cuMemSetAccess), which
-//     automatically unmaps on destruction.
+// Deallocation and unmap requests are asynchronous. The allocator records a GPU
+// timeline write on the device stream and keeps the MemoryAllocation,
+// MemoryReservation, and ScopedMapping objects alive until all earlier stream
+// work has completed. This lets callers release allocator-owned addresses or
+// return extra mappings while kernels may still be using them.
 //
-// The allocator tracks the ScopedMapping and underlying MemoryAllocation and
-// MemoryReservation objects for each returned DeviceAddressBase. Callers can
-// retrieve these via GetRawAllocation() and GetReservation().
-//
-// This allocator supports asynchronous deallocation: when Deallocate() is
-// called, it records a GPU timeline write on the device's stream and defers
-// the actual deallocation until the GPU reaches that point in the stream. This
-// allows callers to deallocate memory while device kernels may still be
-// consuming the data.
+// Each registered device has independent state protected by its own mutex, so
+// operations on different devices can proceed in parallel. The per-device map
+// is populated at construction time and is not modified afterward.
 //
 // Concrete subclasses implement the platform-specific virtual methods
 // (InitializeDeviceState, CreateAllocation, CreateReservation,
 // EnqueueDeferredDeallocation) and expose platform-specific Create() factories.
 // Subclasses must also set PerDeviceState::destroy_fn in InitializeDeviceState
-// to release platform-specific resources (e.g. pinned timeline memory).
-//
-// This allocator is thread-safe for concurrent use by multiple threads across
-// any registered devices.
+// to release platform-specific resources such as pinned timeline memory.
 class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
  public:
   // Per-device configuration supplied at construction.
@@ -93,14 +90,86 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       int device_ordinal, uint64_t size, bool retry_on_failure,
       int64_t memory_space) override;
 
-  // Pull in two-arg overload that sets retry_on_failure to true.
-  using DeviceAddressAllocator::Allocate;
-
   // Deallocates memory asynchronously. The caller can call this function even
   // if device kernels are still consuming the data — the actual deallocation
   // will be deferred until all previously enqueued work on the device's stream
   // completes.
   absl::Status Deallocate(int device_ordinal, DeviceAddressBase mem) override;
+
+  // Allocates raw physical memory on `device_ordinal` and maps it into an
+  // existing virtual address `reservation` at `reservation_offset`.
+  //
+  // The caller owns `reservation` and must keep it alive until the mapping is
+  // explicitly deallocated. The mapped range starts at `reservation_offset` and
+  // has size `size`. This method does not destroy or otherwise take ownership
+  // of `reservation`.
+  absl::Status AllocateRawAndMap(int device_ordinal,
+                                 MemoryReservation* reservation,
+                                 uint64_t reservation_offset, uint64_t size);
+
+  // UnMaps a range previously mapped by AllocateRawAndMap() and releases the
+  // raw physical allocation associated with that mapping.
+  //
+  // The caller owns `reservation`. This method unmaps the range starting at
+  // `reservation_offset` with size `size`, but does not destroy or otherwise
+  // take ownership of `reservation`.
+  absl::Status DeallocateRawAndUnMap(int device_ordinal,
+                                     MemoryReservation* reservation,
+                                     uint64_t reservation_offset,
+                                     uint64_t size);
+
+  // Maps an already tracked raw physical allocation into an existing virtual
+  // address `reservation` at `reservation_offset`.
+  //
+  // `raw_allocation` must be a physical allocation tracked by this allocator,
+  // typically obtained from GetRawAllocation(). The caller owns `reservation`
+  // and must keep it alive until the returned ScopedMapping is unmapped. If
+  // the mapping is passed to UnMapToRaw(), keep `reservation` alive until the
+  // raw allocation is deallocated and the deferred unmap has completed.
+  absl::StatusOr<MemoryReservation::ScopedMapping> MapToRaw(
+      int device_ordinal, MemoryAllocation* raw_allocation,
+      MemoryReservation* reservation, uint64_t reservation_offset,
+      uint64_t size);
+
+  // Defers unmapping a mapping created by MapToRaw() until the underlying raw
+  // physical allocation is deallocated.
+  //
+  // On success this method consumes `mapping` and returns ownership to the
+  // allocator for deferred unmap. On error, `mapping` remains owned by the
+  // caller and active MapToRaw() bookkeeping is unchanged. `raw_allocation`
+  // must be the same tracked raw allocation that was passed to MapToRaw() for
+  // this mapping. Empty mappings, such as the result of a zero-size MapToRaw(),
+  // are treated as no-ops.
+  absl::Status UnMapToRaw(int device_ordinal, MemoryAllocation* raw_allocation,
+                          MemoryReservation::ScopedMapping&& mapping);
+
+  // Allocates `allocation_size` bytes on `device_ordinal`, returns the newly
+  // allocated device address, and also maps `mapping_size` bytes of the same
+  // physical allocation into an existing virtual address `reservation` at
+  // `reservation_offset`.
+  //
+  // The caller owns `reservation` and must keep it alive until the external
+  // mapping is explicitly unmapped. To release both the returned allocation and
+  // the external mapping, release the returned ScopedDeviceAddress and pass the
+  // raw address to DeallocateAndUnMap(). DeallocateAndUnMap() does not destroy
+  // or otherwise take ownership of `reservation`.
+  absl::StatusOr<ScopedDeviceAddress<uint8_t>> AllocateAndMap(
+      int device_ordinal, uint64_t allocation_size, bool retry_on_failure,
+      int64_t memory_space, MemoryReservation* reservation,
+      uint64_t reservation_offset, uint64_t mapping_size);
+
+  // Deallocates `mem` and unmaps it from an existing virtual address
+  // `reservation` at `reservation_offset`.
+  //
+  // The caller owns `reservation`. This method releases the device allocation
+  // and unmaps the range starting at `reservation_offset` with size `size`, but
+  // does not destroy or otherwise take ownership of `reservation`.
+  absl::Status DeallocateAndUnMap(int device_ordinal, DeviceAddressBase mem,
+                                  MemoryReservation* reservation,
+                                  uint64_t reservation_offset, uint64_t size);
+
+  // Pull in two-arg overload that sets retry_on_failure to true.
+  using DeviceAddressAllocator::Allocate;
 
   // Returns true — this allocator supports asynchronous deallocation.
   bool AllowsAsynchronousDeallocation() const override { return true; }
@@ -134,11 +203,26 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       StreamExecutor* executor, uint64_t size) = 0;
 
  protected:
+  enum class PendingDeallocationKind {
+    kDeallocate,
+    kDeallocateRawAndUnMap,
+    kDeallocateAndUnMap,
+  };
+
   struct PendingDeallocation {
+    PendingDeallocationKind kind = PendingDeallocationKind::kDeallocate;
+    // Device address to free after the GPU reaches `seqno`. This is an address
+    // allocated through Allocate() or AllocateAndMap(). It can be empty when
+    // the pending operation only needs to defer an unmap.
     DeviceAddressBase mem;
     // GPU stream sequence number recorded at deallocation time. When the
     // pinned_timeline value reaches this seqno, the memory is safe to free.
     uint64_t seqno;
+    // Pending mapping to keep alive until the GPU reaches `seqno`. Destroying
+    // this ScopedMapping performs the unmap for AllocateRawAndMap() or
+    // DeallocateAndUnMap(). Empty when the pending operation only needs to free
+    // `mem`.
+    std::optional<MemoryReservation::ScopedMapping> mapping;
   };
 
   struct PerDeviceState {
@@ -172,11 +256,25 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     // Monotonically increasing counter for timeline sequence numbers.
     uint64_t next_seqno ABSL_GUARDED_BY(mu) = 1;
     std::deque<PendingDeallocation> pending_deallocations ABSL_GUARDED_BY(mu);
-    absl::flat_hash_map<void*, std::unique_ptr<MemoryAllocation>>
+    absl::flat_hash_map<void*, std::shared_ptr<MemoryAllocation>>
         raw_allocations ABSL_GUARDED_BY(mu);
     absl::flat_hash_map<void*, std::unique_ptr<MemoryReservation>> reservations
         ABSL_GUARDED_BY(mu);
     absl::flat_hash_map<void*, MemoryReservation::ScopedMapping> scoped_mappings
+        ABSL_GUARDED_BY(mu);
+    // Extra MapToRaw() mappings returned to callers through ScopedMapping
+    // ownership and later returned to the allocator through UnMapToRaw().
+    // These mappings are destroyed when the underlying raw allocation is
+    // completed.
+    absl::flat_hash_map<MemoryAllocation*,
+                        std::vector<MemoryReservation::ScopedMapping>>
+        deferred_raw_mappings ABSL_GUARDED_BY(mu);
+    // Extra MapToRaw() mappings currently owned by callers, keyed by mapped
+    // virtual address. A raw allocation must not have entries in this map when
+    // its PendingDeallocation is completed; callers must transfer active
+    // mappings back through UnMapToRaw() before deallocating the raw
+    // allocation.
+    absl::flat_hash_map<void*, MemoryAllocation*> active_raw_mapping_keys
         ABSL_GUARDED_BY(mu);
   };
 
@@ -209,25 +307,134 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // registered. No lock needed — per_device_ is read-only after construction.
   PerDeviceState* GetPerDeviceState(int device_ordinal) const;
 
-  absl::StatusOr<DeviceAddressBase> AllocateWithBudget(PerDeviceState& state,
-                                                       uint64_t size)
+  static PendingDeallocation PendingDeallocate(DeviceAddressBase mem,
+                                               uint64_t seqno);
+
+  static PendingDeallocation PendingDeallocateRawAndUnMap(
+      uint64_t seqno, MemoryReservation::ScopedMapping mapping);
+
+  static PendingDeallocation PendingDeallocateAndUnMap(
+      DeviceAddressBase mem, uint64_t seqno,
+      MemoryReservation::ScopedMapping mapping);
+
+  absl::StatusOr<uint64_t> EnqueuePendingOperation(PerDeviceState& state)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  absl::Status QueueDeallocate(PerDeviceState& state, DeviceAddressBase mem)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  absl::Status QueueDeallocateRawAndUnMap(
+      PerDeviceState& state, MemoryReservation::ScopedMapping& mapping)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  absl::Status QueueDeallocateAndUnMap(
+      PerDeviceState& state, DeviceAddressBase mem,
+      MemoryReservation::ScopedMapping& mapping)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  void* TrackOwnedAllocation(PerDeviceState& state,
+                             std::shared_ptr<MemoryAllocation> raw_allocation,
+                             std::unique_ptr<MemoryReservation> reservation,
+                             MemoryReservation::ScopedMapping mapping,
+                             uint64_t allocated_size)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  void TrackRawAndExternalMapping(
+      PerDeviceState& state, DeviceAddressBase target,
+      std::shared_ptr<MemoryAllocation> raw_allocation,
+      MemoryReservation::ScopedMapping mapping, uint64_t allocated_size)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  void* TrackOwnedAndExternalMapping(
+      PerDeviceState& state, DeviceAddressBase target,
+      std::shared_ptr<MemoryAllocation> raw_allocation,
+      std::unique_ptr<MemoryReservation> owned_reservation,
+      MemoryReservation::ScopedMapping owned_mapping,
+      MemoryReservation::ScopedMapping external_mapping,
+      uint64_t allocated_size) ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  absl::StatusOr<DeviceAddressBase> TryFreshAllocate(PerDeviceState& state,
+                                                     uint64_t size)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  absl::StatusOr<DeviceAddressBase> TryFreshAllocateRawAndMap(
+      PerDeviceState& state, MemoryReservation* reservation,
+      uint64_t reservation_offset, uint64_t size)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  absl::StatusOr<DeviceAddressBase> TryFreshAllocateAndMap(
+      PerDeviceState& state, uint64_t allocation_size,
+      MemoryReservation* reservation, uint64_t reservation_offset,
+      uint64_t mapping_size) ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  void LogFreshAllocationResult(
+      PerDeviceState& state, const char* attempt, uint64_t reclaim_size,
+      const absl::StatusOr<DeviceAddressBase>& result) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  void LogPendingReclaim(PerDeviceState& state, const char* reclaim_action,
+                         uint64_t reclaim_size) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  template <typename TryReuseFn, typename TryFreshFn>
+  absl::StatusOr<DeviceAddressBase> TryWithPendingReclaim(PerDeviceState& state,
+                                                          uint64_t reclaim_size,
+                                                          TryReuseFn try_reuse,
+                                                          TryFreshFn try_fresh)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  absl::StatusOr<DeviceAddressBase> ValidateReservationRange(
+      MemoryReservation* reservation, uint64_t reservation_offset,
+      uint64_t size) const;
 
   // Process any pending deallocations whose timeline sequence numbers have
   // been passed by the GPU.
   void ProcessCompletedPendingDeallocations(PerDeviceState& state)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
-  // Wait for enough pending deallocations to complete to free at least 'size'
-  // bytes. Selects deallocations from the front of the queue until their
+  // Wait for enough pending operations to complete to reclaim at least 'size'
+  // bytes. Selects pending operations from the front of the queue until their
   // cumulative size meets or exceeds the requested size, then spin-waits on
-  // the GPU timeline counter and performs the deallocations.
+  // the GPU timeline counter and completes the selected operations.
   // Temporarily releases and reacquires state.mu around the blocking wait.
   void WaitPendingDeallocationsToComplete(PerDeviceState& state, uint64_t size)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
+  // Completes a pending operation whose stream sequence has passed. If this
+  // releases a raw allocation, active_raw_mapping_keys must not contain any
+  // caller-owned MapToRaw() mappings for that raw allocation.
+  void CompletePendingDeallocation(PerDeviceState& state,
+                                   PendingDeallocation& pending)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
   // Actually perform the synchronous deallocation.
   void DoDeallocate(PerDeviceState& state, DeviceAddressBase mem)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  uint64_t EraseRawAllocationKey(PerDeviceState& state, void* key)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  bool IsTrackedRawAllocation(const PerDeviceState& state,
+                              const MemoryAllocation* raw_allocation) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  bool HasActiveRawMappings(const PerDeviceState& state,
+                            const MemoryAllocation* raw_allocation) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  absl::Status ValidateNoActiveRawMappings(
+      const PerDeviceState& state, const MemoryAllocation* raw_allocation,
+      const char* operation) const ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Destroys deferred mappings returned through UnMapToRaw() for
+  // `raw_allocation`. Active MapToRaw() mappings are caller-owned and must
+  // already have been returned through UnMapToRaw() before this is called.
+  void CompleteDeferredRawMappings(PerDeviceState& state,
+                                   MemoryAllocation* raw_allocation)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  uint64_t PendingDeallocationReclaimableSize(
+      const PerDeviceState& state, const PendingDeallocation& pending) const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Try to reuse a pending deallocation with matching rounded size.
@@ -235,8 +442,16 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // Reuse is safe because any new work submitted after Allocate() returns is
   // enqueued on the same stream after the recorded deallocation event, so GPU
   // stream ordering guarantees the old work finishes before the new work runs.
-  std::optional<DeviceAddressBase> TryReusePendingDeallocation(
+  std::optional<DeviceAddressBase> TryReusePendingDeallocate(
       PerDeviceState& state, uint64_t size)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  bool TryReuseDeallocateRawAndUnMap(PerDeviceState& state,
+                                     DeviceAddressBase target)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  std::optional<DeviceAddressBase> TryReuseDeallocateAndUnMap(
+      PerDeviceState& state, DeviceAddressBase target, uint64_t allocation_size)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Round up size to the device's allocation granularity.

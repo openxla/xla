@@ -24,7 +24,9 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "xla/stream_executor/cuda/cuda_memory_reservation.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
@@ -38,6 +40,9 @@ namespace {
 using ::absl_testing::IsOk;
 using ::absl_testing::IsOkAndHolds;
 using ::testing::Ne;
+
+// 1 MB, rounded up to the VMM allocation granularity by CUDA VMM.
+static constexpr uint64_t kVmmTestSize = 1024 * 1024;
 
 class DeviceAddressVmmAllocatorTest : public ::testing::Test {
  protected:
@@ -284,6 +289,603 @@ TEST_F(DeviceAddressVmmAllocatorTest,
 
   // Sync to drain all pending GPU timeline writes before the allocator
   // is destroyed.
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       AllocateRawAndMapAndDeallocateRawAndUnMapTrackExternalReservation) {
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, kVmmTestSize));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  DeviceAddressBase target =
+      reservation->address().GetByteSlice(/*offset_bytes=*/0, kVmmTestSize);
+
+  ASSERT_THAT(
+      allocator->AllocateRawAndMap(ordinal, reservation.get(),
+                                   /*reservation_offset=*/0, kVmmTestSize),
+      IsOk());
+  MemoryAllocation* raw = allocator->GetRawAllocation(ordinal, target);
+  ASSERT_NE(raw, nullptr);
+  EXPECT_EQ(allocator->GetReservation(ordinal, target), nullptr);
+
+  ASSERT_THAT(
+      allocator->DeallocateRawAndUnMap(ordinal, reservation.get(),
+                                       /*reservation_offset=*/0, kVmmTestSize),
+      IsOk());
+
+  // Mapping the same external VA after DeallocateRawAndUnMap() should reuse the
+  // pending mapping without creating a new physical allocation.
+  ASSERT_THAT(
+      allocator->AllocateRawAndMap(ordinal, reservation.get(),
+                                   /*reservation_offset=*/0, kVmmTestSize),
+      IsOk());
+  EXPECT_EQ(allocator->GetRawAllocation(ordinal, target), raw);
+
+  ASSERT_THAT(
+      allocator->DeallocateRawAndUnMap(ordinal, reservation.get(),
+                                       /*reservation_offset=*/0, kVmmTestSize),
+      IsOk());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       AllocateAndMapTracksOwnedAndExternalAliases) {
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, kVmmTestSize));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  DeviceAddressBase target =
+      reservation->address().GetByteSlice(/*offset_bytes=*/0, kVmmTestSize);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr, allocator->AllocateAndMap(
+                     ordinal, kVmmTestSize, /*retry_on_failure=*/true,
+                     static_cast<int64_t>(MemorySpace::kP2P), reservation.get(),
+                     /*reservation_offset=*/0, kVmmTestSize));
+  DeviceAddressBase owned = addr.cref();
+
+  MemoryAllocation* owned_raw = allocator->GetRawAllocation(ordinal, owned);
+  ASSERT_NE(owned_raw, nullptr);
+  EXPECT_EQ(allocator->GetRawAllocation(ordinal, target), owned_raw);
+  EXPECT_NE(allocator->GetReservation(ordinal, owned), nullptr);
+  EXPECT_EQ(allocator->GetReservation(ordinal, target), nullptr);
+
+  ASSERT_THAT(
+      allocator->DeallocateAndUnMap(ordinal, addr.Release(), reservation.get(),
+                                    /*reservation_offset=*/0, kVmmTestSize),
+      IsOk());
+
+  // Reusing the same AllocateAndMap shape should return the same owned VA and
+  // restore the same external mapping while it is still pending.
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto reused,
+      allocator->AllocateAndMap(
+          ordinal, kVmmTestSize, /*retry_on_failure=*/true,
+          static_cast<int64_t>(MemorySpace::kP2P), reservation.get(),
+          /*reservation_offset=*/0, kVmmTestSize));
+  EXPECT_EQ(reused->opaque(), owned.opaque());
+  EXPECT_EQ(allocator->GetRawAllocation(ordinal, reused.cref()), owned_raw);
+  EXPECT_EQ(allocator->GetRawAllocation(ordinal, target), owned_raw);
+
+  ASSERT_THAT(allocator->DeallocateAndUnMap(
+                  ordinal, reused.Release(), reservation.get(),
+                  /*reservation_offset=*/0, kVmmTestSize),
+              IsOk());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest, MapCanReclaimPendingDeallocate) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto probe,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+  const uint64_t granularity = probe->GetAllocationGranularity(executor_);
+  ASSERT_GT(granularity, 0);
+  probe.reset();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, granularity));
+  TF_ASSERT_OK_AND_ASSIGN(auto allocator,
+                          gpu::CudaDeviceAddressVmmAllocator::Create(
+                              executor_, stream_.get(), granularity));
+
+  const int ordinal = executor_->device_ordinal();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr,
+      allocator->Allocate(ordinal, granularity, /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kP2P)));
+  ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
+
+  ASSERT_THAT(
+      allocator->AllocateRawAndMap(ordinal, reservation.get(),
+                                   /*reservation_offset=*/0, granularity),
+      IsOk());
+  ASSERT_THAT(
+      allocator->DeallocateRawAndUnMap(ordinal, reservation.get(),
+                                       /*reservation_offset=*/0, granularity),
+      IsOk());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest, AllocateCanReclaimPendingUnMap) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto probe,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+  const uint64_t granularity = probe->GetAllocationGranularity(executor_);
+  ASSERT_GT(granularity, 0);
+  probe.reset();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, granularity));
+  TF_ASSERT_OK_AND_ASSIGN(auto allocator,
+                          gpu::CudaDeviceAddressVmmAllocator::Create(
+                              executor_, stream_.get(), granularity));
+
+  const int ordinal = executor_->device_ordinal();
+  ASSERT_THAT(
+      allocator->AllocateRawAndMap(ordinal, reservation.get(),
+                                   /*reservation_offset=*/0, granularity),
+      IsOk());
+  ASSERT_THAT(
+      allocator->DeallocateRawAndUnMap(ordinal, reservation.get(),
+                                       /*reservation_offset=*/0, granularity),
+      IsOk());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr,
+      allocator->Allocate(ordinal, granularity, /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kP2P)));
+  ASSERT_FALSE(addr.is_null());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest, AllocateAndMapCanReclaimPendingUnMap) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto probe,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+  const uint64_t granularity = probe->GetAllocationGranularity(executor_);
+  ASSERT_GT(granularity, 0);
+  probe.reset();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, granularity));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapped_reservation,
+      gpu::CudaMemoryReservation::Create(executor_, granularity));
+  TF_ASSERT_OK_AND_ASSIGN(auto allocator,
+                          gpu::CudaDeviceAddressVmmAllocator::Create(
+                              executor_, stream_.get(), granularity));
+
+  const int ordinal = executor_->device_ordinal();
+  ASSERT_THAT(
+      allocator->AllocateRawAndMap(ordinal, reservation.get(),
+                                   /*reservation_offset=*/0, granularity),
+      IsOk());
+  ASSERT_THAT(
+      allocator->DeallocateRawAndUnMap(ordinal, reservation.get(),
+                                       /*reservation_offset=*/0, granularity),
+      IsOk());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr,
+      allocator->AllocateAndMap(ordinal, granularity, /*retry_on_failure=*/true,
+                                static_cast<int64_t>(MemorySpace::kP2P),
+                                mapped_reservation.get(),
+                                /*reservation_offset=*/0, granularity));
+  ASSERT_FALSE(addr.is_null());
+  ASSERT_THAT(allocator->DeallocateAndUnMap(
+                  ordinal, addr.Release(), mapped_reservation.get(),
+                  /*reservation_offset=*/0, granularity),
+              IsOk());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       AllocateCanReclaimPendingDeallocateAndUnMap) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto probe,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+  const uint64_t granularity = probe->GetAllocationGranularity(executor_);
+  ASSERT_GT(granularity, 0);
+  probe.reset();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, granularity));
+  TF_ASSERT_OK_AND_ASSIGN(auto allocator,
+                          gpu::CudaDeviceAddressVmmAllocator::Create(
+                              executor_, stream_.get(), granularity));
+
+  const int ordinal = executor_->device_ordinal();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapped,
+      allocator->AllocateAndMap(ordinal, granularity, /*retry_on_failure=*/true,
+                                static_cast<int64_t>(MemorySpace::kP2P),
+                                reservation.get(),
+                                /*reservation_offset=*/0, granularity));
+  ASSERT_THAT(allocator->DeallocateAndUnMap(
+                  ordinal, mapped.Release(), reservation.get(),
+                  /*reservation_offset=*/0, granularity),
+              IsOk());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr,
+      allocator->Allocate(ordinal, granularity, /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kP2P)));
+  ASSERT_FALSE(addr.is_null());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest, MapCanReclaimPendingDeallocateAndUnMap) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto probe,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+  const uint64_t granularity = probe->GetAllocationGranularity(executor_);
+  ASSERT_GT(granularity, 0);
+  probe.reset();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, granularity));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapped_reservation,
+      gpu::CudaMemoryReservation::Create(executor_, granularity));
+  TF_ASSERT_OK_AND_ASSIGN(auto allocator,
+                          gpu::CudaDeviceAddressVmmAllocator::Create(
+                              executor_, stream_.get(), granularity));
+
+  const int ordinal = executor_->device_ordinal();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapped,
+      allocator->AllocateAndMap(ordinal, granularity, /*retry_on_failure=*/true,
+                                static_cast<int64_t>(MemorySpace::kP2P),
+                                reservation.get(),
+                                /*reservation_offset=*/0, granularity));
+  ASSERT_THAT(allocator->DeallocateAndUnMap(
+                  ordinal, mapped.Release(), reservation.get(),
+                  /*reservation_offset=*/0, granularity),
+              IsOk());
+
+  ASSERT_THAT(
+      allocator->AllocateRawAndMap(ordinal, mapped_reservation.get(),
+                                   /*reservation_offset=*/0, granularity),
+      IsOk());
+  ASSERT_THAT(
+      allocator->DeallocateRawAndUnMap(ordinal, mapped_reservation.get(),
+                                       /*reservation_offset=*/0, granularity),
+      IsOk());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       AllocateAndMapCanReclaimPendingDeallocate) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto probe,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+  const uint64_t granularity = probe->GetAllocationGranularity(executor_);
+  ASSERT_GT(granularity, 0);
+  probe.reset();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, granularity));
+  TF_ASSERT_OK_AND_ASSIGN(auto allocator,
+                          gpu::CudaDeviceAddressVmmAllocator::Create(
+                              executor_, stream_.get(), granularity));
+
+  const int ordinal = executor_->device_ordinal();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr,
+      allocator->Allocate(ordinal, granularity, /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kP2P)));
+  ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapped,
+      allocator->AllocateAndMap(ordinal, granularity, /*retry_on_failure=*/true,
+                                static_cast<int64_t>(MemorySpace::kP2P),
+                                reservation.get(),
+                                /*reservation_offset=*/0, granularity));
+  ASSERT_FALSE(mapped.is_null());
+  ASSERT_THAT(allocator->DeallocateAndUnMap(
+                  ordinal, mapped.Release(), reservation.get(),
+                  /*reservation_offset=*/0, granularity),
+              IsOk());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest, MapToRawMapsTrackedRawAllocation) {
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, kVmmTestSize));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr, allocator->Allocate(ordinal, kVmmTestSize,
+                                     /*retry_on_failure=*/true,
+                                     static_cast<int64_t>(MemorySpace::kP2P)));
+  MemoryAllocation* raw = allocator->GetRawAllocation(ordinal, addr.cref());
+  ASSERT_NE(raw, nullptr);
+
+  DeviceAddressBase target =
+      reservation->address().GetByteSlice(/*offset_bytes=*/0, kVmmTestSize);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapping,
+      allocator->MapToRaw(ordinal, raw, reservation.get(),
+                          /*reservation_offset=*/0, kVmmTestSize));
+  EXPECT_TRUE(mapping.mapped_address().IsSameAs(target));
+
+  ASSERT_THAT(allocator->UnMapToRaw(ordinal, raw, std::move(mapping)), IsOk());
+  ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest, UnMapToRawWithZeroSizeMappingIsNoOp) {
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, kVmmTestSize));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr, allocator->Allocate(ordinal, kVmmTestSize,
+                                     /*retry_on_failure=*/true,
+                                     static_cast<int64_t>(MemorySpace::kP2P)));
+  MemoryAllocation* raw = allocator->GetRawAllocation(ordinal, addr.cref());
+  ASSERT_NE(raw, nullptr);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapping, allocator->MapToRaw(ordinal, raw, reservation.get(),
+                                        /*reservation_offset=*/0, /*size=*/0));
+
+  ASSERT_THAT(allocator->UnMapToRaw(ordinal, raw, std::move(mapping)), IsOk());
+  ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       MapToRawAllowsMultipleActiveMappingsForSameRawAllocation) {
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation1, gpu::CudaMemoryReservation::Create(
+                                                 executor_, kVmmTestSize));
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation2, gpu::CudaMemoryReservation::Create(
+                                                 executor_, kVmmTestSize));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr, allocator->Allocate(ordinal, kVmmTestSize,
+                                     /*retry_on_failure=*/true,
+                                     static_cast<int64_t>(MemorySpace::kP2P)));
+  MemoryAllocation* raw = allocator->GetRawAllocation(ordinal, addr.cref());
+  ASSERT_NE(raw, nullptr);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapping1,
+      allocator->MapToRaw(ordinal, raw, reservation1.get(),
+                          /*reservation_offset=*/0, kVmmTestSize));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapping2,
+      allocator->MapToRaw(ordinal, raw, reservation2.get(),
+                          /*reservation_offset=*/0, kVmmTestSize));
+
+  EXPECT_NE(mapping1.mapped_address().opaque(),
+            mapping2.mapped_address().opaque());
+
+  ASSERT_THAT(allocator->UnMapToRaw(ordinal, raw, std::move(mapping1)), IsOk());
+  ASSERT_THAT(allocator->UnMapToRaw(ordinal, raw, std::move(mapping2)), IsOk());
+  ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       MapToRawReusesDeferredMappingForSameRawAndRange) {
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, kVmmTestSize));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr, allocator->Allocate(ordinal, kVmmTestSize,
+                                     /*retry_on_failure=*/true,
+                                     static_cast<int64_t>(MemorySpace::kP2P)));
+  MemoryAllocation* raw = allocator->GetRawAllocation(ordinal, addr.cref());
+  ASSERT_NE(raw, nullptr);
+
+  DeviceAddressBase target =
+      reservation->address().GetByteSlice(/*offset_bytes=*/0, kVmmTestSize);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapping,
+      allocator->MapToRaw(ordinal, raw, reservation.get(),
+                          /*reservation_offset=*/0, kVmmTestSize));
+  ASSERT_THAT(allocator->UnMapToRaw(ordinal, raw, std::move(mapping)), IsOk());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto reused_mapping,
+      allocator->MapToRaw(ordinal, raw, reservation.get(),
+                          /*reservation_offset=*/0, kVmmTestSize));
+  EXPECT_TRUE(reused_mapping.mapped_address().IsSameAs(target));
+
+  ASSERT_THAT(allocator->UnMapToRaw(ordinal, raw, std::move(reused_mapping)),
+              IsOk());
+  ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest, DeallocateRejectsActiveMapToRawMapping) {
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, kVmmTestSize));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr, allocator->Allocate(ordinal, kVmmTestSize,
+                                     /*retry_on_failure=*/true,
+                                     static_cast<int64_t>(MemorySpace::kP2P)));
+  MemoryAllocation* raw = allocator->GetRawAllocation(ordinal, addr.cref());
+  ASSERT_NE(raw, nullptr);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapping,
+      allocator->MapToRaw(ordinal, raw, reservation.get(),
+                          /*reservation_offset=*/0, kVmmTestSize));
+
+  EXPECT_FALSE(allocator->Deallocate(ordinal, addr.cref()).ok());
+
+  ASSERT_THAT(allocator->UnMapToRaw(ordinal, raw, std::move(mapping)), IsOk());
+  ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       PendingDeallocationWithDeferredRawMappingIsNotReused) {
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, kVmmTestSize));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr, allocator->Allocate(ordinal, kVmmTestSize,
+                                     /*retry_on_failure=*/true,
+                                     static_cast<int64_t>(MemorySpace::kP2P)));
+  void* const old_va = addr->opaque();
+  MemoryAllocation* raw = allocator->GetRawAllocation(ordinal, addr.cref());
+  ASSERT_NE(raw, nullptr);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapping,
+      allocator->MapToRaw(ordinal, raw, reservation.get(),
+                          /*reservation_offset=*/0, kVmmTestSize));
+  ASSERT_THAT(allocator->UnMapToRaw(ordinal, raw, std::move(mapping)), IsOk());
+  ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto fresh,
+      allocator->Allocate(ordinal, kVmmTestSize, /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kP2P)));
+  EXPECT_NE(fresh->opaque(), old_va);
+
+  ASSERT_THAT(allocator->Deallocate(ordinal, fresh.Release()), IsOk());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       DeferredMapToRawMappingsAreReleasedWithRawAllocation) {
+  const int ordinal = executor_->device_ordinal();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, kVmmTestSize));
+  {
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto allocator,
+        gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto addr,
+        allocator->Allocate(ordinal, kVmmTestSize,
+                            /*retry_on_failure=*/true,
+                            static_cast<int64_t>(MemorySpace::kP2P)));
+    MemoryAllocation* raw = allocator->GetRawAllocation(ordinal, addr.cref());
+    ASSERT_NE(raw, nullptr);
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto mapping,
+        allocator->MapToRaw(ordinal, raw, reservation.get(),
+                            /*reservation_offset=*/0, kVmmTestSize));
+    ASSERT_THAT(allocator->UnMapToRaw(ordinal, raw, std::move(mapping)),
+                IsOk());
+    ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
+  }
+
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest, MapToRawRejectsNullRawAllocation) {
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, kVmmTestSize));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+  EXPECT_FALSE(allocator
+                   ->MapToRaw(executor_->device_ordinal(), nullptr,
+                              reservation.get(), /*reservation_offset=*/0,
+                              kVmmTestSize)
+                   .ok());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest, MapToRawRejectsUntrackedRawAllocation) {
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, kVmmTestSize));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto other_allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto other_addr,
+      other_allocator->Allocate(ordinal, kVmmTestSize,
+                                /*retry_on_failure=*/true,
+                                static_cast<int64_t>(MemorySpace::kP2P)));
+  MemoryAllocation* untracked_raw =
+      other_allocator->GetRawAllocation(ordinal, other_addr.cref());
+  ASSERT_NE(untracked_raw, nullptr);
+  EXPECT_FALSE(allocator
+                   ->MapToRaw(ordinal, untracked_raw, reservation.get(),
+                              /*reservation_offset=*/0, kVmmTestSize)
+                   .ok());
+
+  ASSERT_THAT(other_allocator->Deallocate(ordinal, other_addr.Release()),
+              IsOk());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest, UnMapToRawRejectsRawMappingMismatch) {
+  TF_ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                                executor_, kVmmTestSize));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr1, allocator->Allocate(ordinal, kVmmTestSize,
+                                      /*retry_on_failure=*/true,
+                                      static_cast<int64_t>(MemorySpace::kP2P)));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr2, allocator->Allocate(ordinal, kVmmTestSize,
+                                      /*retry_on_failure=*/true,
+                                      static_cast<int64_t>(MemorySpace::kP2P)));
+  MemoryAllocation* raw1 = allocator->GetRawAllocation(ordinal, addr1.cref());
+  MemoryAllocation* raw2 = allocator->GetRawAllocation(ordinal, addr2.cref());
+  ASSERT_NE(raw1, nullptr);
+  ASSERT_NE(raw2, nullptr);
+  ASSERT_NE(raw1, raw2);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mapping,
+      allocator->MapToRaw(ordinal, raw1, reservation.get(),
+                          /*reservation_offset=*/0, kVmmTestSize));
+
+  EXPECT_FALSE(allocator->UnMapToRaw(ordinal, raw2, std::move(mapping)).ok());
+  ASSERT_THAT(allocator->UnMapToRaw(ordinal, raw1, std::move(mapping)), IsOk());
+  ASSERT_THAT(allocator->Deallocate(ordinal, addr1.Release()), IsOk());
+  ASSERT_THAT(allocator->Deallocate(ordinal, addr2.Release()), IsOk());
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 

@@ -60,14 +60,27 @@ CudaMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
   CUmemAllocationProp props = BuildAllocationProperties(device);
 
   size_t granularity = 0;
+  VLOG(3) << "CUDA VMM cuMemGetAllocationGranularity: device_ordinal="
+          << executor->device_ordinal() << " cu_device=" << device
+          << " requested_size=" << size;
   TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemGetAllocationGranularity(
       &granularity, &props, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED)));
 
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, granularity);
+  VLOG(3) << "CUDA VMM cuMemGetAllocationGranularity completed: "
+          << "device_ordinal=" << executor->device_ordinal()
+          << " granularity=" << granularity << " padded_size=" << padded_size;
 
   CUdeviceptr ptr;
+  VLOG(3) << "CUDA VMM cuMemAddressReserve: device_ordinal="
+          << executor->device_ordinal() << " requested_size=" << size
+          << " padded_size=" << padded_size << " granularity=" << granularity;
   TF_RETURN_IF_ERROR(cuda::ToStatus(
       cuMemAddressReserve(&ptr, padded_size, granularity, 0, 0)));
+  VLOG(3) << "CUDA VMM cuMemAddressReserve completed: device_ordinal="
+          << executor->device_ordinal()
+          << " ptr=" << reinterpret_cast<void*>(ptr)
+          << " padded_size=" << padded_size;
 
   return std::unique_ptr<CudaMemoryReservation>(
       new CudaMemoryReservation(executor, ptr, padded_size));
@@ -90,6 +103,13 @@ absl::Status CudaMemoryReservation::Map(size_t reservation_offset,
         "CudaMemoryReservation::Map requires a CudaRawMemoryAllocation");
   }
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
+  VLOG(3) << "CUDA VMM cuMemMap: device_ordinal=" << executor_->device_ordinal()
+          << " reservation_base=" << reinterpret_cast<void*>(ptr_)
+          << " mapped_ptr="
+          << reinterpret_cast<void*>(ptr_ + reservation_offset)
+          << " reservation_offset=" << reservation_offset
+          << " allocation_offset=" << allocation_offset << " size=" << size
+          << " handle=" << cuda_alloc->GetHandle();
   return cuda::ToStatus(cuMemMap(ptr_ + reservation_offset, size,
                                  allocation_offset, cuda_alloc->GetHandle(),
                                  0));
@@ -104,6 +124,11 @@ absl::Status CudaMemoryReservation::SetAccess(uint64_t reservation_offset,
   desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   desc.location.id = executor_->device_ordinal();
   desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+  VLOG(3) << "CUDA VMM cuMemSetAccess: device_ordinal="
+          << executor_->device_ordinal() << " mapped_ptr="
+          << reinterpret_cast<void*>(ptr_ + reservation_offset)
+          << " reservation_offset=" << reservation_offset << " size=" << size
+          << " access_device=" << desc.location.id;
   RETURN_IF_ERROR(
       cuda::ToStatus(cuMemSetAccess(ptr_ + reservation_offset, size, &desc, 1),
                      "cuMemSetAccess for local device"));
@@ -122,6 +147,11 @@ absl::Status CudaMemoryReservation::SetAccess(uint64_t reservation_offset,
       continue;
     }
     desc.location.id = peer;
+    VLOG(3) << "CUDA VMM cuMemSetAccess: device_ordinal="
+            << executor_->device_ordinal() << " mapped_ptr="
+            << reinterpret_cast<void*>(ptr_ + reservation_offset)
+            << " reservation_offset=" << reservation_offset << " size=" << size
+            << " access_device=" << desc.location.id;
     RETURN_IF_ERROR(cuda::ToStatus(
         cuMemSetAccess(ptr_ + reservation_offset, size, &desc, 1),
         "cuMemSetAccess for peer device"));
@@ -132,6 +162,11 @@ absl::Status CudaMemoryReservation::SetAccess(uint64_t reservation_offset,
 
 absl::Status CudaMemoryReservation::UnMap(size_t offset, size_t size) {
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
+  VLOG(3) << "CUDA VMM cuMemUnmap: device_ordinal="
+          << executor_->device_ordinal()
+          << " reservation_base=" << reinterpret_cast<void*>(ptr_)
+          << " mapped_ptr=" << reinterpret_cast<void*>(ptr_ + offset)
+          << " offset=" << offset << " size=" << size;
   return cuda::ToStatus(cuMemUnmap(ptr_ + offset, size));
 }
 
@@ -143,11 +178,19 @@ CudaMemoryReservation::~CudaMemoryReservation() {
   // Attempt to unmap the full range before freeing the virtual address space.
   // Sub-ranges already unmapped by ScopedMapping destructors will cause this
   // call to fail; the error is logged and the address range is freed anyway.
+  VLOG(3) << "CUDA VMM cuMemUnmap full reservation: device_ordinal="
+          << executor_->device_ordinal()
+          << " reservation_base=" << reinterpret_cast<void*>(ptr_)
+          << " size=" << size_;
   auto unmap_status =
       cuda::ToStatus(cuMemUnmap(ptr_, size_), "Error unmapping CUDA memory");
   if (!unmap_status.ok()) {
     LOG(ERROR) << unmap_status.message();
   }
+  VLOG(3) << "CUDA VMM cuMemAddressFree: device_ordinal="
+          << executor_->device_ordinal()
+          << " reservation_base=" << reinterpret_cast<void*>(ptr_)
+          << " size=" << size_;
   auto free_status = cuda::ToStatus(cuMemAddressFree(ptr_, size_),
                                     "Error freeing CUDA address range");
   if (!free_status.ok()) {
