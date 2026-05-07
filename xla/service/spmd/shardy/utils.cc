@@ -545,5 +545,20 @@ bool isManualComputation(FuncOp funcOp, bool isInlineable) {
                                        : kManualComputationFuncName);
 }
 
+bool isSizeOfOne(mlir::Type type) {
+  if (auto shapedType = mlir::dyn_cast<mlir::ShapedType>(type)) {
+    for (int64_t dimSize : shapedType.getShape()) {
+      if (dimSize != 1) {
+        // Returns false also if `dimSize` is zero.
+        return false;
+      }
+    }
+    // Returns true also for scalar.
+    return true;
+  }
+  // Returns false if not a static-shaped type.
+  return false;
+}
+
 }  // namespace sdy
 }  // namespace xla
