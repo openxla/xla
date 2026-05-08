@@ -48,6 +48,10 @@ struct DynamicSliceDescriptor {
 
   // Index into the while loop nest (0 = innermost, 1 = one level up, etc.).
   // Nullopt when the offset is fully static.
+  //
+  // Currently always 0 (loop analysis resolves offsets only from the
+  // immediately enclosing while loop), but the runtime supports arbitrary loop
+  // nesting depths.
   std::optional<int64_t> loop_index;
 
   // Byte offset into the buffer at iteration 0 (or the static byte offset).

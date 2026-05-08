@@ -179,11 +179,11 @@ static std::optional<StaggeredVariable> TryResolveStaggeredVariable(
   // Step 2: The parameter's parent computation must be the body of exactly
   // one while loop.
   const HloComputation* body = param->parent();
-  auto callers = body->caller_instructions(HloOpcode::kWhile);
-  if (callers.size() != 1) {
+  auto maybe_while_loop = body->GetUniqueCaller(HloOpcode::kWhile);
+  if (!maybe_while_loop.has_value()) {
     return std::nullopt;
   }
-  const HloInstruction* while_loop = callers.front();
+  const HloInstruction* while_loop = *maybe_while_loop;
   if (while_loop->while_body() != body) {
     return std::nullopt;
   }
@@ -244,26 +244,6 @@ static std::optional<StaggeredVariable> TryResolveStaggeredVariable(
   return StaggeredVariable{while_loop, operand, *init_value};
 }
 
-// Counts the number of intervening while loops between `instr` and
-// `while_loop`. Returns 0 if `instr` is directly inside `while_loop`'s body.
-static int64_t ComputeLoopIndex(const HloInstruction* instr,
-                                const HloInstruction* while_loop) {
-  int64_t depth = 0;
-  for (const HloComputation* comp = instr->parent(); comp != nullptr;) {
-    auto callers = comp->caller_instructions(HloOpcode::kWhile);
-    if (callers.empty()) {
-      break;
-    }
-    const HloInstruction* caller = callers.front();
-    if (caller == while_loop) {
-      return depth;
-    }
-    depth++;
-    comp = caller->parent();
-  }
-  return depth;
-}
-
 absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
     const HloInstruction* instr) {
   // Step 1: Only analyze dynamic-slice and dynamic-update-slice instructions.
@@ -301,6 +281,7 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
     const HloInstruction* ivar;
     bool is_staggered;
     int64_t staggered_init;
+    int64_t loop_index;
   };
 
   std::vector<ResolvedOffset> resolved_offsets;
@@ -320,10 +301,13 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
     auto functional_dependency =
         ResolveFunctionalDependencyOnInductionVariable(operand);
     if (functional_dependency) {
+      // ResolveFunctionalDependencyOnInductionVariable guarantees exactly one
+      // while loop in the chain (returns nullopt otherwise), so loop_index is
+      // 0.
       resolved_offsets.push_back({functional_dependency->loop,
                                   functional_dependency->induction_var,
-                                  /*is_staggered=*/false,
-                                  /*staggered_init=*/0});
+                                  /*is_staggered=*/false, /*staggered_init=*/0,
+                                  /*loop_index=*/0});
       continue;
     }
 
@@ -336,7 +320,8 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
     if (staggered_var) {
       resolved_offsets.push_back({staggered_var->loop, staggered_var->gte,
                                   /*is_staggered=*/true,
-                                  staggered_var->init_value});
+                                  staggered_var->init_value,
+                                  /*loop_index=*/0});
       continue;
     }
 
@@ -366,7 +351,7 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
   const ResolvedOffset& front = resolved_offsets.front();
   bool consistent = absl::c_all_of(resolved_offsets, [&](const auto& r) {
     return r.loop == front.loop && r.is_staggered == front.is_staggered &&
-           r.ivar == front.ivar;
+           r.ivar == front.ivar && r.loop_index == front.loop_index;
   });
 
   if (!consistent) {
@@ -434,9 +419,7 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
           << " iterations: offset=" << byte_offset
           << ", stride=" << byte_stride;
 
-  // Step 10: Compute the loop nesting depth (0 = direct child of while_loop).
-  int64_t loop_index = ComputeLoopIndex(instr, while_loop);
-  return DynamicSliceDescriptor{while_loop, loop_index, byte_offset,
+  return DynamicSliceDescriptor{while_loop, front.loop_index, byte_offset,
                                 byte_stride};
 }
 
@@ -479,8 +462,9 @@ absl::StatusOr<DynamicSliceChain> FindDynamicSliceChain(
   }
 
   const HloComputation* computation = instr->parent();
-  auto callers = computation->caller_instructions(HloOpcode::kWhile);
-  if (callers.size() != 1 || callers.front()->while_body() != computation) {
+  auto maybe_caller = computation->GetUniqueCaller(HloOpcode::kWhile);
+  if (!maybe_caller.has_value() ||
+      (*maybe_caller)->while_body() != computation) {
     return Internal("FindDynamicSliceChain: %s is not inside a while loop body",
                     instr->name());
   }
