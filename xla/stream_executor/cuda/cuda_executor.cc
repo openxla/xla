@@ -29,7 +29,6 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
-#include "cub/version.cuh"
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
 #include "absl/base/casts.h"
@@ -52,6 +51,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
 #include "third_party/gpus/cuda/nvml/include/nvml.h"
+#include "cub/version.cuh"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
@@ -958,6 +958,21 @@ absl::Status CudaExecutor::Init() {
   TF_ASSIGN_OR_RETURN(vmm_options_, QueryVmmOptions(device_));
   vmm_options_.enable_peer_access = absl::c_any_of(
       peer_access_cache_, [](const auto& p) { return p.second; });
+
+  // Disable fabric handle if there are no active P2P NVLinks — using
+  // FABRIC+POSIX_FD without a cluster causes allocation failures.
+  if (vmm_options_.enable_fabric_handle) {
+    absl::MutexLock l(GetNVMLLock());
+    if (auto nvml_device = GetNvmlDevice(GetPCIBusID(device_));
+        nvml_device.ok()) {
+      auto p2p_links = GetNumberOfActiveP2PNvlinks(*nvml_device);
+      if (!p2p_links.ok() || *p2p_links == 0) {
+        XLA_VLOG_DEVICE(2, device_ordinal())
+            << "Disabling fabric handle: no active P2P NVLinks detected.";
+        vmm_options_.enable_fabric_handle = false;
+      }
+    }
+  }
 
   device_allocator_ = std::make_unique<CudaDeviceAllocator>(this);
   host_allocator_ = std::make_unique<CudaHostAllocator>(this, numa_node_);
