@@ -19,15 +19,6 @@ permissions:
 
 on:
   workflow_dispatch:
-    inputs:
-      halt-for-connection:
-        description: 'Should this workflow run wait for a remote connection?'
-        type: choice
-        required: true
-        default: 'no'
-        options:
-          - 'yes'
-          - 'no'
   push:
     branches:
       - main
@@ -40,7 +31,10 @@ jobs:
   Tests:
     name: XLA Linux X86 GPU ONEAPI POSTSUBMIT
     runs-on: linux-x86-intel-emr4148-1gpu-02
-    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest  # zizmor: ignore[unpinned-images]
+    container: 
+      image: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest  # zizmor: ignore[unpinned-images]
+      options: --device=/dev/dri
+  
     timeout-minutes: 120
 
     defaults:
@@ -53,11 +47,6 @@ jobs:
         with:
           path: openxla/xla
           persist-credentials: false
-
-      - name: Wait For Connection
-        uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
-        with:
-          halt-dispatch-input: ${{ inputs.halt-for-connection }}
 
       - name: Run oneAPI CI
         working-directory: openxla/xla
