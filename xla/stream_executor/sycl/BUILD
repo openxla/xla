@@ -360,6 +360,7 @@ xla_test(
         "//xla/tests:llvm_irgen_test_base",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
     ],
 )
