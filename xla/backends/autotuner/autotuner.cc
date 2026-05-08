@@ -256,8 +256,16 @@ absl::Status Autotuner::Autotune(HloModule* module,
   absl::StatusOr<std::string> stored_result = kv_store.TryGet(local_key);
   if (stored_result.status().code() == absl::StatusCode::kNotFound) {
     VLOG(2) << "Storing results for " << local_key;
-    TF_RETURN_IF_ERROR(kv_store.Set(local_key, local_results));
-    VLOG(2) << "Shard " << my_shard_index << " stored results at " << local_key;
+    absl::Status set_result = kv_store.Set(local_key, local_results);
+    if (absl::IsAlreadyExists(set_result)) {
+      VLOG(2) << "Shard " << my_shard_index << " tried to store results at "
+              << local_key << " but lost a race to do so";
+    } else if (!set_result.ok()) {
+      return set_result;
+    } else {
+      VLOG(2) << "Shard " << my_shard_index << " stored results at "
+              << local_key;
+    }
   } else if (!stored_result.ok()) {
     return stored_result.status();
   } else {

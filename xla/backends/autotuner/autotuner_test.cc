@@ -1104,6 +1104,111 @@ TEST_F(AutotunerTest, ShardedAutotuning) {
       IsOk());
 }
 
+TEST_F(AutotunerTest, ShardedAutotuningTolerateLostSetRace) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  constexpr int kShardCount = 2;
+  auto should_autotune = [](const HloInstruction& instruction) {
+    return instruction.opcode() == HloOpcode::kAdd ||
+           instruction.opcode() == HloOpcode::kCopy;
+  };
+  auto kv_store = std::make_shared<MockKeyValueStore>();
+  auto cache = std::make_unique<MockAutotunerCache>();
+
+  // Same setup as ShardedAutotuning: shard 0 autotunes kAdd and serializes the
+  // result.
+  EXPECT_CALL(*cache, Lookup(InstrPtrMatcher(HloOpcode::kAdd)))
+      .WillOnce(Return(std::nullopt))
+      .WillOnce(Return(GetCacheConfig("best_config")));
+  EXPECT_CALL(*cache, Insert(InstrPtrMatcher(HloOpcode::kAdd), _))
+      .WillOnce(Return(absl::OkStatus()));
+  EXPECT_CALL(*cache, Serialize(_)).WillOnce(Return("kAdd_autotune_result"));
+
+  // The KV store reports the slot as empty, so the shard tries to Set...
+  EXPECT_CALL(*kv_store, TryGet(testing::HasSubstr("_0")))
+      .WillOnce(Return(absl::NotFoundError("not found")));
+  // ...but a peer wins the race and the underlying store rejects our write
+  // with AlreadyExists. The autotuner must treat this as success.
+  EXPECT_CALL(*kv_store, Set(testing::HasSubstr("_0"), "kAdd_autotune_result"))
+      .WillOnce(Return(absl::AlreadyExistsError("lost the race")));
+
+  // Shard 0 still reads the KV store entry for shard 1 and applies configs
+  // exactly as in the non-racy case.
+  EXPECT_CALL(*kv_store, Get(testing::HasSubstr("_1"), _))
+      .WillOnce(Return("kCopy_autotune_result"));
+  EXPECT_CALL(*cache, Deserialize("kCopy_autotune_result"))
+      .WillOnce(Return(absl::OkStatus()));
+  EXPECT_CALL(*cache, Lookup(InstrPtrMatcher(HloOpcode::kCopy)))
+      .WillOnce(Return(GetCacheConfig("best_config")));
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Autotuner> autotuner,
+      SetupAutotunerWithExpectations(
+          /*instrs_to_autotune=*/{HloOpcode::kAdd},
+          /*instrs_to_apply_config_and_count=*/
+          {{HloOpcode::kCopy, 1}, {HloOpcode::kAdd, 2}}, std::move(cache)));
+
+  MultiProcessKeyValueStore sharding_kv_store;
+  sharding_kv_store.key_value_store = kv_store;
+  sharding_kv_store.process_count = kShardCount;
+  sharding_kv_store.process_index = 0;
+  EXPECT_THAT(
+      autotuner->Autotune(module.get(), should_autotune, sharding_kv_store),
+      IsOk());
+}
+
+TEST_F(AutotunerTest, ShardedAutotuningPropagatesNonRaceSetError) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  constexpr int kShardCount = 2;
+  auto should_autotune = [](const HloInstruction& instruction) {
+    return instruction.opcode() == HloOpcode::kAdd ||
+           instruction.opcode() == HloOpcode::kCopy;
+  };
+  auto kv_store = std::make_shared<MockKeyValueStore>();
+  auto cache = std::make_unique<MockAutotunerCache>();
+
+  // Shard 0 autotunes kAdd and serializes the result, exactly as in the happy
+  // path.
+  EXPECT_CALL(*cache, Lookup(InstrPtrMatcher(HloOpcode::kAdd)))
+      .WillOnce(Return(std::nullopt));
+  EXPECT_CALL(*cache, Insert(InstrPtrMatcher(HloOpcode::kAdd), _))
+      .WillOnce(Return(absl::OkStatus()));
+  EXPECT_CALL(*cache, Serialize(_)).WillOnce(Return("kAdd_autotune_result"));
+
+  // The KV store reports the slot as empty, so the shard tries to Set...
+  EXPECT_CALL(*kv_store, TryGet(testing::HasSubstr("_0")))
+      .WillOnce(Return(absl::NotFoundError("not found")));
+  // ...and the underlying store fails for an unrelated reason. This must NOT
+  // be silently swallowed: only AlreadyExists is treated as a lost race.
+  EXPECT_CALL(*kv_store, Set(testing::HasSubstr("_0"), "kAdd_autotune_result"))
+      .WillOnce(Return(absl::InternalError("disk on fire")));
+
+  // Because Autotune returns early, we must not see any peer reads, cache
+  // deserialization or config application. Leaving these expectations unset
+  // (no EXPECT_CALL) means the mocks would only warn on unexpected calls; we
+  // make the contract explicit by asserting they never happen.
+  EXPECT_CALL(*kv_store, Get(_, _)).Times(0);
+  EXPECT_CALL(*cache, Deserialize(_)).Times(0);
+  EXPECT_CALL(*cache, Lookup(InstrPtrMatcher(HloOpcode::kCopy))).Times(0);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Autotuner> autotuner,
+      SetupAutotunerWithExpectations(
+          /*instrs_to_autotune=*/{HloOpcode::kAdd},
+          // No ApplyConfig calls expected: Autotune bails out before step 6.
+          /*instrs_to_apply_config_and_count=*/{}, std::move(cache)));
+
+  MultiProcessKeyValueStore sharding_kv_store;
+  sharding_kv_store.key_value_store = kv_store;
+  sharding_kv_store.process_count = kShardCount;
+  sharding_kv_store.process_index = 0;
+  EXPECT_THAT(
+      autotuner->Autotune(module.get(), should_autotune, sharding_kv_store),
+      StatusIs(absl::StatusCode::kInternal,
+               testing::HasSubstr("disk on fire")));
+}
+
 TEST_F(AutotunerTest, DumpHlos) {
   ASSERT_OK_AND_ASSIGN(
       tsl::testing::TemporaryDirectory dump_dir,
