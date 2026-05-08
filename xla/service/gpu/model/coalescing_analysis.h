@@ -88,17 +88,6 @@ double BandwidthUtilizationRateHeuristicForTiledMemoryAccess(
     const TiledHloInstruction& hbm_access_instr,
     const se::DeviceDescription& device_info);
 
-// Returns true if read of this tiled hlo operand is coalesced.
-//
-// We consider a read coalesced if the operand tile consist of contiguous chunk
-// of memory that saturate DRAM->L2 cache line. For post-V100 NVIDIA GPUs, that
-// is 64 bytes by default.
-//
-// TODO(b/332714755): check whether we should bump up the granularity of
-// memory transactions.
-bool IsTiledReadCoalescedHeuristic(const TiledHloInstruction& operand,
-                                   const se::DeviceDescription& device_info);
-
 }  // namespace xla::gpu
 
 #endif  // XLA_SERVICE_GPU_MODEL_COALESCING_ANALYSIS_H_

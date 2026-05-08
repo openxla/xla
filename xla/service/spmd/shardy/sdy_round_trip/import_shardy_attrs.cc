@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <utility>
 
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -202,8 +203,7 @@ void convertShardyAttrsWithHloShardingV3(FuncOp funcOp) {
           convertToSdyShardingAttr(parseShardingFromString(oldSharding),
                                    funcOp.getContext()));
     }
-    funcOp.removeResultAttr(
-        resNum, StringAttr::get(funcOp.getContext(), kXlaShardingAttr));
+    funcOp.removeResultAttr(resNum, kXlaShardingAttr);
   }
 
   // Extract the round-tripped shardy attributes from the operations.
@@ -274,9 +274,11 @@ void convertShardyAttrsWithoutHloShardingV3(FuncOp funcOp,
   // Due to `SdyRoundTripExportShardingsPass` keeping `kXlaShardingAttr`, remove
   // them purely for cleanliness of the module.
   for (int64_t resNum = 0; resNum < funcOp.getNumResults(); ++resNum) {
-    funcOp.removeResultAttr(
-        resNum, StringAttr::get(funcOp.getContext(), kXlaShardingAttr));
+    funcOp.removeResultAttr(resNum, kXlaShardingAttr);
   }
+
+  llvm::SmallVector<std::pair<CustomCallOp, DictionaryAttr>>
+      funcResultShardingOps;
 
   // Extract the round-tripped shardy attributes from the operations.
   funcOp.front().walk([&](Operation* op) {
@@ -316,7 +318,7 @@ void convertShardyAttrsWithoutHloShardingV3(FuncOp funcOp,
     } else if (auto customCallOp = mlir::dyn_cast<CustomCallOp>(op)) {
       StringRef targetName = customCallOp.getCallTargetName();
       if (targetName == kFuncResultShardingTargetName) {
-        handleFuncResultSharding(customCallOp, funcOp, dictAttr, rewriter);
+        funcResultShardingOps.push_back({customCallOp, dictAttr});
         return;
       }
       if (targetName == kShardingCustomCallTargetName ||
@@ -332,6 +334,10 @@ void convertShardyAttrsWithoutHloShardingV3(FuncOp funcOp,
     removeFrontendAttribute(
         op, xla::ToStringRef(HloSharding::kShardingFrontendAttrName));
   });
+
+  for (auto& [customCallOp, dictAttr] : funcResultShardingOps) {
+    handleFuncResultSharding(customCallOp, funcOp, dictAttr, rewriter);
+  }
 }
 
 // Builds the shardy attributes coming from Shardy previously. This means
@@ -404,7 +410,7 @@ class SdyRoundTripImportShardyAttrsPass
       std::optional<DictionaryAttr> meshesAttr =
           tryGetFrontendAttr<DictionaryAttr>(moduleOp, kMeshesRoundTripAttr);
       mlir::ArrayRef<NamedAttribute> sdyMeshes =
-          meshesAttr.has_value() ? meshesAttr.value().getValue()
+          meshesAttr.has_value() ? meshesAttr->getValue()
                                  : mlir::ArrayRef<NamedAttribute>();
 
       for (NamedAttribute mesh : sdyMeshes) {

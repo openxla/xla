@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -41,7 +42,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -289,18 +289,18 @@ std::vector<HloInstruction*> GetAllReachableAndFusible(
   return fusible_users;
 }
 
-using ConvKind = HloConvolutionInstruction::ConvKind;
 HloComputation::Builder CreateConvFusionBuilder(HloInstruction* conv) {
   HloComputation* computation = conv->parent();
-  ConvKind conv_kind = DynCast<HloConvolutionInstruction>(conv)->conv_kind();
+  ConvolutionKind convolution_kind =
+      DynCast<HloConvolutionInstruction>(conv)->convolution_kind();
 
   // Give the conv a user-friendly name.
   std::string name;
-  if (conv_kind == ConvKind::FPROP) {
+  if (convolution_kind == CONVOLUTION_KIND_FPROP) {
     name = "conv_fprop";
-  } else if (conv_kind == ConvKind::DGRAD) {
+  } else if (convolution_kind == CONVOLUTION_KIND_DGRAD) {
     name = "conv_dgrad";
-  } else if (conv_kind == ConvKind::WGRAD) {
+  } else if (convolution_kind == CONVOLUTION_KIND_WGRAD) {
     name = "conv_wgrad";
   }
 
@@ -316,10 +316,25 @@ std::pair<HloInstruction*, HloInstruction*> TryFuseConvolutionPrologue(
     HloInstruction* convolution, HloComputation::Builder& builder,
     std::vector<HloInstruction*>& fusion_params,
     absl::flat_hash_map<HloInstruction*, HloInstruction*>& fused_hlo_map) {
+  auto is_fusable_convert = [](const HloInstruction* hlo) {
+    return hlo->opcode() == HloOpcode::kConvert && hlo->user_count() == 1;
+  };
+
+  // Only fuse the prologue converts when both conv operands have one and
+  // they produce the same source type (or neither has one). Otherwise the
+  // cuDNN compiler's "consume convert before conv" path would feed the
+  // conv mismatched input dtypes.
+  const HloInstruction* lhs = convolution->operand(0);
+  const HloInstruction* rhs = convolution->operand(1);
+  const bool fuse_prologue_converts =
+      is_fusable_convert(lhs) && is_fusable_convert(rhs) &&
+      lhs->operand(0)->shape().element_type() ==
+          rhs->operand(0)->shape().element_type();
+
   auto create_operand = [&](int index) {
     HloInstruction* original = convolution->mutable_operand(index);
-    bool is_convert = original->opcode() == HloOpcode::kConvert &&
-                      original->user_count() == 1;
+    const bool is_convert =
+        fuse_prologue_converts && is_fusable_convert(original);
 
     HloInstruction* source =
         is_convert ? original->mutable_operand(0) : original;
@@ -400,9 +415,10 @@ HloInstruction* CreateGpuConvFusion(
 }
 
 absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv) {
-  CHECK_NE(DynCast<HloConvolutionInstruction>(conv)->conv_kind(),
-           ConvKind::UNSET)
-      << "ConvKind assignment pass must run before ConvFusionRewriter pass.";
+  CHECK_NE(DynCast<HloConvolutionInstruction>(conv)->convolution_kind(),
+           CONVOLUTION_KIND_UNSET)
+      << "ConvolutionKind assignment pass must run before ConvFusionRewriter "
+         "pass.";
 
   std::vector<HloInstruction*> fusion_outputs;
   HloInstruction* conv_fusion = CreateGpuConvFusion(conv, fusion_outputs);

@@ -18,15 +18,13 @@ limitations under the License.
 
 #include <cstdint>
 #include <variant>
-#include <vector>
 
+#include "absl/container/inlined_vector.h"
 #include "absl/status/statusor.h"
-#include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/codegen/tiling/tiled_hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/utils/hlo_traversal.h"
-#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
@@ -48,6 +46,9 @@ struct TiledRunTimeData {
 };
 
 using TiledRunTimeDataOrError = std::variant<TiledRunTimeData, FusionDecision>;
+
+using TopKTiledRunTimeDataOrError =
+    std::variant<absl::InlinedVector<TiledRunTimeData, 4>, FusionDecision>;
 
 // Implementation of Cost Model that uses indexing analysis to estimate amount
 // of compute and memory access time.
@@ -75,19 +76,6 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
       const TiledHloComputation& tiled_hlo_computation,
       const se::DeviceDescription& device_info);
 
-  EstimateRunTimeData EstimateRunTimeForFusion(
-      const HloFusionAnalysis& fusion_analysis, bool is_coalesced = true);
-
-  EstimateRunTimeData EstimateRunTimeForInstruction(
-      const HloInstruction* producer);
-
-  EstimateRunTimeData EstimateRunTimeForProducerConsumer(
-      const HloInstruction* producer, const HloInstruction* consumer);
-
-  RunTimes EstimateRunTimes(
-      const HloInstruction* producer,
-      absl::Span<const HloInstruction* const> fused_consumers = {});
-
   absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputation(
       const HloFusionAdaptor& fusion_adaptor,
       const TiledHloComputation& tiled_hlo_computation,
@@ -102,13 +90,12 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
   absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledFusion(
       const HloFusionAdaptor& fusion_adaptor,
       const LaunchDimensions& launch_dimensions,
-      const std::vector<std::vector<int64_t>>& output_tile_sizes);
+      const BlockLevelParameters& block_level_parameters);
 
-  // Estimate the run time of producer and consumer fused together, assuming
-  // that they will be emitted with Triton.
-  // If consumer is nullptr, estimate run time of the producer alone.
+  // Estimate the run time of an Hlo instruction assuming it is emitted by
+  // Triton.
   absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTriton(
-      const HloInstruction* producer, const HloInstruction* consumer = nullptr);
+      const HloInstruction* instr);
 
   // Estimates the best tile sizes for the given fusion. Iterates over all the
   // good tile sizes provided by SymbolicTileAnalysis, estimates the run time
@@ -120,6 +107,11 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
   // Otherwise returns block level parameters that give the best execution time.
   absl::StatusOr<TiledRunTimeDataOrError> TryFindBestTilingForFusion(
       const HloFusionAdaptor& fusion_adaptor);
+
+  // Returns top_k (possibly fewer if not enough valid tilings are found) block
+  // level parameters for the given fusion.
+  absl::StatusOr<TopKTiledRunTimeDataOrError> TryFindTopKBestTilingsForFusion(
+      const HloFusionAdaptor& fusion_adaptor, int top_k);
 
   // Returns an estimate how many FLOPs will be used to produce one element of
   // the output.
