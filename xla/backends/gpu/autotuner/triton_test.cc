@@ -345,6 +345,13 @@ TEST_F(TritonBackendTest, ScaledDotConfigsAreGenerated) {
           *(module->entry_computation()->root_instruction()));
   EXPECT_THAT(configs, absl_testing::IsOk());
   EXPECT_GT(configs.value().size(), 0);
+
+  debug_options_.set_xla_gpu_exhaustive_tiling_search(true);
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<BackendConfig>> exhaustive_configs,
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction())));
+  EXPECT_GT(exhaustive_configs.size(), configs.value().size());
 }
 
 TEST_F(TritonBackendTest, TmaRunCorrectlyForDotsOfBroadcasts) {
