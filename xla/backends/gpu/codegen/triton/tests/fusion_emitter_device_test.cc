@@ -600,6 +600,44 @@ ENTRY entry {
                                "(compute capability 8.0) and up, but got")));
 }
 
+TEST_F(TritonDevicelessTest, RejectsPackedFp4OddMinorOffset) {
+  constexpr absl::string_view kHloText = R"(
+HloModule m
+
+triton_dot {
+  lhs_param = f4e2m1fn[128,258]{1,0:E(4)} parameter(0)
+  lhs = f4e2m1fn[128,256]{1,0:E(4)} slice(lhs_param), slice={[0:128], [1:257]}
+  rhs = f4e2m1fn[256,128]{1,0:E(4)} parameter(1)
+  lhs_scale = f8e8m0fnu[128,8]{1,0} parameter(2)
+  rhs_scale = f8e8m0fnu[8,128]{1,0} parameter(3)
+  ROOT _ = bf16[128,128]{1,0} scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    backend_config={sizes:[128]}
+}
+
+ENTRY e {
+  lhs = f4e2m1fn[128,258]{1,0:E(4)} parameter(0)
+  rhs = f4e2m1fn[256,128]{1,0:E(4)} parameter(1)
+  lhs_scale = f8e8m0fnu[128,8]{1,0} parameter(2)
+  rhs_scale = f8e8m0fnu[8,128]{1,0} parameter(3)
+  ROOT fusion = bf16[128,128]{1,0} fusion(lhs, rhs, lhs_scale, rhs_scale),
+    kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["128","128"]}],
+        "num_warps":"4","num_ctas":"1","num_stages":"1"}}}
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(kHloText));
+  EXPECT_THAT(CreateXTileIrAndFileCheck(std::move(module), "triton_dot", ""),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInvalidArgument,
+                  ::testing::HasSubstr(
+                      "Packed storage requires even offset in dimension 1")));
+}
+
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
 // moved to deviceless test file.
 TEST_F(HloHardwareIndependentTestBase,
@@ -2534,6 +2572,219 @@ TEST_F(TritonScaledDotTest, Fp4Succeeds) {
 
   EXPECT_TRUE(RunAndCompareNoHloPasses(
       std::move(optimized_module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
+TEST_F(TritonScaledDotTest, Mxfp4CanonicalTcgen05Executes) {
+  if (!GetCudaComputeCapability().HasTcgen05()) {
+    GTEST_SKIP() << "Requires a target with tcgen05.";
+  }
+  constexpr absl::string_view kHloTextTemplate = R"hlo(
+    HloModule jit_scaled_dot_fn
+
+    ENTRY %main.2 {
+      %lhs = f4e2m1fn[128,256]{1,0:E(4)} parameter(0)
+      %rhs = f4e2m1fn[256,128]{1,0:E(4)} parameter(1)
+      %lhs_scale = f8e8m0fnu[128,8]{1,0} parameter(2)
+      %rhs_scale = f8e8m0fnu[8,128]{1,0} parameter(3)
+      ROOT %scaled-dot = bf16[128,128]{1,0} scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
+          lhs_contracting_dims={1},
+          rhs_contracting_dims={0}
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(auto optimized_module,
+                       GetOptimizedModule(kHloTextTemplate));
+  HloComputation* scaled_dot_computation = GetFirstComputationWithInstruction(
+      *optimized_module, HloOpcode::kScaledDot);
+  constexpr absl::string_view kExpectedTritonIr = R"(
+      CHECK-NOT: unrealized_conversion_cast
+      CHECK: tt.dot_scaled
+      CHECK-NOT: unrealized_conversion_cast
+  )";
+
+  EXPECT_THAT(CreateTritonIrAndFileCheckForDot(*scaled_dot_computation,
+                                               kExpectedTritonIr),
+              absl_testing::IsOk());
+
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(optimized_module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
+constexpr absl::string_view kMxfp4TransposedLhsHlo = R"hlo(
+HloModule m
+fusion__ {
+  parameter_0 = f4e2m1fn[256,128]{1,0:E(4)} parameter(0)
+  parameter_1 = f4e2m1fn[256,128]{1,0:E(4)} parameter(1)
+  parameter_2 = f8e8m0fnu[8,128]{1,0} parameter(2)
+  parameter_3 = f8e8m0fnu[8,128]{1,0} parameter(3)
+  ROOT _.1 = bf16[128,128] scaled-dot(parameter_0, parameter_1, parameter_2, parameter_3),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0},
+    backend_config={"sizes":["64"]}
+}
+ENTRY e {
+  lhs = f4e2m1fn[256,128]{1,0:E(4)} parameter(0)
+  rhs = f4e2m1fn[256,128]{1,0:E(4)} parameter(1)
+  lhs_scale = f8e8m0fnu[8,128]{1,0} parameter(2)
+  rhs_scale = f8e8m0fnu[8,128]{1,0} parameter(3)
+  ROOT fusion = bf16[128,128] fusion(lhs, rhs, lhs_scale, rhs_scale),
+    kind=kCustom, calls=fusion__,
+    backend_config={"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["128","128"]}],
+        "num_warps":"4","num_ctas":"1","num_stages":"1"}}}
+}
+)hlo";
+
+TEST_F(TritonScaledDotTest, RejectsExplicitMxfp4TransposedLhsBlackwellConfig) {
+  if (!GetCudaComputeCapability().HasTcgen05() ||
+      GetCudaComputeCapability().major ==
+          se::CudaComputeCapability::kBlackwell_12) {
+    GTEST_SKIP() << "Requires a Blackwell target with tcgen05 before SM120.";
+  }
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kMxfp4TransposedLhsHlo));
+  ::testing::AssertionResult result = RunAndCompareNoHloPasses(
+      std::move(module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3});
+  EXPECT_FALSE(result);
+  EXPECT_THAT(
+      std::string(result.message()),
+      ::testing::HasSubstr("Triton scaled-dot is not supported for this "
+                           "operand dtype/layout/CC combination"));
+}
+
+constexpr absl::string_view kMxfp4KPackedRhsHlo = R"hlo(
+HloModule m
+fusion__ {
+  parameter_0 = f4e2m1fn[128,256]{1,0:E(4)} parameter(0)
+  parameter_1 = f4e2m1fn[128,256]{1,0:E(4)} parameter(1)
+  parameter_2 = f8e8m0fnu[128,8]{1,0} parameter(2)
+  parameter_3 = f8e8m0fnu[128,8]{1,0} parameter(3)
+  ROOT _.1 = bf16[128,128] scaled-dot(parameter_0, parameter_1, parameter_2, parameter_3),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1},
+    backend_config={"sizes":["64"]}
+}
+ENTRY e {
+  lhs = f4e2m1fn[128,256]{1,0:E(4)} parameter(0)
+  rhs = f4e2m1fn[128,256]{1,0:E(4)} parameter(1)
+  lhs_scale = f8e8m0fnu[128,8]{1,0} parameter(2)
+  rhs_scale = f8e8m0fnu[128,8]{1,0} parameter(3)
+  ROOT fusion = bf16[128,128] fusion(lhs, rhs, lhs_scale, rhs_scale),
+    kind=kCustom, calls=fusion__,
+    backend_config={"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["128","128"]}],
+        "num_warps":"4","num_ctas":"1","num_stages":"1"}}}
+}
+)hlo";
+
+TEST_F(TritonScaledDotTest, Mxfp4KPackedRhsSm120Executes) {
+  if (GetCudaComputeCapability().major !=
+      se::CudaComputeCapability::kBlackwell_12) {
+    GTEST_SKIP() << "Requires SM120.";
+  }
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kMxfp4KPackedRhsHlo));
+  HloComputation* scaled_dot_computation =
+      GetFirstComputationWithInstruction(*module, HloOpcode::kScaledDot);
+  EXPECT_THAT(CreateTritonIrAndFileCheckForDot(
+                  *scaled_dot_computation, R"(
+      CHECK: tt.trans
+      CHECK: tensor<128x32xi8> -> tensor<32x128xi8>
+      CHECK-NOT: unrealized_conversion_cast
+      CHECK: tt.dot_scaled
+      CHECK: tensor<128x32xi8>, tensor<128x2xi8> * tensor<32x128xi8>, tensor<128x2xi8>
+  )"),
+              absl_testing::IsOk());
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
+constexpr absl::string_view kNvfp4KPackedOperandsHlo = R"hlo(
+HloModule m
+fusion__ {
+  parameter_0 = f4e2m1fn[128,256]{1,0:E(4)} parameter(0)
+  parameter_1 = f4e2m1fn[128,256]{1,0:E(4)} parameter(1)
+  parameter_2 = f8e4m3fn[128,16]{1,0} parameter(2)
+  parameter_3 = f8e4m3fn[128,16]{1,0} parameter(3)
+  ROOT _.1 = bf16[128,128] scaled-dot(parameter_0, parameter_1, parameter_2, parameter_3),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1},
+    backend_config={"sizes":["64"]}
+}
+ENTRY e {
+  lhs = f4e2m1fn[128,256]{1,0:E(4)} parameter(0)
+  rhs = f4e2m1fn[128,256]{1,0:E(4)} parameter(1)
+  lhs_scale = f8e4m3fn[128,16]{1,0} parameter(2)
+  rhs_scale = f8e4m3fn[128,16]{1,0} parameter(3)
+  ROOT fusion = bf16[128,128] fusion(lhs, rhs, lhs_scale, rhs_scale),
+    kind=kCustom, calls=fusion__,
+    backend_config={"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["128","128"]}],
+        "num_warps":"4","num_ctas":"1","num_stages":"1"}}}
+}
+)hlo";
+
+TEST_F(TritonScaledDotTest, Nvfp4KPackedOperandsBlackwellExecutes) {
+  if (!GetCudaComputeCapability().IsAtLeastBlackwell()) {
+    GTEST_SKIP() << "Requires Blackwell.";
+  }
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kNvfp4KPackedOperandsHlo));
+  HloComputation* scaled_dot_computation =
+      GetFirstComputationWithInstruction(*module, HloOpcode::kScaledDot);
+  EXPECT_THAT(CreateTritonIrAndFileCheckForDot(
+                  *scaled_dot_computation, R"(
+      CHECK: tt.trans
+      CHECK: tensor<128x32xi8> -> tensor<32x128xi8>
+      CHECK-NOT: unrealized_conversion_cast
+      CHECK: tt.dot_scaled
+      CHECK: tensor<128x32xi8>, tensor<128x4xf8E4M3FN> * tensor<32x128xi8>, tensor<128x4xf8E4M3FN>
+  )"),
+              absl_testing::IsOk());
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
+TEST_F(TritonScaledDotTest, Mxfp4CanonicalFallbackExecutes) {
+  if (!GetCudaComputeCapability().IsAtLeastHopper() ||
+      GetCudaComputeCapability().HasTcgen05()) {
+    GTEST_SKIP() << "Requires a Hopper-or-newer target without tcgen05.";
+  }
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule m
+fusion__ {
+  parameter_0 = f4e2m1fn[128,256]{1,0:E(4)} parameter(0)
+  parameter_1 = f4e2m1fn[256,128]{1,0:E(4)} parameter(1)
+  parameter_2 = f8e8m0fnu[128,8]{1,0} parameter(2)
+  parameter_3 = f8e8m0fnu[8,128]{1,0} parameter(3)
+  ROOT _.1 = bf16[128,128] scaled-dot(parameter_0, parameter_1, parameter_2, parameter_3),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    backend_config={"sizes":["64"]}
+}
+ENTRY e {
+  lhs = f4e2m1fn[128,256]{1,0:E(4)} parameter(0)
+  rhs = f4e2m1fn[256,128]{1,0:E(4)} parameter(1)
+  lhs_scale = f8e8m0fnu[128,8]{1,0} parameter(2)
+  rhs_scale = f8e8m0fnu[8,128]{1,0} parameter(3)
+  ROOT fusion = bf16[128,128] fusion(lhs, rhs, lhs_scale, rhs_scale),
+    kind=kCustom, calls=fusion__,
+    backend_config={"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["128","128"]}],
+        "num_warps":"4","num_ctas":"1","num_stages":"1"}}}
+}
+)hlo";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  HloComputation* scaled_dot_computation =
+      GetFirstComputationWithInstruction(*module, HloOpcode::kScaledDot);
+  EXPECT_THAT(CreateTritonIrAndFileCheckForDot(
+                  *scaled_dot_computation, R"(
+      CHECK-NOT: unrealized_conversion_cast
+      CHECK: tt.dot_scaled
+      CHECK-NOT: unrealized_conversion_cast
+  )"),
+              absl_testing::IsOk());
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 TEST_F(TritonScaledDotTest, GlobalScalerSucceeds) {

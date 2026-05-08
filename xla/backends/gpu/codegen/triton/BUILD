@@ -38,6 +38,7 @@ cc_library(
         "//xla/backends/gpu/runtime:kernel_thunk",
         "//xla/backends/gpu/runtime:thunk",
         "//xla/codegen:llvm_kernel_source",
+        "//xla/backends/gpu/transforms:triton_scaled_dot_support",
         "//xla/codegen/emitters:kernel_arguments",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",

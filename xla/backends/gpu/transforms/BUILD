@@ -2776,6 +2776,17 @@ cc_library(
 )
 
 cc_library(
+    name = "triton_scaled_dot_support",
+    srcs = ["triton_scaled_dot_support.cc"],
+    hdrs = ["triton_scaled_dot_support.h"],
+    deps = [
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+    ],
+)
+
+cc_library(
     name = "composite_rewriter",
     srcs = ["composite_rewriter.cc"],
     hdrs = ["composite_rewriter.h"],
@@ -4046,6 +4057,20 @@ xla_cc_test(
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+name = "triton_scaled_dot_support_test",
+    srcs = ["triton_scaled_dot_support_test.cc"],
+    deps = [
+        ":triton_scaled_dot_support",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
 )

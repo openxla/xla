@@ -221,6 +221,11 @@ absl::StatusOr<PrimitiveType> GetPrimitiveType(mlir::Type t);
 
 mlir::Type StorageType(mlir::Type t);
 
+bool PrimitiveTypeUsesPackedStorage(PrimitiveType type);
+
+absl::StatusOr<llvm::SmallVector<int64_t>> GetStorageShape(
+    llvm::ArrayRef<int64_t> logical_shape, const Shape& shape);
+
 // Get the value of the scalar constant's literal in a C++ ty˝pe.
 template <typename T>
 T ScalarConstantValue(const HloInstruction& instr, PrimitiveType dst_type) {
@@ -353,7 +358,8 @@ absl::StatusOr<llvm::SmallVector<int64_t>> GetPermutationMinorToMajor(
     mlir::MemRefType memref);
 
 // Function to get a MemRefType from a Shape.
-mlir::MemRefType GetMemRefType(const Shape& shape, mlir::Type element_type);
+absl::StatusOr<mlir::MemRefType> GetMemRefType(const Shape& shape,
+                                               mlir::Type element_type);
 
 // Function to get the MLIR type from a PrimitiveType.
 absl::StatusOr<mlir::Type> GetMlirType(

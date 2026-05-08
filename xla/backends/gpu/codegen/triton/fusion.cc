@@ -44,12 +44,15 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/transforms/triton_scaled_dot_support.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/llvm_kernel_source.h"
 #include "xla/future.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_constants.h"
@@ -100,7 +103,22 @@ xla::Future<TritonWrapperResult> TritonFusion::GenerateTritonKernelAndWrapper(
         "Block level fusion config is required for Triton fusions: ",
         fusion.ToString()));
   }
-
+  if (const auto* cuda_cc =
+          device_info.gpu_compute_capability().cuda_compute_capability()) {
+    for (HloInstruction* scaled_dot :
+         fusion.fused_instructions_computation()->instructions()) {
+      if (scaled_dot->opcode() != HloOpcode::kScaledDot) {
+        continue;
+      }
+      if (!IsTritonSupportedScaledDot(
+              *Cast<HloScaledDotInstruction>(scaled_dot), *cuda_cc)) {
+        return absl::InvalidArgumentError(
+            absl::StrCat("Triton scaled-dot is not supported for this operand "
+                         "dtype/layout/CC combination: ",
+                         scaled_dot->ToString()));
+      }
+    }
+  }
   BlockLevelParameters block_level_parameters =
       BlockLevelParameters::FromBlockLevelFusionConfig(
           analysis_.fusion_backend_config().block_level_fusion_config());

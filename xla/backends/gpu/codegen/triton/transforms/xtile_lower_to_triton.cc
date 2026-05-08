@@ -56,7 +56,8 @@ absl::StatusOr<ttir::ScaleDotElemType> GetScaleDotElemType(Type value) {
   if (type == mlir::Float8E5M2Type::get(value.getContext())) {
     return ttir::ScaleDotElemType::E5M2;
   }
-  if (type == mlir::Float4E2M1FNType::get(value.getContext())) {
+  if (type == mlir::Float4E2M1FNType::get(value.getContext()) ||
+      type == mlir::IntegerType::get(value.getContext(), 8)) {
     return ttir::ScaleDotElemType::E2M1;
   }
   if (type == mlir::BFloat16Type::get(value.getContext())) {
@@ -80,6 +81,16 @@ bool IsDotScaledCanonical(::xla::xtile::DotScaledOp op) {
 
   return is_rank_2(op.getLhs()) && is_rank_2(op.getRhs()) &&
          is_rank_2(op.getLhsScale()) && is_rank_2(op.getRhsScale());
+}
+
+RankedTensorType CollapseUnitDims(RankedTensorType type) {
+  llvm::SmallVector<int64_t> shape;
+  for (int64_t dim : type.getShape()) {
+    if (dim != 1) {
+      shape.push_back(dim);
+    }
+  }
+  return RankedTensorType::get(shape, type.getElementType());
 }
 
 LogicalResult CanonicalDotScaled(::xla::xtile::DotScaledOp op,
@@ -134,10 +145,11 @@ LogicalResult CanonicalDotScaled(::xla::xtile::DotScaledOp op,
   }
 
   RankedTensorType result_type = mlir::cast<RankedTensorType>(op.getType());
-  RankedTensorType new_result_type = RankedTensorType::get(
-      {mlir::cast<ShapedType>(lhs.getType()).getShape()[0],
-       mlir::cast<ShapedType>(rhs.getType()).getShape()[1]},
-      result_type.getElementType());
+  RankedTensorType new_result_type = CollapseUnitDims(result_type);
+  if (new_result_type.getRank() != 2) {
+    return rewriter.notifyMatchFailure(op_loc,
+                                       "Failed to canonicalize result.");
+  }
 
   auto canonical_dims = mlir::stablehlo::DotDimensionNumbersAttr::get(
       rewriter.getContext(), {}, {}, {1}, {0});
@@ -228,8 +240,8 @@ class XTileLowerToTritonPass
 
     {
       mlir::RewritePatternSet patterns(mlir_context);
-      patterns.add<CanonicalizeDotScaled, LowerDotScaled, LowerReshape>(
-          mlir_context);
+      patterns.add<CanonicalizeDotScaled, LowerDotScaled, LowerReshape,
+                   LowerTranspose>(mlir_context);
       if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),
                                                    std::move(patterns)))) {
         return signalPassFailure();

@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/backends/gpu/transforms/fusion_wrapper.h"
 #include "xla/backends/gpu/transforms/priority_fusion.h"
+#include "xla/backends/gpu/transforms/triton_scaled_dot_support.h"
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
@@ -383,6 +384,21 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
             std::get_if<FusionDecision>(&analysis_or_error)) {
       VLOG(1) << "Fusion not tileable: " << fusion_decision->Explain();
       return false;
+    }
+    if (const auto* cuda_cc =
+            device_info.gpu_compute_capability().cuda_compute_capability()) {
+      for (HloInstruction* scaled_dot :
+           fusion->fused_instructions_computation()->instructions()) {
+        if (scaled_dot->opcode() != HloOpcode::kScaledDot) {
+          continue;
+        }
+        if (!IsTritonSupportedScaledDot(
+                *Cast<HloScaledDotInstruction>(scaled_dot), *cuda_cc)) {
+          VLOG(1) << "Triton scaled-dot unsupported on this CC for: "
+                  << scaled_dot->ToString();
+          return false;
+        }
+      }
     }
     return true;
   }

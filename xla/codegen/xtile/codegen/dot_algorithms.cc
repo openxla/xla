@@ -51,11 +51,29 @@ namespace xtile {
 
 namespace {
 
-using ::mlir::ShapedType;
 using ::mlir::Type;
 using ::mlir::Value;
 
 Type ElementType(Value v) { return mlir::getElementTypeOrSelf(v); }
+
+bool IsScaledMicroformat(PrimitiveType type) {
+  return type == F4E2M1FN || type == F8E4M3FN || type == F8E5M2;
+}
+
+bool IsSubByteScaledMicroformat(PrimitiveType type) {
+  return type == F4E2M1FN;
+}
+
+// tt.dot_scaled accepts scale tensors as floating point values or i8. UE8M0
+// has no MLIR FloatType representation that Triton recognizes, so XLA carries
+// it as i8.
+Value ReinterpretScaleIfNeeded(mlir::ImplicitLocOpBuilder& b, Value scale) {
+  if (mlir::isa<mlir::Float8E8M0FNUType>(
+          getElementTypeOrSelf(scale.getType()))) {
+    return Bitcast(b, scale, b.getI8Type());
+  }
+  return scale;
+}
 
 mlir::stablehlo::Precision XlaPrecisionToStableHloPrecision(
     PrecisionConfig::Precision precision) {
@@ -76,17 +94,18 @@ mlir::stablehlo::Precision XlaPrecisionToStableHloPrecision(
 namespace {
 
 absl::StatusOr<Value> ScaledDot(mlir::ImplicitLocOpBuilder& b,
+                                const HloScaledDotInstruction& dot,
                                 ScaledDotOperands& operands) {
-  mlir::Type lhs_dot_elem_type = getElementTypeOrSelf(operands.lhs.getType());
-  mlir::Type rhs_dot_elem_type = getElementTypeOrSelf(operands.rhs.getType());
+  PrimitiveType lhs_primitive_type = dot.operand(0)->shape().element_type();
+  PrimitiveType rhs_primitive_type = dot.operand(1)->shape().element_type();
 
   Value lhs_scale;
-  if (lhs_dot_elem_type != b.getBF16Type()) {
-    lhs_scale = Bitcast(b, operands.lhs_scale, b.getI8Type());
+  if (IsScaledMicroformat(lhs_primitive_type)) {
+    lhs_scale = ReinterpretScaleIfNeeded(b, operands.lhs_scale);
   }
   Value rhs_scale;
-  if (rhs_dot_elem_type != b.getBF16Type()) {
-    rhs_scale = Bitcast(b, operands.rhs_scale, b.getI8Type());
+  if (IsScaledMicroformat(rhs_primitive_type)) {
+    rhs_scale = ReinterpretScaleIfNeeded(b, operands.rhs_scale);
     auto rhs_scale_type = mlir::cast<mlir::ShapedType>(rhs_scale.getType());
     int64_t rank = rhs_scale_type.getRank();
     CHECK_GE(rank, 2) << "RHS scale must be at least rank 2 for scaled dot.";
@@ -100,15 +119,22 @@ absl::StatusOr<Value> ScaledDot(mlir::ImplicitLocOpBuilder& b,
         b, rhs_scale, b.getDenseI64ArrayAttr(permutation));
   }
 
-  // When operand type is subbyte size then it is packed along minor dim and for
-  // RHS minor dim is not K.
-  const auto& lhs_shaped_type =
-      mlir::dyn_cast<ShapedType>(operands.lhs.getType());
-  const bool rhs_k_pack = lhs_shaped_type.getElementType() !=
-                          mlir::Float4E2M1FNType::get(b.getContext());
+  // Non-sub-byte operands are represented as K-packed.
+  bool lhs_k_pack = true;
+  bool rhs_k_pack = true;
+  if (IsSubByteScaledMicroformat(lhs_primitive_type)) {
+    const int64_t lhs_c =
+        dot.dot_dimension_numbers().lhs_contracting_dimensions(0);
+    lhs_k_pack = dot.operand(0)->shape().layout().minor_to_major(0) == lhs_c;
+  }
+  if (IsSubByteScaledMicroformat(rhs_primitive_type)) {
+    const int64_t rhs_c =
+        dot.dot_dimension_numbers().rhs_contracting_dimensions(0);
+    rhs_k_pack = dot.operand(1)->shape().layout().minor_to_major(0) == rhs_c;
+  }
   auto dot_scaled_op = xtile::DotScaledOp::create(
       b, operands.accumulator.getType(), operands.lhs, operands.rhs, lhs_scale,
-      rhs_scale, /*fastMath=*/true, /*lhs_k_pack=*/true, rhs_k_pack,
+      rhs_scale, /*fastMath=*/true, lhs_k_pack, rhs_k_pack,
       operands.dot_dimension_numbers);
 
   auto add_result =
@@ -318,7 +344,7 @@ absl::StatusOr<Value> EmitSingleTileScaledDot(
   dot_operands.dot_dimension_numbers =
       ::xla::stablehlo::ConvertDotDimensionNumbers(
           scaled_dot.dot_dimension_numbers(), &b);
-  return ScaledDot(b, dot_operands);
+  return ScaledDot(b, scaled_dot, dot_operands);
 }
 
 }  // namespace xtile
