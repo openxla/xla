@@ -339,7 +339,7 @@ struct MockBlasLt : public se::gpu::BlasLt {
   }
 
   absl::StatusOr<MatmulPlanPtr> GetGroupedMatmulPlan(
-      se::gpu::GroupedGemmConfig&, Epilogue) const override {
+      const se::gpu::GroupedGemmConfig&, Epilogue) const override {
     return MatmulPlanPtr{};
   }
 
@@ -381,7 +381,7 @@ TEST_F(GpuBlasLtMatmulThunkTest, CacheUnitTest) {
         });
       }
     }  // for j
-  }  // end block
+  }    // end block
   for (auto& res : results) {
     TF_ASSERT_OK(res);
   }
@@ -461,8 +461,8 @@ TEST_F(GpuBlasLtMatmulThunkTest, ThunkProtoSerialization) {
   thunk_info.profile_annotation = "test";
 
   CublasLtMatmulThunkProto proto;
-  ASSERT_TRUE(google::protobuf::TextFormat::ParseFromString(kCublasLtMatmulThunkProtoText,
-                                                  &proto));
+  ASSERT_TRUE(google::protobuf::TextFormat::ParseFromString(
+      kCublasLtMatmulThunkProtoText, &proto));
 
   std::vector<BufferAllocation> allocations = {
       BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),  // UNUSED

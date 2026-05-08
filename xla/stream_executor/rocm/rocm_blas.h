@@ -164,12 +164,12 @@ class ROCMBlas : public blas::BlasSupport {
   // reallocate the memory layout to be strided batched.
   template <typename T, typename FuncT>
   absl::Status DoBlasGemmBatchedInternal(
-      FuncT rocblas_func, Stream* stream, blas::Transpose transa,
+      FuncT rocblas_func, Stream *stream, blas::Transpose transa,
       blas::Transpose transb, uint64_t m, uint64_t n, uint64_t k, T alpha,
       DeviceAddressSlice<T> a_ptrs_to_wrappers, int lda,
       DeviceAddressSlice<T> b_ptrs_to_wrappers, int ldb, T beta,
       DeviceAddressSlice<T> c_ptrs_to_wrappers, int ldc, int batch_count,
-      ScratchAllocator* scratch_allocator);
+      ScratchAllocator *scratch_allocator);
 
   // mutex that guards the rocBLAS handle for this device.
   mutable absl::Mutex mu_;
