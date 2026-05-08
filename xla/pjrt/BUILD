@@ -105,23 +105,6 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "dynamic_shapes",
-    srcs = ["dynamic_shapes.cc"],
-    hdrs = ["dynamic_shapes.h"],
-    deps = [
-        ":device_event",
-        ":raw_buffer",
-        "//xla:shape_util",
-        "//xla/tsl/concurrency:async_value",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:platform_port",
-    ],
-)
-
-cc_library(
     name = "common_pjrt_client",
     srcs = [
         "abstract_tracked_device_buffer.cc",
@@ -140,7 +123,6 @@ cc_library(
     deps = [
         ":async_work_runner",
         ":device_event",
-        ":dynamic_shapes",
         ":host_callback",
         ":pjrt_client",
         ":pjrt_compiler",
@@ -806,7 +788,6 @@ cc_library(
         ":async_work_runner",
         ":common_pjrt_client",
         ":device_event",
-        ":dynamic_shapes",
         ":event_pool",
         ":host_memory_allocator",
         ":host_memory_spaces",

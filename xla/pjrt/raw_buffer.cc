@@ -48,15 +48,16 @@ CommonPjRtRawBuffer::RemoveDynamicShapeMetadataIfPresent(
       "Dynamic shapes are not supported for ", memory_space()->DebugString()));
 }
 
+absl::StatusOr<PjRtRawBufferRef> CommonPjRtRawBuffer::Slice(int64_t offset,
+                                                            int64_t size) {
+  TF_ASSIGN_OR_RETURN(auto results, MultiSlice({{offset, size}}));
+  return results[0];
+}
+
 absl::StatusOr<std::vector<PjRtRawBufferRef>> CommonPjRtRawBuffer::MultiSlice(
     absl::Span<const SliceInfo> slices) {
-  std::vector<PjRtRawBufferRef> results;
-  results.reserve(slices.size());
-  for (const auto& slice : slices) {
-    TF_ASSIGN_OR_RETURN(auto sub_slice, Slice(slice.offset, slice.size));
-    results.push_back(std::move(sub_slice));
-  }
-  return results;
+  return absl::UnimplementedError(absl::StrCat("Slicing is not supported for ",
+                                               memory_space()->DebugString()));
 }
 
 void CommonPjRtRawBuffer::ScheduleCopyTo(

@@ -140,8 +140,6 @@ class CpuRawBuffer : public CommonPjRtRawBufferImpl {
 
   bool is_mutable() const final { return is_mutable_; }
 
-  absl::StatusOr<PjRtRawBufferRef> Slice(int64_t offset, int64_t size) override;
-
   absl::StatusOr<PjRtDeviceEventRef> CopyRawHostToDeviceAndReturnEvent(
       const void* src, int64_t offset, int64_t transfer_size) override;
 

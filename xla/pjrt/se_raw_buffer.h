@@ -106,8 +106,6 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBufferImpl {
 
   LocalDeviceState* local_device() const { return local_device_; }
 
-  absl::Status ValidateSlice(int64_t offset, int64_t slice_size);
-
   const tsl::AsyncValueRef<RawSEDeviceMemory>& device_buffer() const {
     return device_buffer_;
   }
@@ -132,8 +130,6 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBufferImpl {
       void* dst, int64_t offset, int64_t transfer_size) override;
 
   absl::StatusOr<PjRtDeviceEventRef> MakeAllocationReadyEvent() override;
-
-  absl::StatusOr<PjRtRawBufferRef> Slice(int64_t offset, int64_t size) override;
 
   void ReadDynamicShape(tsl::AsyncValueRef<xla::Shape> output_shape,
                         xla::Shape shape) override;

@@ -158,42 +158,9 @@ tsl::AsyncValueRef<CpuDeviceMemory> CpuDeviceMemory::CreateForeignMemory(
       base, size, std::move(on_delete_callback));
 }
 
-class CpuDeviceMemorySlice final : public CpuDeviceMemory {
- public:
-  CpuDeviceMemorySlice(tsl::AsyncValueRef<CpuDeviceMemory> base, size_t offset,
-                       size_t size)
-      : base_(std::move(base)), offset_(offset), size_bytes_(size) {}
-
-  void* untyped_data() const final {
-    return static_cast<uint8_t*>(base_->untyped_data()) + offset_;
-  }
-  size_t size_bytes() const final { return size_bytes_; }
-
- private:
-  tsl::AsyncValueRef<CpuDeviceMemory> base_;
-  size_t offset_;
-  size_t size_bytes_;
-};
-
 tsl::AsyncValueRef<CpuDeviceMemory> CpuDeviceMemory::CreateConstantMemory(
     void* base, size_t size) {
   return tsl::MakeAvailableAsyncValueRef<CpuDeviceMemoryConstant>(base, size);
-}
-
-tsl::AsyncValueRef<CpuDeviceMemory> CpuDeviceMemory::CreateSlicedMemory(
-    tsl::AsyncValueRef<CpuDeviceMemory> base_async_value, size_t offset,
-    size_t size) {
-  auto slice = tsl::MakeConstructedAsyncValueRef<CpuDeviceMemorySlice>(
-      base_async_value, offset, size);
-  base_async_value.AndThen(
-      [slice = slice.CopyRef(), base = base_async_value.CopyRef()]() mutable {
-        if (auto* error = base.GetErrorIfPresent()) {
-          slice.SetError(*error);
-        } else {
-          slice.SetStateConcrete();
-        }
-      });
-  return slice;
 }
 
 // Allocates owning memory wrapped in an available `AsyncValueRef`.

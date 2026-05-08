@@ -45,7 +45,6 @@ limitations under the License.
 #include "xla/pjrt/abstract_tracked_device_buffer.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/device_event.h"
-#include "xla/pjrt/dynamic_shapes.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/transpose.h"
@@ -78,11 +77,6 @@ class CommonPjRtClient : public PjRtClient {
 
   // Backend specific handlers for when an oom is detected during execute.
   virtual void CallOomHandlers() const {}
-
-  virtual PjRtDynamicShapeKind GetDynamicShapeKind(
-      int memory_space_kind_id) const {
-    return PjRtDynamicShapeKind::kNotSupported;
-  }
 
   virtual void LaunchOnDevice(PjRtDevice* device,
                               absl::AnyInvocable<void()> execute_fn) const {

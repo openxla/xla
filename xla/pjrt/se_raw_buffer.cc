@@ -36,7 +36,6 @@ limitations under the License.
 #include "xla/pjrt/buffer_sequencing_event.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/device_event_utils.h"
-#include "xla/pjrt/dynamic_shapes.h"
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -229,39 +228,30 @@ ShapedBuffer PjRtStreamExecutorRawBuffer::AsShapedBuffer(
   return shaped_buffer;
 }
 
-absl::Status PjRtStreamExecutorRawBuffer::ValidateSlice(int64_t offset,
-                                                        int64_t slice_size) {
-  size_t buffer_size = GetOnDeviceSizeInBytes();
-  if (offset < 0 || offset > buffer_size || buffer_size - offset < slice_size) {
-    return InvalidArgument(
-        "Invalid slicing of buffer size %lld with "
-        "invalid offset %lld, slice size %lld",
-        buffer_size, offset, slice_size);
-  }
-  return absl::OkStatus();
-}
-
-absl::StatusOr<PjRtRawBufferRef> PjRtStreamExecutorRawBuffer::Slice(
-    int64_t offset, int64_t size) {
-  TF_RETURN_IF_ERROR(ValidateSlice(offset, size));
-  return tsl::MakeRef<PjRtStreamExecutorRawBuffer>(
-      client_, memory_space_, local_device_,
-      RawSEDeviceMemory::CreateSlice(device_buffer_, offset, size), size);
-}
-
 void PjRtStreamExecutorRawBuffer::ReadDynamicShape(
     tsl::AsyncValueRef<xla::Shape> output_shape, xla::Shape shape) {
-  auto kind = client_->GetDynamicShapeKind(memory_space_->kind_id());
-  xla::ReadDynamicShape(tsl::FormRef(this), output_shape, std::move(shape),
-                        kind);
+  auto* stream = local_device_->GetDeviceToHostStream();
+  auto shaped_buffer = AsShapedBuffer(shape);
+  TransferManager* transfer_manager =
+      client_->client()->backend().transfer_manager();
+  auto status = transfer_manager->ReadDynamicShapes(stream, &shaped_buffer,
+                                                    &*output_shape);
+  if (!status.ok()) {
+    output_shape.SetError(status);
+  } else {
+    output_shape.SetStateConcrete();
+  }
 }
 
 absl::StatusOr<PjRtRawBufferRef>
 PjRtStreamExecutorRawBuffer::RemoveDynamicShapeMetadataIfPresent(
     const xla::Shape& logical_shape) {
-  auto kind = client_->GetDynamicShapeKind(memory_space_->kind_id());
-  return xla::RemoveDynamicShapeMetadataIfPresent(tsl::FormRef(this),
-                                                  logical_shape, kind);
+  TransferManager* transfer_manager =
+      client_->client()->backend().transfer_manager();
+  size_t size = transfer_manager->GetByteSizeRequirement(logical_shape);
+  return tsl::MakeRef<PjRtStreamExecutorRawBuffer>(
+      client_, memory_space_, local_device_,
+      RawSEDeviceMemory::CreateSlice(device_buffer_, 0, size), size);
 }
 
 void PjRtStreamExecutorRawBuffer::CopyToLiteralAsync(
