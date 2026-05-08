@@ -159,6 +159,8 @@ Shape TypeToShape(mlir::Type type) {
   } else if (mlir::isa<mlir::mhlo::TokenType>(type) ||
              mlir::isa<mlir::stablehlo::TokenType>(type)) {
     return ShapeUtil::MakeTokenShape();
+  } else if (mlir::isa<mlir::stablehlo::FutureType>(type)) {
+    return ShapeUtil::MakeTokenShape();
   } else if (auto bundle_type =
                  mlir::dyn_cast<mlir::mhlo::AsyncBundleType>(type)) {
     auto tuple_type =
