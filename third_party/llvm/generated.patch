@@ -1,1 +1,86 @@
 Auto generated patch. Do not edit or delete it, even if empty.
+diff -ruN --strip-trailing-cr a/mlir/lib/Pass/IRPrinting.cpp b/mlir/lib/Pass/IRPrinting.cpp
+--- a/mlir/lib/Pass/IRPrinting.cpp
++++ b/mlir/lib/Pass/IRPrinting.cpp
+@@ -48,6 +48,11 @@
+ 
+ static void printIR(Operation *op, bool printModuleScope, raw_ostream &out,
+                     OpPrintingFlags flags) {
++  // Check to see if we are not printing at module scope.
++  if (!printModuleScope)
++    return op->print(out, op->getBlock() ? flags.useLocalScope() : flags);
++
++  // Otherwise, we are printing at module scope.
+   // Find the top-level operation.
+   auto *topLevelOp = op;
+   while (auto *parentOp = topLevelOp->getParentOp())
+diff -ruN --strip-trailing-cr a/mlir/lib/Reducer/ReductionTreePass.cpp b/mlir/lib/Reducer/ReductionTreePass.cpp
+--- a/mlir/lib/Reducer/ReductionTreePass.cpp
++++ b/mlir/lib/Reducer/ReductionTreePass.cpp
+@@ -40,6 +40,7 @@
+                           ArrayRef<ReductionNode::Range> rangeToKeep,
+                           bool eraseOpNotInRange) {
+   std::vector<Operation *> opsNotInRange;
++  std::vector<Operation *> opsInRange;
+   size_t keepIndex = 0;
+   for (const auto &op : enumerate(region.getOps())) {
+     int index = op.index();
+@@ -48,21 +49,22 @@
+       ++keepIndex;
+     if (keepIndex == rangeToKeep.size() || index < rangeToKeep[keepIndex].first)
+       opsNotInRange.push_back(&op.value());
++    else
++      opsInRange.push_back(&op.value());
+   }
+ 
+   // `applyOpPatternsGreedily` with folding may erase the ops so we can't do the
+   // pattern matching in above iteration. Besides, erase op not-in-range may end
+   // up in invalid module, so `applyOpPatternsGreedily` with folding should come
+   // before that transform.
+-  if (!eraseOpNotInRange)
+-    for (Operation *op : opsNotInRange) {
+-      // `applyOpPatternsGreedily` with folding returns whether the op is
+-      // converted. Omit it because we don't have expectation this reduction
+-      // will be success or not.
+-      (void)applyOpPatternsGreedily(op, patterns,
+-                                    GreedyRewriteConfig().setStrictness(
+-                                        GreedyRewriteStrictness::ExistingOps));
+-    }
++  for (Operation *op : opsInRange) {
++    // `applyOpPatternsGreedily` with folding returns whether the op is
++    // converted. Omit it because we don't have expectation this reduction will
++    // be success or not.
++    (void)applyOpPatternsGreedily(op, patterns,
++                                  GreedyRewriteConfig().setStrictness(
++                                      GreedyRewriteStrictness::ExistingOps));
++  }
+ 
+   if (eraseOpNotInRange)
+     for (Operation *op : opsNotInRange) {
+diff -ruN --strip-trailing-cr a/mlir/test/mlir-reduce/reduction-tree/trivially-dead.mlir b/mlir/test/mlir-reduce/reduction-tree/trivially-dead.mlir
+--- a/mlir/test/mlir-reduce/reduction-tree/trivially-dead.mlir
++++ b/mlir/test/mlir-reduce/reduction-tree/trivially-dead.mlir
+@@ -1,15 +0,0 @@
+-// UNSUPPORTED: system-windows
+-// RUN: mlir-reduce %s -reduction-tree='traversal-mode=0 test=%S/../script/trivially-dead.sh' | FileCheck %s
+-// We are testing the ability of keeping trivially-dead yet interesting code
+-
+-func.func @trivially_dead() {
+-  %0 = arith.constant 1 : i32
+-  %1 = arith.constant 2 : i32
+-  %2 = arith.constant 3 : i32
+-  %3 = arith.constant 4 : i32
+-  return
+-}
+-
+-// CHECK-LABEL: func @trivially_dead
+-//  CHECK-NEXT:   arith.constant 2 : i32
+-//  CHECK-NEXT: return
+diff -ruN --strip-trailing-cr a/mlir/test/mlir-reduce/script/trivially-dead.sh b/mlir/test/mlir-reduce/script/trivially-dead.sh
+--- a/mlir/test/mlir-reduce/script/trivially-dead.sh
++++ b/mlir/test/mlir-reduce/script/trivially-dead.sh
+@@ -1,4 +0,0 @@
+-#!/bin/sh
+-
+-# break only on `arith.constat 2 : i32`
+-! cat $1 | grep "arith.constant 2 : i32" 2>&1 1>/dev/null
