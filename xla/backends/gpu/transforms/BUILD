@@ -1329,6 +1329,7 @@ xla_cc_test(
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test",
+        "//xla/hlo/transforms:while_loop_trip_count_annotator",
         "//xla/hlo/transforms/simplifiers:tuple_simplifier",
         "//xla/hlo/utils:hlo_query",
         "//xla/tsl/platform:statusor",

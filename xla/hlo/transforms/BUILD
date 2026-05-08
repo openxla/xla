@@ -84,6 +84,7 @@ cc_library(
     srcs = ["while_loop_trip_count_annotator.cc"],
     hdrs = ["while_loop_trip_count_annotator.h"],
     deps = [
+        "//xla:literal_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:while_loop_analysis",
         "//xla/hlo/ir:hlo",

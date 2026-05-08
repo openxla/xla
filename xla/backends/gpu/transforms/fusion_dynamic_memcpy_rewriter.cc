@@ -180,8 +180,8 @@ class DynamicOffsetEvaluator {
         int64_t tuple_idx = offset.induction_variable->tuple_index();
         for (const auto& dv : loop_config.dynamic_variables()) {
           if (dv.tuple_index() == tuple_idx) {
-            init = dv.init();
-            step = dv.step();
+            if (dv.has_init()) init = dv.init();
+            if (dv.has_step()) step = dv.step();
             break;
           }
         }

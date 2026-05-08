@@ -1238,6 +1238,7 @@ void AddDoubleBufferingPasses(const HloModule& module,
     pipeline.AddPass<TupleSimplifier>();
     pipeline.AddPass<HloDCE>();
     pipeline.AddPass<ScalarConstantSinker>();
+    pipeline.AddPass<WhileLoopTripCountAnnotator>();
   }
 }
 

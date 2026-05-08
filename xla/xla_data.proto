@@ -1425,20 +1425,27 @@ message WhileLoopBackendConfig {
   // and tuple index 0.
   KnownInductionVariable known_induction_variable = 3;
 
-  // Variables that should be treated as induction variables for dynamic memcpy
-  // analysis, even though they are not the primary induction variable.
-  repeated int64 dynamic_variable_tuple_indices = 4;
+  // Field 4 was `repeated int64 dynamic_variable_tuple_indices`; merged into
+  // `dynamic_variables` below.
+  reserved 4;
+  reserved "dynamic_variable_tuple_indices";
 
   message DynamicVariable {
     int64 tuple_index = 1;
-    int64 init = 2;
-    int64 step = 3;
+    // `init` and `step` describe the affine value of this variable as
+    // `init + iteration * step`. They are optional: a writer that knows a
+    // tuple position is a dynamic variable but does not (yet) know the affine
+    // parameters can leave them unset, in which case consumers should fall
+    // back to `known_init_step` (e.g. for FusionDynamicMemcpyRewriter offset
+    // computation).
+    optional int64 init = 2;
+    optional int64 step = 3;
   }
 
-  // Per-variable init/step for dynamic variables. When present, these take
-  // precedence over known_init_step for offset computation in
-  // FusionDynamicMemcpyRewriter. Each entry corresponds to a variable whose
-  // tuple_index also appears in dynamic_variable_tuple_indices.
+  // Tuple positions that should be treated as induction variables for dynamic
+  // memcpy analysis, even though they are not the primary induction variable.
+  // When `init`/`step` are set, they take precedence over `known_init_step`
+  // for offset computation.
   repeated DynamicVariable dynamic_variables = 5;
 }
 

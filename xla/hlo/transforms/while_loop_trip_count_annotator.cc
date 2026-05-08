@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/hlo/transforms/while_loop_trip_count_annotator.h"
 
 #include <cstdint>
+#include <optional>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
@@ -25,10 +26,128 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/literal_util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 
 namespace xla {
+namespace {
+
+std::optional<int64_t> ScalarConstantInitOperand(const HloInstruction* while_op,
+                                                 int64_t tuple_idx) {
+  const HloInstruction* init = while_op->operand(0);
+  if (init->opcode() != HloOpcode::kTuple ||
+      tuple_idx >= init->operand_count()) {
+    return std::nullopt;
+  }
+  const HloInstruction* init_val = init->operand(tuple_idx);
+  if (init_val->opcode() != HloOpcode::kConstant) {
+    return std::nullopt;
+  }
+  return LiteralUtil::LiteralAsScalarInt64(init_val->literal());
+}
+
+struct AffineMatch {
+  int64_t source_tuple_idx;
+  int64_t step_offset;
+};
+
+struct LinearTerm {
+  std::optional<int64_t> source_tuple_idx;
+  int64_t constant_offset;
+};
+
+std::optional<LinearTerm> DecomposeLinear(const HloInstruction* expr,
+                                          const HloInstruction* param) {
+  if (expr->opcode() == HloOpcode::kGetTupleElement &&
+      expr->operand(0) == param) {
+    return LinearTerm{expr->tuple_index(), 0};
+  }
+  if (expr->opcode() == HloOpcode::kConstant) {
+    std::optional<int64_t> v =
+        LiteralUtil::LiteralAsScalarInt64(expr->literal());
+    if (!v.has_value()) {
+      return std::nullopt;
+    }
+    return LinearTerm{std::nullopt, *v};
+  }
+  if (expr->opcode() == HloOpcode::kAdd ||
+      expr->opcode() == HloOpcode::kSubtract) {
+    std::optional<LinearTerm> lhs = DecomposeLinear(expr->operand(0), param);
+    std::optional<LinearTerm> rhs = DecomposeLinear(expr->operand(1), param);
+    if (!lhs.has_value() || !rhs.has_value()) {
+      return std::nullopt;
+    }
+    bool is_subtract = expr->opcode() == HloOpcode::kSubtract;
+    if (lhs->source_tuple_idx.has_value() &&
+        rhs->source_tuple_idx.has_value()) {
+      return std::nullopt;
+    }
+    if (rhs->source_tuple_idx.has_value() && is_subtract) {
+      return std::nullopt;
+    }
+    int64_t offset = is_subtract
+                         ? lhs->constant_offset - rhs->constant_offset
+                         : lhs->constant_offset + rhs->constant_offset;
+    return LinearTerm{lhs->source_tuple_idx.has_value()
+                          ? lhs->source_tuple_idx
+                          : rhs->source_tuple_idx,
+                      offset};
+  }
+  return std::nullopt;
+}
+
+std::optional<AffineMatch> MatchAffineBodyUpdate(const HloInstruction* root,
+                                                 const HloInstruction* param,
+                                                 int64_t tuple_idx) {
+  if (root->opcode() != HloOpcode::kTuple ||
+      tuple_idx >= root->operand_count()) {
+    return std::nullopt;
+  }
+  std::optional<LinearTerm> term =
+      DecomposeLinear(root->operand(tuple_idx), param);
+  if (!term.has_value() || !term->source_tuple_idx.has_value()) {
+    return std::nullopt;
+  }
+  return AffineMatch{*term->source_tuple_idx, term->constant_offset};
+}
+
+std::optional<std::pair<int64_t, int64_t>> ResolveAffine(
+    const HloInstruction* while_op, int64_t tuple_idx,
+    std::optional<int64_t> primary_idx, std::optional<int64_t> primary_init,
+    std::optional<int64_t> primary_step) {
+  const HloComputation* body = while_op->while_body();
+  const HloInstruction* root = body->root_instruction();
+  const HloInstruction* param = body->parameter_instruction(0);
+
+  std::optional<AffineMatch> match =
+      MatchAffineBodyUpdate(root, param, tuple_idx);
+  if (!match.has_value()) {
+    return std::nullopt;
+  }
+
+  std::optional<int64_t> init = ScalarConstantInitOperand(while_op, tuple_idx);
+  if (!init.has_value()) {
+    return std::nullopt;
+  }
+
+  if (match->source_tuple_idx == tuple_idx) {
+    return std::make_pair(*init, match->step_offset);
+  }
+
+  if (primary_idx.has_value() && match->source_tuple_idx == *primary_idx &&
+      primary_init.has_value() && primary_step.has_value()) {
+    int64_t derived_init = *primary_init - *primary_step + match->step_offset;
+    if (*init != derived_init) {
+      return std::nullopt;
+    }
+    return std::make_pair(derived_init, *primary_step);
+  }
+
+  return std::nullopt;
+}
+
+}  // namespace
 
 absl::StatusOr<bool> WhileLoopTripCountAnnotator::RunImpl(
     HloModule* module,
@@ -40,43 +159,57 @@ absl::StatusOr<bool> WhileLoopTripCountAnnotator::RunImpl(
         continue;
       }
 
-      if (auto induction_variable_index = GetLoopInductionVarTupleIdx(instr)) {
-        // The following analyses all need the induction variable index.
-        WhileLoopBackendConfig config;
-
-        // Preserve existing backend config data
-        if (auto existing_config =
-                instr->backend_config<WhileLoopBackendConfig>();
-            existing_config.ok()) {
-          config = *existing_config;
-        }
-
-        config.mutable_known_induction_variable()->set_tuple_index(
-            *induction_variable_index);
-        if (auto range = MatchTrivialLoopRange(instr);
-            range.has_value() && range->IsBounded() && range->IsStepKnown() &&
-            // We store the values in signed integers, so we need to verify
-            // they fit.
-            range->max()->GetSignedValue() >= 0 &&
-            range->min().GetSignedValue() >= 0 &&
-            range->step()->GetSignedValue() > 0) {
-          int64_t max = range->max()->GetUnsignedValue();
-          int64_t min = range->min().GetUnsignedValue();
-          int64_t step = range->step()->GetSignedValue();
-          int64_t trip_count = (max - min) / step + 1;
-
-          config.mutable_known_trip_count()->set_n(trip_count);
-          config.mutable_known_init_step()->set_init(min);
-          config.mutable_known_init_step()->set_step(step);
-        } else if (auto trip_count = ComputeWhileLoopTripCount(instr)) {
-          // If this is not a trivial loop, it might still be possible to brute
-          // force the trip count.
-          config.mutable_known_trip_count()->set_n(*trip_count);
-        }
-
-        TF_RETURN_IF_ERROR(instr->set_backend_config(config));
-        changed = true;
+      auto induction_variable_index = GetLoopInductionVarTupleIdx(instr);
+      if (!induction_variable_index) {
+        continue;
       }
+
+      WhileLoopBackendConfig config;
+      if (auto existing_config =
+              instr->backend_config<WhileLoopBackendConfig>();
+          existing_config.ok()) {
+        config = *existing_config;
+      }
+
+      config.mutable_known_induction_variable()->set_tuple_index(
+          *induction_variable_index);
+
+      std::optional<int64_t> primary_init;
+      std::optional<int64_t> primary_step;
+      if (auto range = MatchTrivialLoopRange(instr);
+          range.has_value() && range->IsBounded() && range->IsStepKnown() &&
+          // We store the values in signed integers, so we need to verify
+          // they fit.
+          range->max()->GetSignedValue() >= 0 &&
+          range->min().GetSignedValue() >= 0 &&
+          range->step()->GetSignedValue() > 0) {
+        int64_t max = range->max()->GetUnsignedValue();
+        int64_t min = range->min().GetUnsignedValue();
+        int64_t step = range->step()->GetSignedValue();
+        int64_t trip_count = (max - min) / step + 1;
+
+        config.mutable_known_trip_count()->set_n(trip_count);
+        config.mutable_known_init_step()->set_init(min);
+        config.mutable_known_init_step()->set_step(step);
+        primary_init = min;
+        primary_step = step;
+      } else if (auto trip_count = ComputeWhileLoopTripCount(instr)) {
+        config.mutable_known_trip_count()->set_n(*trip_count);
+      }
+
+      for (auto& dv : *config.mutable_dynamic_variables()) {
+        auto resolved = ResolveAffine(instr, dv.tuple_index(),
+                                      induction_variable_index, primary_init,
+                                      primary_step);
+        if (!resolved.has_value()) {
+          continue;
+        }
+        dv.set_init(resolved->first);
+        dv.set_step(resolved->second);
+      }
+
+      TF_RETURN_IF_ERROR(instr->set_backend_config(config));
+      changed = true;
     }
   }
   return changed;

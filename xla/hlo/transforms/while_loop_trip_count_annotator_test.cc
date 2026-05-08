@@ -220,6 +220,94 @@ TEST_F(TripCountAnnotatorTest, Int64Overflow) {
   EXPECT_EQ(config.known_induction_variable().tuple_index(), 0);
 }
 
+TEST_F(TripCountAnnotatorTest, FillsDynamicVariableInitStep) {
+  const char* kModuleStr = R"(
+    HloModule test
+    Body {
+      param = (s32[], s32[]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      counter = s32[] get-tuple-element(param), index=1
+      one = s32[] constant(1)
+      i_plus = s32[] add(i, one)
+      c_plus = s32[] add(counter, one)
+      ROOT tuple = (s32[], s32[]) tuple(i_plus, c_plus)
+    }
+
+    Cond {
+      param = (s32[], s32[]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      ten = s32[] constant(10)
+      ROOT done = pred[] compare(i, ten), direction=LT
+    }
+
+    ENTRY test {
+      i_start = s32[] constant(0)
+      c_start = s32[] constant(5)
+      initial_tuple = (s32[], s32[]) tuple(i_start, c_start)
+      ROOT while = (s32[], s32[]) while(initial_tuple), condition=Cond, body=Body,
+        backend_config={"dynamic_variables":[{"tuple_index":"1"}]}
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  WhileLoopTripCountAnnotator pass;
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+  ASSERT_TRUE(changed);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto config,
+                          m->entry_computation()
+                              ->root_instruction()
+                              ->backend_config<WhileLoopBackendConfig>());
+  ASSERT_EQ(config.dynamic_variables_size(), 1);
+  EXPECT_EQ(config.dynamic_variables(0).tuple_index(), 1);
+  ASSERT_TRUE(config.dynamic_variables(0).has_init());
+  ASSERT_TRUE(config.dynamic_variables(0).has_step());
+  EXPECT_EQ(config.dynamic_variables(0).init(), 5);
+  EXPECT_EQ(config.dynamic_variables(0).step(), 1);
+}
+
+TEST_F(TripCountAnnotatorTest, FillsDynamicVariableInitStepFromPrimaryCopy) {
+  const char* kModuleStr = R"(
+    HloModule test
+    Body {
+      param = (s32[], s32[]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      one = s32[] constant(1)
+      i_plus = s32[] add(i, one)
+      ROOT tuple = (s32[], s32[]) tuple(i_plus, i)
+    }
+
+    Cond {
+      param = (s32[], s32[]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      ten = s32[] constant(10)
+      ROOT done = pred[] compare(i, ten), direction=LT
+    }
+
+    ENTRY test {
+      i_start = s32[] constant(1)
+      shadow_init = s32[] constant(0)
+      initial_tuple = (s32[], s32[]) tuple(i_start, shadow_init)
+      ROOT while = (s32[], s32[]) while(initial_tuple), condition=Cond, body=Body,
+        backend_config={"dynamic_variables":[{"tuple_index":"1"}]}
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  WhileLoopTripCountAnnotator pass;
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+  ASSERT_TRUE(changed);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto config,
+                          m->entry_computation()
+                              ->root_instruction()
+                              ->backend_config<WhileLoopBackendConfig>());
+  ASSERT_EQ(config.dynamic_variables_size(), 1);
+  EXPECT_EQ(config.dynamic_variables(0).tuple_index(), 1);
+  ASSERT_TRUE(config.dynamic_variables(0).has_init());
+  ASSERT_TRUE(config.dynamic_variables(0).has_step());
+  EXPECT_EQ(config.dynamic_variables(0).init(), 0);
+  EXPECT_EQ(config.dynamic_variables(0).step(), 1);
+}
+
 TEST_F(TripCountAnnotatorTest, NonZeroTupleIndex) {
   const char* kModuleStr = R"(
     HloModule test

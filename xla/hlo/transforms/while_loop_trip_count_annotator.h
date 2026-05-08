@@ -24,13 +24,24 @@ limitations under the License.
 
 namespace xla {
 
-// Pass that annotates `while` loops with known trip counts.
+// Pass that annotates `while` loops with `WhileLoopBackendConfig` metadata:
+// induction-variable tuple index, trip count, init/step, and per-position
+// init/step for any tuple slots already marked as dynamic variables.
 //
 // The annotation is stored as a backend-config on the while loop node.
 //
 // This pass should run after all passes that might semantically modify a while
 // loop, e.g. by unrolling it.  Otherwise, a loop could end up with a
-// backend-config that doesn't match its true trip-count.
+// backend-config that doesn't match its true trip-count, or with stale
+// `dynamic_variables` init/step entries for unrolled/pipelined slots.
+//
+// This pass is the *only* writer of `WhileLoopBackendConfig::known_init_step`
+// and of `init`/`step` on `dynamic_variables`. Other passes that need to
+// register dynamic-variable tuple positions (e.g. host-offload pipelining)
+// should write only the `tuple_index` and rely on this pass to fill in the
+// affine values once the loop is final. This keeps `WhileLoopBackendConfig`
+// off the critical path for backends (e.g. TPU) that use a different backend
+// config proto and don't run this pass.
 //
 // This pass does some pattern-matching on loop bodies and conditions, so it
 // should run after most HLO simplifications and before fusion and layout

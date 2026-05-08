@@ -5718,17 +5718,20 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
       WhileLoopBackendConfig config,
       while_loops[0]->backend_config<WhileLoopBackendConfig>());
 
-  std::set<int64_t> dynamic_indices(
-      config.dynamic_variable_tuple_indices().begin(),
-      config.dynamic_variable_tuple_indices().end());
+  std::set<int64_t> dynamic_indices;
+  for (const auto& dv : config.dynamic_variables()) {
+    dynamic_indices.insert(dv.tuple_index());
+  }
 
   std::set<int64_t> expected_indices = {0, 5};
   EXPECT_EQ(dynamic_indices, expected_indices);
 
-  ASSERT_EQ(config.dynamic_variables_size(), 1);
-  EXPECT_EQ(config.dynamic_variables(0).tuple_index(), 5);
-  EXPECT_EQ(config.dynamic_variables(0).init(), 0);
-  EXPECT_EQ(config.dynamic_variables(0).step(), 1);
+  for (const auto& dv : config.dynamic_variables()) {
+    EXPECT_FALSE(dv.has_init())
+        << "Pipeliner should not write init for tuple " << dv.tuple_index();
+    EXPECT_FALSE(dv.has_step())
+        << "Pipeliner should not write step for tuple " << dv.tuple_index();
+  }
 }
 
 TEST_F(CollectivePipelinerTest, HostOffloadingBackward) {
@@ -5832,14 +5835,18 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
       WhileLoopBackendConfig config,
       while_loops[0]->backend_config<WhileLoopBackendConfig>());
 
-  std::set<int64_t> dynamic_indices(
-      config.dynamic_variable_tuple_indices().begin(),
-      config.dynamic_variable_tuple_indices().end());
+  std::set<int64_t> dynamic_indices;
+  for (const auto& dv : config.dynamic_variables()) {
+    dynamic_indices.insert(dv.tuple_index());
+  }
 
   std::set<int64_t> expected_indices = {0, 8};
   EXPECT_EQ(dynamic_indices, expected_indices);
 
-  EXPECT_EQ(config.dynamic_variables_size(), 0);
+  for (const auto& dv : config.dynamic_variables()) {
+    EXPECT_FALSE(dv.has_init());
+    EXPECT_FALSE(dv.has_step());
+  }
 }
 
 TEST_F(CollectivePipelinerTest, ForwardSubtractIndexWithGTELeaf) {

@@ -18,12 +18,14 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -425,10 +427,7 @@ absl::Status MarkDynamicVariables(HloInstruction* while_loop) {
   TF_ASSIGN_OR_RETURN(config,
                       while_loop->backend_config<WhileLoopBackendConfig>());
 
-  config.clear_dynamic_variable_tuple_indices();
-
   std::set<int64_t> dynamic_slice_indices;
-
   for (auto* instr : while_loop->while_body()->instructions()) {
     if (instr->opcode() == HloOpcode::kDynamicUpdateSlice ||
         instr->opcode() == HloOpcode::kDynamicSlice) {
@@ -447,8 +446,26 @@ absl::Status MarkDynamicVariables(HloInstruction* while_loop) {
     }
   }
 
+  absl::flat_hash_map<int64_t, std::pair<std::optional<int64_t>,
+                                         std::optional<int64_t>>>
+      existing;
+  for (const auto& dv : config.dynamic_variables()) {
+    std::optional<int64_t> init =
+        dv.has_init() ? std::optional<int64_t>(dv.init()) : std::nullopt;
+    std::optional<int64_t> step =
+        dv.has_step() ? std::optional<int64_t>(dv.step()) : std::nullopt;
+    existing[dv.tuple_index()] = {init, step};
+  }
+
+  config.clear_dynamic_variables();
   for (int64_t tuple_idx : dynamic_slice_indices) {
-    config.add_dynamic_variable_tuple_indices(tuple_idx);
+    auto* dv = config.add_dynamic_variables();
+    dv->set_tuple_index(tuple_idx);
+    auto it = existing.find(tuple_idx);
+    if (it != existing.end()) {
+      if (it->second.first.has_value()) dv->set_init(*it->second.first);
+      if (it->second.second.has_value()) dv->set_step(*it->second.second);
+    }
   }
 
   TF_RETURN_IF_ERROR(while_loop->set_backend_config(config));

@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
+#include "xla/hlo/transforms/while_loop_trip_count_annotator.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
@@ -1532,7 +1533,7 @@ ENTRY main {
   buffer_init = f32[2,8]{1,0:S(5)} parameter(0)
   update_init = f32[1,8]{1,0} parameter(1)
   input_tuple = (s32[], f32[2,8]{1,0:S(5)}, f32[1,8]{1,0}, s32[]) tuple(c0, buffer_init, update_init, c0)
-  ROOT while = (s32[], f32[2,8]{1,0:S(5)}, f32[1,8]{1,0}, s32[]) while(input_tuple), condition=condition, body=body, backend_config={"known_trip_count":{"n":"10"},"known_induction_variable":{"tuple_index":"0"},"dynamic_variable_tuple_indices":["3","0"]}
+  ROOT while = (s32[], f32[2,8]{1,0:S(5)}, f32[1,8]{1,0}, s32[]) while(input_tuple), condition=condition, body=body, backend_config={"known_trip_count":{"n":"10"},"known_induction_variable":{"tuple_index":"0"},"dynamic_variables":[{"tuple_index":"3"},{"tuple_index":"0"}]}
 }
 )";
 
@@ -1564,15 +1565,15 @@ ENTRY main {
         WhileLoopBackendConfig config,
         while_loop->backend_config<WhileLoopBackendConfig>());
 
-    std::set<int64_t> dynamic_indices(
-        config.dynamic_variable_tuple_indices().begin(),
-        config.dynamic_variable_tuple_indices().end());
+    std::set<int64_t> dynamic_indices;
+    for (const auto& dv : config.dynamic_variables()) {
+      dynamic_indices.insert(dv.tuple_index());
+    }
 
     EXPECT_FALSE(dynamic_indices.empty())
-        << "Expected dynamic_variable_tuple_indices to be preserved for while "
-           "loop: "
+        << "Expected dynamic_variables to be preserved for while loop: "
         << while_loop->name()
-        << ". Double buffering should not erase indices set by "
+        << ". Double buffering should not erase entries set by "
            "CollectivePipeliner.";
 
     EXPECT_NE(dynamic_indices.find(0), dynamic_indices.end())
@@ -1621,7 +1622,7 @@ ENTRY main {
   buffer_init = f32[4,8]{1,0:S(5)} parameter(0)
   update_init = f32[1,8]{1,0} parameter(1)
   input_tuple = (s32[], f32[4,8]{1,0:S(5)}, f32[1,8]{1,0}, s32[]) tuple(c0, buffer_init, update_init, c3)
-  ROOT while = (s32[], f32[4,8]{1,0:S(5)}, f32[1,8]{1,0}, s32[]) while(input_tuple), condition=condition, body=body, backend_config={"known_trip_count":{"n":"10"},"known_init_step":{"init":"0","step":"1"},"known_induction_variable":{"tuple_index":"0"},"dynamic_variable_tuple_indices":["3","0"],"dynamic_variables":[{"tuple_index":"0","init":"0","step":"1"},{"tuple_index":"3","init":"3","step":"1"}]}
+  ROOT while = (s32[], f32[4,8]{1,0:S(5)}, f32[1,8]{1,0}, s32[]) while(input_tuple), condition=condition, body=body, backend_config={"known_trip_count":{"n":"10"},"known_init_step":{"init":"0","step":"1"},"known_induction_variable":{"tuple_index":"0"},"dynamic_variables":[{"tuple_index":"0","init":"0","step":"1"},{"tuple_index":"3","init":"3","step":"1"}]}
 }
 )";
 
@@ -1631,10 +1632,13 @@ ENTRY main {
   DoubleBufferLoopUnrolling double_buffer(
       DoubleBufferLoopUnrolling::UnrollStrategy::kDoubleBuffer);
   TupleSimplifier tuple_simplifier;
+  WhileLoopTripCountAnnotator trip_count_annotator;
 
   TF_ASSERT_OK_AND_ASSIGN(bool changed, double_buffer.Run(module.get()));
   ASSERT_TRUE(changed);
   TF_ASSERT_OK_AND_ASSIGN(changed, tuple_simplifier.Run(module.get()));
+  TF_ASSERT_OK_AND_ASSIGN(changed, trip_count_annotator.Run(module.get()));
+  ASSERT_TRUE(changed);
 
   std::vector<HloInstruction*> while_loops;
   for (HloComputation* comp : module->computations()) {
@@ -1656,6 +1660,8 @@ ENTRY main {
 
     absl::flat_hash_map<int64_t, std::pair<int64_t, int64_t>> dv_init_step;
     for (const auto& dv : config.dynamic_variables()) {
+      ASSERT_TRUE(dv.has_init());
+      ASSERT_TRUE(dv.has_step());
       dv_init_step[dv.tuple_index()] = {dv.init(), dv.step()};
     }
 

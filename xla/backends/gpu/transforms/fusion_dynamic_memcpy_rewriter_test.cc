@@ -211,7 +211,6 @@ constexpr char kLoopDynamicVariableDifferentInitStep[] = R"(
           backend_config={"known_trip_count":{"n":"3"},
                           "known_init_step":{"init":"2","step":"1"},
                           "known_induction_variable":{"tuple_index":"0"},
-                          "dynamic_variable_tuple_indices":["2"],
                           "dynamic_variables":[{"tuple_index":"2","init":"3","step":"1"}]}
     })";
 
