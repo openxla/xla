@@ -31,19 +31,14 @@ limitations under the License.
 
 namespace xla::ffi {
 
-absl::Status ExecutionState::Set(TypeId type_id, void* state) {
-  TF_ASSIGN_OR_RETURN(auto type_info, TypeRegistry::GetTypeInfo(type_id));
-  if (type_info.deleter == nullptr) {
-    return InvalidArgument(
-        "Type id %d does not have a registered type info with a deleter",
-        type_id.value());
-  }
-  return Set(type_id, type_info, state);
-}
-
 absl::Status ExecutionState::Set(TypeId type_id, TypeInfo type_info,
                                  void* state) {
-  DCHECK(state && type_info.deleter) << "State and deleter must not be null";
+  if (state == nullptr) {
+    return InvalidArgument("State must be not null");
+  }
+  if (type_info.deleter == nullptr) {
+    return InvalidArgument("Type info must have a deleter");
+  }
 
   if (state_ != nullptr) {
     return FailedPrecondition("State is already set with a type id %v",
