@@ -16,7 +16,8 @@
 load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
-load("//xla:pytype.bzl", "pytype_strict_binary")
+load("@xla//third_party/rules_python/python:py_test.bzl", "py_test")
+load("//xla:pytype.bzl", "pytype_strict_binary", "pytype_strict_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -26,6 +27,33 @@ package(
 pytype_strict_binary(
     name = "build",
     srcs = ["build.py"],
+)
+
+pytype_strict_library(
+    name = "clang_tidy_diff_lib",
+    srcs = ["clang_tidy_diff.py"],
+    deps = [
+        "//build_tools/lint:diff_parser",
+    ],
+)
+
+pytype_strict_binary(
+    name = "clang_tidy_diff",
+    srcs = ["clang_tidy_diff.py"],
+    main = "clang_tidy_diff.py",
+    deps = [
+        ":clang_tidy_diff_lib",
+    ],
+)
+
+py_test(
+    name = "clang_tidy_diff_test",
+    srcs = ["clang_tidy_diff_test.py"],
+    deps = [
+        ":clang_tidy_diff_lib",
+        "@absl_py//absl/testing:absltest",
+        "@absl_py//absl/testing:parameterized",
+    ],
 )
 
 genrule(
