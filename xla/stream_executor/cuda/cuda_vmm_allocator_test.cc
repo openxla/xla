@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/log/scoped_mock_log.h"
 #include "absl/types/span.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/cuda/cuda_executor.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -136,8 +137,10 @@ TEST_P(CudaVmmAllocatorTest, HopperNoWarningCheck) {
     GTEST_SKIP() << "Test only runs on H100+";
   }
 
+  auto* cuda_executor = static_cast<CudaExecutor*>(executor);
+
   CudaVmmAllocator::Options options = MakeTestOptions(GetParam());
-  options.enable_fabric_handle = true;
+  options.enable_fabric_handle = cuda_executor->is_fabric_supported();
   options.enable_posix_fd_handle = true;
 
   absl::ScopedMockLog log(absl::MockLogDefault::kIgnoreUnexpected);

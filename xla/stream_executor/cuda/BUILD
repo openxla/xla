@@ -1334,6 +1334,7 @@ xla_test(
     tags = ["cuda-only"],
     deps = [
         ":cuda_compute_capability",
+        ":cuda_executor",
         ":cuda_platform",
         ":cuda_vmm_allocator",
         "//xla/stream_executor:device_address",

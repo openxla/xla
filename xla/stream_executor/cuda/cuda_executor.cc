@@ -961,17 +961,11 @@ absl::Status CudaExecutor::Init() {
 
   // Disable fabric handle if there are no active P2P NVLinks — using
   // FABRIC+POSIX_FD without a cluster causes allocation failures.
-  if (vmm_options_.enable_fabric_handle) {
-    absl::MutexLock l(GetNVMLLock());
-    if (auto nvml_device = GetNvmlDevice(GetPCIBusID(device_));
-        nvml_device.ok()) {
-      auto p2p_links = GetNumberOfActiveP2PNvlinks(*nvml_device);
-      if (!p2p_links.ok() || *p2p_links == 0) {
-        XLA_VLOG_DEVICE(2, device_ordinal())
-            << "Disabling fabric handle: no active P2P NVLinks detected.";
-        vmm_options_.enable_fabric_handle = false;
-      }
-    }
+  if (vmm_options_.enable_fabric_handle &&
+      GetDeviceDescription().device_interconnect_info().active_links == 0) {
+    XLA_VLOG_DEVICE(2, device_ordinal())
+        << "Disabling fabric handle: no active P2P NVLinks detected.";
+    vmm_options_.enable_fabric_handle = false;
   }
 
   device_allocator_ = std::make_unique<CudaDeviceAllocator>(this);
