@@ -17,11 +17,11 @@ limitations under the License.
 #define XLA_CODEGEN_EMITTERS_TRANSFORMS_LOWERING_UTILS_H_
 
 #include "absl/strings/str_format.h"
+#include "mlir/Conversion/LLVMCommon/Pattern.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Operation.h"
-#include "mlir/lib/Conversion/GPUCommon/GPUOpsLowering.h"
-#include "mlir/lib/Conversion/GPUCommon/OpToFuncCallLowering.h"
 
 namespace xla {
 namespace emitters {
@@ -32,6 +32,7 @@ void EnsureAMDGPUAllocasUseAS5(mlir::Operation* operation);
 
 namespace spirv {
 namespace mm = ::mlir::math;
+namespace ml = ::mlir::LLVM;
 template <typename... Ops>
 struct SPIRVMathOps {};
 
@@ -42,9 +43,58 @@ inline auto getSPIRVMathOps() {
       mm::LogOp, mm::SinOp, mm::SinhOp, mm::TanOp, mm::TanhOp>{};
 }
 
-// Lowers math ops to SPIR-V OCL driver intrinsics to preserve accuracy,
-// particularly for small-magnitude inputs where generic MLIR lowering may
-// lose precision.
+template <typename Op>
+struct OpToSPVFuncCallLowering : public mlir::ConvertOpToLLVMPattern<Op> {
+ public:
+  explicit OpToSPVFuncCallLowering(const mlir::LLVMTypeConverter& converter,
+                                   mlir::StringRef base)
+      : mlir::ConvertOpToLLVMPattern<Op>(converter, 1), base(base) {}
+
+  mlir::LogicalResult matchAndRewrite(
+      Op op, typename Op::Adaptor adaptor,
+      mlir::ConversionPatternRewriter& rewriter) const override {
+    mlir::Type result_type = op->getResultTypes().front();
+    mlir::SmallVector<mlir::Type> arg_types(adaptor.getOperands().getTypes());
+
+    bool can_lower =
+        mlir::isa<mlir::Float32Type, mlir::Float64Type>(result_type);
+    for (mlir::Type type : arg_types) {
+      can_lower = can_lower && (type == result_type);
+    }
+
+    if (!can_lower) {
+      return rewriter.notifyMatchFailure(
+          op, " expected F32 or F64 result and operand types");
+    }
+
+    std::string name =
+        base + (mlir::isa<mlir::Float32Type>(result_type) ? "f" : "d");
+
+    auto symbol_table =
+        op->template getParentWithTrait<mlir::OpTrait::SymbolTable>();
+    auto func = mlir::dyn_cast_or_null<ml::LLVMFuncOp>(
+        mlir::SymbolTable::lookupSymbolIn(symbol_table, name));
+    if (!func) {
+      mlir::OpBuilder b(symbol_table->getRegion(0));
+      func = ml::LLVMFuncOp::create(
+          b, symbol_table->getLoc(), name,
+          ml::LLVMFunctionType::get(result_type, arg_types));
+      func.setCConv(ml::cconv::CConv::SPIR_FUNC);
+    }
+    auto call =
+        ml::CallOp::create(rewriter, op->getLoc(), func, adaptor.getOperands());
+    call.setCConv(func.getCConv());
+
+    rewriter.replaceOp(op, {call.getResult()});
+    return mlir::success();
+  }
+
+  const std::string base;
+};
+
+// Lowers single/double precision math ops to SPIR-V OCL driver intrinsics to
+// preserve accuracy, particularly for small-magnitude inputs where generic MLIR
+// lowering may lose precision.
 template <typename Op>
 inline void populateLLVMSPVMathOpPatterns(mlir::LLVMTypeConverter& converter,
                                           mlir::RewritePatternSet& patterns) {
@@ -53,10 +103,7 @@ inline void populateLLVMSPVMathOpPatterns(mlir::LLVMTypeConverter& converter,
           .stripDialect();
   auto base =
       absl::StrFormat("_Z%u__spirv_ocl_%s", op_name.size() + 12, op_name.str());
-
-  patterns.add<mlir::ScalarizeVectorOpLowering<Op>>(converter, 1);
-  patterns.add<mlir::OpToFuncCallLowering<Op>>(converter, base + "f",
-                                               base + "d", "", "", "", 1);
+  patterns.add<OpToSPVFuncCallLowering<Op>>(converter, base);
 }
 
 template <typename... Ops>

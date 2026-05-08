@@ -8,7 +8,7 @@ module {
     // CHECK-NOT: llvm.mlir.constant(1.000000e+00 : f32) : f32
     // CHECK-NOT: llvm.fadd %{{.*}}, %arg0 : f32
     // CHECK-NOT: llvm.intr.log
-    // CHECK: llvm.call @_Z{{.*}}__spirv_ocl_log1pf(%arg0)
+    // CHECK: llvm.call spir_funccc @_Z{{.*}}__spirv_ocl_log1pf(%arg0)
     // CHECK: return %{{.*}} : f32
     %0 = math.log1p %arg0 : f32
     return %0 : f32
@@ -24,9 +24,9 @@ module {
   }
 }
 
-// CHECK-DAG: @_Z{{.*}}__spirv_ocl_expm1f
-// CHECK-DAG: @_Z{{.*}}__spirv_ocl_sinf
-// CHECK-DAG: @_Z{{.*}}__spirv_ocl_cosf
+// CHECK-DAG: spir_funccc @_Z{{.*}}__spirv_ocl_expm1f
+// CHECK-DAG: spir_funccc @_Z{{.*}}__spirv_ocl_sinf
+// CHECK-DAG: spir_funccc @_Z{{.*}}__spirv_ocl_cosf
 // CHECK-LABEL: @test_tan
 // CHECK-SAME: %[[ARG0:.*]]: !llvm.struct<(f32, f32)>
 // CHECK: %[[V0:.*]] = llvm.extractvalue %[[ARG0]][0]
@@ -34,9 +34,9 @@ module {
 // CHECK-NOT: llvm.intr.exp
 // CHECK-NOT: llvm.intr.cos
 // CHECK-NOT: llvm.intr.sin
-// CHECK: %[[E0:.*]] = llvm.call @_Z{{.*}}__spirv_ocl_expm1f
-// CHECK: %[[E1:.*]] = llvm.call @_Z{{.*}}__spirv_ocl_expm1f
+// CHECK: %[[E0:.*]] = llvm.call spir_funccc @_Z{{.*}}__spirv_ocl_expm1f
+// CHECK: %[[E1:.*]] = llvm.call spir_funccc @_Z{{.*}}__spirv_ocl_expm1f
 // CHECK: llvm.fsub %[[E0]], %[[E1]] : f32
-// CHECK-DAG: llvm.call @_Z{{.*}}__spirv_ocl_cosf(%[[V0]])
-// CHECK-DAG: llvm.call @_Z{{.*}}__spirv_ocl_sinf(%[[V0]])
+// CHECK-DAG: llvm.call spir_funccc @_Z{{.*}}__spirv_ocl_cosf(%[[V0]])
+// CHECK-DAG: llvm.call spir_funccc @_Z{{.*}}__spirv_ocl_sinf(%[[V0]])
 // CHECK: llvm.return %{{.*}} : !llvm.struct<(f32, f32)>
