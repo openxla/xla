@@ -355,6 +355,7 @@ xla_test(
         "//xla/service/gpu:gpu_executable",
         "//xla/service/gpu:intel_gpu_compiler",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:platform_manager",
         "//xla/tests:llvm_irgen_test_base",
         "//xla/tsl/platform:status_matchers",

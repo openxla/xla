@@ -88,12 +88,12 @@ TEST_F(SyclExecutorTest, GetSyclKernel) {
       dynamic_cast<const xla::gpu::CustomKernelThunk*>(thunk);
   ASSERT_NE(kernel_thunk, nullptr);
 
-  // Load the top-level module and get the symbols for the constants to verify
+  // Load the SPIR-V binary and get the symbols for the constants to verify
   // that they are correctly loaded.
-  std::vector<uint8_t> top_level_bin(gpu_exec->binary());
+  std::vector<uint8_t> spv_bin(gpu_exec->binary());
   MultiModuleLoaderSpec module_spec;
   ModuleHandle module_handle;
-  module_spec.AddCudaCubinInMemory(top_level_bin);
+  module_spec.AddCudaCubinInMemory(spv_bin);
   TF_ASSERT_OK_AND_ASSIGN(module_handle, executor->LoadModule(module_spec));
   auto global_consts = gpu_exec->constants();
   EXPECT_EQ(global_consts.size(), 1);
