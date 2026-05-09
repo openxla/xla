@@ -91,12 +91,10 @@ std::optional<LinearTerm> DecomposeLinear(const HloInstruction* expr,
     if (rhs->source_tuple_idx.has_value() && is_subtract) {
       return std::nullopt;
     }
-    int64_t offset = is_subtract
-                         ? lhs->constant_offset - rhs->constant_offset
-                         : lhs->constant_offset + rhs->constant_offset;
-    return LinearTerm{lhs->source_tuple_idx.has_value()
-                          ? lhs->source_tuple_idx
-                          : rhs->source_tuple_idx,
+    int64_t offset = is_subtract ? lhs->constant_offset - rhs->constant_offset
+                                 : lhs->constant_offset + rhs->constant_offset;
+    return LinearTerm{lhs->source_tuple_idx.has_value() ? lhs->source_tuple_idx
+                                                        : rhs->source_tuple_idx,
                       offset};
   }
   return std::nullopt;
@@ -237,9 +235,9 @@ absl::StatusOr<bool> WhileLoopTripCountAnnotator::RunImpl(
       }
 
       for (auto& dv : *config.mutable_dynamic_variables()) {
-        auto resolved = ResolveAffine(instr, dv.tuple_index(),
-                                      induction_variable_index, primary_init,
-                                      primary_step);
+        auto resolved =
+            ResolveAffine(instr, dv.tuple_index(), induction_variable_index,
+                          primary_init, primary_step);
         if (!resolved.has_value()) {
           continue;
         }

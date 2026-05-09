@@ -473,8 +473,8 @@ absl::Status MarkDynamicVariables(HloInstruction* while_loop) {
     }
   }
 
-  absl::flat_hash_map<int64_t, std::pair<std::optional<int64_t>,
-                                         std::optional<int64_t>>>
+  absl::flat_hash_map<int64_t,
+                      std::pair<std::optional<int64_t>, std::optional<int64_t>>>
       existing;
   for (const auto& dv : config.dynamic_variables()) {
     std::optional<int64_t> init =

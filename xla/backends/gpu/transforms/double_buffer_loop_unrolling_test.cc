@@ -35,7 +35,6 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
-#include "xla/hlo/transforms/while_loop_trip_count_annotator.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
@@ -1632,13 +1631,10 @@ ENTRY main {
   DoubleBufferLoopUnrolling double_buffer(
       DoubleBufferLoopUnrolling::UnrollStrategy::kDoubleBuffer);
   TupleSimplifier tuple_simplifier;
-  WhileLoopTripCountAnnotator trip_count_annotator;
 
   TF_ASSERT_OK_AND_ASSIGN(bool changed, double_buffer.Run(module.get()));
   ASSERT_TRUE(changed);
   TF_ASSERT_OK_AND_ASSIGN(changed, tuple_simplifier.Run(module.get()));
-  TF_ASSERT_OK_AND_ASSIGN(changed, trip_count_annotator.Run(module.get()));
-  ASSERT_TRUE(changed);
 
   std::vector<HloInstruction*> while_loops;
   for (HloComputation* comp : module->computations()) {
