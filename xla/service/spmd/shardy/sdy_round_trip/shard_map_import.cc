@@ -237,12 +237,6 @@ class SdyRoundTripShardMapImportPass
     mlir::SymbolTableCollection symbolTableCollection;
     SymbolTable& symbolTable = symbolTableCollection.getSymbolTable(module);
     mlir::IRRewriter rewriter(module);
-
-    // Clones manual computations and the funcs called from it directly or
-    // indirectly. It practically flattens the call graph under manual
-    // computations.
-    cloneManualComputations(module, symbolTable, symbolTableCollection);
-
     if (!mlir::sdy::walkCalls(module, [&](CallOp callOp) {
           if (isManualComputation(callOp)) {
             rewriter.setInsertionPoint(callOp);
