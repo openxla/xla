@@ -48,7 +48,8 @@ void addSdyRoundTripImportPipeline(mlir::OpPassManager& pm,
                                    bool enableConstantImport = true,
                                    bool liftAndDedupMeshes = false,
                                    bool enableHloShardingV3 = false,
-                                   bool enableNativeNonFlatSupport = false);
+                                   bool enableNativeNonFlatSupport = false,
+                                   std::string shardyDir = "");
 
 // Register the xla-sdy-round-trip-export-pipeline.
 void registerSdyRoundTripExportPipeline();

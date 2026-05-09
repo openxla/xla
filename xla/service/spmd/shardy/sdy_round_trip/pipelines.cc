@@ -26,6 +26,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
+#include "shardy/common/file_utils.h"
 #include "shardy/dialect/sdy/transforms/export/passes.h"
 #include "shardy/dialect/sdy/transforms/import/passes.h"
 #include "xla/mlir_hlo/stablehlo_ext/transforms/passes.h"
@@ -71,7 +72,8 @@ void addSdyRoundTripImportPipeline(mlir::OpPassManager& pm,
                                    bool enableConstantImport,
                                    bool liftAndDedupMeshes,
                                    bool enableHloShardingV3,
-                                   bool enableNativeNonFlatSupport) {
+                                   bool enableNativeNonFlatSupport,
+                                   std::string shardyDir) {
   pm.addPass(mlir::createSymbolDCEPass());
   // TODO(b/333505182): remove when partitioning is done in SDY.
   // We call prepare-for-export pass before SDY propagation, so that all IR
@@ -92,11 +94,8 @@ void addSdyRoundTripImportPipeline(mlir::OpPassManager& pm,
       mlir::stablehlo_ext::createStablehloCanonicalizeFromHloImportPass());
   pm.addPass(createSdyRoundTripImportShardyAttrsPass(enableHloShardingV3));
   pm.addPass(createSdyRoundTripShardMapImportPass());
-  // Deduplicate the functions cloned during shard map import.
-  // TODO(enver): Instead drop clone functions selectively during the shard map
-  // import and remove the unflattener below.
-  pm.addPass(mlir::sdy::createUnflattenCallGraphPass());
-  pm.addPass(mlir::createSymbolDCEPass());  // After UnflattenCallGraphPass.
+  pm.addPass(
+      mlir::sdy::createSaveModuleOpPass(shardyDir, "ShardMapImportPass", 10));
   pm.addPass(createImportSdyCustomCallsPass());
   pm.addNestedPass<FuncOp>(createOpenWhileFreeVarsShardingPass());
   if (enableHloShardingV3 || liftAndDedupMeshes) {

@@ -75,9 +75,32 @@ using ::mlir::stablehlo::CustomCallOp;
 
 namespace sdy = ::mlir::sdy;
 
+FuncOp cloneFuncRecursively(
+    FuncOp funcOp, mlir::sdy::TensorShardingPerValueAttr callOpResultShardings,
+    mlir::SymbolTable& symbolTable) {
+  mlir::StringAttr originalFuncName = mlir::sdy::getOriginalFuncName(funcOp);
+  FuncOp clonedFuncOp =
+      symbolTable.lookup<FuncOp>(originalFuncName.getValue()).clone();
+  // TODO(enver): Have a MLIR native error handling, instead of CHECK.
+  CHECK(clonedFuncOp) << "Failed to lookup function: "
+                      << originalFuncName.str();
+  clonedFuncOp->setAttr(mlir::sdy::kOriginalFuncName, originalFuncName);
+  if (callOpResultShardings) {
+    mlir::sdy::setFuncResultShardings(clonedFuncOp, callOpResultShardings);
+  }
+  clonedFuncOp->walk([&](CallOp callOp) {
+    FuncOp funcOp = symbolTable.lookup<FuncOp>(callOp.getCallee());
+    CHECK(funcOp) << "Failed to lookup function: " << callOp.getCallee().str();
+    callOp.setCallee(symbolTable.insert(cloneFuncRecursively(
+        funcOp, mlir::sdy::getShardingPerValue(callOp), symbolTable)));
+  });
+  return clonedFuncOp;
+}
+
 mlir::LogicalResult rewriteManualComputation(
-    CallOp callOp, mlir::IRRewriter& rewriter,
-    const mlir::SymbolTable& symbolTable) {
+    CallOp callOp,
+    llvm::SmallDenseMap<StringRef, mlir::Region*>& shardMapNameToMovedRegion,
+    mlir::IRRewriter& rewriter, const mlir::SymbolTable& symbolTable) {
   auto shmapBodyFunc = symbolTable.lookup<FuncOp>(callOp.getCallee());
 
   // If the callOp has no uses, but has at least one result, then it means
@@ -165,53 +188,25 @@ mlir::LogicalResult rewriteManualComputation(
   auto manualComputationOp =
       rewriter.replaceOpWithNewOp<sdy::ManualComputationOp>(
           callOp, resultTypes, operands, inShardings, outShardings, manualAxes);
-  sdy::inlineRegionAndConvertTerminatorOp<sdy::ReturnOp>(
-      shmapBodyFunc.getBody(), manualComputationOp.getRegion(), rewriter);
+
+  mlir::Region& manualComputationRegion = manualComputationOp.getRegion();
+  if (auto movedRegionIt =
+          shardMapNameToMovedRegion.find(shmapBodyFunc.getName());
+      movedRegionIt != shardMapNameToMovedRegion.end()) {
+    rewriter.cloneRegionBefore(*movedRegionIt->second, manualComputationRegion,
+                               manualComputationRegion.begin());
+  } else {
+    sdy::inlineRegionAndConvertTerminatorOp<sdy::ReturnOp>(
+        shmapBodyFunc.getBody(), manualComputationRegion, rewriter);
+    shardMapNameToMovedRegion[shmapBodyFunc.getName()] =
+        &manualComputationRegion;
+  }
+
   if (localToGlobalShape) {
     rewriter.replaceAllUsesWith(localToGlobalShape.getResults(),
                                 manualComputationOp->getResults());
   }
   return mlir::success();
-}
-
-FuncOp cloneFuncRecursively(
-    FuncOp funcOp, mlir::sdy::TensorShardingPerValueAttr callOpResultShardings,
-    mlir::SymbolTable& symbolTable) {
-  mlir::StringAttr originalFuncName = mlir::sdy::getOriginalFuncName(funcOp);
-  FuncOp clonedFuncOp =
-      symbolTable.lookup<FuncOp>(originalFuncName.getValue()).clone();
-  // TODO(enver): Have a MLIR native error handling, instead of CHECK.
-  CHECK(clonedFuncOp) << "Failed to lookup function: "
-                      << originalFuncName.str();
-  clonedFuncOp->setAttr(mlir::sdy::kOriginalFuncName, originalFuncName);
-  if (callOpResultShardings) {
-    mlir::sdy::setFuncResultShardings(clonedFuncOp, callOpResultShardings);
-  }
-  clonedFuncOp->walk([&](CallOp callOp) {
-    FuncOp funcOp = symbolTable.lookup<FuncOp>(callOp.getCallee());
-    CHECK(funcOp) << "Failed to lookup function: " << callOp.getCallee().str();
-    callOp.setCallee(symbolTable.insert(cloneFuncRecursively(
-        funcOp, mlir::sdy::getShardingPerValue(callOp), symbolTable)));
-  });
-  return clonedFuncOp;
-}
-
-void cloneManualComputations(
-    ModuleOp moduleOp, SymbolTable& symbolTable,
-    mlir::SymbolTableCollection& symbolTableCollection) {
-  mlir::sdy::walkCalls(moduleOp, [&](CallOp callOp) {
-    if (!isManualComputation(callOp)) {
-      return mlir::WalkResult::advance();
-    }
-    // TODO(b/446881697): Clone just the body on demand like in
-    // shardy/stablehlo_round_trip/shard_map_import.cc.
-    FuncOp funcOp = symbolTable.lookup<FuncOp>(callOp.getCallee());
-    CHECK(funcOp) << "Failed to lookup function: " << callOp.getCallee().str();
-    callOp.setCallee(symbolTable.insert(cloneFuncRecursively(
-        funcOp, mlir::sdy::getShardingPerValue(callOp), symbolTable)));
-    return mlir::WalkResult::advance();
-  });
-  // TODO(enver): Clean up uncalled functions.
 }
 
 SmallVector<StringAttr> getManualAxesList(
@@ -237,17 +232,14 @@ class SdyRoundTripShardMapImportPass
     mlir::SymbolTableCollection symbolTableCollection;
     SymbolTable& symbolTable = symbolTableCollection.getSymbolTable(module);
     mlir::IRRewriter rewriter(module);
-
-    // Clones manual computations and the funcs called from it directly or
-    // indirectly. It practically flattens the call graph under manual
-    // computations.
-    cloneManualComputations(module, symbolTable, symbolTableCollection);
+    llvm::SmallDenseMap<StringRef, mlir::Region*> shardMapNameToMovedRegion;
 
     if (!mlir::sdy::walkCalls(module, [&](CallOp callOp) {
           if (isManualComputation(callOp)) {
             rewriter.setInsertionPoint(callOp);
-            if (mlir::failed(
-                    rewriteManualComputation(callOp, rewriter, symbolTable))) {
+            if (mlir::failed(rewriteManualComputation(callOp,
+                                                      shardMapNameToMovedRegion,
+                                                      rewriter, symbolTable))) {
               // TODO(enver): Return callOp.emitError direcly here and
               // elsewhere.
               callOp.emitError(
@@ -299,12 +291,15 @@ class SdyRoundTripShardMapImportPass
               manualAxesStack.push_back(manualComputationOp.getManualAxes());
             } else if (auto callOp = mlir::dyn_cast<CallOp>(op)) {
               if (!manualAxesStack.empty()) {
+                auto funcManualAxes = sdy::ManualAxesAttr::get(
+                    callOp->getContext(), getManualAxesList(manualAxesStack));
                 FuncOp calledFuncOp =
                     sdy::getFuncOpOrDie(callOp.getCallee(), symbolTable);
-                calledFuncOp->setAttr(
-                    sdy::kFuncManualAxes,
-                    sdy::ManualAxesAttr::get(
-                        op->getContext(), getManualAxesList(manualAxesStack)));
+                if (auto attribute =
+                        calledFuncOp->getAttr(sdy::kFuncManualAxes)) {
+                  CHECK(funcManualAxes == cast<sdy::ManualAxesAttr>(attribute));
+                }
+                calledFuncOp->setAttr(sdy::kFuncManualAxes, funcManualAxes);
               }
             } else if (op->hasTrait<mlir::OpTrait::IsTerminator>() &&
                        mlir::isa<sdy::ManualComputationOp>(op->getParentOp())) {
