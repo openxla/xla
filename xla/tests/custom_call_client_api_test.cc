@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/hlo/builder/xla_builder.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service.h"
 #include "xla/service/shaped_buffer.h"

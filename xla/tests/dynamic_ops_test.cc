@@ -24,6 +24,7 @@ limitations under the License.
 #include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/types/span.h"
 #include "benchmark/benchmark.h"
 #include "xla/array2d.h"
@@ -51,6 +52,7 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/types.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {

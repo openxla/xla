@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <memory>
-#include <utility>
 #include <vector>
 
 #include "xla/hlo/builder/xla_builder.h"
@@ -27,6 +25,7 @@ limitations under the License.
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {

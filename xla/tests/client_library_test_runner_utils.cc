@@ -25,6 +25,7 @@ limitations under the License.
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

@@ -20,6 +20,7 @@ limitations under the License.
 #include <vector>
 
 #include "xla/tests/xla_test_backend_predicates.h"
+#include <gtest/gtest.h>
 #include "Eigen/Core"
 #include "xla/array3d.h"
 #include "xla/error_spec.h"

@@ -20,7 +20,6 @@ limitations under the License.
 #include <numeric>
 #include <string>
 #include <tuple>
-#include <variant>
 #include <vector>
 
 #include "xla/tests/xla_test_backend_predicates.h"

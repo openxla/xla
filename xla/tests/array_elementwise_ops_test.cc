@@ -21,6 +21,7 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <string>
 #include <tuple>
@@ -28,8 +29,10 @@ limitations under the License.
 #include <vector>
 
 #include "xla/tests/xla_test_backend_predicates.h"
+#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/log.h"
 #include "absl/types/span.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"

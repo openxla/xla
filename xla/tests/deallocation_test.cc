@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/service/service.h"
 #include "xla/tests/local_client_test_base.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace {

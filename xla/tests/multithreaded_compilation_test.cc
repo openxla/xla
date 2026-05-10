@@ -22,6 +22,8 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "google/protobuf/descriptor.h"
+#include "google/protobuf/util/message_differencer.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
@@ -33,6 +35,7 @@ limitations under the License.
 #include "xla/tests/pjrt_client_registry.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 

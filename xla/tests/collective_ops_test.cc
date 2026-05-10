@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -21,7 +22,12 @@ limitations under the License.
 #include <vector>
 
 #include "xla/tests/xla_test_backend_predicates.h"
+#include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/str_replace.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "ml_dtypes/include/float8.h"
 #include "xla/literal.h"
@@ -41,6 +47,7 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/types.h"
+#include "xla/xla.pb.h"
 #include "tsl/platform/blocking_counter.h"
 
 namespace xla {

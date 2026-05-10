@@ -14,11 +14,13 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <utility>
-#include <variant>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include "absl/status/statusor.h"

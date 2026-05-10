@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <cstdlib>
 #include <utility>
 
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
