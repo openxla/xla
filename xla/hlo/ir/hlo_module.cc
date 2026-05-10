@@ -559,6 +559,26 @@ void HloModule::ToProto(HloModuleProto* proto) const {
     computation->ToProto(proto->add_computations());
   }
 
+  // Deduplicate backend config payloads. Uses fingerprint as the key instead of
+  // the backend config string since backend config strings can be very large.
+  absl::flat_hash_map<uint64_t, int> payload_ids;
+  for (HloComputationProto& computation : *proto->mutable_computations()) {
+    for (HloInstructionProto& instruction :
+         *computation.mutable_instructions()) {
+      if (!instruction.backend_config().empty()) {
+        const uint64_t fingerprint =
+            tsl::Fingerprint64(instruction.backend_config());
+        const auto [it, inserted] =
+            payload_ids.try_emplace(fingerprint, proto->payloads_size());
+        if (inserted) {
+          proto->add_payloads(std::move(*instruction.mutable_backend_config()));
+        }
+        instruction.clear_backend_config();
+        instruction.mutable_backend_config_payload()->set_id(it->second);
+      }
+    }
+  }
+
   if (has_schedule()) {
     *proto->mutable_schedule() = schedule().ToProto().value();
   }

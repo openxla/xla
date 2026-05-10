@@ -1516,6 +1516,39 @@ TEST(HloModuleTest, CreateFromProto_DecodesBackendConfigPayload) {
   EXPECT_EQ(i2->raw_backend_config_string(), "small_inline_payload");
 }
 
+TEST(HloModuleTest, ToProto_DeduplicatesBackendConfig) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnUnverifiedModule(R"(
+HloModule custom_calls
+
+ENTRY custom_calls {
+  input = s32[16] parameter(0)
+
+  r0 = s32[16] custom-call(input), custom_call_target="Foo",
+       backend_config="foo"
+  r1 = s32[16] custom-call(input), custom_call_target="Foo",
+       backend_config="foo"
+
+  ROOT result = (s32[16], s32[16]) tuple(r0, r1)
+}
+)"));
+  HloModuleProto module_proto = module->ToProto();
+
+  EXPECT_EQ(module_proto.payloads_size(), 1);
+  EXPECT_EQ(module_proto.payloads(0), "foo");
+
+  int num_payloads = 0;
+  for (const HloComputationProto& computation : module_proto.computations()) {
+    for (const HloInstructionProto& instruction : computation.instructions()) {
+      if (instruction.has_backend_config_payload()) {
+        ++num_payloads;
+        EXPECT_EQ(instruction.backend_config_payload().id(), 0);
+      }
+    }
+  }
+  EXPECT_EQ(num_payloads, 2);
+}
+
 class TestCacheEntry : public HloModule::CacheEntry {
  public:
   explicit TestCacheEntry(tsl::Fprint128 key, int value)
