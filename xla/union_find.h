@@ -53,7 +53,9 @@ template <typename T>
 void UnionFind<T>::Merge(UnionFind* other) {
   UnionFind<T>* a = FindRoot();
   UnionFind<T>* b = other->FindRoot();
-  if (a == b) return;
+  if (a == b) {
+    return;
+  }
   if (a->rank_ > b->rank_) {
     b->parent_ = a;
     a->size_ += b->size_;
@@ -70,7 +72,9 @@ void UnionFind<T>::Merge(UnionFind* other) {
 
 template <typename T>
 UnionFind<T>* UnionFind<T>::FindRoot() {
-  if (!parent_) return this;
+  if (!parent_) {
+    return this;
+  }
   // Path compression: update intermediate nodes to point to the root of the
   // equivalence class.
   parent_ = parent_->FindRoot();
