@@ -20,6 +20,8 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
+#include <vector>
 
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -28,6 +30,7 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/traced_command.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"

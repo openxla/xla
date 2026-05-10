@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>

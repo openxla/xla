@@ -17,13 +17,16 @@ limitations under the License.
 
 #include <cstdint>
 #include <cstdlib>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
