@@ -38,8 +38,6 @@ class NvshmemCollectives : public GpuCollectives {
  public:
   ~NvshmemCollectives() override;
 
-  static NvshmemCollectives* Default();
-
   bool IsInitialized() const;
 
   absl::StatusOr<void*> Allocate(uint64_t bytes) final;
