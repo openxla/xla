@@ -149,19 +149,6 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       std::optional<absl::Span<const std::optional<Layout>>> device_layouts,
       PjRtMemorySpace* memory_space) override;
 
-  // CrossHostSendBuffers and CrossHostReceiveBuffers are part of the new
-  // cross-host transfers API.
-  absl::StatusOr<std::vector<Future<>>> CrossHostSendBuffers(
-      absl::Span<PjRtBuffer* const> buffers,
-      absl::Span<const GlobalDeviceId> dst_global_device_ids,
-      std::vector<CrossHostTransferKey> transfer_keys) override;
-
-  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
-  CrossHostReceiveBuffers(
-      xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
-      absl::Span<const GlobalDeviceId> src_global_device_ids,
-      std::vector<CrossHostTransferKey> transfer_keys) override;
-
   // ScheduleRemoteSend and MakeCrossHostReceiveBuffers are methods implemented
   // to support the legacy cross-host transfers API.
   void ScheduleRemoteSend(

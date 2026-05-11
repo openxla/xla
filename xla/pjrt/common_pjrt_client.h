@@ -335,6 +335,19 @@ class CommonPjRtClient : public PjRtClient {
         "CrossHostReceiveBuffersInto is not implemented.");
   }
 
+  // CrossHostSendBuffers and CrossHostReceiveBuffers are part of the second
+  // cross-host transfers API.
+  absl::StatusOr<std::vector<Future<>>> CrossHostSendBuffers(
+      absl::Span<PjRtBuffer* const> buffers,
+      absl::Span<const GlobalDeviceId> dst_global_device_ids,
+      std::vector<CrossHostTransferKey> transfer_keys) override;
+
+  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+  CrossHostReceiveBuffers(
+      xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
+      absl::Span<const GlobalDeviceId> src_global_device_ids,
+      std::vector<CrossHostTransferKey> transfer_keys) override;
+
   // Similar to PjRtClient::CrossHost{Send/Receive}Buffers, but uses
   // PjRtRawBuffer instead of PjRtBuffer.
   // Takes in a vector of transfer dependencies and transfer specs, and launches

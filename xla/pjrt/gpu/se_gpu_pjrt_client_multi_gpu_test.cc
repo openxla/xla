@@ -1413,10 +1413,6 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
                     std::vector<PjRtDeviceEventRef>
                         buf_definition_events) mutable
                 -> absl::StatusOr<PjRtDeviceEventRef> {
-                  // Keep raw_buffer alive until the usage_event completes,
-                  // preventing the allocation from being freed while the
-                  // send is in-flight.
-                  usage_event.AndThen([buf_raw_buffer]() {});
                   raw_buffer = std::move(buf_raw_buffer);
                   for (PjRtDeviceEventRef& event : buf_definition_events) {
                     transfer_dependencies.push_back(std::move(event));
