@@ -35,13 +35,14 @@ namespace xla {
 // backend-config that doesn't match its true trip-count, or with stale
 // `dynamic_variables` init/step entries for unrolled/pipelined slots.
 //
-// This pass is the *only* writer of `WhileLoopBackendConfig::known_init_step`
-// and of `init`/`step` on `dynamic_variables`. Other passes that need to
-// register dynamic-variable tuple positions (e.g. host-offload pipelining)
-// should write only the `tuple_index` and rely on this pass to fill in the
-// affine values once the loop is final. This keeps `WhileLoopBackendConfig`
-// off the critical path for backends (e.g. TPU) that use a different backend
-// config proto and don't run this pass.
+// This pass is the sole *creator* of `WhileLoopBackendConfig`: a pre-existing
+// non-empty config triggers a `FailedPrecondition`. Host-offload dynamic
+// variables are discovered here via
+// `host_offload_utils::CollectDynamicVariableTupleIndices`. Keeping the config
+// off the critical path lets backends (e.g. TPU) that don't run this pass
+// avoid the proto entirely. GPU-only post-passes (e.g.
+// `DoubleBufferLoopUnrolling`) may still mutate existing fields in place to
+// track later loop transformations.
 //
 // This pass does some pattern-matching on loop bodies and conditions, so it
 // should run after most HLO simplifications and before fusion and layout

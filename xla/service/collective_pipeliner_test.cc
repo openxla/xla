@@ -5700,9 +5700,7 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
           /*postprocess_backward_peeled_trailing=*/{},
           /*should_add_loop_invariant_op_in_chain=*/false,
           /*collective_size_threshold_to_delay_sinking=*/INT64_MAX,
-          /*unique_channel_id=*/true,
-          /*postprocess_transformed_while_loop=*/
-          host_offload_utils::MarkDynamicVariables)
+          /*unique_channel_id=*/true)
           .value());
 
   std::vector<HloInstruction*> while_loops;
@@ -5719,21 +5717,13 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
   TF_ASSERT_OK_AND_ASSIGN(
       WhileLoopBackendConfig config,
       while_loops[0]->backend_config<WhileLoopBackendConfig>());
+  EXPECT_EQ(config.dynamic_variables_size(), 0)
+      << "CollectivePipeliner must not write dynamic_variables.";
 
-  std::set<int64_t> dynamic_indices;
-  for (const auto& dv : config.dynamic_variables()) {
-    dynamic_indices.insert(dv.tuple_index());
-  }
-
-  std::set<int64_t> expected_indices = {0, 5};
+  absl::flat_hash_set<int64_t> dynamic_indices =
+      host_offload_utils::CollectDynamicVariableTupleIndices(while_loops[0]);
+  absl::flat_hash_set<int64_t> expected_indices = {0, 5};
   EXPECT_EQ(dynamic_indices, expected_indices);
-
-  for (const auto& dv : config.dynamic_variables()) {
-    EXPECT_FALSE(dv.has_init())
-        << "Pipeliner should not write init for tuple " << dv.tuple_index();
-    EXPECT_FALSE(dv.has_step())
-        << "Pipeliner should not write step for tuple " << dv.tuple_index();
-  }
 }
 
 TEST_F(CollectivePipelinerTest, HostOffloadingBackward) {
@@ -5817,9 +5807,7 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
           /*postprocess_backward_peeled_trailing=*/{},
           /*should_add_loop_invariant_op_in_chain=*/false,
           /*collective_size_threshold_to_delay_sinking=*/INT64_MAX,
-          /*unique_channel_id=*/true,
-          /*postprocess_transformed_while_loop=*/
-          host_offload_utils::MarkDynamicVariables)
+          /*unique_channel_id=*/true)
           .value());
 
   std::vector<HloInstruction*> while_loops;
@@ -5836,19 +5824,13 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
   TF_ASSERT_OK_AND_ASSIGN(
       WhileLoopBackendConfig config,
       while_loops[0]->backend_config<WhileLoopBackendConfig>());
+  EXPECT_EQ(config.dynamic_variables_size(), 0)
+      << "CollectivePipeliner must not write dynamic_variables.";
 
-  std::set<int64_t> dynamic_indices;
-  for (const auto& dv : config.dynamic_variables()) {
-    dynamic_indices.insert(dv.tuple_index());
-  }
-
-  std::set<int64_t> expected_indices = {0, 8};
+  absl::flat_hash_set<int64_t> dynamic_indices =
+      host_offload_utils::CollectDynamicVariableTupleIndices(while_loops[0]);
+  absl::flat_hash_set<int64_t> expected_indices = {0, 8};
   EXPECT_EQ(dynamic_indices, expected_indices);
-
-  for (const auto& dv : config.dynamic_variables()) {
-    EXPECT_FALSE(dv.has_init());
-    EXPECT_FALSE(dv.has_step());
-  }
 }
 
 TEST_F(CollectivePipelinerTest, ForwardSubtractIndexWithGTELeaf) {

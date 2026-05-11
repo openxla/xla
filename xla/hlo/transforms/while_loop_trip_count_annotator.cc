@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/transforms/while_loop_trip_count_annotator.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <utility>
@@ -22,7 +23,9 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/analysis/while_loop_analysis.h"
@@ -32,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/service/host_offload_utils.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -197,15 +201,29 @@ absl::StatusOr<bool> WhileLoopTripCountAnnotator::RunImpl(
         continue;
       }
 
-      WhileLoopBackendConfig config;
-      if (auto existing_config =
-              instr->backend_config<WhileLoopBackendConfig>();
-          existing_config.ok()) {
-        config = *existing_config;
+      TF_ASSIGN_OR_RETURN(WhileLoopBackendConfig existing_config,
+                          instr->backend_config<WhileLoopBackendConfig>());
+      if (existing_config.ByteSizeLong() != 0) {
+        return absl::FailedPreconditionError(absl::StrFormat(
+            "WhileLoopTripCountAnnotator is the sole creator of "
+            "WhileLoopBackendConfig, but %s already has a non-empty "
+            "backend_config: %s",
+            instr->name(), existing_config.ShortDebugString()));
       }
 
+      WhileLoopBackendConfig config;
       config.mutable_known_induction_variable()->set_tuple_index(
           *induction_variable_index);
+
+      absl::flat_hash_set<int64_t> dynamic_variable_tuple_indices =
+          host_offload_utils::CollectDynamicVariableTupleIndices(instr);
+      std::vector<int64_t> sorted_dynamic_indices(
+          dynamic_variable_tuple_indices.begin(),
+          dynamic_variable_tuple_indices.end());
+      std::sort(sorted_dynamic_indices.begin(), sorted_dynamic_indices.end());
+      for (int64_t tuple_idx : sorted_dynamic_indices) {
+        config.add_dynamic_variables()->set_tuple_index(tuple_idx);
+      }
 
       std::optional<int64_t> primary_init;
       std::optional<int64_t> primary_step;
