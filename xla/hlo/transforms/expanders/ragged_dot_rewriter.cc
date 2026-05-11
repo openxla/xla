@@ -405,10 +405,16 @@ absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
           .debug_options()
           .xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
       module->config().debug_options().xla_gpu_enable_cublaslt();
+  const se::CudaComputeCapability* cuda_cc =
+      gpu_compute_capability_.has_value()
+          ? gpu_compute_capability_->cuda_compute_capability()
+          : nullptr;
   const bool ragged_dot_fusion_enabled =
       module->config()
           .debug_options()
-          .xla_gpu_experimental_use_ragged_dot_fusion();
+          .xla_gpu_experimental_use_ragged_dot_fusion() &&
+      cudnn_version_ >= kMinCudnnVersionForRaggedDotFusion &&
+      cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere();
 
   // Gather all Ragged Dot operations.
   std::vector<HloRaggedDotInstruction*> ragged_dots;
