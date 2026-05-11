@@ -1457,6 +1457,14 @@ TEST_F(IndexingMapTest, RangeEvaluatorTest) {
   // d0 * 2 + d1 between [-10, 17].
   EXPECT_EQ(range_evaluator.ComputeExpressionRange(d0 * 2 + d1),
             (Interval{-10, 17}));
+
+  // min(d0, d1) between [-10, -1].
+  EXPECT_EQ(range_evaluator.ComputeExpressionRange(d0.min(d1)),
+            (Interval{-10, -1}));
+
+  // max(d0, d1) between [0, 9].
+  EXPECT_EQ(range_evaluator.ComputeExpressionRange(d0.max(d1)),
+            (Interval{0, 9}));
 }
 
 template <typename T>

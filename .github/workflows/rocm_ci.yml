@@ -47,7 +47,7 @@ jobs:
     env:
       DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
     container: &rocm_container
-      image: ${{ needs.rocm-config.outputs.docker-image }}
+      image: ${{ needs.rocm-config.outputs.docker-image }} # zizmor: ignore[unpinned-images] image is pinned in the rocm-config job.
       volumes:
         - /data/ci-cert.crt:/data/ci-cert.crt
         - /data/ci-cert.key:/data/ci-cert.key

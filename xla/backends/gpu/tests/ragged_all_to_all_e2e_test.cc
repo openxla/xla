@@ -428,9 +428,38 @@ TEST_P(RaggedAllToAllTest, RaggedAllToAll_SeveralOps_2GPUs) {
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
                                            kModuleReplicatedStr, kNumReplicas));
 
-  TF_ASSERT_OK(CreateRandomTestData(module.get(),
-                                    /*input_sizes=*/{/*replica_0=*/{1, 1},
-                                                     /*replica_1=*/{3, 1}}));
+  inputs_.clear();
+  inputs_.reserve(kNumReplicas);
+  inputs_.push_back(LiteralUtil::CreateR1<float>({45.0f, 38.0f, 0.0f, 0.0f}));
+  inputs_.push_back(
+      LiteralUtil::CreateR1<float>({41.0f, 16.0f, 110.0f, 107.0f}));
+
+  output_init_ = LiteralUtil::CreateR1<float>({-1.0f, -1.0f, -1.0f, -1.0f});
+
+  input_offsets_.clear();
+  input_offsets_.reserve(kNumReplicas);
+  input_offsets_.push_back(LiteralUtil::CreateR1<int32_t>({0, 1}));
+  input_offsets_.push_back(LiteralUtil::CreateR1<int32_t>({0, 3}));
+  input_sizes_.clear();
+  input_sizes_.reserve(kNumReplicas);
+  input_sizes_.push_back(LiteralUtil::CreateR1<int32_t>({1, 1}));
+  input_sizes_.push_back(LiteralUtil::CreateR1<int32_t>({3, 1}));
+
+  output_offsets_.clear();
+  output_offsets_.reserve(kNumReplicas);
+  output_offsets_.push_back(LiteralUtil::CreateR1<int32_t>({0, 0}));
+  output_offsets_.push_back(LiteralUtil::CreateR1<int32_t>({1, 1}));
+  output_sizes_.clear();
+  output_sizes_.reserve(kNumReplicas);
+  output_sizes_.push_back(LiteralUtil::CreateR1<int32_t>({1, 3}));
+  output_sizes_.push_back(LiteralUtil::CreateR1<int32_t>({1, 1}));
+
+  expected_outputs_.clear();
+  expected_outputs_.reserve(kNumReplicas);
+  expected_outputs_.push_back(
+      LiteralUtil::CreateR1<float>({45.0f, 38.0f, 107.0f, -1.0f}));
+  expected_outputs_.push_back(
+      LiteralUtil::CreateR1<float>({41.0f, -1.0f, -1.0f, -1.0f}));
 
   TF_ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
@@ -439,8 +468,8 @@ TEST_P(RaggedAllToAllTest, RaggedAllToAll_SeveralOps_2GPUs) {
   const std::vector<Literal>& results = execution_result.results;
 
   ASSERT_EQ(results.size(), kNumReplicas);
-  // TODO(patrios): Check results. Can't hardcode the expected output since
-  // random generator behaves differently.
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected_outputs_[0], results[0]));
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected_outputs_[1], results[1]));
 }
 
 TEST_P(RaggedAllToAllTest, RaggedAllToAll_2GPUs_CommandBuffer) {

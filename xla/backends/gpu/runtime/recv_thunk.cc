@@ -101,6 +101,7 @@ absl::StatusOr<ThunkProto> RecvThunk::ToProto() const {
   RecvThunkProto* thunk_proto = proto.mutable_recv_thunk();
 
   *thunk_proto->mutable_collective_config() = config_.config.ToProto();
+  ASSIGN_OR_RETURN(*thunk_proto->mutable_buffer(), buffer().ToProto());
   std::vector<SourceTarget> source_target_pairs;
   source_target_pairs.reserve(config_.id_to_source_target.size() / 2);
   for (const auto& [key_id, map_entry] : config_.id_to_source_target) {

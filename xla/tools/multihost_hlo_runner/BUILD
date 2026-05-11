@@ -240,7 +240,6 @@ xla_test(
         ],
         "gpu": [
             "multi_gpu",
-            "no_oss",
             "nomsan",
         ],
         "nvgpu_any": [

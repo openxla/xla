@@ -78,7 +78,7 @@ ENTRY entry {
       "fusion_backend_config": {
         "kind":"__triton_gemm",  "triton_gemm_config": {
           "block_m":"64", "block_n":"256", "block_k":"32",
-          "split_k":"1", "num_stages":"5", "num_warps":"4", "num_ctas":"3"
+          "num_stages":"5", "num_warps":"4", "num_ctas":"3"
         }
       }
     }
@@ -129,7 +129,7 @@ ENTRY entry {
         "kind":"__triton_gemm",
         "triton_gemm_config": {
           "block_m":"16", "block_n":"32", "block_k":"64",
-          "split_k":"1", "num_stages":"1", "num_warps":"4", "num_ctas":"1"
+          "num_stages":"1", "num_warps":"4", "num_ctas":"1"
         }
       }
     }
@@ -170,7 +170,7 @@ ENTRY entry {
       "fusion_backend_config": {
         "kind":"__triton_gemm",  "triton_gemm_config": {
           "block_m":"64", "block_n":"256", "block_k":"32",
-          "split_k":"1", "num_stages":"5", "num_warps":"4", "num_ctas":"1",
+          "num_stages":"5", "num_warps":"4", "num_ctas":"1",
           "waves_per_eu":"4"
         }
       }

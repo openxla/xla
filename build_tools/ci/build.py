@@ -394,8 +394,6 @@ Build(
         "-//xla/backends/cpu/collectives:gloo_collectives_test",
         "-//xla/backends/cpu/collectives:mpi_collectives",
         "-//xla/backends/cpu/collectives:mpi_communicator",
-        # ortools is not windows compatible
-        "-//xla/hlo/experimental/...",
         # implementation is not windows compatible
         "-//xla/python/transfer/...",
         "-//xla/backends/profiler/subprocess:subprocess_profiling_session",
@@ -693,7 +691,6 @@ Build(
     configs=("nonccl",),
     target_patterns=(
         "//xla/...",
-        "-//xla/hlo/experimental/...",
         "-//xla/python_api/...",
         "-//xla/python/...",
         "-//xla/service/gpu/...",
@@ -727,7 +724,6 @@ Build(
     configs=("nonccl",),
     target_patterns=(
         "//xla/...",
-        "-//xla/hlo/experimental/...",
         "-//xla/python_api/...",
         "-//xla/python/...",
         "-//xla/service/gpu/...",

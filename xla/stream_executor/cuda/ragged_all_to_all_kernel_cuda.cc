@@ -45,13 +45,14 @@ using PtrArray = stream_executor::gpu::RaggedAllToAllOutputPtrs;
   GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(                              \
       RaggedAllToAllSymmetricMemoryKernelCuda##VECTOR_SIZE##Bytes,             \
       SINGLE_ARG(                                                              \
-          stream_executor::gpu::RaggedAllToAllKernel<xla::SymmetricMemory*,    \
-                                                     VECTOR_SIZE>),            \
+          stream_executor::gpu::RaggedAllToAllWithSymmetricMemoryKernel<       \
+              VECTOR_SIZE>),                                                   \
       stream_executor::cuda::kCudaPlatformId, ([](size_t arity) {              \
         return stream_executor::KernelLoaderSpec::CreateInProcessSymbolSpec(   \
-            absl::bit_cast<void*>(&SINGLE_ARG(                                 \
-                stream_executor::gpu::RaggedAllToAllKernelImpl<void*,          \
-                                                               VECTOR_SIZE>)), \
+            absl::bit_cast<void*>(                                             \
+                &SINGLE_ARG(stream_executor::gpu::                             \
+                                RaggedAllToAllWithSymmetricMemoryKernelImpl<   \
+                                    VECTOR_SIZE>)),                            \
             "ragged_all_to_all_kernel_symmetric_memory_" #VECTOR_SIZE          \
             "_bytes",                                                          \
             arity);                                                            \

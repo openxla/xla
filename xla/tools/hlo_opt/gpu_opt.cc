@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
+#include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/nvptx_alias_info.h"
 #include "xla/service/llvm_compiler.h"
@@ -70,10 +71,8 @@ limitations under the License.
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/tools/hlo_opt/compiled_opt_lib.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
-
 namespace {
 
 class GpuOptProvider : public CompiledOptProvider {
@@ -84,30 +83,27 @@ class GpuOptProvider : public CompiledOptProvider {
       std::unique_ptr<HloModule> module, absl::string_view s) override {
     if (s == "llvm-before-optimizations") {
       ASSIGN_OR_RETURN(std::string llvm_ir,
-                       LlvmIrBeforeOptimizations(std::move(module)));
+                       LlvmIrFor(std::move(module), false));
       return llvm_ir;
     }
     if (s == "llvm" || s == "llvm-after-optimizations") {
-      ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
-                       GetExecutable(std::move(module)));
-      return static_cast<gpu::GpuExecutable*>(executable.get())
-          ->ir_module_string();
+      ASSIGN_OR_RETURN(std::string llvm_ir, LlvmIrFor(std::move(module), true));
+      return llvm_ir;
     }
     if (s == "ptx") {
-      TF_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
-                          GetExecutable(std::move(module)));
-      return static_cast<gpu::GpuExecutable*>(executable.get())->text();
+      ASSIGN_OR_RETURN(std::string ptx, PtxFor(std::move(module)));
+      return ptx;
     }
     if (s == "buffer-assignment") {
-      TF_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
-                          GetExecutable(std::move(module)));
+      ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
+                       GetExecutable(std::move(module)));
       auto gpu_executable = static_cast<gpu::GpuExecutable*>(executable.get());
       return gpu_executable->buffer_assignment()->ToVerboseString(
           gpu_executable->alias_info(), 9999);
     }
     {
       // Delegate to base class.
-      TF_ASSIGN_OR_RETURN(
+      ASSIGN_OR_RETURN(
           std::optional<std::string> out,
           CompiledOptProvider::GenerateStage(std::move(module), s));
       return out;
@@ -190,15 +186,15 @@ class GpuOptProvider : public CompiledOptProvider {
  private:
   absl::StatusOr<se::DeviceDescription> GetDeviceDescription(
       const HloModule* module) {
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         gpu::GpuTargetConfig target_config,
         gpu::GetTargetConfigFromFile(
             module->config().debug_options().xla_gpu_target_config_filename()));
     return target_config.device_description;
   }
 
-  absl::StatusOr<std::string> LlvmIrBeforeOptimizations(
-      std::unique_ptr<HloModule> input_module) {
+  absl::StatusOr<std::string> LlvmIrFor(std::unique_ptr<HloModule> input_module,
+                                        bool optimized) {
     Compiler::CompileOptions opts;
     ASSIGN_OR_RETURN(std::unique_ptr<HloModule> optimized_module,
                      GetOptimizedHlo(std::move(input_module)));
@@ -210,9 +206,15 @@ class GpuOptProvider : public CompiledOptProvider {
 
     llvm::LLVMContext context;
     std::vector<std::unique_ptr<llvm::Module>> modules;
-    llvm_compiler->SetPreOptimizationHook([&](const llvm::Module& module) {
-      modules.push_back(gpu::CopyToContext(module, context));
-    });
+    if (optimized) {
+      llvm_compiler->SetPostOptimizationHook([&](const llvm::Module& module) {
+        modules.push_back(gpu::CopyToContext(module, context));
+      });
+    } else {
+      llvm_compiler->SetPreOptimizationHook([&](const llvm::Module& module) {
+        modules.push_back(gpu::CopyToContext(module, context));
+      });
+    }
 
     ASSIGN_OR_RETURN(
         std::unique_ptr<Executable> executable,
@@ -221,6 +223,26 @@ class GpuOptProvider : public CompiledOptProvider {
     gpu::LinkLlvmModulesInPlace(modules);
 
     return llvm_ir::DumpToString(modules[0].get());
+  }
+
+  absl::StatusOr<std::string> PtxFor(std::unique_ptr<HloModule> input_module) {
+    Compiler::CompileOptions opts;
+    ASSIGN_OR_RETURN(std::unique_ptr<HloModule> optimized_module,
+                     GetOptimizedHlo(std::move(input_module)));
+    ASSIGN_OR_RETURN(se::StreamExecutor * executor, GetExecutor());
+    ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler, GetCompiler());
+
+    gpu::GpuCompiler* gpu_compiler =
+        absl::down_cast<gpu::GpuCompiler*>(compiler.get());
+
+    std::string ptx_str = "// GPU Executable\n";
+    gpu_compiler->SetAsmHook([&](absl::string_view ptx) { ptx_str += ptx; });
+
+    ASSIGN_OR_RETURN(
+        std::unique_ptr<Executable> executable,
+        compiler->RunBackend(std::move(optimized_module), executor, opts));
+
+    return ptx_str;
   }
 };
 

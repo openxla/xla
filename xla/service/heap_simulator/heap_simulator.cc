@@ -2506,42 +2506,45 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::MakeFreeChunks(
         });
   }
 
+  if (used_chunks_.empty()) {
+    return FreeChunks({{0, INT64_MAX}});
+  }
+
   // Sort used chunks by offset ascending.
   std::sort(used_chunks_.begin(), used_chunks_.end(),
             [](const Chunk& a, const Chunk& b) { return a.offset < b.offset; });
 
-  disjoint_used_chunks_.clear();
-
-  // Merge overlapping used chunks.
-  if (!used_chunks_.empty()) {
-    disjoint_used_chunks_.push_back(used_chunks_[0]);
-    for (size_t i = 1; i < used_chunks_.size(); ++i) {
-      Chunk& last = disjoint_used_chunks_.back();
-      const Chunk& curr = used_chunks_[i];
-      if (curr.offset < last.chunk_end()) {
-        last.size = std::max(last.chunk_end(), curr.chunk_end()) - last.offset;
-      } else {
-        disjoint_used_chunks_.push_back(curr);
-      }
-    }
-  }
-
+  // Merge overlapping used chunks and build free chunks in a single pass.
   // Track the start of the current free space candidate.
   int64_t current_free_chunk_start = 0;
   free_chunks_list_.clear();
 
-  for (const auto& used_chunk : disjoint_used_chunks_) {
-    // If there is a gap between the current free space candidate and the used
-    // chunk and the gap is large enough for the buffer, record it as free
-    if (used_chunk.offset - current_free_chunk_start >= buffer_interval.size) {
-      free_chunks_list_.push_back(
-          {current_free_chunk_start, used_chunk.offset});
+  {
+    const absl::Span<const Chunk> used_chunks = used_chunks_;
+    int64_t current_offset = used_chunks[0].offset;
+    int64_t current_end = used_chunks[0].chunk_end();
+    for (size_t i = 1; i < used_chunks.size(); ++i) {
+      const Chunk& curr = used_chunks[i];
+      if (curr.offset < current_end) {
+        current_end = std::max(current_end, curr.chunk_end());
+      } else {
+        // Emit free chunk before this disjoint used range.
+        if (current_offset - current_free_chunk_start >= buffer_interval.size) {
+          free_chunks_list_.push_back(
+              {current_free_chunk_start, current_offset});
+        }
+        current_free_chunk_start = std::max(
+            current_free_chunk_start, ComputeAlignedChunkEnd(current_end));
+        current_offset = curr.offset;
+        current_end = curr.chunk_end();
+      }
     }
-    // Advance the free space candidate start to after the current used chunk,
-    // respecting alignment requirements.
+    // Emit free chunk before the last disjoint used range.
+    if (current_offset - current_free_chunk_start >= buffer_interval.size) {
+      free_chunks_list_.push_back({current_free_chunk_start, current_offset});
+    }
     current_free_chunk_start =
-        std::max(current_free_chunk_start,
-                 ComputeAlignedChunkEnd(used_chunk.chunk_end()));
+        std::max(current_free_chunk_start, ComputeAlignedChunkEnd(current_end));
   }
 
   free_chunks_list_.push_back({current_free_chunk_start, INT64_MAX});
@@ -2666,7 +2669,9 @@ void GlobalDecreasingSizeBestFitHeap<BufferType>::CommitChunkOnly(
     const GlobalDecreasingSizeBestFitHeap<BufferType>::BufferInterval&
         buffer_interval,
     GlobalDecreasingSizeBestFitHeap<BufferType>::Chunk chunk) {
-  CHECK_EQ(chunk.size, buffer_interval.size);
+  CHECK_EQ(chunk.size, buffer_interval.size)
+      << "Chunk size mismatch for buffer: "
+      << buffer_interval.buffer->ToString();
   const int64_t max_colocation_size = GetMaxColocationSize(buffer_interval);
   Chunk max_size_chunk =
       Chunk::FromOffsetSize(chunk.offset, max_colocation_size);

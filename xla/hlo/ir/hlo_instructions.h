@@ -1222,6 +1222,7 @@ class HloSortInstruction : public HloDimensionsInstruction {
   // Returns the number of value operands.
   int64_t values_count() const { return operand_count() - 1; }
   bool is_stable() const { return is_stable_; }
+  void set_is_stable(bool is_stable) { is_stable_ = is_stable; }
 
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kSort;

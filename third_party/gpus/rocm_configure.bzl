@@ -631,6 +631,7 @@ def _create_local_rocm_repository(repository_ctx):
         "%{rocm_toolkit_path}": str(repository_ctx.path(rocm_config.rocm_toolkit_path)),
         "%{rocm_rbe_docker_image}": repository_ctx.os.environ.get(_TF_ROCM_RBE_DOCKER_IMAGE, _DEFAULT_TF_ROCM_RBE_DOCKER_IMAGE),
         "%{rocm_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_POOL, _DEFAULT_TF_ROCM_RBE_POOL),
+        "%{rocm_repo_name}": repository_ctx.name,
     }
 
     is_rocm_clang = _use_rocm_clang(repository_ctx)
@@ -710,7 +711,7 @@ def _create_local_rocm_repository(repository_ctx):
         {
             "%{cpu_compiler}": str(cc),
             "%{compiler_is_clang}": "True",
-            "%{rocm_root}": "external/local_config_rocm/" + str(rocm_config.rocm_toolkit_path),
+            "%{rocm_root}": "external/" + repository_ctx.name + "/" + str(rocm_config.rocm_toolkit_path),
             "%{hipcc_env}": _hipcc_env(repository_ctx),
             "%{rocr_runtime_library}": "hsa-runtime64",
             "%{hip_runtime_library}": "amdhip64",

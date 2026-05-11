@@ -2656,11 +2656,11 @@ OpFoldResult BroadcastOp::fold(FoldAdaptor adaptor) {
     ComplexType complex = cast<ComplexType>(type.getElementType());
     if (isa<FloatType>(complex.getElementType())) {
       return DenseElementsAttr::get(
-          type, {splatOperandAttr.getSplatValue<std::complex<APFloat>>()});
+          type, {splatOperandAttr.getSplatValue<mlir::Complex<APFloat>>()});
     }
     if (isa<IntegerType>(complex.getElementType())) {
       return DenseElementsAttr::get(
-          type, {splatOperandAttr.getSplatValue<std::complex<APInt>>()});
+          type, {splatOperandAttr.getSplatValue<mlir::Complex<APInt>>()});
     }
     return {};
   }
@@ -2757,11 +2757,11 @@ OpFoldResult BroadcastInDimOp::fold(FoldAdaptor adaptor) {
     ComplexType complex = cast<ComplexType>(type.getElementType());
     if (isa<FloatType>(complex.getElementType())) {
       return DenseElementsAttr::get(
-          type, {splatOperandAttr.getSplatValue<std::complex<APFloat>>()});
+          type, {splatOperandAttr.getSplatValue<mlir::Complex<APFloat>>()});
     }
     if (isa<IntegerType>(complex.getElementType())) {
       return DenseElementsAttr::get(
-          type, {splatOperandAttr.getSplatValue<std::complex<APInt>>()});
+          type, {splatOperandAttr.getSplatValue<mlir::Complex<APInt>>()});
     }
     return {};
   }
@@ -4776,7 +4776,7 @@ OpFoldResult PadOp::fold(FoldAdaptor adaptor) {
           dyn_cast_or_null<ComplexType>(returnType.getElementType())) {
     // TODO(atondwal): Allow int types in HLO_complex
     if (isa<FloatType>(complex.getElementType()))
-      return padOpFoldHelper<std::complex<APFloat>>(
+      return padOpFoldHelper<mlir::Complex<APFloat>>(
           input, padding, returnType, getEdgePaddingLow(), getEdgePaddingHigh(),
           getInteriorPadding());
   }

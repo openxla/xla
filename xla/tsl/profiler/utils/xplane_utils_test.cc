@@ -802,6 +802,9 @@ TEST(XplaneutilsTest, TestIsHostPlane) {
   EXPECT_FALSE(IsHostPlane(*xplane_custom_prefix));
   EXPECT_FALSE(IsHostPlane(*xplane_legacy_custom));
   EXPECT_TRUE(IsHostPlane(*xplane_cupti));
+  auto xplane_host_thread_subprocess =
+      FindOrAddMutablePlaneWithName(&xspace, "/host:CPU [123456]");
+  EXPECT_TRUE(IsHostPlane(*xplane_host_thread_subprocess));
 }
 
 TEST(XplaneutilsTest, TestIsDevicePlane) {

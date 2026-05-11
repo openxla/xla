@@ -49,6 +49,7 @@ std::unique_ptr<mlir::Pass> CreateTritonXLAImplementExternElementWisePass();
 std::unique_ptr<mlir::Pass> CreateTritonXLAConvertUnsupportedTypesPass();
 std::unique_ptr<mlir::Pass> CreateTritonXLALowerRemoteAccessPass();
 std::unique_ptr<mlir::Pass> CreateTritonXLALowerXTilePass();
+std::unique_ptr<mlir::Pass> CreateTritonXLAFoldReshapeAroundForLoopPass();
 std::unique_ptr<mlir::Pass> CreateStableHLOLowerToTritonPass(
     bool warp_specialization_allowed);
 std::unique_ptr<mlir::Pass> CreateTensorLowerToTritonPass();

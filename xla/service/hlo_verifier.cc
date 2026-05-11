@@ -1329,6 +1329,21 @@ absl::Status ShapeVerifier::HandleScan(HloInstruction* scan) {
                     scan->dimensions().size());
   }
 
+  auto scan_instr = Cast<HloScanInstruction>(scan);
+
+  // In layout-sensitive verification, only associative scans are legal:
+  // non-associative scans must be expanded into while loops by ScanExpander
+  // before any layout-sensitive pass runs. If we encounter one here, that
+  // means the expander was skipped or runs in the wrong order -- bail out
+  // loudly rather than silently ignoring layouts on its to_apply parameters.
+  if (opts_.layout_sensitive &&
+      scan_instr->is_associative() != TRI_STATE_TRUE) {
+    return Internal(
+        "Non-associative scan reached layout-sensitive HloVerifier; it should "
+        "have been expanded to a while loop by ScanExpander: %s",
+        scan->ToString());
+  }
+
   std::vector<Shape> operand_shapes = GetInstructionShapes(scan->operands());
   std::vector<Shape> parameter_shapes =
       GetInstructionShapes(scan->to_apply()->parameter_instructions());
@@ -1336,7 +1351,6 @@ absl::Status ShapeVerifier::HandleScan(HloInstruction* scan) {
       GetTupleShapesOrSelf(&scan->to_apply()->root_instruction()->shape());
   absl::Span<const Shape> result_shapes = GetTupleShapesOrSelf(&scan->shape());
 
-  auto scan_instr = Cast<HloScanInstruction>(scan);
   int64_t num_carries = scan_instr->num_carries();
 
   TF_RETURN_IF_ERROR(CheckScanOperandAndResultCounts(
@@ -1351,6 +1365,24 @@ absl::Status ShapeVerifier::HandleScan(HloInstruction* scan) {
 
   int64_t num_inputs = operand_shapes.size() - num_carries;
   int64_t num_outputs = result_shapes.size() - num_carries;
+
+  // Build the shape-equality predicate. Layouts are always ignored:
+  // associative scans are lowered directly by an emitter, so the to_apply
+  // computation is never materialized and its parameter layouts are
+  // independent of the operand array layouts (which are freely assigned by
+  // layout assignment). The layout-sensitive guard above ensures
+  // non-associative scans never reach this point.
+  //
+  // When mixed precision is allowed, also ignore FP precision: during BF16
+  // propagation the scan I/O and the body parameter/root shapes can
+  // transiently disagree on element type (e.g. body root pinned at F32 while
+  // the scan output has been lowered to BF16). ResolveInconsistentScans
+  // reconciles these mismatches before the final, strict verifier pass.
+  // This mirrors HandleReduce / HandleReduceWindow / HandleMap.
+  auto shape_equal = Shape::Equal().IgnoreLayout();
+  if (opts_.allow_mixed_precision) {
+    shape_equal.IgnoreFpPrecision();
+  }
 
   // Check shapes of operands vs to_apply parameters.
   for (int64_t i = 0; i < operand_shapes.size(); ++i) {
@@ -1368,7 +1400,7 @@ absl::Status ShapeVerifier::HandleScan(HloInstruction* scan) {
       }
       expected_param_shape.DeleteDimension(scan_dim);
     }
-    if (!ShapesSame(param_shape, expected_param_shape)) {
+    if (!ShapesSame(param_shape, expected_param_shape, shape_equal)) {
       return Internal(
           "Shapes of operand %d and to_apply computation parameter are "
           "inconsistent",
@@ -1377,10 +1409,12 @@ absl::Status ShapeVerifier::HandleScan(HloInstruction* scan) {
   }
 
   // Check carry shapes of to_apply parameters vs root.
+  // Layouts (and, under allow_mixed_precision, FP precision) are ignored for
+  // the same reasons as above.
   for (int64_t i = 0; i < num_carries; ++i) {
     const Shape& param_shape = parameter_shapes[i + num_inputs];
     const Shape& root_shape = root_shapes[i + num_outputs];
-    if (!ShapesSame(param_shape, root_shape)) {
+    if (!ShapesSame(param_shape, root_shape, shape_equal)) {
       return Internal(
           "Shapes of parameter %d and root in to_apply computation are "
           "inconsistent",
@@ -1388,7 +1422,9 @@ absl::Status ShapeVerifier::HandleScan(HloInstruction* scan) {
     }
   }
 
-  // Check shapes of results vs to_apply root.
+  // Check shapes of results vs to_apply root. Use the same shape_equal
+  // predicate as above so allow_mixed_precision lets the body root and the
+  // scan result transiently disagree on FP precision during propagation.
   for (int64_t i = 0; i < root_shapes.size(); ++i) {
     const Shape& root_shape = root_shapes[i];
     const Shape& result_shape = result_shapes[i];
@@ -1404,7 +1440,7 @@ absl::Status ShapeVerifier::HandleScan(HloInstruction* scan) {
       }
       expected_root_shape.DeleteDimension(scan_dim);
     }
-    if (!ShapeUtil::Compatible(root_shape, expected_root_shape)) {
+    if (!ShapesSame(root_shape, expected_root_shape, shape_equal)) {
       return Internal(
           "Shapes of result %d and to_apply computation root are "
           "inconsistent",
@@ -3461,14 +3497,17 @@ int64_t CountWritersInUser(const HloInstruction* inst,
                            const HloInstruction* user) {
   if (HloCallableInstruction::ClassOf(user) ||
       user->opcode() == HloOpcode::kWhile ||
-      user->opcode() == HloOpcode::kConditional) {
+      user->opcode() == HloOpcode::kConditional ||
+      user->opcode() == HloOpcode::kDynamicUpdateSlice) {
     // For HloCallableInstruction, we may overcount here if we will allow
     // a buffer operand not in results.
     //
     // For other case, Without interprocedural analysis, we assume if a buffer
-    // is passed into a while loop, it is written there.
+    // is passed into a while loop or dynamic-update-slice, it is written
+    // there.
     return 1;
   }
+
   if (user->opcode() == HloOpcode::kGetTupleElement &&
       user->tuple_index() == shape_index[0]) {
     return CountWriters(user, shape_index.subspan(1));
@@ -3776,6 +3815,22 @@ absl::Status VerifyBuffers(const HloModule& module, bool layout_sensitive) {
           TF_RETURN_IF_ERROR(VerifyNoBuffersInContext(inst));
         }
         TF_RETURN_IF_ERROR(CheckBufferHasUniqueWriters(inst));
+      } else if (inst->opcode() == HloOpcode::kDynamicUpdateSlice) {
+        if (inst->operand(0)->shape().IsBuffer()) {
+          TF_RETURN_IF_ERROR(CheckBufferHasUniqueWriters(inst));
+          // Operand 1 and following should not be buffers.
+          for (int i = 1; i < inst->operand_count(); ++i) {
+            TF_RETURN_IF_ERROR(
+                VerifyNoBuffers(inst->operand(i)->shape(), inst));
+          }
+          if (!inst->shape().IsBuffer()) {
+            return InvalidArgument(
+                "DynamicUpdateSlice result must be a buffer if operand 0 is a "
+                "buffer");
+          }
+        } else {
+          TF_RETURN_IF_ERROR(VerifyNoBuffersInContext(inst));
+        }
       } else if (inst->opcode() != HloOpcode::kGetTupleElement &&
                  inst->opcode() != HloOpcode::kTuple) {
         TF_RETURN_IF_ERROR(VerifyNoBuffersInContext(inst));

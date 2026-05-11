@@ -29,6 +29,8 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/mesh_and_axis.h"
+#include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/ir/tile_assignment.h"
 
 namespace xla {
@@ -109,7 +111,9 @@ std::unique_ptr<HloSharding> MaybeConvertToV2(const HloSharding& sharding) {
       new_element_ptrs.push_back(MaybeConvertToV2(element));
       changed |= (new_element_ptrs.back() != nullptr);
     }
-    if (!changed) return nullptr;
+    if (!changed) {
+      return nullptr;
+    }
     std::vector<HloSharding> new_elements;
     new_elements.reserve(new_element_ptrs.size());
     for (int i = 0; i < new_element_ptrs.size(); ++i) {
@@ -128,7 +132,9 @@ std::unique_ptr<HloSharding> MaybeConvertToV2(const HloSharding& sharding) {
     return nullptr;
   }
   // Only brute force small number of devices.
-  if (tile.num_elements() > 32 || tile.num_elements() < 2) return nullptr;
+  if (tile.num_elements() > 32 || tile.num_elements() < 2) {
+    return nullptr;
+  }
   const int32_t n = tile.num_elements();
   int32_t remain = n;
   std::vector<int64_t> prime_factors;
@@ -164,13 +170,14 @@ std::unique_ptr<HloSharding> MaybeConvertToV1(const HloSharding& sharding) {
 }
 
 // Converts the sharding to V3 if it's not already V3, nullptr otherwise.
-std::unique_ptr<HloSharding> MaybeConvertToNamed(const HloSharding& sharding) {
+std::unique_ptr<HloSharding> MaybeConvertToNamed(const HloSharding& sharding,
+                                                 int64_t num_devices) {
   if (sharding.IsTuple()) {
     std::vector<std::unique_ptr<HloSharding>> new_element_ptrs;
     new_element_ptrs.reserve(sharding.tuple_elements().size());
     bool changed = false;
     for (const HloSharding& element : sharding.tuple_elements()) {
-      new_element_ptrs.push_back(MaybeConvertToNamed(element));
+      new_element_ptrs.push_back(MaybeConvertToNamed(element, num_devices));
       changed |= (new_element_ptrs.back() != nullptr);
     }
     if (!changed) {
@@ -191,6 +198,23 @@ std::unique_ptr<HloSharding> MaybeConvertToNamed(const HloSharding& sharding) {
   if (sharding.UseNamedShardingLeaf()) {
     return nullptr;
   }
+  if (sharding.IsManual()) {
+    std::vector<int64_t> axes_sizes = {num_devices};
+    std::vector<absl::string_view> axes_names = {"axis_0"};
+    return std::make_unique<HloSharding>(NamedSharding::Manual(
+        Mesh(axes_sizes, axes_names), sharding.metadata()));
+  }
+  if (sharding.IsUnreduced()) {
+    std::vector<int64_t> axes_sizes = {num_devices};
+    std::vector<absl::string_view> axes_names = {"axis_0"};
+    return std::make_unique<HloSharding>(NamedSharding::Unreduced(
+        Mesh(axes_sizes, axes_names), sharding.metadata()));
+  }
+  if (sharding.IsUnknown()) {
+    // Cannot convert unknown sharding to named sharding.
+    return nullptr;
+  }
+  // ToV3Sharding assumes not manual or unreduced.
   return std::make_unique<HloSharding>(HloSharding::ToV3Sharding(sharding));
 }
 
@@ -200,6 +224,9 @@ absl::StatusOr<bool> ShardingFormatPicker::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
+
+  int64_t num_devices = std::max<int64_t>(
+      1, module->config().replica_count() * module->config().num_partitions());
 
   for (HloComputation* computation : module->computations(execution_threads)) {
     auto instructions = computation->MakeInstructionPostOrder();
@@ -217,7 +244,7 @@ absl::StatusOr<bool> ShardingFormatPicker::RunImpl(
           new_sharding = MaybeConvertToV2(sharding);
           break;
         case ShardingType::kNamed:
-          new_sharding = MaybeConvertToNamed(sharding);
+          new_sharding = MaybeConvertToNamed(sharding, num_devices);
           break;
       }
       if (new_sharding) {

@@ -1050,6 +1050,65 @@ TEST_P(HloDataflowAnalysisTest, AsyncOps) {
                   &analysis.GetValueDefinedAt(async_wrapped_instruction, {})));
 }
 
+TEST_P(HloDataflowAnalysisTest, AsyncOpsWithTokenOutput) {
+  // Test that token-typed values are correctly propagated through async
+  // start/update/done. This is the pattern produced when the TPU compiler
+  // outlines host-offloaded custom calls that return tokens.
+  std::string hlo_str = R"(
+  HloModule module
+
+  %async_computation {
+    %p0 = token[] parameter(0)
+    %p1 = f32[] parameter(1)
+    ROOT %custom = token[] custom-call(%p0, %p1), custom_call_target="foo", custom_call_has_side_effect=true
+  }
+
+  ENTRY entry {
+    %tok = token[] after-all()
+    %param = f32[] parameter(0)
+    %start = ((token[], f32[]), token[], u32[]) call-start(%tok, %param), to_apply=%async_computation
+    %update = ((token[], f32[]), token[], u32[]) call-update(%start)
+    ROOT %done = token[] call-done(%update)
+  }
+)";
+  TF_ASSERT_OK_AND_ASSIGN(
+      module_, ParseAndReturnVerifiedModule(hlo_str, GetModuleConfigForTest()));
+
+  bool ssa_form = GetParam();
+  const HloDataflowAnalysis& analysis = RunAnalysis(ssa_form);
+
+  const HloInstruction* tok = FindInstruction(module_.get(), "tok");
+  const HloInstruction* param = FindInstruction(module_.get(), "param");
+  const HloInstruction* start = FindInstruction(module_.get(), "start");
+  const HloInstruction* update = FindInstruction(module_.get(), "update");
+  const HloInstruction* done = FindInstruction(module_.get(), "done");
+  const HloInstruction* custom = FindInstruction(module_.get(), "custom");
+
+  // The token operand should be forwarded to async-start at {0, 0}.
+  EXPECT_THAT(HloValuesAt(start, {0, 0}),
+              UnorderedElementsAre(&analysis.GetValueDefinedAt(tok)));
+  // The f32 operand should be forwarded to async-start at {0, 1}.
+  EXPECT_THAT(HloValuesAt(start, {0, 1}),
+              UnorderedElementsAre(&analysis.GetValueDefinedAt(param)));
+  // The async-wrapped root (custom call producing token) should be
+  // forwarded to async-start at {1}.
+  EXPECT_FALSE(analysis.ValueIsDefinedAt(start, {1}));
+  EXPECT_THAT(HloValuesAt(start, {1}),
+              UnorderedElementsAre(&analysis.GetValueDefinedAt(custom)));
+
+  // The token at {1} should flow through async-update.
+  EXPECT_FALSE(analysis.ValueIsDefinedAt(update, {1}));
+  EXPECT_THAT(HloValuesAt(update, {1}),
+              UnorderedElementsAre(&analysis.GetValueDefinedAt(custom)));
+
+  // The async-done output (token) should contain the custom call's
+  // value. This is the critical check: without the fix, the value set
+  // here would be empty, causing a crash in CopyInsertion.
+  EXPECT_EQ(HloValuesAt(done).size(), 1);
+  EXPECT_THAT(HloValuesAt(done),
+              UnorderedElementsAre(&analysis.GetValueDefinedAt(custom)));
+}
+
 TEST_P(HloDataflowAnalysisTest, AsyncCall) {
   std::string hlo_str = R"(
 HloModule AsyncCall

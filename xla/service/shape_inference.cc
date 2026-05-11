@@ -3336,8 +3336,13 @@ ShapeInference::InferCollectivePermuteDoneShape(const Shape& operand_shape) {
 /* static */ absl::StatusOr<Shape> ShapeInference::InferDynamicUpdateSliceShape(
     const Shape& operand_shape, const Shape& update_shape,
     absl::Span<const Shape> start_index_shapes, bool allow_scalar_indices) {
-  TF_RETURN_IF_ERROR(
-      ExpectArray(operand_shape, "operand of dynamic update slice"));
+  if (!operand_shape.IsArray()) {
+    return InvalidArgument(
+        "Expected array or buffer argument for operand of dynamic update "
+        "slice, "
+        "but got %s.",
+        ShapeUtil::HumanString(operand_shape));
+  }
   TF_RETURN_IF_ERROR(
       ExpectArray(update_shape, "update of dynamic update slice"));
 

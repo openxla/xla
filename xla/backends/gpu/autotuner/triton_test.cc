@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/triton.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <memory>
 #include <set>
 #include <string>
@@ -60,6 +61,7 @@ namespace {
 using absl_testing::IsOk;
 using absl_testing::StatusIs;
 using TritonBackendConfig = AutotuneResult::TritonGemmKey;
+using ::testing::SizeIs;
 using ::tsl::proto_testing::EqualsProto;
 
 const char kHlo[] = R"(
@@ -227,21 +229,6 @@ TEST_F(TritonBackendTest, GetDefaultConfig) {
   EXPECT_THAT(config, absl_testing::IsOk());
 }
 
-TEST_F(TritonBackendTest, GetDefaultConfigReturnsSplitKOne) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHlo));
-  debug_options_.set_xla_gpu_enable_split_k_autotuning(true);
-
-  absl::StatusOr<std::unique_ptr<BackendConfig>> config =
-      backend_.GetDefaultConfig(
-          *(module->entry_computation()->root_instruction()));
-
-  ASSERT_THAT(config, absl_testing::IsOk());
-  TritonBackendConfig triton_config;
-  ASSERT_TRUE(config.value()->UnpackTo(&triton_config));
-  EXPECT_EQ(triton_config.split_k(), 1);
-}
-
 TEST_F(TritonBackendTest, GetDefaultConfigForUnsupportedInstruction) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(kHlo));
@@ -292,32 +279,6 @@ TEST_F(TritonBackendTest, AmpereUsesMoreThanTwoStages) {
                               return false;
                             }
                             return triton_config.num_stages() > 2;
-                          }));
-}
-
-TEST_F(TritonBackendTest, SplitKIsDisabled) {
-  debug_options_.set_xla_gpu_enable_split_k_autotuning(false);
-
-  se::CudaComputeCapability ampere_cap{se::CudaComputeCapability::kAmpere,
-                                       /*minor=*/0};
-  target_config_.device_description.set_gpu_compute_capability(
-      se::GpuComputeCapability{ampere_cap});
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kSimpleGemmFusionHlo));
-
-  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
-      backend_.GetSupportedConfigs(
-          *(module->entry_computation()->root_instruction()));
-  EXPECT_THAT(configs, absl_testing::IsOk());
-
-  EXPECT_TRUE(std::all_of(configs.value().begin(), configs.value().end(),
-                          [](const std::unique_ptr<BackendConfig>& config) {
-                            TritonBackendConfig triton_config;
-                            if (!config->UnpackTo(&triton_config)) {
-                              return false;
-                            }
-                            return triton_config.split_k() == 1;
                           }));
 }
 
@@ -716,41 +677,152 @@ ENTRY e {
   EXPECT_THAT(backend_.Compile(*root, *config), IsOk());
 }
 
-TEST_F(TritonBackendTest, SplitKFloatNormalization) {
-  if (target_config_.device_description.gpu_compute_capability().IsRocm() ||
-      !target_config_.device_description.cuda_compute_capability()
-           .IsAtLeastHopper()) {
-    GTEST_SKIP() << "f8 types are only supported from Hopper onwards.";
+TEST_F(TritonBackendTest, WarpSpecializationWithBitcastWorksCorrectly) {
+  if (target_config_.device_description.gpu_compute_capability().IsRocm()) {
+    GTEST_SKIP() << "Not supported on ROCm.";
   }
-  const char kHlo[] = R"(
+  if (!target_config_.device_description.cuda_compute_capability()
+           .IsAtLeastBlackwell()) {
+    GTEST_SKIP() << "Not supported on pre-Blackwell GPUs.";
+  }
+
+  se::CudaComputeCapability blackwell_cap =
+      se::CudaComputeCapability::B200Accelerated();
+  target_config_.device_description.set_gpu_compute_capability(
+      se::GpuComputeCapability{blackwell_cap});
+  debug_options_.set_xla_gpu_experimental_enable_triton_warp_specialization(
+      true);
+  debug_options_.set_xla_gpu_exhaustive_tiling_search(true);
+
+  const char kHlo[] =
+      R"(
 HloModule module
 
 gemm_fusion_dot_computation {
-  parameter_0 = f8e5m2[256,256]{1,0} parameter(0)
-  parameter_1 = f8e4m3fn[128,256]{1,0} parameter(1)
-  dot1 = f32[256,128]{1,0} dot(parameter_0, parameter_1), lhs_contracting_dims={1}, rhs_contracting_dims={1}
-  ROOT convert2 = f8e5m2[256,128]{1,0} convert(dot1)
+  p1 = bf16[64,448,128]{2,1,0} parameter(1)
+  p0 = bf16[32,64,448]{2,1,0} parameter(0)
+  dot0 = f32[64,128,32]{1,2,0} dot(p1, p0), lhs_batch_dims={0}, lhs_contracting_dims={1}, rhs_batch_dims={1}, rhs_contracting_dims={2}
+  ROOT bitcast0 = f32[64,32,128]{2,1,0} bitcast(dot0)
 }
-ENTRY entry {
-  p0 = f8e5m2[256,256]{1,0} parameter(0)
-  p1 = f8e4m3fn[128,256]{1,0} parameter(1)
-  ROOT r = f8e5m2[256,128]{1,0} fusion(p0, p1), kind=kCustom, calls=gemm_fusion_dot_computation, backend_config={"fusion_backend_config":{"kind":"__triton_gemm"},"force_earliest_schedule":false}
+
+ENTRY entry_computation {
+  p0 = bf16[32,64,448]{2,1,0} parameter(0)
+  p1 = bf16[64,448,128]{2,1,0} parameter(1)
+  ROOT micro_kernel = f32[64,32,128]{2,1,0} fusion(p0, p1), kind=kCustom, calls=gemm_fusion_dot_computation, backend_config={"operation_queue_id":"0","fusion_backend_config":{"kind":"__triton_gemm"},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
 })";
+
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(kHlo));
   HloInstruction* root = module->entry_computation()->root_instruction();
-  AutotuneResult::TritonGemmKey triton_config_proto;
-  triton_config_proto.set_block_m(32);
-  triton_config_proto.set_block_n(64);
-  triton_config_proto.set_block_k(64);
-  triton_config_proto.set_split_k(1);
-  triton_config_proto.set_num_stages(1);
-  triton_config_proto.set_num_warps(4);
-  triton_config_proto.set_num_ctas(1);
-  google::protobuf::Any config;
-  config.PackFrom(triton_config_proto);
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                          backend_.GetSupportedConfigs(*root));
+  for (const auto& config : configs) {
+    TritonBackendConfig triton_config;
+    if (config->UnpackTo(&triton_config) &&
+        triton_config.is_warp_specialization_allowed()) {
+      EXPECT_THAT(backend_.Compile(*root, *config), IsOk());
+    }
+  }
+}
 
-  EXPECT_THAT(backend_.Compile(*root, config), IsOk());
+TEST_F(TritonBackendTest, CostModelOptions_Top) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHlo));
+
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())["top"] =
+      "2";
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+
+  ASSERT_THAT(configs, IsOk());
+  EXPECT_THAT(configs.value(), SizeIs(2));
+}
+
+TEST_F(TritonBackendTest, CostModelOptions_TopFromDefault) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHlo));
+
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())["top"] =
+      "2";
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())
+      ["top_from_default"] = "1";
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+
+  ASSERT_THAT(configs, IsOk());
+  EXPECT_THAT(configs.value(), SizeIs(2));
+}
+
+TEST_F(TritonBackendTest, CostModelOptions_Mixin) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHlo));
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> default_configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+  ASSERT_THAT(default_configs, IsOk());
+  size_t default_size = default_configs.value().size();
+
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())
+      ["mixin"] = "2";
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+
+  ASSERT_THAT(configs, IsOk());
+  EXPECT_THAT(configs.value(), SizeIs(default_size + 2));
+}
+
+TEST_F(TritonBackendTest, CostModelOptions_Filter) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHlo));
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> default_configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+  ASSERT_THAT(default_configs, IsOk());
+
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())
+      ["filter"] = "0.0";
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+
+  ASSERT_THAT(configs, IsOk());
+  EXPECT_LT(configs.value().size(), default_configs.value().size());
+}
+
+TEST_F(TritonBackendTest, CostModelOptions_Combination) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHlo));
+
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())["top"] =
+      "2";
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())
+      ["top_from_default"] = "1";
+  (*debug_options_
+        .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())
+      ["mixin"] = "5";
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+
+  ASSERT_THAT(configs, IsOk());
+  EXPECT_THAT(configs.value(), SizeIs(7));
 }
 
 }  // namespace

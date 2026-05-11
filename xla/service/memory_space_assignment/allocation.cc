@@ -185,7 +185,8 @@ absl::Status Allocation::UpdateUses(HloComputation* computation,
                                     const HloAliasAnalysis& alias_analysis) {
   for (const HloUse& use : uses()) {
     HloInstruction* replacement_instruction = producing_instruction;
-    Shape operand_shape = use.instruction->operand(use.operand_number)->shape();
+    const Shape& operand_shape =
+        use.instruction->operand(use.operand_number)->shape();
     if (operand_shape.IsTuple()) {
       HloInstruction* tuple_inst =
           use.instruction->mutable_operand(use.operand_number);
@@ -438,10 +439,10 @@ std::string ReservedAllocation::ToString() const {
   if (chunk) {
     absl::StrAppend(&memory_space_str, " chunk: ", chunk->ToString());
   }
-  return absl::StrCat(
-      "ReservedAllocation defined in alternate memory defined at ",
-      original_defining_position().ToString(), ", start_time: ", start_time(),
-      ", end_time: ", end_time(), " reserved: ", reserved_);
+  return absl::StrCat("ReservedAllocation defined in ", memory_space_str,
+                      " defined at ", original_defining_position().ToString(),
+                      ", start_time: ", start_time(),
+                      ", end_time: ", end_time(), " reserved: ", reserved_);
 }
 
 bool ReservedAllocation::operator==(const Allocation& other) const {
@@ -1245,8 +1246,7 @@ std::tuple<int64_t, bool, int64_t> GetAllocationSortTuple(
   int64_t scheduled_on_or_before = allocation->start_time();
   int64_t scheduled_on_or_after = allocation->start_time();
   if (allocation->is_copy_allocation()) {
-    auto copy_allocation =
-        tensorflow::down_cast<CopyAllocation*>(allocation.get());
+    auto copy_allocation = absl::down_cast<CopyAllocation*>(allocation.get());
     scheduled_on_or_before = copy_allocation->copy_done_schedule_before();
     scheduled_on_or_after = copy_allocation->copy_start_schedule_after();
   }

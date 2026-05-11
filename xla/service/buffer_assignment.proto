@@ -126,7 +126,9 @@ message BufferAssignmentAlgorithmProto {
     TEMPORAL = 3;
     FAST_MERGE = 4;
     FAST_SPLIT = 5;
+    FAST_MERGE_WITH_FALLBACK = 6;
   }
+  optional Value fallback_algorithm = 1;
 }
 
 message BufferAllocationSliceProto {

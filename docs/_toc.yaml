@@ -51,6 +51,8 @@ toc:
     path: /xla/shapes
   - title: SparseCore
     path: /xla/sparsecore
+  - title: Symbolic expressions and maps
+    path: /xla/symbolic_expression
   - title: Testing HLO passes
     path: /xla/test_hlo_passes
   - title: Tiled layout

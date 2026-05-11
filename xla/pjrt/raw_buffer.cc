@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/device_event.h"
+#include "xla/pjrt/device_event_utils.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/async_value.h"
@@ -40,21 +41,21 @@ std::vector<RegisterRawBufferFactory::FactoryFuncT>& GetFactoryFuncs() {
   return *funcs;
 }
 
-absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
+absl::StatusOr<PjRtRawBufferRef>
 CommonPjRtRawBuffer::RemoveDynamicShapeMetadataIfPresent(
     const xla::Shape& logical_shape) {
   return absl::InvalidArgumentError(absl::StrCat(
       "Dynamic shapes are not supported for ", memory_space()->DebugString()));
 }
 
-absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
-CommonPjRtRawBuffer::Slice(int64_t offset, int64_t size) {
+absl::StatusOr<PjRtRawBufferRef> CommonPjRtRawBuffer::Slice(int64_t offset,
+                                                            int64_t size) {
   TF_ASSIGN_OR_RETURN(auto results, MultiSlice({{offset, size}}));
   return results[0];
 }
 
-absl::StatusOr<std::vector<tsl::RCReference<CommonPjRtRawBuffer>>>
-CommonPjRtRawBuffer::MultiSlice(absl::Span<const SliceInfo> slices) {
+absl::StatusOr<std::vector<PjRtRawBufferRef>> CommonPjRtRawBuffer::MultiSlice(
+    absl::Span<const SliceInfo> slices) {
   return absl::UnimplementedError(absl::StrCat("Slicing is not supported for ",
                                                memory_space()->DebugString()));
 }
@@ -62,7 +63,7 @@ CommonPjRtRawBuffer::MultiSlice(absl::Span<const SliceInfo> slices) {
 void CommonPjRtRawBuffer::ScheduleCopyTo(
     AsyncWorkRunner* async_work_runner,
     std::vector<tsl::RCReference<tsl::AsyncValue>> transfer_dependency_avs,
-    tsl::RCReference<CommonPjRtRawBuffer> dst_raw_buffer,
+    PjRtRawBufferRef dst_raw_buffer,
     tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
     tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
     tsl::AsyncValueRef<bool> allocation_event) {
@@ -88,6 +89,10 @@ void CommonPjRtRawBuffer::ScheduleCopyTo(
                                         std::move(src_usage_event_promise),
                                         std::move(allocation_event));
                });
+}
+
+void CommonPjRtRawBuffer::DecrefAfter(std::vector<PjRtDeviceEventRef> events) {
+  xla::RunWhenReady(events, [this]() { DropRef(); });
 }
 
 absl::StatusOr<tsl::RCReference<PjRtRawBuffer>>

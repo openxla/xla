@@ -27,6 +27,12 @@ extern "C" {
 // Signature for user-provided AndThen callbacks.
 typedef void (*PJRT_DeviceEvent_AndThen)(void* user_arg);
 
+typedef enum {
+  PJRT_DeviceEvent_State_Unavailable = 0,
+  PJRT_DeviceEvent_State_Ready = 1,
+  PJRT_DeviceEvent_State_Error = 2,
+} PJRT_DeviceEvent_State;
+
 struct PJRT_DeviceEvent_FunctionTable {
   size_t struct_size;
   PJRT_Extension_Base* extension_start;
@@ -40,12 +46,26 @@ struct PJRT_DeviceEvent_FunctionTable {
   // The returned string only lives as long as the device_event.
   int (*get_error_if_present)(void* device_event, PJRT_Error_Code* code,
                               const char** message, size_t* message_size);
+  // If not null, the event can be aliased as this event type.
+  // For a single plugin, events should have the same parent type
+  // which allows using them as that type.
+  const struct PJRT_DeviceEvent_FunctionTable* parent;
+  // Gets the current state of the event. Underlying events may have
+  // additional states but they should be mapped to
+  // unavailable, ready, or error.
+  PJRT_DeviceEvent_State (*get_state)(void* device_event);
+  // Opaque platform-specific stream-id. Can be 0 if not supported or unknown.
+  intptr_t (*get_definition_stream)(void* device_event,
+                                    uint64_t* sequence_number);
 };
+
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_DeviceEvent_FunctionTable,
+                          get_definition_stream);
 
 // A PJRT_DeviceEvent is a pair of pointers containing both type information
 // and the actual opaque device event object. See: xla::PjRtDeviceEventRef.
 struct PJRT_DeviceEvent {
-  struct PJRT_DeviceEvent_FunctionTable* vtable;
+  const struct PJRT_DeviceEvent_FunctionTable* vtable;
   void* device_event;
 };
 

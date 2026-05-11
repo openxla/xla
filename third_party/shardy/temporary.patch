@@ -1,445 +1,612 @@
-diff --git a/third_party/llvm/generated.patch b/third_party/llvm/generated.patch
-index c6a2aaa..509398d 100644
---- a/third_party/llvm/generated.patch
-+++ b/third_party/llvm/generated.patch
-@@ -1,293 +1 @@
- Auto generated patch. Do not edit or delete it, even if empty.
--diff -ruN --strip-trailing-cr a/llvm/lib/Transforms/Vectorize/VPlanTransforms.cpp b/llvm/lib/Transforms/Vectorize/VPlanTransforms.cpp
----- a/llvm/lib/Transforms/Vectorize/VPlanTransforms.cpp
--+++ b/llvm/lib/Transforms/Vectorize/VPlanTransforms.cpp
--@@ -5882,21 +5882,26 @@
--         BackedgeVal,
--         match_fn(m_VPInstruction<VPInstruction::ComputeReductionResult>())));
-- 
---    // If IV is an expression to sink, create a new select that tracks the
---    // underlying IV directly and update the backedge value.
---    if (IVOfExpressionToSink) {
---      auto *OrigFindLastSelectR = FindLastSelect->getDefiningRecipe();
---      VPBuilder LoopBuilder(OrigFindLastSelectR);
---      DebugLoc DL = OrigFindLastSelectR->getDebugLoc();
---      VPValue *SelectCond = OrigFindLastSelectR->getOperand(0);
---      if (OrigFindLastSelectR->getOperand(1) == PhiR) {
---        FindLastSelect = LoopBuilder.createSelect(SelectCond, PhiR,
---                                                  IVOfExpressionToSink, DL);
---      } else {
---        assert(OrigFindLastSelectR->getOperand(2) == PhiR &&
---               "PhiR expected as operand 1 or 2");
---        FindLastSelect = LoopBuilder.createSelect(
---            SelectCond, IVOfExpressionToSink, PhiR, DL);
--+    VPValue *NewFindLastSelect = BackedgeVal;
--+    VPValue *SelectCond = Cond;
--+    if (!SentinelVal || IVOfExpressionToSink) {
--+      // When we need to create a new select, normalize the condition so that
--+      // PhiR is the last operand and include the header mask if needed.
--+      DebugLoc DL = FindLastSelect->getDefiningRecipe()->getDebugLoc();
--+      VPBuilder LoopBuilder(FindLastSelect->getDefiningRecipe());
--+      if (FindLastSelect->getDefiningRecipe()->getOperand(1) == PhiR)
--+        SelectCond = LoopBuilder.createNot(SelectCond);
--+
--+      // When tail folding, mask the condition with the header mask to prevent
--+      // propagating poison from inactive lanes in the last vector iteration.
--+      if (HeaderMask)
--+        SelectCond = LoopBuilder.createLogicalAnd(HeaderMask, SelectCond);
--+
--+      if (SelectCond != Cond || IVOfExpressionToSink) {
--+        NewFindLastSelect = LoopBuilder.createSelect(
--+            SelectCond,
--+            IVOfExpressionToSink ? IVOfExpressionToSink : FindLastExpression,
--+            PhiR, DL);
--       }
--     }
-- 
--@@ -5908,8 +5913,9 @@
--                     FastMathFlags());
--     DebugLoc ExitDL = RdxResult->getDebugLoc();
--     VPBuilder MiddleBuilder(RdxResult);
---    VPValue *ReducedIV = MiddleBuilder.createNaryOp(
---        VPInstruction::ComputeReductionResult, FindLastSelect, Flags, ExitDL);
--+    VPValue *ReducedIV =
--+        MiddleBuilder.createNaryOp(VPInstruction::ComputeReductionResult,
--+                                   NewFindLastSelect, Flags, ExitDL);
-- 
--     // If IVOfExpressionToSink is an expression to sink, sink it now.
--     VPValue *VectorRegionExitingVal = ReducedIV;
--@@ -5939,10 +5945,7 @@
--       AnyOfPhi->insertAfter(PhiR);
-- 
--       VPBuilder LoopBuilder(BackedgeVal->getDefiningRecipe());
---      VPValue *AnyOfCond = Cond;
---      if (FindLastSelect->getOperand(1) == PhiR)
---        AnyOfCond = LoopBuilder.createNot(Cond);
---      VPValue *OrVal = LoopBuilder.createOr(AnyOfPhi, AnyOfCond);
--+      VPValue *OrVal = LoopBuilder.createOr(AnyOfPhi, SelectCond);
--       AnyOfPhi->setOperand(1, OrVal);
-- 
--       VPIRFlags OrFlags(RecurKind::Or, /*IsOrdered=*/false,
--@@ -5963,7 +5966,7 @@
-- 
--     auto *NewPhiR = new VPReductionPHIRecipe(
--         cast<PHINode>(PhiR->getUnderlyingInstr()), RecurKind::FindIV, *StartVPV,
---        *FindLastSelect, RdxUnordered{1}, {},
--+        *NewFindLastSelect, RdxUnordered{1}, {},
--         PhiR->hasUsesOutsideReductionChain());
--     NewPhiR->insertBefore(PhiR);
--     PhiR->replaceAllUsesWith(NewPhiR);
--diff -ruN --strip-trailing-cr a/llvm/test/Transforms/LoopVectorize/find-last-iv-sinkable-expr.ll b/llvm/test/Transforms/LoopVectorize/find-last-iv-sinkable-expr.ll
----- a/llvm/test/Transforms/LoopVectorize/find-last-iv-sinkable-expr.ll
--+++ b/llvm/test/Transforms/LoopVectorize/find-last-iv-sinkable-expr.ll
--@@ -73,7 +73,8 @@
-- ; TF-NEXT:    [[TMP1:%.*]] = getelementptr inbounds i64, ptr [[A]], i64 [[INDEX]]
-- ; TF-NEXT:    [[WIDE_MASKED_LOAD:%.*]] = call <4 x i64> @llvm.masked.load.v4i64.p0(ptr align 8 [[TMP1]], <4 x i1> [[TMP0]], <4 x i64> poison)
-- ; TF-NEXT:    [[TMP2:%.*]] = icmp eq <4 x i64> [[WIDE_MASKED_LOAD]], splat (i64 42)
---; TF-NEXT:    [[TMP3]] = select <4 x i1> [[TMP2]], <4 x i64> [[VEC_IND]], <4 x i64> [[VEC_PHI]]
--+; TF-NEXT:    [[TMP9:%.*]] = select <4 x i1> [[TMP0]], <4 x i1> [[TMP2]], <4 x i1> zeroinitializer
--+; TF-NEXT:    [[TMP3]] = select <4 x i1> [[TMP9]], <4 x i64> [[VEC_IND]], <4 x i64> [[VEC_PHI]]
-- ; TF-NEXT:    [[INDEX_NEXT]] = add i64 [[INDEX]], 4
-- ; TF-NEXT:    [[VEC_IND_NEXT]] = add <4 x i64> [[VEC_IND]], splat (i64 4)
-- ; TF-NEXT:    [[TMP4:%.*]] = icmp eq i64 [[INDEX_NEXT]], [[N_VEC]]
--@@ -174,7 +175,8 @@
-- ; TF-NEXT:    [[TMP1:%.*]] = getelementptr inbounds i64, ptr [[A]], i64 [[INDEX]]
-- ; TF-NEXT:    [[WIDE_MASKED_LOAD:%.*]] = call <4 x i64> @llvm.masked.load.v4i64.p0(ptr align 8 [[TMP1]], <4 x i1> [[TMP0]], <4 x i64> poison)
-- ; TF-NEXT:    [[TMP2:%.*]] = icmp eq <4 x i64> [[WIDE_MASKED_LOAD]], splat (i64 42)
---; TF-NEXT:    [[TMP3]] = select <4 x i1> [[TMP2]], <4 x i64> [[VEC_IND]], <4 x i64> [[VEC_PHI]]
--+; TF-NEXT:    [[TMP9:%.*]] = select <4 x i1> [[TMP0]], <4 x i1> [[TMP2]], <4 x i1> zeroinitializer
--+; TF-NEXT:    [[TMP3]] = select <4 x i1> [[TMP9]], <4 x i64> [[VEC_IND]], <4 x i64> [[VEC_PHI]]
-- ; TF-NEXT:    [[INDEX_NEXT]] = add i64 [[INDEX]], 4
-- ; TF-NEXT:    [[VEC_IND_NEXT]] = add <4 x i64> [[VEC_IND]], splat (i64 4)
-- ; TF-NEXT:    [[TMP4:%.*]] = icmp eq i64 [[INDEX_NEXT]], [[N_VEC]]
--@@ -392,7 +394,8 @@
-- ; TF-NEXT:    [[TMP1:%.*]] = getelementptr inbounds i64, ptr [[A]], i64 [[INDEX]]
-- ; TF-NEXT:    [[WIDE_MASKED_LOAD:%.*]] = call <4 x i64> @llvm.masked.load.v4i64.p0(ptr align 8 [[TMP1]], <4 x i1> [[TMP0]], <4 x i64> poison)
-- ; TF-NEXT:    [[TMP2:%.*]] = icmp eq <4 x i64> [[WIDE_MASKED_LOAD]], splat (i64 42)
---; TF-NEXT:    [[TMP3]] = select <4 x i1> [[TMP2]], <4 x i64> [[VEC_IND]], <4 x i64> [[VEC_PHI]]
--+; TF-NEXT:    [[TMP9:%.*]] = select <4 x i1> [[TMP0]], <4 x i1> [[TMP2]], <4 x i1> zeroinitializer
--+; TF-NEXT:    [[TMP3]] = select <4 x i1> [[TMP9]], <4 x i64> [[VEC_IND]], <4 x i64> [[VEC_PHI]]
-- ; TF-NEXT:    [[INDEX_NEXT]] = add i64 [[INDEX]], 4
-- ; TF-NEXT:    [[VEC_IND_NEXT]] = add <4 x i64> [[VEC_IND]], splat (i64 4)
-- ; TF-NEXT:    [[TMP4:%.*]] = icmp eq i64 [[INDEX_NEXT]], [[N_VEC]]
--@@ -513,7 +516,7 @@
-- ; TF:       [[VECTOR_BODY]]:
-- ; TF-NEXT:    [[INDEX:%.*]] = phi i64 [ 0, %[[VECTOR_PH]] ], [ [[INDEX_NEXT:%.*]], %[[PRED_LOAD_CONTINUE8:.*]] ]
-- ; TF-NEXT:    [[VEC_IND:%.*]] = phi <4 x i64> [ <i64 10, i64 12, i64 14, i64 16>, %[[VECTOR_PH]] ], [ [[VEC_IND_NEXT:%.*]], %[[PRED_LOAD_CONTINUE8]] ]
---; TF-NEXT:    [[VEC_PHI:%.*]] = phi <4 x i64> [ zeroinitializer, %[[VECTOR_PH]] ], [ [[TMP31:%.*]], %[[PRED_LOAD_CONTINUE8]] ]
--+; TF-NEXT:    [[VEC_PHI:%.*]] = phi <4 x i64> [ zeroinitializer, %[[VECTOR_PH]] ], [ [[TMP36:%.*]], %[[PRED_LOAD_CONTINUE8]] ]
-- ; TF-NEXT:    [[TMP3:%.*]] = mul i64 [[INDEX]], 2
-- ; TF-NEXT:    [[OFFSET_IDX:%.*]] = add i64 10, [[TMP3]]
-- ; TF-NEXT:    [[BROADCAST_SPLATINSERT1:%.*]] = insertelement <4 x i64> poison, i64 [[INDEX]], i64 0
--@@ -562,13 +565,14 @@
-- ; TF-NEXT:    [[TMP28:%.*]] = phi <4 x i64> [ [[TMP22]], %[[PRED_LOAD_CONTINUE6]] ], [ [[TMP27]], %[[PRED_LOAD_IF7]] ]
-- ; TF-NEXT:    [[TMP29:%.*]] = icmp eq <4 x i64> [[TMP28]], splat (i64 42)
-- ; TF-NEXT:    [[TMP30:%.*]] = add <4 x i64> [[VEC_IND]], splat (i64 100)
---; TF-NEXT:    [[TMP31]] = select <4 x i1> [[TMP29]], <4 x i64> [[TMP30]], <4 x i64> [[VEC_PHI]]
--+; TF-NEXT:    [[TMP31:%.*]] = select <4 x i1> [[TMP29]], <4 x i64> [[TMP30]], <4 x i64> [[VEC_PHI]]
--+; TF-NEXT:    [[TMP36]] = select <4 x i1> [[TMP4]], <4 x i64> [[TMP31]], <4 x i64> [[VEC_PHI]]
-- ; TF-NEXT:    [[INDEX_NEXT]] = add i64 [[INDEX]], 4
-- ; TF-NEXT:    [[VEC_IND_NEXT]] = add nuw nsw <4 x i64> [[VEC_IND]], splat (i64 8)
-- ; TF-NEXT:    [[TMP32:%.*]] = icmp eq i64 [[INDEX_NEXT]], [[N_VEC]]
-- ; TF-NEXT:    br i1 [[TMP32]], label %[[MIDDLE_BLOCK:.*]], label %[[VECTOR_BODY]], !llvm.loop [[LOOP6:![0-9]+]]
-- ; TF:       [[MIDDLE_BLOCK]]:
---; TF-NEXT:    [[TMP33:%.*]] = call i64 @llvm.vector.reduce.umax.v4i64(<4 x i64> [[TMP31]])
--+; TF-NEXT:    [[TMP33:%.*]] = call i64 @llvm.vector.reduce.umax.v4i64(<4 x i64> [[TMP36]])
-- ; TF-NEXT:    [[TMP34:%.*]] = icmp ne i64 [[TMP33]], 0
-- ; TF-NEXT:    [[TMP35:%.*]] = select i1 [[TMP34]], i64 [[TMP33]], i64 -1
-- ; TF-NEXT:    br label %[[DONE:.*]]
--@@ -1213,7 +1217,8 @@
-- ; TF-NEXT:    [[TMP7:%.*]] = getelementptr i64, ptr [[TMP6]], i64 -3
-- ; TF-NEXT:    [[WIDE_MASKED_LOAD8:%.*]] = call <4 x i64> @llvm.masked.load.v4i64.p0(ptr align 8 [[TMP7]], <4 x i1> [[REVERSE]], <4 x i64> poison)
-- ; TF-NEXT:    [[REVERSE9:%.*]] = shufflevector <4 x i64> [[WIDE_MASKED_LOAD8]], <4 x i64> poison, <4 x i32> <i32 3, i32 2, i32 1, i32 0>
---; TF-NEXT:    [[TMP8:%.*]] = icmp sle <4 x i64> [[REVERSE6]], [[REVERSE9]]
--+; TF-NEXT:    [[TMP16:%.*]] = icmp sle <4 x i64> [[REVERSE6]], [[REVERSE9]]
--+; TF-NEXT:    [[TMP8:%.*]] = select <4 x i1> [[TMP2]], <4 x i1> [[TMP16]], <4 x i1> zeroinitializer
-- ; TF-NEXT:    [[TMP9]] = select <4 x i1> [[TMP8]], <4 x i64> [[VEC_IND]], <4 x i64> [[VEC_PHI]]
-- ; TF-NEXT:    [[TMP10]] = or <4 x i1> [[VEC_PHI3]], [[TMP8]]
-- ; TF-NEXT:    [[INDEX_NEXT]] = add i64 [[INDEX]], 4
--@@ -1321,7 +1326,8 @@
-- ; TF-NEXT:    [[TMP1:%.*]] = getelementptr inbounds i64, ptr [[A]], i64 [[INDEX]]
-- ; TF-NEXT:    [[WIDE_MASKED_LOAD:%.*]] = call <4 x i64> @llvm.masked.load.v4i64.p0(ptr align 8 [[TMP1]], <4 x i1> [[TMP0]], <4 x i64> poison)
-- ; TF-NEXT:    [[TMP2:%.*]] = icmp eq <4 x i64> [[WIDE_MASKED_LOAD]], splat (i64 42)
---; TF-NEXT:    [[TMP3]] = select <4 x i1> [[TMP2]], <4 x i64> [[VEC_IND]], <4 x i64> [[VEC_PHI]]
--+; TF-NEXT:    [[TMP9:%.*]] = select <4 x i1> [[TMP0]], <4 x i1> [[TMP2]], <4 x i1> zeroinitializer
--+; TF-NEXT:    [[TMP3]] = select <4 x i1> [[TMP9]], <4 x i64> [[VEC_IND]], <4 x i64> [[VEC_PHI]]
-- ; TF-NEXT:    [[INDEX_NEXT]] = add i64 [[INDEX]], 4
-- ; TF-NEXT:    [[VEC_IND_NEXT]] = add <4 x i64> [[VEC_IND]], splat (i64 4)
-- ; TF-NEXT:    [[TMP4:%.*]] = icmp eq i64 [[INDEX_NEXT]], [[N_VEC]]
--@@ -1424,7 +1430,8 @@
-- ; TF-NEXT:    [[TMP1:%.*]] = getelementptr inbounds i64, ptr [[A]], i64 [[INDEX]]
-- ; TF-NEXT:    [[WIDE_MASKED_LOAD:%.*]] = call <4 x i64> @llvm.masked.load.v4i64.p0(ptr align 8 [[TMP1]], <4 x i1> [[TMP0]], <4 x i64> poison)
-- ; TF-NEXT:    [[TMP2:%.*]] = icmp eq <4 x i64> [[WIDE_MASKED_LOAD]], splat (i64 42)
---; TF-NEXT:    [[TMP3]] = select <4 x i1> [[TMP2]], <4 x i64> [[VEC_IND]], <4 x i64> [[VEC_PHI]]
--+; TF-NEXT:    [[TMP9:%.*]] = select <4 x i1> [[TMP0]], <4 x i1> [[TMP2]], <4 x i1> zeroinitializer
--+; TF-NEXT:    [[TMP3]] = select <4 x i1> [[TMP9]], <4 x i64> [[VEC_IND]], <4 x i64> [[VEC_PHI]]
-- ; TF-NEXT:    [[INDEX_NEXT]] = add i64 [[INDEX]], 4
-- ; TF-NEXT:    [[VEC_IND_NEXT]] = add <4 x i64> [[VEC_IND]], splat (i64 4)
-- ; TF-NEXT:    [[TMP4:%.*]] = icmp eq i64 [[INDEX_NEXT]], [[N_VEC]]
--diff -ruN --strip-trailing-cr a/llvm/test/Transforms/LoopVectorize/iv-select-cmp-decreasing.ll b/llvm/test/Transforms/LoopVectorize/iv-select-cmp-decreasing.ll
----- a/llvm/test/Transforms/LoopVectorize/iv-select-cmp-decreasing.ll
--+++ b/llvm/test/Transforms/LoopVectorize/iv-select-cmp-decreasing.ll
--@@ -330,11 +330,15 @@
-- ; IC4VF4-NEXT:    [[TMP77:%.*]] = select <4 x i1> [[TMP101]], <4 x i16> <i16 7, i16 6, i16 5, i16 4>, <4 x i16> splat (i16 32767)
-- ; IC4VF4-NEXT:    [[TMP70:%.*]] = select <4 x i1> [[TMP102]], <4 x i16> <i16 3, i16 2, i16 1, i16 0>, <4 x i16> splat (i16 32767)
-- ; IC4VF4-NEXT:    [[TMP71:%.*]] = select <4 x i1> [[TMP103]], <4 x i16> <i16 -1, i16 -2, i16 -3, i16 -4>, <4 x i16> splat (i16 32767)
--+; IC4VF4-NEXT:    [[TMP82:%.*]] = select <4 x i1> splat (i1 true), <4 x i16> [[TMP76]], <4 x i16> splat (i16 32767)
--+; IC4VF4-NEXT:    [[TMP83:%.*]] = select <4 x i1> splat (i1 true), <4 x i16> [[TMP77]], <4 x i16> splat (i16 32767)
--+; IC4VF4-NEXT:    [[TMP88:%.*]] = select <4 x i1> splat (i1 true), <4 x i16> [[TMP70]], <4 x i16> splat (i16 32767)
--+; IC4VF4-NEXT:    [[TMP89:%.*]] = select <4 x i1> zeroinitializer, <4 x i16> [[TMP71]], <4 x i16> splat (i16 32767)
-- ; IC4VF4-NEXT:    br label %[[MIDDLE_BLOCK:.*]]
-- ; IC4VF4:       [[MIDDLE_BLOCK]]:
---; IC4VF4-NEXT:    [[RDX_MINMAX:%.*]] = call <4 x i16> @llvm.smin.v4i16(<4 x i16> [[TMP76]], <4 x i16> [[TMP77]])
---; IC4VF4-NEXT:    [[RDX_MINMAX45:%.*]] = call <4 x i16> @llvm.smin.v4i16(<4 x i16> [[RDX_MINMAX]], <4 x i16> [[TMP70]])
---; IC4VF4-NEXT:    [[RDX_MINMAX46:%.*]] = call <4 x i16> @llvm.smin.v4i16(<4 x i16> [[RDX_MINMAX45]], <4 x i16> [[TMP71]])
--+; IC4VF4-NEXT:    [[RDX_MINMAX:%.*]] = call <4 x i16> @llvm.smin.v4i16(<4 x i16> [[TMP82]], <4 x i16> [[TMP83]])
--+; IC4VF4-NEXT:    [[RDX_MINMAX31:%.*]] = call <4 x i16> @llvm.smin.v4i16(<4 x i16> [[RDX_MINMAX]], <4 x i16> [[TMP88]])
--+; IC4VF4-NEXT:    [[RDX_MINMAX46:%.*]] = call <4 x i16> @llvm.smin.v4i16(<4 x i16> [[RDX_MINMAX31]], <4 x i16> [[TMP89]])
-- ; IC4VF4-NEXT:    [[TMP116:%.*]] = call i16 @llvm.vector.reduce.smin.v4i16(<4 x i16> [[RDX_MINMAX46]])
-- ; IC4VF4-NEXT:    [[RDX_SELECT_CMP:%.*]] = icmp ne i16 [[TMP116]], 32767
-- ; IC4VF4-NEXT:    [[RDX_SELECT:%.*]] = select i1 [[RDX_SELECT_CMP]], i16 [[TMP116]], i16 0
--@@ -592,11 +596,15 @@
-- ; IC4VF4-NEXT:    [[TMP77:%.*]] = select <4 x i1> [[TMP101]], <4 x i16> <i16 7, i16 6, i16 5, i16 4>, <4 x i16> splat (i16 32767)
-- ; IC4VF4-NEXT:    [[TMP70:%.*]] = select <4 x i1> [[TMP102]], <4 x i16> <i16 3, i16 2, i16 1, i16 0>, <4 x i16> splat (i16 32767)
-- ; IC4VF4-NEXT:    [[TMP71:%.*]] = select <4 x i1> [[TMP103]], <4 x i16> <i16 -1, i16 -2, i16 -3, i16 -4>, <4 x i16> splat (i16 32767)
--+; IC4VF4-NEXT:    [[TMP82:%.*]] = select <4 x i1> splat (i1 true), <4 x i16> [[TMP76]], <4 x i16> splat (i16 32767)
--+; IC4VF4-NEXT:    [[TMP83:%.*]] = select <4 x i1> splat (i1 true), <4 x i16> [[TMP77]], <4 x i16> splat (i16 32767)
--+; IC4VF4-NEXT:    [[TMP88:%.*]] = select <4 x i1> splat (i1 true), <4 x i16> [[TMP70]], <4 x i16> splat (i16 32767)
--+; IC4VF4-NEXT:    [[TMP89:%.*]] = select <4 x i1> zeroinitializer, <4 x i16> [[TMP71]], <4 x i16> splat (i16 32767)
-- ; IC4VF4-NEXT:    br label %[[MIDDLE_BLOCK:.*]]
-- ; IC4VF4:       [[MIDDLE_BLOCK]]:
---; IC4VF4-NEXT:    [[RDX_MINMAX:%.*]] = call <4 x i16> @llvm.smin.v4i16(<4 x i16> [[TMP76]], <4 x i16> [[TMP77]])
---; IC4VF4-NEXT:    [[RDX_MINMAX45:%.*]] = call <4 x i16> @llvm.smin.v4i16(<4 x i16> [[RDX_MINMAX]], <4 x i16> [[TMP70]])
---; IC4VF4-NEXT:    [[RDX_MINMAX46:%.*]] = call <4 x i16> @llvm.smin.v4i16(<4 x i16> [[RDX_MINMAX45]], <4 x i16> [[TMP71]])
--+; IC4VF4-NEXT:    [[RDX_MINMAX:%.*]] = call <4 x i16> @llvm.smin.v4i16(<4 x i16> [[TMP82]], <4 x i16> [[TMP83]])
--+; IC4VF4-NEXT:    [[RDX_MINMAX31:%.*]] = call <4 x i16> @llvm.smin.v4i16(<4 x i16> [[RDX_MINMAX]], <4 x i16> [[TMP88]])
--+; IC4VF4-NEXT:    [[RDX_MINMAX46:%.*]] = call <4 x i16> @llvm.smin.v4i16(<4 x i16> [[RDX_MINMAX31]], <4 x i16> [[TMP89]])
-- ; IC4VF4-NEXT:    [[TMP116:%.*]] = call i16 @llvm.vector.reduce.smin.v4i16(<4 x i16> [[RDX_MINMAX46]])
-- ; IC4VF4-NEXT:    [[RDX_SELECT_CMP:%.*]] = icmp ne i16 [[TMP116]], 32767
-- ; IC4VF4-NEXT:    [[RDX_SELECT:%.*]] = select i1 [[RDX_SELECT_CMP]], i16 [[TMP116]], i16 0
--diff -ruN --strip-trailing-cr a/llvm/test/Transforms/LoopVectorize/iv-select-cmp-fold-tail.ll b/llvm/test/Transforms/LoopVectorize/iv-select-cmp-fold-tail.ll
----- a/llvm/test/Transforms/LoopVectorize/iv-select-cmp-fold-tail.ll
--+++ b/llvm/test/Transforms/LoopVectorize/iv-select-cmp-fold-tail.ll
--@@ -59,3 +59,80 @@
-- exit:
--   ret i32 %rdx.next
-- }
--+
--+define i64 @select_decreasing_induction_icmp_non_const_start(ptr %a, ptr %b, i64 %rdx.start, i64 %n) {
--+; CHECK-LABEL: define i64 @select_decreasing_induction_icmp_non_const_start(
--+; CHECK-SAME: ptr [[A:%.*]], ptr [[B:%.*]], i64 [[RDX_START:%.*]], i64 [[N:%.*]]) {
--+; CHECK-NEXT:  [[ENTRY:.*:]]
--+; CHECK-NEXT:    [[TMP0:%.*]] = add i64 [[N]], 1
--+; CHECK-NEXT:    [[UMIN:%.*]] = call i64 @llvm.umin.i64(i64 [[N]], i64 1)
--+; CHECK-NEXT:    [[TMP1:%.*]] = sub i64 [[TMP0]], [[UMIN]]
--+; CHECK-NEXT:    br label %[[VECTOR_PH:.*]]
--+; CHECK:       [[VECTOR_PH]]:
--+; CHECK-NEXT:    [[N_RND_UP:%.*]] = add i64 [[TMP1]], 3
--+; CHECK-NEXT:    [[N_MOD_VF:%.*]] = urem i64 [[N_RND_UP]], 4
--+; CHECK-NEXT:    [[N_VEC:%.*]] = sub i64 [[N_RND_UP]], [[N_MOD_VF]]
--+; CHECK-NEXT:    [[TRIP_COUNT_MINUS_1:%.*]] = sub i64 [[TMP1]], 1
--+; CHECK-NEXT:    [[BROADCAST_SPLATINSERT:%.*]] = insertelement <4 x i64> poison, i64 [[TRIP_COUNT_MINUS_1]], i64 0
--+; CHECK-NEXT:    [[BROADCAST_SPLAT:%.*]] = shufflevector <4 x i64> [[BROADCAST_SPLATINSERT]], <4 x i64> poison, <4 x i32> zeroinitializer
--+; CHECK-NEXT:    [[BROADCAST_SPLATINSERT1:%.*]] = insertelement <4 x i64> poison, i64 [[N]], i64 0
--+; CHECK-NEXT:    [[BROADCAST_SPLAT2:%.*]] = shufflevector <4 x i64> [[BROADCAST_SPLATINSERT1]], <4 x i64> poison, <4 x i32> zeroinitializer
--+; CHECK-NEXT:    [[INDUCTION:%.*]] = add nsw <4 x i64> [[BROADCAST_SPLAT2]], <i64 0, i64 -1, i64 -2, i64 -3>
--+; CHECK-NEXT:    br label %[[VECTOR_BODY:.*]]
--+; CHECK:       [[VECTOR_BODY]]:
--+; CHECK-NEXT:    [[INDEX:%.*]] = phi i64 [ 0, %[[VECTOR_PH]] ], [ [[INDEX_NEXT:%.*]], %[[VECTOR_BODY]] ]
--+; CHECK-NEXT:    [[VEC_IND:%.*]] = phi <4 x i64> [ [[INDUCTION]], %[[VECTOR_PH]] ], [ [[VEC_IND_NEXT:%.*]], %[[VECTOR_BODY]] ]
--+; CHECK-NEXT:    [[VEC_PHI:%.*]] = phi <4 x i64> [ splat (i64 9223372036854775807), %[[VECTOR_PH]] ], [ [[TMP52:%.*]], %[[VECTOR_BODY]] ]
--+; CHECK-NEXT:    [[VEC_PHI3:%.*]] = phi <4 x i1> [ zeroinitializer, %[[VECTOR_PH]] ], [ [[TMP50:%.*]], %[[VECTOR_BODY]] ]
--+; CHECK-NEXT:    [[OFFSET_IDX:%.*]] = sub i64 [[N]], [[INDEX]]
--+; CHECK-NEXT:    [[BROADCAST_SPLATINSERT4:%.*]] = insertelement <4 x i64> poison, i64 [[INDEX]], i64 0
--+; CHECK-NEXT:    [[BROADCAST_SPLAT5:%.*]] = shufflevector <4 x i64> [[BROADCAST_SPLATINSERT4]], <4 x i64> poison, <4 x i32> zeroinitializer
--+; CHECK-NEXT:    [[VEC_IV:%.*]] = add <4 x i64> [[BROADCAST_SPLAT5]], <i64 0, i64 1, i64 2, i64 3>
--+; CHECK-NEXT:    [[TMP2:%.*]] = icmp ule <4 x i64> [[VEC_IV]], [[BROADCAST_SPLAT]]
--+; CHECK-NEXT:    [[TMP38:%.*]] = add nsw i64 [[OFFSET_IDX]], -1
--+; CHECK-NEXT:    [[TMP39:%.*]] = getelementptr inbounds i64, ptr [[A]], i64 [[TMP38]]
--+; CHECK-NEXT:    [[TMP5:%.*]] = getelementptr i64, ptr [[TMP39]], i64 -3
--+; CHECK-NEXT:    [[REVERSE:%.*]] = shufflevector <4 x i1> [[TMP2]], <4 x i1> poison, <4 x i32> <i32 3, i32 2, i32 1, i32 0>
--+; CHECK-NEXT:    [[WIDE_MASKED_LOAD:%.*]] = call <4 x i64> @llvm.masked.load.v4i64.p0(ptr align 8 [[TMP5]], <4 x i1> [[REVERSE]], <4 x i64> poison)
--+; CHECK-NEXT:    [[TMP46:%.*]] = shufflevector <4 x i64> [[WIDE_MASKED_LOAD]], <4 x i64> poison, <4 x i32> <i32 3, i32 2, i32 1, i32 0>
--+; CHECK-NEXT:    [[TMP6:%.*]] = getelementptr inbounds i64, ptr [[B]], i64 [[TMP38]]
--+; CHECK-NEXT:    [[TMP7:%.*]] = getelementptr i64, ptr [[TMP6]], i64 -3
--+; CHECK-NEXT:    [[WIDE_MASKED_LOAD8:%.*]] = call <4 x i64> @llvm.masked.load.v4i64.p0(ptr align 8 [[TMP7]], <4 x i1> [[REVERSE]], <4 x i64> poison)
--+; CHECK-NEXT:    [[TMP47:%.*]] = shufflevector <4 x i64> [[WIDE_MASKED_LOAD8]], <4 x i64> poison, <4 x i32> <i32 3, i32 2, i32 1, i32 0>
--+; CHECK-NEXT:    [[TMP48:%.*]] = icmp sgt <4 x i64> [[TMP46]], [[TMP47]]
--+; CHECK-NEXT:    [[TMP49:%.*]] = select <4 x i1> [[TMP2]], <4 x i1> [[TMP48]], <4 x i1> zeroinitializer
--+; CHECK-NEXT:    [[TMP52]] = select <4 x i1> [[TMP49]], <4 x i64> [[VEC_IND]], <4 x i64> [[VEC_PHI]]
--+; CHECK-NEXT:    [[TMP50]] = or <4 x i1> [[VEC_PHI3]], [[TMP49]]
--+; CHECK-NEXT:    [[INDEX_NEXT]] = add i64 [[INDEX]], 4
--+; CHECK-NEXT:    [[VEC_IND_NEXT]] = add nsw <4 x i64> [[VEC_IND]], splat (i64 -4)
--+; CHECK-NEXT:    [[TMP51:%.*]] = icmp eq i64 [[INDEX_NEXT]], [[N_VEC]]
--+; CHECK-NEXT:    br i1 [[TMP51]], label %[[MIDDLE_BLOCK:.*]], label %[[VECTOR_BODY]], !llvm.loop [[LOOP3:![0-9]+]]
--+; CHECK:       [[MIDDLE_BLOCK]]:
--+; CHECK-NEXT:    [[TMP53:%.*]] = call i64 @llvm.vector.reduce.smin.v4i64(<4 x i64> [[TMP52]])
--+; CHECK-NEXT:    [[TMP54:%.*]] = add nsw i64 [[TMP53]], -1
--+; CHECK-NEXT:    [[TMP56:%.*]] = call i1 @llvm.vector.reduce.or.v4i1(<4 x i1> [[TMP50]])
--+; CHECK-NEXT:    [[TMP57:%.*]] = freeze i1 [[TMP56]]
--+; CHECK-NEXT:    [[RDX_SELECT:%.*]] = select i1 [[TMP57]], i64 [[TMP54]], i64 [[RDX_START]]
--+; CHECK-NEXT:    br label %[[EXIT:.*]]
--+; CHECK:       [[EXIT]]:
--+; CHECK-NEXT:    ret i64 [[RDX_SELECT]]
--+;
--+entry:
--+  br label %loop
--+
--+loop:
--+  %iv = phi i64 [ %iv.next, %loop ], [ %n, %entry ]
--+  %rdx = phi i64 [ %cond, %loop ], [ %rdx.start, %entry ]
--+  %iv.next = add nsw i64 %iv, -1
--+  %gep.a.iv = getelementptr inbounds i64, ptr %a, i64 %iv.next
--+  %ld.a = load i64, ptr %gep.a.iv, align 8
--+  %gep.b.iv = getelementptr inbounds i64, ptr %b, i64 %iv.next
--+  %ld.b = load i64, ptr %gep.b.iv, align 8
--+  %cmp.a.b = icmp sgt i64 %ld.a, %ld.b
--+  %cond = select i1 %cmp.a.b, i64 %iv.next, i64 %rdx
--+  %exit.cond = icmp ugt i64 %iv, 1
--+  br i1 %exit.cond, label %loop, label %exit
--+
--+exit:
--+  ret i64 %cond
--+}
 diff --git a/third_party/llvm/workspace.bzl b/third_party/llvm/workspace.bzl
-index f220caa..a8a877a 100644
+index 8b8a1226..bf16ff8f 100644
 --- a/third_party/llvm/workspace.bzl
 +++ b/third_party/llvm/workspace.bzl
 @@ -4,8 +4,8 @@ load("//third_party:repo.bzl", "tf_http_archive")
  
  def repo(name):
      """Imports LLVM."""
--    LLVM_COMMIT = "2cf353b5e8560723409f3f9164bddec76f499963"
--    LLVM_SHA256 = "3a9b33b701b9ebd4110ef795d23be54fb5d762ca4e190480c4a06d71b7aa8064"
-+    LLVM_COMMIT = "19463aab0271572a3e9e2f45ec21014553241c05"
-+    LLVM_SHA256 = "fdc4b645b58f85ee75ddefc4d2725f54b39faaed07e935443ceff21b87acbe5e"
+-    LLVM_COMMIT = "4f40fe10a4dae5405a41d4a47903711de7e0b77d"
+-    LLVM_SHA256 = "015f76315e6270721d837358718ecc7ef8692f8e44442d410262074d91e6d1ea"
++    LLVM_COMMIT = "0e6d57648584c3895abd3021fb8fa2a767146d5a"
++    LLVM_SHA256 = "bbd2acb1760bb6a3566a0ffa272f0828c4f2d8233be1759741023abb73910c44"
  
      tf_http_archive(
          name = name,
 diff --git a/third_party/stablehlo/temporary.patch b/third_party/stablehlo/temporary.patch
-index 8b13789..59857a1 100644
+index 8b137891..98e44999 100644
 --- a/third_party/stablehlo/temporary.patch
 +++ b/third_party/stablehlo/temporary.patch
-@@ -1 +1,127 @@
-+diff --ruN a/stablehlo/stablehlo/tests/ops_stablehlo_quantized.mlir b/stablehlo/stablehlo/tests/ops_stablehlo_quantized.mlir
-+--- stablehlo/stablehlo/tests/ops_stablehlo_quantized.mlir
-++++ stablehlo/stablehlo/tests/ops_stablehlo_quantized.mlir
-+@@ -437,7 +437,7 @@
-+ // -----
-+ 
-+ func.func @negative_clamp_quantization(%arg0: tensor<1x!quant.uniform<ui8:f32:0, {0.1:-30}>>) -> tensor<1x!quant.uniform<ui8:f32:0, {0.1:-30}>> {
-+-  // expected-error-re@+1 {{operand #0 must be ranked tensor of {{.*}}, but got 'tensor<1x!quant.uniform<u8:f32:0, {1.000000e-01:-30}>>'}}
-++  // expected-error-re@+1 {{operand #0 must be ranked tensor of {{.*}}, but got 'tensor<1x!quant.uniform<ui8:f32:0, {1.000000e-01:-30}>>'}}
-+   %0 = "stablehlo.clamp"(%arg0, %arg0, %arg0) : (tensor<1x!quant.uniform<ui8:f32:0, {0.1:-30}>>, tensor<1x!quant.uniform<ui8:f32:0, {0.1:-30}>>, tensor<1x!quant.uniform<ui8:f32:0, {0.1:-30}>>) -> tensor<1x!quant.uniform<ui8:f32:0, {0.1:-30}>>
-+   func.return %0: tensor<1x!quant.uniform<ui8:f32:0, {0.1:-30}>>
+@@ -1 +1,592 @@
++diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h b/stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h
++--- stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h
+++++ stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h
++@@ -163,22 +163,22 @@
++ //////////////////////
++ template <typename T>
++ typename std::enable_if<std::is_floating_point_v<T>,
++-                        std::complex<APFloat>>::type
+++                        mlir::Complex<APFloat>>::type
++ getComplexValue(std::complex<T> value, FloatType floatType) {
++   FloatAttr realAttr = getFloatAttr(value.real(), floatType);
++   FloatAttr imagAttr = getFloatAttr(value.imag(), floatType);
++-  return std::complex<APFloat>(realAttr.getValue(), imagAttr.getValue());
++-}
++-template <typename T>
++-std::complex<APFloat> getComplexValue(T value, FloatType floatType) {
+++  return mlir::Complex<APFloat>(realAttr.getValue(), imagAttr.getValue());
+++}
+++template <typename T>
+++mlir::Complex<APFloat> getComplexValue(T value, FloatType floatType) {
++   FloatAttr realAttr = getFloatAttr(value, floatType);
++-  return std::complex<APFloat>(realAttr.getValue(), toAPFloat(0.0, floatType));
++-}
++-template <typename T>
++-SmallVector<std::complex<APFloat>> getComplexValues(ArrayRef<T> values,
+++  return mlir::Complex<APFloat>(realAttr.getValue(), toAPFloat(0.0, floatType));
+++}
+++template <typename T>
+++SmallVector<mlir::Complex<APFloat>> getComplexValues(ArrayRef<T> values,
++                                                     FloatType floatType) {
++   return llvm::to_vector(
++-      llvm::map_range(values, [&](T value) -> std::complex<APFloat> {
+++      llvm::map_range(values, [&](T value) -> mlir::Complex<APFloat> {
++         return getComplexValue(value, floatType);
++       }));
 + }
-+@@ -888,7 +888,7 @@
-+ // -----
++@@ -225,7 +225,7 @@
++           llvm::report_fatal_error(
++               "makeConstant with non-float complex type is unsupported.");
 + 
-+ func.func @illegal_storage_type_for_quantized_element_type(%arg0: tensor<4x!quant.uniform<si8:f32, 1.000000e+00>>) -> tensor<4xf32> {
-+-  // expected-error-re@+1 {{operand #0 must be ranked tensor of {{.*}}, but got 'tensor<4x!quant.uniform<i8:f32, 1.000000e+00>>}}
-++  // expected-error-re@+1 {{operand #0 must be ranked tensor of {{.*}}, but got 'tensor<4x!quant.uniform<si8:f32, 1.000000e+00>>}}
-+   %0 = "stablehlo.uniform_dequantize"(%arg0) : (tensor<4x!quant.uniform<si8:f32, 1.000000e+00>>) -> tensor<4xf32>
-+   func.return %0 : tensor<4xf32>
++-        std::complex<APFloat> complexValue =
+++        mlir::Complex<APFloat> complexValue =
++             detail::getComplexValue(value, floatType);
++         return DenseElementsAttr::get(tensorType, complexValue);
++       })
++@@ -262,7 +262,7 @@
++           llvm::report_fatal_error(
++               "makeConstant with non-float complex type is unsupported.");
++ 
++-        SmallVector<std::complex<APFloat>> complexValues =
+++        SmallVector<mlir::Complex<APFloat>> complexValues =
++             detail::getComplexValues(values, floatType);
++         return DenseElementsAttr::get(tensorType, complexValues);
++       })
++diff --ruN a/stablehlo/stablehlo/reference/Element.cpp b/stablehlo/stablehlo/reference/Element.cpp
++--- stablehlo/stablehlo/reference/Element.cpp
+++++ stablehlo/stablehlo/reference/Element.cpp
++@@ -120,7 +120,7 @@
++     return convert(type, floatFn(el.getFloatValue().convertToDouble()));
++ 
++   if (isSupportedComplexType(type))
++-    return convert(type, complexFn(std::complex<double>(
+++    return convert(type, complexFn(mlir::Complex<double>(
++                              el.getComplexValue().real().convertToDouble(),
++                              el.getComplexValue().imag().convertToDouble())));
++ 
++@@ -144,10 +144,10 @@
++ 
++   if (isSupportedComplexType(type)) {
++     return convert(
++-        type, complexFn(std::complex<double>(
+++        type, complexFn(mlir::Complex<double>(
++                             lhs.getComplexValue().real().convertToDouble(),
++                             lhs.getComplexValue().imag().convertToDouble()),
++-                        std::complex<double>(
+++                        mlir::Complex<double>(
++                             rhs.getComplexValue().real().convertToDouble(),
++                             rhs.getComplexValue().imag().convertToDouble())));
++   }
++@@ -223,7 +223,7 @@
++   value_ = value;
 + }
-+diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_legalize_qdq_to_quantized_op.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_legalize_qdq_to_quantized_op.mlir
-+--- stablehlo/stablehlo/tests/transforms/stablehlo_legalize_qdq_to_quantized_op.mlir
-++++ stablehlo/stablehlo/tests/transforms/stablehlo_legalize_qdq_to_quantized_op.mlir
-+@@ -3,8 +3,8 @@
-+ // -----
 + 
-+ // CHECK-LABEL @compose_quantized_abs_op
-+-// CHECK:      %[[abs0:.*]] = stablehlo.abs %arg0 : tensor<16x16x!quant.uniform<u8:f32, 3.400000e+01:16>>
-+-// CHECK-NEXT: return %[[abs0]] : tensor<16x16x!quant.uniform<u8:f32, 3.400000e+01:16>>
-++// CHECK:      %[[abs0:.*]] = stablehlo.abs %arg0 : tensor<16x16x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT: return %[[abs0]] : tensor<16x16x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-+ func.func @compose_quantized_abs_op(%arg0: tensor<16x16x!quant.uniform<ui8:f32, 34.0:16>>) -> tensor<16x16x!quant.uniform<ui8:f32, 34.0:16>> {
-+     %0 = stablehlo.uniform_dequantize %arg0 : (tensor<16x16x!quant.uniform<ui8:f32, 34.0:16>>) -> tensor<16x16xf32>
-+     %1 = stablehlo.abs %0 : tensor<16x16xf32>
-+@@ -15,8 +15,8 @@
-+ // -----
++-Element::Element(Type type, std::complex<APFloat> value) {
+++Element::Element(Type type, mlir::Complex<APFloat> value) {
++   if (!isSupportedComplexType(type))
++     report_fatal_error(invalidArgument("Unsupported element type: %s",
++                                        debugString(type).c_str()));
++@@ -264,12 +264,12 @@
++   return std::get<APFloat>(value_);
++ }
 + 
-+ // CHECK-LABEL @failed_to_match_uniform_quant_op_operand_not_defined_by_op
-+-// CHECK:       %0 = stablehlo.uniform_quantize %arg0 : (tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<u8:f32, 3.400000e+01:16>>
-+-// CHECK-NEXT:  return %0 : tensor<16x16x!quant.uniform<u8:f32, 3.400000e+01:16>>
-++// CHECK:       %0 = stablehlo.uniform_quantize %arg0 : (tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:  return %0 : tensor<16x16x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-+ func.func @failed_to_match_uniform_quant_op_operand_not_defined_by_op(%arg0: tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<ui8:f32, 34.0:16>> {
-+   %0 = stablehlo.uniform_quantize %arg0 : (tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<ui8:f32, 34.0:16>>
-+   func.return %0 : tensor<16x16x!quant.uniform<ui8:f32, 34.0:16>>
-+@@ -30,8 +30,8 @@
-+ // CHECK-NEXT:    %2 = stablehlo.add %arg1, %arg2 : tensor<f32>
-+ // CHECK-NEXT:    stablehlo.return %2 : tensor<f32>
-+ // CHECK-NEXT:    }) : (tensor<4xf32>) -> tensor<4xf32>
-+-// CHECK-NEXT:  %1 = stablehlo.uniform_quantize %0 : (tensor<4xf32>) -> tensor<4x!quant.uniform<u8:f32, 3.400000e+01:16>>
-+-// CHECK-NEXT:  return %1 : tensor<4x!quant.uniform<u8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:  %1 = stablehlo.uniform_quantize %0 : (tensor<4xf32>) -> tensor<4x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:  return %1 : tensor<4x!quant.uniform<ui8:f32, 3.400000e+01:16>>
++-std::complex<APFloat> Element::getComplexValue() const {
+++mlir::Complex<APFloat> Element::getComplexValue() const {
++   if (!isSupportedComplexType(type_))
++     llvm::report_fatal_error("Element is not a complex value");
 + 
-+ func.func @failed_to_match_op_with_region(%operand0 : tensor<4xf32>) -> (tensor<4x!quant.uniform<ui8:f32, 34.0:16>>) {
-+   %0 = stablehlo.uniform_quantize %operand0 : (tensor<4xf32>) -> tensor<4x!quant.uniform<ui8:f32, 34.0:16>>
-+@@ -51,13 +51,13 @@
-+ // -----
++   auto floatPair = std::get<std::pair<APFloat, APFloat>>(value_);
++-  return std::complex<APFloat>(floatPair.first, floatPair.second);
+++  return mlir::Complex<APFloat>(floatPair.first, floatPair.second);
++ }
 + 
-+ // CHECK-LABEL failed_to_match_varidic_op
-+-// CHECK:       %0 = stablehlo.uniform_quantize %arg0 : (tensor<8x2xf32>) -> tensor<8x2x!quant.uniform<u8:f32, 3.400000e+01:16>>
-+-// CHECK-NEXT:  %1 = stablehlo.uniform_dequantize %0 : (tensor<8x2x!quant.uniform<u8:f32, 3.400000e+01:16>>) -> tensor<8x2xf32>
-+-// CHECK-NEXT:  %2 = stablehlo.uniform_quantize %arg1 : (tensor<2x2xf32>) -> tensor<2x2x!quant.uniform<u8:f32, 3.400000e+01:16>>
-+-// CHECK-NEXT:  %3 = stablehlo.uniform_dequantize %2 : (tensor<2x2x!quant.uniform<u8:f32, 3.400000e+01:16>>) -> tensor<2x2xf32>
-++// CHECK:       %0 = stablehlo.uniform_quantize %arg0 : (tensor<8x2xf32>) -> tensor<8x2x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:  %1 = stablehlo.uniform_dequantize %0 : (tensor<8x2x!quant.uniform<ui8:f32, 3.400000e+01:16>>) -> tensor<8x2xf32>
-++// CHECK-NEXT:  %2 = stablehlo.uniform_quantize %arg1 : (tensor<2x2xf32>) -> tensor<2x2x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:  %3 = stablehlo.uniform_dequantize %2 : (tensor<2x2x!quant.uniform<ui8:f32, 3.400000e+01:16>>) -> tensor<2x2xf32>
-+ // CHECK-NEXT:  %4:2 = "stablehlo.all_gather"(%1, %3) {{.*}} : (tensor<8x2xf32>, tensor<2x2xf32>) -> (tensor<8x8xf32>, tensor<2x4xf32>)
-+-// CHECK-NEXT:  %5 = stablehlo.uniform_quantize %4#0 : (tensor<8x8xf32>) -> tensor<8x8x!quant.uniform<u8:f32, 3.400000e+01:16>>
-+-// CHECK-NEXT:  return %5, %4#1 : tensor<8x8x!quant.uniform<u8:f32, 3.400000e+01:16>>, tensor<2x4xf32>
-++// CHECK-NEXT:  %5 = stablehlo.uniform_quantize %4#0 : (tensor<8x8xf32>) -> tensor<8x8x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:  return %5, %4#1 : tensor<8x8x!quant.uniform<ui8:f32, 3.400000e+01:16>>, tensor<2x4xf32>
-+ func.func @failed_to_match_varidic_op(%arg0: tensor<8x2xf32>, %arg1: tensor<2x2xf32>) -> (tensor<8x8x!quant.uniform<ui8:f32, 34.0:16>>, tensor<2x4xf32>) {
-+   %0 = stablehlo.uniform_quantize %arg0 : (tensor<8x2xf32>) -> tensor<8x2x!quant.uniform<ui8:f32, 34.0:16>>
-+   %1 = stablehlo.uniform_dequantize %0 : (tensor<8x2x!quant.uniform<ui8:f32, 34.0:16>>) -> tensor<8x2xf32>
-+@@ -75,12 +75,12 @@
-+ // -----
++ APInt Element::toBits() const {
++@@ -328,8 +328,8 @@
++       [](APFloat lhs, APFloat rhs) -> APFloat {
++         llvm::report_fatal_error("float & float is unsupported");
++       },
++-      [](std::complex<APFloat> lhs,
++-         std::complex<APFloat> rhs) -> std::complex<APFloat> {
+++      [](mlir::Complex<APFloat> lhs,
+++         mlir::Complex<APFloat> rhs) -> mlir::Complex<APFloat> {
++         llvm::report_fatal_error("complex & complex is unsupported");
++       });
++ }
++@@ -339,11 +339,11 @@
++       *this, other, [](APInt lhs, APInt rhs) { return lhs * rhs; },
++       [](bool lhs, bool rhs) -> bool { return lhs & rhs; },
++       [](APFloat lhs, APFloat rhs) { return lhs * rhs; },
++-      [](std::complex<APFloat> lhs, std::complex<APFloat> rhs) {
++-        // TODO(#226): Use std::complex::operator*
+++      [](mlir::Complex<APFloat> lhs, mlir::Complex<APFloat> rhs) {
+++        // TODO(#226): Use mlir::Complex::operator*
++         auto resultReal = lhs.real() * rhs.real() - lhs.imag() * rhs.imag();
++         auto resultImag = lhs.real() * rhs.imag() + lhs.imag() * rhs.real();
++-        return std::complex<APFloat>(resultReal, resultImag);
+++        return mlir::Complex<APFloat>(resultReal, resultImag);
++       });
++ }
 + 
-+ // CHECK-LABEL @failed_to_match_operand_of_compute_op_already_quantized
-+-// CHECK:        %0 = stablehlo.uniform_quantize %arg0 : (tensor<1x8x8x207xf32>) -> tensor<1x8x8x207x!quant.uniform<u8:f32, 3.400000e+01:16>>
-+-// CHECK-NEXT:   %1 = stablehlo.uniform_dequantize %0 : (tensor<1x8x8x207x!quant.uniform<u8:f32, 3.400000e+01:16>>) -> tensor<1x8x8x207xf32>
-++// CHECK:        %0 = stablehlo.uniform_quantize %arg0 : (tensor<1x8x8x207xf32>) -> tensor<1x8x8x207x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:   %1 = stablehlo.uniform_dequantize %0 : (tensor<1x8x8x207x!quant.uniform<ui8:f32, 3.400000e+01:16>>) -> tensor<1x8x8x207xf32>
-+ // CHECK-NEXT:   %2 = stablehlo.abs %arg1 : tensor<3x3x207x16x!quant.uniform<i8:f32, 5.000000e+00:20>>
-+ // CHECK-NEXT:   %3 = stablehlo.convolution(%1, %2) {{.*}} : (tensor<1x8x8x207xf32>, tensor<3x3x207x16x!quant.uniform<i8:f32, 5.000000e+00:20>>) -> tensor<1x8x8x16xf32>
-+-// CHECK-NEXT:   %4 = stablehlo.uniform_quantize %3 : (tensor<1x8x8x16xf32>) -> tensor<1x8x8x16x!quant.uniform<u8:f32, 3.400000e+01:16>>
-+-// CHECK-NEXT:   return %4 : tensor<1x8x8x16x!quant.uniform<u8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:   %4 = stablehlo.uniform_quantize %3 : (tensor<1x8x8x16xf32>) -> tensor<1x8x8x16x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:   return %4 : tensor<1x8x8x16x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-+ func.func @failed_to_match_operand_of_compute_op_already_quantized(%arg0: tensor<1x8x8x207xf32>, %arg1: tensor<3x3x207x16x!quant.uniform<i8:f32, 5.0:20>>) -> tensor<1x8x8x16x!quant.uniform<ui8:f32, 34.0:16>> {
-+     %0 = stablehlo.uniform_quantize %arg0 : (tensor<1x8x8x207xf32>) -> tensor<1x8x8x207x!quant.uniform<ui8:f32, 34.0:16>>
-+     %1 = stablehlo.uniform_dequantize %0 : (tensor<1x8x8x207x!quant.uniform<ui8:f32, 34.0:16>>) -> tensor<1x8x8x207xf32>
-+@@ -97,11 +97,11 @@
-+ // -----
++@@ -352,11 +352,11 @@
++       *this, other, [](APInt lhs, APInt rhs) { return lhs + rhs; },
++       [](bool lhs, bool rhs) -> bool { return lhs | rhs; },
++       [](APFloat lhs, APFloat rhs) { return lhs + rhs; },
++-      [](std::complex<APFloat> lhs, std::complex<APFloat> rhs) {
++-        // TODO(#226): Use std::complex::operator+
+++      [](mlir::Complex<APFloat> lhs, mlir::Complex<APFloat> rhs) {
+++        // TODO(#226): Use mlir::Complex::operator+
++         auto resultReal = lhs.real() + rhs.real();
++         auto resultImag = lhs.imag() + rhs.imag();
++-        return std::complex<APFloat>(resultReal, resultImag);
+++        return mlir::Complex<APFloat>(resultReal, resultImag);
++       });
++ }
 + 
-+ // CHECK-LABEL @failed_to_match_operand_not_defined_by_op
-+-// CHECK:       %0 = stablehlo.uniform_quantize %arg1 : (tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<u8:f32, 3.400000e+01:16>>
-+-// CHECK-NEXT:  %1 = stablehlo.uniform_dequantize %0 : (tensor<16x16x!quant.uniform<u8:f32, 3.400000e+01:16>>) -> tensor<16x16xf32>
-++// CHECK:       %0 = stablehlo.uniform_quantize %arg1 : (tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:  %1 = stablehlo.uniform_dequantize %0 : (tensor<16x16x!quant.uniform<ui8:f32, 3.400000e+01:16>>) -> tensor<16x16xf32>
-+ // CHECK-NEXT:  %2 = stablehlo.add %arg0, %1 : tensor<16x16xf32>
-+-// CHECK-NEXT:  %3 = stablehlo.uniform_quantize %2 : (tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<u8:f32, 3.400000e+01:16>>
-+-// CHECK-NEXT:  return %3 : tensor<16x16x!quant.uniform<u8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:  %3 = stablehlo.uniform_quantize %2 : (tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:  return %3 : tensor<16x16x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-+ func.func @failed_to_match_operand_not_defined_by_op(%arg0: tensor<16x16xf32>, %arg1: tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<ui8:f32, 34.0:16>> {
-+     %1 = stablehlo.uniform_quantize %arg1 : (tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<ui8:f32, 34.0:16>>
-+     %2 = stablehlo.uniform_dequantize %1 : (tensor<16x16x!quant.uniform<ui8:f32, 34.0:16>>) -> tensor<16x16xf32>
-+@@ -114,11 +114,11 @@
++@@ -367,7 +367,7 @@
++         llvm::report_fatal_error("-bool is unsupported");
++       },
++       [&](APFloat val) { return -val; },
++-      [](std::complex<APFloat> val) { return -val; });
+++      [](mlir::Complex<APFloat> val) { return -val; });
++ }
 + 
-+ // CHECK-LABEL @failed_to_match_defining_op_is_not_a_uniform_dequantized_op
-+ // CHECK:       %0 = stablehlo.abs %arg0 : tensor<16x16xf32>
-+-// CHECK-NEXT:  %1 = stablehlo.uniform_quantize %arg1 : (tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<u8:f32, 3.400000e+01:16>>
-+-// CHECK-NEXT:  %2 = stablehlo.uniform_dequantize %1 : (tensor<16x16x!quant.uniform<u8:f32, 3.400000e+01:16>>) -> tensor<16x16xf32>
-++// CHECK-NEXT:  %1 = stablehlo.uniform_quantize %arg1 : (tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:  %2 = stablehlo.uniform_dequantize %1 : (tensor<16x16x!quant.uniform<ui8:f32, 3.400000e+01:16>>) -> tensor<16x16xf32>
-+ // CHECK-NEXT:  %3 = stablehlo.add %0, %2 : tensor<16x16xf32>
-+-// CHECK-NEXT:  %4 = stablehlo.uniform_quantize %3 : (tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<u8:f32, 3.400000e+01:16>>
-+-// CHECK-NEXT:  return %4 : tensor<16x16x!quant.uniform<u8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:  %4 = stablehlo.uniform_quantize %3 : (tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-++// CHECK-NEXT:  return %4 : tensor<16x16x!quant.uniform<ui8:f32, 3.400000e+01:16>>
-+ func.func @failed_to_match_defining_op_is_not_a_uniform_dequantized_op(%arg0: tensor<16x16xf32>, %arg1: tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<ui8:f32, 34.0:16>> {
-+     %0 = stablehlo.abs %arg0 : tensor<16x16xf32>
-+     %1 = stablehlo.uniform_quantize %arg1 : (tensor<16x16xf32>) -> tensor<16x16x!quant.uniform<ui8:f32, 34.0:16>>
++ Element Element::operator-(const Element &other) const {
++@@ -377,11 +377,11 @@
++         llvm::report_fatal_error("bool - bool is unsupported");
++       },
++       [](APFloat lhs, APFloat rhs) { return lhs - rhs; },
++-      [](std::complex<APFloat> lhs, std::complex<APFloat> rhs) {
++-        // TODO(#226): Use std::complex::operator-
+++      [](mlir::Complex<APFloat> lhs, mlir::Complex<APFloat> rhs) {
+++        // TODO(#226): Use mlir::Complex::operator-
++         auto resultReal = lhs.real() - rhs.real();
++         auto resultImag = lhs.imag() - rhs.imag();
++-        return std::complex<APFloat>(resultReal, resultImag);
+++        return mlir::Complex<APFloat>(resultReal, resultImag);
++       });
++ }
++ 
++@@ -410,20 +410,20 @@
++   }
++ 
++   if (isSupportedComplexType(type)) {
++-    // TODO(#226): Use std::complex::operator/
+++    // TODO(#226): Use mlir::Complex::operator/
++     auto lhsVal = lhs.getComplexValue();
++     auto rhsVal = rhs.getComplexValue();
++     const llvm::fltSemantics &elSemantics = lhsVal.real().getSemantics();
++-    auto resultVal = std::complex<double>(lhsVal.real().convertToDouble(),
++-                                          lhsVal.imag().convertToDouble()) /
++-                     std::complex<double>(rhsVal.real().convertToDouble(),
++-                                          rhsVal.imag().convertToDouble());
+++    auto resultVal = mlir::Complex<double>(lhsVal.real().convertToDouble(),
+++                                           lhsVal.imag().convertToDouble()) /
+++                     mlir::Complex<double>(rhsVal.real().convertToDouble(),
+++                                           rhsVal.imag().convertToDouble());
++     bool roundingErr;
++     APFloat resultReal(resultVal.real());
++     resultReal.convert(elSemantics, APFloat::rmNearestTiesToEven, &roundingErr);
++     APFloat resultImag(resultVal.imag());
++     resultImag.convert(elSemantics, APFloat::rmNearestTiesToEven, &roundingErr);
++-    return Element(type, std::complex<APFloat>(resultReal, resultImag));
+++    return Element(type, mlir::Complex<APFloat>(resultReal, resultImag));
++   }
++ 
++   report_fatal_error(invalidArgument("Unsupported element type: %s",
++@@ -546,8 +546,8 @@
++       [](APFloat lhs, APFloat rhs) -> APFloat {
++         llvm::report_fatal_error("float ^ float is unsupported");
++       },
++-      [](std::complex<APFloat> lhs,
++-         std::complex<APFloat> rhs) -> std::complex<APFloat> {
+++      [](mlir::Complex<APFloat> lhs,
+++         mlir::Complex<APFloat> rhs) -> mlir::Complex<APFloat> {
++         llvm::report_fatal_error("complex ^ complex is unsupported");
++       });
++ }
++@@ -559,8 +559,8 @@
++       [](APFloat lhs, APFloat rhs) -> APFloat {
++         llvm::report_fatal_error("float | float is unsupported");
++       },
++-      [](std::complex<APFloat> lhs,
++-         std::complex<APFloat> rhs) -> std::complex<APFloat> {
+++      [](mlir::Complex<APFloat> lhs,
+++         mlir::Complex<APFloat> rhs) -> mlir::Complex<APFloat> {
++         llvm::report_fatal_error("complex | complex is unsupported");
++       });
++ }
++@@ -577,7 +577,7 @@
++       [](APFloat val) -> APFloat {
++         llvm::report_fatal_error("~float is unsupported");
++       },
++-      [](std::complex<APFloat> val) -> std::complex<APFloat> {
+++      [](mlir::Complex<APFloat> val) -> mlir::Complex<APFloat> {
++         llvm::report_fatal_error("~complex is unsupported");
++       });
++ }
++@@ -597,7 +597,7 @@
++ 
++   if (isSupportedComplexType(type)) {
++     auto elVal = el.getComplexValue();
++-    auto resultVal = std::abs(std::complex<double>(
+++    auto resultVal = std::abs(mlir::Complex<double>(
++         elVal.real().convertToDouble(), elVal.imag().convertToDouble()));
++     return convert(cast<ComplexType>(type).getElementType(), resultVal);
++   }
++@@ -642,7 +642,7 @@
++ 
++   if (isSupportedComplexType(type)) {
++     // atan2(y, x) = -i * log((x + i * y) / sqrt(x**2+y**2))
++-    auto i = convert(type, std::complex<double>(0.0, 1.0));
+++    auto i = convert(type, mlir::Complex<double>(0.0, 1.0));
++     return -i * log((e2 + i * e1) / sqrt(e2 * e2 + e1 * e1));
++   }
++ 
++@@ -699,11 +699,11 @@
++ Element cbrt(const Element &el) {
++   return mapWithUpcastToDouble(
++       el, [](double e) { return std::cbrt(e); },
++-      [](std::complex<double> e) {
+++      [](mlir::Complex<double> e) {
++         auto theta = std::atan2(e.imag(), e.real()) / 3.0;
++         return std::pow(std::pow(e.real(), 2.0) + std::pow(e.imag(), 2.0),
++                         1.0 / 6.0) *
++-               std::complex<double>(std::cos(theta), std::sin(theta));
+++               mlir::Complex<double>(std::cos(theta), std::sin(theta));
++       });
++ }
++ 
++@@ -716,8 +716,8 @@
++ Element complex(const Element &e1, const Element &e2) {
++   auto complexType = ComplexType::get(e1.getType());
++   if (isSupportedComplexType(complexType))
++-    return Element(complexType, std::complex<APFloat>(e1.getFloatValue(),
++-                                                      e2.getFloatValue()));
+++    return Element(complexType, mlir::Complex<APFloat>(e1.getFloatValue(),
+++                                                       e2.getFloatValue()));
++   report_fatal_error(invalidArgument("Unsupported element type: %s",
++                                      debugString(complexType).c_str()));
++ }
++@@ -791,7 +791,7 @@
++     return Element(type, value);
++   }
++   if (isSupportedComplexType(type))
++-    return convert(type, std::complex<APFloat>(value, APFloat(0.0)));
+++    return convert(type, mlir::Complex<APFloat>(value, APFloat(0.0)));
++   report_fatal_error(invalidArgument("Unsupported element type: %s",
++                                      debugString(type).c_str()));
++ }
++@@ -800,20 +800,20 @@
++   return convert(type, APFloat(value));
++ }
++ 
++-Element convert(Type type, std::complex<APFloat> value) {
+++Element convert(Type type, mlir::Complex<APFloat> value) {
++   if (isSupportedComplexType(type)) {
++     auto elementType = cast<ComplexType>(type).getElementType();
++     auto realElement = convert(elementType, value.real());
++     auto imagElement = convert(elementType, value.imag());
++-    return Element(type, std::complex<APFloat>(realElement.getFloatValue(),
++-                                               imagElement.getFloatValue()));
+++    return Element(type, mlir::Complex<APFloat>(realElement.getFloatValue(),
+++                                                imagElement.getFloatValue()));
++   }
++   return convert(type, value.real());
++ }
++ 
++-Element convert(Type type, std::complex<double> value) {
++-  return convert(type, std::complex<APFloat>(APFloat(value.real()),
++-                                             APFloat(value.imag())));
+++Element convert(Type type, mlir::Complex<double> value) {
+++  return convert(type, mlir::Complex<APFloat>(APFloat(value.real()),
+++                                              APFloat(value.imag())));
++ }
++ 
++ Element getZeroValueOfType(Type type) {
++@@ -825,7 +825,7 @@
++   if (isSupportedFloatType(type))
++     return convert(type, static_cast<APFloat>(0.0));
++   if (isSupportedComplexType(type))
++-    return convert(type, std::complex<APFloat>(APFloat(0.0), APFloat(0.0)));
+++    return convert(type, mlir::Complex<APFloat>(APFloat(0.0), APFloat(0.0)));
++   report_fatal_error(invalidArgument("Unsupported element type: %s",
++                                      debugString(type).c_str()));
++ }
++@@ -833,14 +833,14 @@
++ Element exponential(const Element &el) {
++   return mapWithUpcastToDouble(
++       el, [](double e) { return std::exp(e); },
++-      [](std::complex<double> e) { return std::exp(e); });
+++      [](mlir::Complex<double> e) { return std::exp(e); });
++ }
++ 
++ Element exponentialMinusOne(const Element &el) {
++   return mapWithUpcastToDouble(
++       el, [](double e) { return std::expm1(e); },
++-      [](std::complex<double> e) {
++-        return std::exp(e) - std::complex<double>(1.0, 0.0);
+++      [](mlir::Complex<double> e) {
+++        return std::exp(e) - mlir::Complex<double>(1.0, 0.0);
++       });
++ }
++ 
++@@ -873,20 +873,20 @@
++ Element cosine(const Element &el) {
++   return mapWithUpcastToDouble(
++       el, [](double e) { return std::cos(e); },
++-      [](std::complex<double> e) { return std::cos(e); });
+++      [](mlir::Complex<double> e) { return std::cos(e); });
++ }
++ 
++ Element log(const Element &el) {
++   return mapWithUpcastToDouble(
++       el, [](double e) { return std::log(e); },
++-      [](std::complex<double> e) { return std::log(e); });
+++      [](mlir::Complex<double> e) { return std::log(e); });
++ }
++ 
++ Element logPlusOne(const Element &el) {
++   return mapWithUpcastToDouble(
++       el, [](double e) { return std::log1p(e); },
++-      [](std::complex<double> e) {
++-        return std::log(e + std::complex<double>(1.0));
+++      [](mlir::Complex<double> e) {
+++        return std::log(e + mlir::Complex<double>(1.0));
++       });
++ }
++ 
++@@ -905,7 +905,7 @@
++       },
++       [](bool lhs, bool rhs) -> bool { return lhs | rhs; },
++       [](APFloat lhs, APFloat rhs) { return llvm::maximum(lhs, rhs); },
++-      [](std::complex<APFloat> lhs, std::complex<APFloat> rhs) {
+++      [](mlir::Complex<APFloat> lhs, mlir::Complex<APFloat> rhs) {
++         auto cmpRes = lhs.real().compare(rhs.real()) == APFloat::cmpEqual
++                           ? lhs.imag() > rhs.imag()
++                           : lhs.real() > rhs.real();
++@@ -923,7 +923,7 @@
++       },
++       [](bool lhs, bool rhs) -> bool { return lhs & rhs; },
++       [](APFloat lhs, APFloat rhs) { return llvm::minimum(lhs, rhs); },
++-      [](std::complex<APFloat> lhs, std::complex<APFloat> rhs) {
+++      [](mlir::Complex<APFloat> lhs, mlir::Complex<APFloat> rhs) {
++         auto cmpRes = lhs.real().compare(rhs.real()) == APFloat::cmpEqual
++                           ? lhs.imag() < rhs.imag()
++                           : lhs.real() < rhs.real();
++@@ -960,7 +960,7 @@
++ 
++   return mapWithUpcastToDouble(
++       e1, e2, [](double lhs, double rhs) { return std::pow(lhs, rhs); },
++-      [](std::complex<double> lhs, std::complex<double> rhs) {
+++      [](mlir::Complex<double> lhs, mlir::Complex<double> rhs) {
++         return std::pow(lhs, rhs);
++       });
++ }
++@@ -1056,8 +1056,8 @@
++         (void)lhs.mod(rhs);
++         return lhs;
++       },
++-      [](std::complex<APFloat> lhs,
++-         std::complex<APFloat> rhs) -> std::complex<APFloat> {
+++      [](mlir::Complex<APFloat> lhs,
+++         mlir::Complex<APFloat> rhs) -> mlir::Complex<APFloat> {
++         // TODO(#997): remove support for complex
++         llvm::report_fatal_error("rem(complex, complex) is not implemented");
++       });
++@@ -1080,7 +1080,7 @@
++ Element rsqrt(const Element &el) {
++   return mapWithUpcastToDouble(
++       el, [](double e) { return 1.0 / std::sqrt(e); },
++-      [](std::complex<double> e) { return 1.0 / std::sqrt(e); });
+++      [](mlir::Complex<double> e) { return 1.0 / std::sqrt(e); });
++ }
++ 
++ Element shiftLeft(const Element &e1, const Element &e2) {
++@@ -1119,13 +1119,14 @@
++     const llvm::fltSemantics &elSemantics = elVal.real().getSemantics();
++ 
++     if (elVal.real().isNaN() || elVal.imag().isNaN())
++-      return Element(type, std::complex<APFloat>(APFloat::getNaN(elSemantics),
++-                                                 APFloat::getNaN(elSemantics)));
+++      return Element(type,
+++                     mlir::Complex<APFloat>(APFloat::getNaN(elSemantics),
+++                                            APFloat::getNaN(elSemantics)));
++ 
++     if (elVal.real().isZero() && elVal.imag().isZero())
++       return Element(type,
++-                     std::complex<APFloat>(APFloat::getZero(elSemantics),
++-                                           APFloat::getZero(elSemantics)));
+++                     mlir::Complex<APFloat>(APFloat::getZero(elSemantics),
+++                                            APFloat::getZero(elSemantics)));
++ 
++     return el / convert(type, abs(el).getFloatValue());
++   }
++@@ -1137,25 +1138,25 @@
++ Element sine(const Element &el) {
++   return mapWithUpcastToDouble(
++       el, [](double e) { return std::sin(e); },
++-      [](std::complex<double> e) { return std::sin(e); });
+++      [](mlir::Complex<double> e) { return std::sin(e); });
++ }
++ 
++ Element sqrt(const Element &el) {
++   return mapWithUpcastToDouble(
++       el, [](double e) { return std::sqrt(e); },
++-      [](std::complex<double> e) { return std::sqrt(e); });
+++      [](mlir::Complex<double> e) { return std::sqrt(e); });
++ }
++ 
++ Element tan(const Element &el) {
++   return mapWithUpcastToDouble(
++       el, [](double e) { return std::tan(e); },
++-      [](std::complex<double> e) { return std::tan(e); });
+++      [](mlir::Complex<double> e) { return std::tan(e); });
++ }
++ 
++ Element tanh(const Element &el) {
++   return mapWithUpcastToDouble(
++       el, [](double e) { return std::tanh(e); },
++-      [](std::complex<double> e) { return std::tanh(e); });
+++      [](mlir::Complex<double> e) { return std::tanh(e); });
++ }
++ 
++ void Element::print(raw_ostream &os, bool elideType) const {
++diff --ruN a/stablehlo/stablehlo/reference/Element.h b/stablehlo/stablehlo/reference/Element.h
++--- stablehlo/stablehlo/reference/Element.h
+++++ stablehlo/stablehlo/reference/Element.h
++@@ -23,6 +23,7 @@
++ #include "llvm/Support/raw_ostream.h"
++ #include "mlir/IR/BuiltinTypes.h"
++ #include "mlir/IR/Types.h"
+++#include "mlir/Support/Complex.h"
++ 
++ namespace mlir {
++ namespace stablehlo {
++@@ -48,7 +49,7 @@
++ 
++   /// Initializes Element object with type `type` and value `value`. `type` must
++   /// be a complex type of the same semantics as `value`.
++-  Element(Type type, std::complex<APFloat> value);
+++  Element(Type type, mlir::Complex<APFloat> value);
++ 
++   Element(const Element &other) = default;
++   /// @}
++@@ -73,7 +74,7 @@
++ 
++   /// Returns the underlying complex value stored in an Element object with
++   /// complex type.
++-  std::complex<APFloat> getComplexValue() const;
+++  mlir::Complex<APFloat> getComplexValue() const;
++ 
++   /// Returns the implementation-defined bits of the underlying value.
++   APInt toBits() const;
++@@ -213,7 +214,7 @@
++ /// destination type), then then the behavior is TBD (#180). If the real part of
++ /// `value` cannot be exactly represented in the non-complex destination type,
++ /// then the behavior is also TBD (#180).
++-Element convert(Type type, std::complex<APFloat> value);
+++Element convert(Type type, mlir::Complex<APFloat> value);
++ 
++ /// Returns converted Element object of type `type` from source complex<double>
++ /// `value`. Only the real part of `value` is used to convert to non-complex
++@@ -222,7 +223,7 @@
++ /// destination type), then then the behavior is TBD (#180). If the real part of
++ /// `value` cannot be exactly represented in the non-complex destination type,
++ /// then the behavior is also TBD (#180).
++-Element convert(Type type, std::complex<double> value);
+++Element convert(Type type, mlir::Complex<double> value);
++ 
++ /// Returns Element object of type `type` from zero `value`
++ Element getZeroValueOfType(Type type);
++diff --ruN a/stablehlo/stablehlo/reference/Ops.cpp b/stablehlo/stablehlo/reference/Ops.cpp
++--- stablehlo/stablehlo/reference/Ops.cpp
+++++ stablehlo/stablehlo/reference/Ops.cpp
++@@ -1816,7 +1816,7 @@
++     auto N = operand.getShape()[dimension];
++ 
++     Element X(resultType.getElementType(),
++-              std::complex<APFloat>(APFloat(0.0), APFloat(0.0)));
+++              mlir::Complex<APFloat>(APFloat(0.0), APFloat(0.0)));
++ 
++     for (int n = 0; n < N; n++) {
++       auto operandIndex = Index(resultIndex);
++@@ -1860,7 +1860,7 @@
++     // compute IFFT as conjugation, FFT, conjugation and normalization
++     Tensor result(operand);
++     for (auto d = fftDims.begin(); d != fftDims.end(); ++d) {
++-      auto divisorValue = std::complex<APFloat>(
+++      auto divisorValue = mlir::Complex<APFloat>(
++           APFloat(static_cast<double>(resultType.getDimSize(*d))),
++           APFloat(0.0));
++       auto divisor =
++diff --ruN a/stablehlo/stablehlo/reference/Tensor.cpp b/stablehlo/stablehlo/reference/Tensor.cpp
++--- stablehlo/stablehlo/reference/Tensor.cpp
+++++ stablehlo/stablehlo/reference/Tensor.cpp
++@@ -191,16 +191,16 @@
++       auto elementData =
++           reinterpret_cast<const std::complex<float> *>(elementPtr);
++       return Element(elementType,
++-                     std::complex<APFloat>(APFloat(elementData->real()),
++-                                           APFloat(elementData->imag())));
+++                     mlir::Complex<APFloat>(APFloat(elementData->real()),
+++                                            APFloat(elementData->imag())));
++     }
++ 
++     if (complexElemTy.isF64()) {
++       auto elementData =
++           reinterpret_cast<const std::complex<double> *>(elementPtr);
++       return Element(elementType,
++-                     std::complex<APFloat>(APFloat(elementData->real()),
++-                                           APFloat(elementData->imag())));
+++                     mlir::Complex<APFloat>(APFloat(elementData->real()),
+++                                            APFloat(elementData->imag())));
++     }
++   }
++ 
++@@ -539,8 +539,8 @@
++     auto complexElemTy = cast<ComplexType>(elementType).getElementType();
++     if (complexElemTy.isF32()) {
++       auto complexValues = llvm::map_to_vector(
++-          attr.getValues<std::complex<APFloat>>(),
++-          [&](std::complex<APFloat> value) -> std::complex<float> {
+++          attr.getValues<mlir::Complex<APFloat>>(),
+++          [&](mlir::Complex<APFloat> value) -> std::complex<float> {
++             return std::complex<float>(value.real().convertToFloat(),
++                                        value.imag().convertToFloat());
++           });
++@@ -551,8 +551,8 @@
++     }
++     if (complexElemTy.isF64()) {
++       auto complexValues = llvm::map_to_vector(
++-          attr.getValues<std::complex<APFloat>>(),
++-          [&](std::complex<APFloat> value) -> std::complex<double> {
+++          attr.getValues<mlir::Complex<APFloat>>(),
+++          [&](mlir::Complex<APFloat> value) -> std::complex<double> {
++             return std::complex<double>(value.real().convertToDouble(),
++                                         value.imag().convertToDouble());
++           });
++diff --ruN a/stablehlo/stablehlo/transforms/StablehloLegalizeDeprecatedOps.cpp b/stablehlo/stablehlo/transforms/StablehloLegalizeDeprecatedOps.cpp
++--- stablehlo/stablehlo/transforms/StablehloLegalizeDeprecatedOps.cpp
+++++ stablehlo/stablehlo/transforms/StablehloLegalizeDeprecatedOps.cpp
++@@ -126,7 +126,7 @@
++       APFloat real(floatTy.getFloatSemantics(), rawValue);
++       APFloat imag = APFloat::getZero(floatTy.getFloatSemantics());
++       return DenseElementsAttr::get(scalarTy,
++-                                    std::complex<APFloat>(real, imag));
+++                                    mlir::Complex<APFloat>(real, imag));
++     }
++   }
++   llvm::report_fatal_error("unsupported type");
++diff --ruN a/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp b/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp
++--- stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp
+++++ stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp
++@@ -112,7 +112,7 @@
++         bool losesInfo;
++         apFloatZero.convert(realImagComponentFloatType.getFloatSemantics(),
++                             llvm::RoundingMode::NearestTiesToEven, &losesInfo);
++-        std::complex<APFloat> complexZeroScalar(apFloatZero, apFloatZero);
+++        mlir::Complex<APFloat> complexZeroScalar(apFloatZero, apFloatZero);
++         auto complexZeroSplat =
++             SplatElementsAttr::get(shapedType, complexZeroScalar);
++         return LazyPlaceholderValue(
  

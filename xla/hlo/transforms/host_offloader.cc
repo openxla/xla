@@ -487,6 +487,28 @@ absl::StatusOr<bool> HostOffloader::HandleMoveToHostCustomCall(
   }
   VLOG(1) << "Offloading \"" << custom_call_instruction->operand(0)->name()
           << "\" to host.";
+
+  // Check if operand should be set to host memory directly.
+  HloInstruction* operand = custom_call_instruction->mutable_operand(0);
+  if (operand->IsCustomCall("AllocateBuffer") && operand->users().size() == 1) {
+    SetMemorySpace(operand->mutable_shape(), Layout::kHostMemorySpace);
+  } else if (operand->opcode() == HloOpcode::kBroadcast &&
+             operand->users().size() == 1 &&
+             custom_call_instruction->users().size() == 1 &&
+             custom_call_instruction->users()[0]->opcode() ==
+                 HloOpcode::kDynamicUpdateSlice) {
+    HloInstruction* allocate_buffer =
+        operand->AddInstruction(HloInstruction::CreateCustomCall(
+            operand->shape(), {}, "AllocateBuffer"));
+    SetMemorySpace(allocate_buffer->mutable_shape(), Layout::kHostMemorySpace);
+    VLOG(2) << absl::StreamFormat(
+        "Created new AllocateBuffer instruction \"%s\" to replace "
+        "broadcast \"%s\"",
+        allocate_buffer->ToString(), operand->name());
+    TF_RETURN_IF_ERROR(
+        custom_call_instruction->ReplaceOperandWith(0, allocate_buffer));
+  }
+
   TF_ASSIGN_OR_RETURN(
       std::vector<InstructionAndShapeIndex> starting_instruction_and_shapes,
       GetStartingInstructions(custom_call_instruction));
@@ -687,9 +709,8 @@ HostOffloader::GetStartingInstructions(
       // Found the start of "normal" memory offloading.
       result.push_back(instruction_and_shape);
       continue;
-    } else {
-      // Is a logical bitcast/reshape, we won't offload this yet.
     }
+    // Is a logical bitcast/reshape, we won't offload this yet.
     TF_ASSIGN_OR_RETURN(
         const std::vector<InstructionAndShapeIndex> successors,
         host_offload_utils::GetSuccessors(instruction_and_shape));
@@ -751,7 +772,7 @@ absl::Status HostOffloader::CreateAllocateBufferForDynamicUpdateSlice(
     return absl::OkStatus();
   }
   VLOG(2) << absl::StreamFormat(
-      "Creating a AllocateBuffer in host memory space for \"%s\"",
+      "Possibly creating an AllocateBuffer in host memory space for \"%s\"",
       dynamic_update_slice->name());
   // Walk the graph up. We expect to find a broadcast. Also, while walking up
   // the graph, set host memory space on everything between the AllocateBuffer
@@ -778,6 +799,24 @@ absl::Status HostOffloader::CreateAllocateBufferForDynamicUpdateSlice(
     HloInstruction* instruction = instruction_and_shape.instruction;
     const ShapeIndex& shape_index = instruction_and_shape.shape_index;
     if (instruction->opcode() == HloOpcode::kParameter) {
+      if (instruction->parent()->IsEntryComputation()) {
+        if (ShapeUtil::GetSubshape(
+                instruction->GetModule()
+                    ->entry_computation_layout()
+                    .parameter_layout(instruction->parameter_number())
+                    .shape(),
+                shape_index)
+                .layout()
+                .memory_space() == Layout::kHostMemorySpace) {
+          // Buffer comes from one parameter. Stop the process.
+          return absl::OkStatus();
+        }
+        return absl::InvalidArgumentError(
+            absl::StrFormat("Entry computation parameter \"%s\" (shape index "
+                            "%s) is not in host memory space.",
+                            instruction->name(), shape_index.ToString()));
+      }
+
       // If this is a parameter of a while_body, we also need to find the
       // matching parameter in the while_condition and set the memory spaces
       // there.
@@ -894,6 +933,7 @@ absl::Status HostOffloader::CreateAllocateBufferForDynamicUpdateSlice(
           break;
         }
       }
+      // Buffer is already from AllocateBuffer, stop the process.
       return absl::OkStatus();
     }
     previous_instruction_and_shape = instruction_and_shape;
@@ -1350,8 +1390,9 @@ absl::StatusOr<bool> HostOffloader::HandleDynamicUpdateSlices() {
       SetMemorySpace(dus->mutable_shape(), Layout::kHostMemorySpace);
       changed = true;
     } else if (device_to_host) {
-      // Device to host.
-      SetMemorySpace(dus->mutable_shape(), Layout::kHostMemorySpace);
+      // Operand of dus can be a broadcast that's already moved to host memory
+      // space. Look for this case and create an AllocateBuffer for it.
+      TF_RETURN_IF_ERROR(CreateAllocateBufferForDynamicUpdateSlice(dus));
       changed = true;
     } else if (device_to_device) {
       // Device to device.

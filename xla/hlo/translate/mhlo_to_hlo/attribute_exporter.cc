@@ -135,7 +135,8 @@ absl::StatusOr<mlir::sdy::MeshAttr> FindMeshInFrontendAttributes(
   }
 
   mlir::sdy::MeshAttr mesh_attr;
-  if (auto mesh_val = parsed_dict.get(failed_lookup_name)) {
+  if (auto mesh_val = parsed_dict.get(llvm::StringRef(
+          failed_lookup_name.data(), failed_lookup_name.size()))) {
     mesh_attr = mlir::cast<mlir::sdy::MeshAttr>(mesh_val);
   } else if (parsed_dict.size() == 1) {
     mesh_attr =

@@ -127,6 +127,20 @@ TEST(GpuTopologyTest, GetGpuTopologyForPlatformOberonB200) {
                                 "aarch64-linux-gnu")));
 }
 
+TEST(GpuTopologyTest, GetGpuTopologyForPlatformOberonB300) {
+  auto topology_or = GetGpuTopologyForPlatform("oberon_b300", 1, 2, 4);
+  ASSERT_OK(topology_or);
+  const auto& topology = *topology_or;
+  EXPECT_EQ(topology.platform_version(), "oberon_b300");
+  EXPECT_EQ(topology.num_partitions(), 1);
+  EXPECT_EQ(topology.num_hosts_per_partition(), 2);
+  EXPECT_EQ(topology.num_devices_per_host(), 4);
+  EXPECT_TRUE(topology.has_gpu_target_config());
+  EXPECT_THAT(topology.host_target_machine_options(),
+              Optional(Property(&cpu::TargetMachineOptions::triple,
+                                "aarch64-linux-gnu")));
+}
+
 TEST(GpuTopologyTest, GetGpuTopologyForPlatformInvalid) {
   EXPECT_THAT(GetGpuTopologyForPlatform("invalid_gpu", 1, 1, 1),
               StatusIs(absl::StatusCode::kInvalidArgument));

@@ -23,12 +23,16 @@ limitations under the License.
 #include "absl/base/nullability.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/compiler.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/model/fusion_analysis_cache.h"
+#include "xla/service/gpu/model/gpu_indexing_performance_model.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/xla.pb.h"
 
@@ -49,7 +53,13 @@ class BlockLevelEmitterBackend : public GpuCodegenBackend {
       const Compiler::GpuTargetConfig* target_config)
       : GpuCodegenBackend(autotuner::Backend::BLOCK_LEVEL_EMITTER,
                           debug_options, compiler, target_config),
-        shape_size_fn_(std::move(shape_size_fn)) {}
+        shape_size_fn_(std::move(shape_size_fn)),
+        fusion_analysis_cache_(target_config->device_description),
+        indexing_performance_model_(&target_config->device_description,
+                                    &fusion_analysis_cache_, shape_size_fn_,
+                                    &mlir_context_) {
+    RegisterSymbolicExprStorage(&mlir_context_);
+  }
 
   // Returns all supported block-level tiling configurations for the given
   // instruction.
@@ -73,10 +83,13 @@ class BlockLevelEmitterBackend : public GpuCodegenBackend {
 
  private:
   absl::StatusOr<BlockLevelFusionConfig> GetCostModelConfig(
-      const HloInstruction& instr) const;
+      const HloInstruction& instr);
   // A function which returns the size in bytes of the top-level buffer of a
   // shape.
   HloCostAnalysis::ShapeSizeFunction shape_size_fn_;
+  mlir::MLIRContext mlir_context_;
+  HloFusionAnalysisCache fusion_analysis_cache_;
+  GpuPerformanceModelWithIndexingAnalysis indexing_performance_model_;
 };
 
 }  // namespace gpu

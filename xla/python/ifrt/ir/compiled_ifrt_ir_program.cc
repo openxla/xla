@@ -267,10 +267,6 @@ CompiledIfrtIrProgram::Create(
       LookUpDevices(client, compile_options->device_assignments));
 
   mlir::ModuleOp mlir_module = ifrt_ir_program->mlir_module;
-  // Load the dialects necessary to compile the IFRT IR module.
-  mlir::MLIRContext* context = mlir_module.getContext();
-  xla::ifrt::support::RegisterMlirDialects(*context);
-
   std::string program_name = mlir_module.getName().value_or("unknown").str();
 
   // Add the bounded executables to the atom program executable map so that
@@ -287,6 +283,7 @@ CompiledIfrtIrProgram::Create(
 
   // Run lowering passes.
   {
+    mlir::MLIRContext* context = mlir_module.getContext();
     mlir::PassManager pm(context);
     InitPassManager(pm, "ifrt.compile", compile_options->mlir_dump_to,
                     compile_options->mlir_dump_pass_re,

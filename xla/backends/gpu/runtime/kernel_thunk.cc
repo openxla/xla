@@ -86,7 +86,7 @@ absl::StatusOr<ThunkProto> KernelThunk::ToProto() const {
   ThunkProto proto;
   *proto.mutable_thunk_info() = thunk_info().ToProto();
 
-  auto* kernel_proto = proto.mutable_kernel_thunk();
+  KernelThunkProto* kernel_proto = proto.mutable_kernel_thunk();
   for (int i = 0; i < args_.size(); i++) {
     ASSIGN_OR_RETURN(*kernel_proto->add_args(), args_[i].slice.ToProto());
     *kernel_proto->add_args_shape() = args_[i].shape.ToProto();
@@ -100,6 +100,10 @@ absl::StatusOr<ThunkProto> KernelThunk::ToProto() const {
   kernel_proto->set_shmem_bytes(shmem_bytes_);
   kernel_proto->set_use_pdl(use_pdl_);
   *kernel_proto->mutable_tma_metadata() = tma_metadata_.ToProto();
+
+  kernel_proto->mutable_zeroed_output_buffer_indices()->Assign(
+      zeroed_output_buffer_indices_.begin(),
+      zeroed_output_buffer_indices_.end());
   return proto;
 }
 

@@ -71,8 +71,10 @@ limitations under the License.
 #include "xla/service/gpu/gpu_hlo_ordering.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu/ir_emitter_context.h"
+#include "xla/service/gpu/kernel_reuse_cache.pb.h"
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/gpu/thunk_emitter.h"
+#include "xla/service/gpu_topology.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
@@ -188,7 +190,8 @@ absl::Status LoadCache(IrEmitterContext& ir_emitter_context,
 
 absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
     const HloModule* module, const GpuAliasInfo* alias_info,
-    BufferValue::SizeFunction buffer_size_bytes_function) {
+    BufferValue::SizeFunction buffer_size_bytes_function,
+    const GpuTopology& gpu_topology) {
   ScopedAnnotation annotation(Phase("XlaBufferAssignment", module));
 
   const DebugOptions& options = module->config().debug_options();
@@ -201,7 +204,7 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
 
   BufferAssigner::Options opts;
   opts.allocate_buffers_for_constants = true;
-  opts.colorer = CreateColorer(options);
+  opts.colorer = CreateColorer(options, gpu_topology);
   opts.temp_buffer_color = color;
   std::unique_ptr<HloOrdering> hlo_ordering;
   switch (options.xla_gpu_command_buffer_scheduling_mode()) {
@@ -233,13 +236,15 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
 absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     const HloModule* hlo_module, llvm::LLVMContext* llvm_context,
     const std::string& target_triple, const std::string& data_layout,
-    se::Platform::Id platform_id, const se::DeviceDescription& device_desc,
+    se::Platform::Id platform_id, const GpuTopology& gpu_topology,
     const GpuAliasInfo* alias_info,
     BufferValue::SizeFunction buffer_size_bytes_function,
     llvm_ir::LLVMCommandLineOptionsReleasableLock& llvm_options_lock,
     KernelCompiler* compiler,
     xla::cpu::TargetMachineOptions cpu_target_machine_options) {
   tsl::profiler::TraceMe traceme("CompileModuleToLlvmIr");
+  const se::DeviceDescription& device_desc =
+      gpu_topology.gpu_target_config().device_description;
   const bool use_cache = UseCache(hlo_module->config().debug_options());
 
   CompileModuleResults results = InitializeResults(hlo_module);
@@ -247,7 +252,7 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
   TF_ASSIGN_OR_RETURN(
       results.buffer_assignment,
       RunBufferAssignment(hlo_module, alias_info,
-                          std::move(buffer_size_bytes_function)));
+                          std::move(buffer_size_bytes_function), gpu_topology));
   TF_ASSIGN_OR_RETURN(results.output_info,
                       GetOutputInfo(*hlo_module, *results.buffer_assignment));
 

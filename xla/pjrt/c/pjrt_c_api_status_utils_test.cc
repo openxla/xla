@@ -28,10 +28,11 @@ namespace {
 TEST(PjRtCApiStatusUtilsTest, PjrtErrorToStatusPayloadTest) {
   absl::Status status = absl::InternalError("test error");
   status.SetPayload("test_payload", absl::Cord("test_value"));
-  PJRT_Error error{status};
+  PJRT_Error* error = StatusToPjRtError(status);
 
   const PJRT_Api* api = GetPjrtApi();
-  absl::Status result = PjrtErrorToStatus(&error, api);
+  absl::Status result = PjrtErrorToStatus(error, api);
+  DestroyPjRtError(error);
   EXPECT_EQ(result.code(), absl::StatusCode::kInternal);
   EXPECT_EQ(result.message(), "test error");
   auto payload = result.GetPayload("test_payload");

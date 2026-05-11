@@ -227,6 +227,15 @@ bool IsSliceOpSupportedByYnn(const HloInstruction* hlo) {
   return hlo->shape().element_type() == input->shape().element_type();
 }
 
+bool IsIotaSupportedByYnn(const HloInstruction* hlo) {
+  CHECK_EQ(hlo->opcode(), HloOpcode::kIota);
+  PrimitiveType type = hlo->shape().element_type();
+  if (type != F32 && type != S32) {
+    return false;
+  }
+  return IsLayoutSupportedByYnn(hlo->shape());
+}
+
 bool IsConstantSupportedByYnn(const HloInstruction* hlo) {
   CHECK(hlo->IsConstant());
 

@@ -13,7 +13,7 @@ common:clang_local --repo_env USE_HERMETIC_CC_TOOLCHAIN=0
 common:clang-tidy --aspects=@bazel_clang_tidy//clang_tidy:clang_tidy.bzl%clang_tidy_aspect
 common:clang-tidy --@bazel_clang_tidy//:clang_tidy_config=//:clang_tidy_config
 common:clang-tidy --output_groups=report
-common:clang-tidy --action_env=PATH --host_action_env=PATH
+common:clang-tidy --@bazel_clang_tidy//:clang_tidy_executable=//build_tools/ci:clang_tidy_bin
 
 # Load the TensorFlow bazelrc
 import %workspace%/tensorflow.bazelrc

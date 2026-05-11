@@ -241,6 +241,39 @@ TEST_P(RemapPlanTest, InvalidLayout) {
                   HasSubstr("Input and output must have the same layout")));
 }
 
+TEST_P(RemapPlanTest, ValidLayoutFromDifferentLayoutObjects) {
+  RemapPlan plan;
+  plan.input_specs.push_back(ArraySpec{
+      /*dtype=*/DType(DType::kS32),
+      /*shape=*/Shape({2, 3}),
+      /*sharding=*/
+      ConcreteEvenSharding::Create(GetDevices({0}), MemoryKind(),
+                                   /*shape=*/Shape({2, 3}),
+                                   /*shard_shape=*/Shape({2, 3})),
+      /*layout=*/
+      std::make_shared<xla::PjRtLayout>(
+          xla::LayoutUtil::MakeAscendingLayout(2)),
+  });
+  plan.output_specs.push_back(ArraySpec{
+      /*dtype=*/DType(DType::kS32),
+      /*shape=*/Shape({2, 3}),
+      /*sharding=*/
+      ConcreteEvenSharding::Create(GetDevices({0}), MemoryKind(),
+                                   /*shape=*/Shape({2, 3}),
+                                   /*shard_shape=*/Shape({2, 3})),
+      /*layout=*/
+      std::make_shared<xla::PjRtLayout>(
+          xla::LayoutUtil::MakeAscendingLayout(2)),  // same layout
+  });
+  plan.mappings = std::make_shared<std::vector<RemapPlan::Mapping>>();
+  plan.mappings->push_back(
+      RemapPlan::Mapping{/*in_array=*/0,
+                         /*out_array=*/0,
+                         /*from=*/{RemapPlan::Interval{0, 1, 1}},
+                         /*to=*/{RemapPlan::Interval{0, 1, 1}}});
+  EXPECT_OK(plan.Validate());
+}
+
 TEST_P(RemapPlanTest, InvalidInputArrayIndex) {
   RemapPlan plan;
   plan.input_specs.push_back(

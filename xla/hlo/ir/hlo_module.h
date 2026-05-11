@@ -360,6 +360,15 @@ class HloModule {
     }
   }
 
+  // Canonicalizes the local_ids of all instructions in all computations
+  // in this module and updates the schedule's instruction unique IDs.
+  //
+  // WARNING: This is a dangerous API because it reassigns local IDs in all
+  // computations. It should only be used in contexts where you are certain
+  // that nothing is caching instruction unique IDs or relying on the stability
+  // of local IDs.
+  void CanonicalizeComputationLocalIds();
+
   // Compute and return a topological sort of all computations in the module.
   // The sort is defined like so: if computation A has an instruction which
   // calls computation B, then A will appear after B in the sort.

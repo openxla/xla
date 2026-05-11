@@ -19,6 +19,7 @@ limitations under the License.
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -360,13 +361,13 @@ absl::Status Autotuner::IsValidExecutable(
         absl::StrCat("Compilation failed: ", executable.status().message()));
   }
 
-  if (!autotune_config_.allow_reg_spills && executable.value()) {
+  if (!autotune_config_.allow_reg_spills && *executable) {
     const auto spills_registers = [](const auto& pair) {
       const KernelStats& kernel_stats = pair.second;
       return kernel_stats.store_bytes_spilled > 0 ||
              kernel_stats.load_bytes_spilled > 0;
     };
-    ModuleStats module_stats = executable.value()->module_stats();
+    ModuleStats module_stats = (*executable)->module_stats();
     if (absl::c_any_of(module_stats, spills_registers)) {
       return absl::ResourceExhaustedError(
           "Discarding compilation due to register spilling.");
@@ -391,24 +392,33 @@ tsl::Future<Autotuner::Config> Autotuner::TuneBestConfig(
   return std::move(executables)
       .Map([instr,
             this](std::vector<std::pair<
-                      Config, std::optional<std::unique_ptr<Executable>>>>&&
+                      Config, absl::StatusOr<std::unique_ptr<Executable>>>>&&
                       executables) mutable -> absl::StatusOr<Config> {
         std::vector<ExecutableCandidate> executable_candidates;
-        for (int i = 0; i < executables.size(); ++i) {
-          if (executables[i].second.has_value()) {
-            executable_candidates.push_back(
-                {std::move(executables[i].first),
-                 std::move(executables[i].second.value())});
+        std::vector<ConfigResult> results;
+        for (auto& [config, executable] : executables) {
+          if (!executable.ok()) {
+            VLOG(4) << "Failed to compile config " << config.ToString()
+                    << " with status: " << executable.status();
+            results.push_back({std::move(config),
+                               Failure{FailureKind::kCompilationFailed,
+                                       executable.status().ToString()},
+                               absl::ZeroDuration(), 0});
+            continue;
           }
+          executable_candidates.push_back(
+              {std::move(config), std::move(*executable)});
         }
 
         if (executable_candidates.empty()) {
+          LogConfigResults(*instr, results);
           return absl::InternalError(
               absl::StrCat("Autotuner failed for HLO: ", instr->ToString(),
                            ". No configs could be compiled."));
         }
         VLOG(1) << "Successfully compiled " << executable_candidates.size()
-                << " configs out of " << executables.size() << " configs.";
+                << " configs out of " << executables.size() << " configs with "
+                << results.size() << " compilation failures.";
 
         bool skip_profiling = executable_candidates.size() == 1 ||
                               autotune_config_.select_first_config;
@@ -416,7 +426,10 @@ tsl::Future<Autotuner::Config> Autotuner::TuneBestConfig(
           VLOG(1) << "Skipping profiling and using the "
                   << (autotune_config_.select_first_config ? "first" : "only")
                   << " config: " << executable_candidates[0].config.ToString();
-          return std::move(executable_candidates[0].config);
+          results.push_back({std::move(executable_candidates[0].config),
+                             std::nullopt, absl::ZeroDuration(), 0});
+          LogConfigResults(*instr, results);
+          return std::move(results.back().config);
         }
 
         auto profile_results_or =
@@ -428,8 +441,11 @@ tsl::Future<Autotuner::Config> Autotuner::TuneBestConfig(
                            ". Failed to profile configs: ",
                            profile_results_or.status().message()));
         }
-        std::vector<ConfigResult> results =
-            std::move(profile_results_or).value();
+        std::vector<ConfigResult> profile_results =
+            *std::move(profile_results_or);
+        results.insert(results.end(),
+                       std::make_move_iterator(profile_results.begin()),
+                       std::make_move_iterator(profile_results.end()));
         LogConfigResults(*instr, results);
         absl::StatusOr<ConfigResult> best_result = PickBestConfig(results);
         if (!best_result.ok()) {
@@ -438,8 +454,8 @@ tsl::Future<Autotuner::Config> Autotuner::TuneBestConfig(
                            ". Failed to pick best config: ",
                            best_result.status().message()));
         }
-        VLOG(1) << "Picked best config: " << best_result.value().ToString();
-        return std::move(best_result.value().config);
+        VLOG(1) << "Picked best config: " << best_result->ToString();
+        return std::move(best_result->config);
       });
 }
 
@@ -481,7 +497,7 @@ absl::StatusOr<std::vector<Autotuner::Config>> Autotuner::GetConfigsForAll(
   std::vector<Config> configs;
   for (auto& config_or : status_or_configs) {
     if (config_or.ok()) {
-      configs.push_back(std::move(config_or.value()));
+      configs.push_back(std::move(*config_or));
     }
   }
   return configs;
@@ -558,7 +574,7 @@ absl::StatusOr<std::vector<Autotuner::Config>> Autotuner::GetSupportedConfigs(
               << per_backend_configs.status();
       continue;
     }
-    VLOG(3) << "Found of " << per_backend_configs->size()
+    VLOG(3) << "Found " << per_backend_configs->size()
             << " supported configs for backend " << codegen_backend->name();
     for (auto& config : *per_backend_configs) {
       configs.push_back({codegen_backend.get(), std::move(config)});
@@ -567,39 +583,37 @@ absl::StatusOr<std::vector<Autotuner::Config>> Autotuner::GetSupportedConfigs(
   return configs;
 }
 
-std::optional<std::unique_ptr<Executable>> Autotuner::Compile(
-    HloInstruction* instr, const Config& config) {
+absl::StatusOr<std::unique_ptr<Executable>> Autotuner::Compile(
+    const HloInstruction* instr, const Config& config) {
   if (autotune_config_.exclude_cublas_config &&
       (config.codegen_backend->name() == "CUBLAS_FISSION" ||
        config.codegen_backend->name() == "CUBLASLT_FISSION" ||
        config.codegen_backend->name() == "ROCBLAS_FISSION" ||
        config.codegen_backend->name() == "HIPBLASLT_FISSION")) {
-    VLOG(4) << "Skipping config " << config.ToString()
-            << " as exclude_cublas_config is set.";
-    return std::nullopt;
+    return absl::CancelledError("exclude_cublas_config is set.");
   }
+  VLOG(4) << "Compiling config " << config.ToString() << " for HLO "
+          << instr->ToString();
   absl::StatusOr<std::unique_ptr<Executable>> executable =
       config.codegen_backend->Compile(*instr, *config.backend_config);
-
   if (absl::Status status = IsValidExecutable(executable); !status.ok()) {
-    VLOG(4) << "Skipping config " << config.ToString()
-            << " as it could not be compiled successfully. Error: " << status;
-    return std::nullopt;
+    return status;
   }
-  return std::make_optional(std::move(*executable));
+  return executable;
 }
 
 tsl::Future<std::vector<
-    std::pair<Autotuner::Config, std::optional<std::unique_ptr<Executable>>>>>
-Autotuner::CompileAll(HloInstruction* instr, std::vector<Config>& configs) {
+    std::pair<Autotuner::Config, absl::StatusOr<std::unique_ptr<Executable>>>>>
+Autotuner::CompileAll(const HloInstruction* instr,
+                      std::vector<Config>& configs) {
   if (thread_pool_ == nullptr) {
-    std::vector<std::pair<Config, std::optional<std::unique_ptr<Executable>>>>
+    std::vector<std::pair<Config, absl::StatusOr<std::unique_ptr<Executable>>>>
         executables;
     executables.reserve(configs.size());
     for (Config& config : configs) {
       executables.emplace_back(std::move(config), Compile(instr, config));
       if (autotune_config_.select_first_config &&
-          executables.back().second.has_value()) {
+          executables.back().second.ok()) {
         return std::move(executables);
       }
     }
@@ -607,15 +621,14 @@ Autotuner::CompileAll(HloInstruction* instr, std::vector<Config>& configs) {
   }
 
   std::vector<tsl::Future<
-      std::pair<Config, std::optional<std::unique_ptr<Executable>>>>>
+      std::pair<Config, absl::StatusOr<std::unique_ptr<Executable>>>>>
       executables;
   executables.reserve(configs.size());
   for (int i = 0; i < configs.size(); ++i) {
     executables.push_back(tsl::MakeFutureOn(
         *thread_pool_->AsExecutor(),
         [&, instr = instr, config = std::move(configs[i])]() mutable {
-          auto executable = Compile(instr, config);
-          return std::make_pair(std::move(config), std::move(executable));
+          return std::make_pair(std::move(config), Compile(instr, config));
         }));
   }
   return tsl::JoinFutures(absl::MakeSpan(executables));
@@ -623,8 +636,8 @@ Autotuner::CompileAll(HloInstruction* instr, std::vector<Config>& configs) {
 
 absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
     std::vector<ExecutableCandidate> candidates, const HloInstruction* instr) {
-  std::vector<ConfigResult> results_vec;
-  results_vec.reserve(candidates.size());
+  std::vector<ConfigResult> config_results;
+  config_results.reserve(candidates.size());
 
   absl::MutexLock lock(profiler_m_);
 
@@ -664,7 +677,7 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
         }
       }
     }
-    results_vec.push_back(
+    config_results.push_back(
         {std::move(candidates[i].config), failure, duration, scratch_bytes});
   }
   // Clear the candidates while holding the profiler lock
@@ -672,7 +685,7 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
   // not doing this for example causes timeouts of delay kernels used for
   // precise CUDA event-based timing.
   candidates.clear();
-  return results_vec;
+  return config_results;
 }
 
 absl::StatusOr<Autotuner::ConfigResult> Autotuner::PickBestConfig(
@@ -759,10 +772,10 @@ std::optional<ScopedShapedBuffer> Autotuner::GetReferenceOutput(
       VLOG(2) << "Failed to profile executable: " << profile_result.status();
       continue;
     }
-    if (profile_result.value().output_buffer.has_value()) {
+    if (profile_result->output_buffer.has_value()) {
       VLOG(2) << "Found reference output for config: "
               << candidate.config.ToString();
-      return std::move(profile_result.value().output_buffer.value());
+      return std::move(profile_result->output_buffer.value());
     }
   }
   return std::nullopt;
@@ -848,7 +861,7 @@ AutotuneResult::FailureResult Autotuner::Failure::ToProto() const {
   AutotuneResult::FailureResult failure_proto;
   switch (kind) {
     case FailureKind::kCompilationFailed:
-      failure_proto.set_kind(AutotuneResult::UNKNOWN);
+      failure_proto.set_kind(AutotuneResult::DISQUALIFIED);
       break;
     case FailureKind::kExecutionFailed:
       failure_proto.set_kind(AutotuneResult::DISQUALIFIED);

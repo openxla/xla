@@ -316,10 +316,25 @@ std::pair<HloInstruction*, HloInstruction*> TryFuseConvolutionPrologue(
     HloInstruction* convolution, HloComputation::Builder& builder,
     std::vector<HloInstruction*>& fusion_params,
     absl::flat_hash_map<HloInstruction*, HloInstruction*>& fused_hlo_map) {
+  auto is_fusable_convert = [](const HloInstruction* hlo) {
+    return hlo->opcode() == HloOpcode::kConvert && hlo->user_count() == 1;
+  };
+
+  // Only fuse the prologue converts when both conv operands have one and
+  // they produce the same source type (or neither has one). Otherwise the
+  // cuDNN compiler's "consume convert before conv" path would feed the
+  // conv mismatched input dtypes.
+  const HloInstruction* lhs = convolution->operand(0);
+  const HloInstruction* rhs = convolution->operand(1);
+  const bool fuse_prologue_converts =
+      is_fusable_convert(lhs) && is_fusable_convert(rhs) &&
+      lhs->operand(0)->shape().element_type() ==
+          rhs->operand(0)->shape().element_type();
+
   auto create_operand = [&](int index) {
     HloInstruction* original = convolution->mutable_operand(index);
-    bool is_convert = original->opcode() == HloOpcode::kConvert &&
-                      original->user_count() == 1;
+    const bool is_convert =
+        fuse_prologue_converts && is_fusable_convert(original);
 
     HloInstruction* source =
         is_convert ? original->mutable_operand(0) : original;

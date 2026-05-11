@@ -1374,6 +1374,52 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
                                             ConvertArray(interior_padding))
           .getOperation();
     }
+    case HloOpcode::kScan: {
+      // The HLO `scan` instruction has a tuple result `(outputs...,
+      // carries...)` (or a single tensor when there is exactly one output and
+      // no carries), and operands `(inputs..., inits...)`. Import it as
+      // `mhlo.scan`, which has separate variadic results for outputs and
+      // carries, then wrap the multi-results back into a tuple to preserve the
+      // original HLO shape for downstream consumers (e.g. get-tuple-element).
+      auto scan = Cast<HloScanInstruction>(instruction);
+
+      llvm::SmallVector<Type, 4> return_types = {result_type};
+      if (mlir::TupleType tuple_ty =
+              mlir::dyn_cast<mlir::TupleType>(result_type)) {
+        return_types = llvm::to_vector<6>(tuple_ty.getTypes());
+      }
+
+      int64_t num_carries = scan->num_carries();
+      int64_t num_outputs = return_types.size() - num_carries;
+      llvm::ArrayRef<Type> output_types =
+          llvm::ArrayRef(return_types).take_front(num_outputs);
+      llvm::ArrayRef<Type> carry_types =
+          llvm::ArrayRef(return_types).drop_front(num_outputs);
+
+      int64_t num_inputs = operands.size() - num_carries;
+      auto inputs = mlir::ValueRange(operands).take_front(num_inputs);
+      auto inits = mlir::ValueRange(operands).drop_front(num_inputs);
+
+      mlir::BoolAttr is_associative_attr;
+      if (scan->is_associative() != TRI_STATE_UNSPECIFIED) {
+        is_associative_attr =
+            builder_->getBoolAttr(scan->is_associative() == TRI_STATE_TRUE);
+      }
+
+      auto scan_op = mlir::mhlo::ScanOp::create(
+          *func_builder, loc, output_types, carry_types, inputs, inits,
+          builder_->getI64IntegerAttr(scan->scan_dimension()),
+          /*scan_dim_size=*/mlir::IntegerAttr{},
+          builder_->getBoolAttr(scan->is_reverse()), is_associative_attr);
+      TF_RETURN_IF_ERROR(
+          ImportAsRegion(*instruction->to_apply(), &scan_op.getBody()));
+
+      // Single result with the same type as the HLO shape: return as is.
+      if (return_types.size() == 1 && return_types.front() == result_type) {
+        return scan_op.getOperation();
+      }
+      return WrapInTuple(func_builder, scan_op);
+    }
     case HloOpcode::kScatter: {
       auto scatter = Cast<HloScatterInstruction>(instruction);
       attributes.push_back(builder_->getNamedAttr(
@@ -2177,6 +2223,41 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       // instruction. If dimensions are non-default, the XLA builder
       // implements it as a separate transpose.
       NO_ATTRIBUTE_CASE(kReshape, ReshapeOp);
+    case HloOpcode::kDynamicReshape: {
+      mlir::Value output_shape;
+      llvm::SmallVector<mlir::Value, 4> size_tensors;
+      if (operands.size() <= 1) {
+        return InvalidArgument(
+            "DynamicReshape requires at least two operands.");
+      }
+      for (size_t i = 1; i < operands.size(); ++i) {
+        auto size_type =
+            mlir::dyn_cast<mlir::RankedTensorType>(operands[i].getType());
+        if (size_type && size_type.getRank() == 0) {
+          auto new_type =
+              mlir::RankedTensorType::get({1}, size_type.getElementType());
+          auto reshape_op = mlir::stablehlo::ReshapeOp::create(
+              *func_builder, loc, new_type, operands[i]);
+          size_tensors.push_back(reshape_op.getResult());
+        } else {
+          size_tensors.push_back(operands[i]);
+        }
+      }
+      // Build output shape tensor by concatenating the size tensors.
+      // All size tensors are guaranteed to have the same element type.
+      auto element_type =
+          mlir::cast<mlir::ShapedType>(size_tensors[0].getType())
+              .getElementType();
+      auto concat_type = mlir::RankedTensorType::get(
+          {static_cast<int64_t>(size_tensors.size())}, element_type);
+      output_shape = mlir::stablehlo::ConcatenateOp::create(
+          *func_builder, loc, concat_type, size_tensors,
+          builder_->getI64IntegerAttr(0));
+
+      return mlir::stablehlo::DynamicReshapeOp::create(
+                 *func_builder, loc, result_type, operands[0], output_shape)
+          .getOperation();
+    }
       NO_ATTRIBUTE_CASE(kRoundNearestAfz, RoundOp);
       NO_ATTRIBUTE_CASE(kRoundNearestEven, RoundNearestEvenOp);
       NO_ATTRIBUTE_CASE(kSelect, SelectOp);

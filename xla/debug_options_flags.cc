@@ -181,6 +181,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_backend_optimization_level(3);
   opts.set_xla_gpu_autotune_level(4);
   opts.set_xla_gpu_autotune_max_solutions(0);
+  opts.set_xla_gpu_fusion_autotune_top_k_configs(1);
   opts.set_xla_cpu_multi_thread_eigen(true);
   opts.set_xla_gpu_cuda_data_dir("./cuda_sdk_lib");
   opts.set_xla_gpu_generate_debug_info(false);
@@ -295,6 +296,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
   opts.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(false);
   opts.set_xla_gpu_experimental_enable_nvshmem(false);
+  opts.set_xla_gpu_experimental_move_gemm_conv_autotuner(false);
   opts.set_xla_gpu_enable_nccl_comm_splitting(true);
   opts.set_xla_gpu_nccl_init_max_rank_per_root_ratio(0);
 
@@ -360,8 +362,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_copy_insertion_use_region_analysis(false);
   opts.set_xla_gpu_collect_cost_model_stats(false);
-  opts.set_xla_gpu_enable_split_k_autotuning(false);
-
   opts.set_xla_gpu_cublas_fallback(true);
   opts.set_xla_gpu_cudnn_gemm_fusion_level(0);
   opts.set_xla_gpu_enable_while_loop_double_buffering(false);
@@ -513,6 +513,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_enable_pdl(true);
   opts.set_xla_gpu_command_buffer_update_mode(DebugOptions::ALWAYS_UPDATE);
+
+  opts.set_xla_gpu_experimental_aot_compiled_thunks(true);
   return opts;
 }
 
@@ -1422,6 +1424,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_autotune_max_solutions(),
       "Maximal number of GEMM solutions to consider for autotuning: 0 means "
       "consider all solutions returned by the GEMM library."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_fusion_autotune_top_k_configs",
+                int32_setter_for(
+                    &DebugOptions::set_xla_gpu_fusion_autotune_top_k_configs),
+                debug_options->xla_gpu_fusion_autotune_top_k_configs(),
+                "Maximum number of candidate configs considered during "
+                "autotuning non-gemm fusions."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_autotune_gemm_rtol",
       float_setter_for(&DebugOptions::set_xla_gpu_autotune_gemm_rtol),
@@ -1848,8 +1857,10 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_enable_cudnn_layer_norm(),
       "Rewrite layer norm patterns into cuDNN library call."));
   flag_list->push_back(
-      tsl::Flag("xla_gpu_enable_cublaslt", noop_flag_setter<bool>, false,
-                "[Deprecated] Use cuBLASLt for GEMMs when possible."));
+      tsl::Flag("xla_gpu_enable_cublaslt",
+                bool_setter_for(&DebugOptions::set_xla_gpu_enable_cublaslt),
+                debug_options->xla_gpu_enable_cublaslt(),
+                "Use cuBLASLt for GEMMs when possible."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_command_buffer",
       SetterForRepeatedEnum<DebugOptions::CommandBufferCmdType>(
@@ -2294,11 +2305,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_collect_cost_model_stats(),
       "If true, each fusion instruction will have a cost model runtime "
       "estimate in backend config after compilation."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_enable_split_k_autotuning",
-      bool_setter_for(&DebugOptions::set_xla_gpu_enable_split_k_autotuning),
-      debug_options->xla_gpu_enable_split_k_autotuning(),
-      "Enable split_k autotuning for triton gemms."));
+
   flag_list->push_back(tsl::Flag("xla_gpu_enable_nccl_clique_optimization",
                                  noop_flag_setter<bool>, false,
                                  "[Deprecated, do not use]."));
@@ -2965,6 +2972,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_use_ragged_dot_grouped_gemm(),
       "If true, use grouped GEMM (hipBLASLt) for ragged dot operations."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_use_ragged_dot_fusion",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_use_ragged_dot_fusion),
+      debug_options->xla_gpu_experimental_use_ragged_dot_fusion(),
+      "If true, use cuDNN fusion for ragged dot operations."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_scaled_dot_with_triton",
       bool_setter_for(
           &DebugOptions::set_xla_gpu_experimental_scaled_dot_with_triton),
@@ -3114,6 +3127,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           debug_options->xla_gpu_command_buffer_update_mode()),
       "Controls the VA remapping update strategy for command buffer thunks. "
       "See CommandBufferUpdateMode for details."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_move_gemm_conv_autotuner",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_move_gemm_conv_autotuner),
+      debug_options->xla_gpu_experimental_move_gemm_conv_autotuner(),
+      "If true, move GEMM and Conv autotuning and post cleanup after fusiion "
+      "passes."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_cost_model_gemm_tiling_options",
       setter_for_xla_gpu_experimental_cost_model_gemm_tiling_options, "",

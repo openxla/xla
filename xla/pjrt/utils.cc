@@ -864,6 +864,10 @@ bool HasMajorToMinorLayout(PrimitiveType type, absl::Span<int64_t const> dims,
 absl::StatusOr<Shape> MakeShapeWithTrivialByteStrides(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions,
     absl::Span<const int64_t> byte_strides) {
+  if (!primitive_util::IsArrayType(element_type)) {
+    return InvalidArgument("Element type %s does not support layout",
+                           PrimitiveType_Name(element_type));
+  }
   TF_RET_CHECK(dimensions.size() == byte_strides.size());
   std::vector<int64_t> minor_to_major(dimensions.size());
   // Begin with a major-to-minor layout that is likey the most common.

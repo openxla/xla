@@ -50,8 +50,6 @@ cc_library(
         "ifrt_verify_donation_pass.cc",
         "ifrt_verify_sharding_specified_pass.cc",
         "passes.cc",
-        "spmd_expandable_interface_verification_pass.cc",
-        "spmd_expansion_pass.cc",
         "vifrt_legalize_to_ifrt_pass.cc",
         "vifrt_to_version_pass.cc",
         # go/keep-sorted end
@@ -122,18 +120,6 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:random",
-    ],
-)
-
-cc_library(
-    name = "built_in_spmd_expansions",
-    srcs = ["built_in_spmd_expansions.cc"],
-    hdrs = ["built_in_spmd_expansions.h"],
-    compatible_with = get_compatible_with_portable(),
-    deps = [
-        "//xla/python/ifrt/ir/transforms/spmd_expanders:spmd_expander",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
     ],
 )
 

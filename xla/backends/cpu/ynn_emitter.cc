@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
+#include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/tsl/platform/errors.h"
@@ -295,6 +296,48 @@ absl::StatusOr<uint32_t> DefineSliceOp(ynn_subgraph_t subgraph,
       subgraph, rank, axes.data(), starts.data(), limits.data(), strides.data(),
       in, &out, /*flags=*/0));
   return out;
+}
+
+absl::StatusOr<uint32_t> DefineIotaOp(ynn_subgraph_t subgraph,
+                                      const HloInstruction* instr) {
+  VLOG(3) << absl::StreamFormat("Define tensor value for iota op: %s",
+                                instr->ToString());
+  CHECK_EQ(instr->opcode(), HloOpcode::kIota);
+  const HloIotaInstruction* iota = Cast<HloIotaInstruction>(instr);
+
+  TF_ASSIGN_OR_RETURN(uint32_t out_id, DefineTensorValue(subgraph, instr));
+
+  const Shape& shape = instr->shape();
+  int64_t rank = shape.dimensions().size();
+  int64_t iota_dim = iota->iota_dimension();
+
+  PrimitiveType element_type = shape.element_type();
+  TF_ASSIGN_OR_RETURN(auto ynn_element_type, YnnType(element_type));
+
+  auto stride_shape = ShapeUtil::MakeShape(element_type, {rank});
+  TF_ASSIGN_OR_RETURN(auto stride_value, Literal::Make(stride_shape));
+
+  for (int64_t i = 0; i < rank; ++i) {
+    int value = (i == iota_dim) ? 1 : 0;
+    if (primitive_util::IsIntegralType(element_type)) {
+      TF_RETURN_IF_ERROR(stride_value.SetIntegralAsS64({i}, value));
+    } else {
+      TF_RETURN_IF_ERROR(stride_value.SetFromDouble({i}, value));
+    }
+  }
+
+  uint32_t stride_id = YNN_INVALID_VALUE_ID;
+  const size_t stride_dims[] = {static_cast<size_t>(rank)};
+  YNN_RETURN_IF_ERROR(ynn_define_tensor(
+      subgraph, ynn_element_type, 1, stride_dims, stride_value.untyped_data(),
+      YNN_VALUE_FLAG_COPY_DATA, &stride_id));
+
+  auto out_ynn_dims = YnnDimensions(shape);
+  YNN_RETURN_IF_ERROR(ynn_define_iota(subgraph, ynn_element_type, rank,
+                                      out_ynn_dims.data(), YNN_INVALID_VALUE_ID,
+                                      stride_id, &out_id,
+                                      /*flags=*/0));
+  return out_id;
 }
 
 absl::StatusOr<uint32_t> DefineUnaryOp(ynn_subgraph_t subgraph,
@@ -816,6 +859,16 @@ absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
         }
         TF_ASSIGN_OR_RETURN(tensor_ids[instr],
                             DefineSliceOp(subgraph.get(), tensor_ids, instr));
+      } break;
+
+      case HloOpcode::kIota: {
+        if (!IsIotaSupportedByYnn(instr)) {
+          return InvalidArgument(
+              "Unsupported iota instruction in YNN fusion: %s",
+              instr->ToString());
+        }
+        TF_ASSIGN_OR_RETURN(tensor_ids[instr],
+                            DefineIotaOp(subgraph.get(), instr));
       } break;
 
       case HloOpcode::kDot: {

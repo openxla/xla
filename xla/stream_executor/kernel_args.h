@@ -26,6 +26,7 @@ limitations under the License.
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "absl/base/macros.h"
 #include "absl/container/fixed_array.h"
@@ -418,6 +419,10 @@ class KernelArgsPackedArray : public KernelArgsPackedArrayBase {
     shared_memory_bytes_ += number_of_bytes;
   }
 
+  absl::Span<void*> device_addr_args() {
+    return absl::MakeSpan(device_addr_args_);
+  }
+
   // Gets the number of arguments added so far, including shared memory
   // arguments.
   size_t number_of_arguments() const final {
@@ -431,6 +436,8 @@ class KernelArgsPackedArray : public KernelArgsPackedArrayBase {
   absl::Span<const void* const> argument_addresses() const final {
     return argument_addresses_;
   }
+
+  size_t shared_memory_bytes() const { return shared_memory_bytes_; }
 
  private:
   // A storage for device address arguments added to this array.
@@ -558,6 +565,32 @@ std::unique_ptr<KernelArgsPackedArrayBase> PackKernelArgs(int64_t shmem_bytes,
   using PackedArgs = KernelArgsPackedTuple<Args...>;
   return std::make_unique<PackedArgs>(std::forward<Args>(args)..., shmem_bytes);
 }
+
+// Adapter that allows applying KernelLoaderSpec to KernelArgsPackedArray.
+class KernelArgsDeviceAddressArrayAdapter
+    : public KernelArgsDeviceAddressArray {
+ public:
+  static KernelArgsDeviceAddressArrayAdapter Build(
+      std::unique_ptr<KernelArgsPackedArray> impl) {
+    std::vector<DeviceAddressBase> addrs;
+    for (int i = 0; i < impl->device_addr_args().size(); i++) {
+      addrs.push_back(DeviceAddressBase{impl->device_addr_args()[i]});
+    }
+    return KernelArgsDeviceAddressArrayAdapter(std::move(impl),
+                                               std::move(addrs));
+  }
+
+ private:
+  KernelArgsDeviceAddressArrayAdapter(
+      std::unique_ptr<KernelArgsPackedArray> impl,
+      std::vector<DeviceAddressBase> addrs)
+      : KernelArgsDeviceAddressArray(addrs, impl->shared_memory_bytes()),
+        impl_(std::move(impl)),
+        addrs_(std::move(addrs)) {}
+
+  std::unique_ptr<KernelArgsPackedArray> impl_;
+  std::vector<DeviceAddressBase> addrs_;
+};
 
 }  // namespace stream_executor
 

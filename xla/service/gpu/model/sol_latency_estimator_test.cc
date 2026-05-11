@@ -331,7 +331,6 @@ ENTRY e {
           "block_m":"128",
           "block_n":"128",
           "block_k":"64",
-          "split_k":"1",
           "num_stages":"1",
           "num_warps":"8",
           "num_ctas":"1"

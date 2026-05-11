@@ -76,7 +76,7 @@ GetHostTargetMachineOptions(absl::string_view platform_version) {
         "push2pop2,-raoint,-rdpru,-sgx,-sha512,-shstk,-sm3,-sm4,-sse4a,-tbm,-"
         "uintr,-usermsr,-waitpkg,-widekl,-xop,-zu"};
   }
-  if (platform_version == "oberon_b200") {
+  if (platform_version == "oberon_b200" || platform_version == "oberon_b300") {
     return cpu::TargetMachineOptions{
         "aarch64-linux-gnu", "neoverse-n1",
         "+aes,+crc,+fp-armv8,+lse,+neon,+sha2,+sha3,+sm4,+sve-aes,+sve-sha3,+"

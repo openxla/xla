@@ -143,6 +143,11 @@ std::string Tile::ToString(bool print_variables) const {
   ss << "] upper bounds [";
   llvm::interleaveComma(upper_bounds(), ss, print_expr);
   ss << ']';
+  if (replica_id_.has_value()) {
+    ss << " replica_id [";
+    ss << replica_id_->ToString(tid_names, symbol_names);
+    ss << ']';
+  }
   return ss.str();
 }
 
@@ -197,10 +202,21 @@ void Tile::Replace(const llvm::DenseMap<SymbolicExpr, SymbolicExpr>& map) {
     dim_tile.stride = dim_tile.stride.Replace(map);
     dim_tile.upper_bound = dim_tile.upper_bound.Replace(map);
   }
+  if (replica_id_.has_value()) {
+    replica_id_ = replica_id_->Replace(map);
+  }
+}
+
+Tile Tile::CloneWithNewDims(llvm::SmallVector<DimTile> new_dim_tiles) const {
+  Tile ret{*tiling_space_, std::move(new_dim_tiles)};
+  ret.set_replica_id(replica_id_);
+  return ret;
 }
 
 bool Tile::operator==(const Tile& other) const {
-  return tiling_space_ == other.tiling_space_ && dim_tiles_ == other.dim_tiles_;
+  return tiling_space_ == other.tiling_space_ &&  //
+         dim_tiles_ == other.dim_tiles_ &&        //
+         replica_id_ == other.replica_id_;
 }
 
 }  // namespace xla::gpu::experimental

@@ -18,12 +18,10 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <utility>
-#include <variant>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
-#include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"

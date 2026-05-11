@@ -20,7 +20,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -39,6 +38,8 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
+#include "xla/codegen/kernel_definition.h"
+#include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/mlir_kernel_source.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -199,6 +200,9 @@ class MlirKernelFusion final : public KernelFusionInterface {
   static constexpr std::array<int, 3> kIndexingMapBlockIdxDims = {3, 4, 5};
 
  private:
+  absl::StatusOr<KernelDefinition<LlvmKernelSource>> EmitLlvmModule(
+      const HloFusionInstruction& fusion, const std::string& kernel_name,
+      IrEmitterContext& parent_context) const;
   std::unique_ptr<MlirKernelEmitter> emitter_;
 };
 
@@ -211,7 +215,6 @@ void AddLoopTransformationPasses(mlir::OpPassManager& pm,
 // Adds passes that lower transformed loops to LLVM.
 void AddLoweringPasses(mlir::OpPassManager& pm,
                        const se::DeviceDescription& device);
-
 }  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_CODEGEN_EMITTERS_MLIR_KERNEL_EMITTER_H_

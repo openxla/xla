@@ -159,10 +159,12 @@ xla_test(
     backend_tags = {
         "b200": ["full"],
         "gb200": ["full"],
+        "gb300": ["full"],
     },
     backends = [
         "b200",
         "gb200",
+        "gb300",
     ],
     tags = [
         # This is testing whether the system configs are up to date and the test would fail on any

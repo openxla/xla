@@ -154,6 +154,25 @@ TEST_P(YnnFusionTest, Slice) {
   RunTest(kModuleStr);
 }
 
+TEST_P(YnnFusionTest, Iota) {
+  if (GetParam().in_dtype == "bf16") {
+    GTEST_SKIP() << "Iota not supported for bf16";
+  }
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule iota
+
+    ynn_fusion {
+      ROOT %iota = $dtype[8, 10] iota(), iota_dimension=1
+    }
+
+    ENTRY entry {
+      ROOT %fusion = $dtype[8, 10] fusion(), kind=kCustom, calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
 TEST_P(YnnFusionTest, ConcatenateAddMul) {
   constexpr absl::string_view kModuleStr = R"(
     HloModule concatenate_add_mul

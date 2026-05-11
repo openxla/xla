@@ -181,6 +181,7 @@ cc_library(
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/transforms:literal_canonicalizer",
         "//xla/hlo/transforms:operand_upcaster",
+        "//xla/hlo/transforms:propagate_call_metadata",
         "//xla/hlo/transforms:shape_canonicalizer",
         "//xla/hlo/transforms:while_loop_trip_count_annotator",
         "//xla/hlo/transforms/collectives:async_collective_replacer",

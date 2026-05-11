@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_memory_descriptions_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_profiler_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_shardings_extension.h"
+#include "xla/pjrt/c/pjrt_c_api_status_utils.h"
 #include "xla/pjrt/c/pjrt_c_api_stream_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_triton_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_triton_internal.h"
@@ -80,6 +81,8 @@ namespace gpu_plugin {
 
 #if TENSORFLOW_USE_ROCM
 #define PJRT_GPU_PLUGIN_PLATFORM_NAME "ROCM"
+#elif TENSORFLOW_USE_SYCL
+#define PJRT_GPU_PLUGIN_PLATFORM_NAME "ONEAPI"
 #else
 #define PJRT_GPU_PLUGIN_PLATFORM_NAME "CUDA"
 #endif
@@ -134,11 +137,11 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
     } else if (allocator_name == "vmm") {
       allocator_config.kind = xla::GpuAllocatorConfig::Kind::kVmm;
     } else {
-      return new PJRT_Error{absl::UnimplementedError(absl::StrFormat(
+      return StatusToPjRtError(absl::UnimplementedError(absl::StrFormat(
           "Allocator %s not supported for PJRT GPU plugin. Supported "
           "allocator "
           "options are: 'default', 'platform', 'bfc', 'cuda_async' and 'vmm'.",
-          allocator_name))};
+          allocator_name)));
     }
   }
   if (auto it = create_options.find("memory_fraction");
@@ -304,12 +307,20 @@ PJRT_Error* PJRT_GpuDeviceTopology_Create(
       PJRT_TopologyDescription_Create_Args_STRUCT_SIZE, args->struct_size));
 
   // Determine the platform ID and name based on the platform.
-  xla::PjRtPlatformId platform_id =
-      (std::string(PJRT_GPU_PLUGIN_PLATFORM_NAME) == "ROCM") ? xla::RocmId()
-                                                             : xla::CudaId();
-  std::string platform_name =
-      (std::string(PJRT_GPU_PLUGIN_PLATFORM_NAME) == "ROCM") ? xla::RocmName()
-                                                             : xla::CudaName();
+  xla::PjRtPlatformId platform_id;
+  std::string platform_name;
+  absl::string_view plugin_platform = PJRT_GPU_PLUGIN_PLATFORM_NAME;
+
+  if (plugin_platform == "ROCM") {
+    platform_id = xla::RocmId();
+    platform_name = xla::RocmName();
+  } else if (plugin_platform == "ONEAPI") {
+    platform_id = xla::OneapiId();
+    platform_name = xla::OneapiName();
+  } else {
+    platform_id = xla::CudaId();
+    platform_name = xla::CudaName();
+  }
 
   absl::flat_hash_map<std::string, xla::PjRtValueType> create_options =
       pjrt::ConvertFromPjRtNamedValueList(args->create_options,
@@ -334,10 +345,10 @@ PJRT_Error* PJRT_GpuDeviceTopology_Create(
     // If the user did not specify the topology and we did not
     // get any devices from the client, then error out because
     // we do not know how many devices the topology should have.
-    return new PJRT_Error{
+    return StatusToPjRtError(
         absl::FailedPreconditionError("Cannot create topology without an "
                                       "explicit topology shape or without "
-                                      "a client")};
+                                      "a client"));
   }
 
   if (sizes.GetDeviceCount() != device_ids.size()) {
@@ -362,15 +373,15 @@ PJRT_Error* PJRT_GpuDeviceTopology_Create(
   std::string target_config_attr;
   if (!tsl::protobuf::TextFormat::PrintToString(target_config_proto,
                                                 &target_config_attr)) {
-    return new PJRT_Error{
-        absl::FailedPreconditionError("Cannot serialize target_config_proto")};
+    return StatusToPjRtError(
+        absl::FailedPreconditionError("Cannot serialize target_config_proto"));
   }
   std::string host_target_machine_options_attr;
   if (!tsl::protobuf::TextFormat::PrintToString(
           target_config_and_devices.host_target_machine_options,
           &host_target_machine_options_attr)) {
-    return new PJRT_Error{absl::FailedPreconditionError(
-        "Cannot serialize host_target_machine_options")};
+    return StatusToPjRtError(absl::FailedPreconditionError(
+        "Cannot serialize host_target_machine_options"));
   }
   auto pjrt_topology =
       std::make_unique<xla::StreamExecutorGpuTopologyDescription>(
@@ -539,10 +550,10 @@ PJRT_Error* PJRT_Gpu_Register_Custom_Call(
               reinterpret_cast<XLA_FFI_Handler*>(args->handler_execute)});
       return nullptr;
     default:
-      return new PJRT_Error{absl::UnimplementedError(
+      return StatusToPjRtError(absl::UnimplementedError(
           absl::StrFormat("API version %d not supported for PJRT GPU plugin. "
                           "Supported versions are 0 and 1.",
-                          args->api_version))};
+                          args->api_version)));
   }
 }
 

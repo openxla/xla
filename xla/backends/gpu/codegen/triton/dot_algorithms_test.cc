@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
@@ -1149,7 +1150,7 @@ class NumericTestsForTriton : public TritonAlgorithmTest,
       ROOT _ = f32[8,8] fusion(p0, p1), kind=kCustom, calls=triton_dot,
         backend_config={"fusion_backend_config": {kind: "__triton_gemm",
         triton_gemm_config: {"block_m":32,"block_n":32,"block_k":32,
-        "split_k":1,"num_stages":1,"num_warps":1, "num_ctas":1}}}
+        "num_stages":1,"num_warps":1, "num_ctas":1}}}
     }
   )";
   std::string algorithm_;
@@ -1897,7 +1898,6 @@ class PrecisionTests
     TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
                         ParseAndReturnVerifiedModule(hlo_text));
     auto debug_options = module->config().debug_options();
-    debug_options.set_xla_gpu_enable_split_k_autotuning(false);
     if (algorithm == PC::ALG_UNSET) {
       // Here we test that the default algorithm for f32 dots is
       // ALG_DOT_BF16_BF16_F32 if the flag is set.

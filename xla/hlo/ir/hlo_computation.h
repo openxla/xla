@@ -886,6 +886,16 @@ class HloComputation {
   // Note: the removal operation is stable because some users depend on it.
   void Cleanup();
 
+  // Canonicalizes the local_ids of all instructions in this computation
+  // based on a stable post-order traversal. This ensures that semantically
+  // equivalent computations get the same local_ids.
+  //
+  // WARNING: This is a dangerous API because it reassigns local IDs (and thus
+  // changes the index in the instruction vector). It should only be used in
+  // contexts where you are certain that nothing is caching instruction unique
+  // IDs or relying on the stability of local IDs.
+  void CanonicalizeLocalIds();
+
   // Returns true if a given instruction is marked dead in this computation.
   bool IsMarkedAsDead(const HloInstruction* inst);
 

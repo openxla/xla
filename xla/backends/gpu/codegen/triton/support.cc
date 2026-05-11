@@ -392,7 +392,6 @@ CodegenDecision IsSupportedDotAlgorithm(
     case PrecisionConfig::ALG_UNSET:
     case PrecisionConfig::ALG_DOT_F16_F16_F16:
     case PrecisionConfig::ALG_DOT_F32_F32_F32:
-    case PrecisionConfig::ALG_DOT_F64_F64_F64:
     case PrecisionConfig::ALG_DOT_F16_F16_F32:
     case PrecisionConfig::ALG_DOT_BF16_BF16_F32:
     case PrecisionConfig::ALG_DOT_BF16_BF16_F32_X3:
@@ -400,6 +399,11 @@ CodegenDecision IsSupportedDotAlgorithm(
     case PrecisionConfig::ALG_DOT_TF32_TF32_F32:
     case PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3:
     case PrecisionConfig::ALG_DOT_BF16_BF16_F32_X9:
+      return CodegenDecision::Allow();
+    case PrecisionConfig::ALG_DOT_F64_F64_F64:
+      if (gpu_version.IsRocm()) {
+        break;
+      }
       return CodegenDecision::Allow();
     case PrecisionConfig::ALG_DOT_BF16_BF16_BF16:
       if (gpu_version.IsRocm()) {
@@ -433,12 +437,17 @@ CodegenDecision AreTypesSupportedByAlgUnsetDot(
     }
   }
 
-  std::vector<PrimitiveType> supported_float_types = {BF16, F16,      F32,
-                                                      F64,  F8E4M3FN, F8E5M2};
+  std::vector<PrimitiveType> supported_float_types = {BF16, F16, F32, F8E4M3FN,
+                                                      F8E5M2};
   if (gpu_version.IsRocm()) {
+    // The F64 type for dot operations in Triton is not currently supported
+    // on ROCm so it is excluded.
     supported_float_types.insert(supported_float_types.end(),
                                  {F8E4M3FNUZ, F8E5M2FNUZ});
+  } else {
+    supported_float_types.push_back(F64);
   }
+
   if (absl::c_linear_search(supported_float_types, input_type)) {
     return CodegenDecision::Allow();
   }
@@ -602,21 +611,6 @@ CodegenDecision IsTritonSupportedConcatenate(const HloInstruction& hlo) {
   CHECK(hlo.opcode() == HloOpcode::kConcatenate);
   if (hlo.shape().element_type() == S4) {
     return CodegenDecision::Forbid("S4 is not supported.");
-  }
-  if (!IsInTritonNestedGemmFusion(hlo)) {
-    return CodegenDecision::Forbid(
-        "Only concatenates in nested GEMM fusions are supported.");
-  }
-  if (AnyOperandIsFusion(hlo)) {
-    // TODO(b/393299275): remove this operand filter once migration is
-    // complete and priority fusion can produce nests.
-    if (absl::c_any_of(hlo.operands(), [](const HloInstruction* operand) {
-          return operand->opcode() != HloOpcode::kFusion;
-        })) {
-      return CodegenDecision::Forbid(
-          "Only support concatenates with nested GEMM fusions as a "
-          "parameter.");
-    }
   }
   return CodegenDecision::Allow();
 }
@@ -856,6 +850,19 @@ bool IsTritonFusedComputation(const HloComputation& computation) {
          fusion->backend_config<gpu::GpuBackendConfig>()
                  ->fusion_backend_config()
                  .kind() == kTritonGemmFusionKind;
+}
+
+bool IsTritonGemm(const HloInstruction& instr) {
+  if (instr.opcode() != HloOpcode::kFusion ||
+      instr.called_computations().size() != 1) {
+    return false;
+  }
+  if (!IsGpuFusionKind(instr, kTritonGemmFusionKind) &&
+      !IsGpuFusionKind(instr, kTritonNestedGemmFusionKind)) {
+    return false;
+  }
+  return absl::c_count_if(instr.fused_instructions(),
+                          HloPredicateIsOp<HloOpcode::kDot>) == 1;
 }
 
 }  // namespace gpu

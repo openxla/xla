@@ -268,10 +268,6 @@ TEST(HostCrossCompilationTest,
   passes_cpu_target_machine_options_instantiate_called = false;
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module, GetHloModule());
-  DebugOptions debug_options = hlo_module->config().debug_options();
-  debug_options.set_xla_gpu_experimental_aot_compiled_thunks(true);
-  hlo_module->mutable_config().set_debug_options(debug_options);
-
   ASSERT_OK_AND_ASSIGN(
       stream_executor::GpuTargetConfigProto gpu_target_config_proto,
       GetGpuTargetConfig(GpuModel::A6000));
@@ -298,10 +294,6 @@ TEST(HostCrossCompilationTest,
   passes_cpu_target_machine_options_instantiate_called = false;
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module, GetHloModule());
-  DebugOptions debug_options = hlo_module->config().debug_options();
-  debug_options.set_xla_gpu_experimental_aot_compiled_thunks(true);
-  hlo_module->mutable_config().set_debug_options(debug_options);
-
   ASSERT_OK_AND_ASSIGN(
       stream_executor::GpuTargetConfigProto gpu_target_config_proto,
       GetGpuTargetConfig(GpuModel::A6000));

@@ -791,6 +791,7 @@ cc_library(
     name = "ragged_all_to_all_kernel",
     hdrs = ["ragged_all_to_all_kernel.h"],
     deps = [
+        "//xla/core/collectives:symmetric_memory",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],

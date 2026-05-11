@@ -717,7 +717,8 @@ std::pair<std::string, std::string> GetFeatureStrFromGCNArchName(
     // The rest of the tokens are the feature/targetid strings
     auto mapped_token = MapGCNArchNameTokenToFeatureStr(tokens[i], gfx);
     if (!mapped_token.empty()) {
-      mapped_tokens += "," + mapped_token;
+      if (!mapped_tokens.empty()) mapped_tokens += ",";
+      mapped_tokens += mapped_token;
     }
   }
   return std::pair{gfx, mapped_tokens};

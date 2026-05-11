@@ -178,6 +178,20 @@ absl::Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
   return absl::OkStatus();
 }
 
+void AMDGPUCompiler::AddPaddingForGpublasGemms(
+    HloPassPipeline& pipeline, const DebugOptions& debug_options,
+    const se::GpuComputeCapability& gpu_version) {
+  if (!debug_options.xla_gpu_experimental_disable_binary_libraries()) {
+    for (const auto& req : HipblasPaddingRequirements) {
+      pipeline.AddPass<CublasPadForGemms>(gpu_version, req.data_type,
+                                          req.multiple_of);
+    }
+    // Padding a gemm operand that's a constant results in pad(constant).  Run
+    // constant-folding to simplify this into a new constant.
+    pipeline.AddPass<HloConstantFolding>();
+  }
+}
+
 absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
     HloModule* hlo_module, se::StreamExecutor* stream_exec,
     const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
@@ -188,14 +202,6 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
 
   pre_pipeline.AddPass<DotDimensionMerger>();
 
-  for (const auto& req : HipblasPaddingRequirements) {
-    pre_pipeline.AddPass<CublasPadForGemms>(
-        gpu_target_config.device_description.gpu_compute_capability(),
-        req.data_type, req.multiple_of);
-  }
-  // Padding a gemm operand that's a constant results in pad(constant).  Run
-  // constant-folding to simplify this into a new constant.
-  pre_pipeline.AddPass<HloConstantFolding>();
   TF_RETURN_IF_ERROR(
       pre_pipeline
           .Run(hlo_module,

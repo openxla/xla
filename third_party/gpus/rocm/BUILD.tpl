@@ -114,14 +114,16 @@ cc_library(
     name = "rocm_rpath",
     linkopts = select({
         ":build_hermetic": [
-            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib",
         ],
         ":link_only": [
         ],
         ":multiple_rocm_paths": [
+            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib",
             "-Wl,-rpath=%{rocm_lib_paths}",
         ],
         "//conditions:default": [
+            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib",
             "-Wl,-rpath,/opt/rocm/lib",
         ],
     }),
@@ -263,6 +265,7 @@ rocm_lib_import(
     data = glob([
         "%{rocm_root}/lib/libMIOpen.so*",
         "%{rocm_root}/share/miopen/**",
+        "%{rocm_root}/lib/librocm-core.so*",
     ]),
     interface_library = "%{rocm_root}/lib/libMIOpen.so",
     deps = [

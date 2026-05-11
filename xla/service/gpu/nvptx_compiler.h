@@ -31,6 +31,7 @@ limitations under the License.
 #include "llvm/IR/Module.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/service/compilation_stats.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_compiler.h"
@@ -60,6 +61,10 @@ class NVPTXCompiler : public GpuCompiler {
       se::dnn::VersionInfo dnn_version,
       const se::SemanticVersion& toolkit_version,
       CompilationStats* compilation_stats) override;
+
+  void AddPaddingForGpublasGemms(
+      HloPassPipeline& pipeline, const DebugOptions& debug_options,
+      const se::GpuComputeCapability& gpu_version) override;
 
   absl::Status OptimizeHloPostLayoutAssignment(
       HloModule* hlo_module, se::StreamExecutor* stream_exec,

@@ -42,7 +42,9 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.h"
+#include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/stream_executor/abi/executable_abi_version.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -233,9 +235,10 @@ TEST_F(GpuAotCompilationResultTest, LoadExecutable) {
 
   EnsureCudaSymbolIsRegistered();
 
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
-                       std::move(*result).LoadExecutable(
-                           platform_.id(), GetDeviceDescription()));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      std::move(*result).LoadExecutable(platform_.id(), GetDeviceDescription(),
+                                        DebugOptions()));
 
   {
     ASSERT_OK_AND_ASSIGN(

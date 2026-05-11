@@ -1092,7 +1092,6 @@ AutotuneResult::TritonGemmKey TritonGemmConfig::ToProto() const {
   key.set_block_m(block_m);
   key.set_block_n(block_n);
   key.set_block_k(block_k);
-  key.set_split_k(1);
   key.set_num_stages(num_stages);
   key.set_num_warps(num_warps);
   key.set_num_ctas(num_ctas);

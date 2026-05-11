@@ -68,6 +68,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
+#include "xla/backends/gpu/runtime/async_execution.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/collective_broadcast_thunk.h"
 #include "xla/backends/gpu/runtime/collective_group_thunk.h"
@@ -1290,7 +1291,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitTritonCustomCall(
 
     kernel_modules_.push_back(std::move(result.llvm_module));
     return {{kernel_name, launch_dimensions, /*cluster_dim=*/std::nullopt,
-             result.shmem_bytes, /*binary=*/"", /*tma_metadata=*/{},
+             result.shmem_bytes, /*binary=*/{}, /*tma_metadata=*/{},
              result.use_pdl}};
   };
 
@@ -1317,7 +1318,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitTritonCustomCall(
       /*zeroed_output_buffer_indices=*/call.zeroed_outputs, entry->use_pdl));
 }
 
-absl::StatusOr<ThunkSequence> ThunkEmitter::EmitAsyncComputation(
+AsyncThunkSequence ThunkEmitter::EmitAsyncComputation(
     const HloInstruction* instr) {
   const HloInstruction* wrapped = instr->async_wrapped_instruction();
   TF_RET_CHECK(wrapped->called_computations().size() == 1);
@@ -1329,22 +1330,27 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitAsyncComputation(
   ASSIGN_OR_RETURN(ExecutionStreamId execution_stream_id,
                    stream_assignment.GetExecutionStreamId(async_start));
 
-  ASSIGN_OR_RETURN(ThunkSequence nested_thunks,
-                   EmitHloComputation(computation).Await());
+  AsyncThunkSequence nested_thunks = EmitHloComputation(computation);
 
-  auto start_thunk = std::make_unique<AsyncStartThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(
-          instr, ir_emitter_context_->GetNextThunkId()),
-      execution_stream_id, std::move(nested_thunks));
+  Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
+      instr, ir_emitter_context_->GetNextThunkId());
 
-  auto [it, inserted] =
-      hlo_async_executions_.emplace(wrapped, start_thunk->async_execution());
+  std::shared_ptr<AsyncExecution> async_execution =
+      std::make_shared<AsyncExecution>(thunk_info);
+  auto [it, inserted] = hlo_async_executions_.emplace(wrapped, async_execution);
   if (!inserted) {
     return Internal("Async execution already exists for instruction %s",
                     wrapped->ToString());
   }
 
-  return GetThunkSequence(std::move(start_thunk));
+  return std::move(nested_thunks)
+      .Map([thunk_info = std::move(thunk_info),
+            async_execution = std::move(async_execution),
+            execution_stream_id](ThunkSequence nested_thunks) {
+        return ThunkSequence::Of(std::make_unique<AsyncStartThunk>(
+            std::move(thunk_info), execution_stream_id,
+            std::move(nested_thunks), async_execution));
+      });
 }
 
 AsyncThunkSequence ThunkEmitter::EmitFusion(const HloFusionInstruction* instr) {
@@ -1388,31 +1394,36 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCopy(
       /*mem_size=*/src_buffer.size()));
 }
 
-absl::StatusOr<ThunkSequence> ThunkEmitter::EmitAsyncCustomCallStart(
+AsyncThunkSequence ThunkEmitter::EmitAsyncCustomCallStart(
     const HloInstruction* instr) {
   const HloInstruction* wrapped = instr->async_wrapped_instruction();
-  ASSIGN_OR_RETURN(auto custom_call_thunks,
-                   EmitCustomCallSwitch(wrapped).Await());
+  AsyncThunkSequence custom_call_thunks = EmitCustomCallSwitch(wrapped);
 
   auto* async_start = Cast<HloAsyncInstruction>(instr);
   const ExecutionStreamAssignment& stream_assignment =
       ir_emitter_context_->execution_stream_assignment();
-  TF_ASSIGN_OR_RETURN(ExecutionStreamId execution_stream_id,
-                      stream_assignment.GetExecutionStreamId(async_start));
+  ASSIGN_OR_RETURN(ExecutionStreamId execution_stream_id,
+                   stream_assignment.GetExecutionStreamId(async_start));
 
-  auto start_thunk = std::make_unique<AsyncStartThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(
-          instr, ir_emitter_context_->GetNextThunkId()),
-      execution_stream_id, std::move(custom_call_thunks));
+  Thunk::ThunkInfo start_thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
+      instr, ir_emitter_context_->GetNextThunkId());
 
-  auto [it, inserted] =
-      hlo_async_executions_.emplace(wrapped, start_thunk->async_execution());
+  std::shared_ptr<AsyncExecution> async_execution =
+      std::make_shared<AsyncExecution>(start_thunk_info);
+  auto [it, inserted] = hlo_async_executions_.emplace(wrapped, async_execution);
   if (!inserted) {
     return Internal("Async execution already exists for instruction %s",
                     wrapped->ToString());
   }
 
-  return GetThunkSequence(std::move(start_thunk));
+  return std::move(custom_call_thunks)
+      .Map([start_thunk_info = std::move(start_thunk_info),
+            async_execution = std::move(async_execution),
+            execution_stream_id](ThunkSequence custom_call_thunks) {
+        return ThunkSequence::Of(std::make_unique<AsyncStartThunk>(
+            std::move(start_thunk_info), execution_stream_id,
+            std::move(custom_call_thunks), std::move(async_execution)));
+      });
 }
 
 absl::Status ThunkEmitter::AssertNonDeterminismIsOkay(
@@ -1490,6 +1501,9 @@ AsyncThunkSequence ThunkEmitter::EmitRngGetAndUpdateState(
 }
 
 AsyncThunkSequence ThunkEmitter::EmitSort(const HloSortInstruction* sort) {
+  if (sort->is_stable()) {
+    return Internal("Stable sort not supported. Did stable_sort_expander run?");
+  }
   std::string op_name(sort->name());
   const Shape& keys_shape = sort->operand(0)->shape();
   ThunkSequence thunks;
@@ -1824,46 +1838,60 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectiveThunk(
 
 AsyncThunkSequence ThunkEmitter::EmitCollectiveGroupStartThunk(
     const HloInstruction* instr) {
-  ThunkSequence thunks;
+  std::vector<AsyncThunkSequence> futures;
   for (const HloInstruction* nested_instruction :
        instr->async_wrapped_computation()->instructions()) {
-    ASSIGN_OR_RETURN(
-        auto comp_thunks,
-        EmitHloInstruction(nested_instruction, /*emit_group_thunks=*/true)
-            .Await());
-    AppendThunkSequence(thunks, comp_thunks);
+    futures.push_back(
+        EmitHloInstruction(nested_instruction, /*emit_group_thunks=*/true));
   }
-  auto group_thunk = std::make_unique<CollectiveGroupThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(
-          instr, ir_emitter_context_->GetNextThunkId()),
-      Thunk::Kind::kGroup, std::move(thunks));
 
-  // For synchronous collectives, emit group thunk directly without async
-  // wrapping.
-  if (IsGPUSyncCollective(*instr)) {
+  Thunk::ThunkInfo group_thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
+      instr, ir_emitter_context_->GetNextThunkId());
+  Thunk::ThunkInfo start_thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
+      instr, ir_emitter_context_->GetNextThunkId());
+
+  bool is_sync = IsGPUSyncCollective(*instr);
+
+  std::shared_ptr<AsyncExecution> async_execution;
+  std::optional<ExecutionStreamId> execution_stream_id;
+  if (is_sync) {
     hlo_async_executions_.try_emplace(instr, nullptr);
-    return ThunkSequence::Of(std::move(group_thunk));
+  } else {
+    async_execution = std::make_shared<AsyncExecution>(start_thunk_info);
+
+    auto [it, inserted] = hlo_async_executions_.emplace(instr, async_execution);
+    if (!inserted) {
+      return Internal("Async execution already exists for instruction %s",
+                      instr->ToString());
+    }
+
+    const ExecutionStreamAssignment& stream_assignment =
+        ir_emitter_context_->execution_stream_assignment();
+    ASSIGN_OR_RETURN(execution_stream_id,
+                     stream_assignment.GetExecutionStreamId(instr));
   }
 
-  // Wrap in AsyncStartThunk for asynchronous execution.
-  const ExecutionStreamAssignment& stream_assignment =
-      ir_emitter_context_->execution_stream_assignment();
-  TF_ASSIGN_OR_RETURN(ExecutionStreamId execution_stream_id,
-                      stream_assignment.GetExecutionStreamId(instr));
+  return tsl::JoinFutures(absl::MakeSpan(futures))
+      .Map([group_thunk_info = std::move(group_thunk_info),
+            start_thunk_info = std::move(start_thunk_info),
+            async_execution = std::move(async_execution), execution_stream_id,
+            is_sync](std::vector<ThunkSequence> sequences) {
+        ThunkSequence thunks = FlattenThunkSequence(std::move(sequences));
+        auto group_thunk = std::make_unique<CollectiveGroupThunk>(
+            std::move(group_thunk_info), Thunk::Kind::kGroup,
+            std::move(thunks));
 
-  auto start_thunk = std::make_unique<AsyncStartThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(
-          instr, ir_emitter_context_->GetNextThunkId()),
-      execution_stream_id, ThunkSequence::Of(std::move(group_thunk)));
+        // For synchronous collectives, emit group thunk directly without async
+        // wrapping.
+        if (is_sync) {
+          return ThunkSequence::Of(std::move(group_thunk));
+        }
 
-  auto [it, inserted] =
-      hlo_async_executions_.emplace(instr, start_thunk->async_execution());
-  if (!inserted) {
-    return Internal("Async execution already exists for instruction %s",
-                    instr->ToString());
-  }
-
-  return GetThunkSequence(std::move(start_thunk));
+        return ThunkSequence::Of(std::make_unique<AsyncStartThunk>(
+            std::move(start_thunk_info), *execution_stream_id,
+            ThunkSequence::Of(std::move(group_thunk)),
+            std::move(async_execution)));
+      });
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectiveAsyncDone(
@@ -2517,8 +2545,20 @@ AsyncThunkSequence ThunkEmitter::EmitAsyncStart(const HloInstruction* instr) {
           std::nullopt);
     }
     case HloOpcode::kFusion: {
-      ASSIGN_OR_RETURN(ThunkSequence fusion_thunks,
-                       EmitFusion(Cast<HloFusionInstruction>(wrapped)).Await());
+      AsyncThunkSequence fusion_thunks =
+          EmitFusion(Cast<HloFusionInstruction>(wrapped));
+
+      Thunk::ThunkInfo start_thunk_info =
+          Thunk::ThunkInfo::WithProfileAnnotation(
+              instr, ir_emitter_context_->GetNextThunkId());
+      std::shared_ptr<AsyncExecution> async_execution =
+          std::make_shared<AsyncExecution>(start_thunk_info);
+      auto [it, inserted] =
+          hlo_async_executions_.emplace(wrapped, async_execution);
+      if (!inserted) {
+        return Internal("Async execution already exists for instruction %s",
+                        wrapped->ToString());
+      }
 
       auto* async_start = Cast<HloAsyncInstruction>(instr);
       const ExecutionStreamAssignment& stream_assignment =
@@ -2526,19 +2566,14 @@ AsyncThunkSequence ThunkEmitter::EmitAsyncStart(const HloInstruction* instr) {
       ASSIGN_OR_RETURN(ExecutionStreamId execution_stream_id,
                        stream_assignment.GetExecutionStreamId(async_start));
 
-      auto start_thunk = std::make_unique<AsyncStartThunk>(
-          Thunk::ThunkInfo::WithProfileAnnotation(
-              instr, ir_emitter_context_->GetNextThunkId()),
-          execution_stream_id, std::move(fusion_thunks));
-
-      auto [it, inserted] = hlo_async_executions_.emplace(
-          wrapped, start_thunk->async_execution());
-      if (!inserted) {
-        return Internal("Async execution already exists for instruction %s",
-                        wrapped->ToString());
-      }
-
-      return ThunkSequence::Of(std::move(start_thunk));
+      return std::move(fusion_thunks)
+          .Map([start_thunk_info = std::move(start_thunk_info),
+                async_execution = std::move(async_execution),
+                execution_stream_id](ThunkSequence fusion_thunks) {
+            return ThunkSequence::Of(std::make_unique<AsyncStartThunk>(
+                std::move(start_thunk_info), execution_stream_id,
+                std::move(fusion_thunks), std::move(async_execution)));
+          });
     }
     case HloOpcode::kCall: {
       return EmitAsyncComputation(instr);

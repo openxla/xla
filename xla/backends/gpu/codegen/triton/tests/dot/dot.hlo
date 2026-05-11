@@ -53,20 +53,19 @@ fusion {
 // CHECK-SAME:    : memref<256x16x512xf32, #xtile.layout<[0, 1, 2]>>
 // CHECK:        %[[ABSF_0:.*]] = math.absf %[[EXTRACT_1]] : tensor<32x1x64xf32>
 
-// CHECK:        %[[RESHAPE_0:.*]] = tt.reshape %[[NEGF_0]]
+// CHECK:        %[[RESHAPE_LHS:.*]] = tt.reshape %[[NEGF_0]]
 // CHECK-SAME:     : tensor<16x1x32xf32> -> tensor<16x32xf32>
-// CHECK:        %[[RESHAPE_1:.*]] = tt.reshape %[[ABSF_0]]
+// CHECK:        %[[RESHAPE_RHS:.*]] = tt.reshape %[[ABSF_0]]
 // CHECK-SAME:     : tensor<32x1x64xf32> -> tensor<32x64xf32>
-// CHECK:        %[[DOT:.*]] = tt.dot %[[RESHAPE_0]], %[[RESHAPE_1]], %[[ACC]]
+// CHECK:        %[[DOT:.*]] = tt.dot %[[RESHAPE_LHS]], %[[RESHAPE_RHS]], %[[ACC]]
 // CHECK-SAME:     : tensor<16x32xf32> * tensor<32x64xf32> -> tensor<16x64xf32>
 // CHECK:        scf.yield %[[DOT]] : tensor<16x64xf32>
 // CHECK:      }
-// CHECK:      %[[RESHAPE_2:.*]] = tt.reshape %[[FOR_0]]
-// CHECK-SAME:   : tensor<16x64xf32> -> tensor<1x16x64xf32>
+// CHECK:      %[[FOR_0_R:.*]] = tt.reshape %[[FOR_0]] : tensor<16x64xf32> -> tensor<1x16x64xf32>
 // CHECK:      %[[OFFSET_4:.*]] = xla.apply_indexing #[[$ATTR_1]](%[[ARG3]])
 // CHECK:      %[[OFFSET_5:.*]] = xla.apply_indexing #[[$ATTR_0]](%[[ARG3]])
 // CHECK:      %[[OFFSET_6:.*]] = xla.apply_indexing #[[$ATTR_3]](%[[ARG3]])
-// CHECK:      xtile.insert %[[RESHAPE_2]] into %[[ARG2]]
+// CHECK:      xtile.insert %[[FOR_0_R]] into %[[ARG2]]
 // CHECK-SAME:    [%[[OFFSET_4]], %[[OFFSET_5]], %[[OFFSET_6]]]
 // CHECK-SAME:    [1, 16, 64] [1, 1, 1]
 // CHECK-SAME:    : tensor<1x16x64xf32> -> memref<16x32x512xf32, #xtile.layout<[2, 0, 1]>>

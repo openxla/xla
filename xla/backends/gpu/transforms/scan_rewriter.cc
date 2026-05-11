@@ -63,7 +63,8 @@ absl::StatusOr<bool> ScanRewriter::RunOnComputation(
     while (init->opcode() == HloOpcode::kBroadcast) {
       init = init->operand(0);
     }
-    if (!init->IsConstant() || !init->literal().IsZero({})) {
+    if (!init->IsConstant() || !ShapeUtil::IsScalar(init->shape()) ||
+        !init->literal().IsZero({})) {
       continue;
     }
     const HloInstruction* root = scan->to_apply()->root_instruction();
@@ -89,9 +90,9 @@ absl::StatusOr<bool> ScanRewriter::RunOnComputation(
       if (dim == scan_dim) {
         found_scan_dim = true;
       } else if (found_scan_dim) {
-        vector_length *= shape.dimensions(dim);
-      } else {
         column_length *= shape.dimensions(dim);
+      } else {
+        vector_length *= shape.dimensions(dim);
       }
     }
 

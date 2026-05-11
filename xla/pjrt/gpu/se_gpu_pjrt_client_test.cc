@@ -322,6 +322,22 @@ TEST(StreamExecutorGpuClientTest, CreateErrorBuffer) {
   }
 }
 
+TEST(StreamExecutorGpuClientTest, CreateErrorBufferToken) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+
+  xla::Shape shape = ShapeUtil::MakeTokenShape();
+  for (PjRtMemorySpace* memory_space : client->memory_spaces()) {
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto buffer,
+        client->CreateErrorBuffer(Internal("foobar"), shape, memory_space));
+    EXPECT_THAT(
+        buffer->ToLiteral().Await(),
+        absl_testing::StatusIs(tsl::error::INTERNAL, HasSubstr("foobar")));
+    EXPECT_EQ(buffer->memory_space(), memory_space);
+  }
+}
+
 TEST(StreamExecutorGpuClientTest, PropagateError) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(DefaultOptions()));
@@ -785,6 +801,27 @@ TEST(StreamExecutorGpuClientTest, ToLiteralAsyncToken) {
   buffer.reset();
 
   n.WaitForNotification();
+}
+
+TEST(StreamExecutorGpuClientTest, AsyncTransferToken) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 1);
+
+  xla::Shape shape = ShapeUtil::MakeTokenShape();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto transfer_manager,
+      client->CreateBuffersForAsyncHostToDevice(
+          {shape}, client->addressable_devices()[0]->memory_spaces()[0]));
+  auto buffer = transfer_manager->RetrieveBuffer(0);
+  auto ready_future = buffer->GetReadyFuture();
+  EXPECT_FALSE(ready_future.IsReady());
+
+  TF_ASSERT_OK(transfer_manager->TransferRawDataToBuffer(0, absl::string_view(),
+                                                         []() {}));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, buffer->ToLiteral().Await());
+  EXPECT_TRUE(literal->shape().IsToken());
 }
 
 TEST(StreamExecutorGpuClientTest, ToLiteralAsyncBeforeBufferReady) {

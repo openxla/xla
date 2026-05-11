@@ -20,6 +20,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/compiled_memory_stats.h"
@@ -45,7 +46,8 @@ class EarlyExitCompilationResult : public CompiledModule {
 
   absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable(
       se::Platform::Id platform_id,
-      const se::DeviceDescription& device_description) &&
+      const se::DeviceDescription& device_description,
+      const DebugOptions& debug_options) &&
       override;
 
   const HloModule* optimized_module() const override { return module_.get(); }

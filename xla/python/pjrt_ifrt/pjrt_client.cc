@@ -1170,8 +1170,12 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::MakeErrorArrays(
         array_spec.sharding->devices()->AddressableDeviceList()->devices();
     TF_ASSIGN_OR_RETURN(Shape shard_shape,
                         array_spec.sharding->GetShardShape(array_spec.shape));
-    xla::Shape xla_shape =
-        xla::ShapeUtil::MakeShape(primitive_type, shard_shape.dims());
+    xla::Shape xla_shape;
+    if (primitive_type == xla::TOKEN) {
+      xla_shape = xla::ShapeUtil::MakeTokenShape();
+    } else {
+      xla_shape = xla::ShapeUtil::MakeShape(primitive_type, shard_shape.dims());
+    }
 
     PjRtArray::PjRtBuffers buffers;
     buffers.reserve(ifrt_addressable_devices.size());

@@ -101,6 +101,7 @@ cc_library(
         "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/translate/hlo_to_mhlo:attribute_importer",
         "//xla/hlo/translate/hlo_to_mhlo:hlo_function_importer",
         "//xla/mlir_hlo",
         "//xla/service:hlo_module_config",
@@ -203,6 +204,7 @@ xla_cc_test(
     deps = [
         ":dot_algorithms",
         ":emitter_helpers",
+        "//xla:xla_proto_cc",
         "//xla/codegen/xtile/ir:xtile",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",

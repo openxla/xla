@@ -3390,6 +3390,34 @@ func.func @main(%arg0: tensor<i1>, %arg1: memref<2xf32>) -> memref<2xf32> {
 // -----
 
 // CHECK: HloModule
+// CHECK: %[[COMPUTATION:.*]] ({{.*}}: f32[], {{.*}}: f32[]) -> (f32[], f32[])
+// CHECK: ENTRY
+// CHECK: %[[ARG0:.*]] = f32[10] parameter(0)
+// CHECK: %[[INIT:.*]] = f32[] constant(0)
+// CHECK: %[[RESULT:.*]] = (f32[10], f32[]) scan(%[[ARG0]], %[[INIT]]),
+// CHECK-SAME: dimensions={0}, num_carries=1, is_associative=true, to_apply=%[[COMPUTATION]]
+// CHECK-DAG: ROOT %{{.*}} = f32[10] get-tuple-element(%[[RESULT]]), index=0
+// Get-tuple-element for the unused carry is also emitted; HLO DCE removes it
+// later. This mirrors how other multi-result ops are exported (kReduce, kSort,
+// etc.), which is required so per-result Shardy shardings can be applied to
+// each get-tuple-element instead of to the tuple as a whole.
+// CHECK-DAG: %{{.*}} = f32[] get-tuple-element(%[[RESULT]]), index=1
+func.func @main(%arg0: tensor<10xf32>) -> tensor<10xf32> {
+  %init = mhlo.constant dense<0.0> : tensor<f32>
+  %0:2 = mhlo.scan(%arg0) inits (%init) dimension = 0 attributes {
+    is_associative = true,
+    is_reverse = false
+  } {
+  ^bb0(%arg1: tensor<f32>, %arg2: tensor<f32>):
+    %1 = mhlo.add %arg1, %arg2 : tensor<f32>
+    mhlo.return %1, %1 : tensor<f32>, tensor<f32>
+  } : (tensor<10xf32>, tensor<f32>) -> (tensor<10xf32>, tensor<f32>)
+  func.return %0#0 : tensor<10xf32>
+}
+
+// -----
+
+// CHECK: HloModule
 // CHECK: ENTRY
 func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x6xf32> {
   // CHECK: [[RES:%custom.*]] = (f32[8,6]) custom-call(%{{.*}}), custom_call_target="SparseActivationsUnstack"

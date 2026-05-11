@@ -1085,6 +1085,12 @@ Interval RangeEvaluator::ComputeExpressionRange(SymbolicExpr expr) {
       result = {std::min(a, b), std::max(a, b)};
       break;
     }
+    case SymbolicExprType::kMin:
+      result = lhs.min(rhs);
+      break;
+    case SymbolicExprType::kMax:
+      result = lhs.max(rhs);
+      break;
     default:
       // We don't use ceildiv, so we don't support it.
       LOG(FATAL) << "Unsupported expression type: "

@@ -24,6 +24,7 @@ limitations under the License.
 #include "mhlo/IR/register.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -139,8 +140,7 @@ void setFrontendAttribute(SmallVector<NamedAttribute>& existingAttributes,
       break;
     }
   }
-  existingAttributes.emplace_back(
-      NamedAttribute(builder.getStringAttr(name), stringValue));
+  existingAttributes.emplace_back(builder.getStringAttr(name), stringValue);
 }
 
 void removeFrontendAttribute(
@@ -287,7 +287,7 @@ bool isPythonCallbackCustomCall(mlir::stablehlo::CustomCallOp op) {
          targetName == kFFIPythonGpuCallbackCustomCallTargetName;
 }
 
-std::string duplicateShardingsAtIndices(
+absl::StatusOr<std::string> duplicateShardingsAtIndices(
     mlir::StringRef shardingsFrontendAttr,
     const llvm::BitVector& indicesToDuplicate) {
   auto context = std::make_unique<mlir::MLIRContext>(
@@ -295,7 +295,9 @@ std::string duplicateShardingsAtIndices(
   context->loadDialect<mlir::sdy::SdyDialect>();
   auto shardingPerValue = parseStringAttr<TensorShardingPerValueAttr>(
       shardingsFrontendAttr, context.get());
-  CHECK(shardingPerValue);
+  if (!shardingPerValue) {
+    return absl::InvalidArgumentError("Failed to parse sharding");
+  }
   SmallVector<TensorShardingAttr> newShardings;
   newShardings.reserve(shardingPerValue.size());
   for (auto [index, sharding] :
@@ -409,18 +411,6 @@ bool hasGspmdAttrsOrOps(mlir::ModuleOp module) {
 
 bool hasShardyMesh(mlir::ModuleOp module) {
   return !module.getOps<mlir::sdy::MeshOp>().empty();
-}
-
-
-TensorShardingPerValueAttr getFullyClosedLike(
-    TensorShardingPerValueAttr shardings) {
-  SmallVector<TensorShardingAttr> resultShardings;
-  resultShardings.reserve(shardings.size());
-  for (TensorShardingAttr sharding : shardings.getShardings()) {
-    resultShardings.push_back(TensorShardingAttr::getFullyClosedLike(sharding));
-  }
-  return TensorShardingPerValueAttr::get(shardings.getContext(),
-                                         resultShardings);
 }
 
 mlir::sdy::MeshAttr toSdyMeshAttr(const Mesh& mesh,
@@ -543,120 +533,16 @@ mlir::sdy::TensorShardingPerValueAttr convertToSdySharding(
       context, convertToSdyShardingAttr(hloSharding, context));
 }
 
-bool isManualComputation(CallOp callOp) {
-  return callOp.getCallee().contains(kManualComputationFuncName);
+bool isManualComputation(CallOp callOp, bool isInlineable) {
+  return callOp.getCallee().contains(isInlineable
+                                         ? kInlineableManualComputationFuncName
+                                         : kManualComputationFuncName);
 }
 
-bool isManualComputation(FuncOp funcOp) {
-  return funcOp.getName().contains(kManualComputationFuncName);
-}
-
-namespace {
-mlir::sdy::ManualAxesAttr getManualAxes(CallOp callOp) {
-  return callOp->getAttrOfType<mlir::sdy::ManualAxesAttr>(kManualAxes);
-}
-
-// Returns the first non-maximal mesh on the given shardings, if there is
-// one. Otherwise returns `nullptr`.
-mlir::Attribute getMeshOrRef(
-    int64_t numElements, const SymbolTable& symbolTable,
-    std::function<TensorShardingAttr(int64_t)> getSharding) {
-  for (int64_t i = 0; i < numElements; ++i) {
-    if (TensorShardingAttr sdySharding = getSharding(i);
-        sdySharding && !sdySharding.getMesh(symbolTable).isMaximal()) {
-      return sdySharding.getMeshOrRef();
-    }
-  }
-  return nullptr;
-}
-
-TensorShardingPerValueAttr getFullyClosedLike(mlir::ValueRange values,
-                                              Attribute meshOrRef) {
-  SmallVector<TensorShardingAttr> resultShardings;
-  resultShardings.reserve(values.size());
-  for (mlir::Value value : values) {
-    resultShardings.push_back(TensorShardingAttr::getFullyReplicated(
-        meshOrRef.getContext(), mlir::sdy::getTensorRank(value), meshOrRef,
-        /*isClosed=*/true));
-  }
-  return TensorShardingPerValueAttr::get(meshOrRef.getContext(),
-                                         resultShardings);
-}
-}  // namespace
-
-void insertReshardsOnFuncArguments(FuncOp funcOp, CallOp callOp,
-                                   const SymbolTable& symbolTable,
-                                   mlir::IRRewriter& rewriter) {
-  TensorShardingPerValueAttr funcArgShardings =
-      getFuncArgShardings(funcOp, symbolTable);
-  if (!funcArgShardings) {
-    mlir::Attribute meshOrRef = getMeshOrRef(
-        callOp.getNumOperands(), symbolTable,
-        [&](int64_t i) { return getSharding(callOp.getOperand(i)); });
-    // Return without inserting reshards as neither func arguments nor call
-    // operands have a sharding with non-maximal mesh.
-    if (!meshOrRef) {
-      return;
-    }
-    funcArgShardings = getFullyClosedLike(callOp.getOperands(), meshOrRef);
-  }
-  rewriter.setInsertionPoint(callOp);
-  for (auto [funcArgSharding, operand] : llvm::zip_equal(
-           funcArgShardings.getShardings(), callOp->getOpOperands())) {
-    if (!funcArgSharding.isEquivalent(getSharding(operand.get()))) {
-      auto copyOp = mlir::mhlo::CopyOp::create(rewriter, operand.get().getLoc(),
-                                               operand.get());
-      if (mlir::sdy::ManualAxesAttr manualAxes = getManualAxes(callOp)) {
-        copyOp->setAttr(kManualAxes, manualAxes);
-      }
-      mlir::sdy::setShardings(copyOp, funcArgSharding);
-      operand.set(copyOp);
-    }
-  }
-}
-
-namespace {
-void insertReshardsOnFuncResults(TensorShardingPerValueAttr funcResultShardings,
-                                 CallOp callOp, mlir::IRRewriter& rewriter) {
-  for (auto [funcResultSharding, result] : llvm::zip_equal(
-           funcResultShardings.getShardings(), callOp.getResults())) {
-    mlir::sdy::TensorShardingAttr callResultSharding =
-        mlir::sdy::getSharding(result);
-    if (!funcResultSharding.isEquivalent(callResultSharding)) {
-      rewriter.setInsertionPointAfterValue(result);
-      auto copyOp =
-          mlir::mhlo::CopyOp::create(rewriter, result.getLoc(), result);
-      if (mlir::sdy::ManualAxesAttr manualAxes = getManualAxes(callOp)) {
-        copyOp->setAttr(kManualAxes, manualAxes);
-      }
-      mlir::sdy::setShardings(
-          copyOp, callResultSharding
-                      ? callResultSharding
-                      : mlir::sdy::TensorShardingAttr::getFullyClosedLike(
-                            funcResultSharding));
-      rewriter.replaceAllUsesExcept(result, copyOp, copyOp);
-    }
-  }
-  mlir::sdy::setShardings(callOp, funcResultShardings);
-}
-}  // namespace
-
-void insertReshardsOnFuncResults(FuncOp funcOp, CallOp callOp,
-                                 const SymbolTable& symbolTable,
-                                 mlir::IRRewriter& rewriter) {
-  TensorShardingPerValueAttr funcResultShardings =
-      mlir::sdy::getFuncResultShardings(funcOp, symbolTable);
-  if (!funcResultShardings) {
-    TensorShardingPerValueAttr callResultShardings =
-        mlir::sdy::getShardingPerValue(callOp);
-    // Return without inserting reshards as neither func arguments have a
-    // sharding with non-maximal mesh nor call has non-empty shardings.
-    if (!callResultShardings) {
-      return;
-    }
-    funcResultShardings = getFullyClosedLike(callResultShardings);
-  }
-  insertReshardsOnFuncResults(funcResultShardings, callOp, rewriter);
+bool isManualComputation(FuncOp funcOp, bool isInlineable) {
+  return funcOp.getName().contains(isInlineable
+                                       ? kInlineableManualComputationFuncName
+                                       : kManualComputationFuncName);
 }
 
 }  // namespace sdy

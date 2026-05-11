@@ -199,7 +199,7 @@ absl::Status SuccessfulCrossHostTransferTestBody(bool is_sender,
   std::unique_ptr<PJRT_Error, ::pjrt::PJRT_ErrorDeleter> error(
       api->PJRT_Client_Create(&create_arg), ::pjrt::MakeErrorDeleter(api));
   if (error != nullptr) {
-    return error->status;
+    return PjrtErrorToStatus(error.get(), api);
   }
   std::unique_ptr<PJRT_Client, ::pjrt::PJRT_ClientDeleter> client_deleter(
       create_arg.client, ::pjrt::MakeClientDeleter(api));
@@ -240,7 +240,7 @@ absl::Status SuccessfulCrossHostTransferTestBody(bool is_sender,
               api->PJRT_Client_BufferFromHostBuffer(&args),
               ::pjrt::MakeErrorDeleter(api)};
       if (transfer_error != nullptr) {
-        return transfer_error->status;
+        return PjrtErrorToStatus(transfer_error.get(), api);
       }
       CHECK_OK(args.buffer->buffer->GetReadyFuture().Await());
       std::unique_ptr<PJRT_Event, PJRT_EventDeleter> event(

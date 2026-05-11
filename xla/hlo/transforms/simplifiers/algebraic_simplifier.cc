@@ -2550,6 +2550,28 @@ absl::Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
         result_shape.element_type());
   }
 
+  // A / broadcast(B) => A * broadcast(1 / B)
+  // This simplification allows many of the other simplifications here to apply
+  // when they otherwise would not have, because e.g. A / broadcast(rsqrt(B))
+  // does not match the A / rsqrt(B) rule above.
+  // This rewrite does not preserve Inf/NaN for complex types, so we only use
+  // this rewrite if the type is not complex, or fast math is enabled.
+  // TODO: b/504985408 - This rewrite should apply to any device.
+  if (options_.executing_on_cpu() && options_.enable_sink_broadcast() &&
+      (!primitive_util::IsComplexType(divide->shape().element_type()) ||
+       options_.enable_fast_math()) &&
+      Match(divide,
+            m::Divide(m::Op(&a), m::Broadcast(m::Op(&b).WithOneUse())))) {
+    HloInstruction* bcast = divide->mutable_operand(1);
+    auto* recip = bcast->AddInstruction(HloInstruction::CreateBinary(
+        b->shape(), HloOpcode::kDivide, MakeScalarLike(b, 1), b));
+    auto* recip_bcast = bcast->AddInstruction(HloInstruction::CreateBroadcast(
+        divide->shape(), recip, bcast->dimensions()));
+    return ReplaceWithNewInstruction(
+        divide, HloInstruction::CreateBinary(
+                    divide->shape(), HloOpcode::kMultiply, a, recip_bcast));
+  }
+
   // (A / B) / (C / D)  =>  (A / B)*(D / C) => (A * D) / (B * C)
   if (Match(divide, m::Divide(m::Divide(m::Op(&a), m::Op(&b)),
                               m::Divide(m::Op(&c), m::Op(&d))))) {
@@ -8738,6 +8760,59 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
           HloInstruction::CreateBinary(
               reduce_result_shape, function->root_instruction()->opcode(),
               broadcast_arg, reduce->mutable_operand(1)));
+    }
+  }
+
+  // Commute Reduce and Broadcast when the reduce dimensions map entirely to
+  // dimensions of the original base tensor. This avoids performing reduction
+  // over the replicated elements produced by the broadcast.
+  if (arg->opcode() == HloOpcode::kBroadcast &&
+      !options_.is_layout_sensitive()) {
+    std::vector<int64_t> new_reduce_dims;
+    bool all_reduce_dims_from_original_tensor = true;
+    auto bcast_dims = arg->dimensions();
+    // Find which dimensions of the original unbroadcast input correspond to the
+    // reduction dimensions.
+    for (int64_t dim : reduce->dimensions()) {
+      auto it = absl::c_find(bcast_dims, dim);
+      if (it == bcast_dims.end()) {
+        all_reduce_dims_from_original_tensor = false;
+        break;
+      }
+      new_reduce_dims.push_back(std::distance(bcast_dims.begin(), it));
+    }
+
+    if (all_reduce_dims_from_original_tensor) {
+      // Perform the reduction first on the original tensor.
+      Shape new_reduce_result_shape = ShapeUtil::DeleteDimensions(
+          new_reduce_dims, arg->mutable_operand(0)->shape());
+      simplifier_->UpdateLayout(&new_reduce_result_shape);
+      HloInstruction* new_reduce =
+          reduce->AddInstruction(HloInstruction::CreateReduce(
+              new_reduce_result_shape, arg->mutable_operand(0), init_value,
+              new_reduce_dims, function));
+
+      // Broadcast the reduced result to the final shape, computing the new
+      // target dimensions for any surviving unreduced dimensions.
+      std::vector<int64_t> new_broadcast_dims;
+      for (int64_t orig_dim = 0;
+           orig_dim < arg->mutable_operand(0)->shape().dimensions().size();
+           ++orig_dim) {
+        if (!absl::c_linear_search(new_reduce_dims, orig_dim)) {
+          int64_t bcast_dim = arg->dimensions()[orig_dim];
+          int64_t shift = 0;
+          for (int64_t d : reduce->dimensions()) {
+            if (d < bcast_dim) {
+              shift++;
+            }
+          }
+          new_broadcast_dims.push_back(bcast_dim - shift);
+        }
+      }
+
+      return ReplaceWithNewInstruction(
+          reduce, HloInstruction::CreateBroadcast(
+                      reduce_result_shape, new_reduce, new_broadcast_dims));
     }
   }
 

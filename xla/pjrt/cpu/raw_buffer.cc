@@ -22,6 +22,7 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -53,6 +54,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/errors.h"
@@ -162,9 +164,10 @@ absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyFromLiteral(
   async_work_runner->Execute([literal, layout, event, buffer = buffer_]() {
     CHECK(buffer.IsConcrete());
     const xla::Shape& shape = literal.shape();
-    if ((!shape.has_layout() &&
-         !xla::LayoutUtil::IsMonotonicWithDim0Major(layout)) ||
-        shape.layout() != layout) {
+    if (shape.IsToken()) {
+    } else if ((!shape.has_layout() &&
+                !xla::LayoutUtil::IsMonotonicWithDim0Major(layout)) ||
+               shape.layout() != layout) {
       auto shape_copy = xla::ShapeUtil::MakeShape(
           literal.shape().element_type(), literal.shape().dimensions());
       shape_copy.mutable_layout()->mutable_minor_to_major()->assign(
@@ -191,7 +194,7 @@ absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyFromHostBuffer(
     AsyncWorkRunner* async_work_runner, tsl::thread::ThreadPool* thread_pool,
     int max_transpose_threads) {
   CommonPjRtClient* client =
-      tensorflow::down_cast<CommonPjRtClient*>(memory_space()->client());
+      absl::down_cast<CommonPjRtClient*>(memory_space()->client());
   tsl::AsyncValueRef<CpuDeviceMemory> device_buffer = buffer_;
   bool has_default_layout =
       !byte_strides || HasMajorToMinorLayout(type, dims, *byte_strides);
@@ -341,7 +344,7 @@ void CpuRawBuffer::CopyToLiteralAsync(
     Promise<> promise, tsl::RCReference<PjRtDeviceEventPromise> device_promise,
     MutableLiteralBase* literal, xla::Shape shape) {
   CommonPjRtClient* client =
-      tensorflow::down_cast<CommonPjRtClient*>(memory_space()->client());
+      absl::down_cast<CommonPjRtClient*>(memory_space()->client());
   client->async_work_runner()->Execute(
       [client, buffer = buffer_, promise = std::move(promise),
        device_promise = std::move(device_promise), literal, shape]() mutable {
@@ -416,7 +419,7 @@ void CpuRawBuffer::CopyToLiteralAsync(
 }
 
 void CpuRawBuffer::CopyTo(
-    tsl::RCReference<CommonPjRtRawBuffer> dst_raw_buffer,
+    PjRtRawBufferRef dst_raw_buffer,
     tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
     tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
     ::tsl::AsyncValueRef<bool> allocation_event) {
@@ -437,6 +440,46 @@ void CpuRawBuffer::CopyTo(
             PjRtDeviceEventRef(tsl::MakeAvailableAsyncValueRef<CpuEvent>()));
       });
   definition_event_promise->Set(*std::move(other_event));
+}
+
+void CpuTrackedDeviceEventSet::AddEvent(PjRtDeviceEventRef event) {
+  if (event) {
+    events_.push_back(tsl::FormRef(event.async_value()));
+  }
+}
+
+void CpuTrackedDeviceEventSet::AddEvent(
+    tsl::RCReference<tsl::AsyncValue> event) {
+  events_.push_back(std::move(event));
+}
+
+void CpuTrackedDeviceEventSet::AppendTo(
+    std::vector<tsl::RCReference<tsl::AsyncValue>>& events) {
+  for (const auto& ev : events_) {
+    events.push_back(ev);
+  }
+}
+
+void CpuTrackedDeviceEventSet::AppendTo(
+    std::vector<PjRtDeviceEventRef>& events) {
+  events.reserve(events.size() + events_.size());
+  for (const auto& ev : events_) {
+    events.push_back(
+        PjRtDeviceEventRef(tsl::AsyncValueRef<tsl::AsyncValue>(ev)));
+  }
+}
+
+void CpuTrackedDeviceEventSet::AppendTo(PjRtDeviceEventSet& events) {
+  for (const auto& ev : events_) {
+    events.AddEvent(PjRtDeviceEventRef(tsl::AsyncValueRef<CpuEvent>(ev)));
+  }
+}
+
+absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyRawToRemoteDevice(
+    Future<std::string> serialized_descriptor, RemoteSendCallback on_done,
+    std::vector<tsl::RCReference<tsl::AsyncValue>> transfer_dependency_avs) {
+  return absl::UnimplementedError(
+      "CpuRawBuffer does not support CopyRawToRemoteDevice.");
 }
 
 }  // namespace xla

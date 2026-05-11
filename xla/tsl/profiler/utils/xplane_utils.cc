@@ -731,14 +731,17 @@ bool IsCustomPlane(const XPlane& plane) {
 }
 
 bool IsHostPlane(const XPlane& plane) {
-  return plane.name() == kHostThreadsPlaneName ||
-         plane.name() == kHostCpusPlaneName ||
-         plane.name() == kTFStreamzPlaneName ||
-         plane.name() == kMetadataPlaneName ||
-         plane.name() == kSyscallsPlaneName ||
-         plane.name() == kPythonTracerPlaneName ||
-         plane.name() == kCuptiDriverApiPlaneName ||
-         plane.name() == kScopeRangeIdTreePlaneName;
+  static const absl::string_view kHostPlanePrefixes[] = {
+      kHostThreadsPlaneName,    kHostCpusPlaneName,
+      kTFStreamzPlaneName,      kMetadataPlaneName,
+      kSyscallsPlaneName,       kPythonTracerPlaneName,
+      kCuptiDriverApiPlaneName, kScopeRangeIdTreePlaneName};
+  for (absl::string_view prefix : kHostPlanePrefixes) {
+    if (absl::StartsWith(plane.name(), prefix)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool IsDevicePlane(const XPlane& plane) {

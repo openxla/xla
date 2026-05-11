@@ -49,6 +49,10 @@ class AMDGPUCompiler : public GpuCompiler {
       const se::SemanticVersion& toolkit_version,
       CompilationStats* compilation_stats) override;
 
+  void AddPaddingForGpublasGemms(
+      HloPassPipeline& pipeline, const DebugOptions& debug_options,
+      const se::GpuComputeCapability& gpu_version) override;
+
   absl::Status OptimizeHloPostLayoutAssignment(
       HloModule* hlo_module, se::StreamExecutor* stream_exec,
       const CompileOptions& options, const GpuTargetConfig& gpu_target_config,

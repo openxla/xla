@@ -541,7 +541,11 @@ absl::StatusOr<bool> RunOnComputation(HloComputation* computation,
   std::vector<HloInstruction*> convs;
   for (auto* hlo : computation->instructions()) {
     if (HloPredicateIsOp<HloOpcode::kConvolution>(hlo)) {
-      convs.push_back(hlo);
+      ConvolutionKind convolution_kind =
+          DynCast<HloConvolutionInstruction>(hlo)->convolution_kind();
+      if (convolution_kind == CONVOLUTION_KIND_UNSET) {
+        convs.push_back(hlo);
+      }
     }
   }
 

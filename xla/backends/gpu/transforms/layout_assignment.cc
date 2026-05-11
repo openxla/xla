@@ -20,13 +20,16 @@ limitations under the License.
 #include <functional>
 #include <initializer_list>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -535,6 +538,16 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
     } else if (HloPredicateIsOp<HloOpcode::kDot>(instruction)) {
       TF_RETURN_IF_ERROR(AddDotBackendConstraints(
           constraints, Cast<HloDotInstruction>(instruction)));
+    } else if (HloPredicateIsOp<HloOpcode::kRaggedDot>(instruction)) {
+      Shape op0_shape = instruction->operand(0)->shape();
+      Shape op1_shape = instruction->operand(1)->shape();
+      LayoutUtil::SetToDefaultLayout(&op0_shape);
+      LayoutUtil::SetToDefaultLayout(&op1_shape);
+      Shape output_shape = instruction->shape();
+      LayoutUtil::SetToDefaultLayout(&output_shape);
+      TF_RETURN_IF_ERROR(SetOperandLayout(op0_shape, instruction, 0));
+      TF_RETURN_IF_ERROR(SetOperandLayout(op1_shape, instruction, 1));
+      TF_RETURN_IF_ERROR(SetInstructionLayout(output_shape, instruction));
     } else if (HloPredicateIsOp<HloOpcode::kTranspose>(instruction)) {
       const HloInstruction* operand = instruction->operand(0);
       if ((HloPredicateIsNotOp<HloOpcode::kDot>(operand)) ||
@@ -869,6 +882,193 @@ bool GpuLayoutAssignment::InstructionCanChangeLayoutInstance(
   }
 
   return LayoutAssignment::InstructionCanChangeLayoutInstance(instruction);
+}
+
+// GPU specific layout alignment for reshapes.
+// ShapeUtil::AlignLayouts puts 1-sized dimensions at the end of minor_to_major
+// (most major), which is good for TPU to avoid padding. But on GPU it can
+// cause unnecessary copies.
+// Here we preserve the relative position of 1-sized dimensions from
+// `template_layout`.
+static std::optional<Layout> AlignLayoutsGPU(const Shape& input_shape,
+                                             const Shape& output_shape,
+                                             const Layout& template_layout) {
+  CHECK(input_shape.IsArray());
+  CHECK(output_shape.IsArray());
+
+  auto simple_input_shape = ShapeUtil::DropDegenerateDimensions(input_shape);
+  auto simple_output_shape = ShapeUtil::DropDegenerateDimensions(output_shape);
+
+  auto simple_output_shape_with_layout =
+      ShapeUtil::AlignLayouts(simple_input_shape, simple_output_shape);
+  if (!simple_output_shape_with_layout) {
+    return std::nullopt;
+  }
+
+  if (!ShapeUtil::HasDegenerateDimensions(input_shape) &&
+      !ShapeUtil::HasDegenerateDimensions(output_shape)) {
+    return simple_output_shape_with_layout->layout();
+  }
+
+  auto aligned_minor_to_major_span =
+      simple_output_shape_with_layout->layout().minor_to_major();
+  absl::InlinedVector<int64_t, 8> aligned_minor_to_major(
+      aligned_minor_to_major_span.begin(), aligned_minor_to_major_span.end());
+
+  // For each non-degenerate dimension in output_shape, map it back to its
+  // original index.
+  absl::InlinedVector<int64_t, 8> dim_map;
+  dim_map.reserve(simple_output_shape.dimensions().size());
+  for (int64_t i = 0; i < output_shape.dimensions().size(); ++i) {
+    if (output_shape.dimensions(i) != 1) {
+      dim_map.push_back(i);
+    }
+  }
+
+  absl::InlinedVector<int64_t, 8> aligned_minor_to_major_mapped;
+  aligned_minor_to_major_mapped.reserve(aligned_minor_to_major.size());
+  for (int64_t d : aligned_minor_to_major) {
+    aligned_minor_to_major_mapped.push_back(dim_map[d]);
+  }
+
+  // We want to insert the 1-sized dimensions back into
+  // `aligned_minor_to_major_mapped` such that their position relative to the
+  // non-1-sized dimensions matches `template_layout`. `initial_ones` collects
+  // 1-sized dimensions that appear before any non-1-sized dimension in
+  // `template_layout`. `follow_map` maps a non-1-sized dimension d to a list of
+  // 1-sized dimensions that follow d in `template_layout`.
+  absl::InlinedVector<int64_t, 8> initial_ones;
+  absl::flat_hash_map<int64_t, absl::InlinedVector<int64_t, 8>> follow_map;
+
+  int64_t last_non_one = -1;
+  for (int64_t d : template_layout.minor_to_major()) {
+    if (output_shape.dimensions(d) == 1) {
+      if (last_non_one == -1) {
+        initial_ones.push_back(d);
+      } else {
+        follow_map[last_non_one].push_back(d);
+      }
+    } else {
+      last_non_one = d;
+    }
+  }
+
+  absl::InlinedVector<int64_t, 8> new_minor_to_major;
+  new_minor_to_major.reserve(output_shape.dimensions().size());
+
+  // Construct the new minor_to_major layout.
+  // 1. Insert initial 1-sized dimensions.
+  new_minor_to_major.insert(new_minor_to_major.end(), initial_ones.begin(),
+                            initial_ones.end());
+
+  // 2. For each non-1-sized dimension in its bitcast required order, insert it
+  // and any 1-sized dimensions that followed it in `template_layout`.
+  for (int64_t d : aligned_minor_to_major_mapped) {
+    new_minor_to_major.push_back(d);
+    auto it = follow_map.find(d);
+    if (it != follow_map.end()) {
+      new_minor_to_major.insert(new_minor_to_major.end(), it->second.begin(),
+                                it->second.end());
+    }
+  }
+
+  return Layout{new_minor_to_major};
+}
+
+static std::unique_ptr<Layout> TryChooseReshapeBitcastLayout(
+    const Shape& input_shape_with_layout, const Shape& target_output_shape,
+    const Layout& template_layout) {
+  if (ShapeUtil::TrueNumDimensions(input_shape_with_layout) == 1 &&
+      ShapeUtil::TrueNumDimensions(target_output_shape) == 1) {
+    return nullptr;
+  }
+
+  auto aligned_layout = AlignLayoutsGPU(input_shape_with_layout,
+                                        target_output_shape, template_layout);
+  if (aligned_layout) {
+    auto operand_layout = aligned_layout.value();
+    CHECK_OK(LayoutUtil::ValidateLayoutForShape(operand_layout,
+                                                target_output_shape));
+    return std::make_unique<Layout>(operand_layout);
+  }
+  return nullptr;
+}
+
+std::unique_ptr<Layout>
+GpuLayoutAssignment::ChooseOperandLayoutFromOutputLayout(
+    const Layout& output_layout, const HloInstruction* instruction,
+    int64_t operand_no) {
+  const HloInstruction* operand = instruction->operand(operand_no);
+  CHECK(instruction->shape().IsArray());
+  CHECK(operand->shape().IsArray());
+  if (!ShapeUtil::IsScalar(operand->shape()) &&
+      operand->shape().dimensions().size() ==
+          instruction->shape().dimensions().size() &&
+      !InstructionCanChangeLayoutInstance(instruction)) {
+    return std::make_unique<Layout>(output_layout);
+  }
+
+  if (instruction->opcode() == HloOpcode::kReshape) {
+    const Shape& output_shape = instruction->shape();
+    Shape output_shape_with_layout = ShapeUtil::MakeShapeWithDenseLayout(
+        output_shape.element_type(), output_shape.dimensions(),
+        LayoutUtil::MinorToMajor(output_layout));
+    Shape operand_shape = operand->shape();
+    Layout template_layout =
+        operand->shape().has_layout()
+            ? operand->shape().layout()
+            : LayoutUtil::GetDefaultLayoutForShape(operand_shape);
+
+    auto operand_layout = TryChooseReshapeBitcastLayout(
+        output_shape_with_layout, operand_shape, template_layout);
+    if (operand_layout) {
+      return operand_layout;
+    }
+  }
+
+  return LayoutAssignment::ChooseOperandLayoutFromOutputLayout(
+      output_layout, instruction, operand_no);
+}
+
+std::unique_ptr<Layout>
+GpuLayoutAssignment::ChooseOutputLayoutFromOperandLayout(
+    const Layout& operand_layout, const HloInstruction* user,
+    int64_t operand_no) {
+  const HloInstruction* operand = user->operand(operand_no);
+
+  if (user->opcode() == HloOpcode::kReduce && user->shape().IsTuple()) {
+    return LayoutAssignment::ChooseOutputLayoutFromOperandLayout(
+        operand_layout, user, operand_no);
+  }
+
+  CHECK(user->shape().IsArray() && operand->shape().IsArray());
+
+  if (!ShapeUtil::IsScalar(operand->shape()) &&
+      operand->shape().dimensions().size() ==
+          user->shape().dimensions().size() &&
+      !InstructionCanChangeLayoutInstance(user)) {
+    return std::make_unique<Layout>(operand_layout);
+  }
+
+  if (user->opcode() == HloOpcode::kReshape) {
+    Shape operand_shape_with_layout = ShapeUtil::MakeShapeWithDenseLayout(
+        operand->shape().element_type(), operand->shape().dimensions(),
+        LayoutUtil::MinorToMajor(operand_layout));
+    Shape output_shape = user->shape();
+    Layout template_layout =
+        user->shape().has_layout()
+            ? user->shape().layout()
+            : LayoutUtil::GetDefaultLayoutForShape(output_shape);
+
+    auto user_layout = TryChooseReshapeBitcastLayout(
+        operand_shape_with_layout, output_shape, template_layout);
+    if (user_layout) {
+      return user_layout;
+    }
+  }
+
+  return LayoutAssignment::ChooseOutputLayoutFromOperandLayout(
+      operand_layout, user, operand_no);
 }
 
 }  // namespace gpu

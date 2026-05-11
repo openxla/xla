@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/async_collective_replacer.h"
 
+#include <vector>
+
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -24,7 +26,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/transforms/collectives/convert_async_collectives_to_sync.h"
-#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -65,6 +67,8 @@ absl::StatusOr<bool> AsyncCollectiveReplacer::RunImpl(
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
+    // Gather the list of all async pairs that need to be replaced.
+    std::vector<std::pair<HloInstruction*, HloInstruction*>> async_pairs;
     for (HloInstruction* inst : computation->MakeInstructionPostOrder()) {
       if (!ShouldBeReplaced(config_, inst)) {
         continue;
@@ -78,12 +82,14 @@ absl::StatusOr<bool> AsyncCollectiveReplacer::RunImpl(
       VLOG(1) << "Replacing async start/done ops with synchronous counterpart";
       VLOG(1) << "async start = " << inst->ToString();
       VLOG(1) << "async done = " << done->ToString();
-      TF_ASSIGN_OR_RETURN(
-          HloInstruction * sync,
-          ConvertAsyncCollectivesToSync::ReplaceWithSyncVariant(inst, done));
-      VLOG(1) << "sync = " << sync->ToString();
+      async_pairs.push_back({inst, done});
       changed = true;
     }
+
+    // Replace them.
+    TF_RETURN_IF_ERROR(
+        ConvertAsyncCollectivesToSync::ReplaceAsyncInstructionsWithSync(
+            computation, async_pairs));
   }
   return changed;
 }

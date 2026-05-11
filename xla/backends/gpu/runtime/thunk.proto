@@ -289,6 +289,8 @@ message CustomKernelThunkProto {
   repeated bool written = 2;
   CustomKernelProto custom_kernel = 3;
   bool use_pdl = 4;
+  repeated int64 zeroed_output_buffer_indices = 5;
+  optional stream_executor.gpu.TmaMetadataProto tma_metadata = 6;
 }
 
 message AllGatherThunkProto {
@@ -309,6 +311,8 @@ message AllReduceThunkProto {
   bool collective_kernel_enabled = 8;
   bool is_async = 9;
   LaunchDimensionsProto launch_dimensions = 10;
+  bool use_pdl = 11;
+  optional bytes cubin = 12;
 }
 
 message ReduceScatterThunkProto {

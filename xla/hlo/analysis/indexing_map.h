@@ -121,7 +121,9 @@ class IndexingMap {
     Variable(int64_t lb, int64_t ub, llvm::StringRef name = "")
         : Variable(Interval{lb, ub}, name) {}
 
+    // struct Interval represents a closed interval [lower_bound, upper_bound].
     Interval bounds;
+    // Name of the variable is used for nicer printing.
     std::string name = "";
   };
 

@@ -34,6 +34,7 @@ limitations under the License.*/
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
 #include "xla/backends/gpu/runtime/collective_kernel_api.h"
@@ -294,18 +295,22 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
         TF_RET_CHECK(launch_dimensions_.has_value())
             << "Launch dimensions are not set for when using emitted "
                "collective kernel.";
-        if (!params.src.binary.empty()) {
-          TF_ASSIGN_OR_RETURN(
+        if (cubin_.has_value()) {
+          ASSIGN_OR_RETURN(
+              kernel, CreateKernel(kernel_name_, kAllReduceArgsCount, *cubin_,
+                                   params.executor, shmem_bytes_));
+        } else if (!params.src.binary.empty()) {
+          ASSIGN_OR_RETURN(
               kernel,
               CreateKernel(kernel_name_, kAllReduceArgsCount, params.src.binary,
                            params.executor, shmem_bytes_));
-
         } else {
-          TF_ASSIGN_OR_RETURN(
+          ASSIGN_OR_RETURN(
               kernel,
               CreateKernel(kernel_name_, kAllReduceArgsCount, params.src.text,
                            params.executor, shmem_bytes_));
         }
+        kernel->set_use_pdl(use_pdl_);
       }
       // Step2: Emplace into the stream state.
       per_stream_state_.emplace(

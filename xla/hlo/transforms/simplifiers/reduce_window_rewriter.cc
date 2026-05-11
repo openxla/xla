@@ -812,10 +812,15 @@ absl::StatusOr<bool> ReduceWindowRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
+  const bool decompose_assoc_scan = DecomposeAssociativeScan();
   for (const auto& computation : module->computations(execution_threads)) {
     for (HloInstruction* instruction :
          computation->MakeInstructionPostOrder()) {
       if (auto* scan = DynCast<HloScanInstruction>(instruction)) {
+        if (!decompose_assoc_scan) {
+          // Backend has a native scan emitter; leave kScan alone.
+          continue;
+        }
         auto result = TryOptimizeAssociativeScan(scan);
         TF_RETURN_IF_ERROR(result.status());
         if (*result) {

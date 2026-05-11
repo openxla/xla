@@ -778,6 +778,75 @@ MovableAllReduceContext IsAllReduceMovable(
           }
           break;
         }
+        case HloOpcode::kMultiply: {
+          // Hoisting reduce-scatter through a multiply is unsupported: it
+          // would require rewriting the other operand to the post-scatter
+          // shape, which this pass does not do.
+          if (is_reduce_scatter) {
+            is_all_reduce_movable = false;
+            break;
+          }
+          HloInstruction* other_operand =
+              user->mutable_operand(1 - user->operand_index(instruction));
+          HloInstruction* unwrapped_other = other_operand;
+          bool other_is_broadcast = false;
+          while (unwrapped_other->opcode() == HloOpcode::kBroadcast ||
+                 unwrapped_other->opcode() == HloOpcode::kConvert) {
+            if (unwrapped_other->opcode() == HloOpcode::kBroadcast) {
+              other_is_broadcast = true;
+            }
+            unwrapped_other = unwrapped_other->mutable_operand(0);
+          }
+          const bool current_is_scalar =
+              ShapeUtil::IsScalar(all_reduce->shape());
+          const bool unwrapped_other_is_all_reduce =
+              unwrapped_other->opcode() == HloOpcode::kAllReduce;
+          const bool unwrapped_other_is_scalar =
+              ShapeUtil::IsScalar(unwrapped_other->shape());
+
+          if (current_is_scalar && unwrapped_other_is_all_reduce) {
+            // Scalar side of the ZeRO-1 weight-normalization pattern
+            //   grads_accum = tree_map(
+            //       lambda g, b: AR(g) * AR(total_weights) + b,
+            //       grads, grads_accum)
+            // expressed in HLO as
+            //   multiply(all-reduce(g),
+            //            broadcast(convert(all-reduce(total_weights)))).
+            // Hoisting all-reduce(total_weights) would replace it inside
+            // the body with its local pre-all-reduce value, scaling the
+            // gradient by an unreduced scalar and producing an
+            // accumulation off by a factor of num_replicas. Keep it in
+            // the body.
+            VLOG(4) << "Scalar all-reduce " << all_reduce->name()
+                    << " is used as a factor of a multiply with another "
+                       "all-reduce ("
+                    << unwrapped_other->name()
+                    << "); marking it unmovable so it stays in the loop body "
+                       "and preserves the math of the hoisted all-reduce.";
+            is_all_reduce_movable = false;
+          } else if (unwrapped_other_is_all_reduce && other_is_broadcast &&
+                     unwrapped_other_is_scalar) {
+            // Gradient (non-scalar) side of the same pattern. The other
+            // operand is a broadcasted scalar all-reduce acting as a
+            // per-iteration scaling factor; it is pinned in the body by
+            // the branch above when it is itself analyzed, so hoisting
+            // the current all-reduce is safe. Requiring the unwrapped
+            // other operand to be scalar excludes non-scaling shapes such
+            // as multiply(broadcast(all-reduce(a)), broadcast(all-reduce(b)))
+            // where both all-reduces are non-scalar; hoisting either
+            // all-reduce in that pattern would scale the other side by a
+            // pre-all-reduce local value, producing an accumulation off
+            // by a factor of num_replicas.
+            to_visit.push(user);
+          } else {
+            is_all_reduce_movable = false;
+          }
+          break;
+        }
+        case HloOpcode::kBroadcast: {
+          to_visit.push(user);
+          break;
+        }
         case HloOpcode::kAdd: {
           int64_t buffer_index = 1 - user->operand_index(instruction);
           HloInstruction* accumulation_buffer =

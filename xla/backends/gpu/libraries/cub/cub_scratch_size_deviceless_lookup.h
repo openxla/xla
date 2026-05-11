@@ -28,6 +28,10 @@ namespace xla::gpu {
 
 // A lookup table for that returns an estimate of the scratch space required by
 // CUB sorts without requiring a GPU.
+//
+// Note that the scratch space may depend on the device's SM occupancy, which
+// can vary in dbg vs opt builds. The internal data is based on the opt builds,
+// which (unintuitively) requires more scratch space than dbg builds.
 class CubScratchSizeDevicelessLookup {
  public:
   // Not copyable, only movable, since this is a singleton.

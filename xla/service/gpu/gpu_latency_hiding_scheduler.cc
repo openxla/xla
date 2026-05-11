@@ -18,15 +18,18 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
+#include <limits>
 #include <optional>
 #include <tuple>
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/strings/numbers.h"
+#include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -38,7 +41,9 @@ limitations under the License.
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/side_effect_util.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -270,7 +275,8 @@ bool GpuScheduleCrossesOverlapLimit(
   if (resource_type == xla::ResourceTypeToIndex(
                            GpuResourceType::kGpuAsyncStreamCollectives) &&
       sched_state.resource_occupiers_in_flight.contains(resource_type) &&
-      !sched_state.resource_occupiers_in_flight.at(resource_type).empty()) {
+      !sched_state.resource_occupiers_in_flight.at(resource_type).empty() &&
+      !IsCustomCollectiveOp(&node->GetInstr())) {
     const HloInstruction& curr_hlo_inst = node->GetInstr();
     if (sched_state.async_tracker->IsSupportedAsyncDone(curr_hlo_inst)) {
       CHECK(
@@ -440,7 +446,8 @@ ResourcesVector GpuAsyncTracker::GetResourcesFromInstructionImpl(
       usage = op.outer == HloOpcode::kAsyncStart
                   ? ResourceUsageType::kResourceRelease
                   : ResourceUsageType::kResourceOccupy;
-      resource = hlo_query::IsCollectiveCommunicationOp(op.inner)
+      resource = hlo_query::IsCollectiveCommunicationOp(op.inner) ||
+                         IsCustomCollectiveOp(&instr)
                      ? GpuResourceType::kGpuAsyncStreamCollectives
                      : GpuResourceType::kGpuAsyncStreamComputes;
     }
@@ -703,6 +710,19 @@ void GPUProfileStatisticsAggregator::HandleMissingInstructionLatency(
 void GPUProfileStatisticsAggregator::HandleFoundInstructionLatency(
     const HloInstruction& from, const HloInstruction& to) {
   found_instructions_count_++;
+}
+
+// Checks if the async instruction is a custom collective call
+bool IsCustomCollectiveOp(const HloInstruction* instr) {
+  if (instr->opcode() == HloOpcode::kAsyncStart ||
+      instr->opcode() == HloOpcode::kAsyncDone ||
+      instr->opcode() == HloOpcode::kAsyncUpdate) {
+    auto& attrs = instr->frontend_attributes().map();
+    if (auto it = attrs.find(kXlaStreamAnnotationAttr); it != attrs.end()) {
+      return absl::EqualsIgnoreCase(it->second, kXlaCollectiveStreamAnnotation);
+    }
+  }
+  return false;
 }
 
 }  // namespace gpu

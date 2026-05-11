@@ -437,9 +437,16 @@ std::optional<WindowedEinsumConfig> GetWindowedEinsumConfiguration(
     if (!original_ideal_sharding) {
       return true;
     }
-    for (const HloInstruction* user : to_loop_over->users()) {
+    for (HloInstruction* user : to_loop_over->users()) {
       if (user == original_hlo) {
         continue;
+      }
+      // Sharding conversion not required if tuple sharding as
+      // GetShardingFromUser() just returns leaf sharding.
+      if (user->has_sharding() && !user->sharding().IsTuple() &&
+          user->sharding().UseNamedShardingLeaf()) {
+        user->set_sharding(
+            HloSharding::V3ToV2Sharding(user->sharding().named_sharding()));
       }
       std::optional<HloSharding> from_user =
           ShardingPropagation::GetShardingFromUser(
@@ -4298,6 +4305,19 @@ absl::Status SpmdPartitioningVisitor::HandleDotHelper(
   if (hlo->sharding().IsSingleDevice()) {
     return DefaultAction(hlo);
   }
+
+  if (hlo->has_sharding() && hlo->sharding().UseNamedShardingLeaf()) {
+    hlo->set_sharding(
+        HloSharding::V3ToV2Sharding(hlo->sharding().named_sharding()));
+  }
+  for (int i = 0; i < hlo->operand_count(); ++i) {
+    if (hlo->operand(i)->has_sharding() &&
+        hlo->operand(i)->sharding().UseNamedShardingLeaf()) {
+      hlo->mutable_operand(i)->set_sharding(HloSharding::V3ToV2Sharding(
+          hlo->operand(i)->sharding().named_sharding()));
+    }
+  }
+
   HloInstruction* partitioned_dot;
   Window conv_window;
   if constexpr (std::is_same_v<CreateShardedFunctor,
@@ -4359,23 +4379,6 @@ absl::Status SpmdPartitioningVisitor::HandleDotHelper(
                      dims_mapping, num_partitions_, create_sharded_dot,
                      conv_window, module_, hlo, options_, &b_,
                      &windowed_dot_general_loops_, this));
-
-    if (original_lhs_sharding.UseNamedShardingLeaf()) {
-      lhs_operand.hlo()->set_sharding(original_lhs_sharding);
-    }
-    if (original_rhs_sharding.UseNamedShardingLeaf()) {
-      rhs_operand.hlo()->set_sharding(original_rhs_sharding);
-    }
-    if (original_lhs_scale_sharding.UseNamedShardingLeaf()) {
-      lhs_scale.hlo()->set_sharding(original_lhs_scale_sharding);
-    }
-    if (original_rhs_scale_sharding.UseNamedShardingLeaf()) {
-      rhs_scale.hlo()->set_sharding(original_rhs_scale_sharding);
-    }
-    if (partitioned_dot != nullptr &&
-        original_output_sharding.UseNamedShardingLeaf()) {
-      partitioned_dot->set_sharding(original_output_sharding);
-    }
   } else {
     PartitionedHlo lhs = GetPartitionedHlo(hlo->operand(0));
     PartitionedHlo raw_rhs = GetPartitionedHlo(hlo->operand(1));
@@ -4413,17 +4416,6 @@ absl::Status SpmdPartitioningVisitor::HandleDotHelper(
         PartitionDot(lhs, rhs, hlo->shape(), v2_output_sharding, dims_mapping,
                      num_partitions_, create_sharded_dot, conv_window, module_,
                      hlo, options_, &b_, &windowed_dot_general_loops_, this));
-
-    if (original_lhs_sharding.UseNamedShardingLeaf()) {
-      lhs.hlo()->set_sharding(original_lhs_sharding);
-    }
-    if (original_rhs_sharding.UseNamedShardingLeaf()) {
-      rhs.hlo()->set_sharding(original_rhs_sharding);
-    }
-    if (partitioned_dot != nullptr &&
-        original_output_sharding.UseNamedShardingLeaf()) {
-      partitioned_dot->set_sharding(original_output_sharding);
-    }
   }
   SetPartitionedHlo(hlo, partitioned_dot);
   return absl::OkStatus();

@@ -391,6 +391,10 @@ cc_library(
     name = "memory_allocation",
     srcs = ["memory_allocation.cc"],
     hdrs = ["memory_allocation.h"],
+    visibility = internal_visibility([
+        ":friends",
+        "//third_party/py/jax:__subpackages__",
+    ]),
     deps = [
         ":device_address",
         "@com_google_absl//absl/base:core_headers",
@@ -591,6 +595,10 @@ cc_library(
     name = "memory_allocator",
     srcs = ["memory_allocator.cc"],
     hdrs = ["memory_allocator.h"],
+    visibility = internal_visibility([
+        ":friends",
+        "//third_party/py/jax:__subpackages__",
+    ]),
     deps = [
         ":device_address",
         ":memory_allocation",
@@ -606,6 +614,10 @@ cc_library(
 cc_library(
     name = "memory_space",
     hdrs = ["memory_space.h"],
+    visibility = internal_visibility([
+        ":friends",
+        "//third_party/py/jax:__subpackages__",
+    ]),
     deps = ["@com_google_absl//absl/base:core_headers"],
 )
 

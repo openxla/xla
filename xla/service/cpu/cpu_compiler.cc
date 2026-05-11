@@ -129,6 +129,7 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/stochastic_convert_decomposer.h"
 #include "xla/hlo/transforms/literal_canonicalizer.h"
 #include "xla/hlo/transforms/operand_upcaster.h"
+#include "xla/hlo/transforms/propagate_call_metadata.h"
 #include "xla/hlo/transforms/shape_canonicalizer.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/batch_dot_simplification.h"
@@ -406,15 +407,11 @@ class CollectProfileCandidates : public DfsHloVisitorWithDefault {
   absl::Status HandleConditional(HloInstruction* conditional) override {
     TF_RETURN_IF_ERROR(DefaultAction(conditional));
 
-    CollectProfileCandidates candidates_for_true(hlo_to_profile_idx_,
-                                                 assigned_indices_);
-    TF_RETURN_IF_ERROR(
-        conditional->true_computation()->Accept(&candidates_for_true));
-
-    CollectProfileCandidates candidates_for_false(hlo_to_profile_idx_,
-                                                  assigned_indices_);
-    TF_RETURN_IF_ERROR(
-        conditional->false_computation()->Accept(&candidates_for_false));
+    for (HloComputation* branch : conditional->branch_computations()) {
+      CollectProfileCandidates candidates_for_branch(hlo_to_profile_idx_,
+                                                     assigned_indices_);
+      TF_RETURN_IF_ERROR(branch->Accept(&candidates_for_branch));
+    }
 
     return absl::OkStatus();
   }
@@ -485,6 +482,8 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
       !module->config().debug_options().xla_cpu_enable_fast_min_max());
   options.set_supports_non_canonical_dots(false);
   options.set_executing_on_cpu(true);
+  options.set_enable_fast_math(
+      module->config().debug_options().xla_cpu_enable_fast_math());
   options.set_enable_onednn_support(use_onednn_custom_call);
   options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
   pipeline->AddPass<AlgebraicSimplifier>(options);
@@ -1141,6 +1140,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     pipeline.AddPass<SmallWhileLoopHoistingPass>(byte_threshold);
   }
 
+  pipeline.AddPass<PropagateCallMetadata>();
   pipeline.AddPass<HloDCE>();
   return pipeline.Run(module).status();
 }

@@ -3254,7 +3254,7 @@ TEST_F(DynamicSliceFusionTest,
   // In the following checks, only the order of the thunks matter.
   EXPECT_THAT(thunks, ::testing::ElementsAre(ThunkKindIs(Thunk::kCopy),
                                              ThunkKindIs(Thunk::kAsyncStart),
-                                             ThunkKindIs(Thunk::kKernel),
+                                             ThunkKindIs(Thunk::kCustomKernel),
                                              ThunkKindIs(Thunk::kAsyncDone)));
 
   // Check that the async start thunk wraps a dynamic slice thunk which runs

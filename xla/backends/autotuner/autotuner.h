@@ -206,17 +206,22 @@ class Autotuner {
   absl::StatusOr<std::vector<Config>> GetSupportedConfigs(
       HloInstruction* instr);
 
-  std::optional<std::unique_ptr<Executable>> Compile(HloInstruction* instr,
-                                                     const Config& config);
+  // Compiles HLO with given config and returns executable on success.
+  // Returns error status on compilation failure or if executable is invalid
+  // (e.g. due to register spill).
+  absl::StatusOr<std::unique_ptr<Executable>> Compile(
+      const HloInstruction* instr, const Config& config);
 
   tsl::Future<std::vector<
-      std::pair<Config, std::optional<std::unique_ptr<Executable>>>>>
-  CompileAll(HloInstruction* instr, std::vector<Config>& configs);
+      std::pair<Config, absl::StatusOr<std::unique_ptr<Executable>>>>>
+  CompileAll(const HloInstruction* instr, std::vector<Config>& configs);
 
   // Profiles all the executable candidates for a given instruction.
   absl::StatusOr<std::vector<ConfigResult>> ProfileAll(
       std::vector<ExecutableCandidate> candidates,
       const HloInstruction* instr = nullptr);
+  // Picks the best config from the given results.
+  // Result is moved from the input vector.
   absl::StatusOr<ConfigResult> PickBestConfig(
       std::vector<ConfigResult>& results);
 

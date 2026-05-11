@@ -21,6 +21,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "xla/array.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/mesh_and_axis.h"
 #include "xla/hlo/ir/named_sharding.h"
@@ -30,6 +31,7 @@ limitations under the License.
 
 namespace xla {
 namespace spmd {
+
 namespace {
 
 TEST(SPMDPartitionerUtilTest, PartialReplicateReshardCompatibleSharding1) {
@@ -659,6 +661,64 @@ TEST(SPMDPartitionerUtilTest,
     EXPECT_EQ(v3_group_list_1->flattened_replica_groups(),
               v3_group_list_2->flattened_replica_groups());
   }
+}
+
+TEST(SPMDPartitionerUtilTest, CanonicalizeShardingV2Transposed) {
+  // Sharding: [2,4]<=[4,2]T(1,0)
+  HloSharding sharding = HloSharding::IotaTile({2, 4}, {4, 2}, {1, 0});
+
+  // For a sharding like [2,4]<=[4,2]T(1,0), we expect translation to a
+  // canonical V3 representation with mesh=['axis_0'=4, 'axis_1'=2] and
+  // sharding=[{"axis_1"}, {"axis_0"}].
+  HloSharding canonicalized = xla::spmd::CanonicalizeSharding(sharding);
+
+  EXPECT_TRUE(canonicalized.UseNamedShardingLeaf());
+  EXPECT_EQ(canonicalized.named_sharding().ToString(),
+            "{mesh['axis_0'=4,'axis_1'=2], [{'axis_1'}, {'axis_0'}]}");
+}
+
+TEST(SPMDPartitionerUtilTest, CanonicalizeShardingV2Trivial) {
+  HloSharding sharding = HloSharding::IotaTile({2, 2});
+
+  // Trivial iota should now be translated by HloSharding::ToNamedSharding.
+  HloSharding canonicalized = xla::spmd::CanonicalizeSharding(sharding);
+
+  EXPECT_TRUE(canonicalized.UseNamedShardingLeaf());
+  EXPECT_EQ(canonicalized.named_sharding().ToString(),
+            "{mesh['axis_0'=2,'axis_1'=2], [{'axis_0'}, {'axis_1'}]}");
+}
+
+TEST(SPMDPartitionerUtilTest, CanonicalizeShardingV1Iota) {
+  // Create a V1 sharding with iota order.
+  Array<int64_t> device_assignment({2, 2});
+  device_assignment.FillIota(0);
+  HloSharding sharding = HloSharding::Tile(device_assignment);
+
+  // CanonicalizeSharding calls ToNamedSharding which will now translate
+  // the V1 sharding to a V3 sharding.
+  HloSharding canonicalized = xla::spmd::CanonicalizeSharding(sharding);
+
+  EXPECT_TRUE(canonicalized.UseNamedShardingLeaf());
+  EXPECT_EQ(canonicalized.named_sharding().ToString(),
+            "{mesh['axis_0'=2,'axis_1'=2], [{'axis_0'}, {'axis_1'}]}");
+}
+
+TEST(SPMDPartitionerUtilTest, CanonicalizeShardingV1NonIota) {
+  // Create a V1 sharding with non-iota order.
+  Array<int64_t> device_assignment({2, 2});
+  device_assignment(0, 0) = 0;
+  device_assignment(0, 1) = 2;
+  device_assignment(1, 0) = 1;
+  device_assignment(1, 1) = 3;
+  HloSharding sharding = HloSharding::Tile(device_assignment);
+
+  // Non-iota shardings are also translated using the physical device order.
+  HloSharding canonicalized = xla::spmd::CanonicalizeSharding(sharding);
+
+  EXPECT_TRUE(canonicalized.UseNamedShardingLeaf());
+  EXPECT_EQ(canonicalized.named_sharding().ToString(),
+            "{mesh['axis_0'=2,'axis_1'=2], device_ids=(0,2,1,3), [{'axis_0'}, "
+            "{'axis_1'}]}");
 }
 
 }  // namespace

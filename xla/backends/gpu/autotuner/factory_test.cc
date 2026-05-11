@@ -97,15 +97,15 @@ TEST_P(FactoryTest, GetCodegenBackends) {
 INSTANTIATE_TEST_SUITE_P(
     All, FactoryTest,
     ::testing::Values(
-        FactoryTestParams{{}, 4, /*run_on_cuda=*/true, /*run_on_rocm=*/false},
-        FactoryTestParams{{}, 4, /*run_on_cuda=*/false, /*run_on_rocm=*/true},
+        FactoryTestParams{{}, 6, /*run_on_cuda=*/true, /*run_on_rocm=*/false},
+        FactoryTestParams{{}, 6, /*run_on_cuda=*/false, /*run_on_rocm=*/true},
         FactoryTestParams{{Backend::TRITON}, 1},
         FactoryTestParams{{Backend::TRITON, Backend::CUBLAS},
-                          1,
+                          2,
                           /*run_on_cuda=*/true,
                           /*run_on_rocm=*/false},
         FactoryTestParams{{Backend::TRITON, Backend::ROCBLAS},
-                          1,
+                          2,
                           /*run_on_cuda=*/false,
                           /*run_on_rocm=*/true}));
 

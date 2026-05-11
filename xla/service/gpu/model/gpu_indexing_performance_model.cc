@@ -22,7 +22,9 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -286,11 +288,18 @@ absl::StatusOr<EstimateRunTimeData> GetDotEstimates(
   const auto* dot_instr = Cast<const HloDotInstruction>(tiled_hlo->hlo());
   TF_RETURN_IF_ERROR(gpu_dot_fusion_cost_model::IsSupported(dot_instr));
 
+  int64_t block_k = 0;
+  if (!tiled_hlo->operands().empty()) {
+    int64_t lhs_contracting_dim =
+        dot_instr->dot_dimension_numbers().lhs_contracting_dimensions(0);
+    block_k = tiled_hlo->operand(0)->tile_sizes()[lhs_contracting_dim];
+  }
+
   BlockLevelParameters block_params;
   block_params.output_tile_sizes.push_back(std::vector<int64_t>{
       tiled_hlo->tile_sizes().begin(), tiled_hlo->tile_sizes().end()});
   return gpu_dot_fusion_cost_model::EstimateRunTimeForDotOpWithBlockParameters(
-      dot_instr, block_params, device_info);
+      dot_instr, block_params, device_info, block_k);
 }
 
 }  // namespace
@@ -378,162 +387,6 @@ int64_t GpuPerformanceModelWithIndexingAnalysis::GetShapeSizeRecursive(
   return total_size;
 }
 
-int64_t GetIterationSpaceSize(const IndexingMap& indexing_map,
-                              const HloInstruction* instr) {
-  if (indexing_map.IsUndefined()) {
-    return ShapeUtil::ElementsInRecursive(instr->shape());
-  }
-
-  if (indexing_map.IsKnownEmpty()) {
-    return 0;
-  }
-
-  auto get_ranges_iteration_space_size =
-      [](const std::vector<Interval>& ranges) {
-        int64_t num_iters = 1;
-        for (const Interval& range : ranges) {
-          num_iters *= range.upper - range.lower + 1;
-        }
-        return num_iters;
-      };
-
-  return get_ranges_iteration_space_size(indexing_map.GetSymbolBounds()) *
-         get_ranges_iteration_space_size(indexing_map.GetDimensionBounds());
-}
-
-EstimateRunTimeData
-GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForFusion(
-    const HloFusionAnalysis& fusion_analysis, bool is_coalesced) {
-  auto& fusion_adaptor = fusion_analysis.fusion();
-  VLOG(5) << "EstimateRunTimeForFusion: " << fusion_adaptor.ToString();
-
-  auto roots = fusion_adaptor.GetRoots();
-  CHECK_EQ(roots.size(), 1)
-      << "Indexing cost model doesn't support multi-output fusions.";
-  auto root_shape = roots.front().shape();
-
-  LaunchDimensions launch_dimensions =
-      EstimateFusionLaunchDimensions(fusion_analysis, mlir_context_);
-
-  int64_t num_blocks = launch_dimensions.num_blocks();
-
-  // Compute indexing from root to each instruction in the fusion and fusion
-  // operands. For each instruction, tells which elements of the instructions
-  // result will be used to compute one result element of the fusion.
-  auto grouped_fusion_indexing = ComputeGroupedOutputToInputIndexing(
-      fusion_adaptor, roots[0], mlir_context_);
-
-  int64_t flops = 0;
-  int64_t bytes_read = 0;
-  absl::Duration read_time = absl::ZeroDuration();
-
-  for (const auto& [instr, indexing_maps] : grouped_fusion_indexing) {
-    VLOG(10) << "instr: " << instr->name();
-
-    // Instructions inside the fusion are computation and account for FLOPs
-    // count. Instructions outside the fusion are operands of the fusion and
-    // account for memory read time.
-    bool is_operand = !fusion_adaptor.ContainsInstruction(instr);
-
-    auto element_type = instr->shape().element_type();
-    int64_t n_bytes_total = 0;
-    for (const auto& indexing_map : indexing_maps) {
-      VLOG(10) << indexing_map;
-
-      int64_t num_iters = GetIterationSpaceSize(indexing_map.map(), instr);
-
-      if (is_operand) {
-        int64_t type_size = ShapeUtil::ByteSizeOfPrimitiveType(element_type);
-        n_bytes_total += type_size * num_iters;
-      } else {
-        int64_t flops_per_element = FlopsPerElement(instr);
-        flops += flops_per_element * num_iters;
-      }
-    }
-
-    if (is_operand) {
-      int64_t operand_size = shape_size_(instr->shape());
-      int64_t n_bytes_net = std::min(operand_size, n_bytes_total);
-      bytes_read += n_bytes_total;
-
-      VLogOperandRead(instr, n_bytes_total, n_bytes_net, is_coalesced);
-
-      read_time += ReadTimeWithDRAMHeuristic(
-          *device_info_, num_blocks, n_bytes_net, n_bytes_total, element_type,
-          GetCoalescingUtilizationRate(element_type, *device_info_,
-                                       is_coalesced));
-    }
-  }
-
-  int64_t bytes_written = GetShapeSizeRecursive(root_shape);
-
-  absl::Duration compute_time =
-      ComputeTime(*device_info_, flops, num_blocks,
-                  launch_dimensions.num_threads_per_block());
-  absl::Duration write_time = WriteTime(*device_info_, bytes_written);
-  absl::Duration memory_access_time = read_time + write_time;
-  absl::Duration exec_time =
-      CombineComputeAndMemoryAccessTime(compute_time, memory_access_time);
-
-  EstimateRunTimeData runtime_data = {flops,     bytes_read, bytes_written,
-                                      read_time, write_time, compute_time,
-                                      exec_time};
-  VLOG(3) << "Runtime data for HLO fusion: " << fusion_adaptor.ToString()
-          << "\n"
-          << launch_dimensions.ToString() << "\n"
-          << runtime_data.ToString();
-
-  return runtime_data;
-}
-
-EstimateRunTimeData
-GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForInstruction(
-    const HloInstruction* producer) {
-  // Stand-alone bitcast is always no-op during runtime.
-  if (producer->opcode() == HloOpcode::kBitcast) {
-    return EstimateRunTimeData::Zero();
-  }
-
-  auto fusion_analysis = HloFusionAnalysis::Create(*producer, *device_info_);
-
-  bool is_coalesced = IsReadCoalescedHeuristic(
-      fusion_analysis.emitter_fusion_kind(), *device_info_, producer);
-  return EstimateRunTimeForFusion(fusion_analysis, is_coalesced);
-}
-
-EstimateRunTimeData
-GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForProducerConsumer(
-    const HloInstruction* producer, const HloInstruction* consumer) {
-  auto fusion_analysis =
-      HloFusionAnalysis::Create(*producer, *consumer, *device_info_);
-
-  bool is_coalesced = IsReadCoalescedHeuristic(
-      fusion_analysis.emitter_fusion_kind(), *device_info_, producer, consumer);
-  return EstimateRunTimeForFusion(fusion_analysis, is_coalesced);
-}
-
-/*static*/
-GpuPerformanceModelWithIndexingAnalysis::RunTimes
-GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimes(
-    const HloInstruction* producer,
-    absl::Span<const HloInstruction* const> fused_consumers) {
-  auto producer_runtime = EstimateRunTimeForInstruction(producer);
-
-  absl::Duration time_unfused =
-      kKernelLaunchOverhead * (fused_consumers.size() + 1) +
-      producer_runtime.exec_time;
-
-  absl::Duration time_fused = kKernelLaunchOverhead * fused_consumers.size();
-
-  for (const auto& consumer : fused_consumers) {
-    time_unfused += EstimateRunTimeForInstruction(consumer).exec_time;
-    time_fused +=
-        EstimateRunTimeForProducerConsumer(producer, consumer).exec_time;
-  }
-
-  return {time_unfused, time_fused};
-}
-
 absl::StatusOr<EstimateRunTimeData>
 GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledHloComputation(
     const HloFusionAdaptor& fusion_adaptor,
@@ -546,6 +399,12 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledHloComputation(
   int64_t flops = 0;
   int64_t bytes_read = 0;
   int64_t num_blocks = launch_dimensions.num_blocks();
+
+  if (tiled_hlo_computation.num_output_tiles() != num_blocks) {
+    return absl::FailedPreconditionError(absl::StrCat(
+        "Number of output tiles does not match number of blocks. ",
+        tiled_hlo_computation.num_output_tiles(), " vs ", num_blocks));
+  }
 
   absl::Duration dot_compute_time = absl::ZeroDuration();
 
@@ -716,10 +575,8 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledFusion(
 
 absl::StatusOr<EstimateRunTimeData>
 GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTriton(
-    const HloInstruction* producer, const HloInstruction* consumer) {
-  const auto& fusion_analysis =
-      (consumer == nullptr) ? fusion_analysis_cache_->Get(*producer)
-                            : fusion_analysis_cache_->Get(*producer, *consumer);
+    const HloInstruction* instr) {
+  const auto& fusion_analysis = fusion_analysis_cache_->Get(*instr);
   auto launch_config = TritonFusion(fusion_analysis).GetLaunchConfig();
 
   if (!launch_config.has_value()) {
@@ -755,9 +612,9 @@ GpuPerformanceModelWithIndexingAnalysis::GetLaunchDimensionsForTiledFusion(
           static_cast<uint64_t>(num_warps * WarpSize(device_info))};
 }
 
-absl::StatusOr<TiledRunTimeDataOrError>
-GpuPerformanceModelWithIndexingAnalysis::TryFindBestTilingForFusion(
-    const HloFusionAdaptor& fusion_adaptor) {
+absl::StatusOr<TopKTiledRunTimeDataOrError>
+GpuPerformanceModelWithIndexingAnalysis::TryFindTopKBestTilingsForFusion(
+    const HloFusionAdaptor& fusion_adaptor, int top_k) {
   SymbolicTileAnalysisOrError analysis_or_error =
       SymbolicTileAnalysis::AnalyzeFusion(
           fusion_adaptor, mlir_context_,
@@ -773,7 +630,7 @@ GpuPerformanceModelWithIndexingAnalysis::TryFindBestTilingForFusion(
 
   TF_ASSIGN_OR_RETURN(auto tilings, analysis.GetValidTilings());
 
-  std::optional<TiledRunTimeData> best_tiled_run_time_data;
+  absl::InlinedVector<TiledRunTimeData, 4> candidates;
 
   for (const auto& tiling : tilings) {
     // TODO(b/372454662): This needs to be adjusted if we want to support more
@@ -806,28 +663,46 @@ GpuPerformanceModelWithIndexingAnalysis::TryFindBestTilingForFusion(
       continue;
     }
 
-    if (!best_tiled_run_time_data.has_value() ||
-        estimate_run_time_data.exec_time <
-            best_tiled_run_time_data->runtime_data.exec_time) {
-      BlockLevelParameters block_level_parameters;
-      auto tiled_roots = tiled_hlo_computation.GetRoots();
-      block_level_parameters.output_tile_sizes.reserve(tiled_roots.size());
-      for (auto tiled_root : tiled_roots) {
-        block_level_parameters.output_tile_sizes.emplace_back(
-            tiled_root->tile_sizes().begin(), tiled_root->tile_sizes().end());
-      }
-      block_level_parameters.num_warps =
-          launch_dimensions.num_threads_per_block() / WarpSize(*device_info_);
-
-      best_tiled_run_time_data =
-          TiledRunTimeData{estimate_run_time_data, block_level_parameters};
+    BlockLevelParameters block_level_parameters;
+    auto tiled_roots = tiled_hlo_computation.GetRoots();
+    block_level_parameters.output_tile_sizes.reserve(tiled_roots.size());
+    for (auto tiled_root : tiled_roots) {
+      block_level_parameters.output_tile_sizes.emplace_back(
+          tiled_root->tile_sizes().begin(), tiled_root->tile_sizes().end());
     }
+    block_level_parameters.num_warps =
+        launch_dimensions.num_threads_per_block() / WarpSize(*device_info_);
+
+    candidates.push_back(
+        TiledRunTimeData{estimate_run_time_data, block_level_parameters});
   }
 
-  if (!best_tiled_run_time_data.has_value()) {
+  absl::c_stable_sort(
+      candidates, [](const TiledRunTimeData& a, const TiledRunTimeData& b) {
+        return a.runtime_data.exec_time < b.runtime_data.exec_time;
+      });
+
+  if (candidates.size() > top_k) {
+    candidates.resize(top_k);
+  }
+
+  return candidates;
+}
+
+absl::StatusOr<TiledRunTimeDataOrError>
+GpuPerformanceModelWithIndexingAnalysis::TryFindBestTilingForFusion(
+    const HloFusionAdaptor& fusion_adaptor) {
+  TF_ASSIGN_OR_RETURN(auto top_k_result, TryFindTopKBestTilingsForFusion(
+                                             fusion_adaptor, /*top_k=*/1));
+  if (std::holds_alternative<FusionDecision>(top_k_result)) {
+    return std::get<FusionDecision>(top_k_result);
+  }
+  auto& tilings =
+      std::get<absl::InlinedVector<TiledRunTimeData, 4>>(top_k_result);
+  if (tilings.empty()) {
     return FusionDecision::Forbid("No valid tilings found.");
   }
-  return *best_tiled_run_time_data;
+  return tilings.front();
 }
 
 }  // namespace gpu

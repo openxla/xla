@@ -267,6 +267,7 @@ absl::Status GatherComputationsByAllocationType(
           case HloOpcode::kMap:
           case HloOpcode::kReduce:
           case HloOpcode::kReduceWindow:
+          case HloOpcode::kScan:
           case HloOpcode::kScatter:
           case HloOpcode::kSelectAndScatter:
           case HloOpcode::kSort:
@@ -1914,7 +1915,7 @@ absl::Status BufferAssigner::AssignBuffersForComputations(
   std::unique_ptr<CallGraph> call_graph =
       CallGraph::Build(computations[0]->parent());
   TF_RETURN_IF_ERROR(call_graph->VisitNodes([&](const CallGraphNode& node) {
-    if (absl::c_linear_search(computations, node.computation())) {
+    if (computations_set.contains(node.computation())) {
       reverse_post_order_computations.push_back(node.computation());
     }
     return absl::OkStatus();
@@ -1927,8 +1928,6 @@ absl::Status BufferAssigner::AssignBuffersForComputations(
     }
   }
 
-  HloSchedule schedule(&assignment->module());
-
   for (const HloComputation* computation : computations) {
     const HloInstructionSequence* instruction_sequence =
         assignment->hlo_ordering().SequentialOrder(*computation);
@@ -1940,8 +1939,6 @@ absl::Status BufferAssigner::AssignBuffersForComputations(
       // run whole-module heap simulation.
       buffers_to_assign_sequentially->emplace(computation,
                                               flat_hash_set<const HloValue*>());
-
-      schedule.set_sequence(computation, *instruction_sequence);
     }
   }
 
@@ -2088,10 +2085,41 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
   // runs of alloc / free calls sorted in decreasing size order.
   const HloOrdering& hlo_ordering = assignment->hlo_ordering();
 
+  auto get_memory_limit = [&](LogicalBuffer::Color color) -> int64_t {
+    int64_t memory_limit = 0;
+    if (opts_.color_memory_limit) {
+      memory_limit = opts_.color_memory_limit(color);
+      if (memory_limit <= 0) {
+        // A value of 0 indicates that we do not know the limit or shouldn't
+        // fallback.
+        return 0;
+      }
+    } else {
+      memory_limit = assignment->module().config().device_memory_size();
+    }
+
+    VLOG(1) << "memory_limit: " << memory_limit;
+    if (memory_limit > 0) {
+      int64_t already_allocated_bytes = 0;
+      for (const BufferAllocation& alloc : assignment->Allocations()) {
+        if (alloc.color() == color &&
+            (alloc.is_entry_computation_parameter() || alloc.is_constant())) {
+          already_allocated_bytes += alloc.size();
+        }
+      }
+      memory_limit -= already_allocated_bytes;
+      if (memory_limit < 0) {
+        memory_limit = 0;
+      }
+    }
+    VLOG(1) << "memory_limit after update: " << memory_limit;
+    return memory_limit;
+  };
+
   // Returns a heap algorithm that chooses the best result from several
   // algorithms.
-  auto get_heap_algorithm =
-      [&](int64_t alignment) -> std::unique_ptr<HeapAlgorithm<HloValue>> {
+  auto get_heap_algorithm = [&](int64_t alignment, LogicalBuffer::Color color)
+      -> std::unique_ptr<HeapAlgorithm<HloValue>> {
     if (heap_buffer_interval_compare) {
       return std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
           assignment->multiheap_size_constraint_per_heap(), alignment,
@@ -2099,41 +2127,67 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
           heap_buffer_interval_compare);
     }
     using HeapType = GlobalDecreasingSizeBestFitHeap<HloValue>;
-    switch (buffer_assignment_algorithm) {
-      case buffer_assignment::BufferAssignmentAlgorithmProto::SPATIAL:
-        return std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
-            assignment->multiheap_size_constraint_per_heap(), alignment,
-            HeapType::kSpatial);
-      case buffer_assignment::BufferAssignmentAlgorithmProto::TEMPORAL:
-        return std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
-            assignment->multiheap_size_constraint_per_heap(), alignment,
-            HeapType::kTemporal);
-      case buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE:
-        return std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
-            assignment->multiheap_size_constraint_per_heap(), alignment,
-            HeapType::kFastMerge);
-      case buffer_assignment::BufferAssignmentAlgorithmProto::FAST_SPLIT:
-        return std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
-            assignment->multiheap_size_constraint_per_heap(), alignment,
-            HeapType::kFastSplit);
-      case buffer_assignment::BufferAssignmentAlgorithmProto::
-          BEST_OF_SPATIAL_TEMPORAL:
-      case buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT:
-      default: {
-        auto algorithms = std::make_unique<
-            std::vector<std::unique_ptr<HeapAlgorithm<HloValue>>>>();
-        algorithms->push_back(
-            std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
-                assignment->multiheap_size_constraint_per_heap(), alignment,
-                HeapType::kSpatial));
-        algorithms->push_back(
-            std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
-                assignment->multiheap_size_constraint_per_heap(), alignment,
-                HeapType::kTemporal));
-        return std::make_unique<ChooseBestHeapAlgorithm<HloValue>>(
-            std::move(algorithms));
+
+    auto build_algorithm =
+        [alignment, assignment](
+            buffer_assignment::BufferAssignmentAlgorithmProto::Value algo)
+        -> std::unique_ptr<HeapAlgorithm<HloValue>> {
+      switch (algo) {
+        case buffer_assignment::BufferAssignmentAlgorithmProto::SPATIAL:
+          return std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
+              assignment->multiheap_size_constraint_per_heap(), alignment,
+              HeapType::kSpatial);
+        case buffer_assignment::BufferAssignmentAlgorithmProto::TEMPORAL:
+          return std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
+              assignment->multiheap_size_constraint_per_heap(), alignment,
+              HeapType::kTemporal);
+        case buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE:
+          return std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
+              assignment->multiheap_size_constraint_per_heap(), alignment,
+              HeapType::kFastMerge);
+        case buffer_assignment::BufferAssignmentAlgorithmProto::FAST_SPLIT:
+          return std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
+              assignment->multiheap_size_constraint_per_heap(), alignment,
+              HeapType::kFastSplit);
+        case buffer_assignment::BufferAssignmentAlgorithmProto::
+            BEST_OF_SPATIAL_TEMPORAL:
+        case buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT:
+        default: {
+          auto algorithms = std::make_unique<
+              std::vector<std::unique_ptr<HeapAlgorithm<HloValue>>>>();
+          algorithms->push_back(
+              std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
+                  assignment->multiheap_size_constraint_per_heap(), alignment,
+                  HeapType::kSpatial));
+          algorithms->push_back(
+              std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
+                  assignment->multiheap_size_constraint_per_heap(), alignment,
+                  HeapType::kTemporal));
+          return std::make_unique<ChooseBestHeapAlgorithm<HloValue>>(
+              std::move(algorithms));
+        }
       }
+    };
+
+    if (buffer_assignment_algorithm ==
+        buffer_assignment::BufferAssignmentAlgorithmProto::
+            FAST_MERGE_WITH_FALLBACK) {
+      VLOG(1) << "Using FAST_MERGE_WITH_FALLBACK";
+      auto primary = build_algorithm(
+          buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE);
+      auto fallback_factory = [build_algorithm,
+                               fallback_algorithm = opts_.fallback_algorithm]()
+          -> std::unique_ptr<HeapAlgorithm<HloValue>> {
+        VLOG(1) << "Fallback algorithm ID: "
+                << static_cast<int>(fallback_algorithm);
+        return build_algorithm(fallback_algorithm);
+      };
+      return std::make_unique<HeapAlgorithmWithFallback<HloValue>>(
+          std::move(primary), std::move(fallback_factory),
+          get_memory_limit(color));
     }
+
+    return build_algorithm(buffer_assignment_algorithm);
   };
 
   if (run_whole_module_heap_simulation) {
@@ -2189,20 +2243,22 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
           options.buffers_to_assign = &computation_map_it->second;
           const HloInstructionSequence* instruction_sequence =
               hlo_ordering.SequentialOrder(*private_stack_computation);
+          HeapSimulator::Result<HloValue> result;
           TF_ASSIGN_OR_RETURN(
-              HeapSimulator::Result<HloValue> result,
-              HeapSimulator::Run(
-                  get_heap_algorithm(alignment), *private_stack_computation,
-                  *instruction_sequence, assignment->alias_analysis(),
-                  alias_info_, &assignment->buffer_size_, &schedule, options));
+              result, HeapSimulator::Run(
+                          get_heap_algorithm(alignment, color),
+                          *private_stack_computation, *instruction_sequence,
+                          assignment->alias_analysis(), alias_info_,
+                          &assignment->buffer_size_, &schedule, options));
           TF_RETURN_IF_ERROR(AssignBuffersFromHeapSimulator(
               result, assignment, color, isolation_options));
         }
       } else {
         options.buffers_to_assign = &color_map[color];
+        HeapSimulator::Result<HloValue> result;
         TF_ASSIGN_OR_RETURN(
-            HeapSimulator::Result<HloValue> result,
-            HeapSimulator::Run(get_heap_algorithm(alignment),
+            result,
+            HeapSimulator::Run(get_heap_algorithm(alignment, color),
                                assignment->module(), schedule,
                                assignment->alias_analysis(), alias_info_,
                                &assignment->buffer_size_, options));
@@ -2234,12 +2290,12 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
         int64_t alignment = assignment->color_alignment_(color);
         HeapSimulator::Options options;
         options.buffers_to_assign = &color_map[color];
+        HeapSimulator::Result<HloValue> result;
         TF_ASSIGN_OR_RETURN(
-            HeapSimulator::Result<HloValue> result,
-            HeapSimulator::Run(get_heap_algorithm(alignment), *computation,
-                               *instruction_sequence,
-                               assignment->alias_analysis(), alias_info_,
-                               &assignment->buffer_size_, options));
+            result, HeapSimulator::Run(
+                        get_heap_algorithm(alignment, color), *computation,
+                        *instruction_sequence, assignment->alias_analysis(),
+                        alias_info_, &assignment->buffer_size_, options));
         TF_RETURN_IF_ERROR(AssignBuffersFromHeapSimulator(
             result, assignment, color, isolation_options));
       }

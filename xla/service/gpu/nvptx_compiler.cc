@@ -163,6 +163,24 @@ class MatmulBfloat16Support : public FloatSupport {
 
 }  // namespace
 
+void NVPTXCompiler::AddPaddingForGpublasGemms(
+    HloPassPipeline& pipeline, const DebugOptions& debug_options,
+    const se::GpuComputeCapability& gpu_version) {
+  if (!debug_options.xla_gpu_experimental_disable_binary_libraries()) {
+    for (const CublasPaddingRequirement& requirement :
+         CublasPaddingRequirements) {
+      if (gpu_version.cuda_compute_capability()->SupportsAllFeaturesOf(
+              requirement.min_compute_capability)) {
+        pipeline.AddPass<CublasPadForGemms>(gpu_version, requirement.data_type,
+                                            requirement.multiple_of);
+      }
+    }
+    // Padding a gemm operand that's a constant results in pad(constant).  Run
+    // constant-folding to simplify this into a new constant.
+    pipeline.AddPass<HloConstantFolding>();
+  }
+}
+
 absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
     HloModule* hlo_module, const se::GpuComputeCapability& gpu_version,
     se::dnn::VersionInfo dnn_version,
@@ -285,22 +303,6 @@ absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
           : se::dnn::VersionInfo{});
   pre_pipeline.AddPass<DotDimensionMerger>();
 
-  if (!hlo_module->config()
-           .debug_options()
-           .xla_gpu_experimental_disable_binary_libraries()) {
-    for (const CublasPaddingRequirement& requirement :
-         CublasPaddingRequirements) {
-      if (cuda_compute_capability->SupportsAllFeaturesOf(
-              requirement.min_compute_capability)) {
-        pre_pipeline.AddPass<CublasPadForGemms>(
-            gpu_target_config.device_description.gpu_compute_capability(),
-            requirement.data_type, requirement.multiple_of);
-      }
-    }
-  }
-  // Padding a gemm operand that's a constant results in pad(constant).  Run
-  // constant-folding to simplify this into a new constant.
-  pre_pipeline.AddPass<HloConstantFolding>();
   TF_RETURN_IF_ERROR(
       pre_pipeline.Run(hlo_module, {HloInstruction::kMainExecutionThread})
           .status());

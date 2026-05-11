@@ -527,6 +527,37 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "propagate_call_metadata",
+    srcs = ["propagate_call_metadata.cc"],
+    hdrs = ["propagate_call_metadata.h"],
+    deps = [
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "propagate_call_metadata_test",
+    size = "small",
+    srcs = ["propagate_call_metadata_test.cc"],
+    deps = [
+        ":propagate_call_metadata",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",  # fixdeps: keep
+    ],
+)
+
+cc_library(
     name = "add_original_value",
     srcs = ["add_original_value.cc"],
     hdrs = ["add_original_value.h"],
@@ -618,5 +649,79 @@ xla_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",  # fixdeps: keep
+    ],
+)
+
+cc_library(
+    name = "hlo_module_stitcher",
+    srcs = ["hlo_module_stitcher.cc"],
+    hdrs = ["hlo_module_stitcher.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "hlo_module_splitter",
+    srcs = ["hlo_module_splitter.cc"],
+    hdrs = ["hlo_module_splitter.h"],
+    deps = [
+        ":hlo_module_stitcher",
+        "//xla:shape_tree",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service:name_uniquer",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_module_splitter_test",
+    srcs = ["hlo_module_splitter_test.cc"],
+    deps = [
+        ":hlo_module_splitter",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:hlo_verifier",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status_macros",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_module_stitcher_test",
+    srcs = ["hlo_module_stitcher_test.cc"],
+    deps = [
+        ":hlo_module_stitcher",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:hlo_verifier",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
     ],
 )

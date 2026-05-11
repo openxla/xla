@@ -96,6 +96,11 @@ class UnsupportedExecutorProcessControl
     llvm_unreachable("Unsupported");
   }
 
+  llvm::Expected<std::unique_ptr<llvm::jitlink::JITLinkMemoryManager>>
+  createDefaultMemoryManager() override {
+    llvm_unreachable("Unsupported");
+  }
+
   llvm::Expected<std::unique_ptr<llvm::orc::MemoryAccess>>
   createDefaultMemoryAccess() override {
     return std::make_unique<llvm::orc::InProcessMemoryAccess>(

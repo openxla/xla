@@ -3809,13 +3809,16 @@ void IterateThroughWindow(
     const Shape& window_shape, const Window& window, const Shape& base_shape,
     const absl::Span<const int64_t> window_count_index,
     const std::function<void(absl::Span<const int64_t>)>& f) {
-  const int64_t rank = base_shape.dimensions().size();
+  const size_t rank = base_shape.dimensions().size();
   DimensionVector window_index(rank);
-  std::fill(window_index.begin(), window_index.end(), 0);
+  absl::Span<int64_t> window_index_span = absl::MakeSpan(window_index);
+  std::fill(window_index_span.begin(), window_index_span.end(), 0);
+
   do {
     DimensionVector base_index(rank);
+    absl::Span<int64_t> base_index_span = absl::MakeSpan(base_index);
     bool out_of_bound = false;
-    for (int64_t i = 0; i < rank; ++i) {
+    for (size_t i = 0; i < rank; ++i) {
       // Padding is applied to the dilated base. Say that padding is 3 and
       // dilation is 2 for some dimension. After applying base dilation and
       // padding, the dimension looks like:
@@ -3829,23 +3832,30 @@ void IterateThroughWindow(
       // When this is a natural number, we index an original element.
       // Otherwise, we index a 0 (pad or hole), and we don't need to apply
       // the callback f.
-      base_index[i] = window_count_index[i] * window.dimensions(i).stride() +
-                      window_index[i] * window.dimensions(i).window_dilation() -
-                      window.dimensions(i).padding_low();
-      if (base_index[i] % window.dimensions(i).base_dilation() != 0) {
-        out_of_bound = true;
-        break;
+      const xla::WindowDimension& window_dimension = window.dimensions(i);
+      int64_t base_index_i =
+          window_count_index[i] * window_dimension.stride() +
+          window_index_span[i] * window_dimension.window_dilation() -
+          window_dimension.padding_low();
+      const int64_t base_dilation = window_dimension.base_dilation();
+      if (base_dilation != 1) {
+        if (base_index_i % base_dilation != 0) {
+          out_of_bound = true;
+          base_index_span[i] = base_index_i;
+          break;
+        }
+        base_index_i /= base_dilation;
       }
-      base_index[i] /= window.dimensions(i).base_dilation();
-      if (base_index[i] < 0 || base_index[i] >= base_shape.dimensions(i)) {
+      base_index_span[i] = base_index_i;
+      if (base_index_i < 0 || base_index_i >= base_shape.dimensions(i)) {
         out_of_bound = true;
         break;
       }
     }
     if (!out_of_bound) {
-      f(base_index);
+      f(base_index_span);
     }
-  } while (IndexUtil::BumpIndices(window_shape, absl::MakeSpan(window_index)));
+  } while (IndexUtil::BumpIndices(window_shape, window_index_span));
 }
 
 template <typename Fp, typename Uint, typename ResultT>
@@ -4713,25 +4723,26 @@ absl::Status HloEvaluator::HandleReduceWindow(const HloInstruction* hlo) {
     for (const auto* init : init_literal_vec) {
       computed_result.push_back(init->Clone());
     }
+    absl::InlinedVector<Literal, 2> curr_val_literal_vec;
+    curr_val_literal_vec.reserve(input_literal_vec.size());
+    for (const auto* input_literal : input_literal_vec) {
+      curr_val_literal_vec.push_back(Literal(
+          ShapeUtil::MakeShape(input_literal->shape().element_type(), {})));
+    }
+    absl::InlinedVector<const Literal*, 2> args;
     IterateThroughWindow(
         window_shape, window, input_literal_vec[0]->shape(), output_index,
         [&](absl::Span<const int64_t> operand_index) -> void {
-          absl::InlinedVector<const Literal*, 2> args;
+          args.clear();
           for (auto& curr_result_val : computed_result) {
             VLOG(2) << "Pushing:" << curr_result_val.ToString() << "\n";
             args.push_back(&curr_result_val);
           }
-          absl::InlinedVector<Literal, 2> curr_val_literal_vec;
-          curr_val_literal_vec.reserve(input_literal_vec.size());
-          for (const auto* input_literal : input_literal_vec) {
-            // Evaluate computation with specified literal operands.
-            curr_val_literal_vec.push_back(Literal(ShapeUtil::MakeShape(
-                input_literal->shape().element_type(), {})));
-            curr_val_literal_vec.back().CopyElementFrom(*input_literal,
-                                                        operand_index, {});
-            VLOG(2) << "Pushing:" << curr_val_literal_vec.back().ToString()
-                    << "\n";
-            args.push_back(&curr_val_literal_vec.back());
+          for (size_t i = 0; i < input_literal_vec.size(); ++i) {
+            curr_val_literal_vec[i].CopyElementFrom(*input_literal_vec[i],
+                                                    operand_index, {});
+            VLOG(2) << "Pushing:" << curr_val_literal_vec[i].ToString() << "\n";
+            args.push_back(&curr_val_literal_vec[i]);
           }
           computed_result[0] =
               embedded_evaluator.Evaluate(*function, args).value();

@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/kernel_reuse_cache.pb.h"
+#include "xla/service/gpu_topology.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/shape.h"
@@ -71,7 +72,7 @@ absl::Status LoadCache(IrEmitterContext& ir_emitter_context,
 absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     const HloModule* hlo_module, llvm::LLVMContext* llvm_context,
     const std::string& target_triple, const std::string& data_layout,
-    se::Platform::Id platform_id, const se::DeviceDescription& device_desc,
+    se::Platform::Id platform_id, const GpuTopology& gpu_topology,
     const GpuAliasInfo* alias_info,
     BufferValue::SizeFunction buffer_size_bytes_function,
     llvm_ir::LLVMCommandLineOptionsReleasableLock& llvm_options_lock,
