@@ -564,9 +564,10 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
         clique_key, device_buffers[1].destination_buffer);
     output_sym_mem = sym;
     output_base_offset = offset;
-    VLOG(3) << "RaggedAllToAllThunk::RunCollective: FindSymmetricMemory "
-            << "returned sym=" << (sym ? "non-null" : "NULL")
-            << " offset=" << offset;
+    XLA_VLOG_DEVICE(3, stream.parent()->device_ordinal())
+        << "RaggedAllToAllThunk::RunCollective: FindSymmetricMemory "
+        << "returned sym=" << (sym ? "non-null" : "NULL")
+        << " offset=" << offset;
   }
 
   return RunRaggedAllToAll(config_.num_row_elements, config_.num_total_updates,
@@ -673,7 +674,8 @@ absl::Status RunRaggedAllToAll(
   auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(&comm);
 
   if (use_put_path) {
-    VLOG(3) << "RunRaggedAllToAll: using Put+Signal path";
+    XLA_VLOG_DEVICE(3, device_ordinal)
+        << "RunRaggedAllToAll: using Put+Signal path";
     PrimitiveType element_type = buffers[0].element_type;
     int64_t element_byte_width = primitive_util::ByteWidth(element_type);
     se::DeviceAddressBase input_buffer = buffers[0].source_buffer;
@@ -686,18 +688,19 @@ absl::Status RunRaggedAllToAll(
          &stream](GpuCommunicator* comm) -> absl::Status {
           for (int peer = 0; peer < num_ranks; ++peer) {
             for (int64_t i = 0; i < num_updates_per_replica; ++i) {
-              int64_t idx = peer * num_updates_per_replica + i;
-              int64_t send_count = send_sizes[idx] * ragged_row_element_size;
+              const int64_t idx = peer * num_updates_per_replica + i;
+              const int64_t send_count =
+                  send_sizes[idx] * ragged_row_element_size;
 
-              se::DeviceAddressBase send_slice = GpuCollectives::Slice(
+              const se::DeviceAddressBase send_slice = GpuCollectives::Slice(
                   input_buffer, element_type,
                   input_offsets[idx] * ragged_row_element_size, send_count);
 
-              size_t byte_offset =
+              const size_t byte_offset =
                   output_base_offset + output_offsets[idx] *
                                            ragged_row_element_size *
                                            element_byte_width;
-              size_t byte_count = send_count * element_byte_width;
+              const size_t byte_count = send_count * element_byte_width;
 
               RETURN_IF_ERROR(comm->LaunchPut(
                   send_slice, output_symmetric_memory, byte_offset, byte_count,
@@ -719,7 +722,8 @@ absl::Status RunRaggedAllToAll(
     return absl::OkStatus();
   }
 
-  VLOG(3) << "RunRaggedAllToAll: using Send/Recv path";
+  XLA_VLOG_DEVICE(3, device_ordinal)
+      << "RunRaggedAllToAll: using Send/Recv path";
   const int64_t* recv_sizes = ragged_metadata_allocs[3];
 
   Future<> future = gpu_comm->GroupExecute(
