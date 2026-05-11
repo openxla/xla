@@ -90,6 +90,11 @@ struct AutotuneConfig {
   bool dump_hlos = false;
   // Whether to allow or discard configs that ptxas warns will spill registers.
   bool allow_reg_spills = false;
+  // If true, recompute the reference output before each candidate compare
+  // instead of computing it once and reusing it. Mitigates a multi-process
+  // race on AMDGPU where the hoisted reference buffer can be perturbed
+  // between compares.
+  bool recompute_reference_per_candidate = false;
 
   std::string ToString() const;
 };

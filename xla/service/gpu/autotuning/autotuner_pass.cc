@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
 #include "xla/tsl/platform/errors.h"
@@ -126,6 +127,12 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
       // BufferComparatorKernel and RedzoneAllocatorKernel are registered for
       // SYCL platform.
       autotune_config.check_buffers = false;
+    }
+    if (stream_executor->GetPlatform()->id() ==
+        stream_executor::rocm::kROCmPlatformId) {
+      // Workaround for a multi-process race on AMDGPU where the hoisted
+      // reference buffer can be perturbed between candidate compares.
+      autotune_config.recompute_reference_per_candidate = true;
     }
     profiler = GpuProfiler::Create(
         stream_executor, GetProfileOptions(debug_options, autotune_config),

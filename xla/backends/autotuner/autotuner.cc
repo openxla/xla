@@ -645,8 +645,11 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
       std::unique_ptr<InputBuffers> input_buffers,
       profiler_->CreateInputBuffers(candidates[0].executable.get(), instr));
 
+  // Compute the reference output once, unless the caller asked to recompute
+  // it per candidate (see AutotuneConfig::recompute_reference_per_candidate).
   std::optional<ScopedShapedBuffer> reference_output;
-  if (autotune_config_.check_buffers) {
+  if (autotune_config_.check_buffers &&
+      !autotune_config_.recompute_reference_per_candidate) {
     VLOG(2) << "Checking buffers";
     reference_output = GetReferenceOutput(candidates, *input_buffers);
     if (!reference_output.has_value()) {
@@ -655,6 +658,14 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
   }
 
   for (int i = 0; i < candidates.size(); ++i) {
+    if (autotune_config_.check_buffers &&
+        autotune_config_.recompute_reference_per_candidate) {
+      reference_output = GetReferenceOutput(candidates, *input_buffers);
+      if (!reference_output.has_value()) {
+        LOG(WARNING) << "No reference output found even though buffer checking ";
+      }
+    }
+
     absl::StatusOr<ProfileResult> profile_result =
         profiler_->Profile(candidates[i].executable.get(), *input_buffers);
 
@@ -917,7 +928,8 @@ std::string AutotuneConfig::ToString() const {
       "  \"select_first_config\": %s,\n"
       "  \"use_default_config\": %s,\n"
       "  \"dump_hlos\": %s,\n"
-      "  \"allow_reg_spills\": %s\n"
+      "  \"allow_reg_spills\": %s,\n"
+      "  \"recompute_reference_per_candidate\": %s\n"
       "}",
       check_buffers ? "true" : "false", relative_tolerance,
       crash_on_check_failure ? "true" : "false",
@@ -926,7 +938,8 @@ std::string AutotuneConfig::ToString() const {
       exclude_cublas_config ? "true" : "false",
       select_first_config ? "true" : "false",
       use_default_config ? "true" : "false", dump_hlos ? "true" : "false",
-      allow_reg_spills ? "true" : "false");
+      allow_reg_spills ? "true" : "false",
+      recompute_reference_per_candidate ? "true" : "false");
 }
 
 AutotunerCacheInterface::CacheStats Autotuner::GetCacheStats() {

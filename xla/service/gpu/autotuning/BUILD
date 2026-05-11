@@ -267,6 +267,7 @@ cc_library(
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/rocm:rocm_platform_id",
         "//xla/stream_executor/sycl:sycl_platform_id",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
