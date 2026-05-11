@@ -252,12 +252,16 @@ absl::Status IsAllReduceKernelSupported(
   if (!is_collective_kernel_enabled) {
     return absl::UnimplementedError("Collective kernel is not enabled.");
   }
-  const auto compute_capability = device_info.cuda_compute_capability();
-  if (!compute_capability.IsAtLeastHopper()) {
-    return absl::UnimplementedError(
-        absl::StrCat("Collective kernel is not supported for compute "
-                     "capability less than 9.0. Got ",
-                     compute_capability.ToString(), "."));
+  // Check if the device supports Triton collective codegen:
+  // CUDA: Requires compute capability 9.0+ (Hopper or newer)
+  // ROCm: All versions with Triton support are enabled
+  if (!device_info.cuda_compute_capability().IsAtLeastHopper() &&
+      !device_info.gpu_compute_capability().IsRocm()) {
+    return absl::UnimplementedError(absl::StrCat(
+        "Triton collective codegen requires CUDA compute capability >= 9.0 "
+        "(Hopper or newer) or a ROCm device with Triton support. "
+        "Got: ",
+        device_info.gpu_compute_capability().ToString(), "."));
   }
   // TODO(b/383125489): Support variadic arguments.
   if (num_operands != 1) {

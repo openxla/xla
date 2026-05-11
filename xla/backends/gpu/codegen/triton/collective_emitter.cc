@@ -38,7 +38,7 @@ limitations under the License.
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
@@ -98,9 +98,10 @@ using ReductionComputationEmitter = absl::AnyInvocable<xtile::TensorValue(
     mlir::ImplicitLocOpBuilder&, xtile::TensorValue, xtile::TensorValue)>;
 
 // The main memory space on a device (HBM).
+// Use GPU dialect address space which is platform-independent.
 static constexpr auto kGlobalAddressSpace =
-    static_cast<std::underlying_type_t<mlir::NVVM::NVVMMemorySpace>>(
-        mlir::NVVM::NVVMMemorySpace::Global);
+    static_cast<std::underlying_type_t<mlir::gpu::AddressSpace>>(
+        mlir::gpu::AddressSpace::Global);
 
 // Metadata arguments for the collective emitter.
 // device_rank, signal_value, signal_buffers.

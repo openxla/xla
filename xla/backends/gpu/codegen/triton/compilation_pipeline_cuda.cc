@@ -22,6 +22,7 @@ limitations under the License.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
+#include "xla/backends/gpu/codegen/triton/extern_function_helper.h"
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "triton/Conversion/TritonGPUToLLVM/Passes.h"
@@ -180,7 +181,8 @@ static void MakeLLIR(mlir::OpPassManager* pm,
 
   // Add XLA custom pass to implement extern_elementwise functions
   // This must run after MLIR->LLVM conversion but before final optimizations
-  pm->addPass(mt_xla::CreateTritonXLAImplementExternElementWisePass());
+  pm->addPass(mt_xla::CreateTritonXLAImplementExternElementWisePass(
+      mt_xla::TargetBackend::CUDA));
 }
 
 void CreateTritonCudaPipeline(

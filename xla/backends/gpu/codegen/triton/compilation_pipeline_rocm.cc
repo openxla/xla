@@ -26,9 +26,12 @@ limitations under the License.
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
-#include "xla/stream_executor/device_description.h"
+#include "xla/backends/gpu/codegen/triton/extern_function_helper.h"
+#include "xla/backends/gpu/codegen/triton/transforms/passes.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "triton/Conversion/TritonGPUToLLVM/Passes.h"
 #include "triton/Conversion/TritonToTritonGPU/Passes.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 
@@ -179,6 +182,11 @@ static void MakeLLIR(mlir::OpPassManager* pm,
   }
   pm->addPass(mt::createConvertBuiltinFuncToLLVMPass(rocm_cc.gfx_version(),
                                                      /*ftz=*/true));
+
+  // Add XLA custom pass to implement extern_elementwise functions
+  // This must run after MLIR->LLVM conversion but before final optimizations
+  pm->addPass(mlir::triton::xla::CreateTritonXLAImplementExternElementWisePass(
+      mlir::triton::xla::TargetBackend::ROCM));
 }
 
 void CreateTritonRocmPipeline(

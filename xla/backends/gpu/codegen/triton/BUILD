@@ -148,6 +148,7 @@ cc_library(
     ],
     hdrs = ["compilation_pipeline.h"],
     deps = [
+        ":extern_function_helper",
         "//xla/backends/gpu/codegen/emitters/transforms:passes",
         "//xla/backends/gpu/codegen/triton/transforms:passes",
         "//xla/backends/gpu/codegen/triton/transforms:triton_xla_implement_extern_element_wise_pass",
@@ -729,6 +730,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:NVVMDialect",
         "@llvm-project//mlir:Support",
