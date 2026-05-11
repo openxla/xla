@@ -130,12 +130,14 @@ absl::Status DynamicSliceFusionV2Thunk::Initialize(
   return executor_.Initialize(params);
 }
 
-absl::Status DynamicSliceFusionV2Thunk::VerifySliceOffset(
+static absl::Status VerifySliceOffset(
     se::Stream& stream, const BufferAllocations& orig, absl::string_view kind,
     size_t idx, const std::optional<DynamicSliceConfig>& config,
     const std::optional<std::vector<DynamicSliceFusion::Offset>>& offsets,
     const Shape& src_shape, const Shape& dst_shape,
-    absl::Span<const WhileLoopState> loop_nest) const {
+    absl::Span<const WhileLoopState> loop_nest,
+    absl::Span<const DynamicSliceFusion::Parameter> parameters,
+    absl::Span<const BufferAllocation::Slice> parameter_buffers) {
   if (!config.has_value() || !offsets.has_value()) {
     return absl::OkStatus();
   }
@@ -153,12 +155,12 @@ absl::Status DynamicSliceFusionV2Thunk::VerifySliceOffset(
   for (size_t d = 0; d < runtime_offsets.size(); ++d) {
     int64_t param_num = runtime_offsets[d].parameter_number;
     if (!ShapeUtil::IsScalarWithElementType(
-            parameters_[param_num].parameter_shape, S32)) {
+            parameters[param_num].parameter_shape, S32)) {
       return Internal(
           "Expected S32 scalar offset parameter at index %d, got %s", param_num,
-          ShapeUtil::HumanString(parameters_[param_num].parameter_shape));
+          ShapeUtil::HumanString(parameters[param_num].parameter_shape));
     }
-    auto src = orig.GetDeviceAddress(parameter_buffers_[param_num]);
+    auto src = orig.GetDeviceAddress(parameter_buffers[param_num]);
     RETURN_IF_ERROR(stream.Memcpy(&indices[d], src, sizeof(int32_t)));
   }
 
@@ -181,23 +183,26 @@ absl::Status DynamicSliceFusionV2Thunk::VerifySliceOffset(
   return absl::OkStatus();
 }
 
-absl::Status DynamicSliceFusionV2Thunk::VerifyOffsets(
-    const ExecuteParams& params,
-    absl::Span<const WhileLoopState> loop_nest) const {
+static absl::Status VerifyOffsets(
+    const Thunk::ExecuteParams& params,
+    absl::Span<const WhileLoopState> loop_nest,
+    absl::Span<const DynamicSliceFusion::Parameter> parameters,
+    absl::Span<const DynamicSliceFusion::Result> results,
+    absl::Span<const BufferAllocation::Slice> parameter_buffers) {
   se::Stream& stream = *params.stream;
   const BufferAllocations& orig = *params.buffer_allocations;
 
-  for (size_t i = 0; i < parameters_.size(); ++i) {
+  for (size_t i = 0; i < parameters.size(); ++i) {
     RETURN_IF_ERROR(VerifySliceOffset(
-        stream, orig, "param", i, parameters_[i].slice_config,
-        parameters_[i].slice_offsets, parameters_[i].parameter_shape,
-        parameters_[i].slice_shape, loop_nest));
+        stream, orig, "param", i, parameters[i].slice_config,
+        parameters[i].slice_offsets, parameters[i].parameter_shape,
+        parameters[i].slice_shape, loop_nest, parameters, parameter_buffers));
   }
-  for (size_t j = 0; j < results_.size(); ++j) {
-    RETURN_IF_ERROR(
-        VerifySliceOffset(stream, orig, "result", j, results_[j].update_config,
-                          results_[j].update_offsets, results_[j].result_shape,
-                          results_[j].update_shape, loop_nest));
+  for (size_t j = 0; j < results.size(); ++j) {
+    RETURN_IF_ERROR(VerifySliceOffset(
+        stream, orig, "result", j, results[j].update_config,
+        results[j].update_offsets, results[j].result_shape,
+        results[j].update_shape, loop_nest, parameters, parameter_buffers));
   }
   return absl::OkStatus();
 }
@@ -212,7 +217,8 @@ absl::Status DynamicSliceFusionV2Thunk::ExecuteOnStream(
       parameters_.size(), results_.size(), loop_nest.size());
 
   if (verify_offsets_) {
-    RETURN_IF_ERROR(VerifyOffsets(params, loop_nest));
+    RETURN_IF_ERROR(VerifyOffsets(params, loop_nest, parameters_, results_,
+                                  parameter_buffers_));
   }
 
   std::vector<se::DeviceAddressBase> buffers =
@@ -379,6 +385,7 @@ DynamicSliceFusionV2Thunk::FromProto(
     absl::Span<const BufferAllocation> buffer_allocations,
     const DeserializerWithCustomAllocations& deserializer) {
   std::vector<DynamicSliceFusion::Parameter> parameters;
+  parameters.reserve(proto.parameters().size());
   for (const auto& p : proto.parameters()) {
     std::optional<DynamicSliceConfig> config;
     if (p.has_slice_config()) {
@@ -404,6 +411,7 @@ DynamicSliceFusionV2Thunk::FromProto(
   }
 
   std::vector<DynamicSliceFusion::Result> results;
+  results.reserve(proto.results().size());
   for (const auto& r : proto.results()) {
     std::optional<DynamicSliceConfig> update_config;
     if (r.has_update_config()) {
@@ -430,6 +438,7 @@ DynamicSliceFusionV2Thunk::FromProto(
   }
 
   std::vector<BufferAllocation::Slice> parameter_buffers;
+  parameter_buffers.reserve(proto.parameter_buffers().size());
   for (const auto& buf_proto : proto.parameter_buffers()) {
     ASSIGN_OR_RETURN(auto slice, BufferAllocation::Slice::FromProto(
                                      buf_proto, buffer_allocations));
@@ -437,6 +446,7 @@ DynamicSliceFusionV2Thunk::FromProto(
   }
 
   std::vector<BufferAllocation::Slice> result_buffers;
+  result_buffers.reserve(proto.result_buffers().size());
   for (const auto& buf_proto : proto.result_buffers()) {
     ASSIGN_OR_RETURN(auto slice, BufferAllocation::Slice::FromProto(
                                      buf_proto, buffer_allocations));
@@ -444,11 +454,13 @@ DynamicSliceFusionV2Thunk::FromProto(
   }
 
   std::vector<BufferAllocation> slice_allocations;
+  slice_allocations.reserve(proto.slice_allocations().size());
   for (const auto& alloc_proto : proto.slice_allocations()) {
     slice_allocations.push_back(BufferAllocation::FromProto(alloc_proto));
   }
 
   ThunkSequence embedded_thunks;
+  embedded_thunks.reserve(proto.embedded_thunks().thunks().size());
   for (const auto& thunk_proto : proto.embedded_thunks().thunks()) {
     ASSIGN_OR_RETURN(std::unique_ptr<Thunk> thunk,
                      deserializer(thunk_proto, slice_allocations));

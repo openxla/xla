@@ -16,15 +16,12 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_DYNAMIC_SLICE_FUSION_V2_THUNK_H_
 #define XLA_BACKENDS_GPU_RUNTIME_DYNAMIC_SLICE_FUSION_V2_THUNK_H_
 
-#include <cstddef>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -34,9 +31,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/shape.h"
 #include "xla/stream_executor/device_address.h"
-#include "xla/stream_executor/stream.h"
 
 namespace xla::gpu {
 
@@ -92,16 +87,6 @@ class DynamicSliceFusionV2Thunk : public Thunk {
   absl::Status TransformNested(Transformer callback) override;
 
  private:
-  absl::Status VerifyOffsets(const ExecuteParams& params,
-                             absl::Span<const WhileLoopState> loop_nest) const;
-
-  absl::Status VerifySliceOffset(
-      se::Stream& stream, const BufferAllocations& orig, absl::string_view kind,
-      size_t idx, const std::optional<DynamicSliceConfig>& config,
-      const std::optional<std::vector<DynamicSliceFusion::Offset>>& offsets,
-      const Shape& src_shape, const Shape& dst_shape,
-      absl::Span<const WhileLoopState> loop_nest) const;
-
   std::vector<se::DeviceAddressBase> BuildDynamicSliceBuffers(
       const BufferAllocations& orig_allocs,
       absl::Span<const WhileLoopState> loop_nest) const;
