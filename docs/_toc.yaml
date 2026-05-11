@@ -118,11 +118,16 @@ toc:
 - title: XLA frontends
   # This is the default tab for the XLA frontends section.
   section:
-  - title: Use XLA in TensorFlow
-    path: /xla/tf2xla
-  - title: Use XLA in JAX
+  - title: JAX
     path: https://docs.jax.dev/en/latest/notebooks/thinking_in_jax.html
     status: external
-  - title: Use XLA in PyTorch
+  - title: "PyTorch/XLA"
     path: https://docs.pytorch.org/xla/release/r2.8/index.html#pytorch-xla-documentation
     status: external
+  - heading: TensorFlow
+  - title: Use XLA in TensorFlow
+    path: /xla/tf2xla
+  - title: Autoclustering tutorial
+    path: /xla/tf2xla/tutorials/autoclustering_xla
+  - title: Use XLA with tf.function
+    path: /xla/tf2xla/tutorials/jit_compile
