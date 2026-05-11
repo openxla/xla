@@ -1230,10 +1230,10 @@ TEST(StreamExecutorGpuClientTest, FailedCrossHostTransferSrcAndDstAddressable) {
                                             /*allocate_after=*/{}));
 
   EXPECT_THAT(
-      pjrt_client
+      client
           ->CrossHostTransferBuffers(
               /*transfer_dependencies=*/{},
-              /*transfer_specs=*/{PjRtClient::CrossHostTransferSpec{
+              /*transfer_specs=*/{CommonPjRtClient::CrossHostTransferSpec{
                   GlobalDeviceId(0), GlobalDeviceId(1), std::move(raw_buffer)}})
           .status(),
       absl_testing::StatusIs(
@@ -1370,7 +1370,7 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
 
   // Passed as input to CrossHostTransferBuffers; contains raw buffers wrapped
   // by owned_buffers.
-  std::vector<PjRtClient::CrossHostTransferSpec> transfer_specs;
+  std::vector<CommonPjRtClient::CrossHostTransferSpec> transfer_specs;
   transfer_specs.reserve(num_transfers);
 
   // Holds definition events of owned_buffers.
@@ -1426,7 +1426,7 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
                 "SuccessfulCrossHostTransferTestBody"));
 
     // Form the transfer spec.
-    transfer_specs.push_back(PjRtClient::CrossHostTransferSpec{
+    transfer_specs.push_back(CommonPjRtClient::CrossHostTransferSpec{
         GlobalDeviceId(src_global_device_id),
         GlobalDeviceId(dst_global_device_id), std::move(raw_buffer)});
 
@@ -1439,8 +1439,9 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
   LOG(INFO) << log_prefix << ": enqueuing transfers";
   ASSIGN_OR_RETURN(
       std::vector<PjRtDeviceEventRef> usage_events,
-      client->CrossHostTransferBuffers(std::move(transfer_dependencies),
-                                       std::move(transfer_specs)));
+      tensorflow::down_cast<CommonPjRtClient*>(client.get())
+          ->CrossHostTransferBuffers(std::move(transfer_dependencies),
+                                     std::move(transfer_specs)));
   EXPECT_EQ(usage_events.size(), num_transfers);
 
   // Populate usage events.

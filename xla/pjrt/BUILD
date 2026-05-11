@@ -358,7 +358,6 @@ cc_library(
     hdrs = ["pjrt_client.h"],
     visibility = internal_visibility(["//xla:friends"]),
     deps = [
-        ":device_event",
         ":host_memory_allocator",
         ":maybe_owning_mlir_module",
         ":pjrt_abi_version",

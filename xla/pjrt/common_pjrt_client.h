@@ -335,6 +335,25 @@ class CommonPjRtClient : public PjRtClient {
         "CrossHostReceiveBuffersInto is not implemented.");
   }
 
+  // Similar to PjRtClient::CrossHost{Send/Receive}Buffers, but uses
+  // PjRtRawBuffer instead of PjRtBuffer.
+  // Takes in a vector of transfer dependencies and transfer specs, and launches
+  // the data transfers specified by the transfer specs so that they occur after
+  // all transfer dependencies are complete.
+  struct CrossHostTransferSpec {
+    GlobalDeviceId src_global_device_id;
+    GlobalDeviceId dst_global_device_id;
+    tsl::RCReference<PjRtRawBuffer> raw_buffer;
+  };
+
+  virtual absl::StatusOr<std::vector<PjRtDeviceEventRef>>
+  CrossHostTransferBuffers(
+      std::vector<PjRtDeviceEventRef> transfer_dependencies,
+      std::vector<CrossHostTransferSpec> transfer_specs) {
+    return absl::UnimplementedError(
+        "CrossHostTransferBuffers is not implemented.");
+  }
+
   static absl::Status PrepareArguments(
       const ExecuteOptions& options,
       absl::Span<PjRtBuffer* const> argument_handles,
