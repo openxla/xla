@@ -63,6 +63,12 @@ constexpr char kCloudSdkConfig[] = "CLOUDSDK_CONFIG";
 // the GCE metadata service.
 constexpr char kNoGceCheck[] = "NO_GCE_CHECK";
 
+// The environment variable to set the maximum number of retries for GCE auth.
+constexpr char kGcsAuthMaxRetries[] = "TF_GCS_AUTH_MAX_RETRIES";
+
+// The environment variable to set the delay in seconds between GCE auth retries.
+constexpr char kGcsAuthRetryDelaySec[] = "TF_GCS_AUTH_RETRY_DELAY_SEC";
+
 // The default path to the gcloud config folder, relative to the home folder.
 constexpr char kGCloudConfigFolder[] = ".config/gcloud/";
 
@@ -180,7 +186,22 @@ absl::Status GoogleAuthProvider::GetToken(std::string* t) {
                      absl::StrCat("GCE check skipped due to presence of $",
                                   kNoGceCheck, " environment variable."));
   } else {
-    token_from_gce_status = GetTokenFromGce();
+    const char* max_retries_env = std::getenv(kGcsAuthMaxRetries);
+    const char* retry_delay_env = std::getenv(kGcsAuthRetryDelaySec);
+    int max_retries = max_retries_env ? std::atoi(max_retries_env) : 1;
+    int retry_delay_sec = retry_delay_env ? std::atoi(retry_delay_env) : 5;
+
+    for (int i = 0; i < max_retries; ++i) {
+      token_from_gce_status = GetTokenFromGce();
+      if (token_from_gce_status.ok()) {
+        break;
+      }
+      if (i < max_retries - 1) {
+        LOG(INFO) << "GCE auth failed with status: " << token_from_gce_status.ToString()
+                  << ". Retrying in " << retry_delay_sec << " seconds... (Attempt " << i + 1 << " of " << max_retries << ")";
+        env_->SleepForMicroseconds(retry_delay_sec * 1000000);
+      }
+    }
   }
 
   if (token_from_gce_status.ok()) {
