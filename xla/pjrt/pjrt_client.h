@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/pjrt/device_event.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/host_memory_allocator.h"
@@ -79,6 +80,7 @@ class PjRtClient;
 class PjRtDevice;
 class PjRtLoadedExecutable;
 class PjRtExecutableForwarder;
+class PjRtRawBuffer;
 struct CompileOptions;
 
 typedef absl::AnyInvocable<absl::Status(absl::StatusOr<PjRtBuffer*>)>
@@ -496,7 +498,8 @@ TSL_LIB_GTL_DEFINE_INT_TYPE(CrossHostTransferKey, int64_t);
 //
 // A note on the semantics of cross-device copies.
 //
-// There are three mechanisms to transfer a buffer from one device to another.
+// There are four mechanisms to transfer a buffer from one device to another.
+//
 // When both devices are on the same host (more specifically, the user program
 // ends up with pointers to both the source and destination buffers in the same
 // address space), the caller can use:
@@ -509,15 +512,32 @@ TSL_LIB_GTL_DEFINE_INT_TYPE(CrossHostTransferKey, int64_t);
 //   DstHost: dst_client->CrossHostReceiveBuffers(...)
 //   SrcHost: src_client->CrossHostSendBuffers(...)
 //
-// The caller can also use the original cross-host transfers API:
+// For cross-host transfers, besides CrossHost{Send/Receive}Buffers, callers
+// can also use the original cross-host transfers API:
 //   DstHost: dst_client->MakeCrossHostReceiveBuffers(...)
 //   DstHost: [...]
 //   DstHost: gets callback containing PjRtCrossHostRecvDescriptors
 //   DstHost: sends cross-host recv serialized descriptors to SrcHost
 //   SrcHost: src_buffer->CopyToRemoteDevice(serialized_descriptors)
 //
+// Both the CrossHost{Send/Receive}Buffers and
+// MakeCrossHostReceiveBuffers/CopyToRemoteDevice APIs allocate new receive
+// buffers for received data each time they are called. To receive data
+// into preallocated receive buffers, callers can use the
+// CrossHostTransferBuffers API:
+//   DstHost: std::vector<CrossHostTransferSpec> transfer_specs;
+//   DstHost: transfer_specs.push_back(CrossHostTransferSpec{
+//              src_device_id, dst_device_id, receive_raw_buffer};
+//   DstHost: ... (add any more required transfer_specs)
+//   DstHost: dst_client->CrossHostTransferBuffers(deps, transfer_specs);
+//   SrcHost: std::vector<CrossHostTransferSpec> transfer_specs;
+//   SrcHost: transfer_specs.push_back(CrossHostTransferSpec{
+//              src_device_id, dst_device_id, send_raw_buffer};
+//   SrcHost: ... (add any more required transfer_specs)
+//   SrcHost: src_client->CrossHostTransferBuffers(deps, transfer_specs);
+//
 // See subclass documentation for platform-specific tradeoffs between the
-// two cross-host transfer methods.
+// three cross-host transfer methods.
 //
 // Note that in the cross-host case, the dst_client may call
 // (Make)CrossHostReceiveBuffers before the action that produces src_buffer has
@@ -1105,6 +1125,24 @@ class PjRtClient {
       std::vector<CrossHostTransferKey> transfer_keys) {
     return absl::UnimplementedError(
         "Cross-host data transfers are not supported.");
+  }
+
+  // Similar to CrossHost{Send/Receive}Buffers, but uses PjRtRawBuffer instead
+  // of PjRtBuffer. Takes in a vector of transfer dependencies and transfer
+  // specs, and launches the data transfers specified by the transfer specs
+  // so that they occur after all transfer dependencies are complete.
+  struct CrossHostTransferSpec {
+    GlobalDeviceId src_global_device_id;
+    GlobalDeviceId dst_global_device_id;
+    tsl::RCReference<PjRtRawBuffer> raw_buffer;
+  };
+
+  virtual absl::StatusOr<std::vector<PjRtDeviceEventRef>>
+  CrossHostTransferBuffers(
+      std::vector<PjRtDeviceEventRef> transfer_dependencies,
+      std::vector<CrossHostTransferSpec> transfer_specs) {
+    return absl::UnimplementedError(
+        "CrossHostTransferBuffers is not implemented.");
   }
 
  private:
