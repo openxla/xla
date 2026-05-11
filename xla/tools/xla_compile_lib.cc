@@ -128,14 +128,6 @@ static absl::StatusOr<std::string> CompileGpuExecutable(
   }
 
   if (aot) {
-    TF_ASSIGN_OR_RETURN(se::Platform::Id target_platform_id,
-                        xla::PlatformUtil::GetPlatformIdFromCanonicalName(
-                            (*target_config).platform_name));
-    if (platform_id != target_platform_id) {
-      return absl::FailedPreconditionError(absl::StrCat(
-          "Attempting to AOT compile for ", (*target_config).platform_name,
-          ", but the current platform is ", platform_name, "."));
-    }
     AotCompilationOptions aot_options(platform_id);
     std::optional<GpuTopology> topology;
 
@@ -155,6 +147,20 @@ static absl::StatusOr<std::string> CompileGpuExecutable(
           /*num_hosts_per_partition=*/1,
           /*num_devices_per_host=*/num_replicas, *target_config);
       aot_options.set_gpu_topology(*topology);
+    }
+
+    // Host and Target platforms must match for AOT compile
+    if (topology.has_value() && topology->has_gpu_target_config()) {
+      std::string target_platform_name =
+          topology->gpu_target_config().platform_name;
+      TF_ASSIGN_OR_RETURN(se::Platform::Id target_platform_id,
+                          xla::PlatformUtil::GetPlatformIdFromCanonicalName(
+                              target_platform_name));
+      if (platform_id != target_platform_id) {
+        return absl::FailedPreconditionError(
+            absl::StrCat("Attempting to AOT compile for ", target_platform_name,
+                         ", but the current platform is ", platform_name, "."));
+      }
     }
 
     if (use_attached_device) {
