@@ -139,6 +139,39 @@ TEST_F(GoogleAuthProviderTest, InternalRetriesOnGceFailure) {
   EXPECT_EQ("fake-recovered-token", token);
 }
 
+TEST_F(GoogleAuthProviderTest, InternalRetriesExhausted) {
+  setenv("TF_GCS_AUTH_MAX_RETRIES", "2", 1);
+  setenv("TF_GCS_AUTH_RETRY_DELAY_SEC", "0", 1);
+
+  auto oauth_client = new FakeOAuthClient;
+
+  // Provide exactly two 404 requests to match the 2 attempts without internal GetMetadata retries
+  std::vector<HttpRequest*> requests({
+      new FakeHttpRequest(
+          "Uri: http://metadata.google.internal/computeMetadata/v1/instance"
+          "/service-accounts/default/token\n"
+          "Header Metadata-Flavor: Google\n",
+          "", absl::NotFoundError("404"), 404),
+      new FakeHttpRequest(
+          "Uri: http://metadata.google.internal/computeMetadata/v1/instance"
+          "/service-accounts/default/token\n"
+          "Header Metadata-Flavor: Google\n",
+          "", absl::NotFoundError("404"), 404)
+  });
+
+  FakeEnv env;
+  std::shared_ptr<HttpRequest::Factory> fakeHttpRequestFactory =
+      std::make_shared<FakeHttpRequestFactory>(&requests);
+  auto metadataClient = std::make_shared<ComputeEngineMetadataClient>(
+      fakeHttpRequestFactory, RetryConfig(0 /* init_delay_time_us */));
+  GoogleAuthProvider provider(std::unique_ptr<OAuthClient>(oauth_client),
+                              metadataClient, &env);
+
+  std::string token;
+  TF_EXPECT_OK(provider.GetToken(&token));
+  EXPECT_EQ("", token);  // Graceful fallback to empty token
+}
+
 TEST_F(GoogleAuthProviderTest, EnvironmentVariable_Caching) {
   setenv("GOOGLE_APPLICATION_CREDENTIALS",
          io::JoinPath(TestData(), "service_account_credentials.json").c_str(),
