@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/protobuf.h"
 
 namespace xla {
@@ -70,6 +71,10 @@ inline constexpr int64_t kMaxBitsInMostMinorDimension = 8 * 8;
 // Returns true if the given dot is supported by cuBLAS.
 absl::StatusOr<bool> IsCublasSupportedMatMul(
     const HloInstruction& dot, bool allow_matrix_vector_multiplication);
+
+// Returns true if the given instruction is supported by gpuBLASLt
+// GroupedMatMul.
+bool IsGpublasLtSupportedGroupedMatMul(const HloInstruction& instr);
 
 inline constexpr int64_t WarpSize(
     const se::DeviceDescription& gpu_device_info) {
@@ -153,6 +158,10 @@ bool IsMosaicWithNvshmem(const HloInstruction& hlo);
 // Returns true if `hlo` will be implemented as a call to a Mosaic GPU kernel
 // with multimem.
 bool IsMosaicWithMultimem(const HloInstruction& hlo);
+
+// Returns true if `hlo` will be implemented as a call to a Mosaic GPU kernel
+// with collective metadata.
+bool IsMosaicWithCollectiveMetadata(const HloInstruction& hlo);
 
 // Returns true if instruction is a Mosaic GPU collective instruction.
 bool IsCollectiveMosaicGpuInstruction(const HloInstruction& hlo);

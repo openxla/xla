@@ -113,7 +113,6 @@ cc_library(
 
 xla_cc_test(
     name = "hlo_evaluator_slow_reduce_window_test",
-    timeout = "long",
     srcs = ["hlo_evaluator_slow_reduce_window_test.cc"],
     tags = [
         # Times out in asan/tsan/zapfhahn.
@@ -127,9 +126,10 @@ xla_cc_test(
         "//xla:literal_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
