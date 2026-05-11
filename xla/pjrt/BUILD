@@ -1800,3 +1800,23 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+xla_cc_test(
+    name = "pjrt_stream_executor_dump_test",
+    srcs = ["pjrt_stream_executor_dump_test.cc"],
+    deps = [
+        ":local_device_state",
+        ":pjrt_stream_executor_client",
+        "//xla:status_macros",
+        "//xla/client:client_library",
+        "//xla/client:local_client",
+        "//xla/hlo/builder:xla_builder",
+        "//xla/service:cpu_plugin",
+        "//xla/service:platform_util",
+        "//xla/tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:path",
+    ],
+)
