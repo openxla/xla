@@ -119,6 +119,26 @@ std::optional<AffineMatch> MatchAffineBodyUpdate(const HloInstruction* root,
   return AffineMatch{*term->source_tuple_idx, term->constant_offset};
 }
 
+// Tries to recover the affine (init, step) parameters describing how the
+// tuple-element at `tuple_idx` of `while_op` evolves across iterations, i.e.
+// value_at_iteration(k) = init + k * step.
+//
+// Two body-update patterns are supported:
+//
+//   1. Self-affine:  body_root[tuple_idx] = body_param[tuple_idx] + step
+//      → init comes from the scalar constant operand of the while at
+//        `tuple_idx`; step comes from the body update.
+//
+//   2. Lagged copy of the primary induction variable:
+//        body_root[tuple_idx] = body_param[primary_idx] + delta
+//      The tuple slot trails the primary induction variable by one iteration,
+//      so it shares the primary's step. `init` is derived as
+//      `primary_init - primary_step + delta` and is cross-checked against the
+//      actual scalar init operand of the while.
+//
+// Returns nullopt if neither pattern matches, or if the consistency check
+// fails. `primary_*` arguments are only consulted by pattern (2) and must all
+// be set together for that pattern to apply.
 std::optional<std::pair<int64_t, int64_t>> ResolveAffine(
     const HloInstruction* while_op, int64_t tuple_idx,
     std::optional<int64_t> primary_idx, std::optional<int64_t> primary_init,
