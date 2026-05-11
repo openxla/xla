@@ -21,6 +21,7 @@ limitations under the License.
 #include <set>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
@@ -37,12 +38,15 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
 namespace {
+
+using ::tsl::proto_testing::EqualsProto;
 
 int64_t CountInstructions(HloComputation& computation, HloOpcode opcode) {
   int64_t count = 0;
@@ -1645,30 +1649,19 @@ ENTRY main {
     }
   }
 
-  ASSERT_FALSE(while_loops.empty());
+  ASSERT_EQ(while_loops.size(), 1);
 
-  for (HloInstruction* while_loop : while_loops) {
-    TF_ASSERT_OK_AND_ASSIGN(
-        WhileLoopBackendConfig config,
-        while_loop->backend_config<WhileLoopBackendConfig>());
+  TF_ASSERT_OK_AND_ASSIGN(
+      WhileLoopBackendConfig config,
+      while_loops[0]->backend_config<WhileLoopBackendConfig>());
 
-    EXPECT_EQ(config.known_init_step().step(), 2);
-
-    absl::flat_hash_map<int64_t, std::pair<int64_t, int64_t>> dv_init_step;
-    for (const auto& dv : config.dynamic_variables()) {
-      ASSERT_TRUE(dv.has_init());
-      ASSERT_TRUE(dv.has_step());
-      dv_init_step[dv.tuple_index()] = {dv.init(), dv.step()};
-    }
-
-    ASSERT_TRUE(dv_init_step.contains(0));
-    EXPECT_EQ(dv_init_step[0].second, 2)
-        << "Primary variable step should be doubled after double buffering";
-
-    ASSERT_TRUE(dv_init_step.contains(3));
-    EXPECT_EQ(dv_init_step[3].second, 2)
-        << "Dynamic variable step should be doubled after double buffering";
-  }
+  EXPECT_THAT(config, EqualsProto(R"pb(
+                known_trip_count { n: 5 }
+                known_induction_variable { tuple_index: 0 }
+                known_init_step { init: 0 step: 2 }
+                dynamic_variables { tuple_index: 0 init: 0 step: 2 }
+                dynamic_variables { tuple_index: 3 init: 3 step: 2 }
+              )pb"));
 }
 
 }  // namespace

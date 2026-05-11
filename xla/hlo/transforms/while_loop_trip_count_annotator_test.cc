@@ -20,14 +20,19 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
+#include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {
+
+using ::absl_testing::StatusIs;
+using ::tsl::proto_testing::EqualsProto;
 
 class TripCountAnnotatorTest : public HloHardwareIndependentTestBase {};
 
@@ -268,12 +273,12 @@ TEST_F(TripCountAnnotatorTest, FillsDynamicVariableInitStep) {
                           m->entry_computation()
                               ->root_instruction()
                               ->backend_config<WhileLoopBackendConfig>());
-  ASSERT_EQ(config.dynamic_variables_size(), 1);
-  EXPECT_EQ(config.dynamic_variables(0).tuple_index(), 1);
-  ASSERT_TRUE(config.dynamic_variables(0).has_init());
-  ASSERT_TRUE(config.dynamic_variables(0).has_step());
-  EXPECT_EQ(config.dynamic_variables(0).init(), 5);
-  EXPECT_EQ(config.dynamic_variables(0).step(), 1);
+  EXPECT_THAT(config, EqualsProto(R"pb(
+                known_trip_count { n: 10 }
+                known_induction_variable { tuple_index: 0 }
+                known_init_step { init: 0 step: 1 }
+                dynamic_variables { tuple_index: 1 init: 5 step: 1 }
+              )pb"));
 }
 
 TEST_F(TripCountAnnotatorTest, FillsDynamicVariableInitStepFromPrimaryCopy) {
@@ -318,12 +323,12 @@ TEST_F(TripCountAnnotatorTest, FillsDynamicVariableInitStepFromPrimaryCopy) {
                           m->entry_computation()
                               ->root_instruction()
                               ->backend_config<WhileLoopBackendConfig>());
-  ASSERT_EQ(config.dynamic_variables_size(), 1);
-  EXPECT_EQ(config.dynamic_variables(0).tuple_index(), 1);
-  ASSERT_TRUE(config.dynamic_variables(0).has_init());
-  ASSERT_TRUE(config.dynamic_variables(0).has_step());
-  EXPECT_EQ(config.dynamic_variables(0).init(), 0);
-  EXPECT_EQ(config.dynamic_variables(0).step(), 1);
+  EXPECT_THAT(config, EqualsProto(R"pb(
+                known_trip_count { n: 9 }
+                known_induction_variable { tuple_index: 0 }
+                known_init_step { init: 1 step: 1 }
+                dynamic_variables { tuple_index: 1 init: 0 step: 1 }
+              )pb"));
 }
 
 TEST_F(TripCountAnnotatorTest, NonZeroTupleIndex) {
@@ -646,10 +651,8 @@ TEST_F(TripCountAnnotatorTest, ErrorOnPrePopulatedBackendConfig) {
 
   ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   WhileLoopTripCountAnnotator pass;
-  auto status_or_changed = RunHloPass(&pass, m.get());
-  EXPECT_FALSE(status_or_changed.ok());
-  EXPECT_EQ(status_or_changed.status().code(),
-            absl::StatusCode::kFailedPrecondition);
+  EXPECT_THAT(RunHloPass(&pass, m.get()),
+              StatusIs(absl::StatusCode::kFailedPrecondition));
 }
 
 }  // namespace
