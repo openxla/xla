@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_SERVICE_DUMP_H_
 #define XLA_SERVICE_DUMP_H_
 
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,8 +37,6 @@ limitations under the License.
 
 namespace xla {
 
-struct DumpOptions;
-
 // Argument used when calling DumpHloModuleIfEnabled before optimizations are
 // performed on an HloModule.
 constexpr char kBeforeOptimizationsDumpName[] = "before_optimizations";
@@ -51,12 +48,12 @@ class HloSnapshot;
 
 // Creates dir if doesn't exist (analogue of `mkdir -p`), tries to get around
 // race conditions by trying again on collision.
-absl::Status CreateDirIfNeeded(absl::string_view dir, tsl::Env* env);
+absl::Status CreateDirIfNeeded(const std::string& dir, tsl::Env* env);
 
 // Get a timestamp which we can use as a filename prefix specific to this
 // module.
 std::string TimestampFor(const HloModule& module,
-                         const DebugOptions* debug_options_override = nullptr);
+                         const DebugOptions* debug_options = nullptr);
 
 // Create the filename we will use to dump in DumpToFileInDir.
 std::string FilenameFor(int unique_id, absl::string_view module_name,
@@ -106,14 +103,13 @@ void DumpProtobufToFile(const tsl::protobuf::Message& proto,
                         absl::string_view filename,
                         absl::AnyInvocable<absl::StatusOr<std::string>(
                             tsl::Env*, const tsl::protobuf::Message&)>
-                            text_formatter = nullptr,
-                        const DumpOptions* override_opts = nullptr);
+                            text_formatter = nullptr);
 
 // Render graph in a given format.
 std::string RenderGraph(absl::string_view label, const HloModule& module,
                         RenderedGraphFormat format,
                         bool show_fusion_subcomputations = true,
-                        const DebugOptions* dump_options = nullptr);
+                        const DebugOptions* debug_options = nullptr);
 
 // Similar to above, but the filename depends on module's information and the
 // given name. Also allows for the optional serialization function.
@@ -125,27 +121,16 @@ void DumpPerModuleProtobufToFile(const HloModule& module,
                                      tsl::Env*, const tsl::protobuf::Message&)>
                                      text_formatter = nullptr);
 
-// Similar to above, but the filename depends on module's information, the
-// given name, and the number of times the module has been executed so far. Also
-// allows for the optional serialization function.
-void DumpPerExecutionProtobufToFile(
-    const HloModule& module, const tsl::protobuf::Message& proto,
-    const DebugOptions& debug_options, absl::string_view name,
-    absl::AnyInvocable<
-        absl::StatusOr<std::string>(tsl::Env*, const tsl::protobuf::Message&)>
-        text_formatter = nullptr);
-
 // Dumps the given HLO module if dumping is enabled for the module. Exactly
 // where and in what formats it's dumped is determined by the module's config.
 // Returns the full file paths of all dumps of the module, or an empty vector if
-// nothing was dumped. If not null, `dump_options` are used to determine the
-// dump directory, file formats, and so on.
+// nothing was dumped.
 std::vector<std::string> DumpHloModuleIfEnabled(
     const HloModule& module, absl::string_view name,
-    const DebugOptions* dump_options = nullptr);
+    const DebugOptions* debug_options = nullptr);
 std::vector<std::string> DumpHloModuleIfEnabled(
     const HloModule& module, const BufferAssignment& buffer_assn,
-    absl::string_view name);
+    absl::string_view name, const DebugOptions* debug_options = nullptr);
 
 std::vector<std::string> DumpHloModuleProtoIfEnabled(
     const HloModuleProto& module_proto, absl::string_view name);
@@ -181,7 +166,7 @@ void DumpHloSnapshotIfEnabled(const HloSnapshot& snapshot,
 void DumpHloUnoptimizedSnapshotIfEnabled(
     const HloUnoptimizedSnapshot& hlo_snapshot, const DebugOptions& opts);
 
-void DumpHloModuleMetadataIfEnabled(HloModule* module);
+void DumpHloModuleMetadataIfEnabled(const std::vector<HloModule*>& modules);
 
 // Returns true if we should dump data for an HloModule.  This is useful if you
 // want to check if DumpToFileInDir{,OrStdout} will do anything before
@@ -191,10 +176,6 @@ bool DumpingEnabledForHloModule(absl::string_view hlo_module_name,
 
 // Returns true if we should dump data for an HLO pass
 bool DumpingEnabledForHloPass(absl::string_view hlo_pass_name,
-                              const DebugOptions& opts);
-
-// Returns true if we should dump data for an emitter.
-bool DumpingEnabledForEmitter(absl::string_view emitter_name,
                               const DebugOptions& opts);
 
 inline bool DumpingEnabledForHloModule(const HloModule& module) {
@@ -218,8 +199,8 @@ bool DumpingToStdout(const DebugOptions& opts);
 // If 'full_name' is not null then it is set to the name of the file the
 // protobuf was written to.
 absl::Status DumpProtoToDirectory(const tsl::protobuf::Message& message,
-                                  absl::string_view directory,
-                                  absl::string_view file_name,
+                                  const std::string& directory,
+                                  const std::string& file_name,
                                   std::string* full_path = nullptr);
 
 void DumpHloConfigIfEnabled(const HloModule& module);
@@ -229,7 +210,7 @@ void DumpHloConfigIfEnabled(const HloModule& module);
 // dump. If unable to dump, returns std::nullopt.
 std::optional<std::string> DumpNonDefaultDebugOptions(
     const HloModule& module, absl::string_view suffix,
-    const DebugOptions* dump_options = nullptr);
+    const DebugOptions* debug_options = nullptr);
 
 // Returns the non-default debug options as a string. The default debug options
 // are received from DefaultDebugOptionsIgnoringFlags().
