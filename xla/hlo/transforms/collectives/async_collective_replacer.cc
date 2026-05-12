@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/async_collective_replacer.h"
 
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
