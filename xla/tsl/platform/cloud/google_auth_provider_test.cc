@@ -92,13 +92,13 @@ class GoogleAuthProviderTest : public ::testing::Test {
     unsetenv("GOOGLE_APPLICATION_CREDENTIALS");
     unsetenv("GOOGLE_AUTH_TOKEN_FOR_TESTING");
     unsetenv("NO_GCE_CHECK");
-    unsetenv("TF_GCS_AUTH_MAX_RETRIES");
+    unsetenv("TF_GCS_AUTH_MAX_REQUESTS");
     unsetenv("TF_GCS_AUTH_RETRY_DELAY_SEC");
   }
 };
 
 TEST_F(GoogleAuthProviderTest, InternalRetriesOnGceFailure) {
-  setenv("TF_GCS_AUTH_MAX_RETRIES", "3", 1);
+  setenv("TF_GCS_AUTH_MAX_REQUESTS", "3", 1);
   setenv("TF_GCS_AUTH_RETRY_DELAY_SEC", "0", 1);  // 0s delay for fast test execution
 
   auto oauth_client = new FakeOAuthClient;
@@ -140,12 +140,12 @@ TEST_F(GoogleAuthProviderTest, InternalRetriesOnGceFailure) {
 }
 
 TEST_F(GoogleAuthProviderTest, InternalRetriesExhausted) {
-  setenv("TF_GCS_AUTH_MAX_RETRIES", "2", 1);
+  setenv("TF_GCS_AUTH_MAX_REQUESTS", "2", 1);
   setenv("TF_GCS_AUTH_RETRY_DELAY_SEC", "0", 1);
 
   auto oauth_client = new FakeOAuthClient;
 
-  // Provide exactly two 404 requests to match the 2 attempts without internal GetMetadata retries
+  // Provide exactly two 404 requests to match the 2 requests
   std::vector<HttpRequest*> requests({
       new FakeHttpRequest(
           "Uri: http://metadata.google.internal/computeMetadata/v1/instance"
