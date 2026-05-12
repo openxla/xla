@@ -1168,9 +1168,15 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
         auto tile_info,
         TileInfo::Construct(b, tile_id, /*runtime_values=*/{}, *root));
 
-    xtile::InsertTileOp::create(b, result, arg, tile_info.offsets(),
-                                tile_info.padded_tile_sizes(),
-                                tile_info.tile_strides());
+    if (TileInfoIsAlwaysFull(tile_info)) {
+      xtile::InsertAlignedTileOp::create(b, result, arg, tile_info.offsets(),
+                                         tile_info.padded_tile_sizes(),
+                                         tile_info.tile_strides());
+    } else {
+      xtile::InsertTileOp::create(b, result, arg, tile_info.offsets(),
+                                  tile_info.padded_tile_sizes(),
+                                  tile_info.tile_strides());
+    }
   }
 
   return absl::OkStatus();

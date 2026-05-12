@@ -362,4 +362,118 @@ llvm::LogicalResult InsertTileOp::bufferize(
   return mlir::success();
 }
 
+bool ExtractAlignedTileOp::bufferizesToMemoryRead(
+    mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
+  return true;
+}
+
+bool ExtractAlignedTileOp::bufferizesToMemoryWrite(
+    mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
+  return true;
+}
+
+bool ExtractAlignedTileOp::bufferizesToAllocation(mlir::Value value) {
+  // As we don't know if we will emit an allocation at compile time we must be
+  // conservative.
+  return true;
+}
+
+mlir::bufferization::AliasingValueList ExtractAlignedTileOp::getAliasingValues(
+    mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
+  return {};
+}
+
+mlir::bufferization::AliasingOpOperandList
+ExtractAlignedTileOp::getAliasingOpOperands(
+    mlir::Value value, const mlir::bufferization::AnalysisState& state) {
+  DCHECK_EQ(value, getResult());
+  mlir::bufferization::AliasingOpOperand result(
+      &getSourceMutable(), mlir::bufferization::BufferRelation::Equivalent,
+      false);
+  return {result};
+}
+
+bool ExtractAlignedTileOp::isWritable(
+    mlir::Value value, const mlir::bufferization::AnalysisState& state) {
+  return false;
+}
+
+llvm::LogicalResult ExtractAlignedTileOp::bufferize(
+    mlir::RewriterBase& rewriter,
+    const mlir::bufferization::BufferizationOptions& options,
+    mlir::bufferization::BufferizationState& state) {
+  mlir::ImplicitLocOpBuilder builder(getLoc(), rewriter);
+  auto buffer = GetFullTileSubView(builder, *this);
+  if (buffer.getType().getLayout().isIdentity()) {
+    auto to_tensor_op =
+        mlir::bufferization::ToTensorOp::create(builder, getType(), buffer);
+    rewriter.replaceOp(getOperation(), {to_tensor_op.getResult()});
+    return mlir::success();
+  }
+  // Non-identity layout fixup: still need alloc+copy to give downstream ops
+  // an identity-layout memref. No scf.if guard though.
+  mlir::MemRefType default_buffer_type =
+      mlir::MemRefType::Builder(buffer.getType()).setLayout(nullptr);
+  auto default_buffer =
+      mlir::memref::AllocOp::create(builder, default_buffer_type);
+  mlir::memref::CopyOp::create(builder, buffer, default_buffer);
+  auto to_tensor_op = mlir::bufferization::ToTensorOp::create(
+      builder, getType(), default_buffer);
+  to_tensor_op.setWritable(true);
+  to_tensor_op.setRestrict(true);
+  rewriter.replaceOp(getOperation(), {to_tensor_op.getResult()});
+  return mlir::success();
+}
+
+bool InsertAlignedTileOp::bufferizesToMemoryRead(
+    mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
+  return true;
+}
+
+bool InsertAlignedTileOp::bufferizesToMemoryWrite(
+    mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
+  DCHECK_EQ(operand.getOperandNumber(), 0)
+      << "This should only be called on the tensor operand.";
+  return false;
+}
+
+bool InsertAlignedTileOp::bufferizesToAllocation(mlir::Value value) {
+  // As we don't know if we will emit an allocation at compile time we must be
+  // conservative.
+  return true;
+}
+
+mlir::bufferization::AliasingValueList InsertAlignedTileOp::getAliasingValues(
+    mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
+  return {};
+}
+
+mlir::bufferization::AliasingOpOperandList
+InsertAlignedTileOp::getAliasingOpOperands(
+    mlir::Value value, const mlir::bufferization::AnalysisState& state) {
+  return {};
+}
+
+bool InsertAlignedTileOp::isWritable(
+    mlir::Value value, const mlir::bufferization::AnalysisState& state) {
+  if (value == getDestination()) {
+    return true;
+  }
+
+  return false;
+}
+
+llvm::LogicalResult InsertAlignedTileOp::bufferize(
+    mlir::RewriterBase& rewriter,
+    const mlir::bufferization::BufferizationOptions& options,
+    mlir::bufferization::BufferizationState& state) {
+  mlir::ImplicitLocOpBuilder builder(getLoc(), rewriter);
+  auto target_buffer_subview = GetFullTileSubView(builder, *this);
+  auto materialize_op = mlir::bufferization::MaterializeInDestinationOp::create(
+      builder, getSource(), target_buffer_subview);
+  materialize_op.setWritable(true);
+  rewriter.eraseOp(getOperation());
+  return mlir::success();
+}
+
 }  // namespace xla::xtile

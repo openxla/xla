@@ -221,6 +221,72 @@ def InsertTileOp : XTile_Op<"insert", [TiledBufferInterface]> {
   let hasVerifier = 1;
 }
 
+def ExtractAlignedTileOp : XTile_Op<"extract_aligned", [TiledBufferInterface]> {
+  let summary = "Extract a full tile from a memref, assuming offsets are in range.";
+  let description = [{
+    Identical semantics to xtile.extract, with an additional precondition:
+    the caller guarantees that for every dim i,
+      offsets[i] + (full_tile_shape[i] - 1) * strides[i] < source.shape[i].
+    Under this precondition the partial-tile case cannot occur, so
+    bufferization elides the runtime boundary check.
+  }];
+
+  let arguments = (ins
+    AnyMemRef:$source,
+    Variadic<Index>:$offsets,
+    DenseI64ArrayAttr:$full_tile_shape,
+    DenseI64ArrayAttr:$strides
+  );
+
+
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $source `[` $offsets `]` $full_tile_shape $strides
+    `:` type($source) `->` type($result) attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    mlir::TypedValue<mlir::MemRefType> getBuffer();
+    mlir::TypedValue<mlir::RankedTensorType> getTile();
+  }];
+
+  let hasVerifier = 1;
+}
+
+def InsertAlignedTileOp : XTile_Op<"insert_aligned", [TiledBufferInterface]> {
+  let summary = "Insert a full tile into a memref, assuming offsets are in range.";
+  let description = [{
+    Identical semantics to xtile.insert, with an additional precondition:
+    the caller guarantees that for every dim i,
+      offsets[i] + (full_tile_shape[i] - 1) * strides[i] < destination.shape[i].
+    Under this precondition the partial-tile case cannot occur, so
+    bufferization elides the runtime boundary check.
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$source,
+    AnyMemRef:$destination,
+    Variadic<Index>:$offsets,
+    DenseI64ArrayAttr:$full_tile_shape,
+    DenseI64ArrayAttr:$strides
+  );
+
+  let results = (outs);
+
+  let assemblyFormat = [{
+    $source `into` $destination `[` $offsets `]` $full_tile_shape $strides
+    `:` type($source) `->` type($destination) attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    mlir::TypedValue<mlir::MemRefType> getBuffer();
+    mlir::TypedValue<mlir::RankedTensorType> getTile();
+  }];
+
+  let hasVerifier = 1;
+}
+
 def MaskOp : XTile_Op<"mask",
                       [Pure,
                        AllTypesMatch<["source", "result"]>,

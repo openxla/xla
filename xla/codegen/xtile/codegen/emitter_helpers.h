@@ -299,7 +299,13 @@ absl::StatusOr<mlir::Value> EmitElementwise(mlir::ImplicitLocOpBuilder& b,
 mlir::Value Bitcast(mlir::ImplicitLocOpBuilder& b, mlir::Value value,
                     mlir::Type type);
 
-// Emits an xtile::ExtractTileOp for the given tile info and argument.
+// Returns true if every tile access described by `tile_info` is statically
+// guaranteed to fit inside the buffer (no boundary clamp needed). Used by the
+// emitter to choose between aligned and unconstrained Extract/Insert ops.
+bool TileInfoIsAlwaysFull(const TileInfo& tile_info);
+
+// Emits an xtile::ExtractTileOp (or ExtractAlignedTileOp when the tile is
+// provably always in-range) for the given tile info and argument.
 TensorValue EmitParameterExtract(mlir::ImplicitLocOpBuilder& b,
                                  const TileInfo& tile_info, mlir::Value arg);
 

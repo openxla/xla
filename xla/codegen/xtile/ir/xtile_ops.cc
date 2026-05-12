@@ -198,6 +198,30 @@ mlir::TypedValue<mlir::RankedTensorType> InsertTileOp::getTile() {
 
 mlir::LogicalResult InsertTileOp::verify() { return VerifyBufferOp(*this); }
 
+mlir::TypedValue<mlir::MemRefType> ExtractAlignedTileOp::getBuffer() {
+  return getSource();
+}
+
+mlir::TypedValue<mlir::RankedTensorType> ExtractAlignedTileOp::getTile() {
+  return getResult();
+}
+
+mlir::LogicalResult ExtractAlignedTileOp::verify() {
+  return VerifyBufferOp(*this);
+}
+
+mlir::TypedValue<mlir::MemRefType> InsertAlignedTileOp::getBuffer() {
+  return getDestination();
+}
+
+mlir::TypedValue<mlir::RankedTensorType> InsertAlignedTileOp::getTile() {
+  return getSource();
+}
+
+mlir::LogicalResult InsertAlignedTileOp::verify() {
+  return VerifyBufferOp(*this);
+}
+
 llvm::SmallVector<int64_t> MaskOp::getMaskedDimensions() {
   llvm::SmallVector<int64_t> masked_dimensions;
 
