@@ -204,9 +204,16 @@ cc_library(
     ]) + if_rocm([
         # keep sorted
         "@local_config_rocm//rocm:rocm_headers",
+    ]) + if_sycl([
+        # keep sorted
+        "@local_config_sycl//sycl:sycl_headers",
+        "//xla:debug_options_flags",
+        "//xla/service/gpu:gpu_compiler",
+        "//xla/service/gpu:gpu_constants",
+        "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu:stream_executor_util",
     ]),
 )
-
 xla_test(
     name = "se_gpu_pjrt_client_test",
     srcs = ["se_gpu_pjrt_client_test.cc"],
