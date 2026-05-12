@@ -36,7 +36,7 @@ class BlasLt : public gpu::BlasLt {
       const gpu::GemmConfig& config, Epilogue epilogue) const override;
 
   absl::StatusOr<MatmulPlanPtr> GetGroupedMatmulPlan(
-      gpu::GroupedGemmConfig& config,
+      const gpu::GroupedGemmConfig& config,
       const std::vector<Epilogue>& epilogues) const override;
 
   ~BlasLt() override = default;
@@ -52,7 +52,7 @@ class BlasLt : public gpu::BlasLt {
         blas::ProfileResult* profile_result) const override;
 
     absl::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
-        const Stream* stream, size_t max_algorithm_count,
+        size_t max_algorithm_count,
         size_t max_workspace_size) const override;
 
     absl::Status SetAlgorithm(const MatmulAlgorithm& algorithm) override {

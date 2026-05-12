@@ -43,27 +43,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-CublasLtMatmulThunk::CublasLtMatmulThunk(const CublasLtMatmulThunk& rhs)
-    : TracedCommand(CommandType::kCublasLtCmd, Kind::kCublasLtMatmul, {}),
-      gemm_config_(rhs.gemm_config_),
-      epilogue_(rhs.epilogue_),
-      algorithm_idx_(rhs.algorithm_idx_),
-      autotune_workspace_size_(rhs.autotune_workspace_size_),
-      canonical_hlo_(rhs.canonical_hlo_),
-      a_(rhs.a_),
-      b_(rhs.b_),
-      c_(rhs.c_),
-      d_(rhs.d_),
-      group_sizes_(rhs.group_sizes_),
-      bias_(rhs.bias_),
-      aux_(rhs.aux_),
-      a_scale_(rhs.a_scale_),
-      b_scale_(rhs.b_scale_),
-      c_scale_(rhs.c_scale_),
-      d_scale_(rhs.d_scale_),
-      d_amax_(rhs.d_amax_),
-      workspace_(rhs.workspace_) {}
-
 CublasLtMatmulThunk::CublasLtMatmulThunk(
     Thunk::ThunkInfo thunk_info, std::string canonical_hlo,
     GemmConfig gemm_config, se::gpu::BlasLt::Epilogue epilogue,
@@ -127,8 +106,7 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
       d_amax_(d_amax),
       workspace_(workspace) {}
 
-absl::Status CublasLtMatmulThunk::ExecuteOnStreamInternal(
-    se::Stream* stream, const ExecuteParams& params) {
+absl::Status CublasLtMatmulThunk::ExecuteOnStream(const ExecuteParams& params) {
   VLOG(3) << "Running cublas_lt matmul thunk";
   const BufferAllocations& allocs = *params.buffer_allocations;
 
@@ -159,44 +137,51 @@ absl::Status CublasLtMatmulThunk::ExecuteOnStreamInternal(
     workspace = allocs.GetDeviceAddress(workspace_->slice);
   }
 
+  TF_ASSIGN_OR_RETURN(auto* plan, GetCachedMatmulPlan(params));
+  se::gpu::BlasLt::MemoryArgs args{allocs.GetDeviceAddress(a_.slice),
+                                   allocs.GetDeviceAddress(b_.slice),
+                                   allocs.GetDeviceAddress(c_.slice),
+                                   allocs.GetDeviceAddress(d_.slice),
+                                   bias,
+                                   aux,
+                                   a_scale,
+                                   b_scale,
+                                   c_scale,
+                                   d_scale,
+                                   {d_amax},
+                                   workspace,
+                                   nullptr};
+
   if (is_grouped()) {
     if (!group_sizes_.has_value()) {
       return absl::InternalError(
           "GroupedMatmul must have a non-empty group_sizes_");
     }
-    // Grouped matmul execution
-    TF_ASSIGN_OR_RETURN(auto* plan, GetCachedGroupedMatmulPlan(params));
-    return plan->ExecuteOnStream(
-        stream, allocs.GetDeviceAddress(a_.slice),
-        allocs.GetDeviceAddress(b_.slice), allocs.GetDeviceAddress(c_.slice),
-        allocs.GetDeviceAddress(d_.slice),
-        allocs.GetDeviceAddress(group_sizes_->slice), bias, aux, a_scale,
-        b_scale, c_scale, d_scale, d_amax, workspace);
-  } else {
-    // Regular matmul execution
-    TF_ASSIGN_OR_RETURN(auto* plan, GetCachedMatmulPlan(params));
-    return plan->ExecuteOnStream(
-        stream, allocs.GetDeviceAddress(a_.slice),
-        allocs.GetDeviceAddress(b_.slice), allocs.GetDeviceAddress(c_.slice),
-        allocs.GetDeviceAddress(d_.slice), bias, aux, a_scale, b_scale, c_scale,
-        d_scale, d_amax, workspace);
+    args.group_sizes = allocs.GetDeviceAddress(group_sizes_->slice);
   }
+  return plan->ExecuteOnStream(params.stream, args);
 }
 
 absl::StatusOr<se::gpu::BlasLt::MatmulPlan*>
 CublasLtMatmulThunk::GetCachedMatmulPlan(const ExecuteParams& params) {
-  auto* blas_lt = se::gpu::BlasLt::Get(params.stream);
+  TF_ASSIGN_OR_RETURN(auto* blas_lt,
+                      se::gpu::BlasLt::Get(params.stream->parent()));
   auto create = [&]() -> absl::StatusOr<se::gpu::BlasLt::MatmulPlanPtr> {
-    VLOG(2) << this << ": Adding new MatmulPlan for stream: " << params.stream
+    VLOG(2) << this << ": Adding new " << (is_grouped() ? "grouped" : "regular")
+            << " MatmulPlan for stream: " << params.stream
             << " instr: " << canonical_hlo_;
 
-    auto* gemm_config = std::get_if<GemmConfig>(&gemm_config_);
-    if (gemm_config == nullptr) {
-      return absl::InternalError(
-          "Expected GemmConfig but gemm_config_ holds a different type");
-    }
-    TF_ASSIGN_OR_RETURN(auto plan,
-                        blas_lt->GetMatmulPlan(*gemm_config, epilogue_));
+    auto get_plan = [&](const auto& gemm_config)
+        -> absl::StatusOr<se::gpu::BlasLt::MatmulPlanPtr> {
+      using T = std::decay_t<decltype(gemm_config)>;
+      if constexpr (std::is_same_v<T, GemmConfig>) {
+        return blas_lt->GetMatmulPlan(gemm_config, epilogue_);
+      } else {
+        std::vector<se::gpu::BlasLt::Epilogue> epilogues(1, epilogue_);
+        return blas_lt->GetGroupedMatmulPlan(gemm_config, epilogues);
+      }
+    };
+    TF_ASSIGN_OR_RETURN(auto plan, std::visit(get_plan, gemm_config_));
 
     // Set the workspace size to the size that was used for autotuning, so
     // algorithm index will be the same as returned by GetAlgorithms called
@@ -207,9 +192,8 @@ CublasLtMatmulThunk::GetCachedMatmulPlan(const ExecuteParams& params) {
     // algorithms, it's enough to get the default one only.
     int64_t num_algorithms =
         algorithm_idx_ == 0 ? 1 : GemmConfig::kNumAlgorithms;
-    TF_ASSIGN_OR_RETURN(
-        auto algorithms,
-        plan->GetAlgorithms(params.stream, num_algorithms, max_workspace));
+    TF_ASSIGN_OR_RETURN(auto algorithms,
+                        plan->GetAlgorithms(num_algorithms, max_workspace));
 
     if (algorithms.empty()) {
       return absl::InternalError(
@@ -219,46 +203,6 @@ CublasLtMatmulThunk::GetCachedMatmulPlan(const ExecuteParams& params) {
     return std::move(plan);
   };
   return blas_lt->GetOrCreateMatmulPlan(canonical_hlo_, create);
-}
-
-absl::StatusOr<se::gpu::BlasLt::MatmulPlan*>
-CublasLtMatmulThunk::GetCachedGroupedMatmulPlan(const ExecuteParams& params) {
-  auto* blas_lt = se::gpu::BlasLt::Get(params.stream);
-  auto create = [&]() -> absl::StatusOr<se::gpu::BlasLt::MatmulPlanPtr> {
-    VLOG(2) << this
-            << ": Adding new Grouped MatmulPlan for stream: " << params.stream
-            << " instr: " << canonical_hlo_;
-
-    auto* gemm_config = std::get_if<se::gpu::GroupedGemmConfig>(&gemm_config_);
-    if (gemm_config == nullptr) {
-      return absl::InternalError(
-          "Expected GroupedGemmConfig but gemm_config_ holds a different type");
-    }
-    std::vector<se::gpu::BlasLt::Epilogue> epilogues(1, epilogue_);
-    TF_ASSIGN_OR_RETURN(auto plan,
-                        blas_lt->GetGroupedMatmulPlan(*gemm_config, epilogues));
-
-    // Set the workspace size to the size that was used for autotuning, so
-    // algorithm index will be the same as returned by GetAlgorithms called
-    // during autotuning.
-    int64_t max_workspace = autotune_workspace_size_;
-
-    // If autotuning is disabled, there is no point on retrieving all
-    // algorithms, it's enough to get the default one only.
-    int64_t num_algorithms =
-        algorithm_idx_ == 0 ? 1 : GemmConfig::kNumAlgorithms;
-    TF_ASSIGN_OR_RETURN(
-        auto algorithms,
-        plan->GetAlgorithms(params.stream, num_algorithms, max_workspace));
-
-    if (algorithms.empty()) {
-      return absl::InternalError(
-          "Failed to get a GroupedMatmulPlan: no valid algorithm found.");
-    }
-    TF_RETURN_IF_ERROR(plan->SetAlgorithm(algorithms[algorithm_idx_]));
-    return std::move(plan);
-  };
-  return blas_lt->GetOrCreateGroupedMatmulPlan(canonical_hlo_, create);
 }
 
 absl::Status CublasLtMatmulThunk::Initialize(const InitializeParams& params) {

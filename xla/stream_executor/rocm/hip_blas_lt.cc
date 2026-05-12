@@ -24,9 +24,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/casts.h"
-#include "rocm/rocm_config.h"
-#if TF_HIPBLASLT
-
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -36,6 +33,7 @@ limitations under the License.
 #include "rocm/include/hipblas/hipblas.h"
 #include "rocm/include/hipblaslt/hipblaslt.h"
 #include "rocm/include/rocblas/internal/rocblas-types.h"
+#include "rocm/rocm_config.h"
 #include "xla/primitive_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/activate_context.h"
@@ -153,10 +151,10 @@ static absl::StatusOr<hipblasLtEpilogue_t> AsHipblasLtEpilogue(
 }  // namespace
 
 absl::Status BlasLt::Init() {
-  hipblasLtHandle_t blas_lt;
-  SE_HIPBLAS_RETURN_IF_ERROR(hipblasLtCreate(&blas_lt));
+  hipblasLtHandle_t handle;
+  SE_HIPBLAS_RETURN_IF_ERROR(hipblasLtCreate(&handle));
   absl::MutexLock lock(mu_);
-  blas_lt_.reset(blas_lt);
+  handle_.reset(handle);
   return absl::OkStatus();
 }
 
@@ -222,51 +220,14 @@ absl::Status BlasLt::Init() {
   return std::move(desc);
 }
 
-auto BlasLt::MatmulPlan::GetAlgorithmsForGroupedMatmul(
-    const Stream* stream, size_t max_algorithm_count,
-    size_t max_workspace_size) const
-    -> absl::StatusOr<std::vector<MatmulAlgorithm>> {
-  std::vector<hipblasLtMatmulHeuristicResult_t> heuristicResult;
-
-  auto blas_lt = static_cast<BlasLt*>(gpu::BlasLt::Get(stream));
-  absl::MutexLock lock(&blas_lt->mu_);
-
-  std::unique_ptr<ActivateContext> activation = blas_lt->parent_->Activate();
-
-  auto problem = grouped_gemm_->getProblemTypes()[0];
-
-  grouped_gemm_->setMaxWorkspaceBytes(max_workspace_size);
-
-  SE_HIPBLAS_RETURN_IF_ERROR(hipblaslt_ext::getAllAlgos(
-      blas_lt->blas_lt_.get(), hipblaslt_ext::GemmType::HIPBLASLT_GROUPED_GEMM,
-      problem.getOpA(), problem.getOpB(), problem.getTypeA(),
-      problem.getTypeB(), problem.getTypeC(), problem.getTypeD(),
-      problem.getTypeCompute(), heuristicResult));
-  VLOG(2) << "Total heuristics found: " << heuristicResult.size();
-  std::vector<MatmulAlgorithm> algorithms;
-  algorithms.reserve(max_algorithm_count);
-  for (hipblasLtMatmulHeuristicResult_t& result : heuristicResult) {
-    if (algorithms.size() >= max_algorithm_count) break;
-    size_t workspace_size = 0;
-    if ((result.state == HIPBLAS_STATUS_SUCCESS) &&
-        (grouped_gemm_->isAlgoSupported(result.algo, workspace_size) ==
-         HIPBLAS_STATUS_SUCCESS)) {
-      algorithms.push_back({result.algo, result.workspaceSize});
-    }
-  }
-  return std::move(algorithms);
-}
-
-auto BlasLt::MatmulPlan::GetAlgorithmsForMatmul(const Stream* stream,
-                                                size_t max_algorithm_count,
-                                                size_t max_workspace_size) const
+auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
+                                              size_t max_workspace_size) const
     -> absl::StatusOr<std::vector<MatmulAlgorithm>> {
   max_algorithm_count = std::min(max_algorithm_count, size_t{INT_MAX});
   std::vector<hipblasLtMatmulHeuristicResult_t> results(max_algorithm_count);
   {
-    auto blas_lt = static_cast<BlasLt*>(gpu::BlasLt::Get(stream));
-    absl::MutexLock lock(blas_lt->mu_);
-    TF_RET_CHECK(blas_lt->blas_lt_ != nullptr);
+    absl::MutexLock lock(blas_lt_.mu_);
+    TF_RET_CHECK(blas_lt_.handle_ != nullptr);
 
     hipblasLtMatmulPreference_t hip_preference;
     SE_HIPBLAS_RETURN_IF_ERROR(
@@ -280,29 +241,30 @@ auto BlasLt::MatmulPlan::GetAlgorithmsForMatmul(const Stream* stream,
         hip_preference, HIPBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
         max_workspace_size));
 
-    std::unique_ptr<ActivateContext> activation = blas_lt->parent_->Activate();
+    std::unique_ptr<ActivateContext> activation =
+        blas_lt_.executor_->Activate();
 
     // hipBlasLt requires setting the bias pointer (even a dummy one), otherwise
     // no algorithms can be found for "bias epilogues". This is to be removed
     // later when this limitation is gone.
-    if (op_desc_->has_bias_epilogue()) {
+    if (op_desc_.has_bias_epilogue()) {
       static int64_t dummy_pointer = 0xACEBALL;
       TF_RETURN_IF_ERROR(SetAttr(
-          op_desc_->get(), HIPBLASLT_MATMUL_DESC_BIAS_POINTER, &dummy_pointer));
+          op_desc_.get(), HIPBLASLT_MATMUL_DESC_BIAS_POINTER, &dummy_pointer));
     }
 
     // hipBlasLt requires setting the a/b scale pointer (even a dummy one),
     // otherwise no algorithms can be found for "a/b scaling". This is to be
     // removed later when this limitation is gone.
-    switch (op_desc_->scale_mode()) {
+    switch (op_desc_.scale_mode()) {
       case gpu::ScaleMode::kNone:
         break;
       case gpu::ScaleMode::kTensorScaling: {
         static int64_t dummy_pointer = 0xACEBALL;
-        TF_RETURN_IF_ERROR(SetAttr(op_desc_->get(),
+        TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                    HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
                                    &dummy_pointer));
-        TF_RETURN_IF_ERROR(SetAttr(op_desc_->get(),
+        TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                    HIPBLASLT_MATMUL_DESC_B_SCALE_POINTER,
                                    &dummy_pointer));
         break;
@@ -310,18 +272,18 @@ auto BlasLt::MatmulPlan::GetAlgorithmsForMatmul(const Stream* stream,
       case gpu::ScaleMode::kBlockScaling: {
 #if TF_ROCM_VERSION >= 70000
         static int64_t dummy_pointer = 0xACEBALL;
-        TF_RETURN_IF_ERROR(SetAttr(op_desc_->get(),
+        TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                    HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
                                    &dummy_pointer));
-        TF_RETURN_IF_ERROR(SetAttr(op_desc_->get(),
+        TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                    HIPBLASLT_MATMUL_DESC_B_SCALE_POINTER,
                                    &dummy_pointer));
         hipblasLtMatmulMatrixScale_t mx_scale =
             HIPBLASLT_MATMUL_MATRIX_SCALE_VEC32_UE8M0;
         TF_RETURN_IF_ERROR(SetAttr(
-            op_desc_->get(), HIPBLASLT_MATMUL_DESC_A_SCALE_MODE, mx_scale));
+            op_desc_.get(), HIPBLASLT_MATMUL_DESC_A_SCALE_MODE, mx_scale));
         TF_RETURN_IF_ERROR(SetAttr(
-            op_desc_->get(), HIPBLASLT_MATMUL_DESC_B_SCALE_MODE, mx_scale));
+            op_desc_.get(), HIPBLASLT_MATMUL_DESC_B_SCALE_MODE, mx_scale));
 #else
         return absl::InternalError("Block scaling requires ROCm >= 7.0");
 #endif
@@ -331,9 +293,9 @@ auto BlasLt::MatmulPlan::GetAlgorithmsForMatmul(const Stream* stream,
 
     int found_algorithm_count = 0;
     auto error = hipblasLtMatmulAlgoGetHeuristic(
-        blas_lt->blas_lt_.get(), op_desc_->get(), a_desc_->get(),
-        b_desc_->get(), c_desc_->get(), d_desc_->get(), preference.get(),
-        max_algorithm_count, results.data(), &found_algorithm_count);
+        blas_lt_.handle_.get(), op_desc_.get(), a_desc_.get(), b_desc_.get(),
+        c_desc_.get(), d_desc_.get(), preference.get(), max_algorithm_count,
+        results.data(), &found_algorithm_count);
     if (error != 0) {
       VLOG(0) << "hipblasLtMatmulAlgoGetHeuristic returned " << (int)error;
       SE_HIPBLAS_RETURN_IF_ERROR(error);
@@ -348,20 +310,7 @@ auto BlasLt::MatmulPlan::GetAlgorithmsForMatmul(const Stream* stream,
       algorithms.push_back({result.algo, result.workspaceSize});
     }
   }
-  return std::move(algorithms);
-}
-
-auto BlasLt::MatmulPlan::GetAlgorithms(const Stream* stream,
-                                       size_t max_algorithm_count,
-                                       size_t max_workspace_size) const
-    -> absl::StatusOr<std::vector<MatmulAlgorithm>> {
-  if (is_grouped()) {
-    return GetAlgorithmsForGroupedMatmul(stream, max_algorithm_count,
-                                         max_workspace_size);
-  } else {
-    return GetAlgorithmsForMatmul(stream, max_algorithm_count,
-                                  max_workspace_size);
-  }
+  return algorithms;
 }
 
 absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
@@ -409,7 +358,7 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
         gpu::GetBlasComputationType(
             cfg.precision_algorithm, lhs_layout.dtype, output_layout.dtype,
             cfg.compute_precision,
-            parent_->GetDeviceDescription().gpu_compute_capability()));
+            executor_->GetDeviceDescription().gpu_compute_capability()));
   }
 
   if (lhs_layout.order == gpu::MatrixLayout::Order::kRowMajor) {
@@ -437,183 +386,47 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
   // data type for fp8 matmul, which is different from cublasLt. This is a
   // workaround to match cublasLt behavior.
   if (epilogue == gpu::BlasLt::Epilogue::kBias) {
-    auto a_dtype = a_desc.type();
-    auto b_dtype = b_desc.type();
-
-    auto bias_dtype = d_desc.type();
+    auto a_dtype = a_desc.type(), b_dtype = b_desc.type();
     if ((a_dtype == HIP_R_8F_E4M3_FNUZ || a_dtype == HIP_R_8F_E5M2_FNUZ) &&
         (b_dtype == HIP_R_8F_E4M3_FNUZ || b_dtype == HIP_R_8F_E5M2_FNUZ)) {
-      auto d_dtype = d_desc.type();
-      if (d_dtype == HIP_R_32F) {
-        bias_dtype = HIP_R_16BF;
-      }
-
-      if (bias_dtype != d_dtype) {
+      auto bias_dtype = d_desc.type();
+      if (bias_dtype == HIP_R_32F) {
         TF_RETURN_IF_ERROR(SetAttr(
-            op_desc.get(), HIPBLASLT_MATMUL_DESC_BIAS_DATA_TYPE, bias_dtype));
+            op_desc.get(), HIPBLASLT_MATMUL_DESC_BIAS_DATA_TYPE, HIP_R_16BF));
       }
     }
   }
 #endif  // TF_ROCM_VERSION >= 60000
 
-  return std::make_unique<MatmulPlan>(std::move(op_desc), std::move(a_desc),
-                                      std::move(b_desc), std::move(c_desc),
-                                      std::move(d_desc), cfg.alpha, cfg.beta,
-                                      must_swap_operands);
-}
+  std::tuple operand_types{a_desc.type(), b_desc.type(), c_desc.type(),
+                           d_desc.type()};
 
-absl::Status BlasLt::MatmulPlan::DoMatmul(
-    Stream* stream, const void* alpha, const void* beta,
-    const gpu::BlasLt::MemoryArgs& args,
-    blas::ProfileResult* profile_result) const {
-  if (!algorithm_.has_value()) {
-    return absl::InternalError(
-        "Algorithm must be set before calling DoMatMul!");
-  }
-  DeviceAddressBase a = args.a, b = args.b;
-  DeviceAddressBase a_scale = args.a_scale, b_scale = args.b_scale;
-  if (must_swap_operands_) {
-    std::swap(a, b);
-    if (a_scale != nullptr && b_scale != nullptr) {
-      std::swap(a_scale, b_scale);
-    }
-  }
+  auto plan = std::make_unique<RegularMatmulPlan>(
+      *this, std::move(op_desc), std::move(a_desc), std::move(b_desc),
+      std::move(c_desc), std::move(d_desc), must_swap_operands);
 
-  auto blas_lt = static_cast<BlasLt*>(gpu::BlasLt::Get(stream));
-  TF_RET_CHECK(blas_lt != nullptr);
-  absl::Status status =
-      blas_lt->parent_->RecordApiTrace(StreamExecutor::GemmCallTrace{
-          StreamExecutor::GemmCallTrace::GemmType::kBlasLt, 0, a.size(),
-          b.size()});
-  std::unique_ptr<EventBasedTimer> timer;
-
-  if (profile_result != nullptr) {
-    TF_ASSIGN_OR_RETURN(timer, stream->CreateEventBasedTimer(
-                                   profile_result->warmup_run_executed()));
-  }
-
-  void* workspace_addr = nullptr;
-  uint64_t workspace_size = algorithm_->workspace_size;
-  if (workspace_size > 0) {
-    if (args.scratch_allocator != nullptr) {
-      TF_ASSIGN_OR_RETURN(
-          DeviceAddress<uint8_t> alloc,
-          args.scratch_allocator->AllocateBytes(workspace_size));
-      workspace_addr = gpu::GpuMemoryMutable(&alloc);
-    } else {
-      workspace_addr = args.workspace.opaque();
-      size_t new_size = args.workspace.size();
-      TF_RET_CHECK(workspace_addr != nullptr && new_size >= workspace_size);
-      workspace_size = new_size;
-    }
-  }
-
-  auto palgo = std::any_cast<hipblasLtMatmulAlgo_t>(&algorithm_->opaque_algo);
-  {
-    absl::MutexLock lock(blas_lt->mu_);
-    TF_RET_CHECK(blas_lt->blas_lt_ != nullptr);
-    // We must set the bias and aux pointers while holding the mutex, to avoid a
-    // potential race condition from multiple threads sharing the same plan.
-    if (op_desc_->has_bias_epilogue() && args.bias != nullptr) {
-      TF_RETURN_IF_ERROR(SetAttr(op_desc_->get(),
-                                 HIPBLASLT_MATMUL_DESC_BIAS_POINTER,
-                                 args.bias.opaque()));
-    }
-
-#if TF_ROCM_VERSION >= 60000
-    if (a_scale != nullptr) {
-      TF_RETURN_IF_ERROR(SetAttr(op_desc_->get(),
-                                 HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
-                                 a_scale.opaque()));
-    }
-    if (b_scale != nullptr) {
-      TF_RETURN_IF_ERROR(SetAttr(op_desc_->get(),
-                                 HIPBLASLT_MATMUL_DESC_B_SCALE_POINTER,
-                                 b_scale.opaque()));
-    }
-    if (args.c_scale != nullptr) {
-      TF_RETURN_IF_ERROR(SetAttr(op_desc_->get(),
-                                 HIPBLASLT_MATMUL_DESC_C_SCALE_POINTER,
-                                 args.c_scale.opaque()));
-    }
-    if (args.d_scale != nullptr) {
-      TF_RETURN_IF_ERROR(SetAttr(op_desc_->get(),
-                                 HIPBLASLT_MATMUL_DESC_D_SCALE_POINTER,
-                                 args.d_scale.opaque()));
-    }
-#else
-    if (!(args.a_scale == nullptr && args.b_scale == nullptr &&
-          args.c_scale == nullptr && args.d_scale == nullptr)) {
-      return absl::InternalError("hipblaslt does not support scale");
-    }
-#endif
-
-    if (args.d_amax != nullptr) {
-      return absl::InternalError("hipblaslt does not support amax");
-    }
-
-    if (args.aux != nullptr) {
-      return absl::InternalError(
-          "hipblaslt does not support auxiliary inputs / outputs");
-    }
-
-    std::unique_ptr<ActivateContext> activation = blas_lt->parent_->Activate();
-
-    if (palgo != nullptr) {
-      SE_HIPBLAS_RETURN_IF_ERROR(hipblasLtMatmul(
-          blas_lt->blas_lt_.get(), op_desc_->get(), alpha, a.opaque(),
-          a_desc_->get(), b.opaque(), b_desc_->get(), beta, args.c.opaque(),
-          c_desc_->get(), args.d.opaque(), d_desc_->get(), palgo,
-          workspace_addr, workspace_size,
-          absl::bit_cast<hipStream_t>(
-              stream->platform_specific_handle().stream)));
-    } else {
-      return absl::InternalError("hipblaslt: Invalid algorithm type");
-    }
-  }
-
-  typedef struct __attribute__((packed, aligned(8))) _rocblaslt_matmul_algo {
-    uint8_t data[8] = {0};
-    bool fallback = false;
-    size_t max_workspace_bytes = 0;
-  } rocblaslt_matmul_algo;
-
-  if (profile_result != nullptr) {
-    TF_ASSIGN_OR_RETURN(absl::Duration elapsed, timer->GetElapsedDuration());
-    // set algorithm ID to be unique (otherwise it gets kDefaultAlgorithm ID)
-    auto roc_algo = (const rocblaslt_matmul_algo*)palgo;
-    auto pindex = (int*)roc_algo->data;
-    profile_result->set_algorithm(static_cast<blas::AlgorithmType>(*pindex));
-    profile_result->set_is_valid(true);
-    profile_result->set_elapsed_time_in_ms(absl::ToDoubleMilliseconds(elapsed));
-  }
-  return absl::OkStatus();
-}
-
-absl::Status BlasLt::MatmulPlan::ExecuteRegularMatmul(
-    Stream* stream, const gpu::BlasLt::MemoryArgs& args,
-    blas::ProfileResult* profile_result) const {
-  auto wrapped_matmul = [&](auto scale) {
+  auto assign_alpha_beta = [&](auto scale) {
     using Scale = decltype(scale);
-    Scale salpha;
+    static_assert(sizeof(Scale) <= RegularMatmulPlan::kMaxScaleBytes,
+                  "Scale type must fit in kMaxScaleBytes");
+    auto* palpha = reinterpret_cast<Scale*>(&plan->alpha_[0]);
     if constexpr (std::is_same_v<Scale, xla::complex64> ||
                   std::is_same_v<Scale, xla::complex128>) {
-      salpha = static_cast<Scale>(*alpha_);
+      *palpha = static_cast<Scale>(cfg.alpha);
     } else {
-      salpha = static_cast<Scale>(alpha_->real());
+      *palpha = static_cast<Scale>(cfg.alpha.real());
     }
-    Scale sbeta = static_cast<Scale>(*beta_);
-    return DoMatmul(stream, &salpha, &sbeta, args, profile_result);
+    auto* pbeta = reinterpret_cast<Scale*>(&plan->beta_[0]);
+    *pbeta = static_cast<Scale>(cfg.beta);
   };
 
-  std::tuple operand_types{a_desc_->type(), b_desc_->type(), c_desc_->type(),
-                           d_desc_->type()};
-
-#define TYPED_MATMUL(Scale, ATYPE, BTYPE, CTYPE, DTYPE)          \
-  if (operand_types == std::tuple{ATYPE, BTYPE, CTYPE, DTYPE}) { \
-    return wrapped_matmul(Scale{});                              \
+#define TYPED_MATMUL(Scale, ATYPE, BTYPE, CTYPE, DTYPE)               \
+  else if (operand_types == std::tuple{ATYPE, BTYPE, CTYPE, DTYPE}) { \
+    assign_alpha_beta(Scale{});                                       \
   }
 
+  if (false) {
+  }  // This is needed to avoid compiler error for the else clause.
 // FP8 compatible types combinations (Full table in
 // https://github.com/ROCm/hipBLASLt/blob/develop/docs/api-reference.rst?plain=1)
 #if TF_ROCM_VERSION >= 60000
@@ -738,45 +551,207 @@ absl::Status BlasLt::MatmulPlan::ExecuteRegularMatmul(
   TYPED_MATMUL(float, HIP_R_8I, HIP_R_8I, HIP_R_32F, HIP_R_32F)
   TYPED_MATMUL(complex64, HIP_C_32F, HIP_C_32F, HIP_C_32F, HIP_C_32F)
   TYPED_MATMUL(complex128, HIP_C_64F, HIP_C_64F, HIP_C_64F, HIP_C_64F)
-
+  else {
+    return xla::Internal("Unexpected dtype");
+  }
 #undef TYPED_MATMUL
-
-  return xla::Internal("Unexpected dtype");
+  return plan;
 }
 
-void BlasLt::MatmulPlan::InitializeGroupedGemm(
-    hipblasLtHandle_t blas_lt_handle, blas::ComputationType compute_type) {
-  auto batch_stride_a = (cfg_->m * cfg_->k);
-  auto batch_stride_b = (cfg_->n * cfg_->k);
-  if (cfg_->ragged_mode == gpu::RaggedDotMode::kRaggedNonContracting) {
-    if (cfg_->must_swap_operands) {
-      batch_stride_a *= cfg_->group_count;
-    } else {
-      batch_stride_b *= cfg_->group_count;
+absl::Status BlasLt::RegularMatmulPlan::ExecuteOnStream(
+    Stream* stream, const gpu::BlasLt::MemoryArgs& args,
+    blas::ProfileResult* profile_result) const {
+  if (!algorithm_.has_value()) {
+    return absl::InternalError(
+        "Algorithm must be set before calling ExecuteOnStream!");
+  }
+  DeviceAddressBase a = args.a, b = args.b;
+  DeviceAddressBase a_scale = args.a_scale, b_scale = args.b_scale;
+  if (must_swap_operands_) {
+    std::swap(a, b);
+    if (a_scale != nullptr && b_scale != nullptr) {
+      std::swap(a_scale, b_scale);
     }
   }
 
-  grouped_gemm_ = std::make_unique<hipblaslt_ext::GroupedGemm>(
-      blas_lt_handle, AsHipblasOperation(cfg_->trans_a),
-      AsHipblasOperation(cfg_->trans_b), AsHipblasDataType(cfg_->type_a),
-      AsHipblasDataType(cfg_->type_b), AsHipblasDataType(cfg_->type_c),
-      AsHipblasDataType(cfg_->type_d), AsHipblasComputeType(compute_type));
+  absl::Status status =
+      blas_lt_.executor_->RecordApiTrace(StreamExecutor::GemmCallTrace{
+          StreamExecutor::GemmCallTrace::GemmType::kBlasLt, 0, a.size(),
+          b.size()});
+  std::unique_ptr<EventBasedTimer> timer;
 
-  std::vector<int64_t> v_m(cfg_->group_count, cfg_->m),
-      v_n(cfg_->group_count, cfg_->n), v_k(cfg_->group_count, cfg_->k),
-      v_batch_count(cfg_->group_count, cfg_->batch_count),
-      v_lda(cfg_->group_count, cfg_->lhs_leading_dim_stride),
-      v_ldb(cfg_->group_count, cfg_->rhs_leading_dim_stride),
-      v_ldc(cfg_->group_count, cfg_->output_leading_dim_stride),
-      v_ldd(cfg_->group_count, cfg_->output_leading_dim_stride),
-      v_strideA(cfg_->group_count, batch_stride_a),
-      v_strideB(cfg_->group_count, batch_stride_b),
-      v_strideC(cfg_->group_count, (cfg_->m * cfg_->n)),
-      v_strideD(cfg_->group_count, (cfg_->m * cfg_->n));
+  if (profile_result != nullptr) {
+    TF_ASSIGN_OR_RETURN(timer, stream->CreateEventBasedTimer(
+                                   profile_result->warmup_run_executed()));
+  }
 
-  switch (cfg_->ragged_mode) {
+  void* workspace_addr = nullptr;
+  uint64_t workspace_size = algorithm_->workspace_size;
+  if (workspace_size > 0) {
+    if (args.scratch_allocator != nullptr) {
+      TF_ASSIGN_OR_RETURN(
+          DeviceAddress<uint8_t> alloc,
+          args.scratch_allocator->AllocateBytes(workspace_size));
+      workspace_addr = gpu::GpuMemoryMutable(&alloc);
+    } else {
+      workspace_addr = args.workspace.opaque();
+      size_t new_size = args.workspace.size();
+      TF_RET_CHECK(workspace_addr != nullptr && new_size >= workspace_size);
+      workspace_size = new_size;
+    }
+  }
+
+  auto palgo = std::any_cast<hipblasLtMatmulAlgo_t>(&algorithm_->opaque_algo);
+  {
+    absl::MutexLock lock(blas_lt_.mu_);
+    TF_RET_CHECK(blas_lt_.handle_ != nullptr);
+    // We must set the bias and aux pointers while holding the mutex, to avoid a
+    // potential race condition from multiple threads sharing the same plan.
+    if (op_desc_.has_bias_epilogue() && args.bias != nullptr) {
+      TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                                 HIPBLASLT_MATMUL_DESC_BIAS_POINTER,
+                                 args.bias.opaque()));
+    }
+
+#if TF_ROCM_VERSION >= 60000
+    if (a_scale != nullptr) {
+      TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                                 HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
+                                 a_scale.opaque()));
+    }
+    if (b_scale != nullptr) {
+      TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                                 HIPBLASLT_MATMUL_DESC_B_SCALE_POINTER,
+                                 b_scale.opaque()));
+    }
+    if (args.c_scale != nullptr) {
+      TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                                 HIPBLASLT_MATMUL_DESC_C_SCALE_POINTER,
+                                 args.c_scale.opaque()));
+    }
+    if (args.d_scale != nullptr) {
+      TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                                 HIPBLASLT_MATMUL_DESC_D_SCALE_POINTER,
+                                 args.d_scale.opaque()));
+    }
+#else
+    if (!(args.a_scale == nullptr && args.b_scale == nullptr &&
+          args.c_scale == nullptr && args.d_scale == nullptr)) {
+      return absl::InternalError("hipblaslt does not support scale");
+    }
+#endif
+
+    if (args.d_amax != nullptr) {
+      return absl::InternalError("hipblaslt does not support amax");
+    }
+
+    if (args.aux != nullptr) {
+      return absl::InternalError(
+          "hipblaslt does not support auxiliary inputs / outputs");
+    }
+
+    std::unique_ptr<ActivateContext> activation =
+        blas_lt_.executor_->Activate();
+
+    if (palgo != nullptr) {
+      SE_HIPBLAS_RETURN_IF_ERROR(hipblasLtMatmul(
+          blas_lt_.handle_.get(), op_desc_.get(), &alpha_, a.opaque(),
+          a_desc_.get(), b.opaque(), b_desc_.get(), &beta_, args.c.opaque(),
+          c_desc_.get(), args.d.opaque(), d_desc_.get(), palgo, workspace_addr,
+          workspace_size,
+          absl::bit_cast<hipStream_t>(
+              stream->platform_specific_handle().stream)));
+    } else {
+      return absl::InternalError("hipblaslt: Invalid algorithm type");
+    }
+  }
+
+  if (profile_result != nullptr) {
+    TF_ASSIGN_OR_RETURN(absl::Duration elapsed, timer->GetElapsedDuration());
+    // set algorithm ID to be unique (otherwise it gets kDefaultAlgorithm ID)
+    profile_result->set_algorithm(hipblaslt_ext::getIndexFromAlgo(*palgo));
+    profile_result->set_is_valid(true);
+    profile_result->set_elapsed_time_in_ms(absl::ToDoubleMilliseconds(elapsed));
+  }
+  return absl::OkStatus();
+}
+
+auto BlasLt::GroupedMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
+                                              size_t max_workspace_size) const
+    -> absl::StatusOr<std::vector<MatmulAlgorithm>> {
+  std::vector<hipblasLtMatmulHeuristicResult_t> heuristicResult;
+
+  absl::MutexLock lock(&blas_lt_.mu_);
+  std::unique_ptr<ActivateContext> activation = blas_lt_.executor_->Activate();
+  auto problem = grouped_gemm_->getProblemTypes()[0];
+  grouped_gemm_->setMaxWorkspaceBytes(max_workspace_size);
+
+  SE_HIPBLAS_RETURN_IF_ERROR(hipblaslt_ext::getAllAlgos(
+      blas_lt_.handle_.get(), hipblaslt_ext::GemmType::HIPBLASLT_GROUPED_GEMM,
+      problem.getOpA(), problem.getOpB(), problem.getTypeA(),
+      problem.getTypeB(), problem.getTypeC(), problem.getTypeD(),
+      problem.getTypeCompute(), heuristicResult));
+  VLOG(2) << "Total heuristics found: " << heuristicResult.size();
+  std::vector<MatmulAlgorithm> algorithms;
+  algorithms.reserve(max_algorithm_count);
+  for (hipblasLtMatmulHeuristicResult_t& result : heuristicResult) {
+    if (algorithms.size() >= max_algorithm_count) break;
+    size_t workspace_size = 0;
+    if ((result.state == HIPBLAS_STATUS_SUCCESS) &&
+        (grouped_gemm_->isAlgoSupported(result.algo, workspace_size) ==
+         HIPBLAS_STATUS_SUCCESS)) {
+      algorithms.push_back({result.algo, result.workspaceSize});
+    }
+  }
+  return algorithms;
+}
+
+absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetGroupedMatmulPlan(
+    const gpu::GroupedGemmConfig& cfg,
+    const std::vector<gpu::BlasLt::Epilogue>& epilogues) const {
+  auto compute_type = cfg.compute_type;
+  if (!compute_type) {  // obtain compute_type unless provided by the user
+    TF_ASSIGN_OR_RETURN(xla::PrimitiveType primitive_type_a,
+                        gpu::AsXlaPrimitiveType(cfg.type_a));
+    TF_ASSIGN_OR_RETURN(xla::PrimitiveType primitive_type_d,
+                        gpu::AsXlaPrimitiveType(cfg.type_d));
+    TF_ASSIGN_OR_RETURN(
+        compute_type,
+        gpu::GetBlasComputationType(
+            cfg.precision_algorithm, primitive_type_a, primitive_type_d,
+            cfg.compute_precision,
+            executor_->GetDeviceDescription().gpu_compute_capability()));
+  }
+  if (!compute_type) {
+    return absl::InternalError(
+        "This algorithm requires a non-zero compute_type!");
+  }
+
+  auto batch_stride_a = (cfg.m * cfg.k);
+  auto batch_stride_b = (cfg.n * cfg.k);
+  if (cfg.ragged_mode == gpu::RaggedDotMode::kRaggedNonContracting) {
+    if (cfg.must_swap_operands) {
+      batch_stride_a *= cfg.group_count;
+    } else {
+      batch_stride_b *= cfg.group_count;
+    }
+  }
+
+  std::vector<int64_t> v_m(cfg.group_count, cfg.m),
+      v_n(cfg.group_count, cfg.n), v_k(cfg.group_count, cfg.k),
+      v_batch_count(cfg.group_count, cfg.batch_count),
+      v_lda(cfg.group_count, cfg.lhs_leading_dim_stride),
+      v_ldb(cfg.group_count, cfg.rhs_leading_dim_stride),
+      v_ldc(cfg.group_count, cfg.output_leading_dim_stride),
+      v_ldd(cfg.group_count, cfg.output_leading_dim_stride),
+      v_strideA(cfg.group_count, batch_stride_a),
+      v_strideB(cfg.group_count, batch_stride_b),
+      v_strideC(cfg.group_count, (cfg.m * cfg.n)),
+      v_strideD(cfg.group_count, (cfg.m * cfg.n));
+
+  switch (cfg.ragged_mode) {
     case gpu::RaggedDotMode::kRaggedNonContracting: {
-      if (cfg_->must_swap_operands) {
+      if (cfg.must_swap_operands) {
         // ragged dimension in the n dimension
         std::fill(v_n.begin() + 1, v_n.end(), 1);
       } else {
@@ -795,12 +770,12 @@ void BlasLt::MatmulPlan::InitializeGroupedGemm(
   }
 
   // TODO: recover GemmEpilogues from args
-  std::vector<hipblaslt_ext::GemmEpilogue> epilogue(cfg_->group_count);
-  std::vector<hipblaslt_ext::GemmInputs> inputs(cfg_->group_count);
+  std::vector<hipblaslt_ext::GemmEpilogue> epilogue(cfg.group_count);
+  std::vector<hipblaslt_ext::GemmInputs> inputs(cfg.group_count);
 
-  float salpha = cfg_->alpha.real();
-  float sbeta = cfg_->beta;
-  for (int64_t i = 0; i < cfg_->group_count; i++) {
+  float salpha = cfg.alpha.real();
+  float sbeta = cfg.beta;
+  for (int64_t i = 0; i < cfg.group_count; i++) {
     epilogue[i].setMode(HIPBLASLT_EPILOGUE_DEFAULT);
     inputs[i].setA(reinterpret_cast<void*>(~0ULL));
     inputs[i].setB(reinterpret_cast<void*>(~0ULL));
@@ -811,57 +786,32 @@ void BlasLt::MatmulPlan::InitializeGroupedGemm(
   }
 
   hipblaslt_ext::GemmProblemType problem(
-      AsHipblasOperation(cfg_->trans_a), AsHipblasOperation(cfg_->trans_b),
-      AsHipblasDataType(cfg_->type_a), AsHipblasDataType(cfg_->type_b),
-      AsHipblasDataType(cfg_->type_c), AsHipblasDataType(cfg_->type_d),
-      AsHipblasComputeType(compute_type));
+      AsHipblasOperation(cfg.trans_a), AsHipblasOperation(cfg.trans_b),
+      AsHipblasDataType(cfg.type_a), AsHipblasDataType(cfg.type_b),
+      AsHipblasDataType(cfg.type_c), AsHipblasDataType(cfg.type_d),
+      AsHipblasComputeType(*compute_type));
+
+  absl::MutexLock lock(&mu_);
+  auto grouped_gemm = std::make_unique<hipblaslt_ext::GroupedGemm>(
+      handle_.get(), problem.getOpA(), problem.getOpB(), 
+      problem.getTypeA(), problem.getTypeB(), problem.getTypeC(), problem.getTypeD(), problem.getTypeCompute());
 
   // Note that Matrices given to HipBlasLt Group-Gemm
   // are expected to be in COLUMN-MAJOR order.
-
-  auto status = grouped_gemm_->setProblem(
+  auto status = grouped_gemm->setProblem(
       v_m, v_n, v_k, v_batch_count, v_lda, v_ldb, v_ldc, v_ldd, v_strideA,
       v_strideB, v_strideC, v_strideD, epilogue, inputs, problem);
 
   if (status != HIPBLAS_STATUS_SUCCESS) {
-    LOG(FATAL) << "Failed to set problem for grouped GEMM: " << status;
-  }
-}
-
-absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetGroupedMatmulPlan(
-    gpu::GroupedGemmConfig& cfg,
-    const std::vector<gpu::BlasLt::Epilogue>& epilogues) const {
-  auto compute_type = cfg.compute_type;
-  if (!compute_type) {  // obtain compute_type unless provided by the user
-    TF_ASSIGN_OR_RETURN(xla::PrimitiveType primitive_type_a,
-                        gpu::AsXlaPrimitiveType(cfg.type_a));
-    TF_ASSIGN_OR_RETURN(xla::PrimitiveType primitive_type_d,
-                        gpu::AsXlaPrimitiveType(cfg.type_d));
-    TF_ASSIGN_OR_RETURN(
-        compute_type,
-        gpu::GetBlasComputationType(
-            cfg.precision_algorithm, primitive_type_a, primitive_type_d,
-            cfg.compute_precision,
-            parent_->GetDeviceDescription().gpu_compute_capability()));
-  }
-  if (!compute_type) {
     return absl::InternalError(
-        "This algorithm requires a non-zero compute_type!");
+        absl::StrFormat("Failed to set problem for grouped GEMM: %d", status));
   }
 
-  hipblasLtHandle_t blas_lt_handle;
-  {
-    absl::MutexLock lock(&mu_);
-    blas_lt_handle = blas_lt_.get();
-  }
-
-  auto plan = std::make_unique<MatmulPlan>(
-      std::move(cfg), cfg.must_swap_operands, blas_lt_handle, *compute_type);
-
-  return absl::StatusOr<MatmulPlanPtr>(std::move(plan));
+  return
+      std::make_unique<GroupedMatmulPlan>(*this, std::move(cfg), std::move(grouped_gemm));
 }
 
-absl::Status BlasLt::MatmulPlan::ExecuteGroupedMatmul(
+absl::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(
     Stream* stream, const MemoryArgs& args,
     blas::ProfileResult* profile_result) const {
   if (!algorithm_.has_value()) {
@@ -870,18 +820,19 @@ absl::Status BlasLt::MatmulPlan::ExecuteGroupedMatmul(
   }
 
   auto palgo = std::any_cast<hipblasLtMatmulAlgo_t>(&algorithm_->opaque_algo);
-  auto blas_lt = static_cast<BlasLt*>(gpu::BlasLt::Get(stream));
-  absl::MutexLock lock(&blas_lt->mu_);
+  if (palgo == nullptr) {
+    return absl::InternalError("Invalid algorithm type!");
+  }
+  absl::MutexLock lock(&blas_lt_.mu_);
 
   // The first chunk of the workspace is reserved for userargs.
-  if (algorithm_must_be_initialized_ ||
-      !args.workspace.IsSameAs(saved_address_workspace_)) {
+  if (algorithm_dirty_ || !args.workspace.IsSameAs(saved_address_workspace_)) {
     void* addr_workspace = static_cast<void*>(
         static_cast<uint8_t*>(args.workspace.opaque()) +
-        sizeof(hipblaslt_ext::UserArguments) * cfg_->group_count);
+        sizeof(hipblaslt_ext::UserArguments) * cfg_.group_count);
     SE_HIPBLAS_RETURN_IF_ERROR(
         grouped_gemm_->initialize(*palgo, addr_workspace));
-    algorithm_must_be_initialized_ = false;
+    algorithm_dirty_ = false;
     saved_address_workspace_ = args.workspace;
   }
 
@@ -913,26 +864,25 @@ absl::Status BlasLt::MatmulPlan::ExecuteGroupedMatmul(
     }
   };
 
-  DeviceAddressBase a = cfg_->must_swap_operands ? args.b : args.a;
-  DeviceAddressBase b = cfg_->must_swap_operands ? args.a : args.b;
+  DeviceAddressBase a = args.a, b = args.b;
+  if (cfg_.must_swap_operands) std::swap(a, b);
   const DeviceAddressBase& d_userArgs = args.workspace;
 
-  uint8_t log2_byte_width_elem_a = Log2ByteWidth(cfg_->type_a);
-  uint8_t log2_byte_width_elem_b = Log2ByteWidth(cfg_->type_b);
-  uint8_t log2_byte_width_elem_d = Log2ByteWidth(cfg_->type_d);
+  uint8_t log2_byte_width_elem_a = Log2ByteWidth(cfg_.type_a);
+  uint8_t log2_byte_width_elem_b = Log2ByteWidth(cfg_.type_b);
+  uint8_t log2_byte_width_elem_d = Log2ByteWidth(cfg_.type_d);
 
   auto group_size_bytewidth =
-      (cfg_->ragged_mode != gpu::RaggedDotMode::kRaggedBatch)
+      (cfg_.ragged_mode != gpu::RaggedDotMode::kRaggedBatch)
           ? static_cast<size_t>(args.group_sizes.size() /
-                                (cfg_->group_count * cfg_->batch_count))
-          : static_cast<size_t>(args.group_sizes.size() / cfg_->group_count);
+                                (cfg_.group_count * cfg_.batch_count))
+          : static_cast<size_t>(args.group_sizes.size() / cfg_.group_count);
 
-  TF_RET_CHECK(blas_lt != nullptr);
   absl::Status status =
-      blas_lt->parent_->RecordApiTrace(StreamExecutor::GemmCallTrace{
+      blas_lt_.executor_->RecordApiTrace(StreamExecutor::GemmCallTrace{
           StreamExecutor::GemmCallTrace::GemmType::kBlasLt, 0,
-          cfg_->m * cfg_->k * cfg_->batch_count,
-          cfg_->k * cfg_->n * cfg_->batch_count * cfg_->group_count});
+          cfg_.m * cfg_.k * cfg_.batch_count,
+          cfg_.k * cfg_.n * cfg_.batch_count * cfg_.group_count});
   std::unique_ptr<EventBasedTimer> timer;
 
   if (profile_result != nullptr) {
@@ -940,19 +890,19 @@ absl::Status BlasLt::MatmulPlan::ExecuteGroupedMatmul(
                                    profile_result->warmup_run_executed()));
   }
 
-  uint32_t strideA1 = cfg_->lhs_leading_dim_stride;
-  uint32_t strideA2 = cfg_->m * cfg_->k;
-  uint32_t strideB1 = cfg_->rhs_leading_dim_stride;
-  uint32_t strideB2 = cfg_->n * cfg_->k;
-  if (cfg_->ragged_mode == gpu::RaggedDotMode::kRaggedNonContracting) {
-    if (cfg_->must_swap_operands) {
-      strideA2 *= cfg_->group_count;
+  uint32_t strideA1 = cfg_.lhs_leading_dim_stride;
+  uint32_t strideA2 = cfg_.m * cfg_.k;
+  uint32_t strideB1 = cfg_.rhs_leading_dim_stride;
+  uint32_t strideB2 = cfg_.n * cfg_.k;
+  if (cfg_.ragged_mode == gpu::RaggedDotMode::kRaggedNonContracting) {
+    if (cfg_.must_swap_operands) {
+      strideA2 *= cfg_.group_count;
     } else {
-      strideB2 *= cfg_->group_count;
+      strideB2 *= cfg_.group_count;
     }
   }
-  uint32_t strideD1 = cfg_->output_leading_dim_stride;
-  uint32_t strideD2 = cfg_->m * cfg_->n;
+  uint32_t strideD1 = cfg_.output_leading_dim_stride;
+  uint32_t strideD2 = cfg_.m * cfg_.n;
 
   auto hip_stream =
       absl::bit_cast<hipStream_t>(stream->platform_specific_handle().stream);
@@ -960,10 +910,10 @@ absl::Status BlasLt::MatmulPlan::ExecuteGroupedMatmul(
   GroupGemmUpdateArgs(
       hip_stream, d_userArgs, a, b, args.d, args.group_sizes,
       group_size_bytewidth, log2_byte_width_elem_a, log2_byte_width_elem_b,
-      log2_byte_width_elem_d, cfg_->stride_ragged_dim, cfg_->stride_group_dim,
-      cfg_->output_stride_ragged_dim, cfg_->must_swap_operands, cfg_->m,
-      cfg_->n, cfg_->k, cfg_->batch_count, strideA1, strideA2, strideB1,
-      strideB2, strideD1, strideD2, cfg_->ragged_mode, cfg_->group_count);
+      log2_byte_width_elem_d, cfg_.stride_ragged_dim, cfg_.stride_group_dim,
+      cfg_.output_stride_ragged_dim, cfg_.must_swap_operands, cfg_.m, cfg_.n,
+      cfg_.k, cfg_.batch_count, strideA1, strideA2, strideB1, strideB2,
+      strideD1, strideD2, cfg_.ragged_mode, cfg_.group_count);
 
   SE_HIPBLAS_RETURN_IF_ERROR(
       grouped_gemm_->run(d_userArgs.opaque(), hip_stream));
@@ -972,27 +922,13 @@ absl::Status BlasLt::MatmulPlan::ExecuteGroupedMatmul(
   if (profile_result != nullptr) {
     TF_ASSIGN_OR_RETURN(absl::Duration elapsed, timer->GetElapsedDuration());
     // set algorithm ID to be unique (otherwise it gets kDefaultAlgorithm ID)
-    hipblasLtMatmulAlgo_t algo =
-        std::any_cast<hipblasLtMatmulAlgo_t>(algorithm_->opaque_algo);
-    profile_result->set_algorithm(hipblaslt_ext::getIndexFromAlgo(algo));
+    profile_result->set_algorithm(hipblaslt_ext::getIndexFromAlgo(*palgo));
     profile_result->set_is_valid(true);
     profile_result->set_elapsed_time_in_ms(absl::ToDoubleMilliseconds(elapsed));
   }
   return absl::OkStatus();
 }
 
-absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
-    Stream* stream, const gpu::BlasLt::MemoryArgs& args,
-    blas::ProfileResult* profile_result) const {
-  if (is_grouped()) {
-    return ExecuteGroupedMatmul(stream, args, profile_result);
-  } else {
-    return ExecuteRegularMatmul(stream, args, profile_result);
-  }
-}
-
 }  // namespace rocm
 
 }  // namespace stream_executor
-
-#endif  // TF_HIPBLASLT

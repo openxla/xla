@@ -417,7 +417,6 @@ def _create_dummy_repository(repository_ctx):
             "%{rocm_extra_copts}": "[]",
             "%{rocm_gpu_architectures}": "[]",
             "%{rocm_version_number}": "0",
-            "%{rocm_hipblaslt}": "False",
             "%{single_gpu_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_SINGLE_GPU_POOL, _DEFAULT_TF_ROCM_RBE_SINGLE_GPU_POOL),
             "%{multi_gpu_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_MULTI_GPU_POOL, _DEFAULT_TF_ROCM_RBE_MULTI_GPU_POOL),
         },
@@ -452,7 +451,6 @@ def _create_dummy_repository(repository_ctx):
         "rocm:rocm_config.h",
         {
             "%{rocm_toolkit_path}": _DEFAULT_ROCM_TOOLKIT_PATH,
-            "%{hipblaslt_flag}": "0",
         },
         "rocm/rocm_config/rocm_config.h",
     )
@@ -622,7 +620,6 @@ def _create_local_rocm_repository(repository_ctx):
             "%{multi_gpu_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_MULTI_GPU_POOL, _DEFAULT_TF_ROCM_RBE_MULTI_GPU_POOL),
             "%{rocm_gpu_architectures}": str(rocm_config.amdgpu_targets),
             "%{rocm_version_number}": str(rocm_version_number),
-            "%{rocm_hipblaslt}": "True",
         },
     )
 
@@ -741,7 +738,6 @@ def _create_local_rocm_repository(repository_ctx):
             "%{rocm_version_number}": rocm_config.rocm_version_number,
             "%{miopen_version_number}": rocm_config.miopen_version_number,
             "%{hipruntime_version_number}": rocm_config.hipruntime_version_number,
-            "%{hipblaslt_flag}": "1",
         },
     )
 
@@ -758,7 +754,6 @@ def _create_local_rocm_repository(repository_ctx):
             "%{rocm_version_number}": rocm_config.rocm_version_number,
             "%{miopen_version_number}": rocm_config.miopen_version_number,
             "%{hipruntime_version_number}": rocm_config.hipruntime_version_number,
-            "%{hipblaslt_flag}": "1",
         },
     )
 

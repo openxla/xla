@@ -70,9 +70,8 @@ class CublasLtMatmulThunk : public TracedCommand {
                       std::optional<ShapedSlice> d_amax,
                       std::optional<const ShapedSlice> workspace);
 
-  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
-    return ExecuteOnStreamInternal(params.stream, params);
-  }
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+
   absl::Status Initialize(const InitializeParams& params) override;
   std::optional<const ShapedSlice> workspace() const { return workspace_; }
 
@@ -88,13 +87,7 @@ class CublasLtMatmulThunk : public TracedCommand {
       absl::Span<const BufferAllocation> allocations);
 
  protected:
-  CublasLtMatmulThunk(const CublasLtMatmulThunk& rhs);
-
-  absl::Status ExecuteOnStreamInternal(se::Stream* stream,
-                                       const ExecuteParams& params);
   absl::StatusOr<se::gpu::BlasLt::MatmulPlan*> GetCachedMatmulPlan(
-      const ExecuteParams& params);
-  absl::StatusOr<se::gpu::BlasLt::MatmulPlan*> GetCachedGroupedMatmulPlan(
       const ExecuteParams& params);
 
   std::variant<GemmConfig, se::gpu::GroupedGemmConfig> gemm_config_;
