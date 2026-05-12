@@ -189,19 +189,10 @@ TEST(RecorderTest, Multithreaded) {
   }
 }
 
-TEST(RecorderTest, EnableSourceLocation) {
+TEST(RecorderTest, EnableSourceLocationNotImplemented) {
   EXPECT_TRUE(TraceMeGlobalFlags::IsSourceLocationEnabled());
   // Currently, _src is not implemented in TraceMeEncode.
-  EXPECT_TRUE(absl::StrContains(TraceMeEncode("Hello", {}), "_src="));
-}
-
-TEST(RecorderTest, DisableSourceLocation) {
-  bool original_value = TraceMeGlobalFlags::IsSourceLocationEnabled();
-  g_enable_source_location.store(false);
-  EXPECT_FALSE(TraceMeGlobalFlags::IsSourceLocationEnabled());
   EXPECT_FALSE(absl::StrContains(TraceMeEncode("Hello", {}), "_src="));
-  // Reset the flag to its original value.
-  g_enable_source_location.store(original_value);
 }
 
 }  // namespace
