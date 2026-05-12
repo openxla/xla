@@ -2003,7 +2003,7 @@ TEST_F(
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo, config));
   Compiler::CompileOptions compile_options;
   compile_options.gpu_topology =
-      GpuTopology(/*platform_version=*/"", 1, 2, 1, gpu_target_config());
+      GpuTopology(/*platform_version=*/"", 100, 1, 1, gpu_target_config());
   ASSERT_OK_AND_ASSIGN(
       auto optimized_module,
       compiler()->RunHloPasses(module->Clone(), nullptr, compile_options));

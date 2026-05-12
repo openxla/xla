@@ -2053,7 +2053,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // normalized again.
   add_float_normalization(pipeline);
 
-
   // Clean up new_tuple described above.
   pipeline.AddPass<TupleSimplifier>();
 
@@ -2236,7 +2235,8 @@ bool ShouldAddCopyForCollectiveMemorySpace(const HloValue* value,
       if ((is_nccl_buffers_used && IsCollective(use.instruction)) ||
           RequiresCollectiveSymmetricMemorySpace(use.instruction) ||
           IsCollectiveMosaicGpuInstruction(*use.instruction) ||
-          (gpu_topology.number_of_hosts() > 1 &&
+          (gpu_topology.num_partitions() >
+               gpu_topology.num_devices_per_host() &&
            IsMosaicWithCollectiveMetadata(*use.instruction)) ||
           UsesCollectiveMemorySpaceFrontendAttr(use)) {
         return true;
