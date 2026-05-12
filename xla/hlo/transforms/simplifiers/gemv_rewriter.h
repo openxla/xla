@@ -41,9 +41,9 @@ class GemvRewriter : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
-  // Whether the pass should be layout sensitive. This indicates the position of
-  // the pass with respect to the layout assignment and normalization passes in
-  // pipelines.
+  // Whether the pass should be layout sensitive. If this pass is run before
+  // layout assignment then this value should be set to false, else should be
+  // set to true.
   const bool is_layout_sensitive_;
 };
 

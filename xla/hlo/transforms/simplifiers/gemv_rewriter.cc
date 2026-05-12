@@ -93,9 +93,9 @@ class GemvRewriterVisitor : public DfsHloRewriteVisitor {
     // Skip if the layout is not normalized and the pass is not layout
     // sensitive.
     if (!is_layout_sensitive_ &&
-        (!LayoutUtil::IsMonotonicWithDim0Major(lhs->shape().layout()) ||
-         !LayoutUtil::IsMonotonicWithDim0Major(rhs->shape().layout()) ||
-         !LayoutUtil::IsMonotonicWithDim0Major(dot->shape().layout()))) {
+        !(LayoutUtil::IsMonotonicWithDim0Major(lhs->shape().layout()) &&
+          LayoutUtil::IsMonotonicWithDim0Major(rhs->shape().layout()) &&
+          LayoutUtil::IsMonotonicWithDim0Major(dot->shape().layout()))) {
       return absl::OkStatus();
     }
 
