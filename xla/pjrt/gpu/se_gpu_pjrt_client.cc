@@ -288,6 +288,10 @@ absl::string_view StreamExecutorGpuClient::platform_version() const {
   return "rocm " STRINGIFY(TF_ROCM_VERSION);
 #elif GOOGLE_CUDA && defined(CUDART_VERSION)  // cuda
   return "cuda " STRINGIFY(CUDART_VERSION);
+// TODO(intel-tf): Oneapi multiple platform version support
+// will be added in future, for now, oneapi 2025.1 is supported
+#elif TENSORFLOW_USE_SYCL  //oneapi
+  return "oneapi 2025.1";
 #else
   return "<unknown>";
 #endif  // TENSORFLOW_USE_ROCM && defined(TF_ROCM_VERSION)
