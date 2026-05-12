@@ -3417,8 +3417,11 @@ TEST_F(LatencyHidingSchedulerTest, DepthPressureReduction) {
   }
 
   const HloInstruction* f = FindInstruction(hlo_module.get(), "f");
+  const HloInstruction* h = FindInstruction(hlo_module.get(), "h");
   const HloInstruction* g = FindInstruction(hlo_module.get(), "g");
   EXPECT_LT(PositionInVector(new_instruction_sequence, g),
+            PositionInVector(new_instruction_sequence, h));
+  EXPECT_LT(PositionInVector(new_instruction_sequence, h),
             PositionInVector(new_instruction_sequence, f));
 }
 

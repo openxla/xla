@@ -1,7 +1,7 @@
 // RUN: hlo_to_xtileir %s | FileCheck %s
 // RUN: triton_test_correctness %s
 // TODO: b/477615292 - enable experimental tiling when reshape [2,4] -> [8] is supported.
-// RUN-NOT: hlo_to_xtileir --use_experimental_tiling %s | FileCheck %s
+// RUN-NOT: hlo_to_xtileir --xla_gpu_experimental_enable_tiling_propagation %s | FileCheck %s
 // RUN-NOT: triton_test_correctness %s --xla_gpu_experimental_enable_tiling_propagation
 
 // Reproducer from b/380277401.

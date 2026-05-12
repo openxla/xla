@@ -1031,6 +1031,8 @@ const TileAssignment& HloSharding::TileAgnosticDeviceAssignment() const {
   }
 
   TF_RET_CHECK(!proto.tile_assignment_dimensions().empty());
+  TF_RET_CHECK(absl::c_all_of(proto.tile_assignment_dimensions(),
+                              [](int64_t d) { return d > 0; }));
 
   auto product_no_overflow =
       [](absl::Span<const int64_t> dims) -> absl::StatusOr<int64_t> {

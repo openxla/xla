@@ -73,6 +73,9 @@ bool IsConcatenateOpSupportedByYnn(const HloInstruction* hlo);
 // Returns true if the slice op is supported by YNNPACK.
 bool IsSliceOpSupportedByYnn(const HloInstruction* hlo);
 
+// Returns true if the pad op is supported by YNNPACK.
+bool IsPadOpSupportedByYnn(const HloInstruction* hlo);
+
 // Returns true if the iota op is supported by YNNPACK.
 bool IsIotaSupportedByYnn(const HloInstruction* hlo);
 

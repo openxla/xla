@@ -124,15 +124,15 @@ class CommonPjRtRawBuffer : public PjRtRawBuffer {
       std::function<void(absl::Status status, bool sends_were_enqueued)>;
   virtual absl::StatusOr<PjRtDeviceEventRef> CopyRawToRemoteDevice(
       Future<std::string> serialized_descriptor, RemoteSendCallback on_done,
-      std::vector<tsl::RCReference<tsl::AsyncValue>>
-          transfer_dependency_avs) = 0;
+      std::vector<PjRtDeviceEventRef> transfer_dependency_avs) = 0;
 
   // A sliced buffer is a view into the offset and range of this buffer.
   //
   // Note that the underlying driver may have requirements
   // on the alignment of `offset`. Look at implementations of
   // this method for specific alignment requirements.
-  absl::StatusOr<PjRtRawBufferRef> Slice(int64_t offset, int64_t size);
+  virtual absl::StatusOr<PjRtRawBufferRef> Slice(int64_t offset,
+                                                 int64_t size) = 0;
 
   struct SliceInfo {
     int64_t offset;
@@ -148,7 +148,7 @@ class CommonPjRtRawBuffer : public PjRtRawBuffer {
 
   // Slices out any dynamic shape information (if present).
   virtual absl::StatusOr<PjRtRawBufferRef> RemoveDynamicShapeMetadataIfPresent(
-      const xla::Shape& logical_shape);
+      const xla::Shape& device_shape, const xla::Shape& logical_shape);
 
   // Reads the dynamic shape for a raw buffer. output_shape must be a
   // constructed AsyncValueRef which will have its dimensions updated.
@@ -177,7 +177,7 @@ class CommonPjRtRawBuffer : public PjRtRawBuffer {
   // and src_usage_event_promise when done using this buffer.
   virtual void ScheduleCopyTo(
       AsyncWorkRunner* async_work_runner,
-      std::vector<tsl::RCReference<tsl::AsyncValue>> transfer_dependency_avs,
+      std::vector<PjRtDeviceEventRef> transfer_dependency_events,
       PjRtRawBufferRef dst_raw_buffer,
       tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
       tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,

@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -40,6 +41,7 @@ limitations under the License.
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -101,7 +103,7 @@ Future<> AbstractTrackedDeviceBuffer::GetReadyFuture(
 absl::Status AbstractTrackedDeviceBuffer::BlockForOperationsToComplete(
     PjRtMemorySpace* memory_space) {
   std::vector<tsl::RCReference<tsl::AsyncValue>> avs;
-  usage_events().AppendTo(avs);
+  usage_events_->AppendTo(avs);
   for (const auto& av : avs) {
     tsl::BlockUntilReady(av.get());
   }
@@ -143,7 +145,7 @@ void AbstractTrackedDeviceBuffer::Delete(PjRtMemorySpace* memory_space) {
   for (const auto& ev : device_buffer->definition_events()) {
     events.push_back(ev);
   }
-  device_buffer->usage_events().AppendTo(events);
+  device_buffer->usage_events_->AppendTo(events);
 
   device_buffer->LockUseAndTransferUsageEvents();
   auto raw_buffer = device_buffer->raw_buffer();
@@ -372,7 +374,7 @@ void CommonPjRtBuffer::ScopedHold::ConvertUsageHold(PjRtDeviceEventRef event) {
     absl::MutexLock lock(parent()->mu_);
     CHECK(parent()->device_buffer() == buffer() ||
           parent()->device_buffer() == nullptr);
-    buffer()->usage_events().AddEvent(std::move(event));
+    buffer()->AddUsageEvent(std::move(event));
     parent()->DecrementUsage();
   }
   SetState(kConverted);
@@ -459,6 +461,35 @@ absl::Status CommonPjRtBuffer::AcquireScopedRawBuffer(
                                 std::move(definition_events)));
   device_buffer.ConvertUsageHold(std::move(device_event));
   return absl::OkStatus();
+}
+
+absl::StatusOr<CommonPjRtBuffer::RawBufferForUsage>
+CommonPjRtBuffer::GetRawBufferForUsage(const char* caller_name) {
+  xla::PjRtRawBufferRef raw_buffer;
+  tsl::RCReference<xla::PjRtDeviceEventPromise> usage_done_promise;
+  TF_RETURN_IF_ERROR(AcquireScopedRawBuffer(
+      [&](xla::PjRtRawBufferRef raw_buffer_ref,
+          std::vector<xla::PjRtDeviceEventRef> definition_events)
+          -> absl::StatusOr<xla::PjRtDeviceEventRef> {
+        // `definition_events` is unused because we return
+        // `GetReadyFuture()` below.
+        raw_buffer = std::move(raw_buffer_ref);
+        xla::PjRtDeviceEventRef usage_event;
+        auto* client =
+            absl::down_cast<CommonPjRtClient*>(memory_space_->client());
+        TF_ASSIGN_OR_RETURN(std::tie(usage_done_promise, usage_event),
+                            client->CreateLinkedEventPromise(
+                                memory_space_, "GetRawBufferForUsage"));
+        return usage_event;
+      },
+      caller_name));
+  return RawBufferForUsage{
+      std::move(raw_buffer),
+      [usage_done_promise = std::move(usage_done_promise)]() mutable {
+        usage_done_promise->SetReady();
+      },
+      GetReadyFuture(),
+  };
 }
 
 CommonPjRtBuffer::ScopedHold CommonPjRtBuffer::GetBufferWithHold(

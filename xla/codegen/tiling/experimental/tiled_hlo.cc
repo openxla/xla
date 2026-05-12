@@ -279,7 +279,7 @@ absl::InlinedVector<const HloInstruction*, 2> ToInstructions(
 // * Otherwise, returns a region including tiled_root and all dependencies.
 /*static*/ absl::StatusOr<TiledHloRegion> TiledHloComputation::CreateHloRegion(
     std::unique_ptr<TiledHloInstruction> tiled_root,
-    const HloFusionAdaptor& fusion, const TilingSpace& tiling_space,
+    const HloFusionAdaptor& fusion, TilingSpace& tiling_space,
     absl::flat_hash_map<int64_t,
                         std::pair<const TiledHloInstruction*, Interval>>&
         rt_symbol_to_tiled_hlo) {

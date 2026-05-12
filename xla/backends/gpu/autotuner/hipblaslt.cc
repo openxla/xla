@@ -331,10 +331,8 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
     TF_ASSIGN_OR_RETURN(BlasLt::Epilogue epilogue,
                         AsBlasLtEpilogue(backend_config.epilogue()));
 
-    std::vector<BlasLt::Epilogue> epilogues = {epilogue};
-    TF_ASSIGN_OR_RETURN(plan,
-                        se::gpu::BlasLt::GetGroupedMatmulPlan(
-                            stream.get(), grouped_gemm_config, epilogues));
+    TF_ASSIGN_OR_RETURN(plan, se::gpu::BlasLt::GetGroupedMatmulPlan(
+                                  stream.get(), grouped_gemm_config, epilogue));
 
     const Shape& output_shape = instr.shape();
     if (!output_shape.IsTuple() || output_shape.tuple_shapes().empty()) {

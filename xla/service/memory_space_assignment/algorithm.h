@@ -36,6 +36,7 @@ limitations under the License.
 #endif
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/hash/hash.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -295,22 +296,45 @@ class AsynchronousCopyResource {
 
 // Helper class to compute a minimal fingerprint of an HloInstruction and it's
 // operand shapes for MSA.
+// Use a cache to avoid recomputing the fingerprint of the shape for the same
+// instruction more than once.
+template <typename HashType>
 class MsaInstructionFingerprint {
  public:
-  explicit MsaInstructionFingerprint(const HloInstruction* instruction)
-      : inst_(instruction) {};
+  explicit MsaInstructionFingerprint(
+      const HloInstruction* instruction,
+      absl::flat_hash_map<const HloInstruction*, HashType>*
+          instruction_shape_hash_cache = nullptr)
+      : inst_(instruction),
+        instruction_shape_hash_cache_(instruction_shape_hash_cache) {}
 
   template <typename H>
   friend H AbslHashValue(H h, const MsaInstructionFingerprint& fp) {
+    auto get_or_compute_shape_hash = [&fp](const HloInstruction* inst) {
+      if (fp.instruction_shape_hash_cache_ != nullptr) {
+        auto it = fp.instruction_shape_hash_cache_->find(inst);
+        if (it != fp.instruction_shape_hash_cache_->end()) {
+          return it->second;
+        }
+      }
+      HashType shape_hash = absl::HashOf(inst->shape());
+      if (fp.instruction_shape_hash_cache_ != nullptr) {
+        fp.instruction_shape_hash_cache_->insert({inst, shape_hash});
+      }
+      return shape_hash;
+    };
     for (const HloInstruction* operand : fp.inst_->operands()) {
-      h = H::combine(std::move(h), operand->shape());
+      h = H::combine(std::move(h), get_or_compute_shape_hash(operand));
     }
     return H::combine(std::move(h), fp.inst_->opcode(),
-                      fp.inst_->operand_count(), fp.inst_->shape());
+                      fp.inst_->operand_count(),
+                      get_or_compute_shape_hash(fp.inst_));
   }
 
  private:
   const HloInstruction* inst_;
+  absl::flat_hash_map<const HloInstruction*, HashType>*
+      instruction_shape_hash_cache_;
 };
 
 // This class inherits from GlobalDecreasingSizeBestFitHeap with a notion of

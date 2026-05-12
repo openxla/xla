@@ -887,7 +887,8 @@ TEST_F(TritonAlgorithmTest, UnsetAlgorithmToBF16) {
       p1 = f32[256,256] parameter(1)
       ROOT dot = f32[256,256] dot(p0, p1),
           lhs_contracting_dims={0},
-          rhs_contracting_dims={1}
+          rhs_contracting_dims={1},
+          backend_config={sizes:[16]}
     }
 
     ENTRY entry_computation {
@@ -900,7 +901,7 @@ TEST_F(TritonAlgorithmTest, UnsetAlgorithmToBF16) {
           "fusion_backend_config":{
             "kind":"__triton_nested_gemm_fusion",
             "block_level_fusion_config":{
-              "output_tiles": [{"sizes": ["16","256","16"]}],
+              "output_tiles": [{"sizes": ["256","16"]}],
               "num_stages":4,
               "num_warps":4,
               "num_ctas":1

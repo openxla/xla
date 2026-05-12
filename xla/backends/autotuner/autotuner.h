@@ -159,9 +159,22 @@ class Autotuner {
     std::optional<Failure> failure;
     absl::Duration duration = absl::ZeroDuration();
     int scratch_bytes = 0;
+    // Index into the OutputCluster vector built by ProfileAll, or -1 if the
+    // config was not clustered (output check disabled, or profiling failed
+    // before reaching the cluster assignment step).
+    int cluster_index = -1;
 
     std::string ToString(bool verbose = false) const;
     AutotuneResult ToProto() const;
+  };
+  // A group of configs whose profiled outputs agree within
+  // autotune_config_.relative_tolerance.
+  struct OutputCluster {
+    ScopedShapedBuffer representative;
+    int count = 0;
+    // True iff at least one member comes from a backend that declares
+    // CanProduceWrongResults()==false.
+    bool has_trusted_member = false;
   };
 
   Autotuner(std::vector<std::unique_ptr<CodegenBackend>> codegen_backends,
@@ -220,19 +233,37 @@ class Autotuner {
   absl::StatusOr<std::vector<ConfigResult>> ProfileAll(
       std::vector<ExecutableCandidate> candidates,
       const HloInstruction* instr = nullptr);
+
+  ConfigResult ProfileCandidate(ExecutableCandidate& candidate,
+                                InputBuffers& input_buffers,
+                                std::vector<OutputCluster>& clusters,
+                                bool is_trusted_config, bool allow_new_cluster)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(profiler_m_);
+
   // Picks the best config from the given results.
   // Result is moved from the input vector.
   absl::StatusOr<ConfigResult> PickBestConfig(
       std::vector<ConfigResult>& results);
 
-  std::optional<ScopedShapedBuffer> GetReferenceOutput(
-      std::vector<ExecutableCandidate>& candidates, InputBuffers& input_buffers)
+  // Assigns `output` to the first cluster whose representative matches within
+  // autotune_config_.relative_tolerance. If `allow_new_cluster` is true,
+  // creates a new cluster if no match is found; otherwise returns -1.
+  // `is_trusted_config` marks the cluster as having a trustworthy-backend
+  // member (propagates through the OR of member trust flags). Returns the
+  // assigned cluster index.
+  int AssignToOutputCluster(std::vector<OutputCluster>& clusters,
+                            ScopedShapedBuffer& output, bool is_trusted_config,
+                            bool allow_new_cluster)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(profiler_m_);
 
-  std::optional<Failure> CheckBuffers(InputBuffers& input_buffers,
-                                      ScopedShapedBuffer& output,
-                                      ScopedShapedBuffer& reference)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(profiler_m_);
+  // Stamps kWrongResults on every successful result that is not in the
+  // winning cluster. Winner: if any cluster has a trustworthy member, the
+  // largest among those; otherwise the largest overall. Earliest insertion
+  // wins on tie. Reads `ConfigResult::cluster_index` to find each result's
+  // cluster.
+  void DemoteNonWinningClusterConfigs(
+      std::vector<ConfigResult>& results,
+      const std::vector<OutputCluster>& clusters);
   absl::Status IsValidExecutable(
       const absl::StatusOr<std::unique_ptr<Executable>>& executable) const;
 

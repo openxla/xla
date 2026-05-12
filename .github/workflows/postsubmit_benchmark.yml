@@ -131,11 +131,13 @@ jobs:
           echo "---------------------------------------"
 
           # Make resolved paths available to subsequent steps via GITHUB_ENV
-          echo "RESOLVED_OUTPUT_DIR=$FULL_OUTPUT_DIR_PATH" >> $GITHUB_ENV
-          echo "RESOLVED_SCRIPT_DIR=$RESOLVED_SCRIPT_DIR_PATH" >> $GITHUB_ENV
-          echo "RESOLVED_BASELINE_YAML=$RESOLVED_BASELINE_YAML_PATH" >> $GITHUB_ENV
-          echo "RESOLVED_COMPARISON_SCRIPT=$RESOLVED_COMPARISON_SCRIPT_PATH" >> $GITHUB_ENV
-          echo "RESOLVED_RUN_COMPARISON_SCRIPT=$RESOLVED_RUN_COMPARISON_SCRIPT_PATH" >> $GITHUB_ENV
+          {
+            echo "RESOLVED_OUTPUT_DIR=$FULL_OUTPUT_DIR_PATH"
+            echo "RESOLVED_SCRIPT_DIR=$RESOLVED_SCRIPT_DIR_PATH"
+            echo "RESOLVED_BASELINE_YAML=$RESOLVED_BASELINE_YAML_PATH"
+            echo "RESOLVED_COMPARISON_SCRIPT=$RESOLVED_COMPARISON_SCRIPT_PATH"
+            echo "RESOLVED_RUN_COMPARISON_SCRIPT=$RESOLVED_RUN_COMPARISON_SCRIPT_PATH"
+          } >> "$GITHUB_ENV"
 
           # Create the output directory; scripts will assume it exists
           mkdir -p "$FULL_OUTPUT_DIR_PATH"

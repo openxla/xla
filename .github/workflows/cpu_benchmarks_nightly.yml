@@ -83,7 +83,7 @@ jobs:
 
           ./configure.py --backend=CPU
       - name: Download and run Gemma HLO files and collect runtime and compile time stats
-        if: ${{ matrix.job_info.os != 'linux-arm64-t2a-48' }}
+        if: ${{ matrix.job_info.pool != 'linux-arm64-t2a-48' }}
         run: |
           mkdir -p "$OUTPUT_DIR/tmp_hlo"
           cd "$OUTPUT_DIR/tmp_hlo"

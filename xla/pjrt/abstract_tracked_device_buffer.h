@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <array>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "absl/base/attributes.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/tsl/concurrency/async_value.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
 
@@ -77,7 +79,22 @@ class AbstractTrackedDeviceBuffer {
         result.push_back(tsl::FormRef(ev.async_value()));
       }
     }
-    usage_events().AppendTo(result);
+    usage_events_->AppendTo(result);
+    return result;
+  }
+
+  // Construct (or return) a vector of PjRtDeviceEventRef events which
+  // will become ready when this buffer is ok to mutate.
+  std::vector<PjRtDeviceEventRef>
+  GetAsyncValueDefinitionAndUsageDeviceEvents() {
+    std::vector<PjRtDeviceEventRef> result;
+    result.reserve(definition_events_.size());
+    for (const auto& ev : definition_events_) {
+      if (ev) {
+        result.push_back(ev);
+      }
+    }
+    usage_events_->AppendTo(result);
     return result;
   }
 
@@ -85,21 +102,11 @@ class AbstractTrackedDeviceBuffer {
   // underlying memory as this AbstractTrackedDeviceBuffer.
   const PjRtRawBufferRef& raw_buffer() const { return raw_buffer_; }
 
-  // Set of all usage events.
-  PjRtDeviceEventSet& usage_events() {
-    CHECK(usage_events_ != nullptr);
-    return *usage_events_;
-  }
-  const PjRtDeviceEventSet& usage_events() const {
-    CHECK(usage_events_ != nullptr);
-    return *usage_events_;
-  }
-
   // Only to be called via the result of
   // CommonPjRtBuffer::ScopedHold::ConvertUsageHold with an optional device
   // event to add to the usage events.
   void AddUsageEvent(PjRtDeviceEventRef event) {
-    usage_events().AddEvent(std::move(event));
+    usage_events_->AddEvent(std::move(event));
   }
 
   void ConfirmDonation() {
@@ -158,7 +165,7 @@ class AbstractTrackedDeviceBuffer {
   }
 
   void AddUsageEventsToSet(PjRtDeviceEventSet& events) {
-    usage_events().AppendTo(events);
+    usage_events_->AppendTo(events);
   }
 
   // Return the usage events for the buffers. After
@@ -326,6 +333,23 @@ class CommonPjRtBuffer : public PjRtBuffer {
           std::vector<PjRtDeviceEventRef> definition_events) &&>
           scoped_acquire,
       const char* caller_name = "AcquireScopedRawBuffer");
+
+  struct RawBufferForUsage {
+    PjRtRawBufferRef raw_buffer;
+
+    // The caller must call this after they have finished accessing
+    // `raw_buffer`.
+    absl::AnyInvocable<void() &&> usage_done_cb;
+
+    // A future that is satisfied when the buffer's definition events
+    // become ready.
+    Future<> definition_future;
+  };
+  // A convenience version of `AcquireScopedRawBuffer` that returns a
+  // raw buffer and a usage done promise that the caller should complete
+  // when they are done using the buffer.
+  absl::StatusOr<RawBufferForUsage> GetRawBufferForUsage(
+      const char* caller_name = "GetRawBufferForUsage");
 
   ScopedHold GetBufferWithHold(ScopedHold::Type type);
 

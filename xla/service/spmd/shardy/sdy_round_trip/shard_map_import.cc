@@ -177,13 +177,9 @@ mlir::LogicalResult rewriteManualComputation(
 FuncOp cloneFuncRecursively(
     FuncOp funcOp, mlir::sdy::TensorShardingPerValueAttr callOpResultShardings,
     mlir::SymbolTable& symbolTable) {
-  mlir::StringAttr originalFuncName = mlir::sdy::getOriginalFuncName(funcOp);
-  FuncOp clonedFuncOp =
-      symbolTable.lookup<FuncOp>(originalFuncName.getValue()).clone();
-  // TODO(enver): Have a MLIR native error handling, instead of CHECK.
-  CHECK(clonedFuncOp) << "Failed to lookup function: "
-                      << originalFuncName.str();
-  clonedFuncOp->setAttr(mlir::sdy::kOriginalFuncName, originalFuncName);
+  FuncOp clonedFuncOp = funcOp.clone();
+  clonedFuncOp->setAttr(mlir::sdy::kOriginalFuncName,
+                        mlir::sdy::getOriginalFuncName(funcOp));
   if (callOpResultShardings) {
     mlir::sdy::setFuncResultShardings(clonedFuncOp, callOpResultShardings);
   }

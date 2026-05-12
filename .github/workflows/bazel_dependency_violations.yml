@@ -47,7 +47,7 @@ jobs:
           set -euo pipefail
           TAG_WITH_UNDERSCORES="${{ matrix.tag }}"
           TAG_WITH_UNDERSCORES="${TAG_WITH_UNDERSCORES/-/_}"
-          if ! OUTPUT=$(bazel cquery --aspects build_tools/dependencies/aspects.bzl%validate_${TAG_WITH_UNDERSCORES}_tag //xla/... 2>&1); then
+          if ! OUTPUT=$(bazel cquery --aspects "build_tools/dependencies/aspects.bzl%validate_${TAG_WITH_UNDERSCORES}_tag" //xla/... 2>&1); then
             echo "Failed to run bazel cquery. Output:"
             echo "$OUTPUT"
             exit 1

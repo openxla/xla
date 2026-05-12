@@ -242,6 +242,7 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -253,7 +254,6 @@ xla_cc_test(
     name = "symbolic_tile_test",
     srcs = ["symbolic_tile_test.cc"],
     deps = [
-        ":affine_map_evaluator",
         ":symbolic_tile",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/analysis:indexing_test_utils",

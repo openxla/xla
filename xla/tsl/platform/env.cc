@@ -655,7 +655,7 @@ absl::Status WriteTextProto(Env* env, const std::string& fname,
                             const protobuf::Message& proto) {
   std::string serialized;
   if (!protobuf::TextFormat::PrintToString(proto, &serialized)) {
-    return errors::FailedPrecondition("Unable to convert proto to text.");
+    return absl::FailedPreconditionError("Unable to convert proto to text.");
   }
   return WriteStringToFile(env, fname, serialized);
 }

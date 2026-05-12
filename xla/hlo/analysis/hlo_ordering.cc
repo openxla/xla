@@ -63,18 +63,16 @@ HloOrdering::ExecutionConstraint HloOrdering::GetExecutionConstraint(
   // callgraph ancestor instructions which call (potentially transitively) the
   // computations containing 'a' and 'b' and use these ancestor instructions to
   // compare order.
-  auto is_async_wrapped = [](const HloInstruction* a, const HloInstruction* b) {
-    // Treats the async wrapped instruction as same as the wrapper.
-    return a->IsAsynchronous() && a->async_wrapped_instruction() == b;
-  };
-  if (a == b || is_async_wrapped(a, b) || is_async_wrapped(b, a)) {
+  if (a == b) {
     return ExecutionConstraint::kIsSame;
   }
-  const HloInstruction* a_ancestor;
-  const HloInstruction* b_ancestor;
-  std::tie(a_ancestor, b_ancestor) =
-      call_graph_->NearestAncestorsInSameComputation(
-          const_cast<HloInstruction*>(a), const_cast<HloInstruction*>(b));
+  if (a->parent() != b->parent() &&
+      ((a->IsAsynchronous() && a->async_wrapped_instruction() == b) ||
+       (b->IsAsynchronous() && b->async_wrapped_instruction() == a))) {
+    return ExecutionConstraint::kIsSame;
+  }
+  auto [a_ancestor, b_ancestor] =
+      call_graph_->NearestAncestorsInSameComputation(a, b);
 
   if (a_ancestor == nullptr) {
     VLOG(4) << "Ancestors in a common computation could not be found between"

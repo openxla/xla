@@ -38,6 +38,7 @@ limitations under the License.
 
 #include "absl/base/attributes.h"
 #include "absl/base/macros.h"
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -69,6 +70,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_pool.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
@@ -327,7 +329,8 @@ class HloInstruction {
       const absl::flat_hash_map<int64_t, HloInstruction*>& instruction_map,
       const absl::flat_hash_map<int64_t, HloComputation*>& computation_map = {},
       bool prohibit_empty_literal = true,
-      const tsl::protobuf::RepeatedPtrField<std::string>* payloads = nullptr);
+      absl::Span<const tsl::RCReference<BackendConfigWrapper>> backend_configs =
+          {});
 
   // Creates a parameter-retrieving instruction.
   static std::unique_ptr<HloInstruction> CreateParameter(
@@ -1928,12 +1931,14 @@ class HloInstruction {
     return static_cast<int32_t>(unique_id >> 32);
   }
 
-  bool has_backend_config() const { return !backend_config_.empty(); }
+  bool has_backend_config() const { return !backend_config_->empty(); }
 
-  void clear_backend_config() { backend_config_ = BackendConfigWrapper(); }
+  void clear_backend_config() {
+    backend_config_ = tsl::MakeRef<BackendConfigWrapper>();
+  }
 
   void CopyBackendConfigFrom(const HloInstruction* other) {
-    backend_config_ = BackendConfigWrapper(other->backend_config_);
+    backend_config_ = other->backend_config_;
   }
 
   // Replaces the frontend attributes with the provided argument.
@@ -2066,7 +2071,7 @@ class HloInstruction {
   template <typename ConfigProto, EnableIfProto<ConfigProto>* = nullptr>
   absl::StatusOr<ConfigProto> backend_config() const {
     ConfigProto proto;
-    TF_RETURN_IF_ERROR(backend_config_.GetProto(&proto));
+    TF_RETURN_IF_ERROR(backend_config_->GetProto(&proto));
     return proto;
   }
 
@@ -2077,25 +2082,31 @@ class HloInstruction {
   template <typename ConfigProto, EnableIfProto<ConfigProto>* = nullptr>
   absl::Status MutateBackendConfig(
       const std::function<absl::Status(ConfigProto*)>& fn) {
-    return backend_config_.ApplyFnOnProto(fn);
+    if (!backend_config_->IsUnique()) {
+      backend_config_ = tsl::MakeRef<BackendConfigWrapper>(*backend_config_);
+    }
+    return backend_config_->ApplyFnOnProto(fn);
   }
 
   absl::Status set_backend_config(const tsl::protobuf::Message& proto) {
-    backend_config_ = BackendConfigWrapper(proto);
+    backend_config_ = tsl::MakeRef<BackendConfigWrapper>(proto);
     return absl::OkStatus();
   }
 
   // Getter/setter for raw JSON-encoded backend config.  Prefer the
   // functions above that deal in proto Messages where possible.
   const std::string& raw_backend_config_string() const {
-    return backend_config_.GetRawString();
+    return backend_config_->GetRawString();
   }
   void set_raw_backend_config_string(std::string config_str) {
-    backend_config_ = BackendConfigWrapper(std::move(config_str));
+    backend_config_ = tsl::MakeRef<BackendConfigWrapper>(std::move(config_str));
   }
 
   bool is_default_config() const { return is_default_config_; }
   void set_default_config() { is_default_config_ = true; }
+
+  // Returns true if the instruction supports precision config.
+  bool SupportsPrecisionConfig() const;
 
   // Returns the information used to tell the implementation information about
   // what sort of precision is requested. The meaning of the field is backend
@@ -2791,8 +2802,10 @@ class HloInstruction {
   std::shared_ptr<Shape> shape_;
 
   // The backend-specific configuration for how a backend should compile this
-  // HLO. See the documentation on backend_config().
-  BackendConfigWrapper backend_config_;
+  // HLO. See the documentation on backend_config(). Declared as RCReference to
+  // implement copy-on-write.
+  absl_nonnull tsl::RCReference<BackendConfigWrapper> backend_config_ =
+      tsl::MakeRef<BackendConfigWrapper>();
 
   // String identifier for instruction.
   std::string name_;

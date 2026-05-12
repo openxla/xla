@@ -25,6 +25,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
@@ -148,6 +149,14 @@ class TilingSpace {
     const HloInstruction* hlo;
   };
 
+  // Special constraint requiring that `expr` evaluated at concrete tile sizes
+  // is a clean multiple of the concrete value of `tile_size` symbol.
+  // This allows verification using IsMultipleOf without heuristics for tid.
+  struct DivisibilityConstraint {
+    SymbolicExpr expr;
+    SymbolicExpr tile_size;
+  };
+
   static std::unique_ptr<TilingSpace> Create(const HloFusionAdaptor& fusion,
                                              mlir::MLIRContext* ctx);
 
@@ -167,7 +176,7 @@ class TilingSpace {
                                         int64_t dim_position) const;
 
   // Assigns tile sizes to the dimensions.
-  void AssignTileSizes(absl::Span<const int64_t> tile_sizes);
+  absl::Status AssignTileSizes(absl::Span<const int64_t> tile_sizes);
 
   // Returns the runtime variable info for `hlo` that uses it and its
   // `operand_id`.
@@ -183,12 +192,19 @@ class TilingSpace {
   ConstraintExpression& mutable_constraint() { return constraints_; }
   const ConstraintExpression& constraint() const { return constraints_; }
 
+  void AddDivisibilityConstraint(SymbolicExpr expr, SymbolicExpr tile_size) {
+    divisibility_constraints_.push_back({expr, tile_size});
+  }
+  llvm::ArrayRef<DivisibilityConstraint> divisibility_constraints() const {
+    return divisibility_constraints_;
+  }
+
   mlir::MLIRContext* mlir_context() const { return mlir_context_; }
 
   llvm::ArrayRef<Tile> tiled_roots() const { return tiled_roots_; }
 
   int64_t num_dimensions() const { return dimensions_.size(); }
-  int64_t num_parallel_dimsensions() const;
+  int64_t num_parallel_dimensions() const;
   int64_t num_rt_vars() const { return rt_vars_.size(); }
 
   void AppendDimension(const HloInstruction* hlo, int64_t dim_position,
@@ -225,6 +241,9 @@ class TilingSpace {
 
   // Constraint expression for the tiling space.
   ConstraintExpression constraints_;
+
+  // Special divisibility constraints.
+  llvm::SmallVector<DivisibilityConstraint, 2> divisibility_constraints_;
 
   mlir::MLIRContext* mlir_context_;
 

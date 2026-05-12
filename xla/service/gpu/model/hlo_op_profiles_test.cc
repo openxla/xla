@@ -130,6 +130,22 @@ TEST_F(HloOpProfilesTest, GetProfileH100) {
       3);
 }
 
+TEST_F(HloOpProfilesTest, GetProfileSm103) {
+  auto hlo_op_profiles = HloOpProfiles::Load(kDeviceHloOpProfiles,
+                                             /*default_profile_name=*/"sm_80");
+  stream_executor::DeviceDescription device_info;
+  device_info.set_gpu_compute_capability(stream_executor::GpuComputeCapability(
+      stream_executor::CudaComputeCapability(10, 3)));
+
+  EXPECT_EQ(HloOpProfiles::GetProfileName(device_info), "sm_103");
+  const auto& op_profile = hlo_op_profiles->GetProfile(device_info);
+  ASSERT_TRUE(op_profile.contains(
+      std::make_pair(HloOpcode::kDivide, PrimitiveType::S8)));
+  EXPECT_EQ(
+      op_profile.at(std::make_pair(HloOpcode::kDivide, PrimitiveType::S8)),
+      372);
+}
+
 TEST_F(HloOpProfilesTest, GetProfileMI210) {
   auto hlo_op_profiles = HloOpProfiles::Load(kDeviceHloOpProfilesTest,
                                              /*default_profile_name=*/"sm_80");

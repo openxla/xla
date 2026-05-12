@@ -282,6 +282,9 @@ void UpdateFunctionType(mlir::func::FuncOp func_op) {
 }
 
 absl::StatusOr<DType> ToIfrtDType(mlir::Type type) {
+  if (llvm::isa<IfrtTokenType>(type)) {
+    return ToDType(xla::PrimitiveType::TOKEN);
+  }
   xla::PrimitiveType primitive_type = xla::ConvertMlirTypeToPrimitiveType(type);
   return ToDType(primitive_type);
 }

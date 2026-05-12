@@ -1100,6 +1100,7 @@ cc_library(
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/debugging:leak_check",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -1333,14 +1334,19 @@ xla_test(
     backends = ["gpu"],
     tags = ["cuda-only"],
     deps = [
+        ":cuda_compute_capability",
+        ":cuda_executor",
         ":cuda_platform",
         ":cuda_vmm_allocator",
         "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_description",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/base:log_severity",
+        "@com_google_absl//absl/log:scoped_mock_log",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
     ],
@@ -1427,6 +1433,7 @@ cc_library(
         "@com_google_absl//absl/debugging:leak_check",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -1634,6 +1641,16 @@ cc_library(
 )
 
 cc_library(
+    name = "nvml_lock",
+    srcs = ["nvml_lock.cc"],
+    hdrs = ["nvml_lock.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_google_absl//absl/synchronization",
+    ],
+)
+
+cc_library(
     name = "cuda_executor_lib",
     srcs = ["cuda_executor.cc"],
     hdrs = [":cuda_executor"],
@@ -1660,6 +1677,7 @@ cc_library(
         ":cuda_vmm_allocator",
         ":cudnn_api_wrappers",
         ":host_callback_registry",
+        ":nvml_lock",
         ":tma_util",
         "//xla:util",
         "//xla/backends/gpu/collectives:gpu_collectives",
@@ -1949,6 +1967,7 @@ cc_library(
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -2595,6 +2614,7 @@ cc_library(
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",

@@ -284,10 +284,18 @@ def TritonXLAImplementExternElementWisePass
   let description = [{
     This pass implements custom atomic functions declared by tt.extern_elementwise
     operations using LLVM IR intrinsics and atomic operations with proper memory
-    ordering and sync scopes. It supports CUDA (NVPTX) backend.
+    ordering and sync scopes. It supports CUDA (NVPTX) and ROCM backends.
     It runs in the Triton pipeline after MLIR has been converted to LLVM dialect.
     The target backend must be specified via the target option.
   }];
+  let options = [
+    Option<"target_", "target", "TargetBackend", "TargetBackend::CUDA",
+           "Target backend (CUDA or ROCm).",
+           [{llvm::cl::values(
+               clEnumValN(TargetBackend::CUDA, "cuda", "CUDA (NVPTX) backend"),
+               clEnumValN(TargetBackend::ROCM, "rocm", "ROCm (AMDGPU) backend")
+           )}]>,
+  ];
 }
 
 def TritonXLAFoldReshapeAroundForLoopPass

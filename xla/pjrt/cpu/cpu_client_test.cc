@@ -75,6 +75,7 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::absl_testing::StatusIs;
 using ::testing::Each;
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
@@ -629,6 +630,44 @@ TEST(PjRtCpuClientTest, CopyToMemorySpace) {
   TF_ASSERT_OK_AND_ASSIGN(auto received_literal, buffer->ToLiteral().Await());
   EXPECT_THAT(received_literal->data<int32_t>(),
               ElementsAreArray(literal.data<int32_t>()));
+}
+
+TEST(PjRtCpuClientTest, CopyTokenToDevice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 1);
+
+  auto* device = client->addressable_devices()[0];
+
+  xla::Literal literal = xla::LiteralUtil::CreateToken();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto src_buffer,
+      client->BufferFromHostLiteral(literal, *device->default_memory_space()));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto dst_buffer, src_buffer->CopyToMemorySpace(
+                                               src_buffer->memory_space()));
+
+  xla::Literal received_literal = xla::LiteralUtil::CreateToken();
+  TF_ASSERT_OK(dst_buffer->ToLiteral(&received_literal).Await());
+  EXPECT_TRUE(received_literal.shape().IsToken());
+}
+
+TEST(PjRtCpuClientTest, CopyErrorTokenToDevice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 1);
+
+  auto* device = client->addressable_devices()[0];
+
+  xla::Shape shape = ShapeUtil::MakeTokenShape();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto src_buffer,
+      client->CreateErrorBuffer(absl::InternalError("token error"), shape,
+                                *device->default_memory_space()));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto dst_buffer, src_buffer->CopyToMemorySpace(
+                                               src_buffer->memory_space()));
+
+  EXPECT_THAT(dst_buffer->ToLiteral().Await(),
+              StatusIs(absl::StatusCode::kInternal, HasSubstr("token error")));
 }
 
 TEST(PjRtCpuClientTest, AsyncTransferCallsOnDone) {

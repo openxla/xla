@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/collective_broadcast_thunk.h"
 #include "xla/backends/gpu/runtime/collective_group_thunk.h"
+#include "xla/backends/gpu/runtime/collective_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/convolution_reorder_thunk.h"
@@ -313,6 +314,10 @@ absl::StatusOr<std::unique_ptr<Thunk>> DeserializeThunkProtoImpl(
       return CollectiveGroupThunk::FromProto(
           std::move(thunk_info), thunk_proto.collective_group_thunk(),
           buffer_allocations, deserializer);
+    case ThunkProto::kCollectiveKernelThunk:
+      return CollectiveKernelThunk::FromProto(
+          std::move(thunk_info), thunk_proto.collective_kernel_thunk(),
+          buffer_allocations);
     case ThunkProto::kNvshmemAllReduceThunk:
       return NvshmemAllReduceThunk::FromProto(
           std::move(thunk_info), thunk_proto.nvshmem_all_reduce_thunk(),

@@ -363,7 +363,10 @@ absl::StatusOr<GlobalTopology> MakeGlobalTopologyFromPjRtClient(
       device.set_device_kind(
           // OSS requires explicit string conversion
           // NOLINTNEXTLINE(*-redundant-string-conversions)
-          std::string(pjrt_client->addressable_devices()[0]->device_kind()));
+          std::string(
+              pjrt_device != nullptr
+                  ? pjrt_device->device_kind()
+                  : pjrt_client->addressable_devices()[0]->device_kind()));
 
       // TODO(hyeontaek): Take optional device->partition_index mapping in
       // GlobalDeviceMapping and generate the `partition_index` attribute for

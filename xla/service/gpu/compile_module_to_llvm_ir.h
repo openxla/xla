@@ -77,14 +77,14 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     BufferValue::SizeFunction buffer_size_bytes_function,
     llvm_ir::LLVMCommandLineOptionsReleasableLock& llvm_options_lock,
     KernelCompiler* compiler,
-    xla::cpu::TargetMachineOptions cpu_target_machine_options);
+    xla::cpu::TargetMachineOptions cpu_target_machine_options,
+    ObjectPool<std::unique_ptr<mlir::MLIRContext>>* mlir_context_pool);
 
 void LinkLlvmModulesInPlace(
     std::vector<std::unique_ptr<llvm::Module>>& llvm_modules);
 
 std::unique_ptr<llvm::Module> CopyToContext(const llvm::Module& module,
                                             llvm::LLVMContext& context);
-
 }  // namespace xla::gpu
 
 #endif  // XLA_SERVICE_GPU_COMPILE_MODULE_TO_LLVM_IR_H_

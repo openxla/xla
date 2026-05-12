@@ -285,6 +285,7 @@ rocm_lib_import(
     interface_library = "%{rocm_root}/lib/librccl.so",
     deps = [
         ":hip_runtime_libs",
+        ":amdsmi_libs",
         ":rocm_smi_libs",
         ":rocprofiler_register_libs",
         ":roctx_libs",
@@ -292,11 +293,15 @@ rocm_lib_import(
 )
 
 cc_library(
-    name = "rocm_smi_libs",
-    data = glob([
-        "%{rocm_root}/lib/librocm_smi64.so*",
-        "%{rocm_root}/lib/libamd_smi.so*",
-    ]),
+    name = "amdsmi_libs",
+    data = glob(["%{rocm_root}/lib/libamd_smi.so*"]),
+)
+
+rocm_lib_import(
+    name = "rocm_smi",
+    data = glob(["%{rocm_root}/lib/librocm_smi64.so*"]),
+    interface_library = "%{rocm_root}/lib/librocm_smi64.so",
+    deps = [],
 )
 
 bzl_library(

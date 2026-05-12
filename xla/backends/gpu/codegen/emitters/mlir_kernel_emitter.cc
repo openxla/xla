@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -66,6 +67,7 @@ limitations under the License.
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
@@ -83,6 +85,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
+#include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/codegen/kernels/ptx_custom_kernel.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
@@ -100,6 +103,7 @@ limitations under the License.
 #include "xla/codegen/kernel_spec.h"
 #include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/mlir_kernel_source.h"
+#include "xla/future.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -223,7 +227,23 @@ absl::Status RunPassPipeline(mlir::ModuleOp module, const HloModule& hlo_module,
   return diagnostic_handler.consumeStatus();
 }
 
+// Prints mlir diagnostic messages to VLOG level 2.
+mlir::LogicalResult DiagnosticHandler(mlir::Diagnostic& diag) {
+  VLOG(2) << diag.str();
+  return mlir::failure();
+}
+
 }  // namespace
+
+std::unique_ptr<mlir::MLIRContext> CreateMlirContext() {
+  // Disable MLIR multi-threading to prevent creating too many threads when
+  // compiling XLA executables concurrently (e.g. during auto-tuning).
+  auto mlir_context = std::make_unique<mlir::MLIRContext>(
+      mlir::MLIRContext::Threading::DISABLED);
+  mlir_context->getDiagEngine().registerHandler(DiagnosticHandler);
+  RegisterSymbolicExprStorage(mlir_context.get());
+  return mlir_context;
+}
 
 absl::StatusOr<MlirKernelSource> MlirKernelEmitter::Emit(
     mlir::MLIRContext* mlir_context, const HloFusionInstruction& fusion,
@@ -309,46 +329,44 @@ llvm::SmallVector<Value> MlirKernelEmitter::EmitThreadAndBlockIds(
           EmitBlockId(b, 0),  EmitBlockId(b, 1),  EmitBlockId(b, 2)};
 }
 
-absl::StatusOr<KernelDefinition<LlvmKernelSource>>
+xla::Future<KernelDefinition<LlvmKernelSource>>
 MlirKernelFusion::EmitLlvmModule(const HloFusionInstruction& fusion,
                                  const std::string& kernel_name,
                                  IrEmitterContext& parent_context) const {
-  auto llvm_context = std::make_unique<llvm::LLVMContext>();
-  std::unique_ptr<IrEmitterContext> ir_emitter_context =
-      parent_context.SubContext(llvm_context.get());
+  return CreateLLVMModule(parent_context.gpu_device_info(), fusion, kernel_name,
+                          &parent_context.buffer_assignment(),
+                          parent_context.kernel_compiler(),
+                          parent_context.BorrowMlirContext())
+      .Map([target_triple = parent_context.target_triple(),
+            buffer_assignment = &parent_context.buffer_assignment(),
+            gpu_device_info = parent_context.gpu_device_info(), kernel_name,
+            launch_dims = launch_dimensions(),
+            data_layout = parent_context.data_layout(),
+            fusion = &fusion](LlvmKernelSource source)
+               -> absl::StatusOr<KernelDefinition<LlvmKernelSource>> {
+        llvm::orc::ThreadSafeModule safe_module =
+            std::move(source).thread_safe_module();
+        llvm::Module* module = safe_module.getModuleUnlocked();
 
-  mlir::MLIRContext& mlir_context = *ir_emitter_context->mlir_context();
+        auto* kernel_func = module->getFunction(kernel_name);
 
-  LaunchDimensions launch_dims = launch_dimensions();
+        AddRanges(kernel_func, launch_dims, module);
 
-  mlir_context.appendDialectRegistry(MlirKernelEmitter::GetDialectRegistry());
-  mlir_context.loadAllAvailableDialects();
-  RegisterSymbolicExprStorage(&mlir_context);
-  ASSIGN_OR_RETURN(
-      std::unique_ptr<llvm::Module> module,
-      CreateLLVMModule(mlir_context, *ir_emitter_context->llvm_context(),
-                       ir_emitter_context->gpu_device_info(), fusion,
-                       kernel_name, &ir_emitter_context->buffer_assignment()));
-  auto* kernel_func = module->getFunction(kernel_name);
-  AddRanges(kernel_func, launch_dims, module.get());
+        module->setDataLayout(data_layout);
+        module->setTargetTriple(target_triple);
 
-  module->setDataLayout(ir_emitter_context->data_layout());
-  module->setTargetTriple(ir_emitter_context->target_triple());
+        llvm::IRBuilder<> builder(module->getContext());
+        AnnotateFunctionAsGpuKernel(module, kernel_func, &builder);
+        RETURN_IF_ERROR(AnnotateKernelLaunchDimensions(
+            gpu_device_info, launch_dims, kernel_func, module));
 
-  llvm::IRBuilder<> builder(module->getContext());
-  AnnotateFunctionAsGpuKernel(module.get(), kernel_func, &builder);
-  RETURN_IF_ERROR(
-      AnnotateKernelLaunchDimensions(ir_emitter_context->gpu_device_info(),
-                                     launch_dims, kernel_func, module.get()));
-
-  ASSIGN_OR_RETURN(
-      KernelSpec kernel_spec,
-      emitters::GetKernelSpec(kernel_name, fusion,
-                              &ir_emitter_context->buffer_assignment(),
-                              launch_dims.AsWorkDimensions()));
-  return KernelDefinition<LlvmKernelSource>(
-      std::move(kernel_spec),
-      LlvmKernelSource{std::move(llvm_context), std::move(module)});
+        ASSIGN_OR_RETURN(
+            KernelSpec kernel_spec,
+            emitters::GetKernelSpec(kernel_name, *fusion, buffer_assignment,
+                                    launch_dims.AsWorkDimensions()));
+        return KernelDefinition<LlvmKernelSource>(
+            std::move(kernel_spec), LlvmKernelSource{std::move(safe_module)});
+      });
 }
 
 absl::StatusOr<FusionEmissionResult> MlirKernelFusion::Emit(
@@ -360,32 +378,33 @@ absl::StatusOr<FusionEmissionResult> MlirKernelFusion::Emit(
                                   GetDefaultBufferAlignment(), &fusion));
   auto [future_entry, cached] = ir_emitter_context.kernel_cache().GetWithStatus(
       fusion.fused_instructions_computation(), args.args(),
-      /*discriminator=*/"", [&]() -> tsl::Future<KernelReuseCache::Entry> {
+      /*discriminator=*/"", [&]() -> xla::Future<KernelReuseCache::Entry> {
         std::string kernel_name = ir_emitter_context.GetSanitizedUniqueName(
             std::string(fusion.name()));
-        ASSIGN_OR_RETURN(
-            KernelDefinition<LlvmKernelSource> kernel_def,
-            EmitLlvmModule(fusion, kernel_name, ir_emitter_context));
+        return EmitLlvmModule(fusion, kernel_name, ir_emitter_context)
+            .Map([&ir_emitter_context, &fusion,
+                  kernel_name](KernelDefinition<LlvmKernelSource> kernel_def)
+                     -> xla::Future<KernelReuseCache::Entry> {
+              KernelSpec spec = kernel_def.spec();
+              ASSIGN_OR_RETURN(
+                  LaunchDimensions launch_dims,
+                  LaunchDimensions::FromWorkDimensions(spec.work_dimensions()));
 
-        KernelSpec spec = kernel_def.spec();
-        ASSIGN_OR_RETURN(
-            LaunchDimensions launch_dims,
-            LaunchDimensions::FromWorkDimensions(spec.work_dimensions()));
+              bool use_pdl = EnablePDL(*fusion.GetModule(),
+                                       ir_emitter_context.gpu_device_info());
 
-        bool use_pdl = EnablePDL(*fusion.GetModule(),
-                                 ir_emitter_context.gpu_device_info());
+              return ir_emitter_context.kernel_compiler()
+                  ->CompileToPtx(std::move(kernel_def).TakeSource())
+                  .Map([kernel_name = std::move(kernel_name),
+                        launch_dims = std::move(launch_dims),
+                        use_pdl](const std::vector<uint8_t>& cubin) {
+                    KernelReuseCache::Entry entry{kernel_name, launch_dims,
+                                                  std::nullopt,
+                                                  /*shmem_bytes=*/0, cubin};
 
-        return ir_emitter_context.kernel_compiler()
-            ->CompileToPtx(std::move(kernel_def).TakeSource())
-            .Map([kernel_name = std::move(kernel_name),
-                  launch_dims = std::move(launch_dims),
-                  use_pdl](const std::vector<uint8_t>& cubin) {
-              KernelReuseCache::Entry entry{kernel_name, launch_dims,
-                                            std::nullopt,
-                                            /*shmem_bytes=*/0, cubin};
-
-              entry.use_pdl = use_pdl;
-              return entry;
+                    entry.use_pdl = use_pdl;
+                    return entry;
+                  });
             });
       });
   FusionEmissionResult result;
@@ -414,44 +433,25 @@ absl::StatusOr<FusionEmissionResult> MlirKernelFusion::Emit(
   return result;
 }
 
-absl::StatusOr<std::unique_ptr<llvm::Module>>
-MlirKernelFusion::CreateLLVMModule(
-    mlir::MLIRContext& mlir_context, llvm::LLVMContext& llvm_context,
+xla::Future<LlvmKernelSource> MlirKernelFusion::CreateLLVMModule(
     const se::DeviceDescription& device, const HloFusionInstruction& fusion,
     const std::string& entry_function_name,
-    const BufferAssignment* buffer_assignment) const {
+    const BufferAssignment* buffer_assignment, KernelCompiler* kernel_compiler,
+    BorrowedMlirContext borrowed_context) const {
+  mlir::MLIRContext* mlir_context = borrowed_context->get();
+
+  mlir_context->appendDialectRegistry(MlirKernelEmitter::GetDialectRegistry());
+  mlir_context->loadAllAvailableDialects();
+  RegisterSymbolicExprStorage(mlir_context);
+
   ASSIGN_OR_RETURN(MlirKernelSource source,
-                   emitter_->Emit(&mlir_context, fusion, entry_function_name,
+                   emitter_->Emit(mlir_context, fusion, entry_function_name,
                                   buffer_assignment));
 
-  mlir::OwningOpRef<mlir::ModuleOp> module = std::move(source).TakeModule();
-
-  mlir::PassManager pm(module->getContext());
-  // Only enable verifier in debug builds.
-  bool should_verify = (fusion.GetModule()
-                            ->config()
-                            .debug_options()
-                            .xla_gpu_llvm_verification_level() >= 1);
-#ifndef NDEBUG
-  should_verify = true;
-#endif
-  pm.enableVerifier(should_verify);
-
-  emitters::RegisterOptimizationPasses(pm);
-  AddLoopTransformationPasses(pm, device, emitter_->unroll_factor());
-  if (EnablePDL(*fusion.GetModule(), device)) {
-    pm.addPass(CreateInsertPDLPass());
-  }
-  AddLoweringPasses(pm, device);
-
-  RETURN_IF_ERROR(RunPassPipeline(module.get(), *fusion.GetModule(), pm,
-                                  entry_function_name));
-
-  auto llvm_module = mlir::translateModuleToLLVMIR(module.get(), llvm_context);
-  TF_RET_CHECK(llvm_module != nullptr)
-      << "Failed to translate module to LLVM IR.";
-
-  return llvm_module;
+  return kernel_compiler->CompileMlirToLlvm(
+      device, *fusion.GetModule(), entry_function_name,
+      emitter_->unroll_factor(), std::move(source),
+      std::move(borrowed_context));
 }
 
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>>
@@ -627,8 +627,9 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
     se::SemanticVersion ptx_version =
         nvptx::DetermineHighestSupportedPtxVersionFromCudaVersion(
             device.runtime_version());
-    pm.addPass(CreateConvertFloatNvidiaPass(
-        cc->major, cc->minor, ptx_version.major(), ptx_version.minor()));
+    pm.addPass(CreateConvertFloatNvidiaPass(cc->major, cc->minor,
+                                            ptx_version.major_version(),
+                                            ptx_version.minor_version()));
   } else if (auto* cc =
                  device.gpu_compute_capability().rocm_compute_capability()) {
     if (cc->has_fp8_support()) {
@@ -642,6 +643,41 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
   pm.addPass(mlir::createSCFToControlFlowPass());
   pm.addPass(emitters::CreateLowerToLLVMGPUPass(device));
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
+}
+
+absl::StatusOr<LlvmKernelSource> CompileMlirToLlvm(
+    const se::DeviceDescription& device, const HloModule& hlo_module,
+    const std::string& entry_function_name, int unroll_factor,
+    mlir::MLIRContext& mlir_context, MlirKernelSource source) {
+  auto llvm_context = std::make_unique<llvm::LLVMContext>();
+
+  mlir::OwningOpRef<mlir::ModuleOp> module = std::move(source).TakeModule();
+
+  mlir::PassManager pm(module->getContext());
+  // Only enable verifier in debug builds.
+  bool should_verify =
+      (hlo_module.config().debug_options().xla_gpu_llvm_verification_level() >=
+       1);
+#ifndef NDEBUG
+  should_verify = true;
+#endif
+  pm.enableVerifier(should_verify);
+
+  emitters::RegisterOptimizationPasses(pm);
+  AddLoopTransformationPasses(pm, device, unroll_factor);
+  if (EnablePDL(hlo_module, device)) {
+    pm.addPass(CreateInsertPDLPass());
+  }
+  AddLoweringPasses(pm, device);
+
+  RETURN_IF_ERROR(
+      RunPassPipeline(module.get(), hlo_module, pm, entry_function_name));
+
+  auto llvm_module = mlir::translateModuleToLLVMIR(module.get(), *llvm_context);
+  TF_RET_CHECK(llvm_module != nullptr)
+      << "Failed to translate module to LLVM IR.";
+
+  return LlvmKernelSource{std::move(llvm_context), std::move(llvm_module)};
 }
 
 }  // namespace xla::gpu

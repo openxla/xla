@@ -157,9 +157,12 @@ se::GpuTargetConfigProto GpuTargetConfig::ToProto() const {
   proto.set_platform_name(platform_name);
   *proto.mutable_dnn_version_info() = dnn_version_info.ToProto();
   se::RuntimeVersionProto runtime_version_proto;
-  runtime_version_proto.set_major(device_description.runtime_version().major());
-  runtime_version_proto.set_minor(device_description.runtime_version().minor());
-  runtime_version_proto.set_patch(device_description.runtime_version().patch());
+  runtime_version_proto.set_major(
+      device_description.runtime_version().major_version());
+  runtime_version_proto.set_minor(
+      device_description.runtime_version().minor_version());
+  runtime_version_proto.set_patch(
+      device_description.runtime_version().patch_version());
   *proto.mutable_runtime_version() = runtime_version_proto;
   proto.set_device_description_str(device_description_str);
   return proto;

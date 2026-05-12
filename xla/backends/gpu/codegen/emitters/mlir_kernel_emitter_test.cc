@@ -18,6 +18,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -37,13 +38,18 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
+#include "xla/backends/gpu/codegen/cubin_custom_kernel_compiler.h"
+#include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
+#include "xla/codegen/llvm_kernel_source.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/runtime/object_pool.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/stream_executor/device_description.h"
@@ -139,22 +145,34 @@ TEST_F(MlirKernelFusionTest, CreateMlirModule) {
 }
 
 TEST_F(MlirKernelFusionTest, CreateLLVMModule) {
-  llvm::LLVMContext llvm_context;
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(kModule));
+  CubinCustomKernelCompiler kernel_compiler(
+      [](llvm::Module& llvm_module, const se::DeviceDescription& descr,
+         const DebugOptions& opts) { return std::vector<uint8_t>{}; },
+      device_info_, module->config().debug_options());
 
-  auto module = ParseAndReturnVerifiedModule(kModule).value();
+  ObjectPool<std::unique_ptr<mlir::MLIRContext>> mlir_context_pool(
+      []() { return CreateMlirContext(); });
   MlirKernelFusion emitter(std::make_unique<DummyCopyEmitter>());
+  TF_ASSERT_OK_AND_ASSIGN(BorrowedMlirContext borrowed_context,
+                          mlir_context_pool.GetOrCreate());
   TF_ASSERT_OK_AND_ASSIGN(
-      auto llvm_module,
-      emitter.CreateLLVMModule(
-          mlir_context_, llvm_context, device_info_,
-          *Cast<HloFusionInstruction>(
-              module->entry_computation()->root_instruction()),
-          "fusion",
-          /*buffer_assignment=*/nullptr));
+      LlvmKernelSource source,
+      emitter
+          .CreateLLVMModule(
+              device_info_,
+              *Cast<HloFusionInstruction>(
+                  module->entry_computation()->root_instruction()),
+              "fusion",
+              /*buffer_assignment=*/nullptr, &kernel_compiler,
+              std::move(borrowed_context))
+          .Await());
+  auto llvm_module = std::move(source).thread_safe_module();
 
   std::string out;
   llvm::raw_string_ostream stream(out);
-  stream << *llvm_module;
+  stream << *llvm_module.getModuleUnlocked();
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto filecheck_result,

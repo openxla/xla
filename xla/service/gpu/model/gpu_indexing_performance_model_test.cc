@@ -37,7 +37,6 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
@@ -408,12 +407,11 @@ ENTRY main {
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
       module->entry_computation()->root_instruction());
 
-  LaunchDimensions launch_dimensions{131076LL * 16384LL, 32};
   TF_ASSERT_OK_AND_ASSIGN(
       auto runtime_data,
       indexing_cost_model_.EstimateRunTimeForTiledFusion(
-          *fusion_adaptor, launch_dimensions,
-          BlockLevelParameters{/*output_tile_sizes=*/{{1, 1}}}));
+          *fusion_adaptor, BlockLevelParameters{/*output_tile_sizes=*/{{1, 1}},
+                                                /*num_warps=*/1}));
 
   EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.read_time), 2932, 2);
   EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.compute_time), 14, 1);
@@ -441,11 +439,9 @@ ENTRY main {
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
       module->entry_computation()->root_instruction());
 
-  LaunchDimensions launch_dimensions{96, 128};
-
   auto result = indexing_cost_model_.EstimateRunTimeForTiledFusion(
-      *fusion_adaptor, launch_dimensions,
-      BlockLevelParameters{/*output_tile_sizes=*/{{1, 128}}});
+      *fusion_adaptor, BlockLevelParameters{/*output_tile_sizes=*/{{1, 128}},
+                                            /*num_warps=*/3});
 
   TF_ASSERT_OK(result.status());
   // The flops contribution for a single instruction is calculated as:
@@ -471,7 +467,7 @@ dot_fusion {
   p0 = f32[128, 257] parameter(0)
   p1 = f32[257, 64] parameter(1)
   exp = f32[128, 257] exponential(p0)
-  ROOT dot = f32[128, 64] dot(exp, p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT dot = f32[128, 64] dot(exp, p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={sizes:[64]}
 }
 
 ENTRY main {
@@ -483,13 +479,11 @@ ENTRY main {
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
       module->entry_computation()->root_instruction());
 
-  uint64_t num_blocks = 8;
-  int64_t num_warps = 32;
-
   auto result = indexing_cost_model_.EstimateRunTimeForTiledFusion(
-      *fusion_adaptor, LaunchDimensions{num_blocks, num_warps * WarpSize()},
-      BlockLevelParameters{/*output_tile_sizes=*/{{64, 32, 32}},
-                           /*num_warps=*/num_warps});
+      *fusion_adaptor, BlockLevelParameters{/*output_tile_sizes=*/{{32, 32}},
+                                            /*num_warps=*/32});
+
+  int64_t num_blocks = 8;
 
   TF_ASSERT_OK(result.status());
   // The flops contribution for a single instruction is calculated as:
@@ -534,20 +528,16 @@ ENTRY main {
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
       module->entry_computation()->root_instruction());
 
-  int64_t num_warps = 1;
-
   TF_ASSERT_OK_AND_ASSIGN(
-      auto res1,
-      indexing_cost_model_.EstimateRunTimeForTiledFusion(
-          *fusion_adaptor, /*launch_dimensions=*/{16, num_warps * WarpSize()},
-          BlockLevelParameters{/*output_tile_sizes=*/{{1, 16000}}}));
+      auto res1, indexing_cost_model_.EstimateRunTimeForTiledFusion(
+                     *fusion_adaptor,
+                     BlockLevelParameters{/*output_tile_sizes=*/{{1, 16000}}}));
   EXPECT_NEAR(absl::ToDoubleMicroseconds(res1.exec_time), 3, 1);
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto res2,
-      indexing_cost_model_.EstimateRunTimeForTiledFusion(
-          *fusion_adaptor, /*launch_dimensions=*/{8, num_warps * WarpSize()},
-          BlockLevelParameters{/*output_tile_sizes=*/{{2, 16000}}}));
+      auto res2, indexing_cost_model_.EstimateRunTimeForTiledFusion(
+                     *fusion_adaptor,
+                     BlockLevelParameters{/*output_tile_sizes=*/{{2, 16000}}}));
   EXPECT_TRUE(res2.IsInfinite());
 }
 
@@ -588,27 +578,28 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(
       auto res1,
       indexing_cost_model_.EstimateRunTimeForTiledFusion(
-          *fusion_adaptor, /*launch_dimensions=*/{8192, 8 * WarpSize()},
-          BlockLevelParameters{/*output_tile_sizes=*/{{4, 4}}}));
+          *fusion_adaptor, BlockLevelParameters{/*output_tile_sizes=*/{{4, 4}},
+                                                /*num_warps=*/8}));
   EXPECT_NEAR(absl::ToDoubleMicroseconds(res1.exec_time), 147, 1);
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto res2,
       indexing_cost_model_.EstimateRunTimeForTiledFusion(
-          *fusion_adaptor, /*launch_dimensions=*/{4096, 8 * WarpSize()},
-          BlockLevelParameters{/*output_tile_sizes=*/{{8, 4}}}));
+          *fusion_adaptor, BlockLevelParameters{/*output_tile_sizes=*/{{8, 4}},
+                                                /*num_warps=*/8}));
   EXPECT_TRUE(res2.IsInfinite());
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto res3,
       indexing_cost_model_.EstimateRunTimeForTiledFusion(
-          *fusion_adaptor, /*launch_dimensions=*/{4096, 4 * WarpSize()},
-          BlockLevelParameters{/*output_tile_sizes=*/{{4, 8}}}));
+          *fusion_adaptor, BlockLevelParameters{/*output_tile_sizes=*/{{4, 8}},
+                                                /*num_warps=*/4}));
   EXPECT_TRUE(res3.IsInfinite());
 }
 
-TEST_F(GpuIndexingPerformanceModelTest,
-       EstimateRunTimeForTiledFusion_UsesPaddedTileSizeForMemoryAccessTime) {
+TEST_F(
+    GpuIndexingPerformanceModelTest,
+    EstimateRunTimeForTiledFusion_UsesHloDimensionSizeWhenTileCoversFullDimensionForMemoryAccessTime) {  // NOLINT(whitespace/line_length)
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -629,8 +620,9 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto res, indexing_cost_model_.EstimateRunTimeForTiledFusion(
-                    *fusion_adaptor, /*launch_dimensions=*/{1, 2 * WarpSize()},
-                    BlockLevelParameters{/*output_tile_sizes=*/{{65, 65}}}));
+                    *fusion_adaptor,
+                    BlockLevelParameters{/*output_tile_sizes=*/{{65, 65}},
+                                         /*num_warps=*/2}));
 
   constexpr int64_t kParamSizeBytes = 65 * 65 * 4;
   constexpr int64_t kPaddedOutputTileSize = 128 * 128;
@@ -668,14 +660,16 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(
       auto res_coalesced,
       indexing_cost_model_.EstimateRunTimeForTiledFusion(
-          *fusion_adaptor, /*launch_dimensions=*/{4096, 2 * WarpSize()},
-          BlockLevelParameters{/*output_tile_sizes=*/{{2, 128}}}));
+          *fusion_adaptor,
+          BlockLevelParameters{/*output_tile_sizes=*/{{2, 128}},
+                               /*num_warps=*/2}));
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto res_uncoalesced,
       indexing_cost_model_.EstimateRunTimeForTiledFusion(
-          *fusion_adaptor, /*launch_dimensions=*/{4096, 2 * WarpSize()},
-          BlockLevelParameters{/*output_tile_sizes=*/{{128, 2}}}));
+          *fusion_adaptor,
+          BlockLevelParameters{/*output_tile_sizes=*/{{128, 2}},
+                               /*num_warps=*/2}));
 
   // The number of bytes read is the same for coalesced and uncoalesced reads.
   constexpr int64_t kParamSizeBytes = 2048 * 512 * 4;
@@ -714,13 +708,13 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(
       auto res_coalesced,
       indexing_cost_model_.EstimateRunTimeForTiledFusion(
-          *fusion_adaptor, /*launch_dimensions=*/{512, WarpSize()},
+          *fusion_adaptor,
           BlockLevelParameters{/*output_tile_sizes=*/{{16, 128}}}));
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto res_uncoalesced,
       indexing_cost_model_.EstimateRunTimeForTiledFusion(
-          *fusion_adaptor, /*launch_dimensions=*/{512, WarpSize()},
+          *fusion_adaptor,
           BlockLevelParameters{/*output_tile_sizes=*/{{128, 16}}}));
 
   // The number of bytes read is the same for coalesced and uncoalesced reads.
@@ -768,14 +762,13 @@ ENTRY main {
                               .ComputeTiledComputation(Tiling(
                                   {{fusion_root, FlatTiling({9, 9, 9})}})));
 
-  LaunchDimensions launch_dimensions = GpuPerformanceModelWithIndexingAnalysis::
-      GetLaunchDimensionsForTiledFusion(tiled_hlo_computation, device_info_);
-  EXPECT_EQ(launch_dimensions.num_blocks(), 1);
+  int64_t num_warps = GpuPerformanceModelWithIndexingAnalysis::EstimateNumWarps(
+      tiled_hlo_computation);
 
   // Tile size is 9 * 9 * 9 = 729 that corresponds to 2 warps. But we estimate
   // the number of warps for padded tile that has size of 16 * 16 * 16 = 4096
   // and corresponds to 4 warps.
-  EXPECT_EQ(launch_dimensions.num_threads_per_block(), 4 * WarpSize());
+  EXPECT_EQ(num_warps, 4);
 }
 
 TEST_F(GpuIndexingPerformanceModelTest,
@@ -818,13 +811,12 @@ ENTRY main {
       std::get<SymbolicTileAnalysis>(analysis_or_error)
           .ComputeTiledComputation(Tiling({{fusion_root, FlatTiling({1})}})));
 
-  LaunchDimensions launch_dimensions = GpuPerformanceModelWithIndexingAnalysis::
-      GetLaunchDimensionsForTiledFusion(tiled_hlo_computation, device_info_);
-  EXPECT_EQ(launch_dimensions.num_blocks(), 1);
+  int64_t num_warps = GpuPerformanceModelWithIndexingAnalysis::EstimateNumWarps(
+      tiled_hlo_computation);
 
   // The largest tile size is 1 * 4096, for which our implementation recommends
   // using 4 warps.
-  EXPECT_EQ(launch_dimensions.num_threads_per_block(), 4 * WarpSize());
+  EXPECT_EQ(num_warps, 4);
 }
 
 class FlopsPerElementTest : public GpuIndexingPerformanceModelTest {

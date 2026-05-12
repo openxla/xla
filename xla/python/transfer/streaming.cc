@@ -338,11 +338,11 @@ AllocateNetworkPinnedMemory(size_t size) {
   auto out = std::make_shared<pinned_mem_state>();
   int sfd = socket(AF_INET6, SOCK_STREAM | SOCK_CLOEXEC, 0);
   out->buffer = mmap(nullptr, size, PROT_READ, MAP_SHARED, sfd, 0);
+  close(sfd);
   if (out->buffer == MAP_FAILED) {
     return absl::ErrnoToStatus(errno, "tcp-zero-copy-mmap");
   }
   out->size = size;
-  close(sfd);
   out->data =
       absl::Span<uint8_t>(reinterpret_cast<uint8_t*>(out->buffer), size);
   return std::shared_ptr<absl::Span<uint8_t>>(out, &out->data);

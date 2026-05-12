@@ -18,6 +18,7 @@ syntax = "proto3";
 package xla.gpu;
 
 import "xla/backends/gpu/codegen/kernels/custom_kernel.proto";
+import "xla/backends/gpu/runtime/collective_kernel_thunk.proto";
 import "xla/backends/gpu/runtime/collective_thunk.proto";
 import "xla/backends/gpu/runtime/convolution_filter_thunk.proto";
 import "xla/backends/gpu/runtime/copy_thunk.proto";
@@ -447,6 +448,7 @@ message ThunkProto {
     NvshmemRecvThunkProto nvshmem_recv_thunk = 55;
     AsyncStartThunkProto async_start_thunk = 57;
     AsyncDoneThunkProto async_done_thunk = 58;
+    CollectiveKernelThunkProto collective_kernel_thunk = 59;
   }
 
   reserved 10, 37, 49, 50, 51, 56;

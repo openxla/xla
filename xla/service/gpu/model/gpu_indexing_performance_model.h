@@ -71,15 +71,13 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
             *device_info_),
         mlir_context_(mlir_context) {}
 
-  // Returns the launch dimensions for the given tiled HLO computation.
-  static LaunchDimensions GetLaunchDimensionsForTiledFusion(
-      const TiledHloComputation& tiled_hlo_computation,
-      const se::DeviceDescription& device_info);
+  // Returns the number of warps for the given tiled HLO computation.
+  static int64_t EstimateNumWarps(
+      const TiledHloComputation& tiled_hlo_computation);
 
   absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputation(
       const HloFusionAdaptor& fusion_adaptor,
-      const TiledHloComputation& tiled_hlo_computation,
-      const LaunchDimensions& launch_dimensions);
+      const TiledHloComputation& tiled_hlo_computation, int64_t num_warps);
 
   // Estimate the run time of the fusion with the given launch dimensions and
   // output tile sizes.
@@ -89,7 +87,6 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
   // access and computation.
   absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledFusion(
       const HloFusionAdaptor& fusion_adaptor,
-      const LaunchDimensions& launch_dimensions,
       const BlockLevelParameters& block_level_parameters);
 
   // Estimate the run time of an Hlo instruction assuming it is emitted by
@@ -118,8 +115,6 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
   int64_t FlopsPerElement(const HloInstruction* instr);
 
  private:
-  int64_t GetShapeSizeRecursive(const Shape& shape) const;
-
   const HloOpProfiles::HloOpProfile* hlo_op_profile_;
   const se::DeviceDescription* device_info_;
   HloFusionAnalysisCache* fusion_analysis_cache_;

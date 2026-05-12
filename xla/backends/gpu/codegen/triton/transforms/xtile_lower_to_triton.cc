@@ -104,14 +104,14 @@ LogicalResult CanonicalDotScaled(::xla::xtile::DotScaledOp op,
   Value lhs = op.getLhs();
   if (mlir::failed(CanonicalizeOperand(
           builder, lhs, dims_attr.getLhsContractingDimensions()[0],
-          ::xla::xtile::DotOperandSide::kLhs))) {
+          DotOperandSide::kLhs))) {
     return rewriter.notifyMatchFailure(op_loc, "Failed to canonicalize LHS.");
   }
 
   Value rhs = op.getRhs();
   if (mlir::failed(CanonicalizeOperand(
           builder, rhs, dims_attr.getRhsContractingDimensions()[0],
-          ::xla::xtile::DotOperandSide::kRhs))) {
+          DotOperandSide::kRhs))) {
     return rewriter.notifyMatchFailure(op_loc, "Failed to canonicalize RHS.");
   }
 
@@ -119,7 +119,7 @@ LogicalResult CanonicalDotScaled(::xla::xtile::DotScaledOp op,
   if (lhs_scale &&
       mlir::failed(CanonicalizeOperand(
           builder, lhs_scale, dims_attr.getLhsContractingDimensions()[0],
-          ::xla::xtile::DotOperandSide::kLhs))) {
+          DotOperandSide::kLhs))) {
     return rewriter.notifyMatchFailure(op_loc,
                                        "Failed to canonicalize LHS scale.");
   }
@@ -128,7 +128,7 @@ LogicalResult CanonicalDotScaled(::xla::xtile::DotScaledOp op,
   if (rhs_scale &&
       mlir::failed(CanonicalizeOperand(
           builder, rhs_scale, dims_attr.getRhsContractingDimensions()[0],
-          ::xla::xtile::DotOperandSide::kRhs))) {
+          DotOperandSide::kRhs))) {
     return rewriter.notifyMatchFailure(op_loc,
                                        "Failed to canonicalize RHS scale.");
   }

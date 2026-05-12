@@ -74,6 +74,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_version_parser.h"
 #include "xla/stream_executor/cuda/cuda_vmm_allocator.h"
 #include "xla/stream_executor/cuda/cudnn_api_wrappers.h"
+#include "xla/stream_executor/cuda/nvml_lock.h"
 #include "xla/stream_executor/cuda/tma_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
@@ -958,6 +959,15 @@ absl::Status CudaExecutor::Init() {
   vmm_options_.enable_peer_access = absl::c_any_of(
       peer_access_cache_, [](const auto& p) { return p.second; });
 
+  // Disable fabric handle if there are no active P2P NVLinks — using
+  // FABRIC+POSIX_FD without a cluster causes allocation failures.
+  if (vmm_options_.enable_fabric_handle &&
+      GetDeviceDescription().device_interconnect_info().active_links == 0) {
+    XLA_VLOG_DEVICE(2, device_ordinal())
+        << "Disabling fabric handle: no active P2P NVLinks detected.";
+    vmm_options_.enable_fabric_handle = false;
+  }
+
   device_allocator_ = std::make_unique<CudaDeviceAllocator>(this);
   host_allocator_ = std::make_unique<CudaHostAllocator>(this, numa_node_);
   vmm_allocator_ = std::make_unique<CudaVmmAllocator>(this, vmm_options_);
@@ -1686,37 +1696,40 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
                               int64_t{mem_bus_width_bits.value()} / 8);
   }
 
-  if (absl::StatusOr<nvmlDevice_t> device = GetNvmlDevice(pci_bus_id);
-      device.ok()) {
-    absl::StatusOr<int64_t> bandwidth = GetDevicePcieBandwidth(*device);
-    if (bandwidth.ok()) {
-      desc.set_pcie_bandwidth(*bandwidth);
-    } else {
-      LOG(ERROR) << bandwidth.status().message()
-                 << " Assuming PCIe gen 3 x16 bandwidth.";
-      bandwidth = 16LL * 1024 * 1024 * 1024;
-    }
-
-    absl::StatusOr<int64_t> p2p_link_count =
-        GetNumberOfActiveP2PNvlinks(*device);
-    DeviceInterconnectInfo info;
-    if (p2p_link_count.ok()) {
-      info.active_links = *p2p_link_count;
-    } else {
-      LOG(ERROR) << p2p_link_count;
-    }
-    // nvmlDeviceGetGpuFabricInfoV is only available in driver r545+
-    if (desc.kernel_mode_driver_version().major() >= 545) {  // NOLINT
-      absl::StatusOr<FabricInfo> fabric_info = GetDeviceFabricInfo(*device);
-      if (fabric_info.ok()) {
-        info.cluster_uuid = fabric_info->cluster_uuid;
-        info.clique_id = fabric_info->clique_id;
+  {
+    absl::MutexLock l(::stream_executor::gpu::GetNVMLLock());
+    if (absl::StatusOr<nvmlDevice_t> device = GetNvmlDevice(pci_bus_id);
+        device.ok()) {
+      absl::StatusOr<int64_t> bandwidth = GetDevicePcieBandwidth(*device);
+      if (bandwidth.ok()) {
+        desc.set_pcie_bandwidth(*bandwidth);
+      } else {
+        LOG(ERROR) << bandwidth.status().message()
+                   << " Assuming PCIe gen 3 x16 bandwidth.";
+        bandwidth = 16LL * 1024 * 1024 * 1024;
       }
-      desc.set_device_interconnect_info(info);
-    } else {
-      VLOG(1) << "Skipping GPU Fabric info retrieval; NVIDIA driver r545+ "
-                 "is required. Current driver version: "
-              << desc.kernel_mode_driver_version();
+
+      absl::StatusOr<int64_t> p2p_link_count =
+          GetNumberOfActiveP2PNvlinks(*device);
+      DeviceInterconnectInfo info;
+      if (p2p_link_count.ok()) {
+        info.active_links = *p2p_link_count;
+      } else {
+        LOG(ERROR) << p2p_link_count;
+      }
+      // nvmlDeviceGetGpuFabricInfoV is only available in driver r545+
+      if (desc.kernel_mode_driver_version().major_version() >= 545) {  // NOLINT
+        absl::StatusOr<FabricInfo> fabric_info = GetDeviceFabricInfo(*device);
+        if (fabric_info.ok()) {
+          info.cluster_uuid = fabric_info->cluster_uuid;
+          info.clique_id = fabric_info->clique_id;
+        }
+        desc.set_device_interconnect_info(info);
+      } else {
+        VLOG(1) << "Skipping GPU Fabric info retrieval; NVIDIA driver r545+ "
+                   "is required. Current driver version: "
+                << desc.kernel_mode_driver_version();
+      }
     }
   }
 

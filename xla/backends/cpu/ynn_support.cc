@@ -20,6 +20,7 @@ limitations under the License.
 #include <tuple>
 
 #include "ynnpack/include/ynnpack.h"
+#include "absl/algorithm/container.h"
 #include "absl/base/no_destructor.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -227,6 +228,39 @@ bool IsSliceOpSupportedByYnn(const HloInstruction* hlo) {
   return hlo->shape().element_type() == input->shape().element_type();
 }
 
+bool IsPadOpSupportedByYnn(const HloInstruction* hlo) {
+  CHECK_EQ(hlo->opcode(), HloOpcode::kPad);
+  if (!YnnType(hlo->shape().element_type()).ok()) {
+    return false;
+  }
+  const HloInstruction* input = hlo->operand(0);
+  const HloInstruction* padding_value = hlo->operand(1);
+  if (hlo->shape().element_type() != input->shape().element_type() ||
+      hlo->shape().element_type() != padding_value->shape().element_type()) {
+    return false;
+  }
+  if (!IsLayoutSupportedByYnn(hlo->shape()) ||
+      !IsLayoutSupportedByYnn(input->shape())) {
+    return false;
+  }
+
+  const PaddingConfig& config = hlo->padding_config();
+  for (int i = 0; i < config.dimensions().size(); ++i) {
+    const auto& dim = config.dimensions(i);
+    if (input->shape().dimensions()[i] == 1) {
+      if (dim.edge_padding_low() != 0 || dim.edge_padding_high() != 0) {
+        // YNNPACK treats extent 1 dimensions as broadcasts (b/510492094).
+        return false;
+      }
+    }
+    if (dim.interior_padding() != 0) {
+      // YNNPACK's ynn_define_static_pad does not support interior padding.
+      return false;
+    }
+  }
+  return true;
+}
+
 bool IsIotaSupportedByYnn(const HloInstruction* hlo) {
   CHECK_EQ(hlo->opcode(), HloOpcode::kIota);
   PrimitiveType type = hlo->shape().element_type();
@@ -392,9 +426,12 @@ bool IsReduceLikeOpSupportedByYnn(const HloInstruction* hlo) {
     const Window& window = reduce_window->window();
     int new_axis_count = 0;
     for (const WindowDimension& dim : window.dimensions()) {
-      if (dim.size() > 1) {
+      if (dim.size() > 1 || dim.stride() > 1) {
         // TODO(ashaposhnikov): consider relaxing the constraints below.
-        if (dim.stride() != dim.size()) {
+        if (dim.size() > 1 && dim.stride() != dim.size()) {
+          // When a reduce-window has a stride greater than 1 on a dimension
+          // with size 1, it effectively skips input elements, resulting in a
+          // smaller output dimension.
           return false;
         }
         if (dim.base_dilation() != 1) {

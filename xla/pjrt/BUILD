@@ -105,6 +105,23 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "dynamic_shapes",
+    srcs = ["dynamic_shapes.cc"],
+    hdrs = ["dynamic_shapes.h"],
+    deps = [
+        ":device_event",
+        ":raw_buffer",
+        "//xla:shape_util",
+        "//xla/tsl/concurrency:async_value",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:platform_port",
+    ],
+)
+
+cc_library(
     name = "common_pjrt_client",
     srcs = [
         "abstract_tracked_device_buffer.cc",
@@ -123,6 +140,7 @@ cc_library(
     deps = [
         ":async_work_runner",
         ":device_event",
+        ":dynamic_shapes",
         ":host_callback",
         ":pjrt_client",
         ":pjrt_compiler",
@@ -788,6 +806,7 @@ cc_library(
         ":async_work_runner",
         ":common_pjrt_client",
         ":device_event",
+        ":dynamic_shapes",
         ":event_pool",
         ":host_memory_allocator",
         ":host_memory_spaces",
@@ -1290,23 +1309,23 @@ cc_library(
     ],
     compatible_with = [],
     tags = [
+        "cuda-only",
         "gpu",
         "manual",
     ],
     visibility = internal_visibility([":friends"]),
     deps = [
         "//xla/backends/gpu/codegen/triton:compilation_pipeline",
+        "//xla/service/gpu/llvm_gpu_backend",
+        "//xla/service/gpu/llvm_gpu_backend:nvptx_backend",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
-        "//xla/tsl/platform:env",
-        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:IRReader",
@@ -1323,9 +1342,9 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:IndexToLLVM",
         "@llvm-project//mlir:LLVMCommonConversion",
+        "@llvm-project//mlir:LLVMDialect",
         "@llvm-project//mlir:LLVMIRTransforms",
         "@llvm-project//mlir:LLVMToLLVMIRTranslation",
-        "@llvm-project//mlir:NVVMTarget",
         "@llvm-project//mlir:NVVMToLLVMIRTranslation",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
@@ -1334,7 +1353,6 @@ cc_library(
         "@triton//:TritonTransforms",
         "@triton//third_party/nvidia:NVGPUToLLVM",
         "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
-        "@tsl//tsl/platform:cuda_root_path",
         "@tsl//tsl/platform:path",
     ],
 )
@@ -1429,9 +1447,12 @@ cc_library(
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:executor",
         "//xla/tsl/concurrency:ref_count",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
     ],
 )

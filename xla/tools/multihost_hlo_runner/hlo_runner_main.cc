@@ -56,7 +56,7 @@ Usage:
 
 The tool can be used to just compile the HLO and not run it:
 
-  bazel run hlo_runner_main -- /path/to/module1.hlo --run=false
+  bazel run hlo_runner_main -- /path/to/module1.hlo --compile_only=true
 
 Note that multiple HLOs can also be launched:
 
@@ -81,6 +81,7 @@ struct HloRunnerConfig {
   xla::InputFormat input_format;
   std::string output_mode_str = "return_outputs";
   bool should_run = true;
+  bool compile_only = false;
   bool enable_mock_nccl = false;
   std::string dump_output_literal_to = "";
   int task_id = 0;
@@ -300,7 +301,7 @@ static absl::Status RunMultihostHloRunner(int argc, char** argv,
   for (int c = 1; c < argc; c++) {
     const char* hlo_file = argv[c];
     execution_profiles.clear();
-    if (opts.should_run) {
+    if (opts.should_run && !opts.compile_only) {
       std::cout << "\n** Running " << hlo_file << " **\n";
       TF_RETURN_IF_ERROR(xla::FunctionalHloRunner::LoadAndRunAndDump(
           *env.client, GetDebugOptionsFromFlags(), preproc_options,
@@ -358,7 +359,11 @@ int main(int argc, char** argv) {
                 "HLO input mode: text, proto_text, proto_binary, "
                 "snapshot_proto_binary, unoptimized_snapshot_proto_binary, or "
                 "unoptimized_snapshot_proto_text"),
-      tsl::Flag("run", &opts.should_run, "Should we run the compiled HLO?"),
+      // --run and --compile_only does the same thing, remove --run when it is
+      // safe to do so to avoid breaking 3P workflows.
+      tsl::Flag("compile_only", &opts.compile_only,
+                "Compiles a module without running it"),
+      tsl::Flag("run", &opts.should_run, "Compiles and runs a module"),
       tsl::Flag("dump_output_literal_to", &opts.dump_output_literal_to,
                 "A path to which the HLO output will be dumped. "
                 "Example: /a/b/literal.txt."),

@@ -45,6 +45,7 @@ limitations under the License.
 #include "mlir/Support/DebugStringHelper.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/pjrt/layout_mode.h"
 #include "xla/python/ifrt/ir/constants.h"
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
@@ -66,6 +67,10 @@ mlir::FailureOr<mlir::RankedTensorType> GetGlobalShape(mlir::Type type) {
   if (auto array = mlir::dyn_cast<IfrtArrayType>(type)) {
     return array.getShape();
   }
+  if (llvm::isa<mlir::stablehlo::TokenType>(type)) {
+    return mlir::RankedTensorType::get({},
+                                       IfrtTokenType::get(type.getContext()));
+  }
   return mlir::failure();
 }
 
@@ -83,6 +88,10 @@ mlir::FailureOr<mlir::RankedTensorType> GetGlobalShapeFromLocal(
                                          local_ranked_tensor.getElementType());
     }
     return mlir::failure();
+  }
+  if (llvm::isa<mlir::stablehlo::TokenType>(type)) {
+    return mlir::RankedTensorType::get({},
+                                       IfrtTokenType::get(type.getContext()));
   }
   // IFRT arrays cannot be in the local view.
   return mlir::failure();

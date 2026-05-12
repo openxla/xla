@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "google/protobuf/message.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "tsl/platform/human_readable_json.h"
 #include "tsl/platform/protobuf.h"
 
@@ -65,7 +66,8 @@ std::unique_ptr<tsl::protobuf::Message> CloneBackendConfigProto(
 //
 // All accesses are protected via a mutex because instances of this class are
 // accessed concurrently during auto tuning.
-class BackendConfigWrapper {
+class BackendConfigWrapper
+    : public tsl::ReferenceCounted<BackendConfigWrapper> {
  public:
   BackendConfigWrapper() = default;
   explicit BackendConfigWrapper(std::string raw_string);

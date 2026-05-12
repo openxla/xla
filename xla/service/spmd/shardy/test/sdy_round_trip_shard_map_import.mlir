@@ -645,14 +645,14 @@ sdy.mesh @mesh = <["a"=2, "b"=2, "c"=2]>
 // CHECK-NEXT:  }
 // CHECK-LABEL: func.func private @foo_4(%arg0: tensor<4xf32>) -> tensor<4xf32> attributes {sdy.func_manual_axes = #sdy<manual_axes{"a"}>, sdy.original_func_name = "foo"} {
 // CHECK-NEXT:    %0 = sdy.manual_computation(%arg0) in_shardings=[<@mesh, [{"c"}]>] out_shardings=[<@mesh, [{"c"}]>] manual_axes={"c"} (%arg1: tensor<2xf32>) {
-// CHECK-NEXT:      %1 = func.call @bar_2(%arg1) : (tensor<2xf32>) -> tensor<2xf32>
+// CHECK-NEXT:      %1 = func.call @bar_0_2(%arg1) : (tensor<2xf32>) -> tensor<2xf32>
 // CHECK-NEXT:      sdy.return %1 : tensor<2xf32>
 // CHECK-NEXT:    } : (tensor<4xf32>) -> tensor<4xf32>
 // CHECK-NEXT:    return %0 : tensor<4xf32>
 // CHECK-NEXT:  }
 // CHECK-LABEL: func.func private @foo_8(%arg0: tensor<4xf32>) -> tensor<4xf32> attributes {sdy.func_manual_axes = #sdy<manual_axes{"b"}>, sdy.original_func_name = "foo"} {
 // CHECK-NEXT:    %0 = sdy.manual_computation(%arg0) in_shardings=[<@mesh, [{"c"}]>] out_shardings=[<@mesh, [{"c"}]>] manual_axes={"c"} (%arg1: tensor<2xf32>) {
-// CHECK-NEXT:      %1 = func.call @bar_6(%arg1) : (tensor<2xf32>) -> tensor<2xf32>
+// CHECK-NEXT:      %1 = func.call @bar_0_6(%arg1) : (tensor<2xf32>) -> tensor<2xf32>
 // CHECK-NEXT:      sdy.return %1 : tensor<2xf32>
 // CHECK-NEXT:    } : (tensor<4xf32>) -> tensor<4xf32>
 // CHECK-NEXT:    return %0 : tensor<4xf32>
@@ -801,7 +801,7 @@ func.func @non_flat_same_non_manual_called_by_another_non_manual_and_parent_manu
   // CHECK-SAME: manual_axes={"a"}
   // CHECK-NEXT:   sdy.manual_computation(%arg1)
   // CHECK-SAME:   manual_axes={"b"}
-  // CHECK-NEXT:     call @foo_4(%arg2)
+  // CHECK-NEXT:     call @foo_1_4(%arg2)
   // CHECK-NEXT:     sdy.return
   // CHECK-NEXT:   }
   // CHECK-NEXT:   %cst = stablehlo.constant
@@ -815,13 +815,13 @@ func.func @non_flat_same_non_manual_called_by_another_non_manual_and_parent_manu
   return %2 : tensor<8xf32>
 }
 
-// CHECK-LABEL: func private @bar_3(%arg0: tensor<2xf32>) -> tensor<2xf32>
+// CHECK-LABEL: func private @bar_0_3(%arg0: tensor<2xf32>) -> tensor<2xf32>
 // CHECK-SAME:  attributes {sdy.func_manual_axes = #sdy<manual_axes{"a", "b"}>, sdy.original_func_name = "bar"} {
 // CHECK-NEXT:    return
 
-// CHECK-LABEL: func private @foo_4(%arg0: tensor<2xf32>) -> tensor<2xf32>
+// CHECK-LABEL: func private @foo_1_4(%arg0: tensor<2xf32>) -> tensor<2xf32>
 // CHECK-SAME:  attributes {sdy.func_manual_axes = #sdy<manual_axes{"a", "b"}>, sdy.original_func_name = "foo"} {
-// CHECK-NEXT:    call @bar_3(%arg0)
+// CHECK-NEXT:    call @bar_0_3(%arg0)
 // CHECK-NEXT:    return
 
 // CHECK-LABEL: func private @bar_6(%arg0: tensor<2xf32>) -> tensor<2xf32>
@@ -1033,7 +1033,7 @@ func.func @non_flat_same_non_manual_called_by_another_non_manual_and_parent_manu
   // CHECK-SAME: manual_axes={"a", "d"}
   // CHECK-NEXT:   sdy.manual_computation(%arg1)
   // CHECK-SAME:   manual_axes={"b"}
-  // CHECK-NEXT:     call @foo_4(%arg2)
+  // CHECK-NEXT:     call @foo_1_4(%arg2)
   // CHECK-NEXT:     sdy.return
   // CHECK-NEXT:   }
   // CHECK-NEXT:   %cst = stablehlo.constant
@@ -1047,13 +1047,13 @@ func.func @non_flat_same_non_manual_called_by_another_non_manual_and_parent_manu
   return %2 : tensor<16xf32>
 }
 
-// CHECK-LABEL: func private @bar_3(%arg0: tensor<2xf32>) -> tensor<2xf32>
+// CHECK-LABEL: func private @bar_0_3(%arg0: tensor<2xf32>) -> tensor<2xf32>
 // CHECK-SAME:  attributes {sdy.func_manual_axes = #sdy<manual_axes{"a", "d", "b"}>, sdy.original_func_name = "bar"} {
 // CHECK-NEXT:    return
 
-// CHECK-LABEL: func private @foo_4(%arg0: tensor<2xf32>) -> tensor<2xf32>
+// CHECK-LABEL: func private @foo_1_4(%arg0: tensor<2xf32>) -> tensor<2xf32>
 // CHECK-SAME:  attributes {sdy.func_manual_axes = #sdy<manual_axes{"a", "d", "b"}>, sdy.original_func_name = "foo"} {
-// CHECK-NEXT:    call @bar_3(%arg0)
+// CHECK-NEXT:    call @bar_0_3(%arg0)
 // CHECK-NEXT:    return
 
 // CHECK-LABEL: func private @bar_6(%arg0: tensor<2xf32>) -> tensor<2xf32>

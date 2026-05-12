@@ -163,7 +163,7 @@ TEST_P(ReshapeTilePropagationTest, PropagateReshape) {
                                           &mlir_context_);
   if (!param.input_tile_sizes.empty()) {
     CHECK_EQ(param.input_tile_sizes.size(), tiling_space->num_dimensions());
-    tiling_space->AssignTileSizes(param.input_tile_sizes);
+    ASSERT_OK(tiling_space->AssignTileSizes(param.input_tile_sizes));
   }
   SmallVector<DimTile> input_dim_tiles =
       llvm::to_vector(tiling_space->tiled_roots()[0].dim_tiles());
@@ -346,6 +346,19 @@ INSTANTIATE_TEST_SUITE_P(
          strides [1]
          upper bounds [min(tid_0, 2) * 4 + min(tid_2 * 3 + 2, 3) + 1]
   )"},
+        {"CollapseShape_3DCollapseWithTrivialInnerDim",
+         /*input_shape=*/{2, 32, 128},
+         /*input_tile_sizes=*/{1, 16, 1},
+         /*input_tile_strides=*/{1, 1, 1},
+         /*input_tile_offsets=*/{},
+         /*output_shape=*/{8192},
+         /*expected_output=*/R"(
+     0) (tid_0, tid_1, tid_2)
+       -> offsets [tid_0 * 4096 + tid_1 * 2048 + tid_2]
+          sizes [16]
+          strides [128]
+          upper bounds [min(tid_1 * 16 + 15, 31) * 128 + min(tid_0, 1) * 4096 + min(tid_2, 127) + 1]
+   )"},
         {"ExpandShape_FullTargetInnerDim",
          /*input_shape=*/{12},
          /*input_tile_sizes=*/{4},
@@ -1159,7 +1172,7 @@ TEST_F(TilePropagationTest, CanPropagateToInputsOfReduceOp) {
       -> offsets [] sizes [] strides [] upper bounds []
   )"));
 
-  tiling_space->AssignTileSizes({8, 16, 32, 64});
+  EXPECT_OK(tiling_space->AssignTileSizes({8, 16, 32, 64}));
   ASSERT_OK_AND_ASSIGN(auto concrete_tiled_operands,
                        PropagateTileToInput(*tiling_space, *root,
                                             tiling_space->tiled_roots()[0], 0));
@@ -1246,6 +1259,129 @@ TEST_F(TilePropagationTest, CanPropagateToInputsOfVariadicReduceOp) {
     3) (tid_0, tid_1)
       -> offsets [] sizes [] strides [] upper bounds []
   )"));
+}
+
+TEST_F(TilePropagationTest,
+       ConcatenateOpAddsOperandSizeDivisibilityConstraints) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    ENTRY e {
+      p0 = f32[10] parameter(0)
+      p1 = f32[20] parameter(1)
+      concat = f32[30] concatenate(p0, p1), dimensions={0}
+      ROOT slice = f32[10] slice(concat), slice={[5:15]}
+    }
+  )");
+  auto tiling_space = TilingSpace::Create(
+      *HloFusionAdaptor::ForInstruction(root), &mlir_context_);
+  Tile tile = GetTestTile(*tiling_space, root->shape().dimensions());
+
+  // Propagate from slice to concat.
+  ASSERT_OK_AND_ASSIGN(auto operands_of_slice,
+                       PropagateTileToInput(*tiling_space, *root, tile, 0));
+
+  // Propagate from concat to operands.
+  const Tile& concat_tile = operands_of_slice[0];
+  const HloInstruction* concat = root->operand(0);
+  ASSERT_OK_AND_ASSIGN(
+      auto operands_of_concat,
+      PropagateTileToInput(*tiling_space, *concat, concat_tile, 0));
+
+  std::string space_str = tiling_space->ToString();
+  EXPECT_THAT(space_str, ::testing::HasSubstr("d0 * s0 is multiple of s0"));
+  EXPECT_THAT(space_str, ::testing::HasSubstr("5 is multiple of s0"));
+
+  EXPECT_OK(tiling_space->AssignTileSizes({5}));
+
+  auto tiling_space2 = TilingSpace::Create(
+      *HloFusionAdaptor::ForInstruction(root), &mlir_context_);
+  Tile tile2 = GetTestTile(*tiling_space2, root->shape().dimensions());
+  ASSERT_OK_AND_ASSIGN(auto operands_of_slice2,
+                       PropagateTileToInput(*tiling_space2, *root, tile2, 0));
+  const Tile& concat_tile2 = operands_of_slice2[0];
+  ASSERT_OK(
+      PropagateTileToInput(*tiling_space2, *concat, concat_tile2, 0).status());
+
+  EXPECT_THAT(
+      tiling_space2->AssignTileSizes({4}),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               ::testing::HasSubstr("Divisibility constraint not satisfied")));
+}
+
+TEST_F(TilePropagationTest, ConcatenateOpSupportsShiftedConstantBaseOffset) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    ENTRY e {
+      p0 = f32[10] parameter(0)
+      p1 = f32[20] parameter(1)
+      p2 = f32[30] parameter(2)
+      concat = f32[60] concatenate(p0, p1, p2), dimensions={0}
+      ROOT slice = f32[30] slice(concat), slice={[13:43]}
+    }
+  )");
+  auto tiling_space = TilingSpace::Create(
+      *HloFusionAdaptor::ForInstruction(root), &mlir_context_);
+  Tile tile = GetTestTile(*tiling_space, root->shape().dimensions());
+
+  ASSERT_OK_AND_ASSIGN(auto operands_of_slice,
+                       PropagateTileToInput(*tiling_space, *root, tile, 0));
+  const Tile& concat_tile = operands_of_slice[0];
+  const HloInstruction* concat = root->operand(0);
+  ASSERT_OK_AND_ASSIGN(
+      auto operands_of_concat,
+      PropagateTileToInput(*tiling_space, *concat, concat_tile, 0));
+
+  std::string space_str = tiling_space->ToString();
+  EXPECT_THAT(space_str, ::testing::HasSubstr("d0 * s0 is multiple of s0"));
+  EXPECT_THAT(space_str, ::testing::HasSubstr("17 is multiple of s0"));
+
+  EXPECT_OK(tiling_space->AssignTileSizes({17}));
+
+  auto tiling_space2 = TilingSpace::Create(
+      *HloFusionAdaptor::ForInstruction(root), &mlir_context_);
+  Tile tile2 = GetTestTile(*tiling_space2, root->shape().dimensions());
+  ASSERT_OK_AND_ASSIGN(auto operands_of_slice2,
+                       PropagateTileToInput(*tiling_space2, *root, tile2, 0));
+  const Tile& concat_tile2 = operands_of_slice2[0];
+  ASSERT_OK(
+      PropagateTileToInput(*tiling_space2, *concat, concat_tile2, 0).status());
+
+  EXPECT_THAT(
+      tiling_space2->AssignTileSizes({5}),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               ::testing::HasSubstr("Divisibility constraint not satisfied")));
+}
+
+TEST_F(TilePropagationTest,
+       ConcatenateOpRejectsShiftedOffsetWhenRemainingSizeNotDivisible) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    ENTRY e {
+      p0 = f32[10] parameter(0)
+      p1 = f32[20] parameter(1)
+      p2 = f32[30] parameter(2)
+      concat = f32[60] concatenate(p0, p1, p2), dimensions={0}
+      ROOT slice = f32[30] slice(concat), slice={[13:43]}
+    }
+  )");
+  auto tiling_space = TilingSpace::Create(
+      *HloFusionAdaptor::ForInstruction(root), &mlir_context_);
+  EXPECT_OK(tiling_space->AssignTileSizes({5}));
+
+  const Tile& root_tile = tiling_space->tiled_roots()[0];
+
+  ASSERT_OK_AND_ASSIGN(
+      auto operands_of_slice,
+      PropagateTileToInput(*tiling_space, *root, root_tile, 0));
+  const Tile& concat_tile = operands_of_slice[0];
+  const HloInstruction* concat = root->operand(0);
+
+  EXPECT_THAT(
+      PropagateTileToInput(*tiling_space, *concat, concat_tile, 0).status(),
+      StatusIs(absl::StatusCode::kFailedPrecondition,
+               ::testing::HasSubstr(
+                   "The remaining dimension size 17 in the concatenate operand "
+                   "1 must be a clean multiple of its tile size 5")));
 }
 
 }  // namespace

@@ -18,16 +18,17 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LogicalResult.h"
 #include "stablehlo/dialect/StablehloOps.h"
-#include "xla/codegen/xtile/codegen/emitter_helpers.h"
 
 namespace mlir::triton::xla {
+
+using TensorValue = mlir::TypedValue<mlir::RankedTensorType>;
+
+enum class DotOperandSide { kLhs, kRhs };
 
 // Lowers stablehlo.reshape to ttir.reshape, ttir.splat, or ttir.unsplat.
 class LowerReshape : public mlir::OpRewritePattern<stablehlo::ReshapeOp> {
@@ -49,7 +50,7 @@ mlir::LogicalResult GetFusedAddUnit(mlir::Operation* op,
 mlir::LogicalResult CanonicalizeOperand(mlir::ImplicitLocOpBuilder& b,
                                         mlir::Value& operand,
                                         int64_t contracting_dim_idx,
-                                        ::xla::xtile::DotOperandSide side);
+                                        DotOperandSide side);
 
 // Aligns the MJIR rank of a fused AddOp after hardware math lowering by
 // inserting rank-restoration reshapes.

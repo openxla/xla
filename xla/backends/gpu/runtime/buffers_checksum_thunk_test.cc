@@ -89,6 +89,10 @@ class FakeThunk : public Thunk {
 
   BufferUses buffer_uses() const override { return buffer_uses_; }
 
+  absl::StatusOr<ThunkProto> ToProto() const override {
+    return absl::UnimplementedError("FakeThunk::ToProto is not implemented");
+  }
+
  private:
   BufferUses buffer_uses_;
 };

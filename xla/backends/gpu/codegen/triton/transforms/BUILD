@@ -78,6 +78,7 @@ cc_library(
         "//xla/stream_executor/gpu:collective_kernel_metadata",
         "//xla/stream_executor/gpu:tma_metadata",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
