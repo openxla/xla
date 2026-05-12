@@ -52,7 +52,7 @@ namespace xla {
 // introducing `copy` nodes.
 class WhileLoopTripCountAnnotator : public HloModulePass {
  public:
-  ~WhileLoopTripCountAnnotator() override {}
+  ~WhileLoopTripCountAnnotator() override = default;
   absl::string_view name() const override {
     return "while-loop-trip-count-annotator";
   }

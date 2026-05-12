@@ -1294,7 +1294,6 @@ xla_cc_test(
     deps = [
         ":double_buffer_loop_unrolling",
         "//xla:xla_data_proto_cc",
-        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/testlib:filecheck",

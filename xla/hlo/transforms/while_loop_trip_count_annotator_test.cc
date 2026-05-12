@@ -261,15 +261,15 @@ TEST_F(TripCountAnnotatorTest, FillsDynamicVariableInitStep) {
       ROOT while = (s32[], s32[], f32[20,8]) while(initial_tuple), condition=Cond, body=Body
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   WhileLoopTripCountAnnotator pass;
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
   ASSERT_TRUE(changed);
 
-  TF_ASSERT_OK_AND_ASSIGN(auto config,
-                          m->entry_computation()
-                              ->root_instruction()
-                              ->backend_config<WhileLoopBackendConfig>());
+  ASSERT_OK_AND_ASSIGN(auto config,
+                       m->entry_computation()
+                           ->root_instruction()
+                           ->backend_config<WhileLoopBackendConfig>());
   EXPECT_THAT(config, EqualsProto(R"pb(
                 known_trip_count { n: 10 }
                 known_induction_variable { tuple_index: 0 }
@@ -311,15 +311,15 @@ TEST_F(TripCountAnnotatorTest, FillsDynamicVariableInitStepFromPrimaryCopy) {
       ROOT while = (s32[], s32[], f32[20,8]) while(initial_tuple), condition=Cond, body=Body
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   WhileLoopTripCountAnnotator pass;
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
   ASSERT_TRUE(changed);
 
-  TF_ASSERT_OK_AND_ASSIGN(auto config,
-                          m->entry_computation()
-                              ->root_instruction()
-                              ->backend_config<WhileLoopBackendConfig>());
+  ASSERT_OK_AND_ASSIGN(auto config,
+                       m->entry_computation()
+                           ->root_instruction()
+                           ->backend_config<WhileLoopBackendConfig>());
   EXPECT_THAT(config, EqualsProto(R"pb(
                 known_trip_count { n: 9 }
                 known_induction_variable { tuple_index: 0 }
@@ -406,7 +406,7 @@ TEST_F(TripCountAnnotatorTest, InductionVarForwardedToConstant) {
   for (const HloInstruction* instr : entry->instructions()) {
     if (instr->opcode() == HloOpcode::kConstant &&
         instr->shape().element_type() == S32 &&
-        instr->shape().dimensions_size() == 0 &&
+        instr->shape().dimensions().empty() &&
         instr->literal().Get<int32_t>({}) == 10) {
       found_constant = true;
     }
@@ -454,7 +454,7 @@ TEST_F(TripCountAnnotatorTest, InductionVarForwardedNonZeroInit) {
   for (const HloInstruction* instr : entry->instructions()) {
     if (instr->opcode() == HloOpcode::kConstant &&
         instr->shape().element_type() == S32 &&
-        instr->shape().dimensions_size() == 0 &&
+        instr->shape().dimensions().empty() &&
         instr->literal().Get<int32_t>({}) == 15) {
       found_constant = true;
     }
@@ -514,7 +514,7 @@ TEST_F(TripCountAnnotatorTest, InductionVarMultipleGTEsForwarded) {
   for (const HloInstruction* instr : entry->instructions()) {
     if (instr->opcode() == HloOpcode::kConstant &&
         instr->shape().element_type() == S32 &&
-        instr->shape().dimensions_size() == 0 &&
+        instr->shape().dimensions().empty() &&
         instr->literal().Get<int32_t>({}) == 4) {
       constant_4_count++;
     }
@@ -613,7 +613,7 @@ TEST_F(TripCountAnnotatorTest, InductionVarNonZeroTupleIndexForwarded) {
   for (const HloInstruction* instr : entry->instructions()) {
     if (instr->opcode() == HloOpcode::kConstant &&
         instr->shape().element_type() == S32 &&
-        instr->shape().dimensions_size() == 0 &&
+        instr->shape().dimensions().empty() &&
         instr->literal().Get<int32_t>({}) == 7) {
       found_constant_7 = true;
     }

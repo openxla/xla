@@ -20,7 +20,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <queue>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -61,6 +60,7 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {
@@ -2979,10 +2979,14 @@ TEST_F(CollectivePipelinerTest, TransformRecvSendBackwards) {
   )";
 
   auto should_pipeline = [](const HloInstruction* instruction) {
-    if (!HloPredicateIsOp<HloOpcode::kRecvDone>(instruction)) return false;
+    if (!HloPredicateIsOp<HloOpcode::kRecvDone>(instruction)) {
+      return false;
+    }
     const HloRecvDoneInstruction* recv_done =
         DynCast<const HloRecvDoneInstruction>(instruction);
-    if (recv_done->is_host_transfer()) return false;
+    if (recv_done->is_host_transfer()) {
+      return false;
+    }
     // Check that the recv-done is used for non-trivial computation, which can
     // also help avoid repeatedly pipelining a loop.
     return (recv_done->user_count() == 1 && recv_done->parent() != nullptr &&
@@ -3076,8 +3080,9 @@ TEST_F(CollectivePipelinerTest,
 
   auto should_pipeline = [](const HloInstruction* instr) {
     if (!HloPredicateIsOp<HloOpcode::kRecv>(instr) &&
-        !HloPredicateIsOp<HloOpcode::kSend>(instr))
+        !HloPredicateIsOp<HloOpcode::kSend>(instr)) {
       return false;
+    }
     const HloSendRecvInstruction* send_recv =
         DynCast<const HloSendRecvInstruction>(instr);
     // Check that the Send or Recv is used for non-trivial computation, which

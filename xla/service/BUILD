@@ -507,6 +507,7 @@ xla_cc_test(
         ":scheduling_annotations_util",
         "//xla:literal_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:hlo_reachability",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
