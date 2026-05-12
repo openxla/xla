@@ -109,13 +109,25 @@ TEST(ClientImplTest, DefaultDeviceAssignment) {
 
 TEST(ClientImplTest, ClearMemoryStats) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
-  ASSERT_GT(client->devices().size(), 0);
-  Device* device = client->devices()[0];
+  ASSERT_GT(client->addressable_devices().size(), 0);
+  Device* device = client->addressable_devices()[0];
 
   absl::Status clear_status = device->ClearMemoryStats();
 
   if (!clear_status.ok()) {
     EXPECT_TRUE(absl::IsUnimplemented(clear_status));
+  }
+}
+
+TEST(ClientImplTest, ClearMemoryStatsOnNonAddressableDeviceFails) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+  for (Device* device : client->devices()) {
+    if (device->IsAddressable()) continue;
+    absl::Status clear_status = device->ClearMemoryStats();
+    EXPECT_FALSE(clear_status.ok());
+    EXPECT_TRUE(absl::IsFailedPrecondition(clear_status) ||
+                absl::IsUnimplemented(clear_status))
+        << clear_status;
   }
 }
 

@@ -77,6 +77,10 @@ absl::Span<Memory* const> PjRtDevice::Memories() const { return memories_; }
 int PjRtDevice::ProcessIndex() const { return process_index_; }
 
 absl::Status PjRtDevice::ClearMemoryStats() const {
+  if (!IsAddressable()) {
+    return absl::FailedPreconditionError(
+        "ClearMemoryStats is only supported on addressable devices.");
+  }
   return pjrt_device_->ClearMemoryStats();
 }
 
