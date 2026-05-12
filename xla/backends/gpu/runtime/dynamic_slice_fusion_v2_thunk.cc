@@ -198,12 +198,14 @@ static absl::Status VerifyOffsets(
         parameters[i].slice_offsets, parameters[i].parameter_shape,
         parameters[i].slice_shape, loop_nest, parameters, parameter_buffers));
   }
+
   for (size_t j = 0; j < results.size(); ++j) {
     RETURN_IF_ERROR(VerifySliceOffset(
         stream, orig, "result", j, results[j].update_config,
         results[j].update_offsets, results[j].result_shape,
         results[j].update_shape, loop_nest, parameters, parameter_buffers));
   }
+
   return absl::OkStatus();
 }
 

@@ -98,6 +98,10 @@ class BufferOffsetRecordingThunk : public Thunk {
 
   BufferUses buffer_uses() const override { return {}; }
 
+  absl::StatusOr<ThunkProto> ToProto() const override {
+    return absl::UnimplementedError("not serializable");
+  }
+
   const std::vector<se::DeviceAddressBase>& recorded_buffers() const {
     return recorded_buffers_;
   }
