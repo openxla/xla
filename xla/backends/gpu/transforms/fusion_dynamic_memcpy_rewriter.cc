@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -180,8 +181,12 @@ class DynamicOffsetEvaluator {
         int64_t tuple_idx = offset.induction_variable->tuple_index();
         for (const auto& dv : loop_config.dynamic_variables()) {
           if (dv.tuple_index() == tuple_idx) {
-            if (dv.has_init()) init = dv.init();
-            if (dv.has_step()) step = dv.step();
+            if (dv.has_init()) {
+              init = dv.init();
+            }
+            if (dv.has_step()) {
+              step = dv.step();
+            }
             break;
           }
         }
