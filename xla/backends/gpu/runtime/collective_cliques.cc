@@ -145,8 +145,8 @@ absl::StatusOr<bool> AllFirstRendezvousCompleted(
     const CollectiveCliques& collective_cliques,
     const std::vector<GpuCliqueKey>& requested_clique_keys,
     const absl::string_view module_name) {
-  return !module_name.empty() &&
-         (collective_cliques.empty() ||
+  return collective_cliques.empty() ||
+         (!module_name.empty() &&
           absl::c_all_of(requested_clique_keys,
                          [&](const GpuCliqueKey& clique_key) {
                            auto rend_flags =
