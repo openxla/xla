@@ -825,7 +825,9 @@ int Autotuner::AssignToOutputCluster(std::vector<OutputCluster>& clusters,
       return c;
     }
   }
-  if (!allow_new_cluster) return -1;
+  if (!allow_new_cluster) {
+    return -1;
+  }
   int new_idx = clusters.size();
   clusters.push_back(OutputCluster{std::move(output), /*count=*/1,
                                    /*has_trusted_member=*/is_trusted_config});
@@ -835,15 +837,21 @@ int Autotuner::AssignToOutputCluster(std::vector<OutputCluster>& clusters,
 void Autotuner::DemoteNonWinningClusterConfigs(
     std::vector<ConfigResult>& results,
     const std::vector<OutputCluster>& clusters) {
-  if (clusters.empty()) return;
+  if (clusters.empty()) {
+    return;
+  }
   // Prefer clusters with a trusted member; among the preferred set, pick the
   // largest count (earliest insertion wins on tie).
   const bool any_trusted = absl::c_any_of(
       clusters, [](const OutputCluster& c) { return c.has_trusted_member; });
   int winner = -1;
   for (int c = 0; c < clusters.size(); ++c) {
-    if (any_trusted && !clusters[c].has_trusted_member) continue;
-    if (winner < 0 || clusters[c].count > clusters[winner].count) winner = c;
+    if (any_trusted && !clusters[c].has_trusted_member) {
+      continue;
+    }
+    if (winner < 0 || clusters[c].count > clusters[winner].count) {
+      winner = c;
+    }
   }
   VLOG(2) << "Output clustering formed " << clusters.size()
           << " cluster(s); selected cluster " << winner << " with "
