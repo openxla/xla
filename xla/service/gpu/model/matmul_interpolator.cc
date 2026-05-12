@@ -175,7 +175,7 @@ InterpolationSpecification Spec(const HloFusionInstruction& dot_fusion,
 
 absl::StatusOr<GemmPerfTableEntryValues> ReadDefaultProfile(
     const se::DeviceDescription& device_info) {
-  std::string key = HloOpProfiles::GetProfileName(device_info);
+  std::string key = HloOpProfiles::GetDeviceSpecificProfileName(device_info);
 
   if (!Profile().entries().contains(key)) {
     return absl::NotFoundError(absl::StrCat("Cannot find key: ", key));

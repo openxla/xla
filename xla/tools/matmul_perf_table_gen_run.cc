@@ -91,7 +91,8 @@ int RunPerfTableCollection(int argc, char** argv) {
       },
   };
   cfg.output =
-      FilepathOutput(HloOpProfiles::GetProfileName(device_description));
+      FilepathOutput(
+          HloOpProfiles::GetDeviceSpecificProfileName(device_description));
   MatmulPerfTableGen table_gen(runner.get(), &device_description,
                                std::move(cfg));
 

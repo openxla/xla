@@ -396,7 +396,7 @@ HloOpcode AsyncToSyncOpcode(const HloCollectiveInstruction& instr) {
 
 absl::StatusOr<HloInstructionProfileList> ReadDefaultProfiles(
     const se::DeviceDescription& device_info) {
-  std::string key = HloOpProfiles::GetProfileName(device_info);
+  std::string key = HloOpProfiles::GetDeviceSpecificProfileName(device_info);
 
   if (!Profile().entries().contains(key)) {
     return absl::NotFoundError(absl::StrCat("Cannot find key: ", key));
