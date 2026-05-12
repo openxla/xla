@@ -35,9 +35,11 @@ namespace xla {
 // backend-config that doesn't match its true trip-count, or with stale
 // `dynamic_variables` init/step entries for unrolled/pipelined slots.
 //
-// This pass is the sole *creator* of `WhileLoopBackendConfig`: a pre-existing
-// non-empty config triggers a `FailedPrecondition`. Host-offload dynamic
-// variables are discovered here via
+// This pass overwrites any existing `WhileLoopBackendConfig` on a while
+// instruction. If a non-empty config is already present (e.g. set by an
+// earlier producer or by tooling), the pass logs a warning and replaces it
+// with the freshly-computed annotation. Host-offload dynamic variables are
+// discovered here via
 // `host_offload_utils::CollectDynamicVariableTupleIndices`. Keeping the config
 // off the critical path lets backends (e.g. TPU) that don't run this pass
 // avoid the proto entirely. GPU-only post-passes (e.g.

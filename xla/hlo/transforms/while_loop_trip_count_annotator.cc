@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -224,11 +225,10 @@ absl::StatusOr<bool> WhileLoopTripCountAnnotator::RunImpl(
       TF_ASSIGN_OR_RETURN(WhileLoopBackendConfig existing_config,
                           instr->backend_config<WhileLoopBackendConfig>());
       if (existing_config.ByteSizeLong() != 0) {
-        return absl::FailedPreconditionError(absl::StrFormat(
-            "WhileLoopTripCountAnnotator is the sole creator of "
-            "WhileLoopBackendConfig, but %s already has a non-empty "
-            "backend_config: %s",
-            instr->name(), existing_config.ShortDebugString()));
+        LOG(WARNING) << absl::StrFormat(
+            "WhileLoopTripCountAnnotator is overwriting an existing non-empty "
+            "WhileLoopBackendConfig on %s: %s",
+            instr->name(), existing_config.ShortDebugString());
       }
 
       WhileLoopBackendConfig config;

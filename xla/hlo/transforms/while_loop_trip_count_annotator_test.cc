@@ -19,8 +19,6 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/status/status.h"
-#include "absl/status/status_matchers.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -31,7 +29,6 @@ limitations under the License.
 namespace xla {
 namespace {
 
-using ::absl_testing::StatusIs;
 using ::tsl::proto_testing::EqualsProto;
 
 class TripCountAnnotatorTest : public HloHardwareIndependentTestBase {};
@@ -624,7 +621,7 @@ TEST_F(TripCountAnnotatorTest, InductionVarNonZeroTupleIndexForwarded) {
   EXPECT_TRUE(found_constant_7);
 }
 
-TEST_F(TripCountAnnotatorTest, ErrorOnPrePopulatedBackendConfig) {
+TEST_F(TripCountAnnotatorTest, OverwritesPrePopulatedBackendConfig) {
   const char* kModuleStr = R"(
     HloModule test
     Body {
@@ -651,8 +648,18 @@ TEST_F(TripCountAnnotatorTest, ErrorOnPrePopulatedBackendConfig) {
 
   ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   WhileLoopTripCountAnnotator pass;
-  EXPECT_THAT(RunHloPass(&pass, m.get()),
-              StatusIs(absl::StatusCode::kFailedPrecondition));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+  ASSERT_TRUE(changed);
+
+  HloInstruction* while_op = m->entry_computation()->root_instruction();
+  ASSERT_EQ(while_op->opcode(), HloOpcode::kWhile);
+  ASSERT_OK_AND_ASSIGN(WhileLoopBackendConfig config,
+                       while_op->backend_config<WhileLoopBackendConfig>());
+  EXPECT_THAT(config, EqualsProto(R"pb(
+                known_induction_variable { tuple_index: 0 }
+                known_trip_count { n: 10 }
+                known_init_step { init: 0 step: 1 }
+              )pb"));
 }
 
 }  // namespace
