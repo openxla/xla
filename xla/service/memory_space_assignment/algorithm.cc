@@ -479,6 +479,8 @@ MsaAlgorithm::MsaAlgorithm(HloModule* module, AllocationSequence* allocations,
 
   call_graph_ = CallGraph::Build(&alias_analysis_.dataflow_analysis().module());
 
+  absl::flat_hash_map<const HloInstruction*, uint64_t>
+      instruction_shape_hash_cache;
   std::vector<float> initial_resources(hlo_live_range.schedule_end_time(), 1.0);
   if (options.cost_analysis) {
     const std::vector<HloInstruction*>& flattened_instructions =
@@ -504,7 +506,9 @@ MsaAlgorithm::MsaAlgorithm(HloModule* module, AllocationSequence* allocations,
             options.cost_analysis->GetInstructionElapsed(*inst);
         if (options_.use_repeated_instance_for_preferred_prefetch_time ||
             options_.memory_bound_loop_optimizer_options.enabled()) {
-          uint64_t fingerprint = absl::HashOf(MsaInstructionFingerprint(inst));
+          uint64_t fingerprint =
+              absl::HashOf(MsaInstructionFingerprint<uint64_t>(
+                  inst, &instruction_shape_hash_cache));
           fingerprint_map_[inst] = fingerprint;
           repeated_inst_map_[fingerprint].push_back(inst);
         }

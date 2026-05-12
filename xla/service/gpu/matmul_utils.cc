@@ -486,9 +486,9 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
     int64_t lhs_ragged_dimension, const Shape& rhs_shape,
     absl::Span<const int64_t> rhs_batch_dims,
     absl::Span<const int64_t> rhs_contracting_dims,
-    absl::Span<const int64_t> rhs_group_dimensions, const Shape& output_shape,
-    double alpha_real, double alpha_imag, double beta,
-    PrecisionConfig::Algorithm precision_algorithm,
+    absl::Span<const int64_t> rhs_group_dimensions, const Shape& c_shape,
+    const Shape& output_shape, double alpha_real, double alpha_imag,
+    double beta, PrecisionConfig::Algorithm precision_algorithm,
     std::optional<int64_t> algorithm, int64_t compute_precision,
     uint64_t group_count, const se::GpuComputeCapability& gpu_version) {
   se::gpu::RaggedDotMode ragged_mode =
@@ -546,6 +546,11 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
                       MatrixLayout::For(output_shape, output_batch_dims,
                                         output_row_dims, output_col_dims));
 
+  // Create C layout to properly calculate c_stride_ragged_dim
+  TF_ASSIGN_OR_RETURN(MatrixLayout c_layout,
+                      MatrixLayout::For(c_shape, output_batch_dims,
+                                        output_row_dims, output_col_dims));
+
   TF_RET_CHECK(output_shape.dimensions().size() ==
                num_batch_dims + lhs_row_dims.size() + rhs_col_dims.size());
 
@@ -565,8 +570,9 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
     return Internal(
         "A single group dimension is expected for rhs when the ragged "
         "dimension is in the non-contracting dimension.");
-  } else if ((ragged_mode != se::gpu::RaggedDotMode::kRaggedNonContracting) &&
-             (rhs_group_dimensions.size() != 0)) {
+  }
+  if ((ragged_mode != se::gpu::RaggedDotMode::kRaggedNonContracting) &&
+      !rhs_group_dimensions.empty()) {
     return Internal(
         "No group dimension is expected for rhs when the ragged dimension is "
         "in the contracting or the batch dimensions.");
@@ -576,14 +582,17 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
   uint64_t k = lhs_shape.dimensions(lhs_col_dims[0]);
   uint64_t n = rhs_shape.dimensions(rhs_col_dims[0]);
   int64_t leading_dim_a = lhs_row_dims[0];
-  if (lhs_layout.order == se::gpu::MatrixLayout::Order::kColumnMajor)
+  if (lhs_layout.order == se::gpu::MatrixLayout::Order::kColumnMajor) {
     leading_dim_a = lhs_col_dims[0];
+  }
   int64_t leading_dim_b = rhs_row_dims[0];
-  if (rhs_layout.order == se::gpu::MatrixLayout::Order::kColumnMajor)
+  if (rhs_layout.order == se::gpu::MatrixLayout::Order::kColumnMajor) {
     leading_dim_b = rhs_col_dims[0];
+  }
   int64_t leading_dim_d = output_row_dims[0];
-  if (output_layout.order == se::gpu::MatrixLayout::Order::kColumnMajor)
+  if (output_layout.order == se::gpu::MatrixLayout::Order::kColumnMajor) {
     leading_dim_d = output_col_dims[0];
+  }
 
   uint64_t batch_count = lhs_layout.batch_size;
   int64_t input_stride_ragged_dim = (lhs_ragged_dimension == leading_dim_a)
@@ -608,6 +617,7 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
                                  : 1;
   }
 
+  // Calculate output_stride_ragged_dim for the D (output) matrix
   int64_t output_stride_ragged_dim = 1;
   switch (ragged_mode) {
     case se::gpu::RaggedDotMode::kRaggedNonContracting: {
@@ -636,6 +646,43 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
     }
   }
 
+  // Calculate c_stride_ragged_dim for the C matrix
+  int64_t c_stride_ragged_dim = 1;
+
+  // Calculate leading_dim_c based on C's layout
+  int64_t leading_dim_c = output_row_dims[0];
+  if (c_layout.order == se::gpu::MatrixLayout::Order::kColumnMajor) {
+    leading_dim_c = output_col_dims[0];
+  }
+
+  switch (ragged_mode) {
+    case se::gpu::RaggedDotMode::kRaggedNonContracting: {
+      // Use the same condition as output_stride_ragged_dim but with c_layout
+      if ((lhs_ragged_dimension == leading_dim_c) ||
+          (lhs_layout.order == se::gpu::MatrixLayout::Order::kColumnMajor)) {
+        c_stride_ragged_dim = c_layout.leading_dim_stride;
+      }
+      break;
+    }
+    case se::gpu::RaggedDotMode::kRaggedBatch: {
+      c_stride_ragged_dim = m * n;
+      break;
+    }
+    case se::gpu::RaggedDotMode::kRaggedContracting: {
+      absl::Span<const int64_t> c_minor_to_major =
+          c_shape.layout().minor_to_major();
+      c_stride_ragged_dim = 1;
+      for (auto dim : c_minor_to_major) {
+        // The group dimension is always the outer dim (dim 0) for C
+        if (dim == 0) {
+          break;
+        }
+        c_stride_ragged_dim *= c_shape.dimensions(dim);
+      }
+      break;
+    }
+  }
+
   TF_ASSIGN_OR_RETURN(se::blas::DataType type_a,
                       se::gpu::AsBlasDataType(lhs_shape.element_type()));
   TF_ASSIGN_OR_RETURN(se::blas::DataType type_b,
@@ -651,7 +698,7 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
           output_shape.element_type(), compute_precision, gpu_version));
 
   bool must_swap_operands =
-      MakeOutputColumnMajor(lhs_layout, rhs_layout, output_layout, nullptr);
+      MakeOutputColumnMajor(lhs_layout, rhs_layout, output_layout, &c_layout);
 
   auto trans_a = lhs_layout.transpose, trans_b = rhs_layout.transpose;
   if (lhs_layout.order == gpu::MatrixLayout::Order::kRowMajor) {
@@ -676,7 +723,7 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
                                  group_count,
                                  lhs_layout.leading_dim_stride,
                                  rhs_layout.leading_dim_stride,
-                                 output_layout.leading_dim_stride,
+                                 c_layout.leading_dim_stride,
                                  output_layout.leading_dim_stride,
                                  trans_a,
                                  trans_b,
@@ -689,6 +736,7 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
                                  type_d,
                                  input_stride_ragged_dim,
                                  input_stride_group_dim,
+                                 c_stride_ragged_dim,
                                  output_stride_ragged_dim,
                                  precision_algorithm,
                                  compute_precision,
@@ -727,6 +775,11 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
                                   ? grouped_gemm->shape().tuple_shapes(0)
                                   : grouped_gemm->shape();
 
+  // Determine C shape based on whether there's a matrix bias
+  bool has_matrix_bias = gemm_config.beta() != 0.;
+  Shape c_shape =
+      has_matrix_bias ? grouped_gemm->operand(3)->shape() : output_shape;
+
   int64_t precision = se::blas::kDefaultComputePrecision;
   for (auto operand_precision :
        gemm_config.precision_config().operand_precision()) {
@@ -744,7 +797,7 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
       // lhs_ragged_dimension (expected a single ragged dim)
       ragged_dot_config.lhs_ragged_dimensions()[0], rhs_shape,
       dot_dims.rhs_batch_dimensions(), dot_dims.rhs_contracting_dimensions(),
-      ragged_dot_config.rhs_group_dimensions(), output_shape,
+      ragged_dot_config.rhs_group_dimensions(), c_shape, output_shape,
       gemm_config.alpha_real(), gemm_config.alpha_imag(), gemm_config.beta(),
       precision_algorithm, algorithm, precision, group_count, gpu_version);
 }

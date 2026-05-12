@@ -460,7 +460,7 @@ class Thunk {
   }
 
   // Serializes the thunk into a `ThunkProto`.
-  virtual absl::StatusOr<ThunkProto> ToProto() const;
+  virtual absl::StatusOr<ThunkProto> ToProto() const = 0;
 
   // Serializes the metadata of the thunk into a `ThunkMetadataProto`.
   ThunkMetadataProto ToMetadataProto() const;

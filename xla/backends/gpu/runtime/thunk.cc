@@ -455,12 +455,6 @@ bool Thunk::IsCollective() const {
   }
 }
 
-absl::StatusOr<ThunkProto> Thunk::ToProto() const {
-  return absl::UnimplementedError(absl::StrFormat(
-      "Proto serialization for thunk of type %s is not implemented",
-      typeid(*this).name()));
-}
-
 ThunkMetadataProto Thunk::ToMetadataProto() const {
   ThunkMetadataProto metadata_proto;
   *metadata_proto.mutable_thunk_info() = thunk_info_.ToProto();

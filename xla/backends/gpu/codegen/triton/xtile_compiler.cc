@@ -227,7 +227,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
     TF_ASSIGN_OR_RETURN(
         llvm::SmallVector<int64_t> tile_sizes,
         GetTilingSpaceConcreteSizes(*tiling_space, block_level_parameters));
-    tiling_space->AssignTileSizes(xtile::GetPaddedTileSizes(tile_sizes));
+    RETURN_IF_ERROR(
+        tiling_space->AssignTileSizes(xtile::GetPaddedTileSizes(tile_sizes)));
 
     ASSIGN_OR_RETURN(
         TiledHloComputation tiled_computation,

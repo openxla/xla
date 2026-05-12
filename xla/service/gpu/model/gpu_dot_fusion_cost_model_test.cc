@@ -55,7 +55,10 @@ backend_config={"sizes":["32"]}
 })"));
 
   BlockLevelParameters block_params;
-  block_params.output_tile_sizes = {{128, 256}};
+  // TODO: b/510666436 - Tile sizes are intentionally kept large to reduce
+  // L2 cache replication overhead modeled by threadblock_count, keeping
+  // the operation compute bound.
+  block_params.output_tile_sizes = {{256, 512}};
   block_params.num_warps = 4;
   block_params.num_ctas = 1;
   block_params.num_stages = 1;
@@ -80,6 +83,8 @@ backend_config={"sizes":["32"]}
 }
 
 TEST_F(GpuDotFusionCostModelTest, GpuDotMemoryBoundBf16) {
+  // TODO: b/510666436 - Backend config tuned to minimize L2 loads replication
+  // so the operation remains strictly HBM bounded.
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(R"(
 ENTRY e {
@@ -87,11 +92,13 @@ p0 = bf16[4,4096] parameter(0)
 p1 = bf16[4096,4096] parameter(1)
 ROOT r = bf16[4,4096] dot(p0, p1),
 lhs_contracting_dims={1}, rhs_contracting_dims={0}, algorithm=dot_bf16_bf16_bf16,
-backend_config={"sizes":["128"]}
+backend_config={"sizes":["512"]}
 })"));
 
   BlockLevelParameters block_params;
-  block_params.output_tile_sizes = {{4, 32}};
+  // TODO: b/510666436 - Output tile sizes tuned to minimize L2 loads
+  // replication so the operation remains strictly HBM bounded.
+  block_params.output_tile_sizes = {{4, 128}};
   block_params.num_warps = 4;
   block_params.num_ctas = 1;
   block_params.num_stages = 1;
@@ -245,6 +252,26 @@ backend_config={"sizes":["32"]}
       gpu_dot_fusion_cost_model::EstimateRunTimeForDotOpWithBlockParameters(
           dot, block_params, ddh100_));
   ASSERT_GT(absl::ToInt64Microseconds(runtime_h100.exec_time), 0);
+}
+
+// TODO: b/501002656 - Remove this test once we support transposes in the dot
+// fusion cost model.
+TEST_F(GpuDotFusionCostModelTest, GpuDotWithDownstreamTransposeIsRejected) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+ENTRY e {
+p0 = bf16[1024,2048] parameter(0)
+p1 = bf16[2048,1024] parameter(1)
+d = bf16[1024,1024] dot(p0, p1),
+lhs_contracting_dims={1}, rhs_contracting_dims={0}, algorithm=dot_bf16_bf16_bf16,
+backend_config={"sizes":["32"]}
+ROOT r = bf16[1024,1024] transpose(d), dimensions={1,0}
+})"));
+
+  auto* root = module->entry_computation()->root_instruction();
+  auto* dot = Cast<HloDotInstruction>(root->operand(0));
+  EXPECT_THAT(gpu_dot_fusion_cost_model::IsSupported(dot),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
 }
 
 }  // namespace

@@ -16,10 +16,11 @@ limitations under the License.
 #ifndef XLA_HLO_ANALYSIS_INDEXING_TEST_UTILS_H_
 #define XLA_HLO_ANALYSIS_INDEXING_TEST_UTILS_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <optional>
+#include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -38,6 +39,11 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 
 namespace xla {
+
+// Returns the first mismatching non-whitespace character pair in the two
+// strings.
+std::pair<size_t, size_t> FindApproximateMismatch(absl::string_view lhs,
+                                                  absl::string_view rhs);
 
 // Matches two strings ignoring whitespaces.
 bool ApproximateMatch(absl::string_view lhs, absl::string_view rhs);
@@ -89,8 +95,6 @@ class IndexingTestBase : public HloHardwareIndependentTestBase {
   mlir::MLIRContext mlir_context_;
   std::unique_ptr<VerifiedHloModule> module_;
 };
-
-
 
 // Enumerates all the points in the domain of the given indexing map: points
 // within the bounds of the dimensions and symbols that do not violate any of

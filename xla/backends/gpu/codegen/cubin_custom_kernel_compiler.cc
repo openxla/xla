@@ -25,14 +25,19 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "llvm/IR/Module.h"
+#include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
+#include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/codegen/kernels/ptx_custom_kernel.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/llvm_kernel_source.h"
+#include "xla/codegen/mlir_kernel_source.h"
 #include "xla/future.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/stream_executor/device_description.h"
 
 namespace xla::gpu {
 
@@ -54,6 +59,26 @@ xla::Future<std::unique_ptr<Thunk>> CubinCustomKernelCompiler::Compile(
         return CompileImpl(std::move(thunk_info), std::move(kernel_source),
                            sanitized_kernel_name, kernel_arguments,
                            launch_dimensions);
+      });
+}
+
+xla::Future<LlvmKernelSource> CubinCustomKernelCompiler::CompileMlirToLlvm(
+    const se::DeviceDescription& device, const HloModule& hlo_module,
+    const std::string& entry_function_name, int unroll_factor,
+    MlirKernelSource source, BorrowedMlirContext borrowed_context) {
+  if (!thread_pool_) {
+    return gpu::CompileMlirToLlvm(device, hlo_module, entry_function_name,
+                                  unroll_factor, **borrowed_context,
+                                  std::move(source));
+  }
+  return xla::MakeFutureOn(
+      *thread_pool_->AsExecutor(),
+      [source = std::move(source), device, &hlo_module, entry_function_name,
+       unroll_factor,
+       borrowed_context = std::move(borrowed_context)]() mutable {
+        return gpu::CompileMlirToLlvm(device, hlo_module, entry_function_name,
+                                      unroll_factor, **borrowed_context,
+                                      std::move(source));
       });
 }
 

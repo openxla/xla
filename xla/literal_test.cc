@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test_benchmark.h"
+#include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/safe_reinterpret_cast.h"
 #include "xla/types.h"
 #include "xla/util.h"
@@ -873,6 +874,38 @@ TEST_F(LiteralUtilTest, IsAll) {
   EXPECT_FALSE(LiteralUtil::CreateR2<uint64_t>(
                    {{uint64_max, uint64_max}, {uint64_max, uint64_max}})
                    .IsAll(-1));
+}
+
+TEST_F(LiteralUtilTest, MaterializeSparseOperandValidConfigReturnsDense) {
+  absl::StatusOr<Literal> dense_or = MaterializeSparseOperand(
+      LiteralUtil::CreateR2<float>({{1.0f, 2.0f}, {3.0f, 4.0f}}),
+      LiteralUtil::CreateR2<int32_t>({{0, 2}, {1, 3}}),
+      tsl::proto_testing::ParseTextProtoOrDie<
+          SparsityConfig::TensorSparsityConfig>(
+          R"pb(
+            dimension: 1 block_size: 4 num_non_zero: 1 stride: 1
+          )pb"));
+  ASSERT_TRUE(dense_or.ok());
+  Literal dense = std::move(dense_or).value();
+  Literal expected = LiteralUtil::CreateFromDimensions(F32, {2, 8});
+  expected.PopulateWithValue(0.0f);
+  expected.Set<float>({0, 0}, 1.0f);
+  expected.Set<float>({0, 6}, 2.0f);
+  expected.Set<float>({1, 1}, 3.0f);
+  expected.Set<float>({1, 7}, 4.0f);
+  EXPECT_EQ(dense, expected);
+}
+
+TEST_F(LiteralUtilTest, MaterializeSparseOperandInvalidConfigReturnsError) {
+  EXPECT_FALSE(MaterializeSparseOperand(
+                   LiteralUtil::CreateR2<float>({{1.0f, 2.0f}, {3.0f, 4.0f}}),
+                   LiteralUtil::CreateR2<int32_t>({{0, 2}, {1, 3}}),
+                   tsl::proto_testing::ParseTextProtoOrDie<
+                       SparsityConfig::TensorSparsityConfig>(
+                       R"pb(
+                         dimension: 1 block_size: 4 num_non_zero: 2 stride: 1
+                       )pb"))
+                   .ok());
 }
 
 TEST_F(LiteralUtilTest, IsAllFloat) {

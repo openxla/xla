@@ -25,6 +25,8 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -167,6 +169,13 @@ std::string TilingSpace::ToString() const {
   if (!constraints_.IsAlwaysSatisfied()) {
     ss << "Constraints:\n" << constraints_.ToString() << "\n";
   }
+  if (!divisibility_constraints_.empty()) {
+    ss << "Divisibility constraints:\n";
+    for (const auto& c : divisibility_constraints_) {
+      ss << c.expr.ToString(dimensions_.size()) << " is multiple of "
+         << c.tile_size.ToString(dimensions_.size()) << "\n";
+    }
+  }
   return ss.str();
 }
 
@@ -188,9 +197,11 @@ std::optional<const TilingSpace::RTVarInfo*> TilingSpace::GetRTVarInfo(
   return it->second;
 }
 
-void TilingSpace::AssignTileSizes(absl::Span<const int64_t> tile_sizes) {
+absl::Status TilingSpace::AssignTileSizes(
+    absl::Span<const int64_t> tile_sizes) {
   CHECK_EQ(tile_sizes.size(), dimensions_.size());
   is_symbolic_ = false;
+
   llvm::DenseMap<SymbolicExpr, SymbolicExpr> replacement_map;
   for (const auto& [index, dim] : llvm::enumerate(dimensions_)) {
     dim.tile_size = tile_sizes[index];
@@ -198,9 +209,28 @@ void TilingSpace::AssignTileSizes(absl::Span<const int64_t> tile_sizes) {
                                      mlir_context_)] =
         CreateSymbolicConstant(tile_sizes[index], mlir_context_);
   }
+  for (const auto& c : divisibility_constraints_) {
+    SymbolicExpr replaced_size = c.tile_size.Replace(replacement_map);
+    if (replaced_size.GetType() != SymbolicExprType::kConstant) {
+      return absl::InternalError(absl::StrFormat(
+          "Expected tile size symbol to evaluate to a constant after "
+          "replacement, but got %s.",
+          replaced_size.ToString(dimensions_.size())));
+    }
+    int64_t concrete_tile_size = replaced_size.GetValue();
+    SymbolicExpr replaced_expr = c.expr.Replace(replacement_map);
+    if (!replaced_expr.IsMultipleOf(concrete_tile_size)) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Divisibility constraint not satisfied: %s is not a clean multiple "
+          "of %d.",
+          replaced_expr.ToString(dimensions_.size()), concrete_tile_size));
+    }
+  }
+
   for (auto& tiled_root : tiled_roots_) {
     tiled_root.Replace(replacement_map);
   }
+  return absl::OkStatus();
 }
 
 std::unique_ptr<TilingSpace> TilingSpace::Create(const HloFusionAdaptor& fusion,
@@ -261,7 +291,7 @@ std::unique_ptr<TilingSpace> TilingSpace::Create(const HloFusionAdaptor& fusion,
   return tiling_space;
 }
 
-int64_t TilingSpace::num_parallel_dimsensions() const {
+int64_t TilingSpace::num_parallel_dimensions() const {
   return absl::c_count_if(dimensions_, [](const DimensionInfo& dim) {
     return dim.type == DimensionSemantics::kParallel;
   });

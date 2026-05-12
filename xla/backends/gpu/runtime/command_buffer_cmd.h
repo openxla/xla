@@ -17,22 +17,14 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_RUNTIME_COMMAND_BUFFER_CMD_H_
 
 #include <cstdint>
-#include <memory>
 #include <optional>
-#include <string>
-#include <utility>
 #include <vector>
 
-#include "absl/base/thread_annotations.h"
-#include "absl/container/flat_hash_map.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
-#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
-#include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
@@ -40,22 +32,10 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
-#include "xla/backends/gpu/runtime/traced_command.h"
-#include "xla/core/collectives/reduction_kind.h"
-#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/shaped_slice.h"
-#include "xla/shape.h"
 #include "xla/stream_executor/command_buffer.h"
-#include "xla/stream_executor/device_address.h"
-#include "xla/stream_executor/gpu/tma_metadata.h"
-#include "xla/stream_executor/kernel.h"
-#include "xla/stream_executor/memory_allocation.h"
-#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/stream_executor/stream_executor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -150,27 +130,6 @@ class CollectiveCmd : public Command {
  private:
   CollectiveConfig config_;
   CommunicationId communication_id_;
-};
-
-//===----------------------------------------------------------------------===//
-// ReduceScatterCmd
-//===----------------------------------------------------------------------===//
-
-class ReduceScatterCmd : public CollectiveCmd {
- public:
-  ReduceScatterCmd(CollectiveConfig config, ReductionKind reduction_kind,
-                   absl::Span<const CollectiveThunk::Buffer> buffers);
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override;
-
- private:
-  ReductionKind reduction_kind_;
-  std::vector<CollectiveThunk::Buffer> buffers_;
 };
 
 //===----------------------------------------------------------------------===//

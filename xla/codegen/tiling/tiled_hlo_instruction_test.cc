@@ -195,9 +195,9 @@ TEST_F(TiledHloInstructionTest, ToString) {
       /*range_vars=*/{},
       /*rt_vars=*/{IndexingMap::Variable{0, 3}});
 
-  std::vector<std::unique_ptr<TiledHloInstruction>> region;
+  TiledHloRegion region;
   region.push_back(std::move(tiled_p2));
-  llvm::SmallVector<std::vector<std::unique_ptr<TiledHloInstruction>>> regions;
+  llvm::SmallVector<TiledHloRegion> regions;
   regions.push_back(std::move(region));
   std::unique_ptr<HloInstruction> p3_hlo = HloInstruction::CreateParameter(
       /*parameter_number=*/3, ShapeUtil::MakeShape(PrimitiveType::F32, {32}),

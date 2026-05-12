@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/core/host_offloading/host_compute_asyncifier.h"
 
+#include "absl/base/casts.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"

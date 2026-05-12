@@ -901,6 +901,17 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
       HloInstruction* hlo, const HloInstruction* input_tensor,
       const HloInstruction* update_tensor);
 
+  absl::StatusOr<HloInstruction*> ProcessUpdatePiece(
+      HloInstruction* hlo, const HloInstruction* input_tensor,
+      const HloInstruction* piece_update_tensor,
+      std::vector<int64_t> piece_dus_starts, HloInstruction* current_input);
+
+  absl::StatusOr<HloInstruction*> ProcessUpdatePieceExtractOperand(
+      HloInstruction* hlo, const HloInstruction* input_tensor,
+      const HloInstruction* piece_update_tensor,
+      std::vector<int64_t> piece_dus_starts, HloInstruction* current_input,
+      HloInstruction* zeroElemOp);
+
   // Handler for operations with no conflicts.
   // go/keep-sorted start
   absl::Status HandleDotWithoutConflicts(HloInstruction* hlo);

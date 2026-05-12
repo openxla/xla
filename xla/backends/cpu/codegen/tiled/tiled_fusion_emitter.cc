@@ -97,7 +97,7 @@ int64_t TotalCacheLineHits(
     const TiledHloComputation& tiling,
     const absl::flat_hash_set<const HloInstruction*>& operands) {
   int64_t per_tile_cost = 0;
-  for (const auto* root : tiling.GetRoots()) {
+  for (const auto* root : tiling.roots()) {
     per_tile_cost += PerTileCacheLines(*root);
   }
 

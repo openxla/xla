@@ -960,29 +960,31 @@ absl::StatusOr<xla::Shape> BuildXlaShapeFromC(
   } else {
     shape = xla::ShapeUtil::MakeShape(
         cpp_element_type, absl::Span<const int64_t>(dims, num_dims));
-  }
-  xla::Layout cpp_layout;
-  if (layout != nullptr) {
-    switch (layout->type) {
-      case PJRT_Buffer_MemoryLayout_Type::PJRT_Buffer_MemoryLayout_Type_Tiled: {
-        TF_ASSIGN_OR_RETURN(cpp_layout, ConvertToLayout(layout->tiled));
-        break;
+    if (layout != nullptr) {
+      xla::Layout cpp_layout;
+      switch (layout->type) {
+        case PJRT_Buffer_MemoryLayout_Type::
+            PJRT_Buffer_MemoryLayout_Type_Tiled: {
+          TF_ASSIGN_OR_RETURN(cpp_layout, ConvertToLayout(layout->tiled));
+          break;
+        }
+        case PJRT_Buffer_MemoryLayout_Type::
+            PJRT_Buffer_MemoryLayout_Type_Strides: {
+          TF_RETURN_IF_ERROR(absl::InvalidArgumentError(
+              "PJRT_Buffer_MemoryLayout_Type_Strides is not supported to be "
+              "converted to a xla::Shape"));
+          break;
+        }
+        default: {
+          TF_RETURN_IF_ERROR(absl::InvalidArgumentError(
+              absl::StrCat("Unexpected PJRT_Buffer_MemoryLayout_Type type: ",
+                           layout->type)));
+        }
       }
-      case PJRT_Buffer_MemoryLayout_Type::
-          PJRT_Buffer_MemoryLayout_Type_Strides: {
-        TF_RETURN_IF_ERROR(absl::InvalidArgumentError(
-            "PJRT_Buffer_MemoryLayout_Type_Strides is not supported to be "
-            "converted to a xla::Shape"));
-        break;
-      }
-      default: {
-        TF_RETURN_IF_ERROR(absl::InvalidArgumentError(absl::StrCat(
-            "Unexpected PJRT_Buffer_MemoryLayout_Type type: ", layout->type)));
-      }
+      *shape.mutable_layout() = cpp_layout;
+    } else {
+      shape.clear_layout();
     }
-    *shape.mutable_layout() = cpp_layout;
-  } else {
-    shape.clear_layout();
   }
   return shape;
 }

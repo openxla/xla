@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/runtime/object_pool.h"
 #include "xla/service/compilation_stats.h"
 #include "xla/service/compiled_module.h"
 #include "xla/service/compiler.h"
@@ -354,6 +355,8 @@ class GpuCompiler : public LLVMCompiler {
 
   absl::Mutex user_asm_hook_m_;
   AsmModuleHook user_asm_hook_ ABSL_GUARDED_BY(user_asm_hook_m_);
+
+  ObjectPool<std::unique_ptr<mlir::MLIRContext>> mlir_context_pool_;
 };
 
 }  // namespace gpu

@@ -24,6 +24,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -87,6 +88,23 @@ class TiledHloInstruction {
   template <typename Sink>
   friend void AbslStringify(Sink& sink, const TiledHloInstruction& tiled_hlo) {
     sink.Append(tiled_hlo.ToString());
+  }
+
+  // Temporary helpers to match API of the old TiledHloInstruction.
+  // TODO: b/509505290 -- Remove these once we migrate to this tiling and the
+  // old API is removed.
+  int64_t tile_size(int64_t dim) const {
+    auto tile_sizes = tile_.GetStaticTileSizes();
+    CHECK_OK(tile_sizes);
+    CHECK_LT(dim, tile_sizes->size());
+    return (*tile_sizes)[dim];
+  }
+
+  int64_t tile_stride(int64_t dim) const {
+    auto tile_strides = tile_.GetStaticTileStrides();
+    CHECK_OK(tile_strides);
+    CHECK_LT(dim, tile_strides->size());
+    return (*tile_strides)[dim];
   }
 
  private:
@@ -179,7 +197,7 @@ class TiledHloComputation {
 
   static absl::StatusOr<TiledHloRegion> CreateHloRegion(
       std::unique_ptr<TiledHloInstruction> tiled_root,
-      const HloFusionAdaptor& fusion, const TilingSpace& tiling_space,
+      const HloFusionAdaptor& fusion, TilingSpace& tiling_space,
       absl::flat_hash_map<int64_t,
                           std::pair<const TiledHloInstruction*, Interval>>&
           rt_symbol_to_tiled_hlo);

@@ -4202,7 +4202,6 @@ LogicalResult ExportXlaOp(XlaRngGetAndUpdateStateOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(ScanOp op, OpLoweringContext ctx) {
-  auto& value_map = *ctx.values;
   xla::XlaComputationId body;
   if (failed(ctx.converter->LowerRegionAsComputation(&op.getBody(), body))) {
     return failure();
@@ -4241,11 +4240,12 @@ LogicalResult ExportXlaOp(ScanOp op, OpLoweringContext ctx) {
       xla::Scan(inputs, inits, body, op.getDimension(), scan_dimension_size,
                 op.getIsReverse(), is_associative);
 
-  for (int i = 0; i < op.getNumResults(); ++i) {
-    if (!op.getResult(i).use_empty()) {
-      value_map[op.getResult(i)] = xla::GetTupleElement(result, i);
-    }
-  }
+  // The HLO `kScan` instruction always produces a tuple, even with a single
+  // result. Use `BuildGetTupleElementsForTupleResults` so per-result shardings
+  // (e.g. propagated by Shardy) are applied to each get-tuple-element rather
+  // than the tuple as a whole, which would otherwise fail validation against
+  // the single-tensor element shape.
+  BuildGetTupleElementsForTupleResults(op, result, ctx);
   return success();
 }
 

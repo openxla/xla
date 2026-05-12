@@ -1113,11 +1113,11 @@ e {
   ROOT d = bf16[16,1920] dot(p3, cvt),
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 })"));
-  EXPECT_TRUE(GemmFusion(se::CudaComputeCapability{
+  ASSERT_TRUE(GemmFusion(se::CudaComputeCapability{
                              se::CudaComputeCapability::kAmpere, 0})
                   .Run(module.get())
                   .value());
-  EXPECT_THAT(module->entry_computation()->root_instruction(),
+  ASSERT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch((m::Fusion(m::Parameter(), m::Parameter(),
                                     m::Parameter(), m::Parameter()))));
   const HloComputation* computation =
@@ -1275,7 +1275,7 @@ ENTRY e {
       "foo");
 }
 
-TEST_F(GemmFusionTest, ElementwiseAddIsFusedInEpilogue) {
+TEST_P(GemmFusionTestVersioned, ElementwiseAddIsFusedInEpilogue) {
   auto module = ParseAndReturnVerifiedModule(R"(
 HloModule m
 ENTRY e {
@@ -1295,7 +1295,7 @@ ENTRY e {
                       .WithFusionKind(HloInstruction::FusionKind::kCustom))));
 }
 
-TEST_F(GemmFusionTest, FusesBroadcastOfScalarEpilogues) {
+TEST_P(GemmFusionTestVersioned, FusesBroadcastOfScalarEpilogues) {
   auto module = ParseAndReturnVerifiedModule(R"(
 HloModule m
 ENTRY e {
@@ -1317,7 +1317,8 @@ ENTRY e {
                                     m::Parameter(), m::Parameter()))));
 }
 
-TEST_F(GemmFusionTest, BroadcastsOfParametersAreFusedAsEpilogueInputs) {
+TEST_P(GemmFusionTestVersioned,
+       BroadcastsOfParametersAreFusedAsEpilogueInputs) {
   auto module = ParseAndReturnVerifiedModule(R"(
 e {
   p0 = f16[4,55] parameter(0)

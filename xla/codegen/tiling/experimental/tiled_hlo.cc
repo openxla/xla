@@ -41,7 +41,6 @@ limitations under the License.
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
-#include "mlir/IR/MLIRContext.h"
 #include "xla/codegen/tiling/experimental/tile.h"
 #include "xla/codegen/tiling/experimental/tile_propagation.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
@@ -52,7 +51,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/instruction_fusion.h"
 #include "xla/service/name_uniquer.h"
 #include "xla/util.h"
 
@@ -60,7 +58,6 @@ namespace xla::gpu::experimental {
 
 using ::llvm::ArrayRef;
 using ::llvm::SmallVector;
-using ::mlir::MLIRContext;
 
 std::string TiledHloInstruction::ToString(
     absl::string_view field_separator) const {
@@ -282,7 +279,7 @@ absl::InlinedVector<const HloInstruction*, 2> ToInstructions(
 // * Otherwise, returns a region including tiled_root and all dependencies.
 /*static*/ absl::StatusOr<TiledHloRegion> TiledHloComputation::CreateHloRegion(
     std::unique_ptr<TiledHloInstruction> tiled_root,
-    const HloFusionAdaptor& fusion, const TilingSpace& tiling_space,
+    const HloFusionAdaptor& fusion, TilingSpace& tiling_space,
     absl::flat_hash_map<int64_t,
                         std::pair<const TiledHloInstruction*, Interval>>&
         rt_symbol_to_tiled_hlo) {

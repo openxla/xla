@@ -185,7 +185,8 @@ absl::Status Allocation::UpdateUses(HloComputation* computation,
                                     const HloAliasAnalysis& alias_analysis) {
   for (const HloUse& use : uses()) {
     HloInstruction* replacement_instruction = producing_instruction;
-    Shape operand_shape = use.instruction->operand(use.operand_number)->shape();
+    const Shape& operand_shape =
+        use.instruction->operand(use.operand_number)->shape();
     if (operand_shape.IsTuple()) {
       HloInstruction* tuple_inst =
           use.instruction->mutable_operand(use.operand_number);

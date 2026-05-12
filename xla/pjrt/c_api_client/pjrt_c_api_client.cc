@@ -1566,8 +1566,10 @@ class PjRtCApiAsyncHostToDeviceTransferManager
     args.buffer_index = buffer_index;
 
     const xla::Shape& shape = literal.shape();
-    args.shape_dims = shape.dimensions().data();
-    args.shape_num_dims = shape.dimensions().size();
+    if (shape.IsArray()) {
+      args.shape_dims = shape.dimensions().data();
+      args.shape_num_dims = shape.dimensions().size();
+    }
     args.shape_element_type =
         pjrt::ConvertToPjRtBufferType(shape.element_type());
 
@@ -1580,7 +1582,11 @@ class PjRtCApiAsyncHostToDeviceTransferManager
       args.shape_layout = nullptr;
     }
 
-    args.data = literal.untyped_data();
+    if (shape.IsArray()) {
+      args.data = literal.untyped_data();
+    } else {
+      args.data = nullptr;
+    }
     const PJRT_Api* api = c_client_->pjrt_c_api();
     RETURN_STATUS_IF_PJRT_ERROR(
         api->PJRT_AsyncHostToDeviceTransferManager_TransferLiteral(&args), api);
@@ -3539,10 +3545,15 @@ std::shared_ptr<const PjRtLayout> PjRtCApiBuffer::layout() const {
 
 const Shape& PjRtCApiBuffer::on_device_shape() const {
   if (!on_device_shape_.has_value()) {
-    Shape shape(element_type(), dimensions(), is_dynamic_dimension());
-    *shape.mutable_layout() = layout()->xla_layout();
-    absl::MutexLock lock(mu_);
-    on_device_shape_ = shape;
+    if (element_type() == TOKEN) {
+      absl::MutexLock lock(mu_);
+      on_device_shape_ = ShapeUtil::MakeTokenShape();
+    } else {
+      Shape shape(element_type(), dimensions(), is_dynamic_dimension());
+      *shape.mutable_layout() = layout()->xla_layout();
+      absl::MutexLock lock(mu_);
+      on_device_shape_ = shape;
+    }
   }
   return *on_device_shape_;
 }

@@ -551,6 +551,18 @@ cc_library(
 )
 
 cc_library(
+    name = "traceme_global_flags",
+    srcs = ["traceme_global_flags.cc"],
+    hdrs = ["traceme_global_flags.h"],
+    copts = tf_profiler_copts(),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//xla/tsl/platform:macros",
+    ],
+    alwayslink = True,
+)
+
+cc_library(
     name = "lock_free_queue",
     hdrs = ["lock_free_queue.h"],
     deps = [

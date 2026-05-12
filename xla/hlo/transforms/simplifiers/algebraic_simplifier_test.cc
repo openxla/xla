@@ -13836,5 +13836,55 @@ TEST_F(AlgebraicSimplifierTest, HoistTransposeOfReshapeLayoutSensitive) {
   EXPECT_FALSE(simplifier.Run(m.get()).value());
 }
 
+TEST_F(AlgebraicSimplifierTest, CommuteReduceAndBroadcast) {
+  constexpr absl::string_view kModuleStr = R"(
+  HloModule m
+
+  region_0.1 {
+    reduce_sum.4 = f32[] parameter(1)
+    reduce_sum.3 = f32[] parameter(0)
+    ROOT reduce_sum.5 = f32[] add(reduce_sum.3, reduce_sum.4)
+  }
+
+  ENTRY fused_computation {
+    param_0.4 = f32[512,1024] parameter(0)
+    broadcast_in_dim.0 = f32[16,8,512,1024] broadcast(param_0.4), dimensions={2,3}
+    constant.0 = f32[] constant(0)
+    ROOT reduce_sum.0 = f32[16,8] reduce(broadcast_in_dim.0, constant.0), dimensions={2,3}, to_apply=region_0.1
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  EXPECT_TRUE(
+      RunHloPass(AlgebraicSimplifier(default_options_), m.get()).value());
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(m::Broadcast(m::Reduce(m::Parameter(), m::Constant()))));
+}
+
+TEST_F(AlgebraicSimplifierTest, CommuteReduceAndBroadcastUnsorted) {
+  constexpr absl::string_view kModuleStr = R"(
+  HloModule m
+
+  region_0.1 {
+    reduce_sum.4 = f32[] parameter(1)
+    reduce_sum.3 = f32[] parameter(0)
+    ROOT reduce_sum.5 = f32[] add(reduce_sum.3, reduce_sum.4)
+  }
+
+  ENTRY fused_computation {
+    param_0.4 = f32[512,1024] parameter(0)
+    broadcast_in_dim.0 = f32[16,8,1024,512] broadcast(param_0.4), dimensions={3,2}
+    constant.0 = f32[] constant(0)
+    ROOT reduce_sum.0 = f32[16,8] reduce(broadcast_in_dim.0, constant.0), dimensions={3,2}, to_apply=region_0.1
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  EXPECT_TRUE(
+      RunHloPass(AlgebraicSimplifier(default_options_), m.get()).value());
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(m::Broadcast(m::Reduce(m::Parameter(), m::Constant()))));
+}
+
 }  // namespace
 }  // namespace xla

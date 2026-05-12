@@ -113,6 +113,7 @@ limitations under the License.
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/dump/dump.h"
+#include "xla/pjrt/dynamic_shapes.h"
 #include "xla/pjrt/event_pool.h"
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/host_memory_spaces.h"
@@ -467,13 +468,30 @@ void MaybeWaitForEventOnStream(const BufferSequencingEventRef& event,
 
 absl::StatusOr<int64_t> PjRtStreamExecutorClient::GetOnDeviceBytesCount(
     int memory_space_kind, const xla::Shape& shape) const {
-  return client()->backend().transfer_manager()->GetByteSizeRequirement(shape);
+  int64_t transfer_manager_size =
+      client()->backend().transfer_manager()->GetByteSizeRequirement(shape);
+
+  auto kind = GetDynamicShapeKind(memory_space_kind);
+  auto requirements =
+      PjRtShapeAndMetadataTransferRequirements::Get(shape, kind);
+
+  if (static_cast<int64_t>(requirements.size) != transfer_manager_size) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "%s mismatch between transfer_manager requirements (%ld) and "
+        "PjRtTransferRequirements (%zu)",
+        shape.ToString(true), transfer_manager_size, requirements.size));
+  }
+
+  return static_cast<int64_t>(requirements.size);
 }
 
 absl::StatusOr<xla::Shape>
 PjRtStreamExecutorClient::MakeDefaultShapeForMemorySpace(
     PjRtMemorySpace* memory_space, xla::Shape shape,
     const xla::Layout* layout) const {
+  if (shape.IsToken()) {
+    return shape;
+  }
   TransferManager* transfer_manager = client()->backend().transfer_manager();
   if (layout != nullptr) {
     *shape.mutable_layout() = *layout;
@@ -635,6 +653,20 @@ PjRtStreamExecutorClient::LinearizeHostBufferInto(
                       tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
                           ->GetLocalDeviceState());
 
+  TransferManager* transfer_manager = client()->backend().transfer_manager();
+
+  auto* copy_stream = local_device->host_to_device_stream();
+
+  TF_RETURN_IF_ERROR(WaitForAllocation(copy_stream, *raw_buffer));
+  auto definition_event = BufferSequencingEvent::Create(async_work_runner());
+
+  if (type == xla::TOKEN) {
+    TF_RETURN_IF_ERROR(AllocateAndRecordEvent(definition_event, local_device,
+                                              copy_stream,
+                                              "LinearizeHostBufferIntoToken"));
+    return PjRtDeviceEventRef(definition_event);
+  }
+
   Shape on_host_shape = ShapeUtil::MakeShape(type, dims);
   absl::InlinedVector<int64_t, 4> tmp_strides;
   if (!byte_strides) {
@@ -645,19 +677,12 @@ PjRtStreamExecutorClient::LinearizeHostBufferInto(
   }
   int64_t size = ShapeUtil::ByteSizeOf(on_host_shape);
 
-  TransferManager* transfer_manager = client()->backend().transfer_manager();
-
   absl::InlinedVector<int64_t, 4> shape_strides(
       device_shape.dimensions().size());
   TF_RETURN_IF_ERROR(ShapeUtil::UnpackedByteStrides(
       device_shape, absl::MakeSpan(shape_strides)));
   bool host_and_device_strides_equal =
       (size == 0 || *byte_strides == shape_strides);
-
-  auto* copy_stream = local_device->host_to_device_stream();
-
-  TF_RETURN_IF_ERROR(WaitForAllocation(copy_stream, *raw_buffer));
-  auto definition_event = BufferSequencingEvent::Create(async_work_runner());
 
   std::shared_ptr<TransposePlan> transpose;
   if (!host_and_device_strides_equal) {
@@ -890,47 +915,48 @@ absl::StatusOr<PjRtDeviceEventRef> PjRtStreamExecutorClient::LinearizeInto(
   TF_RETURN_IF_ERROR(WaitForAllocation(copy_stream, *raw_buffer));
 
   if (literal.shape().IsToken()) {
-    event.SetStateConcrete();
-  } else {
-    TransferManager* transfer_manager = client()->backend().transfer_manager();
-
-    // The host to device transfer is performed on a thread pool, mostly because
-    // it includes linearization that may be slow.
-    // TODO(misard) assess if it would be preferable to introduce a heuristic to
-    // put the transfer into the calling thread for small literals.
-    auto transfer_h2d = [this, local_client = client(), transfer_manager,
-                         local_device, raw_buffer, device, event, literal,
-                         on_device_shape = device_shape]() mutable {
-      // This function uses CHECK_OK and value() since we have no way
-      // to report failures from a callback. However, the operations here are
-      // unlikely to fail and not recoverable even if we were to fail: DMAs to
-      // memory that has already been allocated, and a possible Event
-      // allocation.
-      auto device_memory =
-          tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(raw_buffer.get())
-              ->device_buffer();
-
-      se::Stream* h2d_stream = local_device->host_to_device_stream();
-
-      ShapedBuffer buffer =
-          device_memory->AsShapedBuffer(device, on_device_shape);
-      CHECK_OK(transfer_manager->TransferLiteralToDeviceAsync(h2d_stream,
-                                                              literal, buffer));
-
-      CHECK_OK(AddDestinationBufferSynchronization(this, local_device, event,
-                                                   h2d_stream));
-
-      local_device->ThenRelease(h2d_stream, device_memory).IgnoreError();
-
-      // This can sometimes catch the case where the literal memory has been
-      // freed before the H2D transfer was issued.
-      h2d_stream->RefreshStatus()
-          .IgnoreError();  // Can return error::Unimplemented
-      QCHECK(h2d_stream->ok());
-    };
-    async_work_runner()->Schedule(
-        WrapClosureAsCopyable(std::move(transfer_h2d)));
+    TF_RETURN_IF_ERROR(AllocateAndRecordEvent(event, local_device, copy_stream,
+                                              "LinearizeIntoToken"));
+    return PjRtDeviceEventRef(event);
   }
+
+  TransferManager* transfer_manager = client()->backend().transfer_manager();
+
+  // The host to device transfer is performed on a thread pool, mostly because
+  // it includes linearization that may be slow.
+  // TODO(misard) assess if it would be preferable to introduce a heuristic to
+  // put the transfer into the calling thread for small literals.
+  auto transfer_h2d = [this, local_client = client(), transfer_manager,
+                       local_device, raw_buffer, device, event, literal,
+                       on_device_shape = device_shape]() mutable {
+    // This function uses CHECK_OK and value() since we have no way
+    // to report failures from a callback. However, the operations here are
+    // unlikely to fail and not recoverable even if we were to fail: DMAs to
+    // memory that has already been allocated, and a possible Event
+    // allocation.
+    auto device_memory =
+        tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(raw_buffer.get())
+            ->device_buffer();
+
+    se::Stream* h2d_stream = local_device->host_to_device_stream();
+
+    ShapedBuffer buffer =
+        device_memory->AsShapedBuffer(device, on_device_shape);
+    CHECK_OK(transfer_manager->TransferLiteralToDeviceAsync(h2d_stream, literal,
+                                                            buffer));
+
+    CHECK_OK(AddDestinationBufferSynchronization(this, local_device, event,
+                                                 h2d_stream));
+
+    local_device->ThenRelease(h2d_stream, device_memory).IgnoreError();
+
+    // This can sometimes catch the case where the literal memory has been
+    // freed before the H2D transfer was issued.
+    h2d_stream->RefreshStatus()
+        .IgnoreError();  // Can return error::Unimplemented
+    QCHECK(h2d_stream->ok());
+  };
+  async_work_runner()->Schedule(WrapClosureAsCopyable(std::move(transfer_h2d)));
   return PjRtDeviceEventRef(event);
 }
 
@@ -1193,7 +1219,7 @@ PjRtStreamExecutorLoadedExecutable::PjRtStreamExecutorLoadedExecutable(
         IsAllZeros(*device_assignment_)) {
       // This code path should only be triggered when we intentionally compile
       // an HLO without having enough devices to actually run it. See the
-      // "--run=false" option in
+      // "--compile_only=true" option in
       // tensorflow/compiler/xla/tools/multihost_hlo_runner/hlo_runner_main.cc.
       // That will help us debug the XLA compiler locally.
       LOG(INFO)

@@ -416,6 +416,10 @@ tsl::Future<> PjRtArray::CopyToHostBuffer(
   }
 
   PjRtBuffer* pjrt_buffer = pjrt_buffers_.front().get();
+  if (*dtype == xla::TOKEN) {
+    return pjrt_buffer->GetReadyFuture();
+  }
+
   absl::Span<const int64_t> dims;
   absl::StatusOr<std::vector<int64_t>> logical_dims;
   if (!pjrt_buffer->has_dynamic_dimensions()) {

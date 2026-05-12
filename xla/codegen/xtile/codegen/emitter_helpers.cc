@@ -878,52 +878,6 @@ absl::Status CheckConcatenateOperands(
   return absl::OkStatus();
 }
 
-std::pair<SmallVector<int64_t>, SmallVector<int64_t>> CollapseUnitDims(
-    llvm::ArrayRef<int64_t> shape, llvm::ArrayRef<int64_t> counterpart_shape) {
-  SmallVector<int64_t> shape_without_unit_dims;
-  SmallVector<int64_t> non_unit_dims_indices;
-  for (auto [i, size] : llvm::enumerate(shape)) {
-    if (size != 1 || size != counterpart_shape[i]) {
-      shape_without_unit_dims.push_back(size);
-      non_unit_dims_indices.push_back(i);
-    }
-  }
-  return {std::move(shape_without_unit_dims), std::move(non_unit_dims_indices)};
-}
-
-absl::StatusOr<TensorValue> CanonicalizeDotOperand(
-    mlir::ImplicitLocOpBuilder& b, TensorValue operand,
-    int64_t contracting_dim_idx, DotOperandSide side,
-    TensorValue counterpart_operand) {
-  llvm::ArrayRef<int64_t> shape = operand.getType().getShape();
-  llvm::ArrayRef<int64_t> counterpart_shape =
-      counterpart_operand == nullptr ? shape
-                                     : counterpart_operand.getType().getShape();
-
-  auto [shape_without_unit_dims, non_unit_dims_indices] =
-      CollapseUnitDims(shape, counterpart_shape);
-
-  if (shape_without_unit_dims.size() != 2) {
-    return absl::FailedPreconditionError(
-        "Expected dot operand tile to have exactly two non-unit tile sizes");
-  }
-  if (shape.size() != shape_without_unit_dims.size()) {
-    ASSIGN_OR_RETURN(operand,
-                     EmitTiledReshape(b, shape_without_unit_dims, operand));
-  }
-  int expected_contracting_dim_position = side == DotOperandSide::kLhs ? 1 : 0;
-  bool is_transposed =
-      non_unit_dims_indices[expected_contracting_dim_position] !=
-      contracting_dim_idx;
-
-  if (is_transposed) {
-    SmallVector<int64_t, 2> transposed_shape{shape_without_unit_dims[1],
-                                             shape_without_unit_dims[0]};
-    operand =
-        EmitTiledTranspose(b, transposed_shape, /*dimensions=*/{1, 0}, operand);
-  }
-  return operand;
-}
 
 absl::StatusOr<TensorValue> EmitTiledReshape(mlir::ImplicitLocOpBuilder& b,
                                              ArrayRef<int64_t> tile_sizes,

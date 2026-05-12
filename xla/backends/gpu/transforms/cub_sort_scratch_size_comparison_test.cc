@@ -168,6 +168,11 @@ absl::StatusOr<int64_t> ExtractScratchSize(const HloModule& module) {
 }
 
 TEST_P(CubSortScratchSizeComparisonTest, CompareScratchSize) {
+#ifndef NDEBUG
+  GTEST_SKIP()
+      << "Skipping test: Debug builds have smaller cub sort scratch space, and "
+         "may break the test";
+#endif
   auto [key_size, value_size, batch_size, num_items] = GetParam();
   TestParams params{key_size, value_size, batch_size, num_items};
 
@@ -190,7 +195,11 @@ TEST_P(CubSortScratchSizeComparisonTest, CompareScratchSize) {
   ASSERT_OK_AND_ASSIGN(int64_t deviceless_scratch_size,
                        RunPassAndExtractScratchSize(*module, &deviceless_pass));
 
-  EXPECT_GE(deviceless_scratch_size, required_scratch_size);
+  EXPECT_GE(deviceless_scratch_size, required_scratch_size)
+      << "Actual scratch size is larger than the deviceless scratch size for "
+         "key size "
+      << key_size << ", value size " << value_size << ", batch size "
+      << batch_size << ", and num items " << num_items;
   EXPECT_LE(deviceless_scratch_size, required_scratch_size * 1.1)
       << "Estimated deviceless scratch size is too large: actual scratch "
          "size needed: "

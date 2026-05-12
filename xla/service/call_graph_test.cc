@@ -496,7 +496,7 @@ TEST_F(CallGraphTest, ComplexGraphNearestAncestors) {
   }
 
   HloComputation* entry_computation;
-  HloInstruction* entry_while;
+  const HloInstruction* entry_while;
   {
     HloComputation::Builder builder(TestName() + ".entry");
     HloInstruction* param0 = builder.AddInstruction(
@@ -512,23 +512,30 @@ TEST_F(CallGraphTest, ComplexGraphNearestAncestors) {
   // Verify NearestAncestorsInSameComputation for various instructions in the
   // module.
   EXPECT_EQ(call_graph->NearestAncestorsInSameComputation(a_call, a_call),
-            std::make_pair(a_call, a_call));
+            std::make_pair((const HloInstruction*)a_call,
+                           (const HloInstruction*)a_call));
 
   // c_computation is called from more than one site, so
   // NearestAncestorsInSameComputation bails and returns nullptrs.
-  std::pair<HloInstruction*, HloInstruction*> null_pair = {nullptr, nullptr};
+  std::pair<const HloInstruction*, const HloInstruction*> null_pair = {nullptr,
+                                                                       nullptr};
   EXPECT_EQ(call_graph->NearestAncestorsInSameComputation(
                 b_map, c_computation->root_instruction()),
             null_pair);
 
   EXPECT_EQ(call_graph->NearestAncestorsInSameComputation(b_map, entry_while),
-            std::make_pair(entry_while, entry_while));
+            std::make_pair((const HloInstruction*)entry_while,
+                           (const HloInstruction*)entry_while));
+
   EXPECT_EQ(call_graph->NearestAncestorsInSameComputation(b_map, a_call),
-            std::make_pair(a_while, a_call));
+            std::make_pair((const HloInstruction*)a_while,
+                           (const HloInstruction*)a_call));
   EXPECT_EQ(call_graph->NearestAncestorsInSameComputation(a_while, a_call),
-            std::make_pair(a_while, a_call));
+            std::make_pair((const HloInstruction*)a_while,
+                           (const HloInstruction*)a_call));
   EXPECT_EQ(call_graph->NearestAncestorsInSameComputation(a_while, b_map),
-            std::make_pair(a_while, a_while));
+            std::make_pair((const HloInstruction*)a_while,
+                           (const HloInstruction*)a_while));
 }
 
 TEST_F(CallGraphTest, NearestCommonAncestorInstructions) {

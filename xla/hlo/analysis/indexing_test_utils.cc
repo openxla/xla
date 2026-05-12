@@ -141,7 +141,8 @@ HloInstructionIndexing IndexingTestBase::GetInputToOutputIndexing(
   return indexing;
 }
 
-bool ApproximateMatch(absl::string_view lhs, absl::string_view rhs) {
+std::pair<size_t, size_t> FindApproximateMismatch(absl::string_view lhs,
+                                                  absl::string_view rhs) {
   size_t lhs_length = lhs.size();
   size_t rhs_length = rhs.size();
   size_t l = 0, r = 0;
@@ -155,14 +156,19 @@ bool ApproximateMatch(absl::string_view lhs, absl::string_view rhs) {
     if (l == lhs_length || r == rhs_length) {
       break;
     }
-    if (lhs[l++] != rhs[r++]) {
-      return false;
+    if (lhs[l] != rhs[r]) {
+      return {l, r};
     }
+    l++;
+    r++;
   }
-  return l == lhs_length && r == rhs_length;
+  return {l, r};
 }
 
-
+bool ApproximateMatch(absl::string_view lhs, absl::string_view rhs) {
+  return FindApproximateMismatch(lhs, rhs) ==
+         std::make_pair(lhs.size(), rhs.size());
+}
 
 absl::Status EnumerateDomain(
     const IndexingMap& indexing_map,

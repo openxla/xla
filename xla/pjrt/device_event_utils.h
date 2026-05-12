@@ -39,6 +39,10 @@ class ScopedLauncher {
     AddDependency(dependency.ptr());
   }
 
+  void AddDependency(tsl::AsyncValue* dependency);
+
+  void AddDependency(absl::Span<const PjRtDeviceEventRef> dependencies);
+
  private:
   class Callee;
   tsl::RCReference<Callee> state_;
@@ -65,6 +69,12 @@ inline void RunWhenReady(absl::Span<const PjRtDeviceEventRef> events,
 // Returns an error if any of the `events` have an error.
 // Does not wait for events to become ready.
 absl::Status GetErrors(absl::Span<const PjRtDeviceEventRef> events);
+
+void BlockUntilReady(PjRtDeviceEventPtr event);
+
+inline void BlockUntilReady(const PjRtDeviceEventRef& event) {
+  BlockUntilReady(event.ptr());
+}
 
 }  // namespace xla
 

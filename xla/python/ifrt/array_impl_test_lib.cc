@@ -1009,6 +1009,59 @@ TEST(ArrayImplTest, HostBufferInt4) {
   }
 }
 
+TEST(ArrayImplTest, HostBufferTokens) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      DeviceListRef device_list,
+      client->MakeDeviceList(client->addressable_devices()));
+  ASSERT_GT(device_list->size(), 1);
+
+  xla::ifrt::DType dtype(xla::ifrt::DType::kToken);
+  xla::ifrt::Shape shape({});
+
+  for (Memory* const memory : device_list->devices().front()->Memories()) {
+    SCOPED_TRACE(absl::StrCat(memory->Kind()));
+
+    ShardingRef sharding = ConcreteEvenSharding::Create(
+        device_list, memory->Kind(), shape, /*shard_shape=*/shape,
+        /*is_fully_replicated=*/true);
+
+    {
+      ASSERT_OK_AND_ASSIGN(
+          auto array,
+          client->MakeArrayFromHostBuffer(
+              nullptr, dtype, shape, /*byte_strides=*/std::nullopt, sharding,
+              /*layout=*/nullptr,
+              xla::ifrt::Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+              /*on_done_with_host_buffer=*/nullptr));
+
+      tsl::Future<> future =
+          array->CopyToHostBuffer(nullptr, /*byte_strides=*/std::nullopt,
+                                  xla::ifrt::ArrayCopySemantics::kReuseInput);
+      ASSERT_OK(future.Await());
+    }
+
+    {
+      const absl::Status status = absl::InternalError("injected error");
+      const xla::ifrt::ArraySpec array_spec = {
+          /*dtype=*/dtype,
+          /*shape=*/shape,
+          /*sharding=*/sharding,
+      };
+      ASSERT_OK_AND_ASSIGN(auto arrays,
+                           client->MakeErrorArrays(status, {array_spec}));
+      ASSERT_EQ(arrays.size(), 1);
+
+      tsl::Future<> future = arrays[0]->CopyToHostBuffer(
+          nullptr, /*byte_strides=*/std::nullopt,
+          xla::ifrt::ArrayCopySemantics::kReuseInput);
+      EXPECT_THAT(future.Await(),
+                  StatusIs(status.code(), HasSubstr(status.message())));
+    }
+  }
+}
+
 TEST(ArrayImplTest, MakeErrorArrays) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
   TF_ASSERT_OK_AND_ASSIGN(
@@ -1619,7 +1672,7 @@ TEST(ArrayImplTest, CopyPreservesDefaultLayouts) {
   }
 }
 
-TEST(ArrayImplTest, MakeAndCopyZeroSizedBuffers) {
+TEST(ArrayImplTest, MakeAndCopyZeroSizedArrays) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
 
   Device* const device = client->addressable_devices().front();
@@ -1663,7 +1716,7 @@ TEST(ArrayImplTest, MakeAndCopyZeroSizedBuffers) {
   }
 }
 
-TEST(ArrayImplTest, PoisonedZeroSizedBuffers) {
+TEST(ArrayImplTest, PoisonedZeroSizedArrays) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
 
   Device* const device = client->addressable_devices().front();
@@ -1672,6 +1725,97 @@ TEST(ArrayImplTest, PoisonedZeroSizedBuffers) {
 
   DType dtype(DType::kF32);
   Shape shape({0, 1});
+  const absl::Status error = absl::InternalError("injected error");
+
+  for (Memory* const memory : device->Memories()) {
+    SCOPED_TRACE(absl::StrCat(memory->Kind()));
+
+    ShardingRef sharding = ConcreteEvenSharding::Create(
+        device_list, memory->Kind(), shape,
+        /*shard_shape=*/shape, /*is_fully_replicated=*/true);
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<ArrayRef> arrays,
+        client->MakeErrorArrays(error, {{
+                                           /*dtype=*/dtype,
+                                           /*shape=*/shape,
+                                           /*sharding=*/sharding,
+                                       }}));
+    EXPECT_THAT(arrays[0]->GetReadyFuture().Await(),
+                StatusIs(error.code(), HasSubstr(error.message())));
+
+    for (Device* const device : client->addressable_devices()) {
+      TF_ASSERT_OK_AND_ASSIGN(DeviceListRef single_device_list,
+                              client->MakeDeviceList({device}));
+      TF_ASSERT_OK_AND_ASSIGN(
+          auto copied,
+          client->CopyArrays(absl::MakeSpan(arrays),
+                             std::move(single_device_list), std::nullopt,
+                             ArrayCopySemantics::kReuseInput));
+      EXPECT_THAT(copied[0]->GetReadyFuture().Await(),
+                  StatusIs(error.code(), HasSubstr(error.message())));
+
+      tsl::Future<> future =
+          copied[0]->CopyToHostBuffer(nullptr, /*byte_strides=*/std::nullopt,
+                                      ArrayCopySemantics::kAlwaysCopy);
+      EXPECT_THAT(future.Await(),
+                  StatusIs(error.code(), HasSubstr(error.message())));
+    }
+  }
+}
+
+TEST(ArrayImplTest, MakeAndCopyTokenArrays) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+
+  Device* const device = client->addressable_devices().front();
+  TF_ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
+                          client->MakeDeviceList({device}));
+
+  DType dtype(DType::kToken);
+  Shape shape({});
+
+  for (Memory* const memory : device->Memories()) {
+    SCOPED_TRACE(absl::StrCat(memory->Kind()));
+
+    ShardingRef sharding = ConcreteEvenSharding::Create(
+        device_list, memory->Kind(), shape,
+        /*shard_shape=*/shape, /*is_fully_replicated=*/true);
+    TF_ASSERT_OK_AND_ASSIGN(
+        ArrayRef array,
+        client->MakeArrayFromHostBuffer(
+            nullptr, dtype, shape,
+            /*byte_strides=*/std::nullopt, sharding,
+            /*layout=*/nullptr,
+            Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+            /*on_done_with_host_buffer=*/nullptr));
+    TF_ASSERT_OK(array->GetReadyFuture().Await());
+
+    for (Device* const device : client->addressable_devices()) {
+      TF_ASSERT_OK_AND_ASSIGN(DeviceListRef single_device_list,
+                              client->MakeDeviceList({device}));
+      TF_ASSERT_OK_AND_ASSIGN(
+          auto copied,
+          client->CopyArrays(absl::MakeSpan(&array, 1),
+                             std::move(single_device_list), std::nullopt,
+                             ArrayCopySemantics::kReuseInput));
+      TF_ASSERT_OK(copied[0]->GetReadyFuture().Await());
+
+      tsl::Future<> future =
+          copied[0]->CopyToHostBuffer(nullptr, /*byte_strides=*/std::nullopt,
+                                      ArrayCopySemantics::kAlwaysCopy);
+      TF_ASSERT_OK(future.Await());
+    }
+  }
+}
+
+TEST(ArrayImplTest, PoisonedTokenArrays) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+
+  Device* const device = client->addressable_devices().front();
+  TF_ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
+                          client->MakeDeviceList({device}));
+
+  DType dtype(DType::kToken);
+  Shape shape({});
   const absl::Status error = absl::InternalError("injected error");
 
   for (Memory* const memory : device->Memories()) {

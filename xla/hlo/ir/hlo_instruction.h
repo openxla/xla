@@ -2097,6 +2097,9 @@ class HloInstruction {
   bool is_default_config() const { return is_default_config_; }
   void set_default_config() { is_default_config_ = true; }
 
+  // Returns true if the instruction supports precision config.
+  bool SupportsPrecisionConfig() const;
+
   // Returns the information used to tell the implementation information about
   // what sort of precision is requested. The meaning of the field is backend
   // specific. At the moment, it is only supported for kConvolution and kDot.

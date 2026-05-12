@@ -561,5 +561,25 @@ TEST_F(HloInstructionTest, MapUnaryOutputDimToOperandDimReshapeMixed) {
   EXPECT_EQ(reshape->MapUnaryOutputDimToOperandDim(2), 2);
 }
 
+TEST_F(HloInstructionTest, PrecisionConfigMethodConsistency) {
+  // 1. Test a valid opcode (kParameter) that does not have PrecisionConfig.
+  std::unique_ptr<HloInstruction> param = HloInstruction::CreateParameter(
+      0, ShapeUtil::MakeShape(F32, {}), "param");
+  EXPECT_FALSE(param->SupportsPrecisionConfig());
+  EXPECT_DEATH(param->precision_config(), "");
+  EXPECT_DEATH(param->mutable_precision_config(), "");
+
+  // 2. Test an opcode (kDot) that does have PrecisionConfig.
+  std::unique_ptr<HloInstruction> lhs = HloInstruction::CreateParameter(
+      0, ShapeUtil::MakeShape(F32, {2, 2}), "lhs");
+  std::unique_ptr<HloInstruction> rhs = HloInstruction::CreateParameter(
+      1, ShapeUtil::MakeShape(F32, {2, 2}), "rhs");
+  DotDimensionNumbers dnums;
+  std::unique_ptr<HloInstruction> dot =
+      HloInstruction::CreateDot(ShapeUtil::MakeShape(F32, {2, 2}), lhs.get(),
+                                rhs.get(), dnums, PrecisionConfig());
+  EXPECT_TRUE(dot->SupportsPrecisionConfig());
+}
+
 }  // namespace
 }  // namespace xla

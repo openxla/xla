@@ -8763,6 +8763,59 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
     }
   }
 
+  // Commute Reduce and Broadcast when the reduce dimensions map entirely to
+  // dimensions of the original base tensor. This avoids performing reduction
+  // over the replicated elements produced by the broadcast.
+  if (arg->opcode() == HloOpcode::kBroadcast &&
+      !options_.is_layout_sensitive()) {
+    std::vector<int64_t> new_reduce_dims;
+    bool all_reduce_dims_from_original_tensor = true;
+    auto bcast_dims = arg->dimensions();
+    // Find which dimensions of the original unbroadcast input correspond to the
+    // reduction dimensions.
+    for (int64_t dim : reduce->dimensions()) {
+      auto it = absl::c_find(bcast_dims, dim);
+      if (it == bcast_dims.end()) {
+        all_reduce_dims_from_original_tensor = false;
+        break;
+      }
+      new_reduce_dims.push_back(std::distance(bcast_dims.begin(), it));
+    }
+
+    if (all_reduce_dims_from_original_tensor) {
+      // Perform the reduction first on the original tensor.
+      Shape new_reduce_result_shape = ShapeUtil::DeleteDimensions(
+          new_reduce_dims, arg->mutable_operand(0)->shape());
+      simplifier_->UpdateLayout(&new_reduce_result_shape);
+      HloInstruction* new_reduce =
+          reduce->AddInstruction(HloInstruction::CreateReduce(
+              new_reduce_result_shape, arg->mutable_operand(0), init_value,
+              new_reduce_dims, function));
+
+      // Broadcast the reduced result to the final shape, computing the new
+      // target dimensions for any surviving unreduced dimensions.
+      std::vector<int64_t> new_broadcast_dims;
+      for (int64_t orig_dim = 0;
+           orig_dim < arg->mutable_operand(0)->shape().dimensions().size();
+           ++orig_dim) {
+        if (!absl::c_linear_search(new_reduce_dims, orig_dim)) {
+          int64_t bcast_dim = arg->dimensions()[orig_dim];
+          int64_t shift = 0;
+          for (int64_t d : reduce->dimensions()) {
+            if (d < bcast_dim) {
+              shift++;
+            }
+          }
+          new_broadcast_dims.push_back(bcast_dim - shift);
+        }
+      }
+
+      return ReplaceWithNewInstruction(
+          reduce, HloInstruction::CreateBroadcast(
+                      reduce_result_shape, new_reduce, new_broadcast_dims));
+    }
+  }
+
   // Replace Reduce(Broadcast(x), +, init_value) with Broadcast(Add(Multiply(x),
   // init_value))) if all reduction dimensions were introduced by Broadcast
   if (arg->opcode() == HloOpcode::kBroadcast &&

@@ -133,6 +133,7 @@ cc_library(
     deps = [
         ":ynn_support",
         "//xla:literal",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -175,6 +176,7 @@ cc_library(
         "//xla/service:pattern_matcher",
         "//xla/tsl/platform:statusor",
         "@XNNPACK//ynnpack",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",

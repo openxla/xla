@@ -15,10 +15,10 @@ limitations under the License.
 
 #include <string>
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
+#include "xla/error_spec.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
@@ -31,18 +31,22 @@ class CuteDslCustomCallTest : public HloPjRtGpuTestBase {};
 
 TEST_F(CuteDslCustomCallTest, RunVectorAdd) {
   std::string hlo_path =
-      tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "backends", "gpu", "tests",
-                        "cute_dsl_vector_add.hlo");
+      tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "backends", "gpu",
+                        "libraries", "cutedsl", "vector_add.hlo");
   std::string hlo_text;
   TF_ASSERT_OK(tsl::ReadFileToString(tsl::Env::Default(), hlo_path, &hlo_text));
 
-  auto result = Run(hlo_text, /*run_hlo_passes=*/true);
+  std::string reference_hlo_text = R"(
+    HloModule reference, entry_computation_layout={(f32[1024]{0}, f32[1024]{0})->f32[1024]{0}}
+    ENTRY main {
+      a = f32[1024]{0} parameter(0)
+      b = f32[1024]{0} parameter(1)
+      ROOT add = f32[1024]{0} add(a, b)
+    }
+  )";
 
-  // TODO: b/448630810 - Update this test once registration is implemented.
-  EXPECT_FALSE(result);
-  EXPECT_THAT(result.message(),
-              ::testing::HasSubstr("No FFI handler registered for "
-                                   "CuteDSLRT_NvJaxCutlassCall"));
+  EXPECT_TRUE(
+      RunAndCompareTwoModules(hlo_text, reference_hlo_text, ErrorSpec{0.0}));
 }
 
 }  // namespace

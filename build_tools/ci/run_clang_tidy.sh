@@ -57,10 +57,26 @@ else
   QUERY="${BASE_QUERY}"
 fi
 # --output=label prints a hash that we want to avoid, hence using --output=starlark to print only the target labels.
-TARGETS=$($BAZEL_CMD cquery --output=starlark --starlark:expr="target.label" --config=clang-tidy "$QUERY")
+CONFIG="clang-tidy-noerrors"
+TARGETS=$($BAZEL_CMD cquery --output=starlark --starlark:expr="target.label" --config="$CONFIG" "$QUERY")
 if [ -z "$TARGETS" ]; then
   set +x
   echo "No relevant targets found for changed files."
   exit 0
 fi
-$BAZEL_CMD build --config=clang-tidy --keep_going $TARGETS
+
+# Create temporary files for the patch and BEP
+PATCH_FILE=$(mktemp)
+BEP_FILE=$(mktemp)
+# Ensure cleanup on exit
+trap 'rm -f "$PATCH_FILE" "$BEP_FILE"' EXIT
+
+# Generate the patch file for changed lines
+git diff "$MERGE_BASE" > "$PATCH_FILE"
+
+$BAZEL_CMD build --config="$CONFIG" --build_event_json_file="$BEP_FILE" --keep_going \
+  $TARGETS
+$BAZEL_CMD run //build_tools/ci:clang_tidy_diff -- \
+  --patch "$PATCH_FILE" \
+  --repo-root "$BUILD_WORKSPACE_DIRECTORY" \
+  --bep-file "$BEP_FILE"

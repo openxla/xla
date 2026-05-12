@@ -25,6 +25,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
@@ -206,6 +207,33 @@ void HloReachabilityMap::UpdateReachabilityThroughInstruction(
       for (const HloInstruction* succ : item->control_successors()) {
         worklist.push(succ);
         ++in_worklist[succ];
+      }
+    }
+  }
+}
+
+void HloReachabilityMap::UpdateMultipleInstructions(
+    absl::flat_hash_map<const HloInstruction*,
+                        absl::flat_hash_set<const HloInstruction*>>
+        to_update) {
+  while (!to_update.empty()) {
+    auto it = to_update.begin();
+    const HloInstruction* instruction = it->first;
+
+    BitSet bit_set = BitSetFromIndex(GetIndex(instruction));
+    bool changed = false;
+    // NOLINTNEXTLINE the loop aggregation is order independent.
+    for (const HloInstruction* operand : it->second) {
+      BitSet operand_bit_set = BitSetFromIndex(GetIndex(operand));
+      changed |= bit_set.OrUpdate(operand_bit_set);
+    }
+    to_update.erase(it);
+    if (changed) {
+      for (const HloInstruction* user : instruction->users()) {
+        to_update[user].insert(instruction);
+      }
+      for (const HloInstruction* succ : instruction->control_successors()) {
+        to_update[succ].insert(instruction);
       }
     }
   }

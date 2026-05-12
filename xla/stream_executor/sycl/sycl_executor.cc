@@ -41,6 +41,8 @@ limitations under the License.
 #include "xla/stream_executor/generic_memory_allocation.h"
 #include "xla/stream_executor/generic_memory_allocator.h"
 #include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/kernel_args.h"
+#include "xla/stream_executor/kernel_args_packing_spec.h"
 #include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
@@ -519,12 +521,24 @@ absl::StatusOr<std::unique_ptr<Kernel>> SyclExecutor::LoadKernel(
   // TODO (intel-tf): Once SyclKernel::GetKernelMetadata() is implemented,
   // we should use it here via set_metadata().
   sycl_kernel->set_name(kernel_name);
-  // Set argument packing function if provided.
+  // Set the kernel's argument packing callback. The KernelLoaderSpec carries
+  // it as a variant of either a user-provided packing function or a
+  // serializable packing specification; in the latter case we wrap the spec
+  // in a closure so the kernel has a uniform callback to invoke at launch.
   if (std::holds_alternative<KernelLoaderSpec::KernelArgsPackingFunc>(
           spec.kernel_args_packing())) {
     sycl_kernel->set_args_packing(
         std::get<KernelLoaderSpec::KernelArgsPackingFunc>(
             spec.kernel_args_packing()));
+  } else {
+    const auto& packing_spec =
+        std::get<KernelArgsPackingSpec>(spec.kernel_args_packing());
+    sycl_kernel->set_args_packing(
+        [packing_spec](const Kernel& kernel, const KernelArgs& args) {
+          const auto& mem_args = Cast<KernelArgsDeviceAddressArray>(&args);
+          return packing_spec.BuildArguments(mem_args->device_addr_args(),
+                                             args.number_of_shared_bytes());
+        });
   }
   return std::move(sycl_kernel);
 }

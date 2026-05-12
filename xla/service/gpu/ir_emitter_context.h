@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
@@ -39,6 +40,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/runtime/object_pool.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/call_inliner.h"
 #include "xla/service/gpu/execution_stream_assignment.h"
@@ -50,8 +52,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 // Maps host offloading start ops to their async events so we can emit done
 // thunk sharing events with corresponding start thunk.
 using InstructionToHostExecuteAsyncEvents =
@@ -72,7 +73,8 @@ class IrEmitterContext {
                    llvm::LLVMContext* llvm_context, bool emit_kernels,
                    llvm::Triple target_triple, std::string data_layout,
                    KernelCompiler* compiler,
-                   xla::cpu::TargetMachineOptions cpu_target_machine_options)
+                   xla::cpu::TargetMachineOptions cpu_target_machine_options,
+                   ObjectPool<std::unique_ptr<mlir::MLIRContext>>* pool)
       : hlo_module_(hlo_module),
         buffer_assignment_(buffer_assignment),
         execution_stream_assignment_(execution_stream_assignment),
@@ -84,7 +86,8 @@ class IrEmitterContext {
         target_triple_(std::move(target_triple)),
         emit_kernels_(emit_kernels),
         compiler_(compiler),
-        cpu_target_machine_options_(std::move(cpu_target_machine_options)) {}
+        cpu_target_machine_options_(std::move(cpu_target_machine_options)),
+        mlir_context_pool_(pool) {}
 
   // Disallow copy and assign.
   IrEmitterContext(const IrEmitterContext&) = delete;
@@ -96,7 +99,7 @@ class IrEmitterContext {
         hlo_module_, buffer_assignment_, execution_stream_assignment_,
         platform_name_, gpu_device_info_, mlir_context_, llvm_context,
         emit_kernels_, target_triple_, data_layout_, compiler_,
-        cpu_target_machine_options_);
+        cpu_target_machine_options_, mlir_context_pool_);
   }
 
   // Simple accessors.
@@ -170,6 +173,13 @@ class IrEmitterContext {
 
   KernelCompiler* kernel_compiler() { return compiler_; }
 
+  BorrowedMlirContext BorrowMlirContext() {
+    auto context = mlir_context_pool_->GetOrCreate();
+    // Due to generator, always ok.
+    CHECK_OK(context.status());
+    return std::move(*context);
+  }
+
  private:
   const HloModule* hlo_module_;
   const BufferAssignment* buffer_assignment_;
@@ -195,9 +205,9 @@ class IrEmitterContext {
 
   KernelCompiler* compiler_;
   const xla::cpu::TargetMachineOptions cpu_target_machine_options_;
+  ObjectPool<std::unique_ptr<mlir::MLIRContext>>* mlir_context_pool_;
 };
 
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu
 
 #endif  // XLA_SERVICE_GPU_IR_EMITTER_CONTEXT_H_

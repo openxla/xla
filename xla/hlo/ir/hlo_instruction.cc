@@ -5664,40 +5664,55 @@ bool HloPtrComparatorInternal::operator()(
   return lhs->local_id() < rhs->local_id();
 }
 
-const PrecisionConfig& HloInstruction::precision_config() const {
-  if (auto* convolution = DynCast<HloConvolutionInstruction>(this)) {
-    return convolution->precision_config();
+bool HloInstruction::SupportsPrecisionConfig() const {
+  switch (opcode_) {
+    case HloOpcode::kConvolution:
+    case HloOpcode::kDot:
+    // In practice, the precision config value makes no sense for `scaled_dot`
+    // because it cannot produce anything better than default.
+    case HloOpcode::kScaledDot:
+    case HloOpcode::kRaggedDot:
+    case HloOpcode::kCustomCall:
+      return true;
+    default:
+      return false;
   }
-  if (auto* dot = DynCast<HloDotInstruction>(this)) {
-    return dot->precision_config();
-  }
-  if (auto* scaled_dot = DynCast<HloScaledDotInstruction>(this)) {
-    return scaled_dot->precision_config();
-  }
-  if (auto* ragged_dot = DynCast<HloRaggedDotInstruction>(this)) {
-    return ragged_dot->precision_config();
-  }
+}
 
-  if (auto* custom_call = DynCast<HloCustomCallInstruction>(this)) {
-    return custom_call->precision_config();
+const PrecisionConfig& HloInstruction::precision_config() const {
+  CHECK(SupportsPrecisionConfig());
+  switch (opcode_) {
+    case HloOpcode::kConvolution:
+      return Cast<HloConvolutionInstruction>(this)->precision_config();
+    case HloOpcode::kDot:
+      return Cast<HloDotInstruction>(this)->precision_config();
+    case HloOpcode::kScaledDot:
+      return Cast<HloScaledDotInstruction>(this)->precision_config();
+    case HloOpcode::kRaggedDot:
+      return Cast<HloRaggedDotInstruction>(this)->precision_config();
+    case HloOpcode::kCustomCall:
+      return Cast<HloCustomCallInstruction>(this)->precision_config();
+    default:
+      LOG(FATAL) << "Unimplemented method: " << opcode_;
   }
-  LOG(FATAL) << "Unimplemented method.";
 }
 
 PrecisionConfig* HloInstruction::mutable_precision_config() {
-  if (auto* convolution = DynCast<HloConvolutionInstruction>(this)) {
-    return convolution->mutable_precision_config();
+  CHECK(SupportsPrecisionConfig());
+  switch (opcode_) {
+    case HloOpcode::kConvolution:
+      return Cast<HloConvolutionInstruction>(this)->mutable_precision_config();
+    case HloOpcode::kDot:
+      return Cast<HloDotInstruction>(this)->mutable_precision_config();
+    case HloOpcode::kScaledDot:
+      return Cast<HloScaledDotInstruction>(this)->mutable_precision_config();
+    case HloOpcode::kRaggedDot:
+      return Cast<HloRaggedDotInstruction>(this)->mutable_precision_config();
+    case HloOpcode::kCustomCall:
+      return Cast<HloCustomCallInstruction>(this)->mutable_precision_config();
+    default:
+      LOG(FATAL) << "Unimplemented method: " << opcode_;
   }
-  if (auto* dot = DynCast<HloDotInstruction>(this)) {
-    return dot->mutable_precision_config();
-  }
-  if (auto* ragged_dot = DynCast<HloRaggedDotInstruction>(this)) {
-    return ragged_dot->mutable_precision_config();
-  }
-  if (auto* custom_call = DynCast<HloCustomCallInstruction>(this)) {
-    return custom_call->mutable_precision_config();
-  }
-  LOG(FATAL) << "Unimplemented method.";
 }
 
 HloModule* HloInstruction::GetModule() const {

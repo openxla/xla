@@ -638,14 +638,14 @@ LogicalResult CanonicalDotGeneral(stablehlo::DotGeneralOp op,
   Value lhs = op.getLhs();
   if (mlir::failed(CanonicalizeOperand(builder, lhs,
                                        dims.getLhsContractingDimensions()[0],
-                                       ::xla::xtile::DotOperandSide::kLhs))) {
+                                       DotOperandSide::kLhs))) {
     return rewriter.notifyMatchFailure(op_loc, "Failed to canonicalize LHS.");
   }
 
   Value rhs = op.getRhs();
   if (mlir::failed(CanonicalizeOperand(builder, rhs,
                                        dims.getRhsContractingDimensions()[0],
-                                       ::xla::xtile::DotOperandSide::kRhs))) {
+                                       DotOperandSide::kRhs))) {
     return rewriter.notifyMatchFailure(op_loc, "Failed to canonicalize RHS.");
   }
 

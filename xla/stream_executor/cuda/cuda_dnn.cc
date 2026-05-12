@@ -236,8 +236,8 @@ class CudnnHandle {
 // need not match.
 bool IsSourceCompatibleWithCudnnLibrary(const SemanticVersion& source_version,
                                         const SemanticVersion& loaded_version) {
-  return loaded_version.major() == source_version.major() &&
-         loaded_version.minor() >= source_version.minor();
+  return loaded_version.major_version() == source_version.major_version() &&
+         loaded_version.minor_version() >= source_version.minor_version();
 }
 
 }  // namespace
@@ -494,8 +494,9 @@ void CudnnSupport::NotifyStreamDestroyed(Stream* stream) /* override */ {
 absl::StatusOr<stream_executor::dnn::VersionInfo> CudnnSupport::GetVersion() {
   TF_ASSIGN_OR_RETURN(SemanticVersion version,
                       stream_executor::cuda::GetLoadedCudnnVersion());
-  return stream_executor::dnn::VersionInfo(version.major(), version.minor(),
-                                           version.patch());
+  return stream_executor::dnn::VersionInfo(version.major_version(),
+                                           version.minor_version(),
+                                           version.patch_version());
 }
 
 namespace {

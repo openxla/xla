@@ -261,5 +261,9 @@ std::string BuffersDebugFloatCheckThunk::ToString(int indent) const {
   }
   return result;
 }
+absl::StatusOr<ThunkProto> BuffersDebugFloatCheckThunk::ToProto() const {
+  return absl::InvalidArgumentError(
+      "BuffersDebugFloatCheckThunk can't be serialized.");
+}
 
 }  // namespace xla::gpu

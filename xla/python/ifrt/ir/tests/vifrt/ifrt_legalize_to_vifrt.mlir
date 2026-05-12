@@ -337,6 +337,30 @@ func.func @copy_back(%arg1: !array_cp1) -> !array_cp0
   return %0: !array_cp0
 }
 
+!token0 = !ifrt.array<tensor<!ifrt.token>,
+                      #ifrt.sharding_param< to [0] on 2>, [0, 1]>
+!token1 = !ifrt.array<tensor<!ifrt.token>,
+                      #ifrt.sharding_param< to [0] on 2>, [2, 3]>
+// CHECK: "vifrt.FuncV1"()
+// CHECK-SAME: <{
+// CHECK-DAG: arg_attrs = []
+// CHECK-DAG: function_type = #vifrt.type_v1<!vifrt.func_v1<(!vifrt.array_v1<tensor<!vifrt.token_v1>, #vifrt.sharding_param_v2< to [0] on 2>, [0, 1], memory_kind = "vifrt.default", layout = "vifrt.default">) -> !vifrt.array_v1<tensor<!vifrt.token_v1>, #vifrt.sharding_param_v2< to [0] on 2>, [2, 3], memory_kind = "vifrt.default", layout = "vifrt.default">>>
+// CHECK-DAG: res_attrs = []
+// CHECK-DAG: sym_name = "token_type"
+// CHECK-DAG: sym_visibility = "vifrt.default"
+// CHECK-SAME: }>
+// CHECK-NEXT: (%[[ARG0:.*]]: {{.*}}):
+func.func @token_type(%arg0: !token0) -> !token1 attributes {ifrt.function} {
+  // CHECK: "vifrt.CopyArraysV1"(%[[ARG0]])
+  // CHECK-SAME: <{
+  // CHECK-DAG: donated = false
+  // CHECK-DAG: operandSegmentSizes = array<i32: 1, 0>
+  // CHECK-SAME: }>
+  // CHECK-SAME: (!vifrt.array_v1<tensor<!vifrt.token_v1>, #vifrt.sharding_param_v2< to [0] on 2>, [0, 1], memory_kind = "vifrt.default", layout = "vifrt.default">) -> (!vifrt.array_v1<tensor<!vifrt.token_v1>, #vifrt.sharding_param_v2< to [0] on 2>, [2, 3], memory_kind = "vifrt.default", layout = "vifrt.default">, !vifrt.control_v1)
+  %0, %ctrl = ifrt.CopyArrays(%arg0) : (!token0) -> !token1
+  return %0: !token1
+}
+
 // Important: The test verifying CallOps must be last. This is necessary because
 // in order to test serialization roundtrip the tests in this file are not split
 // into per file tests. However, during deserialization we do not know where to

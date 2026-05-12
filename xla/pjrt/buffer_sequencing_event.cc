@@ -76,7 +76,9 @@ void BufferSequencingEvent::WaitForEventOnStream(se::Stream* stream) {
     return;
   }
 
-  stream->WaitFor(event_->event.event()).IgnoreError();
+  if (event_->event.event()) {
+    stream->WaitFor(event_->event.event()).IgnoreError();
+  }
   streams_defined_on_.push_back(stream);
 }
 

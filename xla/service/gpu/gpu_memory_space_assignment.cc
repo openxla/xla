@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/die_if_null.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
@@ -312,12 +313,28 @@ absl::Status AssignColors(bool use_collective_memory, bool use_nvshmem,
       // instead of marking all buffers.
       // TODO(508106498): We need to start to respect replica groups once
       // mosaic will support them.
-      if ((HasMosaicWithNvshmemInstruction(*alias) && use_nvshmem) ||
-          HasMosaicWithMultimemInstruction(*alias) ||
-          (HasMosaicWithCollectiveMetadataInstruction(*alias) &&
-           gpu_topology.number_of_hosts() > 1)) {
-        // This is a temporary solution until a separate BFC allocator will be
-        // added for the symmetric memory space.
+      const bool is_mosaic_with_nvshmem =
+          HasMosaicWithNvshmemInstruction(*alias);
+      const bool is_mosaic_with_collective_metadata =
+          HasMosaicWithCollectiveMetadataInstruction(*alias);
+      const bool is_mosaic_with_multimem =
+          HasMosaicWithMultimemInstruction(*alias);
+      if ((is_mosaic_with_nvshmem && use_nvshmem) || is_mosaic_with_multimem ||
+          (is_mosaic_with_collective_metadata &&
+           gpu_topology.num_partitions() >
+               gpu_topology.num_devices_per_host())) {
+        VLOG(1) << "Assigning color kCollective to value of instruction "
+                << alias->instruction()->ToShortString()
+                << " is_mosaic_with_collective_metadata "
+                << is_mosaic_with_collective_metadata
+                << " is_mosaic_with_multimem " << is_mosaic_with_multimem
+                << " is_mosaic_with_nvshmem " << is_mosaic_with_nvshmem
+                << " topology { "
+                << " num_partitions: " << gpu_topology.num_partitions()
+                << " num_devices_per_host: "
+                << gpu_topology.num_devices_per_host() << " }";
+        // This is a temporary solution until a separate BFC
+        // allocator will be added for the symmetric memory space.
         value->set_color((int)MemorySpaceColor::kCollective);
       } else if (HasSymmetricMemoryInstruction(*alias)) {
         // Device-initiated and one-sided collectives require symmetric memory.
