@@ -37,7 +37,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -45,6 +44,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -224,6 +224,7 @@ class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
   // ExecuteReplicated.
   std::vector<std::vector<Literal*>> GetInputLiteralPtrs() {
     std::vector<std::vector<Literal*>> input_literal_ptrs;
+    input_literal_ptrs.reserve(inputs_.size());
     for (int i = 0; i < inputs_.size(); ++i) {
       input_literal_ptrs.push_back({&inputs_[i], &output_init_,
                                     &input_offsets_[i], &input_sizes_[i],
