@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/tsl/platform/cloud/google_auth_provider.h"
 
-#include <stdlib.h>
-
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -25,6 +23,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "json/json.h"
+#include <stdlib.h>
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/cloud/compute_engine_metadata_client.h"
 #include "xla/tsl/platform/cloud/http_request.h"
@@ -99,32 +98,32 @@ class GoogleAuthProviderTest : public ::testing::Test {
 
 TEST_F(GoogleAuthProviderTest, InternalRetriesOnGceFailure) {
   setenv("TF_GCS_AUTH_MAX_REQUESTS", "3", 1);
-  setenv("TF_GCS_AUTH_RETRY_DELAY_SEC", "0", 1);  // 0s delay for fast test execution
+  setenv("TF_GCS_AUTH_RETRY_DELAY_SEC", "0",
+         1);  // 0s delay for fast test execution
 
   auto oauth_client = new FakeOAuthClient;
 
   // Provide 3 requests: first 2 fail, 3rd succeeds!
-  std::vector<HttpRequest*> requests({
-      new FakeHttpRequest(
-          "Uri: http://metadata.google.internal/computeMetadata/v1/instance"
-          "/service-accounts/default/token\n"
-          "Header Metadata-Flavor: Google\n",
-          "", absl::UnavailableError("503"), 503),
-      new FakeHttpRequest(
-          "Uri: http://metadata.google.internal/computeMetadata/v1/instance"
-          "/service-accounts/default/token\n"
-          "Header Metadata-Flavor: Google\n",
-          "", absl::NotFoundError("404"), 404),
-      new FakeHttpRequest(
-          "Uri: http://metadata.google.internal/computeMetadata/v1/instance"
-          "/service-accounts/default/token\n"
-          "Header Metadata-Flavor: Google\n",
-          R"({
+  std::vector<HttpRequest*> requests(
+      {new FakeHttpRequest(
+           "Uri: http://metadata.google.internal/computeMetadata/v1/instance"
+           "/service-accounts/default/token\n"
+           "Header Metadata-Flavor: Google\n",
+           "", absl::UnavailableError("503"), 503),
+       new FakeHttpRequest(
+           "Uri: http://metadata.google.internal/computeMetadata/v1/instance"
+           "/service-accounts/default/token\n"
+           "Header Metadata-Flavor: Google\n",
+           "", absl::NotFoundError("404"), 404),
+       new FakeHttpRequest(
+           "Uri: http://metadata.google.internal/computeMetadata/v1/instance"
+           "/service-accounts/default/token\n"
+           "Header Metadata-Flavor: Google\n",
+           R"({
             "access_token":"fake-recovered-token",
             "expires_in": 3600,
             "token_type":"Bearer"
-          })")
-  });
+          })")});
 
   FakeEnv env;
   std::shared_ptr<HttpRequest::Factory> fakeHttpRequestFactory =
@@ -146,18 +145,17 @@ TEST_F(GoogleAuthProviderTest, InternalRetriesExhausted) {
   auto oauth_client = new FakeOAuthClient;
 
   // Provide exactly two 404 requests to match the 2 requests
-  std::vector<HttpRequest*> requests({
-      new FakeHttpRequest(
-          "Uri: http://metadata.google.internal/computeMetadata/v1/instance"
-          "/service-accounts/default/token\n"
-          "Header Metadata-Flavor: Google\n",
-          "", absl::NotFoundError("404"), 404),
-      new FakeHttpRequest(
-          "Uri: http://metadata.google.internal/computeMetadata/v1/instance"
-          "/service-accounts/default/token\n"
-          "Header Metadata-Flavor: Google\n",
-          "", absl::NotFoundError("404"), 404)
-  });
+  std::vector<HttpRequest*> requests(
+      {new FakeHttpRequest(
+           "Uri: http://metadata.google.internal/computeMetadata/v1/instance"
+           "/service-accounts/default/token\n"
+           "Header Metadata-Flavor: Google\n",
+           "", absl::NotFoundError("404"), 404),
+       new FakeHttpRequest(
+           "Uri: http://metadata.google.internal/computeMetadata/v1/instance"
+           "/service-accounts/default/token\n"
+           "Header Metadata-Flavor: Google\n",
+           "", absl::NotFoundError("404"), 404)});
 
   FakeEnv env;
   std::shared_ptr<HttpRequest::Factory> fakeHttpRequestFactory =

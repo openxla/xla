@@ -67,7 +67,8 @@ constexpr char kNoGceCheck[] = "NO_GCE_CHECK";
 // The environment variable to set the maximum number of requests for GCE auth.
 constexpr char kGcsAuthMaxRequests[] = "TF_GCS_AUTH_MAX_REQUESTS";
 
-// The environment variable to set the delay in seconds between GCE auth retries.
+// The environment variable to set the delay in seconds between GCE auth
+// retries.
 constexpr char kGcsAuthRetryDelaySec[] = "TF_GCS_AUTH_RETRY_DELAY_SEC";
 
 // The default path to the gcloud config folder, relative to the home folder.
