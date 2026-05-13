@@ -672,8 +672,8 @@ CudaCommandBuffer::CaptureInlineAndReturnSinks(
 
   // Snapshot the nodes currently in the graph so we can identify new ones.
   size_t num_nodes_before = 0;
-  TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuGraphGetNodes(graph_, nullptr, &num_nodes_before)));
+  TF_RETURN_IF_ERROR(
+      cuda::ToStatus(cuGraphGetNodes(graph_, nullptr, &num_nodes_before)));
   std::vector<CUgraphNode> nodes_before(num_nodes_before);
   if (num_nodes_before > 0) {
     TF_RETURN_IF_ERROR(cuda::ToStatus(
@@ -687,13 +687,13 @@ CudaCommandBuffer::CaptureInlineAndReturnSinks(
           << " existing_nodes=" << num_nodes_before;
 
   // Begin capturing directly into graph_.
-  TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuStreamBeginCaptureToGraph(
-          stream_handle, graph_,
-          dep_handles.empty() ? nullptr : dep_handles.data(),
-          /*dependencyData=*/nullptr, dep_handles.size(),
-          CU_STREAM_CAPTURE_MODE_THREAD_LOCAL),
-      "Failed to begin inline stream capture to graph"));
+  TF_RETURN_IF_ERROR(
+      cuda::ToStatus(cuStreamBeginCaptureToGraph(
+                         stream_handle, graph_,
+                         dep_handles.empty() ? nullptr : dep_handles.data(),
+                         /*dependencyData=*/nullptr, dep_handles.size(),
+                         CU_STREAM_CAPTURE_MODE_THREAD_LOCAL),
+                     "Failed to begin inline stream capture to graph"));
 
   auto traced = function();
 
@@ -708,8 +708,8 @@ CudaCommandBuffer::CaptureInlineAndReturnSinks(
 
   // Enumerate all nodes now in graph_ and find the newly-added ones.
   size_t num_nodes_after = 0;
-  TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuGraphGetNodes(graph_, nullptr, &num_nodes_after)));
+  TF_RETURN_IF_ERROR(
+      cuda::ToStatus(cuGraphGetNodes(graph_, nullptr, &num_nodes_after)));
   std::vector<CUgraphNode> nodes_after(num_nodes_after);
   if (num_nodes_after > 0) {
     TF_RETURN_IF_ERROR(cuda::ToStatus(
