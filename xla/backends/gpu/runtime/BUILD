@@ -1720,7 +1720,6 @@ xla_test(
     ],
     deps = [
         ":select_k_exec_raft",
-        ":select_k_exec_stub",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
@@ -1739,7 +1738,7 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-    ],
+    ]
 )
 
 cc_library(
