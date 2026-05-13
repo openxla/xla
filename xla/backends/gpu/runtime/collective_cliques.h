@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/core/collectives/rank_id.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/rendezvous.h"
+#include "xla/service/xla_debug_info_manager.h"
 #include "xla/tsl/util/tied_ref.h"
 #include "xla/util.h"
 
@@ -72,7 +73,7 @@ class CollectiveCliques {
 
   absl::StatusOr<std::pair<RendezvousFlag*, RendezvousFlag*>>
   GetCliqueFirstRendezvousFlags(const GpuCliqueKey& clique_key,
-                                absl::string_view module_name) const;
+                                const ModuleIdentifier& module_id) const;
 
  private:
   AcquiredCliquesMap cliques_map_;
@@ -101,7 +102,7 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
 absl::StatusOr<bool> AllFirstRendezvousCompleted(
     const CollectiveCliques& collective_cliques,
     const std::vector<GpuCliqueKey>& requested_clique_keys,
-    absl::string_view module_name);
+    const ModuleIdentifier& module_id);
 
 }  // namespace xla::gpu
 

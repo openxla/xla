@@ -129,10 +129,9 @@ std::string GpuClique::LockableName::ToString(const GpuClique& clique) {
 }
 
 std::pair<RendezvousFlag*, RendezvousFlag*> GpuClique::GetFirstRendezvousFlags(
-    absl::string_view module_name) {
+    const ModuleIdentifier& module_id) {
   absl::MutexLock lock(mu_);
-  std::string module_name_str(module_name);
-  auto& flags = module_rendezvous_flags_[module_name_str];
+  auto& flags = module_rendezvous_flags_[module_id];
   return std::make_pair(&flags.first, &flags.second);
 }
 

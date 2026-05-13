@@ -131,31 +131,30 @@ absl::StatusOr<bool> CollectiveCliques::peer_access_enabled(
 
 absl::StatusOr<std::pair<RendezvousFlag*, RendezvousFlag*>>
 CollectiveCliques::GetCliqueFirstRendezvousFlags(
-    const GpuCliqueKey& clique_key, absl::string_view module_name) const {
+    const GpuCliqueKey& clique_key, const ModuleIdentifier& module_id) const {
   // Check that we locked access to a clique for `clique_key`.
   auto clique = cliques_map_.find(clique_key);
   if (clique == cliques_map_.end()) {
     return NotFound("No clique found for clique key: %s",
                     clique_key.ToString());
   }
-  return (*clique->second)->GetFirstRendezvousFlags(module_name);
+  return (*clique->second)->GetFirstRendezvousFlags(module_id);
 }
 
 absl::StatusOr<bool> AllFirstRendezvousCompleted(
     const CollectiveCliques& collective_cliques,
     const std::vector<GpuCliqueKey>& requested_clique_keys,
-    const absl::string_view module_name) {
+    const ModuleIdentifier& module_id) {
   return collective_cliques.empty() ||
-         (!module_name.empty() &&
           absl::c_all_of(requested_clique_keys,
                          [&](const GpuCliqueKey& clique_key) {
                            auto rend_flags =
                                collective_cliques.GetCliqueFirstRendezvousFlags(
-                                   clique_key, module_name);
+                                   clique_key, module_id);
                            CHECK(rend_flags.ok());
                            return rend_flags.value().first->IsCompleted() &&
                                   rend_flags.value().second->IsCompleted();
-                         }));
+                         });
 }
 
 absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(

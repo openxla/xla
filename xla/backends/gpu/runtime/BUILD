@@ -2731,6 +2731,7 @@ cc_library(
         "//xla/service:computation_placer",
         "//xla/service:rendezvous",
         "//xla/service:shaped_slice",
+        "//xla/service:xla_debug_info_manager",
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:command_buffer",

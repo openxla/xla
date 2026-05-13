@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/core/collectives/rank_id.h"
 #include "xla/service/lockable.h"
 #include "xla/service/rendezvous.h"
+#include "xla/service/xla_debug_info_manager.h"
 #include "xla/tsl/util/tied_ref.h"
 
 namespace xla::gpu {
@@ -94,7 +95,7 @@ class GpuClique : public Clique {
   const GpuClique* parent() const { return parent_; }
 
   std::pair<RendezvousFlag*, RendezvousFlag*> GetFirstRendezvousFlags(
-      absl::string_view module_name);
+      const ModuleIdentifier& module_id);
 
  private:
   friend LockableGpuClique;
@@ -137,7 +138,7 @@ class GpuClique : public Clique {
   tsl::TiedAny tied_any_ ABSL_GUARDED_BY(mu_);
 
   // Module-mapped rendezvous flags
-  absl::node_hash_map<std::string, std::pair<RendezvousFlag, RendezvousFlag>>
+  absl::node_hash_map<ModuleIdentifier, std::pair<RendezvousFlag, RendezvousFlag>>
       module_rendezvous_flags_ ABSL_GUARDED_BY(mu_);
 };
 

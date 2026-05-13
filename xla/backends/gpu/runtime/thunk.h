@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/service/xla_debug_info_manager.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/future.h"
@@ -292,7 +293,7 @@ class Thunk {
         CollectiveMemory* collective_memory,
         std::vector<se::Stream*> additional_compute_streams = {},
         ExecutionScopedState* execution_scoped_state = nullptr,
-        absl::string_view module_name = "");
+        const ModuleIdentifier& module_id = -1);
 
     // Constructs execute parameters from an existing parameters but with
     // different buffer allocations.
@@ -339,7 +340,7 @@ class Thunk {
     ExecutionScopedState* execution_scoped_state = nullptr;
 
     // Module name for the executable..
-    absl::string_view module_name = "";
+    ModuleIdentifier module_id;
 
     bool mock_collectives = false;
 
@@ -360,7 +361,7 @@ class Thunk {
                   const ffi::ExecutionContext* ffi_execution_context,
                   std::vector<se::Stream*> additional_compute_streams = {},
                   ExecutionScopedState* execution_scoped_state = nullptr,
-                  absl::string_view module_name = "",
+                  const ModuleIdentifier& module_id = -1,
                   bool mock_collectives = false, int64_t execution_id = 0);
   };
 

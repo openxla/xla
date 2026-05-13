@@ -66,7 +66,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
     CollectiveMemory* collective_memory,
     std::vector<se::Stream*> additional_compute_streams,
     ExecutionScopedState* execution_scoped_state,
-    const absl::string_view module_name) {
+    const ModuleIdentifier& module_id) {
   return ExecuteParams(&buffer_allocations, stream, command_buffer_trace_stream,
                        collective_params, collective_cliques, collective_memory,
                        run_options.run_options().device_to_host_stream(),
@@ -75,7 +75,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
                        run_options.run_options().recv_device_memory_function(),
                        run_options.run_options().ffi_execution_context(),
                        additional_compute_streams, execution_scoped_state,
-                       module_name,
+                       module_id,
                        run_options.run_options().gpu_executable_run_options()
                            ? run_options.run_options()
                                  .gpu_executable_run_options()
@@ -93,7 +93,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
       params.collective_memory, params.device_to_host_stream,
       params.host_to_device_stream, params.send_device_memory_function,
       params.recv_device_memory_function, params.ffi_execution_context,
-      params.additional_compute_streams, nullptr, params.module_name);
+      params.additional_compute_streams, nullptr, params.module_id);
 }
 
 Thunk::ExecuteParams Thunk::ExecuteParams::WithComputeStream(
@@ -103,7 +103,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::WithComputeStream(
                        device_to_host_stream, host_to_device_stream,
                        send_device_memory_function, recv_device_memory_function,
                        ffi_execution_context, additional_compute_streams,
-                       execution_scoped_state, module_name, mock_collectives,
+                       execution_scoped_state, module_id, mock_collectives,
                        execution_id);
 }
 
@@ -118,7 +118,7 @@ Thunk::ExecuteParams::ExecuteParams(
     const ffi::ExecutionContext* ffi_execution_context,
     std::vector<se::Stream*> additional_compute_streams,
     ExecutionScopedState* execution_scoped_state,
-    const absl::string_view module_name, bool mock_collectives,
+    const ModuleIdentifier& module_id, bool mock_collectives,
     int64_t execution_id)
     : buffer_allocations(buffer_allocations),
       stream(stream),
@@ -133,7 +133,7 @@ Thunk::ExecuteParams::ExecuteParams(
       ffi_execution_context(ffi_execution_context),
       additional_compute_streams(additional_compute_streams),
       execution_scoped_state(execution_scoped_state),
-      module_name(module_name),
+      module_id(module_id),
       mock_collectives(mock_collectives),
       execution_id(execution_id) {}
 

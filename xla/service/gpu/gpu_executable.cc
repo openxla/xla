@@ -754,7 +754,7 @@ absl::Status ExecuteThunksImpl(const DebugOptions* debug_options,
       bool skip_rendezvous_after_init,
       AllFirstRendezvousCompleted(collective_cliques,
                                   collective_clique_requests.RequestedCliques(),
-                                  module_name));
+                                  module_id));
 
   ASSIGN_OR_RETURN(ScratchMemory scratch_memory,
                    AcquireScratchMemory(
@@ -798,7 +798,7 @@ absl::Status ExecuteThunksImpl(const DebugOptions* debug_options,
       *run_options, buffer_allocations, main_stream,
       command_buffer_trace_stream, &collective_params, &collective_cliques,
       &collective_memory, std::move(additional_compute_streams),
-      &execution_scoped_state, module_name);
+      &execution_scoped_state, module_id);
 
   XLA_VLOG_DEVICE(1, run_options->device_ordinal())
       << "Start GpuExecutable::ExecuteOnStream module: " << module_name;
