@@ -196,8 +196,8 @@ TEST(CollectiveBroadcastThunkMultiGpuTest, ExecuteOnStream) {
   CollectiveBroadcastThunk thunk = MakeThunk(alloc_src, alloc_dst);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(
-      RunOnDevices(kNumDevices, "collective_broadcast_execute", [&](int d) {
+  ASSERT_OK(RunOnDevices(
+      kNumDevices, "collective_broadcast_execute", [&](int d) -> absl::Status {
         RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         return RunExecuteOnStreamPhase(slots[d], thunk, d, /*phase=*/1);
       }));
@@ -217,8 +217,8 @@ TEST(CollectiveBroadcastThunkMultiGpuTest, RecordCommandBufferCreate) {
   CollectiveBroadcastThunk thunk = MakeThunk(alloc_src, alloc_dst);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(
-      RunOnDevices(kNumDevices, "collective_broadcast_create", [&](int d) {
+  ASSERT_OK(RunOnDevices(
+      kNumDevices, "collective_broadcast_create", [&](int d) -> absl::Status {
         RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
       }));
@@ -238,8 +238,8 @@ TEST(CollectiveBroadcastThunkMultiGpuTest, RecordCommandBufferUpdate) {
   CollectiveBroadcastThunk thunk = MakeThunk(alloc_src, alloc_dst);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(
-      RunOnDevices(kNumDevices, "collective_broadcast_create", [&](int d) {
+  ASSERT_OK(RunOnDevices(
+      kNumDevices, "collective_broadcast_create", [&](int d) -> absl::Status {
         RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
       }));
