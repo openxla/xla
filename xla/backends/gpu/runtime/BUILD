@@ -2989,6 +2989,7 @@ cc_library(
         "//xla/stream_executor:stream",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_macros",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
