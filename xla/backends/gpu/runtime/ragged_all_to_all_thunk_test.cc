@@ -47,7 +47,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
-#include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -68,7 +67,9 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -107,6 +108,12 @@ static bool IsAtLeastCuda12900(const se::StreamExecutor* executor) {
   }
   return std::min(desc.driver_version(), desc.compile_time_toolkit_version()) >=
          se::SemanticVersion(12, 9, 0);
+}
+
+static se::StreamExecutor* GpuExecutor() {
+  auto* platform =
+      se::PlatformManager::PlatformWithName(se::GpuPlatformName()).value();
+  return platform->ExecutorForDevice(0).value();
 }
 
 static RaggedAllToAllConfig MakeOneRankConfig() {
@@ -243,8 +250,8 @@ static absl::Status VerifyOneRankOutput(se::Stream& stream,
   return absl::OkStatus();
 }
 
-TEST_F(GpuRaggedAllToAllTest, RecordCommandBufferCreateAndUpdate) {
-  se::StreamExecutor* executor = backend().default_stream_executor();
+TEST(RaggedAllToAllThunkTest, RecordCommandBufferCreateAndUpdate) {
+  se::StreamExecutor* executor = GpuExecutor();
   if (!IsAtLeastCuda12900(executor)) {
     GTEST_SKIP() << "Child command nodes require CUDA 12.9+";
   }

@@ -73,6 +73,7 @@ limitations under the License.
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_allocator.h"
 #include "xla/stream_executor/memory_space.h"
+#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/trace_command_buffer_factory.h"
 #include "xla/tsl/platform/errors.h"
