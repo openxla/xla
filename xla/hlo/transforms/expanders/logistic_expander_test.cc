@@ -28,8 +28,8 @@ limitations under the License.
 #include "xla/hlo/testlib/test.h"
 #include "xla/service/dynamic_padder.h"
 #include "xla/service/pattern_matcher.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
