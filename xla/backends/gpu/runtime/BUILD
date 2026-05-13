@@ -3104,6 +3104,39 @@ xla_test(
     ],
 )
 
+xla_test(
+    name = "send_recv_thunk_multigpu_test",
+    srcs = ["send_recv_thunk_multigpu_test.cc"],
+    backend_tags = {
+        "gpu": ["multi_gpu"],
+    },
+    backends = ["gpu"],
+    deps = [
+        ":collective_thunk",
+        ":collective_thunk_multigpu_test_utils",
+        ":command",
+        ":p2p_thunk_common",
+        ":recv_thunk",
+        ":send_thunk",
+        ":thunk",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:collective_op_group_mode",
+        "//xla/service:buffer_assignment",
+        "//xla/service:shaped_slice",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/stream_executor:command_buffer",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:stream",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "collective_group_thunk",
     srcs = ["collective_group_thunk.cc"],
