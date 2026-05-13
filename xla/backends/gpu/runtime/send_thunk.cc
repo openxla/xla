@@ -77,7 +77,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> SendThunk::Record(
         "SendThunk requires collective parameters");
   }
 
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       const int64_t current_id,
       GetCollectiveCurrentId(execute_params.collective_params, config_));
   const P2PConfig::SourceTargetMapEntry source_target =
@@ -177,9 +177,8 @@ absl::Status SendThunk::RunCollective(const ExecuteParams& params,
       send_buffer.source_memory_space,
       send_buffer.destination_memory_space};
 
-  TF_ASSIGN_OR_RETURN(
-      const int64_t current_id,
-      GetCollectiveCurrentId(params.collective_params, config_));
+  ASSIGN_OR_RETURN(const int64_t current_id,
+                   GetCollectiveCurrentId(params.collective_params, config_));
   std::string device_string = GetDeviceString(*params.collective_params);
 
   const P2PConfig::SourceTargetMapEntry source_target =
