@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk_multigpu_test_utils.h"
 #include "xla/backends/gpu/runtime/command.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -109,17 +109,17 @@ static std::vector<float> ExpectedRecvValues(int device_ordinal, int phase) {
   return std::vector<float>(kLength, 0.0f);
 }
 
-static absl::Status FillDeviceBufferWithValue(
-    se::Stream& stream, se::DeviceAddressBase buffer, float value) {
+static absl::Status FillDeviceBufferWithValue(se::Stream& stream,
+                                              se::DeviceAddressBase buffer,
+                                              float value) {
   return FillDeviceBuffer(stream, buffer, std::vector<float>(kLength, value));
 }
 
 static absl::Status PreparePhaseInputs(
     DeviceTestSlot& slot, int device_ordinal, int phase,
     absl::Span<const se::DeviceAddressBase> buffers) {
-  RETURN_IF_ERROR(
-      FillDeviceBuffer(*slot.stream, buffers[0],
-                       SourceValues(device_ordinal, phase)));
+  RETURN_IF_ERROR(FillDeviceBuffer(*slot.stream, buffers[0],
+                                   SourceValues(device_ordinal, phase)));
   return FillDeviceBufferWithValue(*slot.stream, buffers[1], -1.0f);
 }
 
@@ -168,8 +168,7 @@ static absl::Status RunExecuteOnStreamPhase(int device_ordinal,
   BufferAllocations allocations =
       MakeBufferAllocations(slot, slot.create_buffers);
   RETURN_IF_ERROR(ExecuteSendRecv(slot, send_thunk, recv_thunk, allocations));
-  return VerifyRecvOutput(slot, device_ordinal, kPhase,
-                          slot.create_buffers[1]);
+  return VerifyRecvOutput(slot, device_ordinal, kPhase, slot.create_buffers[1]);
 }
 
 static absl::Status RunCreatePhase(int device_ordinal, DeviceTestSlot& slot,
