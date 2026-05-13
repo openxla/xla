@@ -79,6 +79,7 @@ limitations under the License.
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 
@@ -130,7 +131,7 @@ class NoOpCollectivePermuteThunk : public CollectivePermuteThunk {
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const ExecuteParams& execute_params, const RecordParams&,
       RecordAction record_action, se::CommandBuffer* command_buffer) override {
-    se::DeviceMemoryBase dst =
+    se::DeviceAddressBase dst =
         execute_params.buffer_allocations->GetDeviceAddress(
             buffers()[0].destination_buffer.slice);
     ASSIGN_OR_RETURN(

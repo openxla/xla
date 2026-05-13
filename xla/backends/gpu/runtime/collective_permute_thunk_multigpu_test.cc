@@ -22,6 +22,7 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
@@ -30,14 +31,13 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_thunk_multigpu_test_utils.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/thunk.h"
-#include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/computation_placer.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
