@@ -265,10 +265,11 @@ TEST(RaggedAllToAllThunkMultiGpuTest, ExecuteOnStream) {
   RaggedAllToAllThunk thunk = MakeThunk(buffer_allocations);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(RunOnDevices(kNumDevices, "ragged_execute", [&](int d) {
-    RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
-    return RunExecuteOnStreamPhase(slots[d], thunk, d, /*phase=*/1);
-  }));
+  ASSERT_OK(
+      RunOnDevices(kNumDevices, "ragged_execute", [&](int d) -> absl::Status {
+        RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        return RunExecuteOnStreamPhase(slots[d], thunk, d, /*phase=*/1);
+      }));
 }
 
 TEST(RaggedAllToAllThunkMultiGpuTest, RecordCommandBufferCreate) {
@@ -285,10 +286,11 @@ TEST(RaggedAllToAllThunkMultiGpuTest, RecordCommandBufferCreate) {
   RaggedAllToAllThunk thunk = MakeThunk(buffer_allocations);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(RunOnDevices(kNumDevices, "ragged_create", [&](int d) {
-    RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
-    return RunCreatePhase(slots[d], thunk, d, /*phase=*/1);
-  }));
+  ASSERT_OK(
+      RunOnDevices(kNumDevices, "ragged_create", [&](int d) -> absl::Status {
+        RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        return RunCreatePhase(slots[d], thunk, d, /*phase=*/1);
+      }));
 }
 
 TEST(RaggedAllToAllThunkMultiGpuTest, RecordCommandBufferUpdate) {
@@ -305,10 +307,11 @@ TEST(RaggedAllToAllThunkMultiGpuTest, RecordCommandBufferUpdate) {
   RaggedAllToAllThunk thunk = MakeThunk(buffer_allocations);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(RunOnDevices(kNumDevices, "ragged_create", [&](int d) {
-    RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
-    return RunCreatePhase(slots[d], thunk, d, /*phase=*/1);
-  }));
+  ASSERT_OK(
+      RunOnDevices(kNumDevices, "ragged_create", [&](int d) -> absl::Status {
+        RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        return RunCreatePhase(slots[d], thunk, d, /*phase=*/1);
+      }));
 
   ASSERT_OK(RunOnDevices(kNumDevices, "ragged_update", [&](int d) {
     return RunUpdatePhase(slots[d], thunk, d, /*phase=*/2);
