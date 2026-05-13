@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/collective_broadcast_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk_multigpu_test_utils.h"
@@ -37,7 +38,6 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -104,8 +104,7 @@ static absl::Status FillDestinationBuffer(se::Stream& stream,
 static absl::Status PrepareInputs(
     se::Stream& stream, absl::Span<const se::DeviceAddressBase> buffers,
     int device_ordinal, int phase) {
-  RETURN_IF_ERROR(
-      FillSourceBuffer(stream, buffers[0], device_ordinal, phase));
+  RETURN_IF_ERROR(FillSourceBuffer(stream, buffers[0], device_ordinal, phase));
   return FillDestinationBuffer(stream, buffers[1], -1.0f);
 }
 
@@ -245,10 +244,9 @@ TEST(CollectiveBroadcastThunkMultiGpuTest, RecordCommandBufferUpdate) {
         return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
       }));
 
-  ASSERT_OK(
-      RunOnDevices(kNumDevices, "collective_broadcast_update", [&](int d) {
-        return RunUpdatePhase(slots[d], thunk, d, /*phase=*/3);
-      }));
+  ASSERT_OK(RunOnDevices(
+      kNumDevices, "collective_broadcast_update",
+      [&](int d) { return RunUpdatePhase(slots[d], thunk, d, /*phase=*/3); }));
 }
 
 }  // namespace
