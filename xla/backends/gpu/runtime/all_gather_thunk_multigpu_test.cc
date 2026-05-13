@@ -196,10 +196,11 @@ TEST(AllGatherThunkMultiGpuTest, ExecuteOnStream) {
   AllGatherThunk thunk = MakeThunk(alloc_src, alloc_dst);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(RunOnDevices(kNumDevices, "allgather_execute", [&](int d) {
-    RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
-    return RunExecuteOnStreamPhase(slots[d], thunk, d, /*phase=*/1);
-  }));
+  ASSERT_OK(RunOnDevices(
+      kNumDevices, "allgather_execute", [&](int d) -> absl::Status {
+        RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        return RunExecuteOnStreamPhase(slots[d], thunk, d, /*phase=*/1);
+      }));
 }
 
 TEST(AllGatherThunkMultiGpuTest, RecordCommandBufferCreate) {
@@ -216,10 +217,11 @@ TEST(AllGatherThunkMultiGpuTest, RecordCommandBufferCreate) {
   AllGatherThunk thunk = MakeThunk(alloc_src, alloc_dst);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(RunOnDevices(kNumDevices, "allgather_create", [&](int d) {
-    RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
-    return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
-  }));
+  ASSERT_OK(
+      RunOnDevices(kNumDevices, "allgather_create", [&](int d) -> absl::Status {
+        RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
+      }));
 }
 
 TEST(AllGatherThunkMultiGpuTest, RecordCommandBufferUpdate) {
@@ -236,10 +238,11 @@ TEST(AllGatherThunkMultiGpuTest, RecordCommandBufferUpdate) {
   AllGatherThunk thunk = MakeThunk(alloc_src, alloc_dst);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(RunOnDevices(kNumDevices, "allgather_create", [&](int d) {
-    RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
-    return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
-  }));
+  ASSERT_OK(
+      RunOnDevices(kNumDevices, "allgather_create", [&](int d) -> absl::Status {
+        RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
+      }));
 
   ASSERT_OK(RunOnDevices(kNumDevices, "allgather_update", [&](int d) {
     return RunUpdatePhase(slots[d], thunk, d, /*phase=*/3);
