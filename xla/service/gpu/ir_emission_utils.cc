@@ -620,6 +620,8 @@ std::optional<Dependencies> GetLeafDependencies(const HloInstruction* root) {
     queue.pop();
 
     if (instruction->opcode() == HloOpcode::kCustomCall ||
+        instruction->opcode() == HloOpcode::kPartitionId ||
+        instruction->opcode() == HloOpcode::kReplicaId ||
         instruction->HasSideEffect()) {
       VLOG(5) << "Found an unsafe operation.";
       return std::nullopt;
