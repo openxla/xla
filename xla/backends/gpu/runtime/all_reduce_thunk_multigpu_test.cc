@@ -24,6 +24,7 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
@@ -38,7 +39,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
