@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk_multigpu_test_utils.h"
@@ -37,7 +38,6 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -123,8 +123,9 @@ static float SourceValue(int source_rank, int target_rank, int phase) {
   return static_cast<float>(phase * 100 + source_rank * 10 + target_rank);
 }
 
-static absl::Status FillDeviceBufferWithValue(
-    se::Stream& stream, se::DeviceAddressBase buffer, float value) {
+static absl::Status FillDeviceBufferWithValue(se::Stream& stream,
+                                              se::DeviceAddressBase buffer,
+                                              float value) {
   std::vector<float> data(kLength, value);
   return FillDeviceBuffer(stream, buffer, data);
 }
