@@ -206,10 +206,11 @@ TEST(CollectivePermuteThunkMultiGpuTest, ExecuteOnStream) {
   CollectivePermuteThunk thunk = MakeThunk(alloc_src, alloc_dst);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(RunOnDevices(kNumDevices, "collective_permute_execute", [&](int d) {
-    RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
-    return RunExecuteOnStreamPhase(slots[d], thunk, d, /*phase=*/1);
-  }));
+  ASSERT_OK(RunOnDevices(
+      kNumDevices, "collective_permute_execute", [&](int d) -> absl::Status {
+        RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        return RunExecuteOnStreamPhase(slots[d], thunk, d, /*phase=*/1);
+      }));
 }
 
 TEST(CollectivePermuteThunkMultiGpuTest, RecordCommandBufferCreate) {
@@ -226,10 +227,11 @@ TEST(CollectivePermuteThunkMultiGpuTest, RecordCommandBufferCreate) {
   CollectivePermuteThunk thunk = MakeThunk(alloc_src, alloc_dst);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(RunOnDevices(kNumDevices, "collective_permute_create", [&](int d) {
-    RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
-    return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
-  }));
+  ASSERT_OK(RunOnDevices(
+      kNumDevices, "collective_permute_create", [&](int d) -> absl::Status {
+        RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
+      }));
 }
 
 TEST(CollectivePermuteThunkMultiGpuTest, RecordCommandBufferUpdate) {
@@ -246,10 +248,11 @@ TEST(CollectivePermuteThunkMultiGpuTest, RecordCommandBufferUpdate) {
   CollectivePermuteThunk thunk = MakeThunk(alloc_src, alloc_dst);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(RunOnDevices(kNumDevices, "collective_permute_create", [&](int d) {
-    RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
-    return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
-  }));
+  ASSERT_OK(RunOnDevices(
+      kNumDevices, "collective_permute_create", [&](int d) -> absl::Status {
+        RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
+      }));
 
   ASSERT_OK(RunOnDevices(kNumDevices, "collective_permute_update", [&](int d) {
     return RunUpdatePhase(slots[d], thunk, d, /*phase=*/3);
