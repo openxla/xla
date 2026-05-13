@@ -174,24 +174,6 @@ mlir::LogicalResult rewriteManualComputation(
   return mlir::success();
 }
 
-FuncOp cloneFuncRecursively(
-    FuncOp funcOp, mlir::sdy::TensorShardingPerValueAttr callOpResultShardings,
-    mlir::SymbolTable& symbolTable) {
-  FuncOp clonedFuncOp = funcOp.clone();
-  clonedFuncOp->setAttr(mlir::sdy::kOriginalFuncName,
-                        mlir::sdy::getOriginalFuncName(funcOp));
-  if (callOpResultShardings) {
-    mlir::sdy::setFuncResultShardings(clonedFuncOp, callOpResultShardings);
-  }
-  clonedFuncOp->walk([&](CallOp callOp) {
-    FuncOp funcOp = symbolTable.lookup<FuncOp>(callOp.getCallee());
-    CHECK(funcOp) << "Failed to lookup function: " << callOp.getCallee().str();
-    callOp.setCallee(symbolTable.insert(cloneFuncRecursively(
-        funcOp, mlir::sdy::getShardingPerValue(callOp), symbolTable)));
-  });
-  return clonedFuncOp;
-}
-
 void cloneManualComputations(
     ModuleOp moduleOp, SymbolTable& symbolTable,
     mlir::SymbolTableCollection& symbolTableCollection) {
@@ -201,10 +183,9 @@ void cloneManualComputations(
     }
     // TODO(b/446881697): Clone just the body on demand like in
     // shardy/stablehlo_round_trip/shard_map_import.cc.
-    FuncOp funcOp = symbolTable.lookup<FuncOp>(callOp.getCallee());
-    CHECK(funcOp) << "Failed to lookup function: " << callOp.getCallee().str();
-    callOp.setCallee(symbolTable.insert(cloneFuncRecursively(
-        funcOp, mlir::sdy::getShardingPerValue(callOp), symbolTable)));
+    FuncOp funcOp = mlir::sdy::getFuncOpOrDie(callOp.getCallee(), symbolTable);
+    callOp.setCallee(symbolTable.insert(
+        mlir::sdy::cloneFuncRecursively(funcOp, symbolTable)));
     return mlir::WalkResult::advance();
   });
   // TODO(enver): Clean up uncalled functions.

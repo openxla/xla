@@ -56,7 +56,6 @@ limitations under the License.
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
@@ -423,7 +422,7 @@ class HloComputation {
       const absl::flat_hash_map<int64_t, HloComputation*>& computation_map,
       bool prohibit_empty_literal = true, bool preserve_instruction_ids = true,
       absl::flat_hash_map<int64_t, int64_t>* id_remap_map = nullptr,
-      absl::Span<const tsl::RCReference<BackendConfigWrapper>> backend_configs =
+      absl::Span<const std::shared_ptr<BackendConfigWrapper>> backend_configs =
           {});
 
   // Generates a hash value of an HLO computation. Hash considers

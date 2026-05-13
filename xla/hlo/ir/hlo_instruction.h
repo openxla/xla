@@ -70,7 +70,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_pool.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
@@ -329,7 +328,7 @@ class HloInstruction {
       const absl::flat_hash_map<int64_t, HloInstruction*>& instruction_map,
       const absl::flat_hash_map<int64_t, HloComputation*>& computation_map = {},
       bool prohibit_empty_literal = true,
-      absl::Span<const tsl::RCReference<BackendConfigWrapper>> backend_configs =
+      absl::Span<const std::shared_ptr<BackendConfigWrapper>> backend_configs =
           {});
 
   // Creates a parameter-retrieving instruction.
@@ -1934,7 +1933,7 @@ class HloInstruction {
   bool has_backend_config() const { return !backend_config_->empty(); }
 
   void clear_backend_config() {
-    backend_config_ = tsl::MakeRef<BackendConfigWrapper>();
+    backend_config_ = std::make_shared<BackendConfigWrapper>();
   }
 
   void CopyBackendConfigFrom(const HloInstruction* other) {
@@ -2082,14 +2081,15 @@ class HloInstruction {
   template <typename ConfigProto, EnableIfProto<ConfigProto>* = nullptr>
   absl::Status MutateBackendConfig(
       const std::function<absl::Status(ConfigProto*)>& fn) {
-    if (!backend_config_->IsUnique()) {
-      backend_config_ = tsl::MakeRef<BackendConfigWrapper>(*backend_config_);
+    if (backend_config_.use_count() > 1) {
+      backend_config_ =
+          std::make_shared<BackendConfigWrapper>(*backend_config_);
     }
     return backend_config_->ApplyFnOnProto(fn);
   }
 
   absl::Status set_backend_config(const tsl::protobuf::Message& proto) {
-    backend_config_ = tsl::MakeRef<BackendConfigWrapper>(proto);
+    backend_config_ = std::make_shared<BackendConfigWrapper>(proto);
     return absl::OkStatus();
   }
 
@@ -2099,7 +2099,8 @@ class HloInstruction {
     return backend_config_->GetRawString();
   }
   void set_raw_backend_config_string(std::string config_str) {
-    backend_config_ = tsl::MakeRef<BackendConfigWrapper>(std::move(config_str));
+    backend_config_ =
+        std::make_shared<BackendConfigWrapper>(std::move(config_str));
   }
 
   bool is_default_config() const { return is_default_config_; }
@@ -2152,6 +2153,8 @@ class HloInstruction {
   void set_metadata_scheduling_name(absl::string_view name) {
     mutable_metadata().set_scheduling_name(name);
   }
+
+  bool has_metadata() const { return metadata_ != nullptr; }
 
   const OpMetadata& metadata() const {
     OpMetadata* m = metadata_.get();
@@ -2802,10 +2805,10 @@ class HloInstruction {
   std::shared_ptr<Shape> shape_;
 
   // The backend-specific configuration for how a backend should compile this
-  // HLO. See the documentation on backend_config(). Declared as RCReference to
+  // HLO. See the documentation on backend_config(). Declared as shared_ptr to
   // implement copy-on-write.
-  absl_nonnull tsl::RCReference<BackendConfigWrapper> backend_config_ =
-      tsl::MakeRef<BackendConfigWrapper>();
+  absl_nonnull std::shared_ptr<BackendConfigWrapper> backend_config_ =
+      std::make_shared<BackendConfigWrapper>();
 
   // String identifier for instruction.
   std::string name_;

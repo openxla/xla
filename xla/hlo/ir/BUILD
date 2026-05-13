@@ -192,7 +192,7 @@ xla_cc_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test_main",
-        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
     ],
@@ -324,7 +324,6 @@ cc_library(
     hdrs = ["backend_config.h"],
     deps = [
         "//xla:util",
-        "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:errors",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log",

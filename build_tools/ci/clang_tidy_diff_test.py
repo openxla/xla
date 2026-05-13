@@ -153,7 +153,7 @@ class TestClangTidyDiff(parameterized.TestCase):
 
   def test_process_file(self):
     with tempfile.TemporaryDirectory() as tmpdir:
-      yaml_path = pathlib.Path(tmpdir) / "test.clang-tidy.yaml"
+      yaml_path = pathlib.Path(tmpdir) / "file1.cc.clang-tidy.yaml"
       with open(yaml_path, "w") as f:
         f.write(textwrap.dedent(f"""\
                     ---
@@ -188,7 +188,7 @@ class TestClangTidyDiff(parameterized.TestCase):
             json.dumps({
                 "namedSetOfFiles": {
                     "files": [{
-                        "name": "test.clang-tidy.yaml",
+                        "name": "file1.cc.clang-tidy.yaml",
                         "pathPrefix": [],
                     }]
                 }
@@ -209,9 +209,7 @@ class TestClangTidyDiff(parameterized.TestCase):
       filterer = clang_tidy_diff.ClangTidyDiffFilter(
           config, offset_provider=mock_offset_provider
       )
-      diagnostics: list[clang_tidy_diff.Diagnostic] = filterer.process_file(
-          str(yaml_path)
-      )
+      diagnostics, summary = filterer.process_file(str(yaml_path))
 
       with self.subTest("Diagnostics"):
         self.assertLen(diagnostics, 1)
@@ -223,6 +221,17 @@ class TestClangTidyDiff(parameterized.TestCase):
         self.assertEqual(diagnostics[0].level, "Error")
         self.assertEqual(diagnostics[0].name, "misc-unused")
         self.assertEqual(diagnostics[0].message, "unused variable")
+
+      with self.subTest("DiagnosticSummary"):
+        self.assertEqual(
+            summary,
+            clang_tidy_diff.DiagnosticSummary(
+                file_path="file1.cc",
+                was_skipped=False,
+                total=1,
+                matched=1,
+            ),
+        )
 
   def test_process_file_no_substring_false_positives(self):
     """Tests that we don't get false positives from diff file paths being substrings of other file paths."""
@@ -274,9 +283,75 @@ class TestClangTidyDiff(parameterized.TestCase):
         warnings_as_errors=True,
     )
     filterer = clang_tidy_diff.ClangTidyDiffFilter(config)
-    _ = filterer.process_file(str(yaml_path))
+    _, summary = filterer.process_file(str(yaml_path))
     self.assertIn("xla/long_util.cc", filterer.seen_files)
+    self.assertFalse(summary.was_skipped)
     self.assertNotIn("util.cc", filterer.seen_files)
+
+  def test_process_file_empty_yaml_aspect_path(self):
+    tmpdir = self.create_tempdir()
+    yaml_path = pathlib.Path(tmpdir) / (
+        "bazel-out/k8-opt/bin/xla/backends/bazel_clang_tidy_xla/"
+        "backends/source.cc.target.clang-tidy.yaml"
+    )
+    yaml_path.parent.mkdir(parents=True, exist_ok=True)
+    self.create_tempfile(yaml_path.as_posix(), content="")
+    diff_path = pathlib.Path(tmpdir) / "test.diff"
+    self.create_tempfile(
+        diff_path.as_posix(),
+        content=textwrap.dedent("""\
+        diff --git a/xla/backends/source.cc b/xla/backends/source.cc
+        index 123456..789012 100644
+        --- a/xla/backends/source.cc
+        +++ b/xla/backends/source.cc
+        @@ -1,1 +1,2 @@
+         line1
+        +line2
+        """),
+    )
+    bep_path = pathlib.Path(tmpdir) / "test.bep"
+    self.create_tempfile(
+        bep_path.as_posix(),
+        content=json.dumps({
+            "namedSetOfFiles": {
+                "files": [{
+                    "name": "xla/backends/source.cc.target.clang-tidy.yaml",
+                    "pathPrefix": [
+                        "bazel-out",
+                        "k8-opt",
+                        "bin",
+                        "xla",
+                        "backends",
+                        "bazel_clang_tidy_xla",
+                    ],
+                }]
+            }
+        })
+        + "\n",
+    )
+    config = clang_tidy_diff.AppConfig(
+        patch=str(diff_path),
+        repo_root=str(tmpdir),
+        bep_file=str(bep_path),
+        warnings_as_errors=False,
+    )
+    filterer = clang_tidy_diff.ClangTidyDiffFilter(config)
+    _, summary = filterer.process_file(str(yaml_path))
+    # File should be marked as seen despite the empty YAML.
+    self.assertIn(
+        "xla/backends/source.cc",
+        filterer.seen_files,
+    )
+    with self.subTest("DiagnosticSummary"):
+      self.assertEqual(
+          summary,
+          clang_tidy_diff.DiagnosticSummary(
+              file_path="xla/backends/source.cc",
+              was_skipped=False,
+              total=0,
+              matched=0,
+          ),
+      )
 
   def test_run(self):
     with tempfile.TemporaryDirectory() as tmpdir:

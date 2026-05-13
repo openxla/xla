@@ -72,7 +72,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/gtl/map_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
@@ -862,10 +861,10 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
       << ShapeUtil::HumanStringWithLayout(expected_program_shape.result())
       << ", actual: " << ShapeUtil::HumanStringWithLayout(result_shape);
 
-  std::vector<tsl::RCReference<BackendConfigWrapper>> backend_configs;
+  std::vector<std::shared_ptr<BackendConfigWrapper>> backend_configs;
   backend_configs.reserve(proto.payloads_size());
   for (const std::string& payload : proto.payloads()) {
-    backend_configs.push_back(tsl::MakeRef<BackendConfigWrapper>(payload));
+    backend_configs.push_back(std::make_shared<BackendConfigWrapper>(payload));
   }
 
   absl::flat_hash_map<int64_t, HloComputation*> computation_map;

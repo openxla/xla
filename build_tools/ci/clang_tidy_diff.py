@@ -80,6 +80,24 @@ class Diagnostic:
   yaml_file: str
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class DiagnosticSummary:
+  """Summary for all Clang-Tidy diagnostics for a file.
+
+  Attributes:
+    file_path: The path to the file where the diagnostics were found, relative
+      to the repo root.
+    was_skipped: Whether the file was skipped due to not being in the git diff.
+    total: The total number of diagnostics found in the report.
+    matched: The number of diagnostics that matched the diff.
+  """
+
+  file_path: str
+  was_skipped: bool
+  total: int
+  matched: int
+
+
 # Can't use TypedDict with classes because linting will complain about fields
 # starting with capital letters.
 ClangTidyDiagnostic = TypedDict(
@@ -343,7 +361,8 @@ def print_diagnostic(
       lines = f.readlines()
   except FileNotFoundError:
     _logger().warning(
-        "Could not read file %s to print diagnostic snippet.", abs_path
+        "Could not read file %r to print diagnostic snippet.",
+        abs_path.as_posix(),
     )
     return
 
@@ -364,6 +383,47 @@ def print_diagnostic(
       )
     else:
       stream.write(f"{prefix}{line_content}\n")
+
+
+def _find_with_prefix(
+    parts: Sequence[str], prefix: str
+) -> tuple[int, str | None]:
+  """Finds the index and value of the first part starting with the prefix.
+
+  Args:
+    parts: The path parts to search.
+    prefix: The prefix to search for.
+
+  Returns:
+    A tuple of (index, dir) where dir is the directory starting with the
+    prefix or None if not found.
+  """
+  for idx, part in enumerate(parts):
+    if part.startswith(prefix):
+      return idx, part
+  return 0, None
+
+
+def _get_report_source(yaml_file_path: pathlib.Path, repo_root: str) -> str:
+  """Returns the source file path for a Clang-Tidy YAML report file."""
+  # yaml_path looks like:
+  # x/y/z/bazel_clang_tidy/path/to/file.cc.<target>.clang-tidy.yml.
+  expected_prefix = "bazel_clang_tidy_"
+  idx, aspect_dir = _find_with_prefix(yaml_file_path.parts, expected_prefix)
+  if aspect_dir is not None:
+    toplevel = [aspect_dir.removeprefix(expected_prefix)]
+    rel_parts = yaml_file_path.parts[idx + 1 :]
+    # Remove <target>.clang-tidy.yml suffix.
+    filename = rel_parts[-1].rsplit(".", 3)[0]
+  else:
+    toplevel = []
+    rel_parts = yaml_file_path.parts
+    # Remove .clang-tidy.yml without the <target>.
+    filename = rel_parts[-1].rsplit(".", 2)[0]
+  return normalize_path(
+      pathlib.Path(*toplevel, *rel_parts[:-1], filename).as_posix(),
+      repo_root,
+  )
 
 
 class ClangTidyDiffFilter:
@@ -390,8 +450,17 @@ class ClangTidyDiffFilter:
     self.file_offsets_cache: dict[str, Sequence[int]] = {}
     self.seen_files: set[str] = set()
 
-  def process_file(self, yaml_file: str) -> Sequence[Diagnostic]:
-    """Processes a single Clang-Tidy YAML report file."""
+  def process_file(
+      self, yaml_file: str
+  ) -> tuple[Sequence[Diagnostic], DiagnosticSummary]:
+    """Processes a single Clang-Tidy YAML report file.
+
+    Args:
+      yaml_file: The path to the Clang-Tidy YAML report file.
+
+    Returns:
+      A tuple of (matched_diagnostics, summary).
+    """
     matched_diagnostics: list[Diagnostic] = []
     data = parse_clang_tidy_yaml(yaml_file)
     _logger().debug(
@@ -399,37 +468,40 @@ class ClangTidyDiffFilter:
         yaml_file,
         data,
     )
-
+    yaml_file_path = pathlib.Path(yaml_file)
+    report_source = _get_report_source(yaml_file_path, self.repo_root)
     if not data:
-      return []
+      return [], DiagnosticSummary(
+          file_path=report_source,
+          was_skipped=True,
+          total=0,
+          matched=0,
+      )
 
     main_source = data.get("MainSourceFile")
     if main_source:
       norm_main_source = normalize_path(main_source, self.repo_root)
       self.seen_files.add(norm_main_source)
-    report_source = normalize_path(
-        yaml_file.removesuffix(".clang-tidy.yaml"), self.repo_root
-    )
+
     if report_source in self.diff_ranges:
       self.seen_files.add(report_source)
     if "Diagnostics" not in data:
-      return []
+      return [], DiagnosticSummary(
+          file_path=report_source,
+          was_skipped=True,
+          total=0,
+          matched=0,
+      )
 
     for diag in data["Diagnostics"]:
-      msg: ClangTidyDiagnostic = diag.get("DiagnosticMessage", {})
-      file_path = msg.get("FilePath") or diag.get("FilePath")
-      offset = msg.get("FileOffset") or diag.get("FileOffset")
+      file_path = diag.get("FilePath")
+      offset = diag.get("FileOffset")
 
       if not file_path or offset is None:
         continue
 
       norm_path = normalize_path(file_path, self.repo_root)
-
       if norm_path not in self.diff_ranges:
-        _logger().info(
-            "Skipping diagnostic for file %s as it is not in the diff.",
-            norm_path,
-        )
         continue
 
       abs_path = pathlib.Path(self.repo_root) / norm_path
@@ -441,7 +513,7 @@ class ClangTidyDiffFilter:
       offsets = self.file_offsets_cache[norm_path]
       if not offsets:
         _logger().warning(
-            "Could not read file %s to calculate line number.",
+            "Could not read file %r to calculate line number.",
             abs_path.as_posix(),
         )
         continue
@@ -460,11 +532,16 @@ class ClangTidyDiffFilter:
                 col_num=col_num,
                 level=diag.get("Level") or "",
                 name=diag.get("DiagnosticName") or "",
-                message=msg.get("Message") or diag.get("Message") or "",
+                message=diag.get("Message") or "",
                 yaml_file=yaml_file,
             )
         )
-    return matched_diagnostics
+    return matched_diagnostics, DiagnosticSummary(
+        file_path=report_source,
+        was_skipped=report_source not in self.diff_ranges,
+        total=len(data["Diagnostics"]),
+        matched=len(matched_diagnostics),
+    )
 
   def report_missing(self) -> None:
     """Reports any touched files that were not processed using the logger."""
@@ -493,9 +570,23 @@ class ClangTidyDiffFilter:
 
     found_diagnostics = False
     for y in self.yaml_files:
-      diagnostics = self.process_file(y)
+      diagnostics, summary = self.process_file(y)
       if diagnostics:
         found_diagnostics = True
+      if summary.was_skipped and summary.total > 0:
+        _logger().info(
+            "Skipping %r with %d diagnostics because it is not in the diff.",
+            summary.file_path,
+            summary.total,
+        )
+      if summary.total > summary.matched and not summary.was_skipped:
+        _logger().info(
+            "Not all diagnostics will be reported for %r because they are not"
+            " part of the diff. Found %d diagnostics but reported %d.",
+            summary.file_path,
+            summary.total,
+            summary.matched,
+        )
       for d in diagnostics:
         print_diagnostic(
             d, self.repo_root, warnings_as_errors=self.warnings_as_errors

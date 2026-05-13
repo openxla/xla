@@ -68,7 +68,6 @@ limitations under the License.
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
@@ -1297,7 +1296,7 @@ HloComputation::CreateFromProto(
     const absl::flat_hash_map<int64_t, HloComputation*>& computation_map,
     bool prohibit_empty_literal, bool preserve_instruction_ids,
     absl::flat_hash_map<int64_t, int64_t>* id_remap_map,
-    absl::Span<const tsl::RCReference<BackendConfigWrapper>> backend_configs) {
+    absl::Span<const std::shared_ptr<BackendConfigWrapper>> backend_configs) {
   // Instruction_map uses the ids of the instructions as defined in the proto.
   // The final instruction ids will change if preserve_instruction_ids is false.
   absl::flat_hash_map<int64_t, HloInstruction*> instruction_map;

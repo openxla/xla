@@ -18,6 +18,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -142,7 +143,8 @@ TEST_F(GemvRewriterTest, DoNotRewriteDotsWithNonNormalizedLayout) {
   GemvRewriter rewriter;
   absl::StatusOr<bool> result = this->RunHloPass(&rewriter, module.get());
   EXPECT_FALSE(result.ok());
-  EXPECT_EQ(result.status().message(), "Layout is not normalized.");
+  EXPECT_THAT(result.status().message(),
+              ::testing::HasSubstr("Layout is not normalized."));
 }
 
 }  // namespace

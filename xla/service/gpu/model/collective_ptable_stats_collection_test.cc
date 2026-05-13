@@ -69,7 +69,8 @@ DeviceHloInstructionProfiles TestProfiles(
 
   *profile_list.add_entries() = std::move(profile_entry);
   profiles.mutable_entries()->insert(
-      {HloOpProfiles::GetProfileName(device_info), std::move(profile_list)});
+      {HloOpProfiles::GetDeviceSpecificProfileName(device_info),
+       std::move(profile_list)});
 
   return profiles;
 }

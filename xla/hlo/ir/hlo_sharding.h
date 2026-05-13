@@ -541,6 +541,7 @@ class HloSharding {
     }
     return *this == V3ToV2Sharding(*other.named_sharding_);
   }
+
   bool operator!=(const HloSharding& other) const { return !(*this == other); }
 
   template <typename H>

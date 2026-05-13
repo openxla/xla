@@ -369,10 +369,10 @@ absl::StatusOr<SmallVector<int64_t>> GetSequentialLoopIterationCounts(
     CHECK(dim_info.type == ge::TilingSpace::DimensionSemantics::kSequential)
         << "Expected a sequential dimension info for contracting dimension "
         << dim_id << " in op " << hlo.ToString();
-    CHECK(dim_info.IsTileSizeSet())
+    CHECK(dim_info.tile_size.has_value())
         << "Tile size is not set for contracting dimension ";
     loop_iteration_counts.push_back(
-        CeilOfRatio(dim_info.dimension_size, dim_info.tile_size));
+        CeilOfRatio(dim_info.dimension_size, *dim_info.tile_size));
   }
   return loop_iteration_counts;
 }
@@ -983,13 +983,13 @@ void EmitFullyTiledSequentialDimensions(
     QCHECK(dim_info.hlo != nullptr) << "Sequential dimension " << dim_id
                                     << " does not have a corresponding "
                                        "HLO.";
-    QCHECK(dim_info.IsTileSizeSet()) << "Sequential dimension " << dim_id
-                                     << " does not have a tile size set.";
+    QCHECK(dim_info.tile_size.has_value()) << "Sequential dimension " << dim_id
+                                           << " does not have a tile size set.";
     if (dim_info.hlo->opcode() == HloOpcode::kReduce &&
-        dim_info.tile_size >= dim_info.dimension_size) {
+        *dim_info.tile_size >= dim_info.dimension_size) {
       VLOG(2) << "Mapping reduce sequential dimension " << dim_id << " of size "
               << dim_info.dimension_size << " with tile size "
-              << dim_info.tile_size << " for hlo " << dim_info.hlo->name()
+              << *dim_info.tile_size << " for hlo " << dim_info.hlo->name()
               << " to a new value 0";
       emitter_ctx.MapSymbolIdToSequentialDimValue(
           ge::TiledDimId(dim_id), MakeIndex(b, 0), Interval{0, 0});

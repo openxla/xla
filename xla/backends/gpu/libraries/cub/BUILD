@@ -159,7 +159,7 @@ text_to_binary_proto(
     src = "cub_scratch_size_lookup_table.textproto",
     out = "cub_scratch_size_lookup_table.binarypb",
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
-    proto_file = ":scratch_space_lookup_table.proto",
+    proto_deps = [":scratch_space_lookup_table_proto"],
     proto_name = "xla.gpu.CubScratchSizeLookupTable",
 )
 

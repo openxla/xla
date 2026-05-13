@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -26,6 +27,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/LLVMContext.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/backends/gpu/transforms/collectives/all_gather_optimizer.h"
@@ -74,6 +76,18 @@ limitations under the License.
 
 namespace xla {
 namespace {
+std::string GetAlphaSmallestFunctionName(const llvm::Module& module) {
+  std::string name;
+  for (const llvm::Function& func : module.functions()) {
+    if (!func.isDeclaration() &&
+        func.getLinkage() == llvm::GlobalValue::LinkageTypes::ExternalLinkage) {
+      if (name.empty() || name > func.getName().str()) {
+        name = func.getName().str();
+      }
+    }
+  }
+  return name;
+}
 
 class GpuOptProvider : public CompiledOptProvider {
  public:
@@ -219,6 +233,13 @@ class GpuOptProvider : public CompiledOptProvider {
     ASSIGN_OR_RETURN(
         std::unique_ptr<Executable> executable,
         compiler->RunBackend(std::move(optimized_module), executor, opts));
+
+    std::sort(modules.begin(), modules.end(),
+              [](const std::unique_ptr<llvm::Module>& m1,
+                 const std::unique_ptr<llvm::Module>& m2) {
+                return GetAlphaSmallestFunctionName(*m1) >
+                       GetAlphaSmallestFunctionName(*m2);
+              });
 
     gpu::LinkLlvmModulesInPlace(modules);
 

@@ -59,8 +59,8 @@ std::string TilingSpace::DimensionInfo::ToString() const {
   ss << id << " type: "
      << (type == DimensionSemantics::kParallel ? "parallel" : "sequential")
      << " size: " << dimension_size;
-  if (IsTileSizeSet()) {
-    ss << " tile size: " << tile_size;
+  if (tile_size.has_value()) {
+    ss << " tile size: " << *tile_size;
   }
   ss << " dim ID:" << dim_position << " hlo: " << HloPtrToString(hlo);
   return ss.str();
@@ -208,6 +208,13 @@ absl::Status TilingSpace::AssignTileSizes(
     replacement_map[CreateSymbolExpr(dim.id.value(), dimensions_.size(),
                                      mlir_context_)] =
         CreateSymbolicConstant(tile_sizes[index], mlir_context_);
+
+    // If the tile size is greater than or equal to the dimension size, then
+    // the dimension is trivial and can be replaced with 0.
+    if (dim.dimension_size <= tile_sizes[index]) {
+      replacement_map[CreateDimExpr(dim.id.value(), mlir_context_)] =
+          CreateSymbolicConstant(0, mlir_context_);
+    }
   }
   for (const auto& c : divisibility_constraints_) {
     SymbolicExpr replaced_size = c.tile_size.Replace(replacement_map);

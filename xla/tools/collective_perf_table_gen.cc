@@ -557,7 +557,7 @@ DeviceHloInstructionProfiles CollectivePerfTableGen::ComputeTable() {
 
   GpuTargetConfig gpu_target_config =
       GetGpuTargetConfig(GetPjRtEnv().client.get());
-  std::string device_key = HloOpProfiles::GetProfileName(
+  std::string device_key = HloOpProfiles::GetDeviceSpecificProfileName(
       /*device_info=*/gpu_target_config.device_description);
   profiles.mutable_entries()->insert({device_key, profile_list});
   return profiles;

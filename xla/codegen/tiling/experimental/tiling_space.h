@@ -116,10 +116,7 @@ class TilingSpace {
     int64_t dim_position;
 
     // Tile size for the dimension.
-    int64_t tile_size = -1;
-
-    // Whether the tile size is set.
-    bool IsTileSizeSet() const { return tile_size != -1; }
+    std::optional<int64_t> tile_size;
 
     std::string ToString() const;
   };

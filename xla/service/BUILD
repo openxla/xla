@@ -6705,6 +6705,7 @@ cc_library(
         ":shaped_slice_proto_cc",
         "//xla:shape_util",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
     ],

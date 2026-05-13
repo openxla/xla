@@ -250,6 +250,37 @@ TEST_F(AutotunerTest, NoCacheManager) {
   EXPECT_THAT(autotuner, IsOk());
 }
 
+TEST_F(AutotunerTest, AutotuneSingleSupportedConfig) {
+  auto cache_manager = std::make_unique<MockAutotunerCache>();
+  EXPECT_CALL(*cache_manager, Lookup(_)).WillOnce(Return(std::nullopt));
+  EXPECT_CALL(*cache_manager, Insert(_, _)).WillOnce(Return(absl::OkStatus()));
+
+  std::vector<std::unique_ptr<BackendConfig>> configs;
+  configs.push_back(GetTestConfig("only_config"));
+
+  auto backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend, GetSupportedConfigs)
+      .WillOnce(Return(std::move(configs)));
+  EXPECT_CALL(*backend, Compile(_, _)).Times(0);
+  EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("only_config")))
+      .Times(1)
+      .WillRepeatedly(Return(absl::OkStatus()));
+
+  auto profiler = std::make_unique<MockProfiler>();
+  EXPECT_CALL(*profiler, CreateInputBuffers(_, _)).Times(0);
+  EXPECT_CALL(*profiler, Profile(_, _)).Times(0);
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(backend));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto autotuner,
+      Autotuner::Create(std::move(backends), std::move(profiler), config_,
+                        std::move(cache_manager)));
+  auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  EXPECT_THAT(autotuner->Autotune(dummy_instr.get()), absl_testing::IsOk());
+}
+
 TEST_F(AutotunerTest, AutotuneButNoSupportedConfigs) {
   auto cache_manager = std::make_unique<MockAutotunerCache>();
   EXPECT_CALL(*cache_manager, Lookup(_)).WillOnce(Return(std::nullopt));
@@ -278,13 +309,16 @@ TEST_F(AutotunerTest, AutotuneButNoCompiledConfigs) {
   EXPECT_CALL(*cache_manager, Lookup(_)).WillOnce(Return(std::nullopt));
 
   std::vector<std::unique_ptr<BackendConfig>> configs;
-  configs.push_back(GetTestConfig("invalid_config"));
+  configs.push_back(GetTestConfig("invalid_config_1"));
+  configs.push_back(GetTestConfig("invalid_config_2"));
 
   auto backend = std::make_unique<MockCodegenBackend>();
   EXPECT_CALL(*backend, GetSupportedConfigs)
       .WillOnce(Return(std::move(configs)));
   EXPECT_CALL(*backend, Compile(_, _))
-      .WillOnce(Return(absl::InternalError("test error")));
+      .WillRepeatedly([](const HloInstruction&, const BackendConfig&) {
+        return absl::InternalError("test error");
+      });
 
   auto profiler = std::make_unique<MockProfiler>();
   auto device_description = CreateDummyDeviceDescription();
@@ -442,14 +476,17 @@ TEST_F(AutotunerTest, AutotuneButOneBackendFails) {
   EXPECT_CALL(*cache_manager, Insert(_, _)).WillOnce(Return(absl::OkStatus()));
 
   std::vector<std::unique_ptr<BackendConfig>> configs;
-  configs.push_back(GetTestConfig("test_config"));
+  configs.push_back(GetTestConfig("test_config_1"));
+  configs.push_back(GetTestConfig("test_config_2"));
 
   auto good_backend = std::make_unique<MockCodegenBackend>();
   EXPECT_CALL(*good_backend, GetSupportedConfigs)
       .WillOnce(Return(std::move(configs)));
   EXPECT_CALL(*good_backend, Compile(_, _))
-      .WillOnce(Return(std::unique_ptr<Executable>()));
-  EXPECT_CALL(*good_backend, ApplyConfig(_, ConfigMatcher("test_config")))
+      .WillRepeatedly([](const HloInstruction&, const BackendConfig&) {
+        return std::unique_ptr<Executable>();
+      });
+  EXPECT_CALL(*good_backend, ApplyConfig(_, ConfigMatcher("test_config_2")))
       .Times(1)
       .WillRepeatedly(Return(absl::OkStatus()));
   auto bad_backend = std::make_unique<MockCodegenBackend>();
@@ -457,6 +494,12 @@ TEST_F(AutotunerTest, AutotuneButOneBackendFails) {
       .WillOnce(Return(absl::InternalError("test error")));
 
   auto profiler = std::make_unique<MockProfiler>();
+  EXPECT_CALL(*profiler, CreateInputBuffers(_, _))
+      .WillOnce(Return(std::make_unique<InputBuffers>()));
+  EXPECT_CALL(*profiler, Profile(_, _))
+      .WillOnce(Return(ProfileResult({absl::Seconds(2)})))
+      .WillOnce(Return(ProfileResult({absl::Seconds(1)})));
+
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(good_backend));
   backends.push_back(std::move(bad_backend));

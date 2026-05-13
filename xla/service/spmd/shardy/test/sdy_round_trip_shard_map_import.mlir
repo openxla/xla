@@ -1014,11 +1014,11 @@ func.func @foo(%arg0: tensor<4xf32>) -> (tensor<4xf32> {sdy.sharding = #sdy.shar
   return %arg0 : tensor<4xf32>
 }
 
-// CHECK-LABEL: func @foo_0(%arg0: tensor<4xf32>) -> (tensor<4xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"c"}]>})
+// CHECK-LABEL: func @foo_0(%arg0: tensor<4xf32>) -> (tensor<4xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"b"}]>})
 // CHECK-SAME:  attributes {sdy.func_manual_axes = #sdy<manual_axes{"a"}>, sdy.original_func_name = "foo"} {
 // CHECK-NEXT:    return
 
-// CHECK-LABEL: func @foo_1(%arg0: tensor<4xf32>) -> (tensor<4xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"d"}]>})
+// CHECK-LABEL: func @foo_1(%arg0: tensor<4xf32>) -> (tensor<4xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"b"}]>})
 // CHECK-SAME:  attributes {sdy.func_manual_axes = #sdy<manual_axes{"a"}>, sdy.original_func_name = "foo"} {
 // CHECK-NEXT:    return
 

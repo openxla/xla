@@ -63,15 +63,28 @@ using ::llvm::ArrayRef;
 using ::llvm::SmallVector;
 using ::mlir::MLIRContext;
 
-DimTile GetDimTile(const TilingSpace::DimensionInfo& dim_info, bool is_symbolic,
+DimTile GetDimTile(const TilingSpace::DimensionInfo& dim_info,
                    int64_t num_dimensions, MLIRContext* ctx) {
-  CHECK(is_symbolic || dim_info.tile_size >= 0)
-      << "Concrete tile size cannot be negative.";
-  SymbolicExpr tile_size =
-      is_symbolic ? CreateSymbolExpr(dim_info.id.value(), num_dimensions, ctx)
-                  : CreateSymbolicConstant(dim_info.tile_size, ctx);
-  return GetDefaultDimTile(dim_info.id.value(), tile_size,
-                           dim_info.dimension_size);
+  if (dim_info.tile_size.has_value()) {
+    CHECK_GE(*dim_info.tile_size, 0)
+        << "Concrete tile size cannot be negative.";
+  }
+
+  SymbolicExpr size =
+      dim_info.tile_size.has_value()
+          ? CreateSymbolicConstant(*dim_info.tile_size, ctx)
+          : CreateSymbolExpr(dim_info.id.value(), num_dimensions, ctx);
+
+  // If the tile size is greater than or equal to the dimension size, then
+  // the dimension is trivial and can be replaced with 0.
+  SymbolicExpr offset = dim_info.tile_size.has_value() &&
+                                *dim_info.tile_size >= dim_info.dimension_size
+                            ? CreateSymbolicConstant(0, ctx)
+                            : CreateDimExpr(dim_info.id.value(), ctx) * size;
+
+  return DimTile{
+      offset, size, /*stride=*/CreateSymbolicConstant(1, ctx),
+      /*upper_bound=*/CreateSymbolicConstant(dim_info.dimension_size, ctx)};
 }
 
 Tiles PropagateTileToInputForCwiseOp(const HloInstruction& hlo,
@@ -532,8 +545,7 @@ Tiles PropagateTileToInputForDotOp(const TilingSpace& tiling_space,
         << "Expected a sequential dimension info for contracting dimension "
         << lhs_contracting_dim << " in dot (like) op " << hlo.ToString();
     lhs_dim_tiles[lhs_contracting_dim] = rhs_dim_tiles[rhs_contracting_dim] =
-        GetDimTile(contracting_dim_info, tiling_space.IsSymbolic(),
-                   tiling_space.num_dimensions(), ctx);
+        GetDimTile(contracting_dim_info, tiling_space.num_dimensions(), ctx);
   }
   return {output_tile.CloneWithNewDims(std::move(lhs_dim_tiles)),
           output_tile.CloneWithNewDims(std::move(rhs_dim_tiles))};
@@ -611,8 +623,7 @@ Tiles PropagateTileToInputForReduceOp(const TilingSpace& tiling_space,
           << "Expected a sequential dimension info for contracting dimension "
           << input_dim_id << " in reduce op " << reduce.ToString();
       input_dim_tiles[input_dim_id] =
-          GetDimTile(reduction_dim_info, tiling_space.IsSymbolic(),
-                     tiling_space.num_dimensions(), ctx);
+          GetDimTile(reduction_dim_info, tiling_space.num_dimensions(), ctx);
       continue;
     }
     input_dim_tiles[input_dim_id] = output_tile.dim_tiles()[output_dim_id++];
