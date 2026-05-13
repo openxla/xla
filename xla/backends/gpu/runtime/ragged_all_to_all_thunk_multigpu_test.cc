@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk_multigpu_test_utils.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
@@ -37,7 +38,6 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -115,8 +115,7 @@ static std::vector<int64_t> DeviceBufferSizes() {
   buffer_sizes.push_back(static_cast<int64_t>(sizeof(float)) * kNumElements);
   buffer_sizes.push_back(static_cast<int64_t>(sizeof(float)) * kNumElements);
   for (int i = 2; i < kNumBuffers; ++i) {
-    buffer_sizes.push_back(static_cast<int64_t>(sizeof(int64_t)) *
-                           kNumUpdates);
+    buffer_sizes.push_back(static_cast<int64_t>(sizeof(int64_t)) * kNumUpdates);
   }
   return buffer_sizes;
 }
@@ -165,14 +164,14 @@ static absl::Status PrepareInputs(
     int device_ordinal, int phase) {
   RETURN_IF_ERROR(
       FillDeviceBuffer(stream, buffers[0], InputValues(device_ordinal, phase)));
-  RETURN_IF_ERROR(FillDeviceBuffer(
-      stream, buffers[1], std::vector<float>(kNumElements, -1.0f)));
+  RETURN_IF_ERROR(FillDeviceBuffer(stream, buffers[1],
+                                   std::vector<float>(kNumElements, -1.0f)));
   RETURN_IF_ERROR(
       WriteBuffer(stream, buffers[2], std::vector<int64_t>{0, 1, 2, 3}));
   RETURN_IF_ERROR(
       WriteBuffer(stream, buffers[3], std::vector<int64_t>{1, 1, 1, 1}));
-  RETURN_IF_ERROR(WriteBuffer(stream, buffers[4],
-                              OutputOffsets(device_ordinal)));
+  RETURN_IF_ERROR(
+      WriteBuffer(stream, buffers[4], OutputOffsets(device_ordinal)));
   RETURN_IF_ERROR(
       WriteBuffer(stream, buffers[5], std::vector<int64_t>{1, 1, 1, 1}));
   return stream.BlockHostUntilDone();
