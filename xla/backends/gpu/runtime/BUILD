@@ -2103,7 +2103,7 @@ cc_library(
         ":scratch_memory_requests",
         ":thunk",
         "//xla:future",
-        "//xla:status_macros",
+        "//xla/tsl/platform:status_macros",
         "//xla/runtime:device_id",
         "//xla/service:buffer_assignment",
         "//xla/service:computation_placer_hdr",
