@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
@@ -48,6 +49,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
+#include "xla/core/collectives/reduction_kind.h"
 #include "xla/future.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
@@ -211,7 +213,7 @@ class MemzeroAllToAllThunk : public AllToAllThunk {
                              se::Stream& stream, Communicator&) override {
     const BufferAllocation::Slice& dst_slice =
         buffers()[0].destination_buffer.slice;
-    se::DeviceMemoryBase dst =
+    se::DeviceAddressBase dst =
         params.buffer_allocations->GetDeviceAddress(dst_slice);
     return stream.MemZero(&dst, dst_slice.size());
   }
