@@ -79,8 +79,7 @@ class DeviceAddressVmmAllocatorTest : public ::testing::Test {
     auto probe_or =
         gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get());
     if (!probe_or.ok()) {
-      ADD_FAILURE() << "Failed to create VMM allocator: "
-                    << probe_or.status();
+      ADD_FAILURE() << "Failed to create VMM allocator: " << probe_or.status();
       return 0;
     }
     uint64_t granularity = (*probe_or)->GetAllocationGranularity(executor_);
@@ -635,9 +634,8 @@ TEST_F(DeviceAddressVmmAllocatorTest, MapToRawMapsTrackedRawAllocation) {
       reservation->address().GetByteSlice(/*offset_bytes=*/0, granularity);
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto mapping,
-      allocator->MapToRaw(ordinal, raw, reservation.get(),
-                          /*reservation_offset=*/0, granularity));
+      auto mapping, allocator->MapToRaw(ordinal, raw, reservation.get(),
+                                        /*reservation_offset=*/0, granularity));
   EXPECT_TRUE(mapping.mapped_address().IsSameAs(target));
 
   ASSERT_THAT(allocator->UnMapToRaw(ordinal, raw, std::move(mapping)), IsOk());
@@ -729,9 +727,8 @@ TEST_F(DeviceAddressVmmAllocatorTest,
       reservation->address().GetByteSlice(/*offset_bytes=*/0, granularity);
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto mapping,
-      allocator->MapToRaw(ordinal, raw, reservation.get(),
-                          /*reservation_offset=*/0, granularity));
+      auto mapping, allocator->MapToRaw(ordinal, raw, reservation.get(),
+                                        /*reservation_offset=*/0, granularity));
   ASSERT_THAT(allocator->UnMapToRaw(ordinal, raw, std::move(mapping)), IsOk());
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -764,9 +761,8 @@ TEST_F(DeviceAddressVmmAllocatorTest, DeallocateRejectsActiveMapToRawMapping) {
   ASSERT_NE(raw, nullptr);
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto mapping,
-      allocator->MapToRaw(ordinal, raw, reservation.get(),
-                          /*reservation_offset=*/0, granularity));
+      auto mapping, allocator->MapToRaw(ordinal, raw, reservation.get(),
+                                        /*reservation_offset=*/0, granularity));
 
   EXPECT_FALSE(allocator->Deallocate(ordinal, addr.cref()).ok());
 
@@ -795,9 +791,8 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_NE(raw, nullptr);
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto mapping,
-      allocator->MapToRaw(ordinal, raw, reservation.get(),
-                          /*reservation_offset=*/0, granularity));
+      auto mapping, allocator->MapToRaw(ordinal, raw, reservation.get(),
+                                        /*reservation_offset=*/0, granularity));
   ASSERT_THAT(allocator->UnMapToRaw(ordinal, raw, std::move(mapping)), IsOk());
   ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
 
@@ -909,9 +904,8 @@ TEST_F(DeviceAddressVmmAllocatorTest, UnMapToRawRejectsRawMappingMismatch) {
   ASSERT_NE(raw1, raw2);
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto mapping,
-      allocator->MapToRaw(ordinal, raw1, reservation.get(),
-                          /*reservation_offset=*/0, granularity));
+      auto mapping, allocator->MapToRaw(ordinal, raw1, reservation.get(),
+                                        /*reservation_offset=*/0, granularity));
 
   EXPECT_FALSE(allocator->UnMapToRaw(ordinal, raw2, std::move(mapping)).ok());
   ASSERT_THAT(allocator->UnMapToRaw(ordinal, raw1, std::move(mapping)), IsOk());
