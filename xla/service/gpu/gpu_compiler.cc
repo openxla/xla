@@ -193,6 +193,7 @@ limitations under the License.
 #include "xla/hlo/transforms/host_offload_legalize.h"
 #include "xla/hlo/transforms/host_offloader.h"
 #include "xla/hlo/transforms/host_offloading_prepare.h"
+#include "xla/hlo/transforms/metadata_interner.h"
 #include "xla/hlo/transforms/operand_upcaster.h"
 #include "xla/hlo/transforms/propagate_call_metadata.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
@@ -606,6 +607,7 @@ absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module,
   pre_spmd_pipeline.AddPass<CallInliner>(
       /*single_call_site=*/false, /*update_domain=*/false,
       /*composites_to_preserve=*/absl::flat_hash_set<std::string>());
+  pre_spmd_pipeline.AddPass<MetadataInterner>();
   pre_spmd_pipeline.AddPass<ZeroSizedHloElimination>();
   pre_spmd_pipeline.AddPass<ConditionalCanonicalizer>();
 
@@ -782,6 +784,7 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<CallInliner>(
       /*single_call_site=*/false, /*update_domain=*/false,
       /*composites_to_preserve=*/absl::flat_hash_set<std::string>());
+  pipeline.AddPass<MetadataInterner>();
 
   pipeline.AddPass<StochasticConvertDecomposer>();
 
