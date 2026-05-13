@@ -93,7 +93,7 @@ class NoOpAllGatherThunk : public AllGatherThunk {
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const ExecuteParams& execute_params, const RecordParams&,
       RecordAction record_action, se::CommandBuffer* command_buffer) override {
-    se::DeviceMemoryBase dst =
+    se::DeviceAddressBase dst =
         execute_params.buffer_allocations->GetDeviceAddress(
             buffers()[0].destination_buffer.slice);
     ASSIGN_OR_RETURN(
