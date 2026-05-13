@@ -259,11 +259,12 @@ TEST(SendRecvThunkMultiGpuTest, ExecuteOnStream) {
   RecvThunk recv_thunk = MakeRecvThunk(recv_alloc);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(RunOnDevices(kNumDevices, "sendrecv_execute", [&](int d) {
-    RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], send_thunk, recv_thunk,
-                                    device_assignment));
-    return RunExecuteOnStreamPhase(d, slots[d], send_thunk, recv_thunk);
-  }));
+  ASSERT_OK(
+      RunOnDevices(kNumDevices, "sendrecv_execute", [&](int d) -> absl::Status {
+        RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], send_thunk, recv_thunk,
+                                        device_assignment));
+        return RunExecuteOnStreamPhase(d, slots[d], send_thunk, recv_thunk);
+      }));
 }
 
 TEST(SendRecvThunkMultiGpuTest, RecordCommandBufferCreate) {
@@ -281,11 +282,12 @@ TEST(SendRecvThunkMultiGpuTest, RecordCommandBufferCreate) {
   RecvThunk recv_thunk = MakeRecvThunk(recv_alloc);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(RunOnDevices(kNumDevices, "sendrecv_create", [&](int d) {
-    RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], send_thunk, recv_thunk,
-                                    device_assignment));
-    return RunCreatePhase(d, slots[d], send_thunk, recv_thunk);
-  }));
+  ASSERT_OK(
+      RunOnDevices(kNumDevices, "sendrecv_create", [&](int d) -> absl::Status {
+        RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], send_thunk, recv_thunk,
+                                        device_assignment));
+        return RunCreatePhase(d, slots[d], send_thunk, recv_thunk);
+      }));
 }
 
 TEST(SendRecvThunkMultiGpuTest, RecordCommandBufferUpdate) {
@@ -303,11 +305,12 @@ TEST(SendRecvThunkMultiGpuTest, RecordCommandBufferUpdate) {
   RecvThunk recv_thunk = MakeRecvThunk(recv_alloc);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
-  ASSERT_OK(RunOnDevices(kNumDevices, "sendrecv_create", [&](int d) {
-    RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], send_thunk, recv_thunk,
-                                    device_assignment));
-    return RunCreatePhase(d, slots[d], send_thunk, recv_thunk);
-  }));
+  ASSERT_OK(
+      RunOnDevices(kNumDevices, "sendrecv_create", [&](int d) -> absl::Status {
+        RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], send_thunk, recv_thunk,
+                                        device_assignment));
+        return RunCreatePhase(d, slots[d], send_thunk, recv_thunk);
+      }));
 
   ASSERT_OK(RunOnDevices(kNumDevices, "sendrecv_update", [&](int d) {
     return RunUpdatePhase(d, slots[d], send_thunk, recv_thunk);
