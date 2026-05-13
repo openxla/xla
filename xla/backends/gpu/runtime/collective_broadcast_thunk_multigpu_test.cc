@@ -21,9 +21,9 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
-#include "absl/status/status_matchers.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
