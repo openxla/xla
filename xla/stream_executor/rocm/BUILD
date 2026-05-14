@@ -1021,10 +1021,8 @@ cc_library(
 
 rocm_library(
     name = "buffer_comparator_kernel_rocm",
-    srcs = [
-        "buffer_comparator_kernel_rocm.cu.cc",
-        "//xla/stream_executor/gpu:buffer_comparator_kernel_lib.cu.h",
-    ],
+    srcs = ["buffer_comparator_kernel_rocm.cu.cc"],
+    hdrs = ["//xla/stream_executor/gpu:buffer_comparator_kernel_lib.cu.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",
@@ -1066,10 +1064,8 @@ rocm_library(
 
 rocm_library(
     name = "ragged_all_to_all_kernel_rocm",
-    srcs = [
-        "ragged_all_to_all_kernel_rocm.cc",
-        "//xla/stream_executor/gpu:ragged_all_to_all_kernel_lib.cu.h",
-    ],
+    srcs = ["ragged_all_to_all_kernel_rocm.cc"],
+    hdrs = ["//xla/stream_executor/gpu:ragged_all_to_all_kernel_lib.cu.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",
@@ -1152,10 +1148,8 @@ cc_library(
 # CUB scan kernel implementation (hipCUB/rocPRIM) - compiled with hipcc
 rocm_library(
     name = "cub_scan_kernel_rocm_impl",
-    srcs = [
-        "cub_scan_kernel_rocm.h",
-        "cub_scan_kernel_rocm_impl.cu.cc",
-    ],
+    srcs = ["cub_scan_kernel_rocm_impl.cu.cc"],
+    hdrs = ["cub_scan_kernel_rocm.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",
@@ -1226,9 +1220,9 @@ rocm_library(
     name = "topk_kernel_rocm",
     srcs = [
         "topk_kernel_rocm_bfloat16.cu.cc",
-        "topk_kernel_rocm_common.cu.h",
         "topk_kernel_rocm_float.cu.cc",
     ],
+    hdrs = ["topk_kernel_rocm_common.cu.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",
@@ -1247,10 +1241,8 @@ rocm_library(
 
 rocm_library(
     name = "repeat_buffer_kernel_rocm",
-    srcs = [
-        "repeat_buffer_kernel_rocm.cc",
-        "//xla/stream_executor/gpu:repeat_buffer_kernel.cu.h",
-    ],
+    srcs = ["repeat_buffer_kernel_rocm.cc"],
+    hdrs = ["//xla/stream_executor/gpu:repeat_buffer_kernel.cu.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",
@@ -1267,10 +1259,8 @@ rocm_library(
 
 rocm_library(
     name = "redzone_allocator_kernel_rocm",
-    srcs = [
-        "redzone_allocator_kernel_rocm.cu.cc",
-        "//xla/stream_executor/gpu:redzone_allocator_kernel_lib.cu.h",
-    ],
+    srcs = ["redzone_allocator_kernel_rocm.cu.cc"],
+    hdrs = ["//xla/stream_executor/gpu:redzone_allocator_kernel_lib.cu.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",
@@ -1288,10 +1278,8 @@ rocm_library(
 rocm_library(
     name = "gpu_test_kernels_rocm",
     testonly = 1,
-    srcs = [
-        "gpu_test_kernels_rocm.cu.cc",
-        "//xla/stream_executor/gpu:gpu_test_kernels_lib.cu.h",
-    ],
+    srcs = ["gpu_test_kernels_rocm.cu.cc"],
+    hdrs = ["//xla/stream_executor/gpu:gpu_test_kernels_lib.cu.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     linkstatic = True,
     tags = [
@@ -1327,10 +1315,8 @@ rocm_library(
 
 rocm_library(
     name = "multi_gpu_barrier_kernel_rocm",
-    srcs = [
-        "multi_gpu_barrier_kernel_rocm.cu.cc",
-        "//xla/stream_executor/gpu:multi_gpu_barrier_kernel.cu.h",
-    ],
+    srcs = ["multi_gpu_barrier_kernel_rocm.cu.cc"],
+    hdrs = ["//xla/stream_executor/gpu:multi_gpu_barrier_kernel.cu.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",
@@ -1350,10 +1336,8 @@ rocm_library(
 
 rocm_library(
     name = "all_reduce_kernel_rocm",
-    srcs = [
-        "all_reduce_kernel_rocm.cc",
-        "//xla/stream_executor/gpu:all_reduce_kernel_lib.cu.h",
-    ],
+    srcs = ["all_reduce_kernel_rocm.cc"],
+    hdrs = ["//xla/stream_executor/gpu:all_reduce_kernel_lib.cu.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",

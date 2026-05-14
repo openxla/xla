@@ -296,6 +296,7 @@ xla_cc_test(
     srcs = ["amdgpu_bitcode_link_test.cc"],
     data = [
         "tests_data/amdgpu.ll",
+        "@local_config_rocm//rocm:amdgcn_bitcode",
     ],
     tags = if_google([
         # Embedded libdevice is required for this test, but not supported in the Google-internal build.

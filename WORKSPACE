@@ -31,7 +31,6 @@ register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
 
-
 # Initialize hermetic Python
 load("//third_party/py:python_init_rules.bzl", "python_init_rules")
 
@@ -108,6 +107,13 @@ load(
 )
 
 cuda_configure(name = "local_config_cuda")
+
+load("//third_party/gpus:rocm_configure.bzl", "rocm_configure")
+
+rocm_configure(
+    name = "local_config_rocm",
+    rocm_dist = "@config_rocm_hipcc//rocm:rocm_dist",
+)
 
 load(
     "@rules_ml_toolchain//gpu/nccl:nccl_redist_init_repository.bzl",

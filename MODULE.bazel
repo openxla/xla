@@ -46,9 +46,9 @@ bazel_dep(name = "rules_ml_toolchain")
 # echo "sha256-${HASH}"
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-C0L2k6YMYFDYfbHgoOrrhKs/VBkfzglNhjNPrtyAfaA=",
-    strip_prefix = "rules_ml_toolchain-398d613aea7a4c294da49b79a6d6f3f8732bd84c",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/398d613aea7a4c294da49b79a6d6f3f8732bd84c.tar.gz"],
+    integrity = "sha256-Z+S9+Shsiy/58H5Pp6F8Nf1Qvh7QCmWKN+j1LdZN92w=",
+    strip_prefix = "rules_ml_toolchain-e0c44e92c4e03de3436ccd01ab7db54be7cdc9f1",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/e0c44e92c4e03de3436ccd01ab7db54be7cdc9f1.tar.gz"],
 )
 
 # TODO: Upstream the patch?
@@ -275,18 +275,18 @@ override_repo(
 nvshmem_redist = use_extension("@rules_ml_toolchain//extensions:nvshmem_redist.bzl", "nvshmem_redist_ext")
 use_repo(nvshmem_redist, "nvidia_nvshmem")
 
-register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
-
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_sycl")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
 
-register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
-
-### Other local config repos
 hipcc_configure = use_extension("@rules_ml_toolchain//extensions:hipcc_configure.bzl", "hipcc_configure_ext")
+
+local_clang_configure = use_extension("@rules_ml_toolchain//extensions:local_clang_configure.bzl", "local_clang_configure_ext")
+
+use_repo(local_clang_configure, "local_config_clang")
+
 use_repo(hipcc_configure, "config_rocm_hipcc")
 
 rocm_configure = use_extension("//third_party/extensions:rocm_configure.bzl", "rocm_configure_ext")
