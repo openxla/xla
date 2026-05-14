@@ -911,7 +911,6 @@ xla_cc_test(
         "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_device_dimensions",
         "//xla/pjrt:pjrt_stream_executor_device_description",
-        "//xla/runtime:process_id",
         "//xla/service:gpu_topology",
         "//xla/tsl/platform:statusor",
         "@com_google_googletest//:gtest_main",
