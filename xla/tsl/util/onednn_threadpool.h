@@ -91,6 +91,10 @@ class OneDnnThreadPool : public threadpool_iface {
 #ifndef ENABLE_ONEDNN_ASYNC
   uint64_t get_flags() const override { return ASYNCHRONOUS; }
 #else   // ENABLE_ONEDNN_ASYNC
+  // When ENABLE_ONEDNN_ASYNC is true, we'd normally need to return
+  // ASYNCHRONOUS, but we return 0 instead, because this threadpool is
+  // synchronous. Returning 0 signals to oneDNN that the caller handles
+  // synchronization.
   uint64_t get_flags() const override { return 0; }
   // wait() method for synchronous execution is basically a no-op.
   // But we need to implement it to satisfy the interface.
