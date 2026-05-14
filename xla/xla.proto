@@ -1043,6 +1043,10 @@ message DebugOptions {
   // Paths to files with ptx code.
   repeated string xla_gpu_ptx_file = 127;
 
+  // Memory mode for the ragged-all-to-all operation. In symmetric mode,
+  // the put/signal path is used. See CollectivesMode for details.
+  optional CollectivesMode xla_gpu_ragged_all_to_all_mode = 478;
+
   // Size threshold (in bytes) for the GPU reduce-scatter combiner.
   optional int64 xla_gpu_reduce_scatter_combine_threshold_bytes = 213;
 
