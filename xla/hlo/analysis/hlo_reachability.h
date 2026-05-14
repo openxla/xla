@@ -22,6 +22,8 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/types/span.h"
@@ -112,6 +114,14 @@ class HloReachabilityMap {
   // (operands and control predecessors) of 'instruction' has changed.
   void UpdateReachabilityThroughInstruction(const HloInstruction* instruction);
 
+  // Bulk update reachabilities for multiple instructions. All works if new
+  // predecessors are added to the instructions, but not removed. to_update is a
+  // map from instruction to new predecessors.
+  void UpdateMultipleInstructions(
+      absl::flat_hash_map<const HloInstruction*,
+                          absl::flat_hash_set<const HloInstruction*>>
+          to_update);
+
   // Returns true if "b" is reachable from "a"
   //
   // Note that this function only correctly answers queries about reachability
@@ -192,6 +202,28 @@ class HloReachabilityMap {
     void Set(Index index) {
       DCHECK(index >= 0 && index < bits_);
       ptr_[index / kBits] |= 1ull << (index % kBits);
+    }
+
+    // Same as operator|=, but returns whether the bitset changed.
+    bool OrUpdate(const BitSet& other) {
+      DCHECK(bits_ == other.bits_);
+      if (ptr_ == other.ptr_) {
+        return false;
+      }
+
+      // Ease the work of the auto-vectorizer.
+      Word* __restrict a = ptr_;
+      const Word* __restrict b = other.ptr_;
+      size_t num_words = NumWords();
+      Word changed_accumulator = 0;
+      for (size_t i = 0; i < num_words; ++i) {
+        Word ai = a[i];
+        Word bi = b[i];
+
+        a[i] = ai | bi;
+        changed_accumulator |= (~ai & bi);
+      }
+      return changed_accumulator;
     }
 
     // Sets this bit-set to union of this bit-set and `other`.

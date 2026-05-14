@@ -1833,6 +1833,42 @@ cc_library(
 )
 
 cc_library(
+    name = "multi_module_driver",
+    srcs = ["multi_module_driver.cc"],
+    hdrs = ["multi_module_driver.h"],
+    deps = [
+        ":compiler",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/transforms:hlo_module_splitter",
+        "//xla/hlo/transforms:hlo_module_stitcher",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/concurrency:executor",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:blocking_counter",
+    ],
+)
+
+xla_test(
+    name = "multi_module_driver_test",
+    srcs = ["multi_module_driver_test.cc"],
+    backends = ["cpu"],
+    deps = [
+        ":compiler",
+        ":multi_module_driver",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service/cpu:cpu_compiler",
+        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
     name = "mock_compiler",
     testonly = True,
     hdrs = ["mock_compiler.h"],
@@ -5850,6 +5886,7 @@ xla_cc_test(
         ":test_compilation_environment_proto_cc",
         # "@com_google_protobuf//:descriptor_cc_proto" - This target is included in @com_google_protobuf//:protobuf and not available separately in OSS.
         "@com_google_googletest//:gtest",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
@@ -6669,6 +6706,7 @@ cc_library(
         ":shaped_slice_proto_cc",
         "//xla:shape_util",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
     ],

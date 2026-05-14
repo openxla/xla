@@ -258,9 +258,13 @@ class IfrtToVifrtTypeConverter : public VifrtTypeConverterBuiltin {
                                 << array.getDevicesAttr() << '\n');
         return {};
       }
-      return VifrtArrayV1Type::get(array.getContext(), array.getShape(),
-                                   sharding_attr, devices_attr,
-                                   memory_kind_attr, layout_attr);
+      mlir::RankedTensorType shape = array.getShape();
+      if (llvm::isa<IfrtTokenType>(shape.getElementType())) {
+        shape = mlir::RankedTensorType::get(
+            {}, VifrtTokenV1Type::get(array.getContext()));
+      }
+      return VifrtArrayV1Type::get(array.getContext(), shape, sharding_attr,
+                                   devices_attr, memory_kind_attr, layout_attr);
     });
     addConversion([](IfrtControlType type) -> mlir::Type {
       return VifrtControlV1Type::get(type.getContext());

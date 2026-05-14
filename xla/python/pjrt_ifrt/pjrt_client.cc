@@ -28,6 +28,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
@@ -49,6 +50,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.h"
+#include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/coordination/coordination_service_agent.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/distributed/topology_util.h"
@@ -363,7 +365,10 @@ absl::StatusOr<GlobalTopology> MakeGlobalTopologyFromPjRtClient(
       device.set_device_kind(
           // OSS requires explicit string conversion
           // NOLINTNEXTLINE(*-redundant-string-conversions)
-          std::string(pjrt_client->addressable_devices()[0]->device_kind()));
+          std::string(
+              pjrt_device != nullptr
+                  ? pjrt_device->device_kind()
+                  : pjrt_client->addressable_devices()[0]->device_kind()));
 
       // TODO(hyeontaek): Take optional device->partition_index mapping in
       // GlobalDeviceMapping and generate the `partition_index` attribute for

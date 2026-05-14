@@ -1,4 +1,4 @@
-// RUN: xla-opt %s -triton-xla-implement-extern-element-wise | FileCheck %s
+// RUN: xla-opt %s -triton-xla-implement-extern-element-wise="target=cuda" | FileCheck %s
 
 // Test CUDA implementation of extern_elementwise atomic functions
 // This pass operates on LLVM dialect and generates LLVM intrinsics

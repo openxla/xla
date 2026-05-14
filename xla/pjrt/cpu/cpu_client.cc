@@ -78,6 +78,7 @@ limitations under the License.
 #include "xla/pjrt/cpu/tracked_cpu_device_buffer.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/dump/dump.h"
+#include "xla/pjrt/dynamic_shapes.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/host_to_device_transfer_manager.h"
@@ -956,10 +957,9 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::CreateErrorBuffer(
   if (device->client() != this) {
     return absl::InvalidArgumentError("Device is not attached to this client");
   }
-  TF_ASSIGN_OR_RETURN(
-      auto raw_buffer,
-      CpuRawBuffer::Allocate(memory_space, ShapeUtil::ByteSizeOf(shape),
-                             *allocator_));
+  TF_ASSIGN_OR_RETURN(int64_t size, GetOnDeviceBytesCount(memory_space, shape));
+  TF_ASSIGN_OR_RETURN(auto raw_buffer,
+                      CpuRawBuffer::Allocate(memory_space, size, *allocator_));
   absl::InlinedVector<PjRtDeviceEventRef, 2> definition_device_events;
   definition_device_events.push_back(
       PjRtDeviceEventRef(tsl::AsyncValueRef<CpuEvent>(
@@ -1109,7 +1109,21 @@ PjRtCpuClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
 
 absl::StatusOr<int64_t> PjRtCpuClient::GetOnDeviceBytesCount(
     int memory_space_kind, const xla::Shape& shape) const {
-  return xla::ShapeUtil::ByteSizeOf(shape);
+  int64_t original_size = xla::ShapeUtil::ByteSizeOf(shape);
+  auto kind = GetDynamicShapeKind(memory_space_kind);
+  auto requirements =
+      PjRtShapeAndMetadataTransferRequirements::Get(shape, kind);
+  if (shape.has_layout()) {
+    return static_cast<int64_t>(requirements.size);
+  }
+  if (static_cast<int64_t>(requirements.size) != original_size) {
+    return absl::InternalError(absl::StrFormat(
+        "%s mismatch between transfer_manager requirements (%ld) and "
+        "PjRtTransferRequirements (%zu)",
+        shape.ToString(true), original_size, requirements.size));
+  }
+
+  return static_cast<int64_t>(requirements.size);
 }
 
 absl::StatusOr<xla::Shape> PjRtCpuClient::MakeDefaultShapeForMemorySpace(
@@ -1193,15 +1207,21 @@ PjRtCpuExecutable::PjRtCpuExecutable(
     input_buffer_sizes_in_bytes_.reserve(computation_layout.parameter_count());
     for (int i = 0; i < computation_layout.parameter_count(); ++i) {
       input_buffer_sizes_in_bytes_.push_back(
-          ShapeUtil::ByteSizeOf(computation_layout.parameter_shape(i)));
+          PjRtShapeAndMetadataTransferRequirements::Get(
+              computation_layout.parameter_shape(i),
+              PjRtDynamicShapeKind::kNotSupported)
+              .size);
     }
   } else {
     input_buffer_sizes_in_bytes_.reserve(
         computation_layout.parameter_shape(0).tuple_shapes().size());
     for (int i = 0;
          i < computation_layout.parameter_shape(0).tuple_shapes().size(); ++i) {
-      input_buffer_sizes_in_bytes_.push_back(ShapeUtil::ByteSizeOf(
-          computation_layout.parameter_shape(0).tuple_shapes(i)));
+      input_buffer_sizes_in_bytes_.push_back(
+          PjRtShapeAndMetadataTransferRequirements::Get(
+              computation_layout.parameter_shape(0).tuple_shapes(i),
+              PjRtDynamicShapeKind::kNotSupported)
+              .size);
     }
   }
 

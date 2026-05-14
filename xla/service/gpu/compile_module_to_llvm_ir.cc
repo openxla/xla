@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 
-#include <stdlib.h>
-
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -47,20 +45,16 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
-#include "mlir/IR/Diagnostics.h"
-#include "mlir/IR/DialectRegistry.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
-#include "xla/backends/gpu/runtime/sequential_thunk.h"
-#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/runtime/object_pool.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/dump.h"
@@ -76,7 +70,6 @@ limitations under the License.
 #include "xla/service/gpu/thunk_emitter.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/logical_buffer.h"
-#include "xla/shape.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -94,15 +87,7 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
-using ::mlir::MLIRContext;
-
 using tsl::profiler::ScopedAnnotation;
-
-// Prints mlir diagnostic messages to VLOG level 2.
-static mlir::LogicalResult DiagnosticHandler(mlir::Diagnostic& diag) {
-  VLOG(2) << diag.str();
-  return mlir::failure();
-}
 
 CompileModuleResults InitializeResults(const HloModule* hlo_module) {
   CompileModuleResults results;
@@ -133,17 +118,6 @@ std::string GetDumpName(const se::DeviceDescription& device_desc) {
     prefix = cc->gfx_version();
   }
   return absl::StrCat(prefix, "_gpu_", kAfterOptimizationsDumpName);
-}
-
-std::unique_ptr<mlir::MLIRContext> CreateMlirContext() {
-  mlir::DialectRegistry registry;
-  // Disable MLIR multi-threading to prevent creating too many threads when
-  // compiling XLA executables concurrently (e.g. during auto-tuning).
-  auto mlir_context = std::make_unique<mlir::MLIRContext>(
-      registry, mlir::MLIRContext::Threading::DISABLED);
-  mlir_context->getDiagEngine().registerHandler(DiagnosticHandler);
-  RegisterSymbolicExprStorage(mlir_context.get());
-  return mlir_context;
 }
 
 std::string Phase(absl::string_view phase_name, const HloModule* module) {
@@ -241,7 +215,8 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     BufferValue::SizeFunction buffer_size_bytes_function,
     llvm_ir::LLVMCommandLineOptionsReleasableLock& llvm_options_lock,
     KernelCompiler* compiler,
-    xla::cpu::TargetMachineOptions cpu_target_machine_options) {
+    xla::cpu::TargetMachineOptions cpu_target_machine_options,
+    ObjectPool<std::unique_ptr<mlir::MLIRContext>>* mlir_context_pool) {
   tsl::profiler::TraceMe traceme("CompileModuleToLlvmIr");
   const se::DeviceDescription& device_desc =
       gpu_topology.gpu_target_config().device_description;
@@ -249,12 +224,12 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
 
   CompileModuleResults results = InitializeResults(hlo_module);
 
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       results.buffer_assignment,
       RunBufferAssignment(hlo_module, alias_info,
                           std::move(buffer_size_bytes_function), gpu_topology));
-  TF_ASSIGN_OR_RETURN(results.output_info,
-                      GetOutputInfo(*hlo_module, *results.buffer_assignment));
+  ASSIGN_OR_RETURN(results.output_info,
+                   GetOutputInfo(*hlo_module, *results.buffer_assignment));
 
   // capture the output shape after buffer assignment because it may change
   // during buffer assignment (nevertheless the const hlo_module)
@@ -265,13 +240,14 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
   VLOG(1) << "After optimization module fingerprint for " << hlo_module->name()
           << ": " << hlo_module->GetFingerprint128();
 
-  std::unique_ptr<mlir::MLIRContext> mlir_context = CreateMlirContext();
+  ASSIGN_OR_RETURN(BorrowedMlirContext borrowed_context,
+                   mlir_context_pool->GetOrCreate());
   IrEmitterContext ir_emitter_context(
       hlo_module, results.buffer_assignment.get(),
       results.execution_stream_assignment.get(), platform_id->ToName(),
-      device_desc, mlir_context.get(), llvm_context, /*emit_kernels=*/true,
+      device_desc, borrowed_context->get(), llvm_context, /*emit_kernels=*/true,
       llvm::Triple(target_triple), data_layout, compiler,
-      std::move(cpu_target_machine_options));
+      std::move(cpu_target_machine_options), mlir_context_pool);
   ThunkEmitter thunk_emitter(&ir_emitter_context, &llvm_options_lock);
 
   const DebugOptions& options = hlo_module->config().debug_options();

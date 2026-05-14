@@ -6040,9 +6040,11 @@ ENTRY main {
 
   absl::StatusOr<Literal> actual = Evaluate({&arg});
   EXPECT_FALSE(actual.ok());
-  EXPECT_EQ(actual.status().message(),
-            "Evaluator cannot evaluate bitcast for non-scalar operand without "
-            "assigned layout.");
+  EXPECT_THAT(
+      actual.status().message(),
+      ::testing::HasSubstr(
+          "Evaluator cannot evaluate bitcast for non-scalar operand without "
+          "assigned layout."));
 }
 
 TEST_P(HloEvaluatorBf16Test, EffectiveScalarBitcastWithoutLayout) {

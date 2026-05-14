@@ -158,6 +158,7 @@ class Build:
   test_env: Dict[str, Any] = dataclasses.field(default_factory=dict)
   repo_env: Dict[str, Any] = dataclasses.field(default_factory=dict)
   override_repository: Dict[str, str] = dataclasses.field(default_factory=dict)
+  override_module: Dict[str, str] = dataclasses.field(default_factory=dict)
   options: Dict[str, Any] = dataclasses.field(default_factory=dict)
   startup_options: Dict[str, Any] = dataclasses.field(default_factory=dict)
   extra_setup_commands: Tuple[List[str], ...] = ()
@@ -168,7 +169,9 @@ class Build:
         self.type_ not in self.__class__._builds
     ), "Can't have multiple builds of same BuildType!"
     assert (
-        self.repo == "openxla/xla" or self.override_repository
+        self.repo == "openxla/xla"
+        or self.override_repository
+        or self.override_module
     ), "Must override repo if repo under test isn't XLA!"
     self.__class__._builds[self.type_] = self
 
@@ -201,6 +204,9 @@ class Build:
         f"--override_repository={k}={v}"
         for k, v in self.override_repository.items()
     ]
+    override_module = [
+        f"--override_module={k}={v}" for k, v in self.override_module.items()
+    ]
 
     tag_filters = [build_tag_filters, test_tag_filters]
     all_options = (
@@ -210,6 +216,7 @@ class Build:
         + test_env
         + repo_env
         + override_repository
+        + override_module
         + options
         + list(extra_options)
     )
@@ -762,8 +769,8 @@ Build(
         JAX_NUM_GENERATED_CASES=25,
         JAX_SKIP_SLOW_TESTS=1,
     ),
-    override_repository={
-        "xla~": f"{_GITHUB_WORKSPACE}/openxla/xla",
+    override_module={
+        "xla": f"{_GITHUB_WORKSPACE}/openxla/xla",
     },
     options=_DEFAULT_BAZEL_OPTIONS,
     repo_env={"HERMETIC_PYTHON_VERSION": "3.12"},
@@ -788,6 +795,9 @@ Build(
         JAX_SKIP_SLOW_TESTS=1,
     ),
     override_repository=dict(
+        xla=f"{_GITHUB_WORKSPACE}\\openxla\\xla",
+    ),
+    override_module=dict(
         xla=f"{_GITHUB_WORKSPACE}\\openxla\\xla",
     ),
     options={**_DEFAULT_BAZEL_OPTIONS, "build_runfile_links": False},
@@ -821,6 +831,9 @@ Build(
         JAX_EXCLUDE_TEST_TARGETS="PmapTest.testSizeOverflow",
     ),
     override_repository=dict(
+        xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
+    ),
+    override_module=dict(
         xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
     ),
     options={
@@ -877,6 +890,9 @@ Build(
     override_repository=dict(
         xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
     ),
+    override_module=dict(
+        xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
+    ),
     repo_env={"USE_PYWRAP_RULES": "True"},
 )
 
@@ -896,6 +912,9 @@ Build(
     build_tag_filters=tensorflow_gpu_tag_filters,
     test_tag_filters=tensorflow_gpu_tag_filters,
     override_repository=dict(
+        xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
+    ),
+    override_module=dict(
         xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
     ),
     options=dict(

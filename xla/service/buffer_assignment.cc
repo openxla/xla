@@ -2098,12 +2098,12 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
       memory_limit = assignment->module().config().device_memory_size();
     }
 
-    VLOG(1) << "memory_limit: " << memory_limit;
+    VLOG(1) << "Initial memory limit before subtracting allocations: "
+            << memory_limit;
     if (memory_limit > 0) {
       int64_t already_allocated_bytes = 0;
       for (const BufferAllocation& alloc : assignment->Allocations()) {
-        if (alloc.color() == color &&
-            (alloc.is_entry_computation_parameter() || alloc.is_constant())) {
+        if (alloc.color() == color) {
           already_allocated_bytes += alloc.size();
         }
       }
@@ -2112,8 +2112,17 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
         memory_limit = 0;
       }
     }
-    VLOG(1) << "memory_limit after update: " << memory_limit;
-    return memory_limit;
+    VLOG(1) << "Memory limit after subtracting allocations: " << memory_limit;
+    // Apply a safety margin to the memory limit, reserving 1GiB or 5% of
+    // memory headroom, whichever is smaller.
+    constexpr double kMemoryLimitMultiplier = 0.95;
+    constexpr int64_t kMinHeadroomBytes = int64_t{1} << 30;
+    int64_t adjusted_memory_limit =
+        std::max(static_cast<int64_t>(memory_limit * kMemoryLimitMultiplier),
+                 memory_limit - kMinHeadroomBytes);
+    VLOG(1) << "Final memory limit after safety margin applied: "
+            << adjusted_memory_limit;
+    return adjusted_memory_limit;
   };
 
   // Returns a heap algorithm that chooses the best result from several

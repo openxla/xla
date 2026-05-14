@@ -5056,7 +5056,7 @@ absl::Status HloEvaluator::HandleScan(const HloInstruction* hlo) {
   HloComputation* to_apply = scan->to_apply();
   const Shape& root_shape = to_apply->root_instruction()->shape();
   const int64_t num_results =
-      root_shape.IsTuple() ? root_shape.tuple_shapes_size() : 1;
+      root_shape.IsTuple() ? root_shape.tuple_shapes().size() : 1;
   TF_RET_CHECK(num_results >= num_carries)
       << "Scan to_apply must return at least num_carries values.";
   const int64_t num_outputs = num_results - num_carries;

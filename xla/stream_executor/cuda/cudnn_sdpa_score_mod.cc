@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cudnn_sdpa_score_mod.h"
 
-#include <iostream>
 #include <optional>
 #include <string>
 #include <vector>

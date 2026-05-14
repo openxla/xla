@@ -2374,6 +2374,72 @@ module {
   ASSERT_OK(result.outputs[1]->GetReadyFuture().Await());
 }
 
+TEST_F(IfrtIrLoadedExecutableTest, AtomCallsWithTokens) {
+  std::string source = R"(
+!array = !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
+                     [0,1]>
+!token = !ifrt.array<tensor<!ifrt.token>, #ifrt.sharding_param< to [0] on 2>,
+                     [0, 1]>
+module {
+  func.func @main(%arg0: !array) -> (!array, !token)
+      attributes {ifrt.function} {
+    %0, %1, %ctrl_0 = ifrt.Call @add_one(%arg0) on devices [0,1]
+        : (!array) -> (!array, !token)
+    %2, %3, %ctrl_1 = ifrt.Call @add_one_with_token(%0, %1) on devices [0,1]
+        : (!array, !token) -> (!array, !token)
+    return %2, %3 : !array, !token
+  }
+
+  func.func private @add_one(%arg0: tensor<2x2xi32>)
+      -> (tensor<2x2xi32>, !stablehlo.token) {
+    %0 = stablehlo.constant dense<1> : tensor<2x2xi32>
+    %1 = stablehlo.add %arg0, %0 : tensor<2x2xi32>
+    %2 = "stablehlo.create_token"() : () -> !stablehlo.token
+    return %1, %2 : tensor<2x2xi32>, !stablehlo.token
+  }
+
+  func.func private @add_one_with_token(
+      %arg0: tensor<2x2xi32>, %arg1: !stablehlo.token)
+      -> (tensor<2x2xi32>, !stablehlo.token) {
+    %0 = stablehlo.constant dense<1> : tensor<2x2xi32>
+    %1 = stablehlo.add %arg0, %0 : tensor<2x2xi32>
+    return %1, %arg1 : tensor<2x2xi32>, !stablehlo.token
+  }
+}
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
+                          LoadFromSource(source));
+  TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
+  TF_ASSERT_OK_AND_ASSIGN(
+      LoadedExecutableRef loaded_exec,
+      client_->GetDefaultCompiler()
+          ->CompileAndLoad(
+              std::make_unique<IfrtIRProgram>(*mlir_module),
+              std::make_unique<IfrtIRCompileOptions>(GetDeviceIds(devices)))
+          .Await());
+
+  std::vector<int> data0 = {0, 1};
+  std::vector<int> data1 = {2, 3};
+  Shape shard_shape({1, 2});
+  DType dtype(DType::kS32);
+  TF_ASSERT_OK_AND_ASSIGN(
+      ArrayRef input, CreateArray({data0.data(), data1.data()}, Shape({2, 2}),
+                                  shard_shape, dtype, devices));
+
+  TF_ASSERT_OK_AND_ASSIGN(LoadedExecutable::ExecuteResult result,
+                          loaded_exec->Execute(absl::MakeSpan(&input, 1),
+                                               ExecuteOptionsWithFillStatus(),
+                                               /*devices=*/std::nullopt));
+
+  TF_ASSERT_OK(result.status.Await());
+  ASSERT_EQ(result.outputs.size(), 2);
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
+      result.outputs[0], dtype, shard_shape, {{2, 3}, {4, 5}}, devices));
+  ASSERT_EQ(result.outputs[1]->dtype(), DType(DType::kToken));
+  ASSERT_EQ(result.outputs[1]->shape(), Shape({}));
+  ASSERT_TRUE(result.outputs[1]->sharding().IsFullyReplicated());
+}
+
 }  // namespace
 }  // namespace ifrt
 }  // namespace xla

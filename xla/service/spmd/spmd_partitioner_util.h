@@ -598,13 +598,14 @@ HloInstruction* PadDataFromWindowReshard(
 // collective) from the sharding and provided replication_dims. Will prioritize
 // generating V3 format and fallback to V2 or V1 if needed.
 std::unique_ptr<CollectiveDeviceListBase> GetPartitionGroupsForReplication(
-    const HloSharding& sharding, absl::Span<const int64_t> replication_dims);
+    const HloSharding& sharding, absl::Span<const int64_t> replication_dims,
+    bool enable_rgv3 = true);
 
 // Generates partition groups (groups of devices that will communicate via a
 // collective) across provided target dims with provided group sizes.
 std::unique_ptr<CollectiveDeviceListBase> GetPartitionGroupsAcrossTargetDims(
     const HloSharding& sharding, absl::Span<const int64_t> target_dims,
-    absl::Span<const int64_t> group_sizes);
+    absl::Span<const int64_t> group_sizes, bool enable_rgv3 = true);
 
 // Expands partition group list across all replicas. Expects that provided
 // partition_group_list utilizes all the partitions.

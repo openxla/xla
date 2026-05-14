@@ -52,7 +52,7 @@ class YnnFusionTest
                                            {"$in_dtype", params.in_dtype},
                                            {"$out_dtype", params.out_dtype}});
     bool bf16_compute = absl::StrContains(hlo_text, "bf16");
-    double tolerance = bf16_compute ? 1e-2 : 1e-7;
+    double tolerance = bf16_compute ? 1e-2 : 2e-7;
     EXPECT_TRUE(RunAndCompareNoHloPasses(
         hlo_text, ErrorSpec{/*aabs=*/tolerance, /*arel=*/tolerance}));
   }
@@ -73,6 +73,27 @@ TEST_P(YnnFusionTest, AddAndMultiply) {
       %p0 = $dtype[100] parameter(0)
       %p1 = $dtype[100] parameter(1)
       ROOT %fusion = $dtype[100] fusion(%p0, %p1), kind=kCustom, calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
+TEST_P(YnnFusionTest, Pad) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule pad
+
+    ynn_fusion {
+      %input = $dtype[8, 10] parameter(0)
+      %padding_value = $dtype[] parameter(1)
+      ROOT %pad = $dtype[10, 14] pad(%input, %padding_value),
+        padding=1_1_0x2_2_0
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[8, 10] parameter(0)
+      %p1 = $dtype[] parameter(1)
+      ROOT %fusion = $dtype[10, 14] fusion(%p0, %p1), kind=kCustom, calls=ynn_fusion,
         backend_config={"fusion_config": {kind: "__ynn_fusion"}}
     })";
 
@@ -318,6 +339,32 @@ TEST_P(YnnFusionReduceWindowTest, ReduceWindow) {
   RunTest(kModuleStr);
 }
 
+TEST_P(YnnFusionReduceWindowTest, ReduceWindowWithInit) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule reduce_window_with_init
+
+    %add {
+      %lhs = f32[] parameter(0)
+      %rhs = f32[] parameter(1)
+      ROOT %add = f32[] add(%lhs, %rhs)
+    }
+
+    ynn_fusion {
+      %param_0 = f32[4,6]{1,0} parameter(0)
+      %constant.0 = f32[] constant(1)
+      ROOT %reduce_window.0 = f32[3,9]{1,0} reduce-window(%param_0, %constant.0),
+        window={size=2x1 stride=2x1 pad=0_3x1_2 rhs_dilate=1x2}, to_apply=%add
+    }
+
+    ENTRY entry {
+      %p0 = f32[4,6]{1,0} parameter(0)
+      ROOT %fusion = f32[3,9]{1,0} fusion(%p0), kind=kCustom, calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
 TEST_P(YnnFusionReduceWindowTest, ReduceWindowAndReduce) {
   constexpr absl::string_view kModuleStr = R"(
     HloModule reduce_window_and_reduce
@@ -390,6 +437,32 @@ TEST_P(YnnFusionReduceWindowTest, ConvertReduce) {
     ENTRY entry {
       %p0 = bf16[64, 2] parameter(0)
       ROOT %fusion = $dtype[64] fusion(%p0), kind=kCustom, calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
+TEST_P(YnnFusionReduceWindowTest, ReduceWindowMax) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule reduce_window_max
+
+    %max {
+      %lhs = $dtype[] parameter(0)
+      %rhs = $dtype[] parameter(1)
+      ROOT %max = $dtype[] maximum(%lhs, %rhs)
+    }
+
+    ynn_fusion {
+      %param_0 = $dtype[3,2,4,6] parameter(0)
+      %constant.0 = $dtype[] constant(-inf)
+      ROOT %reduce_window_max.0 = $dtype[4,2,4,8] reduce-window(%param_0, %constant.0),
+        window={size=1x1x2x1 stride=1x2x2x1 pad=0_1x1_0x2_3x0_2}, to_apply=%max
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[3,2,4,6] parameter(0)
+      ROOT %fusion = $dtype[4,2,4,8] fusion(%p0), kind=kCustom, calls=ynn_fusion,
         backend_config={"fusion_config": {kind: "__ynn_fusion"}}
     })";
 

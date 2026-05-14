@@ -562,7 +562,7 @@ DeviceHloInstructionProfiles MatmulPerfTableGen::ComputeTable() {
     ReportProgress("Profiling progress", i + 1, specs.size());
   }
   std::string device_key =
-      gpu::HloOpProfiles::GetProfileName(device_description_);
+      gpu::HloOpProfiles::GetDeviceSpecificProfileName(device_description_);
   device_profiles.mutable_entries()->insert({device_key, profile_list});
   return device_profiles;
 }

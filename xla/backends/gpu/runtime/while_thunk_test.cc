@@ -53,7 +53,6 @@ namespace xla::gpu {
 namespace {
 
 using ::testing::ElementsAre;
-using ::testing::NotNull;
 using ::testing::SizeIs;
 using ::tsl::proto_testing::EqualsProto;
 using ::tsl::proto_testing::ParseTextProtoOrDie;
@@ -106,6 +105,10 @@ class IterationLoggerThunk : public Thunk {
 
   const std::vector<std::optional<int64_t>>& logged_counters() const {
     return iteration_counters_;
+  }
+
+  absl::StatusOr<ThunkProto> ToProto() const override {
+    return absl::UnimplementedError("Not implemented");
   }
 
  private:

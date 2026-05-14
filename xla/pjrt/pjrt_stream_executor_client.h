@@ -394,6 +394,11 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   bool allows_recursion() const override { return false; }
   bool allows_execute_recursion() const override { return true; }
 
+  PjRtDynamicShapeKind GetDynamicShapeKind(
+      int memory_space_kind_id) const override {
+    return PjRtDynamicShapeKind::kSuffix;
+  }
+
   using CommonPjRtClient::GetOnDeviceBytesCount;
   absl::StatusOr<int64_t> GetOnDeviceBytesCount(
       int memory_space_kind, const xla::Shape& shape) const override;

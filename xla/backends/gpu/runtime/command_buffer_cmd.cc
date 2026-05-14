@@ -15,12 +15,10 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 
-#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -29,28 +27,18 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/base/optimization.h"
-#include "absl/container/btree_set.h"
-#include "absl/container/flat_hash_map.h"
-#include "absl/container/flat_hash_set.h"
-#include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
-#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
-#include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
-#include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/collective_broadcast_thunk.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
@@ -58,7 +46,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/command_state.h"
-#include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/recv_thunk.h"
@@ -67,18 +54,13 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/while_loop.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
-#include "xla/core/collectives/reduction_kind.h"
 #include "xla/executable_run_options.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/device_id.h"
-#include "xla/runtime/execution_graph.h"
-#include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -86,37 +68,17 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_handle.h"
 #include "xla/stream_executor/gpu/multi_gpu_barrier_kernel.h"
-#include "xla/stream_executor/gpu/tma_metadata.h"
-#include "xla/stream_executor/kernel.h"
-#include "xla/stream_executor/kernel_args.h"
-#include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/tensor_map.h"
 #include "xla/stream_executor/trace_command_buffer_factory.h"
-#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla::gpu {
-
-static absl::string_view ReductionKindString(ReductionKind kind) {
-  switch (kind) {
-    case ReductionKind::MAX:
-      return "max";
-    case ReductionKind::MIN:
-      return "min";
-    case ReductionKind::PRODUCT:
-      return "product";
-    case ReductionKind::SUM:
-      return "sum";
-  }
-}
 
 // Create a callback to create a command buffer from a command sequence.
 static se::CommandBuffer::CreateCommands CreateCommands(
@@ -455,73 +417,6 @@ CollectiveCmd::RecordTracedCommand(
       [&](const se::CommandBuffer::Command* command) {
         return command_buffer->UpdateChildCommand(command, *nested_cmd);
       });
-}
-
-//===----------------------------------------------------------------------===//
-// ReduceScatterCmd
-//===----------------------------------------------------------------------===//
-
-ReduceScatterCmd::ReduceScatterCmd(
-    CollectiveConfig config, ReductionKind reduction_kind,
-    absl::Span<const CollectiveThunk::Buffer> buffers)
-    : CollectiveCmd(CommandType::kReduceScatterCmd, std::move(config)),
-      reduction_kind_(reduction_kind),
-      buffers_(buffers.begin(), buffers.end()) {}
-
-absl::StatusOr<const se::CommandBuffer::Command*> ReduceScatterCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  TF_ASSIGN_OR_RETURN(
-      std::vector<DeviceBufferPair> device_buffers,
-      ConvertToDeviceBuffers(execute_params.buffer_allocations, buffers_,
-                             config().operand_element_type));
-
-  int device_ordinal = execute_params.stream->parent()->device_ordinal();
-  XLA_VLOG_DEVICE(5, device_ordinal)
-      << "ReduceScatterCmd: reduction=" << ReductionKindString(reduction_kind_);
-
-  for (size_t i = 0; i < device_buffers.size(); ++i) {
-    XLA_VLOG_DEVICE(5, device_ordinal)
-        << "  Src: " << buffers_[i].source_buffer << " ("
-        << device_buffers[i].source_buffer.opaque() << ")";
-    XLA_VLOG_DEVICE(5, device_ordinal)
-        << "  Dst: " << buffers_[i].destination_buffer << " ("
-        << device_buffers[i].destination_buffer.opaque() << ")";
-  }
-
-  if (!execute_params.collective_params || !execute_params.collective_cliques) {
-    return absl::InvalidArgumentError(
-        "ReduceScatterCmd requires collective parameters and cliques");
-  }
-
-  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
-                      GetGpuCliqueKey(*execute_params.collective_params,
-                                      config().replica_groups,
-                                      config().group_mode, communication_id()));
-
-  TF_ASSIGN_OR_RETURN(
-      Communicator * comm,
-      execute_params.collective_cliques->GetComm(
-          clique_key, execute_params.collective_params->global_device_id));
-
-  return RecordTracedCommand(execute_params, record_params, record_action,
-                             command_buffer, [&](se::Stream* stream) {
-                               return RunReduceScatter(
-                                   reduction_kind_, device_buffers, *stream,
-                                   *comm, config().use_symmetric_buffer);
-                             });
-}
-
-Command::BufferUses ReduceScatterCmd::buffer_uses() const {
-  BufferUses buffer_usage;
-  for (auto& buffer : buffers_) {
-    buffer_usage.emplace_back(BufferUse::Read(buffer.source_buffer.slice,
-                                              buffer.source_buffer.shape));
-    buffer_usage.emplace_back(BufferUse::Write(
-        buffer.destination_buffer.slice, buffer.destination_buffer.shape));
-  }
-  return buffer_usage;
 }
 
 //===----------------------------------------------------------------------===//

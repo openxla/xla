@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/pjrt/abstract_tracked_device_buffer.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/device_event.h"
+#include "xla/pjrt/dynamic_shapes.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/transpose.h"
@@ -77,6 +78,11 @@ class CommonPjRtClient : public PjRtClient {
 
   // Backend specific handlers for when an oom is detected during execute.
   virtual void CallOomHandlers() const {}
+
+  virtual PjRtDynamicShapeKind GetDynamicShapeKind(
+      int memory_space_kind_id) const {
+    return PjRtDynamicShapeKind::kNotSupported;
+  }
 
   virtual void LaunchOnDevice(PjRtDevice* device,
                               absl::AnyInvocable<void()> execute_fn) const {
@@ -305,7 +311,7 @@ class CommonPjRtClient : public PjRtClient {
 
   virtual void ScheduleRemoteSend(
       PjRtMemorySpace* memory_space, PjRtRawBufferRef raw_buffer,
-      std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events,
+      std::vector<PjRtDeviceEventRef> definition_events,
       tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise,
       Future<std::string> serialized_descriptor,
       PjRtBuffer::RemoteSendCallback on_done);
@@ -324,7 +330,7 @@ class CommonPjRtClient : public PjRtClient {
   CrossHostReceiveBuffersInto(
       absl::Span<const tsl::RCReference<PjRtRawBuffer>> buffers,
       PjRtCrossHostRecvNotifier notifier,
-      std::vector<tsl::RCReference<tsl::AsyncValue>> transfer_dependency_avs) {
+      absl::Span<const PjRtDeviceEventRef> transfer_dependency_avs) {
     return absl::UnimplementedError(
         "CrossHostReceiveBuffersInto is not implemented.");
   }

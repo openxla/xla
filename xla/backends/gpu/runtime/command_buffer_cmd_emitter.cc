@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
+#include "xla/backends/gpu/runtime/convolution_thunk.h"
 #include "xla/backends/gpu/runtime/cudnn_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
@@ -125,12 +126,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
   }
   return std::make_unique<CaseCmd>(thunk.branch_index_buffer(),
                                    std::move(branch_cmds));
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const ReduceScatterThunk& thunk) {
-  return std::make_unique<ReduceScatterCmd>(
-      thunk.config(), thunk.reduction_kind(), thunk.buffers());
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
@@ -260,8 +255,11 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kAllReduce:
       cmd_sequence.Append(static_cast<AllReduceThunk*>(&thunk));
       return absl::OkStatus();
+    // ReduceScatterThunk implements Command directly; append as borrowed
+    // pointer — the thunk outlives the command sequence.
     case Thunk::Kind::kReduceScatter:
-      return append(Convert<ReduceScatterThunk>(thunk));
+      cmd_sequence.Append(static_cast<ReduceScatterThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kAllToAll:
       return append(Convert<AllToAllThunk>(thunk));
     case Thunk::Kind::kCollectiveBroadcast:
@@ -294,6 +292,11 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     // borrowed pointer.
     case Thunk::Kind::kCuDnn:
       cmd_sequence.Append(static_cast<CuDnnThunk*>(&thunk));
+      return absl::OkStatus();
+    // ConvolutionThunk implements TracedCommand directly; append as
+    // borrowed pointer — the thunk outlives the command sequence.
+    case Thunk::Kind::kConvolution:
+      cmd_sequence.Append(static_cast<ConvolutionThunk*>(&thunk));
       return absl::OkStatus();
     // Sequential thunk does not have any special semantics and we simply inline
     // all nested thunks into command buffer.

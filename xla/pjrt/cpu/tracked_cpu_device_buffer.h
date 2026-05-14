@@ -87,6 +87,10 @@ class CpuDeviceMemory {
   static tsl::AsyncValueRef<CpuDeviceMemory> CreateConstantMemory(void* base,
                                                                   size_t size);
 
+  static tsl::AsyncValueRef<CpuDeviceMemory> CreateSlicedMemory(
+      tsl::AsyncValueRef<CpuDeviceMemory> base_async_value, size_t offset,
+      size_t size);
+
   // Allocates owning memory wrapped in an available `AsyncValueRef`.
   static absl::StatusOr<tsl::AsyncValueRef<CpuDeviceMemory>> Allocate(
       size_t size_bytes, const Allocator& allocator = DefaultAllocator());

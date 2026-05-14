@@ -5065,5 +5065,36 @@ ENTRY main {
   EXPECT_FALSE(HaveRemainingOffloadAnnotations(module.get()));
 }
 
+TEST_F(HostOffloaderTest, AddResultMovedToHostAndUsedInDus) {
+  const std::string& hlo_string = R"(
+HloModule my_module
+ENTRY main {
+  p0 = f32[4096] parameter(0)
+  p1 = f32[4096] parameter(1)
+  add = f32[4096] add(p0, p1)
+  mth = f32[4096] custom-call(add), custom_call_target="MoveToHost"
+  const = f32[] constant(1.0)
+  update = f32[2048] broadcast(const), dimensions={}
+  update_mth = f32[2048] custom-call(update), custom_call_target="MoveToHost"
+  idx = s32[] constant(0)
+  dus = f32[4096] dynamic-update-slice(mth, update_mth, idx)
+  ROOT mtd = f32[4096] custom-call(dus), custom_call_target="MoveToDevice"
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloader(module.get()));
+  EXPECT_TRUE(changed);
+  VLOG(1) << "module after: " << module->ToString();
+
+  EXPECT_FALSE(HaveRemainingOffloadAnnotations(module.get()));
+
+  HloInstruction* dus = FindInstruction(module.get(), "dus");
+  ASSERT_NE(dus, nullptr);
+  TestShapeHasMemorySpace(dus->shape(), Layout::kHostMemorySpace);
+}
+
 }  // namespace
 }  // namespace xla

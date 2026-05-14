@@ -24,7 +24,8 @@ namespace tsl {
 TEST(NonAlphaNumArgs, Char) {
   auto status_1 = errors::Aborted("Aborted Error Message with char: ", 'a');
   EXPECT_EQ(status_1.message(), "Aborted Error Message with char: a");
-  auto status_2 = errors::Aborted("Aborted Error Message with string: ", "a");
+  auto status_2 = absl::AbortedError(
+      absl::StrCat("Aborted Error Message with string: ", "a"));
   EXPECT_EQ(status_2.message(), "Aborted Error Message with string: a");
   EXPECT_NE(status_1.GetSourceLocations()[0].line(),
             status_2.GetSourceLocations()[0].line());

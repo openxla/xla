@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/codegen/tiling/experimental/tile_propagation.h"
 
-#include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -28,8 +26,6 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
-#include "absl/strings/escaping.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
@@ -53,55 +49,6 @@ namespace {
 using ::absl_testing::StatusIs;
 using ::llvm::SmallVector;
 using ::mlir::MLIRContext;
-
-// Generates a human readable report of the first mismatch between two strings.
-// Intended to be used only when ApproximateMatch returns false.
-std::string GetMismatchReport(int lhs_index, int rhs_index,
-                              absl::string_view expected,
-                              absl::string_view actual) {
-  // Failsafe. Should never happen if only called when ApproximateMatch returns
-  // false.
-  if (lhs_index == expected.size() && rhs_index == actual.size()) {
-    return "Strings match (ignoring whitespace).";
-  }
-  std::string report =
-      absl::StrCat("\nMismatch found. Expected char at ", lhs_index,
-                   ", Actual char at ", rhs_index, "\n");
-
-  const auto append_context = [&](absl::string_view str, size_t mismatch_idx,
-                                  absl::string_view label) {
-    static constexpr size_t kContextWidth = 10;
-    const size_t start =
-        mismatch_idx > kContextWidth ? mismatch_idx - kContextWidth : 0;
-    const size_t end = std::min(str.length(), mismatch_idx + kContextWidth);
-    std::string line = absl::StrCat(label, ": ");
-    static constexpr absl::string_view kTruncated = "[truncated]";
-    static constexpr absl::string_view kEOF = "[EOF]";
-    if (start > 0) {
-      absl::StrAppend(&line, kTruncated);
-    }
-    absl::StrAppend(&line,
-                    absl::CEscape(str.substr(start, mismatch_idx - start)));
-    // Position of mismatch in the line.
-    size_t caret_pos = line.length();
-    // Content from mismatch onwards
-    if (mismatch_idx < str.length()) {
-      absl::StrAppend(
-          &line, absl::CEscape(str.substr(mismatch_idx, end - mismatch_idx)));
-    } else {
-      absl::StrAppend(&line, kEOF);
-    }
-    if (end < str.length()) {
-      absl::StrAppend(&line, kTruncated);
-    }
-    absl::StrAppend(&report, line, "\n");
-    std::string caret_line(caret_pos, ' ');
-    absl::StrAppend(&report, caret_line, "^\n");
-  };
-  append_context(expected, lhs_index, "Expected");
-  append_context(actual, rhs_index, "Actual  ");
-  return report;
-}
 
 MATCHER_P(MatchToString, test_string, "") {
   absl::string_view expected_string = test_string;
@@ -163,7 +110,7 @@ TEST_P(ReshapeTilePropagationTest, PropagateReshape) {
                                           &mlir_context_);
   if (!param.input_tile_sizes.empty()) {
     CHECK_EQ(param.input_tile_sizes.size(), tiling_space->num_dimensions());
-    tiling_space->AssignTileSizes(param.input_tile_sizes);
+    ASSERT_OK(tiling_space->AssignTileSizes(param.input_tile_sizes));
   }
   SmallVector<DimTile> input_dim_tiles =
       llvm::to_vector(tiling_space->tiled_roots()[0].dim_tiles());
@@ -285,10 +232,10 @@ INSTANTIATE_TEST_SUITE_P(
          /*output_shape=*/{12},
          /*expected_output=*/R"(
     0) (tid_0, tid_1)
-      -> offsets [tid_0 * 8 + tid_1 * 4]
+      -> offsets [tid_0 * 8]
          sizes [8]
          strides [1]
-         upper bounds [min(tid_0 * 2 + 1, 2) * 4 + min(tid_1 * 4 + 3, 3) + 1]
+         upper bounds [min(tid_0 * 2 + 1, 2) * 4 + 4]
   )"},
         // Example (tid_0, tid_1) -> (offset, upper bound):
         // (0, 0) -> (0,  4), (0, 1) -> ( 3,  4)
@@ -346,6 +293,19 @@ INSTANTIATE_TEST_SUITE_P(
          strides [1]
          upper bounds [min(tid_0, 2) * 4 + min(tid_2 * 3 + 2, 3) + 1]
   )"},
+        {"CollapseShape_3DCollapseWithTrivialInnerDim",
+         /*input_shape=*/{2, 32, 128},
+         /*input_tile_sizes=*/{1, 16, 1},
+         /*input_tile_strides=*/{1, 1, 1},
+         /*input_tile_offsets=*/{},
+         /*output_shape=*/{8192},
+         /*expected_output=*/R"(
+     0) (tid_0, tid_1, tid_2)
+       -> offsets [tid_0 * 4096 + tid_1 * 2048 + tid_2]
+          sizes [16]
+          strides [128]
+          upper bounds [min(tid_1 * 16 + 15, 31) * 128 + min(tid_0, 1) * 4096 + min(tid_2, 127) + 1]
+   )"},
         {"ExpandShape_FullTargetInnerDim",
          /*input_shape=*/{12},
          /*input_tile_sizes=*/{4},
@@ -1042,6 +1002,24 @@ TEST_F(TilePropagationTest, CanPropagateToInputsOfDotOp) {
             strides [1, 1, 5, 1, 6, 2]
             upper bounds [17, 10, 16, 18, 22, 38]
   )"));
+
+  EXPECT_OK(tiling_space->AssignTileSizes({16, 16, 16, 16, 16, 16, 16, 16}));
+  ASSERT_OK_AND_ASSIGN(auto concrete_tiled_operands,
+                       PropagateTileToInput(*tiling_space, *root,
+                                            tiling_space->tiled_roots()[0], 0));
+
+  EXPECT_THAT(concrete_tiled_operands, MatchToString(R"(
+    0) (tid_0, tid_1, tid_2, tid_3, tid_4, tid_5, tid_6, tid_7)
+         -> offsets [0, tid_1 * 16, tid_7 * 16, 0, tid_6 * 16, 0]
+            sizes [16, 16, 16, 16, 16, 16]
+            strides [1, 1, 1, 1, 1, 1]
+            upper bounds [4, 38, 17, 11, 18, 10]
+    1) (tid_0, tid_1, tid_2, tid_3, tid_4, tid_5, tid_6, tid_7)
+         -> offsets [tid_7 * 16, 0, 0, tid_6 * 16, tid_5 * 16, tid_1 * 16]
+            sizes [16, 16, 16, 16, 16, 16]
+            strides [1, 1, 1, 1, 1, 1]
+            upper bounds [17, 10, 16, 18, 22, 38]
+  )"));
 }
 
 TEST_F(TilePropagationTest, CanPropagateToInputsForScaledDotOp) {
@@ -1159,13 +1137,13 @@ TEST_F(TilePropagationTest, CanPropagateToInputsOfReduceOp) {
       -> offsets [] sizes [] strides [] upper bounds []
   )"));
 
-  tiling_space->AssignTileSizes({8, 16, 32, 64});
+  EXPECT_OK(tiling_space->AssignTileSizes({8, 16, 32, 64}));
   ASSERT_OK_AND_ASSIGN(auto concrete_tiled_operands,
                        PropagateTileToInput(*tiling_space, *root,
                                             tiling_space->tiled_roots()[0], 0));
   EXPECT_THAT(concrete_tiled_operands, MatchToString(R"(
     0) (tid_0, tid_1, tid_2, tid_3)
-      -> offsets [tid_0 * 8, tid_3 * 64, tid_1 * 16, tid_2 * 32]
+      -> offsets [tid_0 * 8, 0, 0, tid_2 * 32]
         sizes [8, 64, 16, 32]
         strides [1, 1, 1, 1]
         upper bounds [150, 20, 10, 50]
@@ -1246,6 +1224,129 @@ TEST_F(TilePropagationTest, CanPropagateToInputsOfVariadicReduceOp) {
     3) (tid_0, tid_1)
       -> offsets [] sizes [] strides [] upper bounds []
   )"));
+}
+
+TEST_F(TilePropagationTest,
+       ConcatenateOpAddsOperandSizeDivisibilityConstraints) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    ENTRY e {
+      p0 = f32[10] parameter(0)
+      p1 = f32[20] parameter(1)
+      concat = f32[30] concatenate(p0, p1), dimensions={0}
+      ROOT slice = f32[10] slice(concat), slice={[5:15]}
+    }
+  )");
+  auto tiling_space = TilingSpace::Create(
+      *HloFusionAdaptor::ForInstruction(root), &mlir_context_);
+  Tile tile = GetTestTile(*tiling_space, root->shape().dimensions());
+
+  // Propagate from slice to concat.
+  ASSERT_OK_AND_ASSIGN(auto operands_of_slice,
+                       PropagateTileToInput(*tiling_space, *root, tile, 0));
+
+  // Propagate from concat to operands.
+  const Tile& concat_tile = operands_of_slice[0];
+  const HloInstruction* concat = root->operand(0);
+  ASSERT_OK_AND_ASSIGN(
+      auto operands_of_concat,
+      PropagateTileToInput(*tiling_space, *concat, concat_tile, 0));
+
+  std::string space_str = tiling_space->ToString();
+  EXPECT_THAT(space_str, ::testing::HasSubstr("d0 * s0 is multiple of s0"));
+  EXPECT_THAT(space_str, ::testing::HasSubstr("5 is multiple of s0"));
+
+  EXPECT_OK(tiling_space->AssignTileSizes({5}));
+
+  auto tiling_space2 = TilingSpace::Create(
+      *HloFusionAdaptor::ForInstruction(root), &mlir_context_);
+  Tile tile2 = GetTestTile(*tiling_space2, root->shape().dimensions());
+  ASSERT_OK_AND_ASSIGN(auto operands_of_slice2,
+                       PropagateTileToInput(*tiling_space2, *root, tile2, 0));
+  const Tile& concat_tile2 = operands_of_slice2[0];
+  ASSERT_OK(
+      PropagateTileToInput(*tiling_space2, *concat, concat_tile2, 0).status());
+
+  EXPECT_THAT(
+      tiling_space2->AssignTileSizes({4}),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               ::testing::HasSubstr("Divisibility constraint not satisfied")));
+}
+
+TEST_F(TilePropagationTest, ConcatenateOpSupportsShiftedConstantBaseOffset) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    ENTRY e {
+      p0 = f32[10] parameter(0)
+      p1 = f32[20] parameter(1)
+      p2 = f32[30] parameter(2)
+      concat = f32[60] concatenate(p0, p1, p2), dimensions={0}
+      ROOT slice = f32[30] slice(concat), slice={[13:43]}
+    }
+  )");
+  auto tiling_space = TilingSpace::Create(
+      *HloFusionAdaptor::ForInstruction(root), &mlir_context_);
+  Tile tile = GetTestTile(*tiling_space, root->shape().dimensions());
+
+  ASSERT_OK_AND_ASSIGN(auto operands_of_slice,
+                       PropagateTileToInput(*tiling_space, *root, tile, 0));
+  const Tile& concat_tile = operands_of_slice[0];
+  const HloInstruction* concat = root->operand(0);
+  ASSERT_OK_AND_ASSIGN(
+      auto operands_of_concat,
+      PropagateTileToInput(*tiling_space, *concat, concat_tile, 0));
+
+  std::string space_str = tiling_space->ToString();
+  EXPECT_THAT(space_str, ::testing::HasSubstr("d0 * s0 is multiple of s0"));
+  EXPECT_THAT(space_str, ::testing::HasSubstr("17 is multiple of s0"));
+
+  EXPECT_OK(tiling_space->AssignTileSizes({17}));
+
+  auto tiling_space2 = TilingSpace::Create(
+      *HloFusionAdaptor::ForInstruction(root), &mlir_context_);
+  Tile tile2 = GetTestTile(*tiling_space2, root->shape().dimensions());
+  ASSERT_OK_AND_ASSIGN(auto operands_of_slice2,
+                       PropagateTileToInput(*tiling_space2, *root, tile2, 0));
+  const Tile& concat_tile2 = operands_of_slice2[0];
+  ASSERT_OK(
+      PropagateTileToInput(*tiling_space2, *concat, concat_tile2, 0).status());
+
+  EXPECT_THAT(
+      tiling_space2->AssignTileSizes({5}),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               ::testing::HasSubstr("Divisibility constraint not satisfied")));
+}
+
+TEST_F(TilePropagationTest,
+       ConcatenateOpRejectsShiftedOffsetWhenRemainingSizeNotDivisible) {
+  HloInstruction* root = ParseAndGetRoot(R"(
+    HloModule m
+    ENTRY e {
+      p0 = f32[10] parameter(0)
+      p1 = f32[20] parameter(1)
+      p2 = f32[30] parameter(2)
+      concat = f32[60] concatenate(p0, p1, p2), dimensions={0}
+      ROOT slice = f32[30] slice(concat), slice={[13:43]}
+    }
+  )");
+  auto tiling_space = TilingSpace::Create(
+      *HloFusionAdaptor::ForInstruction(root), &mlir_context_);
+  EXPECT_OK(tiling_space->AssignTileSizes({5}));
+
+  const Tile& root_tile = tiling_space->tiled_roots()[0];
+
+  ASSERT_OK_AND_ASSIGN(
+      auto operands_of_slice,
+      PropagateTileToInput(*tiling_space, *root, root_tile, 0));
+  const Tile& concat_tile = operands_of_slice[0];
+  const HloInstruction* concat = root->operand(0);
+
+  EXPECT_THAT(
+      PropagateTileToInput(*tiling_space, *concat, concat_tile, 0).status(),
+      StatusIs(absl::StatusCode::kFailedPrecondition,
+               ::testing::HasSubstr(
+                   "The remaining dimension size 17 in the concatenate operand "
+                   "1 must be a clean multiple of its tile size 5")));
 }
 
 }  // namespace

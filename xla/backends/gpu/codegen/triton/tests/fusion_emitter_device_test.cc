@@ -96,6 +96,16 @@ class TritonEmitterTest
     : public HloPjRtInterpreterReferenceMixin<GpuPjRtCodegenTest>,
       public XTileTestBase {
  public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    // TODO: b/509502550 - remove the flag and disable tests that use
+    // multi-output fusions when removing the feature.
+    DebugOptions debug_options = HloPjRtInterpreterReferenceMixin<
+        GpuPjRtCodegenTest>::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_unsupported_enable_triton_multi_output_fusion(
+        true);
+    return debug_options;
+  }
+
   const stream_executor::GpuComputeCapability& GpuComputeCapability() {
     return device_description().gpu_compute_capability();
   }

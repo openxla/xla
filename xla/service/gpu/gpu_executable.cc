@@ -1956,6 +1956,15 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
   if (proto.has_hlo_module_with_config()) {
     ASSIGN_OR_RETURN(params.debug_module, HloModule::CreateFromProtoWithConfig(
                                               proto.hlo_module_with_config()));
+    // The HLO module deserialized from the proto carries xla_dump_to from the
+    // process that originally compiled it. Override with the current process's
+    // dump path so that runtime dumps (checksum logs, etc.) land in the correct
+    // per-process directory.
+    if (params.debug_options.has_xla_dump_to()) {
+      params.debug_module->mutable_config()
+          .mutable_debug_options()
+          .set_xla_dump_to(params.debug_options.xla_dump_to());
+    }
   }
   if (proto.has_buffer_assignment()) {
     params.buffer_assignment_proto.emplace(proto.buffer_assignment());

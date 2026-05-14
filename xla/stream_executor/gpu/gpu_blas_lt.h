@@ -21,6 +21,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -35,6 +36,8 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.pb.h"
+#include "xla/stream_executor/scratch_allocator.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
 
@@ -172,6 +175,7 @@ struct GroupedGemmConfig {
   blas::DataType type_a, type_b, type_c, type_d;
   int64_t stride_ragged_dim;
   int64_t stride_group_dim;
+  int64_t c_stride_ragged_dim;
   int64_t output_stride_ragged_dim;
   // PrecisionConfig-level algorithm
   xla::PrecisionConfig::Algorithm precision_algorithm;
@@ -351,8 +355,8 @@ struct BlasLt {
     // returned in the order of increasing estimated compute time according to
     // an internal heuristic.
     virtual absl::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
-        const Stream* stream, size_t max_algorithm_count = 128,
-        size_t max_workspace_size = 1ll << 32) const = 0;
+        const Stream* stream, size_t max_algorithm_count,
+        size_t max_workspace_size) const = 0;
 
     // Algorithm must to be set before calling ExecuteOnStream function(s).
     // Usually, we call ExecuteOnStream with the same algorithm ID, hence using
@@ -372,8 +376,7 @@ struct BlasLt {
       const GemmConfig& cfg, Epilogue epilogue) const = 0;
 
   virtual absl::StatusOr<MatmulPlanPtr> GetGroupedMatmulPlan(
-      gpu::GroupedGemmConfig& config,
-      const std::vector<Epilogue>& epilogues) const = 0;
+      gpu::GroupedGemmConfig& config, Epilogue epilogue) const = 0;
 
   static BlasLt* Get(const Stream* stream);
 
@@ -383,8 +386,7 @@ struct BlasLt {
                                                      Epilogue epilogue);
 
   static absl::StatusOr<MatmulPlanPtr> GetGroupedMatmulPlan(
-      const Stream* stream, gpu::GroupedGemmConfig& config,
-      const std::vector<Epilogue>& epilogues);
+      const Stream* stream, gpu::GroupedGemmConfig& cfg, Epilogue epilogue);
 
   absl::StatusOr<MatmulPlan*> GetOrCreateMatmulPlan(const std::string& key,
                                                     PlanCreateFunc create);

@@ -144,6 +144,7 @@ cc_library(
         ":shard_map_import",
         "//xla/mlir_hlo:stablehlo_extension_passes",
         "//xla/service:hlo_proto_cc",
+        "//xla/service/spmd/shardy:utils",
         "//xla/service/spmd/shardy/round_trip_common:import_constants",
         "//xla/service/spmd/shardy/round_trip_common:import_sdy_custom_calls",
         "//xla/service/spmd/shardy/round_trip_common:open_while_free_vars_sharding",

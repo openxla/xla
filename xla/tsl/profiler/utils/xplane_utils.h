@@ -123,8 +123,10 @@ class XLinesComparatorByName {
   }
 };
 
-// Sorts each XLine's XEvents by offset_ps (ascending) and duration_ps
+// Sorts the XLine's XEvents by offset_ps (ascending) and duration_ps
 // (descending) so nested events are sorted from outer to innermost.
+void SortXLine(XLine* line);
+// Sorts each line of the XPlane.
 void SortXPlane(XPlane* plane);
 // Sorts each plane of the XSpace.
 void SortXSpace(XSpace* space);

@@ -929,9 +929,14 @@ PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_TransferLiteral(
       pjrt::BuildXlaShapeFromC(args->shape_element_type, args->shape_dims,
                                args->shape_num_dims, args->shape_layout));
 
-  auto literal = std::make_unique<xla::BorrowingLiteral>(
-      static_cast<const char*>(args->data), shape);
-  xla::BorrowingLiteral* literal_ptr = literal.get();
+  std::unique_ptr<xla::LiteralBase> literal;
+  if (shape.IsToken()) {
+    literal = std::make_unique<xla::Literal>(shape);
+  } else {
+    literal = std::make_unique<xla::BorrowingLiteral>(
+        static_cast<const char*>(args->data), shape);
+  }
+  xla::LiteralBase* literal_ptr = literal.get();
 
   auto [promise, future] = xla::MakePromise();
   absl::AnyInvocable<void() &&> on_done_with_d2h_transfer =

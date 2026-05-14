@@ -42,7 +42,6 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
-#include "xla/literal_util.h"
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -674,6 +673,12 @@ absl::StatusOr<Literal> MakeFakeLiteral(
     std::optional<uint64_t> index_known_zeroes = std::nullopt,
     std::function<double(std::minstd_rand0*)> float_generator = nullptr,
     std::optional<ConstraintInterval> interval = std::nullopt);
+
+// Materializes a dense literal from compressed sparse values and indices
+// using the provided sparsity configuration.
+absl::StatusOr<Literal> MaterializeSparseOperand(
+    const LiteralSlice& values, const LiteralSlice& indices,
+    const SparsityConfig::TensorSparsityConfig& config);
 
 }  // namespace xla
 

@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/llvm_kernel_source.h"
+#include "xla/codegen/mlir_kernel_source.h"
 #include "xla/future.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/stream_executor/device_description.h"
@@ -67,6 +68,11 @@ class CubinCustomKernelCompiler : public KernelCompiler {
       const std::string& sanitized_kernel_name,
       const emitters::KernelArguments& kernel_arguments,
       const LaunchDimensions& launch_dimensions) override;
+
+  xla::Future<LlvmKernelSource> CompileMlirToLlvm(
+      const se::DeviceDescription& device, const HloModule& hlo_module,
+      const std::string& entry_function_name, int unroll_factor,
+      MlirKernelSource source, BorrowedMlirContext borrowed_context) override;
 
   xla::Future<std::vector<uint8_t>> CompileToPtx(
       LlvmKernelSource kernel_source) override;

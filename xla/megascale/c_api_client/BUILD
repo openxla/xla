@@ -74,8 +74,8 @@ cc_library(
     deps = [
         "//xla/megascale:megascale_runtime_error_overlay_proto_cc",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
-        "//xla/pjrt/c:pjrt_c_api_helpers",
         "//xla/pjrt/c:pjrt_c_api_megascale_extension_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_status_utils",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:string_view",

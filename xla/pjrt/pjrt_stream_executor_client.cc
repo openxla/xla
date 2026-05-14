@@ -113,6 +113,7 @@ limitations under the License.
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/dump/dump.h"
+#include "xla/pjrt/dynamic_shapes.h"
 #include "xla/pjrt/event_pool.h"
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/host_memory_spaces.h"
@@ -467,7 +468,21 @@ void MaybeWaitForEventOnStream(const BufferSequencingEventRef& event,
 
 absl::StatusOr<int64_t> PjRtStreamExecutorClient::GetOnDeviceBytesCount(
     int memory_space_kind, const xla::Shape& shape) const {
-  return client()->backend().transfer_manager()->GetByteSizeRequirement(shape);
+  int64_t transfer_manager_size =
+      client()->backend().transfer_manager()->GetByteSizeRequirement(shape);
+
+  auto kind = GetDynamicShapeKind(memory_space_kind);
+  auto requirements =
+      PjRtShapeAndMetadataTransferRequirements::Get(shape, kind);
+
+  if (static_cast<int64_t>(requirements.size) != transfer_manager_size) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "%s mismatch between transfer_manager requirements (%ld) and "
+        "PjRtTransferRequirements (%zu)",
+        shape.ToString(true), transfer_manager_size, requirements.size));
+  }
+
+  return static_cast<int64_t>(requirements.size);
 }
 
 absl::StatusOr<xla::Shape>
@@ -646,7 +661,9 @@ PjRtStreamExecutorClient::LinearizeHostBufferInto(
   auto definition_event = BufferSequencingEvent::Create(async_work_runner());
 
   if (type == xla::TOKEN) {
-    definition_event.SetStateConcrete();
+    TF_RETURN_IF_ERROR(AllocateAndRecordEvent(definition_event, local_device,
+                                              copy_stream,
+                                              "LinearizeHostBufferIntoToken"));
     return PjRtDeviceEventRef(definition_event);
   }
 
@@ -898,7 +915,8 @@ absl::StatusOr<PjRtDeviceEventRef> PjRtStreamExecutorClient::LinearizeInto(
   TF_RETURN_IF_ERROR(WaitForAllocation(copy_stream, *raw_buffer));
 
   if (literal.shape().IsToken()) {
-    event.SetStateConcrete();
+    TF_RETURN_IF_ERROR(AllocateAndRecordEvent(event, local_device, copy_stream,
+                                              "LinearizeIntoToken"));
     return PjRtDeviceEventRef(event);
   }
 
@@ -1201,7 +1219,7 @@ PjRtStreamExecutorLoadedExecutable::PjRtStreamExecutorLoadedExecutable(
         IsAllZeros(*device_assignment_)) {
       // This code path should only be triggered when we intentionally compile
       // an HLO without having enough devices to actually run it. See the
-      // "--run=false" option in
+      // "--compile_only=true" option in
       // tensorflow/compiler/xla/tools/multihost_hlo_runner/hlo_runner_main.cc.
       // That will help us debug the XLA compiler locally.
       LOG(INFO)

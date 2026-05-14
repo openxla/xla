@@ -25,7 +25,6 @@ common_patch_list = [
     "//third_party/triton:common/include_functional.patch",
     "//third_party/triton:common/launcher.patch",
     "//third_party/triton:common/disable_amd_test.patch",
-    "//third_party/triton:common/avoid-0fc-mid-ptwas-128.patch",
     "//third_party/triton:common/wgmma_pipeline_fix.patch",
     "//third_party/triton:common/nvdisasm_bin_path.patch",
     "//third_party/triton:common/stage_and_cluster_map.patch",
@@ -36,5 +35,6 @@ common_patch_list = [
     "//third_party/triton:common/llvm_cl904544082.patch",
     "//third_party/triton:common/check_null_encoding.patch",
     "//third_party/triton:common/llvm_cl910324404.patch",
+    "//third_party/triton:common/llvm_cl914652433.patch",
     # Add new patches just above this line
 ]

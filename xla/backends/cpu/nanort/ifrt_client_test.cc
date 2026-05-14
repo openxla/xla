@@ -332,17 +332,19 @@ int main(int argc, char** argv) {
       // `MakeErrorArrays` is not supported in NanoIfrtClient.
       "ArrayImplTest.MakeErrorArrays:"
       "ArrayImplTest.CopyPoisonedArray:"
-      "ArrayImplTest.PoisonedZeroSizedBuffers:"
+      "ArrayImplTest.PoisonedZeroSizedArrays:"
       // Sub-byte types are not supported in NanoIfrtClient.
       "ArrayImplTest.HostBufferInt4:"
       "ArrayImplTest.CopyArraysSubByteDType:"
       // NanoRT does not handle zero-sized buffers correctly.
-      "ArrayImplTest.MakeAndCopyZeroSizedBuffers:"
+      "ArrayImplTest.MakeAndCopyZeroSizedArrays:"
       // NanoRT does not handle CopyArrays with re-ordered devices correctly.
       "ArrayImplTest.CopyArraysWithPartialReuse:"
       "ArrayImplTest.CopyToDifferentDevice:"
       // NanoRT does not support tokens.
-      "ArrayMemoryKindTest.HostBufferTokens:"
+      "ArrayImplTest.HostBufferTokens:"
+      "ArrayImplTest.PoisonedTokenArrays:"
+      "ArrayImplTest.MakeAndCopyTokenArrays:"
       // Executable returns a wrong number of devices.
       "*LoadedExecutableImplTest.Properties*:"
       // Incorrect deleted state of donated inputs.

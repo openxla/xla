@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/numbers.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
@@ -489,6 +490,37 @@ absl::StatusOr<std::vector<MemorySpaceColor>> GetOutputMemoryKinds(
                            ? program_shape.result().tuple_shapes().size()
                            : 1;
   return GetMemoryKinds(computation, kOutMemorySpacesAttr, num_outputs);
+}
+
+void PopulateFrontendAttributesMap(
+    google::protobuf::Map<std::string, std::string>& frontend_attrs_map,
+    const std::vector<LayoutMode>& arg_layout_modes,
+    const std::vector<LayoutMode>& out_layout_modes,
+    const std::vector<MemorySpaceColor>& arg_memory_spaces,
+    const std::vector<MemorySpaceColor>& out_memory_spaces) {
+  auto serialize_layout_modes = [](const std::vector<LayoutMode>& modes) {
+    return absl::StrJoin(modes, kAttrValueDelimiter,
+                         [](std::string* out, const LayoutMode& mode) {
+                           absl::StrAppend(out, mode.ToString());
+                         });
+  };
+  auto serialize_memory_spaces =
+      [](const std::vector<MemorySpaceColor>& spaces) {
+        return absl::StrJoin(
+            spaces, kAttrValueDelimiter,
+            [](std::string* out, const MemorySpaceColor& space) {
+              absl::StrAppend(out, space);
+            });
+      };
+
+  frontend_attrs_map[std::string(kArgLayoutModesAttr)] =
+      serialize_layout_modes(arg_layout_modes);
+  frontend_attrs_map[std::string(kOutLayoutModesAttr)] =
+      serialize_layout_modes(out_layout_modes);
+  frontend_attrs_map[std::string(kArgMemorySpacesAttr)] =
+      serialize_memory_spaces(arg_memory_spaces);
+  frontend_attrs_map[std::string(kOutMemorySpacesAttr)] =
+      serialize_memory_spaces(out_memory_spaces);
 }
 
 absl::StatusOr<Shape> LayoutModeToXlaShape(

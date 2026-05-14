@@ -21,7 +21,6 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -332,13 +331,12 @@ size_t BlasLt::GetMatmulPlanCacheSize() const {
 }
 
 /*static*/ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetGroupedMatmulPlan(
-    const Stream* stream, GroupedGemmConfig& cfg,
-    const std::vector<Epilogue>& epilogues) {
-  auto blas = Get(stream);
+    const Stream* stream, GroupedGemmConfig& cfg, Epilogue epilogue) {
+  BlasLt* blas = BlasLt::Get(stream);
   if (blas == nullptr) {
     return xla::Internal("BlasLt is unavailable");
   }
-  return blas->GetGroupedMatmulPlan(cfg, epilogues);
+  return blas->GetGroupedMatmulPlan(cfg, epilogue);
 }
 
 absl::StatusOr<BlasLt::MatmulPlan*> BlasLt::GetOrCreateGroupedMatmulPlan(
@@ -451,6 +449,7 @@ absl::StatusOr<GroupedGemmConfig> GroupedGemmConfig::FromProto(
                            typeD,
                            proto.stride_ragged_dim(),
                            proto.stride_group_dim(),
+                           proto.c_stride_ragged_dim(),
                            proto.output_stride_ragged_dim(),
                            proto.precision_algorithm(),
                            proto.compute_precision(),
@@ -496,6 +495,7 @@ xla::GroupedGemmConfigProto GroupedGemmConfig::ToProto() const {
 
   proto.set_stride_ragged_dim(stride_ragged_dim);
   proto.set_stride_group_dim(stride_group_dim);
+  proto.set_c_stride_ragged_dim(c_stride_ragged_dim);
   proto.set_output_stride_ragged_dim(output_stride_ragged_dim);
   proto.set_precision_algorithm(precision_algorithm);
   proto.set_compute_precision(compute_precision);

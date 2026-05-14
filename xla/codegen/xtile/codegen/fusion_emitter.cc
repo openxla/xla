@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -53,7 +54,6 @@ limitations under the License.
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
-#include "mlir/IR/Verifier.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
@@ -61,7 +61,6 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
-#include "mlir/Target/LLVMIR/Export.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
@@ -489,7 +488,7 @@ absl::StatusOr<TensorValue> EmitDot(
   //   acc += dot(lhs, rhs)
   // }
   // c = acc
-  TF_RET_CHECK(tiled_hlo_dot.regions().size() == 1);
+  TF_RET_CHECK(tiled_hlo_dot.hlo_regions().size() == 1);
 
   SmallVector<int64_t> padded_tile_sizes =
       GetPaddedTileSizes(tiled_hlo_dot.tile_sizes());
@@ -534,9 +533,9 @@ absl::StatusOr<TensorValue> EmitDot(
     Value computation_index = xla::ApplyIndexingOp::create(
                                   b, ValueRange{pid, ki}, computation_index_map)
                                   .getResult(0);
-    TF_RETURN_IF_ERROR(EmitTiledInstructionList(b, fusion,
-                                                tiled_hlo_dot.regions().front(),
-                                                fn, computation_index, values));
+    TF_RETURN_IF_ERROR(
+        EmitTiledInstructionList(b, fusion, tiled_hlo_dot.hlo_regions().front(),
+                                 fn, computation_index, values));
     SmallVector<TensorValue> dot_args;
     for (const TiledHloInstruction* operand : tiled_hlo_dot.operands()) {
       CHECK(values.contains(operand))
@@ -600,7 +599,7 @@ absl::StatusOr<TensorValue> EmitScaledDot(
   //   acc += dot(lhs, rhs)
   // }
   // c = acc
-  TF_RET_CHECK(tiled_hlo_dot.regions().size() == 1);
+  TF_RET_CHECK(tiled_hlo_dot.hlo_regions().size() == 1);
 
   SmallVector<int64_t> padded_tile_sizes =
       GetPaddedTileSizes(tiled_hlo_dot.tile_sizes());
@@ -642,9 +641,9 @@ absl::StatusOr<TensorValue> EmitScaledDot(
     Value computation_index = xla::ApplyIndexingOp::create(
                                   b, ValueRange{pid, ki}, computation_index_map)
                                   .getResult(0);
-    TF_RETURN_IF_ERROR(EmitTiledInstructionList(b, fusion,
-                                                tiled_hlo_dot.regions().front(),
-                                                fn, computation_index, values));
+    TF_RETURN_IF_ERROR(
+        EmitTiledInstructionList(b, fusion, tiled_hlo_dot.hlo_regions().front(),
+                                 fn, computation_index, values));
     SmallVector<TensorValue> dot_args;
     for (const TiledHloInstruction* operand : tiled_hlo_dot.operands()) {
       CHECK(values.contains(operand))
@@ -690,7 +689,7 @@ absl::StatusOr<TensorValue> EmitConcatenate(
   const int64_t concatenate_dimension = hlo_concat->concatenate_dimension();
 
   TF_RET_CHECK(tiled_concatenate.operands().size() ==
-               tiled_concatenate.regions().size())
+               tiled_concatenate.hlo_regions().size())
       << "Concatenate must have the same number of operands and regions";
 
   // TODO(b/393299275): get rid of calls to `GetPaddedTileSizes` once tiling
@@ -751,7 +750,7 @@ absl::StatusOr<TensorValue> EmitConcatenate(
       if_ops.push_back(if_op);
     }
     RETURN_IF_ERROR(EmitTiledInstructionList(
-        b, fusion, tiled_concatenate.regions()[i], fn, pid, values));
+        b, fusion, tiled_concatenate.hlo_regions()[i], fn, pid, values));
     // We assume that operand is part of the region, thus it will be in the
     // values.
     TF_RET_CHECK(values.contains(operand))
@@ -1068,8 +1067,8 @@ absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
     VLOG(8) << "Emitted " << hlo->ToString(HloPrintOptions::ShortParsable());
   }
   std::vector<TensorValue> results;
-  results.reserve(tiled_computation.GetRoots().size());
-  for (const auto* root : tiled_computation.GetRoots()) {
+  results.reserve(tiled_computation.roots().size());
+  for (const auto* root : tiled_computation.roots()) {
     results.push_back(values[root]);
   }
   return std::move(results);
@@ -1152,7 +1151,7 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
 
   const HloComputation* computation = fusion.fused_instructions_computation();
   for (auto [root, result, arg] :
-       llvm::zip(tiled_hlo_computation.GetRoots(), results,
+       llvm::zip(tiled_hlo_computation.roots(), results,
                  fn.getArguments().drop_front(computation->num_parameters()))) {
     // Workaround(i1_to_i8_workaround)
     // Some types are stored using different types, e.g. i1 is stored in memory
@@ -1188,6 +1187,11 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
     MLIRContext& mlir_context, absl::Span<mlir::Type> opaque_args_types,
     const std::optional<stream_executor::GpuComputeCapability>& gpu_cc) {
   const auto debug_options = fusion.GetModule()->config().debug_options();
+
+  if (fusion.IsMultiOutputFusion() &&
+      !debug_options.xla_gpu_unsupported_enable_triton_multi_output_fusion()) {
+    return absl::InvalidArgumentError("Multi-output fusion is disabled.");
+  }
 
   const HloComputation* hlo_computation =
       fusion.fused_instructions_computation();

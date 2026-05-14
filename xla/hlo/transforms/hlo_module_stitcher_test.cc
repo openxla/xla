@@ -67,7 +67,8 @@ ENTRY sub_entry {
   optimized_modules["optimized_sub_module"] = sub_module.get();
 
   HloModuleStitcher stitcher(optimized_modules);
-  EXPECT_THAT(stitcher.Run(main_module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(stitcher.Run(main_module.get()),
+              absl_testing::IsOkAndHolds(true));
 
   const char* expected_hlo = R"(
 CHECK: %sub_entry
@@ -105,8 +106,9 @@ ENTRY main {
 
   HloModuleStitcher stitcher(optimized_modules);
   EXPECT_THAT(stitcher.Run(main_module.get()),
-              StatusIs(absl::StatusCode::kNotFound,
-                       HasSubstr("Sub-module missing_sub_module not found")));
+              absl_testing::StatusIs(
+                  absl::StatusCode::kNotFound,
+                  HasSubstr("Sub-module missing_sub_module not found")));
 }
 
 TEST_F(HloModuleStitcherTest, OperandCountMismatchReturnsError) {
@@ -139,8 +141,8 @@ ENTRY sub_entry {
 
   HloModuleStitcher stitcher(optimized_modules);
   EXPECT_THAT(stitcher.Run(main_module.get()),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("Operand count mismatch")));
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("Operand count mismatch")));
 }
 
 TEST_F(HloModuleStitcherTest, LayoutReconciliationAddsKCopy) {
@@ -171,7 +173,8 @@ ENTRY sub_entry {
   optimized_modules["optimized_sub_module"] = sub_module.get();
 
   HloModuleStitcher stitcher(optimized_modules);
-  EXPECT_THAT(stitcher.Run(main_module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(stitcher.Run(main_module.get()),
+              absl_testing::IsOkAndHolds(true));
 
   const char* expected_hlo = R"(
 CHECK: ENTRY %main

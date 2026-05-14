@@ -23,7 +23,9 @@ limitations under the License.
 #include <cerrno>
 #include <cstdlib>
 #include <deque>
+#include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -35,6 +37,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/python/transfer/transfer_socket.pb.h"
 #include "xla/tsl/concurrency/future.h"
@@ -338,11 +341,11 @@ AllocateNetworkPinnedMemory(size_t size) {
   auto out = std::make_shared<pinned_mem_state>();
   int sfd = socket(AF_INET6, SOCK_STREAM | SOCK_CLOEXEC, 0);
   out->buffer = mmap(nullptr, size, PROT_READ, MAP_SHARED, sfd, 0);
+  close(sfd);
   if (out->buffer == MAP_FAILED) {
     return absl::ErrnoToStatus(errno, "tcp-zero-copy-mmap");
   }
   out->size = size;
-  close(sfd);
   out->data =
       absl::Span<uint8_t>(reinterpret_cast<uint8_t*>(out->buffer), size);
   return std::shared_ptr<absl::Span<uint8_t>>(out, &out->data);

@@ -1578,6 +1578,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/utils:hlo_query",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",

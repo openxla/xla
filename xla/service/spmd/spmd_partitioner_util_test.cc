@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/spmd/spmd_partitioner_util.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -719,6 +720,42 @@ TEST(SPMDPartitionerUtilTest, CanonicalizeShardingV1NonIota) {
   EXPECT_EQ(canonicalized.named_sharding().ToString(),
             "{mesh['axis_0'=2,'axis_1'=2], device_ids=(0,2,1,3), [{'axis_0'}, "
             "{'axis_1'}]}");
+}
+
+TEST(SPMDPartitionerUtilTest, GetPartitionGroupsForReplicationGating) {
+  HloSharding sharding = HloSharding::IotaTile({8, 8, 16});
+
+  // With enable_rgv3 = true, should return kMeshAxes (V3) representation
+  std::unique_ptr<CollectiveDeviceListBase> groups_v3 =
+      GetPartitionGroupsForReplication(sharding, {0, 1}, /*enable_rgv3=*/true);
+  EXPECT_EQ(groups_v3->version(), CollectiveDeviceListVersion::kMeshAxes);
+
+  // With enable_rgv3 = false, should fall back to kIota or kListOfLists
+  // representation
+  std::unique_ptr<CollectiveDeviceListBase> groups_fallback =
+      GetPartitionGroupsForReplication(sharding, {0, 1}, /*enable_rgv3=*/false);
+  EXPECT_NE(groups_fallback->version(), CollectiveDeviceListVersion::kMeshAxes);
+  EXPECT_EQ(groups_fallback->flattened_replica_groups(),
+            groups_v3->flattened_replica_groups());
+}
+
+TEST(SPMDPartitionerUtilTest, GetPartitionGroupsAcrossTargetDimsGating) {
+  HloSharding sharding = HloSharding::IotaTile({8, 8, 16});
+
+  // With enable_rgv3 = true, should return kMeshAxes (V3) representation
+  std::unique_ptr<CollectiveDeviceListBase> groups_v3 =
+      GetPartitionGroupsAcrossTargetDims(sharding, {0, 1}, {4, 4},
+                                         /*enable_rgv3=*/true);
+  EXPECT_EQ(groups_v3->version(), CollectiveDeviceListVersion::kMeshAxes);
+
+  // With enable_rgv3 = false, should fall back to kIota or kListOfLists
+  // representation
+  std::unique_ptr<CollectiveDeviceListBase> groups_fallback =
+      GetPartitionGroupsAcrossTargetDims(sharding, {0, 1}, {4, 4},
+                                         /*enable_rgv3=*/false);
+  EXPECT_NE(groups_fallback->version(), CollectiveDeviceListVersion::kMeshAxes);
+  EXPECT_EQ(groups_fallback->flattened_replica_groups(),
+            groups_v3->flattened_replica_groups());
 }
 
 }  // namespace

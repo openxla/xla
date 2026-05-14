@@ -1259,6 +1259,48 @@ TEST(StreamExecutorGpuClientTest, CopyErrorBufferToDevice) {
       absl_testing::StatusIs(tsl::error::INTERNAL, HasSubstr("some error")));
 }
 
+TEST(StreamExecutorGpuClientTest, CopyTokenToDevice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 2);
+
+  auto* d0 = client->addressable_devices()[0];
+  auto* d1 = client->addressable_devices()[1];
+
+  xla::Literal literal = xla::LiteralUtil::CreateToken();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto src_buffer,
+      client->BufferFromHostLiteral(literal, *d0->default_memory_space()));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto dst_buffer, src_buffer->CopyToMemorySpace(
+                                               *d1->default_memory_space()));
+
+  xla::Literal received_literal = xla::LiteralUtil::CreateToken();
+  TF_ASSERT_OK(dst_buffer->ToLiteral(&received_literal).Await());
+  EXPECT_TRUE(received_literal.shape().IsToken());
+}
+
+TEST(StreamExecutorGpuClientTest, CopyErrorTokenToDevice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 2);
+
+  auto* d0 = client->addressable_devices()[0];
+  auto* d1 = client->addressable_devices()[1];
+
+  xla::Shape shape = ShapeUtil::MakeTokenShape();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto src_buffer,
+      client->CreateErrorBuffer(absl::InternalError("token error"), shape,
+                                *d0->default_memory_space()));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto dst_buffer, src_buffer->CopyToMemorySpace(
+                                               *d1->default_memory_space()));
+
+  EXPECT_THAT(dst_buffer->ToLiteral().Await(),
+              StatusIs(absl::StatusCode::kInternal, HasSubstr("token error")));
+}
+
 TEST(StreamExecutorGpuClientTest, CopyDelayedErrorBufferToDevice) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(DefaultOptions()));
@@ -2065,7 +2107,7 @@ TEST(StreamExecutorGpuClientTest,
   if (client->platform_name() == xla::RocmName()) {
     EXPECT_EQ(memory_stats.peak_memory_in_bytes, 1845006788);
   } else {
-    EXPECT_EQ(memory_stats.peak_memory_in_bytes, 1845010888);
+    EXPECT_EQ(memory_stats.peak_memory_in_bytes, 2165875144);
   }
 }
 
@@ -2104,7 +2146,7 @@ ROOT tuple = (f32[16]{0}, f32[2]{0}, f32[2]{0}) tuple(ag, p0, add0)
 
   EXPECT_EQ(memory_stats.output_size_in_bytes, 104);
   EXPECT_EQ(memory_stats.host_output_size_in_bytes, 0);
-  EXPECT_EQ(memory_stats.peak_memory_in_bytes, 120);
+  EXPECT_EQ(memory_stats.peak_memory_in_bytes, 184);
 }
 
 TEST(StreamExecutorGpuClientTest, GetCompiledMemoryStatsMixedTupleNotRoot) {
@@ -2136,7 +2178,7 @@ ROOT gte0 = f32[16]{0} get-tuple-element(t), index=0
 
   EXPECT_EQ(memory_stats.output_size_in_bytes, 64);
   EXPECT_EQ(memory_stats.host_output_size_in_bytes, 0);
-  EXPECT_EQ(memory_stats.peak_memory_in_bytes, 80);
+  EXPECT_EQ(memory_stats.peak_memory_in_bytes, 144);
 }
 
 TEST(StreamExecutorGpuClientTest, GetCompiledMemoryStatsCountTupleTable) {
@@ -2222,7 +2264,8 @@ TEST(StreamExecutorGpuClientTest,
   TF_ASSERT_OK(result_buffers[0]->GetReadyFuture().Await());
   Shape result_shape = result_buffers[0]->on_device_shape();
   auto memory_space = result_shape.layout().memory_space();
-  EXPECT_EQ(memory_space, 1);
+  // Entry results should be copied from S1 to S0 memory space.
+  EXPECT_EQ(memory_space, 0);
 }
 
 TEST(StreamExecutorGpuClientTest, CollectiveMemorySpaceSmoke) {
@@ -2255,9 +2298,9 @@ TEST(StreamExecutorGpuClientTest, CollectiveMemorySpaceSmoke) {
   auto& buf = results[0][0];
   TF_ASSERT_OK(buf->GetReadyFuture().Await());
 
-  // Override default memory space to collective memory space.
+  // Entry results should be copied from S1 to S0 memory space.
   EXPECT_EQ(buf->on_device_shape().layout().memory_space(),
-            (int)gpu::MemorySpaceColor::kCollective);
+            (int)gpu::MemorySpaceColor::kDefault);
 }
 
 TEST(StreamExecutorGpuClientTest,

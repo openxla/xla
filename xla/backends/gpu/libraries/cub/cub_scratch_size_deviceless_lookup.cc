@@ -31,6 +31,7 @@ limitations under the License.
 #include "riegeli/zstd/zstd_reader.h"
 #include "xla/backends/gpu/libraries/cub/cub_sort_utils.h"
 #include "xla/backends/gpu/libraries/cub/embed_cub_scratch_size_lookup_table.h"
+#include "xla/backends/gpu/libraries/cub/scratch_space_lookup_table.pb.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/util/file_toc.h"
 

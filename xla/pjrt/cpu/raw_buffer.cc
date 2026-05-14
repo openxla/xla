@@ -139,6 +139,15 @@ absl::Status CpuRawBuffer::ValidateSlice(int64_t offset, int64_t slice_size) {
   return absl::OkStatus();
 }
 
+absl::StatusOr<PjRtRawBufferRef> CpuRawBuffer::Slice(int64_t offset,
+                                                     int64_t slice_size) {
+  TF_RETURN_IF_ERROR(ValidateSlice(offset, slice_size));
+  auto sliced_memory =
+      CpuDeviceMemory::CreateSlicedMemory(buffer_, offset, slice_size);
+  return tsl::MakeRef<CpuRawBuffer>(memory_space_, std::move(sliced_memory),
+                                    slice_size, is_mutable_);
+}
+
 absl::StatusOr<PjRtDeviceEventRef>
 CpuRawBuffer::CopyRawHostToDeviceAndReturnEvent(const void* src, int64_t offset,
                                                 int64_t transfer_size) {
@@ -477,7 +486,7 @@ void CpuTrackedDeviceEventSet::AppendTo(PjRtDeviceEventSet& events) {
 
 absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyRawToRemoteDevice(
     Future<std::string> serialized_descriptor, RemoteSendCallback on_done,
-    std::vector<tsl::RCReference<tsl::AsyncValue>> transfer_dependency_avs) {
+    std::vector<PjRtDeviceEventRef> transfer_dependency_avs) {
   return absl::UnimplementedError(
       "CpuRawBuffer does not support CopyRawToRemoteDevice.");
 }

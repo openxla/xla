@@ -1137,6 +1137,10 @@ absl::StatusOr<CompileOptions> CreateCompileOptions(
   return compile_options;
 }
 
+// Dumps the output literals to the specified path.
+// Example:
+//  `dump_output_to` filepath: /tmp/output.pb
+//  Actual output filepath: /tmp/output_task_0.device_0.literal_0.pb
 absl::Status DumpOutput(
     const FunctionalHloRunner::PerDeviceLiteralVecType& output,
     absl::string_view dump_output_to, int task_id, OutputFormat output_format) {
@@ -1174,7 +1178,7 @@ absl::Status DumpOutput(
           break;
         }
         case OutputFormat::kProtoText: {
-          CHECK_EQ(suffix, std::string("pbtxt"));
+          CHECK(suffix == "pbtxt" || suffix == "textproto");
           TF_RETURN_IF_ERROR(
               tsl::WriteTextProto(tsl::Env::Default(), literal_path,
                                   literal_vec[literal_id].ToProto()));

@@ -84,8 +84,9 @@ class ConvFusionRewriterUnitTest : public HloPjRtGpuTestBase {
   }
   stream_executor::dnn::VersionInfo GetDnnVersion() const {
     auto version = device_description().dnn_version();
-    return stream_executor::dnn::VersionInfo(version.major(), version.minor(),
-                                             version.patch());
+    return stream_executor::dnn::VersionInfo(version.major_version(),
+                                             version.minor_version(),
+                                             version.patch_version());
   }
 
   se::SemanticVersion GetToolkitVersion() const {
@@ -386,8 +387,9 @@ class ConvFusionRewriterIntegrationTest
   }
   stream_executor::dnn::VersionInfo GetDnnVersion() const {
     auto version = device_description().dnn_version();
-    return stream_executor::dnn::VersionInfo(version.major(), version.minor(),
-                                             version.patch());
+    return stream_executor::dnn::VersionInfo(version.major_version(),
+                                             version.minor_version(),
+                                             version.patch_version());
   }
 
   stream_executor::SemanticVersion GetToolkitVersion() const {

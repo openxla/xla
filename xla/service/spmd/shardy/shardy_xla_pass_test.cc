@@ -47,6 +47,10 @@ using ShardyXLATest = HloHardwareIndependentTestBase;
 void runShardy(VerifiedHloModule* module, bool stablehloImport,
                bool runSdyShardingPropagation = true,
                bool expectChanged = true) {
+  // TODO (b/512424980): Parameterize ShardyXLA tests with HloShardingV3
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_enable_hlo_sharding_v3(false);
   if (stablehloImport) {
     module->add_frontend_attribute(std::string(xla::sdy::kImportMhloShardings),
                                    "t");

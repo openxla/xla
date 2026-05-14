@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/hlo/ir/backend_config.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -421,7 +422,8 @@ class HloComputation {
       const absl::flat_hash_map<int64_t, HloComputation*>& computation_map,
       bool prohibit_empty_literal = true, bool preserve_instruction_ids = true,
       absl::flat_hash_map<int64_t, int64_t>* id_remap_map = nullptr,
-      const tsl::protobuf::RepeatedPtrField<std::string>* payloads = nullptr);
+      absl::Span<const std::shared_ptr<BackendConfigWrapper>> backend_configs =
+          {});
 
   // Generates a hash value of an HLO computation. Hash considers
   // information on opcode, shape, operands, and typically a root instruction.

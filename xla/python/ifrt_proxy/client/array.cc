@@ -115,13 +115,20 @@ absl::StatusOr<uint64_t> MakeHostBuffer(
   // Asynchronously send data.
 
   if (semantics == HostBufferSemantics::kImmutableOnlyDuringCall) {
-    char* alloc = static_cast<char*>(malloc(mem_region.size()));
-    memcpy(alloc, mem_region.data(), mem_region.size());
-    mem_region = absl::string_view(alloc, mem_region.size());
-    if (on_done_with_host_buffer != nullptr) {
-      std::move(on_done_with_host_buffer)();
+    if (mem_region.size() > 0) {
+      char* alloc = static_cast<char*>(malloc(mem_region.size()));
+      memcpy(alloc, mem_region.data(), mem_region.size());
+      mem_region = absl::string_view(alloc, mem_region.size());
+      if (on_done_with_host_buffer != nullptr) {
+        std::move(on_done_with_host_buffer)();
+      }
+      on_done_with_host_buffer = [alloc]() { free(alloc); };
+    } else {
+      if (on_done_with_host_buffer != nullptr) {
+        std::move(on_done_with_host_buffer)();
+        on_done_with_host_buffer = nullptr;
+      }
     }
-    on_done_with_host_buffer = [alloc]() { free(alloc); };
   }
 
   // If the async-send results in an error, ignoring it may mean that the
@@ -760,6 +767,11 @@ tsl::Future<> Array::CopyToHostBuffer(
     return CopyToStringHostBuffer(data, byte_strides, semantics);
   }
   tsl::profiler::TraceMe traceme("IfrtProxyEntrypointCopyToHostBuffer");
+
+  if (dtype_.kind() == DType::kToken) {
+    return GetReadyFuture();
+  }
+
   const auto mem_region = ArrayMemRegion::FromZerothElementPointer(
       /*zeroth_element=*/data, dtype_, shape_, byte_strides);
   if (!mem_region.ok()) {

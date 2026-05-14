@@ -23,6 +23,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -31,6 +32,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
@@ -120,7 +122,7 @@ double GetEffectiveFlopsPerNsForTileSize(
   return peak_flops_per_ns * flops_derate;
 }
 
-int64_t CalculateL2Bytes(const DotTileSize& out_tile, int64_t problem_k,
+int64_t CalculateL2Bytes(const DotProblemInfo& dot, const DotTileSize& out_tile,
                          int64_t threadblock_count) {
   // When tiling the GEMM problem on the outputs and mapping one tile per SM,
   // the problem of data replication (or extra loads of the same data) between
@@ -129,7 +131,11 @@ int64_t CalculateL2Bytes(const DotTileSize& out_tile, int64_t problem_k,
 
   // Input data loaded by each tile is equal to (Tile_M + Tile_N) * problem_k
   // bytes (The threadblock iterates over the entire problem_k dimension).
-  int64_t l2_data_per_tile = problem_k * out_tile.b * (out_tile.n + out_tile.m);
+  int64_t lhs_bytes = CeilOfRatio<int64_t>(
+      out_tile.b * out_tile.m * dot.k * BitWidth(dot.lhs_element_type), 8);
+  int64_t rhs_bytes = CeilOfRatio<int64_t>(
+      out_tile.b * out_tile.n * dot.k * BitWidth(dot.rhs_element_type), 8);
+  int64_t l2_data_per_tile = lhs_bytes + rhs_bytes;
 
   // Across all the tiles, data loads will be equal to: (l2_data_per_tile *
   // threadblock_count).
@@ -226,7 +232,7 @@ absl::StatusOr<absl::Duration> CalculateL2Time(
       is_tma_allowed ? kTmaLoopOverheadSeconds : kLegacyLoopOverheadSeconds;
 
   double base_time_seconds =
-      1.0f * CalculateL2Bytes(dot_tile, dot.k, threadblock_count) /
+      1.0f * CalculateL2Bytes(dot, dot_tile, threadblock_count) /
       device_l2_bandwidth;
   return absl::Seconds(base_time_seconds + num_k_iters * k_loop_overhead);
 }
@@ -344,6 +350,26 @@ absl::Status IsSupported(const HloDotInstruction* dot) {
         absl::StrJoin(dim_numbers.lhs_contracting_dimensions(), ","),
         "], RHS: [",
         absl::StrJoin(dim_numbers.rhs_contracting_dimensions(), ","), "]"));
+  }
+
+  // TODO: b/501002656 - Support downstream transposes by fixing dimension
+  // mapping.
+  std::vector<const HloInstruction*> stack;
+  absl::flat_hash_set<const HloInstruction*> visited;
+  stack.push_back(dot);
+  visited.insert(dot);
+  while (!stack.empty()) {
+    const HloInstruction* current = stack.back();
+    stack.pop_back();
+    if (current != dot && current->opcode() == HloOpcode::kTranspose) {
+      return absl::UnimplementedError(
+          "Dot with a downstream transpose is not supported.");
+    }
+    for (const HloInstruction* user : current->users()) {
+      if (visited.insert(user).second) {
+        stack.push_back(user);
+      }
+    }
   }
 
   return absl::OkStatus();
