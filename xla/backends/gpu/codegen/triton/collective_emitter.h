@@ -84,5 +84,9 @@ absl::StatusOr<std::vector<Shape>> GetCollectiveUnmanagedKernelArguments(
 mlir::LogicalResult RewriteAllReduce(mlir::stablehlo::AllReduceOp op,
                                      mlir::PatternRewriter& rewriter);
 
+// Rewrites stablehlo all-gather op to a triton implementation.
+mlir::LogicalResult RewriteAllGather(mlir::stablehlo::AllGatherOp op,
+                                     mlir::PatternRewriter& rewriter);
+
 }  // namespace xla::gpu
 #endif  // XLA_BACKENDS_GPU_CODEGEN_TRITON_COLLECTIVE_EMITTER_H_

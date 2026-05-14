@@ -83,13 +83,13 @@ std::optional<absl::string_view> IsLegalTensorOp(mlir::Operation* op) {
 std::optional<absl::string_view> IsLegalStablehloOp(mlir::Operation* op) {
   if (mlir::isa<
           // go/keep-sorted start
-          mlir::stablehlo::AllReduceOp, mlir::stablehlo::AddOp,
-          mlir::stablehlo::AndOp, mlir::stablehlo::BroadcastInDimOp,
-          mlir::stablehlo::CompareOp, mlir::stablehlo::ConvertOp,
-          mlir::stablehlo::DivOp, mlir::stablehlo::DotGeneralOp,
-          mlir::stablehlo::MaxOp, mlir::stablehlo::MinOp,
-          mlir::stablehlo::MulOp, mlir::stablehlo::ReduceOp,
-          mlir::stablehlo::OrOp, mlir::stablehlo::RemOp,
+          mlir::stablehlo::AddOp, mlir::stablehlo::AllGatherOp,
+          mlir::stablehlo::AllReduceOp, mlir::stablehlo::AndOp,
+          mlir::stablehlo::BroadcastInDimOp, mlir::stablehlo::CompareOp,
+          mlir::stablehlo::ConvertOp, mlir::stablehlo::DivOp,
+          mlir::stablehlo::DotGeneralOp, mlir::stablehlo::MaxOp,
+          mlir::stablehlo::MinOp, mlir::stablehlo::MulOp, mlir::stablehlo::OrOp,
+          mlir::stablehlo::ReduceOp, mlir::stablehlo::RemOp,
           mlir::stablehlo::ReshapeOp, mlir::stablehlo::ReturnOp,
           mlir::stablehlo::SubtractOp, mlir::stablehlo::TransposeOp,
           mlir::stablehlo::XorOp

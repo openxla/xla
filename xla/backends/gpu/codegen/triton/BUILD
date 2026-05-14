@@ -703,6 +703,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
+        "//xla/backends/gpu/runtime:all_gather",
         "//xla/backends/gpu/runtime:all_reduce",
         "//xla/codegen/emitters/ir:xla",
         "//xla/codegen/xtile/codegen:emitter_helpers",

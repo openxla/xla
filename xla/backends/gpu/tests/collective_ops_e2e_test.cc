@@ -359,6 +359,53 @@ TEST_P(AsyncCollectiveOps, AsyncAllGather) {
   }
 }
 
+TEST_P(AsyncCollectiveOps, AsyncAllGatherTritonBackend) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+  ENTRY test_computation {
+    id = u32[] replica-id()
+    id_f32 = f32[] convert(id)
+    id2 = f32[1, 4] broadcast(id_f32), dimensions={}
+    a0 = f32[1, 4] constant({{10, 15, 20, 25}})
+    a1 = f32[1, 4] add(id2, a0)
+    allgather = f32[2, 4] all-gather(a1), replica_groups={{0,1}}, dimensions={0}
+    ROOT out = f32[8] reshape(allgather)
+  }
+  )";
+  const int64_t kNumReplicas = 2;
+  ASSERT_GE(device_count(), kNumReplicas)
+      << "Test requires at least " << kNumReplicas << " devices ("
+      << device_count() << " available)";
+
+  const bool enable_async_all_gather = GetParam();
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  config.mutable_debug_options()
+      .set_xla_gpu_unsupported_use_all_gather_triton_backend(true);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  TF_ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                          ExecuteReplicated(std::move(module)));
+
+  const HloModule* hlo_module = execution_result.optimized_module;
+  HloInstruction* all_gather_start =
+      FindInstruction(hlo_module, HloOpcode::kAllGatherStart);
+  HloInstruction* all_gather_done =
+      FindInstruction(hlo_module, HloOpcode::kAllGatherDone);
+  EXPECT_THAT(all_gather_start, NotNull());
+  EXPECT_THAT(all_gather_done, NotNull());
+  EXPECT_EQ(IsAsync(all_gather_start), enable_async_all_gather);
+
+  const std::vector<Literal>& results = execution_result.results;
+  ASSERT_EQ(results.size(), kNumReplicas);
+  for (const Literal& result : results) {
+    LiteralTestUtil::ExpectR1Equal<float>({10.0, 15.0, 20.0, 25.0, 11.0, 16.0, 21.0, 26.0}, result);
+  }
+}
+
 TEST_P(AsyncCollectiveOps, AsyncAllGatherMixedTypes) {
   const absl::string_view kModuleStr = R"(
   HloModule test
@@ -2934,6 +2981,48 @@ TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOnDim0OutputIsCorrect) {
   }
 }
 
+TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOnDim0OutputIsCorrectTritonBackend) {
+  constexpr int kNumReplicas = 2;
+  ASSERT_GE(device_count(), kNumReplicas)
+      << "Test requires at least " << kNumReplicas << " devices ("
+      << device_count() << " available)";
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  config.mutable_debug_options()
+      .set_xla_gpu_unsupported_use_all_gather_triton_backend(true);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto unoptimized_module,
+                          ParseAndReturnVerifiedModule(R"(
+    HloModule m, replica_count=2
+
+    e {
+      a = s4[2,4]{1,0:E(4)} constant({{0,1,2,3},{4,5,5,4}})
+      b = s4[4,4]{1,0:E(4)} all-gather(a), replica_groups={{0,1}}, dimensions={0}
+    })",
+                                                       config));
+
+  TF_ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                          ExecuteReplicated(std::move(unoptimized_module)));
+
+  const HloModule* module = execution_result.optimized_module;
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Bitcast(m::AllGatherDone().WithShape(S8, {4, 2}))));
+
+  const Literal expected_result =
+      LiteralUtil::CreateR2<s4>({{s4(0), s4(1), s4(2), s4(3)},
+                                 {s4(4), s4(5), s4(5), s4(4)},
+                                 {s4(0), s4(1), s4(2), s4(3)},
+                                 {s4(4), s4(5), s4(5), s4(4)}});
+
+  const std::vector<Literal>& result = execution_result.results;
+  ASSERT_EQ(result.size(), kNumReplicas);
+  for (int i = 0; i < kNumReplicas; ++i) {
+    EXPECT_TRUE(LiteralTestUtil::Equal(expected_result, result[i]))
+        << "Results differ at replica " << i;
+  }
+}
+
 TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOnDim1OutputIsCorrect) {
   constexpr int kNumReplicas = 2;
   ASSERT_GE(device_count(), kNumReplicas)
@@ -2949,6 +3038,51 @@ TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOnDim1OutputIsCorrect) {
       b = s4[4,4]{1,0:E(4)} all-gather(a), dimensions={1}
     })",
                                                        kNumReplicas));
+
+  TF_ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                          ExecuteReplicated(std::move(unoptimized_module)));
+
+  const HloModule* module = execution_result.optimized_module;
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, GmockMatch(m::Fusion(
+                        m::Bitcast(m::AllGatherDone().WithShape(S8, {2, 4})))));
+  EXPECT_THAT(root->fused_expression_root(),
+              GmockMatch(m::Transpose(m::Parameter())));
+
+  const Literal expected_result =
+      LiteralUtil::CreateR2<s4>({{s4(0), s4(1), s4(0), s4(1)},
+                                 {s4(2), s4(3), s4(2), s4(3)},
+                                 {s4(4), s4(5), s4(4), s4(5)},
+                                 {s4(5), s4(4), s4(5), s4(4)}});
+
+  const std::vector<Literal>& result = execution_result.results;
+  ASSERT_EQ(result.size(), kNumReplicas);
+  for (int i = 0; i < kNumReplicas; ++i) {
+    EXPECT_TRUE(LiteralTestUtil::Equal(expected_result, result[i]))
+        << "Results differ at replica " << i;
+  }
+}
+
+TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOnDim1OutputIsCorrectTritonBackend) {
+  constexpr int kNumReplicas = 2;
+  ASSERT_GE(device_count(), kNumReplicas)
+      << "Test requires at least " << kNumReplicas << " devices ("
+      << device_count() << " available)";
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  config.mutable_debug_options()
+      .set_xla_gpu_unsupported_use_all_gather_triton_backend(true);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto unoptimized_module,
+                          ParseAndReturnVerifiedModule(R"(
+    HloModule m, replica_count=2
+
+    e {
+      a = s4[4,2]{1,0:E(4)} constant({{0,1},{2,3},{4,5},{5,4}})
+      b = s4[4,4]{1,0:E(4)} all-gather(a), replica_groups={{0,1}}, dimensions={1}
+    })",
+                                                       config));
 
   TF_ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
                           ExecuteReplicated(std::move(unoptimized_module)));
@@ -3003,6 +3137,47 @@ TEST_F(CollectiveOpsTestE2E, AllGatherOnChangedDimensionIsCorrect) {
                           ExecuteReplicated(executable.get(), {{}, {}}));
   ASSERT_EQ(results.size(), kNumReplicas);
   Literal expected = LiteralUtil::CreateR3<uint32_t>(
+      {{{0, 1, 2}, {3, 4, 5}, {0, 1, 2}, {3, 4, 5}},
+       {{6, 7, 8}, {9, 10, 11}, {6, 7, 8}, {9, 10, 11}}});
+  for (const Literal& result : results) {
+    EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
+  }
+}
+
+TEST_F(CollectiveOpsTestE2E, AllGatherOnChangedDimensionIsCorrectTritonBackend) {
+  const int64_t kNumReplicas = 2;
+  ASSERT_GE(device_count(), kNumReplicas)
+      << "The test requires at least " << kNumReplicas << " devices";
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  config.mutable_debug_options()
+      .set_xla_gpu_unsupported_use_all_gather_triton_backend(true);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto unoptimized_module,
+                          ParseAndReturnVerifiedModule(R"(
+  HloModule m, replica_count=2
+  e {
+    a = f32[2,2,3] constant({{{0,1,2},{3,4,5}},{{6,7,8},{9,10,11}}})
+    g = f32[2,4,3] all-gather(a), replica_groups={{0,1}}, dimensions={1}
+  })",
+                                                       config));
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CreateExecutable(std::move(unoptimized_module),
+                                           /*run_hlo_passes=*/true));
+  TF_ASSERT_OK_AND_ASSIGN(const HloModule* module,
+                          test_runner().HloModuleFromWrapped(executable.get()));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+
+  EXPECT_THAT(root, GmockMatch(m::Fusion(m::AllGatherDone(
+                        m::AllGatherStart(m::Bitcast(m::Constant()))))));
+  EXPECT_THAT(root->fused_expression_root(),
+              GmockMatch(m::Transpose(m::Bitcast(m::Parameter()))));
+
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                          ExecuteReplicated(executable.get(), {{}, {}}));
+  ASSERT_EQ(results.size(), kNumReplicas);
+  Literal expected = LiteralUtil::CreateR3<float>(
       {{{0, 1, 2}, {3, 4, 5}, {0, 1, 2}, {3, 4, 5}},
        {{6, 7, 8}, {9, 10, 11}, {6, 7, 8}, {9, 10, 11}}});
   for (const Literal& result : results) {

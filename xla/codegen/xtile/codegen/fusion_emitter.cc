@@ -100,6 +100,7 @@ limitations under the License.
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
@@ -890,6 +891,75 @@ absl::StatusOr<TensorValue> EmitAllReduce(
   return mlir::cast<TensorValue>(all_reduce_op.getResult(0));
 }
 
+absl::StatusOr<TensorValue> EmitAllGather(
+    mlir::ImplicitLocOpBuilder& b, const HloComputation* computation,
+    const HloAllGatherInstruction& all_gather,
+    const TiledHloInstruction& tiled_hlo_gather,
+    absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
+  llvm::SmallVector<mlir::Value> operands;
+  operands.reserve(tiled_hlo_gather.operands().size());
+
+  for (const auto operand : tiled_hlo_gather.operands()) {
+    if (!values.contains(operand)) {
+      return Internal("Operand %s not found in the values map.",
+                      operand->ToString());
+    }
+    operands.push_back(values[operand]);
+  }
+
+  if (all_gather.device_list()->replica_groups().empty()) {
+    return Internal(
+        "Triton emitting AllGather without replica groups is not supported.");
+  }
+
+  llvm::SmallVector<int64_t> flattened_replica_group_ids;
+  for (const auto& replica_group : all_gather.replica_groups()) {
+    for (const auto& replica_id : replica_group.replica_ids()) {
+      flattened_replica_group_ids.push_back(replica_id);
+    }
+  }
+
+  std::optional<int64_t> channel_handle = all_gather.channel_id();
+  bool use_global_device_ids = all_gather.use_global_device_ids();
+  int64_t all_gather_dimension = all_gather.all_gather_dimension();
+
+  // AllGather-start returns a tuple (input, output), but we need the output
+  // shape (element 1)
+  const Shape& all_gather_output_shape =
+      all_gather.shape().IsTuple()
+          ? ShapeUtil::GetTupleElementShape(all_gather.shape(), 1)
+          : all_gather.shape();
+
+  TF_ASSIGN_OR_RETURN(auto output_element_type,
+                      xtile::PrimitiveTypeToMlirType(
+                          b, all_gather_output_shape.element_type()));
+
+  // Use the tiled output shape
+  llvm::SmallVector<int64_t> output_shape(tiled_hlo_gather.tile_sizes().begin(),
+                                          tiled_hlo_gather.tile_sizes().end());
+
+  auto output_type =
+      mlir::RankedTensorType::get(output_shape, output_element_type);
+
+  auto replica_groups_type = mlir::RankedTensorType::get(
+      {static_cast<int64_t>(all_gather.replica_groups().size()),
+       static_cast<int64_t>(all_gather.replica_groups()[0].replica_ids_size())},
+      b.getI64Type());
+  auto replica_groups_attr = mlir::DenseIntElementsAttr::get(
+      replica_groups_type, flattened_replica_group_ids);
+  auto channel_handle_attr =
+      channel_handle ? mlir::stablehlo::ChannelHandleAttr::get(b.getContext(),
+                                                               *channel_handle,
+                                                               /*type=*/0)
+                     : nullptr;
+
+  auto all_gather_op = mlir::stablehlo::AllGatherOp::create(
+      b, b.getLoc(), output_type, mlir::ValueRange(operands),
+      all_gather_dimension, replica_groups_attr, channel_handle_attr,
+      use_global_device_ids);
+  return mlir::cast<TensorValue>(all_gather_op.getResult(0));
+}
+
 absl::StatusOr<TensorValue> EmitTiledHloInstruction(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloInstruction& tiled_hlo, mlir::FunctionOpInterface fn,
@@ -993,6 +1063,29 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
     return values[tiled_hlo.operand(0)];
   }
 
+  if (hlo->opcode() == HloOpcode::kAllGatherStart) {
+    const HloComputation* computation =
+        fusion.fused_instructions_computation();
+    const HloInstruction* root_instruction = computation->root_instruction();
+
+    // Handle GetTupleElement wrapping
+    if (root_instruction->opcode() == HloOpcode::kGetTupleElement &&
+        root_instruction->operand(0)->opcode() == HloOpcode::kAllGatherStart) {
+      root_instruction = root_instruction->operand(0);
+    }
+    if (root_instruction->opcode() == HloOpcode::kAllGatherDone) {
+      root_instruction = root_instruction->operand(0);
+    }
+
+    return EmitAllGather(b, computation,
+                         *xla::Cast<HloAllGatherInstruction>(root_instruction),
+                         tiled_hlo, values);
+  }
+
+  if (hlo->opcode() == HloOpcode::kAllGatherDone) {
+    return values[tiled_hlo.operand(0)];
+  }
+
   if (hlo->IsElementwise()) {
     std::vector<Value> operands;
     operands.reserve(hlo->operands().size());
@@ -1030,6 +1123,11 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
   if (hlo->opcode() == HloOpcode::kDynamicSlice) {
     // Dynamic slice is implemented as a load and does not require any further
     // processing.
+    return values[tiled_hlo.operand(0)];
+  }
+
+  // GetTupleElement is a pass-through operation
+  if (hlo->opcode() == HloOpcode::kGetTupleElement) {
     return values[tiled_hlo.operand(0)];
   }
 

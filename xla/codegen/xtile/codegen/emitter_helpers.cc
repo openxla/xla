@@ -694,10 +694,14 @@ absl::StatusOr<TensorValue> EmitScope(
                hlo->opcode() == HloOpcode::kTranspose ||
                hlo->opcode() == HloOpcode::kSlice ||
                hlo->opcode() == HloOpcode::kReshape ||
-               hlo->opcode() == HloOpcode::kPad) {
+               hlo->opcode() == HloOpcode::kPad ||
+               hlo->opcode() == HloOpcode::kGetTupleElement ||
+               hlo->opcode() == HloOpcode::kAllGatherStart) {
       // All these are currently supported only as operations on indices
       // which are pushed to loads and stores. No operations on tiles are
       // performed here.
+      // For GetTupleElement and AllGatherStart, we pass through the operand
+      // value
       result = values[hlo->operand(0)];
     } else if (hlo->opcode() == HloOpcode::kFusion) {
       const auto* fusion_instruction = ::xla::Cast<HloFusionInstruction>(hlo);

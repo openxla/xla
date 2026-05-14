@@ -991,6 +991,21 @@ std::unique_ptr<HloModule> NewModuleWithFusion(
     });
   }
 
+  // For AllGather-start, extract the output element from the tuple.
+  // AllGather-start returns (input, output) tuple, but Triton backend
+  // cannot handle tuple results. We extract element 1 (the output).
+  Shape fusion_output_shape = instruction->shape();
+  if (instruction->opcode() == HloOpcode::kAllGatherStart &&
+      instruction->shape().IsTuple()) {
+    // Extract just the output element (index 1) from the tuple
+    HloInstruction* gte =
+        fusion_builder.AddInstruction(HloInstruction::CreateGetTupleElement(
+            ShapeUtil::GetTupleElementShape(instruction->shape(), 1),
+            fused_root, 1));
+    fused_root = gte;
+    fusion_output_shape = fused_root->shape();
+  }
+
   HloComputation* fused_computation =
       hlo_module->AddEmbeddedComputation(fusion_builder.Build(fused_root));
 
@@ -1000,7 +1015,7 @@ std::unique_ptr<HloModule> NewModuleWithFusion(
       build_parameter_instructions(entry_builder);
   HloInstruction* fusion_instruction =
       entry_builder.AddInstruction(HloInstruction::CreateFusion(
-          instruction->shape(), fusion_kind, entry_parameters,
+          fusion_output_shape, fusion_kind, entry_parameters,
           fused_computation,
           /*prefix=*/absl::StrCat(instruction->name(), "-")));
 
