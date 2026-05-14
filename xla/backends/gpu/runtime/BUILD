@@ -1738,7 +1738,7 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-    ]
+    ],
 )
 
 cc_library(
@@ -2663,13 +2663,11 @@ cc_library(
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/runtime:device_id",
-        "//xla/service:rendezvous",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:tied_ref",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
@@ -2731,7 +2729,6 @@ cc_library(
         "//xla/service:computation_placer",
         "//xla/service:rendezvous",
         "//xla/service:shaped_slice",
-        "//xla/service:xla_debug_info_manager",
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:command_buffer",

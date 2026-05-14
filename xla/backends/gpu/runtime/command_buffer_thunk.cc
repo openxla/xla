@@ -223,7 +223,6 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
       /*send_device_memory_function=*/nullptr,
       /*recv_device_memory_function=*/nullptr, params.ffi_execution_context,
       /*additional_compute_streams=*/{}, params.execution_scoped_state,
-      /*module_id=*/-1,
       /*mock_collectives=*/false);
 
   if (!cmd_buffer->warmup_done) {
