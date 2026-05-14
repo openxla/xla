@@ -105,7 +105,8 @@ absl::StatusOr<std::vector<RepeatedFlagModifier>> ParseRepeatedEnumModifiers(
 namespace {
 
 template <typename T>
-static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list, T value) {
+static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list,
+                                   T value) {
   for (auto it = list->begin(); it != list->end(); ++it) {
     if (*it == value) {
       return it;
@@ -290,6 +291,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_recognize_reduction_optimization_level(0);
 
   opts.set_xla_gpu_enable_dynamic_slice_fusion(false);
+  opts.set_xla_gpu_dynamic_slice_fusion_verify_offsets(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
   opts.set_xla_gpu_enable_shared_constants(true);
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
@@ -1944,6 +1946,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_enable_dynamic_slice_fusion(),
       "[Stable] Whether to enable address computation fusion to optimize "
       "dynamic-slice and dynamic-update-slice operations."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_dynamic_slice_fusion_verify_offsets",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_dynamic_slice_fusion_verify_offsets),
+      debug_options->xla_gpu_dynamic_slice_fusion_verify_offsets(),
+      "When true, DynamicSliceFusionV2Thunk verifies at runtime that "
+      "annotated DynamicSliceConfig offsets match actual XLA-computed "
+      "DS/DUS offsets. Adds D2H sync overhead — for debugging only."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_nccl_termination_timeout_seconds",
       int64_setter_for(
