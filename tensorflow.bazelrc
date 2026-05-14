@@ -687,6 +687,7 @@ common:tf_public_macos_cache_push --config=tf_public_macos_cache --remote_upload
 # seems it is this way because these flags are old and predate the distinction
 # between host and execution platform.
 common:cross_compile_base --config=clang_local
+common:cross_compile_base --incompatible_enable_cc_toolchain_resolution
 common:cross_compile_base --host_cpu=k8
 common:cross_compile_base --host_crosstool_top=//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
 common:cross_compile_base --extra_execution_platforms=//tools/toolchains/cross_compile/config:linux_x86_64
