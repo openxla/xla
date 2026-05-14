@@ -1901,6 +1901,7 @@ cc_library(
     srcs = ["all_gather_thunk.cc"],
     hdrs = ["all_gather_thunk.h"],
     deps = [
+        ":collective_kernel_thunk",
         ":collective_thunk",
         ":thunk",
         ":thunk_proto_cc",
@@ -1949,6 +1950,7 @@ cc_library(
     srcs = ["collective_kernel_thunk.cc"],
     hdrs = ["collective_kernel_thunk.h"],
     deps = [
+        ":all_gather",
         ":all_reduce",
         ":collective_kernel_api",
         ":collective_kernel_thunk_proto_cc",
@@ -3788,6 +3790,49 @@ xla_test(
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "all_gather",
+    srcs = ["all_gather.cc"],
+    hdrs = ["all_gather.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service/gpu:launch_dimensions",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/gpu:all_reduce_kernel",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+xla_cc_test(
+    name = "all_gather_build_info_test",
+    srcs = ["all_gather_build_info_test.cc"],
+    deps = [
+        ":all_gather",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/host:host_platform",
+        "//xla/tsl/lib/gtl:int_type",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_googletest//:gtest",
     ],
 )
 

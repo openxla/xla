@@ -1131,6 +1131,9 @@ message DebugOptions {
   // all-reduce operations.
   optional bool xla_gpu_unsupported_use_all_reduce_one_shot_kernel = 387;
 
+  // Internal testing flag to enable Triton backend for all-gather operations.
+  optional bool xla_gpu_unsupported_use_all_gather_triton_backend = 478;
+
   // Internal testing flag to enable one-shot kernel for single-host
   // ragged-all-to-all operations.
   optional bool xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel = 375;

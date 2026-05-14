@@ -365,6 +365,50 @@ CodegenDecision IsTritonSupportedAllReduce(
   return CodegenDecision::Allow();
 }
 
+CodegenDecision IsTritonSupportedAllGather(
+    const HloAllGatherInstruction& all_gather,
+    const se::GpuComputeCapability& gpu_version) {
+  // Check if the flag is enabled
+  bool flag_enabled = all_gather.GetModule()
+                          ->config()
+                          .debug_options()
+                          .xla_gpu_unsupported_use_all_gather_triton_backend();
+
+  VLOG(1) << "IsTritonSupportedAllGather called for: " << all_gather.name()
+          << ", flag_enabled=" << flag_enabled;
+
+  if (!flag_enabled) {
+    VLOG(1) << "AllGather Triton backend is DISABLED for: "
+            << all_gather.name();
+    return CodegenDecision::Forbid(
+        "Triton backend for all-gather is disabled. Enable with "
+        "--xla_gpu_unsupported_use_all_gather_triton_backend=true");
+  }
+
+  VLOG(1) << "AllGather Triton backend is ENABLED for: " << all_gather.name();
+  PrimitiveType element_type = all_gather.operand(0)->shape().element_type();
+  if (element_type == F8E4M3FN || element_type == F8E5M2 ||
+      element_type == S4) {
+    VLOG(1) << "AllGather rejected due to unsupported data type: "
+            << all_gather.shape().element_type();
+    return CodegenDecision::Forbid(
+        "S4, F8E4M3FN and F8E5M2 are not supported for all-gathers.");
+  }
+
+  // TODO(allgather-triton): Add additional validation checks similar to
+  // AllReduce
+  // - Check replica groups
+  // - Check gather dimension constraints
+  // - Check size thresholds
+
+  VLOG(1) << "AllGather Triton backend ALLOWED for: " << all_gather.name()
+          << " (but fusion wrapping may not happen - check thunk_emitter.cc)";
+
+  // Allow codegen to proceed - the actual "not implemented" error will be
+  // generated in collective_emitter.cc::RewriteAllGather()
+  return CodegenDecision::Allow();
+}
+
 bool IsInTritonNestedGemmFusion(const HloInstruction& hlo) {
   if (!hlo.parent()->IsFusionComputation()) {
     return false;
@@ -741,6 +785,12 @@ CodegenDecision IsTritonSupportedInstructionImpl(
     case HloOpcode::kAllReduceDone:
       return IsTritonSupportedAllReduce(
           *Cast<HloAllReduceInstruction>(instr.operand(0)), gpu_version);
+    case HloOpcode::kAllGatherStart:
+      return IsTritonSupportedAllGather(*Cast<HloAllGatherInstruction>(&instr),
+                                        gpu_version);
+    case HloOpcode::kAllGatherDone:
+      return IsTritonSupportedAllGather(
+          *Cast<HloAllGatherInstruction>(instr.operand(0)), gpu_version);
     default:
       // Not all instructions have a special handling.
       break;

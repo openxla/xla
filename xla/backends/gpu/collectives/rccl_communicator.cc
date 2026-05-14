@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/backends/gpu/collectives/rccl_communicator.h"
+#include "xla/backends/gpu/collectives/rccl_symmetric_memory.h"
 
 #include <atomic>
 #include <cstddef>
@@ -680,6 +681,11 @@ absl::Status RcclCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
     TF_RETURN_IF_ERROR(PollUntilDone());
   }
   return absl::OkStatus();
+}
+
+absl::StatusOr<std::unique_ptr<SymmetricMemory>>
+RcclCommunicator::CreateSymmetricMemory(se::DeviceAddressBase addr) {
+  return RcclSymmetricMemory::Create(comm_, addr);
 }
 
 std::string RcclCommunicator::ToString() const {

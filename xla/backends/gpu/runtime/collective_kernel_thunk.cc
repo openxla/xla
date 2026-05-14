@@ -36,6 +36,7 @@ limitations under the License.*/
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/runtime/all_gather.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
 #include "xla/backends/gpu/runtime/collective_kernel_api.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
@@ -155,25 +156,54 @@ absl::Status CopyCollectiveMetadataToDevice(
 absl::StatusOr<bool> CollectiveKernelThunk::IsSupported(
     const GpuCliqueKey& clique_key, se::StreamExecutor& executor,
     const CollectiveParams& collective_params) const {
-  absl::Status status = IsAllReduceKernelSupported(
-      collective_kernel_enabled_, executor.GetDeviceDescription(),
-      /*num_operands= */ buffers_.size(), reduction_kind_,
-      clique_key.num_local_participants(), buffers_[0].element_count,
-      collective_config_.operand_element_type[0], clique_key.is_local(),
-      is_multimem_enabled_, collective_config_.replica_groups);
-  if (absl::IsUnimplemented(status)) {
-    VLOG(3) << "Collective kernel not supported: " << status.message();
-    return false;
+  const bool is_all_gather =
+      (collective_op_kind_ == CollectiveOpKind::kAllGather);
+
+  if (!is_all_gather) {
+    absl::Status status = IsAllReduceKernelSupported(
+        collective_kernel_enabled_, executor.GetDeviceDescription(),
+        /*num_operands= */ buffers_.size(), reduction_kind_,
+        clique_key.num_local_participants(), buffers_[0].element_count,
+        collective_config_.operand_element_type[0], clique_key.is_local(),
+        is_multimem_enabled_, collective_config_.replica_groups);
+    if (absl::IsUnimplemented(status)) {
+      VLOG(3) << "Collective kernel not supported: " << status.message();
+      return false;
+    }
+    TF_RETURN_IF_ERROR(status);
+  } else {
+    absl::Status status = IsAllGatherKernelSupported(
+        collective_kernel_enabled_, executor.GetDeviceDescription(),
+        /*num_operands=*/buffers_.size(), clique_key.num_local_participants(),
+        buffers_[0].element_count, collective_config_.operand_element_type[0],
+        clique_key.is_local(), collective_config_.replica_groups);
+    if (absl::IsUnimplemented(status)) {
+      VLOG(3) << "Collective kernel not supported: " << status.message();
+      return false;
+    }
+    TF_RETURN_IF_ERROR(status);
   }
-  TF_RETURN_IF_ERROR(status);
+
   for (const GlobalDeviceId& device : clique_key.devices()) {
     TF_ASSIGN_OR_RETURN(const int peer_device_id,
                         GetLocalDeviceId(device, collective_params));
     if (!executor.CanEnablePeerAccessTo(peer_device_id)) {
       XLA_VLOG_DEVICE(3, executor.device_ordinal())
           << "Peer access is not supported with device " << peer_device_id;
+      VLOG(3) << "CollectiveKernelThunk::IsSupported: peer access not "
+                 "supported to device "
+              << peer_device_id;
       return false;
     }
+  }
+  // All-reduce has a built-in custom kernel (RunAllReduceKernel) that
+  // ExecuteOnStream can fall back to when no Triton kernel was emitted
+  // (i.e., kernel_name_ is empty and state->kernel == nullptr). All-gather
+  // has no such built-in fallback: reaching the kernel_name_-empty path in
+  // ExecuteOnStream would hit CHECK(kAllReduce) and crash. We therefore only
+  // return true for all-gather when a Triton kernel was actually emitted.
+  if (is_all_gather) {
+    return !kernel_name_.empty();
   }
   return true;
 }
@@ -210,18 +240,31 @@ absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
   absl::MutexLock lock(mutex_);
   if (!per_stream_memory_.contains(params.executor)) {
     // Allocate scratch buffers.
+    const bool is_all_gather =
+        (collective_op_kind_ == CollectiveOpKind::kAllGather);
     const AllReduceStrategy strategy =
         GetAllReduceStrategy(GetInputSizeBytes(), is_multimem_enabled_);
-    const LaunchDimensions launch_dimensions =
-        launch_dimensions_.value_or(AllReduceLaunchDimensions(
-            buffers_[0].element_count, clique_key.num_local_participants(),
-            strategy));
+    const LaunchDimensions launch_dimensions = launch_dimensions_.value_or(
+        is_all_gather
+            ? AllGatherLaunchDimensions(buffers_[0].element_count,
+                                        clique_key.num_local_participants())
+            : AllReduceLaunchDimensions(buffers_[0].element_count,
+                                        clique_key.num_local_participants(),
+                                        strategy));
     const int64_t kNumSignalFlags =
         clique_key.num_local_participants() * launch_dimensions.num_blocks();
     const int64_t kSignalBufferSize = xla::RoundUpTo<uint64_t>(
         kNumSignalFlags * sizeof(int32_t), kXlaAllocatedBufferAlignBytes);
+
+    // For AllGather, we need to allocate buffers based on the destination size
+    // (which is num_replicas * source_size), not the source size.
+    // For AllReduce, source and destination sizes are the same.
+    const int64_t buffer_size_to_allocate =
+        is_all_gather ? buffers_[0].destination_buffer.slice.size()
+                      : buffers_[0].source_buffer.slice.size();
+
     const int64_t kLocalBufferSize = xla::RoundUpTo<uint64_t>(
-        buffers_[0].source_buffer.slice.size(), kXlaAllocatedBufferAlignBytes);
+        buffer_size_to_allocate, kXlaAllocatedBufferAlignBytes);
     TF_ASSIGN_OR_RETURN(
         se::DeviceAddressHandle local_buffers_handle,
         AllocateMemory(params.executor, kLocalBufferSize * kNumBuffers,
@@ -397,12 +440,15 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
           tsl::safe_reinterpret_cast<char*>(dst_mmem) + dst_mmem_offset;
 
       XLA_VLOG_DEVICE(3, params.executor->device_ordinal())
-          << "Constructed device state {"
-          << " metadata rank: " << metadata.rank << ", param_to_peers: ("
+          << "Constructed device state {" << " metadata rank: " << metadata.rank
+          << ", param_to_peers: ("
           << absl::StrJoin(param_to_peers_ptrs, ", ", PtrFormatter{})
           << "), multimem_addresses: ("
           << absl::StrJoin(multimem_addresses, ", ", PtrFormatter{}) << ")}";
     } else {
+      // For both AllReduce and AllGather, we exchange 2 buffers via P2P:
+      // - Parameter 0: Data symmetric buffer (local_buffers)
+      // - Parameter 1: Signal/synchronization buffer (signal_buffers)
       std::vector<se::DeviceAddressBase> parameters{
           memory_state->local_buffers_handle.address(),
           memory_state->signal_buffers_handle.address()};
@@ -515,19 +561,23 @@ absl::Status CollectiveKernelThunk::ExecuteOnStream(
                                  launch_dimensions_.value(),
                                  /*cluster_dim=*/std::nullopt, stream);
   }
+  // TODO(b/407736956): Change this to emitted kernel.
+  CHECK(collective_op_kind_ == CollectiveOpKind::kAllReduce)
+      << "RunAllReduceKernel should only be called for AllReduce operations, "
+      << "not for AllGather. AllGather requires an emitted Triton kernel.";
+  TF_RET_CHECK(reduction_kind_.has_value())
+      << "reduction_kind_ must be set for AllReduce operations";
   const LaunchDimensions launch_dimensions =
       AllReduceLaunchDimensions(buffer.element_count, num_devices, strategy);
   XLA_VLOG_DEVICE(3, device_ordinal)
       << "CUDA kernel launch dimensions: " << launch_dimensions.num_blocks()
       << "x" << launch_dimensions.num_threads_per_block()
       << "(block x threadsPerBlock)";
-
-  // TODO(b/407736956): Change this to emitted kernel.
   return RunAllReduceKernel(
       /*stream=*/stream,
       /*launch_dimensions=*/launch_dimensions,
       /*element_type=*/element_type,
-      /*reduction_kind=*/reduction_kind_,
+      /*reduction_kind=*/*reduction_kind_,
       /*all_reduce_strategy=*/strategy,
       /*symmetric_input_buffer=*/input_buffer_ptr,
       /*local_input_buffer=*/source_buffer,
