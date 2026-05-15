@@ -296,6 +296,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
   opts.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(false);
   opts.set_xla_gpu_experimental_enable_nvshmem(false);
+  opts.set_xla_gpu_experimental_move_gemm_conv_autotuner(false);
   opts.set_xla_gpu_enable_nccl_comm_splitting(true);
   opts.set_xla_gpu_nccl_init_max_rank_per_root_ratio(0);
 
@@ -464,7 +465,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel(true);
   opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
   opts.set_xla_gpu_experimental_enable_fusion_autotuner(true);
-  opts.set_xla_gpu_experimental_autotune_post_fusion(false);
   opts.set_xla_gpu_experimental_max_unroll_factor(32);
   opts.set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_fix_max_iterations(false);
@@ -2967,6 +2967,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 "Memory mode for ragged-all-to-all: private, symmetric, peer. "
                 "In symmetric mode, the put/signal path is used. "
                 "See CollectivesMode for details."));
+  // TODO: b/482045400 - Remove double-copy approach once testing is complete.
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_ragged_all_to_all_zero_copy",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_ragged_all_to_all_zero_copy),
+      debug_options->xla_gpu_experimental_ragged_all_to_all_zero_copy(),
+      "If true, use the Symmetric Memory mode for "
+      "MultiGpuBarrierWithNcclKernel"));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_use_ragged_dot_grouped_gemm",
       bool_setter_for(
@@ -3064,12 +3072,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_enable_fusion_autotuner(),
       "Enable autotuning between the native & triton fusion emitters."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_autotune_post_fusion",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_experimental_autotune_post_fusion),
-      debug_options->xla_gpu_experimental_autotune_post_fusion(),
-      "All autotuning executes after fusion passes."));
-  flag_list->push_back(tsl::Flag(
       "xla_gpu_rocm_max_trace_events",
       int64_setter_for(&DebugOptions::set_xla_gpu_rocm_max_trace_events),
       debug_options->xla_gpu_rocm_max_trace_events(),
@@ -3150,6 +3152,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           debug_options->xla_gpu_command_buffer_update_mode()),
       "Controls the VA remapping update strategy for command buffer thunks. "
       "See CommandBufferUpdateMode for details."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_move_gemm_conv_autotuner",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_move_gemm_conv_autotuner),
+      debug_options->xla_gpu_experimental_move_gemm_conv_autotuner(),
+      "If true, move GEMM and Conv autotuning and post cleanup after fusiion "
+      "passes."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_cost_model_gemm_tiling_options",
       setter_for_xla_gpu_experimental_cost_model_gemm_tiling_options, "",

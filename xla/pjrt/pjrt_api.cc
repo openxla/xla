@@ -111,6 +111,7 @@ absl::StatusOr<const PJRT_Api*> LoadPjrtPlugin(absl::string_view device_type,
   PjrtApiInitFn init_fn;
   *reinterpret_cast<void**>(&init_fn) = dlsym(library, "GetPjrtApi");
   if (init_fn == nullptr) {
+    dlclose(library);
     return absl::NotFoundError(
         absl::StrCat("GetPjrtApi not found in ", library_path));
   }

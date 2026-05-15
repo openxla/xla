@@ -139,6 +139,7 @@ constexpr char kBackendConfig[] = "backend_config";
 constexpr char kCallTargetName[] = "call_target_name";
 constexpr char kCalledComputations[] = "called_computations";
 constexpr char kChannelId[] = "channel_id";
+constexpr char kControlDep[] = "control_dep";
 constexpr char kHasSideEffect[] = "has_side_effect";
 constexpr char kIsFallback[] = "is_fallback";
 constexpr char kRaggedAllToAll[] = "ragged_all_to_all";
@@ -2690,8 +2691,13 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
   }
 
   xla::XlaOp custom_call;
-  if (op.getCalledComputations().size() == 1 && op.getOperandLayouts() &&
-      op.getResultLayouts()) {
+  if (call_target_name == kControlDep) {
+    custom_call = xla::CustomCall(
+        ctx.builder, call_target_name, args, result_shape, backend_config,
+        op.getHasSideEffect(), output_operand_aliasing, literal_ptr,
+        custom_call_schedule, *xla_api_version);
+  } else if (op.getCalledComputations().size() == 1 && op.getOperandLayouts() &&
+             op.getResultLayouts()) {
     mlir::func::FuncOp callee = ctx.converter->LookUpSymbol(
         mlir::cast<FlatSymbolRefAttr>(op.getCalledComputations()[0]));
     if (failed(ctx.converter->RunOnFunction(callee))) {

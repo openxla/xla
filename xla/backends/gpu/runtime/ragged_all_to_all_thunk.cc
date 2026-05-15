@@ -20,6 +20,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -44,6 +45,8 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_kernel_api.h"
+#include "xla/backends/gpu/runtime/collective_memory.h"
+#include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.pb.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all.h"
@@ -124,6 +127,12 @@ RaggedAllToAllConfig GetRaggedAllToAllConfig(
     config.fast_interconnect_slice_size_override =
         fast_interconnect_slice_size_override;
   }
+
+  config.zero_copy_in_one_shot_kernel =
+      instr->GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_experimental_ragged_all_to_all_zero_copy();
   return config;
 }
 
@@ -400,9 +409,14 @@ absl::Status RaggedAllToAllThunk::Initialize(const InitializeParams& params) {
                        params.collective_cliques->Tie(
                            state->clique_key, std::move(symmetric_memory)));
     }
-    if (config_.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel) {
+    if (config_.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel &&
+        !zero_copy_in_one_shot_kernel()) {
+      // TODO: b/482045400 - Remove double-copy approach once testing is done
       ASSIGN_OR_RETURN(state->output_temporary_symmetric_memory,
                        params.scratch_memory->GetSymmetricMemory());
+      TF_RET_CHECK(state->output_temporary_symmetric_memory != nullptr)
+          << "Temporary symmetric memory is required for one-shot "
+             "ragged-all-to-all, but the scratch allocator returned nullptr.";
       XLA_VLOG_DEVICE(3, state->device_ordinal)
           << "Using temporary symmetric memory for output buffers: (addr="
           << state->output_temporary_symmetric_memory->addr().opaque()
@@ -472,7 +486,8 @@ RaggedAllToAllThunk::FromProto(
           thunk_proto.num_row_elements(), thunk_proto.one_shot_kernel_enabled(),
           thunk_proto.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel(),
           thunk_proto.collectives_mode(),
-          fast_interconnect_slice_size_override},
+          fast_interconnect_slice_size_override,
+          thunk_proto.zero_copy_in_one_shot_kernel()},
       std::move(buffers));
 }
 
@@ -498,6 +513,7 @@ absl::StatusOr<ThunkProto> RaggedAllToAllThunk::ToProto() const {
   thunk_proto->set_collectives_mode(collectives_mode());
   thunk_proto->set_fast_interconnect_slice_size_override(
       config_.fast_interconnect_slice_size_override.value_or(0));
+  thunk_proto->set_zero_copy_in_one_shot_kernel(zero_copy_in_one_shot_kernel());
 
   return proto;
 }
@@ -531,13 +547,34 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
 
   if (should_use_one_shot_kernel && state->lsa_size.has_value() &&
       state->lsa_size.value() == clique_key.num_devices()) {
+    SymmetricMemory* output_sym_mem = nullptr;
+    size_t output_sym_offset = 0;
+    bool is_zero_copy = zero_copy_in_one_shot_kernel();
+    if (is_zero_copy) {
+      const BufferAllocation::Slice& out_slice =
+          buffers()[1].destination_buffer.slice;
+      std::tie(output_sym_mem, output_sym_offset) =
+          params.collective_memory->FindSymmetricMemory(clique_key, out_slice);
+
+      if (output_sym_mem == nullptr) {
+        return Internal(
+            "Symmetric memory not found for destination buffer slice [%s] "
+            "in clique %v",
+            out_slice.ToString(), clique_key);
+      }
+    } else {
+      // TODO: b/482045400 - Remove double-copy approach once testing is done.
+      output_sym_mem = state->output_temporary_symmetric_memory.get();
+      TF_RET_CHECK(output_sym_mem != nullptr)
+          << "Output buffer ptr storage symmetric memory is not supported in "
+             "one-shot NCCL kernel.";
+    }
     return RunOneShotRaggedAllToAllWithNccl(
         clique_key, stream, state->rank,
         state->barrier_signal_symmetric_memory.Lock(),
-        state->barrier_signal_value->address(),
-        state->output_temporary_symmetric_memory, /*output_sym_offset=*/0,
-        config_.num_total_updates, config_.num_input_rows,
-        config_.num_row_elements, device_buffers);
+        state->barrier_signal_value->address(), output_sym_mem,
+        output_sym_offset, is_zero_copy, config_.num_total_updates,
+        config_.num_input_rows, config_.num_row_elements, device_buffers);
   }
 
   if (should_use_one_shot_kernel && peer_access_enabled &&
@@ -616,10 +653,19 @@ RendezvousResources(int device_ordinal, RankId rank,
 absl::Status RaggedAllToAllThunk::PrepareCollective(
     const PrepareParams& params, const GpuCliqueKey& clique_key) {
   if (config_.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel) {
-    // TODO(patrios): Calculate the size based on output buffer size.
-    constexpr int64_t kScratchMemorySize = 512 * 1024 * 1024;
-    params.scratch_memory_requests->RequestScratchMemory(clique_key,
-                                                         kScratchMemorySize);
+    if (zero_copy_in_one_shot_kernel()) {
+      // Request symmetric memory for the output buffer only.
+      auto& mem_requests = *params.collective_memory_requests;
+      const Buffer& output_buffer = buffers()[1];
+      RETURN_IF_ERROR(mem_requests.RequestSymmetricAllocationSlice(
+          clique_key, output_buffer.destination_buffer.slice));
+    } else {
+      // TODO: b/482045400 - Remove double-copy approach once testing is done.
+      // TODO(patrios): Calculate the size based on output buffer size.
+      constexpr int64_t kScratchMemorySize = 512 * 1024 * 1024;
+      params.scratch_memory_requests->RequestScratchMemory(clique_key,
+                                                           kScratchMemorySize);
+    }
   }
 
   if (use_symmetric_memory()) {
@@ -786,12 +832,9 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
     const GpuCliqueKey& clique_key, se::Stream& stream, RankId rank,
     std::shared_ptr<xla::SymmetricMemory> barrier_signal_symmetric_memory,
     const se::DeviceAddressBase& barrier_signal_value,
-    std::shared_ptr<xla::SymmetricMemory> output_temporary_symmetric_memory,
-    size_t output_sym_offset, int64_t num_total_updates, int64_t num_input_rows,
+    SymmetricMemory* output_sym_mem, size_t output_sym_offset,
+    bool is_zero_copy, int64_t num_total_updates, int64_t num_input_rows,
     int64_t num_row_elements, absl::Span<DeviceBufferPair const> buffers) {
-  TF_RET_CHECK(output_temporary_symmetric_memory != nullptr)
-      << "Output buffer ptr storage symmetric memory is not supported in "
-         "one-shot NCCL kernel.";
   int device_ordinal = stream.parent()->device_ordinal();
   const int64_t num_ranks = clique_key.num_devices();
 
@@ -808,24 +851,27 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
       << input_buffer.opaque() << ", size=" << input_buffer.size()
       << ") output buffer: (" << output_buffer.opaque()
       << ", size=" << output_buffer.size() << ")"
-      << " symmetric temporary output (handle="
-      << output_temporary_symmetric_memory
-      << ", address=" << output_temporary_symmetric_memory->addr().opaque()
-      << ", size=" << output_temporary_symmetric_memory->addr().size()
-      << ", sym_offset=" << output_sym_offset << ")"
+      << " output sym memory (handle=" << output_sym_mem
+      << ", address=" << output_sym_mem->addr().opaque()
+      << ", size=" << output_sym_mem->addr().size()
+      << ", sym_offset=" << output_sym_offset
+      << ", is_zero_copy=" << is_zero_copy << ")"
       << " barrier signal symmetric memory (handle="
       << barrier_signal_symmetric_memory.get()
       << ", address=" << barrier_signal_symmetric_memory->addr().opaque()
       << ", size=" << barrier_signal_symmetric_memory->addr().size() << ")";
 
-  // 0. Initialization Step
-  // Initialize the temporary symmetric memory with initial values from the
-  // actual output buffer. This ensures that any data not explicitly updated by
-  // incoming P2P writes from peers is preserved.
-  se::DeviceAddressBase output_temporary_symmetric_memory_addr =
-      output_temporary_symmetric_memory->addr();
-  TF_RETURN_IF_ERROR(stream.MemcpyD2D(&output_temporary_symmetric_memory_addr,
-                                      output_buffer, output_buffer.size()));
+  if (!is_zero_copy) {
+    // TODO: b/482045400 - Remove double-copy approach once testing is done.
+    // 0. Initialization Step
+    // Initialize the temporary symmetric memory with initial values from the
+    // actual output buffer. This ensures that any data not explicitly updated
+    // by incoming P2P writes from peers is preserved.
+    se::DeviceAddressBase output_temporary_symmetric_memory_addr =
+        output_sym_mem->addr();
+    TF_RETURN_IF_ERROR(stream.MemcpyD2D(&output_temporary_symmetric_memory_addr,
+                                        output_buffer, output_buffer.size()));
+  }
   // 1. Barrier (Pre-Kernel)
   // Global synchronization before P2P writes.
   // Ensures that all peers have reached this point and their output buffers
@@ -840,8 +886,7 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
   const int64_t num_updates_per_replica = num_total_updates / num_ranks;
 
   TF_RETURN_IF_ERROR(RunRaggedAllToAllWithSymmetricMemoryKernel(
-      &stream, element_type, input_buffer,
-      output_temporary_symmetric_memory.get(), output_sym_offset,
+      &stream, element_type, input_buffer, output_sym_mem, output_sym_offset,
       buffers[2].source_buffer, buffers[3].source_buffer,
       buffers[4].source_buffer, num_ranks, num_updates_per_replica,
       num_input_rows, num_row_elements));
@@ -855,9 +900,12 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
       &stream, num_ranks, rank, barrier_signal_symmetric_memory.get(),
       barrier_signal_value));
 
-  TF_RETURN_IF_ERROR(stream.MemcpyD2D(&output_buffer,
-                                      output_temporary_symmetric_memory_addr,
-                                      output_buffer.size()));
+  if (!is_zero_copy) {
+    // TODO: b/482045400 - Remove double-copy approach once testing is done.
+    // 4. Copy from temporary symmetric memory to actual output buffer.
+    TF_RETURN_IF_ERROR(stream.MemcpyD2D(&output_buffer, output_sym_mem->addr(),
+                                        output_buffer.size()));
+  }
 
   if (VLOG_IS_ON(6)) {
     TF_RETURN_IF_ERROR(stream.BlockHostUntilDone());

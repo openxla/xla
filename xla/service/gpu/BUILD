@@ -120,6 +120,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "//xla/service:buffer_value",
+        "//xla/service:collective_ops_utils",
         "//xla/service:gpu_topology",
         "//xla/service:hlo_value",
         "//xla/tsl/platform:status_macros",

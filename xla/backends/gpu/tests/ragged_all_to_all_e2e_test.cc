@@ -57,6 +57,8 @@ enum class RaggedAllToAllImplType {
   kDecomposer,
   kOneShotWithMultiGpuBarrier,
   kOneShotWithMultiGpuBarrierWithNccl,
+  // TODO: b/482045400 - Remove double-copy approach once testing is done.
+  kOneShotWithMultiGpuBarrierWithNcclZeroCopy,
 };
 
 class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
@@ -264,6 +266,17 @@ class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
       opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier(false);
       opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl(
           true);
+    }
+    // TODO: b/482045400 - Remove double-copy approach once testing is done.
+    if (impl_type_ == RaggedAllToAllImplType::
+                          kOneShotWithMultiGpuBarrierWithNcclZeroCopy &&
+        // Do not enable use_barrier_with_nccl on pre-Hopper architectures
+        Capability().cuda_compute_capability()->IsAtLeastHopper()) {
+      opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
+      opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier(false);
+      opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl(
+          true);
+      opts.set_xla_gpu_experimental_ragged_all_to_all_zero_copy(true);
     }
     return opts;
   }
@@ -1066,6 +1079,9 @@ std::string RaggedAllToAllImplTypeName(
       return "one_shot_with_multi_gpu_barrier";
     case RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNccl:
       return "one_shot_with_multi_gpu_barrier_with_nccl";
+    // TODO: b/482045400 - Remove double-copy approach once testing is done.
+    case RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNcclZeroCopy:
+      return "one_shot_with_multi_gpu_barrier_with_nccl_zero_copy";
     default:
       LOG(FATAL) << "Unknown ragged all-to-all implementation type.";
   }
@@ -1103,7 +1119,8 @@ BuildRaggedAllToAllTestParams() {
     for (RaggedAllToAllImplType impl_type :
          {RaggedAllToAllImplType::kDecomposer,
           RaggedAllToAllImplType::kOneShotWithMultiGpuBarrier,
-          RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNccl}) {
+          RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNccl,
+          RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNcclZeroCopy}) {
       params.emplace_back(enable_async, impl_type,
                           DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
     }

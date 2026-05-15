@@ -33,7 +33,6 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/log/vlog_is_on.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
@@ -70,7 +69,10 @@ limitations under the License.
 #include "xla/tsl/util/proto/proto_utils.h"
 #include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
+#include "tsl/platform/blocking_counter.h"
 #include "tsl/platform/fingerprint.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 
@@ -777,33 +779,34 @@ absl::StatusOr<Autotuner::ConfigResult> Autotuner::PickBestConfig(
     return absl::NotFoundError(message);
   }
 
-  // Optimize scratch bytes
-  const ConfigResult* fastest_result = best_result;
-  int64_t min_scratch_bytes = std::numeric_limits<int64_t>::max();
-  absl::Duration duration_limit =
-      min_duration +
-      absl::Microseconds(autotune_config_.scratch_bytes_window_size_us);
-  absl::Duration min_duration_with_optimzed_scratch_bytes =
-      absl::InfiniteDuration();
-  for (ConfigResult& result : results) {
-    if (!result.failure.has_value() && result.duration <= duration_limit) {
-      bool current_result_is_better =
-          result.scratch_bytes < min_scratch_bytes ||
-          (result.scratch_bytes == min_scratch_bytes &&
-           result.duration < min_duration_with_optimzed_scratch_bytes);
-      if (current_result_is_better) {
-        min_scratch_bytes = result.scratch_bytes;
-        min_duration_with_optimzed_scratch_bytes = result.duration;
-        best_result = &result;
+  if (autotune_config_.optimize_scratch_bytes) {
+    const ConfigResult* fastest_result = best_result;
+    int64_t min_scratch_bytes = std::numeric_limits<int64_t>::max();
+    absl::Duration duration_limit =
+        min_duration +
+        absl::Microseconds(autotune_config_.scratch_bytes_window_size_us);
+    absl::Duration min_duration_with_optimzed_scratch_bytes =
+        absl::InfiniteDuration();
+    for (ConfigResult& result : results) {
+      if (!result.failure.has_value() && result.duration <= duration_limit) {
+        bool current_result_is_better =
+            result.scratch_bytes < min_scratch_bytes ||
+            (result.scratch_bytes == min_scratch_bytes &&
+             result.duration < min_duration_with_optimzed_scratch_bytes);
+        if (current_result_is_better) {
+          min_scratch_bytes = result.scratch_bytes;
+          min_duration_with_optimzed_scratch_bytes = result.duration;
+          best_result = &result;
+        }
       }
     }
-  }
-  if (best_result != fastest_result) {
-    VLOG(2) << "Autotuner picked a slower config to save scratch memory. "
-            << "Fastest config: " << fastest_result->ToString() << ". "
-            << "Selected config: " << best_result->ToString() << ". "
-            << "Tolerance: " << autotune_config_.scratch_bytes_window_size_us
-            << "us.";
+    if (best_result != fastest_result) {
+      VLOG(2) << "Autotuner picked a slower config to save scratch memory. "
+              << "Fastest config: " << fastest_result->ToString() << ". "
+              << "Selected config: " << best_result->ToString() << ". "
+              << "Tolerance: " << autotune_config_.scratch_bytes_window_size_us
+              << "us.";
+    }
   }
 
   return std::move(*best_result);
@@ -992,6 +995,7 @@ std::string AutotuneConfig::ToString() const {
       "  \"check_buffers\": %s,\n"
       "  \"relative_tolerance\": %f,\n"
       "  \"crash_on_check_failure\": %s,\n"
+      "  \"optimize_scratch_bytes\": %s,\n"
       "  \"scratch_bytes_window_size_us\": %d,\n"
       "  \"expect_all_instructions_in_cache\": %s,\n"
       "  \"dump_logs_to\": \"%s\",\n"
@@ -1002,7 +1006,8 @@ std::string AutotuneConfig::ToString() const {
       "  \"allow_reg_spills\": %s\n"
       "}",
       check_buffers ? "true" : "false", relative_tolerance,
-      crash_on_check_failure ? "true" : "false", scratch_bytes_window_size_us,
+      crash_on_check_failure ? "true" : "false",
+      optimize_scratch_bytes ? "true" : "false", scratch_bytes_window_size_us,
       expect_all_instructions_in_cache ? "true" : "false", dump_logs_to,
       exclude_cublas_config ? "true" : "false",
       select_first_config ? "true" : "false",

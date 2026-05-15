@@ -155,6 +155,11 @@ limitations under the License.
 
 namespace xla {
 
+template <typename MemorySpaceKind>
+static bool IsMemorySpaceKind(const PjRtMemorySpace* memory_space) {
+  return memory_space->kind_id() == MemorySpaceKind::kKindId;
+}
+
 absl::Status RunCallbackOnStream(
     se::Stream* stream, AsyncWorkRunner* async_work_runner,
     absl::AnyInvocable<void() &&> callback,
@@ -1342,6 +1347,19 @@ absl::StatusOr<Layout> StreamExecutorGpuClient::GetDefaultLayout(
     return absl::FailedPreconditionError("GPU Topology is missing");
   }
   return topology_->GetDefaultLayout(element_type, dims);
+}
+
+absl::StatusOr<xla::Shape> StreamExecutorGpuClient::GetCopyDestinationShape(
+    const xla::Shape& shape, PjRtMemorySpace* src_memory_space,
+    PjRtMemorySpace* dst_memory_space) {
+  if (this != dst_memory_space->client() ||
+      IsMemorySpaceKind<UnpinnedHostMemorySpace>(src_memory_space) !=
+          IsMemorySpaceKind<UnpinnedHostMemorySpace>(dst_memory_space)) {
+    return CommonPjRtClient::GetCopyDestinationShape(shape, src_memory_space,
+                                                     dst_memory_space);
+  }
+  return MakeDefaultShapeForMemorySpace(
+      dst_memory_space, shape, shape.has_layout() ? &shape.layout() : nullptr);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>

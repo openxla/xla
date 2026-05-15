@@ -1,11 +1,27 @@
+diff --git a/utils/bazel/llvm-project-overlay/lld/BUILD.bazel b/utils/bazel/llvm-project-overlay/lld/BUILD.bazel
+index 959b9f94b027..a0f4806161f6 100644
+--- a/utils/bazel/llvm-project-overlay/lld/BUILD.bazel
++++ b/utils/bazel/llvm-project-overlay/lld/BUILD.bazel
+@@ -111,8 +111,6 @@ cc_library(
+         "//llvm:TargetParser",
+         "//llvm:TransformUtils",
+         "//llvm:config",
+-        "//third-party:zlib",
+-        "//third-party:zstd",
+     ],
+ )
+ 
 diff --git a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
-index 37e79db376b4..058788948f94 100644
+index 2f681c82c298..a095fd9a6657 100644
 --- a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
 +++ b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
-@@ -321,14 +321,6 @@ cc_library(
-         ":config",
+@@ -478,18 +478,10 @@ cc_library(
+         "include/llvm/Support/*.def",
+     ]),
+     deps = [
+-        ":config",
          ":Demangle",
-         "//third-party/siphash",
+-        "//third-party/siphash",
 -        # We unconditionally depend on the custom LLVM zlib wrapper. This will
 -        # be an empty library unless zlib is enabled, in which case it will
 -        # both provide the necessary dependencies and configuration defines.
@@ -14,18 +30,9 @@ index 37e79db376b4..058788948f94 100644
 -        # be an empty library unless zstd is enabled, in which case it will
 -        # both provide the necessary dependencies and configuration defines.
 -        "//third-party:zstd",
++        ":config",
+         "//libc:shared_math_headers",
++        "//third-party/siphash",
      ],
  )
  
-diff -u a/utils/bazel/llvm-project-overlay/lld/BUILD.bazel  b/utils/bazel/llvm-project-overlay/lld/BUILD.bazel
---- a/utils/bazel/llvm-project-overlay/lld/BUILD.bazel
-+++ b/utils/bazel/llvm-project-overlay/lld/BUILD.bazel
-@@ -111,8 +111,6 @@
-         "//llvm:TargetParser",
-         "//llvm:TransformUtils",
-         "//llvm:config",
--        "//third-party:zlib",
--        "//third-party:zstd",
-     ],
- )
-
