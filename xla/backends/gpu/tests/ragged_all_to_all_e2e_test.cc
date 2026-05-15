@@ -1120,7 +1120,8 @@ BuildRaggedAllToAllTestParams() {
          {RaggedAllToAllImplType::kDecomposer,
           RaggedAllToAllImplType::kOneShotWithMultiGpuBarrier,
           RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNccl,
-          RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNcclZeroCopy}) {
+          RaggedAllToAllImplType::
+              kOneShotWithMultiGpuBarrierWithNcclZeroCopy}) {
       params.emplace_back(enable_async, impl_type,
                           DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
     }

@@ -485,8 +485,7 @@ RaggedAllToAllThunk::FromProto(
           config, thunk_proto.num_total_updates(), thunk_proto.num_input_rows(),
           thunk_proto.num_row_elements(), thunk_proto.one_shot_kernel_enabled(),
           thunk_proto.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel(),
-          thunk_proto.collectives_mode(),
-          fast_interconnect_slice_size_override,
+          thunk_proto.collectives_mode(), fast_interconnect_slice_size_override,
           thunk_proto.zero_copy_in_one_shot_kernel()},
       std::move(buffers));
 }
