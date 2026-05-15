@@ -32,10 +32,9 @@ inline const stream_executor::dnn::VersionInfo
 // RaggedDotRewriter converts ragged dots to general dots through expansion.
 class RaggedDotRewriter : public HloModulePass {
  public:
-  explicit RaggedDotRewriter(
-      se::GpuComputeCapability gpu_compute_capability,
-      stream_executor::dnn::VersionInfo cudnn_version =
-          stream_executor::dnn::VersionInfo())
+  explicit RaggedDotRewriter(se::GpuComputeCapability gpu_compute_capability,
+                             stream_executor::dnn::VersionInfo cudnn_version =
+                                 stream_executor::dnn::VersionInfo())
       : gpu_compute_capability_(gpu_compute_capability),
         cudnn_version_(cudnn_version) {}
 

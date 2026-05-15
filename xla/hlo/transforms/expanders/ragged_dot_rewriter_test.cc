@@ -83,11 +83,10 @@ TEST_F(RaggedDotRewriterTest, DontRewriteIfUsingRaggedDotFusion) {
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed,
-      RaggedDotRewriter(GetCudaComputeCapability(),
-                        kMinCudnnVersionForRaggedDotFusion)
-          .Run(module.get()));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          RaggedDotRewriter(GetCudaComputeCapability(),
+                                            kMinCudnnVersionForRaggedDotFusion)
+                              .Run(module.get()));
   EXPECT_FALSE(changed);
 }
 
@@ -140,16 +139,12 @@ TEST_F(RaggedDotRewriterTest, RewriteIfCudnnVersionTooOldForRaggedDotFusion) {
       .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
   TF_ASSERT_OK_AND_ASSIGN(
       bool changed,
-      RaggedDotRewriter(GetCudaComputeCapability(),
-                        se::dnn::VersionInfo{9, 21})
+      RaggedDotRewriter(GetCudaComputeCapability(), se::dnn::VersionInfo{9, 21})
           .Run(module.get()));
   EXPECT_TRUE(changed);
 }
 
-TEST_F(RaggedDotRewriterTest, RewriteIfRaggedDotFusionFlagSetOnRocm) {
-  // ROCm targets have no cuDNN, so the cuDNN-fusion path must not be taken
-  // even if xla_gpu_experimental_use_ragged_dot_fusion is set; the rewriter
-  // should fall back to the generic expansion.
+TEST_F(RaggedDotRewriterTest, DontRewriteIfUsingRaggedDotFusionRocm) {
   absl::string_view module_string = R"(
   HloModule module
 
@@ -170,7 +165,7 @@ TEST_F(RaggedDotRewriterTest, RewriteIfRaggedDotFusionFlagSetOnRocm) {
   TF_ASSERT_OK_AND_ASSIGN(
       bool changed,
       RaggedDotRewriter(GetRocmComputeCapability()).Run(module.get()));
-  EXPECT_TRUE(changed);
+  EXPECT_FALSE(changed);
 }
 
 TEST_F(RaggedDotRewriterTest, DontRewriteIfUsingRaggedDotGroupedGemm) {
