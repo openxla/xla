@@ -1550,14 +1550,15 @@ void AssignValuesToRTVars(IndexingMap* indexing_map) {
 
 HloInstructionIndexing ComputeOutputToInputAllGatherOpIndexing(
     const HloAllGatherInstruction* instr, MLIRContext* mlir_context) {
-  // CHECK_EQ(instr->all_gather_dimension(), 0);
-  // if (instr->all_gather_dimension() != 0) {
-  //   return CreateUnknownIndexing(instr->operand_count());
-  // }
+  // For AllGather-start, the shape is a tuple (input, output)
+  // We need to use the output element (index 1) for indexing
+  const Shape& output_shape =
+      instr->shape().IsTuple()
+          ? ShapeUtil::GetTupleElementShape(instr->shape(), 1)
+          : instr->shape();
 
   int64_t all_gather_dim = instr->all_gather_dimension();
-
-  auto output_rank = instr->shape().dimensions().size();
+  auto output_rank = output_shape.dimensions().size();
 
   llvm::SmallVector<SymbolicExpr> exprs;
   exprs.reserve(output_rank);
@@ -1573,14 +1574,14 @@ HloInstructionIndexing ComputeOutputToInputAllGatherOpIndexing(
 
   IndexingMap indexing_map = IndexingMap::FromTensorSizes(
       SymbolicMap::Get(mlir_context, output_rank, 0, exprs),
-      instr->shape().dimensions(), {});
+      output_shape.dimensions(), {});
 
   SymbolicExpr replica_id_expr = CreateDimExpr(all_gather_dim, mlir_context)
                                      .floorDiv(all_gather_input_dim_size);
 
   IndexingMap replica_id_map = IndexingMap::FromTensorSizes(
       SymbolicMap::Get(mlir_context, output_rank, 0, {replica_id_expr}),
-      instr->shape().dimensions(), {});
+      output_shape.dimensions(), {});
 
   OperandIndexing operand_indexing(indexing_map, {}, replica_id_map);
 
@@ -1665,6 +1666,37 @@ HloInstructionIndexing ComputeOutputToInputIndexing(const HloInstruction* instr,
   }
   if (auto transpose = DynCast<HloTransposeInstruction>(instr)) {
     return ComputeOutputToInputTransposeOpIndexing(transpose, mlir_context);
+  }
+  // GetTupleElement extracts an element from a tuple operand.
+  // An identity mapping is only valid when the tuple operand's extracted
+  // element has the same shape as the GTE output. This is the case for
+  // AllGather fusion tiling where GTE acts as a pass-through.
+  if (instr->opcode() == HloOpcode::kGetTupleElement) {
+    auto* gte = Cast<HloGetTupleElementInstruction>(instr);
+    const HloInstruction* tuple_operand = gte->operand(0);
+    const Shape& tuple_shape = tuple_operand->shape();
+    const Shape& output_shape = gte->shape();
+
+    // Verify the operand is a tuple and the extracted element shape matches
+    if (tuple_shape.IsTuple() &&
+        gte->tuple_index() < tuple_shape.tuple_shapes_size()) {
+      const Shape& element_shape = tuple_shape.tuple_shapes(gte->tuple_index());
+
+      // Only use identity mapping if the extracted element shape matches
+      // the GTE output shape
+      if (ShapeUtil::Equal(output_shape, element_shape)) {
+        IndexingMap identity_map =
+            CreateIdentityMap(output_shape, mlir_context);
+        HloInstructionIndexing indexing;
+        indexing.indexing_maps.resize(instr->operand_count());
+        indexing.indexing_maps[0].insert(
+            OperandIndexing{identity_map, /*runtime_variables=*/{}});
+        return indexing;
+      }
+    }
+
+    // If shapes don't match or context is invalid, return unknown indexing
+    return CreateUnknownIndexing(instr->operand_count());
   }
   // go/keep-sorted end
   LOG(ERROR) << "ComputeOutputToInputIndexing is not implemented for opcode "
