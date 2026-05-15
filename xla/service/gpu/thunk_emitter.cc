@@ -1509,8 +1509,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDynamicSliceFusionV2(
   auto thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
 
-  bool verify_offsets = ir_emitter_context_->debug_options()
-                            .xla_gpu_dynamic_slice_fusion_verify_offsets();
+  bool verify_offsets =
+      ir_emitter_context_->debug_options()
+          .xla_gpu_experimental_dynamic_slice_fusion_verify_offsets();
 
   auto dsf_thunk = std::make_unique<DynamicSliceFusionV2Thunk>(
       thunk_info, std::move(parameters), std::move(results),

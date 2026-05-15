@@ -654,10 +654,6 @@ message DebugOptions {
   // dynamic-update-slice operations around library calls.
   optional bool xla_gpu_enable_dynamic_slice_fusion = 105;
 
-  // When true, DynamicSliceFusionV2Thunk verifies at runtime that annotated
-  // offsets match actual XLA-computed DS/DUS offsets. For debugging only.
-  optional bool xla_gpu_dynamic_slice_fusion_verify_offsets = 484;
-
   // When true we lower the Minimum and Maximum hlos in the GPU backend such
   // that Min(NotNaN, NaN) = Min(NaN, NotNaN) = NotNaN.  In other words, if flag
   // this is true we don't propagate NaNs through Min and Max.
@@ -812,6 +808,10 @@ message DebugOptions {
   // which contain the binary serialized `xla.gpu.GpuExecutableProto`, in the
   // `serialized_executable` field.
   optional bool xla_gpu_experimental_dump_gpu_executable = 427;
+
+  // When true, DynamicSliceFusionV2Thunk verifies at runtime that annotated
+  // offsets match actual XLA-computed DS/DUS offsets. For debugging only.
+  optional bool xla_gpu_experimental_dynamic_slice_fusion_verify_offsets = 484;
 
   // Enable windowed einsum(collective matmul) rewrite for all-to-all + gemm
   // This feature is still experimental and effective only

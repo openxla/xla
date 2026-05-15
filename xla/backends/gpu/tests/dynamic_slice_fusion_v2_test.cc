@@ -36,11 +36,7 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
-#if TENSORFLOW_USE_ROCM
-static constexpr char kPlatform[] = "ROCM";
-#else
-static constexpr char kPlatform[] = "CUDA";
-#endif
+static constexpr char kPlatform[] = "gpu";
 
 static absl::Status MemsetScale1(se::Stream* stream, ffi::AnyBuffer input,
                                  ffi::Result<ffi::BufferR1<F32>> result,
@@ -118,7 +114,8 @@ class DynamicSliceFusionV2Test : public HloPjRtGpuTestBase {
  protected:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloPjRtGpuTestBase::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_dynamic_slice_fusion_verify_offsets(true);
+    debug_options.set_xla_gpu_experimental_dynamic_slice_fusion_verify_offsets(
+        true);
     return debug_options;
   }
 };
