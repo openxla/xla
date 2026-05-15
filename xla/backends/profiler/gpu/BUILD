@@ -731,7 +731,6 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:stringpiece",
     ],
     alwayslink = 1,
@@ -811,7 +810,6 @@ xla_cc_test(
         ":cupti_utils",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:test",
     ],
 )
 
