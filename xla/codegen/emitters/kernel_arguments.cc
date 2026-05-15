@@ -190,6 +190,61 @@ absl::StatusOr<KernelArguments> KernelArguments::Create(
                                hlo_instruction, unmanaged_arguments);
 }
 
+// Special overload for AllGather with tuple unpacking
+absl::StatusOr<KernelArguments> KernelArguments::Create(
+    const BufferAssignment& buffer_assignment,
+    const BufferAlignment& buffer_alignment,
+    const HloInstruction* shape_instruction,
+    const HloInstruction* buffer_instruction, const ShapeIndex& output_index,
+    absl::Span<const Shape> unmanaged_arguments) {
+  std::vector<KernelArgument> kernel_arguments;
+
+  // Input arguments: use shape_instruction's operands for shapes,
+  // but buffer_instruction's operands for buffer lookups
+  for (int i = 0; i < shape_instruction->operand_count(); ++i) {
+    const HloInstruction* shape_operand = shape_instruction->operand(i);
+    const HloInstruction* buffer_operand = buffer_instruction->operand(i);
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
+                        buffer_assignment.GetUniqueSlice(buffer_operand, {}));
+    kernel_arguments.emplace_back(
+        KernelArgument(shape_operand->shape(), slice));
+  }
+
+  // Output arguments: use shape_instruction's shape,
+  // but look up buffer from buffer_instruction at output_index
+  absl::flat_hash_set<BufferAllocation::Slice> buffers_written;
+  TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
+      shape_instruction->shape(),
+      [&](const Shape& subshape, const ShapeIndex& index) {
+        if (!subshape.IsArray()) return absl::OkStatus();
+
+        // For output buffers, look them up from buffer_instruction at
+        // output_index
+        ShapeIndex buffer_index = output_index;
+        // Append the current index to output_index for nested shapes
+        for (int64_t i : index) {
+          buffer_index.push_back(i);
+        }
+
+        TF_ASSIGN_OR_RETURN(
+            BufferAllocation::Slice slice,
+            buffer_assignment.GetUniqueSlice(buffer_instruction, buffer_index));
+
+        kernel_arguments.emplace_back(KernelArgument(subshape, slice));
+        buffers_written.insert(slice);
+        return absl::OkStatus();
+      }));
+
+  // Add unmanaged arguments
+  for (const Shape& unmanaged_argument : unmanaged_arguments) {
+    kernel_arguments.emplace_back(unmanaged_argument);
+  }
+
+  FillKernelArgumentAttributes(kernel_arguments, buffer_alignment,
+                               buffers_written);
+  return KernelArguments(std::move(kernel_arguments));
+}
+
 absl::StatusOr<KernelArguments> KernelArguments::Create(
     const BufferAssignment& buffer_assignment,
     const BufferAlignment& buffer_alignment,
