@@ -50,9 +50,9 @@ def workspace():
 
     tf_http_archive(
         name = "rules_cc",
-        urls = tf_mirror_urls("https://github.com/bazelbuild/rules_cc/releases/download/0.2.0/rules_cc-0.2.0.tar.gz"),
-        strip_prefix = "rules_cc-0.2.0",
-        sha256 = "ae244f400218f4a12ee81658ff246c0be5cb02c5ca2de5519ed505a6795431e9",
+        urls = tf_mirror_urls("https://github.com/bazelbuild/rules_cc/releases/download/0.2.17/rules_cc-0.2.17.tar.gz"),
+        strip_prefix = "rules_cc-0.2.17",
+        sha256 = "283fa1cdaaf172337898749cf4b9b1ef5ea269da59540954e51fba0e7b8f277a",
         patch_file = [
             "@xla//third_party/py:rules_cc_protobuf.patch",
         ],
