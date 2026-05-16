@@ -11898,8 +11898,15 @@ ENTRY entry {
               AllOf(op::Convolution(lhs, rhs), op::Shape("f32[16,801,1,512]")));
 }
 
-// TODO(b/510244899): fix unnecessary copy instruction insertion for v3.
-TEST_P(SpmdPartitioningTest, NoReshardOnBroadcastDims) {
+TEST_P(SpmdPartitioningAllShardingTest, NoReshardOnBroadcastDims) {
+  if (GetParam() == ShardingFormatPicker::ShardingType::kNamed) {
+    GTEST_SKIP()
+        << "Skipping for V3/Named Sharding as the format picker generates "
+           "shardings that would be deduped and have size 1 axes removed "
+           "before the SPMD partitioner. Coverage for this optimisation in V3 "
+           "is explicitly provided by `NoReshardOnBroadcastDimsDedupedMeshes` "
+           "below.";
+  }
   absl::string_view hlo_string = R"(
 HloModule module
 
@@ -17984,6 +17991,47 @@ ENTRY entry {
   // (resharding across 'y').
   EXPECT_THAT(root,
               op::Copy(op::AllGather(op::CollectivePermute(op::Parameter(0)))));
+}
+
+TEST_F(SpmdPartitioningV3Test, NoReshardOnBroadcastDimsDedupedMeshes) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f32[2,3] parameter(0)
+  %param1 = f32[2,3,20] parameter(1)
+  %br0 = f32[20,2,20,3,20] broadcast(%param0), dimensions={1,3}, sharding={mesh['x'=2,'y'=2,'z'=2] [{'x'}, {}, {'y'}, {}, {'z'}]}
+  %br1 = f32[20,2,20,3,20] broadcast(%param1), dimensions={1,3,4}, sharding={mesh['x'=2,'y'=2,'z'=2] [{'x'}, {}, {'y'}, {}, {'z'}]}
+  %add = f32[20,2,20,3,20] add(%br0, %br1), sharding={mesh['x'=2,'y'=2,'z'=2] [{'x'}, {}, {'y'}, {}, {'z'}]}
+  %reshape = f32[10,4,10,6,20] reshape(%br0), sharding={mesh['x'=2,'y'=2,'z'=2] [{'x'}, {}, {'y'}, {}, {'z'}]}
+  %transpose = f32[2,3,20,20,20] transpose(%br0), dimensions={1,3,0,2,4}, sharding={mesh['x'=2,'y'=2,'z'=2] [{}, {}, {'x'}, {'y'}, {'z'}]}
+  %copy_add0 = f32[20,2,20,3,20] copy(%add), sharding={mesh['x'=2,'y'=2,'z'=2] [{'y'}, {}, {'x'}, {}, {'z'}]}
+  %copy_add1 = f32[20,2,20,3,20] copy(%add), sharding={mesh['x'=2,'y'=2,'z'=2] [{'z'}, {}, {'y'}, {}, {'x'}]}
+  %copy_reshape = f32[10,4,10,6,20] copy(%reshape), sharding={mesh['x'=2,'y'=2,'z'=2] [{'z'}, {}, {'y'}, {}, {'x'}]}
+  %copy_transpose = f32[2,3,20,20,20] copy(%transpose), sharding={mesh['x'=2,'y'=2,'z'=2] [{}, {}, {'z'}, {'y'}, {'x'}]}
+  ROOT %tuple = (f32[20,2,20,3,20], f32[20,2,20,3,20], f32[10,4,10,6,20], f32[2,3,20,20,20])
+    tuple(%copy_add0, %copy_add1, %copy_reshape, %copy_transpose),
+    sharding={{mesh['x'=2,'y'=2,'z'=2] [{'y'}, {}, {'x'}, {}, {'z'}]},{mesh['x'=2,'y'=2,'z'=2] [{'z'}, {}, {'y'}, {}, {'x'}]},{mesh['x'=2,'y'=2,'z'=2] [{'z'}, {}, {'y'}, {}, {'x'}]},{mesh['x'=2,'y'=2,'z'=2] [{}, {}, {'z'}, {'y'}, {'x'}]}}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/8));
+
+  const auto root = module->entry_computation()->root_instruction();
+
+  // Reshard on copy_add0 only happens on broadcast dims, can be skipped.
+  auto copy_add0 =
+      op::Copy(op::Copy(op::Add(op::Broadcast(_), op::Broadcast(_))));
+  // Reshard on copy_add1 also happens on non-broadcast dims.
+  auto copy_add1 = op::Copy(
+      op::CollectivePermute(op::Add(op::Broadcast(_), op::Broadcast(_))));
+  // Reshard on copy_reshape only happens on broadcast dims, can be skipped.
+  auto copy_reshape = op::Copy(op::Copy(op::Reshape(op::Broadcast(_))));
+  // Reshard on copy_transpose only happens on broadcast dims, can be skipped.
+  auto copy_transpose = op::Copy(op::Copy(op::Transpose(op::Broadcast(_))));
+
+  EXPECT_THAT(root,
+              op::Tuple(copy_add0, copy_add1, copy_reshape, copy_transpose));
 }
 
 }  // namespace
