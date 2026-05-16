@@ -46,9 +46,9 @@ bazel_dep(name = "rules_ml_toolchain")
 # echo "sha256-${HASH}"
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-Q0hIsz3GP1DLOZkXfIJe6/+D16XqPbt7E9TQsYsohak=",
-    strip_prefix = "rules_ml_toolchain-99052a9140b9c6ff0592bfa00199c5374389c6ee",
-    urls = ["https://github.com/cerisier/rules_ml_toolchain/archive/99052a9140b9c6ff0592bfa00199c5374389c6ee.tar.gz"],
+    integrity = "sha256-LUlZUd1lZRzU27Vxx7nnfS9Tksk0BEiCOXLGH7myKCU=",
+    strip_prefix = "rules_ml_toolchain-a5051ed3676e3956c098a6fa2f885132e8b72506",
+    urls = ["https://github.com/cerisier/rules_ml_toolchain/archive/a5051ed3676e3956c098a6fa2f885132e8b72506.tar.gz"],
 )
 
 # TODO: Upstream the patch?
