@@ -113,6 +113,7 @@ class SpmdPartitioningTest
     config.set_use_shardy_partitioner(true);
     config.mutable_debug_options().set_xla_enable_hlo_sharding_v3(
         GetParam() == ShardingFormatPicker::ShardingType::kNamed);
+    config.mutable_debug_options().set_xla_enable_rgv3_materialization(true);
     if (enable_enzyme_opt) {
       config.mutable_debug_options().set_xla_enable_enzyme_comms_opt(true);
     }
@@ -17249,8 +17250,8 @@ ENTRY entry {
   EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kAllReduce), nullptr);
 }
 
-// TODO(b/510247535): Fix replica group construction for trivial shardings.
-TEST_P(SpmdPartitioningTest, OriginalValueWithTrivialShardingAnnotation) {
+TEST_P(SpmdPartitioningAllShardingTest,
+       OriginalValueWithTrivialShardingAnnotation) {
   absl::string_view hlo_string = R"(
 HloModule module
 
@@ -17278,7 +17279,7 @@ ENTRY entry {
   auto iterator = recovery_computation->instructions().begin();
 
   const HloInstruction* param_instruction = *iterator++;
-  EXPECT_EQ(param_instruction->sharding().tile_assignment(),
+  EXPECT_EQ(param_instruction->sharding().device_assignment(),
             TileAssignment({8, 2, 1}));
 
   const HloInstruction* partition_id_instruction = *iterator++;
@@ -17339,7 +17340,7 @@ ENTRY entry {
 
   auto iterator = recovery_computation->instructions().begin();
   const HloInstruction* param_instruction = *iterator++;
-  EXPECT_EQ(param_instruction->sharding().tile_assignment(),
+  EXPECT_EQ(param_instruction->sharding().device_assignment(),
             TileAssignment({8, 2, 1}, {2, 4, 2}, {2, 1, 0}));
 
   const HloInstruction* partition_id_instruction = *iterator++;
