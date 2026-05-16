@@ -155,6 +155,14 @@ bool ShouldRewriteReductionFusion(
 absl::StatusOr<bool> ShouldTryRewriteFusion(
     const HloFusionInstruction* fusion,
     const se::DeviceDescription& device_description) {
+  if (fusion->IsMultiOutputFusion() &&
+      !fusion->GetModule()
+           ->config()
+           .debug_options()
+           .xla_gpu_unsupported_enable_triton_multi_output_fusion()) {
+    return false;
+  }
+
   if (fusion->GetModule()
           ->config()
           .debug_options()
