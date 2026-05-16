@@ -50,10 +50,10 @@ def workspace():
     # Details: https://github.com/cerisier/rules_ml_toolchain
     tf_http_archive(
         name = "rules_ml_toolchain",
-        sha256 = "01e088ee5bd6714f47be9f7c0069870d378e0468186762b5b5aa16575e1e57ec",
-        strip_prefix = "rules_ml_toolchain-0117c0ef4865f14fc65b8996c8af92108ae4dd86",
+        sha256 = "434848b33dc63f50cb3999177c825eebff83d7a5ea3dbb7b13d4d0b18b2885a9",
+        strip_prefix = "rules_ml_toolchain-99052a9140b9c6ff0592bfa00199c5374389c6ee",
         urls = tf_mirror_urls(
-            "https://github.com/cerisier/rules_ml_toolchain/archive/0117c0ef4865f14fc65b8996c8af92108ae4dd86.tar.gz",
+            "https://github.com/cerisier/rules_ml_toolchain/archive/99052a9140b9c6ff0592bfa00199c5374389c6ee.tar.gz",
         ),
     )
 
