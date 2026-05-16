@@ -2986,6 +2986,7 @@ cc_library(
         "//xla/runtime:device_id",
         "//xla/service:buffer_assignment",
         "//xla/service:computation_placer",
+        "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:stream",
         "//xla/tsl/platform:errors",
