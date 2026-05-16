@@ -39,6 +39,7 @@ limitations under the License.
 
 namespace xla {
 
+// Dummy source touch to verify ROCm SVD presubmit behavior on main.
 class SVDTest : public ClientLibraryTestRunnerMixin<
                     HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>> {
  protected:
