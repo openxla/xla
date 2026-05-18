@@ -683,6 +683,32 @@ absl::StatusOr<int64_t> GetConstantIntValue(mlir::Value value) {
       "Expected constant integer value for replica ID bound, but got: %v",
       value));
 }
+static bool IsPerfectTiling(mlir::MemRefType buffer_type,
+                            llvm::ArrayRef<int64_t> tile_sizes,
+                            llvm::ArrayRef<int64_t> strides) {
+  auto buffer_shape = buffer_type.getShape();
+  if (buffer_shape.size() != tile_sizes.size() ||
+      buffer_shape.size() != strides.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < buffer_shape.size(); ++i) {
+    if (mlir::ShapedType::isDynamic(buffer_shape[i])) {
+      return false;
+    }
+    int64_t stride = strides[i];
+    if (stride == 0) {
+      if (buffer_shape[i] < tile_sizes[i]) {
+        return false;
+      }
+    } else {
+      int64_t step = tile_sizes[i] * stride;
+      if (step == 0 || buffer_shape[i] % step != 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
 
 absl::StatusOr<TensorValue> EmitParameterExtract(mlir::ImplicitLocOpBuilder& b,
                                                  const TileInfo& tile_info,
@@ -716,9 +742,18 @@ absl::StatusOr<TensorValue> EmitParameterExtract(mlir::ImplicitLocOpBuilder& b,
     source_buffer = b.create<xtile::SelectBufferOp>(spatial_memref_type,
                                                     source_buffer, replica_id);
   }
+  mlir::MemRefType buffer_type =
+      mlir::cast<mlir::MemRefType>(source_buffer.getType());
+  bool is_perfect = IsPerfectTiling(buffer_type, tile_info.padded_tile_sizes(),
+                                    tile_info.tile_strides());
+  std::optional<bool> should_allocate = std::nullopt;
+  if (is_perfect) {
+    should_allocate = false;
+  }
+
   return xla::xtile::ExtractTileOp::create(
       b, tensor_type, source_buffer, tile_info.offsets(),
-      tile_info.padded_tile_sizes(), tile_info.tile_strides());
+      tile_info.padded_tile_sizes(), tile_info.tile_strides(), should_allocate);
 }
 
 absl::StatusOr<TensorValue> EmitScope(

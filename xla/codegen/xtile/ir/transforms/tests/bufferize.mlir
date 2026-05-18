@@ -141,9 +141,76 @@ func.func @extract_static(%source: memref<16xf32>) -> tensor<8xf32> {
   // CHECK: %[[SUBVIEW:.*]] = memref.subview %[[SOURCE]][0] [8] [1] : memref<16xf32> to memref<8xf32, strided<[1]>>
   // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<8xf32>
   // CHECK: memref.copy %[[SUBVIEW]], %[[ALLOC]] : memref<8xf32, strided<[1]>> to memref<8xf32>
-  // CHECK: %[[TILE:.*]] = bufferization.to_tensor %[[ALLOC]] : memref<8xf32> to tensor<8xf32>
+  // CHECK: %[[TILE:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable : memref<8xf32> to tensor<8xf32>
   // CHECK: return %[[TILE]]
   %c0 = arith.constant 0 : index
   %tile = xtile.extract %source[%c0][8][1] : memref<16xf32> -> tensor<8xf32>
   return %tile : tensor<8xf32>
 }
+
+// -----
+
+// xtile.extract with {should_allocate = false} promises the tile fits/aligned,
+// bypassing BOTH runtime boundary checks (scf.if) and layout fixup allocations
+// (no memref.alloc). The returned subview is wrapped in to_tensor directly.
+// CHECK-LABEL: @extract_aligned_dynamic_offset(
+// CHECK-SAME: %[[SOURCE:.*]]: memref<1024xf32>, %[[OFFSET:.*]]: index)
+func.func @extract_aligned_dynamic_offset(%source: memref<1024xf32>, %tile_id: index) -> tensor<16xf32> {
+  // CHECK-NOT: scf.if
+  // CHECK-NOT: memref.alloc
+  // CHECK: %[[SUBVIEW:.*]] = memref.subview %[[SOURCE]][%[[OFFSET]]] [16] [1] : memref<1024xf32> to memref<16xf32, strided<[1], offset: ?>>
+  // CHECK: %[[TILE:.*]] = bufferization.to_tensor %[[SUBVIEW]]
+  // CHECK: return %[[TILE]]
+  %tile = xtile.extract %source[%tile_id][16][1] : memref<1024xf32> -> tensor<16xf32> {should_allocate = false}
+  return %tile : tensor<16xf32>
+}
+
+// -----
+
+// xtile.insert with {should_allocate = false} promises offsets are in-range,
+// bypassing runtime boundary checks (no scf.if).
+// CHECK-LABEL: @insert_aligned_dynamic_offset(
+// CHECK-SAME: %[[SOURCE:.*]]: tensor<16xf32>,
+// CHECK-SAME: %[[DEST:.*]]: memref<1024xf32>,
+// CHECK-SAME: %[[OFFSET:.*]]: index)
+func.func @insert_aligned_dynamic_offset(%source: tensor<16xf32>, %destination: memref<1024xf32>, %tile_id: index) {
+  // CHECK-NOT: scf.if
+  // CHECK: %[[SUBVIEW:.*]] = memref.subview %[[DEST]][%[[OFFSET]]] [16] [1] : memref<1024xf32> to memref<16xf32, strided<[1], offset: ?>>
+  // CHECK: memref.copy {{.*}}, %[[SUBVIEW]]
+  xtile.insert %source into %destination[%tile_id][16][1] : tensor<16xf32> -> memref<1024xf32> {should_allocate = false}
+  return
+}
+
+// -----
+
+// CHECK-LABEL: @extract_aligned_static_zero_offset(
+// CHECK-SAME: %[[SOURCE:.*]]: memref<1024xf32>)
+func.func @extract_aligned_static_zero_offset(%source: memref<1024xf32>) -> tensor<16xf32> {
+  // CHECK-NOT: memref.alloc
+  // CHECK: %[[SUBVIEW:.*]] = memref.subview %[[SOURCE]][0] [16] [1] : memref<1024xf32> to memref<16xf32, strided<[1]>>
+  // CHECK: %[[CAST:.*]] = memref.cast %[[SUBVIEW]]
+  // CHECK: %[[TILE:.*]] = bufferization.to_tensor %[[CAST]]
+  // CHECK: return %[[TILE]]
+  %c0 = arith.constant 0 : index
+  %tile = xtile.extract %source[%c0][16][1] : memref<1024xf32> -> tensor<16xf32> {should_allocate = false}
+  return %tile : tensor<16xf32>
+}
+
+// -----
+
+module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<f32, dense<64> : vector<1xi64>>>} {
+  // CHECK-LABEL: @extract_aligned_static_zero_offset_unaligned(
+  // CHECK-SAME: %[[SOURCE:.*]]: memref<1024xf32>)
+  func.func @extract_aligned_static_zero_offset_unaligned(%source: memref<1024xf32>) -> tensor<8xf32> {
+    // CHECK: %[[SUBVIEW:.*]] = memref.subview %[[SOURCE]][0] [8] [1] : memref<1024xf32> to memref<8xf32, strided<[1]>>
+    // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<8xf32>
+    // CHECK: memref.copy %[[SUBVIEW]], %[[ALLOC]]
+    // CHECK: %[[TILE:.*]] = bufferization.to_tensor %[[ALLOC]]
+    // CHECK: return %[[TILE]]
+    %c0 = arith.constant 0 : index
+    %tile = xtile.extract %source[%c0][8][1] : memref<1024xf32> -> tensor<8xf32>
+    return %tile : tensor<8xf32>
+  }
+}
+
+
