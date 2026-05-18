@@ -43,27 +43,36 @@ class MxScaledDotExecutionTest : public HloPjRtGpuTestBase {
   // expected custom call target.
   void RunMxCorrectnessTest(absl::string_view hlo_string,
                             const ErrorSpec& error_spec) {
-    TF_ASSERT_OK_AND_ASSIGN(auto reference_module,
-                            ParseAndReturnUnverifiedModule(hlo_string));
-    reference_module->mutable_config()
-        .mutable_debug_options()
+    HloModuleConfig ref_config = GetModuleConfigForTest();
+    ref_config.mutable_debug_options()
         .set_xla_gpu_experimental_scaled_dot_with_triton(false);
-    reference_module->mutable_config()
-        .mutable_debug_options()
-        .set_xla_gpu_enable_triton_gemm(false);
+    ref_config.mutable_debug_options().set_xla_gpu_enable_triton_gemm(false);
+    TF_ASSERT_OK_AND_ASSIGN(auto ref_optimized,
+                            GetOptimizedModule(hlo_string, ref_config));
+    EXPECT_THAT(
+        RunFileCheck(ref_optimized->ToString(),
+                     R"(CHECK: {{__cublas\$lt\$matmul|__cublas\$gemm}})"),
+        absl_testing::IsOkAndHolds(true));
 
-    TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                            ParseAndReturnUnverifiedModule(hlo_string));
-    test_module->mutable_config()
-        .mutable_debug_options()
+    HloModuleConfig test_config = GetModuleConfigForTest();
+    test_config.mutable_debug_options()
         .set_xla_gpu_experimental_scaled_dot_with_triton(true);
-    test_module->mutable_config()
-        .mutable_debug_options()
-        .set_xla_gpu_enable_triton_gemm(true);
+    test_config.mutable_debug_options().set_xla_gpu_enable_triton_gemm(true);
+    TF_ASSERT_OK_AND_ASSIGN(auto test_optimized,
+                            GetOptimizedModule(hlo_string, test_config));
+    // The autotuner may pick any of the MX-aware ROCm backends:
+    //   __triton_nested_gemm_fusion -> Triton
+    //   __cublas$lt$matmul$mx       -> hipBLASLt
+    //   __cublas$lt$matmul          -> HIPBLASLT_FISSION (should never win)
+    EXPECT_THAT(
+        RunFileCheck(
+            test_optimized->ToString(),
+            R"(CHECK: {{__triton_nested_gemm_fusion|__cublas\$lt\$matmul\$mx}})"),
+        absl_testing::IsOkAndHolds(true));
 
-    EXPECT_TRUE(RunAndCompareTwoModules(std::move(test_module),
-                                        std::move(reference_module), error_spec,
-                                        /*run_hlo_passes=*/true));
+    EXPECT_TRUE(RunAndCompareTwoModules(std::move(test_optimized),
+                                        std::move(ref_optimized), error_spec,
+                                        /*run_hlo_passes=*/false));
   }
 };
 
