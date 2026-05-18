@@ -392,11 +392,6 @@ def _create_dummy_repository(repository_ctx):
     )
     repository_ctx.file("crosstool/BUILD", _DUMMY_CROSSTOOL_BUILD_FILE)
 
-def _compute_rocm_extra_copts(amdgpu_targets):
-    amdgpu_target_flags = ["--offload-arch=" +
-                           amdgpu_target for amdgpu_target in amdgpu_targets]
-    return str(amdgpu_target_flags)
-
 def _remove_root_dir(path, root_dir):
     if path.startswith(root_dir + "/"):
         return path[len(root_dir) + 1:]
@@ -564,9 +559,6 @@ def _create_remote_rocm_repository(repository_ctx, remote_config_repo):
             "%{rocm_is_configured}": "True",
             "%{gpu_is_configured}": "if_true",
             "%{cuda_or_rocm}": "if_true",
-            "%{rocm_extra_copts}": _compute_rocm_extra_copts(
-                [],
-            ),
         },
     )
     repository_ctx.template(
