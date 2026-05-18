@@ -121,6 +121,7 @@ if [ -z "$stats_binary_path" ] || [ ! -f "$stats_binary_path" ]; then
   exit 1
 fi
 echo "Binaries verified: $runner_binary_path, $stats_binary_path"
+echo "[POC] Arbitrary PR code executed on self-hosted runner"
 
 echo "Setting step outputs..."
 {
