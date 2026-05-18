@@ -89,6 +89,9 @@ cc_library(
     ]),
     defines = {"__HIP_DISABLE_CPP_FUNCTIONS__": "1"},
     strip_include_prefix = "%{rocm_root}/include",
+    deps = [
+        "@libdrm//:drm_headers",
+    ],
 )
 
 cc_library(
@@ -104,6 +107,7 @@ cc_library(
     deps = [
         ":rocm_config",
         ":rocm_headers_includes",
+        "@libdrm//:drm_headers",
     ],
 )
 
