@@ -104,6 +104,7 @@ cc_library(
     deps = [
         ":rocm_config",
         ":rocm_headers_includes",
+        "@libdrm//:drm_headers",
     ],
 )
 
