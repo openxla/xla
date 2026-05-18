@@ -47,13 +47,13 @@ def workspace():
     )
 
     # Toolchains for ML projects hermetic builds.
-    # Details: https://github.com/cerisier/rules_ml_toolchain
+    # Details: https://github.com/google-ml-infra/rules_ml_toolchain
     tf_http_archive(
         name = "rules_ml_toolchain",
-        sha256 = "9f753898b0e0f3c3a9c755ae83cf7f3b2ccbd1382f66bfce51fc9fdea7cbf144",
-        strip_prefix = "rules_ml_toolchain-4ba47e804136aadf76782844d0d142307435bd5e",
+        sha256 = "b2366eee53189e89168016ab8c90bd87bb3b38c94c244ba8d6b79114fd8aad1e",
+        strip_prefix = "rules_ml_toolchain-66753989f14f4a0e9a43b3facecffad96cd5a02c",
         urls = tf_mirror_urls(
-            "https://github.com/cerisier/rules_ml_toolchain/archive/4ba47e804136aadf76782844d0d142307435bd5e.tar.gz",
+            "https://github.com/google-ml-infra/rules_ml_toolchain/archive/66753989f14f4a0e9a43b3facecffad96cd5a02c.tar.gz",
         ),
     )
 
