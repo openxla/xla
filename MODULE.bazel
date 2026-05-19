@@ -48,6 +48,10 @@ archive_override(
     integrity = "sha256-C0L2k6YMYFDYfbHgoOrrhKs/VBkfzglNhjNPrtyAfaA=",
     strip_prefix = "rules_ml_toolchain-398d613aea7a4c294da49b79a6d6f3f8732bd84c",
     urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/398d613aea7a4c294da49b79a6d6f3f8732bd84c.tar.gz"],
+    patch_strip = 1,
+    patches = [
+        "//third_party/rules_ml_toolchain:hipcc_wrapper_bzlmod.patch",
+    ],
 )
 
 # TODO: Upstream the patch?
