@@ -51,6 +51,7 @@ archive_override(
     patch_strip = 1,
     patches = [
         "//third_party/rules_ml_toolchain:hipcc_wrapper_bzlmod.patch",
+        "//third_party/rules_ml_toolchain:sycl_bzlmod.patch",
     ],
 )
 

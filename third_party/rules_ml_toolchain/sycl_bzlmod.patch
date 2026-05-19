@@ -1,0 +1,11 @@
+--- a/gpu/sycl/BUILD
++++ b/gpu/sycl/BUILD
+@@ -14,7 +14,7 @@
+ 
+ alias(
+     name = "sycl_headers",
+-    actual = "@@oneapi//:headers",
++    actual = "@oneapi//:headers",
+     visibility = ["//visibility:public"],
+ )
+ 
