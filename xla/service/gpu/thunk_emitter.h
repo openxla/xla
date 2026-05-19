@@ -108,7 +108,7 @@ class ThunkEmitter {
       const HloCollectivePermuteInstruction* hlo);
 
   template <typename CollectiveThunkType, typename HloInstType>
-  absl::StatusOr<ThunkSequence> EmitCollectiveThunk(
+  AsyncThunkSequence EmitCollectiveThunk(
       Thunk::Kind kind, const HloInstruction* async_start,
       const HloInstType* inst, std::optional<bool> use_global_device_ids);
 
@@ -209,7 +209,7 @@ class ThunkEmitter {
   absl::StatusOr<ThunkSequence> EmitTriangularSolveCustomCall(
       const HloInstruction* hlo);
 
-  absl::StatusOr<ThunkSequence> EmitTritonCustomCall(
+  AsyncThunkSequence EmitTritonCustomCall(
       const HloCustomCallInstruction* instr);
 
   AsyncThunkSequence EmitWhile(const HloInstruction* instr);

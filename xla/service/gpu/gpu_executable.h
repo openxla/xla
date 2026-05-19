@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/logical_buffer.h"
+#include "xla/service/rendezvous.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
@@ -447,7 +448,7 @@ class GpuExecutable : public Executable {
   absl::node_hash_map<std::pair<stream_executor::StreamExecutor*, int>,
                       VaRanges>
       module_va_ranges_ ABSL_GUARDED_BY(va_ranges_mutex_);
-
+  RendezvousFlag post_init_rendezvous_flag_;
   GpuExecutable(const GpuExecutable&) = delete;
   GpuExecutable& operator=(const GpuExecutable&) = delete;
 

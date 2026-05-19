@@ -1432,8 +1432,8 @@ int64_t HloSharding::NumTiles(absl::Span<const int64_t> dims) const {
     return 1;
   }
   CHECK(!IsManual());
-  CHECK(!ReplicateOnLastTileDim() ||
-        !absl::c_linear_search(dims, num_dimensions() - 1));
+  CHECK(UseNamedShardingLeaf() || !HasPartialReplication() ||
+        !absl::c_linear_search(dims, SubgroupReplicationDim()));
   int64_t num_tiles = 1;
   for (int64_t d : dims) {
     CHECK(d < num_dimensions());

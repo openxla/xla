@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/analysis/indexing_test_utils.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -29,15 +30,12 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/Support/MathExtras.h"
-#include "mlir/AsmParser/AsmParser.h"
-#include "mlir/IR/AffineExpr.h"
-#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
@@ -45,13 +43,9 @@ limitations under the License.
 #include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/status_macros.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace {
-
-using ::mlir::AffineExpr;
-using ::mlir::AffineMap;
 
 std::string FormatDimsAndSyms(absl::Span<int64_t const> dims,
                               absl::Span<int64_t const> syms) {
@@ -139,6 +133,53 @@ HloInstructionIndexing IndexingTestBase::GetInputToOutputIndexing(
     indexing.indexing_maps[output_id] = operand_indexing_maps;
   }
   return indexing;
+}
+
+std::string GetMismatchReport(int lhs_index, int rhs_index,
+                              absl::string_view expected,
+                              absl::string_view actual) {
+  // Failsafe. Should never happen if only called when ApproximateMatch returns
+  // false.
+  if (lhs_index == expected.size() && rhs_index == actual.size()) {
+    return "Strings match (ignoring whitespace).";
+  }
+  std::string report =
+      absl::StrCat("\nMismatch found. Expected char at ", lhs_index,
+                   ", Actual char at ", rhs_index, "\n");
+
+  const auto append_context = [&](absl::string_view str, size_t mismatch_idx,
+                                  absl::string_view label) {
+    static constexpr size_t kContextWidth = 10;
+    const size_t start =
+        mismatch_idx > kContextWidth ? mismatch_idx - kContextWidth : 0;
+    const size_t end = std::min(str.length(), mismatch_idx + kContextWidth);
+    std::string line = absl::StrCat(label, ": ");
+    static constexpr absl::string_view kTruncated = "[truncated]";
+    static constexpr absl::string_view kEOF = "[EOF]";
+    if (start > 0) {
+      absl::StrAppend(&line, kTruncated);
+    }
+    absl::StrAppend(&line,
+                    absl::CEscape(str.substr(start, mismatch_idx - start)));
+    // Position of mismatch in the line.
+    size_t caret_pos = line.length();
+    // Content from mismatch onwards
+    if (mismatch_idx < str.length()) {
+      absl::StrAppend(
+          &line, absl::CEscape(str.substr(mismatch_idx, end - mismatch_idx)));
+    } else {
+      absl::StrAppend(&line, kEOF);
+    }
+    if (end < str.length()) {
+      absl::StrAppend(&line, kTruncated);
+    }
+    absl::StrAppend(&report, line, "\n");
+    std::string caret_line(caret_pos, ' ');
+    absl::StrAppend(&report, caret_line, "^\n");
+  };
+  append_context(expected, lhs_index, "Expected");
+  append_context(actual, rhs_index, "Actual  ");
+  return report;
 }
 
 std::pair<size_t, size_t> FindApproximateMismatch(absl::string_view lhs,

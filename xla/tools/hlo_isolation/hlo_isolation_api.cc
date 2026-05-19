@@ -59,6 +59,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 #include "tsl/platform/path.h"
 
 using ::xla::hlo_isolation::ModuleIsolationOptions;
@@ -82,17 +83,18 @@ absl::Status InitIsolatorOptions(ModuleIsolationOptions& options) {
     options.on_mismatch_fn = [](const HloModule& module,
                                 const Literal& /*test_output*/,
                                 const Literal& /*reference_output*/,
-                                const absl::Status& /*compare_status*/) {
+                                const absl::Status& compare_status) {
+      ADD_FAILURE() << compare_status.message();
+      LOG(ERROR) << compare_status.message();
       auto* env = tsl::Env::Default();
       std::string outdir;
       std::string filename;
       if (tsl::io::GetTestUndeclaredOutputsDir(&outdir)) {
         filename = tsl::io::JoinPath(
-            outdir, absl::StrCat("failed_module-", env->NowMicros(), "-",
-                                 module.name(), ".txt"));
+            outdir, absl::StrCat("failed-", module.name(), ".txt"));
       } else {
         filename = tsl::io::GetTempFilename(
-            absl::StrCat("failed_module-", module.name(), ".txt"));
+            absl::StrCat("failed-", module.name(), ".txt"));
       }
       CHECK_OK(tsl::WriteStringToFile(env, filename, module.ToString()));
       LOG(INFO) << "Wrote failed HLO module to " << filename;
@@ -143,8 +145,8 @@ void WriteLiteralToTempFile(const LiteralSlice& literal,
   std::string outdir;
   std::string prefix = absl::StrCat(module_name, "-", name);
   if (tsl::io::GetTestUndeclaredOutputsDir(&outdir)) {
-    std::string filename = tsl::io::JoinPath(
-        outdir, absl::StrCat("failed-", env->NowMicros(), "-", prefix));
+    std::string filename =
+        tsl::io::JoinPath(outdir, absl::StrCat("failed-", prefix));
     binary_filename = absl::StrCat(filename, ".pb");
     text_filename = absl::StrCat(filename, ".txt");
   } else {
@@ -156,6 +158,30 @@ void WriteLiteralToTempFile(const LiteralSlice& literal,
   CHECK_OK(tsl::WriteStringToFile(env, text_filename, literal.ToString()));
   LOG(INFO) << "Wrote Literal to " << prefix << " binary: " << binary_filename
             << " text: " << text_filename;
+}
+
+const absl::string_view kResultsFilename = "hlo_isolation_test_results.pbtxt";
+
+void WriteResults(const std::vector<HloIsolationTestResult>& pipeline_results) {
+  auto* env = tsl::Env::Default();
+  std::string outdir;
+  std::string filename;
+  if (tsl::io::GetTestUndeclaredOutputsDir(&outdir)) {
+    filename = tsl::io::JoinPath(outdir, kResultsFilename);
+  } else {
+    filename = tsl::io::GetTempFilename(std::string(kResultsFilename));
+  }
+  HloIsolationTestSummary results_proto;
+  for (const auto& res : pipeline_results) {
+    *results_proto.add_results() = res;
+  }
+  absl::Status status = tsl::WriteTextProto(env, filename, results_proto);
+  if (!status.ok()) {
+    LOG(ERROR) << "Failed to write results proto to " << filename << ": "
+               << status;
+  } else {
+    LOG(INFO) << "Wrote test results to " << filename;
+  }
 }
 
 absl::Status CompareOutputs(const HloModule& module, const Literal& test_output,
@@ -407,6 +433,7 @@ absl::StatusOr<std::vector<HloIsolationTestResult>> RunIsolationPipeline(
       skipped_result.set_state(State::SKIPPED);
       skipped_result.set_reason(skip_reason);
       pipeline_results.push_back(std::move(skipped_result));
+      WriteResults(pipeline_results);
       continue;
     }
 
@@ -430,9 +457,11 @@ absl::StatusOr<std::vector<HloIsolationTestResult>> RunIsolationPipeline(
       failed_result.set_state(State::FAILURE);
       failed_result.set_reason(result_or.status().message());
       pipeline_results.push_back(std::move(failed_result));
+      WriteResults(pipeline_results);
       continue;
     }
     pipeline_results.push_back(std::move(*result_or));
+    WriteResults(pipeline_results);
   }
 
   return pipeline_results;

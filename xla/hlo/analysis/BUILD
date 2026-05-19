@@ -686,6 +686,7 @@ cc_library(
     hdrs = ["indexing_test_utils.h"],
     deps = [
         ":indexing_analysis",
+        ":interval",
         ":symbolic_map",
         "//xla:status_macros",
         "//xla/hlo/ir:hlo",
@@ -701,10 +702,8 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_for_library",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:AsmParser",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform:errors",
     ],
 )
 

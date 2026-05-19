@@ -290,8 +290,7 @@ TEST_P(CollectiveEmitterParameterizedTest,
       TritonWrapperResult triton_kernel,
       triton_fusion->GenerateTritonKernelAndWrapper(
           *result->FusionInstr(), "test-all-reduce-start", device_info_,
-          result->target_triple, result->data_layout, &result->llvm_context,
-          &result->mlir_context));
+          result->target_triple, result->data_layout, &result->mlir_context));
 }
 
 INSTANTIATE_TEST_SUITE_P(

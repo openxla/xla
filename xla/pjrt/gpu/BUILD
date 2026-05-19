@@ -37,6 +37,7 @@ cc_library(
         "//xla/tsl/framework:bfc_allocator",
         "//xla/tsl/framework:device_id_impl",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:env_var",
         "@com_google_absl//absl/log",
@@ -204,6 +205,14 @@ cc_library(
     ]) + if_rocm([
         # keep sorted
         "@local_config_rocm//rocm:rocm_headers",
+    ]) + if_sycl([
+        # keep sorted
+        "//xla:debug_options_flags",
+        "//xla/service/gpu:gpu_compiler",
+        "//xla/service/gpu:gpu_constants",
+        "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu:stream_executor_util",
+        "@local_config_sycl//sycl:sycl_headers",
     ]),
 )
 
@@ -287,6 +296,7 @@ xla_test(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:subprocess",
         "//xla/tsl/util:command_line_flags",
@@ -399,6 +409,7 @@ xla_test(
         "//xla/pjrt/distributed:service",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/tsl/platform:status",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:subprocess",
         "//xla/tsl/util:command_line_flags",
@@ -435,7 +446,6 @@ xla_test(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
-        "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/ffi",
         "//xla/ffi:ffi_api",
         "//xla/hlo/builder:xla_computation",
@@ -455,6 +465,7 @@ xla_test(
         "//xla/service:platform_util",
         "//xla/tests:literal_test_util",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -717,6 +728,7 @@ xla_test(
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/service:compiler",
         "//xla/tests:literal_test_util",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/memory",
@@ -868,6 +880,7 @@ xla_test(
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:stream",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

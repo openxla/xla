@@ -228,11 +228,10 @@ GetLibTpuInitArguments() {
     args = absl::StrSplit(env, ' ');
   }
 
-  arg_ptrs.reserve(args.size() + 1);
+  arg_ptrs.reserve(args.size());
   for (int i = 0; i < args.size(); ++i) {
     arg_ptrs.push_back(args[i].data());
   }
-  arg_ptrs.push_back(nullptr);
 
   return {std::move(args), std::move(arg_ptrs)};
 }

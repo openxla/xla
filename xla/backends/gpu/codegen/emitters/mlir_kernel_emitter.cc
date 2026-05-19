@@ -378,7 +378,8 @@ absl::StatusOr<FusionEmissionResult> MlirKernelFusion::Emit(
                                   GetDefaultBufferAlignment(), &fusion));
   auto [future_entry, cached] = ir_emitter_context.kernel_cache().GetWithStatus(
       fusion.fused_instructions_computation(), args.args(),
-      /*discriminator=*/"", [&]() -> xla::Future<KernelReuseCache::Entry> {
+      /*discriminator=*/"MlirKernelFusion",
+      [&]() -> xla::Future<KernelReuseCache::Entry> {
         std::string kernel_name = ir_emitter_context.GetSanitizedUniqueName(
             std::string(fusion.name()));
         return EmitLlvmModule(fusion, kernel_name, ir_emitter_context)

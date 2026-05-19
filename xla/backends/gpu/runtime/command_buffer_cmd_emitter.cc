@@ -128,47 +128,6 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
                                    std::move(branch_cmds));
 }
 
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const AllToAllThunk& thunk) {
-  return std::make_unique<AllToAllCmd>(
-      thunk.config(), thunk.has_split_dimension(), thunk.buffers());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const AllGatherThunk& thunk) {
-  return std::make_unique<AllGatherCmd>(thunk.config(), thunk.buffers());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const CollectiveBroadcastThunk& thunk) {
-  return std::make_unique<CollectiveBroadcastCmd>(thunk.config(),
-                                                  thunk.buffers());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const CollectivePermuteThunk& thunk) {
-  return std::make_unique<CollectivePermuteCmd>(
-      thunk.config(), thunk.p2p_config(), thunk.buffers());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const RaggedAllToAllThunk& thunk) {
-  return std::make_unique<RaggedAllToAllCmd>(thunk.ragged_all_to_all_config(),
-                                             thunk.buffers());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const RecvThunk& thunk) {
-  return std::make_unique<RecvCmd>(thunk.config(), thunk.p2p_config(),
-                                   thunk.buffer());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const SendThunk& thunk) {
-  return std::make_unique<SendCmd>(thunk.config(), thunk.p2p_config(),
-                                   thunk.buffer());
-}
-
 //===----------------------------------------------------------------------===//
 static absl::StatusOr<std::unique_ptr<Command>> CopyMetadata(
     absl::StatusOr<std::unique_ptr<Command>> cmd, const Thunk& thunk) {
@@ -248,8 +207,11 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kMemzero:
       cmd_sequence.Append(static_cast<MemzeroThunk*>(&thunk));
       return absl::OkStatus();
+    // AllGatherThunk implements Command directly; append as borrowed pointer —
+    // the thunk outlives the command sequence.
     case Thunk::Kind::kAllGather:
-      return append(Convert<AllGatherThunk>(thunk));
+      cmd_sequence.Append(static_cast<AllGatherThunk*>(&thunk));
+      return absl::OkStatus();
     // AllReduceThunk implements Command directly; append as borrowed pointer —
     // the thunk outlives the command sequence.
     case Thunk::Kind::kAllReduce:
@@ -260,18 +222,30 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kReduceScatter:
       cmd_sequence.Append(static_cast<ReduceScatterThunk*>(&thunk));
       return absl::OkStatus();
+    // AllToAllThunk implements Command directly; append as borrowed pointer.
     case Thunk::Kind::kAllToAll:
-      return append(Convert<AllToAllThunk>(thunk));
+      cmd_sequence.Append(static_cast<AllToAllThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kCollectiveBroadcast:
-      return append(Convert<CollectiveBroadcastThunk>(thunk));
+      cmd_sequence.Append(static_cast<CollectiveBroadcastThunk*>(&thunk));
+      return absl::OkStatus();
+    // CollectivePermuteThunk implements Command directly; append as borrowed
+    // pointer — the thunk outlives the command sequence.
     case Thunk::Kind::kCollectivePermute:
-      return append(Convert<CollectivePermuteThunk>(thunk));
+      cmd_sequence.Append(static_cast<CollectivePermuteThunk*>(&thunk));
+      return absl::OkStatus();
+    // RaggedAllToAllThunk implements Command directly; append borrowed pointer.
     case Thunk::Kind::kRaggedAllToAll:
-      return append(Convert<RaggedAllToAllThunk>(thunk));
+      cmd_sequence.Append(static_cast<RaggedAllToAllThunk*>(&thunk));
+      return absl::OkStatus();
+    // RecvThunk implements Command directly; append borrowed pointer.
     case Thunk::Kind::kRecv:
-      return append(Convert<RecvThunk>(thunk));
+      cmd_sequence.Append(static_cast<RecvThunk*>(&thunk));
+      return absl::OkStatus();
+    // SendThunk implements Command directly; append borrowed pointer.
     case Thunk::Kind::kSend:
-      return append(Convert<SendThunk>(thunk));
+      cmd_sequence.Append(static_cast<SendThunk*>(&thunk));
+      return absl::OkStatus();
     // These thunks implement Command directly; append borrowed pointers.
     // Note: kCopy also borrows DeviceToDeviceCopyThunk (see case above).
     case Thunk::Kind::kMemset32BitValue:

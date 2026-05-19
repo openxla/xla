@@ -295,7 +295,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
   opts.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(false);
   opts.set_xla_gpu_experimental_enable_nvshmem(false);
-  opts.set_xla_gpu_experimental_move_gemm_conv_autotuner(false);
   opts.set_xla_gpu_enable_nccl_comm_splitting(true);
   opts.set_xla_gpu_nccl_init_max_rank_per_root_ratio(0);
 
@@ -464,6 +463,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel(true);
   opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
   opts.set_xla_gpu_experimental_enable_fusion_autotuner(true);
+  opts.set_xla_gpu_experimental_autotune_post_fusion(false);
   opts.set_xla_gpu_experimental_max_unroll_factor(32);
   opts.set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_fix_max_iterations(false);
@@ -487,6 +487,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_early_exit_with_layouts(false);
   opts.set_xla_gpu_experimental_all_fusions_with_triton(false);
   opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier(true);
+  opts.set_xla_gpu_ragged_all_to_all_mode(
+      DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
   opts.set_xla_gpu_experimental_use_ragged_dot_grouped_gemm(true);
   opts.set_xla_gpu_native_emitter_tune_unroll_factor_for_loops(false);
 
@@ -496,6 +498,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_keep_shardings_after_spmd(false);
   opts.set_xla_enable_hlo_sharding_v3(false);
+  opts.set_xla_enable_rgv3_materialization(true);
+  opts.set_xla_sdy_export_all_reduce_scatter(false);
   opts.set_xla_gpu_experimental_enable_checksum_tracing_on_thunks(false);
   opts.set_xla_gpu_experimental_enable_buffer_saver_on_thunks(false);
 
@@ -513,6 +517,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_command_buffer_update_mode(DebugOptions::ALWAYS_UPDATE);
 
   opts.set_xla_gpu_experimental_aot_compiled_thunks(true);
+  opts.set_xla_gpu_deviceless_cub_mode(DebugOptions::DEVICELESS_CUB_DISABLED);
   return opts;
 }
 
@@ -640,6 +645,17 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           return false;
         }
         debug_options->set_xla_gpu_shape_checks(shape_checks);
+        return true;
+      };
+
+  // Custom "sub-parser" lambda for xla_gpu_deviceless_cub_mode.
+  auto setter_for_xla_gpu_deviceless_cub_mode =
+      [debug_options](const std::string& value) {
+        DebugOptions::DevicelessCubMode mode;
+        if (!DebugOptions::DevicelessCubMode_Parse(value, &mode)) {
+          return false;
+        }
+        debug_options->set_xla_gpu_deviceless_cub_mode(mode);
         return true;
       };
 
@@ -2368,6 +2384,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_enable_cub_radix_sort(),
       "Enable radix sort using CUB for simple shapes"));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_deviceless_cub_mode", setter_for_xla_gpu_deviceless_cub_mode,
+      DebugOptions::DevicelessCubMode_Name(
+          debug_options->xla_gpu_deviceless_cub_mode()),
+      "Control CUB behavior during deviceless compilation. "
+      "Available options: DEVICELESS_CUB_DISABLED, "
+      "DEVICELESS_CUB_WITH_FALLBACK, DEVICELESS_CUB_NO_FALLBACK, "
+      "DEVICELESS_CUB_FORCE_ON_NO_FALLBACK."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_threshold_for_windowed_einsum_mib",
       int64_setter_for(
           &DebugOptions::set_xla_gpu_threshold_for_windowed_einsum_mib),
@@ -2955,6 +2979,22 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           ->xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl(),
       "If true, use the MultiGpuBarrierWithNcclKernel in one-shot "
       "RaggedAllToAll thunk."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_ragged_all_to_all_mode",
+                collectives_mode_setter_for(
+                    &DebugOptions::set_xla_gpu_ragged_all_to_all_mode),
+                std::string("private"),
+                "Memory mode for ragged-all-to-all: private, symmetric, peer. "
+                "In symmetric mode, the put/signal path is used. "
+                "See CollectivesMode for details."));
+  // TODO: b/482045400 - Remove double-copy approach once testing is complete.
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_ragged_all_to_all_zero_copy",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_ragged_all_to_all_zero_copy),
+      debug_options->xla_gpu_experimental_ragged_all_to_all_zero_copy(),
+      "If true, use the Symmetric Memory mode for "
+      "MultiGpuBarrierWithNcclKernel"));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_use_ragged_dot_grouped_gemm",
       bool_setter_for(
@@ -3011,6 +3051,20 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 "If true, use HloShardingV3 which is a mesh and axis based "
                 "sharding representation."));
   flag_list->push_back(tsl::Flag(
+      "xla_enable_rgv3_materialization",
+      bool_setter_for(&DebugOptions::set_xla_enable_rgv3_materialization),
+      debug_options->xla_enable_rgv3_materialization(),
+      "If true, opportunistically materialize MeshAxesReplicaGroupList "
+      "(RGV3) in SPMD partitioner. If false, fallback to legacy V1/V2 "
+      "representations."));
+  flag_list->push_back(tsl::Flag(
+      "xla_sdy_export_all_reduce_scatter",
+      bool_setter_for(&DebugOptions::set_xla_sdy_export_all_reduce_scatter),
+      debug_options->xla_sdy_export_all_reduce_scatter(),
+      "Whether to export all sdy.reduce_scatter operations as native StableHLO "
+      "collectives wrapped in manual computation blocks. If false (default), "
+      "only operations with unreduced axes are exported this way."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_checksum_tracing_on_thunks",
       bool_setter_for(
           &DebugOptions::
@@ -3044,6 +3098,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_experimental_enable_fusion_autotuner),
       debug_options->xla_gpu_experimental_enable_fusion_autotuner(),
       "Enable autotuning between the native & triton fusion emitters."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_autotune_post_fusion",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_autotune_post_fusion),
+      debug_options->xla_gpu_experimental_autotune_post_fusion(),
+      "All autotuning executes after fusion passes."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_rocm_max_trace_events",
       int64_setter_for(&DebugOptions::set_xla_gpu_rocm_max_trace_events),
@@ -3125,13 +3185,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           debug_options->xla_gpu_command_buffer_update_mode()),
       "Controls the VA remapping update strategy for command buffer thunks. "
       "See CommandBufferUpdateMode for details."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_move_gemm_conv_autotuner",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_experimental_move_gemm_conv_autotuner),
-      debug_options->xla_gpu_experimental_move_gemm_conv_autotuner(),
-      "If true, move GEMM and Conv autotuning and post cleanup after fusiion "
-      "passes."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_cost_model_gemm_tiling_options",
       setter_for_xla_gpu_experimental_cost_model_gemm_tiling_options, "",

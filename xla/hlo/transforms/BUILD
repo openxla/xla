@@ -725,3 +725,32 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "strip_memory_placement_annotations",
+    srcs = ["strip_memory_placement_annotations.cc"],
+    hdrs = ["strip_memory_placement_annotations.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//xla:status_macros",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+xla_cc_test(
+    name = "strip_memory_placement_annotations_test",
+    srcs = ["strip_memory_placement_annotations_test.cc"],
+    deps = [
+        ":strip_memory_placement_annotations",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:statusor",
+        "@com_google_googletest//:gtest",
+    ],
+)

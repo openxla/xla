@@ -3419,10 +3419,14 @@ bool PrioritizeContractingDimensionsPartitioning(
     ag_replication_dims.push_back(lhs_matching_iterations ? dim.rhs : dim.lhs);
   }
 
-  auto all_gather_subgroups =
-      GetPartitionGroupsForReplication(other_sharding, ag_replication_dims);
+  const bool enable_rgv3 = visitor->module()
+                               ->config()
+                               .debug_options()
+                               .xla_enable_rgv3_materialization();
+  auto all_gather_subgroups = GetPartitionGroupsForReplication(
+      other_sharding, ag_replication_dims, enable_rgv3);
   auto reduce_scatter_subgroups = GetPartitionGroupsForReplication(
-      outer_output_tmp_sharding, output_slice_dims);
+      outer_output_tmp_sharding, output_slice_dims, enable_rgv3);
   const double all_gather_time_in_ms = visitor->GetCommunicationTimeInMilliSec(
       all_gather_bytes, *all_gather_subgroups);
   const double reduce_scatter_time_in_ms =

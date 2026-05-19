@@ -610,7 +610,10 @@ class HloSharding {
 
   // Gets the tile assignment tensor.
   // REQUIRES: !IsReplicated() && !IsTuple()
-  const TileAssignment& tile_assignment() const { return tile_assignment_; }
+  const TileAssignment& tile_assignment() const {
+    CHECK(!IsTuple());
+    return tile_assignment_;
+  }
 
   // Returns the flattened list of devices used in the tile assignment.
   // REQUIRES: !IsReplicated() && !IsTuple()

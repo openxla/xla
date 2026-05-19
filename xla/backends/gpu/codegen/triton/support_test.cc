@@ -305,7 +305,7 @@ class SupportTest : public HloHardwareIndependentTestBase,
     auto run_triton_codegen = [&]() {
       return TritonWrapper("test_fn", ti.TritonFusion(), cc, dev_info,
                            block_level_parameters, target_triple_, data_layout_,
-                           llvm_ctx_, mlir_context_);
+                           mlir_context_);
     };
 
     auto is_supported = IsTritonSupportedInstruction(ti.Instruction(), cc);

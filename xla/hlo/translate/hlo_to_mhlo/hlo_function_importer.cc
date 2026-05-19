@@ -82,7 +82,6 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/protobuf_util.h"
 #include "xla/service/hlo.pb.h"
-#include "xla/service/spmd/shardy/utils.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
@@ -532,12 +531,10 @@ absl::StatusOr<FuncOp> HloFunctionImporter::ImportAsFunc(
     bool anyChanged = false;
     for (const auto& [ret_index, ret_sharding] :
          llvm::enumerate(ret_shardings)) {
-      if (!sdy::isSizeOfOne(function.getFunctionType().getResult(ret_index))) {
-        mlir::NamedAttrList attrs(funcResultAttrs[ret_index]);
-        attrs.set(xla::kMhloSharding, ConvertSharding(ret_sharding, builder_));
-        funcResultAttrs[ret_index] = attrs.getDictionary(function.getContext());
-        anyChanged = true;
-      }
+      mlir::NamedAttrList attrs(funcResultAttrs[ret_index]);
+      attrs.set(xla::kMhloSharding, ConvertSharding(ret_sharding, builder_));
+      funcResultAttrs[ret_index] = attrs.getDictionary(function.getContext());
+      anyChanged = true;
     }
     if (anyChanged) {
       function.setAllResultAttrs(funcResultAttrs);

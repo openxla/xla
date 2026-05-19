@@ -104,7 +104,7 @@ absl::Status CudaKernel::UpdateMaxDynamicSharedMemoryBytes(
     return absl::OkStatus();
   }
 
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (shared_memory_bytes <=
       max_dynamic_shared_memory_bytes_.load(std::memory_order_relaxed)) {
     return absl::OkStatus();

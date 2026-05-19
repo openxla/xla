@@ -1680,6 +1680,7 @@ cc_library(
         ":host_callback_registry",
         ":nvml_lock",
         ":tma_util",
+        "//xla:debug_options_flags",
         "//xla:util",
         "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/core/collectives",
@@ -1962,6 +1963,7 @@ cc_library(
         "//xla/stream_executor:stream_common",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "//xla/tsl/util:env_var",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:inlined_vector",
@@ -2013,6 +2015,8 @@ xla_test(
     name = "cuda_stream_error_test",
     srcs = ["cuda_stream_error_test.cc"],
     backends = ["gpu"],
+    # TODO(b/512853069): Remove when fixed.
+    env = {"XLA_CUDA_HOST_CALLBACK_SPINWAIT": "1"},
     # Stream error tests poison the entire process, so we need to run them in a separate
     # process.
     shard_count = 2,

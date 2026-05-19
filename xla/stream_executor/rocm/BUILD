@@ -1334,6 +1334,7 @@ rocm_library(
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",
+        "nofixdeps",
         "rocm-only",
     ],
     deps = [
@@ -1343,7 +1344,6 @@ rocm_library(
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/gpu:multi_gpu_barrier_kernel",
         "@com_google_absl//absl/base",
-        "@local_config_rocm//rocm:rocm_headers",
     ],
     alwayslink = 1,
 )

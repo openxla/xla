@@ -1791,9 +1791,10 @@ PartitionedHlo PartitionedHlo::ReshardWithAllToAll(
   VLOG(5) << "Target ata shape: " << reshape->shape().ToString();
 
   HloInstruction* all_to_all = nullptr;
+  const bool enable_rgv3 = this->enable_rgv3();
   std::unique_ptr<CollectiveDeviceListBase> groups =
       GetPartitionGroupsAcrossTargetDims(temp_target, {target_dim},
-                                         {group_size});
+                                         {group_size}, enable_rgv3);
   all_to_all = state_.collective_ops_creator.create_all_to_all(
       state_.b, {reshape}, *groups, (*state_.next_channel_id)++, target_dim);
   CHECK_NE(all_to_all, nullptr);
@@ -1962,9 +1963,10 @@ PartitionedHlo PartitionedHlo::TryMultipleSourceTargetDims(
       sharding(), eligible_source_dims, eligible_target_dims);
 
   HloInstruction* all_to_all = nullptr;
+  const bool enable_rgv3 = this->enable_rgv3();
   std::unique_ptr<CollectiveDeviceListBase> groups =
       GetPartitionGroupsAcrossTargetDims(temp_target, eligible_target_dims,
-                                         group_sizes);
+                                         group_sizes, enable_rgv3);
   all_to_all = state_.collective_ops_creator.create_all_to_all(
       state_.b, {reshape_1}, *groups, (*state_.next_channel_id)++, 0);
 
@@ -4961,7 +4963,7 @@ absl::Status SpmdPartitioningVisitor::HandleReduce(HloInstruction* hlo) {
           return inputs[0].sharding().dimension(i) > 1;
         });
     if (reduce_sharded_dimension) {
-      if (inputs[0].sharding().ReplicateOnLastTileDim()) {
+      if (inputs[0].sharding().HasPartialReplication()) {
         preserved_dims.push_back(inputs[0].base_shape().dimensions().size());
       }
       if (local_reduce->shape().IsArray()) {
@@ -5999,6 +6001,7 @@ SpmdPartitioner::AllGatherShardsInternal(
     return {operand, nullptr};
   }
   CHECK(!sharding.IsReplicatedOrSingleDevice());
+  const bool enable_rgv3 = this->enable_rgv3();
   if (per_dim_ag || selected_dims.size() == 1) {
     HloInstruction* result = operand;
     Shape result_shape = operand->shape();
@@ -6007,7 +6010,7 @@ SpmdPartitioner::AllGatherShardsInternal(
         continue;
       }
       std::unique_ptr<CollectiveDeviceListBase> partition_group_list =
-          GetPartitionGroupsForReplication(sharding, {*it});
+          GetPartitionGroupsForReplication(sharding, {*it}, enable_rgv3);
       result_shape.set_dimensions(
           *it, result_shape.dimensions(*it) *
                    partition_group_list->num_devices_per_group());
@@ -6030,7 +6033,7 @@ SpmdPartitioner::AllGatherShardsInternal(
   HloInstruction* result = reshape;
 
   std::unique_ptr<CollectiveDeviceListBase> partition_group_list =
-      GetPartitionGroupsForReplication(sharding, selected_dims);
+      GetPartitionGroupsForReplication(sharding, selected_dims, enable_rgv3);
   shape[0] *= partition_group_list->num_devices_per_group();
   result = collectives_creator.create_all_gather(
       b, result, ShapeUtil::MakeShape(operand->shape().element_type(), shape),
@@ -6108,8 +6111,9 @@ HloInstruction* SpmdPartitioner::AllReduceAlongShardingDimsInternal(
     return operand;
   }
 
+  const bool enable_rgv3 = this->enable_rgv3();
   std::unique_ptr<CollectiveDeviceListBase> partition_group_list =
-      GetPartitionGroupsForReplication(sharding, selected_dims);
+      GetPartitionGroupsForReplication(sharding, selected_dims, enable_rgv3);
   if (!per_dim_ar) {
     return collectives_creator.create_all_reduce(
         b, operand, reduction, *partition_group_list, (*next_channel_id)++);
@@ -6121,7 +6125,7 @@ HloInstruction* SpmdPartitioner::AllReduceAlongShardingDimsInternal(
       continue;
     }
     std::unique_ptr<CollectiveDeviceListBase> partition_group_list =
-        GetPartitionGroupsForReplication(sharding, {*it});
+        GetPartitionGroupsForReplication(sharding, {*it}, enable_rgv3);
     result = collectives_creator.create_all_reduce(
         b, result, reduction, *partition_group_list, (*next_channel_id)++);
   }
@@ -6219,6 +6223,8 @@ int64_t SpmdPartitioner::CommunicationCostInBytes(HloInstruction* hlo) {
 absl::StatusOr<bool> SpmdPartitioner::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  enable_rgv3_ =
+      module->config().debug_options().xla_enable_rgv3_materialization();
   set_execution_threads(execution_threads);
   TF_RETURN_IF_ERROR(PreprocessSharding(module, execution_threads));
   TF_ASSIGN_OR_RETURN(bool changed,

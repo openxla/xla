@@ -155,6 +155,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/tree_reduction_rewriter.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/zero_sized_hlo_elimination.h"
+#include "xla/hlo/transforms/strip_memory_placement_annotations.h"
 #include "xla/hlo/transforms/while_loop_trip_count_annotator.h"
 #include "xla/literal_pool.h"
 #include "xla/map_util.h"
@@ -171,6 +172,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/conditional_simplifier.h"
 #include "xla/service/conditional_to_select.h"
+#include "xla/service/control_dep_rewriter.h"
 #include "xla/service/copy_insertion.h"
 #include "xla/service/cpu/conv_canonicalization.h"
 #include "xla/service/cpu/cpu_aot_compilation_result.h"
@@ -603,6 +605,13 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   async_collective_pipeline.AddPass<AsyncCollectiveReplacer>(acr_config);
   TF_RETURN_IF_ERROR(async_collective_pipeline.Run(module).status());
 
+  // Strip memory placement annotations early before SPMD partitioner runs.
+  {
+    HloPassPipeline pre_spmd_pipeline("pre-spmd-partitioner");
+    pre_spmd_pipeline.AddPass<StripMemoryPlacementAnnotations>();
+    TF_RETURN_IF_ERROR(pre_spmd_pipeline.Run(module).status());
+  }
+
   if (num_partitions > 1) {
     if (!module->config().use_spmd_partitioning()) {
       return InvalidArgument(
@@ -627,6 +636,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     }
     spmd_pipeline.AddPass<spmd::StatefulRngSpmdPartitioner>(
         num_partitions, module->config().replica_count());
+    spmd_pipeline.AddPass<ControlDepRewriter>();
     if (module->config().debug_options().xla_enable_enzyme_comms_opt()) {
       spmd_pipeline.AddPass<RecognizeReduceWindow>();
       spmd_pipeline.AddPass<CollectivePermuteCSE>();
@@ -658,6 +668,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
       sharding_removal_pipeline.AddPass<sdy::ShardyXLA>(
           /*runSdyShardingPropagation=*/false);
     }
+    sharding_removal_pipeline.AddPass<ControlDepRewriter>();
     sharding_removal_pipeline.AddPass<HloDCE>();
     TF_RETURN_IF_ERROR(sharding_removal_pipeline.Run(module).status());
   }

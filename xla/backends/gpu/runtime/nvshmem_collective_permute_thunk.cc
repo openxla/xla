@@ -236,16 +236,15 @@ absl::Status RunCollectivePermute(P2PConfig::SourceTargetMapEntry source_target,
           RankId(*target_id), GpuCollectives::On(stream));
       TF_RETURN_IF_ERROR(send_future.Await());
     }
+  }
+  if (source_id) {
+    // NVSHMEM put/get API is one-way communication - the sender initiates the
+    // transfer and the receiver doesn't need to explicitly receive. We use a
+    // barrier here to ensure all puts have completed before proceeding.
+    VLOG(1) << "CollectivePermute: rank " << device_ordinal
+            << " receiving data from source " << *source_id;
 
-    if (source_id) {
-      // NVSHMEM put/get API is one-way communication - the sender initiates the
-      // transfer and the receiver doesn't need to explicitly receive. We use a
-      // barrier here to ensure all puts have completed before proceeding.
-      VLOG(1) << "CollectivePermute: rank " << device_ordinal
-              << " receiving data from source " << *source_id;
-
-      TF_RETURN_IF_ERROR(nvshmem_comm->Barrier(GpuCollectives::On(stream)));
-    }
+    TF_RETURN_IF_ERROR(nvshmem_comm->Barrier(GpuCollectives::On(stream)));
   }
 
   if (!source_id) {

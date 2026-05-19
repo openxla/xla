@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/codegen/tiling/experimental/tile_propagation.h"
 
-#include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -28,8 +26,6 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
-#include "absl/strings/escaping.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
@@ -53,55 +49,6 @@ namespace {
 using ::absl_testing::StatusIs;
 using ::llvm::SmallVector;
 using ::mlir::MLIRContext;
-
-// Generates a human readable report of the first mismatch between two strings.
-// Intended to be used only when ApproximateMatch returns false.
-std::string GetMismatchReport(int lhs_index, int rhs_index,
-                              absl::string_view expected,
-                              absl::string_view actual) {
-  // Failsafe. Should never happen if only called when ApproximateMatch returns
-  // false.
-  if (lhs_index == expected.size() && rhs_index == actual.size()) {
-    return "Strings match (ignoring whitespace).";
-  }
-  std::string report =
-      absl::StrCat("\nMismatch found. Expected char at ", lhs_index,
-                   ", Actual char at ", rhs_index, "\n");
-
-  const auto append_context = [&](absl::string_view str, size_t mismatch_idx,
-                                  absl::string_view label) {
-    static constexpr size_t kContextWidth = 10;
-    const size_t start =
-        mismatch_idx > kContextWidth ? mismatch_idx - kContextWidth : 0;
-    const size_t end = std::min(str.length(), mismatch_idx + kContextWidth);
-    std::string line = absl::StrCat(label, ": ");
-    static constexpr absl::string_view kTruncated = "[truncated]";
-    static constexpr absl::string_view kEOF = "[EOF]";
-    if (start > 0) {
-      absl::StrAppend(&line, kTruncated);
-    }
-    absl::StrAppend(&line,
-                    absl::CEscape(str.substr(start, mismatch_idx - start)));
-    // Position of mismatch in the line.
-    size_t caret_pos = line.length();
-    // Content from mismatch onwards
-    if (mismatch_idx < str.length()) {
-      absl::StrAppend(
-          &line, absl::CEscape(str.substr(mismatch_idx, end - mismatch_idx)));
-    } else {
-      absl::StrAppend(&line, kEOF);
-    }
-    if (end < str.length()) {
-      absl::StrAppend(&line, kTruncated);
-    }
-    absl::StrAppend(&report, line, "\n");
-    std::string caret_line(caret_pos, ' ');
-    absl::StrAppend(&report, caret_line, "^\n");
-  };
-  append_context(expected, lhs_index, "Expected");
-  append_context(actual, rhs_index, "Actual  ");
-  return report;
-}
 
 MATCHER_P(MatchToString, test_string, "") {
   absl::string_view expected_string = test_string;
