@@ -9,8 +9,8 @@ cc_library(
     name = "drm_headers",
     hdrs = glob([
         "include/drm/*.h",
-        "*.h",
     ]),
-    includes = ["include"],
+    strip_include_prefix = "include/drm",
+    include_prefix = "libdrm",
     visibility = ["//visibility:public"],
 )
