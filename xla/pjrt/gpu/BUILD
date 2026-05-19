@@ -204,6 +204,14 @@ cc_library(
     ]) + if_rocm([
         # keep sorted
         "@local_config_rocm//rocm:rocm_headers",
+    ]) + if_sycl([
+        # keep sorted
+        "//xla:debug_options_flags",
+        "//xla/service/gpu:gpu_compiler",
+        "//xla/service/gpu:gpu_constants",
+        "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu:stream_executor_util",
+        "@local_config_sycl//sycl:sycl_headers",
     ]),
 )
 

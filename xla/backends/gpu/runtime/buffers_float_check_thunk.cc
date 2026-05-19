@@ -173,7 +173,7 @@ absl::Status CheckFloatsAndLog(
   // results of the previous FloatCheck operation are available.
   TF_RETURN_IF_ERROR(reduce_append_kernel.Launch(
       thread_dim, se::BlockDim(1, 1, 1), stream, tmp_ptr,
-      std::min(tmp_ptr.ElementCount(), num_blocks), entry_id,
+      std::min<uint64_t>(tmp_ptr.ElementCount(), num_blocks), entry_id,
       buffer_debug_log.GetDeviceHeader(), buffer_debug_log.GetDeviceEntries()));
 
   return absl::OkStatus();
@@ -260,6 +260,10 @@ std::string BuffersDebugFloatCheckThunk::ToString(int indent) const {
                     ", buffer: ", buffer.ToString());
   }
   return result;
+}
+absl::StatusOr<ThunkProto> BuffersDebugFloatCheckThunk::ToProto() const {
+  return absl::InvalidArgumentError(
+      "BuffersDebugFloatCheckThunk can't be serialized.");
 }
 
 }  // namespace xla::gpu

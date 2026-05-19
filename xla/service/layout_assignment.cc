@@ -2717,6 +2717,9 @@ absl::StatusOr<bool> LayoutAssignment::RunImpl(
     caller->set_branch_computation(
         branch_index, module->AddEmbeddedComputation(computation->Clone()));
   }
+  // Rebuild the call graph with the cloned computations included.
+  // Necessary for validity of the subsequent code.
+  call_graph_ = CallGraph::Build(module);
 
   // Verify computation layout is sane.
   HloComputation* entry = module->entry_computation();

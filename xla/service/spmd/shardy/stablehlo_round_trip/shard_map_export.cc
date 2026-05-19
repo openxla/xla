@@ -189,17 +189,22 @@ mlir::WalkResult setManualAxes(Operation* op, ManualAxesAttr manualAxes,
 void setFuncManualAxesRecursively(FuncOp funcOp, ManualAxesAttr manualAxes,
                                   StringRef meshName,
                                   const mlir::SymbolTable& symbolTable) {
+  llvm::SmallVector<mlir::DictionaryAttr> funcArgAttrs;
+  funcArgAttrs.reserve(funcOp.getNumArguments());
   for (int argNum = 0; argNum < funcOp.getNumArguments(); argNum++) {
-    if (!funcOp.getArgAttrOfType<TensorShardingAttr>(argNum, kShardingAttr)) {
-      funcOp.setArgAttr(
-          argNum, kShardingAttr,
+    mlir::NamedAttrList attrs(funcOp.getArgAttrDict(argNum));
+    if (!attrs.get(kShardingAttr)) {
+      attrs.set(
+          kShardingAttr,
           TensorShardingAttr::getFullyReplicated(
               funcOp->getContext(),
               mlir::sdy::getTensorRank(funcOp.getArgument(argNum)), meshName,
               /*isClosed=*/true));
     }
-    funcOp.setArgAttr(argNum, kManualAxes, manualAxes);
+    attrs.set(kManualAxes, manualAxes);
+    funcArgAttrs.push_back(attrs.getDictionary(funcOp.getContext()));
   }
+  funcOp.setAllArgAttrs(funcArgAttrs);
 
   // TODO(b/510714593): Create a shardy utility to modify func arg/result
   // attributes as below but in a more general way and re-use it.
@@ -364,16 +369,24 @@ void convertManualComputationOp(
   setNonEmptyManualAxes(callOp, regionManualAxesAttr);
   sdy::inlineRegionAndConvertTerminatorOp<mlir::func::ReturnOp>(
       op.getBody(), funcOp.getBody());
+  // TODO(b/5107145930): Use a shardy utility to batch set argument attributes.
+  llvm::SmallVector<mlir::DictionaryAttr> funcArgAttrs;
+  funcArgAttrs.reserve(funcOp.getNumArguments());
+  bool anyChanged = false;
   for (auto [blockArg, sharding] : llvm::zip_equal(
            funcOp.getArguments(), op.getInShardings().getShardings())) {
+    mlir::NamedAttrList attrs(funcOp.getArgAttrDict(blockArg.getArgNumber()));
     if (sharding) {
-      funcOp.setArgAttr(blockArg.getArgNumber(), kShardingAttr,
-                        eraseManualAxes(sharding, manualAxes.region));
+      attrs.set(kShardingAttr, eraseManualAxes(sharding, manualAxes.region));
       if (!regionManualAxesAttr.empty()) {
-        funcOp.setArgAttr(blockArg.getArgNumber(), kManualAxes,
-                          regionManualAxesAttr);
+        attrs.set(kManualAxes, regionManualAxesAttr);
       }
+      anyChanged = true;
     }
+    funcArgAttrs.push_back(attrs.getDictionary(funcOp.getContext()));
+  }
+  if (anyChanged) {
+    funcOp.setAllArgAttrs(funcArgAttrs);
   }
 
   // TODO(b/510714593): Create a shardy utility to modify func arg/result

@@ -44,6 +44,7 @@ limitations under the License.
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
@@ -108,21 +109,29 @@ void exportFunc(FuncOp funcOp, const SymbolTable& symbolTable,
         return sharding.getMesh(symbolTable);
       };
 
+  llvm::SmallVector<mlir::DictionaryAttr> funcArgAttrs;
+  funcArgAttrs.reserve(funcOp.getNumArguments());
+  bool anyChanged = false;
   for (int64_t argNum = 0; argNum < funcOp.getNumArguments(); ++argNum) {
+    mlir::NamedAttrList attrs(funcOp.getArgAttrDict(argNum));
     if (auto sdySharding = funcOp.getArgAttrOfType<TensorShardingAttr>(
             argNum, kShardingAttr)) {
       ArrayRef<StringAttr> manualAxes;
       if (ManualAxesAttr manualAxesAttr =
               funcOp.getArgAttrOfType<ManualAxesAttr>(argNum, kManualAxes)) {
         manualAxes = manualAxesAttr.getValue();
-        funcOp.removeArgAttr(argNum, kManualAxes);
+        attrs.erase(kManualAxes);
       }
-      funcOp.setArgAttr(
-          argNum, kXlaShardingAttr,
-          getStringAttr(convertToHloSharding(sdySharding, getMeshAttr,
-                                             manualAxes, enableHloShardingV3)));
-      funcOp.removeArgAttr(argNum, kShardingAttr);
+      attrs.set(kXlaShardingAttr, getStringAttr(convertToHloSharding(
+                                      sdySharding, getMeshAttr, manualAxes,
+                                      enableHloShardingV3)));
+      attrs.erase(kShardingAttr);
+      anyChanged = true;
     }
+    funcArgAttrs.push_back(attrs.getDictionary(funcOp.getContext()));
+  }
+  if (anyChanged) {
+    funcOp.setAllArgAttrs(funcArgAttrs);
   }
 
   SmallVector<mlir::DictionaryAttr> newResultAttrs;

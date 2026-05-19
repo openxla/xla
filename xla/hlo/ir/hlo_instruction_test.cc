@@ -15,17 +15,16 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_instruction.h"
 
-#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/algorithm/container.h"
+#include "absl/status/status.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
@@ -44,7 +43,6 @@ limitations under the License.
 namespace xla {
 namespace {
 
-using ::testing::ElementsAre;
 using ::testing::HasSubstr;
 using ::testing::Not;
 
@@ -293,6 +291,53 @@ TEST_F(HloInstructionTest, GetStackTraceStringNoSourceInfo) {
   std::string stack_trace = sqrt->GetStackTraceStringFromMetadata(4);
 
   EXPECT_THAT(stack_trace, HasSubstr("    <no source information>"));
+}
+
+TEST_F(HloInstructionTest, PostOrderDFSDataflowErrorLocation) {
+  auto module = CreateNewVerifiedModule();
+  HloComputation::Builder builder("main");
+  auto param = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, ShapeUtil::MakeShape(F32, {1}), "p"));
+  auto sqrt = builder.AddInstruction(HloInstruction::CreateUnary(
+      ShapeUtil::MakeShape(F32, {1}), HloOpcode::kSqrt, param));
+  module->AddEntryComputation(builder.Build());
+
+  // Add stack frames to the module
+  StackFrameIndexProto index;
+  index.add_file_names("file.py");
+  index.add_function_names("func");
+  auto loc = index.add_file_locations();
+  loc->set_file_name_id(1);
+  loc->set_function_name_id(1);
+  loc->set_line(100);
+  auto frame = index.add_stack_frames();
+  frame->set_file_location_id(1);
+  frame->set_parent_frame_id(0);
+  ASSERT_OK_AND_ASSIGN(auto stack_frames, StackFrames::FromProto(index));
+  module->set_stack_frames(std::move(stack_frames));
+
+  // Set metadata on the instruction
+  OpMetadata metadata;
+  metadata.set_stack_frame_id(1);
+  sqrt->set_metadata(metadata);
+
+  class FailingVisitor : public DfsHloVisitorWithDefault {
+   public:
+    absl::Status DefaultAction(HloInstruction* hlo) override {
+      if (hlo->opcode() == HloOpcode::kSqrt) {
+        return absl::Status(absl::StatusCode::kInvalidArgument,
+                            "Injected error");
+      }
+      return absl::OkStatus();
+    }
+  };
+
+  FailingVisitor visitor;
+  absl::Status status = sqrt->Accept(&visitor);
+
+  EXPECT_THAT(status.message(), HasSubstr("Injected error"));
+  EXPECT_THAT(status.message(), HasSubstr("Python Code Location:"));
+  EXPECT_THAT(status.message(), HasSubstr("file.py:100 [func]"));
 }
 
 TEST_F(HloInstructionTest, SetFrontendAttribute) {

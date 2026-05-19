@@ -1,3 +1,70 @@
+diff --ruN a/stablehlo/stablehlo/dialect/Base.td b/stablehlo/stablehlo/dialect/Base.td
+--- stablehlo/stablehlo/dialect/Base.td
++++ stablehlo/stablehlo/dialect/Base.td
+@@ -181,7 +181,7 @@
+ 
+ def HLO_Tensor : RankedTensorOf<[HLO_Float, HLO_Pred, HLO_Int, HLO_Complex, HLO_QuantizedInt]>;
+ 
+-def HLO_Future : Type<CPred<"::llvm::isa<FutureType>($_self)">, "future">;
++def HLO_Future : Type<CPred<"::llvm::isa<::mlir::stablehlo::FutureType>($_self)">, "future">;
+ 
+ def HLO_ScalarTensor: 0DTensorOf<[HLO_Float, HLO_Pred, HLO_Int, HLO_Complex, HLO_QuantizedInt]>;
+ 
+@@ -237,7 +237,7 @@
+ 
+ def HLO_CustomCallTuple : NestedTupleOf<[HLO_AnyTensor, HLO_Buffer, HLO_Token]>;
+ 
+-def HLO_CustomCallValue : AnyTypeOf<[HLO_AnyTensor, HLO_Buffer, HLO_Token, HLO_CustomCallTuple]>;
++def HLO_CustomCallValue : AnyTypeOf<[HLO_AnyTensor, HLO_Buffer, HLO_Token, HLO_CustomCallTuple, HLO_Future]>;
+ 
+ //===----------------------------------------------------------------------===//
+ // HLO combined type definitions.
+diff --ruN a/stablehlo/stablehlo/dialect/Version.h b/stablehlo/stablehlo/dialect/Version.h
+--- stablehlo/stablehlo/dialect/Version.h
++++ stablehlo/stablehlo/dialect/Version.h
+@@ -38,7 +38,7 @@
+   static FailureOr<Version> fromString(llvm::StringRef versionRef);
+ 
+   /// Return a Version representing the current VHLO dialect version.
+-  static Version getCurrentVersion() { return Version(1, 16, 2); }
++  static Version getCurrentVersion() { return Version(1, 17, 0); }
+ 
+   /// Return a Version representing the minimum supported VHLO dialect version.
+   static Version getMinimumVersion() { return Version(0, 9, 0); }
+diff --ruN a/stablehlo/stablehlo/dialect/VhloOps.cpp b/stablehlo/stablehlo/dialect/VhloOps.cpp
+--- stablehlo/stablehlo/dialect/VhloOps.cpp
++++ stablehlo/stablehlo/dialect/VhloOps.cpp
+@@ -346,6 +346,19 @@
+   return success();
+ }
+ 
++LogicalResult verifyConstraint_1_17_0(mlir::Operation* op,
++                                      Version targetVersion) {
++  auto customCallOp = cast<mlir::vhlo::CustomCallOpV1>(op);
++  if (targetVersion < Version(1, 17, 0)) {
++    for (Type type : customCallOp.getInputs().getTypes()) {
++      if (isa<vhlo::FutureV1Type>(type)) {
++        return failure();
++      }
++    }
++  }
++  return success();
++}
++
+ }  // namespace
+ 
+ LogicalResult AllReduceOpV1::validateConstraint(mlir::Operation* op,
+@@ -380,7 +393,9 @@
+ 
+ LogicalResult CustomCallOpV1::validateConstraint(mlir::Operation* op,
+                                                  Version targetVersion) {
+-  return verifyConstraint_1_3_0(op, targetVersion);
++  if (failed(verifyConstraint_1_17_0(op, targetVersion))) return failure();
++  if (failed(verifyConstraint_1_3_0(op, targetVersion))) return failure();
++  return success();
+ }
+ 
+ }  // namespace vhlo
 diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h b/stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h
 --- stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h
 +++ stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h
@@ -565,6 +632,24 @@ diff --ruN a/stablehlo/stablehlo/reference/Tensor.cpp b/stablehlo/stablehlo/refe
              return std::complex<double>(value.real().convertToDouble(),
                                          value.imag().convertToDouble());
            });
+diff --ruN a/stablehlo/stablehlo/tests/ops_stablehlo.mlir b/stablehlo/stablehlo/tests/ops_stablehlo.mlir
+--- stablehlo/stablehlo/tests/ops_stablehlo.mlir
++++ stablehlo/stablehlo/tests/ops_stablehlo.mlir
+@@ -5018,6 +5018,14 @@
+   %0:3 = "stablehlo.custom_call"(%x, %token) {backend_config="", call_target_name = "foo", has_side_effect = false} : (tensor<2xf32>, !stablehlo.token) -> (tensor<2xf32>, tensor<2xf32>, !stablehlo.token)
+   %1 = "stablehlo.add"(%0#0, %0#1) : (tensor<2xf32>, tensor<2xf32>) -> tensor<2xf32>
+   func.return %1 : tensor<2xf32>
++}
++
++// -----
++
++// CHECK: func @custom_call_future
++func.func @custom_call_future(%arg0: !stablehlo.future<tensor<2xf32>>) -> !stablehlo.future<tensor<2xf32>> {
++  %0 = "stablehlo.custom_call"(%arg0) {call_target_name = "foo"} : (!stablehlo.future<tensor<2xf32>>) -> !stablehlo.future<tensor<2xf32>>
++  func.return %0 : !stablehlo.future<tensor<2xf32>>
+ }
+ 
+ // -----
 diff --ruN a/stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compatibility.mlir b/stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compatibility.mlir
 --- stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compatibility.mlir
 +++ stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compatibility.mlir
@@ -623,6 +708,22 @@ diff --ruN a/stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compat
 +    return %0 : tensor<4xf32>
 +  }
  }
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_16_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_16_0.mlir
+--- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_16_0.mlir
++++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_16_0.mlir
+@@ -0,0 +1,12 @@
++// RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.16.0' --verify-diagnostics --split-input-file %s
++
++// expected-error @+1 {{failed to convert VHLO to v1.16.0}}
++module {
++  func.func @custom_call_with_future_type(%arg0: !stablehlo.future<tensor<f32>>) -> !stablehlo.future<tensor<f32>> {
++    // expected-error @+1 {{failed to legalize operation 'vhlo.custom_call_v1' that was explicitly marked illegal}}
++    %0 = "stablehlo.custom_call"(%arg0) {
++      call_target_name = "foo"
++    } : (!stablehlo.future<tensor<f32>>) -> !stablehlo.future<tensor<f32>>
++    func.return %0 : !stablehlo.future<tensor<f32>>
++  }
++}
 diff --ruN a/stablehlo/stablehlo/transforms/StablehloCompatibilityExpander.cpp b/stablehlo/stablehlo/transforms/StablehloCompatibilityExpander.cpp
 --- stablehlo/stablehlo/transforms/StablehloCompatibilityExpander.cpp
 +++ stablehlo/stablehlo/transforms/StablehloCompatibilityExpander.cpp

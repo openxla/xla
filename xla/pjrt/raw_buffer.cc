@@ -43,7 +43,7 @@ std::vector<RegisterRawBufferFactory::FactoryFuncT>& GetFactoryFuncs() {
 
 absl::StatusOr<PjRtRawBufferRef>
 CommonPjRtRawBuffer::RemoveDynamicShapeMetadataIfPresent(
-    const xla::Shape& logical_shape) {
+    const xla::Shape& device_shape, const xla::Shape& logical_shape) {
   return absl::InvalidArgumentError(absl::StrCat(
       "Dynamic shapes are not supported for ", memory_space()->DebugString()));
 }

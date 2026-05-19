@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
+#include "xla/backends/gpu/runtime/convolution_thunk.h"
 #include "xla/backends/gpu/runtime/cudnn_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
@@ -128,50 +129,9 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const ReduceScatterThunk& thunk) {
-  return std::make_unique<ReduceScatterCmd>(
-      thunk.config(), thunk.reduction_kind(), thunk.buffers());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const AllToAllThunk& thunk) {
-  return std::make_unique<AllToAllCmd>(
-      thunk.config(), thunk.has_split_dimension(), thunk.buffers());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const AllGatherThunk& thunk) {
-  return std::make_unique<AllGatherCmd>(thunk.config(), thunk.buffers());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const CollectiveBroadcastThunk& thunk) {
-  return std::make_unique<CollectiveBroadcastCmd>(thunk.config(),
-                                                  thunk.buffers());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const CollectivePermuteThunk& thunk) {
   return std::make_unique<CollectivePermuteCmd>(
       thunk.config(), thunk.p2p_config(), thunk.buffers());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const RaggedAllToAllThunk& thunk) {
-  return std::make_unique<RaggedAllToAllCmd>(thunk.ragged_all_to_all_config(),
-                                             thunk.buffers());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const RecvThunk& thunk) {
-  return std::make_unique<RecvCmd>(thunk.config(), thunk.p2p_config(),
-                                   thunk.buffer());
-}
-
-static absl::StatusOr<std::unique_ptr<Command>> Convert(
-    const SendThunk& thunk) {
-  return std::make_unique<SendCmd>(thunk.config(), thunk.p2p_config(),
-                                   thunk.buffer());
 }
 
 //===----------------------------------------------------------------------===//
@@ -253,27 +213,42 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kMemzero:
       cmd_sequence.Append(static_cast<MemzeroThunk*>(&thunk));
       return absl::OkStatus();
+    // AllGatherThunk implements Command directly; append as borrowed pointer —
+    // the thunk outlives the command sequence.
     case Thunk::Kind::kAllGather:
-      return append(Convert<AllGatherThunk>(thunk));
+      cmd_sequence.Append(static_cast<AllGatherThunk*>(&thunk));
+      return absl::OkStatus();
     // AllReduceThunk implements Command directly; append as borrowed pointer —
     // the thunk outlives the command sequence.
     case Thunk::Kind::kAllReduce:
       cmd_sequence.Append(static_cast<AllReduceThunk*>(&thunk));
       return absl::OkStatus();
+    // ReduceScatterThunk implements Command directly; append as borrowed
+    // pointer — the thunk outlives the command sequence.
     case Thunk::Kind::kReduceScatter:
-      return append(Convert<ReduceScatterThunk>(thunk));
+      cmd_sequence.Append(static_cast<ReduceScatterThunk*>(&thunk));
+      return absl::OkStatus();
+    // AllToAllThunk implements Command directly; append as borrowed pointer.
     case Thunk::Kind::kAllToAll:
-      return append(Convert<AllToAllThunk>(thunk));
+      cmd_sequence.Append(static_cast<AllToAllThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kCollectiveBroadcast:
-      return append(Convert<CollectiveBroadcastThunk>(thunk));
+      cmd_sequence.Append(static_cast<CollectiveBroadcastThunk*>(&thunk));
+      return absl::OkStatus();
     case Thunk::Kind::kCollectivePermute:
       return append(Convert<CollectivePermuteThunk>(thunk));
+    // RaggedAllToAllThunk implements Command directly; append borrowed pointer.
     case Thunk::Kind::kRaggedAllToAll:
-      return append(Convert<RaggedAllToAllThunk>(thunk));
+      cmd_sequence.Append(static_cast<RaggedAllToAllThunk*>(&thunk));
+      return absl::OkStatus();
+    // RecvThunk implements Command directly; append borrowed pointer.
     case Thunk::Kind::kRecv:
-      return append(Convert<RecvThunk>(thunk));
+      cmd_sequence.Append(static_cast<RecvThunk*>(&thunk));
+      return absl::OkStatus();
+    // SendThunk implements Command directly; append borrowed pointer.
     case Thunk::Kind::kSend:
-      return append(Convert<SendThunk>(thunk));
+      cmd_sequence.Append(static_cast<SendThunk*>(&thunk));
+      return absl::OkStatus();
     // These thunks implement Command directly; append borrowed pointers.
     // Note: kCopy also borrows DeviceToDeviceCopyThunk (see case above).
     case Thunk::Kind::kMemset32BitValue:
@@ -294,6 +269,11 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     // borrowed pointer.
     case Thunk::Kind::kCuDnn:
       cmd_sequence.Append(static_cast<CuDnnThunk*>(&thunk));
+      return absl::OkStatus();
+    // ConvolutionThunk implements TracedCommand directly; append as
+    // borrowed pointer — the thunk outlives the command sequence.
+    case Thunk::Kind::kConvolution:
+      cmd_sequence.Append(static_cast<ConvolutionThunk*>(&thunk));
       return absl::OkStatus();
     // Sequential thunk does not have any special semantics and we simply inline
     // all nested thunks into command buffer.

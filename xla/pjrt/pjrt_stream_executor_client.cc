@@ -489,6 +489,12 @@ absl::StatusOr<xla::Shape>
 PjRtStreamExecutorClient::MakeDefaultShapeForMemorySpace(
     PjRtMemorySpace* memory_space, xla::Shape shape,
     const xla::Layout* layout) const {
+  auto topo = GetTopologyDescription();
+  if (topo.ok()) {
+    return (*topo)->MakeCanonicalShapeForMemorySpace(memory_space->kind_id(),
+                                                     std::move(shape), layout);
+  }
+  // TODO(parkers): ensure that topologies are always passed.
   if (shape.IsToken()) {
     return shape;
   }
@@ -1219,7 +1225,7 @@ PjRtStreamExecutorLoadedExecutable::PjRtStreamExecutorLoadedExecutable(
         IsAllZeros(*device_assignment_)) {
       // This code path should only be triggered when we intentionally compile
       // an HLO without having enough devices to actually run it. See the
-      // "--run=false" option in
+      // "--compile_only=true" option in
       // tensorflow/compiler/xla/tools/multihost_hlo_runner/hlo_runner_main.cc.
       // That will help us debug the XLA compiler locally.
       LOG(INFO)

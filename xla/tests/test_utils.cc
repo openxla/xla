@@ -16,16 +16,15 @@ limitations under the License.
 #include "xla/tests/test_utils.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <random>
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"

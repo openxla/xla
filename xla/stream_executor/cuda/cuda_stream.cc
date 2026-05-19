@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -50,6 +51,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_common.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/util/env_var.h"  // IWYU pragma: keep
 #include "tsl/profiler/lib/nvtx_utils.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "tsl/profiler/lib/traceme_encode.h"
@@ -360,6 +362,28 @@ absl::Status CudaStream::Memcpy(void* host_dst,
                                size, stream_handle_);
 }
 
+namespace {
+#if CUDA_VERSION >= 13020
+bool UseSpinwaitHostCallback() {
+  static bool use_spinwait = []() {
+    bool use_spinwait = false;
+    tsl::ReadBoolFromEnvVar("XLA_CUDA_HOST_CALLBACK_SPINWAIT", false,
+                            &use_spinwait)
+        .IgnoreError();
+    if (!use_spinwait) return false;
+    int driver_version = 0;
+    cuDriverGetVersion(&driver_version);
+    use_spinwait = driver_version >= 13020;
+    if (use_spinwait) {
+      LOG(INFO) << "Using spinwait host callback (cuLaunchHostFunc_v2).";
+    }
+    return use_spinwait;
+  }();
+  return use_spinwait;
+}
+#endif
+}  // namespace
+
 absl::Status CudaStream::DoHostCallbackWithStatus(
     absl::AnyInvocable<absl::Status() &&> callback) {
   return DoHostCallbackWithStatus(std::move(callback), nullptr);
@@ -372,6 +396,18 @@ absl::Status CudaStream::DoHostCallbackWithStatus(
       [stream_handle = stream_handle_](
           HostCallbackRegistry::RegistryHandle::DeviceCb device_cb,
           void* data) -> absl::Status {
+// cuHostLaunchFunc is regressed in cuda 12.9 and later. It can result in long
+// blocking stalls in the cuda driver. Mitigation is to use cuLaunchHostFunc_v2
+// with CU_HOST_TASK_SPINWAIT mode if possible.
+#if CUDA_VERSION >= 13020
+    if (UseSpinwaitHostCallback()) {
+      CUhostTaskSyncMode mode = CU_HOST_TASK_SPINWAIT;
+      TraceMe trace("cuLaunchHostFunc_v2(spin)");
+      return cuda::ToStatus(
+          cuLaunchHostFunc_v2(stream_handle, device_cb, data, mode));
+    }
+#endif
+    TraceMe trace("cuLaunchHostFunc");
     return cuda::ToStatus(cuLaunchHostFunc(stream_handle, device_cb, data));
   };
   const auto annotate_cb = [this](auto&& cb) {

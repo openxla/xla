@@ -77,14 +77,18 @@ using ::xla::complex64;
 
 void GroupGemmUpdateArgs(
     hipStream_t stream, DeviceAddressBase args, DeviceAddressBase a,
-    DeviceAddressBase b, DeviceAddressBase d, DeviceAddressBase group_sizes,
+    DeviceAddressBase b, DeviceAddressBase c, DeviceAddressBase d,
+    DeviceAddressBase bias, DeviceAddressBase group_sizes,
     uint8_t group_size_bytewidth, uint8_t log2_byte_width_elem_a,
-    uint8_t log2_byte_width_elem_b, uint8_t log2_byte_width_elem_d,
-    uint32_t stride_ragged_dim, uint32_t stride_group_dim,
+    uint8_t log2_byte_width_elem_b, uint8_t log2_byte_width_elem_c,
+    uint8_t log2_byte_width_elem_d, uint32_t stride_ragged_dim,
+    uint32_t stride_group_dim, uint32_t c_stride_ragged_dim,
     uint32_t output_stride_ragged_dim, bool must_swap_operands, uint32_t m,
     uint32_t n, uint32_t k, uint32_t batch, uint32_t strideA1,
-    uint32_t strideA2, uint32_t strideB1, uint32_t strideB2, uint32_t strideD1,
-    uint32_t strideD2, gpu::RaggedDotMode ragged_mode, uint32_t num_gemms);
+    uint32_t strideA2, uint32_t strideB1, uint32_t strideB2, uint32_t strideC1,
+    uint32_t strideC2, uint32_t strideD1, uint32_t strideD2,
+    gpu::RaggedDotMode ragged_mode, uint32_t num_gemms, int32_t activation_type,
+    int8_t bias_type, bool has_matrix_bias);
 namespace {
 
 template <typename T>
@@ -254,6 +258,11 @@ auto BlasLt::MatmulPlan::GetAlgorithmsForGroupedMatmul(
       algorithms.push_back({result.algo, result.workspaceSize});
     }
   }
+
+  VLOG(2) << "Grouped GEMM algorithms found with epilogue "
+          << static_cast<int>(grouped_gemm_epilogue_) << ": "
+          << algorithms.size();
+
   return std::move(algorithms);
 }
 
@@ -744,7 +753,23 @@ absl::Status BlasLt::MatmulPlan::ExecuteRegularMatmul(
   return xla::Internal("Unexpected dtype");
 }
 
-void BlasLt::MatmulPlan::InitializeGroupedGemm(
+/*static*/ absl::StatusOr<std::unique_ptr<BlasLt::MatmulPlan>>
+BlasLt::MatmulPlan::InitializeGroupedGemm(gpu::GroupedGemmConfig cfg,
+                                          Epilogue epilogue,
+                                          hipblasLtHandle_t blas_lt_handle,
+                                          blas::ComputationType compute_type) {
+  const bool must_swap_operands = cfg.must_swap_operands;
+  // Use `new` directly because the grouped-matmul constructor is private.
+  // This is equivalent to make_unique; the private constructor is accessible
+  // here because this is a static member of MatmulPlan.
+  auto plan = std::unique_ptr<MatmulPlan>(
+      new MatmulPlan(std::move(cfg), must_swap_operands, epilogue));
+  TF_RETURN_IF_ERROR(
+      plan->DoInitializeGroupedGemm(blas_lt_handle, compute_type));
+  return plan;
+}
+
+absl::Status BlasLt::MatmulPlan::DoInitializeGroupedGemm(
     hipblasLtHandle_t blas_lt_handle, blas::ComputationType compute_type) {
   auto batch_stride_a = (cfg_->m * cfg_->k);
   auto batch_stride_b = (cfg_->n * cfg_->k);
@@ -794,14 +819,28 @@ void BlasLt::MatmulPlan::InitializeGroupedGemm(
     }
   }
 
-  // TODO: recover GemmEpilogues from args
   std::vector<hipblaslt_ext::GemmEpilogue> epilogue(cfg_->group_count);
   std::vector<hipblaslt_ext::GemmInputs> inputs(cfg_->group_count);
 
+  // Convert the epilogue from the stored member variable
+  TF_ASSIGN_OR_RETURN(auto hip_epilogue,
+                      AsHipblasLtEpilogue(grouped_gemm_epilogue_));
+
   float salpha = cfg_->alpha.real();
   float sbeta = cfg_->beta;
+  // Dummy bias pointer for initialization (similar to A, B, C, D)
+  static void* dummy_bias = reinterpret_cast<void*>(~0ULL);
+
   for (int64_t i = 0; i < cfg_->group_count; i++) {
-    epilogue[i].setMode(HIPBLASLT_EPILOGUE_DEFAULT);
+    epilogue[i].setMode(hip_epilogue);
+    // Set bias data type and dummy bias pointer for bias epilogues
+    if (grouped_gemm_epilogue_ == Epilogue::kBias ||
+        grouped_gemm_epilogue_ == Epilogue::kBiasThenReLU ||
+        grouped_gemm_epilogue_ == Epilogue::kBiasThenGELU ||
+        grouped_gemm_epilogue_ == Epilogue::kBiasThenSILU) {
+      epilogue[i].setBiasDataType(AsHipblasDataType(cfg_->type_d));
+      inputs[i].setBias(dummy_bias);
+    }
     inputs[i].setA(reinterpret_cast<void*>(~0ULL));
     inputs[i].setB(reinterpret_cast<void*>(~0ULL));
     inputs[i].setC(reinterpret_cast<void*>(~0ULL));
@@ -819,18 +858,45 @@ void BlasLt::MatmulPlan::InitializeGroupedGemm(
   // Note that Matrices given to HipBlasLt Group-Gemm
   // are expected to be in COLUMN-MAJOR order.
 
-  auto status = grouped_gemm_->setProblem(
+  SE_HIPBLAS_RETURN_IF_ERROR(grouped_gemm_->setProblem(
       v_m, v_n, v_k, v_batch_count, v_lda, v_ldb, v_ldc, v_ldd, v_strideA,
-      v_strideB, v_strideC, v_strideD, epilogue, inputs, problem);
+      v_strideB, v_strideC, v_strideD, epilogue, inputs, problem));
 
-  if (status != HIPBLAS_STATUS_SUCCESS) {
-    LOG(FATAL) << "Failed to set problem for grouped GEMM: " << status;
-  }
+  // UserArgument is expecting specific code for activation and bias types.
+  // These are defined by the hipBLASLt library during the problem
+  // initialization. However, as the current implementation explicity sets all
+  // UserArgument parameters in the "GroupGemmUpdateArgs" kernels to avoid an
+  // extra copy from host to device memory, we need a to retrieve these codes
+  // and pass them to the "GroupGemmUpdateArgs" kernel to be set in the final
+  // UserArgument that will be used to perform the group-gemm operation. Note
+  // that we opt for this method because these codes does not appear to
+  // correspond to any public enum exposed by hipBLASLt. Thus, retrieving these
+  // code from the library defined UserArgument makes it more robust to
+  // different versions of hipBLASLt.
+
+  // Get default UserArguments from hipBLASLt and save required parameters
+  auto default_ua =
+      std::make_unique<hipblaslt_ext::UserArguments[]>(cfg_->group_count);
+  grouped_gemm_->getDefaultValueForDeviceUserArguments(
+      static_cast<void*>(default_ua.get()));
+  // The ragged-dot API enforce that activation and bias types are the same
+  // for all the gemm operations.
+  // We can therefore only retrieve/verify value of the first gemm op.
+  activation_type_ = default_ua[0].activationType;
+  bias_type_ = default_ua[0].biasType;
+  // Verify that act0 and act1 are 0 as they are forced to 0 in the userarg
+  // update kernels
+  TF_RET_CHECK(default_ua[0].act0 == 0.0f)
+      << "Expected act0 == 0 in hipBLASLt default UserArguments, got "
+      << default_ua[0].act0;
+  TF_RET_CHECK(default_ua[0].act1 == 0.0f)
+      << "Expected act1 == 0 in hipBLASLt default UserArguments, got "
+      << default_ua[0].act1;
+  return absl::OkStatus();
 }
 
 absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetGroupedMatmulPlan(
-    gpu::GroupedGemmConfig& cfg,
-    const std::vector<gpu::BlasLt::Epilogue>& epilogues) const {
+    gpu::GroupedGemmConfig& cfg, Epilogue epilogue) const {
   auto compute_type = cfg.compute_type;
   if (!compute_type) {  // obtain compute_type unless provided by the user
     TF_ASSIGN_OR_RETURN(xla::PrimitiveType primitive_type_a,
@@ -855,9 +921,9 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetGroupedMatmulPlan(
     blas_lt_handle = blas_lt_.get();
   }
 
-  auto plan = std::make_unique<MatmulPlan>(
-      std::move(cfg), cfg.must_swap_operands, blas_lt_handle, *compute_type);
-
+  TF_ASSIGN_OR_RETURN(
+      auto plan, MatmulPlan::InitializeGroupedGemm(
+                     std::move(cfg), epilogue, blas_lt_handle, *compute_type));
   return absl::StatusOr<MatmulPlanPtr>(std::move(plan));
 }
 
@@ -919,6 +985,7 @@ absl::Status BlasLt::MatmulPlan::ExecuteGroupedMatmul(
 
   uint8_t log2_byte_width_elem_a = Log2ByteWidth(cfg_->type_a);
   uint8_t log2_byte_width_elem_b = Log2ByteWidth(cfg_->type_b);
+  uint8_t log2_byte_width_elem_c = Log2ByteWidth(cfg_->type_c);
   uint8_t log2_byte_width_elem_d = Log2ByteWidth(cfg_->type_d);
 
   auto group_size_bytewidth =
@@ -951,19 +1018,25 @@ absl::Status BlasLt::MatmulPlan::ExecuteGroupedMatmul(
       strideB2 *= cfg_->group_count;
     }
   }
+  uint32_t strideC1 = cfg_->c_leading_dim_stride;
+  uint32_t strideC2 = cfg_->m * cfg_->n;
   uint32_t strideD1 = cfg_->output_leading_dim_stride;
   uint32_t strideD2 = cfg_->m * cfg_->n;
 
   auto hip_stream =
       absl::bit_cast<hipStream_t>(stream->platform_specific_handle().stream);
 
+  bool has_matrix_bias = (cfg_->beta != 0.0);
+
   GroupGemmUpdateArgs(
-      hip_stream, d_userArgs, a, b, args.d, args.group_sizes,
+      hip_stream, d_userArgs, a, b, args.c, args.d, args.bias, args.group_sizes,
       group_size_bytewidth, log2_byte_width_elem_a, log2_byte_width_elem_b,
-      log2_byte_width_elem_d, cfg_->stride_ragged_dim, cfg_->stride_group_dim,
+      log2_byte_width_elem_c, log2_byte_width_elem_d, cfg_->stride_ragged_dim,
+      cfg_->stride_group_dim, cfg_->c_stride_ragged_dim,
       cfg_->output_stride_ragged_dim, cfg_->must_swap_operands, cfg_->m,
       cfg_->n, cfg_->k, cfg_->batch_count, strideA1, strideA2, strideB1,
-      strideB2, strideD1, strideD2, cfg_->ragged_mode, cfg_->group_count);
+      strideB2, strideC1, strideC2, strideD1, strideD2, cfg_->ragged_mode,
+      cfg_->group_count, activation_type_, bias_type_, has_matrix_bias);
 
   SE_HIPBLAS_RETURN_IF_ERROR(
       grouped_gemm_->run(d_userArgs.opaque(), hip_stream));

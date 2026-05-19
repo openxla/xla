@@ -199,8 +199,11 @@ std::vector<HloInstruction*> AsyncCollectiveCreator::MatchCollectives(
       matched = convert;
     } else if (op == HloOpcode::kReduceScatter) {
       bool convert = config_.convert_reduce_scatter(instruction);
-      VLOG(2) << "kReduceScatter: convert=" << convert;
-      matched = convert;
+      int64_t size = GetShapeSize(instruction->shape());
+      int64_t threshold = config_.reduce_scatter_min_threshold_in_bytes;
+      VLOG(2) << "kReduceScatter: convert=" << convert << ", size=" << size
+              << ", threshold=" << threshold;
+      matched = convert && size >= threshold;
     } else if (op == HloOpcode::kRaggedAllToAll) {
       bool convert = config_.convert_ragged_all_to_all(instruction);
       VLOG(2) << "kRaggedAllToAll: convert=" << convert;

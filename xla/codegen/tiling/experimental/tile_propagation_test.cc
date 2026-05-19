@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/codegen/tiling/experimental/tile_propagation.h"
 
-#include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -28,8 +26,6 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
-#include "absl/strings/escaping.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
@@ -53,55 +49,6 @@ namespace {
 using ::absl_testing::StatusIs;
 using ::llvm::SmallVector;
 using ::mlir::MLIRContext;
-
-// Generates a human readable report of the first mismatch between two strings.
-// Intended to be used only when ApproximateMatch returns false.
-std::string GetMismatchReport(int lhs_index, int rhs_index,
-                              absl::string_view expected,
-                              absl::string_view actual) {
-  // Failsafe. Should never happen if only called when ApproximateMatch returns
-  // false.
-  if (lhs_index == expected.size() && rhs_index == actual.size()) {
-    return "Strings match (ignoring whitespace).";
-  }
-  std::string report =
-      absl::StrCat("\nMismatch found. Expected char at ", lhs_index,
-                   ", Actual char at ", rhs_index, "\n");
-
-  const auto append_context = [&](absl::string_view str, size_t mismatch_idx,
-                                  absl::string_view label) {
-    static constexpr size_t kContextWidth = 10;
-    const size_t start =
-        mismatch_idx > kContextWidth ? mismatch_idx - kContextWidth : 0;
-    const size_t end = std::min(str.length(), mismatch_idx + kContextWidth);
-    std::string line = absl::StrCat(label, ": ");
-    static constexpr absl::string_view kTruncated = "[truncated]";
-    static constexpr absl::string_view kEOF = "[EOF]";
-    if (start > 0) {
-      absl::StrAppend(&line, kTruncated);
-    }
-    absl::StrAppend(&line,
-                    absl::CEscape(str.substr(start, mismatch_idx - start)));
-    // Position of mismatch in the line.
-    size_t caret_pos = line.length();
-    // Content from mismatch onwards
-    if (mismatch_idx < str.length()) {
-      absl::StrAppend(
-          &line, absl::CEscape(str.substr(mismatch_idx, end - mismatch_idx)));
-    } else {
-      absl::StrAppend(&line, kEOF);
-    }
-    if (end < str.length()) {
-      absl::StrAppend(&line, kTruncated);
-    }
-    absl::StrAppend(&report, line, "\n");
-    std::string caret_line(caret_pos, ' ');
-    absl::StrAppend(&report, caret_line, "^\n");
-  };
-  append_context(expected, lhs_index, "Expected");
-  append_context(actual, rhs_index, "Actual  ");
-  return report;
-}
 
 MATCHER_P(MatchToString, test_string, "") {
   absl::string_view expected_string = test_string;
@@ -285,10 +232,10 @@ INSTANTIATE_TEST_SUITE_P(
          /*output_shape=*/{12},
          /*expected_output=*/R"(
     0) (tid_0, tid_1)
-      -> offsets [tid_0 * 8 + tid_1 * 4]
+      -> offsets [tid_0 * 8]
          sizes [8]
          strides [1]
-         upper bounds [min(tid_0 * 2 + 1, 2) * 4 + min(tid_1 * 4 + 3, 3) + 1]
+         upper bounds [min(tid_0 * 2 + 1, 2) * 4 + 4]
   )"},
         // Example (tid_0, tid_1) -> (offset, upper bound):
         // (0, 0) -> (0,  4), (0, 1) -> ( 3,  4)
@@ -1055,6 +1002,24 @@ TEST_F(TilePropagationTest, CanPropagateToInputsOfDotOp) {
             strides [1, 1, 5, 1, 6, 2]
             upper bounds [17, 10, 16, 18, 22, 38]
   )"));
+
+  EXPECT_OK(tiling_space->AssignTileSizes({16, 16, 16, 16, 16, 16, 16, 16}));
+  ASSERT_OK_AND_ASSIGN(auto concrete_tiled_operands,
+                       PropagateTileToInput(*tiling_space, *root,
+                                            tiling_space->tiled_roots()[0], 0));
+
+  EXPECT_THAT(concrete_tiled_operands, MatchToString(R"(
+    0) (tid_0, tid_1, tid_2, tid_3, tid_4, tid_5, tid_6, tid_7)
+         -> offsets [0, tid_1 * 16, tid_7 * 16, 0, tid_6 * 16, 0]
+            sizes [16, 16, 16, 16, 16, 16]
+            strides [1, 1, 1, 1, 1, 1]
+            upper bounds [4, 38, 17, 11, 18, 10]
+    1) (tid_0, tid_1, tid_2, tid_3, tid_4, tid_5, tid_6, tid_7)
+         -> offsets [tid_7 * 16, 0, 0, tid_6 * 16, tid_5 * 16, tid_1 * 16]
+            sizes [16, 16, 16, 16, 16, 16]
+            strides [1, 1, 1, 1, 1, 1]
+            upper bounds [17, 10, 16, 18, 22, 38]
+  )"));
 }
 
 TEST_F(TilePropagationTest, CanPropagateToInputsForScaledDotOp) {
@@ -1178,7 +1143,7 @@ TEST_F(TilePropagationTest, CanPropagateToInputsOfReduceOp) {
                                             tiling_space->tiled_roots()[0], 0));
   EXPECT_THAT(concrete_tiled_operands, MatchToString(R"(
     0) (tid_0, tid_1, tid_2, tid_3)
-      -> offsets [tid_0 * 8, tid_3 * 64, tid_1 * 16, tid_2 * 32]
+      -> offsets [tid_0 * 8, 0, 0, tid_2 * 32]
         sizes [8, 64, 16, 32]
         strides [1, 1, 1, 1]
         upper bounds [150, 20, 10, 50]

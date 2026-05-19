@@ -152,6 +152,7 @@ TEST_F(NativeEmitterBackendTest, GetSupportedConfigs) {
 }
 
 TEST_F(NativeEmitterBackendTest, GetDefaultConfigForLoopFusion) {
+  debug_options_.set_xla_gpu_native_emitter_tune_unroll_factor_for_loops(true);
   TF_ASSERT_OK_AND_ASSIGN(auto loop_module,
                           ParseAndReturnVerifiedModule(kLoopFusionHlo));
   auto fusion = loop_module->entry_computation()->root_instruction();
@@ -167,6 +168,7 @@ TEST_F(NativeEmitterBackendTest, GetDefaultConfigForLoopFusion) {
 }
 
 TEST_F(NativeEmitterBackendTest, GetSupportedConfigsForLoopFusion) {
+  debug_options_.set_xla_gpu_native_emitter_tune_unroll_factor_for_loops(true);
   TF_ASSERT_OK_AND_ASSIGN(auto loop_module,
                           ParseAndReturnVerifiedModule(kLoopFusionHlo));
   auto fusion = loop_module->entry_computation()->root_instruction();

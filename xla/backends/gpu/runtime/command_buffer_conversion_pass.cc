@@ -88,8 +88,9 @@ CommandBufferConfig GetCommandBufferConfig(
   static constexpr auto kRequireConditionals = {DebugOptions::CONDITIONAL,
                                                 DebugOptions::WHILE};
   static constexpr auto kRequireTracing = {
-      DebugOptions::CUBLAS, DebugOptions::CUBLASLT, DebugOptions::CUDNN,
-      DebugOptions::CUSTOM_CALL, DebugOptions::COLLECTIVES};
+      DebugOptions::CUBLAS,      DebugOptions::CUBLASLT,
+      DebugOptions::CUDNN,       DebugOptions::CUSTOM_CALL,
+      DebugOptions::COLLECTIVES, DebugOptions::CONVOLUTION};
 
   auto erase = [&](absl::Span<const DebugOptions::CommandBufferCmdType> cmds) {
     for (auto cmd : cmds) {
@@ -164,6 +165,8 @@ std::optional<DebugOptions::CommandBufferCmdType> GetCommandBufferCmdType(
       return DebugOptions::COLLECTIVES;
     case Thunk::kCuDnn:
       return DebugOptions::CUDNN;
+    case Thunk::kConvolution:
+      return DebugOptions::CONVOLUTION;
     case Thunk::kCustomCall:
       return DebugOptions::CUSTOM_CALL;
     case Thunk::kCublasLtMatmul:

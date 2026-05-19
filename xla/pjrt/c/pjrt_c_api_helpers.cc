@@ -301,7 +301,7 @@ xla::PrimitiveType ConvertFromPjRtBufferType(PJRT_Buffer_Type type) {
       return xla::PrimitiveType::F8E3M4;
     case PJRT_Buffer_Type::PJRT_Buffer_Type_F8E8M0FNU:
       return xla::PrimitiveType::F8E8M0FNU;
-    case PJRT_Buffer_Type::PJRT_Buffer_Type_INVALID:
+    default:
       CHECK(false) << "Buffer type is not supported in C API layer.";
   }
 }

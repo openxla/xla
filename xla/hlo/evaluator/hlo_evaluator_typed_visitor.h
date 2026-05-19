@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/shape_inference.h"
 #include "xla/shape.h"
@@ -1071,8 +1072,37 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
     auto rhs = conv->operand(1);
     const auto& window = conv->window();
     Shape result_shape = GetShapeWithLayout(conv->shape());
-    Shape lhs_shape = GetShapeWithLayout(lhs->shape());
-    Shape rhs_shape = GetShapeWithLayout(rhs->shape());
+    Shape lhs_shape;
+    Shape rhs_shape;
+
+    std::optional<Literal> decompressed_lhs;
+    const Literal* lhs_literal_ptr = &parent_->GetEvaluatedLiteralFor(lhs);
+    std::optional<Literal> decompressed_rhs;
+    const Literal* rhs_literal_ptr = &parent_->GetEvaluatedLiteralFor(rhs);
+
+    if (conv->sparsity_config().has_lhs() && lhs->shape().IsTuple()) {
+      TF_ASSIGN_OR_RETURN(
+          decompressed_lhs,
+          xla::MaterializeSparseOperand(LiteralSlice(*lhs_literal_ptr, {0}),
+                                        LiteralSlice(*lhs_literal_ptr, {1}),
+                                        conv->sparsity_config().lhs()));
+      lhs_literal_ptr = &decompressed_lhs.value();
+      lhs_shape = lhs_literal_ptr->shape();
+    } else {
+      lhs_shape = GetShapeWithLayout(lhs->shape());
+    }
+
+    if (conv->sparsity_config().has_rhs() && rhs->shape().IsTuple()) {
+      TF_ASSIGN_OR_RETURN(
+          decompressed_rhs,
+          xla::MaterializeSparseOperand(LiteralSlice(*rhs_literal_ptr, {0}),
+                                        LiteralSlice(*rhs_literal_ptr, {1}),
+                                        conv->sparsity_config().rhs()));
+      rhs_literal_ptr = &decompressed_rhs.value();
+      rhs_shape = rhs_literal_ptr->shape();
+    } else {
+      rhs_shape = GetShapeWithLayout(rhs->shape());
+    }
 
     CHECK_OK(ShapeUtil::ValidateShape(lhs_shape));
     CHECK_OK(ShapeUtil::ValidateShape(rhs_shape));
@@ -1096,15 +1126,15 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
         auto inferred_return_shape,
         ShapeInference::InferConvolveShape(
             lhs_shape, rhs_shape, conv->feature_group_count(),
-            conv->batch_group_count(), window, dnums, conv->sparsity_config(),
+            conv->batch_group_count(), window, dnums, SparsityConfig(),
             /*preferred_element_type=*/conv->shape().element_type()));
     CHECK(ShapeUtil::Compatible(result_shape, inferred_return_shape))
         << "return shape set to: " << ShapeUtil::HumanString(result_shape)
         << " but is inferred to be: "
         << ShapeUtil::HumanString(inferred_return_shape);
 
-    const Literal& lhs_literal = parent_->GetEvaluatedLiteralFor(lhs);
-    const Literal& rhs_literal = parent_->GetEvaluatedLiteralFor(rhs);
+    const Literal& lhs_literal = *lhs_literal_ptr;
+    const Literal& rhs_literal = *rhs_literal_ptr;
     const bool lhs_same = ShapeUtil::SameElementType(lhs_shape, result_shape);
     const bool rhs_same = ShapeUtil::SameElementType(rhs_shape, result_shape);
     if (rhs_same && lhs_same) {

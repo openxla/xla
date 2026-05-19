@@ -86,6 +86,8 @@ class IfrtCompileAtomProgramPass
           compile_options_overrides,
       std::shared_ptr<AtomExecutableFutureMap> atom_executable_future_map)
       : atom_program_compiler_(std::move(compiler)),
+        hlo_program_context_(std::make_shared<mlir::MLIRContext>(
+            mlir::MLIRContext::Threading::DISABLED)),
         compile_options_overrides_(std::move(compile_options_overrides)),
         atom_executable_future_map_(std::move(atom_executable_future_map)),
         user_context_(UserContextScope::current()) {}
@@ -139,6 +141,8 @@ class IfrtCompileAtomProgramPass
 
   std::shared_ptr<AtomProgramCompiler> atom_program_compiler_;
 
+  std::shared_ptr<mlir::MLIRContext> hlo_program_context_;
+
   std::shared_ptr<
       absl::flat_hash_map<std::string, std::unique_ptr<CompileOptions>>>
       compile_options_overrides_;
@@ -178,17 +182,16 @@ absl::StatusOr<AtomProgramCompileResult> IfrtCompileAtomProgramPass::CompileXla(
                       GetXlaCompileOptions(call_op, module_op));
   // In order to be able to compile multiple XLA computations in parallel, we
   // need to:
-  // 1. Create a new MLIR context with threading disabled to ensure MLIR doesn't
-  // create too many threads when compiling many XLA computations in parallel.
+  // 1. Use an MLIR context with threading disabled to ensure MLIR doesn't
+  //    create too many threads when compiling many XLA computations in
+  //    parallel.
   // 2. Clone the module into this new context. This cloning is necessary
-  // because MLIR printing takes different paths depending on if a ModuleOp has
-  // a parent or not. Thus, by cloning the module we ensure that the module's
-  // string representation is maintained.
-  auto context = std::make_unique<mlir::MLIRContext>(
-      mlir::MLIRContext::Threading::DISABLED);
+  //    because MLIR printing takes different paths depending on if a ModuleOp
+  //    has a parent or not. Thus, by cloning the module we ensure that the
+  //    module's string representation is maintained.
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> cloned_module,
-                      CloneModuleIntoContext(module_op, *context));
-  auto hlo_program = std::make_unique<HloProgram>(std::move(context),
+                      CloneModuleIntoContext(module_op, *hlo_program_context_));
+  auto hlo_program = std::make_unique<HloProgram>(hlo_program_context_,
                                                   std::move(cloned_module));
   AtomProgramCompileResult result;
   result.name =

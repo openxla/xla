@@ -126,6 +126,7 @@ cc_library(
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
@@ -305,8 +306,12 @@ xla_cc_test(
 
 cc_library(
     name = "util",
-    srcs = ["util.cc"],
+    srcs = [
+        "error_util.cc",
+        "util.cc",
+    ],
     hdrs = [
+        "error_util.h",
         "iterator_util.h",
         "map_util.h",
         "overflow_util.h",
@@ -337,6 +342,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
@@ -363,7 +369,6 @@ xla_cc_test(
         "//xla/tsl/platform:test_main",
         "//xla/tsl/util:maybe_owning",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
@@ -372,6 +377,20 @@ xla_cc_test(
         "@com_google_googletest//:gtest",
         "@ml_dtypes_py//ml_dtypes:float8",
         "@tsl//tsl/platform:ml_dtypes",
+    ],
+)
+
+xla_cc_test(
+    name = "error_util_test",
+    srcs = ["error_util_test.cc"],
+    deps = [
+        ":util",
+        "//xla/hlo/testlib:test",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 

@@ -1188,6 +1188,11 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
     const std::optional<stream_executor::GpuComputeCapability>& gpu_cc) {
   const auto debug_options = fusion.GetModule()->config().debug_options();
 
+  if (fusion.IsMultiOutputFusion() &&
+      !debug_options.xla_gpu_unsupported_enable_triton_multi_output_fusion()) {
+    return absl::InvalidArgumentError("Multi-output fusion is disabled.");
+  }
+
   const HloComputation* hlo_computation =
       fusion.fused_instructions_computation();
 

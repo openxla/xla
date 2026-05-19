@@ -378,7 +378,8 @@ absl::StatusOr<FusionEmissionResult> MlirKernelFusion::Emit(
                                   GetDefaultBufferAlignment(), &fusion));
   auto [future_entry, cached] = ir_emitter_context.kernel_cache().GetWithStatus(
       fusion.fused_instructions_computation(), args.args(),
-      /*discriminator=*/"", [&]() -> xla::Future<KernelReuseCache::Entry> {
+      /*discriminator=*/"MlirKernelFusion",
+      [&]() -> xla::Future<KernelReuseCache::Entry> {
         std::string kernel_name = ir_emitter_context.GetSanitizedUniqueName(
             std::string(fusion.name()));
         return EmitLlvmModule(fusion, kernel_name, ir_emitter_context)
@@ -627,8 +628,9 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
     se::SemanticVersion ptx_version =
         nvptx::DetermineHighestSupportedPtxVersionFromCudaVersion(
             device.runtime_version());
-    pm.addPass(CreateConvertFloatNvidiaPass(
-        cc->major, cc->minor, ptx_version.major(), ptx_version.minor()));
+    pm.addPass(CreateConvertFloatNvidiaPass(cc->major, cc->minor,
+                                            ptx_version.major_version(),
+                                            ptx_version.minor_version()));
   } else if (auto* cc =
                  device.gpu_compute_capability().rocm_compute_capability()) {
     if (cc->has_fp8_support()) {

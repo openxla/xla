@@ -198,7 +198,8 @@ SmallVector<int64_t> GetPaddedTileSizes(ArrayRef<int64_t> tile_sizes) {
   SmallVector<int64_t> result;
   result.reserve(tile_sizes.size());
   for (int64_t value : tile_sizes) {
-    result.push_back(llvm::PowerOf2Ceil(value));
+    // If tile size is 0, treat it as 1 to avoid crash and empty tensors.
+    result.push_back(value == 0 ? 1 : llvm::PowerOf2Ceil(value));
   }
   return result;
 }
@@ -856,6 +857,10 @@ absl::StatusOr<SmallVector<Type>> GetFnArgTypes(
 
 absl::Status CheckConcatenateOperands(
     const HloConcatenateInstruction& hlo_concat, int64_t concat_dim_tile_size) {
+  if (concat_dim_tile_size <= 0) {
+    return absl::InternalError(absl::StrCat(
+        "Invalid tile size for concatenate dimension: ", concat_dim_tile_size));
+  }
   int64_t concatenate_dimension = hlo_concat.concatenate_dimension();
   int64_t num_operands = hlo_concat.operands().size();
   for (const auto [index, operand] : llvm::enumerate(hlo_concat.operands())) {

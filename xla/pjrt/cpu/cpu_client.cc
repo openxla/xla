@@ -44,10 +44,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "xla/array.h"
-#include "xla/backends/cpu/alignment.h"
-#include "xla/backends/cpu/codegen/cpu_features.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/constant_allocation.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
@@ -68,8 +65,8 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/pjrt/abstract_tracked_device_buffer.h"
 #include "xla/pjrt/common_pjrt_client.h"
+#include "xla/pjrt/compiled_memory_stats.h"
 #include "xla/pjrt/cpu/abstract_cpu_buffer.h"
 #include "xla/pjrt/cpu/cpu_async_execution_tracker.h"
 #include "xla/pjrt/cpu/cpu_device.h"
@@ -78,6 +75,7 @@ limitations under the License.
 #include "xla/pjrt/cpu/tracked_cpu_device_buffer.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/dump/dump.h"
+#include "xla/pjrt/dynamic_shapes.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/host_to_device_transfer_manager.h"
@@ -85,7 +83,6 @@ limitations under the License.
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
-#include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
@@ -97,11 +94,11 @@ limitations under the License.
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/thread_pool_async_work_runner.h"
-#include "xla/pjrt/transpose.h"
 #include "xla/pjrt/utils.h"
 #include "xla/primitive_util.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/compiled_module.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/computation_placer.h"
@@ -134,10 +131,8 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 #include "tsl/platform/denormal.h"
 #include "tsl/platform/fingerprint.h"
-#include "tsl/platform/protobuf.h"
 #include "tsl/platform/setround.h"
 #include "tsl/profiler/lib/traceme.h"
 
@@ -190,6 +185,32 @@ class CustomAllocator final : public CpuDeviceMemory::Allocator {
  private:
   CustomAllocatorFn allocator_fn_;
 };
+
+void UpdateResultLayoutMemorySpaces(
+    absl::Span<const MemorySpaceColor> out_memory_spaces,
+    const XlaComputation& computation, CompileOptions& options) {
+  Shape result_layout;
+  if (options.executable_build_options.result_layout()) {
+    result_layout = *options.executable_build_options.result_layout();
+  } else {
+    auto program_shape_or = computation.GetProgramShape();
+    if (!program_shape_or.ok()) return;
+    result_layout =
+        LayoutUtil::GetWithDefaultLayout(program_shape_or->result());
+  }
+
+  int idx = 0;
+  auto set_memory_space = [&](Shape* subshape, const ShapeIndex&) {
+    if (subshape->IsArray() && idx < out_memory_spaces.size()) {
+      if (out_memory_spaces[idx] != Layout::kDefaultMemorySpace) {
+        subshape->mutable_layout()->set_memory_space(out_memory_spaces[idx]);
+      }
+      ++idx;
+    }
+  };
+  ShapeUtil::ForEachMutableSubshape(&result_layout, set_memory_space);
+  options.executable_build_options.set_result_layout(result_layout);
+}
 
 }  // namespace
 
@@ -459,6 +480,33 @@ absl::StatusOr<std::string> PjRtCpuExecutable::SerializeExecutable() const {
   return serialized_proto;
 }
 
+absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+PjRtCpuExecutable::GetParameterMemoryKinds() const {
+  std::vector<std::vector<absl::string_view>> out;
+  std::vector<absl::string_view>& memory_kinds = out.emplace_back();
+  memory_kinds.reserve(parameter_device_shapes_.size());
+  for (const xla::Shape& s : parameter_device_shapes_) {
+    TF_ASSIGN_OR_RETURN(int kind_id, topology_->GetMemorySpaceKindForShape(s));
+    TF_ASSIGN_OR_RETURN(absl::string_view kind,
+                        topology_->KindIdToKind(kind_id));
+    memory_kinds.push_back(kind);
+  }
+  return out;
+}
+
+absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+PjRtCpuExecutable::GetOutputMemoryKinds() const {
+  std::vector<std::vector<absl::string_view>> out;
+  std::vector<absl::string_view>& leaf_kinds = out.emplace_back();
+  leaf_kinds.reserve(output_memory_space_kind_ids_.size());
+  for (int kind_id : output_memory_space_kind_ids_) {
+    TF_ASSIGN_OR_RETURN(absl::string_view kind,
+                        topology_->KindIdToKind(kind_id));
+    leaf_kinds.push_back(kind);
+  }
+  return out;
+}
+
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtCpuClient::LoadSerializedExecutable(absl::string_view serialized,
                                         std::optional<CompileOptions> options,
@@ -529,7 +577,8 @@ PjRtCpuClient::LoadSerializedExecutable(absl::string_view serialized,
   auto cpu_executable = std::make_shared<PjRtCpuExecutable>(
       num_replicas, num_partitions,
       compile_options.parameter_is_tupled_arguments, std::move(input_options),
-      std::move(executable), std::move(result_buffer_indices), nullptr);
+      std::move(executable), std::move(result_buffer_indices), nullptr,
+      *topology_);
   TF_RETURN_IF_ERROR(cpu_executable->SetUpDonation(
       compile_options.parameter_is_tupled_arguments));
   return LoadInternal(std::move(cpu_executable), std::move(device_assignment));
@@ -687,7 +736,7 @@ PjRtCpuClient::CompileAndAssignDevices(MaybeOwningMlirModule module,
                        options.executable_build_options));
 
   return CompileInternal(xla_computation, arg_layouts_and_pointers.second,
-                         layout_callback, options);
+                         layout_callback, options, /*aot_options=*/nullptr);
 }
 
 absl::StatusOr<std::pair<std::unique_ptr<PjRtCpuExecutable>,
@@ -710,6 +759,29 @@ PjRtCpuClient::CompileAndAssignDevices(const XlaComputation& computation,
       },
       options.argument_layouts, &options.executable_build_options,
       &argument_layout_pointers));
+
+  // Read output memory kinds from frontend attributes to ensure host memory
+  // space is propagated for host-offloaded outputs (e.g., unpinned_host).
+  TF_ASSIGN_OR_RETURN(std::vector<MemorySpaceColor> out_memory_spaces,
+                      GetOutputMemoryKinds(computation));
+  bool has_non_default_output_memory_space = false;
+  for (MemorySpaceColor color : out_memory_spaces) {
+    if (color != Layout::kDefaultMemorySpace) {
+      has_non_default_output_memory_space = true;
+      break;
+    }
+  }
+
+  if (has_non_default_output_memory_space) {
+    // Update the result layout to carry the correct memory spaces.
+    UpdateResultLayoutMemorySpaces(out_memory_spaces, computation, options);
+
+    return CompileInternal(computation, argument_layout_pointers,
+                           /*layout_canonicalization_callback=*/nullptr,
+                           options,
+                           /*aot_options=*/nullptr);
+  }
+
   return CompileInternal(computation, argument_layout_pointers,
                          /*layout_canonicalization_callback=*/nullptr, options);
 }
@@ -782,6 +854,26 @@ PjRtCpuClient::CompileAheadOfTimeAndLoad(
       },
       options.argument_layouts, &options.executable_build_options,
       &argument_layout_pointers));
+  TF_ASSIGN_OR_RETURN(std::vector<MemorySpaceColor> out_memory_spaces,
+                      GetOutputMemoryKinds(computation));
+  bool has_non_default_output_memory_space = false;
+  for (MemorySpaceColor color : out_memory_spaces) {
+    if (color != Layout::kDefaultMemorySpace) {
+      has_non_default_output_memory_space = true;
+      break;
+    }
+  }
+
+  if (has_non_default_output_memory_space) {
+    UpdateResultLayoutMemorySpaces(out_memory_spaces, computation, options);
+    TF_ASSIGN_OR_RETURN(
+        auto results,
+        CompileInternal(computation, argument_layout_pointers,
+                        /*layout_canonicalization_callback=*/nullptr, options,
+                        &aot_options));
+    return LoadInternal(std::move(results.first), std::move(results.second));
+  }
+
   TF_ASSIGN_OR_RETURN(
       auto results,
       CompileInternal(computation, argument_layout_pointers,
@@ -929,15 +1021,12 @@ PjRtCpuClient::CompileInternal(
   auto executable = std::make_unique<PjRtCpuExecutable>(
       num_replicas, num_partitions, options.parameter_is_tupled_arguments,
       std::move(input_options), std::move(cpu_executable),
-      std::move(result_buffer_indices), std::move(unoptimized_hlo_module));
+      std::move(result_buffer_indices), std::move(unoptimized_hlo_module),
+      *topology_);
   TF_RETURN_IF_ERROR(
       executable->SetUpDonation(options.parameter_is_tupled_arguments));
 
   return std::make_pair(std::move(executable), std::move(device_assignment));
-}
-
-static bool IsAlignedData(void* ptr) {
-  return (absl::bit_cast<std::uintptr_t>(ptr) & (cpu::MinAlign() - 1)) == 0;
 }
 
 absl::StatusOr<PjRtRawBufferRef> PjRtCpuClient::ImportForeignMemory(
@@ -956,10 +1045,9 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::CreateErrorBuffer(
   if (device->client() != this) {
     return absl::InvalidArgumentError("Device is not attached to this client");
   }
-  TF_ASSIGN_OR_RETURN(
-      auto raw_buffer,
-      CpuRawBuffer::Allocate(memory_space, ShapeUtil::ByteSizeOf(shape),
-                             *allocator_));
+  TF_ASSIGN_OR_RETURN(int64_t size, GetOnDeviceBytesCount(memory_space, shape));
+  TF_ASSIGN_OR_RETURN(auto raw_buffer,
+                      CpuRawBuffer::Allocate(memory_space, size, *allocator_));
   absl::InlinedVector<PjRtDeviceEventRef, 2> definition_device_events;
   definition_device_events.push_back(
       PjRtDeviceEventRef(tsl::AsyncValueRef<CpuEvent>(
@@ -1109,23 +1197,32 @@ PjRtCpuClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
 
 absl::StatusOr<int64_t> PjRtCpuClient::GetOnDeviceBytesCount(
     int memory_space_kind, const xla::Shape& shape) const {
-  return xla::ShapeUtil::ByteSizeOf(shape);
+  int64_t original_size = xla::ShapeUtil::ByteSizeOf(shape);
+  auto kind = GetDynamicShapeKind(memory_space_kind);
+  auto requirements =
+      PjRtShapeAndMetadataTransferRequirements::Get(shape, kind);
+  if (shape.has_layout()) {
+    return static_cast<int64_t>(requirements.size);
+  }
+  if (static_cast<int64_t>(requirements.size) != original_size) {
+    return absl::InternalError(absl::StrFormat(
+        "%s mismatch between transfer_manager requirements (%ld) and "
+        "PjRtTransferRequirements (%zu)",
+        shape.ToString(true), original_size, requirements.size));
+  }
+
+  return static_cast<int64_t>(requirements.size);
+}
+
+absl::StatusOr<int> PjRtCpuClient::GetMemorySpaceKindForShape(
+    const Shape& shape) const {
+  return topology_->GetMemorySpaceKindForShape(shape);
 }
 
 absl::StatusOr<xla::Shape> PjRtCpuClient::MakeDefaultShapeForMemorySpace(
     PjRtMemorySpace* memory_space, xla::Shape shape,
     const xla::Layout* layout) const {
   return MakeDefaultCpuBufferShape(std::move(shape), layout);
-}
-
-static std::vector<tsl::RCReference<tsl::AsyncValue>> CopyAsyncValues(
-    absl::Span<const tsl::RCReference<tsl::AsyncValue>> events) {
-  std::vector<tsl::RCReference<tsl::AsyncValue>> avs;
-  avs.reserve(events.size());
-  for (const auto& ev : events) {
-    avs.push_back(ev.CopyRef());
-  }
-  return avs;
 }
 
 static std::vector<Shape> GetParameterShapes(const ComputationLayout& layout) {
@@ -1150,7 +1247,8 @@ PjRtCpuExecutable::PjRtCpuExecutable(
     int num_replicas, int num_partitions, bool parameter_is_tupled_arguments,
     CompileOptions compile_options, std::unique_ptr<Executable> cpu_executable,
     absl::InlinedVector<BufferAllocation::Index, 4> result_buffer_indices,
-    std::unique_ptr<HloModule> unoptimized_hlo_module)
+    std::unique_ptr<HloModule> unoptimized_hlo_module,
+    const CpuTopologyDescription& topology)
     : num_replicas_(num_replicas),
       num_partitions_(num_partitions),
       parameter_is_tupled_arguments_(parameter_is_tupled_arguments),
@@ -1160,7 +1258,8 @@ PjRtCpuExecutable::PjRtCpuExecutable(
       parameter_device_shapes_(GetParameterShapes(
           cpu_executable_->module().entry_computation_layout())),
       result_buffer_indices_(std::move(result_buffer_indices)),
-      unoptimized_hlo_module_(std::move(unoptimized_hlo_module)) {
+      unoptimized_hlo_module_(std::move(unoptimized_hlo_module)),
+      topology_(&topology) {
   auto hlo_cost_analysis =
       std::make_unique<HloCostAnalysis>(cpu::CpuExecutable::ShapeSizeBytes);
   CHECK_OK(cpu_executable_->module().entry_computation()->Accept(
@@ -1171,8 +1270,21 @@ PjRtCpuExecutable::PjRtCpuExecutable(
   // switch time (~5us).
   cheap_computation_ = hlo_cost_analysis->flop_count() < 1000;
 
-  output_memory_space_kind_ids_.resize(result_buffer_indices_.size(),
-                                       CpuDeviceMemorySpace::kKindId);
+  output_memory_space_kind_ids_.reserve(result_buffer_indices_.size());
+
+  auto result_shape = cpu_executable_->result_shape();
+  absl::Span<const xla::Shape> shapes =
+      result_shape.IsTuple()
+          ? absl::Span<const xla::Shape>(result_shape.tuple_shapes())
+          : absl::Span<const xla::Shape>(&result_shape, 1);
+  for (const xla::Shape& s : shapes) {
+    auto kind_id_or = topology_->GetMemorySpaceKindForShape(s);
+    if (kind_id_or.ok()) {
+      output_memory_space_kind_ids_.push_back(*kind_id_or);
+    } else {
+      output_memory_space_kind_ids_.push_back(CpuDeviceMemorySpace::kKindId);
+    }
+  }
   output_indices_.resize(
       cpu_executable_->buffer_assignment().Allocations().size(), -1);
   for (int i = 0; i < result_buffer_indices_.size(); ++i) {
@@ -1181,6 +1293,17 @@ PjRtCpuExecutable::PjRtCpuExecutable(
         << "Unexpected duplicate.";
     output_indices_[result_buffer_indices_[i]] = i;
   }
+
+  // Ensure output_memory_space_kind_ids_ is at least as large as the number of
+  // output leaves. Must be done before the early return for parameterless
+  // computations (e.g. iota).
+  int expected_outputs =
+      ShapeUtil::GetLeafCount(cpu_executable_->result_shape());
+  if (output_memory_space_kind_ids_.size() < expected_outputs) {
+    output_memory_space_kind_ids_.resize(expected_outputs,
+                                         CpuDeviceMemorySpace::kKindId);
+  }
+
   const auto& computation_layout =
       cpu_executable_->module().entry_computation_layout();
   if (computation_layout.parameter_count() == 0) {
@@ -1193,15 +1316,21 @@ PjRtCpuExecutable::PjRtCpuExecutable(
     input_buffer_sizes_in_bytes_.reserve(computation_layout.parameter_count());
     for (int i = 0; i < computation_layout.parameter_count(); ++i) {
       input_buffer_sizes_in_bytes_.push_back(
-          ShapeUtil::ByteSizeOf(computation_layout.parameter_shape(i)));
+          PjRtShapeAndMetadataTransferRequirements::Get(
+              computation_layout.parameter_shape(i),
+              PjRtDynamicShapeKind::kNotSupported)
+              .size);
     }
   } else {
     input_buffer_sizes_in_bytes_.reserve(
         computation_layout.parameter_shape(0).tuple_shapes().size());
     for (int i = 0;
          i < computation_layout.parameter_shape(0).tuple_shapes().size(); ++i) {
-      input_buffer_sizes_in_bytes_.push_back(ShapeUtil::ByteSizeOf(
-          computation_layout.parameter_shape(0).tuple_shapes(i)));
+      input_buffer_sizes_in_bytes_.push_back(
+          PjRtShapeAndMetadataTransferRequirements::Get(
+              computation_layout.parameter_shape(0).tuple_shapes(i),
+              PjRtDynamicShapeKind::kNotSupported)
+              .size);
     }
   }
 
@@ -1313,7 +1442,8 @@ static absl::StatusOr<tsl::AsyncValueRef<CpuDeviceMemory>> MemoryForAllocation(
     if (tuple_index_table) {
       if (allocation.param_shape_index().empty()) {
         return tuple_index_table;
-      } else if (allocation.param_shape_index().size() == 1) {
+      }
+      if (allocation.param_shape_index().size() == 1) {
         arg = absl::down_cast<CpuRawBuffer*>(
             input_buffers[allocation.param_shape_index()[0]].get());
       } else {
@@ -1783,18 +1913,34 @@ static void MaybeDumpHloSnapshot(
   *hlo_snapshot.mutable_hlo()->mutable_hlo_module() = module.ToProto();
 
   for (auto* argument : arguments) {
-    *hlo_snapshot.add_arguments() = (*argument->ToLiteral().Await())->ToProto();
+    auto literal_or = argument->ToLiteral().Await();
+    if (!literal_or.ok()) {
+      LOG(ERROR) << "Failed to get literal for argument: "
+                 << literal_or.status();
+      return;
+    }
+    *hlo_snapshot.add_arguments() = (*literal_or)->ToProto();
   }
 
   // If there are multiple results, wrap them in a tuple.
   if (results.size() == 1) {
-    *hlo_snapshot.mutable_result() =
-        (*results[0]->ToLiteral().Await())->ToProto();
+    auto literal_or = results[0]->ToLiteral().Await();
+    if (!literal_or.ok()) {
+      LOG(ERROR) << "Failed to get literal for result: " << literal_or.status();
+      return;
+    }
+    *hlo_snapshot.mutable_result() = (*literal_or)->ToProto();
   } else {
     std::vector<Literal> result_literals;
     result_literals.reserve(results.size());
     for (auto& result : results) {
-      result_literals.push_back(std::move(**result->ToLiteral().Await()));
+      auto literal_or = result->ToLiteral().Await();
+      if (!literal_or.ok()) {
+        LOG(ERROR) << "Failed to get literal for result: "
+                   << literal_or.status();
+        return;
+      }
+      result_literals.push_back(std::move(**literal_or));
     }
     *hlo_snapshot.mutable_result() =
         LiteralUtil::MakeTupleOwned(std::move(result_literals)).ToProto();
@@ -1859,10 +2005,9 @@ PjRtCpuLoadedExecutable::Execute(
     MaybeDumpHloSnapshot(executable_->cpu_executable_->module(), run_id,
                          argument_handles[0], wrapped_results[0]);
     return wrapped_results;
-  } else {
+  }
     return CommonPjRtLoadedExecutable::Execute(argument_handles, options,
                                                returned_futures);
-  }
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>

@@ -266,6 +266,16 @@ absl::StatusOr<std::vector<absl::string_view>> MemoryKindsFromShape(
 absl::StatusOr<std::vector<std::vector<absl::string_view>>>
 StreamExecutorExecutable::GetParameterMemoryKinds() const {
   TF_ASSIGN_OR_RETURN(auto modules, GetHloModules());
+  // If no modules are available, we cannot determine memory kinds. Returning
+  // Unimplemented here triggers a safe fallback in IFRT (executable.cc) to
+  // avoid a crash when memory kinds are not available (e.g., when annotations
+  // are stripped).
+  if (modules.empty()) {
+    return absl::UnimplementedError(
+        "GetParameterMemoryKinds is not supported when no modules are "
+        "available.");
+  }
+
   std::vector<std::vector<absl::string_view>> out;
   out.reserve(modules.size());
   for (const auto& module : modules) {

@@ -923,6 +923,7 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt/hlo:hlo_program",
         "//xla/service:hlo_module_config",
+        "//xla/service:hlo_proto_cc",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

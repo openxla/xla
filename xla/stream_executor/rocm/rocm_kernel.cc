@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "rocm/include/hip/hip_runtime.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/kernel.h"
@@ -106,7 +107,13 @@ absl::Status RocmKernel::Launch(const ThreadDim& thread_dims,
 
   // If arguments are already packed we can just launch the kernel.
   if (auto* packed = DynCast<KernelArgsPackedArrayBase>(&args)) {
-    return launch(*packed);
+    auto& pack = args_packing();
+    if (!pack) {
+      return launch(*packed);
+    }
+    ASSIGN_OR_RETURN(auto repacked, pack(*this, *packed));
+
+    return launch(*repacked);
   }
 
   // For device memory array we rely on a custom kernel arguments packing.

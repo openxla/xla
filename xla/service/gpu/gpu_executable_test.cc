@@ -623,9 +623,7 @@ TEST_F(GpuExecutableTest, FromProtoWithSymbolResolver) {
                 relocations {
                   kind: KIND_BITS64_ABSOLUTE
                   argument_index: 0
-                  offset: 0
                 }
-                data: "\x00\x00\x00\x00\x00\x00\x00\x00"
               }
               kernel_arguments { data: "\x34\x12\x00\x00" }
             }

@@ -5,7 +5,7 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "if_google")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
-load("//xla/util:build_defs.bzl", "embed_files")
+load("//xla/tsl/util:cc_embed_data.bzl", "cc_embed_data")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -78,11 +78,16 @@ exports_files(glob([
     "default_configs/*.txtpb",
 ]))
 
-embed_files(
+cc_embed_data(
     name = "embed_default_configs",
     srcs = glob(["default_configs/*.txtpb"]),
+    outs = [
+        "embed_default_configs.cc",
+        "embed_default_configs.h",
+    ],
     compatible_with = get_compatible_with_portable() + if_google(["//buildenv/target:libtpu"]),
-    cpp_namespace = "xla::gpu::configs",
+    embedopts = ["--namespace=xla::gpu::configs"],
+    flatten = True,
 )
 
 cc_library(
@@ -95,6 +100,7 @@ cc_library(
         "//xla/service/gpu:matmul_utils",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_protobuf//:protobuf",
@@ -125,7 +131,6 @@ cc_library(
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:instruction_fusion",
-        "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu/model:block_level_parameters",
         "//xla/service/gpu/model:fusion_analysis_cache",
@@ -136,6 +141,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:sorted_range",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -160,6 +166,7 @@ xla_cc_test(
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
         "@com_google_protobuf//:protobuf_lite",

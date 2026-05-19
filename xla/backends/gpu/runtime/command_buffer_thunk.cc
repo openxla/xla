@@ -501,5 +501,8 @@ std::string CommandBufferThunk::ToString(int indent) const {
   absl::StrAppend(&result, thunks_->ToString(indent + 1));
   return result;
 }
+absl::StatusOr<ThunkProto> CommandBufferThunk::ToProto() const {
+  return absl::InvalidArgumentError("CommandBufferThunk can't be serialized.");
+}
 
 }  // namespace xla::gpu

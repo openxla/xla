@@ -794,6 +794,25 @@ absl::StatusOr<bool> IsAsyncCollective(const HloInstruction* instruction) {
   }
 }
 
+bool IsRaggedAllToAllOrAsyncStartRaggedAllToAll(
+    const HloInstruction* instruction) {
+  return instruction->opcode() == HloOpcode::kRaggedAllToAll ||
+         (instruction->opcode() == HloOpcode::kAsyncStart &&
+          instruction->async_wrapped_opcode() == HloOpcode::kRaggedAllToAll);
+}
+
+bool IsRaggedAllToAllOrAsyncDoneRaggedAllToAll(
+    const HloInstruction* instruction) {
+  return instruction->opcode() == HloOpcode::kRaggedAllToAll ||
+         (instruction->opcode() == HloOpcode::kAsyncDone &&
+          instruction->async_wrapped_opcode() == HloOpcode::kRaggedAllToAll);
+}
+
+bool IsOneShotZeroCopyRaggedAllToAllEnabled(const DebugOptions& opts) {
+  return opts.xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl() &&
+         opts.xla_gpu_experimental_ragged_all_to_all_zero_copy();
+}
+
 HloInstruction* IsOrHasCollectiveWithChannelId(HloInstruction* instruction) {
   if (instruction->opcode() == HloOpcode::kFusion) {
     for (auto* inner_inst : instruction->fused_instructions()) {

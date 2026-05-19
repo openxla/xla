@@ -180,6 +180,27 @@ xla_cc_test(
     ],
 )
 
+xla_cc_test(
+    name = "hlo_evaluator_sparsity_test",
+    srcs = ["hlo_evaluator_sparsity_test.cc"],
+    deps = [
+        ":hlo_evaluator",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/tests:literal_test_util",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
 cc_library(
     name = "caching_hlo_evaluator",
     srcs = ["caching_hlo_evaluator.cc"],
