@@ -655,11 +655,16 @@ PjRtStreamExecutorClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
 
 absl::Status PjRtStreamExecutorClient::WaitForAllocation(
     se::Stream* stream, const CommonPjRtRawBuffer& raw_buffer) {
-  ASSIGN_OR_RETURN(
-      auto event,
+  auto device_buffer =
       tensorflow::down_cast<const PjRtStreamExecutorRawBuffer*>(&raw_buffer)
-          ->device_buffer()
-          ->GetDefinitionEvent(async_work_runner(), /*nullptr_if_past=*/true));
+          ->device_buffer();
+  tsl::BlockUntilReady(device_buffer);
+  if (device_buffer.IsError()) {
+    return device_buffer.GetError();
+  }
+  ASSIGN_OR_RETURN(auto event,
+                   device_buffer->GetDefinitionEvent(async_work_runner(),
+                                                     /*nullptr_if_past=*/true));
   if (event) {
     event->WaitForEventOnStream(stream);
   }
@@ -1690,7 +1695,7 @@ PjRtStreamExecutorClient::RunAsync(
     auto buf =
         tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(results[i].get())
             ->device_buffer();
-    if (buf.IsAvailable()) {
+    if (buf.IsConcrete()) {
       if (buf->mem().opaque() != mem.opaque() ||
           buf->mem().size() != mem.size()) {
         return absl::InvalidArgumentError("An alias result does not match.");

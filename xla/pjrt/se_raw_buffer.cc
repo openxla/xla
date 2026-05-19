@@ -219,6 +219,10 @@ PjRtStreamExecutorRawBuffer::CopyRawDeviceToHostAndReturnEvent(
 
 ShapedBuffer PjRtStreamExecutorRawBuffer::AsShapedBuffer(
     const xla::Shape& shape) {
+  if (device_buffer_) {
+    tsl::BlockUntilReady(device_buffer_);
+    CHECK(!device_buffer_.IsError());
+  }
   auto* device = memory_space()->devices()[0];
   ShapedBuffer shaped_buffer(shape, device->local_device_id().value(),
                              device->local_hardware_id().value());
@@ -255,6 +259,10 @@ absl::StatusOr<PjRtRawBufferRef> PjRtStreamExecutorRawBuffer::Slice(
 
 absl::StatusOr<PjRtDeviceEventRef>
 PjRtStreamExecutorRawBuffer::MakeAllocationReadyEvent() {
+  tsl::BlockUntilReady(device_buffer_);
+  if (device_buffer_.IsError()) {
+    return device_buffer_.GetError();
+  }
   auto* client =
       tensorflow::down_cast<PjRtStreamExecutorClient*>(memory_space_->client());
   ASSIGN_OR_RETURN(auto result,
