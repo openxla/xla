@@ -584,10 +584,11 @@ absl::StatusOr<PreparedTransfer> PrepareTransfer(
                           std::move(clique_and_communicator), is_sender);
 }
 
-absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>
+// Group transfers by clique key. We return a btree_map to guarantee stable
+// iteration order for all ranks participating in these transfers.
+absl::btree_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>
 GroupTransfersByCliqueKey(std::vector<PreparedTransfer>&& prepared_transfers) {
-  absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>> grouped;
-  grouped.reserve(prepared_transfers.size());
+  absl::btree_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>> grouped;
   for (auto&& prepared_transfer : prepared_transfers) {
     grouped[prepared_transfer.clique_key_].push_back(
         std::move(prepared_transfer));
@@ -833,7 +834,7 @@ void StreamExecutorGpuClient::ScheduleTransfersOnLocalDevice(
         }
 
         // Group transfers by GPU clique.
-        absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>
+        absl::btree_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>
             grouped_transfers =
                 GroupTransfersByCliqueKey(std::move(prepared_transfers));
 
