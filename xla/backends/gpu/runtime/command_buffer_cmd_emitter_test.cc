@@ -454,6 +454,60 @@ TEST_F(CommandBufferCmdEmitterTest, ConvertsConditionalThunkToCommand) {
   EXPECT_THAT(command_names, ElementsAre("conditional", "branch0", "branch1"));
 }
 
+TEST_F(CommandBufferCmdEmitterTest, ConvertsConditionalThunkRepeatedly) {
+  BufferAllocation branch_index_alloc(/*index=*/0, /*size=*/sizeof(int32_t),
+                                      /*color=*/0);
+  BufferAllocation data_alloc(/*index=*/1, /*size=*/2 * 1024, /*color=*/0);
+
+  BufferAllocation::Slice branch_index_slice(&branch_index_alloc, /*offset=*/0,
+                                             /*size=*/sizeof(int32_t));
+  BufferAllocation::Slice branch0_slice(&data_alloc, /*offset=*/0,
+                                        /*size=*/1024);
+  BufferAllocation::Slice branch1_slice(&data_alloc, /*offset=*/1024,
+                                        /*size=*/1024);
+
+  ThunkSequence branch0;
+  branch0.push_back(std::make_unique<FakeKernelThunk>(NextThunkInfo("branch0"),
+                                                      branch0_slice));
+
+  ThunkSequence branch1;
+  branch1.push_back(std::make_unique<FakeKernelThunk>(NextThunkInfo("branch1"),
+                                                      branch1_slice));
+
+  std::vector<ThunkSequence> branches;
+  branches.push_back(std::move(branch0));
+  branches.push_back(std::move(branch1));
+
+  ThunkSequence thunks;
+  thunks.push_back(std::make_unique<ConditionalThunk>(
+      NextThunkInfo("conditional"),
+      ShapedSlice{branch_index_slice, ShapeUtil::MakeShape(S32, {})},
+      std::move(branches)));
+
+  auto collect_command_names = [](CommandExecutor& commands) {
+    std::vector<std::string> command_names;
+    CHECK_OK(commands.Walk([&](Command* command) {
+      command_names.push_back(std::string(command->profile_annotation()));
+      return absl::OkStatus();
+    }));
+    return command_names;
+  };
+
+  ASSERT_OK_AND_ASSIGN(CommandExecutor first_commands,
+                       ConvertToCommands(thunks, ConvertToCommandsOptions()));
+  EXPECT_THAT(collect_command_names(first_commands),
+              ElementsAre("conditional", "branch0", "branch1"));
+
+  ConvertToCommandsOptions concurrent_options;
+  concurrent_options.synchronization_mode =
+      CommandExecutor::SynchronizationMode::kConcurrent;
+  ASSERT_OK_AND_ASSIGN(CommandExecutor second_commands,
+                       ConvertToCommands(thunks, concurrent_options));
+  ASSERT_TRUE(second_commands.execution_graph().has_value());
+  EXPECT_THAT(collect_command_names(second_commands),
+              ElementsAre("conditional", "branch0", "branch1"));
+}
+
 TEST_F(CommandBufferCmdEmitterTest,
        ConvertsBoolConditionalBranchesInCaseOrder) {
   BufferAllocation branch_index_alloc(/*index=*/0, /*size=*/sizeof(bool),

@@ -225,16 +225,12 @@ absl::StatusOr<const se::CommandBuffer::Command*> ConditionalThunk::Record(
       });
 }
 
-absl::Status ConditionalThunk::SetCommandBufferBranchExecutors(
+absl::Status ConditionalThunk::SetOrUpdateCommandBufferBranchExecutors(
     std::vector<CommandExecutor> branch_executors) {
   if (branch_index_is_bool_) {
     TF_RET_CHECK(branch_executors.size() == 2);
   } else {
     TF_RET_CHECK(!branch_executors.empty());
-  }
-  if (command_branch_executors_.has_value()) {
-    return FailedPrecondition(
-        "ConditionalThunk command-buffer branches are already initialized");
   }
   command_branch_executors_ = std::move(branch_executors);
   return absl::OkStatus();

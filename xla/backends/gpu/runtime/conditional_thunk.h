@@ -67,7 +67,7 @@ class ConditionalThunk : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  absl::Status SetCommandBufferBranchExecutors(
+  absl::Status SetOrUpdateCommandBufferBranchExecutors(
       std::vector<CommandExecutor> branch_executors);
 
   absl::Span<const ThunkExecutor> branch_executors() const {

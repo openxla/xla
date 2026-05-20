@@ -103,7 +103,7 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
       std::move(body_cmds), thunk.trip_count(), options.enable_loop_unroll);
 }
 
-static absl::Status SetCommandBufferBranchExecutors(
+static absl::Status SetOrUpdateCommandBufferBranchExecutors(
     ConditionalThunk& thunk, const ConvertToCommandsOptions& options) {
   std::vector<CommandExecutor> branch_cmds;
   branch_cmds.reserve(thunk.branch_executors().size());
@@ -124,7 +124,7 @@ static absl::Status SetCommandBufferBranchExecutors(
       branch_cmds.emplace_back(std::move(cmds));
     }
   }
-  return thunk.SetCommandBufferBranchExecutors(std::move(branch_cmds));
+  return thunk.SetOrUpdateCommandBufferBranchExecutors(std::move(branch_cmds));
 }
 
 //===----------------------------------------------------------------------===//
@@ -166,7 +166,7 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kConditional: {
       auto& conditional_thunk = static_cast<ConditionalThunk&>(thunk);
       TF_RETURN_IF_ERROR(
-          SetCommandBufferBranchExecutors(conditional_thunk, options));
+          SetOrUpdateCommandBufferBranchExecutors(conditional_thunk, options));
       cmd_sequence.Append(&conditional_thunk);
       return absl::OkStatus();
     }

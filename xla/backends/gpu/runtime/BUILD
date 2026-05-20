@@ -231,7 +231,6 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
-        "//xla/service:shaped_slice",
         "//xla/service/gpu:buffer_allocations",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
