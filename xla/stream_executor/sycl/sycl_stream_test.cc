@@ -30,6 +30,8 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
+#include "xla/hlo/parser/hlo_parser.h"
+#include "xla/service/compiler.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/kernel_spec.h"
@@ -38,7 +40,6 @@ limitations under the License.
 #include "xla/stream_executor/sycl/sycl_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
 #include "xla/stream_executor/typed_kernel_factory.h"
-#include "xla/tests/restricted/llvm_irgen_test_base.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 
@@ -53,7 +54,7 @@ using ::testing::ElementsAreArray;
 using ::testing::HasSubstr;
 using ::testing::UnorderedElementsAreArray;
 
-class SyclStreamTest : public xla::LlvmIrGenTestBase {
+class SyclStreamTest : public ::testing::Test {
  public:
   std::optional<SyclExecutor> executor_;
 
@@ -240,14 +241,20 @@ TEST_F(SyclStreamTest, LaunchKernel) {
     })";
 
   xla::HloModuleConfig config;
-  config.set_debug_options(GetDebugOptionsForTest());
+  config.set_debug_options(xla::GetDebugOptionsFromFlags());
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> hlo_module,
                           xla::ParseAndReturnUnverifiedModule(hlo_ir, config));
 
+  TF_ASSERT_OK_AND_ASSIGN(auto compiler,
+                          xla::Compiler::GetForPlatform(kSyclPlatformId));
+  TF_ASSERT_OK_AND_ASSIGN(
+      hlo_module,
+      compiler->RunHloPasses(std::move(hlo_module), &executor_.value(),
+                             /*device_allocator=*/nullptr));
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<xla::Executable> exec,
-      CompileToExecutable(std::move(hlo_module),
-                          /*run_optimization_passes=*/true));
+      compiler->RunBackend(std::move(hlo_module), &executor_.value(),
+                           /*device_allocator=*/nullptr));
 
   auto* gpu_exec = static_cast<xla::gpu::GpuExecutable*>(exec.get());
   ASSERT_NE(gpu_exec, nullptr);
