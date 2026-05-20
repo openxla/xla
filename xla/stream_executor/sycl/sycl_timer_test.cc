@@ -20,7 +20,10 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
+#include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/service/compiler.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/stream_executor/device_address.h"
@@ -38,8 +41,10 @@ const int kDefaultDeviceOrdinal = 0;
 using ::absl_testing::IsOk;
 using ::testing::Gt;
 
-class SyclTimerTest : public ::testing::Test {
+class SyclTimerTest : public xla::gpu::HloPjRtGpuTestBase {
  public:
+  SyclTimerTest() : xla::gpu::HloPjRtGpuTestBase(CreatePjRtClient()) {}
+
   void LaunchSomeKernel(StreamExecutor* executor, Stream* stream) {
     using AddKernel =
         TypedKernelFactory<DeviceAddress<int32_t>, DeviceAddress<int32_t>,
@@ -58,8 +63,8 @@ class SyclTimerTest : public ::testing::Test {
         std::unique_ptr<xla::HloModule> hlo_module,
         xla::ParseAndReturnUnverifiedModule(hlo_ir, config));
 
-    TF_ASSERT_OK_AND_ASSIGN(auto compiler,
-                            xla::Compiler::GetForPlatform(kSyclPlatformId));
+    xla::Compiler* compiler = this->compiler();
+
     TF_ASSERT_OK_AND_ASSIGN(
         hlo_module, compiler->RunHloPasses(std::move(hlo_module), executor,
                                            /*device_allocator=*/nullptr));
@@ -81,8 +86,6 @@ class SyclTimerTest : public ::testing::Test {
         dynamic_cast<const xla::gpu::CustomKernelThunk*>(thunk);
     ASSERT_NE(kernel_thunk, nullptr);
 
-    std::vector<uint8_t> spirv_binary(gpu_exec->binary());
-
     const KernelLoaderSpec& kernel_spec =
         kernel_thunk->custom_kernel().kernel_spec();
 
@@ -92,15 +95,24 @@ class SyclTimerTest : public ::testing::Test {
     constexpr int64_t kByteLength = sizeof(int32_t) * kLength;
 
     // Prepare arguments: a=3, b=2, c=0
-    DeviceAddress<int32_t> a = executor_->AllocateArray<int32_t>(kLength, 0);
-    DeviceAddress<int32_t> b = executor_->AllocateArray<int32_t>(kLength, 0);
-    DeviceAddress<int32_t> c = executor_->AllocateArray<int32_t>(kLength, 0);
+    DeviceAddress<int32_t> a = executor->AllocateArray<int32_t>(kLength, 0);
+    DeviceAddress<int32_t> b = executor->AllocateArray<int32_t>(kLength, 0);
+    DeviceAddress<int32_t> c = executor->AllocateArray<int32_t>(kLength, 0);
 
     EXPECT_THAT(stream->Memset32(&a, 3, kByteLength), absl_testing::IsOk());
     EXPECT_THAT(stream->Memset32(&b, 2, kByteLength), absl_testing::IsOk());
     EXPECT_THAT(stream->MemZero(&c, kByteLength), absl_testing::IsOk());
     EXPECT_THAT(add.Launch(ThreadDim(kLength), BlockDim(), stream, a, b, c),
                 absl_testing::IsOk());
+  }
+
+ private:
+  static std::unique_ptr<xla::PjRtClient> CreatePjRtClient() {
+    xla::GpuClientOptions options;
+    absl::StatusOr<std::unique_ptr<xla::PjRtClient>> pjrt_client =
+        xla::GetXlaPjrtGpuClient(options);
+    CHECK_OK(pjrt_client);
+    return *std::move(pjrt_client);
   }
 
  protected:

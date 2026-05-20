@@ -24,8 +24,11 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
+#include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.h"
@@ -47,7 +50,19 @@ using ::tsl::testing::StatusIs;
 
 constexpr size_t kMemoryAllocationSize = 1024;
 
-class SyclExecutorTest : public ::testing::Test {};
+class SyclExecutorTest : public xla::gpu::HloPjRtGpuTestBase {
+ public:
+  SyclExecutorTest() : xla::gpu::HloPjRtGpuTestBase(CreatePjRtClient()) {}
+
+ private:
+  static std::unique_ptr<xla::PjRtClient> CreatePjRtClient() {
+    xla::GpuClientOptions options;
+    absl::StatusOr<std::unique_ptr<xla::PjRtClient>> pjrt_client =
+        xla::GetXlaPjrtGpuClient(options);
+    CHECK_OK(pjrt_client);
+    return *std::move(pjrt_client);
+  }
+};
 
 TEST_F(SyclExecutorTest, GetSyclKernel) {
   TF_ASSERT_OK_AND_ASSIGN(
@@ -69,8 +84,8 @@ TEST_F(SyclExecutorTest, GetSyclKernel) {
       std::unique_ptr<xla::HloModule> hlo_module,
       xla::ParseAndReturnUnverifiedModule(hlo_text, config));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto compiler,
-                          xla::Compiler::GetForPlatform(kSyclPlatformId));
+  xla::Compiler* compiler = this->compiler();
+
   TF_ASSERT_OK_AND_ASSIGN(
       hlo_module, compiler->RunHloPasses(std::move(hlo_module), executor,
                                          /*device_allocator=*/nullptr));

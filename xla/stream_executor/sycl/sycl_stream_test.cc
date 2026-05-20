@@ -30,7 +30,10 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
+#include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/service/compiler.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/stream_executor/device_address.h"
@@ -54,8 +57,10 @@ using ::testing::ElementsAreArray;
 using ::testing::HasSubstr;
 using ::testing::UnorderedElementsAreArray;
 
-class SyclStreamTest : public ::testing::Test {
+class SyclStreamTest : public xla::gpu::HloPjRtGpuTestBase {
  public:
+  SyclStreamTest() : xla::gpu::HloPjRtGpuTestBase(CreatePjRtClient()) {}
+
   std::optional<SyclExecutor> executor_;
 
  private:
@@ -65,6 +70,14 @@ class SyclStreamTest : public ::testing::Test {
         stream_executor::PlatformManager::PlatformWithId(kSyclPlatformId));
     executor_.emplace(platform, kDefaultDeviceOrdinal);
     ASSERT_THAT(executor_->Init(), absl_testing::IsOk());
+  }
+
+  static std::unique_ptr<xla::PjRtClient> CreatePjRtClient() {
+    xla::GpuClientOptions options;
+    absl::StatusOr<std::unique_ptr<xla::PjRtClient>> pjrt_client =
+        xla::GetXlaPjrtGpuClient(options);
+    CHECK_OK(pjrt_client);
+    return *std::move(pjrt_client);
   }
 };
 
@@ -245,8 +258,8 @@ TEST_F(SyclStreamTest, LaunchKernel) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> hlo_module,
                           xla::ParseAndReturnUnverifiedModule(hlo_ir, config));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto compiler,
-                          xla::Compiler::GetForPlatform(kSyclPlatformId));
+  xla::Compiler* compiler = this->compiler();
+
   TF_ASSERT_OK_AND_ASSIGN(
       hlo_module,
       compiler->RunHloPasses(std::move(hlo_module), &executor_.value(),
@@ -269,8 +282,6 @@ TEST_F(SyclStreamTest, LaunchKernel) {
   const auto* kernel_thunk =
       dynamic_cast<const xla::gpu::CustomKernelThunk*>(thunk);
   ASSERT_NE(kernel_thunk, nullptr);
-
-  std::vector<uint8_t> spirv_binary(gpu_exec->binary());
 
   const KernelLoaderSpec& kernel_spec =
       kernel_thunk->custom_kernel().kernel_spec();
