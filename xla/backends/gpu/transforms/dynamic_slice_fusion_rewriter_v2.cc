@@ -115,7 +115,7 @@ bool IsAlignedSlice(const HloInstruction* instr) {
     return false;
   }
 
-  int64_t slice_bytes = ShapeUtil::ByteSizeOf(slice_shape);
+  int64_t slice_bytes = ShapeUtil::ByteSizeOfElements(slice_shape);
   return slice_bytes % kXlaAllocatedBufferAlignBytes == 0;
 }
 
@@ -528,7 +528,7 @@ absl::StatusOr<HloComputation*> CreateFusionBody(
   return module->AddComputationAndUnifyNamesAndIds(builder.Build(), false);
 }
 
-absl::Status SetDsfBackendConfig(HloInstruction* fusion) {
+absl::Status SetDynamicSliceFusionBackendConfig(HloInstruction* fusion) {
   GpuBackendConfig gpu_config;
   FusionBackendConfig& backend_config =
       *gpu_config.mutable_fusion_backend_config();
@@ -560,7 +560,7 @@ absl::StatusOr<bool> RewriteHero(
       fusion_body->root_instruction()->shape(),
       HloInstruction::FusionKind::kCustom, plan->captures, fusion_body));
   module->SetAndUniquifyInstrName(fusion, "dynamic_slice_fusion");
-  RETURN_IF_ERROR(SetDsfBackendConfig(fusion));
+  RETURN_IF_ERROR(SetDynamicSliceFusionBackendConfig(fusion));
 
   if (sliced_results.size() > 1) {
     bool any_result_replaced = false;
@@ -605,13 +605,9 @@ absl::StatusOr<bool> DynamicSliceFusionRewriterV2::RunImpl(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
 
-  std::vector<HloComputation*> computations(module->computations().begin(),
-                                            module->computations().end());
+  std::vector<HloComputation*> computations =
+      module->MakeNonfusionComputations(execution_threads);
   for (HloComputation* computation : computations) {
-    if (computation->IsFusionComputation()) {
-      continue;
-    }
-
     std::vector<HloInstruction*> heroes;
     for (HloInstruction* candidate : computation->instructions()) {
       if (!options_.predicate(candidate)) {
