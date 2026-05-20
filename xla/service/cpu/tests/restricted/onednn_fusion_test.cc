@@ -114,16 +114,16 @@ class OneDnnFusionBinaryOpTest : public OneDnnFusionTestBase {
     HloModule matmul
 
     onednn_fusion {
-      %p0 = $dtype[1000,200] parameter(0)
-      %p1 = $dtype[200,300] parameter(1)
-      ROOT %mul = $dtype[1000,300] $op_type(%p0, %p1),
+      %p0 = $dtype[10,20] parameter(0)
+      %p1 = $dtype[20,30] parameter(1)
+      ROOT %mul = $dtype[10,30] $op_type(%p0, %p1),
         lhs_contracting_dims={1}, rhs_contracting_dims={0}
     }
 
     ENTRY entry {
-      %p0 = $dtype[1000,200] parameter(0)
-      %p1 = $dtype[200,300] parameter(1)
-      ROOT %fusion = $dtype[1000,300] fusion(%p0, %p1), kind=kCustom,
+      %p0 = $dtype[10,20] parameter(0)
+      %p1 = $dtype[20,30] parameter(1)
+      ROOT %fusion = $dtype[10,30] fusion(%p0, %p1), kind=kCustom,
         calls=onednn_fusion,
         backend_config={"fusion_config": {kind: "__onednn_fusion"}}
     })";

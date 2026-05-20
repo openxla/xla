@@ -115,7 +115,8 @@ const absl::flat_hash_map<HloOpcode, op::kind>& GetOneDnnUnaryOpMap() {
       unary_op_map({
           {HloOpcode::kAbs, op::kind::Abs},
           {HloOpcode::kExp, op::kind::Exp},
-          {HloOpcode::kLog, op::kind::Log},
+          // TODO(b/514636963): Enable Log op once we fix the wrong-answer issue internally.
+          // {HloOpcode::kLog, op::kind::Log},
           {HloOpcode::kSqrt, op::kind::Sqrt},
           {HloOpcode::kTanh, op::kind::Tanh},
       });
