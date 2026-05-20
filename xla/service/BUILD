@@ -446,7 +446,7 @@ xla_cc_test(
 cc_library(
     name = "collective_pipeliner_utils",
     hdrs = ["collective_pipeliner_utils.h"],
-    deps = [],
+    deps = ["//xla/hlo/ir:hlo"],
 )
 
 cc_library(
@@ -3889,7 +3889,6 @@ cc_library(
         "layout_assignment.h",
     ],
     deps = [
-        ":call_graph",
         ":computation_layout",
         ":hlo_graph_dumper",
         ":logical_buffer",
@@ -6296,17 +6295,6 @@ tf_proto_library(
     make_default_target_header_only = True,
     deps = [
         "//xla:xla_data_proto",
-    ],
-)
-
-cc_library(
-    name = "export_hlo",
-    hdrs = ["export_hlo.h"],
-    deps = [
-        "//xla:autotune_results_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/stream_executor:device_description_proto_cc",
-        "@com_google_absl//absl/strings",
     ],
 )
 

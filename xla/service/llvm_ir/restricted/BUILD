@@ -1,3 +1,4 @@
+load("//xla:restricted_package.bzl", "xla_restricted_allow", "xla_restricted_verify")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 
@@ -27,7 +28,7 @@ xla_cc_test(
         "//xla/service:hlo_module_config",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/tests:xla_internal_test_main",
-        "//xla/tests/restricted:hlo_test_base",
+        "//xla/tests/restricted:hlo_test_base_legacy",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:string_view",
@@ -36,3 +37,7 @@ xla_cc_test(
         "@llvm-project//llvm:ir_headers",
     ],
 )
+
+xla_restricted_verify(allowed_targets = [
+    xla_restricted_allow("llvm_util_test"),
+])

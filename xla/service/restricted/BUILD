@@ -1,3 +1,4 @@
+load("//xla:restricted_package.bzl", "xla_restricted_allow", "xla_restricted_verify")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -11,16 +12,6 @@ package_group(
     name = "friends",
     includes = [
         "//xla:friends",
-    ],
-)
-
-cc_library(
-    name = "hlo_runner",
-    hdrs = ["hlo_runner.h"],
-    deps = [
-        ":hlo_runner_legacy",
-        "//xla/stream_executor:device_address_allocator",
-        "//xla/stream_executor:platform",
     ],
 )
 
@@ -71,3 +62,7 @@ cc_library(
         "@eigen_archive//:eigen3",
     ],
 )
+
+xla_restricted_verify(allowed_targets = [
+    xla_restricted_allow("hlo_runner_legacy"),
+])

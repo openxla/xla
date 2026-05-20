@@ -1,4 +1,5 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//xla:restricted_package.bzl", "xla_restricted_allow", "xla_restricted_verify")
 load(
     "//xla:xla.default.bzl",
     "xla_cc_binary",
@@ -34,7 +35,7 @@ xla_cc_binary(
         "//xla/service:hlo_runner_interface",
         "//xla/service:interpreter_plugin",
         "//xla/service:platform_util",
-        "//xla/service/restricted:hlo_runner",
+        "//xla/service/restricted:hlo_runner_legacy",
         "//xla/stream_executor:platform",
         "//xla/tools/hlo_isolation:hlo_isolation_api",
         "//xla/tsl/platform:statusor",
@@ -49,3 +50,9 @@ filegroup(
     name = "hlo_isolation_cli_test_data",
     srcs = ["//xla/tools:data/hlo_isolation_cli_test.hlo"],
 )
+
+xla_restricted_verify(allowed_targets = [
+    xla_restricted_allow("hlo_isolation_cli_test"),
+    xla_restricted_allow("hlo_isolation_cli_test_data"),
+    xla_restricted_allow("hlo_isolation_test"),
+])

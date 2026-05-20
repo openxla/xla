@@ -786,6 +786,7 @@ absl::Status PropagateTileThroughMinimalReshape(
       GetNonTrivialDimInfo(source_shape, source_range, source_tile.dim_tiles());
   auto target_info = GetNonTrivialDimInfo(target_shape, target_range,
                                           absl::MakeSpan(target_dim_tiles));
+  const TilingSpace& tiling_space = source_tile.tiling_space();
 
   switch (minimal_reshape.category) {
     // 1-to-1 mapping of the "significant" dimensions (size > 1).
@@ -813,8 +814,7 @@ absl::Status PropagateTileThroughMinimalReshape(
 
       int64_t target_id = target_info.ids[0];
       target_dim_tiles[target_id].offset =
-          LinearizeShape(source_info.dims, offsets, mlir_context)
-              .Canonicalize();
+          LinearizeShape(source_info.dims, offsets, mlir_context);
       // The linear stride of the collapsed dimension is the step of the
       // innermost tiled dimension (with tile size > 1) multiplied by the sizes
       // of all dimensions inner to it.
@@ -827,13 +827,14 @@ absl::Status PropagateTileThroughMinimalReshape(
         }
         multiplier *= source_info.dims[idx];
       }
-      target_dim_tiles[target_id].stride = collapsed_stride.Canonicalize();
-      target_dim_tiles[target_id].size = total_tile_elements.Canonicalize();
+      target_dim_tiles[target_id].stride = collapsed_stride;
+      target_dim_tiles[target_id].size = total_tile_elements;
       target_dim_tiles[target_id].upper_bound =
-          (LinearizeShape(source_info.dims, upper_bounds_inclusive,
-                          mlir_context) +
-           1)
-              .Canonicalize();
+          LinearizeShape(source_info.dims, upper_bounds_inclusive,
+                         mlir_context) +
+          1;
+
+      target_dim_tiles[target_id].Simplify(tiling_space);
 
       return VerifyReshapeContiguity(
           minimal_reshape, absl::MakeSpan(&target_dim_tiles[target_id], 1),
@@ -850,12 +851,12 @@ absl::Status PropagateTileThroughMinimalReshape(
 
       for (int i = 0; i < static_cast<int>(target_info.ids.size()); ++i) {
         int64_t target_id = target_info.ids[i];
-        target_dim_tiles[target_id].offset = offsets[i].Canonicalize();
-        target_dim_tiles[target_id].stride = source_dt.stride.Canonicalize();
+        target_dim_tiles[target_id].offset = offsets[i];
+        target_dim_tiles[target_id].stride = source_dt.stride;
         target_dim_tiles[target_id].size =
-            (upper_bounds_inclusive[i] - offsets[i] + 1).Canonicalize();
-        target_dim_tiles[target_id].upper_bound =
-            (upper_bounds_inclusive[i] + 1).Canonicalize();
+            upper_bounds_inclusive[i] - offsets[i] + 1;
+        target_dim_tiles[target_id].upper_bound = upper_bounds_inclusive[i] + 1;
+        target_dim_tiles[target_id].Simplify(tiling_space);
         target_info.tiles[i] = target_dim_tiles[target_id];
       }
 
@@ -986,6 +987,7 @@ Tiles PropagateTileToInputForAllGatherOp(const TilingSpace& tiling_space,
       << "Multi-operand AllGather is not yet supported.";
   const Shape& input_shape = hlo.operand(0)->shape();
   int64_t local_size = input_shape.dimensions(gather_dim);
+  int64_t num_replicas = hlo.shape().dimensions(gather_dim) / local_size;
 
   const DimTile& output_dim_tile = output_tile.dim_tiles()[gather_dim];
 
@@ -1005,8 +1007,19 @@ Tiles PropagateTileToInputForAllGatherOp(const TilingSpace& tiling_space,
     }
   }
 
-  Tile input_tile(output_tile.tiling_space(), std::move(input_dim_tiles));
-  input_tile.set_replica_id(replica_id);
+  mlir::MLIRContext* ctx = output_tile.mlir_context();
+  llvm::SmallVector<DimTile> replica_id_dim_tiles =
+      llvm::to_vector(output_tile.replica_ids());
+  replica_id_dim_tiles.push_back(DimTile{
+      /*offset=*/replica_id,
+      /*size=*/CreateSymbolicConstant(1, ctx),
+      /*stride=*/CreateSymbolicConstant(1, ctx),
+      /*upper_bound=*/
+      CreateSymbolicConstant(num_replicas, ctx),
+  });
+
+  Tile input_tile(output_tile.tiling_space(), std::move(input_dim_tiles),
+                  std::move(replica_id_dim_tiles));
 
   return {input_tile};
 }

@@ -24,17 +24,12 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "xla/backends/gpu/collectives/gpu_clique_key.h"
-#include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
-#include "xla/backends/gpu/runtime/command_state.h"
-#include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/stream_executor/command_buffer.h"
-#include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -99,57 +94,6 @@ class WhileCmd : public Command {
   std::optional<int64_t> trip_count_;
   bool enable_loop_unroll_ = false;
   bool is_unrolled_loop_ = false;
-};
-
-//===----------------------------------------------------------------------===//
-// CollectiveCmd
-//===----------------------------------------------------------------------===//
-
-class CollectiveCmd : public Command {
- public:
-  CollectiveCmd(CommandType cmd_type, CollectiveConfig config,
-                CommunicationId communication_id = CommunicationId(0));
-
-  absl::Status Prepare(const Thunk::PrepareParams& params) final;
-
-  bool IsTracedCommand() const override { return true; }
-
-  bool requires_initialization() const final { return true; }
-
-  absl::StatusOr<const se::CommandBuffer::Command*> RecordTracedCommand(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer,
-      absl::FunctionRef<absl::Status(se::Stream*)> trace);
-
- protected:
-  const CollectiveConfig& config() const { return config_; }
-  CommunicationId communication_id() const { return communication_id_; }
-
- private:
-  CollectiveConfig config_;
-  CommunicationId communication_id_;
-};
-
-//===----------------------------------------------------------------------===//
-// CollectivePermuteCmd
-//===----------------------------------------------------------------------===//
-
-class CollectivePermuteCmd : public CollectiveCmd {
- public:
-  CollectivePermuteCmd(CollectiveConfig config, P2PConfig p2p_config,
-                       absl::Span<const CollectiveThunk::Buffer> buffers);
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override;
-
- private:
-  P2PConfig p2p_config_;
-  std::vector<CollectiveThunk::Buffer> buffers_;
 };
 
 }  // namespace xla::gpu

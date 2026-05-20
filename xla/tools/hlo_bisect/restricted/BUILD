@@ -1,6 +1,7 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//xla:restricted_package.bzl", "xla_restricted_allow", "xla_restricted_verify")
 load(
     "//xla:xla.default.bzl",
     "xla_cc_binary",
@@ -55,7 +56,7 @@ cc_library(
         "//xla/service:hlo_runner_interface",
         "//xla/service:hlo_verifier",
         "//xla/service:platform_util",
-        "//xla/service/restricted:hlo_runner",
+        "//xla/service/restricted:hlo_runner_legacy",
         "//xla/stream_executor:platform",
         "//xla/tests:literal_test_util",
         "//xla/tests:test_utils",
@@ -77,3 +78,10 @@ cc_library(
         "@tsl//tsl/platform:path",
     ],
 )
+
+xla_restricted_verify(allowed_targets = [
+    xla_restricted_allow("hlo_bisect"),
+    xla_restricted_allow("hlo_bisect_build_test"),
+    xla_restricted_allow("hlo_bisect_build_test_0__deps"),
+    xla_restricted_allow("hlo_bisect_utils"),
+])

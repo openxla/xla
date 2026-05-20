@@ -78,7 +78,9 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/gpu:tma_metadata",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
@@ -405,7 +407,6 @@ cc_library(
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu/model:triton_emitter_constraints",
         "//xla/stream_executor:device_description",
-        "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
@@ -416,6 +417,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_protobuf//:any_cc_proto",
         "@com_google_protobuf//:protobuf",
         "@llvm-project//mlir:IR",
     ],
@@ -587,7 +589,6 @@ cc_library(
     ],
     deps = [
         ":block_level_emitter",
-        ":cublas",
         ":cublaslt",
         ":cudnn",
         ":factory",
@@ -693,8 +694,8 @@ cc_library(
 )
 
 xla_test(
-    name = "hipblaslt_mx_execution_test",
-    srcs = ["hipblaslt_mx_execution_test.cc"],
+    name = "mx_scaled_dot_execution_test",
+    srcs = ["mx_scaled_dot_execution_test.cc"],
     backends = [
         "amdgpu_any",
     ],
@@ -797,7 +798,6 @@ cc_library(
         ":hipblaslt",
         ":miopen",
         ":native_emitter",
-        ":rocblas",
         ":triton",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner:backends_proto_cc",
@@ -1029,7 +1029,6 @@ xla_cc_test(
         "//xla:literal_util",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner:autotuner_cache_interface",
-        "//xla/backends/autotuner:autotuner_cache_proto_cc",
         "//xla/backends/autotuner:backends_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
@@ -1061,7 +1060,6 @@ xla_cc_binary(
         "//xla/backends/autotuner",
         "//xla/backends/autotuner:autotuner_cache_interface",
         "//xla/backends/autotuner:codegen_backend",
-        "//xla/backends/autotuner:file_based_autotuner_cache",
         "//xla/backends/autotuner:profiler",
         "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",

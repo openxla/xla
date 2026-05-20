@@ -1,4 +1,5 @@
 load("//xla:package_groups.bzl", "xla_test_friend_package_group")
+load("//xla:restricted_package.bzl", "xla_restricted_allow", "xla_restricted_verify")
 load("//xla/tests:build_defs.bzl", "generate_backend_suites", "xla_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -12,20 +13,6 @@ package(
 xla_test_friend_package_group(name = "friends")
 
 generate_backend_suites()
-
-cc_library(
-    name = "hlo_test_base",
-    testonly = True,
-    hdrs = ["hlo_test_base.h"],
-    deps = [
-        ":hlo_test_base_legacy",
-        "//xla:util",
-        "//xla/service/restricted:hlo_runner",
-        "//xla/service/restricted:hlo_runner_legacy",
-        "//xla/stream_executor:platform",
-        "@com_google_absl//absl/base:core_headers",
-    ],
-)
 
 cc_library(
     name = "hlo_test_base_legacy",
@@ -77,7 +64,7 @@ xla_test(
     tags = ["pjrt_migration_candidate"],
     use_legacy_runtime = True,
     deps = [
-        ":hlo_test_base",
+        ":hlo_test_base_legacy",
         "//xla:literal_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:test_helpers",
@@ -112,3 +99,9 @@ cc_library(
         "@tsl//tsl/platform:test",
     ],
 )
+
+xla_restricted_verify(allowed_targets = [
+    xla_restricted_allow("hlo_test_base_legacy"),
+    xla_restricted_allow("llvm_compiler_test"),
+    xla_restricted_allow("llvm_irgen_test_base"),
+])

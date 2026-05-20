@@ -1,3 +1,4 @@
+load("//xla:restricted_package.bzl", "xla_restricted_allow", "xla_restricted_verify")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "tsl_copts")
 load("//xla/tsl/mkl:build_defs.bzl", "if_graph_api")
@@ -30,7 +31,7 @@ xla_cc_test(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/tests/restricted:hlo_test_base",
+        "//xla/tests/restricted:hlo_test_base_legacy",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/strings",
@@ -50,7 +51,7 @@ onednn_graph_cc_test(
         "//xla/backends/cpu:onednn_support",
         "//xla/service:cpu_plugin",
         "//xla/service/cpu:onednn_util",
-        "//xla/tests/restricted:hlo_test_base",
+        "//xla/tests/restricted:hlo_test_base_legacy",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
@@ -74,7 +75,7 @@ onednn_cc_test(
         "//xla/service:cpu_plugin",
         "//xla/service/cpu:onednn_util",
         "//xla/tests:xla_internal_test_main",
-        "//xla/tests/restricted:hlo_test_base",
+        "//xla/tests/restricted:hlo_test_base_legacy",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -100,7 +101,7 @@ onednn_cc_test(
         "//xla/service/cpu:onednn_contraction_rewriter",
         "//xla/service/cpu:onednn_util",
         "//xla/tests:xla_internal_test_main",
-        "//xla/tests/restricted:hlo_test_base",
+        "//xla/tests/restricted:hlo_test_base_legacy",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:platform_port",
     ],
@@ -122,7 +123,7 @@ onednn_cc_test(
         "//xla/service:cpu_plugin",
         "//xla/service/cpu:onednn_util",
         "//xla/tests:xla_internal_test_main",
-        "//xla/tests/restricted:hlo_test_base",
+        "//xla/tests/restricted:hlo_test_base_legacy",
     ],
 )
 
@@ -149,8 +150,17 @@ onednn_cc_test(
         "//xla/service/cpu:onednn_ops_rewriter",
         "//xla/service/cpu:onednn_util",
         "//xla/tests:xla_internal_test_main",
-        "//xla/tests/restricted:hlo_test_base",
+        "//xla/tests/restricted:hlo_test_base_legacy",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
     ],
 )
+
+xla_restricted_verify(allowed_targets = [
+    xla_restricted_allow("cpu_aot_export_test"),
+    xla_restricted_allow("onednn_convolution_test"),
+    xla_restricted_allow("onednn_fusion_test"),
+    xla_restricted_allow("onednn_layer_norm_test"),
+    xla_restricted_allow("onednn_matmul_test"),
+    xla_restricted_allow("onednn_softmax_test"),
+])
