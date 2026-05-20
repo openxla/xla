@@ -125,7 +125,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:casts",
     ],
 )
 
@@ -381,6 +380,7 @@ xla_cc_test(
         ":command",
         ":command_buffer_cmd_emitter",
         ":command_executor",
+        ":conditional_thunk",
         ":kernel_thunk",
         ":thunk",
         ":thunk_id",
@@ -388,6 +388,7 @@ xla_cc_test(
         "//xla/codegen/emitters:kernel_arguments",
         "//xla/runtime:execution_graph",
         "//xla/service:buffer_assignment",
+        "//xla/service:shaped_slice",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/log:check",
@@ -706,8 +707,10 @@ xla_test(
     deps = [
         ":command",
         ":command_buffer_cmd",
+        ":command_buffer_cmd_emitter",
         ":command_buffer_thunk",
         ":command_executor",
+        ":conditional_thunk",
         ":device_to_device_copy_thunk",
         ":gemm_thunk",
         ":gpublas_lt_matmul_thunk",
@@ -806,6 +809,8 @@ cc_library(
     srcs = ["conditional_thunk.cc"],
     hdrs = ["conditional_thunk.h"],
     deps = [
+        ":command",
+        ":command_executor",
         ":host_memory_pool",
         ":thunk",
         ":thunk_executor",
@@ -816,6 +821,7 @@ cc_library(
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "//xla/service:shaped_slice",
+        "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:status_macros",
