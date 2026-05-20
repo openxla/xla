@@ -147,6 +147,11 @@ absl::Status ConditionalThunk::Prepare(const PrepareParams& params) {
   for (auto& branch_executor : branch_executors_) {
     RETURN_IF_ERROR(branch_executor.Prepare(params));
   }
+  if (command_branch_executors_.has_value()) {
+    for (CommandExecutor& branch_executor : *command_branch_executors_) {
+      RETURN_IF_ERROR(branch_executor.Prepare(params));
+    }
+  }
   return absl::OkStatus();
 }
 
