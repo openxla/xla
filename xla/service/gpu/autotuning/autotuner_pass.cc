@@ -344,7 +344,6 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
   // 1. Assessing whether to autotune custom calls.
   bool do_not_autotune_cublas =
       debug_options.xla_gpu_experimental_disable_binary_libraries() ||
-      debug_options.xla_gpu_autotune_level() == 0 ||
       debug_options.xla_gpu_exclude_nondeterministic_ops();
   bool do_not_autotune_cudnn =
       debug_options.xla_gpu_experimental_disable_binary_libraries() ||
