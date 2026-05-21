@@ -82,6 +82,11 @@ class OneDnnMatcher : public LibraryMatcher {
   // oneDNN.
   bool ShouldMergeFusions() override { return false; }
 
+  // oneDNN fusions currently support downward growth only.
+  FusionDirection fusion_direction() const override {
+    return FusionDirection::kDown;
+  }
+
   // Returns a prefix string for the fusion op's name.
   std::string fusion_prefix() const override { return "onednn_"; }
 

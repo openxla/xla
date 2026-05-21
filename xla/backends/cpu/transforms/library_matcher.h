@@ -30,6 +30,12 @@ limitations under the License.
 
 namespace xla::cpu {
 
+enum class FusionDirection {
+  kUp,    // Traverse up (to parents).
+  kDown,  // Traverse down (to children).
+  kBoth,  // Traverse both up and down.
+};
+
 class LibraryMatcher {
  public:
   explicit LibraryMatcher(const TargetMachineFeatures* target_machine_features,
@@ -85,6 +91,11 @@ class LibraryMatcher {
 
   // Return true if the library supports merging fusions.
   virtual bool ShouldMergeFusions() { return true; }
+
+  // Returns the direction in which a fusion could grow.
+  virtual FusionDirection fusion_direction() const {
+    return FusionDirection::kBoth;
+  }
 
   // Returns a prefix string for the fusion op's name.
   virtual std::string fusion_prefix() const { return ""; }

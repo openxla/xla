@@ -258,17 +258,7 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
   // not any new instructions created during the fusion process.
   std::queue<std::pair<HloInstruction*, FusionDirection>> frontier;
 
-  FusionDirection direction = FusionDirection::kBoth;
-
-  // TODO(intel-tf): Restrict fusion direction for oneDNN till future
-  // release of oneDNN library with both fusion direction support.
-#if XLA_ONEDNN_USE_GRAPH_API
-  if (lib->fusion_kind() == kOneDnnFusionKind) {
-    direction = FusionDirection::kDown;
-  }
-#endif  // XLA_ONEDNN_USE_GRAPH_API
-
-  AddFusionCandidates(fusion, fusion, direction, frontier);
+  AddFusionCandidates(fusion, fusion, lib->fusion_direction(), frontier);
 
   // Track the number of operations added to the fusion.
   int fused_op_count = 0;
