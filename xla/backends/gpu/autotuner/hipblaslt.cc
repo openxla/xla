@@ -224,11 +224,10 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
     ASSIGN_OR_RETURN(BlasLt::Epilogue epilogue,
                      AsBlasLtEpilogue(backend_config.epilogue()));
 
-    ASSIGN_OR_RETURN(BlasLt * blas_lt,
-                     se::gpu::BlasLt::Get(stream_executor()));
+    ASSIGN_OR_RETURN(BlasLt * blas_lt, se::gpu::BlasLt::Get(stream_executor()));
 
     ASSIGN_OR_RETURN(BlasLt::MatmulPlanPtr plan,
-                        blas_lt->GetMatmulPlan(gemm_config, epilogue));
+                     blas_lt->GetMatmulPlan(gemm_config, epilogue));
 
     const Shape& output_shape = instr.shape();
     if (!output_shape.IsTuple() || output_shape.tuple_shapes().empty()) {
@@ -284,8 +283,7 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
       return std::vector<std::unique_ptr<BackendConfig>>();
     }
 
-    ASSIGN_OR_RETURN(BlasLt * blas_lt,
-                     se::gpu::BlasLt::Get(stream_executor()));
+    ASSIGN_OR_RETURN(BlasLt * blas_lt, se::gpu::BlasLt::Get(stream_executor()));
     auto plan_or =
         blas_lt->GetMatmulPlan(*gemm_config_or, BlasLt::Epilogue::kDefault);
     if (!plan_or.ok()) {
@@ -317,8 +315,7 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
     ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
                      instr.backend_config<GpuBackendConfig>());
 
-    ASSIGN_OR_RETURN(BlasLt * blas_lt,
-                     se::gpu::BlasLt::Get(stream_executor()));
+    ASSIGN_OR_RETURN(BlasLt * blas_lt, se::gpu::BlasLt::Get(stream_executor()));
 
     int64_t workspace_size;
     const GroupedGemmBackendConfig& grouped_config =

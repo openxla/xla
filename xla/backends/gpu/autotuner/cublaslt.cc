@@ -100,11 +100,10 @@ CublasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
   ASSIGN_OR_RETURN(BlasLt::Epilogue epilogue,
                    AsBlasLtEpilogue(backend_config.epilogue()));
 
-  ASSIGN_OR_RETURN(BlasLt * blas_lt,
-                   se::gpu::BlasLt::Get(stream_executor()));
+  ASSIGN_OR_RETURN(BlasLt * blas_lt, se::gpu::BlasLt::Get(stream_executor()));
 
   ASSIGN_OR_RETURN(std::unique_ptr<BlasLt::MatmulPlan> plan,
-                      blas_lt->GetMatmulPlan(gemm_config, epilogue));
+                   blas_lt->GetMatmulPlan(gemm_config, epilogue));
 
   const Shape& output_shape = instr.shape();
   if (!output_shape.IsTuple() || output_shape.tuple_shapes().empty()) {

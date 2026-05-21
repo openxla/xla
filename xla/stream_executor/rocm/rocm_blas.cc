@@ -33,8 +33,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
-#include "Eigen/Core"
 #include "xla/tsl/platform/status_macros.h"
+#include "Eigen/Core"
 #include "rocm/include/hip/amd_detail/hip_fp16_gcc.h"
 #include "rocm/include/hipblas/hipblas.h"
 #include "rocm/rocm_config.h"
@@ -202,7 +202,7 @@ bool ROCMBlas::Init() {
   return true;
 }
 
-ROCMBlas::ROCMBlas(StreamExecutor* parent)
+ROCMBlas::ROCMBlas(StreamExecutor *parent)
     : parent_(CHECK_NOTNULL(parent)), blas_(nullptr), blas_lt_(parent) {}
 
 ROCMBlas::~ROCMBlas() {
