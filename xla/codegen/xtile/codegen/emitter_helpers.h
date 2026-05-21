@@ -161,6 +161,16 @@ class TileInfo {
     return minor_to_major_layout_;
   }
 
+  // The replica id offsets if the tensor has a replica dimension.
+  llvm::ArrayRef<mlir::Value> replica_id_offsets() const {
+    return replica_id_offsets_;
+  }
+
+  // The replica id bounds if the tensor has a replica dimension.
+  llvm::ArrayRef<mlir::Value> replica_id_bounds() const {
+    return replica_id_bounds_;
+  }
+
   // The storage type of the tensor. This could be different from the element
   // type. e.g. predicates are stored as i8 instead of i1.
   mlir::Type storage_type() const { return storage_type_; }
@@ -172,19 +182,26 @@ class TileInfo {
   llvm::SmallVector<int64_t> padded_tile_sizes_;
   llvm::SmallVector<int64_t> minor_to_major_layout_;
   mlir::Type storage_type_;
+  llvm::SmallVector<mlir::Value> replica_id_offsets_;
+  llvm::SmallVector<mlir::Value> replica_id_bounds_;
 
-  TileInfo(llvm::SmallVector<mlir::Value> offsets,
-           llvm::SmallVector<int64_t> tile_strides,
-           llvm::SmallVector<int64_t> original_shape,
-           llvm::SmallVector<int64_t> padded_tile_sizes,
-           llvm::SmallVector<int64_t> minor_to_major_layout,
-           mlir::Type storage_type)
+  TileInfo(llvm::SmallVector<mlir::Value> offsets,             //
+           llvm::SmallVector<int64_t> tile_strides,            //
+           llvm::SmallVector<int64_t> original_shape,          //
+           llvm::SmallVector<int64_t> padded_tile_sizes,       //
+           llvm::SmallVector<int64_t> minor_to_major_layout,   //
+           mlir::Type storage_type,                            //
+           llvm::SmallVector<mlir::Value> replica_id_offsets,  //
+           llvm::SmallVector<mlir::Value> replica_id_bounds    //
+           )
       : offsets_(std::move(offsets)),
         tile_strides_(std::move(tile_strides)),
         original_shape_(std::move(original_shape)),
         padded_tile_sizes_(std::move(padded_tile_sizes)),
         minor_to_major_layout_(std::move(minor_to_major_layout)),
-        storage_type_(std::move(storage_type)) {}
+        storage_type_(std::move(storage_type)),
+        replica_id_offsets_(std::move(replica_id_offsets)),
+        replica_id_bounds_(std::move(replica_id_bounds)) {}
 };
 
 // Triton requires that all block dimensions are a power of 2.
@@ -343,11 +360,24 @@ absl::StatusOr<mlir::Type> GetMlirType(
     mlir::ImplicitLocOpBuilder& b, PrimitiveType type,
     const std::optional<stream_executor::GpuComputeCapability>& gpu_cc);
 
+// Visitor to determine tile based requirements while iterating over the fusion
+// instructions.
+struct DefaultTileRequirementsVisitor {
+  DefaultTileRequirementsVisitor() = default;
+  virtual ~DefaultTileRequirementsVisitor() = default;
+  virtual absl::StatusOr<llvm::SmallVector<int64_t>> RequiredReplicaIdBounds(
+      const HloInstruction& instr) const {
+    return llvm::SmallVector<int64_t>();
+  }
+};
+
 // Function to get the MLIR types from a HloFusionInstruction.
 absl::StatusOr<llvm::SmallVector<mlir::Type>> GetFnArgTypes(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     absl::Span<mlir::Type> opaque_args_types,
-    const std::optional<stream_executor::GpuComputeCapability>& gpu_cc);
+    const std::optional<stream_executor::GpuComputeCapability>& gpu_cc,
+    const DefaultTileRequirementsVisitor& tile_requirements_visitor =
+        DefaultTileRequirementsVisitor());
 
 // Function to check if the operands of a concatenation are valid for tiling.
 absl::Status CheckConcatenateOperands(
