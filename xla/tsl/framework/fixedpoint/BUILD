@@ -56,7 +56,7 @@ filegroup(
 
 # Files needed for core:mobile_srcs_no_runtime.
 filegroup(
-    name = "mobile_srcs_only_runtime",
+    name = "mobile_hdrs_only_runtime",
     srcs = [
         "FixedPoint.h",
         "MatMatProduct.h",
@@ -73,7 +73,7 @@ filegroup(
 )
 
 filegroup(
-    name = "mobile_srcs_no_runtime",
+    name = "mobile_hdrs_no_runtime",
     srcs = [
         "FixedPoint.h",
         "MatMatProduct.h",

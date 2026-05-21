@@ -60,14 +60,33 @@ filegroup(
     ],
 )
 
+filegroup(
+    name = "mobile_hdrs_no_runtime",
+    srcs = [
+        "allocator.h",
+        "allocator_registry.h",
+        "device_type.h",
+        "fixedpoint_types.h",
+        "numeric_types.h",
+        "tracking_allocator.h",
+        "type_traits.h",
+    ],
+)
+
 # Files needed for core:mobile_srcs_only_runtime.
 filegroup(
     name = "mobile_srcs_only_runtime",
     srcs = [
         "cancellation.cc",
+        "metrics.cc",
+    ],
+)
+
+filegroup(
+    name = "mobile_hdrs_only_runtime",
+    srcs = [
         "cancellation.h",
         "fixedpoint_types.h",
-        "metrics.cc",
         "metrics.h",
     ],
 )
