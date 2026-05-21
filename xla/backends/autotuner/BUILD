@@ -128,6 +128,7 @@ cc_library(
     deps = [
         "//xla/service:executable",
         "//xla/service:shaped_buffer",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
