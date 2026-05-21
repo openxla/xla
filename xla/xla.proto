@@ -644,7 +644,7 @@ message DebugOptions {
   optional bool xla_gpu_enable_cub_radix_sort = 259;
 
   // Whether to use cuBLASLt for GEMMs on GPUs.
-  optional bool xla_gpu_enable_cublaslt = 166;
+  optional bool xla_gpu_enable_cublaslt = 166 [deprecated = true];
 
   optional bool xla_gpu_enable_cudnn_int8x32_convolution_reordering = 189;
 
@@ -653,7 +653,7 @@ message DebugOptions {
 
   // Replaces broadcast(0) scan-accumulator init with AllocateBuffer when the
   // body's DUS covers every slot.
-  optional bool xla_gpu_enable_dus_accumulator_zero_init_elimination = 484;
+  optional bool xla_gpu_enable_dus_accumulator_zero_init_elimination = 485;
 
   // Enables address computation fusion to optimize dynamic-slice and
   // dynamic-update-slice operations around library calls.
@@ -813,6 +813,10 @@ message DebugOptions {
   // which contain the binary serialized `xla.gpu.GpuExecutableProto`, in the
   // `serialized_executable` field.
   optional bool xla_gpu_experimental_dump_gpu_executable = 427;
+
+  // When true, DynamicSliceFusionV2Thunk verifies at runtime that annotated
+  // offsets match actual XLA-computed DS/DUS offsets. For debugging only.
+  optional bool xla_gpu_experimental_dynamic_slice_fusion_verify_offsets = 484;
 
   // Enable windowed einsum(collective matmul) rewrite for all-to-all + gemm
   // This feature is still experimental and effective only
@@ -1572,7 +1576,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 485
+  // Next id: 486
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

@@ -1,8 +1,6 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load(
     "//xla:xla.default.bzl",
-    "xla_cc_binary",
     "xla_cc_test",
     "xla_py_proto_library",
 )
@@ -67,27 +65,6 @@ cc_library(
     ],
 )
 
-xla_cc_binary(
-    name = "hlo_isolation_test",
-    testonly = True,
-    srcs = ["hlo_isolation_cli.cc"],
-    deps = [
-        ":hlo_isolation_api",
-        "//xla/service:cpu_plugin",
-        "//xla/service:gpu_plugin",
-        "//xla/service:hlo_runner",
-        "//xla/service:hlo_runner_interface",
-        "//xla/service:interpreter_plugin",
-        "//xla/service:platform_util",
-        "//xla/stream_executor:platform",
-        "//xla/tsl/platform:statusor",
-        "//xla/tsl/util:command_line_flags",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:platform_port",
-    ],
-)
-
 cc_library(
     name = "hlo_isolation_test_base",
     testonly = True,
@@ -110,36 +87,23 @@ xla_cc_test(
         "//xla:array2d",
         "//xla:literal",
         "//xla:literal_util",
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/service:hlo_runner_interface",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
         "//xla/tests:hlo_pjrt_test_base",
         "//xla/tests:pjrt_interpreter_client_registry",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
-    ],
-)
-
-filegroup(
-    name = "hlo_isolation_cli_test_data",
-    srcs = ["//xla/tools:data/hlo_isolation_cli_test.hlo"],
-)
-
-sh_test(
-    name = "hlo_isolation_cli_test",
-    srcs = ["hlo_isolation_cli_test.sh"],
-    args = [
-        "$(location :hlo_isolation_test)",
-        "$(location @llvm-project//llvm:FileCheck)",
-        "$(location :hlo_isolation_cli_test_data)",
-    ],
-    data = [
-        ":hlo_isolation_cli_test_data",
-        ":hlo_isolation_test",
-        "@llvm-project//llvm:FileCheck",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:path",
     ],
 )

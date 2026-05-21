@@ -446,7 +446,7 @@ xla_cc_test(
 cc_library(
     name = "collective_pipeliner_utils",
     hdrs = ["collective_pipeliner_utils.h"],
-    deps = [],
+    deps = ["//xla/hlo/ir:hlo"],
 )
 
 cc_library(
@@ -3889,7 +3889,6 @@ cc_library(
         "layout_assignment.h",
     ],
     deps = [
-        ":call_graph",
         ":computation_layout",
         ":hlo_graph_dumper",
         ":logical_buffer",
@@ -4781,64 +4780,6 @@ cc_library(
 )
 
 cc_library(
-    name = "hlo_runner_legacy",
-    srcs = ["hlo_runner_legacy.cc"],
-    hdrs = ["hlo_runner_legacy.h"],
-    deps = [
-        ":backend",
-        ":computation_layout",
-        ":computation_placer",
-        ":executable",
-        ":hlo_module_util",
-        ":hlo_runner_interface",
-        ":maybe_owning_device_address",
-        ":shaped_buffer",
-        ":transfer_manager",
-        "//xla:executable_run_options",
-        "//xla:literal",
-        "//xla:literal_util",
-        "//xla:shape_tree",
-        "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:util",
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/service/gpu:gpu_executable_run_options",
-        "//xla/stream_executor:device_address",
-        "//xla/stream_executor:device_address_allocator",
-        "//xla/stream_executor:device_description",
-        "//xla/stream_executor:platform",
-        "//xla/stream_executor:stream_executor_h",
-        "//xla/tsl/platform:env",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:status_macros",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:nullability",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/functional:any_invocable",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/types:span",
-        "@eigen_archive//:eigen3",
-    ],
-)
-
-cc_library(
-    name = "hlo_runner",
-    hdrs = ["hlo_runner.h"],
-    deps = [
-        ":hlo_runner_legacy",
-        "//xla/stream_executor:device_address_allocator",
-        "//xla/stream_executor:platform",
-    ],
-)
-
-cc_library(
     name = "hlo_runner_pjrt",
     srcs = ["hlo_runner_pjrt.cc"],
     hdrs = ["hlo_runner_pjrt.h"],
@@ -5679,6 +5620,34 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "control_dep_rewriter",
+    srcs = ["control_dep_rewriter.cc"],
+    hdrs = ["control_dep_rewriter.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "control_dep_rewriter_test",
+    srcs = ["control_dep_rewriter_test.cc"],
+    deps = [
+        ":control_dep_rewriter",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:test",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:statusor",
+    ],
+)
+
 xla_test(
     name = "topk_rewriter_test",
     srcs = ["topk_rewriter_test.cc"],
@@ -6326,17 +6295,6 @@ tf_proto_library(
     make_default_target_header_only = True,
     deps = [
         "//xla:xla_data_proto",
-    ],
-)
-
-cc_library(
-    name = "export_hlo",
-    hdrs = ["export_hlo.h"],
-    deps = [
-        "//xla:autotune_results_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/stream_executor:device_description_proto_cc",
-        "@com_google_absl//absl/strings",
     ],
 )
 

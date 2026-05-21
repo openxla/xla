@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -31,7 +32,7 @@ limitations under the License.
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/literal.h"
 #include "xla/service/gpu/autotuning/autotuner_cache.h"
-#include "xla/service/platform_util.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/mock_stream_executor.h"
 #include "xla/stream_executor/platform.h"
@@ -39,7 +40,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_utils.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {
@@ -172,11 +172,18 @@ class DeterminismTest : public HloPjRtGpuTestBase {
   }
 };
 
-TEST_F(DeterminismTest, CublasDot) {
-  // This test expects to use Cublas. Disable other backends, including Triton.
+TEST_F(DeterminismTest, CublasLtDot) {
+  if (IsRocm()) {
+    if (!HasHipblasLt()) {
+      GTEST_SKIP() << "No hipblas-lt support on this architecture!";
+    }
+  }
+
+  // This test expects to use CublasLt. Disable other backends, including
+  // Triton.
   debug_options_.clear_xla_gpu_experimental_autotune_backends();
   debug_options_.add_xla_gpu_experimental_autotune_backends(
-      autotuner::Backend::CUBLAS);
+      autotuner::Backend::CUBLASLT);
   constexpr absl::string_view kHloText = R"(
 ENTRY e {
   p0 = f32[128,128] parameter(0)
@@ -188,16 +195,17 @@ ENTRY e {
     if (!HasHipblasLt()) {
       GTEST_SKIP() << "No hipblas-lt support on this architecture!";
     }
+    debug_options_.clear_xla_gpu_experimental_autotune_backends();
   }
   debug_options_.set_xla_gpu_enable_triton_gemm(false);
 
-  debug_options_.set_xla_gpu_enable_cublaslt(false);
-  MatchOptimizedHlo(kHloText, R"(; CHECK: custom_call_target="__cublas$gemm")",
+  MatchOptimizedHlo(kHloText,
+                    R"(; CHECK: custom_call_target="__cublas$lt$matmul")",
                     TimerCreation::kForbidden);
   AssertDeterminism(kHloText);
 }
 
-TEST_F(DeterminismTest, DeterministicGemmUsesCublas) {
+TEST_F(DeterminismTest, DeterministicTritonGemmUsesDefaultConfig) {
   if (!IsAmpereOrLater()) {
     GTEST_SKIP() << "Triton is not supported on non-NVIDIA and "
                     "pre-Ampere NVIDIA GPUs.";
@@ -225,11 +233,42 @@ ENTRY e {
   AutotunerCache::ClearAutotuneResults();
   MatchOptimizedHlo(kHloText, R"(
     CHECK: ENTRY
-    CHECK: custom-call
-    CHECK: custom_call_target="__cublas
+    CHECK: __triton_nested_gemm_fusion
+    CHECK-SAME: "num_warps":"2","output_tiles":[{"sizes":["1","16","8"]}]
+    CHECK-SAME: "num_ctas":1,"num_stages":1,"is_tma_allowed":false
   )",
                     TimerCreation::kForbidden);
   AssertDeterminism(kHloText, /*num_runs=*/3);
+}
+
+TEST_F(DeterminismTest, ExcludingNonDeterministicOpsDoesNotDisableAutotuning) {
+  if (!IsAmpereOrLater()) {
+    GTEST_SKIP() << "Triton is not supported on non-NVIDIA and "
+                    "pre-Ampere NVIDIA GPUs.";
+  }
+
+  debug_options_.set_xla_gpu_cublas_fallback(false);
+  debug_options_.set_xla_gpu_cudnn_gemm_fusion_level(0);
+  ASSERT_TRUE(debug_options_.xla_gpu_exclude_nondeterministic_ops());
+  ASSERT_FALSE(debug_options_.xla_gpu_deterministic_ops());
+  AutotunerCache::ClearAutotuneResults();
+  // The default config is not used when autotuning is on.
+  // TODO(b/431794189): it's not very clear why test considers (32, 32) tiling
+  // to be the default. It seems to pick (16, 16) and it does not change
+  // when changing the flags above.
+  MatchOptimizedHlo(R"(
+ENTRY e {
+  p0 = bf16[128,128] parameter(0)
+  p0_convert = f32[128,128] convert(p0)
+  p1 = f32[128,128] parameter(1)
+  ROOT d = f32[128,128] dot(p0_convert, p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})",
+                    R"(
+    CHECK: ENTRY
+    CHECK: __triton_nested_gemm_fusion
+    CHECK-NOT: "output_tiles":[{"sizes":["32","32"]}]
+  )",
+                    TimerCreation::kAllowed);
 }
 
 TEST_F(DeterminismTest, Conv) {

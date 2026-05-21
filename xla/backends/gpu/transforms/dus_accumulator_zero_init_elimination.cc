@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/dus_accumulator_zero_init_elimination.h"
 
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -38,6 +39,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -444,7 +446,7 @@ absl::StatusOr<bool> DusAccumulatorZeroInitElimination::RunImpl(
         continue;
       }
       const Shape& alloc_shape = *alloc_shape_opt;
-      if (alloc_shape.dimensions_size() == 0 ||
+      if (alloc_shape.dimensions().empty() ||
           alloc_shape.dimensions(0) != cfg.trip_count) {
         continue;
       }

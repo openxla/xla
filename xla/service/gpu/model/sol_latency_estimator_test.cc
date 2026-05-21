@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/time/time.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -43,7 +44,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/restricted/hlo_test_base_legacy.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
@@ -703,7 +704,7 @@ ENTRY main {
                   .ok());
 }
 
-class IsSolLatencyEstimatorEnabledTest : public HloTestBase {
+class IsSolLatencyEstimatorEnabledTest : public HloTestBaseLegacy {
  protected:
   IsSolLatencyEstimatorEnabledTest()
       : gpu_device_info_(TestGpuDeviceInfo::RTXA6000DeviceInfo()) {}
@@ -782,8 +783,8 @@ class IsSolLatencyEstimatorEnabledTest : public HloTestBase {
         HloInstruction::CreateConstant(LiteralUtil::CreateR1<float>({2})));
     HloInstruction* call =
         entry->AddInstruction(HloInstruction::CreateCall(shape, dummy_operand));
-    TF_ASSIGN_OR_RETURN(GpuBackendConfig new_backend_config,
-                        call->backend_config<GpuBackendConfig>());
+    ASSIGN_OR_RETURN(GpuBackendConfig new_backend_config,
+                     call->backend_config<GpuBackendConfig>());
     new_backend_config.set_device_type(DEVICE_TYPE_HOST);
     return call->set_backend_config(new_backend_config);
   }

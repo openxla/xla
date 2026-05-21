@@ -247,12 +247,13 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_enable_cublaslt(true);
 
-  opts.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+  opts.add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONAL);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLASLT);
-  opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
+  opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::DYNAMIC_SLICE_FUSION);
+  opts.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   opts.set_xla_gpu_graph_min_graph_size(5);
   opts.set_xla_gpu_command_buffer_scheduling_mode(DebugOptions::LHS);
   opts.set_xla_gpu_command_buffer_unroll_loops(false);
@@ -292,6 +293,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_enable_dynamic_slice_fusion(false);
   opts.set_xla_gpu_enable_dus_accumulator_zero_init_elimination(false);
+  opts.set_xla_gpu_experimental_dynamic_slice_fusion_verify_offsets(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
   opts.set_xla_gpu_enable_shared_constants(true);
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
@@ -1876,7 +1878,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       tsl::Flag("xla_gpu_enable_cublaslt",
                 bool_setter_for(&DebugOptions::set_xla_gpu_enable_cublaslt),
                 debug_options->xla_gpu_enable_cublaslt(),
-                "Use cuBLASLt for GEMMs when possible."));
+                "[Deprecated] Use cuBLASLt for GEMMs when possible."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_command_buffer",
       SetterForRepeatedEnum<DebugOptions::CommandBufferCmdType>(
@@ -1955,6 +1957,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_enable_dus_accumulator_zero_init_elimination(),
       "Replaces broadcast(0) scan-accumulator init with AllocateBuffer when "
       "the body's DUS covers every slot."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_dynamic_slice_fusion_verify_offsets",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_dynamic_slice_fusion_verify_offsets),
+      debug_options->xla_gpu_experimental_dynamic_slice_fusion_verify_offsets(),
+      "When true, DynamicSliceFusionV2Thunk verifies at runtime that "
+      "annotated DynamicSliceConfig offsets match actual XLA-computed "
+      "DS/DUS offsets. Adds D2H sync overhead — for debugging only."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_nccl_termination_timeout_seconds",
       int64_setter_for(

@@ -1685,7 +1685,8 @@ absl::Status ShapeVerifier::HandleCustomCall(HloInstruction* instruction) {
       DynCast<const HloCustomCallInstruction>(instruction);
   TF_RET_CHECK(custom_call != nullptr);
   if (custom_call->layout_constrained() &&
-      !custom_call->IsCustomCall("LayoutConstraint")) {
+      !custom_call->IsCustomCall("LayoutConstraint") &&
+      !custom_call->IsCustomCall("control_dep")) {
     // If the layout is constrained, verify all the respective shapes have
     // layouts and that the constrained operand shapes match the shapes of the
     // operands.
@@ -2646,12 +2647,21 @@ absl::Status CheckSameIsHostTransfer(const HloInstruction* instr1,
 absl::Status VerifySingleUser(
     const HloInstruction* instruction,
     const absl::flat_hash_set<HloOpcode>& expected_users) {
-  TF_RET_CHECK(instruction->users().size() == 1)
-      << "The " << instruction->opcode()
-      << " instruction requires one consumer, found "
-      << instruction->users().size();
+  // Ignore "control_dep" custom calls.
+  std::vector<const HloInstruction*> real_users;
+  for (const HloInstruction* user : instruction->users()) {
+    if (user->opcode() == HloOpcode::kCustomCall &&
+        user->custom_call_target() == "control_dep") {
+      continue;
+    }
+    real_users.push_back(user);
+  }
 
-  const HloInstruction* user = instruction->users().front();
+  TF_RET_CHECK(real_users.size() == 1)
+      << "The " << instruction->opcode()
+      << " instruction requires one consumer, found " << real_users.size();
+
+  const HloInstruction* user = real_users.front();
   TF_RET_CHECK(expected_users.contains(user->opcode()))
       << "The consumer of a " << instruction->opcode()
       << " instruction needs to be one of ("
@@ -4002,6 +4012,17 @@ absl::Status InstructionVerifier::HandleReshape(HloInstruction* hlo) {
 }
 
 absl::Status InstructionVerifier::HandleCustomCall(HloInstruction* hlo) {
+  if (hlo->custom_call_target() == "GetRngSeed") {
+    TF_RET_CHECK(hlo->operand_count() == 0)
+        << "GetRngSeed custom call must have 0 operands, but has "
+        << hlo->operand_count();
+    TF_RET_CHECK(hlo->shape().element_type() == U64)
+        << "GetRngSeed custom call must return U64 type, but got "
+        << ShapeUtil::HumanString(hlo->shape());
+    TF_RET_CHECK(ShapeUtil::IsScalar(hlo->shape()))
+        << "GetRngSeed custom call must return a scalar, but got "
+        << ShapeUtil::HumanString(hlo->shape());
+  }
   if (opts_.verify_call_nested_computation_thread_name) {
     // Allow kCustomCall to contain computations on separate thread.
     return CheckCallableInstructionThreadName(hlo);
