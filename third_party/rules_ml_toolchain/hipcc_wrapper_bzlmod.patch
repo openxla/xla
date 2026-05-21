@@ -1,0 +1,20 @@
+--- a/cc/impls/linux_x86_64_linux_x86_64_rocm/wrappers/hipcc_wrapper
++++ b/cc/impls/linux_x86_64_linux_x86_64_rocm/wrappers/hipcc_wrapper
+@@ -279,7 +279,7 @@
+     if args.isystem:
+         for p in sum(args.isystem, []):
+             # Skip hermetic LLVM headers - ROCm provides its own
+-            if "/llvm" in p and "/clang/" in p:
++            if ("/llvm" in p or "llvm" in p.replace("+", "/").replace("~", "/")) and "/clang/" in p:
+                 continue
+             gpu_compiler_options.extend(["-isystem", p])
+     if args.sysroot:
+@@ -364,7 +364,7 @@
+     for inc in include_options:
+         # Skip hermetic LLVM headers - they conflict with ROCm's headers
+         # ROCm provides its own LLVM headers (including cuda_wrappers) via --rocm-path
+-        if "/llvm" in inc and "/clang/" in inc:
++        if ("/llvm" in inc or "llvm" in inc.replace("+", "/").replace("~", "/")) and "/clang/" in inc:
+             continue
+         cmd.extend(["-I", inc])
+ 

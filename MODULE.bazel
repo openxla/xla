@@ -48,6 +48,11 @@ archive_override(
     integrity = "sha256-C0L2k6YMYFDYfbHgoOrrhKs/VBkfzglNhjNPrtyAfaA=",
     strip_prefix = "rules_ml_toolchain-398d613aea7a4c294da49b79a6d6f3f8732bd84c",
     urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/398d613aea7a4c294da49b79a6d6f3f8732bd84c.tar.gz"],
+    patch_strip = 1,
+    patches = [
+        "//third_party/rules_ml_toolchain:hipcc_wrapper_bzlmod.patch",
+        "//third_party/rules_ml_toolchain:sycl_bzlmod.patch",
+    ],
 )
 
 # TODO: Upstream the patch?
@@ -91,6 +96,7 @@ archive_override(
     patch_strip = 1,
     patches = [
         "//third_party/googletest:0001-Add-ASSERT_OK-EXPECT_OK-ASSERT_OK_AND_ASSIGN-macros.patch",
+        "//third_party/googletest:googletest.patch",
     ],
     strip_prefix = "googletest-28e9d1f26771c6517c3b4be10254887673c94018",
     urls = ["https://github.com/google/googletest/archive/28e9d1f26771c6517c3b4be10254887673c94018.zip"],
@@ -171,18 +177,9 @@ pip.whl_mods(
     additive_build_content = """
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 cc_library(
-    name = "numpy_headers_2",
-    hdrs = glob(["site-packages/numpy/_core/include/**/*.h"]),
-    strip_include_prefix="site-packages/numpy/_core/include/",
-)
-cc_library(
-    name = "numpy_headers_1",
-    hdrs = glob(["site-packages/numpy/core/include/**/*.h"]),
-    strip_include_prefix="site-packages/numpy/core/include/",
-)
-cc_library(
     name = "numpy_headers",
-    deps = [":numpy_headers_2", ":numpy_headers_1"],
+    hdrs = glob(["site-packages/numpy/_core/include/**/*.h"]) + glob(["site-packages/numpy/core/include/**/*.h"]),
+    includes = ["site-packages/numpy/_core/include", "site-packages/numpy/core/include"],
 )
 """,
     hub_name = "pypi_mods",
@@ -286,6 +283,8 @@ register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_sycl")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_rocm")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
 

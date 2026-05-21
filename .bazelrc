@@ -1,6 +1,10 @@
-# Disable Bzlmod for now
-common --noenable_bzlmod
+# Enable bzlmod by default
+common --config=bzlmod
 common:bzlmod --enable_bzlmod --noenable_workspace
+common:bzlmod --incompatible_use_plus_in_repo_names
+
+## Enable WORKSPACE (to be removed after bzlmod migration is complete)
+common:workspace --noenable_bzlmod --enable_workspace
 
 common --incompatible_enable_cc_toolchain_resolution
 common --repo_env USE_HERMETIC_CC_TOOLCHAIN=1
@@ -25,10 +29,9 @@ import %workspace%/tensorflow.bazelrc
 import %workspace%/warnings.bazelrc
 
 # Treat warnings as errors
-build --config=warnings 
+build --config=warnings
 
 # Enable layering check for CI builds
 common:rbe_linux_cpu --features=layering_check
-common:bzlmod --features=-layering_check
 
 try-import %workspace%/xla_configure.bazelrc
