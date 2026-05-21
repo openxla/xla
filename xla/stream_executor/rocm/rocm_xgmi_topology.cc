@@ -29,14 +29,14 @@ XgmiTopologyInfo GetRocmXgmiTopology(absl::string_view pci_bus_id) {
 
   std::optional<BdfComponents> bdf = ParseBdf(pci_bus_id);
   if (!bdf.has_value()) {
-    LOG(WARNING) << "Failed to parse PCI bus ID for xGMI query: " << pci_bus_id;
+    VLOG(2) << "Failed to parse PCI bus ID for xGMI query: " << pci_bus_id;
     return info;
   }
 
   std::optional<uint32_t> dev_idx = FindDeviceIndex(*bdf);
   if (!dev_idx.has_value()) {
-    LOG(WARNING) << "rocm_smi: could not find device for PCI bus ID "
-                 << pci_bus_id << " (xGMI query)";
+    VLOG(2) << "rocm_smi: could not find device for PCI bus ID " << pci_bus_id
+            << " (xGMI query)";
     return info;
   }
 
@@ -46,7 +46,7 @@ XgmiTopologyInfo GetRocmXgmiTopology(absl::string_view pci_bus_id) {
   if (status == RSMI_STATUS_SUCCESS) {
     info.hive_id = hive_id;
   } else {
-    VLOG(1) << "rsmi_dev_xgmi_hive_id_get failed for " << pci_bus_id
+    VLOG(2) << "rsmi_dev_xgmi_hive_id_get failed for " << pci_bus_id
             << "; device may not be in an xGMI hive.";
   }
 
@@ -73,7 +73,7 @@ XgmiTopologyInfo GetRocmXgmiTopology(absl::string_view pci_bus_id) {
 
   info.active_links = xgmi_links;
 
-  VLOG(1) << "xGMI topology for " << pci_bus_id << ": " << xgmi_links
+  VLOG(2) << "xGMI topology for " << pci_bus_id << ": " << xgmi_links
           << " active xGMI links"
           << " (hive_id=" << hive_id << ", num_devices=" << num_devices << ")";
 

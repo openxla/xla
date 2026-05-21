@@ -53,14 +53,13 @@ std::optional<int64_t> GetRocmPcieBandwidth(absl::string_view pci_bus_id) {
 
   std::optional<BdfComponents> bdf = ParseBdf(pci_bus_id);
   if (!bdf.has_value()) {
-    LOG(WARNING) << "Failed to parse PCI bus ID: " << pci_bus_id;
+    VLOG(2) << "Failed to parse PCI bus ID: " << pci_bus_id;
     return std::nullopt;
   }
 
   std::optional<uint32_t> dev_idx = FindDeviceIndex(*bdf);
   if (!dev_idx.has_value()) {
-    LOG(WARNING) << "rocm_smi: could not find device for PCI bus ID "
-                 << pci_bus_id;
+    VLOG(2) << "rocm_smi: could not find device for PCI bus ID " << pci_bus_id;
     return std::nullopt;
   }
 
@@ -69,8 +68,8 @@ std::optional<int64_t> GetRocmPcieBandwidth(absl::string_view pci_bus_id) {
   if (status != RSMI_STATUS_SUCCESS) {
     const char* err_str = nullptr;
     rsmi_status_string(status, &err_str);
-    LOG(WARNING) << "rsmi_dev_gpu_metrics_info_get failed for " << pci_bus_id
-                 << ": " << (err_str ? err_str : "unknown error");
+    VLOG(2) << "rsmi_dev_gpu_metrics_info_get failed for " << pci_bus_id << ": "
+            << (err_str ? err_str : "unknown error");
     return std::nullopt;
   }
 
@@ -79,16 +78,16 @@ std::optional<int64_t> GetRocmPcieBandwidth(absl::string_view pci_bus_id) {
   uint16_t width = gpu_metrics.pcie_link_width;
 
   if (speed_mt_per_sec == 0 || width == 0) {
-    LOG(WARNING) << "rocm_smi gpu_metrics reported zero PCIe speed ("
-                 << speed_mt_per_sec << " MT/s) or width (" << width
-                 << " lanes) for " << pci_bus_id;
+    VLOG(2) << "rocm_smi gpu_metrics reported zero PCIe speed ("
+            << speed_mt_per_sec << " MT/s) or width (" << width
+            << " lanes) for " << pci_bus_id;
     return std::nullopt;
   }
 
   int64_t bandwidth =
       ComputePcieBandwidthFromSpeedAndWidth(speed_mt_per_sec, width);
 
-  VLOG(1) << "PCIe bandwidth for " << pci_bus_id << ": " << speed_mt_per_sec
+  VLOG(2) << "PCIe bandwidth for " << pci_bus_id << ": " << speed_mt_per_sec
           << " MT/s x" << width << " = " << bandwidth / (1024 * 1024 * 1024)
           << " GB/s (" << bandwidth << " bytes/s)";
 

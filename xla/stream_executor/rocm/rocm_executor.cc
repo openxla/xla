@@ -1161,9 +1161,8 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
     if (pcie_bw.has_value()) {
       desc.set_pcie_bandwidth(*pcie_bw);
     } else {
-      LOG(WARNING) << "Could not determine PCIe bandwidth for device "
-                   << device_ordinal
-                   << " via rocm_smi. Assuming PCIe Gen4 x16.";
+      VLOG(2) << "Could not determine PCIe bandwidth for device "
+              << device_ordinal << " via rocm_smi. Assuming PCIe Gen4 x16.";
       desc.set_pcie_bandwidth(32LL * 1024 * 1024 * 1024);
     }
   }

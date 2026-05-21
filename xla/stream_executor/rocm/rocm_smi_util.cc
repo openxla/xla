@@ -29,8 +29,7 @@ bool InitRocmSmi() {
     if (status != RSMI_STATUS_SUCCESS) {
       const char* err_str = nullptr;
       rsmi_status_string(status, &err_str);
-      LOG(WARNING) << "rsmi_init failed: "
-                   << (err_str ? err_str : "unknown error");
+      VLOG(2) << "rsmi_init failed: " << (err_str ? err_str : "unknown error");
       return false;
     }
     return true;
