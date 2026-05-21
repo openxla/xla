@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <memory>
 #include <optional>
+#include <string>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
