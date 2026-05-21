@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/shape.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -76,13 +77,13 @@ absl::StatusOr<HloFusionInstruction*> CreateLibraryFusion(
   BackendConfig backend_config;
   FusionBackendConfig* fusion_config = backend_config.mutable_fusion_config();
   fusion_config->set_kind(fusion_kind);
-  TF_RETURN_IF_ERROR(fusion->set_backend_config(backend_config));
+  RETURN_IF_ERROR(fusion->set_backend_config(backend_config));
 
   // Replace the instruction.
-  TF_ASSIGN_OR_RETURN(bool changed,
-                      computation->ReplaceInstructionWithDifferentShape(
-                          instr, fusion, /*preserve_sharding=*/false,
-                          /*relay_control_dependency=*/true));
+  ASSIGN_OR_RETURN(bool changed,
+                   computation->ReplaceInstructionWithDifferentShape(
+                       instr, fusion, /*preserve_sharding=*/false,
+                       /*relay_control_dependency=*/true));
   if (!changed) {
     return absl::InternalError("Failed to replace instruction with fusion");
   }
@@ -138,10 +139,10 @@ absl::StatusOr<HloInstruction*> FuseConsumerInstruction(
     *fusion->mutable_shape() = new_root->shape();
   }
 
-  TF_ASSIGN_OR_RETURN(bool changed,
-                      fusion->parent()->ReplaceInstructionWithDifferentShape(
-                          to_fuse, fusion, /*preserve_sharding=*/false,
-                          /*relay_control_dependency=*/true));
+  ASSIGN_OR_RETURN(bool changed,
+                   fusion->parent()->ReplaceInstructionWithDifferentShape(
+                       to_fuse, fusion, /*preserve_sharding=*/false,
+                       /*relay_control_dependency=*/true));
   if (!changed) {
     return absl::InternalError("Failed to fuse consumer instruction");
   }
@@ -161,7 +162,7 @@ inline absl::Status InsertConvertIfNecessary(
   HloComputation* computation = instr->parent();
   HloInstruction* convert = computation->AddInstruction(
       HloInstruction::CreateConvert(instr->shape(), instr));
-  TF_RETURN_IF_ERROR(instr->ReplaceAllUsesWith(convert));
+  RETURN_IF_ERROR(instr->ReplaceAllUsesWith(convert));
   instr->mutable_shape()->set_element_type(new_instr_out_dtype);
 
   if (instr == computation->root_instruction()) {
@@ -179,7 +180,7 @@ inline bool IsElementwiseAndNotConstant(const HloInstruction* instr) {
 absl::StatusOr<LibraryMatcher*> LibraryRewriter::ChooseLibrary(
     HloInstruction* instr) {
   for (std::unique_ptr<LibraryMatcher>& lib : libs_) {
-    TF_ASSIGN_OR_RETURN(bool op_supported, lib->IsOpSupported(instr));
+    ASSIGN_OR_RETURN(bool op_supported, lib->IsOpSupported(instr));
     if (op_supported && lib->ShouldCreateFusion(instr)) {
       return lib.get();
     }
@@ -220,12 +221,12 @@ absl::StatusOr<HloFusionInstruction*> LibraryRewriter::MergeFusionInstructions(
           << ": Fusing with: " << neighbor->ToString();
   if (dir == FusionDirection::kUp) {
     main->MergeFusionInstruction(neighbor);
-    TF_RETURN_IF_ERROR(main->parent()->RemoveInstruction(neighbor));
+    RETURN_IF_ERROR(main->parent()->RemoveInstruction(neighbor));
     return main;
   }
   if (dir == FusionDirection::kDown) {
     neighbor->MergeFusionInstruction(main);
-    TF_RETURN_IF_ERROR(neighbor->parent()->RemoveInstruction(main));
+    RETURN_IF_ERROR(neighbor->parent()->RemoveInstruction(main));
     return neighbor;
   }
   return InvalidArgument("Invalid fusion direction: %s",
@@ -241,10 +242,10 @@ absl::StatusOr<HloInstruction*> LibraryRewriter::GrowFusion(
   if (dir == FusionDirection::kUp) {
     new_instr = fusion->FuseInstruction(to_fuse);
     if (to_fuse->user_count() == 0) {
-      TF_RETURN_IF_ERROR(to_fuse->parent()->RemoveInstruction(to_fuse));
+      RETURN_IF_ERROR(to_fuse->parent()->RemoveInstruction(to_fuse));
     }
   } else if (dir == FusionDirection::kDown) {
-    TF_ASSIGN_OR_RETURN(new_instr, FuseConsumerInstruction(fusion, to_fuse));
+    ASSIGN_OR_RETURN(new_instr, FuseConsumerInstruction(fusion, to_fuse));
   }
   return new_instr;
 }
@@ -278,9 +279,9 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
     // fused into `instr`.
     if (lib->ShouldMergeFusions() &&
         IsCustomFusionWithKind(instr, lib->fusion_kind())) {
-      TF_ASSIGN_OR_RETURN(fusion,
-                          MergeFusionInstructions(
-                              fusion, Cast<HloFusionInstruction>(instr), dir));
+      ASSIGN_OR_RETURN(fusion,
+                       MergeFusionInstructions(
+                           fusion, Cast<HloFusionInstruction>(instr), dir));
       continue;
     }
 
@@ -301,7 +302,7 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
     }
 
     // Skip this instruction if it can't be fused.
-    TF_ASSIGN_OR_RETURN(bool op_supported, lib->IsOpSupported(instr));
+    ASSIGN_OR_RETURN(bool op_supported, lib->IsOpSupported(instr));
     if (!op_supported) {
       VLOG(4) << "  Skipping unsupported instruction: " << instr->ToString();
       continue;
@@ -312,9 +313,9 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
     AddFusionCandidates(fusion, instr, dir, frontier);
 
     // Fuse `instr` into `fusion` according to the travel direction.
-    TF_ASSIGN_OR_RETURN(HloInstruction * new_instr,
-                        GrowFusion(fusion, instr, dir));
-    TF_RETURN_IF_ERROR(
+    ASSIGN_OR_RETURN(HloInstruction * new_instr,
+                     GrowFusion(fusion, instr, dir));
+    RETURN_IF_ERROR(
         InsertConvertIfNecessary(new_instr, lib->LibraryOpOutputType(instr)));
     fused_op_count++;
   }
@@ -354,7 +355,7 @@ absl::StatusOr<bool> LibraryRewriter::ProcessComputation(
     }
 
     // Find the best library to use for the current instruction.
-    TF_ASSIGN_OR_RETURN(LibraryMatcher * lib, ChooseLibrary(centroid));
+    ASSIGN_OR_RETURN(LibraryMatcher * lib, ChooseLibrary(centroid));
     if (lib == nullptr) {
       continue;
     }
@@ -362,15 +363,15 @@ absl::StatusOr<bool> LibraryRewriter::ProcessComputation(
     // Start a fusion node.
     fused_.insert(centroid);
     VLOG(3) << "Starting a fusion with: " << centroid->ToString();
-    TF_ASSIGN_OR_RETURN(HloFusionInstruction * fusion,
-                        CreateLibraryFusion(centroid, lib->fusion_prefix(),
-                                            lib->fusion_kind()));
-    TF_RETURN_IF_ERROR(InsertConvertIfNecessary(
+    ASSIGN_OR_RETURN(HloFusionInstruction * fusion,
+                     CreateLibraryFusion(centroid, lib->fusion_prefix(),
+                                         lib->fusion_kind()));
+    RETURN_IF_ERROR(InsertConvertIfNecessary(
         fusion->fused_expression_root(), lib->LibraryOpOutputType(centroid)));
 
     // Fuse as many neighbors as as we can.
     if (lib->ShouldGrowFusion(centroid)) {
-      TF_RETURN_IF_ERROR(FuseNeighbors(fusion, lib));
+      RETURN_IF_ERROR(FuseNeighbors(fusion, lib));
     }
   }
   return !fused_.empty();
@@ -389,7 +390,7 @@ absl::StatusOr<bool> LibraryRewriter::RunImpl(
                        })) {
       continue;
     }
-    TF_ASSIGN_OR_RETURN(bool comp_changed, ProcessComputation(computation));
+    ASSIGN_OR_RETURN(bool comp_changed, ProcessComputation(computation));
     module_changed |= comp_changed;
   }
   return module_changed;

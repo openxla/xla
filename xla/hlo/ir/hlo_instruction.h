@@ -49,6 +49,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/backend_config.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
@@ -81,6 +82,8 @@ namespace xla {
 class HloComputation;
 class HloModule;
 class HloInstruction;
+class BackendConfigWrapper;
+class HloPayloadDeduplicator;
 
 // A small holder that is used to keep some immutable info alongside an
 // instruction pointer in an HloComputation's list of instructions
@@ -1679,6 +1682,10 @@ class HloInstruction {
 
   virtual void ToProto(HloInstructionProto* proto) const;
 
+  // Non-virtual overload that handles interning.
+  void ToProto(HloInstructionProto* proto,
+               HloPayloadDeduplicator* deduplicator) const;
+
   // Returns a category for the HLO. This could be something like "convolution"
   // or "elementwise".
   virtual std::string ToCategory() const;
@@ -2070,7 +2077,7 @@ class HloInstruction {
   template <typename ConfigProto, EnableIfProto<ConfigProto>* = nullptr>
   absl::StatusOr<ConfigProto> backend_config() const {
     ConfigProto proto;
-    TF_RETURN_IF_ERROR(backend_config_->GetProto(&proto));
+    RETURN_IF_ERROR(backend_config_->GetProto(&proto));
     return proto;
   }
 
