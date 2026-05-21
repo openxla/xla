@@ -1500,6 +1500,62 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "dynamic_slice_fusion_rewriter_v2",
+    srcs = ["dynamic_slice_fusion_rewriter_v2.cc"],
+    hdrs = ["dynamic_slice_fusion_rewriter_v2.h"],
+    tags = ["gpu"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:gpu_constants",
+        "//xla/service/gpu:ir_emission_utils",
+        "//xla/stream_executor:platform_id",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "dynamic_slice_fusion_rewriter_v2_test",
+    srcs = ["dynamic_slice_fusion_rewriter_v2_test.cc"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        ":dynamic_slice_annotator",
+        ":dynamic_slice_fusion",
+        ":dynamic_slice_fusion_rewriter_v2",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:platform_util",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/stream_executor:platform_id",
+        "//xla/stream_executor/gpu:gpu_init_impl",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",  # fixdeps: keep
+    ],
+)
+
+cc_library(
     name = "explicit_collectives_group_async_wrapper",
     srcs = ["explicit_collectives_group_async_wrapper.cc"],
     hdrs = ["explicit_collectives_group_async_wrapper.h"],
