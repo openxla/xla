@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/analysis/while_loop_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -36,33 +37,32 @@ limitations under the License.
 #include "xla/service/while_loop_unroller.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 namespace {
 
-bool IsBroadcastOfScalarConstant(const HloInstruction* h) {
+// Matches broadcast(scalar_constant) through layout-only wrappers
+// (bitcast/copy/reshape) above the broadcast and convert-like casts below it.
+// Strictly wider than hlo_query::IsBroadcastOfScalarConstant.
+bool IsBroadcastOfScalarConstantThroughLayoutWrappers(const HloInstruction* h) {
   while (h->opcode() == HloOpcode::kBitcast ||
          h->opcode() == HloOpcode::kCopy ||
          h->opcode() == HloOpcode::kReshape) {
     h = h->operand(0);
   }
-  if (h->opcode() != HloOpcode::kBroadcast) return false;
-  const HloInstruction* src = hlo_query::StripCastLike(h->operand(0));
-  return src->opcode() == HloOpcode::kConstant &&
-         src->shape().dimensions().empty();
+  return h->opcode() == HloOpcode::kBroadcast &&
+         hlo_query::IsScalarConstant(hlo_query::StripCastLike(h->operand(0)));
 }
 
 // Init value is irrelevant; soundness comes from the dead-input check.
 std::optional<Shape> ClassifyReplaceableInit(const HloInstruction* init) {
-  if (IsBroadcastOfScalarConstant(init)) {
+  if (IsBroadcastOfScalarConstantThroughLayoutWrappers(init)) {
     return init->shape();
   }
   if (init->opcode() == HloOpcode::kFusion && init->operand_count() == 0) {
-    if (IsBroadcastOfScalarConstant(init->fused_expression_root())) {
+    if (IsBroadcastOfScalarConstantThroughLayoutWrappers(
+            init->fused_expression_root())) {
       return init->shape();
     }
   }
@@ -72,7 +72,8 @@ std::optional<Shape> ClassifyReplaceableInit(const HloInstruction* init) {
         fusion->operand_count() == 0) {
       const HloInstruction* root = fusion->fused_expression_root();
       if (root->opcode() == HloOpcode::kTuple &&
-          IsBroadcastOfScalarConstant(root->operand(init->tuple_index()))) {
+          IsBroadcastOfScalarConstantThroughLayoutWrappers(
+              root->operand(init->tuple_index()))) {
         return init->shape();
       }
     }
@@ -80,17 +81,11 @@ std::optional<Shape> ClassifyReplaceableInit(const HloInstruction* init) {
   return std::nullopt;
 }
 
-struct WalkCtx {
-  const WhileLoopConfig& cfg;
-  int depth = 0;
-  static constexpr int kMaxDepth = 8;
-};
-
 absl::StatusOr<bool> AllUsersKillBuffer(const HloInstruction* buffer,
-                                        WalkCtx& ctx);
+                                        const WhileLoopConfig& cfg);
 absl::StatusOr<bool> UserKillsBuffer(const HloInstruction* user,
                                      const HloInstruction* operand,
-                                     WalkCtx& ctx);
+                                     const WhileLoopConfig& cfg);
 
 // Read from the WhileLoopConfig annotation: upstream rewrites defeat
 // structural IV detection.
@@ -129,8 +124,10 @@ std::optional<Range> ResolveIndexRangeAsFunctionOfIv(
 // that are arithmetic expressions over fused parameters (e.g. descending DUS).
 bool IsKillingDus(const HloInstruction* dus, const HloInstruction* operand,
                   const WhileLoopConfig& cfg) {
-  if (dus->opcode() != HloOpcode::kDynamicUpdateSlice) return false;
-  if (dus->operand(0) != operand) return false;
+  if (dus->opcode() != HloOpcode::kDynamicUpdateSlice ||
+      dus->operand(0) != operand) {
+    return false;
+  }
 
   const Shape& slice_shape = dus->operand(1)->shape();
   const Shape& input_shape = dus->operand(0)->shape();
@@ -152,75 +149,70 @@ bool IsKillingDus(const HloInstruction* dus, const HloInstruction* operand,
       }
       continue;
     }
-    if (dyn_dim_opt.has_value()) return false;  // more than one dynamic dim
-    if (!r.has_value()) return false;
+    // Reject if we already saw a dynamic dim, or if no range was resolved.
+    if (dyn_dim_opt.has_value() || !r.has_value()) {
+      return false;
+    }
     dyn_dim_opt = d;
     dyn_dim_range = r;
   }
-  if (!dyn_dim_opt.has_value() || !dyn_dim_range.has_value()) return false;
+  if (!dyn_dim_opt.has_value() || !dyn_dim_range.has_value()) {
+    return false;
+  }
   int64_t dyn_dim = *dyn_dim_opt;
   std::optional<Range> idx_range = dyn_dim_range;
 
   const int64_t dim_size = input_shape.dimensions(dyn_dim);
   const int64_t slice_size = slice_shape.dimensions(dyn_dim);
-  if (slice_size <= 0 || slice_size > dim_size) return false;
-  std::vector<bool> covered(dim_size, false);
-  for (int64_t v = idx_range->min().GetSignedValue();
-       v <= idx_range->max()->GetSignedValue();
-       v += idx_range->step()->GetSignedValue()) {
-    int64_t start =
-        std::min<int64_t>(std::max<int64_t>(v, 0), dim_size - slice_size);
-    for (int64_t i = start; i < start + slice_size; ++i) {
-      if (i >= 0 && i < dim_size) covered[i] = true;
-    }
+  if (slice_size <= 0 || slice_size > dim_size) {
+    return false;
   }
-  for (bool c : covered) {
-    if (!c) return false;
-  }
-  return true;
+  // Left edge, right edge, and no interior gaps.
+  return idx_range->min().GetSignedValue() <= 0 &&
+         idx_range->max()->GetSignedValue() >= dim_size - slice_size &&
+         slice_size >= idx_range->step()->GetSignedValue();
 }
 
 // TODO: scatter killing-write support; needs reasoning over scatter index
 // expressions and update_window_dims.
 
 absl::StatusOr<bool> FusionParamIsKilled(const HloInstruction* fusion,
-                                         int64_t param_idx, WalkCtx& ctx) {
-  if (++ctx.depth > WalkCtx::kMaxDepth) return false;
+                                         int64_t param_idx,
+                                         const WhileLoopConfig& cfg) {
   HloComputation* fc = fusion->fused_instructions_computation();
   HloInstruction* fused_param = fc->parameter_instruction(param_idx);
   bool ok = false;
-  TF_ASSIGN_OR_RETURN(ok, AllUsersKillBuffer(fused_param, ctx));
-  --ctx.depth;
+  ASSIGN_OR_RETURN(ok, AllUsersKillBuffer(fused_param, cfg));
   return ok;
 }
 
 absl::StatusOr<bool> AllUsersKillBuffer(const HloInstruction* buffer,
-                                        WalkCtx& ctx) {
-  if (buffer->user_count() == 0) return true;  // trivially dead
+                                        const WhileLoopConfig& cfg) {
+  if (buffer->user_count() == 0) {
+    return true;  // trivially dead
+  }
   for (const HloInstruction* user : buffer->users()) {
-    TF_ASSIGN_OR_RETURN(bool ok, UserKillsBuffer(user, buffer, ctx));
-    if (!ok) return false;
+    ASSIGN_OR_RETURN(bool ok, UserKillsBuffer(user, buffer, cfg));
+    if (!ok) {
+      return false;
+    }
   }
   return true;
 }
 
 absl::StatusOr<bool> UserKillsBuffer(const HloInstruction* user,
                                      const HloInstruction* operand,
-                                     WalkCtx& ctx) {
-  if (++ctx.depth > WalkCtx::kMaxDepth) {
-    --ctx.depth;
-    return false;
-  }
+                                     const WhileLoopConfig& cfg) {
   bool result = false;
   switch (user->opcode()) {
     case HloOpcode::kDynamicUpdateSlice:
-      result = IsKillingDus(user, operand, ctx.cfg);
+      result = IsKillingDus(user, operand, cfg);
       break;
 
     case HloOpcode::kBitcast:
       // Bitcast is layout-only, so recurse to its users. kCopy intentionally
       // falls to default: it observes the init bytes we are eliding.
-      result = AllUsersKillBuffer(user, ctx).value_or(false);
+      result = AllUsersKillBuffer(user, cfg).value_or(false);
       break;
 
     case HloOpcode::kFusion: {
@@ -229,14 +221,20 @@ absl::StatusOr<bool> UserKillsBuffer(const HloInstruction* user,
         result = false;
         break;
       }
-      result = FusionParamIsKilled(user, op_idx, ctx).value_or(false);
-      if (result) break;
+      result = FusionParamIsKilled(user, op_idx, cfg).value_or(false);
+      if (result) {
+        break;
+      }
 
       // DSF: in-place semantics live in output_to_operand_aliasing, not in
       // the fused body — walk the alias map instead.
-      if (user->fusion_kind() != HloInstruction::FusionKind::kCustom) break;
+      if (user->fusion_kind() != HloInstruction::FusionKind::kCustom) {
+        break;
+      }
       auto bcfg = user->backend_config<GpuBackendConfig>();
-      if (!bcfg.ok()) break;
+      if (!bcfg.ok()) {
+        break;
+      }
       const FusionBackendConfig& fc = bcfg->fusion_backend_config();
       if (fc.kind() != kCustomFusionKind || !fc.has_custom_fusion_config() ||
           fc.custom_fusion_config().name() !=
@@ -244,8 +242,9 @@ absl::StatusOr<bool> UserKillsBuffer(const HloInstruction* user,
         break;
       }
       for (const auto& alias : user->output_operand_aliasing()) {
-        if (alias.second.first != op_idx) continue;
-        if (!alias.second.second.empty()) continue;
+        if (alias.second.first != op_idx || !alias.second.second.empty()) {
+          continue;
+        }
         const ShapeIndex& output_idx = alias.first;
         const HloInstruction* fused_root = user->fused_expression_root();
         const HloInstruction* aliased;
@@ -261,7 +260,9 @@ absl::StatusOr<bool> UserKillsBuffer(const HloInstruction* user,
         while (aliased->opcode() == HloOpcode::kBitcast) {
           aliased = aliased->operand(0);
         }
-        if (aliased->opcode() != HloOpcode::kDynamicUpdateSlice) continue;
+        if (aliased->opcode() != HloOpcode::kDynamicUpdateSlice) {
+          continue;
+        }
         // DUS's operand(0) must trace (through bitcasts) to
         // fused_param[op_idx].
         const HloInstruction* dus_target = aliased->operand(0);
@@ -272,7 +273,7 @@ absl::StatusOr<bool> UserKillsBuffer(const HloInstruction* user,
             dus_target->parameter_number() != op_idx) {
           continue;
         }
-        if (IsKillingDus(aliased, dus_target, ctx.cfg)) {
+        if (IsKillingDus(aliased, dus_target, cfg)) {
           result = true;
           break;
         }
@@ -287,12 +288,13 @@ absl::StatusOr<bool> UserKillsBuffer(const HloInstruction* user,
       bool flows_into_some_branch = false;
       for (int b = 0; b < user->branch_count(); ++b) {
         const HloInstruction* branch_input = user->operand(b + 1);
-        if (branch_input != operand) continue;
+        if (branch_input != operand) {
+          continue;
+        }
         flows_into_some_branch = true;
         HloComputation* branch = user->branch_computation(b);
         HloInstruction* branch_param = branch->parameter_instruction(0);
-        TF_ASSIGN_OR_RETURN(bool branch_ok,
-                            AllUsersKillBuffer(branch_param, ctx));
+        ASSIGN_OR_RETURN(bool branch_ok, AllUsersKillBuffer(branch_param, cfg));
         if (!branch_ok) {
           every_branch_kills = false;
           break;
@@ -312,7 +314,6 @@ absl::StatusOr<bool> UserKillsBuffer(const HloInstruction* user,
       result = false;  // anything else reads the buffer, so it's not killed
       break;
   }
-  --ctx.depth;
   return result;
 }
 
@@ -322,21 +323,28 @@ absl::StatusOr<bool> SlotIsDeadInput(int64_t slot, const WhileLoopConfig& cfg) {
   HloComputation* body = cfg.while_instr->while_body();
   HloInstruction* body_param = body->parameter_instruction(0);
   HloInstruction* body_root = body->root_instruction();
-  if (body_root->opcode() != HloOpcode::kTuple) return false;
+  if (body_root->opcode() != HloOpcode::kTuple) {
+    return false;
+  }
 
   HloInstruction* slot_gte = nullptr;
   for (HloInstruction* u : body_param->users()) {
     if (u->opcode() == HloOpcode::kGetTupleElement &&
         u->tuple_index() == slot) {
-      if (slot_gte != nullptr) return false;  // multiple GTEs at slot
+      if (slot_gte != nullptr) {
+        return false;  // multiple GTEs at slot
+      }
       slot_gte = u;
     }
   }
-  if (slot_gte == nullptr) return true;  // never read; trivially dead
+  if (slot_gte == nullptr) {
+    return true;  // never read; trivially dead
+  }
 
-  WalkCtx ctx{cfg};
-  TF_ASSIGN_OR_RETURN(bool all_kill, AllUsersKillBuffer(slot_gte, ctx));
-  if (!all_kill) return false;
+  ASSIGN_OR_RETURN(bool all_kill, AllUsersKillBuffer(slot_gte, cfg));
+  if (!all_kill) {
+    return false;
+  }
 
   // If the body passes slot through unchanged (root traces to slot_gte via
   // bitcast/copy), post-loop uses would see garbage if we elided the init.
@@ -345,8 +353,49 @@ absl::StatusOr<bool> SlotIsDeadInput(int64_t slot, const WhileLoopConfig& cfg) {
          root_v->opcode() == HloOpcode::kCopy) {
     root_v = root_v->operand(0);
   }
-  if (root_v == slot_gte) return false;  // unmodified passthrough
+  if (root_v == slot_gte) {
+    return false;  // unmodified passthrough
+  }
   return true;
+}
+
+// Filters a single while op against the pass's loop-shape preconditions and
+// returns a WhileLoopConfig if it's a candidate, nullopt otherwise.
+std::optional<WhileLoopConfig> ClassifyCandidateWhile(
+    HloInstruction* while_op) {
+  if (while_op->has_sharding()) {
+    return std::nullopt;
+  }
+  auto loop_cfg = while_op->backend_config<WhileLoopBackendConfig>();
+  if (!loop_cfg.ok() || !loop_cfg->has_known_trip_count()) {
+    return std::nullopt;
+  }
+  int64_t trip_count = loop_cfg->known_trip_count().n();
+  if (trip_count <= 0) {
+    return std::nullopt;
+  }
+  if (!loop_cfg->has_known_init_step() ||
+      loop_cfg->known_init_step().init() != 0 ||
+      loop_cfg->known_init_step().step() != 1) {
+    return std::nullopt;
+  }
+  if (while_op->operand(0)->opcode() != HloOpcode::kTuple) {
+    return std::nullopt;
+  }
+  int64_t iv_tuple_idx;
+  if (loop_cfg->has_known_induction_variable()) {
+    iv_tuple_idx = loop_cfg->known_induction_variable().tuple_index();
+  } else {
+    std::optional<int64_t> iv_idx_opt = GetLoopInductionVarTupleIdx(while_op);
+    if (!iv_idx_opt.has_value()) {
+      return std::nullopt;
+    }
+    iv_tuple_idx = *iv_idx_opt;
+  }
+  return WhileLoopConfig{/*while_instr=*/while_op,
+                         /*init=*/0,
+                         /*trip_count=*/trip_count,
+                         /*induction_var_idx=*/iv_tuple_idx};
 }
 
 }  // namespace
@@ -360,60 +409,50 @@ absl::StatusOr<bool> DusAccumulatorZeroInitElimination::RunImpl(
     return false;
   }
 
-  std::vector<HloInstruction*> whiles;
+  std::vector<WhileLoopConfig> candidates;
   for (HloComputation* comp :
        module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* ins : comp->instructions()) {
-      if (ins->opcode() == HloOpcode::kWhile) whiles.push_back(ins);
+      if (ins->opcode() != HloOpcode::kWhile) {
+        continue;
+      }
+      if (std::optional<WhileLoopConfig> cfg = ClassifyCandidateWhile(ins)) {
+        candidates.push_back(*cfg);
+      }
     }
   }
 
   bool changed = false;
-  for (HloInstruction* while_op : whiles) {
-    if (while_op->has_sharding()) continue;
-    auto loop_cfg = while_op->backend_config<WhileLoopBackendConfig>();
-    if (!loop_cfg.ok() || !loop_cfg->has_known_trip_count()) continue;
-    int64_t trip_count = loop_cfg->known_trip_count().n();
-    if (trip_count <= 0) continue;
-
-    int64_t iv_tuple_idx;
-    if (loop_cfg->has_known_induction_variable()) {
-      iv_tuple_idx = loop_cfg->known_induction_variable().tuple_index();
-    } else {
-      std::optional<int64_t> iv_idx_opt = GetLoopInductionVarTupleIdx(while_op);
-      if (!iv_idx_opt.has_value()) continue;
-      iv_tuple_idx = *iv_idx_opt;
-    }
-
-    if (!loop_cfg->has_known_init_step()) continue;
-    if (loop_cfg->known_init_step().init() != 0 ||
-        loop_cfg->known_init_step().step() != 1) {
-      continue;
-    }
-
-    WhileLoopConfig cfg{/*while_instr=*/while_op,
-                        /*init=*/0,
-                        /*trip_count=*/trip_count,
-                        /*induction_var_idx=*/iv_tuple_idx};
-
+  for (const WhileLoopConfig& cfg : candidates) {
+    // WhileLoopConfig::while_instr is const repo-wide; mutate via const_cast
+    // since we need ReplaceOperandWith / AddInstruction on the actual instr.
+    HloInstruction* while_op = const_cast<HloInstruction*>(cfg.while_instr);
     HloInstruction* init_tuple = while_op->mutable_operand(0);
-    if (init_tuple->opcode() != HloOpcode::kTuple) continue;
-
     int64_t n_slots = init_tuple->operand_count();
     for (int64_t slot = 0; slot < n_slots; ++slot) {
-      if (slot == cfg.induction_var_idx) continue;
+      if (slot == cfg.induction_var_idx) {
+        continue;
+      }
 
       HloInstruction* init = init_tuple->mutable_operand(slot);
       std::optional<Shape> alloc_shape_opt = ClassifyReplaceableInit(init);
-      if (!alloc_shape_opt.has_value()) continue;
-      if (init->has_sharding()) continue;
-      if (init->user_count() != 1) continue;  // init must feed only this while
+      if (!alloc_shape_opt.has_value()) {
+        continue;
+      }
+      // Init must feed only this while and not carry its own sharding.
+      if (init->has_sharding() || init->user_count() != 1) {
+        continue;
+      }
       const Shape& alloc_shape = *alloc_shape_opt;
-      if (alloc_shape.dimensions_size() == 0) continue;
-      if (alloc_shape.dimensions(0) != cfg.trip_count) continue;
+      if (alloc_shape.dimensions_size() == 0 ||
+          alloc_shape.dimensions(0) != cfg.trip_count) {
+        continue;
+      }
 
-      TF_ASSIGN_OR_RETURN(bool dead, SlotIsDeadInput(slot, cfg));
-      if (!dead) continue;
+      ASSIGN_OR_RETURN(bool dead, SlotIsDeadInput(slot, cfg));
+      if (!dead) {
+        continue;
+      }
 
       HloInstruction* alloc =
           while_op->parent()->AddInstruction(HloInstruction::CreateCustomCall(
@@ -421,7 +460,7 @@ absl::StatusOr<bool> DusAccumulatorZeroInitElimination::RunImpl(
       alloc->set_metadata(init->metadata());
       alloc->set_frontend_attributes(init->frontend_attributes());
       alloc->set_statistics_viz(init->statistics_viz());
-      TF_RETURN_IF_ERROR(init_tuple->ReplaceOperandWith(slot, alloc));
+      RETURN_IF_ERROR(init_tuple->ReplaceOperandWith(slot, alloc));
       changed = true;
     }
   }
@@ -431,5 +470,4 @@ absl::StatusOr<bool> DusAccumulatorZeroInitElimination::RunImpl(
   return changed;
 }
 
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu

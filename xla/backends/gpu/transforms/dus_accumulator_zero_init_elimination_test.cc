@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
@@ -30,8 +31,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/tsl/platform/statusor.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 namespace {
 
 class DusAccumulatorZeroInitEliminationTest
@@ -171,6 +171,15 @@ const RawDusCase kRawDusCases[] = {
      .expected_buffers = 1,
      .init_expr = R"(  cneg = bf16[] constant(-inf)
   zero_init = bf16[4,8] broadcast(cneg), dimensions={})"},
+
+    {.name = "TightTileDim1",
+     .expected_changed = true,
+     .expected_buffers = 1,
+     .body_dus = R"(  z = s32[] constant(0)
+  two = s32[] constant(2)
+  two_it = s32[] multiply(it, two)
+  update_tile = bf16[4,2] constant({ {1,1}, {1,1}, {1,1}, {1,1} })
+  dus = bf16[4,8] dynamic-update-slice(acc, update_tile, z, two_it))"},
 };
 
 class DusRawDusParam : public DusAccumulatorZeroInitEliminationTest,
@@ -180,10 +189,10 @@ TEST_P(DusRawDusParam, ParameterisedScan) {
   const RawDusCase& c = GetParam();
   SCOPED_TRACE(c.name);
   const std::string hlo = MakeRawDusHlo(c);
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   EnableFlag(module.get());
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, DusAccumulatorZeroInitElimination().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       DusAccumulatorZeroInitElimination().Run(module.get()));
   EXPECT_EQ(changed, c.expected_changed);
   EXPECT_EQ(CountAllocateBuffers(module.get()), c.expected_buffers);
 
@@ -369,10 +378,10 @@ TEST_P(DusFusionDusParam, ParameterisedScan) {
   const FusionDusCase& c = GetParam();
   SCOPED_TRACE(c.name);
   const std::string hlo = MakeFusionDusHlo(c);
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   EnableFlag(module.get());
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, DusAccumulatorZeroInitElimination().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       DusAccumulatorZeroInitElimination().Run(module.get()));
   EXPECT_EQ(changed, c.expected_changed);
   EXPECT_EQ(CountAllocateBuffers(module.get()), c.expected_buffers);
 }
@@ -497,10 +506,10 @@ TEST_P(DusFusionInitParam, ParameterisedScan) {
   const FusionInitCase& c = GetParam();
   SCOPED_TRACE(c.name);
   const std::string hlo = MakeFusionInitHlo(c);
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   EnableFlag(module.get());
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, DusAccumulatorZeroInitElimination().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       DusAccumulatorZeroInitElimination().Run(module.get()));
   EXPECT_EQ(changed, c.expected_changed);
   EXPECT_EQ(CountAllocateBuffers(module.get()), c.expected_buffers);
 }
@@ -553,10 +562,10 @@ ENTRY e {
   ROOT r = bf16[4,8] get-tuple-element(w), index=1
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
   EnableFlag(module.get());
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, DusAccumulatorZeroInitElimination().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       DusAccumulatorZeroInitElimination().Run(module.get()));
   EXPECT_TRUE(changed);
   EXPECT_EQ(CountAllocateBuffers(module.get()), 2);
 }
@@ -597,14 +606,13 @@ ENTRY e {
   ROOT r = bf16[8,8] get-tuple-element(w), index=1
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
   EnableFlag(module.get());
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, DusAccumulatorZeroInitElimination().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       DusAccumulatorZeroInitElimination().Run(module.get()));
   EXPECT_FALSE(changed);
   EXPECT_EQ(CountAllocateBuffers(module.get()), 0);
 }
 
 }  // namespace
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu

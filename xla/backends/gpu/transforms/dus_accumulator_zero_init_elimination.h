@@ -22,8 +22,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 
 // Replaces broadcast(0) scan-accumulator init with AllocateBuffer when the
 // body's DUS exhaustively covers every slot.
@@ -39,7 +38,6 @@ class DusAccumulatorZeroInitElimination : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 };
 
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_TRANSFORMS_DUS_ACCUMULATOR_ZERO_INIT_ELIMINATION_H_
