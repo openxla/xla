@@ -1930,7 +1930,8 @@ absl::StatusOr<GpuExecutableProto> GpuExecutable::ToProto() const {
   }
 
   if (has_module()) {
-    *proto.mutable_hlo_module_with_config() = module().ToProtoWithConfig();
+    *proto.mutable_hlo_module_with_config() =
+        module().ToProtoWithConfig(/*intern_backend_config=*/true);
   }
 
   proto.mutable_output_info_map()->Reserve(output_info_.size());
