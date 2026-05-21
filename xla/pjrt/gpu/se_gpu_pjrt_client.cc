@@ -584,16 +584,29 @@ absl::StatusOr<PreparedTransfer> PrepareTransfer(
                           std::move(clique_and_communicator), is_sender);
 }
 
-// Group transfers by clique key. We return a btree_map to guarantee stable
-// iteration order for all ranks participating in these transfers.
-absl::btree_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>
+// Groups transfers by clique key, preserving the order in which each clique
+// key first appears in `prepared_transfers`.
+//
+// Cross-host transfers deadlock unless all participating ranks process clique
+// groups in the same order. We guarantee that if every rank submits its
+// transfers in a mutually consistent order, the returned grouping will be
+// consistent across ranks too.
+std::vector<std::pair<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>>
 GroupTransfersByCliqueKey(std::vector<PreparedTransfer>&& prepared_transfers) {
-  absl::btree_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>> grouped;
-  for (auto&& prepared_transfer : prepared_transfers) {
-    grouped[prepared_transfer.clique_key_].push_back(
-        std::move(prepared_transfer));
+  std::vector<std::pair<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>>
+      grouped_results;
+  absl::flat_hash_map<gpu::GpuCliqueKey, size_t> key_to_group_idx;
+  for (auto& prepared_transfer : prepared_transfers) {
+    auto [it, inserted] = key_to_group_idx.try_emplace(
+        prepared_transfer.clique_key_, grouped_results.size());
+    if (inserted) {
+      grouped_results.emplace_back(prepared_transfer.clique_key_,
+                                   std::vector<PreparedTransfer>{});
+    }
+    size_t group_idx = it->second;
+    grouped_results[group_idx].second.push_back(std::move(prepared_transfer));
   }
-  return grouped;
+  return grouped_results;
 }
 
 void FulfillDeviceEvent(PjRtStreamExecutorClient* client,
@@ -834,12 +847,12 @@ void StreamExecutorGpuClient::ScheduleTransfersOnLocalDevice(
         }
 
         // Group transfers by GPU clique.
-        absl::btree_map<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>
+        std::vector<std::pair<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>>
             grouped_transfers =
                 GroupTransfersByCliqueKey(std::move(prepared_transfers));
 
         // Transfers for a particular clique are executed as a group. This
-        // vector holds group futures for each clique_key in grouped_sends.
+        // vector holds group futures for each clique_key in grouped_transfers.
         std::vector<Future<>> group_futures;
         group_futures.reserve(grouped_transfers.size());
 
