@@ -42,6 +42,7 @@ using ::absl_testing::IsOk;
 using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
 using ::testing::Not;
+using ::testing::Pointee;
 
 // Check that we correctly detect move-only types.
 static_assert(internal::IsMoveOnly<std::unique_ptr<int32_t>>::value);
@@ -212,8 +213,13 @@ TEST(FutureTest, OnReadyRvalueFuture) {
 
   promise.Set(42);
 
-  std::move(future).OnReady(
-      [](absl::StatusOr<int32_t> value) { EXPECT_EQ(*value, 42); });
+  future.OnReady([](const absl::StatusOr<int32_t>& value) {
+    EXPECT_THAT(value, IsOkAndHolds(42));
+  });
+
+  std::move(future).OnReady([](absl::StatusOr<int32_t> value) {
+    EXPECT_THAT(value, IsOkAndHolds(42));
+  });
 }
 
 TEST(FutureTest, OnReadyMoveOnlyFuture) {
@@ -221,8 +227,12 @@ TEST(FutureTest, OnReadyMoveOnlyFuture) {
 
   promise.Set(std::make_unique<int32_t>(42));
 
+  future.OnReady([](const absl::StatusOr<std::unique_ptr<int32_t>>& value) {
+    EXPECT_THAT(value, IsOkAndHolds(Pointee(42)));
+  });
+
   std::move(future).OnReady([](absl::StatusOr<std::unique_ptr<int32_t>> value) {
-    EXPECT_EQ(**value, 42);
+    EXPECT_THAT(value, IsOkAndHolds(Pointee(42)));
   });
 }
 
