@@ -105,7 +105,8 @@ absl::StatusOr<std::vector<RepeatedFlagModifier>> ParseRepeatedEnumModifiers(
 namespace {
 
 template <typename T>
-static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list, T value) {
+static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list,
+                                   T value) {
   for (auto it = list->begin(); it != list->end(); ++it) {
     if (*it == value) {
       return it;
@@ -441,8 +442,10 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
       DebugOptions::PGLE_STRICTNESS_LEVEL_WARN);
 
   opts.set_xla_gpu_executable_embed_debug_info(true);
-  opts.set_xla_gpu_executable_warn_stuck_timeout_seconds(10);
+  opts.set_xla_gpu_executable_num_compute_streams(0);
+  opts.set_xla_gpu_executable_num_communication_streams(0);
   opts.set_xla_gpu_executable_terminate_timeout_seconds(30);
+  opts.set_xla_gpu_executable_warn_stuck_timeout_seconds(10);
   opts.set_xla_gpu_execution_terminate_timeout("inf");
   opts.set_xla_gpu_execution_progress_tracking(0);
 
@@ -2664,18 +2667,32 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_executable_embed_debug_info(),
       "Add debug information to the executable such as HLO module, asm_text "
       "etc."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_executable_num_compute_streams",
+                int32_setter_for(
+                    &DebugOptions::set_xla_gpu_executable_num_compute_streams),
+                debug_options->xla_gpu_executable_num_compute_streams(),
+                "Number of additional compute streams to allocate for a GPU "
+                "executable."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_executable_warn_stuck_timeout",
+      "xla_gpu_executable_num_communication_streams",
       int32_setter_for(
-          &DebugOptions::set_xla_gpu_executable_warn_stuck_timeout_seconds),
-      debug_options->xla_gpu_executable_warn_stuck_timeout_seconds(),
-      "Set timeout for Rendezvous stuck warning"));
+          &DebugOptions::set_xla_gpu_executable_num_communication_streams),
+      debug_options->xla_gpu_executable_num_communication_streams(),
+      "Number of additional communication streams to allocate for a GPU "
+      "executable."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_executable_terminate_timeout",
       int32_setter_for(
           &DebugOptions::set_xla_gpu_executable_terminate_timeout_seconds),
       debug_options->xla_gpu_executable_terminate_timeout_seconds(),
       "Set timeout for Rendezvous termination"));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_executable_warn_stuck_timeout",
+      int32_setter_for(
+          &DebugOptions::set_xla_gpu_executable_warn_stuck_timeout_seconds),
+      debug_options->xla_gpu_executable_warn_stuck_timeout_seconds(),
+      "Set timeout for Rendezvous stuck warning"));
 
   flag_list->push_back(tsl::Flag(
       "xla_gpu_execution_terminate_timeout",
@@ -3310,8 +3327,7 @@ FlagStatus GetFlagStatus(absl::string_view flag_name) {
           "xla_gpu_all_reduce_combine_threshold_bytes",
           "xla_gpu_autotune_level",
           "xla_gpu_collective_permute_decomposer_threshold",
-          "xla_gpu_cublas_fallback",
-          "xla_gpu_dot_merger_threshold_mb",
+          "xla_gpu_cublas_fallback", "xla_gpu_dot_merger_threshold_mb",
           "xla_gpu_enable_dynamic_slice_fusion",
           "xla_gpu_enable_latency_hiding_scheduler",
           "xla_gpu_enable_pipelined_all_gather",
