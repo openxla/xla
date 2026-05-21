@@ -291,13 +291,10 @@ AutotunerPass::GetGpuAutotunerBackends(
 
   std::vector<autotuner::Backend> disabled_autotune_backends;
   if (debug_options.xla_gpu_experimental_disable_binary_libraries()) {
-    disabled_autotune_backends.push_back(autotuner::Backend::CUBLAS);
     disabled_autotune_backends.push_back(autotuner::Backend::CUBLASLT);
     disabled_autotune_backends.push_back(autotuner::Backend::CUDNN);
-    disabled_autotune_backends.push_back(autotuner::Backend::ROCBLAS);
     disabled_autotune_backends.push_back(autotuner::Backend::HIPBLASLT);
     disabled_autotune_backends.push_back(autotuner::Backend::MIOPEN);
-    disabled_autotune_backends.push_back(autotuner::Backend::ROCBLAS_FISSION);
     disabled_autotune_backends.push_back(autotuner::Backend::HIPBLASLT_FISSION);
   }
 

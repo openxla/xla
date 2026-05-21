@@ -614,11 +614,11 @@ ENTRY main {
   EXPECT_EQ(operand_1->operand(0)->opcode(), HloOpcode::kAllGatherDone);
 }
 
-// This test ensures that the pathway for using the cuBLAS fallback (forming a
-// Triton fusion and falling back to cuBLAS in the autotuner) is exactly the
-// same as using cuBLAS directly (with Triton disabled).
+// This test ensures that the pathway for using the cuBlasLt fallback (forming a
+// Triton fusion and falling back to cuBlasLt in the autotuner) is exactly the
+// same as using cuBLasLt directly (with Triton disabled).
 TEST_F(GpuCompilerTest,
-       GemmFusionIsNoOpWhenGemmFusionAutotunerFallsBackToCublas) {
+       GemmFusionIsNoOpWhenGemmFusionAutotunerFallsBackToCublasLt) {
   if (!get_cuda_cc().IsAtLeastAmpere()) {
     GTEST_SKIP() << "Autotuning results have only been generated for Ampere "
                  << "and later GPUs";
@@ -656,8 +656,6 @@ ENTRY main {
   DebugOptions triton_enabled_debug_options = GetDebugOptionsForTest();
   triton_enabled_debug_options.clear_xla_gpu_experimental_autotune_backends();
   triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
-      autotuner::Backend::CUBLAS_FISSION);
-  triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
       autotuner::Backend::CUBLASLT_FISSION);
   triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
       autotuner::Backend::NATIVE_EMITTER);
@@ -671,9 +669,8 @@ ENTRY main {
   AutotuneResults results;
   ASSERT_OK(AutotunerCache::SerializeAutotuneResults(&results));
   EXPECT_FALSE(results.results().empty());
-  EXPECT_TRUE(absl::StrContains(results.DebugString(), "CUBLAS_FISSION") ||
-              // CUBLASLT_FISSION is dumped as GemmKey in the AutotunerResult.
-              absl::StrContains(results.DebugString(), "gemm"));
+  // CUBLASLT_FISSION is dumped as GemmKey in the AutotunerResult.
+  EXPECT_TRUE(absl::StrContains(results.DebugString(), "gemm"));
 
   // Triton disabled - this will skip the GemmFusion pass and use cuBLAS.
   DebugOptions triton_disabled_debug_options = GetDebugOptionsForTest();
@@ -688,10 +685,8 @@ ENTRY main {
   const HloInstruction* root =
       triton_enabled_module->entry_computation()->root_instruction();
   const HloInstruction* custom_op = root->operand(0)->operand(0);
-  bool is_cublas_gemm = GetDebugOptionsForTest().xla_gpu_enable_cublaslt()
-                            ? custom_op->IsCustomCall("__cublas$lt$matmul")
-                            : custom_op->IsCustomCall("__cublas$gemm");
-  EXPECT_TRUE(is_cublas_gemm) << custom_op->ToString();
+  EXPECT_TRUE(custom_op->IsCustomCall("__cublas$lt$matmul"))
+      << custom_op->ToString();
   // Make sure that the module has the same number of computations with/without
   // enabling triton gemm
   EXPECT_EQ(triton_enabled_module->computation_count(),
@@ -721,8 +716,6 @@ ENTRY main {
   DebugOptions triton_enabled_debug_options = GetDebugOptionsForTest();
   triton_enabled_debug_options.clear_xla_gpu_experimental_autotune_backends();
   triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
-      autotuner::Backend::CUBLAS_FISSION);
-  triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
       autotuner::Backend::CUBLASLT_FISSION);
   triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
       autotuner::Backend::NATIVE_EMITTER);
@@ -732,7 +725,7 @@ ENTRY main {
   auto triton_enabled_executable =
       triton_enabled_module_and_executable.second.get();
 
-  // Triton disabled - this will skip the GemmFusion pass and use cuBLAS.
+  // Triton disabled - this will skip the GemmFusion pass and use cuBlasLt.
   DebugOptions triton_disabled_debug_options = GetDebugOptionsForTest();
   triton_disabled_debug_options.set_xla_gpu_enable_triton_gemm(false);
   config.set_debug_options(triton_disabled_debug_options);
@@ -815,7 +808,7 @@ ENTRY main {
       R"(CHECK: custom-call($0{{[^)]*}}, $1{{[^)]*}}){{.*}}custom_call_target="__cublas$$lt$$matmul$$f8")",
       lhs_name, rhs_name);
   const std::string cublas_convert_to_f16 =
-      R"(CHECK: custom-call(f16{{.*}}, f16{{.*}}){{.*}}custom_call_target="{{__cublas\$gemm|__cublas\$lt\$matmul}}")";
+      R"(CHECK: custom-call(f16{{.*}}, f16{{.*}}){{.*}}custom_call_target="{{__cublas\$lt\$matmul}}")";
   const std::string fallback_convert_to_f16 =
       R"(CHECK: dot(f16{{[^)]*}}, f16{{[^)]*}}))";
 
@@ -1029,7 +1022,7 @@ HloModule composite
 async_call {
   p0 = f32[32,32] parameter(0)
   p1 = f32[32,32] parameter(1)
-  gemm = (f32[32,32], s8[8192]) custom-call(p0, p1), custom_call_target="__cublas$gemm",
+  gemm = (f32[32,32], s8[8192]) custom-call(p0, p1), custom_call_target="__cublas$lt$matmul",
     backend_config={
       "gemm_backend_config":{"alpha_real":1,"alpha_imag":0,"beta":0,
       "dot_dimension_numbers":
@@ -1071,7 +1064,7 @@ ENTRY main {
       gpu_exec->thunk_executor().thunks()[0].get());
   EXPECT_EQ(async_start_thunk->thunks().size(), 1);
   EXPECT_THAT(async_start_thunk->thunks(),
-              ::testing::ElementsAre(ThunkKindIs(Thunk::kGemm)));
+              ::testing::ElementsAre(ThunkKindIs(Thunk::kCublasLtMatmul)));
 }
 
 TEST_F(GpuCompilerTest, StreamAnnotationThunkTestFDO) {
@@ -1081,7 +1074,7 @@ HloModule composite
 async_call {
   p0 = f32[32,32] parameter(0)
   p1 = f32[32,32] parameter(1)
-  gemm = (f32[32,32], s8[8192]) custom-call(p0, p1), custom_call_target="__cublas$gemm",
+  gemm = (f32[32,32], s8[8192]) custom-call(p0, p1), custom_call_target="__cublas$lt$matmul",
     backend_config={
       "gemm_backend_config":{"alpha_real":1,"alpha_imag":0,"beta":0,
       "dot_dimension_numbers":
@@ -1131,7 +1124,7 @@ ENTRY main {
       gpu_exec->thunk_executor().thunks()[0].get());
   EXPECT_EQ(async_start_thunk->thunks().size(), 1);
   EXPECT_THAT(async_start_thunk->thunks(),
-              ::testing::ElementsAre(ThunkKindIs(Thunk::kGemm)));
+              ::testing::ElementsAre(ThunkKindIs(Thunk::kCublasLtMatmul)));
 }
 
 using GpuCompilerPassTest = GpuCompilerTest;
