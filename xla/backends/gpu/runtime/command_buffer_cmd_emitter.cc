@@ -511,7 +511,7 @@ absl::Status AppendCommandsInConcurrentRegions(
     ConcurrentRegionScheduler& scheduler =
         concurrent_region_schedules.emplace_back(absl::MakeSpan(thunks));
     for (Thunk* thunk : scheduler.scheduled_thunks()) {
-      TF_RETURN_IF_ERROR(AppendCommands(ctx, cmd_sequence, *thunk, options));
+      RETURN_IF_ERROR(AppendCommands(ctx, cmd_sequence, *thunk, options));
       int64_t index = cmd_sequence.size() - 1;
       thunk_to_index[thunk] = index;
     }

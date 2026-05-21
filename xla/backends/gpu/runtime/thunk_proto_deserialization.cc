@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/message.h"
 #include "xla/backends/cpu/target_machine_options.h"
@@ -119,8 +120,8 @@ absl::StatusOr<std::unique_ptr<Thunk>> DeserializeThunkProtoImpl(
     std::shared_ptr<NvshmemBufferAddresses> nvshmem_buffer_addresses,
     const std::optional<xla::cpu::TargetMachineOptions>&
         cpu_target_machine_options) {
-  TF_ASSIGN_OR_RETURN(Thunk::ThunkInfo thunk_info,
-                      Thunk::ThunkInfo::FromProto(thunk_proto.thunk_info()));
+  ASSIGN_OR_RETURN(Thunk::ThunkInfo thunk_info,
+                   Thunk::ThunkInfo::FromProto(thunk_proto.thunk_info()));
   auto deserializer = [&](const ThunkProto& thunk_proto) {
     return DeserializeThunkProtoImpl(
         thunk_proto, buffer_allocations, hlo_module, platform_name,
@@ -388,7 +389,7 @@ absl::StatusOr<ThunkSequence> DeserializeThunkSequenceProto(
       std::make_shared<NvshmemBufferAddresses>();
   ThunkSequence sequence;
   for (const ThunkProto& thunk_proto : thunk_sequence_proto.thunks()) {
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         std::unique_ptr<Thunk> thunk,
         DeserializeThunkProtoImpl(
             thunk_proto, buffer_allocations, hlo_module, platform_name,
