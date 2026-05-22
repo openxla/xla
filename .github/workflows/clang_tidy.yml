@@ -28,8 +28,9 @@ jobs:
     timeout-minutes: 30
     continue-on-error: true
     if: |
-      github.event.sender.type == 'User' ||
-      contains(github.event.pull_request.body, 'FORCE_TEST_ACTIONS')
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event.sender.type == 'User' ||
+       contains(github.event.pull_request.body, 'FORCE_TEST_ACTIONS'))
     steps:
       - name: "Checking out repository"
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

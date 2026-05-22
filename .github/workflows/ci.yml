@@ -37,6 +37,8 @@ concurrency:
 
 jobs:
   Tests:
+    # Restrict to non-fork PRs: self-hosted GCE runners execute fork's build.py.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       # Don't fail fast - want to see results for all builds even if one fails.
       fail-fast: false
