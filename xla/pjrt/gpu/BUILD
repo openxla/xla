@@ -63,6 +63,7 @@ cc_library(
         ":gpu_metrics",
         ":se_gpu_pjrt_runtime_abi_version",
         ":se_gpu_topology_description",
+        "@com_google_absl//absl/base",
         "//xla:executable_run_options",
         "//xla:future",
         "//xla:literal",
