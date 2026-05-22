@@ -14,6 +14,7 @@ bazel_dep(name = "google_benchmark", version = "1.8.5", repo_name = "com_google_
 bazel_dep(name = "googletest", version = "1.17.0", repo_name = "com_google_googletest")
 bazel_dep(name = "grpc", version = "1.78.0", repo_name = "com_github_grpc_grpc")
 bazel_dep(name = "gutil", version = "20260309.0.bcr.1", repo_name = "com_google_gutil")
+bazel_dep(name = "highway", version = "1.3.0", repo_name = "com_google_highway")
 bazel_dep(name = "jsoncpp", version = "1.9.6", repo_name = "jsoncpp_git")
 bazel_dep(name = "or-tools", version = "9.12", repo_name = "com_google_ortools")
 bazel_dep(name = "platforms", version = "1.0.0")
@@ -28,7 +29,6 @@ bazel_dep(name = "rules_license", version = "1.0.0")
 bazel_dep(name = "rules_python", version = "1.8.5")
 bazel_dep(name = "rules_shell", version = "0.6.1")
 bazel_dep(name = "snappy", version = "1.2.1")
-bazel_dep(name = "xxd", version = "9.1.0917.bcr.1")
 bazel_dep(name = "zlib", version = "1.3.2")
 # go/keep-sorted end
 
@@ -125,6 +125,7 @@ use_repo(
     "mpitrampoline",
     "nanobind",
     "nccl_archive",
+    "net_zstd",
     "nvshmem",
     "nvtx_archive",
     "onednn",
@@ -241,6 +242,9 @@ use_repo(nccl_redist, "cuda_nccl")
 sycl_configure = use_extension("@rules_ml_toolchain//extensions:sycl_configure.bzl", "sycl_configure_ext")
 use_repo(sycl_configure, "level_zero", "local_config_sycl", "oneapi", "zero_loader")
 
+local_sysroot = use_extension("@rules_ml_toolchain//extensions:local_sysroot_configure.bzl", "local_sysroot_ext")
+use_repo(local_sysroot, "local_sysroot_config")
+
 cuda_redist_init_ext = use_extension("@rules_ml_toolchain//extensions:cuda_redist_init.bzl", "cuda_redist_init_ext")
 use_repo(
     cuda_redist_init_ext,
@@ -274,6 +278,9 @@ override_repo(
 nvshmem_redist = use_extension("@rules_ml_toolchain//extensions:nvshmem_redist.bzl", "nvshmem_redist_ext")
 use_repo(nvshmem_redist, "nvidia_nvshmem")
 
+toolchain_ext = use_extension("@rules_ml_toolchain//extensions:toolchain.bzl", "toolchain_ext")
+use_repo(toolchain_ext, "llvm18_linux_x86_64", "llvm_linux_x86_64")
+
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
@@ -285,6 +292,9 @@ register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
 
 ### Other local config repos
+local_clang_configure = use_extension("@rules_ml_toolchain//extensions:local_clang_configure.bzl", "local_clang_configure_ext")
+use_repo(local_clang_configure, "local_config_clang")
+
 hipcc_configure = use_extension("@rules_ml_toolchain//extensions:hipcc_configure.bzl", "hipcc_configure_ext")
 use_repo(hipcc_configure, "config_rocm_hipcc")
 

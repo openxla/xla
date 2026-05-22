@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
@@ -663,12 +664,23 @@ XlaBuilder::~XlaBuilder() = default;
 
 XlaOp XlaBuilder::ReportError(const absl::Status& error) {
   CHECK(!error.ok());
+
+  absl::Status updated_error = error;
+  const OpMetadata& current_metadata =
+      one_shot_metadata_.has_value() ? *one_shot_metadata_ : metadata_;
+  if (!current_metadata.source_file().empty()) {
+    tsl::errors::AppendToMessage(
+        &updated_error,
+        "\n\nPython Code Location:\n  File: ", current_metadata.source_file(),
+        ":", current_metadata.source_line());
+  }
+
   if (die_immediately_on_error_) {
-    LOG(FATAL) << "error building computation: " << error;
+    LOG(FATAL) << "error building computation: " << updated_error;
   }
 
   if (first_error_.ok()) {
-    first_error_ = error;
+    first_error_ = updated_error;
     first_error_backtrace_.CreateCurrent(/*skip_count=*/1);
   }
   return XlaOp(this);

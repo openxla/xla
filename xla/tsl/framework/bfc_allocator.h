@@ -24,12 +24,12 @@ limitations under the License.
 #include <deque>
 #include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <vector>
 
 #include "absl/base/casts.h"
 #include "absl/base/thread_annotations.h"
+#include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -164,10 +164,10 @@ class BFCAllocator : public Allocator {
 
   // A ChunkHandle is an index into the chunks_ vector in BFCAllocator
   // kInvalidChunkHandle means an invalid chunk
-  typedef size_t ChunkHandle;
+  using ChunkHandle = size_t;
   static constexpr ChunkHandle kInvalidChunkHandle = SIZE_MAX;
 
-  typedef int BinNum;
+  using BinNum = int;
   static constexpr int kInvalidBinNum = -1;
   // The following means that the largest bin'd chunk size is 256 << 21 = 512MB.
   static constexpr int kNumBins = 21;
@@ -275,7 +275,7 @@ class BFCAllocator : public Allocator {
       BFCAllocator* allocator_;  // The parent allocator
     };
 
-    typedef std::set<ChunkHandle, ChunkComparator> FreeChunkSet;
+    using FreeChunkSet = absl::btree_set<ChunkHandle, ChunkComparator>;
     // List of free chunks within the bin, sorted by chunk size.
     // Chunk * not owned.
     FreeChunkSet free_chunks;
@@ -370,7 +370,7 @@ class BFCAllocator : public Allocator {
   class RegionManager {
    public:
     RegionManager() = default;
-    ~RegionManager() {}
+    ~RegionManager() = default;
 
     void AddAllocationRegion(void* ptr, size_t memory_size) {
       // Insert sorted by end_ptr.

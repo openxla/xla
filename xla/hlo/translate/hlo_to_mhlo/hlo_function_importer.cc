@@ -421,6 +421,10 @@ absl::StatusOr<FuncOp> HloFunctionImporter::ImportAsFunc(
   function.setVisibility(is_main ? FuncOp::Visibility::Public
                                  : FuncOp::Visibility::Private);
 
+  // TODO(b/510714593): Create a shardy utility to modify func result
+  // attributes as below but in a more general way and re-use it.
+  llvm::SmallVector<mlir::DictionaryAttr> funcArgAttrs;
+  function.getAllArgAttrs(funcArgAttrs);
   int arg_index = 0;
   // Create block so that the function has arguments we can attach
   // `mlir::Location`s to.
@@ -446,10 +450,10 @@ absl::StatusOr<FuncOp> HloFunctionImporter::ImportAsFunc(
       }
 
       for (int i = 0; i < leaf_count; ++i) {
+        mlir::NamedAttrList argAttrs(function.getArgAttrDict(arg_index));
         if (!flattened_shardings.empty()) {
-          function.setArgAttr(
-              arg_index, xla::kMhloSharding,
-              ConvertSharding(flattened_shardings[i], builder_));
+          argAttrs.set(xla::kMhloSharding,
+                       ConvertSharding(flattened_shardings[i], builder_));
         }
         if (frontend_attributes) {
           if (leaf_count > 1) {
@@ -457,28 +461,28 @@ absl::StatusOr<FuncOp> HloFunctionImporter::ImportAsFunc(
                 "A tuple parameter that is being flattened shouldn't have "
                 "frontend attributes");
           }
-          function.setArgAttr(arg_index, xla::kMhloFrontendAttributes,
-                              frontend_attributes);
+          argAttrs.set(xla::kMhloFrontendAttributes, frontend_attributes);
         }
         if (parameter->parameter_replicated_at_leaf_buffers() &&
             parameter->parameter_replicated_at_leaf_buffers()->at(i)) {
-          function.setArgAttr(arg_index, xla::kMhloParameterReplication,
-                              builder_->getBoolArrayAttr({true}));
+          argAttrs.set(xla::kMhloParameterReplication,
+                       builder_->getBoolArrayAttr({true}));
         }
         // NOTE: since we are flattening args, all arguments will share the same
         // location as the tuple parameter instruction.
         function.getArgument(arg_index).setLoc(
             mlir::hlo::GenerateInstructionLocation(instruction, context_));
-        ++arg_index;
+        funcArgAttrs[arg_index++] = argAttrs.getDictionary(context_);
       }
     } else {
+      mlir::NamedAttrList argAttrs(function.getArgAttrDict(arg_index));
       if (parameter->has_sharding()) {
-        function.setArgAttr(arg_index, xla::kMhloSharding,
-                            ConvertSharding(parameter->sharding(), builder_));
+        argAttrs.set(xla::kMhloSharding,
+                     ConvertSharding(parameter->sharding(), builder_));
       }
       if (frontend_attributes) {
-        function.setArgAttr(
-            arg_index, xla::kMhloFrontendAttributes,
+        argAttrs.set(
+            xla::kMhloFrontendAttributes,
             GetFrontendAttributes(*builder_, parameter->frontend_attributes()));
       }
       if (parameter->parameter_replicated_at_leaf_buffers().has_value()) {
@@ -490,16 +494,17 @@ absl::StatusOr<FuncOp> HloFunctionImporter::ImportAsFunc(
           nontrival = nontrival || b;
         }
         if (nontrival) {
-          function.setArgAttr(
-              arg_index, xla::kMhloParameterReplication,
-              builder_->getBoolArrayAttr(replicated_at_leaf_buffers));
+          argAttrs.set(xla::kMhloParameterReplication,
+                       builder_->getBoolArrayAttr(replicated_at_leaf_buffers));
         }
       }
       function.getArgument(arg_index).setLoc(
           mlir::hlo::GenerateInstructionLocation(instruction, context_));
-      ++arg_index;
+      funcArgAttrs[arg_index++] = argAttrs.getDictionary(context_);
     }
   }
+  function.setAllArgAttrs(funcArgAttrs);
+
   // TODO(b/260756663): Token sharding is unverified, legacy users provide
   // multiple sharding values for a single token output.
   bool is_token = computation.root_instruction()->shape().IsToken();
@@ -518,10 +523,21 @@ absl::StatusOr<FuncOp> HloFunctionImporter::ImportAsFunc(
       return Internal("Expected %d results but got %d", ret_shardings.size(),
                       function.getNumResults());
     }
+
+    // TODO(b/510714593): Create a shardy utility to modify func result
+    // attributes as below but in a more general way and re-use it.
+    llvm::SmallVector<mlir::DictionaryAttr> funcResultAttrs;
+    function.getAllResultAttrs(funcResultAttrs);
+    bool anyChanged = false;
     for (const auto& [ret_index, ret_sharding] :
          llvm::enumerate(ret_shardings)) {
-      function.setResultAttr(ret_index, xla::kMhloSharding,
-                             ConvertSharding(ret_sharding, builder_));
+      mlir::NamedAttrList attrs(funcResultAttrs[ret_index]);
+      attrs.set(xla::kMhloSharding, ConvertSharding(ret_sharding, builder_));
+      funcResultAttrs[ret_index] = attrs.getDictionary(function.getContext());
+      anyChanged = true;
+    }
+    if (anyChanged) {
+      function.setAllResultAttrs(funcResultAttrs);
     }
   }
   if (computation.execution_thread() != "main") {
@@ -1373,6 +1389,52 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
                                             ConvertArray(edge_padding_high),
                                             ConvertArray(interior_padding))
           .getOperation();
+    }
+    case HloOpcode::kScan: {
+      // The HLO `scan` instruction has a tuple result `(outputs...,
+      // carries...)` (or a single tensor when there is exactly one output and
+      // no carries), and operands `(inputs..., inits...)`. Import it as
+      // `mhlo.scan`, which has separate variadic results for outputs and
+      // carries, then wrap the multi-results back into a tuple to preserve the
+      // original HLO shape for downstream consumers (e.g. get-tuple-element).
+      auto scan = Cast<HloScanInstruction>(instruction);
+
+      llvm::SmallVector<Type, 4> return_types = {result_type};
+      if (mlir::TupleType tuple_ty =
+              mlir::dyn_cast<mlir::TupleType>(result_type)) {
+        return_types = llvm::to_vector<6>(tuple_ty.getTypes());
+      }
+
+      int64_t num_carries = scan->num_carries();
+      int64_t num_outputs = return_types.size() - num_carries;
+      llvm::ArrayRef<Type> output_types =
+          llvm::ArrayRef(return_types).take_front(num_outputs);
+      llvm::ArrayRef<Type> carry_types =
+          llvm::ArrayRef(return_types).drop_front(num_outputs);
+
+      int64_t num_inputs = operands.size() - num_carries;
+      auto inputs = mlir::ValueRange(operands).take_front(num_inputs);
+      auto inits = mlir::ValueRange(operands).drop_front(num_inputs);
+
+      mlir::BoolAttr is_associative_attr;
+      if (scan->is_associative() != TRI_STATE_UNSPECIFIED) {
+        is_associative_attr =
+            builder_->getBoolAttr(scan->is_associative() == TRI_STATE_TRUE);
+      }
+
+      auto scan_op = mlir::mhlo::ScanOp::create(
+          *func_builder, loc, output_types, carry_types, inputs, inits,
+          builder_->getI64IntegerAttr(scan->scan_dimension()),
+          /*scan_dim_size=*/mlir::IntegerAttr{},
+          builder_->getBoolAttr(scan->is_reverse()), is_associative_attr);
+      TF_RETURN_IF_ERROR(
+          ImportAsRegion(*instruction->to_apply(), &scan_op.getBody()));
+
+      // Single result with the same type as the HLO shape: return as is.
+      if (return_types.size() == 1 && return_types.front() == result_type) {
+        return scan_op.getOperation();
+      }
+      return WrapInTuple(func_builder, scan_op);
     }
     case HloOpcode::kScatter: {
       auto scatter = Cast<HloScatterInstruction>(instruction);

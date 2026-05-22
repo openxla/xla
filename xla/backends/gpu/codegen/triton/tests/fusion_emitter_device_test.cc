@@ -96,6 +96,16 @@ class TritonEmitterTest
     : public HloPjRtInterpreterReferenceMixin<GpuPjRtCodegenTest>,
       public XTileTestBase {
  public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    // TODO: b/509502550 - remove the flag and disable tests that use
+    // multi-output fusions when removing the feature.
+    DebugOptions debug_options = HloPjRtInterpreterReferenceMixin<
+        GpuPjRtCodegenTest>::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_unsupported_enable_triton_multi_output_fusion(
+        true);
+    return debug_options;
+  }
+
   const stream_executor::GpuComputeCapability& GpuComputeCapability() {
     return device_description().gpu_compute_capability();
   }
@@ -429,9 +439,9 @@ ENTRY main {
       CreateXTileIrAndFileCheck(std::move(module), "triton_softmax_computation",
                                 R"(
 CHECK:        xtile.entry_func @xtile_dialect_fn(%[[P0:.*]]: {{.*}}, %[[P1:.*]]: {{.*}}, %[[PID:.*]]: index)
-CHECK-DAG:        %[[EXTRACT_IDX_0:.*]] = xla.apply_indexing #indexing_map(%[[PID]])
+CHECK-DAG:        %[[C_0:.*]] = arith.constant 0 : index
 CHECK-NEXT:       xtile.extract %[[P0]]
-CHECK-SAME:       [%[[PID]], %[[EXTRACT_IDX_0]]] [1, 128] [1, 1]
+CHECK-SAME:       [%[[PID]], %[[C_0]]] [1, 128] [1, 1]
 CHECK:            stablehlo.reduce{{.*}} applies stablehlo.add
 CHECK:            stablehlo.multiply
 CHECK-SAME:       tensor<1x128xf32>
@@ -508,10 +518,10 @@ CHECK-SAME:                      %[[P0:[A-Za-z0-9_]*]]: memref<125x127xf32>
 CHECK-SAME:                      %[[P1:[A-Za-z0-9_]*]]: memref<127xf32>
 CHECK-SAME:                      %[[P2:[A-Za-z0-9_]*]]: memref<125x127xf32>
 CHECK-SAME:                      %[[TID:[A-Za-z0-9_]*]]: index)
-CHECK-DAG:        %[[EXTRACT_IDX_0:.*]] = xla.apply_indexing #indexing_map(%[[TID]])
-CHECK-DAG:        xtile.extract %[[P0]][%[[TID]], %[[EXTRACT_IDX_0]]] [1, 128] [1, 1] : {{.*}} -> tensor<1x128xf32>
-CHECK-DAG:        %[[EXTRACT_IDX_1:.*]] = xla.apply_indexing #indexing_map(%[[TID]])
-CHECK-DAG:        xtile.extract %[[P1]][%[[EXTRACT_IDX_1]]] [128] [1] : {{.*}} -> tensor<128xf32>
+CHECK-DAG:        %[[C_0:.*]] = arith.constant 0 : index
+CHECK-DAG:        xtile.extract %[[P0]][%[[TID]], %[[C_0]]] [1, 128] [1, 1] : {{.*}} -> tensor<1x128xf32>
+CHECK-DAG:        %[[C_0_0:.*]] = arith.constant 0 : index
+CHECK-DAG:        xtile.extract %[[P1]][%[[C_0_0]]] [128] [1] : {{.*}} -> tensor<128xf32>
 CHECK:            stablehlo.reduce{{.*}} applies stablehlo.add
 CHECK:            stablehlo.multiply
 CHECK-DAG:        xtile.insert {{.*}} into %[[P2]]
@@ -572,7 +582,6 @@ ENTRY entry {
       hlo_module->entry_computation()->root_instruction());
   const se::DeviceDescription dev_info =
       TestGpuDeviceInfo::RTXA6000DeviceInfo(se::CudaComputeCapability(7, 0));
-  llvm::LLVMContext llvm_ctx;
   mlir::MLIRContext mlir_context;
   llvm::Triple target_triple(nvptx::TargetTriple());
   std::string data_layout(nvptx::DataLayout());
@@ -582,7 +591,7 @@ ENTRY entry {
                     se::CudaComputeCapability{se::CudaComputeCapability::kVolta,
                                               /*minor=*/0},
                     dev_info, BlockLevelParameters(), target_triple,
-                    data_layout, llvm_ctx, mlir_context),
+                    data_layout, mlir_context),
       absl_testing::StatusIs(
           absl::StatusCode::kFailedPrecondition,
           ::testing::HasSubstr("Triton support is only enabled for Ampere GPUs "
@@ -631,7 +640,6 @@ ENTRY entry_computation {
       se::CudaComputeCapability::kHopper, /*minor=*/0};
   const se::DeviceDescription dev_info =
       TestGpuDeviceInfo::RTXA6000DeviceInfo(compute_capability);
-  llvm::LLVMContext llvm_ctx;
   mlir::MLIRContext mlir_context;
   RegisterSymbolicExprStorage(&mlir_context);
   llvm::Triple target_triple(nvptx::TargetTriple());
@@ -647,7 +655,7 @@ ENTRY entry_computation {
   EXPECT_THAT(
       TritonWrapper("test_fn", *triton_fusion, compute_capability, dev_info,
                     block_level_parameters, target_triple, data_layout,
-                    llvm_ctx, mlir_context),
+                    mlir_context),
       absl_testing::StatusIs(
           absl::StatusCode::kInvalidArgument,
           ::testing::HasSubstr("Tiling does not satisfy constraints.")));
@@ -2014,7 +2022,6 @@ TEST_F(TritonEmitterTest, RocmWarpSizeIsSetCorrectly) {
   const HloFusionInstruction* triton_fusion = Cast<HloFusionInstruction>(
       verified_module->entry_computation()->root_instruction());
 
-  llvm::LLVMContext llvm_ctx;
   mlir::MLIRContext mlir_context;
   llvm::Triple target_triple(nvptx::TargetTriple());
   std::string data_layout(nvptx::DataLayout());
@@ -2037,8 +2044,7 @@ TEST_F(TritonEmitterTest, RocmWarpSizeIsSetCorrectly) {
   TF_ASSERT_OK(TritonWrapper(
       "test_fn", *triton_fusion,
       se::GpuComputeCapability{se::RocmComputeCapability("gfx942")}, dev_info,
-      block_level_parameters, target_triple, data_layout, llvm_ctx,
-      mlir_context));
+      block_level_parameters, target_triple, data_layout, mlir_context));
   TF_EXPECT_OK(tsl::Env::Default()->GetMatchingPaths(
       tsl::io::JoinPath(output_directory, "*.triton-to-llvm.txt"), &paths));
   EXPECT_EQ(paths.size(), 1);
@@ -2058,7 +2064,7 @@ TEST_F(TritonEmitterTest, RocmWarpSizeIsSetCorrectly) {
   TF_ASSERT_OK(TritonWrapper(
       "test_fn", *triton_fusion,
       se::GpuComputeCapability{se::RocmComputeCapability("gfx1100")},
-      dev_info_n, block_level_parameters, target_triple, data_layout, llvm_ctx,
+      dev_info_n, block_level_parameters, target_triple, data_layout,
       mlir_context));
   TF_EXPECT_OK(tsl::Env::Default()->GetMatchingPaths(
       tsl::io::JoinPath(output_directory, "*.triton-to-llvm.txt"), &paths));
@@ -2083,7 +2089,6 @@ TEST_F(TritonEmitterTest, RocmWavesPerEuAttributeIsSet) {
   const HloFusionInstruction* triton_fusion = Cast<HloFusionInstruction>(
       verified_module->entry_computation()->root_instruction());
 
-  llvm::LLVMContext llvm_ctx;
   mlir::MLIRContext mlir_context;
   llvm::Triple target_triple(amdgpu::TargetTriple());
   std::string data_layout(amdgpu::DataLayout());
@@ -2101,10 +2106,11 @@ TEST_F(TritonEmitterTest, RocmWavesPerEuAttributeIsSet) {
           "test_fn", *triton_fusion,
           se::GpuComputeCapability{se::RocmComputeCapability("gfx90a")},
           dev_info, block_level_parameters, target_triple, data_layout,
-          llvm_ctx, mlir_context));
+          mlir_context));
 
-  ASSERT_NE(result.llvm_module, nullptr);
-  auto* fn = result.llvm_module->getFunction("test_fn");
+  auto llvm_module = std::move(result.kernel_source).thread_safe_module();
+  ASSERT_NE(llvm_module.getModuleUnlocked(), nullptr);
+  auto* fn = llvm_module.getModuleUnlocked()->getFunction("test_fn");
   ASSERT_NE(fn, nullptr)
       << "Kernel function 'test_fn' not found in LLVM module";
   auto attr = fn->getFnAttribute("amdgpu-waves-per-eu");
@@ -2124,7 +2130,6 @@ TEST_F(TritonEmitterTest, RocmWavesPerEuZeroOmitsAttribute) {
   const HloFusionInstruction* triton_fusion = Cast<HloFusionInstruction>(
       verified_module->entry_computation()->root_instruction());
 
-  llvm::LLVMContext llvm_ctx;
   mlir::MLIRContext mlir_context;
   llvm::Triple target_triple(amdgpu::TargetTriple());
   std::string data_layout(amdgpu::DataLayout());
@@ -2142,10 +2147,11 @@ TEST_F(TritonEmitterTest, RocmWavesPerEuZeroOmitsAttribute) {
           "test_fn", *triton_fusion,
           se::GpuComputeCapability{se::RocmComputeCapability("gfx90a")},
           dev_info, block_level_parameters, target_triple, data_layout,
-          llvm_ctx, mlir_context));
+          mlir_context));
 
-  ASSERT_NE(result.llvm_module, nullptr);
-  auto* fn = result.llvm_module->getFunction("test_fn");
+  auto llvm_module = std::move(result.kernel_source).thread_safe_module();
+  ASSERT_NE(llvm_module.getModuleUnlocked(), nullptr);
+  auto* fn = llvm_module.getModuleUnlocked()->getFunction("test_fn");
   ASSERT_NE(fn, nullptr)
       << "Kernel function 'test_fn' not found in LLVM module";
   EXPECT_FALSE(fn->hasFnAttribute("amdgpu-waves-per-eu"))

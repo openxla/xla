@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/softmax_rewriter_triton.h"
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <utility>
 #include <variant>
@@ -34,6 +35,8 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/reduction_dimension_grouper.h"
 #include "xla/backends/gpu/transforms/reduction_splitter.h"
 #include "xla/backends/gpu/transforms/tree_reduction_rewriter.h"
+#include "xla/codegen/tiling/experimental/tiled_hlo.h"
+#include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -445,13 +448,32 @@ absl::StatusOr<bool> CanSymbolicTileAnalysisTileDiamond(
                       MakeFusionForDiamond(diamond));
   mlir::MLIRContext mlir_context;
   RegisterSymbolicExprStorage(&mlir_context);
-  SymbolicTileAnalysisOrError symbolic_tile_analysis_or_error =
-      SymbolicTileAnalysis::AnalyzeComputation(
-          *normalization_fusion->called_computation(), &mlir_context,
-          TritonEmitterConstraints::GetBuilder(device_info));
 
-  bool can_tile = std::holds_alternative<SymbolicTileAnalysis>(
-      symbolic_tile_analysis_or_error);
+  bool use_experimental_tiling =
+      normalization_fusion->GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_experimental_enable_tiling_propagation();
+
+  bool can_tile = false;
+  if (use_experimental_tiling) {
+    std::unique_ptr<HloFusionAdaptor> fusion_adaptor =
+        HloFusionAdaptor::ForInstruction(normalization_fusion);
+    std::unique_ptr<experimental::TilingSpace> tiling_space =
+        experimental::TilingSpace::Create(*fusion_adaptor, &mlir_context);
+    absl::StatusOr<experimental::TiledHloComputation> tiled_computation_or =
+        experimental::TiledHloComputation::Tile(*fusion_adaptor,
+                                                std::move(tiling_space));
+    can_tile = tiled_computation_or.ok();
+
+  } else {
+    SymbolicTileAnalysisOrError symbolic_tile_analysis_or_error =
+        SymbolicTileAnalysis::AnalyzeComputation(
+            *normalization_fusion->called_computation(), &mlir_context,
+            TritonEmitterConstraints::GetBuilder(device_info));
+    can_tile = std::holds_alternative<SymbolicTileAnalysis>(
+        symbolic_tile_analysis_or_error);
+  }
 
   TF_RETURN_IF_ERROR(diamond.root->GetModule()->RemoveEmbeddedComputation(
       normalization_fusion->called_computation()));

@@ -188,11 +188,12 @@ absl::Status AllReduceThunk::RunCollective(const ExecuteParams& params,
 
   TF_ASSIGN_OR_RETURN(
       bool use_collective_kernel,
-      collective_kernel_thunk_->IsSupported(
-          clique_key, *params.stream->parent(), *params.collective_params));
+      collective_kernel_thunk_->IsSupported(clique_key, *stream.parent(),
+                                            *params.collective_params));
 
   if (use_collective_kernel) {
-    return collective_kernel_thunk_->ExecuteOnStream(params);
+    return collective_kernel_thunk_->ExecuteOnStream(
+        params.WithComputeStream(&stream));
   }
 
   return RunAllReduce(config_.reduction_kind, device_buffers, stream, comm,
@@ -219,15 +220,20 @@ absl::StatusOr<std::unique_ptr<AllReduceThunk>> AllReduceThunk::FromProto(
 
   std::optional<LaunchDimensions> launch_dimensions = std::nullopt;
   if (thunk_proto.has_launch_dimensions()) {
-    TF_ASSIGN_OR_RETURN(
-        launch_dimensions,
-        LaunchDimensions::FromProto(thunk_proto.launch_dimensions()));
+    ASSIGN_OR_RETURN(launch_dimensions, LaunchDimensions::FromProto(
+                                            thunk_proto.launch_dimensions()));
   }
+  std::optional<std::vector<uint8_t>> cubin =
+      thunk_proto.has_cubin()
+          ? std::make_optional(std::vector<uint8_t>{thunk_proto.cubin().begin(),
+                                                    thunk_proto.cubin().end()})
+          : std::nullopt;
   auto kernel_thunk = std::make_unique<CollectiveKernelThunk>(
       thunk_info, config, reduction_kind, thunk_proto.is_async(), buffers,
       thunk_proto.collective_kernel_enabled(), thunk_proto.kernel_name(),
       launch_dimensions, thunk_proto.shmem_bytes(),
-      thunk_proto.is_multimem_enabled());
+      thunk_proto.is_multimem_enabled(), std::move(cubin),
+      thunk_proto.use_pdl());
 
   return std::make_unique<AllReduceThunk>(
       std::move(thunk_info), AllReduceConfig{config, reduction_kind},
@@ -257,6 +263,13 @@ absl::StatusOr<ThunkProto> AllReduceThunk::ToProto() const {
   if (auto launch_dimensions = collective_kernel_thunk_->launch_dimensions();
       launch_dimensions.has_value()) {
     *thunk_proto->mutable_launch_dimensions() = launch_dimensions->ToProto();
+  }
+  thunk_proto->set_use_pdl(collective_kernel_thunk_->use_pdl());
+  if (collective_kernel_thunk_->cubin()) {
+    *thunk_proto->mutable_cubin() =
+        std::string(reinterpret_cast<const char*>(
+                        collective_kernel_thunk_->cubin()->data()),
+                    collective_kernel_thunk_->cubin()->size());
   }
 
   return proto;

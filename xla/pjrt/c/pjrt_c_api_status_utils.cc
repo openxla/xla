@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/c/pjrt_c_api_status_utils.h"
 
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <string>
@@ -28,6 +29,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
+#include "xla/tsl/protobuf/error_codes.pb.h"
 
 namespace pjrt {
 

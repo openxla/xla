@@ -2098,22 +2098,31 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
       memory_limit = assignment->module().config().device_memory_size();
     }
 
-    VLOG(1) << "memory_limit: " << memory_limit;
-    if (memory_limit > 0) {
+    VLOG(1) << "Initial memory limit before subtracting allocations: "
+            << memory_limit;
+    // Apply a safety margin to the initial memory limit. Always
+    // subtract 1.5GiB.
+    constexpr int64_t kOnePointFiveGiB = int64_t{3} << 29;
+    int64_t adjusted_memory_limit =
+        std::max<int64_t>(0, memory_limit - kOnePointFiveGiB);
+    VLOG(1) << "Memory limit after safety margin applied: "
+            << adjusted_memory_limit;
+
+    if (adjusted_memory_limit > 0) {
       int64_t already_allocated_bytes = 0;
       for (const BufferAllocation& alloc : assignment->Allocations()) {
-        if (alloc.color() == color &&
-            (alloc.is_entry_computation_parameter() || alloc.is_constant())) {
+        if (alloc.color() == color) {
           already_allocated_bytes += alloc.size();
         }
       }
-      memory_limit -= already_allocated_bytes;
-      if (memory_limit < 0) {
-        memory_limit = 0;
+      adjusted_memory_limit -= already_allocated_bytes;
+      if (adjusted_memory_limit < 0) {
+        adjusted_memory_limit = 0;
       }
     }
-    VLOG(1) << "memory_limit after update: " << memory_limit;
-    return memory_limit;
+    VLOG(1) << "Final memory limit after subtracting allocations: "
+            << adjusted_memory_limit;
+    return adjusted_memory_limit;
   };
 
   // Returns a heap algorithm that chooses the best result from several
@@ -2173,6 +2182,11 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
         buffer_assignment::BufferAssignmentAlgorithmProto::
             FAST_MERGE_WITH_FALLBACK) {
       VLOG(1) << "Using FAST_MERGE_WITH_FALLBACK";
+      int64_t memory_limit = get_memory_limit(color);
+      if (memory_limit == 0) {
+        return build_algorithm(
+            buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT);
+      }
       auto primary = build_algorithm(
           buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE);
       auto fallback_factory = [build_algorithm,
@@ -2183,8 +2197,7 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
         return build_algorithm(fallback_algorithm);
       };
       return std::make_unique<HeapAlgorithmWithFallback<HloValue>>(
-          std::move(primary), std::move(fallback_factory),
-          get_memory_limit(color));
+          std::move(primary), std::move(fallback_factory), memory_limit);
     }
 
     return build_algorithm(buffer_assignment_algorithm);

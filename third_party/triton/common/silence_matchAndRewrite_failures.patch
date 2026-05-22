@@ -7,7 +7,7 @@ upstreamed with that patch. See context in b/504826033.
 
 --- a/lib/Dialect/TritonGPU/Transforms/OptimizeDotOperands.cpp
 +++ b/lib/Dialect/TritonGPU/Transforms/OptimizeDotOperands.cpp
-@@ -159,7 +159,7 @@ public:
+@@ -161,7 +161,7 @@ public:
      // `allocType` after a reshape.
      MemDescType innerTy;
      if (failed(MemDescReshapeOp::inferReturnTypes(

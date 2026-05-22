@@ -87,12 +87,16 @@ class FissionBackend : public GpuCodegenBackend {
                            const BackendConfig& config) override;
 
   bool IsSupported(const HloInstruction& instr) override;
+  std::string version() const override { return codegen_backend_->version(); }
 
  private:
   absl::StatusOr<std::unique_ptr<HloModule>> GetFissionedAndRewrittenModule(
       const HloInstruction& fusion_instr);
   absl::StatusOr<HloInstruction*> FindFirstSupportedInstruction(
       const HloModule* module);
+  // Runs priority fusion to fuse prologues and epilogue after the fissioned
+  // module has been generated.
+  absl::Status RunPriorityFusion(HloModule* module);
 
   std::unique_ptr<HloPassPipeline> rewriter_pipeline_;
   std::unique_ptr<GpuCodegenBackend> codegen_backend_;

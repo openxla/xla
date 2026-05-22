@@ -61,6 +61,12 @@ class ReduceWindowRewriter : public HloModulePass {
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
+  // If true, decompose an associative HloScanInstruction into the tree-style
+  // reduce-window pipeline (the legacy path). Default: true.
+  // Backends with a native scan emitter should override to return false so
+  // long scans flow through to lowering as a single HLO.
+  virtual bool DecomposeAssociativeScan() const { return true; }
+
  private:
   // Helper methods to optimize ReduceWindow ops.
 

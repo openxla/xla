@@ -28,6 +28,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -42,6 +43,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "riegeli/bytes/string_writer.h"
 #include "riegeli/bytes/writer.h"
 #include "xla/backends/cpu/target_machine_options.h"
@@ -98,7 +100,6 @@ limitations under the License.
 #include "xla/service/hlo_value.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/service/maybe_owning_device_address.h"
-#include "xla/service/rendezvous.h"
 #include "xla/service/riegeli_dump_writer.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
@@ -133,6 +134,7 @@ limitations under the License.
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
@@ -205,8 +207,8 @@ absl::StatusOr<bool> ShouldCollectiveUseMinimalResource(
   for (HloComputation* computation : module.MakeNonfusionComputations()) {
     for (HloInstruction* inst : computation->instructions()) {
       if (IsCollective(inst)) {
-        TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
-                            inst->backend_config<GpuBackendConfig>());
+        ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
+                         inst->backend_config<GpuBackendConfig>());
 
         bool is_sync = gpu_backend_config.collective_backend_config().is_sync();
         int64_t total_size =
@@ -422,8 +424,7 @@ GpuExecutable::GpuExecutable(
   //   NEVER_UPDATE - collect all allocations from all command buffer
   //     commands
   //   CAPTURE_CMD_NEVER_UPDATE - collect only allocations from traced
-  //     commands (TracedCommandBufferCmd subclasses) and collective commands
-  //     (CollectiveCmd subclasses)
+  //     commands, including collective commands recorded by CollectiveThunk
   if (thunk_executor_) {
     DebugOptions::CommandBufferUpdateMode update_mode =
         has_module() ? module_config()
@@ -503,7 +504,8 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
 
 absl::Status RendezvousAfterInitialization(
     const ServiceExecutableRunOptions& run_options,
-    const DebugOptions* absl_nullable debug_options);
+    const DebugOptions* absl_nullable debug_options,
+    RendezvousFlag& post_init_rendezvous_flag);
 
 absl::Status BarrierAfterExecutable(
     const ServiceExecutableRunOptions& run_options,
@@ -520,7 +522,8 @@ absl::Status ExecuteThunksImpl(const DebugOptions* debug_options,
                                bool block_host_until_done,
                                int64_t num_additional_compute_streams,
                                CollectiveMemoryCache& collective_memory_cache,
-                               bool collective_use_minimal_resource) {
+                               bool collective_use_minimal_resource,
+                               RendezvousFlag& post_init_rendezvous_flag) {
   bool mock_collectives =
       run_options->run_options().gpu_executable_run_options()
           ? run_options->run_options()
@@ -781,8 +784,9 @@ absl::Status ExecuteThunksImpl(const DebugOptions* debug_options,
   // collective operations and clique initialization is famous for introducing
   // deadlocks if we try to execute it concurrently with other potentially
   // memory-allocating operations.
-  if (!collective_cliques.empty()) {
-    RETURN_IF_ERROR(RendezvousAfterInitialization(*run_options, debug_options));
+  if (!collective_cliques.empty() && !post_init_rendezvous_flag.IsCompleted()) {
+    RETURN_IF_ERROR(RendezvousAfterInitialization(*run_options, debug_options,
+                                                  post_init_rendezvous_flag));
   }
 
   // Prepare parameters for thunks execution.
@@ -840,7 +844,8 @@ bool operator==(const InitializationKey& a, const InitializationKey& b) {
 
 absl::Status RendezvousAfterInitialization(
     const ServiceExecutableRunOptions& run_options,
-    const DebugOptions* absl_nullable debug_options) {
+    const DebugOptions* absl_nullable debug_options,
+    RendezvousFlag& post_init_rendezvous_flag) {
   // Thunk initialization can allocate new control data structures on device
   // that can lead to deadlocks if other replicas are executing concurrently
   // (i.e. this happens if we try to instantiate CUDA graph when other replica
@@ -894,7 +899,8 @@ absl::Status RendezvousAfterInitialization(
       run_options.device_ordinal(), run_options.run_options().run_id().ToInt());
 
   return Rendezvous(
-      rendezvous_name, rendezvous_key, num_local_participants,
+      post_init_rendezvous_flag, rendezvous_name, rendezvous_key,
+      num_local_participants,
       absl::Seconds(
           debug_options
               ? debug_options->xla_gpu_executable_warn_stuck_timeout_seconds()
@@ -1481,10 +1487,9 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
     }
 
     // Reserve a single large VA range for all command buffer allocations.
-    TF_ASSIGN_OR_RETURN(
-        va_ranges->va_reservation,
-        vmm_allocator->CreateReservation(executor, total_va_size));
-    TF_ASSIGN_OR_RETURN(va_ranges->unmap_event, executor->CreateEvent());
+    ASSIGN_OR_RETURN(va_ranges->va_reservation,
+                     vmm_allocator->CreateReservation(executor, total_va_size));
+    ASSIGN_OR_RETURN(va_ranges->unmap_event, executor->CreateEvent());
 
     XLA_VLOG_DEVICE(3, executor->device_ordinal()) << absl::StreamFormat(
         "VA remapping: Reserved single VA range for module %s "
@@ -1499,7 +1504,7 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
 
     // VA range is already initialized; wait for the unmap event to be marked
     // and then do the VA unmapping.
-    TF_RETURN_IF_ERROR(va_ranges->unmap_event->Synchronize());
+    RETURN_IF_ERROR(va_ranges->unmap_event->Synchronize());
 
     // Unmap physical addresses from the single reserved VA range.
     // Clearing ScopedMappings calls UnMap via their destructors.
@@ -1592,9 +1597,9 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
     // a single call. This maps the contiguous range formed by the descriptors
     // and enables device access before returning.
     if (!mapping_descriptors.empty()) {
-      TF_ASSIGN_OR_RETURN(se::MemoryReservation::ScopedMapping scoped_mapping,
-                          va_ranges->va_reservation->MapTo(
-                              absl::MakeSpan(mapping_descriptors)));
+      ASSIGN_OR_RETURN(se::MemoryReservation::ScopedMapping scoped_mapping,
+                       va_ranges->va_reservation->MapTo(
+                           absl::MakeSpan(mapping_descriptors)));
       va_ranges->scoped_mapping = std::move(scoped_mapping);
     }
   }
@@ -1623,15 +1628,15 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
       buffer_allocations.memory_allocator());
 
   // Execute thunks with remapped addresses.
-  TF_RETURN_IF_ERROR(ExecuteThunksImpl(
+  RETURN_IF_ERROR(ExecuteThunksImpl(
       has_module() ? &module_config().debug_options() : nullptr, module_name_,
       unique_id, *thunk_executor_, executable_source, run_options,
       remapped_buffer_allocations, block_host_until_done,
       num_additional_compute_streams_, collective_memory_cache_,
-      collective_use_minimal_resource));
+      collective_use_minimal_resource, post_init_rendezvous_flag_));
 
   // Record event so VA range can be reclaimed after GPU finishes.
-  TF_RETURN_IF_ERROR(
+  RETURN_IF_ERROR(
       run_options->stream()->RecordEvent(va_ranges->unmap_event.get()));
 
   return absl::OkStatus();
@@ -1735,16 +1740,16 @@ absl::Status GpuExecutable::ExecuteThunks(
                      ShouldCollectiveUseMinimalResource(module()));
   }
   if (use_command_buffer_va_remapping) {
-    TF_RETURN_IF_ERROR(ExecuteThunksWithVaRemapping(
+    RETURN_IF_ERROR(ExecuteThunksWithVaRemapping(
         buffer_allocations, run_options, executor, unique_id, executable_source,
         block_host_until_done, collective_use_minimal_resource));
   } else {
-    TF_RETURN_IF_ERROR(ExecuteThunksImpl(
+    RETURN_IF_ERROR(ExecuteThunksImpl(
         has_module() ? &module_config().debug_options() : nullptr, module_name_,
         unique_id, *thunk_executor_, executable_source, run_options,
         buffer_allocations, block_host_until_done,
         num_additional_compute_streams_, collective_memory_cache_,
-        collective_use_minimal_resource));
+        collective_use_minimal_resource, post_init_rendezvous_flag_));
   }
   return absl::OkStatus();
 }
@@ -1953,6 +1958,15 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
   if (proto.has_hlo_module_with_config()) {
     ASSIGN_OR_RETURN(params.debug_module, HloModule::CreateFromProtoWithConfig(
                                               proto.hlo_module_with_config()));
+    // The HLO module deserialized from the proto carries xla_dump_to from the
+    // process that originally compiled it. Override with the current process's
+    // dump path so that runtime dumps (checksum logs, etc.) land in the correct
+    // per-process directory.
+    if (params.debug_options.has_xla_dump_to()) {
+      params.debug_module->mutable_config()
+          .mutable_debug_options()
+          .set_xla_dump_to(params.debug_options.xla_dump_to());
+    }
   }
   if (proto.has_buffer_assignment()) {
     params.buffer_assignment_proto.emplace(proto.buffer_assignment());

@@ -21,7 +21,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -38,6 +37,7 @@ limitations under the License.
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
@@ -80,7 +80,7 @@ absl::StatusOr<std::unique_ptr<LegacyGpuAotCompilationResult>>
 LegacyGpuAotCompilationResult::FromProto(const GpuExecutableProto& proto,
                                          int pointer_size, Compiler* compiler) {
   tsl::profiler::TraceMe traceme("ResultFromProto");
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       std::unique_ptr<HloModule> module,
       HloModule::CreateFromProtoWithConfig(proto.hlo_module_with_config()));
   return std::unique_ptr<LegacyGpuAotCompilationResult>(
@@ -101,7 +101,8 @@ absl::StatusOr<std::string> LegacyGpuAotCompilationResult::SerializeAsString()
 absl::StatusOr<std::unique_ptr<Executable>>
 LegacyGpuAotCompilationResult::LoadExecutable(
     se::Platform::Id platform_id,
-    const se::DeviceDescription& device_description) && {
+    const se::DeviceDescription& device_description,
+    const DebugOptions& debug_options) && {
   return compiler_->LoadExecutableFromAotResult(*this, device_description);
 }
 

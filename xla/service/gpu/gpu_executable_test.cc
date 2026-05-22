@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "riegeli/bytes/cfile_reader.h"
 #include "riegeli/bytes/string_reader.h"
 #include "xla/backends/cpu/target_machine_options.h"
@@ -36,6 +37,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
@@ -48,8 +50,10 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/literal_util.h"
+#include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
+#include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/logical_buffer.h"
@@ -73,6 +77,8 @@ limitations under the License.
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/util/split_proto/split_proto_reader.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/path.h"
 
 namespace xla::gpu {
@@ -266,10 +272,10 @@ MakeNonEmptyBufferAssignment() {
       b = f32[128] parameter(1)
       ROOT c = f32[128] add(a, b)
     })";
-  TF_ASSIGN_OR_RETURN(auto hlo, ParseAndReturnUnverifiedModule(hlo_text));
+  ASSIGN_OR_RETURN(auto hlo, ParseAndReturnUnverifiedModule(hlo_text));
 
   AliasInfo alias_info;
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       auto buffer_assignment,
       BufferAssigner::Run(
           hlo.get(), std::make_unique<DependencyHloOrdering>(hlo.get()),
@@ -618,9 +624,7 @@ TEST_F(GpuExecutableTest, FromProtoWithSymbolResolver) {
                 relocations {
                   kind: KIND_BITS64_ABSOLUTE
                   argument_index: 0
-                  offset: 0
                 }
-                data: "\x00\x00\x00\x00\x00\x00\x00\x00"
               }
               kernel_arguments { data: "\x34\x12\x00\x00" }
             }

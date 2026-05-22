@@ -21,8 +21,13 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/base/log_severity.h"
+#include "absl/log/scoped_mock_log.h"
 #include "absl/types/span.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/cuda/cuda_executor.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
@@ -32,6 +37,12 @@ limitations under the License.
 namespace stream_executor::gpu {
 namespace {
 
+CudaVmmAllocator::Options MakeTestOptions(bool enable_rdma) {
+  CudaVmmAllocator::Options options;
+  options.enable_rdma = enable_rdma;
+  return options;
+}
+
 class CudaVmmAllocatorTest : public ::testing::TestWithParam<bool> {};
 
 TEST_P(CudaVmmAllocatorTest, AllocateAndFree) {
@@ -40,13 +51,13 @@ TEST_P(CudaVmmAllocatorTest, AllocateAndFree) {
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
                        platform->ExecutorForDevice(0));
 
-  CudaVmmAllocator allocator(executor, /*is_rdma_supported=*/GetParam());
+  CudaVmmAllocator allocator(executor, MakeTestOptions(GetParam()));
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> allocation,
                        allocator.Allocate(1024));
   ASSERT_NE(allocation, nullptr);
   EXPECT_NE(allocation->address().opaque(), nullptr);
-  EXPECT_EQ(allocation->address().size(), 1024);
+  EXPECT_GE(allocation->address().size(), 1024);
 }
 
 TEST_P(CudaVmmAllocatorTest, AllocateZeroBytes) {
@@ -55,7 +66,7 @@ TEST_P(CudaVmmAllocatorTest, AllocateZeroBytes) {
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
                        platform->ExecutorForDevice(0));
 
-  CudaVmmAllocator allocator(executor, /*is_rdma_supported=*/GetParam());
+  CudaVmmAllocator allocator(executor, MakeTestOptions(GetParam()));
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> allocation,
                        allocator.Allocate(0));
@@ -71,7 +82,7 @@ TEST_P(CudaVmmAllocatorTest, MemcpyRoundTrip) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
                        executor->CreateStream());
 
-  CudaVmmAllocator allocator(executor, /*is_rdma_supported=*/GetParam());
+  CudaVmmAllocator allocator(executor, MakeTestOptions(GetParam()));
 
   constexpr int kSize = 1024;
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> allocation,
@@ -83,7 +94,10 @@ TEST_P(CudaVmmAllocatorTest, MemcpyRoundTrip) {
     host_src[i] = static_cast<uint8_t>(i);
   }
 
-  DeviceAddress<uint8_t> addr(allocation->address());
+  // Use a DeviceAddress sized to kSize (not the padded allocation size) so
+  // the memcpy transfers exactly the bytes we care about.
+  DeviceAddress<uint8_t> addr(
+      DeviceAddressBase(allocation->address().opaque(), kSize));
   ASSERT_OK(stream->MemcpyH2D(absl::MakeConstSpan(host_src), &addr));
 
   // Copy back from device to host.
@@ -92,6 +106,55 @@ TEST_P(CudaVmmAllocatorTest, MemcpyRoundTrip) {
   ASSERT_OK(stream->BlockHostUntilDone());
 
   EXPECT_EQ(host_src, host_dst);
+}
+
+TEST_P(CudaVmmAllocatorTest, PeerAccessEnabled) {
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("CUDA"));
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+
+  CudaVmmAllocator::Options options = MakeTestOptions(GetParam());
+  options.enable_peer_access = true;
+  CudaVmmAllocator allocator(executor, options);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> allocation,
+                       allocator.Allocate(4096));
+  ASSERT_NE(allocation, nullptr);
+  EXPECT_NE(allocation->address().opaque(), nullptr);
+  EXPECT_GE(allocation->address().size(), 4096);
+}
+
+TEST_P(CudaVmmAllocatorTest, HopperNoWarningCheck) {
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("CUDA"));
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+
+  CudaComputeCapability cc =
+      executor->GetDeviceDescription().cuda_compute_capability();
+  if (!cc.IsAtLeastHopper()) {
+    GTEST_SKIP() << "Test only runs on H100+";
+  }
+
+  auto* cuda_executor = static_cast<CudaExecutor*>(executor);
+
+  CudaVmmAllocator::Options options = MakeTestOptions(GetParam());
+  options.enable_fabric_handle = cuda_executor->is_fabric_supported();
+  options.enable_posix_fd_handle = true;
+
+  absl::ScopedMockLog log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kWarning, ::testing::_,
+                       ::testing::HasSubstr("FABRIC+POSIX_FD")))
+      .Times(0);
+  log.StartCapturingLogs();
+
+  CudaVmmAllocator allocator(executor, options);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> allocation,
+                       allocator.Allocate(1024));
+  EXPECT_NE(allocation, nullptr);
+
+  log.StopCapturingLogs();
 }
 
 INSTANTIATE_TEST_SUITE_P(RdmaSupport, CudaVmmAllocatorTest, ::testing::Bool(),

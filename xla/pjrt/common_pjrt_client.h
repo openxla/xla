@@ -27,6 +27,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/attributes.h"
+#include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
@@ -44,6 +45,7 @@ limitations under the License.
 #include "xla/pjrt/abstract_tracked_device_buffer.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/device_event.h"
+#include "xla/pjrt/dynamic_shapes.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/transpose.h"
@@ -76,6 +78,11 @@ class CommonPjRtClient : public PjRtClient {
 
   // Backend specific handlers for when an oom is detected during execute.
   virtual void CallOomHandlers() const {}
+
+  virtual PjRtDynamicShapeKind GetDynamicShapeKind(
+      int memory_space_kind_id) const {
+    return PjRtDynamicShapeKind::kNotSupported;
+  }
 
   virtual void LaunchOnDevice(PjRtDevice* device,
                               absl::AnyInvocable<void()> execute_fn) const {
@@ -207,9 +214,6 @@ class CommonPjRtClient : public PjRtClient {
     LOG(FATAL) << "Implement";
   }
 
-  virtual absl::StatusOr<std::unique_ptr<PjRtDeviceEventSet>>
-  CreateUsageEventSet(PjRtMemorySpace* memory_space) const;
-
   tsl::Future<> MakeTrackedReadyFuture(PjRtDeviceEventPtr device_event,
                                        PjRtMemorySpace* memory_space,
                                        const char* callee_type,
@@ -235,6 +239,7 @@ class CommonPjRtClient : public PjRtClient {
       PjRtMemorySpace* dst_memory_space);
 
   virtual bool IsOnCpu(PjRtMemorySpace* memory_space) { return false; }
+  virtual bool use_stream_based_compaction() const { return false; }
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBuffer(
       const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
@@ -306,10 +311,29 @@ class CommonPjRtClient : public PjRtClient {
 
   virtual void ScheduleRemoteSend(
       PjRtMemorySpace* memory_space, PjRtRawBufferRef raw_buffer,
-      std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events,
+      std::vector<PjRtDeviceEventRef> definition_events,
       tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise,
       Future<std::string> serialized_descriptor,
       PjRtBuffer::RemoteSendCallback on_done);
+
+  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+  MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
+                              PjRtDevice* absl_nonnull device,
+                              PjRtCrossHostRecvNotifier notifier) override;
+
+  // Similar to PjRtClient::MakeCrossHostReceiveBuffers, but uses PjRtRawBuffer
+  // instead of PjRtBuffer.
+  // Takes raw buffers, a notifier, and the transfer dependency AVs that must
+  // be ready before the receive can complete. Returns a vector of definition
+  // events that will be fulfilled once the receive operation completes.
+  virtual absl::StatusOr<std::vector<PjRtDeviceEventRef>>
+  CrossHostReceiveBuffersInto(
+      absl::Span<const tsl::RCReference<PjRtRawBuffer>> buffers,
+      PjRtCrossHostRecvNotifier notifier,
+      absl::Span<const PjRtDeviceEventRef> transfer_dependency_avs) {
+    return absl::UnimplementedError(
+        "CrossHostReceiveBuffersInto is not implemented.");
+  }
 
   static absl::Status PrepareArguments(
       const ExecuteOptions& options,

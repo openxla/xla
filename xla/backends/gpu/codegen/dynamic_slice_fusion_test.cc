@@ -54,7 +54,7 @@ limitations under the License.
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tests/hlo_test_base_legacy.h"
+#include "xla/tests/restricted/hlo_test_base_legacy.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
@@ -3254,7 +3254,7 @@ TEST_F(DynamicSliceFusionTest,
   // In the following checks, only the order of the thunks matter.
   EXPECT_THAT(thunks, ::testing::ElementsAre(ThunkKindIs(Thunk::kCopy),
                                              ThunkKindIs(Thunk::kAsyncStart),
-                                             ThunkKindIs(Thunk::kKernel),
+                                             ThunkKindIs(Thunk::kCustomKernel),
                                              ThunkKindIs(Thunk::kAsyncDone)));
 
   // Check that the async start thunk wraps a dynamic slice thunk which runs

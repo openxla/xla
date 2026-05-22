@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/bit_pattern.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -519,6 +520,15 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
   TF_RETURN_IF_ERROR(
       cuda_kernel.UpdateMaxDynamicSharedMemoryBytes(shared_mem_bytes));
 
+  std::unique_ptr<KernelArgsPackedArrayBase> repacked;
+  const KernelArgsPackedArrayBase* packed_args;
+  if (cuda_kernel.args_packing()) {
+    ASSIGN_OR_RETURN(repacked, cuda_kernel.args_packing()(cuda_kernel, args));
+    packed_args = repacked.get();
+  } else {
+    packed_args = &args;
+  }
+
   auto set_params = [&](auto& params) {
     params.func = function;
     params.gridDimX = blocks.x;
@@ -528,7 +538,8 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
     params.blockDimY = threads.y;
     params.blockDimZ = threads.z;
     params.sharedMemBytes = shared_mem_bytes;
-    params.kernelParams = const_cast<void**>(args.argument_addresses().data());
+    params.kernelParams =
+        const_cast<void**>(packed_args->argument_addresses().data());
     params.extra = nullptr;
   };
 
@@ -613,6 +624,16 @@ absl::Status CudaCommandBuffer::UpdateKernelNode(
 
   CUDA_KERNEL_NODE_PARAMS params{};
   const auto& cuda_kernel = static_cast<const CudaKernel&>(kernel);
+
+  std::unique_ptr<KernelArgsPackedArrayBase> repacked;
+  const KernelArgsPackedArrayBase* packed_args;
+  if (cuda_kernel.args_packing()) {
+    ASSIGN_OR_RETURN(repacked, cuda_kernel.args_packing()(cuda_kernel, args));
+    packed_args = repacked.get();
+  } else {
+    packed_args = &args;
+  }
+
   CUfunction function = cuda_kernel.gpu_function();
   params.func = function;
   params.gridDimX = blocks.x;
@@ -622,7 +643,8 @@ absl::Status CudaCommandBuffer::UpdateKernelNode(
   params.blockDimY = threads.y;
   params.blockDimZ = threads.z;
   params.sharedMemBytes = shared_mem_bytes;
-  params.kernelParams = const_cast<void**>(args.argument_addresses().data());
+  params.kernelParams =
+      const_cast<void**>(packed_args->argument_addresses().data());
   params.extra = nullptr;
 
   TF_RETURN_IF_ERROR(

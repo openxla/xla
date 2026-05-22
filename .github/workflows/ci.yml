@@ -67,6 +67,18 @@ jobs:
             repo: "openxla/xla",
           },
           {
+            pool: "linux-x86-n2-16",
+            container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest",
+            name: "XLA Linux x86 GPU ROCm",
+            repo: "openxla/xla",
+          },
+          {
+            pool: "linux-x86-n2-16",
+            container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest",
+            name: "XLA Linux x86 GPU ROCm Local Sysroot",
+            repo: "openxla/xla",
+          },
+          {
             pool: "linux-x86-g2-16-l4-1gpu",
             container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest",
             name: "XLA Linux x86 GPU L4",
@@ -136,10 +148,13 @@ jobs:
         working-directory: ${{ matrix.job_info.repo }}
         timeout-minutes: 60
         run: |
-          if [[ "${{ matrix.job_info.pool }}" == *windows* ]]; then
-            python $GITHUB_WORKSPACE\\openxla\\xla\\build_tools\\ci\\build.py --build="${{ matrix.job_info.name }}_github_actions"
+          # Shellcheck doesn't understand GitHub Actions expressions and incorrectly
+          # thinks this comparison will always fail.
+          # shellcheck disable=SC2193
+          if [[ "${{ matrix.job_info.pool }}" == *"windows"* ]]; then
+            python "$GITHUB_WORKSPACE"\\openxla\\xla\\build_tools\\ci\\build.py --build="${{ matrix.job_info.name }}_github_actions"
           else
-            $GITHUB_WORKSPACE/openxla/xla/build_tools/ci/build.py --build="${{ matrix.job_info.name }}_github_actions"
+            "$GITHUB_WORKSPACE"/openxla/xla/build_tools/ci/build.py --build="${{ matrix.job_info.name }}_github_actions"
           fi
 
 

@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {

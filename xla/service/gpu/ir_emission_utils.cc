@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
-#include <functional>
 #include <optional>
 #include <queue>
 #include <string>
@@ -37,6 +36,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -58,6 +58,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.pb.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
@@ -70,6 +71,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/protobuf.h"
+#include "tsl/platform/regexp.h"
 
 namespace xla {
 namespace gpu {
@@ -100,8 +102,8 @@ absl::StatusOr<bool> IsCublasSupportedMatMul(
   // Number of operands that have non-trivial non-contracting dimension.
   int num_matrix_operands = 0;
   for (int operand : {0, 1}) {
-    TF_ASSIGN_OR_RETURN(DotOperandDims dims,
-                        DotOperandDims::FromDotOperand(&dot, operand));
+    ASSIGN_OR_RETURN(DotOperandDims dims,
+                     DotOperandDims::FromDotOperand(&dot, operand));
     // cuBLAS only supports single contracting dimension.
     if (dims.Rank(DotOperandDims::kContracting) != 1) {
       return false;
@@ -177,6 +179,12 @@ bool IsMosaicWithMultimem(const HloInstruction& hlo) {
   return IsCustomCallToMosaicGpu(hlo) &&
          absl::StrContains(hlo.raw_backend_config_string(),
                            "multimem_parameters");
+}
+
+bool IsMosaicWithCollectiveMetadata(const HloInstruction& hlo) {
+  return IsCustomCallToMosaicGpu(hlo) &&
+         RE2::PartialMatch(hlo.raw_backend_config_string(),
+                           "uses_xla_collective_metadata\\s*=\\s*[tT]rue");
 }
 
 bool IsCollectiveMosaicGpuInstruction(const HloInstruction& hlo) {
@@ -613,6 +621,8 @@ std::optional<Dependencies> GetLeafDependencies(const HloInstruction* root) {
     queue.pop();
 
     if (instruction->opcode() == HloOpcode::kCustomCall ||
+        instruction->opcode() == HloOpcode::kPartitionId ||
+        instruction->opcode() == HloOpcode::kReplicaId ||
         instruction->HasSideEffect()) {
       VLOG(5) << "Found an unsafe operation.";
       return std::nullopt;

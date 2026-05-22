@@ -54,9 +54,13 @@ struct PJRT_DeviceEvent_FunctionTable {
   // additional states but they should be mapped to
   // unavailable, ready, or error.
   PJRT_DeviceEvent_State (*get_state)(void* device_event);
+  // Opaque platform-specific stream-id. Can be 0 if not supported or unknown.
+  intptr_t (*get_definition_stream)(void* device_event,
+                                    uint64_t* sequence_number);
 };
 
-PJRT_DEFINE_STRUCT_TRAITS(PJRT_DeviceEvent_FunctionTable, get_state);
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_DeviceEvent_FunctionTable,
+                          get_definition_stream);
 
 // A PJRT_DeviceEvent is a pair of pointers containing both type information
 // and the actual opaque device event object. See: xla::PjRtDeviceEventRef.

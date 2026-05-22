@@ -18,6 +18,7 @@ limitations under the License.
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -26,7 +27,6 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_address.h"
@@ -63,6 +64,20 @@ namespace {
 std::vector<size_t> YnnDimensions(const Shape& shape) {
   absl::Span<const int64_t> dims = shape.dimensions();
   return {dims.begin(), dims.end()};
+}
+
+absl::StatusOr<double> ReduceIdentity(const HloOpcode& opcode) {
+  switch (opcode) {
+    case HloOpcode::kAdd:
+      return 0.0;
+    case HloOpcode::kMaximum:
+      return -std::numeric_limits<double>::infinity();
+    case HloOpcode::kMinimum:
+      return std::numeric_limits<double>::infinity();
+    default:
+      return InvalidArgument("Unsupported YNNPACK reduce operator: %s",
+                             HloOpcodeString(opcode));
+  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -288,13 +303,43 @@ absl::StatusOr<uint32_t> DefineSliceOp(ynn_subgraph_t subgraph,
   const std::vector<int64_t>& limits = instr->slice_limits();
   const std::vector<int64_t>& strides = instr->slice_strides();
 
-  int rank = input->shape().dimensions_size();
+  int rank = input->shape().dimensions().size();
   std::vector<int32_t> axes(rank);
   absl::c_iota(axes, 0);
 
   YNN_RETURN_IF_ERROR(ynn_define_static_slice(
       subgraph, rank, axes.data(), starts.data(), limits.data(), strides.data(),
       in, &out, /*flags=*/0));
+  return out;
+}
+
+absl::StatusOr<uint32_t> DefinePadOp(ynn_subgraph_t subgraph,
+                                     TensorIdMap& tensor_ids,
+                                     const HloInstruction* instr) {
+  VLOG(3) << absl::StreamFormat("Define tensor value for pad op: %s",
+                                instr->ToString());
+  CHECK_EQ(instr->opcode(), HloOpcode::kPad);
+  const HloInstruction* input = instr->operand(0);
+  const HloInstruction* padding_value = instr->operand(1);
+  TF_ASSIGN_OR_RETURN(auto in, FindTensorValue(tensor_ids, input));
+  TF_ASSIGN_OR_RETURN(auto pad_val, FindTensorValue(tensor_ids, padding_value));
+  TF_ASSIGN_OR_RETURN(auto out, DefineTensorValue(subgraph, instr));
+
+  const PaddingConfig& config = instr->padding_config();
+  int rank = input->shape().dimensions().size();
+  std::vector<int32_t> axes(rank);
+  absl::c_iota(axes, 0);
+
+  std::vector<int64_t> pad_low(rank);
+  std::vector<int64_t> pad_high(rank);
+  for (int i = 0; i < rank; ++i) {
+    pad_low[i] = config.dimensions(i).edge_padding_low();
+    pad_high[i] = config.dimensions(i).edge_padding_high();
+  }
+
+  YNN_RETURN_IF_ERROR(ynn_define_static_pad(subgraph, rank, axes.data(),
+                                            pad_low.data(), pad_high.data(), in,
+                                            pad_val, &out, /*flags=*/0));
   return out;
 }
 
@@ -475,12 +520,11 @@ absl::StatusOr<uint32_t> DefineReduceWindowOp(ynn_subgraph_t subgraph,
   TF_ASSIGN_OR_RETURN(auto init_id, FindTensorValue(tensor_ids, init));
   TF_ASSIGN_OR_RETURN(auto output_id, DefineTensorValue(subgraph, instr));
 
-  TF_ASSIGN_OR_RETURN(
-      auto ynn_reduce_op,
-      YnnReduceOperator(instr->to_apply()->root_instruction()->opcode()));
+  HloOpcode to_apply_opcode = instr->to_apply()->root_instruction()->opcode();
+  TF_ASSIGN_OR_RETURN(auto ynn_reduce_op, YnnReduceOperator(to_apply_opcode));
 
   const Window& window = instr->window();
-  int rank = window.dimensions_size();
+  int rank = window.dimensions().size();
 
   std::vector<int32_t> pad_axes;
   std::vector<int64_t> pad_pre;
@@ -502,7 +546,7 @@ absl::StatusOr<uint32_t> DefineReduceWindowOp(ynn_subgraph_t subgraph,
     pad_pre.push_back(dim.padding_low());
     pad_post.push_back(dim.padding_high());
 
-    if (dim.size() > 1) {
+    if (dim.size() > 1 || dim.stride() > 1) {
       stencil_axes.push_back(i);
       // The new dimension is inserted after the current dimension, accounting
       // for previously added dimensions.
@@ -521,10 +565,28 @@ absl::StatusOr<uint32_t> DefineReduceWindowOp(ynn_subgraph_t subgraph,
   auto is_nonzero = [](int64_t pad) { return pad != 0; };
   if (absl::c_any_of(pad_pre, is_nonzero) ||
       absl::c_any_of(pad_post, is_nonzero)) {
+    // The padding should be the identity value of the reduction.
+    PrimitiveType input_type = input->shape().element_type();
+
+    TF_ASSIGN_OR_RETURN(double identity_float, ReduceIdentity(to_apply_opcode));
+
+    TF_ASSIGN_OR_RETURN(
+        auto identity_literal,
+        LiteralUtil::CreateR0<double>(identity_float).Convert(input_type));
+
+    TF_ASSIGN_OR_RETURN(ynn_type ynn_type, YnnType(input_type));
+
+    uint32_t identity_id = YNN_INVALID_VALUE_ID;
+    YNN_RETURN_IF_ERROR(
+        ynn_define_tensor(subgraph, ynn_type, /*rank=*/0, /*dims=*/nullptr,
+                          /*data=*/identity_literal.untyped_data(),
+                          /*flags=*/YNN_VALUE_FLAG_COPY_DATA, &identity_id));
+
     uint32_t padded_id = YNN_INVALID_VALUE_ID;
     YNN_RETURN_IF_ERROR(ynn_define_static_pad(
         subgraph, pad_axes.size(), pad_axes.data(), pad_pre.data(),
-        pad_post.data(), current_input_id, init_id, &padded_id, /*flags=*/0));
+        pad_post.data(), current_input_id, identity_id, &padded_id,
+        /*flags=*/0));
     current_input_id = padded_id;
   }
 
@@ -574,7 +636,7 @@ absl::StatusOr<uint32_t> DefineConvolutionOp(
   int64_t kernel_output_channels = conv->operand(1)->shape().dimensions(
       conv_dims.kernel_output_feature_dimension());
 
-  const int size = conv_window.dimensions_size();
+  const int size = conv_window.dimensions().size();
   std::vector<int32_t> stencil_axes(size);
   std::vector<size_t> stencil_dims(size);
   std::vector<size_t> stencil_strides(size);
@@ -859,6 +921,16 @@ absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
         }
         TF_ASSIGN_OR_RETURN(tensor_ids[instr],
                             DefineSliceOp(subgraph.get(), tensor_ids, instr));
+      } break;
+
+      case HloOpcode::kPad: {
+        if (!IsPadOpSupportedByYnn(instr)) {
+          return InvalidArgument(
+              "Unsupported pad instruction in YNN fusion: %s",
+              instr->ToString());
+        }
+        TF_ASSIGN_OR_RETURN(tensor_ids[instr],
+                            DefinePadOp(subgraph.get(), tensor_ids, instr));
       } break;
 
       case HloOpcode::kIota: {

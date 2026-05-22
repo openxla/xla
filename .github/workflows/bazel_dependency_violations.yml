@@ -29,7 +29,7 @@ jobs:
     name: no-${{ matrix.tag }}-targets-in-cpu-build
     runs-on: "linux-x86-n2-16"
     container:
-      image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+      image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest" # zizmor: ignore[unpinned-images]
     defaults:
       run:
         shell: bash
@@ -47,7 +47,7 @@ jobs:
           set -euo pipefail
           TAG_WITH_UNDERSCORES="${{ matrix.tag }}"
           TAG_WITH_UNDERSCORES="${TAG_WITH_UNDERSCORES/-/_}"
-          if ! OUTPUT=$(bazel cquery --aspects build_tools/dependencies/aspects.bzl%validate_${TAG_WITH_UNDERSCORES}_tag //xla/... 2>&1); then
+          if ! OUTPUT=$(bazel cquery --aspects "build_tools/dependencies/aspects.bzl%validate_${TAG_WITH_UNDERSCORES}_tag" //xla/... 2>&1); then
             echo "Failed to run bazel cquery. Output:"
             echo "$OUTPUT"
             exit 1

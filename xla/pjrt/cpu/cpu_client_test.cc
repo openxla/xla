@@ -75,6 +75,7 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::absl_testing::StatusIs;
 using ::testing::Each;
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
@@ -573,6 +574,38 @@ TEST(PjRtCpuClientTest, ToLiteralWithLayoutInt4) {
   EXPECT_THAT(new_literal.data<s4>(), ElementsAre(s4(1), s4(3), s4(2), s4(4)));
 }
 
+TEST(PjRtCpuClientTest, ToLiteralToken) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 1);
+
+  xla::Literal literal = xla::LiteralUtil::CreateToken();
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostLiteral(literal, client->memory_spaces()[0]));
+  TF_ASSERT_OK(buffer->GetReadyFuture().Await());
+
+  xla::Literal new_literal = xla::LiteralUtil::CreateToken();
+  TF_ASSERT_OK(buffer->ToLiteral(&new_literal).Await());
+}
+
+TEST(PjRtCpuClientTest, AsyncTransferToken) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  xla::Shape shape = ShapeUtil::MakeTokenShape();
+  TF_ASSERT_OK_AND_ASSIGN(auto transfer_manager,
+                          client->CreateBuffersForAsyncHostToDevice(
+                              {shape}, client->memory_spaces()[0]));
+  auto buffer = transfer_manager->RetrieveBuffer(0);
+  auto ready_future = buffer->GetReadyFuture();
+  EXPECT_FALSE(ready_future.IsReady());
+
+  TF_ASSERT_OK(transfer_manager->TransferRawDataToBuffer(0, absl::string_view(),
+                                                         []() {}));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, buffer->ToLiteral().Await());
+  EXPECT_TRUE(literal->shape().IsToken());
+}
+
 TEST(PjRtCpuClientTest, BufferFromLiteralInt4) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
   xla::Shape shape = xla::ShapeUtil::MakeShape(S4, {128, 256});
@@ -597,6 +630,44 @@ TEST(PjRtCpuClientTest, CopyToMemorySpace) {
   TF_ASSERT_OK_AND_ASSIGN(auto received_literal, buffer->ToLiteral().Await());
   EXPECT_THAT(received_literal->data<int32_t>(),
               ElementsAreArray(literal.data<int32_t>()));
+}
+
+TEST(PjRtCpuClientTest, CopyTokenToDevice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 1);
+
+  auto* device = client->addressable_devices()[0];
+
+  xla::Literal literal = xla::LiteralUtil::CreateToken();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto src_buffer,
+      client->BufferFromHostLiteral(literal, *device->default_memory_space()));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto dst_buffer, src_buffer->CopyToMemorySpace(
+                                               src_buffer->memory_space()));
+
+  xla::Literal received_literal = xla::LiteralUtil::CreateToken();
+  TF_ASSERT_OK(dst_buffer->ToLiteral(&received_literal).Await());
+  EXPECT_TRUE(received_literal.shape().IsToken());
+}
+
+TEST(PjRtCpuClientTest, CopyErrorTokenToDevice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 1);
+
+  auto* device = client->addressable_devices()[0];
+
+  xla::Shape shape = ShapeUtil::MakeTokenShape();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto src_buffer,
+      client->CreateErrorBuffer(absl::InternalError("token error"), shape,
+                                *device->default_memory_space()));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto dst_buffer, src_buffer->CopyToMemorySpace(
+                                               src_buffer->memory_space()));
+
+  EXPECT_THAT(dst_buffer->ToLiteral().Await(),
+              StatusIs(absl::StatusCode::kInternal, HasSubstr("token error")));
 }
 
 TEST(PjRtCpuClientTest, AsyncTransferCallsOnDone) {
@@ -680,6 +751,20 @@ TEST(PjRtCpuClientTest, AsyncTransferSetBufferError) {
 TEST(PjRtCpuClientTest, CreateErrorBuffer) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
   xla::Shape shape = ShapeUtil::MakeShape(U32, {3, 2});
+  for (PjRtMemorySpace* memory_space : client->memory_spaces()) {
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto buffer,
+        client->CreateErrorBuffer(Internal("foobar"), shape, memory_space));
+    EXPECT_THAT(
+        buffer->ToLiteral().Await(),
+        absl_testing::StatusIs(tsl::error::INTERNAL, HasSubstr("foobar")));
+    EXPECT_EQ(buffer->memory_space(), memory_space);
+  }
+}
+
+TEST(PjRtCpuClientTest, CreateErrorBufferToken) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  xla::Shape shape = ShapeUtil::MakeTokenShape();
   for (PjRtMemorySpace* memory_space : client->memory_spaces()) {
     TF_ASSERT_OK_AND_ASSIGN(
         auto buffer,

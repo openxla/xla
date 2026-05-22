@@ -151,6 +151,7 @@ TEST(CustomKernelThunkTest, ToProto) {
             }
           }
           written: true
+          tma_metadata {}
         }
       )pb")));
 }

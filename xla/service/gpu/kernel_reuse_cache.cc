@@ -14,9 +14,11 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/service/gpu/kernel_reuse_cache.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/function_ref.h"
@@ -32,15 +34,17 @@ limitations under the License.
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/gpu/kernel_reuse_cache.pb.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/concurrency/future.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/util.h"
 
 namespace xla::gpu {
 
-constexpr int kCacheCompatibilityVersion = 0;
+constexpr int kCacheCompatibilityVersion = 1;
 
 absl::Status KernelReuseCache::Load(const CompilationCacheProto& proto) {
   if (proto.compatibility_version() != kCacheCompatibilityVersion) {
@@ -56,6 +60,11 @@ absl::Status KernelReuseCache::Load(const CompilationCacheProto& proto) {
           se::ClusterDim{entry.cluster_dim().x(), entry.cluster_dim().y(),
                          entry.cluster_dim().z()};
     }
+    std::vector<uint8_t> binary(entry.binary().data(),
+                                entry.binary().data() + entry.binary().size());
+    if (entry.link_binary()) {
+      binary.clear();
+    }
     TF_RET_CHECK(
         cache_
             .insert(
@@ -64,7 +73,7 @@ absl::Status KernelReuseCache::Load(const CompilationCacheProto& proto) {
                        LaunchDimensions{
                            entry.launch_dimensions().num_blocks(),
                            entry.launch_dimensions().num_threads_per_block()},
-                       cluster_dim, entry.shmem_bytes(), entry.binary()}})
+                       cluster_dim, entry.shmem_bytes(), std::move(binary)}})
             .second);
   }
 
@@ -106,7 +115,10 @@ CompilationCacheProto KernelReuseCache::Export() const {
       *proto_entry.mutable_cluster_dim() = cluster_dim_proto;
     }
     proto_entry.set_shmem_bytes(cache_entry->shmem_bytes);
-    proto_entry.set_binary(cache_entry->binary);
+    proto_entry.set_binary(absl::string_view(
+        reinterpret_cast<const char*>(cache_entry->binary.data()),
+        cache_entry->binary.size()));
+    proto_entry.set_link_binary(cache_entry->binary.empty());
   }
   return proto;
 }
@@ -123,9 +135,24 @@ absl::Status UpdateDiskKernelCache(
     if (!disk_cache.ParseFromString(serialized)) {
       return Internal("Failed to parse serialized CompilationCacheProto.");
     }
+
+    if (disk_cache.compatibility_version() != kCacheCompatibilityVersion) {
+      LOG(WARNING) << "Provided CompilationCacheProto contains no longer "
+                      "compatible data and needs to be regenerated.";
+      disk_cache.Clear();
+    }
   }
-  auto entries = disk_cache.mutable_entries();
+
   int stored_kernel_count = 0;
+  for (const auto& [name, entry] : current_cache.entries()) {
+    if (entry.link_binary()) {
+      continue;
+    }
+    (*disk_cache.mutable_entries())[name] = entry;
+    stored_kernel_count++;
+  }
+
+  auto* entries = disk_cache.mutable_entries();
   for (const auto& [name, binary] : binaries_to_cache) {
     auto it_current = current_cache.entries().find(name);
     TF_RET_CHECK(it_current != current_cache.entries().end());
@@ -137,7 +164,9 @@ absl::Status UpdateDiskKernelCache(
     VLOG(5) << "Cached kernel: " << name << ": " << binary.size();
     ++stored_kernel_count;
   }
-  if (stored_kernel_count > 0) {
+  disk_cache.set_compatibility_version(kCacheCompatibilityVersion);
+
+  if (stored_kernel_count) {
     RETURN_IF_ERROR(tsl::WriteStringToFile(tsl::Env::Default(),
                                            std::string(path),
                                            disk_cache.SerializeAsString()));

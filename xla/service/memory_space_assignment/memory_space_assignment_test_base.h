@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -313,13 +314,13 @@ class MemorySpaceAssignmentTestBase : public HloPjRtTestBase {
       options.is_allowed_in_alternate_mem_fn = is_allowed_in_alternate_mem;
     }
 
-    TF_ASSIGN_OR_RETURN(auto alias_analysis,
-                        HloAliasAnalysis::Run(module, &alias_info_));
-    TF_ASSIGN_OR_RETURN(std::unique_ptr<HloLiveRange> hlo_live_range,
-                        HloLiveRange::Run(module->schedule(), *alias_analysis,
-                                          module->entry_computation()));
+    ASSIGN_OR_RETURN(auto alias_analysis,
+                     HloAliasAnalysis::Run(module, &alias_info_));
+    ASSIGN_OR_RETURN(std::unique_ptr<HloLiveRange> hlo_live_range,
+                     HloLiveRange::Run(module->schedule(), *alias_analysis,
+                                       module->entry_computation()));
 
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         std::unique_ptr<PresetAssignments> preset_assignments,
         MemorySpaceAssignment::Run(module, *hlo_live_range, *alias_analysis,
                                    &alias_info_, options));
@@ -378,15 +379,15 @@ class MemorySpaceAssignmentTestBase : public HloPjRtTestBase {
 
   // Returns a std::vector of HloPositions for the given instruction names and
   // shape_index.
-  std::vector<HloPosition> GetHloPositions(
+  absl::flat_hash_set<HloPosition> GetHloPositions(
       const HloModule* module, std::vector<std::string> instruction_names,
       ShapeIndex shape_index = {}) {
-    std::vector<HloPosition> block_prefetched_positions;
+    absl::flat_hash_set<HloPosition> block_prefetched_positions;
     for (const auto& instruction_name : instruction_names) {
       HloInstruction* param = FindInstruction(module, instruction_name);
       EXPECT_NE(param, nullptr);
       HloPosition param_position{param, shape_index};
-      block_prefetched_positions.push_back(param_position);
+      block_prefetched_positions.insert(param_position);
     }
     return block_prefetched_positions;
   }

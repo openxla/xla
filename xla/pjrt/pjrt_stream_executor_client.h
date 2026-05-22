@@ -394,6 +394,11 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   bool allows_recursion() const override { return false; }
   bool allows_execute_recursion() const override { return true; }
 
+  PjRtDynamicShapeKind GetDynamicShapeKind(
+      int memory_space_kind_id) const override {
+    return PjRtDynamicShapeKind::kSuffix;
+  }
+
   using CommonPjRtClient::GetOnDeviceBytesCount;
   absl::StatusOr<int64_t> GetOnDeviceBytesCount(
       int memory_space_kind, const xla::Shape& shape) const override;
@@ -409,9 +414,6 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   absl::StatusOr<PjRtRawBufferRef> AllocateRawBufferForExecute(
       PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
       bool retry_on_oom) override;
-
-  absl::StatusOr<std::unique_ptr<PjRtDeviceEventSet>> CreateUsageEventSet(
-      PjRtMemorySpace* memory_space) const override;
 
   absl::StatusOr<std::pair<PjRtRawBufferRef, PjRtFulfillAliasRawBufferCallback>>
   CreateRawBufferChannel(PjRtMemorySpace* memory_space,

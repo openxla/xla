@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test_benchmark.h"
+#include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/safe_reinterpret_cast.h"
 #include "xla/types.h"
 #include "xla/util.h"
@@ -510,6 +511,38 @@ TEST_F(LiteralUtilTest, NonScalarEquality) {
   EXPECT_EQ(nil, nil);
 }
 
+TEST_F(LiteralUtilTest, SubByteEqualityDifferentLengthsMod32) {
+  for (int len = 1; len <= 256; ++len) {
+    Shape shape = ShapeUtil::MakeShape(U4, {len});
+
+    Literal literal1(shape);
+    Literal literal2(shape);
+
+    for (int i = 0; i < len; ++i) {
+      literal1.Set<u4>({i}, u4(i % 16));
+      literal2.Set<u4>({i}, u4(i % 16));
+    }
+
+    // Make high bits different.
+    uint8_t* buffer1 = reinterpret_cast<uint8_t*>(literal1.untyped_data());
+    uint8_t* buffer2 = reinterpret_cast<uint8_t*>(literal2.untyped_data());
+    for (int i = 0; i < len; ++i) {
+      buffer1[i] |= 0xA0;
+      buffer2[i] |= 0x50;
+    }
+
+    EXPECT_EQ(literal1, literal2);
+
+    int mid = len / 2;
+    u4 val = literal2.Get<u4>({mid});
+    uint8_t next_val = (static_cast<uint8_t>(val) + 1) % 16;
+    literal2.Set<u4>({mid}, u4{next_val});
+    buffer2[mid] |= 0x50;
+
+    EXPECT_NE(literal1, literal2);
+  }
+}
+
 TEST_F(LiteralUtilTest, TokenEquality) {
   auto token0 = LiteralUtil::CreateToken();
   auto token1 = LiteralUtil::CreateToken();
@@ -841,6 +874,38 @@ TEST_F(LiteralUtilTest, IsAll) {
   EXPECT_FALSE(LiteralUtil::CreateR2<uint64_t>(
                    {{uint64_max, uint64_max}, {uint64_max, uint64_max}})
                    .IsAll(-1));
+}
+
+TEST_F(LiteralUtilTest, MaterializeSparseOperandValidConfigReturnsDense) {
+  absl::StatusOr<Literal> dense_or = MaterializeSparseOperand(
+      LiteralUtil::CreateR2<float>({{1.0f, 2.0f}, {3.0f, 4.0f}}),
+      LiteralUtil::CreateR2<int32_t>({{0, 2}, {1, 3}}),
+      tsl::proto_testing::ParseTextProtoOrDie<
+          SparsityConfig::TensorSparsityConfig>(
+          R"pb(
+            dimension: 1 block_size: 4 num_non_zero: 1 stride: 1
+          )pb"));
+  ASSERT_TRUE(dense_or.ok());
+  Literal dense = std::move(dense_or).value();
+  Literal expected = LiteralUtil::CreateFromDimensions(F32, {2, 8});
+  expected.PopulateWithValue(0.0f);
+  expected.Set<float>({0, 0}, 1.0f);
+  expected.Set<float>({0, 6}, 2.0f);
+  expected.Set<float>({1, 1}, 3.0f);
+  expected.Set<float>({1, 7}, 4.0f);
+  EXPECT_EQ(dense, expected);
+}
+
+TEST_F(LiteralUtilTest, MaterializeSparseOperandInvalidConfigReturnsError) {
+  EXPECT_FALSE(MaterializeSparseOperand(
+                   LiteralUtil::CreateR2<float>({{1.0f, 2.0f}, {3.0f, 4.0f}}),
+                   LiteralUtil::CreateR2<int32_t>({{0, 2}, {1, 3}}),
+                   tsl::proto_testing::ParseTextProtoOrDie<
+                       SparsityConfig::TensorSparsityConfig>(
+                       R"pb(
+                         dimension: 1 block_size: 4 num_non_zero: 2 stride: 1
+                       )pb"))
+                   .ok());
 }
 
 TEST_F(LiteralUtilTest, IsAllFloat) {
@@ -3436,7 +3501,7 @@ TEST(LiteralTest, SetShapeClearsCustomElementSizeInBitsOnTupleLeafArrays) {
   Literal literal(tuple);
 
   ASSERT_TRUE(literal.shape().IsTuple());
-  ASSERT_EQ(literal.shape().tuple_shapes_size(), 1);
+  ASSERT_EQ(literal.shape().tuple_shapes().size(), 1);
   ASSERT_TRUE(literal.shape().tuple_shapes(0).has_layout());
   EXPECT_EQ(literal.shape().tuple_shapes(0).layout().element_size_in_bits(), 0);
 }

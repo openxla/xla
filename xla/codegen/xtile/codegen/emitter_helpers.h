@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
-#include <string>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
@@ -27,7 +26,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
@@ -38,6 +36,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/codegen/ir_emission_utils.h"  // IWYU pragma:  export
 #include "xla/codegen/tiling/experimental/scheduling.h"
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
@@ -128,15 +127,6 @@ class EmitterContext {
                       std::pair<mlir::Value, Interval>>
       sequential_dim_id_to_value_;
 };
-
-// Returns a string representation of the given MLIR entity.
-template <typename T>
-std::string MlirToString(T&& value) {
-  std::string result;
-  llvm::raw_string_ostream os(result);
-  value.print(os);
-  return result;
-}
 
 // Constructs and holds information needed to construct a tile. This information
 // is propagated to Extract/Insert ops to use them to load and store the correct
@@ -362,34 +352,6 @@ absl::StatusOr<llvm::SmallVector<mlir::Type>> GetFnArgTypes(
 // Function to check if the operands of a concatenation are valid for tiling.
 absl::Status CheckConcatenateOperands(
     const HloConcatenateInstruction& hlo_concat, int64_t concat_dim_tile_size);
-
-// Returns `shape` without all its unit dimensions, as well as the index of the
-// remaining dimensions in the original `shape`.
-std::pair<llvm::SmallVector<int64_t>, llvm::SmallVector<int64_t>>
-CollapseUnitDims(llvm::ArrayRef<int64_t> shape,
-                 llvm::ArrayRef<int64_t> counterpart_shape);
-
-enum class DotOperandSide { kLhs, kRhs };
-
-// Canonicalizes the given operand of a dot operation, i.e. make it a 2D tensor,
-// and make sure that the contracting dimension is where we expect it to be for
-// the given side (the second dimension for LHS, the first dimension for the
-// RHS).
-//
-// If it is a scaled-dot scale operand then we drop the extra dims only
-// when they equal to 1  and are matching with the corresponding operand.
-// Example:
-//   when lhs_scale operand with shape [1,128, 1] (passed as operand parameter)
-//   and lhs operand with shape [1,128, 32] (passed as counterpart_operand
-//   parameter)
-//   the function will drop only the first dim and will keep the last one
-//   because the last one of the lhs operand is not equal to 1.
-//
-// Returns an error if canonicalization is not possible.
-absl::StatusOr<TensorValue> CanonicalizeDotOperand(
-    mlir::ImplicitLocOpBuilder& b, TensorValue operand,
-    int64_t contracting_dim_idx, DotOperandSide side,
-    TensorValue counterpart_operand = nullptr);
 
 absl::StatusOr<TensorValue> EmitTiledReshape(mlir::ImplicitLocOpBuilder& b,
                                              llvm::ArrayRef<int64_t> tile_sizes,

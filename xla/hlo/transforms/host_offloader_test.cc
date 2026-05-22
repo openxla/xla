@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -61,10 +62,10 @@ class HostOffloaderTest : public HloHardwareIndependentTestBase {
     }
     bool changed = false;
     HostOffloadLegalize host_offload_legalize;
-    TF_ASSIGN_OR_RETURN(bool legal_changed, host_offload_legalize.Run(module));
+    ASSIGN_OR_RETURN(bool legal_changed, host_offload_legalize.Run(module));
     changed |= legal_changed;
     HostOffloader host_offloader(&alias_info_);
-    TF_ASSIGN_OR_RETURN(bool offload_changed, host_offloader.Run(module));
+    ASSIGN_OR_RETURN(bool offload_changed, host_offloader.Run(module));
     changed |= offload_changed;
     return changed;
   }
@@ -5063,6 +5064,37 @@ ENTRY main {
       Layout::kHostMemorySpace);
 
   EXPECT_FALSE(HaveRemainingOffloadAnnotations(module.get()));
+}
+
+TEST_F(HostOffloaderTest, AddResultMovedToHostAndUsedInDus) {
+  const std::string& hlo_string = R"(
+HloModule my_module
+ENTRY main {
+  p0 = f32[4096] parameter(0)
+  p1 = f32[4096] parameter(1)
+  add = f32[4096] add(p0, p1)
+  mth = f32[4096] custom-call(add), custom_call_target="MoveToHost"
+  const = f32[] constant(1.0)
+  update = f32[2048] broadcast(const), dimensions={}
+  update_mth = f32[2048] custom-call(update), custom_call_target="MoveToHost"
+  idx = s32[] constant(0)
+  dus = f32[4096] dynamic-update-slice(mth, update_mth, idx)
+  ROOT mtd = f32[4096] custom-call(dus), custom_call_target="MoveToDevice"
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloader(module.get()));
+  EXPECT_TRUE(changed);
+  VLOG(1) << "module after: " << module->ToString();
+
+  EXPECT_FALSE(HaveRemainingOffloadAnnotations(module.get()));
+
+  HloInstruction* dus = FindInstruction(module.get(), "dus");
+  ASSERT_NE(dus, nullptr);
+  TestShapeHasMemorySpace(dus->shape(), Layout::kHostMemorySpace);
 }
 
 }  // namespace

@@ -542,9 +542,10 @@ void CompileAndFilecheck(
   opts.num_partitions = num_partitions;
   opts.spmd_mode = FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
   opts.xla_dump_to = dump_dir;
-  TF_EXPECT_OK(FunctionalHloRunner::LoadAndCompile(
-      *client, xla::DebugOptions{}, preproc_options, opts, hlo_file,
-      InputFormat::kText));
+  TF_EXPECT_OK(FunctionalHloRunner::LoadAndCompile(*client, xla::DebugOptions{},
+                                                   preproc_options, opts,
+                                                   hlo_file, InputFormat::kText)
+                   .status());
 
   {
     std::vector<std::string> after_opt_hlo_paths;
@@ -644,7 +645,7 @@ absl::StatusOr<std::string> GetExpectedBackendFingerprint() {
   if (platform_name == "rocm") {
     return "2971291867";
   }
-  return "2396424345";
+  return "4040761820";
 }
 }  // namespace
 
@@ -707,13 +708,15 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id) {
   // autotuner_test.cc. Here, we just check that compilation
   // actually succeeds, and that the autotuner runs correctly ends up storing
   // results for each node in the key-value store.
-  TF_RETURN_IF_ERROR(FunctionalHloRunner::LoadAndCompile(
-      *env.client, GetDebugOptionsFromFlags(),
-      FunctionalHloRunner::PreprocessingOptions{},
-      FunctionalHloRunner::RawCompileOptions{.num_replicas = kNumNodes},
-      GetHloPath("multiple_gemm_fusions.hlo"), InputFormat::kText, node_id,
-      kNumNodes, /*kv_store=*/nullptr,
-      /*use_gpu_count_workaround=*/false));
+  TF_RETURN_IF_ERROR(
+      FunctionalHloRunner::LoadAndCompile(
+          *env.client, GetDebugOptionsFromFlags(),
+          FunctionalHloRunner::PreprocessingOptions{},
+          FunctionalHloRunner::RawCompileOptions{.num_replicas = kNumNodes},
+          GetHloPath("multiple_gemm_fusions.hlo"), InputFormat::kText, node_id,
+          kNumNodes, /*kv_store=*/nullptr,
+          /*use_gpu_count_workaround=*/false)
+          .status());
   if (node_id == 0) {
     TF_ASSIGN_OR_RETURN(std::string backend_fp,
                         GetExpectedBackendFingerprint());
@@ -741,8 +744,14 @@ absl::Status RunShardedHloWithClient(xla::PjRtClient& client) {
   // This method corresponds to:
   // --num_replicas=1 --num_partitions=16
   xla::DebugOptions debug_options;
+  debug_options.set_xla_gpu_autotune_level(0);
+  debug_options.set_xla_gpu_libnvjitlink_mode(
+      xla::DebugOptions::LIB_NV_JIT_LINK_MODE_DISABLED);
   FunctionalHloRunner::PreprocessingOptions preproc_options;
   FunctionalHloRunner::RawCompileOptions raw_compile_options;
+  ExecutionOptions execution_options;
+  *execution_options.mutable_debug_options() = debug_options;
+  raw_compile_options.execution_options = execution_options;
   raw_compile_options.num_replicas = 1;
   raw_compile_options.num_partitions = 16;
 

@@ -601,31 +601,10 @@ CodegenDecision IsTritonSupportedDot(
   return CodegenDecision::Allow();
 }
 
-bool AnyOperandIsFusion(const HloInstruction& hlo) {
-  return absl::c_any_of(hlo.operands(), [](const HloInstruction* operand) {
-    return operand->opcode() == HloOpcode::kFusion;
-  });
-}
-
 CodegenDecision IsTritonSupportedConcatenate(const HloInstruction& hlo) {
   CHECK(hlo.opcode() == HloOpcode::kConcatenate);
   if (hlo.shape().element_type() == S4) {
     return CodegenDecision::Forbid("S4 is not supported.");
-  }
-  if (!IsInTritonNestedGemmFusion(hlo)) {
-    return CodegenDecision::Forbid(
-        "Only concatenates in nested GEMM fusions are supported.");
-  }
-  if (AnyOperandIsFusion(hlo)) {
-    // TODO(b/393299275): remove this operand filter once migration is
-    // complete and priority fusion can produce nests.
-    if (absl::c_any_of(hlo.operands(), [](const HloInstruction* operand) {
-          return operand->opcode() != HloOpcode::kFusion;
-        })) {
-      return CodegenDecision::Forbid(
-          "Only support concatenates with nested GEMM fusions as a "
-          "parameter.");
-    }
   }
   return CodegenDecision::Allow();
 }

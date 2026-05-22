@@ -559,6 +559,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
@@ -725,4 +726,25 @@ cc_library(
     hdrs = ["version.h"],
     compatible_with = [],
     visibility = internal_visibility([":friends"]),
+)
+
+tsl_pybind_extension(
+    name = "xla_transform",
+    srcs = ["xla_transform_py.cc"],
+    deps = [
+        "//xla/service:xla_transform",
+        "@nanobind",
+    ],
+)
+
+py_test(
+    name = "xla_transform_test",
+    srcs = ["xla_transform_test.py"],
+    tags = ["no_oss"],
+    deps = [
+        ":xla_extension",
+        ":xla_transform",
+        "//third_party/py/numpy",
+        "@absl_py//absl/testing:absltest",
+    ] + xla_py_test_deps(),
 )

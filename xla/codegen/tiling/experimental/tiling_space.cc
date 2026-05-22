@@ -21,17 +21,22 @@ limitations under the License.
 #include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/MathExtras.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/codegen/tiling/experimental/tile.h"
+#include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/analysis/symbolic_map.h"
@@ -57,8 +62,8 @@ std::string TilingSpace::DimensionInfo::ToString() const {
   ss << id << " type: "
      << (type == DimensionSemantics::kParallel ? "parallel" : "sequential")
      << " size: " << dimension_size;
-  if (IsTileSizeSet()) {
-    ss << " tile size: " << tile_size;
+  if (tile_size.has_value()) {
+    ss << " tile size: " << *tile_size;
   }
   ss << " dim ID:" << dim_position << " hlo: " << HloPtrToString(hlo);
   return ss.str();
@@ -167,6 +172,13 @@ std::string TilingSpace::ToString() const {
   if (!constraints_.IsAlwaysSatisfied()) {
     ss << "Constraints:\n" << constraints_.ToString() << "\n";
   }
+  if (!divisibility_constraints_.empty()) {
+    ss << "Divisibility constraints:\n";
+    for (const auto& c : divisibility_constraints_) {
+      ss << c.expr.ToString(dimensions_.size()) << " is multiple of "
+         << c.tile_size.ToString(dimensions_.size()) << "\n";
+    }
+  }
   return ss.str();
 }
 
@@ -188,19 +200,50 @@ std::optional<const TilingSpace::RTVarInfo*> TilingSpace::GetRTVarInfo(
   return it->second;
 }
 
-void TilingSpace::AssignTileSizes(absl::Span<const int64_t> tile_sizes) {
+absl::Status TilingSpace::AssignTileSizes(
+    absl::Span<const int64_t> tile_sizes) {
   CHECK_EQ(tile_sizes.size(), dimensions_.size());
   is_symbolic_ = false;
+
   llvm::DenseMap<SymbolicExpr, SymbolicExpr> replacement_map;
   for (const auto& [index, dim] : llvm::enumerate(dimensions_)) {
     dim.tile_size = tile_sizes[index];
     replacement_map[CreateSymbolExpr(dim.id.value(), dimensions_.size(),
                                      mlir_context_)] =
         CreateSymbolicConstant(tile_sizes[index], mlir_context_);
+
+    // If the tile size is greater than or equal to the dimension size, then
+    // the dimension is trivial and can be replaced with 0.
+    if (dim.dimension_size <= tile_sizes[index]) {
+      replacement_map[CreateDimExpr(dim.id.value(), mlir_context_)] =
+          CreateSymbolicConstant(0, mlir_context_);
+    }
   }
+  for (const auto& c : divisibility_constraints_) {
+    SymbolicExpr replaced_size = c.tile_size.Replace(replacement_map);
+    if (replaced_size.GetType() != SymbolicExprType::kConstant) {
+      return absl::InternalError(absl::StrFormat(
+          "Expected tile size symbol to evaluate to a constant after "
+          "replacement, but got %s.",
+          replaced_size.ToString(dimensions_.size())));
+    }
+    int64_t concrete_tile_size = replaced_size.GetValue();
+    SymbolicExpr replaced_expr = c.expr.Replace(replacement_map);
+    if (!replaced_expr.IsMultipleOf(concrete_tile_size)) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Divisibility constraint not satisfied: %s is not a clean multiple "
+          "of %d.",
+          replaced_expr.ToString(dimensions_.size()), concrete_tile_size));
+    }
+  }
+
+  InitSimplificationIndexing();
+
   for (auto& tiled_root : tiled_roots_) {
     tiled_root.Replace(replacement_map);
+    tiled_root.Simplify();
   }
+  return absl::OkStatus();
 }
 
 std::unique_ptr<TilingSpace> TilingSpace::Create(const HloFusionAdaptor& fusion,
@@ -261,10 +304,46 @@ std::unique_ptr<TilingSpace> TilingSpace::Create(const HloFusionAdaptor& fusion,
   return tiling_space;
 }
 
-int64_t TilingSpace::num_parallel_dimsensions() const {
+int64_t TilingSpace::num_parallel_dimensions() const {
   return absl::c_count_if(dimensions_, [](const DimensionInfo& dim) {
     return dim.type == DimensionSemantics::kParallel;
   });
+}
+
+void TilingSpace::InitSimplificationIndexing() {
+  CHECK(!is_symbolic_) << "Tile sizes must be assigned before initializing "
+                          "cached indexing map variables.";
+
+  dim_vars_indexing_.clear();
+  dim_vars_indexing_.reserve(dimensions_.size());
+  for (const auto& dim_info : dimensions_) {
+    CHECK_GT(dim_info.tile_size.value(), 0);
+    int64_t upper_bound =
+        llvm::divideCeil(dim_info.dimension_size, dim_info.tile_size.value());
+    dim_vars_indexing_.push_back(IndexingMap::Variable{0, upper_bound - 1});
+  }
+
+  range_vars_indexing_.assign(dimensions_.size(), IndexingMap::Variable{0, 0});
+
+  rt_vars_indexing_.clear();
+  rt_vars_indexing_.reserve(rt_vars_.size());
+  for (const auto& rt_var : rt_vars_) {
+    rt_vars_indexing_.push_back(IndexingMap::Variable{rt_var.bounds});
+  }
+}
+
+SymbolicExpr TilingSpace::SimplifyExpression(const SymbolicExpr& expr) const {
+  if (is_symbolic_) {
+    return expr.Canonicalize();
+  }
+
+  SymbolicMap map = SymbolicMap::Get(mlir_context(), dimensions_.size(),
+                                     rt_vars_.size(), {expr});
+
+  IndexingMap indexing_map(map, dim_vars_indexing_, range_vars_indexing_,
+                           rt_vars_indexing_);
+  indexing_map.Simplify(IndexingMap::SimplifyPointDimensions::kPreserve);
+  return indexing_map.GetSymbolicMap().GetResults()[0];
 }
 
 }  // namespace xla::gpu::experimental

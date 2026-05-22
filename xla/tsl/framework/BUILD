@@ -190,11 +190,11 @@ cc_library(
         "//xla/tsl/lib/core:bits",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:types",
         "//xla/tsl/profiler/utils:trace_filter_utils",
         "//xla/tsl/protobuf:bfc_memory_map_proto_cc",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/strings",
@@ -214,10 +214,13 @@ tsl_cc_test(
     deps = [
         ":allocator",
         ":bfc_allocator",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:env_impl",  # buildcleaner: keep
         "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/base",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:platform_port",
     ],
 )

@@ -21,13 +21,13 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
 #include "xla/shape.h"
@@ -187,8 +187,8 @@ absl::StatusOr<MatrixLayout> MatrixLayout::FromProto(
       return absl::InvalidArgumentError("Invalid matrix layout order");
   }
 
-  TF_ASSIGN_OR_RETURN(blas::Transpose transpose,
-                      blas::FromProto(proto.transpose()));
+  ASSIGN_OR_RETURN(blas::Transpose transpose,
+                   blas::FromProto(proto.transpose()));
   return MatrixLayout(proto.dtype(), proto.num_rows(), proto.num_cols(), order,
                       proto.batch_size(), proto.leading_dim_stride(),
                       proto.batch_stride(), transpose);
@@ -315,7 +315,7 @@ absl::StatusOr<BlasLt::MatmulPlan*> BlasLt::GetOrCreateMatmulPlan(
   // this is used by command_buffer_thunk test.
   if (res.second || key.empty()) {
     VLOG(2) << "Creating a plan for: " << key;
-    TF_ASSIGN_OR_RETURN(res.first->second, create());
+    ASSIGN_OR_RETURN(res.first->second, create());
     VLOG(2) << "Plan created: cache size: " << plan_cache_.size();
   }
   return res.first->second.get();
@@ -332,13 +332,12 @@ size_t BlasLt::GetMatmulPlanCacheSize() const {
 }
 
 /*static*/ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetGroupedMatmulPlan(
-    const Stream* stream, GroupedGemmConfig& cfg,
-    const std::vector<Epilogue>& epilogues) {
-  auto blas = Get(stream);
+    const Stream* stream, GroupedGemmConfig& cfg, Epilogue epilogue) {
+  BlasLt* blas = BlasLt::Get(stream);
   if (blas == nullptr) {
     return xla::Internal("BlasLt is unavailable");
   }
-  return blas->GetGroupedMatmulPlan(cfg, epilogues);
+  return blas->GetGroupedMatmulPlan(cfg, epilogue);
 }
 
 absl::StatusOr<BlasLt::MatmulPlan*> BlasLt::GetOrCreateGroupedMatmulPlan(
@@ -349,7 +348,7 @@ absl::StatusOr<BlasLt::MatmulPlan*> BlasLt::GetOrCreateGroupedMatmulPlan(
   // this is used by command_buffer_thunk test.
   if (res.second || key.empty()) {
     VLOG(2) << "Creating a grouped plan for: " << key;
-    TF_ASSIGN_OR_RETURN(res.first->second, create());
+    ASSIGN_OR_RETURN(res.first->second, create());
     VLOG(2) << "Grouped Plan created: cache size: "
             << grouped_plan_cache_.size();
   }
@@ -368,14 +367,14 @@ size_t BlasLt::GetGroupedMatmulPlanCacheSize() const {
 
 absl::StatusOr<GemmConfig> GemmConfig::FromProto(
     const xla::GemmConfigProto& proto) {
-  TF_ASSIGN_OR_RETURN(MatrixLayout lhs_layout,
-                      MatrixLayout::FromProto(proto.lhs_layout()));
-  TF_ASSIGN_OR_RETURN(MatrixLayout rhs_layout,
-                      MatrixLayout::FromProto(proto.rhs_layout()));
-  TF_ASSIGN_OR_RETURN(MatrixLayout c_layout,
-                      MatrixLayout::FromProto(proto.c_layout()));
-  TF_ASSIGN_OR_RETURN(MatrixLayout output_layout,
-                      MatrixLayout::FromProto(proto.output_layout()));
+  ASSIGN_OR_RETURN(MatrixLayout lhs_layout,
+                   MatrixLayout::FromProto(proto.lhs_layout()));
+  ASSIGN_OR_RETURN(MatrixLayout rhs_layout,
+                   MatrixLayout::FromProto(proto.rhs_layout()));
+  ASSIGN_OR_RETURN(MatrixLayout c_layout,
+                   MatrixLayout::FromProto(proto.c_layout()));
+  ASSIGN_OR_RETURN(MatrixLayout output_layout,
+                   MatrixLayout::FromProto(proto.output_layout()));
   std::optional<blas::ComputationType> compute_type =
       blas::FromProto(proto.compute_type());
   return GemmConfig{
@@ -421,16 +420,14 @@ absl::StatusOr<GroupedGemmConfig> GroupedGemmConfig::FromProto(
     const xla::GroupedGemmConfigProto& proto) {
   std::optional<blas::ComputationType> compute_type =
       blas::FromProto(proto.compute_type());
-  TF_ASSIGN_OR_RETURN(blas::DataType typeA, AsBlasDataType(proto.type_a()));
-  TF_ASSIGN_OR_RETURN(blas::DataType typeB, AsBlasDataType(proto.type_b()));
-  TF_ASSIGN_OR_RETURN(blas::DataType typeC, AsBlasDataType(proto.type_c()));
-  TF_ASSIGN_OR_RETURN(blas::DataType typeD, AsBlasDataType(proto.type_d()));
-  TF_ASSIGN_OR_RETURN(RaggedDotMode ragged_mode,
-                      RaggedDotModeFromProto(proto.ragged_mode()));
-  TF_ASSIGN_OR_RETURN(blas::Transpose trans_a,
-                      blas::FromProto(proto.trans_a()));
-  TF_ASSIGN_OR_RETURN(blas::Transpose trans_b,
-                      blas::FromProto(proto.trans_b()));
+  ASSIGN_OR_RETURN(blas::DataType typeA, AsBlasDataType(proto.type_a()));
+  ASSIGN_OR_RETURN(blas::DataType typeB, AsBlasDataType(proto.type_b()));
+  ASSIGN_OR_RETURN(blas::DataType typeC, AsBlasDataType(proto.type_c()));
+  ASSIGN_OR_RETURN(blas::DataType typeD, AsBlasDataType(proto.type_d()));
+  ASSIGN_OR_RETURN(RaggedDotMode ragged_mode,
+                   RaggedDotModeFromProto(proto.ragged_mode()));
+  ASSIGN_OR_RETURN(blas::Transpose trans_a, blas::FromProto(proto.trans_a()));
+  ASSIGN_OR_RETURN(blas::Transpose trans_b, blas::FromProto(proto.trans_b()));
   return GroupedGemmConfig{proto.m(),
                            proto.n(),
                            proto.k(),
@@ -451,6 +448,7 @@ absl::StatusOr<GroupedGemmConfig> GroupedGemmConfig::FromProto(
                            typeD,
                            proto.stride_ragged_dim(),
                            proto.stride_group_dim(),
+                           proto.c_stride_ragged_dim(),
                            proto.output_stride_ragged_dim(),
                            proto.precision_algorithm(),
                            proto.compute_precision(),
@@ -496,6 +494,7 @@ xla::GroupedGemmConfigProto GroupedGemmConfig::ToProto() const {
 
   proto.set_stride_ragged_dim(stride_ragged_dim);
   proto.set_stride_group_dim(stride_group_dim);
+  proto.set_c_stride_ragged_dim(c_stride_ragged_dim);
   proto.set_output_stride_ragged_dim(output_stride_ragged_dim);
   proto.set_precision_algorithm(precision_algorithm);
   proto.set_compute_precision(compute_precision);

@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/traced_command.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
@@ -172,15 +173,14 @@ absl::Status CublasLtMatmulThunk::ExecuteOnStreamInternal(
         allocs.GetDeviceAddress(d_.slice),
         allocs.GetDeviceAddress(group_sizes_->slice), bias, aux, a_scale,
         b_scale, c_scale, d_scale, d_amax, workspace);
-  } else {
-    // Regular matmul execution
-    TF_ASSIGN_OR_RETURN(auto* plan, GetCachedMatmulPlan(params));
-    return plan->ExecuteOnStream(
-        stream, allocs.GetDeviceAddress(a_.slice),
-        allocs.GetDeviceAddress(b_.slice), allocs.GetDeviceAddress(c_.slice),
-        allocs.GetDeviceAddress(d_.slice), bias, aux, a_scale, b_scale, c_scale,
-        d_scale, d_amax, workspace);
   }
+  // Regular matmul execution
+  TF_ASSIGN_OR_RETURN(auto* plan, GetCachedMatmulPlan(params));
+  return plan->ExecuteOnStream(
+      stream, allocs.GetDeviceAddress(a_.slice),
+      allocs.GetDeviceAddress(b_.slice), allocs.GetDeviceAddress(c_.slice),
+      allocs.GetDeviceAddress(d_.slice), bias, aux, a_scale, b_scale, c_scale,
+      d_scale, d_amax, workspace);
 }
 
 absl::StatusOr<se::gpu::BlasLt::MatmulPlan*>
@@ -234,9 +234,8 @@ CublasLtMatmulThunk::GetCachedGroupedMatmulPlan(const ExecuteParams& params) {
       return absl::InternalError(
           "Expected GroupedGemmConfig but gemm_config_ holds a different type");
     }
-    std::vector<se::gpu::BlasLt::Epilogue> epilogues(1, epilogue_);
     TF_ASSIGN_OR_RETURN(auto plan,
-                        blas_lt->GetGroupedMatmulPlan(*gemm_config, epilogues));
+                        blas_lt->GetGroupedMatmulPlan(*gemm_config, epilogue_));
 
     // Set the workspace size to the size that was used for autotuning, so
     // algorithm index will be the same as returned by GetAlgorithms called
@@ -438,20 +437,18 @@ absl::StatusOr<std::unique_ptr<Thunk>> CublasLtMatmulThunk::FromProto(
         std::move(aux), std::move(a_scale), std::move(b_scale),
         std::move(c_scale), std::move(d_scale), std::move(d_amax),
         std::move(workspace));
-  } else {
-    ASSIGN_OR_RETURN(
-        stream_executor::gpu::GemmConfig gemm_config,
-        stream_executor::gpu::GemmConfig::FromProto(proto.gemm_config()));
-
-    return std::make_unique<CublasLtMatmulThunk>(
-        std::move(thunk_info), std::move(proto.canonical_hlo()),
-        xla::gpu::GemmConfig(std::move(gemm_config)), std::move(epilogue),
-        proto.algorithm_idx(), proto.autotune_workspace_size(), std::move(a),
-        std::move(b), std::move(c), std::move(d), std::move(bias),
-        std::move(aux), std::move(a_scale), std::move(b_scale),
-        std::move(c_scale), std::move(d_scale), std::move(d_amax),
-        std::move(workspace));
   }
+  ASSIGN_OR_RETURN(
+      stream_executor::gpu::GemmConfig gemm_config,
+      stream_executor::gpu::GemmConfig::FromProto(proto.gemm_config()));
+
+  return std::make_unique<CublasLtMatmulThunk>(
+      std::move(thunk_info), std::move(proto.canonical_hlo()),
+      xla::gpu::GemmConfig(std::move(gemm_config)), std::move(epilogue),
+      proto.algorithm_idx(), proto.autotune_workspace_size(), std::move(a),
+      std::move(b), std::move(c), std::move(d), std::move(bias), std::move(aux),
+      std::move(a_scale), std::move(b_scale), std::move(c_scale),
+      std::move(d_scale), std::move(d_amax), std::move(workspace));
 }
 
 }  // namespace gpu

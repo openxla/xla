@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_verifier.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -821,7 +822,8 @@ ENTRY test {
 ; CHECK-DAG:         "epilogue":"BIAS"
 ; CHECK:           }
 ; CHECK-NEXT:    [[GETTUPLE:%[^ ]+]] = f32[4,4]{1,0} get-tuple-element([[MATMUL]]), index=0
-; CHECK:    ROOT [[OUT:%[^ ]+]] = f32[2,3]{1,0} fusion([[GETTUPLE]]), kind=kLoop
+; CHECK:    ROOT [[OUT:%[^ ]+]] = f32[2,3]{1,0} fusion([[GETTUPLE]])
+; CHECK-SAME:      NATIVE_EMITTER
       )");
 }
 
@@ -1204,7 +1206,8 @@ ENTRY test {
 ; CHECK-DAG:         "epilogue":"RELU"
 ; CHECK:           }
 ; CHECK:         [[MATMUL:%[^ ]+]] = f32[2,4]{1,0} get-tuple-element([[MATMUL_TUPLE]]), index=0
-; CHECK:    ROOT [[OUT:%[^ ]+]] = f32[2,2]{1,0} fusion([[MATMUL]]), kind=kLoop
+; CHECK:    ROOT [[OUT:%[^ ]+]] = f32[2,2]{1,0} fusion([[MATMUL]])
+; CHECK-SAME:      NATIVE_EMITTER
       )");
 }
 
@@ -1676,7 +1679,6 @@ ENTRY test (x: bf16[49152,11008], y: bf16[11008,11008]) -> (bf16[12,4096,11008],
                           ParseAndReturnVerifiedModule(hlo_text, config));
 
   GemmRewriterOptions options;
-  options.enable_cublaslt = true;
   GemmRewriter pass(Capability(), GetToolkitVersion(), options);
 
   TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
@@ -1854,7 +1856,6 @@ ENTRY test {
 )";
 
   GemmRewriterOptions options;
-  options.enable_cublaslt = true;
   GemmRewriter pass(Capability(), GetToolkitVersion(), options);
   RunAndFilecheckHloRewrite(hlo_text, std::move(pass),
                             R"(
@@ -1923,7 +1924,6 @@ ENTRY test {
 )";
 
   GemmRewriterOptions options;
-  options.enable_cublaslt = true;
   GemmRewriter pass(Capability(), GetToolkitVersion(), options);
   RunAndFilecheckHloRewrite(hlo_text, std::move(pass),
                             R"(
@@ -2100,7 +2100,6 @@ ENTRY test {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriterOptions options;
-  options.enable_cublaslt = true;
   GemmRewriter pass(Capability(), GetToolkitVersion(), options);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
@@ -2429,6 +2428,49 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:         }
 ; CHECK-DAG:         "epilogue":"DEFAULT"
 ; CHECK:           }
+)");
+}
+
+TEST_F(ParameterizedGemmRewriteTest, LargeBatch) {
+  const char* hlo_text = R"(
+HloModule BatchedArgRowColTransposeFoldGemm
+
+ENTRY AddDotsFunc {
+  x = f32[20000,4,3,2] parameter(0)
+  y = f32[20000,4,3,4] parameter(1)
+  ROOT dot_a = f32[20000,4,2,4] dot(x, y), lhs_contracting_dims={2}, rhs_contracting_dims={2}, lhs_batch_dims={0,1}, rhs_batch_dims={0,1}
+}
+
+)";
+
+  // Batch sizes larger than 2^16-1 are not supported by cublasLt. Ensure that
+  // the custom_call_target is __cublas$gemm.
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[20000,4,3,2], {{.*}}: f32[20000,4,3,4]) -> f32[20000,4,2,4] {
+; CHECK-DAG:     [[P0:%[^ ]+]] = f32[20000,4,3,2]{3,2,1,0} parameter(0)
+; CHECK-DAG:     [[BC0:%[^ ]+]] = f32[80000,3,2]{2,1,0} bitcast([[P0]])
+; CHECK-DAG:     [[P1:%[^ ]+]] = f32[20000,4,3,4]{3,2,1,0} parameter(1)
+; CHECK-DAG:     [[BC1:%[^ ]+]] = f32[80000,3,4]{2,1,0} bitcast([[P1]])
+; CHECK:         [[GEMM:%[^ ]+]] = (f32[80000,2,4]{2,1,0}, s8[{{[0-9]+}}]{0}) custom-call([[BC0]], [[BC1]]),
+; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           backend_config={
+; CHECK-DAG:         "alpha_real":1
+; CHECK-DAG:         "alpha_imag":0
+; CHECK-DAG:         "beta":0
+; CHECK-DAG:         "dot_dimension_numbers":{
+; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "rhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "lhs_batch_dimensions":["0"]
+; CHECK-DAG:           "rhs_batch_dimensions":["0"]
+; CHECK-DAG:         }
+; CHECK-DAG:         "precision_config":{
+; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
+; CHECK-DAG:         }
+; CHECK:           }
+; CHECK:   [[OUT:%[^ ]+]] = f32[80000,2,4]{2,1,0} get-tuple-element([[GEMM]]), index=0
+; CHECK:   ROOT {{[^ ]+}} = f32[20000,4,2,4]{3,2,1,0} bitcast([[OUT]])
 )");
 }
 
@@ -3090,7 +3132,6 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriterOptions options;
-  options.enable_cublaslt = true;
   GemmRewriter pass(Capability(), GetToolkitVersion(), options);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
@@ -3120,7 +3161,6 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriterOptions options;
-  options.enable_cublaslt = true;
   GemmRewriter pass(Capability(), GetToolkitVersion(), options);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
@@ -3152,7 +3192,6 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriterOptions options;
-  options.enable_cublaslt = true;
   GemmRewriter pass(Capability(), GetToolkitVersion(), options);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
@@ -3190,7 +3229,8 @@ ENTRY DotFunc {
 ; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[3,3], {{.*}}: f32[3,3]) -> f32[3,3] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[3,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,3]{1,0} parameter(1)
-; CHECK:         ROOT {{[^ ]+}} = f32[3,3]{1,0} fusion([[P0]], [[P1]]), kind=kLoop
+; CHECK:         ROOT {{[^ ]+}} = f32[3,3]{1,0} fusion([[P0]], [[P1]])
+; CHECK-SAME:      NATIVE_EMITTER
 )");
 }
 
@@ -3297,6 +3337,35 @@ ENTRY main {
       GemmRewriter(se::CudaComputeCapability{},
                    stream_executor::SemanticVersion{0, 0, 0}),
       std::nullopt);
+}
+
+TEST_F(GemmRewriteTest, UnsupportedGemmFusionF16) {
+  const char* hlo_text = R"(
+HloModule module
+
+ENTRY main {
+  p0 = f16[100,200,300,512]{1,3,2,0} parameter(0)
+  p1 = f16[100,400,300,512]{1,3,2,0} parameter(1)
+  ROOT dot = f16[100,300,200,400]{3,2,1,0} dot(p0, p1),
+      lhs_batch_dims={0,2}, lhs_contracting_dims={3},
+      rhs_batch_dims={0,2}, rhs_contracting_dims={3}
+}
+)";
+
+  auto module_status = ParseAndReturnVerifiedModule(hlo_text);
+  ASSERT_TRUE(module_status.ok());
+  auto module = std::move(module_status.value());
+
+  GemmRewriter pass(se::CudaComputeCapability{},
+                    stream_executor::SemanticVersion{0, 0, 0});
+  auto changed_status = pass.Run(module.get());
+  ASSERT_TRUE(changed_status.ok());
+  EXPECT_TRUE(changed_status.value());
+
+  HloVerifier verifier(/*layout_sensitive=*/false,
+                       /*allow_mixed_precision=*/false);
+  auto verify_status = verifier.Run(module.get());
+  EXPECT_TRUE(verify_status.ok());
 }
 
 }  // namespace

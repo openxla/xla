@@ -65,7 +65,7 @@ stream_executor::DeviceAddressBase NcclSymmetricMemory::addr() const {
 
 absl::StatusOr<stream_executor::DeviceAddressBase>
 NcclSymmetricMemory::multimem_addr() const {
-#if (NCCL_VERSION_CODE >= 22900)
+#if (NCCL_VERSION_CODE >= 22900) || defined(USE_NCCL_HOST_API)
   void* multimem = nullptr;
   XLA_NCCL_RETURN_IF_ERROR(ncclGetLsaMultimemDevicePointer(win_, 0, &multimem));
   if (multimem) {
@@ -78,7 +78,7 @@ NcclSymmetricMemory::multimem_addr() const {
 
 absl::StatusOr<stream_executor::DeviceAddressBase>
 NcclSymmetricMemory::peer_addr(RankId peer) const {
-#if (NCCL_VERSION_CODE >= 22900)
+#if (NCCL_VERSION_CODE >= 22900) || defined(USE_NCCL_HOST_API)
   void* peer_addr = nullptr;
   XLA_NCCL_RETURN_IF_ERROR(
       ncclGetLsaDevicePointer(win_, 0, peer.value(), &peer_addr));

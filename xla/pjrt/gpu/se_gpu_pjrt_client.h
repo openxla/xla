@@ -137,6 +137,7 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   absl::string_view platform_version() const override;
 
   std::optional<PjRtPluginAttributes> plugin_attributes() const override;
+  bool use_stream_based_compaction() const override { return true; }
 
   void UpdateGlobalProcessInfo(
       absl::Span<xla::coordination::TaskInfo> infos) override;
@@ -165,7 +166,7 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   // to support the legacy cross-host transfers API.
   void ScheduleRemoteSend(
       PjRtMemorySpace* memory_space, PjRtRawBufferRef raw_buffer,
-      std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events,
+      std::vector<PjRtDeviceEventRef> definition_events,
       tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise,
       Future<std::string> serialized_descriptor,
       PjRtBuffer::RemoteSendCallback on_done) override;
@@ -180,6 +181,10 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
 
   absl::StatusOr<Layout> GetDefaultLayout(
       PrimitiveType element_type, absl::Span<const int64_t> dims) override;
+
+  absl::StatusOr<xla::Shape> GetCopyDestinationShape(
+      const xla::Shape& shape, PjRtMemorySpace* src_memory_space,
+      PjRtMemorySpace* dst_memory_space) override;
 
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadSerialized(
       absl::string_view serialized, std::optional<CompileOptions> options,

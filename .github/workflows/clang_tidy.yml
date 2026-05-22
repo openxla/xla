@@ -21,7 +21,7 @@ jobs:
   clang-tidy-cuda:
     runs-on: "linux-x86-n2-16"
     container:
-      image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+      image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"  # zizmor: ignore[unpinned-images]
     defaults:
       run:
         shell: bash
@@ -57,4 +57,4 @@ jobs:
           BAZEL_CMD: "bazel"
         run: |
           set -euo pipefail
-          $BAZEL_CMD run //build_tools/ci:run_clang_tidy
+          ./build_tools/ci/run_clang_tidy.sh

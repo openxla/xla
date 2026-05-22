@@ -598,6 +598,15 @@ absl::StatusOr<bool> InstructionFusion::RunImpl(
   for (auto* computation :
        GetNonFusionComputations(module, execution_threads)) {
     CHECK(!computation->IsFusionComputation());
+    // Skip fusion inside the body of any kEmbedded computation (e.g. kScan,
+    // kSort, kMap, kReduce, kReduceWindow, kScatter, kSelectAndScatter,
+    // kAllReduce, kReduceScatter, kAllReduceStart, kCustomCall). These bodies
+    // are typically scalar-in / scalar-out and do not materialize tensors, so
+    // wrapping their instructions in kFusion ops is unhelpful and breaks
+    // backends that expect them to stay flat.
+    if (IsEmbeddedComputation(computation)) {
+      continue;
+    }
     std::unique_ptr<HloReachabilityMap> reachability =
         HloReachabilityMap::Build(computation);
 
@@ -918,6 +927,21 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
 
 }  // namespace
 
+/*static*/ bool InstructionFusion::IsEmbeddedComputation(
+    const HloComputation* computation) {
+  if (computation == nullptr) {
+    return false;
+  }
+  // All callers of a given computation share the same call context, so it
+  // suffices to inspect the first one.
+  auto callers = computation->caller_instructions();
+  if (callers.empty()) {
+    return false;
+  }
+  return GetInstructionCallContext(callers.front()->opcode()) ==
+         CallContext::kEmbedded;
+}
+
 /*static*/ FusionDecision InstructionFusion::ShouldFuseInPlaceOp(
     const HloInstruction* producer, const HloInstruction* consumer,
     const AliasInfo* alias_info,
@@ -1106,13 +1130,6 @@ FusionDecision InstructionFusion::ShouldFuse(
   HloInstruction* producer = consumer->mutable_operand(operand_index);
   VLOG(2) << "Evaluating fusion: producer '" << producer->name()
           << "' into consumer '" << consumer->name() << "'.";
-
-  // Skip fusion inside the body of any kScan.
-  if (const HloComputation* parent = consumer->parent(); parent != nullptr) {
-    if (!parent->caller_instructions(HloOpcode::kScan).empty()) {
-      return FusionDecision::Forbid("not fusing inside the body of a scan");
-    }
-  }
 
   // Don't fuse across a root instruction.
   if (producer == producer->parent()->root_instruction()) {
