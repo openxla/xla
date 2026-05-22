@@ -265,7 +265,8 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
   int fused_op_count = 0;
 
   // BFS and fuse as many neighbors as possible.
-  while (!frontier.empty()) {
+  while (!frontier.empty() &&
+         fusion->fused_instruction_count() < kMaxInstructionsInFusion) {
     auto [instr, dir] = frontier.front();
     frontier.pop();
     if (dir != FusionDirection::kUp && dir != FusionDirection::kDown) {

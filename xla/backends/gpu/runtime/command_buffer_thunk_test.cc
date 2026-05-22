@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd.h"
@@ -99,7 +100,7 @@ struct OwningExecutableSource {
 };
 
 absl::StatusOr<OwningExecutableSource> ExecutableSource() {
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       std::vector<uint8_t> fatbin,
       se::gpu::GetGpuTestKernelsFatbin(GpuExecutor()->GetPlatform()->Name()));
   return OwningExecutableSource{/*text=*/{},

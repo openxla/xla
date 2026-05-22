@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/collective_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
@@ -73,11 +74,10 @@ absl::StatusOr<std::unique_ptr<Thunk>> DeserializeThunkProto(
         symbol_resolver = std::nullopt) {
   ThunkSequenceProto thunk_sequence_proto;
   *thunk_sequence_proto.add_thunks() = thunk_proto;
-  TF_ASSIGN_OR_RETURN(
-      ThunkSequence sequence,
-      DeserializeThunkSequenceProto(thunk_sequence_proto, buffer_allocations,
-                                    hlo_module, platform_name,
-                                    gpu_compute_capability, symbol_resolver));
+  ASSIGN_OR_RETURN(ThunkSequence sequence,
+                   DeserializeThunkSequenceProto(
+                       thunk_sequence_proto, buffer_allocations, hlo_module,
+                       platform_name, gpu_compute_capability, symbol_resolver));
   return std::move(sequence.front());
 }
 
