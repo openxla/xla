@@ -32,8 +32,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/hlo/parser/hlo_parser.h"
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/service/compiler.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/stream_executor/device_address.h"
@@ -59,8 +57,6 @@ using ::testing::UnorderedElementsAreArray;
 
 class SyclStreamTest : public xla::gpu::HloPjRtGpuTestBase {
  public:
-  SyclStreamTest() : xla::gpu::HloPjRtGpuTestBase(CreatePjRtClient()) {}
-
   std::optional<SyclExecutor> executor_;
 
  private:
@@ -70,14 +66,6 @@ class SyclStreamTest : public xla::gpu::HloPjRtGpuTestBase {
         stream_executor::PlatformManager::PlatformWithId(kSyclPlatformId));
     executor_.emplace(platform, kDefaultDeviceOrdinal);
     ASSERT_THAT(executor_->Init(), absl_testing::IsOk());
-  }
-
-  static std::unique_ptr<xla::PjRtClient> CreatePjRtClient() {
-    xla::GpuClientOptions options;
-    absl::StatusOr<std::unique_ptr<xla::PjRtClient>> pjrt_client =
-        xla::GetXlaPjrtGpuClient(options);
-    CHECK_OK(pjrt_client);
-    return *std::move(pjrt_client);
   }
 };
 
@@ -254,20 +242,18 @@ TEST_F(SyclStreamTest, LaunchKernel) {
     })";
 
   xla::HloModuleConfig config;
-  config.set_debug_options(xla::GetDebugOptionsFromFlags());
+  config.set_debug_options(GetDebugOptionsForTest());
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> hlo_module,
                           xla::ParseAndReturnUnverifiedModule(hlo_ir, config));
 
-  xla::Compiler* compiler = this->compiler();
-
   TF_ASSERT_OK_AND_ASSIGN(
       hlo_module,
-      compiler->RunHloPasses(std::move(hlo_module), &executor_.value(),
-                             /*device_allocator=*/nullptr));
+      compiler()->RunHloPasses(std::move(hlo_module), &executor_.value(),
+                               /*device_allocator=*/nullptr));
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<xla::Executable> exec,
-      compiler->RunBackend(std::move(hlo_module), &executor_.value(),
-                           /*device_allocator=*/nullptr));
+      compiler()->RunBackend(std::move(hlo_module), &executor_.value(),
+                             /*device_allocator=*/nullptr));
 
   auto* gpu_exec = static_cast<xla::gpu::GpuExecutable*>(exec.get());
   ASSERT_NE(gpu_exec, nullptr);

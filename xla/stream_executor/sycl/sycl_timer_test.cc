@@ -22,8 +22,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/hlo/parser/hlo_parser.h"
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/service/compiler.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/stream_executor/device_address.h"
@@ -43,8 +41,6 @@ using ::testing::Gt;
 
 class SyclTimerTest : public xla::gpu::HloPjRtGpuTestBase {
  public:
-  SyclTimerTest() : xla::gpu::HloPjRtGpuTestBase(CreatePjRtClient()) {}
-
   void LaunchSomeKernel(StreamExecutor* executor, Stream* stream) {
     using AddKernel =
         TypedKernelFactory<DeviceAddress<int32_t>, DeviceAddress<int32_t>,
@@ -58,20 +54,18 @@ class SyclTimerTest : public xla::gpu::HloPjRtGpuTestBase {
     })";
 
     xla::HloModuleConfig config;
-    config.set_debug_options(xla::GetDebugOptionsFromFlags());
+    config.set_debug_options(GetDebugOptionsForTest());
     TF_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<xla::HloModule> hlo_module,
         xla::ParseAndReturnUnverifiedModule(hlo_ir, config));
 
-    xla::Compiler* compiler = this->compiler();
-
     TF_ASSERT_OK_AND_ASSIGN(
-        hlo_module, compiler->RunHloPasses(std::move(hlo_module), executor,
-                                           /*device_allocator=*/nullptr));
+        hlo_module, compiler()->RunHloPasses(std::move(hlo_module), executor,
+                                             /*device_allocator=*/nullptr));
     TF_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<xla::Executable> exec,
-        compiler->RunBackend(std::move(hlo_module), executor,
-                             /*device_allocator=*/nullptr));
+        compiler()->RunBackend(std::move(hlo_module), executor,
+                               /*device_allocator=*/nullptr));
     auto* gpu_exec = static_cast<xla::gpu::GpuExecutable*>(exec.get());
     ASSERT_NE(gpu_exec, nullptr);
 
@@ -104,15 +98,6 @@ class SyclTimerTest : public xla::gpu::HloPjRtGpuTestBase {
     EXPECT_THAT(stream->MemZero(&c, kByteLength), absl_testing::IsOk());
     EXPECT_THAT(add.Launch(ThreadDim(kLength), BlockDim(), stream, a, b, c),
                 absl_testing::IsOk());
-  }
-
- private:
-  static std::unique_ptr<xla::PjRtClient> CreatePjRtClient() {
-    xla::GpuClientOptions options;
-    absl::StatusOr<std::unique_ptr<xla::PjRtClient>> pjrt_client =
-        xla::GetXlaPjrtGpuClient(options);
-    CHECK_OK(pjrt_client);
-    return *std::move(pjrt_client);
   }
 
  protected:
