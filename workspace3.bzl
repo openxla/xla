@@ -1,10 +1,80 @@
 """TensorFlow workspace initialization. Consult the WORKSPACE on how to use it."""
 
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 
 # buildifier: disable=function-docstring
 # buildifier: disable=unnamed-macro
+def _cc_compatibility_proxy_impl(repository_ctx):
+    repository_ctx.file("BUILD", """
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+
+exports_files(["proxy.bzl", "symbols.bzl"])
+
+bzl_library(
+  name = "proxy_bzl",
+  srcs = ["proxy.bzl"],
+  visibility = ["@rules_cc//cc:__subpackages__"],
+)
+
+bzl_library(
+  name = "symbols_bzl",
+  srcs = ["symbols.bzl"],
+  deps = [
+      "@rules_cc//cc/private/rules_impl:native_cc_common_bzl",
+      "@rules_cc//cc/private/rules_impl:native_providers_bzl",
+  ],
+  visibility = ["@rules_cc//cc:__subpackages__"],
+)
+""")
+    repository_ctx.file("proxy.bzl", """
+cc_binary = native.cc_binary
+cc_import = native.cc_import
+cc_library = native.cc_library
+cc_shared_library = native.cc_shared_library
+cc_static_library = getattr(native, "cc_static_library", None)
+cc_test = native.cc_test
+objc_import = native.objc_import
+objc_library = native.objc_library
+fdo_prefetch_hints = native.fdo_prefetch_hints
+fdo_profile = native.fdo_profile
+memprof_profile = getattr(native, "memprof_profile", None)
+propeller_optimize = native.propeller_optimize
+cc_toolchain = native.cc_toolchain
+cc_toolchain_alias = native.cc_toolchain_alias
+""")
+    repository_ctx.file("symbols.bzl", """
+load("@rules_cc//cc/private/rules_impl:native_cc_common.bzl", "native_cc_common")
+load("@rules_cc//cc/private/rules_impl:native_providers.bzl", "NativeCcInfo")
+load("@rules_cc//cc/private/rules_impl:native_providers.bzl", "NativeDebugPackageInfo")
+load("@rules_cc//cc/private/rules_impl:native_providers.bzl", "NativeCcToolchainConfigInfo")
+load("@rules_cc//cc/private/rules_impl:native_providers.bzl", "NativeCcSharedLibraryInfo")
+cc_common = native_cc_common
+CcInfo = NativeCcInfo
+merge_cc_infos = cc_common.merge_cc_infos
+DebugPackageInfo = NativeDebugPackageInfo
+CcToolchainConfigInfo = NativeCcToolchainConfigInfo
+ObjcInfo = apple_common.Objc
+new_objc_provider = apple_common.new_objc_provider
+CcSharedLibraryInfo = NativeCcSharedLibraryInfo
+""")
+
+cc_compatibility_proxy = repository_rule(
+    implementation = _cc_compatibility_proxy_impl,
+)
+
 def workspace():
+    # Define rules_cc 0.2.11
+    http_archive(
+        name = "rules_cc",
+        urls = ["https://github.com/bazelbuild/rules_cc/releases/download/0.2.11/rules_cc-0.2.11.tar.gz"],
+        strip_prefix = "rules_cc-0.2.11",
+        sha256 = "5287821524d1c1d20f1c0ffa90bd2c2d776473dd8c84dafa9eb783150286d825",
+    )
+
+    # Initialize custom compatibility proxy early
+    cc_compatibility_proxy(name = "cc_compatibility_proxy")
+
     tf_http_archive(
         name = "io_bazel_rules_closure",
         sha256 = "5b00383d08dd71f28503736db0500b6fb4dda47489ff5fc6bed42557c07c6ba9",
@@ -15,12 +85,12 @@ def workspace():
     )
 
     # https://github.com/bazelbuild/bazel-skylib/releases
-    tf_http_archive(
+    http_archive(
         name = "bazel_skylib",
-        sha256 = "bc283cdfcd526a52c3201279cda4bc298652efa898b10b4db0837dc51652756f",
-        urls = tf_mirror_urls(
-            "https://github.com/bazelbuild/bazel-skylib/releases/download/1.7.1/bazel-skylib-1.7.1.tar.gz",
-        ),
+        sha256 = "6e78f0e57de26801f6f564fa7c4a48dc8b36873e416257a92bbb0937eeac8446",
+        urls = [
+            "https://github.com/bazelbuild/bazel-skylib/releases/download/1.8.2/bazel-skylib-1.8.2.tar.gz",
+        ],
     )
 
     tf_http_archive(
