@@ -44,6 +44,12 @@ jobs:
   # ================================================================
   generate_matrix:
     name: Generate Presubmit Matrix
+    # Restrict to non-fork PRs to prevent untrusted code from running on
+    # privileged self-hosted GCE runners. Benchmarks can be triggered
+    # manually via workflow_dispatch for external contributions.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     uses: ./.github/workflows/generate_benchmark_matrix.yml
     with:
       workflow_type: 'PRESUBMIT'
