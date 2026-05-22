@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
+#include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_kernel_api.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
@@ -148,6 +149,11 @@ RaggedAllToAllConfig GetRaggedAllToAllConfig(
           ->config()
           .debug_options()
           .xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl();
+  config.use_device_kernel =
+      instr->GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_experimental_ragged_all_to_all_use_device_kernel();
 
   config.collectives_mode = instr->GetModule()
                                 ->config()
@@ -302,9 +308,11 @@ RaggedAllToAllThunk::RaggedAllToAllThunk(
 CollectiveCliqueRequests::CliqueRequirements
 RaggedAllToAllThunk::GetCliqueRequirements(const GpuCliqueKey& clique_key) {
   CollectiveCliqueRequests::CliqueRequirements clique_reqs;
-  if (config_.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel) {
+  if (UsesDeviceKernel()) {
+    clique_reqs.dev_comm = DeviceKernelDevCommRequirements();
+  } else if (config_.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel) {
     clique_reqs.dev_comm =
-        GpuDeviceCommunicator::Requirements{/*lsa_barrier_count=*/1};
+        GpuDeviceCommunicator::Requirements{.lsa_barrier_count = 1};
   }
   return clique_reqs;
 }
@@ -349,15 +357,18 @@ absl::StatusOr<RaggedAllToAllStreamState*> RaggedAllToAllThunk::InitializeOnce(
     return absl::InternalError("Failed to allocate output offsets buffer.");
   }
 
-  if (use_multi_gpu_barrier_with_nccl_in_one_shot_kernel()) {
+  if (use_multi_gpu_barrier_with_nccl_in_one_shot_kernel() ||
+      config_.use_device_kernel) {
     if (config_.fast_interconnect_slice_size_override.has_value()) {
       state->lsa_size = config_.fast_interconnect_slice_size_override.value();
     } else {
-      ASSIGN_OR_RETURN(
-          auto* dev_comm,
-          params.collective_cliques->GetDeviceComm(
-              state->clique_key, state->rank,
-              GpuDeviceCommunicator::Requirements{/*lsa_barrier_count=*/1}));
+      GpuDeviceCommunicator::Requirements req =
+          UsesDeviceKernel()
+              ? DeviceKernelDevCommRequirements()
+              : GpuDeviceCommunicator::Requirements{.lsa_barrier_count = 1};
+      ASSIGN_OR_RETURN(auto* dev_comm,
+                       params.collective_cliques->GetDeviceComm(
+                           state->clique_key, state->rank, req));
 
       state->lsa_size = dev_comm->lsa_size();
     }
@@ -613,7 +624,8 @@ RaggedAllToAllThunk::FromProto(
           config, thunk_proto.num_total_updates(), thunk_proto.num_input_rows(),
           thunk_proto.num_row_elements(), thunk_proto.one_shot_kernel_enabled(),
           thunk_proto.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel(),
-          thunk_proto.collectives_mode(), fast_interconnect_slice_size_override,
+          thunk_proto.collectives_mode(), thunk_proto.use_device_kernel(),
+          fast_interconnect_slice_size_override,
           thunk_proto.zero_copy_in_one_shot_kernel()},
       std::move(buffers));
 }
@@ -638,6 +650,7 @@ absl::StatusOr<ThunkProto> RaggedAllToAllThunk::ToProto() const {
   thunk_proto->set_use_multi_gpu_barrier_with_nccl_in_one_shot_kernel(
       use_multi_gpu_barrier_with_nccl_in_one_shot_kernel());
   thunk_proto->set_collectives_mode(collectives_mode());
+  thunk_proto->set_use_device_kernel(config_.use_device_kernel);
   thunk_proto->set_fast_interconnect_slice_size_override(
       config_.fast_interconnect_slice_size_override.value_or(0));
   thunk_proto->set_zero_copy_in_one_shot_kernel(zero_copy_in_one_shot_kernel());
@@ -662,6 +675,47 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
     state = per_stream_states_[stream.parent()].get();
   }
 
+  auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(&comm);
+  if (UsesDeviceKernel() && gpu_comm->SupportsGin() &&
+      params.collective_memory != nullptr) {
+    auto [input_sym, input_offset] =
+        params.collective_memory->FindSymmetricMemory(
+            clique_key, device_buffers[0].source_buffer);
+    auto [output_sym, output_offset] =
+        params.collective_memory->FindSymmetricMemory(
+            clique_key, device_buffers[1].destination_buffer);
+
+    if (input_sym != nullptr && output_sym != nullptr) {
+      ASSIGN_OR_RETURN(auto* dev_comm, params.collective_cliques->GetDeviceComm(
+                                           clique_key, state->rank,
+                                           DeviceKernelDevCommRequirements()));
+
+      ASSIGN_OR_RETURN(int32_t num_ranks, comm.NumRanks());
+
+      XLA_VLOG_DEVICE(3, state->device_ordinal)
+          << "Device kernel: lsa_size=" << dev_comm->lsa_size()
+          << " num_ranks=" << num_ranks << " gin=" << gpu_comm->SupportsGin()
+          << " cta_count=" << device_kernel_cta_count()
+          << " num_updates_per_replica="
+          << (config_.num_total_updates / num_ranks)
+          << " num_row_elements=" << config_.num_row_elements
+          << " element_type="
+          << primitive_util::LowercasePrimitiveTypeName(
+                 device_buffers[0].element_type);
+
+      int64_t num_updates_per_replica = config_.num_total_updates / num_ranks;
+      PrimitiveType element_type = device_buffers[0].element_type;
+
+      return RunDeviceRaggedAllToAllKernel(
+          &stream, element_type, dev_comm, input_sym, output_sym,
+          device_buffers[2].source_buffer, device_buffers[3].source_buffer,
+          device_buffers[4].source_buffer, num_ranks, num_updates_per_replica,
+          config_.num_row_elements, device_kernel_cta_count(),
+          static_cast<int64_t>(input_offset),
+          static_cast<int64_t>(output_offset));
+    }
+  }
+
   FabricHomogeneity homogeneity =
       CheckFabricHomogeneity(stream.parent(), clique_key);
   // The fabric is "safe" unless we have confirmed a mismatch.
@@ -670,7 +724,8 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
   bool fabric_safe = (homogeneity != FabricHomogeneity::kHeterogeneous);
 
   if (is_one_shot_kernel_enabled() && fabric_safe) {
-    if (IsRaggedAllToAllWithSymmetricMemoryKernelSupported(
+    if (use_multi_gpu_barrier_with_nccl_in_one_shot_kernel() &&
+        IsRaggedAllToAllWithSymmetricMemoryKernelSupported(
             config_.config.operand_element_type[0]) &&
         state->lsa_size.has_value() &&
         state->lsa_size.value() == clique_key.num_devices()) {
@@ -705,7 +760,8 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
           config_.num_input_rows, config_.num_row_elements, device_buffers);
     }
 
-    if (IsOneShotKernelSupported() && peer_access_enabled &&
+    if (state->participants != nullptr && IsOneShotKernelSupported() &&
+        peer_access_enabled &&
         is_local(params.collective_params->local_device_count)) {
       return RunOneShotRaggedAllToAll(
           clique_key, stream, state->rank,
