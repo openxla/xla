@@ -41,7 +41,8 @@ jobs:
 
   jax:
     needs: rocm-config
-    if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' }}
+    # Restrict to non-fork PRs (existing base_ref check was not a fork guard).
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.base_ref == 'main') }}
     name: JAX Linux x86 AMD Instinct GPU
     runs-on: linux-x86-64-1gpu-amd
     env:
@@ -100,6 +101,8 @@ jobs:
 
   xla:
     needs: rocm-config
+    # Restrict to non-fork PRs: self-hosted AMD GPU runner executes fork's WORKSPACE via bazel.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: XLA Linux x86 AMD Instinct GPU
     runs-on: linux-x86-64-1gpu-amd
     env:
