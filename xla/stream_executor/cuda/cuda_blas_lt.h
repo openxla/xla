@@ -129,7 +129,7 @@ class BlasLt : public gpu::BlasLt {
     double beta_;
     bool must_swap_operands_;
     std::optional<MatmulAlgorithm> algorithm_;  // selected algorithm
-  };  // class MatmulPlan
+  };                                            // class MatmulPlan
 
   explicit BlasLt(StreamExecutor* executor)
       : executor_(executor), handle_(nullptr, cublasLtDestroy) {}
@@ -139,8 +139,8 @@ class BlasLt : public gpu::BlasLt {
   absl::StatusOr<MatmulPlanPtr> GetMatmulPlan(const gpu::GemmConfig& cfg,
                                               Epilogue epilogue) const override;
 
-  absl::StatusOr<MatmulPlanPtr> GetGroupedMatmulPlan(
-      const gpu::GroupedGemmConfig& config, Epilogue epilogue) const override {
+  absl::StatusOr<MatmulPlanPtr> GetMatmulPlan(
+      const gpu::GroupedGemmConfig& cfg, Epilogue epilogue) const override {
     return absl::UnimplementedError(
         "Grouped GEMM is not supported for CUDA BlasLt");
   };
