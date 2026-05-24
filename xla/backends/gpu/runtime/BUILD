@@ -760,6 +760,7 @@ xla_test(
     backends = ["gpu"],
     tags = ["cuda-only"],
     deps = [
+        ":collective_params",
         ":command",
         ":command_buffer_cmd",
         ":command_buffer_thunk",
@@ -771,6 +772,7 @@ xla_test(
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/runtime:buffer_use",
+        "//xla/runtime:device_id",
         "//xla/service:buffer_assignment",
         "//xla/service:executable",
         "//xla/service:platform_util",
