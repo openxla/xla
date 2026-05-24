@@ -117,9 +117,11 @@ namespace stream_executor {
 // stale reservation mapping are rejected.
 //
 // Deallocate() and UnMap() are stream-ordered deferred operations. The
-// allocator enqueues a timeline write on the device stream, moves the affected
-// address record from active tracking to stale tracking, and appends a pending
-// entry with the operation kind, sequence number, and address. The stale
+// allocator assigns the affected address record a per-device batch sequence
+// number, moves it from active tracking to stale tracking, and appends a
+// pending entry with the operation kind, sequence number, and address. A
+// trailing timeline write is enqueued for the open batch when the allocator
+// needs to observe the timeline or when the batch limit is reached. The stale
 // AllocationRecord keeps the raw allocation, any allocator-owned reservation,
 // and ScopedMapping objects alive until the stream reaches that sequence
 // number, so kernels already submitted to the stream can keep using the old VA.
@@ -358,6 +360,10 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     // Allocator address for allocation deallocations; reservation address for
     // kMap.
     DeviceAddressBase addr;
+    // Rounded physical-allocation bytes that become reclaimable when this
+    // pending operation completes. kMap entries do not own physical memory and
+    // therefore use zero.
+    uint64_t reclaimable_bytes = 0;
   };
 
   // Stable identity for a pending operation. Iterators into
@@ -399,6 +405,13 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     uint64_t pa_allocated ABSL_GUARDED_BY(mu) = 0;
     // Monotonically increasing counter for timeline sequence numbers.
     uint64_t next_seqno ABSL_GUARDED_BY(mu) = 1;
+    // Open trailing batch of deferred deallocations. Pending entries in the
+    // open batch have been moved to stale state but do not have a stream
+    // timeline write yet. FlushOpenDeallocationBatch() enqueues a single write
+    // for open_deallocation_batch_seqno and clears these fields.
+    uint64_t open_deallocation_batch_seqno ABSL_GUARDED_BY(mu) = 0;
+    int64_t open_deallocation_batch_entries ABSL_GUARDED_BY(mu) = 0;
+    uint64_t open_deallocation_batch_bytes ABSL_GUARDED_BY(mu) = 0;
     std::deque<PendingDeallocation> pending_deallocations ABSL_GUARDED_BY(mu);
     // Owns AllocationRecord objects. Key is the allocator address pointer
     // (`AllocationRecord::allocator_address.opaque()`), including the
@@ -427,6 +440,11 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // Called by platform-specific Create() factories.
   static absl::Status PopulateDevices(DeviceAddressVmmAllocator* allocator,
                                       absl::Span<const DeviceConfig> devices);
+
+  // Flushes open deallocation batches and drains all pending operations for all
+  // devices. Subclasses with platform-specific timeline enqueue implementations
+  // must call this from their destructor before the base destructor runs.
+  absl::Status SynchronizeAllPendingOperations();
 
   // Validates device capabilities and initializes timeline fields
   // (pinned_timeline, timeline_dev_ptr, allocation_granularity) in state.
@@ -460,6 +478,23 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
     std::atomic<uint64_t> deallocate_calls{0};
     std::atomic<uint64_t> unmap_calls{0};
+
+    std::atomic<uint64_t> deallocation_batch_flushes{0};
+    std::atomic<uint64_t> deallocation_batch_flushes_by_entry_limit{0};
+    std::atomic<uint64_t> deallocation_batch_flushes_by_byte_limit{0};
+    std::atomic<uint64_t> deallocation_batch_flushes_by_wait{0};
+    std::atomic<uint64_t> deallocation_batch_flushes_by_sync{0};
+    std::atomic<uint64_t> deallocation_batch_flushes_by_destructor{0};
+    std::atomic<uint64_t> deallocation_batch_entries_flushed{0};
+    std::atomic<uint64_t> deallocation_batch_bytes_flushed{0};
+  };
+
+  enum class DeallocationBatchFlushReason {
+    kEntryLimit,
+    kByteLimit,
+    kWait,
+    kSync,
+    kDestructor,
   };
 
   std::string DebugStatsTable() const;
@@ -543,6 +578,41 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
   // UnMap/deferred teardown helpers.
 
+  // Flushes the current open deallocation batch before adding a new entry if
+  // keeping it open would exceed the configured entry or reclaimable-byte
+  // limit.
+  absl::Status FlushOpenDeallocationBatchIfNeededForEntry(
+      PerDeviceState& state, uint64_t reclaimable_bytes)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Returns the sequence number for the current open deallocation batch,
+  // creating a new batch if necessary.
+  uint64_t GetOrCreateOpenDeallocationBatchSeqno(PerDeviceState& state)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Records that a pending entry was added to the current open deallocation
+  // batch. The batch sequence must already have been created.
+  void AddOpenDeallocationBatchEntry(PerDeviceState& state,
+                                     uint64_t reclaimable_bytes)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Removes or updates pending entries while maintaining open-batch counters
+  // for entries that have not yet received their trailing stream marker.
+  void ErasePendingDeallocationAt(PerDeviceState& state,
+                                  std::deque<PendingDeallocation>::iterator it)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  void ConvertPendingDeallocationToMap(
+      PerDeviceState& state, std::deque<PendingDeallocation>::iterator it,
+      DeviceAddressBase reservation_address)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Enqueues one stream timeline write for the current open deallocation batch,
+  // if any pending entries remain in that batch.
+  absl::Status FlushOpenDeallocationBatch(PerDeviceState& state,
+                                          DeallocationBatchFlushReason reason)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
   // Removes the matching pending entry when a stale record is reused.
   void ErasePendingDeallocation(PerDeviceState& state,
                                 PendingDeallocationKind kind,
@@ -568,14 +638,14 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // Waits for the device timeline to reach `target_seqno`. Temporarily releases
   // and reacquires state.mu around the blocking wait. This does not complete
   // pending entries by itself.
-  void WaitUntilSeqno(PerDeviceState& state, uint64_t target_seqno)
+  absl::Status WaitUntilSeqno(PerDeviceState& state, uint64_t target_seqno)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Waits for pending operations through `target_seqno`, then completes all
   // still-pending operations up to that sequence. Used only when preserving
   // stale mappings for future reuse is no longer useful.
-  void WaitAndDrainPendingDeallocationsUntilSeqno(PerDeviceState& state,
-                                                  uint64_t target_seqno)
+  absl::Status WaitAndDrainPendingDeallocationsUntilSeqno(PerDeviceState& state,
+                                                          uint64_t target_seqno)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Completes ready allocator-address deallocations for PA reclaim while
@@ -601,21 +671,21 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
   // Waits for and completes the selected allocator-address deallocation, if it
   // is still pending after the wait.
-  void WaitAndCompleteStaleAllocatorDeallocation(
+  absl::Status WaitAndCompleteStaleAllocatorDeallocation(
       PerDeviceState& state, const PendingDeallocationKey& key)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Waits for and completes a stale reservation-address mapping. The
   // reservation mapping may have a kMap queue entry, or it may be stale because
   // Deallocate() auto-staled the alias before queuing allocator deallocation.
-  void WaitAndCompleteStaleReservationMapping(PerDeviceState& state,
-                                              const PendingDeallocationKey& key)
+  absl::Status WaitAndCompleteStaleReservationMapping(
+      PerDeviceState& state, const PendingDeallocationKey& key)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Completes only the stale allocator or reservation mapping that conflicts
   // with the current request, leaving unrelated stale mappings reusable.
-  void WaitAndCompleteStaleOverlap(PerDeviceState& state,
-                                   const OverlappingRecord& overlap)
+  absl::Status WaitAndCompleteStaleOverlap(PerDeviceState& state,
+                                           const OverlappingRecord& overlap)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Device ordinal -> per-device allocator state. Populated at construction by
