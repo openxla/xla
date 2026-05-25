@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_TPU_C_API_DECL_H_
-#define XLA_TPU_C_API_DECL_H_
+#ifndef XLA_STREAM_EXECUTOR_TPU_C_API_DECL_H_
+#define XLA_STREAM_EXECUTOR_TPU_C_API_DECL_H_
 
 #include <stddef.h>
 #include <stdint.h>
 
-#include "xla/tpu/libtftpu.h"
+#include "xla/stream_executor/tpu/libtftpu.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -56,8 +56,6 @@ typedef struct SE_StreamExecutor SE_StreamExecutor;
 typedef struct SE_Stream SE_Stream;
 typedef struct SE_Event SE_Event;
 
-// An empty proto is always represented as (bytes=nullptr, size=0).
-// There is no other valid way to represent it.
 typedef struct TpuSerializedProto {
   const char* bytes;
   size_t size;
@@ -358,4 +356,4 @@ typedef struct SE_OutsideCompilationParams SE_OutsideCompilationParams;
 }
 #endif
 
-#endif  // XLA_TPU_C_API_DECL_H_
+#endif  // XLA_STREAM_EXECUTOR_TPU_C_API_DECL_H_
