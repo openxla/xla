@@ -235,7 +235,7 @@ absl::StatusOr<ThunkProto> CublasLtMatmulThunk::ToProto() const {
       gemm_config_));
 
   cublas_lt_matmul_thunk->set_epilogue(
-      stream_executor::gpu::BlasLt::EpilogueToProto(epilogue_));
+      se::gpu::BlasLt::EpilogueToProto(epilogue_));
   cublas_lt_matmul_thunk->set_algorithm_idx(algorithm_idx_);
   cublas_lt_matmul_thunk->set_autotune_workspace_size(autotune_workspace_size_);
   cublas_lt_matmul_thunk->set_canonical_hlo(canonical_hlo_);
@@ -280,9 +280,8 @@ absl::StatusOr<ThunkProto> CublasLtMatmulThunk::ToProto() const {
 CublasLtMatmulThunk::FromProto(Thunk::ThunkInfo thunk_info,
                                const CublasLtMatmulThunkProto& proto,
                                absl::Span<const BufferAllocation> allocations) {
-  ASSIGN_OR_RETURN(
-      stream_executor::gpu::BlasLt::Epilogue epilogue,
-      stream_executor::gpu::BlasLt::EpilogueFromProto(proto.epilogue()));
+  ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue epilogue,
+                   se::gpu::BlasLt::EpilogueFromProto(proto.epilogue()));
   ASSIGN_OR_RETURN(ShapedSlice a,
                    ShapedSlice::FromProto(proto.a(), allocations));
   ASSIGN_OR_RETURN(ShapedSlice b,
