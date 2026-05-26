@@ -2230,14 +2230,13 @@ StreamExecutorGpuClient::RunAsync(
 
   std::optional<gpu::GpuExecutable::VaRemapExecutionState>
       va_remap_execution_state_storage;
-  gpu::GpuExecutable::VaRemapExecutionState* va_remap_execution_state =
-      nullptr;
+  gpu::GpuExecutable::VaRemapExecutionState* va_remap_execution_state = nullptr;
   std::unique_ptr<absl::MutexLock> command_buffer_va_remap_lock;
-  ASSIGN_OR_RETURN(va_remap_execution_state,
-                   gpu_exec->MaybeCreateVaRemapExecutionState(
-                       run_options, memory_allocator, device_ordinal,
-                       va_remap_execution_state_storage,
-                       command_buffer_va_remap_lock));
+  ASSIGN_OR_RETURN(
+      va_remap_execution_state,
+      gpu_exec->MaybeCreateVaRemapExecutionState(
+          run_options, memory_allocator, device_ordinal,
+          va_remap_execution_state_storage, command_buffer_va_remap_lock));
   RETURN_IF_ERROR(gpu_exec->PrepareVaRemapReservation(
       run_options, device_ordinal, allocate_granularity,
       va_remap_execution_state));
@@ -2293,9 +2292,8 @@ StreamExecutorGpuClient::RunAsync(
         }
         if (buffer_size > 0) {
           absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> owning_buffer_or;
-          if (va_remap_execution_state != nullptr &&
-              gpu_exec->command_buffer_allocation_indexes().contains(
-                  allocation.index())) {
+          if (gpu_exec->ShouldVaRemapAllocation(allocation.index(),
+                                                va_remap_execution_state)) {
             bool allocate_va_address =
                 allocation.maybe_live_out() &&
                 output_allocations.contains(allocation.index());
@@ -2369,9 +2367,8 @@ StreamExecutorGpuClient::RunAsync(
         int64_t allocation_size = ShapeUtil::ByteSizeOf(
             ShapeUtil::GetSubshape(gpu_exec->result_shape(), index));
         absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> allocated_buffer;
-        if (va_remap_execution_state != nullptr &&
-            gpu_exec->command_buffer_allocation_indexes().contains(
-                output_info.allocation_index)) {
+        if (gpu_exec->ShouldVaRemapAllocation(output_info.allocation_index,
+                                              va_remap_execution_state)) {
           allocated_buffer = gpu_exec->AllocateVaRemappedBuffer(
               device_ordinal, *allocation, allocation_size,
               /*allocate_va_address=*/true, *va_remap_execution_state);
@@ -2421,19 +2418,31 @@ StreamExecutorGpuClient::RunAsync(
 
   std::optional<gpu::BufferAllocations> execution_buffer_allocations;
   const gpu::BufferAllocations* execution_buffers = &buffer_allocations;
+  std::optional<gpu::Thunk::CommandBufferUpdateInfo> command_buffer_update_info;
   if (va_remap_execution_state != nullptr) {
+    RETURN_IF_ERROR(gpu_exec->UpdateAdaptiveCommandBufferRemapping(
+        buffer_allocations, *va_remap_execution_state));
+    if (gpu_exec->has_module() &&
+        gpu_exec->module_config()
+                .debug_options()
+                .xla_gpu_command_buffer_update_mode() ==
+            DebugOptions::ADAPTIVE_UPDATE) {
+      gpu::GpuExecutable::VaRemaping& va_remap =
+          va_remap_execution_state->remapping;
+      command_buffer_update_info.emplace(gpu::Thunk::CommandBufferUpdateInfo{
+          va_remap.adaptive_decision_ready,
+          absl::MakeConstSpan(va_remap.adaptive_va_remapped_indices),
+          absl::MakeConstSpan(va_remap.adaptive_dynamic_alloc_indices)});
+    }
     absl::StatusOr<gpu::BufferAllocations> execution_buffer_allocations_or =
-        gpu_exec->BuildVaRemapBufferAllocations(buffer_allocations,
-                                                device_ordinal,
-                                                *va_remap_execution_state);
+        gpu_exec->BuildVaRemapBufferAllocations(
+            buffer_allocations, device_ordinal, *va_remap_execution_state);
     if (!execution_buffer_allocations_or.ok()) {
       absl::Status build_status = execution_buffer_allocations_or.status();
-      absl::Status cleanup_status =
-          gpu_exec->UnMapMemoryReservationAliases(device_ordinal,
-                                                  *va_remap_execution_state);
-      absl::Status teardown_status =
-          buffer_allocations.TearDown(buffers_in_result,
-                                      gpu_exec->GetAllocations());
+      absl::Status cleanup_status = gpu_exec->UnMapMemoryReservationAliases(
+          device_ordinal, *va_remap_execution_state);
+      absl::Status teardown_status = buffer_allocations.TearDown(
+          buffers_in_result, gpu_exec->GetAllocations());
       RETURN_IF_ERROR(build_status);
       RETURN_IF_ERROR(cleanup_status);
       RETURN_IF_ERROR(teardown_status);
@@ -2444,19 +2453,19 @@ StreamExecutorGpuClient::RunAsync(
     XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
         "VA remapping: module %s executing with %d command buffer "
         "allocation(s)",
-        gpu_exec->name(),
-        gpu_exec->command_buffer_allocation_indexes().size());
+        gpu_exec->name(), gpu_exec->command_buffer_allocation_indexes().size());
   }
 
-  absl::Status execute_status =
-      gpu_exec->ExecuteThunks(*execution_buffers, run_options);
+  absl::Status execute_status = gpu_exec->ExecuteThunks(
+      *execution_buffers, run_options,
+      command_buffer_update_info ? &*command_buffer_update_info : nullptr);
   absl::Status unmap_status =
       va_remap_execution_state == nullptr
           ? absl::OkStatus()
-          : gpu_exec->UnMapMemoryReservationAliases(
-                device_ordinal, *va_remap_execution_state);
-  absl::Status teardown_status =
-      buffer_allocations.TearDown(buffers_in_result, gpu_exec->GetAllocations());
+          : gpu_exec->UnMapMemoryReservationAliases(device_ordinal,
+                                                    *va_remap_execution_state);
+  absl::Status teardown_status = buffer_allocations.TearDown(
+      buffers_in_result, gpu_exec->GetAllocations());
 
   RETURN_IF_ERROR(execute_status);
   RETURN_IF_ERROR(unmap_status);

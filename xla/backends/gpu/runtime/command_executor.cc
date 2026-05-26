@@ -54,6 +54,20 @@ limitations under the License.
 namespace xla::gpu {
 
 namespace {
+bool IsSubsetOfSorted(absl::Span<const BufferAllocation::Index> subset,
+                      absl::Span<const BufferAllocation::Index> superset) {
+  auto superset_it = superset.begin();
+  for (BufferAllocation::Index value : subset) {
+    while (superset_it != superset.end() && *superset_it < value) {
+      ++superset_it;
+    }
+    if (superset_it == superset.end() || *superset_it != value) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // An adaptor from Command to ExecutionGraph::Operation for building an
 // execution graph from a command sequence.
 class CommandOperation : public ExecutionGraph::Operation {
@@ -584,6 +598,30 @@ absl::Status CommandExecutor::RecordUpdate(
       VLOG(3) << "Skipping update for traced command " << id
               << " (CAPTURE_CMD_NEVER_UPDATE mode)";
       return true;
+    }
+
+    // In ADAPTIVE_UPDATE mode VA-remapped allocations keep stable
+    // command-buffer-visible addresses. If every allocation referenced by this
+    // command is VA-remapped, the command does not need an update, including
+    // traced collective commands that also require initialization.
+    if (record_params.command_buffer_update_mode ==
+            DebugOptions::ADAPTIVE_UPDATE &&
+        execute_params.command_buffer_update_info != nullptr &&
+        execute_params.command_buffer_update_info->adaptive_decision_ready) {
+      DCHECK(absl::c_is_sorted(cmd_allocs_indices_[id]))
+          << "Command allocs must be sorted: "
+          << absl::StrJoin(cmd_allocs_indices_[id], ", ");
+      DCHECK(absl::c_is_sorted(
+          execute_params.command_buffer_update_info->va_remapped_indices))
+          << "VA-remapped allocs must be sorted: "
+          << absl::StrJoin(
+                 execute_params.command_buffer_update_info->va_remapped_indices,
+                 ", ");
+      if (IsSubsetOfSorted(
+              cmd_allocs_indices_[id],
+              execute_params.command_buffer_update_info->va_remapped_indices)) {
+        return true;
+      }
     }
 
     // We always update commands that require initialization, even if buffer

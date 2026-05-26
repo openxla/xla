@@ -396,10 +396,14 @@ message DebugOptions {
   //     command buffer update needed after initial recording.
   //   CAPTURE_CMD_NEVER_UPDATE: Only traced/collective commands are
   //     VA-remapped; other commands still update on each execution.
+  //   ADAPTIVE_UPDATE: Selects a subset of command-buffer allocations for
+  //     VA-remapping after observing warmup/current address stability; other
+  //     allocations keep using command buffer updates.
   enum CommandBufferUpdateMode {
     ALWAYS_UPDATE = 0;
     NEVER_UPDATE = 1;
     CAPTURE_CMD_NEVER_UPDATE = 2;
+    ADAPTIVE_UPDATE = 3;
   }
 
   // Controls CUB sort behavior during deviceless GPU compilation. CUB sort

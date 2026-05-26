@@ -208,6 +208,97 @@ TEST(CommandBufferThunkTest, DeviceToDeviceCopy) {
   ASSERT_EQ(dst, std::vector<int32_t>(4, 42));
 }
 
+TEST(CommandBufferThunkTest, AdaptiveUpdateIgnoresVaRemappedAllocations) {
+  se::StreamExecutor* stream_executor = GpuExecutor();
+
+  ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
+
+  int64_t length = 4;
+  int64_t byte_length = sizeof(int32_t) * length;
+  Shape shape = ShapeUtil::MakeShape(S32, {length});
+
+  se::DeviceAddress<int32_t> a =
+      stream_executor->AllocateArray<int32_t>(length, 0);
+  se::DeviceAddress<int32_t> c =
+      stream_executor->AllocateArray<int32_t>(length, 0);
+  se::DeviceAddress<int32_t> b =
+      stream_executor->AllocateArray<int32_t>(length, 0);
+  se::DeviceAddress<int32_t> d =
+      stream_executor->AllocateArray<int32_t>(length, 0);
+
+  TF_ASSERT_OK(stream->Memset32(&a, 42, byte_length));
+  TF_ASSERT_OK(stream->Memset32(&c, 7, byte_length));
+  TF_ASSERT_OK(stream->MemZero(&b, byte_length));
+  TF_ASSERT_OK(stream->MemZero(&d, byte_length));
+
+  BufferAllocation alloc_src(/*index=*/0, byte_length, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, byte_length, /*color=*/0);
+
+  BufferAllocation::Slice slice_src(&alloc_src, 0, byte_length);
+  BufferAllocation::Slice slice_dst(&alloc_dst, 0, byte_length);
+
+  CommandSequence commands;
+  commands.Emplace<DeviceToDeviceCopyThunk>(
+      Thunk::ThunkInfo(), ShapedSlice{slice_src, shape},
+      ShapedSlice{slice_dst, shape}, byte_length);
+  ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
+                       CommandExecutor::Create(std::move(commands), serialize));
+
+  CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo(),
+                           /*thunks=*/nullptr,
+                           /*enable_command_buffers_during_profiling=*/false,
+                           DebugOptions::ADAPTIVE_UPDATE);
+
+  std::vector<BufferAllocation::Index> va_remapped_indices = {0};
+  std::vector<BufferAllocation::Index> dynamic_alloc_indices = {1};
+  Thunk::CommandBufferUpdateInfo update_info{
+      /*adaptive_decision_ready=*/true,
+      absl::MakeConstSpan(va_remapped_indices),
+      absl::MakeConstSpan(dynamic_alloc_indices)};
+
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
+  ServiceExecutableRunOptions run_options;
+  BufferAllocations allocations({a, b}, 0, &allocator);
+  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
+      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr,
+      nullptr, /*additional_compute_streams=*/{},
+      /*execution_scoped_state=*/nullptr, &update_info);
+
+  TF_ASSERT_OK(thunk.ExecuteOnStream(params));
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::vector<int32_t> dst(4, 0);
+  TF_ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
+  ASSERT_EQ(dst, std::vector<int32_t>(4, 42));
+
+  TF_ASSERT_OK(stream->MemZero(&b, byte_length));
+  BufferAllocations source_changed_allocations({c, b}, 0, &allocator);
+  params = Thunk::ExecuteParams::Create(
+      run_options, source_changed_allocations, stream.get(), stream.get(),
+      nullptr, nullptr, nullptr, /*additional_compute_streams=*/{},
+      /*execution_scoped_state=*/nullptr, &update_info);
+
+  TF_ASSERT_OK(thunk.ExecuteOnStream(params));
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::fill(dst.begin(), dst.end(), 0);
+  TF_ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
+  ASSERT_EQ(dst, std::vector<int32_t>(4, 42));
+
+  BufferAllocations dynamic_changed_allocations({c, d}, 0, &allocator);
+  params = Thunk::ExecuteParams::Create(
+      run_options, dynamic_changed_allocations, stream.get(), stream.get(),
+      nullptr, nullptr, nullptr, /*additional_compute_streams=*/{},
+      /*execution_scoped_state=*/nullptr, &update_info);
+
+  TF_ASSERT_OK(thunk.ExecuteOnStream(params));
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::fill(dst.begin(), dst.end(), 0);
+  TF_ASSERT_OK(stream->Memcpy(dst.data(), d, byte_length));
+  ASSERT_EQ(dst, std::vector<int32_t>(4, 7));
+}
+
 TEST(CommandBufferThunkTest, MemzeroThunk) {
   se::StreamExecutor* stream_executor = GpuExecutor();
 

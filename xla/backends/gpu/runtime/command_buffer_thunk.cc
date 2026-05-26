@@ -16,12 +16,14 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
@@ -125,10 +127,24 @@ CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
     const CommandExecutor& commands, const Thunk::ExecuteParams& params) {
   std::vector<BufferAllocation::Index> updated_allocs;
   const BufferAllocations* allocs = params.buffer_allocations;
+  std::vector<BufferAllocation::Index> adaptive_allocs_to_check;
+  absl::Span<const BufferAllocation::Index> allocs_to_check =
+      commands.allocs_indices();
+
+  if (params.command_buffer_update_info != nullptr &&
+      params.command_buffer_update_info->adaptive_decision_ready) {
+    DCHECK(absl::c_is_sorted(
+        params.command_buffer_update_info->dynamic_alloc_indices));
+    absl::c_set_intersection(
+        commands.allocs_indices(),
+        params.command_buffer_update_info->dynamic_alloc_indices,
+        std::back_inserter(adaptive_allocs_to_check));
+    allocs_to_check = adaptive_allocs_to_check;
+  }
 
   // We check only allocations referenced by commands in a cmd sequence, and
   // leave every other entry default initialized (nullptr device memory).
-  for (BufferAllocation::Index index : commands.allocs_indices()) {
+  for (BufferAllocation::Index index : allocs_to_check) {
     se::DeviceAddressBase alloc = allocs->GetDeviceAddress(index);
 
     if (recorded_allocs.size() <= index) {
@@ -221,7 +237,8 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
       /*send_device_memory_function=*/nullptr,
       /*recv_device_memory_function=*/nullptr, params.ffi_execution_context,
       /*additional_compute_streams=*/{}, params.execution_scoped_state,
-      /*mock_collectives=*/false);
+      /*mock_collectives=*/false, /*execution_id=*/0,
+      params.command_buffer_update_info);
 
   if (!cmd_buffer->warmup_done) {
     return absl::OkStatus();
@@ -318,7 +335,8 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
       cmd_buffer->command_buffer->state() == se::CommandBuffer::State::kCreate;
   bool needs_update =
       (command_buffer_update_mode_ == DebugOptions::ALWAYS_UPDATE ||
-       command_buffer_update_mode_ == DebugOptions::CAPTURE_CMD_NEVER_UPDATE) &&
+       command_buffer_update_mode_ == DebugOptions::CAPTURE_CMD_NEVER_UPDATE ||
+       command_buffer_update_mode_ == DebugOptions::ADAPTIVE_UPDATE) &&
       !updated_allocs.empty();
 
   if (is_first_record || needs_update) {

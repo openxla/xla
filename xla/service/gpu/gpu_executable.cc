@@ -432,6 +432,8 @@ GpuExecutable::GpuExecutable(
   //     commands
   //   CAPTURE_CMD_NEVER_UPDATE - collect only allocations from traced
   //     commands, including collective commands recorded by CollectiveThunk
+  //   ADAPTIVE_UPDATE - collect all allocations from all command buffer
+  //     commands; the VA-remapped subset is selected after warmup
   if (thunk_executor_) {
     DebugOptions::CommandBufferUpdateMode update_mode =
         has_module() ? module_config()
@@ -440,6 +442,7 @@ GpuExecutable::GpuExecutable(
                      : DebugOptions::ALWAYS_UPDATE;
 
     if (update_mode == DebugOptions::NEVER_UPDATE ||
+        update_mode == DebugOptions::ADAPTIVE_UPDATE ||
         update_mode == DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
       CHECK_OK(thunk_executor_->thunks().WalkNested(
           [&](const Thunk* t) -> absl::Status {
@@ -478,8 +481,9 @@ GpuExecutable::~GpuExecutable() {
       if (va_remap.vmm_allocator == nullptr) {
         continue;
       }
-      absl::Status status = va_remap.vmm_allocator->SynchronizePendingOperations(
-          executor->device_ordinal());
+      absl::Status status =
+          va_remap.vmm_allocator->SynchronizePendingOperations(
+              executor->device_ordinal());
       if (!status.ok()) {
         LOG(ERROR) << "Failed to synchronize command buffer VA remapping "
                       "deferred operations for module "
@@ -537,18 +541,17 @@ absl::Status BarrierAfterExecutable(
     const DebugOptions* absl_nullable debug_options, se::Stream& stream_to_sync,
     size_t num_participants);
 
-absl::Status ExecuteThunksImpl(const DebugOptions* debug_options,
-                               const std::string& module_name,
-                               ModuleIdentifier module_id,
-                               ThunkExecutor& thunk_executor,
-                               Thunk::ExecutableSource executable_source,
-                               const ServiceExecutableRunOptions* run_options,
-                               const BufferAllocations& buffer_allocations,
-                               bool block_host_until_done,
-                               int64_t num_additional_compute_streams,
-                               CollectiveMemoryCache& collective_memory_cache,
-                               bool collective_use_minimal_resource,
-                               RendezvousFlag& post_init_rendezvous_flag) {
+absl::Status ExecuteThunksImpl(
+    const DebugOptions* debug_options, const std::string& module_name,
+    ModuleIdentifier module_id, ThunkExecutor& thunk_executor,
+    Thunk::ExecutableSource executable_source,
+    const ServiceExecutableRunOptions* run_options,
+    const BufferAllocations& buffer_allocations,
+    const Thunk::CommandBufferUpdateInfo* command_buffer_update_info,
+    bool block_host_until_done, int64_t num_additional_compute_streams,
+    CollectiveMemoryCache& collective_memory_cache,
+    bool collective_use_minimal_resource,
+    RendezvousFlag& post_init_rendezvous_flag) {
   bool mock_collectives =
       run_options->run_options().gpu_executable_run_options()
           ? run_options->run_options()
@@ -799,6 +802,7 @@ absl::Status ExecuteThunksImpl(const DebugOptions* debug_options,
         run_options->run_options().ffi_execution_context(),
         run_options->local_device_count(),
         &execution_scoped_state};
+    initialize_params.command_buffer_update_info = command_buffer_update_info;
 
     tsl::profiler::TraceMe trace_initialize("Thunks::Initialize");
     RETURN_IF_ERROR(thunk_executor.Initialize(initialize_params));
@@ -819,7 +823,7 @@ absl::Status ExecuteThunksImpl(const DebugOptions* debug_options,
       *run_options, buffer_allocations, main_stream,
       command_buffer_trace_stream, &collective_params, &collective_cliques,
       &collective_memory, std::move(additional_compute_streams),
-      &execution_scoped_state);
+      &execution_scoped_state, command_buffer_update_info);
 
   XLA_VLOG_DEVICE(1, run_options->device_ordinal())
       << "Start GpuExecutable::ExecuteOnStream module: " << module_name;
@@ -1211,15 +1215,13 @@ absl::Status GpuExecutable::PrepareVaRemapReservation(
 
 absl::StatusOr<se::ScopedDeviceAddress<uint8_t>>
 GpuExecutable::AllocateVaRemappedBuffer(
-    int device_ordinal, const BufferAllocation& allocation,
-    int64_t buffer_size, bool allocate_va_address,
-    VaRemapExecutionState& va_remap_execution_state) {
+    int device_ordinal, const BufferAllocation& allocation, int64_t buffer_size,
+    bool allocate_va_address, VaRemapExecutionState& va_remap_execution_state) {
   VaRemaping& va_remap = va_remap_execution_state.remapping;
   ASSIGN_OR_RETURN(uint64_t va_offset,
                    va_remap.GetReservationOffset(allocation.index()));
-  uint64_t mapping_size =
-      RoundUpToGranularity(static_cast<uint64_t>(buffer_size),
-                           va_remap.granularity);
+  uint64_t mapping_size = RoundUpToGranularity(
+      static_cast<uint64_t>(buffer_size), va_remap.granularity);
   absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> buffer =
       va_remap_execution_state.vmm_allocator.Allocate(
           device_ordinal, mapping_size, /*retry_on_failure=*/true,
@@ -1234,6 +1236,84 @@ GpuExecutable::AllocateVaRemappedBuffer(
         MemoryReservationAlias{va_offset, mapping_size, reservation_address};
   }
   return buffer;
+}
+
+bool GpuExecutable::ShouldVaRemapAllocation(
+    BufferAllocation::Index index,
+    const VaRemapExecutionState* va_remap_execution_state) const {
+  if (va_remap_execution_state == nullptr ||
+      !command_buffer_allocation_indexes_.contains(index)) {
+    return false;
+  }
+  if (!has_module() ||
+      module_config().debug_options().xla_gpu_command_buffer_update_mode() !=
+          DebugOptions::ADAPTIVE_UPDATE) {
+    return true;
+  }
+  const VaRemaping& va_remap = va_remap_execution_state->remapping;
+  if (!va_remap.adaptive_decision_ready) {
+    return true;
+  }
+  return va_remap.adaptive_va_remapped_index_set.contains(index);
+}
+
+absl::Status GpuExecutable::UpdateAdaptiveCommandBufferRemapping(
+    const BufferAllocations& owning_buffer_allocations,
+    VaRemapExecutionState& va_remap_execution_state) {
+  if (!has_module() ||
+      module_config().debug_options().xla_gpu_command_buffer_update_mode() !=
+          DebugOptions::ADAPTIVE_UPDATE) {
+    return absl::OkStatus();
+  }
+
+  VaRemaping& va_remap = va_remap_execution_state.remapping;
+  if (va_remap.adaptive_decision_ready) {
+    return absl::OkStatus();
+  }
+
+  if (!va_remap.adaptive_warmup_captured) {
+    va_remap.adaptive_warmup_addresses.assign(owning_buffer_allocations.size(),
+                                              se::DeviceAddressBase{});
+    for (BufferAllocation::Index index : command_buffer_allocation_indexes_) {
+      if (index < 0 || static_cast<size_t>(index) >=
+                           va_remap.adaptive_warmup_addresses.size()) {
+        return Internal(
+            "Adaptive command buffer VA remapping warmup state for module %s "
+            "cannot record allocation %d",
+            module_name_, index);
+      }
+      va_remap.adaptive_warmup_addresses[index] =
+          owning_buffer_allocations.GetDeviceAddress(index);
+    }
+    va_remap.adaptive_warmup_captured = true;
+    return absl::OkStatus();
+  }
+
+  va_remap.adaptive_va_remapped_indices.clear();
+  va_remap.adaptive_dynamic_alloc_indices.clear();
+  va_remap.adaptive_va_remapped_index_set.clear();
+
+  for (BufferAllocation::Index index : command_buffer_allocation_indexes_) {
+    if (index < 0 || static_cast<size_t>(index) >=
+                         va_remap.adaptive_warmup_addresses.size()) {
+      return Internal(
+          "Adaptive command buffer VA remapping warmup state for module %s "
+          "does not contain allocation %d",
+          module_name_, index);
+    }
+
+    se::DeviceAddressBase current_address =
+        owning_buffer_allocations.GetDeviceAddress(index);
+    if (va_remap.adaptive_warmup_addresses[index].IsSameAs(current_address)) {
+      va_remap.adaptive_va_remapped_indices.push_back(index);
+      va_remap.adaptive_va_remapped_index_set.insert(index);
+    } else {
+      va_remap.adaptive_dynamic_alloc_indices.push_back(index);
+    }
+  }
+
+  va_remap.adaptive_decision_ready = true;
+  return absl::OkStatus();
 }
 
 absl::StatusOr<se::DeviceAddressBase> GpuExecutable::BufferForAllocation(
@@ -1288,8 +1368,8 @@ absl::StatusOr<se::DeviceAddressBase> GpuExecutable::BufferForAllocation(
         buffer_size = RoundUpTo(buffer_size, it->second);
       }
       absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> buffer;
-      if (va_remap_execution_state != nullptr &&
-          command_buffer_allocation_indexes_.contains(allocation.index())) {
+      if (ShouldVaRemapAllocation(allocation.index(),
+                                  va_remap_execution_state)) {
         bool allocate_va_address =
             allocation.maybe_live_out() &&
             output_allocations.contains(allocation.index());
@@ -1389,9 +1469,9 @@ absl::StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
 
   absl::Span<const BufferAllocation* const> allocations = GetAllocations();
   const int64_t num_buffers = allocations.size();
-  RETURN_IF_ERROR(PrepareVaRemapReservation(
-      run_options, device_ordinal, allocate_granularity,
-      va_remap_execution_state));
+  RETURN_IF_ERROR(PrepareVaRemapReservation(run_options, device_ordinal,
+                                            allocate_granularity,
+                                            va_remap_execution_state));
 
   std::vector<se::DeviceAddressBase> buffers;
   buffers.reserve(num_buffers);
@@ -1473,17 +1553,17 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   std::optional<VaRemapExecutionState> va_remap_execution_state_storage;
   VaRemapExecutionState* va_remap_execution_state = nullptr;
   std::unique_ptr<absl::MutexLock> command_buffer_va_remap_lock;
-  ASSIGN_OR_RETURN(va_remap_execution_state,
-                   MaybeCreateVaRemapExecutionState(
-                       run_options, memory_allocator, device_ordinal,
-                       va_remap_execution_state_storage,
-                       command_buffer_va_remap_lock));
+  ASSIGN_OR_RETURN(
+      va_remap_execution_state,
+      MaybeCreateVaRemapExecutionState(
+          run_options, memory_allocator, device_ordinal,
+          va_remap_execution_state_storage, command_buffer_va_remap_lock));
 
-  ASSIGN_OR_RETURN(BufferAllocations owning_buffer_allocations,
-                   GenerateBufferAllocations(
-                       run_options, arguments, globals, memory_allocator,
-                       device_ordinal, output_allocations,
-                       va_remap_execution_state));
+  ASSIGN_OR_RETURN(
+      BufferAllocations owning_buffer_allocations,
+      GenerateBufferAllocations(run_options, arguments, globals,
+                                memory_allocator, device_ordinal,
+                                output_allocations, va_remap_execution_state));
   XLA_VLOG_DEVICE(3, device_ordinal) << owning_buffer_allocations.ToString();
   absl::Span<const BufferAllocation* const> allocations = GetAllocations();
 
@@ -1569,9 +1649,8 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
         int64_t allocation_size = ShapeUtil::ByteSizeOf(
             ShapeUtil::GetSubshape(program_shape_.result(), index));
         absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> allocated_buffer;
-        if (va_remap_execution_state != nullptr &&
-            command_buffer_allocation_indexes_.contains(
-                output_info.allocation_index)) {
+        if (ShouldVaRemapAllocation(output_info.allocation_index,
+                                    va_remap_execution_state)) {
           allocated_buffer = AllocateVaRemappedBuffer(
               device_ordinal, *allocation, allocation_size,
               /*allocate_va_address=*/true, *va_remap_execution_state);
@@ -1611,15 +1690,26 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
 
   std::optional<BufferAllocations> execution_buffer_allocations;
   const BufferAllocations* execution_buffers = &owning_buffer_allocations;
+  std::optional<Thunk::CommandBufferUpdateInfo> command_buffer_update_info;
   if (va_remap_execution_state != nullptr) {
+    RETURN_IF_ERROR(UpdateAdaptiveCommandBufferRemapping(
+        owning_buffer_allocations, *va_remap_execution_state));
+    if (has_module() &&
+        module_config().debug_options().xla_gpu_command_buffer_update_mode() ==
+            DebugOptions::ADAPTIVE_UPDATE) {
+      VaRemaping& va_remap = va_remap_execution_state->remapping;
+      command_buffer_update_info.emplace(Thunk::CommandBufferUpdateInfo{
+          va_remap.adaptive_decision_ready,
+          absl::MakeConstSpan(va_remap.adaptive_va_remapped_indices),
+          absl::MakeConstSpan(va_remap.adaptive_dynamic_alloc_indices)});
+    }
     absl::StatusOr<BufferAllocations> execution_buffer_allocations_or =
         BuildVaRemapBufferAllocations(owning_buffer_allocations, device_ordinal,
                                       *va_remap_execution_state);
     if (!execution_buffer_allocations_or.ok()) {
       absl::Status build_status = execution_buffer_allocations_or.status();
-      absl::Status cleanup_status =
-          UnMapMemoryReservationAliases(device_ordinal,
-                                        *va_remap_execution_state);
+      absl::Status cleanup_status = UnMapMemoryReservationAliases(
+          device_ordinal, *va_remap_execution_state);
       absl::Status teardown_status = owning_buffer_allocations.TearDown(
           buffers_in_result, GetAllocations());
       RETURN_IF_ERROR(build_status);
@@ -1635,7 +1725,9 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
         module_name_, command_buffer_allocation_indexes_.size());
   }
 
-  absl::Status execute_status = ExecuteThunks(*execution_buffers, run_options);
+  absl::Status execute_status = ExecuteThunks(
+      *execution_buffers, run_options,
+      command_buffer_update_info ? &*command_buffer_update_info : nullptr);
 
   absl::Status unmap_status =
       va_remap_execution_state == nullptr
@@ -1682,7 +1774,7 @@ absl::StatusOr<BufferAllocations> GpuExecutable::BuildVaRemapBufferAllocations(
        ++i) {
     se::DeviceAddressBase owning_address =
         owning_buffer_allocations.GetDeviceAddress(i);
-    if (!command_buffer_allocation_indexes_.contains(i)) {
+    if (!ShouldVaRemapAllocation(i, &va_remap_execution_state)) {
       execution_buffers.push_back(owning_address);
       continue;
     }
@@ -1764,9 +1856,9 @@ absl::Status GpuExecutable::UnMapMemoryReservationAliases(
     if (!unmapped_aliases.insert(alias.reservation_address.opaque()).second) {
       return;
     }
-    absl::Status unmap_status = state.vmm_allocator.UnMap(
-        device_ordinal, va_remap.va_reservation.get(), alias.reservation_offset,
-        alias.size);
+    absl::Status unmap_status =
+        state.vmm_allocator.UnMap(device_ordinal, va_remap.va_reservation.get(),
+                                  alias.reservation_offset, alias.size);
     if (!unmap_status.ok() && status.ok()) {
       status = unmap_status;
     }
@@ -1790,7 +1882,8 @@ std::optional<BufferAssignmentProto> GpuExecutable::buffer_assignment_proto()
 }
 absl::Status GpuExecutable::ExecuteThunks(
     const BufferAllocations& buffer_allocations,
-    const ServiceExecutableRunOptions* run_options) {
+    const ServiceExecutableRunOptions* run_options,
+    const Thunk::CommandBufferUpdateInfo* command_buffer_update_info) {
   tsl::profiler::TraceMe trace([&] {
     return tsl::profiler::TraceMeEncode(
         absl::StrFormat("[%d] GpuExecutable::ExecuteThunks",
@@ -1872,7 +1965,7 @@ absl::Status GpuExecutable::ExecuteThunks(
   TF_RETURN_IF_ERROR(ExecuteThunksImpl(
       has_module() ? &module_config().debug_options() : nullptr, module_name_,
       unique_id, *thunk_executor_, executable_source, run_options,
-      buffer_allocations, block_host_until_done,
+      buffer_allocations, command_buffer_update_info, block_host_until_done,
       num_additional_compute_streams_, collective_memory_cache_,
       collective_use_minimal_resource, post_init_rendezvous_flag_));
   return absl::OkStatus();
