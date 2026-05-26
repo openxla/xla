@@ -762,7 +762,6 @@ xla_test(
     deps = [
         ":collective_params",
         ":command",
-        ":command_buffer_cmd",
         ":command_buffer_thunk",
         ":command_executor",
         ":cudnn_thunk",
@@ -787,19 +786,16 @@ xla_test(
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor:stream_executor_memory_allocator",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/cuda:cudnn_plugin",
-        "//xla/tsl/lib/core:status_test_util",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@cudnn_frontend_archive//:cudnn_frontend",
-        "@local_config_cuda//cuda:cuda_headers",
     ],
 )
 

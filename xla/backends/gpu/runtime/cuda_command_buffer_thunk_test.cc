@@ -30,10 +30,8 @@ limitations under the License.
 #include "third_party/cudnn_frontend/include/cudnn_frontend/graph_interface.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend/graph_properties.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend_utils.h"
-#include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command.h"
-#include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/cudnn_thunk.h"
@@ -60,9 +58,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/stream_executor_memory_allocator.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
+#include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/xla_data.pb.h"
 
@@ -124,11 +120,11 @@ TEST(CommandBufferThunkTest, CuDnnCmd) {
     return graph;
   }());
   int64_t workspace_size = graph.Graph().get_workspace_size();
-  TF_ASSERT_OK(graph.Prepare(
+  ASSERT_OK(graph.Prepare(
       dnn_support, se::EngineOptions{/*require_determinism=*/false,
                                      /*allow_tf32=*/true,
                                      /*require_command_buffer=*/true}));
-  TF_ASSERT_OK(graph.Build(dnn_support, /*plan_id=*/std::nullopt));
+  ASSERT_OK(graph.Build(dnn_support, /*plan_id=*/std::nullopt));
   EXPECT_THAT(graph.SupportsExplicitCommandBufferConstruction(),
               absl_testing::IsOkAndHolds(true));
 
@@ -188,11 +184,11 @@ TEST(CommandBufferThunkTest, CuDnnCmd) {
 
   se::DeviceAddress<int8_t> input =
       stream_executor->AllocateArray<int8_t>(kTotalElements);
-  TF_ASSERT_OK(stream->MemZero(&input, input.size()));
+  ASSERT_OK(stream->MemZero(&input, input.size()));
 
   se::DeviceAddress<int32_t> output0 =
       stream_executor->AllocateArray<int32_t>(kTotalElements);
-  TF_ASSERT_OK(stream->Memset32(&output0, 123, output0.size()));
+  ASSERT_OK(stream->Memset32(&output0, 123, output0.size()));
 
   operands.push_back(input);  // multiplying the input by itself
   operands.push_back(output0);
@@ -217,27 +213,27 @@ TEST(CommandBufferThunkTest, CuDnnCmd) {
       nullptr, nullptr);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  TF_ASSERT_OK(thunk.Initialize(
+  ASSERT_OK(thunk.Initialize(
       {stream_executor, source, &allocations, stream.get(), stream.get()}));
 
   // First run warms up by executing the fallback thunk sequence.
-  TF_ASSERT_OK(thunk.ExecuteOnStream(params));
-  TF_ASSERT_OK(stream->BlockHostUntilDone());
+  ASSERT_OK(thunk.ExecuteOnStream(params));
+  ASSERT_OK(stream->BlockHostUntilDone());
 
   std::vector<int32_t> dst(kTotalElements, 1);
-  TF_ASSERT_OK(
+  ASSERT_OK(
       stream->Memcpy(dst.data(), output0, kTotalElements * sizeof(int32_t)));
 
   ASSERT_EQ(dst, std::vector<int32_t>(kTotalElements, 0));
 
-  TF_ASSERT_OK(stream->Memset32(&output0, 123, output0.size()));
+  ASSERT_OK(stream->Memset32(&output0, 123, output0.size()));
 
   // Second run records the command buffer and executes it.
-  TF_ASSERT_OK(thunk.ExecuteOnStream(params));
-  TF_ASSERT_OK(stream->BlockHostUntilDone());
+  ASSERT_OK(thunk.ExecuteOnStream(params));
+  ASSERT_OK(stream->BlockHostUntilDone());
 
   std::fill(dst.begin(), dst.end(), 1);
-  TF_ASSERT_OK(
+  ASSERT_OK(
       stream->Memcpy(dst.data(), output0, kTotalElements * sizeof(int32_t)));
 
   ASSERT_EQ(dst, std::vector<int32_t>(kTotalElements, 0));
@@ -245,7 +241,7 @@ TEST(CommandBufferThunkTest, CuDnnCmd) {
   // Prepare buffer allocation for updating command buffer.
   se::DeviceAddress<int32_t> output1 =
       stream_executor->AllocateArray<int32_t>(kTotalElements);
-  TF_ASSERT_OK(stream->Memset32(&output1, 456, output1.size()));
+  ASSERT_OK(stream->Memset32(&output1, 456, output1.size()));
 
   // Update buffer allocation
   operands[1] = output1;
@@ -256,12 +252,12 @@ TEST(CommandBufferThunkTest, CuDnnCmd) {
 
   // Third run updates the command buffer for the new allocation and executes
   // it.
-  TF_ASSERT_OK(thunk.ExecuteOnStream(params));
-  TF_ASSERT_OK(stream->BlockHostUntilDone());
+  ASSERT_OK(thunk.ExecuteOnStream(params));
+  ASSERT_OK(stream->BlockHostUntilDone());
 
   // Copy output1 data back to host.
   std::fill(dst.begin(), dst.end(), 1);
-  TF_ASSERT_OK(
+  ASSERT_OK(
       stream->Memcpy(dst.data(), output1, kTotalElements * sizeof(int32_t)));
 
   ASSERT_EQ(dst, std::vector<int32_t>(kTotalElements, 0));
