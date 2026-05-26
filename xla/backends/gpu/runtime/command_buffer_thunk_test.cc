@@ -33,7 +33,6 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/runtime/command.h"
-#include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
@@ -45,6 +44,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
@@ -429,6 +429,63 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersEnabledDuringProfiling) {
   std::vector<int32_t> dst(4, 0);
   TF_ASSERT_OK(stream->Memcpy(dst.data(), a, byte_length));
 
+  ASSERT_EQ(dst, std::vector<int32_t>(4, 84));
+}
+
+TEST(CommandBufferThunkTest, InitializedThunkRunsWarmupWithoutCollectives) {
+  se::StreamExecutor* stream_executor = GpuExecutor();
+
+  ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
+
+  int64_t length = 4;
+  int64_t byte_length = sizeof(int32_t) * length;
+
+  se::DeviceAddress<int32_t> a =
+      stream_executor->AllocateArray<int32_t>(length, 0);
+  ASSERT_OK(stream->MemZero(&a, byte_length));
+
+  BufferAllocation alloc_a(/*index=*/0, byte_length, /*color=*/0);
+  BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
+
+  CommandSequence commands;
+  commands.Append(std::make_unique<Memset32BitValueThunk>(
+      Thunk::ThunkInfo(), /*value=*/84, slice_a));
+  ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
+                       CommandExecutor::Create(std::move(commands), serialize));
+
+  ThunkSequence thunks;
+  thunks.push_back(std::make_unique<Memset32BitValueThunk>(
+      Thunk::ThunkInfo(), /*value=*/21, slice_a));
+  auto seq_thunks =
+      std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
+
+  CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo(),
+                           std::move(seq_thunks));
+
+  ServiceExecutableRunOptions run_options;
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
+  BufferAllocations allocations({a}, 0, &allocator);
+
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
+
+  Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
+  ASSERT_OK(thunk.Initialize(
+      {stream_executor, source, &allocations, stream.get(), stream.get()}));
+
+  ASSERT_OK(thunk.ExecuteOnStream(params));
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::vector<int32_t> dst(4, 0);
+  ASSERT_OK(stream->Memcpy(dst.data(), a, byte_length));
+  ASSERT_EQ(dst, std::vector<int32_t>(4, 21));
+
+  ASSERT_OK(thunk.ExecuteOnStream(params));
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::fill(dst.begin(), dst.end(), 0);
+  ASSERT_OK(stream->Memcpy(dst.data(), a, byte_length));
   ASSERT_EQ(dst, std::vector<int32_t>(4, 84));
 }
 
@@ -1196,7 +1253,7 @@ TEST(CommandBufferThunkTest, ConditionalThunkCaseCommand) {
   ASSERT_EQ(dst, std::vector<int32_t>(4, 2 * (42 + 42)));
 }
 
-TEST(CommandBufferThunkTest, WhileCmd) {
+TEST(CommandBufferThunkTest, WhileThunk) {
   se::StreamExecutor* stream_executor = GpuExecutor();
 
   if (!IsAtLeastCuda12300(stream_executor)) {
@@ -1248,34 +1305,33 @@ TEST(CommandBufferThunkTest, WhileCmd) {
   auto body_args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
                            MemoryAccess::kWrite};
 
-  // Prepare commands sequence for loop `cond`.
-  CommandSequence cond_commands;
-  cond_commands.Append(KernelThunk::MakeKernelThunk(
+  // Prepare thunk sequence for loop `cond`.
+  ThunkSequence cond_thunks;
+  cond_thunks.push_back(KernelThunk::MakeKernelThunk(
       "IncAndCmp", cond_args, cond_args_access, LaunchDimensions(1, 1),
       /*shmem_bytes=*/0));
-  TF_ASSERT_OK_AND_ASSIGN(
-      CommandExecutor cond_executor,
-      CommandExecutor::Create(std::move(cond_commands), serialize));
 
-  // Prepare commands sequence for loop `body`.
-  CommandSequence body_commands;
-  body_commands.Append(KernelThunk::MakeKernelThunk(
+  // Prepare thunk sequence for loop `body`.
+  ThunkSequence body_thunks;
+  body_thunks.push_back(KernelThunk::MakeKernelThunk(
       "AddI32", body_args, body_args_access, LaunchDimensions(1, 4),
       /*shmem_bytes=*/0));
-  TF_ASSERT_OK_AND_ASSIGN(
-      CommandExecutor body_executor,
-      CommandExecutor::Create(std::move(body_commands), serialize));
 
-  // Prepare commands sequence for thunk.
-  CommandSequence commands;
-  commands.Emplace<WhileCmd>(slice_pred, std::move(cond_executor),
-                             std::move(body_executor));
-  TF_ASSERT_OK_AND_ASSIGN(
-      CommandExecutor executor,
-      CommandExecutor::Create(std::move(commands), serialize));
+  // Prepare thunk sequence for command buffer conversion.
+  ThunkSequence thunks;
+  thunks.push_back(std::make_unique<WhileThunk>(Thunk::ThunkInfo(), slice_pred,
+                                                std::move(cond_thunks),
+                                                std::move(body_thunks)));
 
-  // Construct a thunk with command sequence.
-  CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
+  ConvertToCommandsOptions options;
+  options.synchronization_mode = serialize;
+  ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
+                       ConvertToCommands(thunks, options));
+
+  // Construct a command buffer thunk with command sequence and fallback thunks.
+  CommandBufferThunk thunk(
+      std::move(executor), Thunk::ThunkInfo(),
+      std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks)));
 
   ServiceExecutableRunOptions run_options;
   stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);

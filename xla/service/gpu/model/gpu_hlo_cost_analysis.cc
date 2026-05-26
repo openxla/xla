@@ -267,7 +267,7 @@ bool GpuHloCostAnalysis::ProducerConsumerMergedTooLarge(
 
 absl::Status GpuHloCostAnalysis::HandleCustomCall(
     const HloInstruction* custom_call) {
-  if (IsCublasGemm(*custom_call)) {
+  if (IsCublasLtGemm(*custom_call)) {
     // The naming conventions and meanings of gemm parameters are documented
     // here:
     // https://docs.nvidia.com/cuda/cublas/index.html#cublas-lt-t-gt-gemm
@@ -369,7 +369,7 @@ int64_t GpuHloCostAnalysis::GetConvolutionFlops(
 }
 
 int64_t GpuHloCostAnalysis::GetFlopsPerElementwiseOpElement(
-    const PrimitiveType type, const HloOpcode opcode) {
+    const PrimitiveType type, const HloOpcode opcode) const {
   // Elementwise instructions typically take at least a few clock cycles.
   constexpr int64_t kDefaultFlopsPerElement = 3;
   return FindOrDefault(hlo_elementwise_op_profile_,
@@ -377,14 +377,14 @@ int64_t GpuHloCostAnalysis::GetFlopsPerElementwiseOpElement(
 }
 
 int64_t GpuHloCostAnalysis::GetFlopsForElementwiseOp(const HloOpcode op_code,
-                                                     const Shape& shape) {
+                                                     const Shape& shape) const {
   int64_t flop_per_element =
       GetFlopsPerElementwiseOpElement(shape.element_type(), op_code);
   return flop_per_element * ShapeUtil::ElementsInRecursive(shape);
 }
 
 int64_t GpuHloCostAnalysis::GetFlopsForElementwiseOp(
-    const HloInstruction* instr) {
+    const HloInstruction* instr) const {
   return GetFlopsForElementwiseOp(instr->opcode(), instr->shape());
 }
 

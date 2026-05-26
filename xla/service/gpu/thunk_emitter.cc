@@ -1404,21 +1404,10 @@ AsyncThunkSequence ThunkEmitter::EmitFusion(const HloFusionInstruction* instr) {
 
   VLOG(3) << "ThunkEmitter::EmitFusion:start";
   std::unique_ptr<FusionInterface> emitter = GetFusionEmitter(
-      /*fusion_info=*/HloFusionInfo(
-          /*analysis=*/fusion_analysis, instr,
-          /*buffer_assignment=*/
-          &ir_emitter_context_->buffer_assignment(),
-          /*call_graph=*/*call_graph_),
+      HloFusionInfo(fusion_analysis, instr,
+                    &ir_emitter_context_->buffer_assignment(), *call_graph_),
       ir_emitter_context_->mlir_context());
-  ASSIGN_OR_RETURN(auto result, emitter->Emit(*ir_emitter_context_, *instr));
-
-  // Use override flag because libdevice functions can be present in both.
-  if (result.module) {
-    kernel_modules_.push_back(std::move(result.module));
-  }
-
-  VLOG(3) << "ThunkEmitter::EmitFusion:complete";
-  return std::move(result.thunks);
+  return emitter->Emit(*ir_emitter_context_, *instr);
 }
 
 AsyncThunkSequence ThunkEmitter::EmitDynamicSliceFusionV2(
@@ -1440,17 +1429,17 @@ AsyncThunkSequence ThunkEmitter::EmitDynamicSliceFusionV2(
   std::vector<BufferAllocation::Slice> parameter_buffers;
   parameter_buffers.reserve(instr->operand_count());
   for (const auto* operand : instr->operands()) {
-    TF_ASSIGN_OR_RETURN(parameter_buffers.emplace_back(),
-                        GetAllocationSliceForHlo(operand));
+    ASSIGN_OR_RETURN(parameter_buffers.emplace_back(),
+                     GetAllocationSliceForHlo(operand));
   }
 
   // result_buffers: one entry per fusion output leaf in DFS order.
   std::vector<BufferAllocation::Slice> result_buffers;
-  TF_RETURN_IF_ERROR(ShapeUtil::ForEachLeafShapeWithStatus(
+  RETURN_IF_ERROR(ShapeUtil::ForEachLeafShapeWithStatus(
       instr->shape(),
       [&](const Shape&, const ShapeIndex& index) -> absl::Status {
-        TF_ASSIGN_OR_RETURN(result_buffers.emplace_back(),
-                            GetAllocationSliceForHlo(instr, index));
+        ASSIGN_OR_RETURN(result_buffers.emplace_back(),
+                         GetAllocationSliceForHlo(instr, index));
         return absl::OkStatus();
       }));
 
@@ -1940,6 +1929,12 @@ AsyncThunkSequence ThunkEmitter::EmitCollectiveThunk(
                   thunk_info, inst, /*buffers=*/std::move(buffers),
                   std::move(collective_kernel_thunk), use_memcpy_local_p2p));
             });
+  } else if constexpr (std::is_constructible_v<
+                           CollectiveThunkType, Thunk::ThunkInfo,
+                           decltype(inst),
+                           std::vector<CollectiveThunk::Buffer>>) {
+    thunks = ThunkSequence::Of(std::make_unique<CollectiveThunkType>(
+        thunk_info, inst, /*buffers=*/std::move(buffers)));
   } else {
     thunks = ThunkSequence::Of(std::make_unique<CollectiveThunkType>(
         thunk_info, inst, /*buffers=*/std::move(buffers),

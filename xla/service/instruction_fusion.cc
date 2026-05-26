@@ -110,6 +110,7 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
     case HloOpcode::kMultiply:
+    case HloOpcode::kMulhi:
     case HloOpcode::kNegate:
     case HloOpcode::kNot:
     case HloOpcode::kOptimizationBarrier:
@@ -706,7 +707,7 @@ absl::StatusOr<bool> InstructionFusion::RunImpl(
 
         if (fusion_instruction == nullptr) {
           FusionDecision fusion_decision = use_regular_fusion.Or(use_mof);
-          CHECK(!fusion_decision.CanFuse());
+          CHECK(fusion_decision.IsForbidden());
           if (dump_fusion) {
             VLOG(2) << "Not fusing " << operand->ToShortString() << "| into |"
                     << instruction->ToShortString() << "| as "

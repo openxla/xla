@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -130,7 +131,7 @@ absl::StatusOr<bool> AsyncCollectiveReplacer::RunImpl(
     absl::flat_hash_set<HloInstruction*> removed;
     for (HloInstruction* control_dep : control_deps_to_remove) {
       if (!removed.contains(control_dep)) {
-        TF_RETURN_IF_ERROR(computation->RemoveInstruction(control_dep));
+        RETURN_IF_ERROR(computation->RemoveInstruction(control_dep));
         removed.insert(control_dep);
       }
     }

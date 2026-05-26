@@ -466,6 +466,10 @@ message DebugOptions {
   // Size threshold (in bytes) for the GPU all-gather combiner.
   optional int64 xla_gpu_all_gather_combine_threshold_bytes = 212;
 
+  // Memory mode for the all-gather operation. Determines which memory
+  // space all-gather buffers are allocated in. See CollectivesMode for details.
+  optional CollectivesMode xla_gpu_all_gather_mode = 485;
+
   // Number of devices per host for first stage of BlueConnect decomposition
   // pass. The pass will attempt to decompose all-reduces ops into a
   // ReduceScatter-AllReduce-AllGather sequence, with the initial ReduceScatter
@@ -673,7 +677,8 @@ message DebugOptions {
   // Indicates whether to do LLVM module compilation in a parallelised way. When
   // set, the number of threads depends on
   // `xla_gpu_force_compilation_parallelism`.
-  optional bool xla_gpu_enable_llvm_module_compilation_parallelism = 268;
+  optional bool xla_gpu_enable_llvm_module_compilation_parallelism = 268
+      [deprecated = true];
 
   // DEPRECATED: This flag is a no-op.
   optional bool xla_gpu_enable_nccl_clique_optimization = 244
@@ -801,6 +806,17 @@ message DebugOptions {
 
   // Path to experimental collective perf tables.
   optional string xla_gpu_experimental_collective_perf_table_path = 377;
+
+  // Enabling this with larger overlap limit for compute bound graphs is
+  // beneficial, as it maximizes the async-start and done interval. However, in
+  // some extreme communication bound scenarios, even though the scheduling
+  // looks good, some compute kernel launches are pushed back during runtime
+  // since the collectives are bundled too closely which consume a lot of the
+  // resources on GPU. The resource utilization is being addressed in comms
+  // library so for now we will need a flag to toggle this scheduling behavior
+  // for different scenarios.
+  optional bool xla_gpu_experimental_collective_start_as_early_as_possible =
+      488;
 
   // Experimentally disables binary libraries in GPU compiler passes.
   optional bool xla_gpu_experimental_disable_binary_libraries = 329;

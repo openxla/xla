@@ -1180,6 +1180,7 @@ ColorScheme HloDotDumper::GetInstructionColor(const HloInstruction* instr) {
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
     case HloOpcode::kMultiply:
+    case HloOpcode::kMulhi:
     case HloOpcode::kNegate:
     case HloOpcode::kNot:
     case HloOpcode::kPopulationCount:
@@ -1446,7 +1447,7 @@ std::string HloDotDumper::GetInstructionNodeBackendConfig(
       props = ExtractCudnnConvBackendConfigProps(
           config->cudnn_conv_backend_config());
     }
-  } else if (gpu::IsCublasGemm(*instr)) {
+  } else if (gpu::IsCublasLtGemm(*instr)) {
     absl::StatusOr<gpu::GpuBackendConfig> config =
         instr->backend_config<gpu::GpuBackendConfig>();
     if (config.ok()) {

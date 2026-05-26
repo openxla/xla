@@ -798,7 +798,11 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
   absl::Status HandleRaggedDot(HloInstruction* instr) override {
+    // The cuDNN ragged dot fusion is only available on NVIDIA/CUDA devices.
+    // On AMD ROCm, always use hipBLASLt GroupedMatMul instead, regardless of
+    // the xla_gpu_experimental_use_ragged_dot_fusion flag value.
     bool ragged_dot_fusion_enabled =
+        gpu_version_.IsCuda() &&
         instr->GetModule()
             ->config()
             .debug_options()
@@ -2323,9 +2327,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     if (!absl::c_linear_search(supported_type, output_type)) {
       return false;
     }
-    TF_ASSIGN_OR_RETURN(const se::blas::DataType output_dtype,
-                        se::gpu::AsBlasDataType(output_type));
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(const se::blas::DataType output_dtype,
+                     se::gpu::AsBlasDataType(output_type));
+    ASSIGN_OR_RETURN(
         const se::blas::ComputationType compute_type,
         se::gpu::GetBlasComputationType(
             instr.precision_config().algorithm(), a_dtype, output_type,

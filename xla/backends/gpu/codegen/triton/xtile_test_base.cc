@@ -74,8 +74,7 @@ XTileTestBase::CreateXTileIrAndFileCheck(std::unique_ptr<HloModule> hlo_module,
           fusion_backend_config.block_level_fusion_config());
   ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> xtile_dialect_module,
                    CreateXTileIrAndFileCheck(*comp, block_level_parameters,
-                                             filecheck_pattern,
-                                             use_experimental_fusion_emitter));
+                                             filecheck_pattern));
   return std::make_pair(std::move(xtile_dialect_module), std::move(hlo_module));
 }
 
@@ -127,7 +126,7 @@ XTileTestBase::CreateXTileIrAndFileCheck(
     ASSIGN_OR_RETURN(
         llvm::SmallVector<int64_t> concrete_sizes,
         GetTilingSpaceConcreteSizes(*tiling_space, block_level_parameters));
-    TF_RETURN_IF_ERROR(tiling_space->AssignTileSizes(
+    RETURN_IF_ERROR(tiling_space->AssignTileSizes(
         xtile::GetPaddedTileSizes(concrete_sizes)));
     ASSIGN_OR_RETURN(ge::TiledHloComputation tiled_computation,
                      ge::TiledHloComputation::Tile(*fusion_adaptor,
@@ -160,7 +159,7 @@ absl::Status XTileTestBase::LowerXTileIrToTritonAndFileCheck(
   BlockLevelParameters block_level_parameters =
       BlockLevelParameters::FromBlockLevelFusionConfig(
           fusion_backend_config.block_level_fusion_config());
-  TF_RETURN_IF_ERROR(ir_emitter_triton_internal::LowerXTileToTriton(
+  RETURN_IF_ERROR(ir_emitter_triton_internal::LowerXTileToTriton(
       xtile_dialect_module, *mlir_context(), fusion,
       TestGpuDeviceInfo::H100SXMDeviceInfo(), block_level_parameters));
 
