@@ -217,17 +217,23 @@ absl::StatusOr<ThunkProto> CublasLtMatmulThunk::ToProto() const {
 
   CublasLtMatmulThunkProto* cublas_lt_matmul_thunk =
       proto.mutable_cublas_lt_matmul_thunk();
-  if (is_grouped()) {
-    auto gemm_config = std::get<se::gpu::GroupedGemmConfig>(gemm_config_);
-    *cublas_lt_matmul_thunk->mutable_grouped_gemm_config() =
-        gemm_config.ToProto();
-    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_group_sizes(),
-                     group_sizes_.value().ToProto());
-  } else {
-    // Serialize regular matmul
-    auto gemm_config = std::get<se::gpu::GemmConfig>(gemm_config_);
-    *cublas_lt_matmul_thunk->mutable_gemm_config() = gemm_config.ToProto();
-  }
+
+  RETURN_IF_ERROR(std::visit(
+      [&](const auto& gemm_config) {
+        using T = std::decay_t<decltype(gemm_config)>;
+        if constexpr (std::is_same_v<T, se::gpu::GroupedGemmConfig>) {
+          *cublas_lt_matmul_thunk->mutable_grouped_gemm_config() =
+              gemm_config.ToProto();
+          ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_group_sizes(),
+                           group_sizes_.value().ToProto());
+        } else {
+          *cublas_lt_matmul_thunk->mutable_gemm_config() =
+              gemm_config.ToProto();
+        }
+        return absl::OkStatus();
+      },
+      gemm_config_));
+
   cublas_lt_matmul_thunk->set_epilogue(
       stream_executor::gpu::BlasLt::EpilogueToProto(epilogue_));
   cublas_lt_matmul_thunk->set_algorithm_idx(algorithm_idx_);
