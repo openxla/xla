@@ -17,13 +17,16 @@ limitations under the License.
 
 #include <cstdint>
 #include <cstdlib>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -31,6 +34,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
@@ -52,7 +56,8 @@ limitations under the License.
 #include "xla/service/shaped_slice.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
-#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/command_buffer.h"
+#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/trace_command_buffer_factory.h"
@@ -310,13 +315,13 @@ absl::Status CollectiveThunk::Prepare(const PrepareParams& params) {
   if (CanUseSymmetricBuffer() && config().use_symmetric_buffer) {
     for (const Buffer& buffer : buffers_) {
       if (buffer.source_memory_space == kCollectiveMemorySpaceColor) {
-        TF_RETURN_IF_ERROR(
+        RETURN_IF_ERROR(
             params.collective_memory_requests->RequestSymmetricAllocation(
                 clique_key, buffer.source_buffer.slice.index()));
       }
 
       if (buffer.destination_memory_space == kCollectiveMemorySpaceColor) {
-        TF_RETURN_IF_ERROR(
+        RETURN_IF_ERROR(
             params.collective_memory_requests->RequestSymmetricAllocation(
                 clique_key, buffer.destination_buffer.slice.index()));
       }
@@ -383,16 +388,11 @@ absl::Status CollectiveThunk::RunWithCommAndRendezvous(
                        clique_key, params.collective_params->global_device_id));
   DCHECK(comm) << "Failed to get communicator for collective operation";
 
-  std::pair<RendezvousFlag*, RendezvousFlag*> rend_flags;
-  ASSIGN_OR_RETURN(rend_flags,
-                   params.collective_cliques->GetCliqueFirstRendezvousFlags(
-                       clique_key, params.module_name));
-
-  RETURN_IF_ERROR(
-      FirstCallRendezvous(params, clique_key, "before", *(rend_flags.first)));
+  RETURN_IF_ERROR(FirstCallRendezvous(params, clique_key, "before",
+                                      pre_call_rendezvous_flag_));
   RETURN_IF_ERROR(fn(clique_key, *comm));
-  RETURN_IF_ERROR(
-      FirstCallRendezvous(params, clique_key, "after", *(rend_flags.second)));
+  RETURN_IF_ERROR(FirstCallRendezvous(params, clique_key, "after",
+                                      post_call_rendezvous_flag_));
   return absl::OkStatus();
 }
 
@@ -438,18 +438,6 @@ absl::StatusOr<const se::CommandBuffer::Command*> CollectiveThunk::Record(
   return Internal("Invalid record action");
 }
 
-absl::StatusOr<std::vector<Communicator*>> CollectiveThunk::GetCommunicators(
-    const ExecuteParams& params) const {
-  ASSIGN_OR_RETURN(
-      GpuCliqueKey clique_key,
-      GetGpuCliqueKey(*params.collective_params, config().replica_groups,
-                      config().group_mode, communication_id_));
-  ASSIGN_OR_RETURN(Communicator * comm,
-                   params.collective_cliques->GetComm(
-                       clique_key, params.collective_params->global_device_id));
-  return std::vector<Communicator*>{comm};
-}
-
 Thunk::BufferUses CollectiveThunk::buffer_uses() const {
   BufferUses uses;
   uses.reserve(buffers_.size() * 2);
@@ -460,6 +448,12 @@ Thunk::BufferUses CollectiveThunk::buffer_uses() const {
                                     buffer.destination_buffer.shape));
   }
   return uses;
+}
+
+absl::StatusOr<GpuCliqueKey> CollectiveThunk::GetCliqueKey(
+    const ExecuteParams& params) const {
+  return GetGpuCliqueKey(*params.collective_params, config().replica_groups,
+                         config().group_mode, communication_id_);
 }
 
 std::string CollectiveThunk::GetDeviceString(

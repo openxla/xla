@@ -32,7 +32,9 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/codegen/tiling/constraint_expression.h"
 #include "xla/codegen/tiling/experimental/tile.h"
+#include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/interval.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/shape.h"
@@ -86,6 +88,11 @@ inline std::ostream& operator<<(std::ostream& os, TiledDimId id) {
 class TilingSpace {
  public:
   TilingSpace() : constraints_(ConstraintExpression::GetAlwaysSatisfied()) {}
+
+  // Disable copy constructor and assignment to prevent dangling pointers
+  // inside hlo_to_dimension_.
+  TilingSpace(const TilingSpace&) = delete;
+  TilingSpace& operator=(const TilingSpace&) = delete;
 
   // Unique ID for the dimension or runtime variable.
   using ID = int64_t;
@@ -211,11 +218,19 @@ class TilingSpace {
 
   bool IsSymbolic() const { return is_symbolic_; }
 
+  // Simplifies an expression using actual dimension and symbol bounds
+  // based on the assigned tile sizes and runtime variable bounds.
+  SymbolicExpr SimplifyExpression(const SymbolicExpr& expr) const;
+
  private:
   void ProcessDotLike(const HloInstruction& hlo);
   void ProcessReduce(const HloInstruction& hlo);
   void ProcessDynamicSlice(const HloInstruction& hlo);
   void ProcessInstruction(const HloInstruction& hlo);
+
+  // Initializes cached indexing map variables. This is necessary to allow
+  // building indexing maps during simplification.
+  void InitSimplificationIndexing();
 
   // Maps from (hlo, dim_position) to the dimension info.
   absl::flat_hash_map<std::pair<const HloInstruction*, int64_t>,
@@ -246,6 +261,12 @@ class TilingSpace {
 
   // Whether the tiling space is symbolic.
   bool is_symbolic_ = true;
+
+  // Cached variables for building actual indexing maps during simplification.
+  // These are populated by AssignTileSizes.
+  std::vector<IndexingMap::Variable> dim_vars_indexing_;
+  std::vector<IndexingMap::Variable> range_vars_indexing_;
+  std::vector<IndexingMap::Variable> rt_vars_indexing_;
 };
 
 // If the shape is a tuple, return the shape at the given index.

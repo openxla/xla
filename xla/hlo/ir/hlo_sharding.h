@@ -179,6 +179,9 @@ class HloSharding {
   // Convert NamedSharding (HloShardingV3) to HloShardingV2.
   static HloSharding V3ToV2Sharding(const NamedSharding& named_sharding);
 
+  // Convert HloShardingV3 (including tuple shardings) to HloShardingV2.
+  static HloSharding V3ToV2Sharding(const HloSharding& sharding);
+
   // Convert HloShardingV1/V2 to NamedSharding (HloShardingV3).
   static NamedSharding ToNamedSharding(const HloSharding& sharding);
 
@@ -610,7 +613,10 @@ class HloSharding {
 
   // Gets the tile assignment tensor.
   // REQUIRES: !IsReplicated() && !IsTuple()
-  const TileAssignment& tile_assignment() const { return tile_assignment_; }
+  const TileAssignment& tile_assignment() const {
+    CHECK(!IsTuple());
+    return tile_assignment_;
+  }
 
   // Returns the flattened list of devices used in the tile assignment.
   // REQUIRES: !IsReplicated() && !IsTuple()
@@ -971,10 +977,10 @@ class HloSharding {
   // so that the elements in subgroup_types_ are unique.
   std::vector<OpSharding::Type> subgroup_types_;
 
-  bool replicated_ : 1;  // When non-tuple, true if the sharding is trivial.
+  bool replicated_ : 1;     // When non-tuple, true if the sharding is trivial.
   bool single_device_ : 1;  // When non-tuple, true if the tensor is on a single
                             // device.
-  bool tuple_ : 1;       // True if this is a tuple.
+  bool tuple_ : 1;          // True if this is a tuple.
   bool manual_ : 1;   // When non-tuple, true if the sharding represents manual
                       // partitioning.
   bool unknown_ : 1;  // When non-tuple, true if the sharding represents a

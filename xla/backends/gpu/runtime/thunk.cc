@@ -25,12 +25,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
@@ -48,7 +46,6 @@ limitations under the License.
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/service_executable_run_options.h"
-#include "xla/status_macros.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 
@@ -65,8 +62,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
     CollectiveParams* collective_params, CollectiveCliques* collective_cliques,
     CollectiveMemory* collective_memory,
     std::vector<se::Stream*> additional_compute_streams,
-    ExecutionScopedState* execution_scoped_state,
-    const absl::string_view module_name) {
+    ExecutionScopedState* execution_scoped_state) {
   return ExecuteParams(&buffer_allocations, stream, command_buffer_trace_stream,
                        collective_params, collective_cliques, collective_memory,
                        run_options.run_options().device_to_host_stream(),
@@ -75,7 +71,6 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
                        run_options.run_options().recv_device_memory_function(),
                        run_options.run_options().ffi_execution_context(),
                        additional_compute_streams, execution_scoped_state,
-                       module_name,
                        run_options.run_options().gpu_executable_run_options()
                            ? run_options.run_options()
                                  .gpu_executable_run_options()
@@ -93,7 +88,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
       params.collective_memory, params.device_to_host_stream,
       params.host_to_device_stream, params.send_device_memory_function,
       params.recv_device_memory_function, params.ffi_execution_context,
-      params.additional_compute_streams, nullptr, params.module_name);
+      params.additional_compute_streams);
 }
 
 Thunk::ExecuteParams Thunk::ExecuteParams::WithComputeStream(
@@ -103,8 +98,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::WithComputeStream(
                        device_to_host_stream, host_to_device_stream,
                        send_device_memory_function, recv_device_memory_function,
                        ffi_execution_context, additional_compute_streams,
-                       execution_scoped_state, module_name, mock_collectives,
-                       execution_id);
+                       execution_scoped_state, mock_collectives, execution_id);
 }
 
 Thunk::ExecuteParams::ExecuteParams(
@@ -117,8 +111,7 @@ Thunk::ExecuteParams::ExecuteParams(
     RecvDeviceMemoryFunction* recv_device_memory_function,
     const ffi::ExecutionContext* ffi_execution_context,
     std::vector<se::Stream*> additional_compute_streams,
-    ExecutionScopedState* execution_scoped_state,
-    const absl::string_view module_name, bool mock_collectives,
+    ExecutionScopedState* execution_scoped_state, bool mock_collectives,
     int64_t execution_id)
     : buffer_allocations(buffer_allocations),
       stream(stream),
@@ -133,7 +126,6 @@ Thunk::ExecuteParams::ExecuteParams(
       ffi_execution_context(ffi_execution_context),
       additional_compute_streams(additional_compute_streams),
       execution_scoped_state(execution_scoped_state),
-      module_name(module_name),
       mock_collectives(mock_collectives),
       execution_id(execution_id) {}
 
@@ -185,6 +177,8 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_CUSTOM_KERNEL;
     case kDynamicSlice:
       return THUNK_KIND_DYNAMIC_SLICE;
+    case kDynamicSliceFusion:
+      return THUNK_KIND_DYNAMIC_SLICE_FUSION;
     case kFft:
       return THUNK_KIND_FFT;
     case kGemm:
@@ -290,6 +284,8 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kCustomKernel;
     case THUNK_KIND_DYNAMIC_SLICE:
       return kDynamicSlice;
+    case THUNK_KIND_DYNAMIC_SLICE_FUSION:
+      return kDynamicSliceFusion;
     case THUNK_KIND_FFT:
       return kFft;
     case THUNK_KIND_GEMM:
@@ -381,6 +377,7 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kCustomCall);
     CASE(kCustomKernel);
     CASE(kDynamicSlice);
+    CASE(kDynamicSliceFusion);
     CASE(kFft);
     CASE(kGemm);
     CASE(kGroup);
@@ -428,6 +425,9 @@ absl::StatusOr<Thunk::ThunkInfo> Thunk::ThunkInfo::FromProto(
   Thunk::ThunkInfo thunk_info;
   thunk_info.profile_annotation = proto.profile_annotation();
   thunk_info.thunk_id = ThunkId(proto.thunk_id());
+  if (proto.has_concurrent_region_id()) {
+    thunk_info.concurrent_region_id = proto.concurrent_region_id();
+  }
   return thunk_info;
 }
 
@@ -482,6 +482,9 @@ ThunkInfoProto Thunk::ThunkInfo::ToProto() const {
   ThunkInfoProto proto;
   proto.set_profile_annotation(profile_annotation);
   proto.set_thunk_id(thunk_id.value());
+  if (concurrent_region_id.has_value()) {
+    proto.set_concurrent_region_id(*concurrent_region_id);
+  }
   return proto;
 }
 
@@ -588,7 +591,9 @@ std::string ThunkSequence::ToString(int indent) const {
   for (int64_t i = 0; i < size(); ++i) {
     const std::unique_ptr<Thunk>& thunk = at(i);
     std::string description = thunk->ToString(indent + 1);
-    if (description.empty()) description = "(no description)";
+    if (description.empty()) {
+      description = "(no description)";
+    }
     absl::StrAppendFormat(
         &result, "%s%03d: %-*s [%-*s | %-*s] %s", indent_str,
         thunk->thunk_info().thunk_id.value(), max_thunk_kind_len,

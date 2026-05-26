@@ -174,23 +174,6 @@ mlir::LogicalResult rewriteManualComputation(
   return mlir::success();
 }
 
-void cloneManualComputations(
-    ModuleOp moduleOp, SymbolTable& symbolTable,
-    mlir::SymbolTableCollection& symbolTableCollection) {
-  mlir::sdy::walkCalls(moduleOp, [&](CallOp callOp) {
-    if (!isManualComputation(callOp)) {
-      return mlir::WalkResult::advance();
-    }
-    // TODO(b/446881697): Clone just the body on demand like in
-    // shardy/stablehlo_round_trip/shard_map_import.cc.
-    FuncOp funcOp = mlir::sdy::getFuncOpOrDie(callOp.getCallee(), symbolTable);
-    callOp.setCallee(symbolTable.insert(
-        mlir::sdy::cloneFuncRecursively(funcOp, symbolTable)));
-    return mlir::WalkResult::advance();
-  });
-  // TODO(enver): Clean up uncalled functions.
-}
-
 SmallVector<StringAttr> getManualAxesList(
     ArrayRef<ArrayRef<StringAttr>> manualAxesStack) {
   SmallVector<StringAttr> manualAxesList;
@@ -214,11 +197,6 @@ class SdyRoundTripShardMapImportPass
     mlir::SymbolTableCollection symbolTableCollection;
     SymbolTable& symbolTable = symbolTableCollection.getSymbolTable(module);
     mlir::IRRewriter rewriter(module);
-
-    // Clones manual computations and the funcs called from it directly or
-    // indirectly. It practically flattens the call graph under manual
-    // computations.
-    cloneManualComputations(module, symbolTable, symbolTableCollection);
 
     if (!mlir::sdy::walkCalls(module, [&](CallOp callOp) {
           if (isManualComputation(callOp)) {
@@ -255,8 +233,9 @@ class SdyRoundTripShardMapImportPass
 
     // Erase all manual computation func ops as now they have no call ops.
     for (FuncOp funcOp : llvm::make_early_inc_range(module.getOps<FuncOp>())) {
-      if (isManualComputation(funcOp)) {
-        symbolTable.erase(symbolTable.lookup(funcOp.getName()));
+      StringRef funcName = funcOp.getName();
+      if (isManualComputationOnName(funcName)) {
+        symbolTable.erase(symbolTable.lookup(funcName));
       }
     }
 

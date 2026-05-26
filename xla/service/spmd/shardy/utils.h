@@ -196,19 +196,13 @@ mlir::sdy::TensorShardingAttr convertToSdyShardingAttr(
 mlir::sdy::TensorShardingPerValueAttr convertToSdySharding(
     const HloSharding& hloSharding, mlir::MLIRContext* context);
 
-// Returns whether the call is on a manual computation. Returns false for an
-// 'inlineable' manual computation if `isInlineable` is false. Returns whether
-// the call is on an 'inlineable' manual computation if `isInlineable` is true.
-bool isManualComputation(mlir::func::CallOp callOp, bool isInlineable = false);
-// Returns whether the func is a manual computation. Returns false for an
+// Returns whether the call is on a manual computation.
+bool isManualComputation(mlir::func::CallOp callOp);
+// Returns whether the `funcName` is a manual computation. Returns false for an
 // 'inlineable' manual computation if `isInlineable` is false. Returns whether
 // the func is an 'inlineable' manual computation if `isInlineable` is true.
-bool isManualComputation(mlir::func::FuncOp funcOp, bool isInlineable = false);
-
-// Returns if `type` has a total size of one.
-//
-// In case `type` is not a static shaped type, returns false.
-bool isSizeOfOne(mlir::Type type);
+bool isManualComputationOnName(mlir::StringRef funcName,
+                               bool isInlineable = false);
 
 }  // namespace sdy
 }  // namespace xla

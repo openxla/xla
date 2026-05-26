@@ -38,7 +38,6 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
@@ -534,28 +533,13 @@ mlir::sdy::TensorShardingPerValueAttr convertToSdySharding(
       context, convertToSdyShardingAttr(hloSharding, context));
 }
 
-bool isManualComputation(CallOp callOp, bool isInlineable) {
-  return callOp.getCallee().contains(isInlineable
-                                         ? kInlineableManualComputationFuncName
-                                         : kManualComputationFuncName);
+bool isManualComputation(CallOp callOp) {
+  return isManualComputationOnName(callOp.getCallee());
 }
 
-bool isManualComputation(FuncOp funcOp, bool isInlineable) {
-  return funcOp.getName().contains(isInlineable
-                                       ? kInlineableManualComputationFuncName
-                                       : kManualComputationFuncName);
-}
-
-bool isSizeOfOne(mlir::Type type) {
-  if (auto shapedType = mlir::dyn_cast<mlir::ShapedType>(type)) {
-    if (!shapedType.hasStaticShape()) {
-      // Returns false if not a static shape.
-      return false;
-    }
-    return shapedType.getNumElements() == 1;
-  }
-  // Returns false if not a shaped type.
-  return false;
+bool isManualComputationOnName(mlir::StringRef funcName, bool isInlineable) {
+  return funcName.contains(isInlineable ? kInlineableManualComputationFuncName
+                                        : kManualComputationFuncName);
 }
 
 }  // namespace sdy

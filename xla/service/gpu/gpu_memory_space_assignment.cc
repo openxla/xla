@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
+#include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu_topology.h"
@@ -64,6 +65,7 @@ const absl::NoDestructor<absl::flat_hash_set<HloOpcode>>
         HloOpcode::kCollectivePermuteStart,
         HloOpcode::kCollectivePermuteDone,
         HloOpcode::kAllToAll,
+        HloOpcode::kRaggedAllToAll,
     });
 
 absl::StatusOr<MemorySpaceColor> AsMemorySpaceColor(int64_t memory_space) {
@@ -235,6 +237,29 @@ static absl::StatusOr<MemorySpaceColor> GetCustomCallOperandMemorySpace(
   return MemorySpaceColor::kDefault;
 }
 
+// Returns true if the value is
+// 1. Used by a RaggedAllToAll as Operand(1)
+// 2. RaggedAllToAll result
+bool IsRaggedAllToAllCollectiveOperandOrResult(const HloValue& value) {
+  if (value.shape().IsTuple()) {
+    return false;
+  }
+
+  // Check if the value is DEFINED by an RA2A (the result)
+  if (IsRaggedAllToAllOrAsyncDoneRaggedAllToAll(value.defining_instruction())) {
+    return true;
+  }
+
+  // Check if the value is USED by an RA2A as the destination (Operand 1)
+  for (const HloUse& use : value.GetUses()) {
+    if (IsRaggedAllToAllOrAsyncStartRaggedAllToAll(use.instruction) &&
+        use.operand_number == 1) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Returns the memory space requested for a custom call result value, or
 // MemorySpaceColor::kDefault if none is specified.
 static absl::StatusOr<MemorySpaceColor> GetCustomCallResultMemorySpace(
@@ -268,6 +293,7 @@ static absl::StatusOr<MemorySpaceColor> GetCustomCallResultMemorySpace(
 // Also assigns memory space colors for custom call operands and results based
 // on `operands_memory_spaces` and `results_memory_spaces` frontend attributes.
 absl::Status AssignColors(bool use_collective_memory, bool use_nvshmem,
+                          bool is_one_shot_zero_copy_ra2a,
                           HloAliasAnalysis* alias_analysis,
                           const GpuTopology& gpu_topology) {
   for (HloValue* value : alias_analysis->dataflow_analysis().values()) {
@@ -336,6 +362,11 @@ absl::Status AssignColors(bool use_collective_memory, bool use_nvshmem,
         // This is a temporary solution until a separate BFC
         // allocator will be added for the symmetric memory space.
         value->set_color((int)MemorySpaceColor::kCollective);
+      } else if (is_one_shot_zero_copy_ra2a &&
+                 IsRaggedAllToAllCollectiveOperandOrResult(*alias)) {
+        // One-shot zero-copy RaggedAllToAll requires collective memory for
+        // both operand 1 and the result.
+        value->set_color((int)MemorySpaceColor::kCollective);
       } else if (HasSymmetricMemoryInstruction(*alias)) {
         // Device-initiated and one-sided collectives require symmetric memory.
         value->set_color((int)MemorySpaceColor::kCollective);
@@ -366,9 +397,14 @@ BufferAssigner::Colorer CreateColorer(const DebugOptions& option,
 
   bool use_collective_memory = nccl_user_buffers || nccl_symmetric_buffers;
 
-  return [use_collective_memory, use_nvshmem, gpu_topology](
-             HloAliasAnalysis* alias_analysis, const HloOrdering&) {
-    return AssignColors(use_collective_memory, use_nvshmem, alias_analysis,
+  // Is one-shot zero-copy RaggedAllToAll feature is enabled.
+  bool is_one_shot_zero_copy_ra2a =
+      IsOneShotZeroCopyRaggedAllToAllEnabled(option);
+
+  return [use_collective_memory, use_nvshmem, is_one_shot_zero_copy_ra2a,
+          gpu_topology](HloAliasAnalysis* alias_analysis, const HloOrdering&) {
+    return AssignColors(use_collective_memory, use_nvshmem,
+                        is_one_shot_zero_copy_ra2a, alias_analysis,
                         gpu_topology);
   };
 }
