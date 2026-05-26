@@ -2039,8 +2039,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // by hipBLASLt GroupedMatMul via GemmRewriter instead.
   if (!debug_options.xla_gpu_experimental_disable_binary_libraries() &&
       debug_options.xla_gpu_experimental_use_ragged_dot_fusion() &&
-      gpu_target_config.device_description.gpu_compute_capability()
-              .cuda_compute_capability() != nullptr) {
+      gpu_target_config.device_description.gpu_compute_capability().IsCuda()) {
     pipeline.AddPass<RaggedDotFusionRewriter>();
   }
 
