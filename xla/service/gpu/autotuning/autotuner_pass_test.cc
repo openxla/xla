@@ -27,19 +27,13 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
-#include "mlir/IR/MLIRContext.h"
 #include "xla/backends/autotuner/autotuner.h"
-#include "xla/backends/autotuner/autotuner_cache.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/profiler.h"
-#include "xla/backends/gpu/autotuner/cublas.h"
-#include "xla/hlo/analysis/alias_info.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
+#include "xla/backends/gpu/autotuner/cublaslt.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/service/compiler.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/nvptx_compiler.h"
@@ -87,7 +81,7 @@ ENTRY %main (arg0: f32[100,100], arg1: f32[100,100]) -> f32[100,100] {
   %arg0 = f32[100,100]{1,0} parameter(0)
   %arg1 = f32[100,100]{1,0} parameter(1)
   %custom-call.1 = (f32[100,100]{1,0}, s8[80000]{0}) custom-call(%arg0, %arg1),
-  custom_call_target="__cublas$gemm",
+  custom_call_target="__cublas$lt$matmul",
   backend_config={
     "gemm_backend_config":{
       "dot_dimension_numbers":
@@ -110,7 +104,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotuned) {
                                       /*num_threads=*/4);
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   GpuCompiler::GpuTargetConfig target_config(stream_executor_);
-  backends.push_back(std::make_unique<CublasBackend>(
+  backends.push_back(std::make_unique<CublasLtBackend>(
       stream_executor_, &module->config().debug_options(), &compiler_,
       &target_config));
 
@@ -155,7 +149,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotunedAndCached) {
   // Run the pass for the first time, this should populate the cache.
   {
     std::vector<std::unique_ptr<CodegenBackend>> backends;
-    backends.push_back(std::make_unique<CublasBackend>(
+    backends.push_back(std::make_unique<CublasLtBackend>(
         stream_executor_, &module->config().debug_options(), &compiler_,
         &target_config));
 
@@ -203,7 +197,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotunedAndCached) {
       .set_xla_gpu_require_complete_aot_autotune_results(true);
   {
     std::vector<std::unique_ptr<CodegenBackend>> backends2;
-    backends2.push_back(std::make_unique<CublasBackend>(
+    backends2.push_back(std::make_unique<CublasLtBackend>(
         stream_executor_, &module_2->config().debug_options(), &compiler_,
         &target_config));
 
@@ -256,7 +250,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotunedWithCacheOnly) {
   // Run the pass for the first time, this should populate the cache.
   {
     std::vector<std::unique_ptr<CodegenBackend>> backends;
-    backends.push_back(std::make_unique<CublasBackend>(
+    backends.push_back(std::make_unique<CublasLtBackend>(
         stream_executor_, &module->config().debug_options(), &compiler_,
         &target_config));
 
@@ -289,7 +283,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotunedWithCacheOnly) {
 
   {
     std::vector<std::unique_ptr<CodegenBackend>> backends2;
-    backends2.push_back(std::make_unique<CublasBackend>(
+    backends2.push_back(std::make_unique<CublasLtBackend>(
         stream_executor_, &module_2->config().debug_options(), &compiler_,
         &target_config));
 
@@ -336,7 +330,7 @@ TEST_F(AutotunerPassTest, DevicelessUsesDefaultConfigIfNoCache) {
   GpuCompiler::GpuTargetConfig target_config(stream_executor_);
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
-  backends.push_back(std::make_unique<CublasBackend>(
+  backends.push_back(std::make_unique<CublasLtBackend>(
       stream_executor_, &module->config().debug_options(), &compiler_,
       &target_config));
 
@@ -373,7 +367,7 @@ ENTRY %main (arg0: f32[100,100], arg1: f32[100,100]) -> f32[100,100] {
   %arg0 = f32[100,100]{1,0} parameter(0)
   %arg1 = f32[100,100]{1,0} parameter(1)
   %custom-call.1 = (f32[100,100]{1,0}, s8[80000]{0}) custom-call(%arg0, %arg1),
-  custom_call_target="__cublas$gemm",
+  custom_call_target="__cublas$lt$matmul",
   backend_config={
     "operation_queue_id":"109",
     "gemm_backend_config":{
@@ -398,7 +392,7 @@ ENTRY %main (arg0: f32[100,100], arg1: f32[100,100]) -> f32[100,100] {
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   GpuCompiler::GpuTargetConfig target_config(stream_executor_);
 
-  backends.push_back(std::make_unique<CublasBackend>(
+  backends.push_back(std::make_unique<CublasLtBackend>(
       stream_executor_, &module->config().debug_options(), &compiler_,
       &target_config));
 
@@ -510,145 +504,6 @@ TEST_F(AutotunerFlagsTest, DeterministicAutotuningSetsSelectFirstConfig) {
   debug_options.set_xla_gpu_deterministic_ops(false);
   debug_options.set_xla_gpu_exclude_nondeterministic_ops(true);
   EXPECT_EQ(GetAutotuneConfig(debug_options).select_first_config, true);
-}
-
-TEST_F(AutotunerPassTest, DeterministicOpsDisablesTritonBackend) {
-  mlir::MLIRContext mlir_context;
-  xla::RegisterSymbolicExprStorage(&mlir_context);
-  AliasInfo alias_info;
-  GpuCompiler::GpuTargetConfig target_config(stream_executor_);
-
-  {
-    DebugOptions debug_options = GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_deterministic_ops(true);
-
-    TF_ASSERT_OK_AND_ASSIGN(
-        std::vector<std::unique_ptr<CodegenBackend>> backends,
-        AutotunerPass::GetGpuAutotunerBackends(
-            stream_executor_, allocator_.get(), &target_config, &alias_info,
-            debug_options, &mlir_context, compiler_.ShapeSizeBytesFunction(),
-            &compiler_, compiler_.PlatformId()));
-
-    for (const auto& backend : backends) {
-      EXPECT_NE(backend->backend(), autotuner::Backend::TRITON);
-    }
-  }
-  {
-    DebugOptions debug_options = GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_exclude_nondeterministic_ops(true);
-
-    TF_ASSERT_OK_AND_ASSIGN(
-        std::vector<std::unique_ptr<CodegenBackend>> backends,
-        AutotunerPass::GetGpuAutotunerBackends(
-            stream_executor_, allocator_.get(), &target_config, &alias_info,
-            debug_options, &mlir_context, compiler_.ShapeSizeBytesFunction(),
-            &compiler_, compiler_.PlatformId()));
-
-    for (const auto& backend : backends) {
-      EXPECT_NE(backend->backend(), autotuner::Backend::TRITON);
-    }
-  }
-  {
-    DebugOptions debug_options = GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_deterministic_ops(false);
-    debug_options.set_xla_gpu_exclude_nondeterministic_ops(false);
-
-    TF_ASSERT_OK_AND_ASSIGN(
-        std::vector<std::unique_ptr<CodegenBackend>> backends,
-        AutotunerPass::GetGpuAutotunerBackends(
-            stream_executor_, allocator_.get(), &target_config, &alias_info,
-            debug_options, &mlir_context, compiler_.ShapeSizeBytesFunction(),
-            &compiler_, compiler_.PlatformId()));
-
-    bool found_triton = false;
-    for (const auto& backend : backends) {
-      if (backend->backend() == autotuner::Backend::TRITON) {
-        found_triton = true;
-        break;
-      }
-    }
-    EXPECT_TRUE(found_triton);
-  }
-}
-
-class TestGpuCompiler : public NVPTXCompiler {
- public:
-  using GpuCompiler::AddFusionAutotuningPass;
-};
-
-TEST_F(AutotunerPassTest, AddFusionAutotuningPassObeysDeterminism) {
-  mlir::MLIRContext mlir_context;
-  xla::RegisterSymbolicExprStorage(&mlir_context);
-  TestGpuCompiler compiler;
-  GpuCompiler::GpuTargetConfig target_config(stream_executor_);
-  tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "autotuning", 4);
-  Compiler::CompileOptions options;
-  options.device_allocator = allocator_.get();
-
-  const char kMinimalHlo[] = R"hlo(
-    HloModule module
-    ENTRY main {
-      ROOT root = f32[] constant(0)
-    }
-  )hlo";
-
-  // Case 1: xla_gpu_deterministic_ops = true -> pass NOT added
-  {
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(kMinimalHlo));
-    DebugOptions debug_options = GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_autotune_level(1);
-    debug_options.set_xla_gpu_experimental_enable_fusion_autotuner(true);
-    debug_options.set_xla_gpu_deterministic_ops(true);
-    module->mutable_config().set_debug_options(debug_options);
-
-    HloPassPipeline pipeline("test-pipeline");
-    ASSERT_THAT(compiler.AddFusionAutotuningPass(
-                    &pipeline, module.get(), options, &thread_pool,
-                    stream_executor_, &target_config,
-                    compiler.ShapeSizeBytesFunction(), options.key_value_store),
-                absl_testing::IsOk());
-    EXPECT_EQ(pipeline.PassesSize(), 0);
-  }
-
-  // Case 2: xla_gpu_exclude_nondeterministic_ops = true -> pass NOT added
-  {
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(kMinimalHlo));
-    DebugOptions debug_options = GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_autotune_level(1);
-    debug_options.set_xla_gpu_experimental_enable_fusion_autotuner(true);
-    debug_options.set_xla_gpu_exclude_nondeterministic_ops(true);
-    module->mutable_config().set_debug_options(debug_options);
-
-    HloPassPipeline pipeline("test-pipeline");
-    ASSERT_THAT(compiler.AddFusionAutotuningPass(
-                    &pipeline, module.get(), options, &thread_pool,
-                    stream_executor_, &target_config,
-                    compiler.ShapeSizeBytesFunction(), options.key_value_store),
-                absl_testing::IsOk());
-    EXPECT_EQ(pipeline.PassesSize(), 0);
-  }
-
-  // Case 3: both false -> pass ADDED
-  {
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(kMinimalHlo));
-    DebugOptions debug_options = GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_autotune_level(1);
-    debug_options.set_xla_gpu_experimental_enable_fusion_autotuner(true);
-    debug_options.set_xla_gpu_deterministic_ops(false);
-    debug_options.set_xla_gpu_exclude_nondeterministic_ops(false);
-    module->mutable_config().set_debug_options(debug_options);
-
-    HloPassPipeline pipeline("test-pipeline");
-    ASSERT_THAT(compiler.AddFusionAutotuningPass(
-                    &pipeline, module.get(), options, &thread_pool,
-                    stream_executor_, &target_config,
-                    compiler.ShapeSizeBytesFunction(), options.key_value_store),
-                absl_testing::IsOk());
-    EXPECT_EQ(pipeline.PassesSize(), 1);
-  }
 }
 
 }  // namespace

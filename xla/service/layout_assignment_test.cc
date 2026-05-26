@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -537,9 +538,9 @@ class OperandsMustBeTheSameLayoutAssignment : public LayoutAssignment {
           operand->shape().dimensions().size()) {
         continue;
       }
-      TF_RETURN_IF_ERROR(SetArrayOperandLayout(buffer_constraint.layout(),
-                                               instruction, operand_no,
-                                               /*mandatory=*/true));
+      RETURN_IF_ERROR(SetArrayOperandLayout(buffer_constraint.layout(),
+                                            instruction, operand_no,
+                                            /*mandatory=*/true));
     }
     return PropagateBufferConstraintToUses(buffer_constraint, constraints);
   }
@@ -2460,23 +2461,7 @@ TEST_F(LayoutAssignmentTest, ScanLayoutAssignment3D) {
   ExpectLayoutIs(scan->operand(0)->shape(), {0, 2, 1});
 }
 
-class LayoutAssignmentWithCallGraph : public LayoutAssignment {
- public:
-  explicit LayoutAssignmentWithCallGraph(
-      ComputationLayout* entry_computation_layout)
-      : LayoutAssignment(entry_computation_layout) {}
-
-  bool call_graph_contains(const HloComputation* computation) const {
-    for (const auto& node : call_graph_->nodes()) {
-      if (computation == node.computation()) {
-        return true;
-      }
-    }
-    return false;
-  }
-};
-
-TEST_F(LayoutAssignmentTest, CloneConditionalComputationAndRebuildCallGraph) {
+TEST_F(LayoutAssignmentTest, CloneConditionalComputationWithMultipleCallsites) {
   const char* module_str = R"hlo(
   HloModule test
 
@@ -2502,7 +2487,7 @@ TEST_F(LayoutAssignmentTest, CloneConditionalComputationAndRebuildCallGraph) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
                           ParseAndReturnVerifiedModule(module_str));
   ComputationLayout* computation_layout = m->mutable_entry_computation_layout();
-  LayoutAssignmentWithCallGraph layout_assignment(computation_layout);
+  LayoutAssignment layout_assignment(computation_layout);
   EXPECT_IS_OK(layout_assignment.Run(m.get()).status());
 
   const HloComputation* branch_comp = FindComputation(m.get(), "branch_comp");
@@ -2512,10 +2497,8 @@ TEST_F(LayoutAssignmentTest, CloneConditionalComputationAndRebuildCallGraph) {
   // Layout assignment clones the branch computation because the two callsites
   // have different layout constraints.
 
-  // Verify that the cloned branch computation is present in the call graph.
+  // Verify that the cloned branch computation is present.
   ASSERT_NE(branch_comp_clone, nullptr);
-  EXPECT_TRUE(layout_assignment.call_graph_contains(branch_comp));
-  EXPECT_TRUE(layout_assignment.call_graph_contains(branch_comp_clone));
 }
 
 }  // namespace

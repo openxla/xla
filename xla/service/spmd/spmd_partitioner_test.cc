@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -117,11 +118,11 @@ class SpmdPartitioningTest
     if (enable_enzyme_opt) {
       config.mutable_debug_options().set_xla_enable_enzyme_comms_opt(true);
     }
-    TF_ASSIGN_OR_RETURN(auto module,
-                        ParseAndReturnVerifiedModule(hlo_module, config));
+    ASSIGN_OR_RETURN(auto module,
+                     ParseAndReturnVerifiedModule(hlo_module, config));
 
     ShardingFormatPicker format_picker(GetParam());
-    TF_ASSIGN_OR_RETURN(bool changed, format_picker.Run(module.get()));
+    ASSIGN_OR_RETURN(bool changed, format_picker.Run(module.get()));
     if (changed) {
       VLOG(1) << "Sharding format changed: "
               << module->ToString(HloPrintOptions()
@@ -137,7 +138,7 @@ class SpmdPartitioningTest
                                   collective_ops_creator);
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
-    TF_RETURN_IF_ERROR(pass.Run(module.get()).status());
+    RETURN_IF_ERROR(pass.Run(module.get()).status());
 
     VerifyNoShardingOnCollectives(module.get());
     return absl::StatusOr<std::unique_ptr<HloModule>>(std::move(module));
@@ -223,6 +224,20 @@ ENTRY entry {
                               op::Select(op::Broadcast(op::Compare()),
                                          op::Conditional(), op::Broadcast()))),
                           op::Shape("s32[2,3]")));
+}
+
+TEST_P(SpmdPartitioningAllShardingTest, GetRngSeedCustomCall) {
+  absl::string_view hlo_string = R"(
+HloModule module
+ENTRY entry {
+  ROOT %cc = u64[] custom-call(), custom_call_target="GetRngSeed",
+    sharding={replicated}
+})";
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, AllOf(op::CustomCall(), op::Shape("u64[]")));
 }
 
 TEST_P(SpmdPartitioningAllShardingTest, SingleDeviceToSingleDevice) {
@@ -5272,6 +5287,26 @@ ENTRY entry {
   auto zero = AllOf(op::Parameter(0), op::Shape("s32[]"));
   const auto root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, AllOf(op::While(zero), op::Shape("s32[]")));
+}
+
+TEST_P(SpmdPartitioningAllShardingTest, ReshardManualSubgroupToReplicated) {
+  // Verifies that resharding from a manual subgroup sharding to replicated
+  // sharding does not crash on the IsManualSubgroup CHECK and compiles to a
+  // local copy (since there are no logically tiled dimensions to communicate).
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = s32[512,8,128] parameter(0), sharding={devices=[1,1,1,4,2]<=[2,4]T(1,0) last_tile_dims={manual, replicated}}
+  ROOT %copy = s32[512,8,128] copy(%param0), sharding={replicated}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/8));
+
+  const auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root,
+              AllOf(op::Copy(op::Parameter(0)), op::Shape("s32[512,8,128]")));
 }
 
 TEST_P(SpmdPartitioningAllShardingTest, TestWhileFrontendAttributes) {
@@ -17752,8 +17787,8 @@ class SpmdPartitioningV3Test : public HloHardwareIndependentTestBase {
     config.set_num_partitions(num_devices);
     config.set_use_shardy_partitioner(true);
     config.mutable_debug_options().set_xla_enable_hlo_sharding_v3(true);
-    TF_ASSIGN_OR_RETURN(auto module,
-                        ParseAndReturnVerifiedModule(hlo_module, config));
+    ASSIGN_OR_RETURN(auto module,
+                     ParseAndReturnVerifiedModule(hlo_module, config));
 
     HloPassPipeline pass("spmd-partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
@@ -17763,7 +17798,7 @@ class SpmdPartitioningV3Test : public HloHardwareIndependentTestBase {
                                   collective_ops_creator);
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
-    TF_RETURN_IF_ERROR(pass.Run(module.get()).status());
+    RETURN_IF_ERROR(pass.Run(module.get()).status());
     VerifyNoShardingOnCollectives(module.get());
     return absl::StatusOr<std::unique_ptr<HloModule>>(std::move(module));
   }

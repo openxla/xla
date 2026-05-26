@@ -45,9 +45,9 @@ bazel_dep(name = "rules_ml_toolchain")
 # echo "sha256-${HASH}"
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-C0L2k6YMYFDYfbHgoOrrhKs/VBkfzglNhjNPrtyAfaA=",
-    strip_prefix = "rules_ml_toolchain-398d613aea7a4c294da49b79a6d6f3f8732bd84c",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/398d613aea7a4c294da49b79a6d6f3f8732bd84c.tar.gz"],
+    integrity = "sha256-koXZBgF1eDjQZKEvUfFDdNQAZN3C+hmJeZCLa9D4k0g=",
+    strip_prefix = "rules_ml_toolchain-7f40603f574b95746152332ef3ad5fce63f1768d",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/7f40603f574b95746152332ef3ad5fce63f1768d.tar.gz"],
 )
 
 # TODO: Upstream the patch?
@@ -125,6 +125,7 @@ use_repo(
     "mpitrampoline",
     "nanobind",
     "nccl_archive",
+    "net_zstd",
     "nvshmem",
     "nvtx_archive",
     "onednn",
@@ -308,3 +309,7 @@ use_repo(pjrt_nightly_timestamp, "nightly_timestamp")
 
 pjrt_rc_number = use_extension("//build_tools/pjrt_wheels:release_candidate.bzl", "rc_number_repo_bzlmod")
 use_repo(pjrt_rc_number, "rc_number")
+
+### libdrm (dedicated extension to avoid Bzlmod merging issues)
+libdrm_ext = use_extension("//third_party/libdrm:extension.bzl", "libdrm_ext")
+use_repo(libdrm_ext, "libdrm")

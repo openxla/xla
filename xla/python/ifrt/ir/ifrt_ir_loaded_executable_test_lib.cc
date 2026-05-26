@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -79,9 +80,9 @@ class IfrtIrLoadedExecutableTest
   // Returns true if the test runs on TPU v4. This is a helper method called
   // from tests that require TPU v4.
   absl::StatusOr<bool> IsUsingTpuV4() {
-    TF_ASSIGN_OR_RETURN(DeviceListRef devices, PickDevices(1));
-    TF_ASSIGN_OR_RETURN(std::shared_ptr<Topology> topology,
-                        client_->GetTopologyForDevices(devices));
+    ASSIGN_OR_RETURN(DeviceListRef devices, PickDevices(1));
+    ASSIGN_OR_RETURN(std::shared_ptr<Topology> topology,
+                     client_->GetTopologyForDevices(devices));
     return topology->DeviceDescriptions().front()->device_kind() == "TPU v4";
   }
 
@@ -1954,10 +1955,12 @@ module @auto_layout {
   ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
                        LoadFromSource(source));
   auto program = std::make_unique<IfrtIRProgram>(*mlir_module);
+  // TODO(b/510955190): Update compatibility requirement to WEEK_4 once the
+  // 4 weeks version is >= 0.4.0.
   ASSERT_OK_AND_ASSIGN(
       program,
       SerDeRoundTrip(std::move(program),
-                     xla::ifrt::Version::CompatibilityRequirement::WEEK_4));
+                     xla::ifrt::Version::CompatibilityRequirement::NONE));
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(4));
   ASSERT_OK_AND_ASSIGN(
       auto ifrt_ir_executable,
