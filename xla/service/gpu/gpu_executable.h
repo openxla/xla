@@ -252,7 +252,9 @@ class GpuExecutable : public Executable {
   const ThunkExecutor& thunk_executor() const { return *thunk_executor_; }
 
   absl::Status ExecuteThunks(const BufferAllocations& buffer_allocations,
-                             const ServiceExecutableRunOptions* run_options);
+                             const ServiceExecutableRunOptions* run_options,
+                             const Thunk::CommandBufferUpdateInfo*
+                                 command_buffer_update_info = nullptr);
 
   using BufferAllocToDeviceMemoryMap =
       absl::flat_hash_map<BufferAllocation::Index, se::DeviceAddressBase>;
@@ -326,6 +328,15 @@ class GpuExecutable : public Executable {
     // VMM allocator that owns deferred mappings into `va_reservation`.
     se::DeviceAddressVmmAllocator* vmm_allocator = nullptr;
 
+    // ADAPTIVE_UPDATE state. The first execution captures warmup addresses; the
+    // following execution freezes the selected VA-remapped and dynamic sets.
+    bool adaptive_warmup_captured = false;
+    bool adaptive_decision_ready = false;
+    std::vector<se::DeviceAddressBase> adaptive_warmup_addresses;
+    std::vector<BufferAllocation::Index> adaptive_va_remapped_indices;
+    std::vector<BufferAllocation::Index> adaptive_dynamic_alloc_indices;
+    absl::btree_set<BufferAllocation::Index> adaptive_va_remapped_index_set;
+
     // Returns the reservation offset recorded for `idx` in
     // `allocation_to_reservation_offset`, or an Internal error if `idx` is not
     // tracked.
@@ -382,6 +393,14 @@ class GpuExecutable : public Executable {
   absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> AllocateVaRemappedBuffer(
       int device_ordinal, const BufferAllocation& allocation,
       int64_t buffer_size, bool allocate_va_address,
+      VaRemapExecutionState& va_remap_execution_state);
+
+  bool ShouldVaRemapAllocation(
+      BufferAllocation::Index index,
+      const VaRemapExecutionState* va_remap_execution_state) const;
+
+  absl::Status UpdateAdaptiveCommandBufferRemapping(
+      const BufferAllocations& owning_buffer_allocations,
       VaRemapExecutionState& va_remap_execution_state);
 
   absl::StatusOr<BufferAllocations> BuildVaRemapBufferAllocations(
@@ -470,8 +489,9 @@ class GpuExecutable : public Executable {
       ModuleIdentifier module_id, ThunkExecutor& thunk_executor,
       Thunk::ExecutableSource executable_source,
       const ServiceExecutableRunOptions* run_options,
-      const BufferAllocations& buffer_allocations, bool block_host_until_done,
-      NumAdditionalStreams num_additional_streams,
+      const BufferAllocations& buffer_allocations,
+      const Thunk::CommandBufferUpdateInfo* command_buffer_update_info,
+      bool block_host_until_done, NumAdditionalStreams num_additional_streams,
       CollectiveMemoryCache& collective_memory_cache,
       bool collective_use_minimal_resource);
 
