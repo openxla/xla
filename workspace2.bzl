@@ -33,6 +33,7 @@ load("//third_party/highway:workspace.bzl", highway = "repo")
 load("//third_party/highwayhash:workspace.bzl", highwayhash = "repo")
 load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
 load("//third_party/implib_so:workspace.bzl", implib_so = "repo")
+load("//third_party/libdrm:workspace.bzl", libdrm = "repo")
 load("//third_party/llvm:workspace.bzl", llvm = "repo")
 load("//third_party/llvm_openmp:workspace.bzl", llvm_openmp = "repo")
 load("//third_party/mkl_dnn:workspace.bzl", onednn = "repo")
@@ -64,7 +65,6 @@ load("//third_party/transformer_engine:workspace.bzl", transformer_engine = "rep
 load("//third_party/triton:workspace.bzl", triton = "repo")
 load("//third_party/uv:workspace.bzl", uv = "repo")
 load("//third_party/xnnpack:workspace.bzl", xnnpack = "repo")
-load("//third_party/xxd:workspace.bzl", xxd = "repo")
 load("//tools/def_file_filter:def_file_filter_configure.bzl", "def_file_filter_configure")
 load("//tools/toolchains:cpus/aarch64/aarch64_compiler_configure.bzl", "aarch64_compiler_configure")
 load("//tools/toolchains:cpus/arm/arm_compiler_configure.bzl", "arm_compiler_configure")
@@ -95,6 +95,7 @@ def _initialize_third_party():
     highwayhash()
     hwloc()
     implib_so()
+    libdrm()
     llvm_openmp()
     ml_dtypes()
     mpitrampoline()
@@ -122,7 +123,6 @@ def _initialize_third_party():
     triton()
     uv()
     xnnpack()
-    xxd()
     cutlass()
 
     # copybara: tsl vendor
@@ -371,10 +371,9 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "snappy",
-        build_file = "//third_party:snappy.BUILD",
-        sha256 = "736aeb64d86566d2236ddffa2865ee5d7a82d26c9016b36218fcc27ea4f09f86",
-        strip_prefix = "snappy-1.2.1",
-        urls = tf_mirror_urls("https://github.com/google/snappy/archive/refs/tags/1.2.1.tar.gz"),
+        sha256 = "90f74bc1fbf78a6c56b3c4a082a05103b3a56bb17bca1a27e052ea11723292dc",
+        strip_prefix = "snappy-1.2.2",
+        urls = tf_mirror_urls("https://github.com/google/snappy/archive/refs/tags/1.2.2.tar.gz"),
     )
 
     tf_http_archive(

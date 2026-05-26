@@ -89,7 +89,10 @@ cc_library(
     ]),
     defines = {"__HIP_DISABLE_CPP_FUNCTIONS__": "1"},
     strip_include_prefix = "%{rocm_root}/include",
-    deps = [":rocm_sysdeps_includes"],
+    deps = [
+        ":rocm_sysdeps_includes",
+        "@xla//third_party/libdrm:drm_headers",
+    ],
 )
 
 cc_library(
@@ -297,8 +300,8 @@ rocm_lib_import(
     data = glob(["%{rocm_root}/lib/librccl.so*"]),
     interface_library = "%{rocm_root}/lib/librccl.so",
     deps = [
-        ":hip_runtime_libs",
         ":amdsmi_libs",
+        ":hip_runtime_libs",
         ":rocm_smi_libs",
         ":rocprofiler_register_libs",
         ":roctx_libs",
