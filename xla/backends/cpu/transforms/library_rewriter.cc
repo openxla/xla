@@ -261,12 +261,9 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
 
   AddFusionCandidates(fusion, fusion, lib->fusion_direction(), frontier);
 
-  // Track the number of operations added to the fusion.
-  int fused_op_count = 0;
-
   // BFS and fuse as many neighbors as possible.
   while (!frontier.empty() &&
-         fusion->fused_instruction_count() < kMaxInstructionsInFusion) {
+         fusion->fused_instruction_count() < lib->MaxFusionSize()) {
     auto [instr, dir] = frontier.front();
     frontier.pop();
     if (dir != FusionDirection::kUp && dir != FusionDirection::kDown) {
@@ -279,7 +276,10 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
     // the frontier because anything that can be fused would have already been
     // fused into `instr`.
     if (lib->ShouldMergeFusions() &&
-        IsCustomFusionWithKind(instr, lib->fusion_kind())) {
+        IsCustomFusionWithKind(instr, lib->fusion_kind()) &&
+        fusion->fused_instruction_count() +
+                Cast<HloFusionInstruction>(instr)->fused_instruction_count() <=
+            lib->MaxFusionSize()) {
       ASSIGN_OR_RETURN(fusion,
                        MergeFusionInstructions(
                            fusion, Cast<HloFusionInstruction>(instr), dir));
@@ -297,11 +297,6 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
     }
 #endif  // XLA_ONEDNN_USE_GRAPH_API
 
-    if (lib->ReachedMaxFusionSize(fused_op_count)) {
-      VLOG(4) << "  Reached max fusion size: " << fused_op_count;
-      break;
-    }
-
     // Skip this instruction if it can't be fused.
     ASSIGN_OR_RETURN(bool op_supported, lib->IsOpSupported(instr));
     if (!op_supported) {
@@ -318,8 +313,11 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
                      GrowFusion(fusion, instr, dir));
     RETURN_IF_ERROR(
         InsertConvertIfNecessary(new_instr, lib->LibraryOpOutputType(instr)));
-    fused_op_count++;
   }
+
+  VLOG(4) << "Finished growing fusion with size: "
+          << fusion->fused_instruction_count();
+
   return absl::OkStatus();
 }
 

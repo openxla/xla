@@ -45,7 +45,11 @@ xla_cc_test(
 onednn_graph_cc_test(
     name = "onednn_fusion_test",
     srcs = ["onednn_fusion_test.cc"],
-    tags = ["pjrt_migration_candidate"],
+    tags = [
+        "no_oss",
+        "notap",
+        "pjrt_migration_candidate",
+    ],
     deps = [
         "//xla:error_spec",
         "//xla/backends/cpu:onednn_support",

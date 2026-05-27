@@ -30,6 +30,11 @@ limitations under the License.
 
 namespace xla::cpu {
 
+// The maximum number of instructions allowed in a library fusion. This avoids
+// crashing libraries with too large graphs. It could break good fusions, e.g.,
+// Softmax, etc. We should deploy a smarter logic in the future.
+static constexpr int kMaxFusionSize = 100;
+
 enum class FusionDirection {
   kUp,    // Traverse up (to parents).
   kDown,  // Traverse down (to children).
@@ -85,9 +90,9 @@ class LibraryMatcher {
     return instr->shape().element_type();
   }
 
-  // Returns true if there is a limit on the number of ops in the fusion and
-  // the maximum fusion size is already reached.
-  virtual bool ReachedMaxFusionSize(int fused_op_count) { return false; }
+  // Returns the maximum number of instructions allowed in a fusion for the
+  // library.
+  virtual int MaxFusionSize() const { return kMaxFusionSize; }
 
   // Return true if the library supports merging fusions.
   virtual bool ShouldMergeFusions() { return true; }

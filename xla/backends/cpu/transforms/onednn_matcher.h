@@ -31,7 +31,7 @@ limitations under the License.
 
 namespace xla::cpu {
 // TODO(intel-tf): Use oneDNN defined constant
-static const int kMaxOneDnnFusionSize = 4;
+static constexpr int kMaxOneDnnFusionSize = 4;
 
 class OneDnnMatcher : public LibraryMatcher {
  public:
@@ -71,11 +71,8 @@ class OneDnnMatcher : public LibraryMatcher {
     return instr->opcode() == HloOpcode::kDot;
   }
 
-  // Returns true if there is a limit on the number of ops in the fusion and
-  // the maximum fusion size is already reached.
-  bool ReachedMaxFusionSize(int fused_op_count) override {
-    return fused_op_count >= kMaxOneDnnFusionSize;
-  }
+  // TODO(intel-tf): Adjust the max fusion size for oneDNN library.
+  int MaxFusionSize() const override { return kMaxOneDnnFusionSize; }
 
   // oneDNN library does not support merging fusions.
   // TODO(intel-tf): Evaluate if merging fusions has performance benefit for

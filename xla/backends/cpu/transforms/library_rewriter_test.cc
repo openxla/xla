@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/codegen/target_machine_test_base.h"
+#include "xla/backends/cpu/transforms/library_matcher.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -694,7 +695,7 @@ TEST_F(CpuLibraryTest, NoHugeFusions) {
                   lhs_contracting_dims={1}, rhs_contracting_dims={0}
     })";
 
-  constexpr int kNumAbsolutes = kMaxInstructionsInFusion * 2;
+  constexpr int kNumAbsolutes = kMaxFusionSize * 2;
   std::string absolutes = "";
   for (int i = 1; i < kNumAbsolutes; ++i) {
     absl::StrAppend(
@@ -707,9 +708,8 @@ TEST_F(CpuLibraryTest, NoHugeFusions) {
   std::string hlo = absl::StrReplaceAll(
       hlo_template, {{"$absolutes", absolutes},
                      {"$num_absolutes", absl::StrCat(kNumAbsolutes - 1)}});
-  RunTestInternal(
-      spec, hlo,
-      FusionProperties{HloOpcode::kDot, 2, kMaxInstructionsInFusion, true});
+  RunTestInternal(spec, hlo,
+                  FusionProperties{HloOpcode::kDot, 2, kMaxFusionSize, true});
 }
 
 }  // namespace
