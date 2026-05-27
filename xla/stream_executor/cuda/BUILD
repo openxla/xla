@@ -1488,11 +1488,8 @@ cc_library(
     hdrs = ["cuda_core_info_table.h"],
     deps = [
         ":cuda_compute_capability",
-        "//xla:shape_util",
-        "//xla:xla_data_proto_cc",
-        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/gpu:dtype_core_info",
         "@com_google_absl//absl/base:no_destructor",
-        "@com_google_absl//absl/container:flat_hash_map",
     ],
 )
 
@@ -1501,10 +1498,10 @@ xla_cc_test(
     srcs = ["cuda_core_info_table_test.cc"],
     deps = [
         ":cuda_compute_capability",
-        ":cuda_core_info_table",
         "//xla:xla_data_proto_cc",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor/gpu:core_info",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -1569,7 +1566,6 @@ cc_library(
         ":cuda_command_buffer",
         ":cuda_compute_capability",
         ":cuda_context",
-        ":cuda_core_info_table",
         ":cuda_device_allocator",
         ":cuda_event",
         ":cuda_executor",
@@ -1617,6 +1613,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:tensor_map",
         "//xla/stream_executor/gpu:context",
+        "//xla/stream_executor/gpu:core_info",
         "//xla/stream_executor/gpu:gpu_executor_header",
         "//xla/stream_executor/gpu:multicast_memory",
         "//xla/stream_executor/gpu:read_numa_node",
