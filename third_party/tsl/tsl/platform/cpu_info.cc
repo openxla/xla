@@ -94,6 +94,7 @@ class CPUIDInfo {
         have_amx_fp8_(0),
         have_amx_int8_(0),
         have_amx_tile_(0),
+        have_amx_fp8_(0),
         have_avx_(0),
         have_avx2_(0),
         have_avx512f_(0),
@@ -274,6 +275,7 @@ class CPUIDInfo {
       case AMX_FP8:       return cpuid->have_amx_fp8_;
       case AMX_INT8:      return cpuid->have_amx_int8_;
       case AMX_TILE:      return cpuid->have_amx_tile_;
+      case AMX_FP8:       return cpuid->have_amx_fp8_;
       case AVX2:          return cpuid->have_avx2_;
       case AVX:           return cpuid->have_avx_;
       case AVX512F:       return cpuid->have_avx512f_;
@@ -334,6 +336,7 @@ class CPUIDInfo {
   int have_amx_fp8_ : 1;
   int have_amx_int8_ : 1;
   int have_amx_tile_ : 1;
+  int have_amx_fp8_ : 1;
   int have_avx_ : 1;
   int have_avx2_ : 1;
   int have_avx512f_ : 1;
