@@ -23,12 +23,13 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/call_once.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/tsl/platform/status_macros.h"
+#include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
@@ -41,6 +42,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/profiler/lib/profiler_lock.h"
@@ -112,7 +114,8 @@ CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
 
   if (params.command_buffer_update_info != nullptr &&
       params.command_buffer_update_info->update_policy_ready) {
-    absl::call_once(policy_allocs_to_check_once, [&] {
+    absl::call_once(policy_allocs_to_check_once,
+                    [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
       DCHECK(absl::c_is_sorted(commands.allocs_indices()));
       DCHECK(absl::c_is_sorted(
           params.command_buffer_update_info->dynamic_alloc_indices));

@@ -543,7 +543,7 @@ GpuExecutable::~GpuExecutable() {
   {
     absl::MutexLock lock(va_remaps_mutex_);
     for (auto& [executor, va_remap] : va_remaps_) {
-      absl::MutexLock remap_lock(&va_remap.mutex);
+      absl::MutexLock remap_lock(va_remap.mutex);
       if (va_remap.vmm_allocator == nullptr) {
         continue;
       }

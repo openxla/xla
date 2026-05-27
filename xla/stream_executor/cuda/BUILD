@@ -1020,6 +1020,7 @@ xla_cc_test(
         ":cuda_platform",
         "//xla/service:computation_placer_hdr",
         "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:memory_reservation",
         "//xla/stream_executor:memory_space",
