@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <set>
@@ -484,19 +485,15 @@ GpuExecutable::GpuExecutable(
   }
   set_module_stats(std::move(module_stats));
 
-  // Populate command_buffer_allocation_indexes_ with buffer indices accessed by
-  // command buffer thunks. Skip constant and zero-size allocations since they
-  // don't need VA remapping (constants are allocated as global values with
-  // fixed addresses; zero-size allocations have nothing to map).
+  // Populate command buffer allocation sets. Skip constant and zero-size
+  // allocations since they don't need VA remapping or update tracking
+  // (constants are allocated as global values with fixed addresses; zero-size
+  // allocations have nothing to map).
   //
-  // The set of collected indices depends on xla_gpu_command_buffer_update_mode:
-  //   ALWAYS_UPDATE - collect nothing (VA remapping disabled)
-  //   NEVER_UPDATE - collect all allocations from all command buffer
-  //     commands
-  //   CAPTURE_CMD_NEVER_UPDATE - collect only allocations from traced
-  //     commands, including collective commands recorded by CollectiveThunk
-  //   ADAPTIVE_UPDATE - collect all allocations from all command buffer
-  //     commands; the VA-remapped subset is selected after warmup
+  // command_buffer_update_allocation_indexes_ contains all allocation indices
+  // that command buffer update logic might need to check. The
+  // command_buffer_allocation_indexes_ subset contains allocation indices that
+  // are eligible for command-buffer VA remapping.
   if (thunk_executor_) {
     DebugOptions::CommandBufferUpdateMode update_mode =
         has_module() ? module_config()
@@ -523,14 +520,20 @@ GpuExecutable::GpuExecutable(
                   const BufferAllocation& alloc = *allocation_ptrs_[index];
                   if (alloc.is_constant() || alloc.size() == 0) continue;
                 }
-                command_buffer_allocation_indexes_.insert(index);
+                command_buffer_update_allocation_indexes_.insert(index);
+                if (update_mode != DebugOptions::CAPTURE_CMD_NEVER_UPDATE ||
+                    cmd->IsTracedCommand()) {
+                  command_buffer_allocation_indexes_.insert(index);
+                }
               }
               return absl::OkStatus();
             });
           }));
       VLOG(3) << "VA remapping: collected "
               << command_buffer_allocation_indexes_.size()
-              << " allocation indexes for module " << module_name_;
+              << " VA-remap allocation indexes and "
+              << command_buffer_update_allocation_indexes_.size()
+              << " update allocation indexes for module " << module_name_;
     }
     // update_mode == ALWAYS_UPDATE: collect nothing.
   }
@@ -1273,35 +1276,50 @@ bool GpuExecutable::ShouldVaRemapAllocation(
       !command_buffer_allocation_indexes_.contains(index)) {
     return false;
   }
-  if (!has_module() ||
-      module_config().debug_options().xla_gpu_command_buffer_update_mode() !=
-          DebugOptions::ADAPTIVE_UPDATE) {
-    return true;
-  }
   const VaRemaping& va_remap = va_remap_execution_state->remapping;
-  if (!va_remap.adaptive_decision_ready) {
+  if (!va_remap.update_policy_ready) {
     return true;
   }
-  return va_remap.adaptive_va_remapped_index_set.contains(index);
+  return va_remap.policy_va_remapped_index_set.contains(index);
 }
 
-absl::Status GpuExecutable::UpdateAdaptiveCommandBufferRemapping(
+absl::Status GpuExecutable::UpdateCommandBufferAllocationPolicy(
     const BufferAllocations& owning_buffer_allocations,
     VaRemapExecutionState& va_remap_execution_state) {
-  if (!has_module() ||
-      module_config().debug_options().xla_gpu_command_buffer_update_mode() !=
-          DebugOptions::ADAPTIVE_UPDATE) {
+  if (!has_module()) {
     return absl::OkStatus();
   }
 
   VaRemaping& va_remap = va_remap_execution_state.remapping;
-  // The adaptive split is a one-shot decision. Step 0 captures warmup
-  // addresses, step 1 computes the fixed VA-remapped/dynamic sets, and later
-  // steps reuse those sets without comparing or rebuilding them.
-  if (va_remap.adaptive_decision_ready) {
+  DebugOptions::CommandBufferUpdateMode update_mode =
+      module_config().debug_options().xla_gpu_command_buffer_update_mode();
+  if (update_mode == DebugOptions::ALWAYS_UPDATE ||
+      va_remap.update_policy_ready) {
     return absl::OkStatus();
   }
 
+  auto initialize_static_policy = [&] {
+    va_remap.policy_va_remapped_indices.assign(
+        command_buffer_allocation_indexes_.begin(),
+        command_buffer_allocation_indexes_.end());
+    va_remap.policy_va_remapped_index_set =
+        command_buffer_allocation_indexes_;
+    va_remap.policy_dynamic_alloc_indices.clear();
+    absl::c_set_difference(
+        command_buffer_update_allocation_indexes_,
+        command_buffer_allocation_indexes_,
+        std::back_inserter(va_remap.policy_dynamic_alloc_indices));
+    va_remap.update_policy_ready = true;
+  };
+
+  if (update_mode != DebugOptions::ADAPTIVE_UPDATE) {
+    initialize_static_policy();
+    return absl::OkStatus();
+  }
+
+  // The adaptive split is a one-shot decision. Step 0 captures warmup
+  // addresses, step 1 computes the fixed VA-remapped/dynamic sets, and later
+  // steps reuse those sets without comparing or rebuilding them.
   if (!va_remap.adaptive_warmup_captured) {
     va_remap.adaptive_warmup_addresses.assign(owning_buffer_allocations.size(),
                                               se::DeviceAddressBase{});
@@ -1320,9 +1338,9 @@ absl::Status GpuExecutable::UpdateAdaptiveCommandBufferRemapping(
     return absl::OkStatus();
   }
 
-  va_remap.adaptive_va_remapped_indices.clear();
-  va_remap.adaptive_dynamic_alloc_indices.clear();
-  va_remap.adaptive_va_remapped_index_set.clear();
+  va_remap.policy_va_remapped_indices.clear();
+  va_remap.policy_dynamic_alloc_indices.clear();
+  va_remap.policy_va_remapped_index_set.clear();
 
   for (BufferAllocation::Index index : command_buffer_allocation_indexes_) {
     if (index < 0 || static_cast<size_t>(index) >=
@@ -1336,15 +1354,26 @@ absl::Status GpuExecutable::UpdateAdaptiveCommandBufferRemapping(
     se::DeviceAddressBase current_address =
         owning_buffer_allocations.GetDeviceAddress(index);
     if (va_remap.adaptive_warmup_addresses[index].IsSameAs(current_address)) {
-      va_remap.adaptive_va_remapped_indices.push_back(index);
-      va_remap.adaptive_va_remapped_index_set.insert(index);
-    } else {
-      va_remap.adaptive_dynamic_alloc_indices.push_back(index);
+      va_remap.policy_va_remapped_indices.push_back(index);
+      va_remap.policy_va_remapped_index_set.insert(index);
     }
   }
 
-  va_remap.adaptive_decision_ready = true;
+  absl::c_set_difference(
+      command_buffer_update_allocation_indexes_,
+      va_remap.policy_va_remapped_indices,
+      std::back_inserter(va_remap.policy_dynamic_alloc_indices));
+  va_remap.update_policy_ready = true;
   return absl::OkStatus();
+}
+
+Thunk::CommandBufferUpdateInfo GpuExecutable::GetCommandBufferUpdateInfo(
+    const VaRemapExecutionState& va_remap_execution_state) const {
+  const VaRemaping& va_remap = va_remap_execution_state.remapping;
+  return Thunk::CommandBufferUpdateInfo{
+      va_remap.update_policy_ready,
+      absl::MakeConstSpan(va_remap.policy_va_remapped_indices),
+      absl::MakeConstSpan(va_remap.policy_dynamic_alloc_indices)};
 }
 
 absl::StatusOr<se::DeviceAddressBase> GpuExecutable::BufferForAllocation(
@@ -1750,17 +1779,10 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   const BufferAllocations* execution_buffers = &owning_buffer_allocations;
   std::optional<Thunk::CommandBufferUpdateInfo> command_buffer_update_info;
   if (va_remap_execution_state != nullptr) {
-    RETURN_IF_ERROR(UpdateAdaptiveCommandBufferRemapping(
+    RETURN_IF_ERROR(UpdateCommandBufferAllocationPolicy(
         owning_buffer_allocations, *va_remap_execution_state));
-    if (has_module() &&
-        module_config().debug_options().xla_gpu_command_buffer_update_mode() ==
-            DebugOptions::ADAPTIVE_UPDATE) {
-      VaRemaping& va_remap = va_remap_execution_state->remapping;
-      command_buffer_update_info.emplace(Thunk::CommandBufferUpdateInfo{
-          va_remap.adaptive_decision_ready,
-          absl::MakeConstSpan(va_remap.adaptive_va_remapped_indices),
-          absl::MakeConstSpan(va_remap.adaptive_dynamic_alloc_indices)});
-    }
+    command_buffer_update_info.emplace(
+        GetCommandBufferUpdateInfo(*va_remap_execution_state));
     absl::StatusOr<BufferAllocations> execution_buffer_allocations_or =
         BuildVaRemapBufferAllocations(owning_buffer_allocations, device_ordinal,
                                       *va_remap_execution_state);

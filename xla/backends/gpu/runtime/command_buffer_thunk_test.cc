@@ -72,7 +72,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
-#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/profiler_lock.h"
 
@@ -210,7 +209,7 @@ TEST(CommandBufferThunkTest, DeviceToDeviceCopy) {
   ASSERT_EQ(dst, std::vector<int32_t>(4, 42));
 }
 
-TEST(CommandBufferThunkTest, AdaptiveUpdateIgnoresVaRemappedAllocations) {
+TEST(CommandBufferThunkTest, UpdatePolicyIgnoresVaRemappedAllocations) {
   se::StreamExecutor* stream_executor = GpuExecutor();
 
   ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
@@ -246,15 +245,12 @@ TEST(CommandBufferThunkTest, AdaptiveUpdateIgnoresVaRemappedAllocations) {
   ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
                        CommandExecutor::Create(std::move(commands), serialize));
 
-  CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo(),
-                           /*thunks=*/nullptr,
-                           /*enable_command_buffers_during_profiling=*/false,
-                           DebugOptions::ADAPTIVE_UPDATE);
+  CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
   std::vector<BufferAllocation::Index> va_remapped_indices = {0};
   std::vector<BufferAllocation::Index> dynamic_alloc_indices = {1};
   Thunk::CommandBufferUpdateInfo update_info{
-      /*adaptive_decision_ready=*/true,
+      /*update_policy_ready=*/true,
       absl::MakeConstSpan(va_remapped_indices),
       absl::MakeConstSpan(dynamic_alloc_indices)};
 

@@ -205,9 +205,9 @@ class Thunk {
   // Command-buffer-specific update policy derived by GpuExecutable for the
   // current execution. Non-command-buffer thunks ignore this field.
   struct CommandBufferUpdateInfo {
-    // False until ADAPTIVE_UPDATE has compared the warmup execution with a
-    // following execution and frozen the selected VA-remapped allocation set.
-    bool adaptive_decision_ready = false;
+    // False until GpuExecutable has frozen the selected VA-remapped and dynamic
+    // allocation sets for this command buffer execution.
+    bool update_policy_ready = false;
 
     // Allocation indices whose command-buffer-visible addresses are stable
     // reservation VAs for this execution.

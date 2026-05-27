@@ -328,14 +328,17 @@ class GpuExecutable : public Executable {
     // VMM allocator that owns deferred mappings into `va_reservation`.
     se::DeviceAddressVmmAllocator* vmm_allocator = nullptr;
 
-    // ADAPTIVE_UPDATE state. The first execution captures warmup addresses; the
-    // following execution freezes the selected VA-remapped and dynamic sets.
+    // Command buffer update policy state. Static modes initialize this
+    // immediately; ADAPTIVE_UPDATE captures warmup addresses first.
+    bool update_policy_ready = false;
+    std::vector<BufferAllocation::Index> policy_va_remapped_indices;
+    std::vector<BufferAllocation::Index> policy_dynamic_alloc_indices;
+    absl::btree_set<BufferAllocation::Index> policy_va_remapped_index_set;
+
+    // ADAPTIVE_UPDATE warmup state. The first execution captures warmup
+    // addresses; the following execution freezes the policy above.
     bool adaptive_warmup_captured = false;
-    bool adaptive_decision_ready = false;
     std::vector<se::DeviceAddressBase> adaptive_warmup_addresses;
-    std::vector<BufferAllocation::Index> adaptive_va_remapped_indices;
-    std::vector<BufferAllocation::Index> adaptive_dynamic_alloc_indices;
-    absl::btree_set<BufferAllocation::Index> adaptive_va_remapped_index_set;
 
     // Returns the reservation offset recorded for `idx` in
     // `allocation_to_reservation_offset`, or an Internal error if `idx` is not
@@ -399,9 +402,12 @@ class GpuExecutable : public Executable {
       BufferAllocation::Index index,
       const VaRemapExecutionState* va_remap_execution_state) const;
 
-  absl::Status UpdateAdaptiveCommandBufferRemapping(
+  absl::Status UpdateCommandBufferAllocationPolicy(
       const BufferAllocations& owning_buffer_allocations,
       VaRemapExecutionState& va_remap_execution_state);
+
+  Thunk::CommandBufferUpdateInfo GetCommandBufferUpdateInfo(
+      const VaRemapExecutionState& va_remap_execution_state) const;
 
   absl::StatusOr<BufferAllocations> BuildVaRemapBufferAllocations(
       const BufferAllocations& owning_buffer_allocations, int device_ordinal,
@@ -600,6 +606,11 @@ class GpuExecutable : public Executable {
 
   // Buffer allocation indices accessed by command buffer thunks. Using
   // btree_set for deterministic iteration order.
+  absl::btree_set<BufferAllocation::Index>
+      command_buffer_update_allocation_indexes_;
+
+  // Buffer allocation indices that can be VA-remapped for command buffer
+  // execution. This is a subset of command_buffer_update_allocation_indexes_.
   absl::btree_set<BufferAllocation::Index> command_buffer_allocation_indexes_;
 
   // Persistent command-buffer VA remapping state, keyed by executor. A single

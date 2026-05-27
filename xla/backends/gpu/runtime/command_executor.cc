@@ -573,14 +573,12 @@ absl::Status CommandExecutor::RecordUpdate(
   CommandExecutorsState::Key key = std::make_pair(this, record_id);
   RecordedCommands& recorded_commands = state->recorded_commands[key];
 
-  const std::vector<bool>* adaptive_skip_commands = nullptr;
-  if (record_params.command_buffer_update_mode ==
-          DebugOptions::ADAPTIVE_UPDATE &&
-      execute_params.command_buffer_update_info != nullptr &&
-      execute_params.command_buffer_update_info->adaptive_decision_ready) {
-    CommandExecutorsState::AdaptiveUpdateCache& adaptive_update_cache =
-        state->adaptive_update_caches[key];
-    if (!adaptive_update_cache.initialized) {
+  const std::vector<bool>* update_policy_skip_commands = nullptr;
+  if (execute_params.command_buffer_update_info != nullptr &&
+      execute_params.command_buffer_update_info->update_policy_ready) {
+    CommandExecutorsState::UpdatePolicyCache& update_policy_cache =
+        state->update_policy_caches[key];
+    if (!update_policy_cache.initialized) {
       DCHECK(absl::c_is_sorted(
           execute_params.command_buffer_update_info->va_remapped_indices))
           << "VA-remapped allocs must be sorted: "
@@ -588,7 +586,7 @@ absl::Status CommandExecutor::RecordUpdate(
                  execute_params.command_buffer_update_info->va_remapped_indices,
                  ", ");
 
-      adaptive_update_cache.skip_commands.assign(commands_.size(), false);
+      update_policy_cache.skip_commands.assign(commands_.size(), false);
       for (CommandId id = 0; id < commands_.size(); ++id) {
         size_t command_index = static_cast<size_t>(id);
         DCHECK(absl::c_is_sorted(cmd_allocs_indices_[id]))
@@ -598,13 +596,13 @@ absl::Status CommandExecutor::RecordUpdate(
         if (IsSubsetOfSorted(cmd_allocs_indices_[id],
                              execute_params.command_buffer_update_info
                                  ->va_remapped_indices)) {
-          adaptive_update_cache.skip_commands[command_index] = true;
+          update_policy_cache.skip_commands[command_index] = true;
         }
       }
 
-      adaptive_update_cache.initialized = true;
+      update_policy_cache.initialized = true;
     }
-    adaptive_skip_commands = &adaptive_update_cache.skip_commands;
+    update_policy_skip_commands = &update_policy_cache.skip_commands;
   }
 
   // Check if command `id` has to be updated based on the buffer allocations
@@ -624,36 +622,17 @@ absl::Status CommandExecutor::RecordUpdate(
       return false;
     }
 
-    // For CAPTURE_CMD_NEVER_UPDATE mode, always skip updates for commands
-    // implemented via tracing. This includes CollectiveThunk command/thunk
-    // hybrids: their buffer allocations are VA-remapped to fixed offsets within
-    // the reserved VA range, so their recorded addresses remain valid across
-    // executions and no update is needed.
-    //
-    // Note: CollectiveThunk satisfies both IsTracedCommand() and
-    // requires_initialization(), but the requires_initialization() check below
-    // is intentionally unreachable for traced commands in this mode. Because
-    // their buffer addresses are stable (VA-mapped), re-initialization is
-    // unnecessary.
-    if (record_params.command_buffer_update_mode ==
-            DebugOptions::CAPTURE_CMD_NEVER_UPDATE &&
-        command->IsTracedCommand()) {
-      VLOG(3) << "Skipping update for traced command " << id
-              << " (CAPTURE_CMD_NEVER_UPDATE mode)";
-      return true;
-    }
-
-    // In ADAPTIVE_UPDATE mode VA-remapped allocations keep stable
-    // command-buffer-visible addresses. If every allocation referenced by this
-    // command is VA-remapped, the command does not need an update, including
-    // traced collective commands that also require initialization.
-    if (record_params.command_buffer_update_mode ==
-            DebugOptions::ADAPTIVE_UPDATE &&
-        execute_params.command_buffer_update_info != nullptr &&
-        execute_params.command_buffer_update_info->adaptive_decision_ready) {
+    // VA-remapped allocations keep stable command-buffer-visible addresses. If
+    // every allocation referenced by this command is VA-remapped, the command
+    // does not need an update, including traced collective commands that also
+    // require initialization.
+    if (execute_params.command_buffer_update_info != nullptr &&
+        execute_params.command_buffer_update_info->update_policy_ready) {
       size_t command_index = static_cast<size_t>(id);
-      if (adaptive_skip_commands != nullptr &&
-          (*adaptive_skip_commands)[command_index]) {
+      if (update_policy_skip_commands != nullptr &&
+          (*update_policy_skip_commands)[command_index]) {
+        VLOG(3) << "Skipping update for command " << id
+                << " whose allocations are VA-remapped";
         return true;
       }
     }

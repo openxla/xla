@@ -2122,20 +2122,10 @@ StreamExecutorGpuClient::RunAsync(
   const gpu::BufferAllocations* execution_buffers = &buffer_allocations;
   std::optional<gpu::Thunk::CommandBufferUpdateInfo> command_buffer_update_info;
   if (va_remap_execution_state != nullptr) {
-    RETURN_IF_ERROR(gpu_exec->UpdateAdaptiveCommandBufferRemapping(
+    RETURN_IF_ERROR(gpu_exec->UpdateCommandBufferAllocationPolicy(
         buffer_allocations, *va_remap_execution_state));
-    if (gpu_exec->has_module() &&
-        gpu_exec->module_config()
-                .debug_options()
-                .xla_gpu_command_buffer_update_mode() ==
-            DebugOptions::ADAPTIVE_UPDATE) {
-      gpu::GpuExecutable::VaRemaping& va_remap =
-          va_remap_execution_state->remapping;
-      command_buffer_update_info.emplace(gpu::Thunk::CommandBufferUpdateInfo{
-          va_remap.adaptive_decision_ready,
-          absl::MakeConstSpan(va_remap.adaptive_va_remapped_indices),
-          absl::MakeConstSpan(va_remap.adaptive_dynamic_alloc_indices)});
-    }
+    command_buffer_update_info.emplace(
+        gpu_exec->GetCommandBufferUpdateInfo(*va_remap_execution_state));
     absl::StatusOr<gpu::BufferAllocations> execution_buffer_allocations_or =
         gpu_exec->BuildVaRemapBufferAllocations(
             buffer_allocations, device_ordinal, *va_remap_execution_state);
