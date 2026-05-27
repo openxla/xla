@@ -121,8 +121,8 @@ absl::Status SyclStream::WaitFor(Stream* other) {
 }
 
 absl::Status SyclStream::RecordEvent(Event* event) {
-  TF_ASSIGN_OR_RETURN(::sycl::event recent_event,
-                      SyclGetRecentEventFromStream(stream_handle_.get()));
+  ASSIGN_OR_RETURN(::sycl::event recent_event,
+                   SyclGetRecentEventFromStream(stream_handle_.get()));
   // Update the event to the most recent one on the stream.
   static_cast<SyclEvent*>(event)->SetEvent(recent_event);
   VLOG(2) << "Recording SYCL event on stream " << stream_handle_.get();

@@ -371,17 +371,16 @@ TEST_F(SyclStreamTest, MultipleStreams) {
 }
 
 TEST_F(SyclStreamTest, RecordEvent) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream1,
-                          SyclStream::Create(&executor_.value(),
-                                             /*enable_multiple_streams=*/true,
-                                             /*priority=*/std::nullopt));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream2,
-                          SyclStream::Create(&executor_.value(),
-                                             /*enable_multiple_streams=*/true,
-                                             /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream1,
+                       SyclStream::Create(&executor_.value(),
+                                          /*enable_multiple_streams=*/true,
+                                          /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream2,
+                       SyclStream::Create(&executor_.value(),
+                                          /*enable_multiple_streams=*/true,
+                                          /*priority=*/std::nullopt));
 
-  TF_ASSERT_OK_AND_ASSIGN(SyclEvent event,
-                          SyclEvent::Create(&executor_.value()));
+  ASSERT_OK_AND_ASSIGN(SyclEvent event, SyclEvent::Create(&executor_.value()));
 
   constexpr int kBufferNumElements = 32;
   DeviceAddress<uint32_t> device_buffer =

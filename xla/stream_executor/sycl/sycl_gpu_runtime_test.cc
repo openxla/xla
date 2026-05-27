@@ -236,8 +236,8 @@ TEST_F(SyclGpuRuntimeTest, TestSyclGetRecentEventFromStream) {
 
   TF_ASSERT_OK(SyclStreamSynchronize(stream_handle.get()));
 
-  TF_ASSERT_OK_AND_ASSIGN(::sycl::event event,
-                          SyclGetRecentEventFromStream(stream_handle.get()));
+  ASSERT_OK_AND_ASSIGN(::sycl::event event,
+                       SyclGetRecentEventFromStream(stream_handle.get()));
 
   // Expect the event to be in a valid state. The command_execution_status
   // should not be "unknown".
