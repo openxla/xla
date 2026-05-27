@@ -229,8 +229,8 @@ TEST_P(FissionTest, CanCreateFissionBackend) {
   }
 
   std::string expected_name = GetParam().expected_backend_name;
-  if (IsRocm(stream_executor_) && expected_name == "CUBLAS_FISSION") {
-    expected_name = "ROCBLAS_FISSION";
+  if (IsRocm(stream_executor_) && expected_name == "CUBLASLT_FISSION") {
+    expected_name = "HIPBLASLT_FISSION";
   }
   EXPECT_EQ(fission_backend_->name(), expected_name);
 }

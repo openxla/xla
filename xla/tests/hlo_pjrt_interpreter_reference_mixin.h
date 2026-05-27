@@ -40,6 +40,9 @@ class HloPjRtInterpreterReferenceMixin
             std::make_unique<HloRunnerPjRt>(MakeInterpreterClientAotAware(
                 []() { return std::make_unique<HloEvaluator>(); })),
             std::forward<BaseArgs>(base_args)...) {}
+  bool IsRocm() {
+    return this->test_runner().HasProperty(HloRunnerPropertyTag::kUsingGpuRocm);
+  }
   ~HloPjRtInterpreterReferenceMixin() override = default;
 };
 
