@@ -23,6 +23,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/call_once.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/function_ref.h"
@@ -125,6 +126,13 @@ class CommandBufferThunk : public Thunk {
     // and block sizes) captured by commands at construction time and do not
     // change.
     std::vector<se::DeviceAddressBase> recorded_allocs ABSL_GUARDED_BY(mutex);
+
+    // Cached intersection of this command buffer's allocation indices with the
+    // adaptive dynamic-allocation set. The adaptive set is fixed after the
+    // post-warmup decision, so it only has to be computed once.
+    absl::once_flag adaptive_allocs_to_check_once;
+    std::vector<BufferAllocation::Index> adaptive_allocs_to_check
+        ABSL_GUARDED_BY(mutex);
 
     // Number of command buffer executions since last update.
     int64_t num_executions ABSL_GUARDED_BY(mutex) = 0;

@@ -130,18 +130,20 @@ CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
     const CommandExecutor& commands, const Thunk::ExecuteParams& params) {
   std::vector<BufferAllocation::Index> updated_allocs;
   const BufferAllocations* allocs = params.buffer_allocations;
-  std::vector<BufferAllocation::Index> adaptive_allocs_to_check;
   absl::Span<const BufferAllocation::Index> allocs_to_check =
       commands.allocs_indices();
 
   if (params.command_buffer_update_info != nullptr &&
       params.command_buffer_update_info->adaptive_decision_ready) {
-    DCHECK(absl::c_is_sorted(
-        params.command_buffer_update_info->dynamic_alloc_indices));
-    absl::c_set_intersection(
-        commands.allocs_indices(),
-        params.command_buffer_update_info->dynamic_alloc_indices,
-        std::back_inserter(adaptive_allocs_to_check));
+    absl::call_once(adaptive_allocs_to_check_once, [&] {
+      DCHECK(absl::c_is_sorted(commands.allocs_indices()));
+      DCHECK(absl::c_is_sorted(
+          params.command_buffer_update_info->dynamic_alloc_indices));
+      absl::c_set_intersection(
+          commands.allocs_indices(),
+          params.command_buffer_update_info->dynamic_alloc_indices,
+          std::back_inserter(adaptive_allocs_to_check));
+    });
     allocs_to_check = adaptive_allocs_to_check;
   }
 

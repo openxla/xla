@@ -1295,6 +1295,9 @@ absl::Status GpuExecutable::UpdateAdaptiveCommandBufferRemapping(
   }
 
   VaRemaping& va_remap = va_remap_execution_state.remapping;
+  // The adaptive split is a one-shot decision. Step 0 captures warmup
+  // addresses, step 1 computes the fixed VA-remapped/dynamic sets, and later
+  // steps reuse those sets without comparing or rebuilding them.
   if (va_remap.adaptive_decision_ready) {
     return absl::OkStatus();
   }

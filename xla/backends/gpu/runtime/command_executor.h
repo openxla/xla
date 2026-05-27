@@ -216,6 +216,15 @@ class CommandExecutor {
     // to values valid during the execution we use a node hash map container.
     using Key = std::pair<const CommandExecutor*, RecordId>;
     absl::node_hash_map<Key, RecordedCommands> recorded_commands;
+
+    struct AdaptiveUpdateCache {
+      bool initialized = false;
+
+      // Commands that only read/write VA-remapped allocations. These can be
+      // skipped forever after the adaptive decision is ready.
+      std::vector<bool> skip_commands;
+    };
+    absl::node_hash_map<Key, AdaptiveUpdateCache> adaptive_update_caches;
   };
 
   CommandExecutor(SynchronizationMode synchronization_mode,

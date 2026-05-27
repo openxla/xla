@@ -569,6 +569,44 @@ absl::Status CommandExecutor::RecordUpdate(
     return absl::OkStatus();
   }
 
+  auto* state = command_buffer->GetOrConstructResource<CommandExecutorsState>();
+  CommandExecutorsState::Key key = std::make_pair(this, record_id);
+  RecordedCommands& recorded_commands = state->recorded_commands[key];
+
+  const std::vector<bool>* adaptive_skip_commands = nullptr;
+  if (record_params.command_buffer_update_mode ==
+          DebugOptions::ADAPTIVE_UPDATE &&
+      execute_params.command_buffer_update_info != nullptr &&
+      execute_params.command_buffer_update_info->adaptive_decision_ready) {
+    CommandExecutorsState::AdaptiveUpdateCache& adaptive_update_cache =
+        state->adaptive_update_caches[key];
+    if (!adaptive_update_cache.initialized) {
+      DCHECK(absl::c_is_sorted(
+          execute_params.command_buffer_update_info->va_remapped_indices))
+          << "VA-remapped allocs must be sorted: "
+          << absl::StrJoin(
+                 execute_params.command_buffer_update_info->va_remapped_indices,
+                 ", ");
+
+      adaptive_update_cache.skip_commands.assign(commands_.size(), false);
+      for (CommandId id = 0; id < commands_.size(); ++id) {
+        size_t command_index = static_cast<size_t>(id);
+        DCHECK(absl::c_is_sorted(cmd_allocs_indices_[id]))
+            << "Command allocs must be sorted: "
+            << absl::StrJoin(cmd_allocs_indices_[id], ", ");
+
+        if (IsSubsetOfSorted(cmd_allocs_indices_[id],
+                             execute_params.command_buffer_update_info
+                                 ->va_remapped_indices)) {
+          adaptive_update_cache.skip_commands[command_index] = true;
+        }
+      }
+
+      adaptive_update_cache.initialized = true;
+    }
+    adaptive_skip_commands = &adaptive_update_cache.skip_commands;
+  }
+
   // Check if command `id` has to be updated based on the buffer allocations
   // that changed since the last call to `Record`. We keep intersection vector
   // outside of a lambda to avoid repeated heap allocations on every call.
@@ -613,18 +651,9 @@ absl::Status CommandExecutor::RecordUpdate(
             DebugOptions::ADAPTIVE_UPDATE &&
         execute_params.command_buffer_update_info != nullptr &&
         execute_params.command_buffer_update_info->adaptive_decision_ready) {
-      DCHECK(absl::c_is_sorted(cmd_allocs_indices_[id]))
-          << "Command allocs must be sorted: "
-          << absl::StrJoin(cmd_allocs_indices_[id], ", ");
-      DCHECK(absl::c_is_sorted(
-          execute_params.command_buffer_update_info->va_remapped_indices))
-          << "VA-remapped allocs must be sorted: "
-          << absl::StrJoin(
-                 execute_params.command_buffer_update_info->va_remapped_indices,
-                 ", ");
-      if (IsSubsetOfSorted(
-              cmd_allocs_indices_[id],
-              execute_params.command_buffer_update_info->va_remapped_indices)) {
+      size_t command_index = static_cast<size_t>(id);
+      if (adaptive_skip_commands != nullptr &&
+          (*adaptive_skip_commands)[command_index]) {
         return true;
       }
     }
@@ -650,10 +679,6 @@ absl::Status CommandExecutor::RecordUpdate(
     return alloc_intersection.empty();
   };
 
-  auto* state = command_buffer->GetOrConstructResource<CommandExecutorsState>();
-  RecordedCommands& recorded_commands =
-      state->recorded_commands[std::make_pair(this, record_id)];
-
   // Check this this executor was correctly recorded into the command buffer.
   if (recorded_commands.size() != commands_.size()) {
     return Internal(
@@ -667,9 +692,6 @@ absl::Status CommandExecutor::RecordUpdate(
   for (CommandId id = 0; id < commands_.size(); ++id) {
     Command* command = commands_[id];
 
-    std::optional<tsl::profiler::ScopedAnnotation> annotation =
-        GetKernelAnnotation(command->profile_annotation());
-
     // Skip updating collective commands if mock collectives are enabled.
     if (execute_params.mock_collectives && command->IsCollective()) {
       continue;
@@ -681,6 +703,9 @@ absl::Status CommandExecutor::RecordUpdate(
       ++num_skipped_command_updates;
       continue;
     }
+
+    std::optional<tsl::profiler::ScopedAnnotation> annotation =
+        GetKernelAnnotation(command->profile_annotation());
 
     Command::RecordUpdate record_action{recorded_commands[id]};
     ASSIGN_OR_RETURN(recorded_commands[id],
