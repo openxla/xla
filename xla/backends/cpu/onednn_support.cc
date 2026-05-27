@@ -40,29 +40,48 @@ bool IsOneDnnSupportedDType(PrimitiveType dtype) {
               (TestCPUFeature(CPUFeature::AVX512_FP16) ||
                TestCPUFeature(CPUFeature::AMX_FP16))) ||
              TestCPUFeature(CPUFeature::AVX_NE_CONVERT);
+    case F8E5M2:
+    case F8E4M3FN:
+    case F8E4M3:
+      if (TestCPUFeature(CPUFeature::AMX_FP8)) return true;
+      if (TestCPUFeature(CPUFeature::AVX512BW) &&
+          TestCPUFeature(CPUFeature::AMX_FP16)) {
+        LOG_FIRST_N(INFO, 1) << "XLA:CPU FP8 dispatched via oneDNN AMX-FP16 "
+                                "emulation path (no native AMX-FP8 on host).";
+        return true;
+      }
+      return false;
     default:
       return false;
   }
+  return false;
 }
 
 bool IsOneDnnSupportedDType(PrimitiveType dtype,
                             const TargetMachineFeatures* cpu_features) {
-  if (dtype == F32) {
-    return true;
-  }
-
   if (cpu_features == nullptr) {
     return IsOneDnnSupportedDType(dtype);
   }
-
-  if (dtype == BF16) {
-    return cpu_features->has_avx512bf16();
+  switch (dtype) {
+    case F32:
+      return true;
+    case BF16:
+      return cpu_features->has_avx512bf16();
+    case F16:
+      return cpu_features->has_avx512fp16();
+    case F8E5M2:
+    case F8E4M3FN:
+    case F8E4M3:
+      if (cpu_features->has_amx_fp8()) return true;
+      if (cpu_features->has_amx_fp16()) {
+        LOG_FIRST_N(INFO, 1) << "XLA:CPU FP8 dispatched via oneDNN AMX-FP16 "
+                                "emulation path (target ISA lacks AMX-FP8).";
+        return true;
+      }
+      return false;
+    default:
+      return false;
   }
-  if (dtype == F16) {
-    return cpu_features->has_avx512fp16();
-  }
-
-  return false;
 }
 
 absl::StatusOr<bool> IsOneDnnDotSupported(

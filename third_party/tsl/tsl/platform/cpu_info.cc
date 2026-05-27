@@ -93,6 +93,7 @@ class CPUIDInfo {
         have_amx_fp16_(0),
         have_amx_int8_(0),
         have_amx_tile_(0),
+        have_amx_fp8_(0),
         have_avx_(0),
         have_avx2_(0),
         have_avx512f_(0),
@@ -144,6 +145,7 @@ class CPUIDInfo {
 
     // Get vendor string (issue CPUID with eax = 0)
     GETCPUID(eax, ebx, ecx, edx, 0, 0);
+    const uint32_t kMaxLeaf = eax;
     cpuid->vendor_str_.append(reinterpret_cast<char *>(&ebx), 4);
     cpuid->vendor_str_.append(reinterpret_cast<char *>(&edx), 4);
     cpuid->vendor_str_.append(reinterpret_cast<char *>(&ecx), 4);
@@ -252,6 +254,13 @@ class CPUIDInfo {
       cpuid->have_avx_vnni_int8_ = (edx >> 4) & 0x1;
       cpuid->have_avx_ne_convert_ = (edx >> 5) & 0x1;
     }
+
+    // AMX_FP8: CPUID.(EAX=0x1E, ECX=0x01):EAX bit 4
+    // Ref: llvm/lib/TargetParser/Host.cpp (HasLeaf1E + amx-fp8)
+    if (kMaxLeaf >= 0x1e && cpuid->have_amx_tile_) {
+      GETCPUID(eax, ebx, ecx, edx, 0x1e, 0x1);
+      cpuid->have_amx_fp8_ = (eax >> 4) & 0x1;
+    }
   }
 
   static bool TestFeature(CPUFeature feature) {
@@ -264,6 +273,7 @@ class CPUIDInfo {
       case AMX_FP16:      return cpuid->have_amx_fp16_;
       case AMX_INT8:      return cpuid->have_amx_int8_;
       case AMX_TILE:      return cpuid->have_amx_tile_;
+      case AMX_FP8:       return cpuid->have_amx_fp8_;
       case AVX2:          return cpuid->have_avx2_;
       case AVX:           return cpuid->have_avx_;
       case AVX512F:       return cpuid->have_avx512f_;
@@ -323,6 +333,7 @@ class CPUIDInfo {
   int have_amx_fp16_ : 1;
   int have_amx_int8_ : 1;
   int have_amx_tile_ : 1;
+  int have_amx_fp8_ : 1;
   int have_avx_ : 1;
   int have_avx2_ : 1;
   int have_avx512f_ : 1;
