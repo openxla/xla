@@ -91,9 +91,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_device_address_vmm_allocator.h"
 #endif  // GOOGLE_CUDA
 #include "xla/pjrt/gpu/se_gpu_pjrt_client_test_helper.h"
-#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
-#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
