@@ -789,6 +789,13 @@ absl::StatusOr<bool> ShouldRewriteSort(
 
   TF_RET_CHECK(deviceless_cub_mode ==
                DebugOptions::DEVICELESS_CUB_WITH_FALLBACK);
+  LOG_EVERY_N_SEC(WARNING, 60)
+      << "Missing deviceless CUB scratch size data for sort. Using "
+         "fallback sort algorithm rather than SortRewriter, "
+         "which will be slower at runtime. \n"
+         "To avoid this, compile with a GPU present, or add the "
+         "deviceless CUB data for your device and CUB version to "
+         "xla/backends/gpu/libraries/cub/data";
   return false;
 }
 
@@ -857,7 +864,7 @@ absl::StatusOr<bool> SortRewriter::RunOnInstruction(
   // MLIR dictionary attributes when rewriting to the final FFI target.
   SortOptions sort_options;
   sort_options.set_descending(sort_analysis.descending);
-  TF_RETURN_IF_ERROR(custom_call->set_backend_config(sort_options));
+  RETURN_IF_ERROR(custom_call->set_backend_config(sort_options));
 
   // Build the replacement instruction.
   HloInstruction* replacement;
@@ -880,8 +887,7 @@ absl::StatusOr<bool> SortRewriter::RunOnInstruction(
   }
 
   // Replace sort operation with custom call followed by GTE.
-  TF_RETURN_IF_ERROR(
-      sort_op->parent()->ReplaceInstruction(sort_op, replacement));
+  RETURN_IF_ERROR(sort_op->parent()->ReplaceInstruction(sort_op, replacement));
   return true;
 }
 
@@ -906,7 +912,7 @@ absl::StatusOr<bool> SortRewriter::RunOnComputation(
 
   bool changed = false;
   for (auto* sort : sort_ops) {
-    TF_ASSIGN_OR_RETURN(bool result, RunOnInstruction(sort));
+    ASSIGN_OR_RETURN(bool result, RunOnInstruction(sort));
     changed |= result;
   }
   return changed;
@@ -928,8 +934,8 @@ absl::StatusOr<bool> SortRewriter::RunImpl(
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
-    TF_ASSIGN_OR_RETURN(bool result,
-                        RunOnComputation(computation, deviceless_cub_mode));
+    ASSIGN_OR_RETURN(bool result,
+                     RunOnComputation(computation, deviceless_cub_mode));
     changed |= result;
   }
   XLA_VLOG_LINES(3, "SortRewriter::RunImpl(), after:\n" + module->ToString());

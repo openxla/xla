@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -36,6 +37,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/codegen/tiling/experimental/tile.h"
+#include "xla/codegen/tiling/experimental/tiling_space_utils.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -287,8 +289,11 @@ std::unique_ptr<TilingSpace> TilingSpace::Create(const HloFusionAdaptor& fusion,
     llvm::SmallVector<DimTile> dim_tiles;
     dim_tiles.reserve(dims.size());
     for (auto [index, dim] : llvm::enumerate(dims)) {
+      int64_t global_dim_id =
+          tiling_space->GetDimensionInfo(root.instruction(), index).id.value();
       dim_tiles.push_back(GetDefaultDimTile(
-          index, CreateSymbolExpr(index, tiling_space->num_dimensions(), ctx),
+          index,
+          CreateSymbolExpr(global_dim_id, tiling_space->num_dimensions(), ctx),
           dim));
     }
     Tile tile{*tiling_space, std::move(dim_tiles)};
@@ -344,6 +349,24 @@ SymbolicExpr TilingSpace::SimplifyExpression(const SymbolicExpr& expr) const {
                            rt_vars_indexing_);
   indexing_map.Simplify(IndexingMap::SimplifyPointDimensions::kPreserve);
   return indexing_map.GetSymbolicMap().GetResults()[0];
+}
+
+absl::StatusOr<std::vector<llvm::SmallVector<int64_t, 4>>>
+TilingSpace::GetValidTilings() {
+  llvm::SmallVector<int64_t, 4> input_space;
+
+  for (const auto& dim : dimensions_) {
+    input_space.push_back(dim.dimension_size);
+  }
+
+  ASSIGN_OR_RETURN(auto flat_tilings, GetFlatTilingsForInputSpace(input_space));
+
+  std::vector<llvm::SmallVector<int64_t, 4>> valid_tilings;
+  valid_tilings.reserve(flat_tilings.size());
+  for (const auto& flat_tiling : flat_tilings) {
+    valid_tilings.push_back({flat_tiling.begin(), flat_tiling.end()});
+  }
+  return valid_tilings;
 }
 
 }  // namespace xla::gpu::experimental

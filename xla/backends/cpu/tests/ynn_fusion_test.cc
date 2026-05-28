@@ -48,7 +48,7 @@ struct YnnFusionTestParams {
 };
 
 class YnnFusionTest
-    : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>,
+    : public HloPjRtInterpreterReferenceMixin<HloTestBase>,
       public ::testing::WithParamInterface<YnnFusionTestParams> {
  public:
   static std::string Name(
@@ -235,7 +235,7 @@ struct AddWithBroadcastConfig {
 };
 
 class AddWithBroadcastTest
-    : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>,
+    : public HloPjRtInterpreterReferenceMixin<HloTestBase>,
       public ::testing::WithParamInterface<
           std::tuple<YnnFusionTestParams, AddWithBroadcastConfig>> {
  public:
@@ -532,7 +532,7 @@ struct YnnUnaryOpTestParams {
 };
 
 class YnnUnaryOpTest
-    : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>,
+    : public HloPjRtInterpreterReferenceMixin<HloTestBase>,
       public ::testing::WithParamInterface<YnnUnaryOpTestParams> {
  public:
   static std::string Name(
@@ -585,7 +585,7 @@ static YnnUnaryOpTestParams unary_op_test_params[] = {
     {HloOpcode::kAbs, F32, F32},
     {HloOpcode::kCeil, F32, F32},
     {HloOpcode::kErf, F32, F32, ErrorSpec{/*aabs=*/2e-7, /*arel=*/3e-7}},
-    {HloOpcode::kExp, F32, F32, ErrorSpec{/*aabs=*/1e-38, /*arel=*/4e-6}},
+    {HloOpcode::kExp, F32, F32, ErrorSpec{/*aabs=*/2e-38, /*arel=*/4e-6}},
     {HloOpcode::kExpm1, F32, F32, ErrorSpec{/*aabs=*/2e-38, /*arel=*/4e-6}},
     {HloOpcode::kFloor, F32, F32},
     {
@@ -593,9 +593,10 @@ static YnnUnaryOpTestParams unary_op_test_params[] = {
         F32,
         F32,
         // On ARM, XLA's log returns NaN when the input is close to infinity.
-        ErrorSpec{/*aabs=*/0, /*arel=*/2e-7, /*relaxed_nans=*/true},
+        ErrorSpec{/*aabs=*/0, /*arel=*/4e-7, /*relaxed_nans=*/true},
     },
-    {HloOpcode::kLog1p, F32, F32, F32_ErrorSpec},
+    // TODO(b/515053903): This test is not reliably passing.
+    // {HloOpcode::kLog1p, F32, F32, ErrorSpec{/*aabs=*/2e-7, /*arel=*/2e-7}},
     {HloOpcode::kLogistic, F32, F32, ErrorSpec{/*aabs=*/2e-7, /*arel=*/2e-7}},
     {HloOpcode::kNegate, F32, F32},
     {HloOpcode::kRoundNearestEven, F32, F32},

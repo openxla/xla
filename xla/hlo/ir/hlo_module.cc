@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value_util.h"
+#include "xla/hlo/ir/hlo_payload_deduplicator.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/ir/hlo_sharding.h"
@@ -547,7 +548,8 @@ uint64_t HloModule::ToFingerprint(
   return printer.ToFingerprint();
 }
 
-void HloModule::ToProto(HloModuleProto* proto) const {
+void HloModule::ToProto(HloModuleProto* proto,
+                        bool intern_backend_config) const {
   proto->set_id(unique_id_);
   proto->set_name(name_);
   if (entry_computation_) {
@@ -557,8 +559,25 @@ void HloModule::ToProto(HloModuleProto* proto) const {
     *proto->mutable_host_program_shape() =
         entry_computation_layout().ComputeProgramShape().ToProto();
   }
+
+  // Only create a deduplicator if needed.
+  int64_t base_offset = proto->payloads_size();
+  std::optional<HloPayloadDeduplicator> deduplicator;
+  if (intern_backend_config) {
+    deduplicator.emplace(base_offset);
+  }
+  HloPayloadDeduplicator* deduplicator_ptr =
+      deduplicator ? &*deduplicator : nullptr;
+
   for (const HloComputation* computation : MakeComputationPostOrder()) {
-    computation->ToProto(proto->add_computations());
+    computation->ToProto(proto->add_computations(), deduplicator_ptr);
+  }
+
+  if (deduplicator) {
+    DCHECK_EQ(proto->payloads_size(), base_offset);
+    for (std::string& payload : std::move(*deduplicator).TakePayloads()) {
+      proto->add_payloads(std::move(payload));
+    }
   }
 
   if (has_schedule()) {
@@ -626,9 +645,10 @@ void HloModule::ToProto(HloModuleProto* proto) const {
   }
 }
 
-void HloModule::ToProtoWithConfig(HloModuleProtoWithConfig* proto) const {
+void HloModule::ToProtoWithConfig(HloModuleProtoWithConfig* proto,
+                                  bool intern_backend_config) const {
   *proto->mutable_config() = config().ToProto();
-  ToProto(proto->mutable_hlo_module());
+  ToProto(proto->mutable_hlo_module(), intern_backend_config);
 }
 
 absl::Status HloModule::CheckUniqueNamesAndIdsForComputationsAndInstructions()
@@ -912,12 +932,6 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
     module->mutable_config().set_device_type(proto.device_type());
   }
 
-  // Sort the computations in the proto id's order.
-  absl::c_sort(computations, [&](const std::unique_ptr<HloComputation>& a,
-                                 const std::unique_ptr<HloComputation>& b) {
-    return to_proto_id[a.get()] < to_proto_id[b.get()];
-  });
-
   // Add sorted computations to the module.
   for (auto& computation : computations) {
     bool is_entry = computation.get() == entry;
@@ -999,6 +1013,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
   }
 
   module->CanonicalizeStackFrameIds(proto.stack_frame_index());
+  RETURN_IF_ERROR(module->ReorderComputationsToPostOrder());
 
   if (proto.has_original_value_recovery_table()) {
     ASSIGN_OR_RETURN(module->original_value_recovery_table_,
@@ -1214,6 +1229,35 @@ void HloModule::CanonicalizeComputationLocalIds() {
       schedule().GetOrCreateSequence(computation).update_id_sequence();
     }
   }
+}
+
+absl::Status HloModule::ReorderComputationsToPostOrder() {
+  std::vector<HloComputation*> post_order = MakeComputationPostOrder();
+  // Reorder computations_ in place based on post_order.
+  // We move the computations into a temporary map keyed by their raw pointers,
+  // and then move unique_ptrs back into computations_ in the post-order.
+  // This avoids copying and handles unique_ptr correctly.
+  absl::flat_hash_map<HloComputation*, std::unique_ptr<HloComputation>>
+      comp_map;
+  comp_map.reserve(computations_.size());
+  for (auto& comp : computations_) {
+    HloComputation* comp_ptr = comp.get();
+    comp_map[comp_ptr] = std::move(comp);
+  }
+
+  computations_.clear();
+  computations_.reserve(post_order.size());
+  for (HloComputation* comp : post_order) {
+    auto it = comp_map.find(comp);
+    TF_RET_CHECK(it != comp_map.end()) << "Computation not found in module";
+    computations_.push_back(std::move(it->second));
+  }
+
+  TF_RET_CHECK(computations_.size() == comp_map.size())
+      << "Lost computations during reordering. Original count: "
+      << comp_map.size() << ", Post-order count: " << computations_.size();
+
+  return absl::OkStatus();
 }
 
 HloInstruction* HloModule::OutlineExpressionFromComputation(

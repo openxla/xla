@@ -70,9 +70,6 @@ class ThunkEmitter {
   std::unique_ptr<llvm::Module> ConsumeConstantsModule() {
     return std::move(constants_module_);
   }
-  std::vector<std::unique_ptr<llvm::Module>> ConsumeKernelModules() {
-    return std::move(kernel_modules_);
-  }
 
  private:
   // Emits code for the given HLO computation.
@@ -157,9 +154,6 @@ class ThunkEmitter {
 
   absl::StatusOr<ThunkSequence> EmitFftThunk(const HloFftInstruction* hlo);
 
-  absl::StatusOr<ThunkSequence> EmitGemmThunk(
-      const HloCustomCallInstruction* hlo);
-
   absl::StatusOr<ThunkSequence> EmitInfeed(const HloInfeedInstruction* hlo);
 
   template <typename NvshmemAllReduceThunkType,
@@ -217,7 +211,7 @@ class ThunkEmitter {
 
   absl::Status AssertNonDeterminismIsOkay(const std::string& op_name);
 
-  absl::StatusOr<ThunkSequence> EmitDynamicSliceFusionV2(
+  AsyncThunkSequence EmitDynamicSliceFusionV2(
       const HloFusionInstruction* instr);
 
   absl::StatusOr<BufferAllocation::Slice> GetAllocationSliceForHlo(
@@ -249,9 +243,6 @@ class ThunkEmitter {
 
   // Module with constants.
   std::unique_ptr<llvm::Module> constants_module_;
-
-  // Modules for each emitted kernel.
-  std::vector<std::unique_ptr<llvm::Module>> kernel_modules_;
 
   // TODO(tjoerg): Attach the HloOrdering to the HloSchedule instead of
   // re-creating it here.

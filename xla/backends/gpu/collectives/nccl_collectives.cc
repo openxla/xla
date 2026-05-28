@@ -87,7 +87,7 @@ class NcclIdStore {
 
   absl::StatusOr<CliqueIds> GetCliqueIds(const CliqueKey& key,
                                          NcclCollectives& nccl_collectives) {
-    auto* gpu_key = tsl::down_cast<const gpu::GpuCliqueKey*>(&key);
+    auto* gpu_key = absl::down_cast<const GpuCliqueKey*>(&key);
     if (gpu_key == nullptr) {
       return InvalidArgument("Expected GPU clique key");
     }
@@ -211,7 +211,7 @@ static absl::StatusOr<std::unique_ptr<Communicator>> Cast(
 }
 
 static auto DeviceOrdinal(const Collectives::DeviceRank& rank) {
-  auto* device = tsl::down_cast<const GpuCollectives::Device*>(rank.device);
+  auto* device = absl::down_cast<const GpuCollectives::Device*>(rank.device);
   return device->stream_executor()->device_ordinal();
 }
 
@@ -231,7 +231,7 @@ static auto DeviceRanksToString(
 }
 
 static ncclComm_t Cast(const Communicator* comm) {
-  auto* nccl_communicator = tsl::down_cast<const NcclCommunicator*>(comm);
+  auto* nccl_communicator = absl::down_cast<const NcclCommunicator*>(comm);
   CHECK(nccl_communicator != nullptr) << "Unsupported XLA communicator";
   return nccl_communicator->comm();
 }
@@ -240,14 +240,6 @@ absl::StatusOr<CliqueId> NcclCollectives::CreateUniqueCliqueId() const {
   ncclUniqueId id;
   XLA_NCCL_RETURN_IF_ERROR(ncclGetUniqueId(&id));
   return CliqueId(absl::string_view(id.internal, NCCL_UNIQUE_ID_BYTES));
-}
-
-bool NcclCollectives::SupportsDeviceComm() const {
-  return NCCL_VERSION_CODE >= 22800;
-}
-
-bool NcclCollectives::SupportsOneSidedComm() const {
-  return NCCL_VERSION_CODE >= 22900;
 }
 
 size_t NcclCollectives::SymmetricMemoryAlignment() const {
@@ -271,12 +263,8 @@ static absl::StatusOr<ncclConfig_t> AsNcclConfig(
   if (xla::GetDebugOptionsFromFlags()
           .xla_gpu_experimental_enable_nccl_symmetric_buffers() &&
       config.use_minimal_resource) {
-#if (NCCL_VERSION_CODE >= 22800)
     VLOG(1) << "Setting CTAPolicy to NCCL_CTA_POLICY_ZERO";
     comm_config.CTAPolicy = NCCL_CTA_POLICY_ZERO;
-#else
-    VLOG(1) << "Requires NCCL version >= 2.28 to use NCCL_CTA_POLICY_ZERO";
-#endif
   }
 
   if (config.max_nchannels > 0) {
@@ -312,7 +300,7 @@ static absl::StatusOr<std::vector<se::StreamExecutor*>> GetStreamExecutors(
     absl::Span<const NcclCollectives::DeviceRank> ranks) {
   std::vector<se::StreamExecutor*> stream_executors(ranks.size());
   for (size_t i = 0; i < ranks.size(); ++i) {
-    auto* device = tsl::down_cast<GpuCollectives::Device*>(ranks[i].device);
+    auto* device = absl::down_cast<GpuCollectives::Device*>(ranks[i].device);
     TF_RET_CHECK(device) << "Device must be GpuCollectives::Device";
     stream_executors[i] = device->stream_executor();
   }
@@ -338,7 +326,7 @@ NcclCollectives::CreateCommunicatorsWithCancel(
       clique_ids->size(), clique_ids->fingerprint());
 
   const auto& gpu_config =
-      tsl::down_cast<const GpuCollectives::Config&>(config);
+      absl::down_cast<const GpuCollectives::Config&>(config);
   if (!gpu_config.blocking_communicators && !gpu_config.async_execution) {
     return FailedPrecondition(
         "GpuCollectives::Config blocking_communicators is false, but "
@@ -368,7 +356,7 @@ NcclCollectives::CreateCommunicatorsWithCancel(
         device_ordinal, rank, rank, num_ranks, clique_ids->size(),
         clique_ids->fingerprint());
 
-    auto* device = tsl::down_cast<GpuCollectives::Device*>(ranks[i].device);
+    auto* device = absl::down_cast<GpuCollectives::Device*>(ranks[i].device);
     TF_RET_CHECK(device != nullptr);
     auto activate_context = device->stream_executor()->Activate();
 
@@ -510,7 +498,7 @@ static absl::StatusOr<xla::gpu::GpuCollectives*> GetNvshmemCollectives() {
   ASSIGN_OR_RETURN(xla::Collectives * collectives,
                    xla::CollectivesRegistry::Get("gpu", "nvshmem"));
   xla::gpu::GpuCollectives* nvshmem_collectives =
-      tsl::down_cast<xla::gpu::GpuCollectives*>(collectives);
+      absl::down_cast<GpuCollectives*>(collectives);
   if (nvshmem_collectives == nullptr) {
     return Internal("Failed to get NVSHMEM collectives");
   }

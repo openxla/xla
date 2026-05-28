@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/pjrt/transpose.h"
 #include "xla/pjrt/utils.h"
 #include "xla/primitive_util.h"
+#include "xla/runtime/device_id.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/concurrency/async_value.h"
@@ -540,7 +541,7 @@ Future<> CommonPjRtRawBufferImpl::CopyRawHostToDevice(const void* src,
   if (!event.ok()) {
     return Future<>(event.status());
   }
-  return tensorflow::down_cast<CommonPjRtClient*>(memory_space()->client())
+  return absl::down_cast<CommonPjRtClient*>(memory_space()->client())
       ->MakeTrackedReadyFuture(event->ptr(), memory_space(),
                                "CommonPjRtRawBuffer", "CopyRawHostToDevice");
 }
@@ -551,14 +552,14 @@ Future<> CommonPjRtRawBufferImpl::CopyRawDeviceToHost(void* dst, int64_t offset,
   if (!event.ok()) {
     return Future<>(event.status());
   }
-  return tensorflow::down_cast<CommonPjRtClient*>(memory_space()->client())
+  return absl::down_cast<CommonPjRtClient*>(memory_space()->client())
       ->MakeTrackedReadyFuture(event->ptr(), memory_space(),
                                "CommonPjRtRawBuffer", "CopyRawDeviceToHost");
 }
 
 void CommonPjRtBufferImpl::CopyToRemoteDevice(
     Future<std::string> serialized_descriptor, RemoteSendCallback on_done) {
-  auto* common_client = tensorflow::down_cast<CommonPjRtClient*>(client());
+  auto* common_client = absl::down_cast<CommonPjRtClient*>(client());
   std::vector<PjRtDeviceEventRef> definition_events;
   tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise;
   PjRtRawBufferRef raw_buffer;
@@ -673,7 +674,7 @@ absl::Status CommonPjRtClient::PrepareArguments(
     std::vector<std::pair<int, size_t>> donated_buffer_stats;
     for (int i = 0; i < argument_handles.size(); ++i) {
       PjRtBuffer* handle = argument_handles[i];
-      auto* tfrt_buffer = tensorflow::down_cast<CommonPjRtBufferImpl*>(handle);
+      auto* tfrt_buffer = absl::down_cast<CommonPjRtBufferImpl*>(handle);
       if (tfrt_buffer->device() != device) {
         return InvalidArgument(
             "Buffer passed to Execute() as argument %d to replica %d is on "
@@ -961,31 +962,13 @@ CommonPjRtClient::MakeCrossHostReceiveBuffers(
           "Tuple shape %s not supported in MakeCrossHostReceiveBuffers",
           ShapeUtil::HumanString(shape));
     }
-    xla::Shape dst_shape;
-    if (shape.has_layout()) {
-      dst_shape = shape;
-    } else {
-      // Use the default destination device layout.
-      ASSIGN_OR_RETURN(dst_shape,
-                       ShapeUtil::MakeValidatedShape(shape.element_type(),
-                                                     shape.dimensions()));
-      ASSIGN_OR_RETURN(const PjRtTopologyDescription* topology_description,
-                       GetTopologyDescription());
-      ASSIGN_OR_RETURN(*dst_shape.mutable_layout(),
-                       topology_description->GetDefaultLayout(
-                           shape.element_type(), shape.dimensions()));
-      LOG_IF_EVERY_N_SEC(
-          WARNING, shape.has_layout() && shape.layout() != dst_shape.layout(),
-          0.1)
-          << "MakeCrossHostReceiveBuffers called with custom layout, "
-          << shape.layout()
-          << ", which will be ignored in favor of the default destination "
-             "device layout, "
-          << dst_shape.layout();
-    }
-    dst_shapes.push_back(dst_shape);
+    ASSIGN_OR_RETURN(xla::Shape dst_shape,
+                     MakeDefaultShapeForMemorySpace(
+                         memory_space, shape,
+                         shape.has_layout() ? &shape.layout() : nullptr));
     ASSIGN_OR_RETURN(int64_t on_device_bytes_count,
                      GetOnDeviceBytesCount(memory_space, dst_shape));
+    dst_shapes.push_back(std::move(dst_shape));
     ASSIGN_OR_RETURN(PjRtRawBufferRef raw_buffer,
                      AllocateRawBuffer(memory_space, on_device_bytes_count,
                                        /*retry_on_oom=*/true,
@@ -1013,6 +996,244 @@ CommonPjRtClient::MakeCrossHostReceiveBuffers(
                      tsl::FormRef(common_raw_buffer), {definition_events[i]}));
     buffers.push_back(std::move(output_buffer));
   }
+  return buffers;
+}
+
+// Send functionality for second cross-host transfers API; wraps
+// CrossHostTransferBuffers.
+absl::StatusOr<std::vector<Future<>>> CommonPjRtClient::CrossHostSendBuffers(
+    absl::Span<PjRtBuffer* const> buffers,
+    absl::Span<const GlobalDeviceId> dst_global_device_ids,
+    std::vector<CrossHostTransferKey> transfer_keys) {
+  // Validate arguments.
+  if (dst_global_device_ids.size() != buffers.size() ||
+      transfer_keys.size() != buffers.size()) {
+    return InvalidArgument(
+        "CrossHostSendBuffers: buffers, dst_global_device_ids, and "
+        "transfer_keys must have the same length, but got %d, %d, and %d.",
+        buffers.size(), dst_global_device_ids.size(), transfer_keys.size());
+  }
+  for (int i = 0; i < buffers.size(); ++i) {
+    // Each transfer must be between an addressable and a non-addressable
+    // device. If both devices are addressable, then both a data transfer and a
+    // 'normal' XLA SPMD executable may try to acquire the same GPU clique,
+    // causing issues.
+    PjRtDevice* src_device = buffers[i]->device();
+    if (!src_device->IsAddressable()) {
+      return InvalidArgument(
+          "CrossHostSendBuffers: buffer %d is on non-addressable device with "
+          "global device id %d.",
+          i, src_device->global_device_id().value());
+    }
+    ASSIGN_OR_RETURN(PjRtDevice * dst_device,
+                     LookupDevice(dst_global_device_ids[i]));
+    if (dst_device->IsAddressable()) {
+      return InvalidArgument(
+          "CrossHostSendBuffers: destination device for buffer %d is "
+          "addressable (global device id %d), but cross-host transfers must "
+          "be between an addressable and a non-addressable device.",
+          i, dst_global_device_ids[i].value());
+    }
+  }
+
+  // Create futures and promises.
+  std::vector<Future<>> futures;
+  std::vector<std::shared_ptr<Promise<>>> promises;
+  futures.reserve(buffers.size());
+  promises.reserve(buffers.size());
+  for (int i = 0; i < buffers.size(); ++i) {
+    auto [promise, future] = MakePromise<>();
+    futures.push_back(std::move(future));
+    promises.push_back(std::move(promise).ToShared());
+  }
+
+  // Extract the raw buffers and definition events for each of the input send
+  // buffers.
+  std::vector<tsl::RCReference<PjRtRawBuffer>> raw_buffers;
+  raw_buffers.reserve(buffers.size());
+
+  std::vector<PjRtDeviceEventRef> transfer_dependencies;
+  std::vector<tsl::RCReference<PjRtDeviceEventPromise>> usage_event_promises;
+  usage_event_promises.reserve(buffers.size());
+
+  for (int i = 0; i < buffers.size(); ++i) {
+    tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise;
+    PjRtDeviceEventRef usage_event;
+    ASSIGN_OR_RETURN(std::tie(usage_event_promise, usage_event),
+                     CreateLinkedEventPromise(
+                         buffers[i]->memory_space(),
+                         absl::StrFormat("CrossHostSendBuffers buffer %i", i)));
+    usage_event_promises.push_back(std::move(usage_event_promise));
+    usage_event.AndThen([promise = std::move(promises[i]), usage_event]() {
+      CHECK(usage_event.async_value()->IsAvailable());
+      if (usage_event.async_value()->IsError()) {
+        promise->Set(usage_event.async_value()->GetError());
+      } else {
+        promise->Set(absl::OkStatus());
+      }
+    });
+    RETURN_IF_ERROR(tensorflow::down_cast<CommonPjRtBufferImpl*>(buffers[i])
+                        ->AcquireScopedRawBuffer(
+                            [&](PjRtRawBufferRef buf_raw_buffer,
+                                std::vector<PjRtDeviceEventRef>
+                                    buf_definition_events) mutable
+                                -> absl::StatusOr<PjRtDeviceEventRef> {
+                              // Note: CrossHostTransferBuffers ensures that
+                              // a reference to buf_raw_buffer is retained
+                              // for the duration of the transfer.
+                              raw_buffers.push_back(std::move(buf_raw_buffer));
+                              for (PjRtDeviceEventRef& definition_event :
+                                   buf_definition_events) {
+                                transfer_dependencies.push_back(
+                                    std::move(definition_event));
+                              }
+                              return PjRtDeviceEventRef(usage_event);
+                            },
+                            "CrossHostSendBuffers"));
+  }
+
+  // Build the CrossHostTransferSpec for each buffer.
+  std::vector<CrossHostTransferSpec> transfer_specs;
+  transfer_specs.reserve(buffers.size());
+  for (int i = 0; i < buffers.size(); ++i) {
+    transfer_specs.push_back(CrossHostTransferSpec{
+        /*src_global_device_id=*/buffers[i]->device()->global_device_id(),
+        dst_global_device_ids[i], std::move(raw_buffers[i])});
+  }
+
+  // Schedule sends.
+  absl::StatusOr<std::vector<PjRtDeviceEventRef>> usage_events_or =
+      CrossHostTransferBuffers(std::move(transfer_dependencies),
+                               std::move(transfer_specs));
+  if (!usage_events_or.ok()) {
+    for (auto& promise : usage_event_promises) {
+      promise->SetError(usage_events_or.status());
+    }
+    return usage_events_or.status();
+  }
+  std::vector<PjRtDeviceEventRef> usage_events =
+      std::move(usage_events_or).value();
+
+  // Populate usage events.
+  for (int i = 0; i < buffers.size(); ++i) {
+    usage_event_promises[i]->Set(usage_events[i]);
+  }
+
+  return futures;
+}
+
+// Receive functionality for second cross-host transfers API; wraps
+// CrossHostTransferBuffers.
+absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+CommonPjRtClient::CrossHostReceiveBuffers(
+    xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
+    absl::Span<const GlobalDeviceId> src_global_device_ids,
+    std::vector<CrossHostTransferKey> transfer_keys) {
+  // Validate arguments.
+  if (shapes.empty()) {
+    return InvalidArgument("shapes parameter empty in CrossHostReceiveBuffers");
+  }
+  if (src_global_device_ids.size() != shapes.size() ||
+      transfer_keys.size() != shapes.size()) {
+    return InvalidArgument(
+        "CrossHostReceiveBuffers: shapes, src_global_device_ids, and "
+        "transfer_keys must have the same length, but got %d, %d, and %d.",
+        shapes.size(), src_global_device_ids.size(), transfer_keys.size());
+  }
+  // Each transfer must be between an addressable and a non-addressable
+  // device. If both devices are addressable, then both a data transfer and a
+  // 'normal' XLA SPMD executable may try to acquire the same GPU clique,
+  // causing issues.
+  if (!device->IsAddressable()) {
+    return InvalidArgument(
+        "CrossHostReceiveBuffers: destination device is non-addressable "
+        "(global device id %d), but cross-host transfers must be between an  "
+        "addressable and a non-addressable device.",
+        device->global_device_id().value());
+  }
+  for (int i = 0; i < src_global_device_ids.size(); ++i) {
+    ASSIGN_OR_RETURN(PjRtDevice * src_device,
+                     LookupDevice(src_global_device_ids[i]));
+    if (src_device->IsAddressable()) {
+      return InvalidArgument(
+          "CrossHostReceiveBuffers: source device for buffer %d is addressable "
+          "(global device id %d), but cross-host transfers must be between an "
+          "addressable and a non-addressable device.",
+          i, src_global_device_ids[i].value());
+    }
+  }
+
+  tsl::profiler::TraceMe trace([&] {
+    return tsl::profiler::TraceMeEncode(
+        absl::StrFormat("[%v] CommonPjRtClient::CrossHostReceiveBuffers",
+                        device->local_device_id()),
+        {{"num_shapes", shapes.size()}});
+  });
+
+  // Create a single definition event for all receive buffers.
+  ASSIGN_OR_RETURN(PjRtMemorySpace * memory_space,
+                   device->default_memory_space());
+  tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise;
+  PjRtDeviceEventRef definition_event;
+  ASSIGN_OR_RETURN(
+      std::tie(definition_event_promise, definition_event),
+      CreateLinkedEventPromise(memory_space,
+                               absl::StrFormat("CrossHostReceiveBuffers")));
+
+  // Build output receive buffers, collect their allocation events, and form
+  // their transfer specs.
+  std::vector<PjRtDeviceEventRef> allocation_events;
+  std::vector<CrossHostTransferSpec> transfer_specs;
+  transfer_specs.reserve(shapes.size());
+  std::vector<std::unique_ptr<PjRtBuffer>> buffers;
+  buffers.reserve(shapes.size());
+
+  for (int i = 0; i < shapes.size(); ++i) {
+    // Allocate the raw buffer and define its owning PjRtBuffer.
+    ASSIGN_OR_RETURN(
+        Shape on_device_shape,
+        MakeDefaultShapeForMemorySpace(
+            memory_space, shapes[i],
+            shapes[i].has_layout() ? &shapes[i].layout() : nullptr));
+    ASSIGN_OR_RETURN(size_t on_device_bytes_count,
+                     GetOnDeviceBytesCount(memory_space, on_device_shape));
+    ASSIGN_OR_RETURN(PjRtRawBufferRef raw_buffer,
+                     AllocateRawBuffer(memory_space, on_device_bytes_count,
+                                       /*retry_on_oom=*/true,
+                                       /*allocate_after=*/{}));
+    ASSIGN_OR_RETURN(std::unique_ptr<PjRtBuffer> buffer,
+                     DefineBuffer(std::move(on_device_shape), memory_space,
+                                  raw_buffer, {definition_event}));
+
+    // Store a ref to the allocation event as a transfer dependency so that
+    // the receive waits for the buffer allocation to complete.
+    ASSIGN_OR_RETURN(PjRtDeviceEventRef allocation_event,
+                     raw_buffer->MakeAllocationReadyEvent());
+    allocation_events.push_back(std::move(allocation_event));
+    transfer_specs.push_back(CrossHostTransferSpec{src_global_device_ids[i],
+                                                   device->global_device_id(),
+                                                   std::move(raw_buffer)});
+    buffers.push_back(std::move(buffer));
+  }
+
+  // Schedule receives.
+  absl::StatusOr<std::vector<PjRtDeviceEventRef>> definition_events_or =
+      CrossHostTransferBuffers(std::move(allocation_events),
+                               std::move(transfer_specs));
+  if (!definition_events_or.ok()) {
+    definition_event_promise->SetError(definition_events_or.status());
+    return definition_events_or.status();
+  }
+  std::vector<PjRtDeviceEventRef> definition_events =
+      std::move(definition_events_or).value();
+
+  // Populate definition event. We use definition_events[0] because all
+  // transfers scheduled by CrossHostReceiveBuffers receive data into the same
+  // device (the 'device' given as input to this function), and because
+  // CrossHostTransferBuffers will only assign different definition events for
+  // transfers into different devices.
+  definition_event_promise->Set(std::move(definition_events[0]));
+
   return buffers;
 }
 
@@ -1313,7 +1534,8 @@ CommonPjRtLoadedExecutable::ExecuteSharded(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
     const ExecuteOptions& options,
     std::optional<tsl::Future<void>>& returned_future, bool fill_future) const {
-  RunId run_id = RunId(options.launch_id);
+  RunId run_id = options.launch_id != 0 ? RunId(options.launch_id)
+                                        : RunId::CreateUniqueId();
   tsl::profiler::TraceMe traceme("CommonPjRtLoadedExecutable::ExecuteSharded");
   for (int i = 0; i < addressable_devices_.size(); ++i) {
     if (addressable_devices_[i] == device) {
@@ -1349,6 +1571,12 @@ CommonPjRtLoadedExecutable::ExecutePortable(
   }
   if (device == nullptr) {
     return InvalidArgument("ExecutePortable expects a device to be specified");
+  }
+  if (!device->IsAddressable()) {
+    return InvalidArgument(
+        "ExecutePortable attempted to execute on device id %d which is not "
+        "addressable by this client",
+        device->global_device_id().value());
   }
 
   RETURN_IF_ERROR(ValidateHostTransferCallbacks(
@@ -1625,7 +1853,7 @@ static absl::Status CommonCopyToMemorySpace(
     ::tsl::AsyncValueRef<bool>& allocation_event) {
   auto* src_memory_space = src_buffer->memory_space();
   CommonPjRtClient* const src_client =
-      tensorflow::down_cast<CommonPjRtClient*>(src_buffer->client());
+      absl::down_cast<CommonPjRtClient*>(src_buffer->client());
   CommonPjRtClient* const dst_client =
       dynamic_cast<CommonPjRtClient*>(dst_memory_space->client());
   if (!dst_client) {
@@ -1761,7 +1989,7 @@ CommonPjRtBufferImpl::CopyFromCpuToMemorySpace(
     xla::Shape dst_shape, PjRtMemorySpace* dst_memory_space) {
   tsl::profiler::TraceMe traceme("CopyToMemorySpace");
   CommonPjRtClient* const src_client =
-      tensorflow::down_cast<CommonPjRtClient*>(client());
+      absl::down_cast<CommonPjRtClient*>(client());
   auto* dst_client =
       dynamic_cast<CommonPjRtClient*>(dst_memory_space->client());
   if (!dst_client) {
@@ -1978,7 +2206,7 @@ CommonPjRtBufferImpl::DirectCopyToMemorySpace(
     PjRtMemorySpace* dst_memory_space) {
   tsl::profiler::TraceMe traceme("CopyToMemorySpace");
   CommonPjRtClient* const src_client =
-      tensorflow::down_cast<CommonPjRtClient*>(client());
+      absl::down_cast<CommonPjRtClient*>(client());
   if (!dynamic_cast<CommonPjRtClient*>(dst_memory_space->client())) {
     return absl::InvalidArgumentError(
         "DirectCopyToMemorySpace only supported across CommonPjRtClient "
@@ -2009,7 +2237,7 @@ CommonPjRtBufferImpl::DirectCopyToMemorySpace(PjRtBuffer* donated_dst) {
   PjRtMemorySpace* dst_memory_space = donated_dst->memory_space();
   tsl::profiler::TraceMe traceme("CopyToMemorySpace");
   CommonPjRtClient* const src_client =
-      tensorflow::down_cast<CommonPjRtClient*>(client());
+      absl::down_cast<CommonPjRtClient*>(client());
   if (!dynamic_cast<CommonPjRtClient*>(dst_memory_space->client())) {
     return absl::InvalidArgumentError(
         "DirectCopyToMemorySpace only supported across CommonPjRtClient "
@@ -2065,7 +2293,7 @@ Future<> CommonPjRtBufferImpl::ToLiteralImpl(
   tsl::profiler::TraceMeProducer producer("CommonPjRtBuffer::ToLiteral",
                                           tsl::profiler::ContextType::kPjRt);
   VLOG(1) << "CommonPjRtBuffer::ToLiteral";
-  auto common_client = tensorflow::down_cast<CommonPjRtClient*>(client());
+  auto common_client = absl::down_cast<CommonPjRtClient*>(client());
   if (!common_client->allows_recursion() && ThisThreadIsInsideHostCallback()) {
     // Because TPU is single threaded, and the host callback currently blocking
     // the TPU, we should not block on any outstanding computations because that
@@ -2278,7 +2506,7 @@ Future<> CommonPjRtBufferImpl::CopyRawToHost(void* dst, int64_t offset,
 Future<> CommonPjRtBufferImpl::CopyRawToHostFuture(Future<void*> dst,
                                                    int64_t offset,
                                                    int64_t transfer_size) {
-  auto buf_client = tensorflow::down_cast<CommonPjRtClient*>(client());
+  auto buf_client = absl::down_cast<CommonPjRtClient*>(client());
   std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events;
   PjRtRawBufferRef raw_buffer;
   // tsl::RCReference<tsl::IndirectAsyncValue> indirect_usage_event;
@@ -2364,7 +2592,7 @@ Future<> CommonPjRtBufferImpl::CopyRawToHostFuture(Future<void*> dst,
           }
         });
   });
-  return tensorflow::down_cast<CommonPjRtClient*>(memory_space()->client())
+  return absl::down_cast<CommonPjRtClient*>(memory_space()->client())
       ->MakeTrackedReadyFuture(usage_event.ptr(), memory_space(),
                                "CommonPjRtBuffer", "CopyRawToHostFuture");
 }
@@ -2374,7 +2602,7 @@ absl::StatusOr<Shape> CommonPjRtBufferImpl::logical_on_device_shape() {
   if (device_shape.is_static()) {
     return device_shape;
   }
-  auto buf_client = tensorflow::down_cast<CommonPjRtClient*>(client());
+  auto buf_client = absl::down_cast<CommonPjRtClient*>(client());
   auto output_shape = tsl::MakeConstructedAsyncValueRef<Shape>(device_shape);
   RETURN_IF_ERROR(AcquireScopedRawBuffer(
       [&](PjRtRawBufferRef raw_buffer,
@@ -2419,8 +2647,7 @@ void CommonPjRtBufferImpl::Delete() {
 }
 
 bool CommonPjRtBufferImpl::IsOnCpu() const {
-  return tensorflow::down_cast<CommonPjRtClient*>(client())->IsOnCpu(
-      memory_space());
+  return absl::down_cast<CommonPjRtClient*>(client())->IsOnCpu(memory_space());
 }
 
 CommonPjRtBufferImpl::CommonPjRtBufferImpl(
@@ -2434,11 +2661,11 @@ CommonPjRtBufferImpl::~CommonPjRtBufferImpl() { Delete(); }
 
 PjRtDevice* CommonPjRtBufferImpl::device() const {
   CHECK_EQ(memory_space_->devices().size(), 1);
-  return tensorflow::down_cast<PjRtDevice*>(memory_space_->devices()[0]);
+  return absl::down_cast<PjRtDevice*>(memory_space_->devices()[0]);
 }
 
 CommonPjRtClient* CommonPjRtBufferImpl::client() const {
-  return tensorflow::down_cast<CommonPjRtClient*>(memory_space()->client());
+  return absl::down_cast<CommonPjRtClient*>(memory_space()->client());
 }
 
 absl::StatusOr<size_t> CommonPjRtBufferImpl::GetOnDeviceSizeInBytes() const {
