@@ -422,8 +422,9 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
 
   if (false) {
   }  // This is needed to avoid compiler error for the else clause.
-// FP8 compatible types combinations (Full table in
-// https://github.com/ROCm/hipBLASLt/blob/develop/docs/api-reference.rst?plain=1)
+
+  // FP8 compatible types combinations (Full table in
+  // https://github.com/ROCm/hipBLASLt/blob/develop/docs/api-reference.rst?plain=1)
   TYPED_MATMUL(float, HIP_R_8F_E4M3_FNUZ, HIP_R_8F_E4M3_FNUZ, HIP_R_16F,
                HIP_R_16F)
   TYPED_MATMUL(float, HIP_R_8F_E4M3_FNUZ, HIP_R_8F_E4M3_FNUZ, HIP_R_32F,
@@ -595,7 +596,6 @@ absl::Status BlasLt::RegularMatmulPlan::ExecuteOnStream(
                               args.bias.opaque()));
     }
 
-#if TF_ROCM_VERSION >= 60000
     if (a_scale != nullptr) {
       RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                               HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
@@ -616,12 +616,6 @@ absl::Status BlasLt::RegularMatmulPlan::ExecuteOnStream(
                               HIPBLASLT_MATMUL_DESC_D_SCALE_POINTER,
                               args.d_scale.opaque()));
     }
-#else
-    if (!(args.a_scale == nullptr && args.b_scale == nullptr &&
-          args.c_scale == nullptr && args.d_scale == nullptr)) {
-      return absl::InternalError("hipblaslt does not support scale");
-    }
-#endif
     if (args.d_amax != nullptr) {
       return absl::InternalError("hipblaslt does not support amax");
     }
