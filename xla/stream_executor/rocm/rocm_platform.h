@@ -74,12 +74,6 @@ class ROCmPlatform : public Platform {
 };
 
 }  // namespace gpu
-
-namespace rocm {
-
-using ROCmPlatform = gpu::ROCmPlatform;
-
-}  // namespace cuda
 }  // namespace stream_executor
 
 #endif  // XLA_STREAM_EXECUTOR_ROCM_ROCM_PLATFORM_H_

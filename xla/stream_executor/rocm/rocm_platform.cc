@@ -112,7 +112,7 @@ ROCmPlatform::GetUncachedExecutor(int ordinal) {
 
 absl::StatusOr<std::unique_ptr<RuntimeAbiVersion> absl_nonnull>
 ROCmPlatform::GetRuntimeAbiVersion() const {
-    return std::make_unique<ROCmRuntimeAbiVersion>();
+  return std::make_unique<ROCmRuntimeAbiVersion>();
 }
 
 }  // namespace gpu
