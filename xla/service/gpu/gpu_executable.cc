@@ -1247,7 +1247,8 @@ absl::Status GpuExecutable::PrepareVaRemapReservation(
 absl::StatusOr<se::ScopedDeviceAddress<uint8_t>>
 GpuExecutable::AllocateVaRemappedBuffer(
     int device_ordinal, const BufferAllocation& allocation, int64_t buffer_size,
-    bool allocate_va_address, VaRemapExecutionState& va_remap_execution_state) {
+    bool return_reservation_address,
+    VaRemapExecutionState& va_remap_execution_state) {
   VaRemaping& va_remap = va_remap_execution_state.remapping;
   ASSIGN_OR_RETURN(uint64_t va_offset,
                    va_remap.GetReservationOffset(allocation.index()));
@@ -1257,8 +1258,8 @@ GpuExecutable::AllocateVaRemappedBuffer(
       va_remap_execution_state.vmm_allocator.Allocate(
           device_ordinal, mapping_size, /*retry_on_failure=*/true,
           /*memory_space=*/allocation.color(), va_remap.va_reservation.get(),
-          va_offset, mapping_size, allocate_va_address);
-  if (buffer.ok() && allocate_va_address) {
+          va_offset, mapping_size, return_reservation_address);
+  if (buffer.ok() && !return_reservation_address) {
     se::DeviceAddressBase reservation_address =
         va_remap.va_reservation->address().GetByteSlice(va_offset,
                                                         mapping_size);
@@ -1302,8 +1303,7 @@ absl::Status GpuExecutable::UpdateCommandBufferAllocationPolicy(
     va_remap.policy_va_remapped_indices.assign(
         command_buffer_allocation_indexes_.begin(),
         command_buffer_allocation_indexes_.end());
-    va_remap.policy_va_remapped_index_set =
-        command_buffer_allocation_indexes_;
+    va_remap.policy_va_remapped_index_set = command_buffer_allocation_indexes_;
     va_remap.policy_dynamic_alloc_indices.clear();
     absl::c_set_difference(
         command_buffer_update_allocation_indexes_,
@@ -1424,11 +1424,11 @@ absl::StatusOr<se::DeviceAddressBase> GpuExecutable::BufferForAllocation(
     }
     absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> buffer;
     if (ShouldVaRemapAllocation(allocation.index(), va_remap_execution_state)) {
-      bool allocate_va_address =
-          allocation.maybe_live_out() &&
-          output_allocations.contains(allocation.index());
+      bool return_reservation_address =
+          !(allocation.maybe_live_out() &&
+            output_allocations.contains(allocation.index()));
       buffer = AllocateVaRemappedBuffer(device_ordinal, allocation, buffer_size,
-                                        allocate_va_address,
+                                        return_reservation_address,
                                         *va_remap_execution_state);
     } else {
       buffer = memory_allocator->Allocate(device_ordinal, buffer_size,
@@ -1564,7 +1564,7 @@ GpuExecutable::AllocateCopyProtectedOutputBuffer(
   if (ShouldVaRemapAllocation(allocation.index(), va_remap_execution_state)) {
     allocated_buffer = AllocateVaRemappedBuffer(
         device_ordinal, allocation, allocation_size,
-        /*allocate_va_address=*/true, *va_remap_execution_state);
+        /*return_reservation_address=*/false, *va_remap_execution_state);
   } else {
     allocated_buffer = memory_allocator->Allocate(
         device_ordinal, allocation_size, /*retry_on_failure=*/true,

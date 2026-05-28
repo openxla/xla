@@ -362,7 +362,7 @@ class GpuExecutable : public Executable {
     se::DeviceAddressVmmAllocator& vmm_allocator;
 
     // Allocation indexes that already have a reservation alias because they
-    // were created with Allocate(..., allocate_va_address=true).
+    // were created with Allocate(..., return_reservation_address=false).
     absl::flat_hash_map<BufferAllocation::Index, MemoryReservationAlias>
         allocation_to_reservation_aliases;
 
@@ -396,7 +396,7 @@ class GpuExecutable : public Executable {
 
   absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> AllocateVaRemappedBuffer(
       int device_ordinal, const BufferAllocation& allocation,
-      int64_t buffer_size, bool allocate_va_address,
+      int64_t buffer_size, bool return_reservation_address,
       VaRemapExecutionState& va_remap_execution_state);
 
   bool ShouldVaRemapAllocation(
