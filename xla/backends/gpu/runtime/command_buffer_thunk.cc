@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/profiler/lib/profiler_lock.h"
@@ -114,16 +114,16 @@ CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
 
   if (params.command_buffer_update_info != nullptr &&
       params.command_buffer_update_info->update_policy_ready) {
-    absl::call_once(policy_allocs_to_check_once,
-                    [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
-      DCHECK(absl::c_is_sorted(commands.allocs_indices()));
-      DCHECK(absl::c_is_sorted(
-          params.command_buffer_update_info->dynamic_alloc_indices));
-      absl::c_set_intersection(
-          commands.allocs_indices(),
-          params.command_buffer_update_info->dynamic_alloc_indices,
-          std::back_inserter(policy_allocs_to_check));
-    });
+    absl::call_once(
+        policy_allocs_to_check_once, [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+          DCHECK(absl::c_is_sorted(commands.allocs_indices()));
+          DCHECK(absl::c_is_sorted(
+              params.command_buffer_update_info->dynamic_alloc_indices));
+          absl::c_set_intersection(
+              commands.allocs_indices(),
+              params.command_buffer_update_info->dynamic_alloc_indices,
+              std::back_inserter(policy_allocs_to_check));
+        });
     allocs_to_check = policy_allocs_to_check;
   }
 
@@ -200,9 +200,8 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
     return absl::OkStatus();
   }
 
-  ASSIGN_OR_RETURN(
-      std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
-      GetOrCreateCommandBuffer(params.executor));
+  ASSIGN_OR_RETURN(std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
+                   GetOrCreateCommandBuffer(params.executor));
   absl::MutexLock lock(cmd_buffer->mutex);
 
   // If there are no thunks, or command buffer does not require initialization,
@@ -297,9 +296,8 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
   }
 
   se::StreamExecutor* executor = params.stream->parent();
-  ASSIGN_OR_RETURN(
-      std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
-      GetOrCreateCommandBuffer(executor));
+  ASSIGN_OR_RETURN(std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
+                   GetOrCreateCommandBuffer(executor));
 
   absl::MutexLock lock(cmd_buffer->mutex);
 
@@ -333,10 +331,10 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     TraceMe trace([&] {
       cmd_buffer->mutex.AssertHeld();
-      return TraceMeEncode(is_first_record ? "command_buffer::record"
-                                           : "command_buffer::update",
-                           {{"device", executor->device_ordinal()},
-                            {"num_commands", commands_.size()}});
+      return TraceMeEncode(
+          is_first_record ? "command_buffer::record" : "command_buffer::update",
+          {{"device", executor->device_ordinal()},
+           {"num_commands", commands_.size()}});
     });
 
     uint64_t start_micros = tsl::Env::Default()->NowMicros();

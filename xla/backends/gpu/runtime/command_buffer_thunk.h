@@ -43,10 +43,9 @@ namespace xla::gpu {
 
 class CommandBufferThunk : public Thunk {
  public:
-  CommandBufferThunk(
-      CommandExecutor commands, ThunkInfo thunk_info,
-      std::unique_ptr<SequentialThunk> thunks = nullptr,
-      bool enable_command_buffers_during_profiling = false);
+  CommandBufferThunk(CommandExecutor commands, ThunkInfo thunk_info,
+                     std::unique_ptr<SequentialThunk> thunks = nullptr,
+                     bool enable_command_buffers_during_profiling = false);
 
   const std::unique_ptr<SequentialThunk>& thunks() const { return thunks_; }
 

@@ -250,8 +250,7 @@ TEST(CommandBufferThunkTest, UpdatePolicyIgnoresVaRemappedAllocations) {
   std::vector<BufferAllocation::Index> va_remapped_indices = {0};
   std::vector<BufferAllocation::Index> dynamic_alloc_indices = {1};
   Thunk::CommandBufferUpdateInfo update_info{
-      /*update_policy_ready=*/true,
-      absl::MakeConstSpan(va_remapped_indices),
+      /*update_policy_ready=*/true, absl::MakeConstSpan(va_remapped_indices),
       absl::MakeConstSpan(dynamic_alloc_indices)};
 
   stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
