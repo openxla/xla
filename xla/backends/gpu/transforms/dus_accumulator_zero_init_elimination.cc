@@ -35,7 +35,6 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/value_range.h"
-#include "xla/service/while_loop_unroller.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/xla.pb.h"
@@ -58,42 +57,48 @@ bool IsBroadcastOfScalarConstantThroughLayoutWrappers(const HloInstruction* h) {
 }
 
 // Init value is irrelevant; soundness comes from the dead-input check.
-std::optional<Shape> ClassifyReplaceableInit(const HloInstruction* init) {
+bool IsInitReplaceable(const HloInstruction* init) {
   if (IsBroadcastOfScalarConstantThroughLayoutWrappers(init)) {
-    return init->shape();
+    return true;
   }
   if (init->opcode() == HloOpcode::kFusion && init->operand_count() == 0) {
-    if (IsBroadcastOfScalarConstantThroughLayoutWrappers(
-            init->fused_expression_root())) {
-      return init->shape();
-    }
+    return IsBroadcastOfScalarConstantThroughLayoutWrappers(
+        init->fused_expression_root());
   }
   if (init->opcode() == HloOpcode::kGetTupleElement) {
     const HloInstruction* fusion = init->operand(0);
     if (fusion->opcode() == HloOpcode::kFusion &&
         fusion->operand_count() == 0) {
       const HloInstruction* root = fusion->fused_expression_root();
-      if (root->opcode() == HloOpcode::kTuple &&
-          IsBroadcastOfScalarConstantThroughLayoutWrappers(
-              root->operand(init->tuple_index()))) {
-        return init->shape();
+      if (root->opcode() == HloOpcode::kTuple) {
+        return IsBroadcastOfScalarConstantThroughLayoutWrappers(
+            root->operand(init->tuple_index()));
       }
     }
   }
-  return std::nullopt;
+  return false;
 }
 
+// Holds the subset of while-loop facts this pass needs. We don't reuse
+// while_loop_unroller's WhileLoopConfig because we want a mutable while_instr
+// and don't need the `init` field.
+struct CandidateLoop {
+  HloInstruction* while_instr;
+  int64_t trip_count;
+  int64_t induction_var_idx;
+};
+
 absl::StatusOr<bool> AllUsersKillBuffer(const HloInstruction* buffer,
-                                        const WhileLoopConfig& cfg);
+                                        const CandidateLoop& cfg);
 absl::StatusOr<bool> UserKillsBuffer(const HloInstruction* user,
                                      const HloInstruction* operand,
-                                     const WhileLoopConfig& cfg);
+                                     const CandidateLoop& cfg);
 
-// Read from the WhileLoopConfig annotation: upstream rewrites defeat
-// structural IV detection.
+// Read from the trip-count annotation: upstream rewrites defeat structural
+// IV detection.
 // TODO: the annotation can outlive the IR shape it was derived from —
 // upstream IV-rewriting passes should refresh or drop it.
-Range LoopIterationRange(const WhileLoopConfig& cfg) {
+Range LoopIterationRange(const CandidateLoop& cfg) {
   return Range{ConstantValue::GetSigned(0, /*bitwidth=*/64),
                ConstantValue::GetSigned(cfg.trip_count - 1, /*bitwidth=*/64),
                ConstantValue::GetSigned(1, /*bitwidth=*/64),
@@ -101,9 +106,10 @@ Range LoopIterationRange(const WhileLoopConfig& cfg) {
 }
 
 // RecursivelyIdentifyRange handles the recursion into fused parameters, so
-// this works inside or outside fusions.
-std::optional<Range> ResolveIndexRangeAsFunctionOfIv(
-    const HloInstruction* idx, const WhileLoopConfig& cfg) {
+// this works inside or outside fusions. Caller is responsible for checking
+// IsBounded()/IsStepKnown() before using the returned range.
+Range ResolveIndexRangeAsFunctionOfIv(const HloInstruction* idx,
+                                      const CandidateLoop& cfg) {
   Range loop_range = LoopIterationRange(cfg);
   absl::flat_hash_map<const HloInstruction*, Range> predefined;
   HloInstruction* body_param =
@@ -114,18 +120,13 @@ std::optional<Range> ResolveIndexRangeAsFunctionOfIv(
       predefined[u] = loop_range;
     }
   }
-
-  Range r = RecursivelyIdentifyRange(idx, predefined, nullptr);
-  if (!r.IsBounded() || !r.IsStepKnown() || r.step()->GetSignedValue() == 0) {
-    return std::nullopt;
-  }
-  return r;
+  return RecursivelyIdentifyRange(idx, predefined, nullptr);
 }
 
 // Generalizes AdvancedMatchShapeCoveringDynamicIndexInstruction to indices
 // that are arithmetic expressions over fused parameters (e.g. descending DUS).
 bool IsKillingDus(const HloInstruction* dus, const HloInstruction* operand,
-                  const WhileLoopConfig& cfg) {
+                  const CandidateLoop& cfg) {
   if (dus->opcode() != HloOpcode::kDynamicUpdateSlice ||
       dus->operand(0) != operand) {
     return false;
@@ -139,30 +140,31 @@ bool IsKillingDus(const HloInstruction* dus, const HloInstruction* operand,
 
   // Find the single dynamic dim; static dims must have start=0 and full size.
   std::optional<int64_t> dyn_dim_opt;
-  std::optional<Range> dyn_dim_range;
+  Range dyn_dim_range;
   const int64_t num_dims = input_shape.dimensions().size();
   for (int64_t d = 0; d < num_dims; ++d) {
     const HloInstruction* idx = dus->operand(2 + d);
-    std::optional<Range> r = ResolveIndexRangeAsFunctionOfIv(idx, cfg);
-    if (r.has_value() && r->IsBounded() && r->IsSingleValue() &&
-        r->min().GetSignedValue() == 0) {
+    Range r = ResolveIndexRangeAsFunctionOfIv(idx, cfg);
+    if (!r.IsBounded() || !r.IsStepKnown() || r.step()->GetSignedValue() == 0) {
+      return false;
+    }
+    if (r.IsSingleValue() && r.min().GetSignedValue() == 0) {
       if (slice_shape.dimensions(d) != input_shape.dimensions(d)) {
         return false;
       }
       continue;
     }
-    // Reject if we already saw a dynamic dim, or if no range was resolved.
-    if (dyn_dim_opt.has_value() || !r.has_value()) {
+    // Reject if we already saw a dynamic dim.
+    if (dyn_dim_opt.has_value()) {
       return false;
     }
     dyn_dim_opt = d;
     dyn_dim_range = r;
   }
-  if (!dyn_dim_opt.has_value() || !dyn_dim_range.has_value()) {
+  if (!dyn_dim_opt.has_value()) {
     return false;
   }
   int64_t dyn_dim = *dyn_dim_opt;
-  std::optional<Range> idx_range = dyn_dim_range;
 
   const int64_t dim_size = input_shape.dimensions(dyn_dim);
   const int64_t slice_size = slice_shape.dimensions(dyn_dim);
@@ -170,9 +172,9 @@ bool IsKillingDus(const HloInstruction* dus, const HloInstruction* operand,
     return false;
   }
   // Left edge, right edge, and no interior gaps.
-  return idx_range->min().GetSignedValue() <= 0 &&
-         idx_range->max()->GetSignedValue() >= dim_size - slice_size &&
-         slice_size >= idx_range->step()->GetSignedValue();
+  return dyn_dim_range.min().GetSignedValue() <= 0 &&
+         dyn_dim_range.max()->GetSignedValue() >= dim_size - slice_size &&
+         slice_size >= dyn_dim_range.step()->GetSignedValue();
 }
 
 // TODO: scatter killing-write support; needs reasoning over scatter index
@@ -180,7 +182,7 @@ bool IsKillingDus(const HloInstruction* dus, const HloInstruction* operand,
 
 absl::StatusOr<bool> FusionParamIsKilled(const HloInstruction* fusion,
                                          int64_t param_idx,
-                                         const WhileLoopConfig& cfg) {
+                                         const CandidateLoop& cfg) {
   HloComputation* fc = fusion->fused_instructions_computation();
   HloInstruction* fused_param = fc->parameter_instruction(param_idx);
   bool ok = false;
@@ -189,7 +191,7 @@ absl::StatusOr<bool> FusionParamIsKilled(const HloInstruction* fusion,
 }
 
 absl::StatusOr<bool> AllUsersKillBuffer(const HloInstruction* buffer,
-                                        const WhileLoopConfig& cfg) {
+                                        const CandidateLoop& cfg) {
   if (buffer->user_count() == 0) {
     return true;  // trivially dead
   }
@@ -204,7 +206,7 @@ absl::StatusOr<bool> AllUsersKillBuffer(const HloInstruction* buffer,
 
 absl::StatusOr<bool> UserKillsBuffer(const HloInstruction* user,
                                      const HloInstruction* operand,
-                                     const WhileLoopConfig& cfg) {
+                                     const CandidateLoop& cfg) {
   bool result = false;
   switch (user->opcode()) {
     case HloOpcode::kDynamicUpdateSlice:
@@ -321,7 +323,7 @@ absl::StatusOr<bool> UserKillsBuffer(const HloInstruction* user,
 
 // Two checks: (1) body_param[slot] is overwritten before any read, and
 // (2) body_root[slot] carries the writer's output, not a passthrough.
-absl::StatusOr<bool> SlotIsDeadInput(int64_t slot, const WhileLoopConfig& cfg) {
+absl::StatusOr<bool> SlotIsDeadInput(int64_t slot, const CandidateLoop& cfg) {
   HloComputation* body = cfg.while_instr->while_body();
   HloInstruction* body_param = body->parameter_instruction(0);
   HloInstruction* body_root = body->root_instruction();
@@ -362,9 +364,8 @@ absl::StatusOr<bool> SlotIsDeadInput(int64_t slot, const WhileLoopConfig& cfg) {
 }
 
 // Filters a single while op against the pass's loop-shape preconditions and
-// returns a WhileLoopConfig if it's a candidate, nullopt otherwise.
-std::optional<WhileLoopConfig> ClassifyCandidateWhile(
-    HloInstruction* while_op) {
+// returns a CandidateLoop if it's a candidate, nullopt otherwise.
+std::optional<CandidateLoop> ClassifyCandidateWhile(HloInstruction* while_op) {
   if (while_op->has_sharding()) {
     return std::nullopt;
   }
@@ -394,10 +395,9 @@ std::optional<WhileLoopConfig> ClassifyCandidateWhile(
     }
     iv_tuple_idx = *iv_idx_opt;
   }
-  return WhileLoopConfig{/*while_instr=*/while_op,
-                         /*init=*/0,
-                         /*trip_count=*/trip_count,
-                         /*induction_var_idx=*/iv_tuple_idx};
+  return CandidateLoop{/*while_instr=*/while_op,
+                       /*trip_count=*/trip_count,
+                       /*induction_var_idx=*/iv_tuple_idx};
 }
 
 }  // namespace
@@ -411,24 +411,22 @@ absl::StatusOr<bool> DusAccumulatorZeroInitElimination::RunImpl(
     return false;
   }
 
-  std::vector<WhileLoopConfig> candidates;
+  std::vector<CandidateLoop> candidates;
   for (HloComputation* comp :
        module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* ins : comp->instructions()) {
       if (ins->opcode() != HloOpcode::kWhile) {
         continue;
       }
-      if (std::optional<WhileLoopConfig> cfg = ClassifyCandidateWhile(ins)) {
+      if (std::optional<CandidateLoop> cfg = ClassifyCandidateWhile(ins)) {
         candidates.push_back(*cfg);
       }
     }
   }
 
   bool changed = false;
-  for (const WhileLoopConfig& cfg : candidates) {
-    // WhileLoopConfig::while_instr is const repo-wide; mutate via const_cast
-    // since we need ReplaceOperandWith / AddInstruction on the actual instr.
-    HloInstruction* while_op = const_cast<HloInstruction*>(cfg.while_instr);
+  for (const CandidateLoop& cfg : candidates) {
+    HloInstruction* while_op = cfg.while_instr;
     HloInstruction* init_tuple = while_op->mutable_operand(0);
     int64_t n_slots = init_tuple->operand_count();
     for (int64_t slot = 0; slot < n_slots; ++slot) {
@@ -437,15 +435,14 @@ absl::StatusOr<bool> DusAccumulatorZeroInitElimination::RunImpl(
       }
 
       HloInstruction* init = init_tuple->mutable_operand(slot);
-      std::optional<Shape> alloc_shape_opt = ClassifyReplaceableInit(init);
-      if (!alloc_shape_opt.has_value()) {
+      if (!IsInitReplaceable(init)) {
         continue;
       }
       // Init must feed only this while and not carry its own sharding.
       if (init->has_sharding() || init->user_count() != 1) {
         continue;
       }
-      const Shape& alloc_shape = *alloc_shape_opt;
+      const Shape& alloc_shape = init->shape();
       if (alloc_shape.dimensions().empty() ||
           alloc_shape.dimensions(0) != cfg.trip_count) {
         continue;

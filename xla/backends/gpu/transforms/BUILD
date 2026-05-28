@@ -319,7 +319,6 @@ cc_library(
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service:constant_value",
         "//xla/service:value_range",
-        "//xla/service:while_loop_unroller",
         "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
