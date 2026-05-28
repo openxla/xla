@@ -539,7 +539,9 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
   TYPED_MATMUL(float, HIP_R_8I, HIP_R_8I, HIP_R_32F, HIP_R_32F)
   TYPED_MATMUL(complex64, HIP_C_32F, HIP_C_32F, HIP_C_32F, HIP_C_32F)
   TYPED_MATMUL(complex128, HIP_C_64F, HIP_C_64F, HIP_C_64F, HIP_C_64F)
-
+  else {
+    return xla::Internal("Unexpected operand types for hipblaslt matmul");
+  }
 #undef TYPED_MATMUL
   return plan;
 }

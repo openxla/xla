@@ -442,6 +442,9 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
   TYPED_MATMUL(float, CUDA_R_8I, CUDA_R_8I, CUDA_R_32F, CUDA_R_32F)
   TYPED_MATMUL(xla::complex64, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F)
   TYPED_MATMUL(xla::complex128, CUDA_C_64F, CUDA_C_64F, CUDA_C_64F, CUDA_C_64F)
+  else {
+    return xla::Internal("Unexpected operand types for cublaslt matmul");
+  }
 #undef TYPED_MATMUL
   return plan;
 }
