@@ -99,6 +99,22 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       int device_ordinal, uint64_t size, bool retry_on_failure,
       int64_t memory_space) override;
 
+  // Allocates raw physical memory and maps it into a caller-owned
+  // MemoryReservation range. `allocation_size` and `mapping_size` must be
+  // equal.
+  //
+  // If `return_reservation_address` is true, the returned allocator address is
+  // the reservation slice and must be released with Deallocate(); `reservation`
+  // must outlive the returned address and any pending deallocation. If false,
+  // the returned allocator address is a separate allocator-owned VA and the
+  // reservation slice is a non-owning alias that must be released with UnMap()
+  // before the returned allocator address is deallocated.
+  absl::StatusOr<ScopedDeviceAddress<uint8_t>> Allocate(
+      int device_ordinal, uint64_t allocation_size, bool retry_on_failure,
+      int64_t memory_space, MemoryReservation* reservation,
+      uint64_t reservation_offset, uint64_t mapping_size,
+      bool return_reservation_address);
+
   // Pull in two-arg overload that sets retry_on_failure to true.
   using DeviceAddressAllocator::Allocate;
 

@@ -284,6 +284,62 @@ TEST_F(DeviceAddressVmmAllocatorTest, MapAndUnMapReservationAlias) {
   ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
 }
 
+TEST_F(DeviceAddressVmmAllocatorTest,
+       AllocateIntoReservationReturnsReservationAddress) {
+  ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  uint64_t granularity = allocator->GetAllocationGranularity(executor_);
+  ASSERT_GT(granularity, 0);
+
+  ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                             executor_, granularity));
+  ASSERT_OK_AND_ASSIGN(
+      auto address,
+      allocator->Allocate(ordinal, granularity, /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kCollective),
+                          reservation.get(), /*reservation_offset=*/0,
+                          granularity,
+                          /*return_reservation_address=*/true));
+
+  EXPECT_EQ(address->opaque(), reservation->address().opaque());
+  EXPECT_NE(allocator->GetRawAllocation(ordinal, address.cref()), nullptr);
+
+  ASSERT_THAT(allocator->Deallocate(ordinal, address.Release()), IsOk());
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       AllocateIntoReservationReturnsAllocatorAddress) {
+  ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  uint64_t granularity = allocator->GetAllocationGranularity(executor_);
+  ASSERT_GT(granularity, 0);
+
+  ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                             executor_, granularity));
+  ASSERT_OK_AND_ASSIGN(
+      auto address,
+      allocator->Allocate(ordinal, granularity, /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kCollective),
+                          reservation.get(), /*reservation_offset=*/0,
+                          granularity,
+                          /*return_reservation_address=*/false));
+
+  EXPECT_NE(address->opaque(), reservation->address().opaque());
+  EXPECT_THAT(allocator->Deallocate(ordinal, address.cref()),
+              absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition));
+  ASSERT_THAT(allocator->UnMap(ordinal, reservation.get(),
+                               /*reservation_offset=*/0, granularity),
+              IsOk());
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+}
+
 TEST_F(DeviceAddressVmmAllocatorTest, DeallocateNull) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto allocator,
