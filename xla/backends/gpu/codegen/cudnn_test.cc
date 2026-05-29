@@ -237,9 +237,8 @@ ENTRY e {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(kHloText));
   BinaryMap dnn_compiled_graphs;
-  CuDnnFusionCompiler cudnn_compiler(stream_executor()->AsDnn(),
-                                     se::DeviceDescription(),
-                                     dnn_compiled_graphs);
+  CuDnnFusionCompiler cudnn_compiler(
+      stream_executor()->AsDnn(), se::DeviceDescription(), dnn_compiled_graphs);
   ASSERT_OK_AND_ASSIGN(bool changed, cudnn_compiler.Run(module.get()));
   EXPECT_TRUE(changed);
   EXPECT_THAT(module->entry_computation()->root_instruction(),
@@ -272,9 +271,8 @@ e {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(kHloText));
   BinaryMap dnn_compiled_graphs;
-  CuDnnFusionCompiler cudnn_compiler(stream_executor()->AsDnn(),
-                                     se::DeviceDescription(),
-                                     dnn_compiled_graphs);
+  CuDnnFusionCompiler cudnn_compiler(
+      stream_executor()->AsDnn(), se::DeviceDescription(), dnn_compiled_graphs);
   EXPECT_THAT(cudnn_compiler.Run(module.get()),
               absl_testing::IsOkAndHolds(false));
   // Single dot is not supported by cuDNN, so Triton should be used.
@@ -322,9 +320,8 @@ ENTRY e {
   ROOT r = tuple(f0, f1)
 })"));
   BinaryMap dnn_compiled_graphs;
-  CuDnnFusionCompiler cudnn_compiler(stream_executor()->AsDnn(),
-                                     se::DeviceDescription(),
-                                     dnn_compiled_graphs);
+  CuDnnFusionCompiler cudnn_compiler(
+      stream_executor()->AsDnn(), se::DeviceDescription(), dnn_compiled_graphs);
   ASSERT_OK_AND_ASSIGN(bool changed, cudnn_compiler.Run(module.get()));
   EXPECT_TRUE(changed);
   EXPECT_THAT(module->entry_computation()->root_instruction(),
@@ -462,7 +459,8 @@ ENTRY e {
   {
     TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                             ParseAndReturnVerifiedModule(kHlo));
-    const se::DeviceDescription& device_description = this->device_description();
+    const se::DeviceDescription& device_description =
+        this->device_description();
     BinaryMap dnn_compiled_graphs;
     CuDnnFusionCompiler cudnn_compiler(/*dnn_support=*/nullptr,
                                        device_description, dnn_compiled_graphs);
