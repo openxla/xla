@@ -2529,10 +2529,21 @@ std::optional<std::vector<OpSharding>> PjRtCApiExecutable::GetOutputShardings()
 absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
 PjRtCApiExecutable::GetParameterLayouts() const {
   const PJRT_Api* c_api = pjrt_c_api();
+  auto verify_hlo_module_is_intact = [&]() -> absl::Status {
+    ASSIGN_OR_RETURN(auto modules, GetHloModules());
+    if (modules.empty() || modules.front() == nullptr) {
+      return absl::UnimplementedError(
+          "HloModule graph is stripped/null. Cannot resolve layouts "
+          "reflection.");
+    }
+    return absl::OkStatus();
+  };
+
   if (c_api->pjrt_api_version.major_version == 0 &&
       c_api->pjrt_api_version.minor_version < 93) {
     // If the PJRT C API version is too old, fall back to the default
     // implementation.
+    RETURN_IF_ERROR(verify_hlo_module_is_intact());
     return this->PjRtExecutable::GetParameterLayouts();
   }
   PJRT_Layouts_Extension* extension =
@@ -2543,6 +2554,7 @@ PjRtCApiExecutable::GetParameterLayouts() const {
       extension->PJRT_Layouts_PJRT_Executable_GetParameterLayouts == nullptr) {
     // If we can't find PJRT_Layouts_PJRT_Executable_GetParameterLayouts
     // support, fall back to the default implementation.
+    RETURN_IF_ERROR(verify_hlo_module_is_intact());
     return this->PjRtExecutable::GetParameterLayouts();
   }
 
@@ -2614,10 +2626,21 @@ PjRtCApiExecutable::GetParameterMemoryKinds() const {
 absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
 PjRtCApiExecutable::GetOutputLayouts() const {
   const PJRT_Api* c_api = pjrt_c_api();
+  auto verify_hlo_module_is_intact = [&]() -> absl::Status {
+    ASSIGN_OR_RETURN(auto modules, GetHloModules());
+    if (modules.empty() || modules.front() == nullptr) {
+      return absl::UnimplementedError(
+          "HloModule graph is stripped/null. Cannot resolve layouts "
+          "reflection.");
+    }
+    return absl::OkStatus();
+  };
+
   if (c_api->pjrt_api_version.major_version == 0 &&
       c_api->pjrt_api_version.minor_version < 81) {
     // If the PJRT C API version is too old, fall back to the default
     // implementation.
+    RETURN_IF_ERROR(verify_hlo_module_is_intact());
     return this->PjRtExecutable::GetOutputLayouts();
   }
   PJRT_Layouts_Extension* extension =
@@ -2628,6 +2651,7 @@ PjRtCApiExecutable::GetOutputLayouts() const {
       extension->PJRT_Layouts_PJRT_Executable_GetOutputLayouts == nullptr) {
     // If we can't find PJRT_Layouts_PJRT_Executable_GetOutputLayouts support,
     // fall back to the default implementation.
+    RETURN_IF_ERROR(verify_hlo_module_is_intact());
     return this->PjRtExecutable::GetOutputLayouts();
   }
 
