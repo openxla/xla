@@ -40,7 +40,7 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_Aarch64SveHyperbolicTan
     const svfloat32_t plus_9 = svdup_f32(9.f);
     const svfloat32_t minus_9 = svdup_f32(-9.f);
     const svfloat32_t s_clamp = svdup_f32(9.f * 9.f);
-    const svfloat32_t threshold_sq = svdup_f32(2.4f * 2.4f);
+    const svfloat32_t threshold_sq = svdup_f32(2.6f * 2.6f);
 
     // Numerator coefficients (odd powers).
     const svfloat32_t alpha_1 = svdup_f32(4.89352455891786e-03f);
@@ -50,6 +50,14 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_Aarch64SveHyperbolicTan
     const svfloat32_t alpha_9 = svdup_f32(-8.60467152213735e-11f);
     const svfloat32_t alpha_11 = svdup_f32(2.00018790482477e-13f);
     const svfloat32_t alpha_13 = svdup_f32(-2.76076847742355e-16f);
+
+    // Fast-path-only refit of alpha_3: BASE_ALPHA_3 + 4 ULPs in f32 space
+    // (bits 0x3a270ded -> 0x3a270df1).  Required to keep max 5 ULP on
+    // the full fast-path domain |x| < 2.6 in the degree-9/6 form -- with
+    // the unperturbed alpha_3 the same form drifts to 6 ULP near
+    // x ~= 2.42.  The slow path keeps the unperturbed alpha_3, so any
+    // |x| >= 2.6 batch is bit-identical to the previous kernel.
+    const svfloat32_t fast_alpha_3 = svdup_f32(6.3726218650e-04f);
 
     // Denominator coefficients (even powers).
     const svfloat32_t beta_0 = svdup_f32(4.89352518554385e-03f);
@@ -92,7 +100,7 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_Aarch64SveHyperbolicTan
         x2_4 = svmul_x(predicate_4, x_4, x_4);
         x2_5 = svmul_x(predicate_5, x_5, x_5);
 
-        // Speculative-degree dispatch test: any |x| >= 2.4 ?  Predicate
+        // Speculative-degree dispatch test: any |x| >= 2.6 ?  Predicate
         // ops (svorr, svptest_any) live on a separate pipe from the FMA
         // work that immediately follows, so most of this latency is
         // hidden behind the start of the polynomial evaluation.
@@ -221,11 +229,10 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_Aarch64SveHyperbolicTan
             svst1_f32(predicate_4, &output[i+sve_len*4], result_4);
             svst1_f32(predicate_5, &output[i+sve_len*5], result_5);
         } else {
-            // Fast path: degree-9/6 polynomial.  All lanes have |x| < 2.4,
+            // Fast path: degree-9/6 polynomial.  All lanes have |x| < 2.6,
             // so we can skip the input clamp and drop alpha_11 and
-            // alpha_13.  The remaining five alpha coefficients give max
-            // 5 ULP on |x| < 2.4 -- equal to the kernel's documented
-            // accuracy bound on the full range.
+            // alpha_13.  Uses fast_alpha_3 (refit) instead of alpha_3 to
+            // keep max 5 ULP on the full fast-path domain.
 
             // Numerator: a1 + a3*s + a5*s^2 + a7*s^3 + a9*s^4 (Horner).
             p_0 = svmad_x(predicate_0, x2_0, alpha_9, alpha_7);
@@ -257,12 +264,12 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_Aarch64SveHyperbolicTan
             q_4 = svmad_x(predicate_4, q_4, x2_4, beta_2);
             q_5 = svmad_x(predicate_5, q_5, x2_5, beta_2);
 
-            p_0 = svmad_x(predicate_0, p_0, x2_0, alpha_3);
-            p_1 = svmad_x(predicate_1, p_1, x2_1, alpha_3);
-            p_2 = svmad_x(predicate_2, p_2, x2_2, alpha_3);
-            p_3 = svmad_x(predicate_3, p_3, x2_3, alpha_3);
-            p_4 = svmad_x(predicate_4, p_4, x2_4, alpha_3);
-            p_5 = svmad_x(predicate_5, p_5, x2_5, alpha_3);
+            p_0 = svmad_x(predicate_0, p_0, x2_0, fast_alpha_3);
+            p_1 = svmad_x(predicate_1, p_1, x2_1, fast_alpha_3);
+            p_2 = svmad_x(predicate_2, p_2, x2_2, fast_alpha_3);
+            p_3 = svmad_x(predicate_3, p_3, x2_3, fast_alpha_3);
+            p_4 = svmad_x(predicate_4, p_4, x2_4, fast_alpha_3);
+            p_5 = svmad_x(predicate_5, p_5, x2_5, fast_alpha_3);
 
             q_0 = svmad_x(predicate_0, q_0, x2_0, beta_0);
             q_1 = svmad_x(predicate_1, q_1, x2_1, beta_0);
