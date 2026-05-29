@@ -2547,6 +2547,7 @@ xla_cc_test(
     ]) + if_rocm_is_configured([
         ":amdgpu_compiler_impl",
     ]) + [
+        ":gpu_executable",
         ":gpu_transfer_manager",
         "//xla:literal",
         "//xla:literal_util",
@@ -2566,6 +2567,7 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
         "//xla/tests/restricted:hlo_test_base_legacy",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest",
