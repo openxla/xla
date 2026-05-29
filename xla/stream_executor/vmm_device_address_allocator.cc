@@ -385,6 +385,36 @@ absl::StatusOr<Stream*> DeviceAddressVmmAllocator::GetStream(
   return state->stream;
 }
 
+absl::Status DeviceAddressVmmAllocator::SynchronizePendingOperations(
+    int device_ordinal) {
+  PerDeviceState* state = GetPerDeviceState(device_ordinal);
+  if (state == nullptr) {
+    return DeviceNotFoundError(device_ordinal);
+  }
+
+  state->mu.lock();
+  if (state->pending_deallocations.empty()) {
+    state->mu.unlock();
+    return absl::OkStatus();
+  }
+  uint64_t target_seqno = state->pending_deallocations.back().seqno;
+
+  state->mu.unlock();
+  while (LoadTimeline(state->pinned_timeline) < target_seqno) {
+    absl::SleepFor(absl::Microseconds(50));
+  }
+  state->mu.lock();
+
+  while (!state->pending_deallocations.empty() &&
+         state->pending_deallocations.front().seqno <= target_seqno) {
+    DoDeallocate(*state, state->pending_deallocations.front().mem);
+    state->pending_deallocations.pop_front();
+  }
+  state->mu.unlock();
+
+  return absl::OkStatus();
+}
+
 absl::StatusOr<StreamExecutor*> DeviceAddressVmmAllocator::GetStreamExecutor(
     int device_ordinal) const {
   PerDeviceState* state = GetPerDeviceState(device_ordinal);
