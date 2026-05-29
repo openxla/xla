@@ -220,10 +220,8 @@ class GpuExecutable : public Executable {
     return buffer_assignment_.get();
   }
 
-  // Returns the proto representation of `buffer_assignment()` if available,
-  // otherwise returns the stored buffer assignment proto if available. Returns
-  // nullopt if neither is available.
-  std::optional<BufferAssignmentProto> buffer_assignment_proto() const;
+  // Returns the proto representation of the BufferAssignment.
+  BufferAssignmentProto buffer_assignment_proto() const;
 
   const GpuAliasInfo* alias_info() const { return alias_info_.get(); }
 
@@ -365,6 +363,9 @@ class GpuExecutable : public Executable {
       NumAdditionalStreams num_additional_streams,
       CollectiveMemoryCache& collective_memory_cache,
       bool collective_use_minimal_resource);
+
+  BufferAssignmentProto GetBufferAssigmentProtoWithDebugSummary(
+      const BufferAssignment& buffer_assignment) const;
 
   // The LLVM IR, in string format, of the unoptimized module generated for
   // this GpuExecutable. We save a string instead of an llvm::Module* because

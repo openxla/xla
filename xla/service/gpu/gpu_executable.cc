@@ -344,6 +344,11 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
     return absl::InvalidArgumentError(
         "Cannot set both buffer_assignment_proto and buffer_assignment.");
   }
+  if (!params.buffer_assignment_proto.has_value() &&
+      params.buffer_assignment == nullptr) {
+    return absl::InvalidArgumentError(
+        "Must set either buffer_assignment_proto or buffer_assignment.");
+  }
 
   int64_t next_idx = 0;
   if (params.mlir_allocations.has_value()) {
@@ -918,8 +923,7 @@ absl::Status RendezvousAfterInitialization(
       run_options.device_ordinal(), run_options.run_options().run_id().ToInt());
 
   return Rendezvous(
-      rendezvous_name, rendezvous_key,
-      num_local_participants,
+      rendezvous_name, rendezvous_key, num_local_participants,
       absl::Seconds(
           debug_options
               ? debug_options->xla_gpu_executable_warn_stuck_timeout_seconds()
@@ -1424,6 +1428,11 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
 }
 
 absl::Status GpuExecutable::VerboseAllocationError(absl::Status s) {
+  if (buffer_assignment_proto_.has_value()) {
+    return ResourceExhausted("%s\n%s\n", s.message(),
+                             buffer_assignment_proto_->debug_summary());
+  }
+  TF_RET_CHECK(buffer_assignment_ != nullptr);
   return ResourceExhausted(
       "%s\n%s\n", s.message(),
       buffer_assignment_->ToVerboseString(alias_info_.get(),
@@ -1659,12 +1668,13 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
   return absl::OkStatus();
 }
 
-std::optional<BufferAssignmentProto> GpuExecutable::buffer_assignment_proto()
-    const {
+BufferAssignmentProto GpuExecutable::buffer_assignment_proto() const {
   if (buffer_assignment_ != nullptr) {
-    return buffer_assignment_->ToProto();
+    return GetBufferAssigmentProtoWithDebugSummary(*buffer_assignment_);
   }
-  return buffer_assignment_proto_;
+  CHECK(buffer_assignment_proto_.has_value())
+      << "GpuExecutable was created without a buffer assignment or proto";
+  return *buffer_assignment_proto_;
 }
 absl::Status GpuExecutable::ExecuteThunks(
     const BufferAllocations& buffer_allocations,
@@ -1925,7 +1935,8 @@ absl::StatusOr<GpuExecutableProto> GpuExecutable::ToProto() const {
   }
 
   if (buffer_assignment_ != nullptr) {
-    *proto.mutable_buffer_assignment() = buffer_assignment_->ToProto();
+    *proto.mutable_buffer_assignment() =
+        GetBufferAssigmentProtoWithDebugSummary(*buffer_assignment_);
   } else if (buffer_assignment_proto_.has_value()) {
     *proto.mutable_buffer_assignment() = buffer_assignment_proto_.value();
   }
@@ -1986,7 +1997,7 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
     }
   }
   if (proto.has_buffer_assignment()) {
-    params.buffer_assignment_proto.emplace(proto.buffer_assignment());
+    params.buffer_assignment_proto = std::move(proto.buffer_assignment());
   }
 
   params.mlir_allocations.emplace();
@@ -2095,6 +2106,13 @@ absl::Status GpuExecutable::DumpExecutableIfEnabled(
       WriteSplitExecutableAndOptions(dump_proto, std::move(writer)));
 
   return absl::OkStatus();
+}
+
+BufferAssignmentProto GpuExecutable::GetBufferAssigmentProtoWithDebugSummary(
+    const BufferAssignment& buffer_assignment) const {
+  std::string debug_summary = buffer_assignment.ToVerboseString(
+      alias_info_.get(), debug_buffer_assignment_show_max_);
+  return buffer_assignment.ToProto(debug_summary);
 }
 
 }  // namespace gpu
