@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+// This is just a test to see if OSS CI works.
+
 #include "xla/stream_executor/rocm/rocm_executor.h"
 
 #include <unistd.h>
