@@ -181,6 +181,8 @@ std::optional<DebugOptions::CommandBufferCmdType> GetCommandBufferCmdType(
 
 bool ThunkSequenceIsConvertible(const ThunkSequence& thunks,
                                 const CommandBufferConfig& config);
+bool ThunkSequenceMustConvertToCommandBuffer(const ThunkSequence& thunks,
+                                             const CommandBufferConfig& config);
 size_t CheckAsyncRegion(absl::Span<const std::unique_ptr<Thunk>> thunks,
                         const CommandBufferConfig& config);
 
@@ -328,6 +330,53 @@ bool IsConvertible(const Thunk& thunk, const CommandBufferConfig& config) {
   return true;
 }
 
+bool MustConvertToCommandBuffer(const Thunk& thunk,
+                                const CommandBufferConfig& config) {
+  // Cmd-buffer-compatible FFI custom calls must be captured even when the
+  // surrounding sequence is smaller than the usual command-buffer threshold.
+  if (thunk.kind() == Thunk::kCustomCall) {
+    if (!config.enabled_commands.contains(DebugOptions::CUSTOM_CALL)) {
+      return false;
+    }
+
+    auto* custom_call_thunk = dynamic_cast<const CustomCallThunk*>(&thunk);
+    return custom_call_thunk != nullptr &&
+           IsConvertible(*custom_call_thunk, config);
+  }
+
+  if (thunk.kind() == Thunk::kWhile) {
+    const auto& while_thunk = static_cast<const WhileThunk&>(thunk);
+    return ThunkSequenceMustConvertToCommandBuffer(
+               while_thunk.body_executor().thunks(), config) ||
+           ThunkSequenceMustConvertToCommandBuffer(
+               while_thunk.condition_executor().thunks(), config);
+  }
+
+  if (thunk.kind() == Thunk::kConditional) {
+    const auto& conditional_thunk = static_cast<const ConditionalThunk&>(thunk);
+    return absl::c_any_of(conditional_thunk.branch_executors(),
+                          [&](const auto& branch) {
+                            return ThunkSequenceMustConvertToCommandBuffer(
+                                branch.thunks(), config);
+                          });
+  }
+
+  if (thunk.kind() == Thunk::kDynamicSlice) {
+    return ThunkSequenceMustConvertToCommandBuffer(
+        static_cast<const DynamicSliceThunk&>(thunk)
+            .get_embedded_executor()
+            .thunks(),
+        config);
+  }
+
+  if (thunk.kind() == Thunk::kAsyncStart) {
+    return ThunkSequenceMustConvertToCommandBuffer(
+        static_cast<const AsyncStartThunk&>(thunk).thunks(), config);
+  }
+
+  return false;
+}
+
 bool ThunkSequenceIsConvertible(const ThunkSequence& thunks,
                                 const CommandBufferConfig& config) {
   for (size_t i = 0; i < thunks.size(); ++i) {
@@ -345,6 +394,13 @@ bool ThunkSequenceIsConvertible(const ThunkSequence& thunks,
     }
   }
   return true;
+}
+
+bool ThunkSequenceMustConvertToCommandBuffer(
+    const ThunkSequence& thunks, const CommandBufferConfig& config) {
+  return absl::c_any_of(thunks, [&](const auto& thunk) {
+    return MustConvertToCommandBuffer(*thunk, config);
+  });
 }
 
 // Collects and returns the size of the shortest non-empty sequence of thunks
@@ -472,13 +528,15 @@ ConvertThunksToCommandBuffer(
 
 absl::Status FlushCommandBuffer(
     CommandExecutor::SynchronizationMode synchronization_mode,
-    const DebugOptions& debug_options,
+    const DebugOptions& debug_options, const CommandBufferConfig& config,
     ThunkSequence& current_command_buffer_thunks, ThunkSequence& new_thunks,
     bool& changed) {
   // If we don't have enough thunks to form a command buffer, we just add
   // them to the new thunks sequence as is.
   if (current_command_buffer_thunks.size() <
-      std::max(1, debug_options.xla_gpu_graph_min_graph_size())) {
+          std::max(1, debug_options.xla_gpu_graph_min_graph_size()) &&
+      !ThunkSequenceMustConvertToCommandBuffer(current_command_buffer_thunks,
+                                               config)) {
     if (VLOG_IS_ON(2)) {
       for (const auto& thunk : current_command_buffer_thunks) {
         VLOG(2) << "Thunk kind " << Thunk::KindToString(thunk->kind())
@@ -540,7 +598,7 @@ absl::StatusOr<bool> CommandBufferConversionPass::Run(
   ThunkSequence new_thunks;
 
   auto flush_command_buffer = [&]() -> absl::Status {
-    return FlushCommandBuffer(synchronization_mode, debug_options,
+    return FlushCommandBuffer(synchronization_mode, debug_options, config,
                               current_command_buffer_thunks, new_thunks,
                               changed);
   };

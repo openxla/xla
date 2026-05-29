@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/convolution_thunk.h"
 #include "xla/backends/gpu/runtime/cudnn_thunk.h"
+#include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
@@ -47,6 +48,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk_pass_pipeline.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/debug_options_flags.h"
+#include "xla/ffi/ffi.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -95,6 +97,42 @@ se::StreamExecutor* GpuExecutor() {
   stream_executor::Platform* platform =
       se::PlatformManager::PlatformWithName(GetPlatformName()).value();
   return platform->ExecutorForDevice(0).value();
+}
+
+absl::Status NoOpCustomCall() { return absl::OkStatus(); }
+
+XLA_FFI_DEFINE_HANDLER(kCmdBufferCompatibleNoOpCustomCall, NoOpCustomCall,
+                       ffi::Ffi::Bind(), {ffi::Traits::kCmdBufferCompatible});
+XLA_FFI_DEFINE_HANDLER(kCmdBufferIncompatibleNoOpCustomCall, NoOpCustomCall,
+                       ffi::Ffi::Bind());
+
+constexpr char kCmdBufferCompatibleCustomCallName[] =
+    "__xla_test$$cmd_buffer_compatible";
+constexpr char kCmdBufferIncompatibleCustomCallName[] =
+    "__xla_test$$cmd_buffer_incompatible";
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),
+                         kCmdBufferCompatibleCustomCallName, "CUDA",
+                         kCmdBufferCompatibleNoOpCustomCall);
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),
+                         kCmdBufferCompatibleCustomCallName, "ROCM",
+                         kCmdBufferCompatibleNoOpCustomCall);
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),
+                         kCmdBufferIncompatibleCustomCallName, "CUDA",
+                         kCmdBufferIncompatibleNoOpCustomCall);
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),
+                         kCmdBufferIncompatibleCustomCallName, "ROCM",
+                         kCmdBufferIncompatibleNoOpCustomCall);
+
+absl::StatusOr<std::unique_ptr<CustomCallThunk>> CreateCustomCallThunk(
+    const char* target_name) {
+  se::StreamExecutor* executor = GpuExecutor();
+  return CustomCallThunk::Create(
+      Thunk::ThunkInfo(), target_name, std::vector<NullableShapedSlice>{},
+      std::vector<NullableShapedSlice>{}, ffi::AttributesMap{},
+      /*called_computation=*/nullptr,
+      /*platform_name=*/executor->GetPlatform()->Name(),
+      executor->GetDeviceDescription().gpu_compute_capability());
 }
 
 std::unique_ptr<AllGatherThunk> CreateAllGatherThunk(
@@ -693,6 +731,105 @@ TEST(CommandBufferConversionPassTest, DontConvertIfNotMinGraphSize) {
                        device_info, allocator),
               IsOkAndHolds(false));
   EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCopy));
+}
+
+TEST(CommandBufferConversionPassTest,
+     ConvertCommandBufferCompatibleCustomCallBelowMinGraphSize) {
+  ThunkSequence thunks;
+
+  ASSERT_OK_AND_ASSIGN(
+      auto custom_call,
+      CreateCustomCallThunk(kCmdBufferCompatibleCustomCallName));
+  thunks.push_back(std::move(custom_call));
+
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
+  debug_options.set_xla_gpu_graph_min_graph_size(2);
+
+  se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  FakeErrorAllocator allocator;
+
+  CommandBufferConversionPass pass{"test"};
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(true));
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer));
+
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(thunks[0].get());
+  EXPECT_THAT(command_buffer_thunk->thunks()->thunks(),
+              ThunkKindsAre(Thunk::kCustomCall));
+}
+
+TEST(CommandBufferConversionPassTest,
+     DontConvertCommandBufferIncompatibleCustomCallBelowMinGraphSize) {
+  ThunkSequence thunks;
+
+  ASSERT_OK_AND_ASSIGN(
+      auto custom_call,
+      CreateCustomCallThunk(kCmdBufferIncompatibleCustomCallName));
+  thunks.push_back(std::move(custom_call));
+
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
+  debug_options.set_xla_gpu_graph_min_graph_size(2);
+
+  se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  FakeErrorAllocator allocator;
+
+  CommandBufferConversionPass pass{"test"};
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(false));
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCustomCall));
+}
+
+TEST(CommandBufferConversionPassTest,
+     ConvertWhileWithCommandBufferCompatibleCustomCallBelowMinGraphSize) {
+  if (GetPlatformName() == "ROCM") {
+    GTEST_SKIP() << "Not supported on ROCm";
+  }
+
+  ThunkSequence thunks;
+
+  BufferAllocation alloc0(0, 1024, 0);
+  ThunkSequence condition_thunks;
+  condition_thunks.push_back(CreateCopyThunk(alloc0));
+
+  ThunkSequence body_thunks;
+  ASSERT_OK_AND_ASSIGN(
+      auto custom_call,
+      CreateCustomCallThunk(kCmdBufferCompatibleCustomCallName));
+  body_thunks.push_back(std::move(custom_call));
+
+  thunks.push_back(CreateWhileThunk(std::move(condition_thunks),
+                                    std::move(body_thunks), alloc0));
+
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::WHILE);
+  debug_options.set_xla_gpu_graph_min_graph_size(2);
+
+  se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  FakeErrorAllocator allocator;
+
+  CommandBufferConversionPass pass{"test"};
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(true));
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer));
+
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(thunks[0].get());
+  EXPECT_THAT(command_buffer_thunk->thunks()->thunks(),
+              ThunkKindsAre(Thunk::kWhile));
 }
 
 TEST(CommandBufferConversionPassTest, ConvertWhileThunk) {
