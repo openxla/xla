@@ -1735,16 +1735,20 @@ absl::Status GpuCompiler::OptimizeHloModule(
       hlo_module, stream_exec, options, gpu_topology.gpu_target_config(),
       alias_info, thread_pool.get_mutable(), compilation_stats, mlir_context));
 
-  // This is a "low effort, high impact" fusion that should be run first.
-  RETURN_IF_ERROR(RunDynamicSliceFusionPasses(
-      hlo_module, /*platform_id=*/PlatformId(), compilation_stats));
-
   RETURN_IF_ERROR(RunFusionPasses(
       hlo_module, gpu_topology.gpu_target_config(), thread_pool.get_mutable(),
       ShapeSizeBytesFunction(), alias_info, mlir_context, compilation_stats));
   RETURN_IF_ERROR(RunPostFusionPasses(
       hlo_module, device_description, alias_info, pointer_size_, options,
       gpu_topology.number_of_devices(), mlir_context, compilation_stats));
+
+  // DynamicSliceAnnotator records loop-dependent offset metadata consumed by
+  // dynamic-slice fusion and the later fusion dispatch pipeline. Run it after
+  // post-fusion loop transformations (notably double-buffer unrolling), but
+  // before async collective conversion changes collective structure.
+  RETURN_IF_ERROR(RunDynamicSliceFusionPasses(
+      hlo_module, /*platform_id=*/PlatformId(), compilation_stats));
+
   RETURN_IF_ERROR(RunAsyncCollectivesConversionPasses(hlo_module));
   RETURN_IF_ERROR(RunPostFusionSimplificationPasses(
       hlo_module,
