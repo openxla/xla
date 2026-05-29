@@ -81,12 +81,27 @@ class AliasInfo {
     return std::nullopt;
   }
 
+  // Returns whether `instruction` can be ignored when tracing fusion in-place
+  // aliases because it does not change the underlying buffer. Backends may
+  // override this to add target-specific no-op wrappers.
+  virtual bool IsNoOpForAliasAnalysis(const HloInstruction* instruction) const {
+    return instruction->opcode() == HloOpcode::kBitcast;
+  }
+
  private:
   // Returns in-place input/output pairs for the given fusion instruction,
   // according to the aliasing rules for the corresponding fusion computation.
   std::vector<std::pair<HloOperandIndex, ShapeIndex>>
   GetFusionInstructionInPlaceInputOutputPairs(
       const HloFusionInstruction* fusion) const;
+
+  // Follows no-op wrappers while tracing an HLO value to its source. For
+  // example, if a fusion root is bitcast(dus), this returns dus.
+  //
+  // Only array values are followed: `operand_index` must be empty before a
+  // wrapper can be skipped.
+  std::pair<const HloInstruction*, ShapeIndex> FollowNoOpIndirection(
+      const HloInstruction* instruction, ShapeIndex operand_index) const;
 };
 
 // Removes layers of tuple indirection introduced via 'tuple' and
