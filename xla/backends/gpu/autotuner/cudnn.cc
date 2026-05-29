@@ -248,7 +248,21 @@ GetCudnnFusionConfigs(const HloInstruction& instr,
                       const Compiler::GpuTargetConfig& target_config,
                       const DebugOptions& debug_options) {
   std::vector<std::unique_ptr<BackendConfig>> configs;
-  if (debug_options.xla_gpu_enable_cudnn_deviceless_compilation()) {
+  bool use_deviceless = false;
+  switch (debug_options.xla_gpu_cudnn_deviceless_compilation_mode()) {
+    case DebugOptions::CUDNN_DEVICELESS_COMPILATION_DISABLED:
+      use_deviceless = false;
+      break;
+    case DebugOptions::CUDNN_DEVICELESS_COMPILATION_ALWAYS:
+      use_deviceless = true;
+      break;
+    case DebugOptions::CUDNN_DEVICELESS_COMPILATION_UNSET:
+    case DebugOptions::CUDNN_DEVICELESS_COMPILATION_AUTO:
+    default:
+      use_deviceless = (stream_executor == nullptr);
+      break;
+  }
+  if (use_deviceless) {
     if (target_config.dnn_version_info < se::dnn::VersionInfo(9, 8, 0)) {
       return absl::FailedPreconditionError(
           "Deviceless cuDNN compilation requires cuDNN >= 9.8.");
@@ -369,10 +383,9 @@ absl::StatusOr<std::unique_ptr<BackendConfig>> CudnnBackend::GetDefaultConfig(
 
   if (stream_executor() != nullptr && instr.opcode() == HloOpcode::kFusion &&
       IsSupportedCudnnFusion(instr, stream_executor(), debug_options())) {
-    ASSIGN_OR_RETURN(
-        std::vector<std::unique_ptr<BackendConfig>> configs,
-        GetCudnnFusionConfigs(instr, stream_executor(), target_config(),
-                              debug_options()));
+    ASSIGN_OR_RETURN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                     GetCudnnFusionConfigs(instr, stream_executor(),
+                                           target_config(), debug_options()));
     if (!configs.empty()) {
       return std::move(configs[0]);
     }

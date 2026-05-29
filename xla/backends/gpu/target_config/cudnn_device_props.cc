@@ -30,8 +30,8 @@ absl::StatusOr<std::shared_ptr<cudnn_frontend::DeviceProperties>>
 BuildDeviceProperties(const stream_executor::DeviceDescription& desc) {
   const auto* cc = desc.gpu_compute_capability().cuda_compute_capability();
   int device_ver = cc ? (cc->major * 100 + cc->minor * 10) : 0;
-  int driver_ver =
-      desc.driver_version().major() * 1000 + desc.driver_version().minor() * 10;
+  int driver_ver = desc.driver_version().major_version() * 1000 +
+                   desc.driver_version().minor_version() * 10;
   std::string json = absl::StrFormat(
       R"json({
   "deviceVer":%d,

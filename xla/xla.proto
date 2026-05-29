@@ -591,8 +591,22 @@ message DebugOptions {
   // but potentially higher the performance.
   optional int32 xla_gpu_cudnn_gemm_max_plans = 318;
 
-  // Enable cuDNN deviceless compilation.
-  optional bool xla_gpu_enable_cudnn_deviceless_compilation = 503;
+  // Controls when cuDNN fusions are compiled in "deviceless" mode, i.e. driven
+  // purely by the DeviceDescription without a live cuDNN handle. Deviceless
+  // compilation requires cuDNN >= 9.8.
+  enum CudnnDevicelessCompilationMode {
+    CUDNN_DEVICELESS_COMPILATION_UNSET = 0;
+    // Never use deviceless compilation; always require a live device.
+    CUDNN_DEVICELESS_COMPILATION_DISABLED = 1;
+    // Use deviceless compilation only when no live device is available (e.g.
+    // ahead-of-time compilation); use the device-dependent path otherwise.
+    CUDNN_DEVICELESS_COMPILATION_AUTO = 2;
+    // Always use deviceless compilation, even when a live device is available.
+    // Provides a testing path toward deprecating the device-dependent path.
+    CUDNN_DEVICELESS_COMPILATION_ALWAYS = 3;
+  }
+  optional CudnnDevicelessCompilationMode
+      xla_gpu_cudnn_deviceless_compilation_mode = 503;
 
   // Allows using the dot precision algorithm `ALG_DOT_BF16_BF16_F32 for f32 dot
   // ops by default. This is expected to improve performance at the expense of

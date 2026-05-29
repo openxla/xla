@@ -253,9 +253,8 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
     se::dnn::DnnSupport *dnn_support,
     const se::DeviceDescription &gpu_device_info,
     HloCustomCallInstruction *custom_call) {
-  ASSIGN_OR_RETURN(
-      auto gpu_config,
-      custom_call->backend_config<xla::gpu::GpuBackendConfig>());
+  ASSIGN_OR_RETURN(auto gpu_config,
+                   custom_call->backend_config<xla::gpu::GpuBackendConfig>());
   xla::gpu::CudnnfMHABackendConfig &config =
       *gpu_config.mutable_cudnn_fmha_backend_config();
 
@@ -379,12 +378,12 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
   TF_RET_CHECK(input_index == custom_call->operand_count());
 
   ASSIGN_OR_RETURN(se::gpu::CudnnGraph graph,
-                      se::gpu::GetCudnnFlashAttentionBackwardOperationGraph(
-                          dnn_support, gpu_device_info, q, k, p, v, d_output,
-                          dq, dk, dv, bias, dbias, dropout_rate, config.seed(),
-                          config.fmha_scale(), dropout_rate > 0.0,
-                          bias.has_value(), dnn_mask_type, force_deterministic,
-                          sliding_window_length, max_seg_per_batch, score_mod));
+                   se::gpu::GetCudnnFlashAttentionBackwardOperationGraph(
+                       dnn_support, gpu_device_info, q, k, p, v, d_output, dq,
+                       dk, dv, bias, dbias, dropout_rate, config.seed(),
+                       config.fmha_scale(), dropout_rate > 0.0,
+                       bias.has_value(), dnn_mask_type, force_deterministic,
+                       sliding_window_length, max_seg_per_batch, score_mod));
   return graph;
 }
 
@@ -392,9 +391,8 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHAF8(
     se::dnn::DnnSupport *dnn_support,
     const se::DeviceDescription &gpu_device_info,
     HloCustomCallInstruction *custom_call) {
-  ASSIGN_OR_RETURN(
-      auto gpu_config,
-      custom_call->backend_config<xla::gpu::GpuBackendConfig>());
+  ASSIGN_OR_RETURN(auto gpu_config,
+                   custom_call->backend_config<xla::gpu::GpuBackendConfig>());
   xla::gpu::CudnnfMHABackendConfig &config =
       *gpu_config.mutable_cudnn_fmha_backend_config();
 
@@ -442,13 +440,13 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHAF8(
   RETURN_IF_ERROR(custom_call->set_backend_config(gpu_config));
 
   ASSIGN_OR_RETURN(CudnnfMHAMaskKind cudnn_mask_type,
-                      AsCudnnFmhaMaskKind(config.mask_type()));
+                   AsCudnnFmhaMaskKind(config.mask_type()));
   ASSIGN_OR_RETURN(se::dnn::FMHAMaskKind dnn_mask_type,
-                      GetDNNFmhaMaskKindFromCudnnFmhaMaskKind(cudnn_mask_type));
+                   GetDNNFmhaMaskKindFromCudnnFmhaMaskKind(cudnn_mask_type));
   ASSIGN_OR_RETURN(se::gpu::CudnnGraph graph,
-                      se::gpu::GetCudnnFlashAttentionBackwardF8OperationGraph(
-                          dnn_support, gpu_device_info, q, k, p, v, d_output,
-                          dq, dk, dv, config.fmha_scale(), dnn_mask_type));
+                   se::gpu::GetCudnnFlashAttentionBackwardF8OperationGraph(
+                       dnn_support, gpu_device_info, q, k, p, v, d_output, dq,
+                       dk, dv, config.fmha_scale(), dnn_mask_type));
   return graph;
 }
 
@@ -558,8 +556,7 @@ class CuDnnCustomCallVisitor : public DfsHloRewriteVisitor {
     if (workspace_size_it == workspace_sizes_.cend()) {
       ASSIGN_OR_RETURN(
           se::gpu::CudnnGraph graph,
-          HloCustomCallToCuDnnGraph(dnn_support_,
-                                    gpu_device_info_,
+          HloCustomCallToCuDnnGraph(dnn_support_, gpu_device_info_,
                                     DynCast<HloCustomCallInstruction>(hlo)));
 
       const int64_t workspace_size = graph.Graph().get_workspace_size();

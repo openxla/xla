@@ -238,10 +238,13 @@ class GpuCompiler : public LLVMCompiler {
       const se::SemanticVersion& toolkit_version, const AliasInfo* alias_info,
       HloCostAnalysis::ShapeSizeFunction shape_size_fn);
 
-  // Runs cuDNN fusion and custom call compiler passes.
+  // Runs cuDNN fusion and custom call compiler passes. Decides internally
+  // whether to compile deviceless (no live cuDNN handle) based on the
+  // xla_gpu_cudnn_deviceless_compilation_mode debug option and whether a live
+  // device (stream_exec) is available.
   virtual absl::Status RunCudnnCompilerPasses(
-      HloModule* module, se::dnn::DnnSupport* dnn_support,
-      const se::DeviceDescription& gpu_device_info,
+      HloModule* module, se::StreamExecutor* stream_exec,
+      const Compiler::GpuTargetConfig& gpu_target_config,
       BinaryMap* dnn_compiled_graphs) {
     return absl::OkStatus();
   }

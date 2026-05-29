@@ -26,8 +26,8 @@ limitations under the License.
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "json/json.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"
+#include "json/json.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
@@ -76,8 +76,8 @@ Json::Value ParseProps(
   Json::CharReaderBuilder builder;
   std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
   std::string errors;
-  EXPECT_TRUE(reader->parse(str.data(), str.data() + str.size(), &value,
-                            &errors))
+  EXPECT_TRUE(
+      reader->parse(str.data(), str.data() + str.size(), &value, &errors))
       << errors;
   return value;
 }
@@ -110,8 +110,8 @@ TEST(CudnnDevicePropsTest, MatchesLiveDevice) {
                     "JSON serialization.";
   }
 
-  std::string name = absl::AsciiStrToUpper(
-      PlatformUtil::CanonicalPlatformName("gpu").value());
+  std::string name =
+      absl::AsciiStrToUpper(PlatformUtil::CanonicalPlatformName("gpu").value());
   TF_ASSERT_OK_AND_ASSIGN(se::Platform * platform,
                           se::PlatformManager::PlatformWithName(name));
 

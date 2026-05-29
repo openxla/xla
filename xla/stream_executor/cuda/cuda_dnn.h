@@ -62,8 +62,7 @@ class CudnnGraph : public dnn::DnnGraph {
                        const DeviceDescription& gpu_device_info,
                        const EngineOptions&) override;
   // Builds single plan of the graph with given ID.
-  absl::Status Build(dnn::DnnSupport*,
-                     const DeviceDescription& gpu_device_info,
+  absl::Status Build(dnn::DnnSupport*, const DeviceDescription& gpu_device_info,
                      std::optional<int64_t> plan_id) override;
   // Builds all the plans
   absl::Status Execute(Stream& stream, absl::Span<DeviceAddressBase> operands,

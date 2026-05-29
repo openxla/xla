@@ -48,10 +48,10 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend/graph_interface.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend/graph_properties.h"
-#include "Eigen/Core"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
+#include "Eigen/Core"
 #include "xla/backends/gpu/target_config/cudnn_device_props.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -396,7 +396,7 @@ CudnnSupport::CudnnSupport(StreamExecutor* parent) : parent_(parent) {}
 
 absl::Status CudnnSupport::Init() {
   if (parent_ == nullptr) {
-    return absl::InternalError("No steam executor provided.");
+    return absl::InternalError("No stream executor provided.");
   }
   std::unique_ptr<ActivateContext> context = parent_->Activate();
 
@@ -6834,7 +6834,7 @@ absl::Status CudnnGraph::Prepare(dnn::DnnSupport* dnn_support,
     const CudnnSupport& cudnn_support =
         static_cast<CudnnSupport&>(*dnn_support);
     ASSIGN_OR_RETURN(auto cudnn_handle,
-                        cudnn_support.cudnn_->GetCompilationHandle());
+                     cudnn_support.cudnn_->GetCompilationHandle());
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.validate());
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.build_operation_graph(cudnn_handle));
     TF_RETURN_IF_ERROR(create_and_filter_plans());
