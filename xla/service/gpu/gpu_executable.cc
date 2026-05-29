@@ -502,6 +502,7 @@ GpuExecutable::GpuExecutable(
                      : DebugOptions::ALWAYS_UPDATE;
 
     if (update_mode == DebugOptions::NEVER_UPDATE ||
+        update_mode == DebugOptions::ADAPTIVE_UPDATE ||
         update_mode == DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
       CHECK_OK(thunk_executor_->thunks().WalkNested(
           [&](const Thunk* t) -> absl::Status {
@@ -1284,7 +1285,7 @@ bool GpuExecutable::ShouldVaRemapAllocation(
 }
 
 absl::Status GpuExecutable::UpdateCommandBufferAllocationPolicy(
-    const BufferAllocations& /*owning_buffer_allocations*/,
+    const BufferAllocations& owning_buffer_allocations,
     VaRemapExecutionState& va_remap_execution_state) {
   if (!has_module()) {
     return absl::OkStatus();
@@ -1298,14 +1299,69 @@ absl::Status GpuExecutable::UpdateCommandBufferAllocationPolicy(
     return absl::OkStatus();
   }
 
-  va_remap.policy_va_remapped_indices.assign(
-      command_buffer_allocation_indexes_.begin(),
-      command_buffer_allocation_indexes_.end());
-  va_remap.policy_va_remapped_index_set = command_buffer_allocation_indexes_;
+  auto initialize_static_policy = [&] {
+    va_remap.policy_va_remapped_indices.assign(
+        command_buffer_allocation_indexes_.begin(),
+        command_buffer_allocation_indexes_.end());
+    va_remap.policy_va_remapped_index_set = command_buffer_allocation_indexes_;
+    va_remap.policy_dynamic_alloc_indices.clear();
+    absl::c_set_difference(
+        command_buffer_update_allocation_indexes_,
+        command_buffer_allocation_indexes_,
+        std::back_inserter(va_remap.policy_dynamic_alloc_indices));
+    va_remap.update_policy_ready = true;
+  };
+
+  if (update_mode != DebugOptions::ADAPTIVE_UPDATE) {
+    initialize_static_policy();
+    return absl::OkStatus();
+  }
+
+  // The adaptive split is a one-shot decision. Step 0 captures warmup
+  // addresses, step 1 computes the fixed VA-remapped/dynamic sets, and later
+  // steps reuse those sets without comparing or rebuilding them.
+  if (!va_remap.adaptive_warmup_captured) {
+    va_remap.adaptive_warmup_addresses.assign(owning_buffer_allocations.size(),
+                                              se::DeviceAddressBase{});
+    for (BufferAllocation::Index index : command_buffer_allocation_indexes_) {
+      if (index < 0 || static_cast<size_t>(index) >=
+                           va_remap.adaptive_warmup_addresses.size()) {
+        return Internal(
+            "Adaptive command buffer VA remapping warmup state for module %s "
+            "cannot record allocation %d",
+            module_name_, index);
+      }
+      va_remap.adaptive_warmup_addresses[index] =
+          owning_buffer_allocations.GetDeviceAddress(index);
+    }
+    va_remap.adaptive_warmup_captured = true;
+    return absl::OkStatus();
+  }
+
+  va_remap.policy_va_remapped_indices.clear();
   va_remap.policy_dynamic_alloc_indices.clear();
+  va_remap.policy_va_remapped_index_set.clear();
+
+  for (BufferAllocation::Index index : command_buffer_allocation_indexes_) {
+    if (index < 0 || static_cast<size_t>(index) >=
+                         va_remap.adaptive_warmup_addresses.size()) {
+      return Internal(
+          "Adaptive command buffer VA remapping warmup state for module %s "
+          "does not contain allocation %d",
+          module_name_, index);
+    }
+
+    se::DeviceAddressBase current_address =
+        owning_buffer_allocations.GetDeviceAddress(index);
+    if (va_remap.adaptive_warmup_addresses[index].IsSameAs(current_address)) {
+      va_remap.policy_va_remapped_indices.push_back(index);
+      va_remap.policy_va_remapped_index_set.insert(index);
+    }
+  }
+
   absl::c_set_difference(
       command_buffer_update_allocation_indexes_,
-      command_buffer_allocation_indexes_,
+      va_remap.policy_va_remapped_indices,
       std::back_inserter(va_remap.policy_dynamic_alloc_indices));
   va_remap.update_policy_ready = true;
   return absl::OkStatus();
