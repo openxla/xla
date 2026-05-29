@@ -313,6 +313,7 @@ def nvidia_gpu_build_with_compute_capability(
         **_DEFAULT_BAZEL_OPTIONS,
         # TODO(b/464116734): Remove once we have more machines
         "test_sharding_strategy": "disabled",
+        "test_strategy": "exclusive",
     }
     nvidia_only_multi_gpu_filters = (
         "-no_oss",
