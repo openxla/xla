@@ -392,25 +392,27 @@ absl::Status DeviceAddressVmmAllocator::SynchronizePendingOperations(
     return DeviceNotFoundError(device_ordinal);
   }
 
-  state->mu.lock();
-  if (state->pending_deallocations.empty()) {
-    state->mu.unlock();
-    return absl::OkStatus();
+  uint64_t target_seqno;
+  {
+    absl::MutexLock lock(&state->mu);
+    if (state->pending_deallocations.empty()) {
+      return absl::OkStatus();
+    }
+    target_seqno = state->pending_deallocations.back().seqno;
   }
-  uint64_t target_seqno = state->pending_deallocations.back().seqno;
 
-  state->mu.unlock();
   while (LoadTimeline(state->pinned_timeline) < target_seqno) {
     absl::SleepFor(absl::Microseconds(50));
   }
-  state->mu.lock();
 
-  while (!state->pending_deallocations.empty() &&
-         state->pending_deallocations.front().seqno <= target_seqno) {
-    DoDeallocate(*state, state->pending_deallocations.front().mem);
-    state->pending_deallocations.pop_front();
+  {
+    absl::MutexLock lock(&state->mu);
+    while (!state->pending_deallocations.empty() &&
+           state->pending_deallocations.front().seqno <= target_seqno) {
+      DoDeallocate(*state, state->pending_deallocations.front().mem);
+      state->pending_deallocations.pop_front();
+    }
   }
-  state->mu.unlock();
 
   return absl::OkStatus();
 }
