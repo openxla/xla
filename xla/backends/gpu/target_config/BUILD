@@ -80,6 +80,10 @@ cc_library(
     name = "cudnn_device_props",
     srcs = ["cudnn_device_props.cc"],
     hdrs = ["cudnn_device_props.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cudnn_frontend_helpers",
