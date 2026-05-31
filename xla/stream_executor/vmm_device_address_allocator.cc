@@ -394,7 +394,7 @@ absl::Status DeviceAddressVmmAllocator::SynchronizePendingOperations(
 
   uint64_t target_seqno;
   {
-    absl::MutexLock lock(&state->mu);
+    absl::MutexLock lock(state->mu);
     if (state->pending_deallocations.empty()) {
       return absl::OkStatus();
     }
@@ -406,7 +406,7 @@ absl::Status DeviceAddressVmmAllocator::SynchronizePendingOperations(
   }
 
   {
-    absl::MutexLock lock(&state->mu);
+    absl::MutexLock lock(state->mu);
     while (!state->pending_deallocations.empty() &&
            state->pending_deallocations.front().seqno <= target_seqno) {
       DoDeallocate(*state, state->pending_deallocations.front().mem);
