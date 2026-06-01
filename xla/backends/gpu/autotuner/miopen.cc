@@ -330,11 +330,6 @@ GetConvolutionCustomCallConfigs(const HloCustomCallInstruction* instr,
       /* use_fallback = */ false, &scratch_allocator, engine_options,
       &conv_runners));
 
-  // Synchronize the stream to ensure all GPU work completes before the
-  // scratch allocator is destroyed. This prevents use-after-free when
-  // the scratch buffers are deallocated.
-  RETURN_IF_ERROR(stream->BlockHostUntilDone());
-
   std::vector<std::unique_ptr<BackendConfig>> configs;
   configs.reserve(conv_runners.size());
   for (const auto& runner : conv_runners) {
