@@ -1224,6 +1224,36 @@ absl::StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
   return {{buffers, device_ordinal, memory_allocator}};
 }
 
+absl::StatusOr<se::DeviceAddressBase>
+GpuExecutable::AllocateCopyProtectedOutputBuffer(
+    const ServiceExecutableRunOptions* run_options,
+    BufferAllocations& buffer_allocations, const ShapeIndex& index,
+    const BufferAllocation& allocation, int device_ordinal,
+    se::DeviceAddressAllocator* const memory_allocator) {
+  // The caller guards this against aliasing pass-through params, as we do not
+  // need to write into the output buffer in that case.
+  XLA_VLOG_DEVICE(3, device_ordinal)
+      << "Using copy-protection: aliasing is specified, but the "
+         "buffer is not donated; allocating a fresh buffer";
+  int64_t allocation_size =
+      ShapeUtil::ByteSizeOf(ShapeUtil::GetSubshape(result_shape(), index));
+  absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> allocated_buffer =
+      memory_allocator->Allocate(device_ordinal, allocation_size,
+                                 /*retry_on_failure=*/true,
+                                 /*memory_space=*/allocation.color());
+  if (!allocated_buffer.ok()) {
+    return VerboseAllocationError(allocated_buffer.status());
+  }
+  se::DeviceAddressBase result_buffer = allocated_buffer->Release();
+  se::DeviceAddressBase& aliased_buffer =
+      buffer_allocations.GetMutableDeviceAddress(allocation.index());
+  CHECK_EQ(aliased_buffer.size(), result_buffer.size());
+  RETURN_IF_ERROR(run_options->stream()->MemcpyD2D(
+      &result_buffer, aliased_buffer, aliased_buffer.size()));
+  aliased_buffer = result_buffer;
+  return result_buffer;
+}
+
 absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStream(
     const ServiceExecutableRunOptions* run_options,
     std::vector<ExecutionInput> arguments) {
@@ -1373,29 +1403,10 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
       } else if (!output_info.passthrough &&
                  !ShapeUtil::GetSubshape(program_shape_.result(), index)
                       .IsTuple()) {
-        // The guard is above is not to insert copy-protection when aliasing
-        // pass-through params, as we do not need to write into the output
-        // buffer.
-        XLA_VLOG_DEVICE(3, device_ordinal)
-            << "Using copy-protection: aliasing is specified, but the "
-               "buffer is not donated; allocating a fresh buffer";
-        int64_t allocation_size = ShapeUtil::ByteSizeOf(
-            ShapeUtil::GetSubshape(program_shape_.result(), index));
-        absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> allocated_buffer =
-            memory_allocator->Allocate(device_ordinal, allocation_size,
-                                       /*retry_on_failure=*/true,
-                                       /*memory_space=*/allocation->color());
-        if (!allocated_buffer.ok()) {
-          return VerboseAllocationError(allocated_buffer.status());
-        }
-        result_buffer = allocated_buffer->Release();
-        se::DeviceAddressBase& aliased_buffer =
-            buffer_allocations.GetMutableDeviceAddress(
-                output_info.allocation_index);
-        CHECK_EQ(aliased_buffer.size(), result_buffer.size());
-        RETURN_IF_ERROR(run_options->stream()->MemcpyD2D(
-            &result_buffer, aliased_buffer, aliased_buffer.size()));
-        aliased_buffer = result_buffer;
+        ASSIGN_OR_RETURN(result_buffer,
+                         AllocateCopyProtectedOutputBuffer(
+                             run_options, buffer_allocations, index,
+                             *allocation, device_ordinal, memory_allocator));
       }
     }
 

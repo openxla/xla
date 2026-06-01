@@ -266,6 +266,17 @@ class GpuExecutable : public Executable {
       const BufferAllocToDeviceMemoryMap* globals,
       se::DeviceAddressAllocator* memory_allocator, int device_ordinal);
 
+  // Copy-protection for an aliased output that was not donated at runtime:
+  // allocates a fresh result buffer for the output at `index`, copies the
+  // contents of the aliased buffer (allocation `allocation`) into it, and
+  // redirects the aliased entry in `buffer_allocations` to the fresh buffer.
+  // Returns the newly allocated result buffer.
+  absl::StatusOr<se::DeviceAddressBase> AllocateCopyProtectedOutputBuffer(
+      const ServiceExecutableRunOptions* run_options,
+      BufferAllocations& buffer_allocations, const ShapeIndex& index,
+      const BufferAllocation& allocation, int device_ordinal,
+      se::DeviceAddressAllocator* memory_allocator);
+
   absl::Status VerboseAllocationError(absl::Status s);
 
   static absl::StatusOr<std::unique_ptr<GpuExecutable>> FromProto(
