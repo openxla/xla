@@ -508,8 +508,8 @@ void GpuHloCostAnalysis::SetRingCollectiveProperties(int64_t num_ranks,
 
 absl::Status GpuHloCostAnalysis::HandleAllReduceStart(
     const HloInstruction* hlo) {
-  TF_ASSIGN_OR_RETURN(int64_t num_ranks,
-                      NumRanks(*Cast<HloAllReduceInstruction>(hlo)));
+  ASSIGN_OR_RETURN(int64_t num_ranks,
+                   NumRanks(*Cast<HloAllReduceInstruction>(hlo)));
 
   int64_t bytes_transferred = ShapeSize(hlo->shape(), options_.shape_size);
 
