@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/node_hash_map.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -206,7 +207,14 @@ class GpuExecutable : public Executable {
       const ServiceExecutableRunOptions* run_options,
       VariantArguments arguments);
 
-  absl::Span<const BufferAllocation* absl_nonnull const> GetAllocations()
+  // Resolves the device address backing an entry-computation-parameter
+  // allocation. Returning a null DeviceAddressBase means "leave the buffer
+  // unset" (e.g. a skipped tuple index-table allocation).
+  using ParameterBufferResolver =
+      absl::FunctionRef<absl::StatusOr<se::DeviceAddressBase>(
+          const BufferAllocation& allocation)>;
+
+  absl::Span<const BufferAllocation * absl_nonnull const> GetAllocations()
       const override {
     return allocation_ptrs_;
   }
@@ -247,6 +255,16 @@ class GpuExecutable : public Executable {
   // instead.
   absl::StatusOr<const BufferAllocToDeviceMemoryMap*> ResolveConstantGlobals(
       se::Stream* stream);
+
+  // Builds the BufferAllocations for an execution. Entry-computation-parameter
+  // buffers are obtained from `get_parameter_buffer`; all other allocations
+  // (thread-local, constant, temp/maybe-live-out) are resolved internally,
+  // including collective-memory granularity rounding and alignment checking.
+  absl::StatusOr<BufferAllocations> GenerateBufferAllocations(
+      const ServiceExecutableRunOptions* run_options,
+      ParameterBufferResolver get_parameter_buffer,
+      const BufferAllocToDeviceMemoryMap* globals,
+      se::DeviceAddressAllocator* memory_allocator, int device_ordinal);
 
   absl::Status VerboseAllocationError(absl::Status s);
 
@@ -327,14 +345,8 @@ class GpuExecutable : public Executable {
   absl::Status CheckCompatibilityWithServiceExecutableRunOptions(
       const ServiceExecutableRunOptions* run_options);
 
-  absl::StatusOr<BufferAllocations> GenerateBufferAllocations(
-      const ServiceExecutableRunOptions* run_options,
-      VariantArguments arguments,
-      const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
-      se::DeviceAddressAllocator* memory_allocator, int device_ordinal);
-
   absl::StatusOr<se::DeviceAddressBase> BufferForAllocation(
-      VariantArguments arguments,
+      ParameterBufferResolver get_parameter_buffer,
       const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
       const BufferAllocation& allocation,
       se::DeviceAddressAllocator* memory_allocator, int device_ordinal,
@@ -495,6 +507,12 @@ class GpuExecutable : public Executable {
 
 absl::StatusOr<absl::flat_hash_map<ShapeIndex, GpuExecutable::OutputInfo>>
 GetOutputInfo(const HloModule& hlo_module, const BufferAssignment& assignment);
+
+// Verifies that `buffer` satisfies the alignment required for `allocation`'s
+// kind (entry parameter, constant, or XLA-allocated). `arg_idx` is used only
+// for error messages.
+absl::Status CheckAlignment(const BufferAllocation& allocation,
+                            se::DeviceAddressBase buffer, int arg_idx);
 
 }  // namespace gpu
 }  // namespace xla

@@ -184,7 +184,7 @@ class GpuExecutableThunkPassBufferAllocator : public ThunkPassBufferAllocator {
       BufferAllocation::Index start_idx)
       : next_idx_(start_idx) {}
 
-  absl::StatusOr<BufferAllocation* absl_nonnull> NewEmptyAllocation(
+  absl::StatusOr<BufferAllocation * absl_nonnull> NewEmptyAllocation(
       int64_t size) override {
     allocations_.push_back(BufferAllocation(next_idx_++, size, /*color=*/0));
     return &allocations_.back();
@@ -918,8 +918,7 @@ absl::Status RendezvousAfterInitialization(
       run_options.device_ordinal(), run_options.run_options().run_id().ToInt());
 
   return Rendezvous(
-      rendezvous_name, rendezvous_key,
-      num_local_participants,
+      rendezvous_name, rendezvous_key, num_local_participants,
       absl::Seconds(
           debug_options
               ? debug_options->xla_gpu_executable_warn_stuck_timeout_seconds()
@@ -1081,7 +1080,7 @@ GpuExecutable::ResolveConstantGlobals(se::Stream* stream) {
 }
 
 absl::StatusOr<se::DeviceAddressBase> GpuExecutable::BufferForAllocation(
-    VariantArguments arguments,
+    ParameterBufferResolver get_parameter_buffer,
     const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
     const BufferAllocation& allocation,
     se::DeviceAddressAllocator* const memory_allocator, int device_ordinal,
@@ -1092,24 +1091,16 @@ absl::StatusOr<se::DeviceAddressBase> GpuExecutable::BufferForAllocation(
     return se::DeviceAddressBase{};
   }
   if (allocation.is_entry_computation_parameter()) {
-    int64_t param_no = allocation.parameter_number();
-    se::DeviceAddressBase registered_buffer = [&] {
-      if (auto unowned_shapedbuffers =
-              std::get_if<absl::Span<const ShapedBuffer* const>>(&arguments)) {
-        return (*unowned_shapedbuffers)[param_no]->buffers().element(
-            allocation.param_shape_index());
-      }
-      return std::get<absl::Span<ExecutionInput>>(arguments)[param_no]
-          .Buffer(allocation.param_shape_index())
-          .AsDeviceAddress();
-    }();
+    ASSIGN_OR_RETURN(se::DeviceAddressBase registered_buffer,
+                     get_parameter_buffer(allocation));
     if (registered_buffer.is_null() && registered_buffer.size() > 0) {
       return FailedPrecondition(
           "Cannot run XLA computation because pointer to (sub-)buffer at "
           "index %s of parameter %d was null.  All pointers to "
           "(sub-)buffers must not be null, unless the (sub-)buffer has "
           "zero elements.",
-          allocation.param_shape_index().ToString(), param_no);
+          allocation.param_shape_index().ToString(),
+          allocation.parameter_number());
     }
     return registered_buffer;
   }
@@ -1141,8 +1132,8 @@ absl::StatusOr<se::DeviceAddressBase> GpuExecutable::BufferForAllocation(
   return buffer_address;
 }
 
-static absl::Status CheckAlignment(const BufferAllocation& allocation,
-                                   se::DeviceAddressBase buffer, int arg_idx) {
+absl::Status CheckAlignment(const BufferAllocation& allocation,
+                            se::DeviceAddressBase buffer, int arg_idx) {
   const int64_t expected_alignment = [&] {
     if (allocation.is_entry_computation_parameter()) {
       return kEntryParameterAlignBytes;
@@ -1192,7 +1183,8 @@ static GpuCollectives* ResolveGpuCollectives(
 }
 
 absl::StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
-    const ServiceExecutableRunOptions* run_options, VariantArguments arguments,
+    const ServiceExecutableRunOptions* run_options,
+    ParameterBufferResolver get_parameter_buffer,
     const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
     se::DeviceAddressAllocator* const memory_allocator, int device_ordinal) {
   tsl::profiler::TraceMe hlo_module_activity(
@@ -1224,8 +1216,9 @@ absl::StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
     const BufferAllocation& allocation = *allocations[i];
     ASSIGN_OR_RETURN(
         buffers.emplace_back(),
-        BufferForAllocation(arguments, globals, allocation, memory_allocator,
-                            device_ordinal, i, allocate_granularity));
+        BufferForAllocation(get_parameter_buffer, globals, allocation,
+                            memory_allocator, device_ordinal, i,
+                            allocate_granularity));
     RETURN_IF_ERROR(CheckAlignment(allocation, buffers.back(), i));
   }
   return {{buffers, device_ordinal, memory_allocator}};
@@ -1289,9 +1282,22 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
                          memory_allocator, device_ordinal,
                          executor->device_ordinal());
 
-  ASSIGN_OR_RETURN(BufferAllocations buffer_allocations,
-                   GenerateBufferAllocations(run_options, arguments, globals,
-                                             memory_allocator, device_ordinal));
+  auto get_parameter_buffer = [&](const BufferAllocation& allocation)
+      -> absl::StatusOr<se::DeviceAddressBase> {
+    int64_t param_no = allocation.parameter_number();
+    if (auto unowned_shapedbuffers =
+            std::get_if<absl::Span<const ShapedBuffer* const>>(&arguments)) {
+      return (*unowned_shapedbuffers)[param_no]->buffers().element(
+          allocation.param_shape_index());
+    }
+    return std::get<absl::Span<ExecutionInput>>(arguments)[param_no]
+        .Buffer(allocation.param_shape_index())
+        .AsDeviceAddress();
+  };
+  ASSIGN_OR_RETURN(
+      BufferAllocations buffer_allocations,
+      GenerateBufferAllocations(run_options, get_parameter_buffer, globals,
+                                memory_allocator, device_ordinal));
   XLA_VLOG_DEVICE(3, device_ordinal) << buffer_allocations.ToString();
   absl::Span<const BufferAllocation* const> allocations = GetAllocations();
 

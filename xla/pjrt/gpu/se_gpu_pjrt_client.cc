@@ -134,7 +134,6 @@ limitations under the License.
 #include "xla/pjrt/gpu/gpu_metrics.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/stream_executor_executable.pb.h"
-#include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/xla.pb.h"
@@ -1902,30 +1901,6 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
   return devices;
 }
 
-#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) || \
-    defined(TENSORFLOW_USE_SYCL)
-static absl::Status CheckAlignment(const BufferAllocation& allocation,
-                                   se::DeviceAddressBase buffer, int arg_idx) {
-  const int64_t expected_alignment = [&] {
-    if (allocation.is_entry_computation_parameter()) {
-      return gpu::kEntryParameterAlignBytes;
-    } else if (allocation.is_constant()) {
-      return gpu::kConstantBufferAlignBytes;
-    } else {
-      return gpu::kXlaAllocatedBufferAlignBytes;
-    }
-  }();
-  if (!buffer.is_null() &&
-      reinterpret_cast<uintptr_t>(buffer.opaque()) % expected_alignment != 0) {
-    return Internal(
-        "Address of buffer %d must be a multiple of %x, but "
-        "was %p",
-        arg_idx, expected_alignment, buffer.opaque());
-  }
-  return absl::OkStatus();
-}
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM || TENSORFLOW_USE_SYCL
-
 absl::StatusOr<PjRtStreamExecutorExecutionOutput>
 StreamExecutorGpuClient::RunAsync(
     LocalExecutable& exec, PjRtDevice* device,
@@ -1991,82 +1966,33 @@ StreamExecutorGpuClient::RunAsync(
   absl::Span<const BufferAllocation* const> allocations =
       gpu_exec->GetAllocations();
 
-  // Build a map of per-color allocation granularity. Collective memory requires
-  // larger alignment than the BFC allocator guarantees (256 bytes).
-  absl::flat_hash_map<LogicalBuffer::Color, int64_t> allocate_granularity;
-  if (auto* collectives =
-          gpu::GpuCollectives::Default(executor->GetPlatform()->Name())) {
-    const int64_t collective_memory_alignment =
-        collectives->SymmetricMemoryAlignment();
-    XLA_VLOG_DEVICE(5, device_ordinal)
-        << "Using collective memory alignment: " << collective_memory_alignment;
-    allocate_granularity[static_cast<LogicalBuffer::Color>(
-        gpu::MemorySpaceColor::kCollective)] = collective_memory_alignment;
-  }
-
-  std::vector<se::DeviceAddressBase> buffers(allocations.size());
-  {
-    tsl::profiler::TraceMe hlo_module_activity(
-        [&] { return std::string("Build buffer allocations"); },
-        tsl::profiler::TraceMeLevel::kInfo);
-    const int64_t num_buffers = allocations.size();
-    for (int64_t i = 0; i < num_buffers; ++i) {
-      const BufferAllocation& allocation = *allocations[i];
-      se::DeviceAddressBase& buffer = buffers[i];
-      if (allocation.is_thread_local()) {
-        // buffer = se::DeviceAddressBase{};
-      } else if (allocation.is_entry_computation_parameter()) {
-        int64_t param_no;
-        if (parameter_is_tupled_arguments) {
-          // TODO(parkers): Change compiler to not even pretend to read
-          // the tuple index tables (also GPU shouldn't tuple ever).
-          if (allocation.param_shape_index().empty()) {
-            continue;
-          }
-          param_no = allocation.param_shape_index()[0];
-        } else {
-          param_no = allocation.parameter_number();
-        }
-        buffer = tensorflow::down_cast<const xla::PjRtStreamExecutorRawBuffer*>(
-                     flat_arguments[param_no].get())
-                     ->device_buffer()
-                     ->mem();
-        if (buffer.is_null() && buffer.size() > 0) {
-          return FailedPrecondition(
-              "Cannot run XLA computation because pointer to (sub-)buffer at "
-              "index %s of parameter %d was null.  All pointers to "
-              "(sub-)buffers must not be null, unless the (sub-)buffer has "
-              "zero elements.",
-              allocation.param_shape_index().ToString(), param_no);
-        }
-      } else if (allocation.is_constant()) {
-        auto it = globals->find(i);
-        if (it != globals->end()) {
-          buffer = it->second;
-        }
-      } else {
-        // Allocate each allocation that might escape, or is the temp buffer.
-        CHECK(allocation.maybe_live_out() ||
-              allocation.IsPreallocatedTempBuffer());
-        int64_t buffer_size = allocation.size();
-        if (auto it = allocate_granularity.find(allocation.color());
-            it != allocate_granularity.end()) {
-          buffer_size = RoundUpTo(buffer_size, it->second);
-        }
-        if (buffer_size > 0) {
-          ASSIGN_OR_RETURN(
-              se::ScopedDeviceAddress<uint8_t> owning_buffer,
-              memory_allocator->Allocate(device_ordinal, buffer_size,
-                                         /*retry_on_failure=*/true,
-                                         /*memory_space=*/allocation.color()));
-          buffer = owning_buffer.Release();
-        }
+  // Resolve entry-parameter buffers from the PjRt raw arguments. All other
+  // allocations (thread-local, constant, temp/maybe-live-out) and the
+  // collective-memory granularity rounding and alignment checks are handled by
+  // GpuExecutable::GenerateBufferAllocations.
+  auto get_parameter_buffer = [&](const BufferAllocation& allocation)
+      -> absl::StatusOr<se::DeviceAddressBase> {
+    int64_t param_no;
+    if (parameter_is_tupled_arguments) {
+      // TODO(parkers): Change compiler to not even pretend to read
+      // the tuple index tables (also GPU shouldn't tuple ever).
+      if (allocation.param_shape_index().empty()) {
+        return se::DeviceAddressBase{};
       }
-      RETURN_IF_ERROR(CheckAlignment(allocation, buffer, i));
+      param_no = allocation.param_shape_index()[0];
+    } else {
+      param_no = allocation.parameter_number();
     }
-  }
-  xla::gpu::BufferAllocations buffer_allocations(buffers, device_ordinal,
-                                                 memory_allocator);
+    return tensorflow::down_cast<const xla::PjRtStreamExecutorRawBuffer*>(
+               flat_arguments[param_no].get())
+        ->device_buffer()
+        ->mem();
+  };
+
+  ASSIGN_OR_RETURN(xla::gpu::BufferAllocations buffer_allocations,
+                   gpu_exec->GenerateBufferAllocations(
+                       run_options, get_parameter_buffer, globals,
+                       memory_allocator, device_ordinal));
   XLA_VLOG_DEVICE(3, device_ordinal)
       << "Buffer allocations: " << buffer_allocations.ToString();
 
