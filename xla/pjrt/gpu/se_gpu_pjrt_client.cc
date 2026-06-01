@@ -2017,7 +2017,9 @@ StreamExecutorGpuClient::RunAsync(
 
   absl::flat_hash_set<BufferAllocation::Index> output_allocations;
   for (const auto& [_, output_info] : gpu_exec->output_info()) {
-    output_allocations.insert(output_info.allocation_index);
+    if (!output_info.copy_from_command_buffer_output) {
+      output_allocations.insert(output_info.allocation_index);
+    }
   }
 
   std::optional<gpu::GpuExecutable::VaRemapExecutionState>
@@ -2111,6 +2113,11 @@ StreamExecutorGpuClient::RunAsync(
       << "Buffer allocations: " << buffer_allocations.ToString();
 
   std::set<se::DeviceAddressBase> buffers_in_result;
+  struct CommandBufferOutputCopy {
+    int result_index;
+    BufferAllocation::Index allocation_index;
+  };
+  std::vector<CommandBufferOutputCopy> command_buffer_outputs_to_copy;
 
   auto set_result = [&](const ShapeIndex& index, int i) -> absl::Status {
     const gpu::GpuExecutable::OutputInfo& output_info =
@@ -2183,6 +2190,12 @@ StreamExecutorGpuClient::RunAsync(
       }
     }
 
+    if (output_info.copy_from_command_buffer_output) {
+      command_buffer_outputs_to_copy.push_back(
+          {i, output_info.allocation_index});
+      return absl::OkStatus();
+    }
+
     if (result_buffer.is_null()) {
       // The source instruction should have a non-parameter buffer
       // assigned.
@@ -2246,11 +2259,66 @@ StreamExecutorGpuClient::RunAsync(
           ? absl::OkStatus()
           : gpu_exec->UnMapMemoryReservationAliases(device_ordinal,
                                                     *va_remap_execution_state);
+  absl::Status copy_status;
+  bool submitted_command_buffer_output_copy = false;
+  if (execute_status.ok()) {
+    for (const CommandBufferOutputCopy& copy : command_buffer_outputs_to_copy) {
+      const BufferAllocation* allocation = allocations[copy.allocation_index];
+      se::DeviceAddressBase source_buffer =
+          buffer_allocations.GetDeviceAddress(copy.allocation_index);
+      uint64_t allocation_size = static_cast<uint64_t>(allocation->size());
+      CHECK_GE(source_buffer.size(), allocation_size);
+
+      absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> allocated_buffer =
+          memory_allocator->Allocate(device_ordinal, allocation_size,
+                                     /*retry_on_failure=*/true,
+                                     /*memory_space=*/allocation->color());
+      if (!allocated_buffer.ok()) {
+        copy_status =
+            gpu_exec->buffer_assignment() == nullptr
+                ? allocated_buffer.status()
+                : gpu_exec->VerboseAllocationError(allocated_buffer.status());
+        break;
+      }
+
+      se::ScopedDeviceAddress<uint8_t> owned_buffer =
+          std::move(*allocated_buffer);
+      se::DeviceAddressBase result_buffer = *owned_buffer;
+      if (allocation_size > 0) {
+        absl::Status memcpy_status = run_options->stream()->MemcpyD2D(
+            &result_buffer, source_buffer, allocation_size);
+        submitted_command_buffer_output_copy = true;
+        if (!memcpy_status.ok()) {
+          copy_status = memcpy_status;
+          break;
+        }
+      }
+
+      buffers_in_result.insert(result_buffer);
+      RawSEDeviceMemory::ConstructDelayed(
+          tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
+              results[copy.result_index].get())
+              ->device_buffer(),
+          owned_buffer.Release(),
+          tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
+              ->local_device_state(),
+          memory_allocator);
+    }
+
+    if (submitted_command_buffer_output_copy &&
+        !memory_allocator->AllowsAsynchronousDeallocation()) {
+      absl::Status block_status = run_options->stream()->BlockHostUntilDone();
+      if (copy_status.ok()) {
+        copy_status = block_status;
+      }
+    }
+  }
   absl::Status teardown_status = buffer_allocations.TearDown(
       buffers_in_result, gpu_exec->GetAllocations());
 
   RETURN_IF_ERROR(execute_status);
   RETURN_IF_ERROR(unmap_status);
+  RETURN_IF_ERROR(copy_status);
   RETURN_IF_ERROR(teardown_status);
 
   std::vector<tsl::AsyncValueRef<RawSEDeviceMemory>> to_be_released;

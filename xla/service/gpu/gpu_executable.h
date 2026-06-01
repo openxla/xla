@@ -120,14 +120,19 @@ class GpuExecutable : public Executable {
     // would indicate the aliased parameter), and what kind of alias it is.
     std::optional<HloInputOutputAliasConfig::Alias> alias_config;
 
+    // Whether this unaliased live-out output is written by a CommandBufferThunk
+    // and must be copied before being returned to the caller.
+    bool copy_from_command_buffer_output = false;
+
     GpuExecutableProto::OutputInfoProto ToProto() const;
     static absl::StatusOr<OutputInfo> FromProto(
         const GpuExecutableProto::OutputInfoProto& proto);
 
     friend bool operator==(const OutputInfo& lhs, const OutputInfo& rhs) {
       return std::tie(lhs.allocation_index, lhs.passthrough,
-                      lhs.alias_config) ==
-             std::tie(rhs.allocation_index, rhs.passthrough, rhs.alias_config);
+                      lhs.alias_config, lhs.copy_from_command_buffer_output) ==
+             std::tie(rhs.allocation_index, rhs.passthrough, rhs.alias_config,
+                      rhs.copy_from_command_buffer_output);
     }
 
     friend bool operator!=(const OutputInfo& lhs, const OutputInfo& rhs) {
@@ -278,13 +283,15 @@ class GpuExecutable : public Executable {
   // Builds the BufferAllocations for an execution. Entry-computation-parameter
   // buffers are obtained from `get_parameter_buffer`; all other allocations
   // (thread-local, constant, temp/maybe-live-out) are resolved internally,
-  // including collective-memory granularity rounding and alignment checking.
+  // including collective-memory granularity rounding, alignment checking, and
+  // command-buffer VA remapping when `va_remap_execution_state` is non-null.
   absl::StatusOr<BufferAllocations> GenerateBufferAllocations(
       const ServiceExecutableRunOptions* run_options,
       ParameterBufferResolver get_parameter_buffer,
       const BufferAllocToDeviceMemoryMap* globals,
       se::DeviceAddressAllocator* memory_allocator, int device_ordinal,
-      const absl::flat_hash_set<BufferAllocation::Index>& output_allocations,
+      const absl::flat_hash_set<BufferAllocation::Index>&
+          returned_output_allocations,
       VaRemapExecutionState* va_remap_execution_state);
 
   // Copy-protection for an aliased output that was not donated at runtime:
@@ -480,7 +487,8 @@ class GpuExecutable : public Executable {
       int64_t arg_idx,
       const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
           allocate_granularity,
-      const absl::flat_hash_set<BufferAllocation::Index>& output_allocations,
+      const absl::flat_hash_set<BufferAllocation::Index>&
+          returned_output_allocations,
       VaRemapExecutionState* va_remap_execution_state);
 
   static absl::StatusOr<BorrowedStreams> BorrowStreams(
