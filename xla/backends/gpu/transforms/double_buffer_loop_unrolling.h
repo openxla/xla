@@ -64,8 +64,8 @@ class DoubleBufferLoopUnrolling : public HloModulePass {
     kAuto,
     kManual,
   };
-  static constexpr absl::string_view manual_unroll_full = "full";
-  static constexpr absl::string_view manual_unroll_double_buffer =
+  static constexpr absl::string_view kManualUnrollFull = "full";
+  static constexpr absl::string_view kManualUnrollDoubleBuffer =
       "double-buffer";
 
   explicit DoubleBufferLoopUnrolling(

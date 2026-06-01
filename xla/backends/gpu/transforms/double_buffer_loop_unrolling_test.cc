@@ -2038,7 +2038,7 @@ condition {
 }
 body {
   input_tuple = (s32[]) parameter(0)
-  ROOT output = (s32[]) while(input_tuple), condition=condition_nested, body=body_nested, backend_config={"known_trip_count":{"n":"11"}}, frontend_attributes={_xla_loop_unroll="full"}
+  ROOT output = (s32[]) while(input_tuple), condition=condition_nested, body=body_nested, backend_config={"known_trip_count":{"n":"11"}}, frontend_attributes={_xla_loop_unroll_strategy="full"}
 }
 ENTRY main {
  param_0 = (s32[]) parameter(0)
@@ -2051,14 +2051,15 @@ ENTRY main {
       DoubleBufferLoopUnrolling::UnrollStrategy::kManual);
   EXPECT_THAT(double_buffer.Run(module.get()),
               absl_testing::IsOkAndHolds(true));
-  auto outter_while = module->entry_computation()->root_instruction();
+  HloInstruction* outter_while =
+      module->entry_computation()->root_instruction();
   // The outter while loop should not be touched at all.
   EXPECT_EQ(outter_while->opcode(), HloOpcode::kWhile);
   EXPECT_EQ(outter_while->backend_config<WhileLoopBackendConfig>()
                 ->known_trip_count()
                 .n(),
             11);
-  auto outter_while_body = outter_while->while_body();
+  HloComputation* outter_while_body = outter_while->while_body();
   int64_t num_inner_whiles = 0;
   hlo_query::ForEachInstructionWithOpcode(
       *outter_while_body, HloOpcode::kWhile,
@@ -2098,7 +2099,7 @@ condition {
 }
 body {
   input_tuple = (s32[]) parameter(0)
-  ROOT output = (s32[]) while(input_tuple), condition=condition_nested, body=body_nested, backend_config={"known_trip_count":{"n":"11"}}, frontend_attributes={_xla_loop_unroll="double-buffer"}
+  ROOT output = (s32[]) while(input_tuple), condition=condition_nested, body=body_nested, backend_config={"known_trip_count":{"n":"11"}}, frontend_attributes={_xla_loop_unroll_strategy="double-buffer"}
 }
 ENTRY main {
  param_0 = (s32[]) parameter(0)
@@ -2111,14 +2112,15 @@ ENTRY main {
       DoubleBufferLoopUnrolling::UnrollStrategy::kManual);
   EXPECT_THAT(double_buffer.Run(module.get()),
               absl_testing::IsOkAndHolds(true));
-  auto outter_while = module->entry_computation()->root_instruction();
+  HloInstruction* outter_while =
+      module->entry_computation()->root_instruction();
   // The outter while loop should not be touched at all.
   EXPECT_EQ(outter_while->opcode(), HloOpcode::kWhile);
   EXPECT_EQ(outter_while->backend_config<WhileLoopBackendConfig>()
                 ->known_trip_count()
                 .n(),
             11);
-  auto outter_while_body = outter_while->while_body();
+  HloComputation* outter_while_body = outter_while->while_body();
   int64_t num_inner_whiles = 0;
   hlo_query::ForEachInstructionWithOpcode(
       *outter_while_body, HloOpcode::kWhile,
