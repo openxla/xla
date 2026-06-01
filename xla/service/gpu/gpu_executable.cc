@@ -1091,18 +1091,19 @@ absl::StatusOr<se::DeviceAddressBase> GpuExecutable::BufferForAllocation(
     return se::DeviceAddressBase{};
   }
   if (allocation.is_entry_computation_parameter()) {
-    ASSIGN_OR_RETURN(se::DeviceAddressBase registered_buffer,
+    ASSIGN_OR_RETURN(ParameterBuffer registered_buffer,
                      get_parameter_buffer(allocation));
-    if (registered_buffer.is_null() && registered_buffer.size() > 0) {
+    if (registered_buffer.buffer.is_null() &&
+        registered_buffer.buffer.size() > 0) {
       return FailedPrecondition(
           "Cannot run XLA computation because pointer to (sub-)buffer at "
           "index %s of parameter %d was null.  All pointers to "
           "(sub-)buffers must not be null, unless the (sub-)buffer has "
           "zero elements.",
           allocation.param_shape_index().ToString(),
-          allocation.parameter_number());
+          registered_buffer.parameter_number);
     }
-    return registered_buffer;
+    return registered_buffer.buffer;
   }
   if (allocation.is_constant()) {
     auto it = globals->find(arg_idx);
@@ -1313,16 +1314,20 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
                          executor->device_ordinal());
 
   auto get_parameter_buffer = [&](const BufferAllocation& allocation)
-      -> absl::StatusOr<se::DeviceAddressBase> {
+      -> absl::StatusOr<ParameterBuffer> {
     int64_t param_no = allocation.parameter_number();
     if (auto unowned_shapedbuffers =
             std::get_if<absl::Span<const ShapedBuffer* const>>(&arguments)) {
-      return (*unowned_shapedbuffers)[param_no]->buffers().element(
-          allocation.param_shape_index());
+      return ParameterBuffer{
+          (*unowned_shapedbuffers)[param_no]->buffers().element(
+              allocation.param_shape_index()),
+          param_no};
     }
-    return std::get<absl::Span<ExecutionInput>>(arguments)[param_no]
-        .Buffer(allocation.param_shape_index())
-        .AsDeviceAddress();
+    return ParameterBuffer{
+        std::get<absl::Span<ExecutionInput>>(arguments)[param_no]
+            .Buffer(allocation.param_shape_index())
+            .AsDeviceAddress(),
+        param_no};
   };
   ASSIGN_OR_RETURN(
       BufferAllocations buffer_allocations,

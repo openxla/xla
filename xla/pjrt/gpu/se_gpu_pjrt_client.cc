@@ -134,6 +134,7 @@ limitations under the License.
 #include "xla/pjrt/gpu/gpu_metrics.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/stream_executor_executable.pb.h"
+#include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/xla.pb.h"
@@ -1971,22 +1972,25 @@ StreamExecutorGpuClient::RunAsync(
   // collective-memory granularity rounding and alignment checks are handled by
   // GpuExecutable::GenerateBufferAllocations.
   auto get_parameter_buffer = [&](const BufferAllocation& allocation)
-      -> absl::StatusOr<se::DeviceAddressBase> {
+      -> absl::StatusOr<gpu::GpuExecutable::ParameterBuffer> {
     int64_t param_no;
     if (parameter_is_tupled_arguments) {
       // TODO(parkers): Change compiler to not even pretend to read
       // the tuple index tables (also GPU shouldn't tuple ever).
       if (allocation.param_shape_index().empty()) {
-        return se::DeviceAddressBase{};
+        return gpu::GpuExecutable::ParameterBuffer{
+            se::DeviceAddressBase{}, allocation.parameter_number()};
       }
       param_no = allocation.param_shape_index()[0];
     } else {
       param_no = allocation.parameter_number();
     }
-    return tensorflow::down_cast<const xla::PjRtStreamExecutorRawBuffer*>(
-               flat_arguments[param_no].get())
-        ->device_buffer()
-        ->mem();
+    return gpu::GpuExecutable::ParameterBuffer{
+        tensorflow::down_cast<const xla::PjRtStreamExecutorRawBuffer*>(
+            flat_arguments[param_no].get())
+            ->device_buffer()
+            ->mem(),
+        param_no};
   };
 
   ASSIGN_OR_RETURN(xla::gpu::BufferAllocations buffer_allocations,

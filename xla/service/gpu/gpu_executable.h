@@ -207,11 +207,17 @@ class GpuExecutable : public Executable {
       const ServiceExecutableRunOptions* run_options,
       VariantArguments arguments);
 
+  struct ParameterBuffer {
+    se::DeviceAddressBase buffer;
+    int64_t parameter_number;
+  };
+
   // Resolves the device address backing an entry-computation-parameter
   // allocation. Returning a null DeviceAddressBase means "leave the buffer
-  // unset" (e.g. a skipped tuple index-table allocation).
+  // unset" (e.g. a skipped tuple index-table allocation). The parameter number
+  // is used only for diagnostics.
   using ParameterBufferResolver =
-      absl::FunctionRef<absl::StatusOr<se::DeviceAddressBase>(
+      absl::FunctionRef<absl::StatusOr<ParameterBuffer>(
           const BufferAllocation& allocation)>;
 
   absl::Span<const BufferAllocation * absl_nonnull const> GetAllocations()
