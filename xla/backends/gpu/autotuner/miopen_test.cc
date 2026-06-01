@@ -87,7 +87,7 @@ class MIOpenBackendTest : public HloHardwareIndependentTestBase {
                              ->ExecutorForDevice(0)
                              .value()),
         target_config_(stream_executor_),
-        allocator_(stream_executor_),
+        allocator_(stream_executor_, /*allows_asynchronous_deallocation=*/true),
         backend_(
             stream_executor_,
             [](auto& opts) {

@@ -39,14 +39,16 @@ class StreamExecutorAddressAllocator : public DeviceAddressAllocator {
  public:
   // Create an allocator supporting a single device, corresponding to the
   // passed executor.
-  explicit StreamExecutorAddressAllocator(StreamExecutor* executor);
+  explicit StreamExecutorAddressAllocator(
+      StreamExecutor* executor, bool allows_asynchronous_deallocation = false);
 
   // Create an allocator supporting multiple stream executors.
   //
   // Precondition: all stream_executors have different device ordinals.
   StreamExecutorAddressAllocator(
       const Platform* platform,
-      absl::Span<StreamExecutor* const> stream_executors);
+      absl::Span<StreamExecutor* const> stream_executors,
+      bool allows_asynchronous_deallocation = false);
 
   absl::StatusOr<ScopedDeviceAddress<uint8_t>> Allocate(
       int device_ordinal, uint64_t size, bool retry_on_failure,
@@ -75,6 +77,9 @@ class StreamExecutorAddressAllocator : public DeviceAddressAllocator {
 
   // Cache of streams for GetStream.
   std::map<int, std::unique_ptr<Stream>> streams_ ABSL_GUARDED_BY(mutex_);
+
+  // Whether this allocator supports asynchronous deallocation.
+  bool allows_asynchronous_deallocation_;
 };
 
 }  // namespace stream_executor

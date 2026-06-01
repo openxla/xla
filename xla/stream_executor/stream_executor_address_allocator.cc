@@ -37,16 +37,19 @@ limitations under the License.
 namespace stream_executor {
 
 StreamExecutorAddressAllocator::StreamExecutorAddressAllocator(
-    StreamExecutor* executor)
-    : DeviceAddressAllocator(executor->GetPlatform()) {
+    StreamExecutor* executor, bool allows_asynchronous_deallocation)
+    : DeviceAddressAllocator(executor->GetPlatform()),
+      allows_asynchronous_deallocation_{allows_asynchronous_deallocation} {
   stream_executors_ = {executor};
 }
 
 StreamExecutorAddressAllocator::StreamExecutorAddressAllocator(
     const Platform* platform,
-    absl::Span<StreamExecutor* const> stream_executors)
+    absl::Span<StreamExecutor* const> stream_executors,
+    bool allows_asynchronous_deallocation)
     : DeviceAddressAllocator(platform),
-      stream_executors_(stream_executors.begin(), stream_executors.end()) {}
+      stream_executors_(stream_executors.begin(), stream_executors.end()),
+      allows_asynchronous_deallocation_{allows_asynchronous_deallocation} {}
 
 absl::StatusOr<ScopedDeviceAddress<uint8_t>>
 StreamExecutorAddressAllocator::Allocate(int device_ordinal, uint64_t size,
@@ -96,7 +99,7 @@ StreamExecutorAddressAllocator::GetStreamExecutor(int device_ordinal) const {
 }
 
 bool StreamExecutorAddressAllocator::AllowsAsynchronousDeallocation() const {
-  return false;
+  return allows_asynchronous_deallocation_;
 }
 
 absl::StatusOr<Stream*> StreamExecutorAddressAllocator::GetStream(
