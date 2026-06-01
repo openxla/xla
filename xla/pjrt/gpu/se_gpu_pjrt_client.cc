@@ -24,7 +24,6 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -134,9 +133,7 @@ limitations under the License.
 #include "xla/pjrt/gpu/gpu_metrics.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/stream_executor_executable.pb.h"
-#include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable.h"
-#include "xla/service/gpu/stream_executor_util.h"
 #include "xla/xla.pb.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM || TENSORFLOW_USE_SYCL
 
@@ -1904,26 +1901,124 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
 
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) || \
     defined(TENSORFLOW_USE_SYCL)
-static absl::Status CheckAlignment(const BufferAllocation& allocation,
-                                   se::DeviceAddressBase buffer, int arg_idx) {
-  const int64_t expected_alignment = [&] {
-    if (allocation.is_entry_computation_parameter()) {
-      return gpu::kEntryParameterAlignBytes;
-    } else if (allocation.is_constant()) {
-      return gpu::kConstantBufferAlignBytes;
-    } else {
-      return gpu::kXlaAllocatedBufferAlignBytes;
+namespace {
+
+class PjRtGpuExecutionBufferProvider
+    : public gpu::GpuExecutable::ExecutionBufferProvider {
+ public:
+  PjRtGpuExecutionBufferProvider(
+      PjRtDevice* device, absl::Span<const PjRtRawBufferRef> flat_arguments,
+      absl::Span<const PjRtRawBufferRef> results,
+      bool parameter_is_tupled_arguments, Shape result_shape,
+      se::DeviceAddressAllocator* memory_allocator)
+      : device_(device),
+        flat_arguments_(flat_arguments),
+        results_(results),
+        parameter_is_tupled_arguments_(parameter_is_tupled_arguments),
+        result_shape_(std::move(result_shape)),
+        memory_allocator_(memory_allocator) {}
+
+  absl::StatusOr<gpu::GpuExecutable::ParameterBuffer> GetParameterBuffer(
+      const BufferAllocation& allocation) override {
+    std::optional<int64_t> param_no = ParameterNumber(allocation);
+    if (!param_no.has_value()) {
+      return gpu::GpuExecutable::ParameterBuffer{se::DeviceAddressBase{},
+                                                 allocation.parameter_number()};
     }
-  }();
-  if (!buffer.is_null() &&
-      reinterpret_cast<uintptr_t>(buffer.opaque()) % expected_alignment != 0) {
-    return Internal(
-        "Address of buffer %d must be a multiple of %x, but "
-        "was %p",
-        arg_idx, expected_alignment, buffer.opaque());
+    auto* raw_buffer =
+        tensorflow::down_cast<const PjRtStreamExecutorRawBuffer*>(
+            flat_arguments_[*param_no].get());
+    return gpu::GpuExecutable::ParameterBuffer{
+        raw_buffer->device_buffer()->mem(), *param_no};
   }
-  return absl::OkStatus();
-}
+
+  std::vector<ShapeIndex> OutputIndices() override {
+    std::vector<ShapeIndex> indices;
+    if (result_shape_.IsTuple()) {
+      int tuple_count = result_shape_.tuple_shapes().size();
+      indices.reserve(tuple_count);
+      for (int i = 0; i < tuple_count; ++i) {
+        indices.push_back({i});
+      }
+    } else {
+      indices.push_back({});
+    }
+    return indices;
+  }
+
+  absl::StatusOr<std::optional<se::DeviceAddressBase>> TryToDonateAlias(
+      const ShapeIndex& output_index, const BufferAllocation& allocation,
+      const gpu::GpuExecutable::OutputInfo& output_info) override {
+    std::optional<int64_t> param_no = ParameterNumber(allocation);
+    CHECK(param_no.has_value());
+    auto input = tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
+                     flat_arguments_[*param_no].get())
+                     ->device_buffer();
+    auto output = tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
+                      results_[ResultBufferIndex(output_index)].get())
+                      ->device_buffer();
+    bool is_donated = input == output;
+    if (output_info.alias_config->must_alias() && !is_donated) {
+      return InvalidArgument(
+          "An input was configured to be must-alias at "
+          "compile time but not donated at runtime: allocation %d",
+          output_info.allocation_index);
+    }
+    if (is_donated) {
+      return std::optional<se::DeviceAddressBase>(input->mem());
+    }
+    return std::nullopt;
+  }
+
+  void MarkAliasedOutput(const ShapeIndex& /*output_index*/) override {}
+
+  absl::Status SetOutputBuffer(const ShapeIndex& output_index,
+                               se::DeviceAddressBase buffer) override {
+    auto buf = tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
+                   results_[ResultBufferIndex(output_index)].get())
+                   ->device_buffer();
+    if (buf.IsAvailable()) {
+      return absl::OkStatus();
+    }
+    RawSEDeviceMemory::ConstructDelayed(
+        buf, buffer,
+        tensorflow::down_cast<PjRtStreamExecutorDevice*>(device_)
+            ->local_device_state(),
+        memory_allocator_);
+    return absl::OkStatus();
+  }
+
+ private:
+  std::optional<int64_t> ParameterNumber(
+      const BufferAllocation& allocation) const {
+    if (!parameter_is_tupled_arguments_) {
+      return allocation.parameter_number();
+    }
+    // TODO(parkers): Change compiler to not even pretend to read the tuple
+    // index tables (also GPU shouldn't tuple ever).
+    if (allocation.param_shape_index().empty()) {
+      return std::nullopt;
+    }
+    return allocation.param_shape_index()[0];
+  }
+
+  int ResultBufferIndex(const ShapeIndex& output_index) const {
+    if (!result_shape_.IsTuple()) {
+      return 0;
+    }
+    CHECK_EQ(output_index.size(), 1);
+    return output_index[0];
+  }
+
+  PjRtDevice* device_;
+  absl::Span<const PjRtRawBufferRef> flat_arguments_;
+  absl::Span<const PjRtRawBufferRef> results_;
+  bool parameter_is_tupled_arguments_;
+  Shape result_shape_;
+  se::DeviceAddressAllocator* memory_allocator_;
+};
+
+}  // namespace
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM || TENSORFLOW_USE_SYCL
 
 absl::StatusOr<PjRtStreamExecutorExecutionOutput>
@@ -1946,225 +2041,11 @@ StreamExecutorGpuClient::RunAsync(
   auto* gpu_exec =
       tensorflow::down_cast<xla::gpu::GpuExecutable*>(exec.executable());
   const ServiceExecutableRunOptions* run_options = &options_and_stream.first;
-  se::DeviceAddressAllocator* const memory_allocator = run_options->allocator();
-
-  se::StreamExecutor* executor = run_options->stream()->parent();
-
-  // Use the `device_ordinal` from the `run_options` if it is provided. This is
-  // the ordinal of the logical devices (e.g., virtual GPUs). If it is not
-  // provided, the ordinals of the logical and physical devices are the same.
-  const int device_ordinal = run_options->device_ordinal() != -1
-                                 ? run_options->device_ordinal()
-                                 : executor->device_ordinal();
-
-  XLA_SCOPED_LOGGING_TIMER(absl::StrCat(
-      "[", device_ordinal, "] GpuExecutable::ExecuteAsyncOnStreamImpl(",
-      gpu_exec->name(), ")"));
-
-  // GpuExecutable always bound to a single GpuContext during its execution, so
-  // we activate it once to skip expensive context activations later.
-  auto activation = executor->Activate();
-
-  // Lock the GPU with a shared lock so that we don't interfere with autotuning
-  // that may be running during JIT compilation while allowing multiple XLA
-  // computations to use the same GPU simultaneously. We do not add locking for
-  // "recursive" invocations, which are done when holding a lock already.
-  std::variant<absl::ReaderMutexLock, absl::WriterMutexLock> gpu_lock(
-      std::in_place_index_t<0>{}, &gpu::GetGpuMutex(executor));
-
-  // Maybe update to a writer lock to get exclusive access to underlying GPU.
-  if (auto* gpu_opts = run_options->run_options().gpu_executable_run_options();
-      gpu_opts && gpu_opts->requires_exclusive_lock_on_gpu()) {
-    gpu_lock.emplace<1>(&gpu::GetGpuMutex(executor));
-  }
-
-  const gpu::GpuExecutable::BufferAllocToDeviceMemoryMap* globals;
-  {
-    tsl::profiler::TraceMe hlo_module_activity(
-        [&] { return std::string("Resolve constant globals"); },
-        tsl::profiler::TraceMeLevel::kInfo);
-
-    ASSIGN_OR_RETURN(globals,
-                     gpu_exec->ResolveConstantGlobals(run_options->stream()));
-  }
-
-  absl::Span<const BufferAllocation* const> allocations =
-      gpu_exec->GetAllocations();
-
-  // Build a map of per-color allocation granularity. Collective memory requires
-  // larger alignment than the BFC allocator guarantees (256 bytes).
-  absl::flat_hash_map<LogicalBuffer::Color, int64_t> allocate_granularity;
-  if (auto* collectives =
-          gpu::GpuCollectives::Default(executor->GetPlatform()->Name())) {
-    const int64_t collective_memory_alignment =
-        collectives->SymmetricMemoryAlignment();
-    XLA_VLOG_DEVICE(5, device_ordinal)
-        << "Using collective memory alignment: " << collective_memory_alignment;
-    allocate_granularity[static_cast<LogicalBuffer::Color>(
-        gpu::MemorySpaceColor::kCollective)] = collective_memory_alignment;
-  }
-
-  std::vector<se::DeviceAddressBase> buffers(allocations.size());
-  {
-    tsl::profiler::TraceMe hlo_module_activity(
-        [&] { return std::string("Build buffer allocations"); },
-        tsl::profiler::TraceMeLevel::kInfo);
-    const int64_t num_buffers = allocations.size();
-    for (int64_t i = 0; i < num_buffers; ++i) {
-      const BufferAllocation& allocation = *allocations[i];
-      se::DeviceAddressBase& buffer = buffers[i];
-      if (allocation.is_thread_local()) {
-        // buffer = se::DeviceAddressBase{};
-      } else if (allocation.is_entry_computation_parameter()) {
-        int64_t param_no;
-        if (parameter_is_tupled_arguments) {
-          // TODO(parkers): Change compiler to not even pretend to read
-          // the tuple index tables (also GPU shouldn't tuple ever).
-          if (allocation.param_shape_index().empty()) {
-            continue;
-          }
-          param_no = allocation.param_shape_index()[0];
-        } else {
-          param_no = allocation.parameter_number();
-        }
-        buffer = tensorflow::down_cast<const xla::PjRtStreamExecutorRawBuffer*>(
-                     flat_arguments[param_no].get())
-                     ->device_buffer()
-                     ->mem();
-        if (buffer.is_null() && buffer.size() > 0) {
-          return FailedPrecondition(
-              "Cannot run XLA computation because pointer to (sub-)buffer at "
-              "index %s of parameter %d was null.  All pointers to "
-              "(sub-)buffers must not be null, unless the (sub-)buffer has "
-              "zero elements.",
-              allocation.param_shape_index().ToString(), param_no);
-        }
-      } else if (allocation.is_constant()) {
-        auto it = globals->find(i);
-        if (it != globals->end()) {
-          buffer = it->second;
-        }
-      } else {
-        // Allocate each allocation that might escape, or is the temp buffer.
-        CHECK(allocation.maybe_live_out() ||
-              allocation.IsPreallocatedTempBuffer());
-        int64_t buffer_size = allocation.size();
-        if (auto it = allocate_granularity.find(allocation.color());
-            it != allocate_granularity.end()) {
-          buffer_size = RoundUpTo(buffer_size, it->second);
-        }
-        if (buffer_size > 0) {
-          ASSIGN_OR_RETURN(
-              se::ScopedDeviceAddress<uint8_t> owning_buffer,
-              memory_allocator->Allocate(device_ordinal, buffer_size,
-                                         /*retry_on_failure=*/true,
-                                         /*memory_space=*/allocation.color()));
-          buffer = owning_buffer.Release();
-        }
-      }
-      RETURN_IF_ERROR(CheckAlignment(allocation, buffer, i));
-    }
-  }
-  xla::gpu::BufferAllocations buffer_allocations(buffers, device_ordinal,
-                                                 memory_allocator);
-  XLA_VLOG_DEVICE(3, device_ordinal)
-      << "Buffer allocations: " << buffer_allocations.ToString();
-
-  std::set<se::DeviceAddressBase> buffers_in_result;
-
-  auto set_result = [&](const ShapeIndex& index, int i) -> absl::Status {
-    const gpu::GpuExecutable::OutputInfo& output_info =
-        gpu_exec->output_info().at(index);
-    const BufferAllocation* allocation =
-        allocations[output_info.allocation_index];
-    se::DeviceAddressBase result_buffer;
-
-    XLA_VLOG_DEVICE(4, device_ordinal)
-        << "Looking at: allocation " << output_info.allocation_index
-        << " @ index: " << index.ToString();
-
-    auto buf =
-        tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(results[i].get())
-            ->device_buffer();
-    if (output_info.alias_config) {
-      auto input = tensorflow::down_cast<xla::PjRtStreamExecutorRawBuffer*>(
-                       flat_arguments[parameter_is_tupled_arguments
-                                          ? allocation->param_shape_index()[0]
-                                          : allocation->parameter_number()]
-                           .get())
-                       ->device_buffer();
-      bool is_donated = input == buf;
-      if (output_info.alias_config->must_alias() && !is_donated) {
-        return InvalidArgument(
-            "An input was configured to be must-alias at "
-            "compile time but not donated at runtime: allocation %d",
-            output_info.allocation_index);
-      }
-      if (is_donated) {
-        // If the caller passes the ownership of the device memory, reuse it
-        // as the output buffer. It is up to the caller whether or not to
-        // donate a buffer; the aliasing information describes which buffers
-        // may alias, not buffers that must alias.
-        buffers_in_result.insert(input->mem());
-        return absl::OkStatus();
-      } else if (!output_info.passthrough &&
-                 !ShapeUtil::GetSubshape(gpu_exec->result_shape(), index)
-                      .IsTuple()) {
-        // The guard is above is not to insert copy-protection when aliasing
-        // pass-through params, as we do not need to write into the output
-        // buffer.
-        XLA_VLOG_DEVICE(3, device_ordinal)
-            << "Using copy-protection: aliasing is specified, but the "
-               "buffer is not donated; allocating a fresh buffer";
-        int64_t allocation_size = ShapeUtil::ByteSizeOf(
-            ShapeUtil::GetSubshape(gpu_exec->result_shape(), index));
-        absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> allocated_buffer =
-            memory_allocator->Allocate(device_ordinal, allocation_size,
-                                       /*retry_on_failure=*/true,
-                                       /*memory_space=*/allocation->color());
-        if (!allocated_buffer.ok()) {
-          return gpu_exec->VerboseAllocationError(allocated_buffer.status());
-        }
-        result_buffer = allocated_buffer->Release();
-        se::DeviceAddressBase& aliased_buffer =
-            buffer_allocations.GetMutableDeviceAddress(
-                output_info.allocation_index);
-        CHECK_EQ(aliased_buffer.size(), result_buffer.size());
-        RETURN_IF_ERROR(run_options->stream()->MemcpyD2D(
-            &result_buffer, aliased_buffer, aliased_buffer.size()));
-        aliased_buffer = result_buffer;
-      }
-    }
-
-    if (result_buffer.is_null()) {
-      // The source instruction should have a non-parameter buffer
-      // assigned.
-      result_buffer =
-          buffer_allocations.GetDeviceAddress(output_info.allocation_index);
-    }
-    buffers_in_result.insert(result_buffer);
-
-    RawSEDeviceMemory::ConstructDelayed(
-        buf, result_buffer,
-        tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
-            ->local_device_state(),
-        memory_allocator);
-    return absl::OkStatus();
-  };
-
-  if (gpu_exec->result_shape().IsTuple()) {
-    int tuple_count = gpu_exec->result_shape().tuple_shapes().size();
-    for (int i = 0; i < tuple_count; ++i) {
-      RETURN_IF_ERROR(set_result({i}, i));
-    }
-  } else {
-    RETURN_IF_ERROR(set_result({}, 0));
-  }
-
-  RETURN_IF_ERROR(gpu_exec->ExecuteThunks(buffer_allocations, run_options));
-
-  RETURN_IF_ERROR(buffer_allocations.TearDown(buffers_in_result,
-                                              gpu_exec->GetAllocations()));
+  PjRtGpuExecutionBufferProvider buffer_provider(
+      device, flat_arguments, results, parameter_is_tupled_arguments,
+      gpu_exec->result_shape(), run_options->allocator());
+  RETURN_IF_ERROR(gpu_exec->ExecuteWithBufferProvider(run_options,
+                                                      &buffer_provider));
 
   std::vector<tsl::AsyncValueRef<RawSEDeviceMemory>> to_be_released;
 

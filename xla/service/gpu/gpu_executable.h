@@ -206,6 +206,31 @@ class GpuExecutable : public Executable {
       const ServiceExecutableRunOptions* run_options,
       VariantArguments arguments);
 
+  struct ParameterBuffer {
+    se::DeviceAddressBase address;
+    int64_t parameter_number;
+  };
+
+  class ExecutionBufferProvider {
+   public:
+    virtual ~ExecutionBufferProvider() = default;
+
+    virtual absl::StatusOr<ParameterBuffer> GetParameterBuffer(
+        const BufferAllocation& allocation) = 0;
+    virtual std::vector<ShapeIndex> OutputIndices() = 0;
+    virtual absl::StatusOr<std::optional<se::DeviceAddressBase>>
+    TryToDonateAlias(const ShapeIndex& output_index,
+                     const BufferAllocation& allocation,
+                     const OutputInfo& output_info) = 0;
+    virtual void MarkAliasedOutput(const ShapeIndex& output_index) = 0;
+    virtual absl::Status SetOutputBuffer(
+        const ShapeIndex& output_index, se::DeviceAddressBase buffer) = 0;
+  };
+
+  absl::Status ExecuteWithBufferProvider(
+      const ServiceExecutableRunOptions* run_options,
+      ExecutionBufferProvider* buffer_provider);
+
   absl::Span<const BufferAllocation* absl_nonnull const> GetAllocations()
       const override {
     return allocation_ptrs_;
@@ -329,12 +354,12 @@ class GpuExecutable : public Executable {
 
   absl::StatusOr<BufferAllocations> GenerateBufferAllocations(
       const ServiceExecutableRunOptions* run_options,
-      VariantArguments arguments,
+      ExecutionBufferProvider* buffer_provider,
       const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
       se::DeviceAddressAllocator* memory_allocator, int device_ordinal);
 
   absl::StatusOr<se::DeviceAddressBase> BufferForAllocation(
-      VariantArguments arguments,
+      ExecutionBufferProvider* buffer_provider,
       const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
       const BufferAllocation& allocation,
       se::DeviceAddressAllocator* memory_allocator, int device_ordinal,
