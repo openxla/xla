@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "rocm/include/hip/hip_runtime.h"
+#include "rocm/rocm_config.h"
 #include "xla/stream_executor/device_address.h"
 
 #if (TF_ROCM_VERSION >= 50200)
@@ -162,6 +163,8 @@ TEST_F(RcclSymmetricMemoryTest, TwoWindowsHaveDistinctHandles) {
   ASSERT_OK_AND_ASSIGN(auto symm2, RcclSymmetricMemory::Create(comm_, addr2));
 
   if (symm1->win() == nullptr || symm2->win() == nullptr) {
+    symm2.reset();
+    symm1.reset();
     (void)ncclMemFree(buf2_ptr);
     GTEST_SKIP() << "RCCL returned null ncclWindow_t handle(s) (expected on "
                     "single-rank communicators); skipping distinctness check.";
@@ -171,6 +174,9 @@ TEST_F(RcclSymmetricMemoryTest, TwoWindowsHaveDistinctHandles) {
   EXPECT_EQ(symm1->addr().opaque(), buf_ptr_);
   EXPECT_EQ(symm2->addr().opaque(), buf2_ptr);
 
+  // Deregister windows before freeing the underlying memory.
+  symm2.reset();
+  symm1.reset();
   (void)ncclMemFree(buf2_ptr);
 }
 
