@@ -25,6 +25,7 @@ limitations under the License.
 #include "tsl/platform/protobuf.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/xla.pb.h"
 
@@ -93,6 +94,12 @@ class LibraryMatcher {
   // Returns the maximum number of instructions allowed in a fusion for the
   // library.
   virtual int MaxFusionSize() const { return kMaxFusionSize; }
+
+  // Returns true if the HLO instruction should be fused into the given fusion.
+  virtual bool ShouldFuse(const HloFusionInstruction* fusion,
+                          const HloInstruction* instr) {
+    return IsOpSupported(instr).value_or(false);
+  }
 
   // Return true if the library supports merging fusions.
   virtual bool ShouldMergeFusions() { return true; }

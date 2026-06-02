@@ -27,11 +27,13 @@ limitations under the License.
 #include "xla/backends/cpu/onednn_support.h"
 #include "xla/backends/cpu/transforms/library_matcher.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_query.h"
 
 namespace xla::cpu {
 // TODO(intel-tf): Use oneDNN defined constant
-static constexpr int kMaxOneDnnFusionSize = 4;
+static constexpr int kMaxOneDnnFusionSize = 10;
 
 class OneDnnMatcher : public LibraryMatcher {
  public:
@@ -78,6 +80,20 @@ class OneDnnMatcher : public LibraryMatcher {
   // TODO(intel-tf): Evaluate if merging fusions has performance benefit for
   // oneDNN.
   bool ShouldMergeFusions() override { return false; }
+
+  bool ShouldFuse(const HloFusionInstruction* fusion,
+                  const HloInstruction* instr) override {
+    if (!IsOpSupported(instr).value_or(false)) {
+      return false;
+    }
+    // oneDNN currently only supports one dot per fusion.
+    if (instr->opcode() == HloOpcode::kDot &&
+        hlo_query::FindInstruction(fusion->fused_instructions_computation(),
+                                   HloOpcode::kDot)) {
+      return false;
+    }
+    return true;
+  }
 
   // oneDNN fusions currently support downward growth only.
   FusionDirection fusion_direction() const override {

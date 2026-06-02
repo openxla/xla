@@ -286,20 +286,7 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
       continue;
     }
 
-    // [TODO]: Make this generic with keeping track of fusion state, i.e.,
-    // number of special ops already in fusion, and checking if library can
-    // still fuse additional same kind of op.
-#if XLA_ONEDNN_USE_GRAPH_API
-    if (lib->fusion_kind() == kOneDnnFusionKind &&
-        instr->opcode() == HloOpcode::kDot) {
-      VLOG(4) << "  Only one dot op is allowed in oneDNN fusion";
-      break;
-    }
-#endif  // XLA_ONEDNN_USE_GRAPH_API
-
-    // Skip this instruction if it can't be fused.
-    ASSIGN_OR_RETURN(bool op_supported, lib->IsOpSupported(instr));
-    if (!op_supported) {
+    if (!lib->ShouldFuse(fusion, instr)) {
       VLOG(4) << "  Skipping unsupported instruction: " << instr->ToString();
       continue;
     }
