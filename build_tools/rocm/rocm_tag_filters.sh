@@ -17,7 +17,6 @@
 
 TAG_FILTERS=(
     -no_gpu
-    -lit
     -requires-gpu-intel
     -requires-gpu-nvidia
     -cuda-only
