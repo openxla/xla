@@ -529,7 +529,7 @@ TEST(ConditionalThunkTest, TransformNested) {
   auto conditional_thunk = std::make_unique<ConditionalThunk>(
       Thunk::ThunkInfo(), ShapedSlice{slice, shape}, std::move(branch_thunks));
 
-  TF_EXPECT_OK(conditional_thunk->TransformNested([](auto) {
+  EXPECT_OK(conditional_thunk->TransformNested([](auto) {
     return std::make_unique<DummyThunk>(Kind::kCustomCall, Thunk::ThunkInfo());
   }));
 

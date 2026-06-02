@@ -192,7 +192,7 @@ TEST_F(CommandExecutorRendererTest, RenderWithoutExtraResourcesHasOneResource) {
   ASSERT_OK_AND_ASSIGN(auto executor,
                        CommandExecutor::Create(std::move(cmds), kConcurrent));
 
-  TF_ASSERT_OK(executor.RenderExecutionGraph().status());
+  ASSERT_OK(executor.RenderExecutionGraph().status());
   ASSERT_EQ(fake_renderer_->captured().size(), 2);
   EXPECT_EQ(fake_renderer_->captured()[0].resource_use_count, 1);
   EXPECT_EQ(fake_renderer_->captured()[1].resource_use_count, 1);
@@ -243,7 +243,7 @@ TEST_F(CommandExecutorRendererTest, RenderUsesStoredExtraResourcesLHSMode) {
       auto executor,
       CommandExecutor::Create(std::move(cmds), kLHS, std::move(extra)));
 
-  TF_ASSERT_OK(executor.RenderExecutionGraph().status());
+  ASSERT_OK(executor.RenderExecutionGraph().status());
   ASSERT_EQ(fake_renderer_->captured().size(), 2);
   // cmd0: Write(cmd0->token()) + Write(shared_resource) = 2.
   EXPECT_EQ(fake_renderer_->captured()[0].resource_use_count, 2);
