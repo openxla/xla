@@ -121,7 +121,8 @@ class GpuExecutable : public Executable {
     std::optional<HloInputOutputAliasConfig::Alias> alias_config;
 
     // Whether this unaliased live-out output is written by a CommandBufferThunk
-    // and must be copied before being returned to the caller.
+    // and must be copied before being returned to the caller when command
+    // buffer update mode is not ALWAYS_UPDATE.
     bool copy_from_command_buffer_output = false;
 
     GpuExecutableProto::OutputInfoProto ToProto() const;

@@ -128,9 +128,10 @@ class ConservativeDeviceToDeviceCopyThunk : public DeviceToDeviceCopyThunk {
 };
 
 absl::StatusOr<std::unique_ptr<GpuExecutable>>
-CreateCommandBufferOutputInfoExecutable(GpuExecutable::OutputInfo output_info,
-                                        bool enable_command_buffer = true,
-                                        bool conservative_write = false) {
+CreateCommandBufferOutputInfoExecutable(
+    GpuExecutable::OutputInfo output_info,
+    DebugOptions::CommandBufferUpdateMode update_mode,
+    bool enable_command_buffer = true, bool conservative_write = false) {
   BufferAllocation alloc(0, 1024, 0);
   Shape shape = ShapeUtil::MakeShape(S32, {256});
   BufferAllocation::Slice slice(&alloc, 0, 1024);
@@ -149,6 +150,7 @@ CreateCommandBufferOutputInfoExecutable(GpuExecutable::OutputInfo output_info,
 
   DebugOptions debug_options = GetDebugOptionsFromFlags();
   debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.set_xla_gpu_command_buffer_update_mode(update_mode);
   debug_options.clear_xla_gpu_enable_command_buffer();
   if (enable_command_buffer) {
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
@@ -228,7 +230,8 @@ TEST_F(GpuExecutableTest, UnaliasedCommandBufferOutputIsMarkedForCopy) {
                                         /*alias_config=*/std::nullopt};
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<GpuExecutable> executable,
-      CreateCommandBufferOutputInfoExecutable(std::move(output_info)));
+      CreateCommandBufferOutputInfoExecutable(std::move(output_info),
+                                              DebugOptions::NEVER_UPDATE));
 
   ASSERT_THAT(executable->thunk_executor().thunks(), SizeIs(1));
   EXPECT_EQ(executable->thunk_executor().thunks().front()->kind(),
@@ -239,6 +242,24 @@ TEST_F(GpuExecutableTest, UnaliasedCommandBufferOutputIsMarkedForCopy) {
 }
 
 TEST_F(GpuExecutableTest,
+       UnaliasedCommandBufferOutputAlwaysUpdateIsNotMarkedForCopy) {
+  GpuExecutable::OutputInfo output_info{/*allocation_index=*/0,
+                                        /*passthrough=*/false,
+                                        /*alias_config=*/std::nullopt};
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> executable,
+      CreateCommandBufferOutputInfoExecutable(std::move(output_info),
+                                              DebugOptions::ALWAYS_UPDATE));
+
+  ASSERT_THAT(executable->thunk_executor().thunks(), SizeIs(1));
+  EXPECT_EQ(executable->thunk_executor().thunks().front()->kind(),
+            Thunk::kCommandBuffer);
+  auto it = executable->output_info().find(ShapeIndex{});
+  ASSERT_NE(it, executable->output_info().end());
+  EXPECT_FALSE(it->second.copy_from_command_buffer_output);
+}
+
+TEST_F(GpuExecutableTest,
        UnaliasedCommandBufferOutputWithConservativeWriteIsMarkedForCopy) {
   GpuExecutable::OutputInfo output_info{/*allocation_index=*/0,
                                         /*passthrough=*/false,
@@ -246,7 +267,8 @@ TEST_F(GpuExecutableTest,
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<GpuExecutable> executable,
       CreateCommandBufferOutputInfoExecutable(
-          std::move(output_info), /*enable_command_buffer=*/true,
+          std::move(output_info), DebugOptions::NEVER_UPDATE,
+          /*enable_command_buffer=*/true,
           /*conservative_write=*/true));
 
   ASSERT_THAT(executable->thunk_executor().thunks(), SizeIs(1));
@@ -267,7 +289,8 @@ TEST_F(GpuExecutableTest, AliasedCommandBufferOutputIsNotMarkedForCopy) {
           /*kind=*/HloInputOutputAliasConfig::kMayAlias}};
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<GpuExecutable> executable,
-      CreateCommandBufferOutputInfoExecutable(std::move(output_info)));
+      CreateCommandBufferOutputInfoExecutable(std::move(output_info),
+                                              DebugOptions::NEVER_UPDATE));
 
   auto it = executable->output_info().find(ShapeIndex{});
   ASSERT_NE(it, executable->output_info().end());
@@ -280,7 +303,8 @@ TEST_F(GpuExecutableTest, PassthroughCommandBufferOutputIsNotMarkedForCopy) {
                                         /*alias_config=*/std::nullopt};
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<GpuExecutable> executable,
-      CreateCommandBufferOutputInfoExecutable(std::move(output_info)));
+      CreateCommandBufferOutputInfoExecutable(std::move(output_info),
+                                              DebugOptions::NEVER_UPDATE));
 
   auto it = executable->output_info().find(ShapeIndex{});
   ASSERT_NE(it, executable->output_info().end());
@@ -294,7 +318,8 @@ TEST_F(GpuExecutableTest, NonCommandBufferOutputIsNotMarkedForCopy) {
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<GpuExecutable> executable,
       CreateCommandBufferOutputInfoExecutable(std::move(output_info),
-                                             /*enable_command_buffer=*/false));
+                                              DebugOptions::NEVER_UPDATE,
+                                              /*enable_command_buffer=*/false));
 
   auto it = executable->output_info().find(ShapeIndex{});
   ASSERT_NE(it, executable->output_info().end());
