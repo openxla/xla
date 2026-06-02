@@ -341,29 +341,27 @@ TEST(ConditionalThunkTest, RecordCreatesAndUpdatesCommandBufferCase) {
   EXPECT_CALL(command_buffer,
               UpdateCase(&case_se_command,
                          testing::A<se::DeviceAddress<int32_t>>(), testing::_))
-      .WillOnce(
-          [&](const se::CommandBuffer::Command* command,
-              se::DeviceAddress<int32_t>,
-              std::vector<se::CommandBuffer::UpdateCommands> update_branches)
-              -> absl::Status {
-            ++update_case_calls;
-            update_case_branch_count = update_branches.size();
-            if (command != &case_se_command) {
-              return absl::InternalError("unexpected case command");
-            }
-            if (update_branches.size() != branch_command_buffers.size()) {
-              return absl::InternalError("unexpected branch count");
-            }
-            for (size_t i = 0; i < update_branches.size(); ++i) {
-              RETURN_IF_ERROR(
-                  branch_command_buffers[i]->command_buffer->Update());
-              RETURN_IF_ERROR(update_branches[i](
-                  branch_command_buffers[i]->command_buffer.get()));
-              RETURN_IF_ERROR(
-                  branch_command_buffers[i]->command_buffer->Finalize());
-            }
-            return absl::OkStatus();
-          });
+      .WillOnce([&](const se::CommandBuffer::Command* command,
+                    se::DeviceAddress<int32_t>,
+                    std::vector<se::CommandBuffer::UpdateCommands>
+                        update_branches) -> absl::Status {
+        ++update_case_calls;
+        update_case_branch_count = update_branches.size();
+        if (command != &case_se_command) {
+          return absl::InternalError("unexpected case command");
+        }
+        if (update_branches.size() != branch_command_buffers.size()) {
+          return absl::InternalError("unexpected branch count");
+        }
+        for (size_t i = 0; i < update_branches.size(); ++i) {
+          RETURN_IF_ERROR(branch_command_buffers[i]->command_buffer->Update());
+          RETURN_IF_ERROR(update_branches[i](
+              branch_command_buffers[i]->command_buffer.get()));
+          RETURN_IF_ERROR(
+              branch_command_buffers[i]->command_buffer->Finalize());
+        }
+        return absl::OkStatus();
+      });
 
   ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* updated_case_command,

@@ -88,8 +88,7 @@ class Command : public Thunk {
   // empty ThunkInfo.
   Command(Thunk::Kind thunk_kind, ThunkInfo thunk_info,
           se::StreamPriority priority = se::StreamPriority::Default)
-      : Thunk(thunk_kind, std::move(thunk_info)),
-        priority_(priority) {
+      : Thunk(thunk_kind, std::move(thunk_info)), priority_(priority) {
     token_ = Resource::Create(Resource::kToken);
   }
 

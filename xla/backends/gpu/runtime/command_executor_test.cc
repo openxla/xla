@@ -68,7 +68,7 @@ TEST(CommandExecutorTest, DuplicateAllocsCollapsedToOne) {
   cmds.Emplace<FakeCmd>(Command::BufferUses{BufferUse::Read(slice, shape)});
   cmds.Emplace<FakeCmd>(Command::BufferUses{BufferUse::Write(slice, shape)});
   ASSERT_OK_AND_ASSIGN(auto executor,
-                          CommandExecutor::Create(std::move(cmds), kSerialize));
+                       CommandExecutor::Create(std::move(cmds), kSerialize));
 
   // Both commands reference the same allocation index — should appear once.
   EXPECT_EQ(executor.allocs_indices().size(), 1);
@@ -175,8 +175,8 @@ TEST_F(CommandExecutorRendererTest, RenderSucceeds) {
   CommandSequence cmds;
   cmds.Emplace<FakeCmd>();
   cmds.Emplace<FakeCmd>();
-  ASSERT_OK_AND_ASSIGN(
-      auto executor, CommandExecutor::Create(std::move(cmds), kConcurrent));
+  ASSERT_OK_AND_ASSIGN(auto executor,
+                       CommandExecutor::Create(std::move(cmds), kConcurrent));
 
   ASSERT_OK_AND_ASSIGN(auto url, executor.RenderExecutionGraph());
   EXPECT_EQ(url, "fake_graph");
@@ -189,8 +189,8 @@ TEST_F(CommandExecutorRendererTest, RenderWithoutExtraResourcesHasOneResource) {
   CommandSequence cmds;
   cmds.Emplace<FakeCmd>();
   cmds.Emplace<FakeCmd>();
-  ASSERT_OK_AND_ASSIGN(
-      auto executor, CommandExecutor::Create(std::move(cmds), kConcurrent));
+  ASSERT_OK_AND_ASSIGN(auto executor,
+                       CommandExecutor::Create(std::move(cmds), kConcurrent));
 
   TF_ASSERT_OK(executor.RenderExecutionGraph().status());
   ASSERT_EQ(fake_renderer_->captured().size(), 2);

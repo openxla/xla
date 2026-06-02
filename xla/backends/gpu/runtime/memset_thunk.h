@@ -43,8 +43,7 @@ namespace gpu {
 class MemzeroThunk : public Command {
  public:
   explicit MemzeroThunk(ThunkInfo thunk_info, const ShapedSlice& dest)
-      : Command(Kind::kMemzero, std::move(thunk_info)),
-        dest_(dest) {}
+      : Command(Kind::kMemzero, std::move(thunk_info)), dest_(dest) {}
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 

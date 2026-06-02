@@ -165,9 +165,8 @@ TEST(CommandBufferCmdTest, SerializeExecution) {
   CommandSequence commands;
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
-  ASSERT_OK_AND_ASSIGN(
-      CommandExecutor executor,
-      CommandExecutor::Create(std::move(commands), serialize));
+  ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
+                       CommandExecutor::Create(std::move(commands), serialize));
 
   // TODO(ezhulenev): Check that executor correctly infer dependencies.
 }
@@ -186,9 +185,8 @@ TEST(CommandBufferCmdTest, NoReadBarrier) {
   CommandSequence commands;
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
-  ASSERT_OK_AND_ASSIGN(
-      CommandExecutor executor,
-      CommandExecutor::Create(std::move(commands), serialize));
+  ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
+                       CommandExecutor::Create(std::move(commands), serialize));
 
   // TODO(ezhulenev): Check that executor correctly infer dependencies.
 }
@@ -207,9 +205,8 @@ TEST(CommandBufferCmdTest, NoWriteBarrier) {
   CommandSequence commands;
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
-  ASSERT_OK_AND_ASSIGN(
-      CommandExecutor executor,
-      CommandExecutor::Create(std::move(commands), serialize));
+  ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
+                       CommandExecutor::Create(std::move(commands), serialize));
 
   // TODO(ezhulenev): Check that executor correctly infer dependencies.
 }
@@ -231,9 +228,8 @@ TEST(CommandBufferCmdTest, WriteConflictBarrier) {
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use2});
-  ASSERT_OK_AND_ASSIGN(
-      CommandExecutor executor,
-      CommandExecutor::Create(std::move(commands), serialize));
+  ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
+                       CommandExecutor::Create(std::move(commands), serialize));
 
   // TODO(ezhulenev): Check that executor correctly infer dependencies.
 }
@@ -274,9 +270,8 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
   commands.Append(KernelThunk::MakeKernelThunk(
       "AddI32", absl::MakeConstSpan(args), args_access, LaunchDimensions(1, 4),
       /*shmem_bytes=*/0));
-  ASSERT_OK_AND_ASSIGN(
-      CommandExecutor executor,
-      CommandExecutor::Create(std::move(commands), serialize));
+  ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
+                       CommandExecutor::Create(std::move(commands), serialize));
 
   // Initialize command commands and load device kernels.
   ASSERT_OK_AND_ASSIGN(
@@ -350,9 +345,8 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
       /*shmem_bytes=*/0));
   commands.back()->set_priority(se::StreamPriority::Highest);
 
-  ASSERT_OK_AND_ASSIGN(
-      CommandExecutor executor,
-      CommandExecutor::Create(std::move(commands), serialize));
+  ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
+                       CommandExecutor::Create(std::move(commands), serialize));
 
   // Initialize command commands and load device kernels.
   ASSERT_OK_AND_ASSIGN(
@@ -425,12 +419,12 @@ TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {
     };
 
     ASSERT_OK_AND_ASSIGN(auto* command_buffer0,
-                            traced_cmd_buffer.GetOrTraceCommandBuffer(
-                                &allocations, executor, stream.get(), trace));
+                         traced_cmd_buffer.GetOrTraceCommandBuffer(
+                             &allocations, executor, stream.get(), trace));
 
     ASSERT_OK_AND_ASSIGN(auto* command_buffer1,
-                            traced_cmd_buffer.GetOrTraceCommandBuffer(
-                                &allocations, executor, stream.get(), trace));
+                         traced_cmd_buffer.GetOrTraceCommandBuffer(
+                             &allocations, executor, stream.get(), trace));
 
     // Check that command buffer was reused as buffer allocations didn't change.
     ASSERT_EQ(command_buffer0, command_buffer1);
@@ -442,8 +436,8 @@ TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {
     allocations = BufferAllocations({mem0, mem2}, 0, &allocator);
 
     ASSERT_OK_AND_ASSIGN(auto* command_buffer2,
-                            traced_cmd_buffer.GetOrTraceCommandBuffer(
-                                &allocations, executor, stream.get(), trace));
+                         traced_cmd_buffer.GetOrTraceCommandBuffer(
+                             &allocations, executor, stream.get(), trace));
 
     ASSERT_NE(command_buffer0, command_buffer2);
     EXPECT_EQ(num_calls, 2);
@@ -452,8 +446,8 @@ TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {
     allocations = BufferAllocations({mem0, mem1}, 0, &allocator);
 
     ASSERT_OK_AND_ASSIGN(auto* command_buffer3,
-                            traced_cmd_buffer.GetOrTraceCommandBuffer(
-                                &allocations, executor, stream.get(), trace));
+                         traced_cmd_buffer.GetOrTraceCommandBuffer(
+                             &allocations, executor, stream.get(), trace));
     ASSERT_EQ(command_buffer0, command_buffer3);
     EXPECT_EQ(num_calls, 2);
 
@@ -462,8 +456,8 @@ TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {
     allocations = BufferAllocations({mem0, mem0}, 0, &allocator);
 
     ASSERT_OK_AND_ASSIGN(auto* command_buffer4,
-                            traced_cmd_buffer.GetOrTraceCommandBuffer(
-                                &allocations, executor, stream.get(), trace));
+                         traced_cmd_buffer.GetOrTraceCommandBuffer(
+                             &allocations, executor, stream.get(), trace));
     ASSERT_NE(command_buffer4, command_buffer3);
     ASSERT_NE(command_buffer4, command_buffer2);
     EXPECT_EQ(num_calls, 3);
@@ -472,8 +466,8 @@ TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {
     allocations = BufferAllocations({mem0, mem1}, 0, &allocator);
 
     ASSERT_OK_AND_ASSIGN(auto* command_buffer5,
-                            traced_cmd_buffer.GetOrTraceCommandBuffer(
-                                &allocations, executor, stream.get(), trace));
+                         traced_cmd_buffer.GetOrTraceCommandBuffer(
+                             &allocations, executor, stream.get(), trace));
     ASSERT_EQ(command_buffer0, command_buffer5);
     EXPECT_EQ(num_calls, 3);
   };
@@ -517,7 +511,7 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
   CommandSequence seq_a;
   seq_a.Append(&memset_a_thunk);
   ASSERT_OK_AND_ASSIGN(CommandExecutor exec_a,
-                          CommandExecutor::Create(std::move(seq_a), serialize));
+                       CommandExecutor::Create(std::move(seq_a), serialize));
 
   // Executor B: b = a + a (launch kernel AddI32)
   CommandSequence seq_b;
@@ -533,7 +527,7 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
                                      /*shmem_bytes=*/0));
   }
   ASSERT_OK_AND_ASSIGN(CommandExecutor exec_b,
-                          CommandExecutor::Create(std::move(seq_b), serialize));
+                       CommandExecutor::Create(std::move(seq_b), serialize));
 
   // Executor C: c = b (memcpy)
   CommandSequence seq_c;
@@ -541,7 +535,7 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
       Thunk::ThunkInfo(), ShapedSlice{slice_b, shape},
       ShapedSlice{slice_c, shape}, byte_length);
   ASSERT_OK_AND_ASSIGN(CommandExecutor exec_c,
-                          CommandExecutor::Create(std::move(seq_c), serialize));
+                       CommandExecutor::Create(std::move(seq_c), serialize));
 
   // Initialize executors (B needs kernel fatbin).
   ASSERT_OK_AND_ASSIGN(
@@ -574,16 +568,16 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
   // Record A (no deps)
   // Record A, B, C with dependencies using the Record API; finalize on B.
   ASSERT_OK_AND_ASSIGN(auto a_sinks,
-                          exec_a.RecordCreate(exec_params, record_params,
-                                              command_buffer.get(), {}));
+                       exec_a.RecordCreate(exec_params, record_params,
+                                           command_buffer.get(), {}));
 
   ASSERT_OK_AND_ASSIGN(auto b_sinks,
-                          exec_b.RecordCreate(exec_params, record_params,
-                                              command_buffer.get(), a_sinks));
+                       exec_b.RecordCreate(exec_params, record_params,
+                                           command_buffer.get(), a_sinks));
 
   ASSERT_OK_AND_ASSIGN(auto c_sinks,
-                          exec_c.RecordCreate(exec_params, record_params,
-                                              command_buffer.get(), b_sinks));
+                       exec_c.RecordCreate(exec_params, record_params,
+                                           command_buffer.get(), b_sinks));
 
   // Finalize command buffer after recording multiple iterations.
   TF_ASSERT_OK(command_buffer->Finalize());

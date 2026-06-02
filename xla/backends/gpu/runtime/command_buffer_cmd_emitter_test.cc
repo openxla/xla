@@ -116,7 +116,7 @@ TEST_F(CommandBufferCmdEmitterTest, ConcurrentAndSequentialExecutionGraphs) {
     options.synchronization_mode =
         CommandExecutor::SynchronizationMode::kConcurrent;
     ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
-                            ConvertToCommands(thunks, options));
+                         ConvertToCommands(thunks, options));
     EXPECT_FALSE(commands.execution_graph()->is_sequential());
   }
 
@@ -128,7 +128,7 @@ TEST_F(CommandBufferCmdEmitterTest, ConcurrentAndSequentialExecutionGraphs) {
     options.synchronization_mode =
         CommandExecutor::SynchronizationMode::kConcurrentRegions;
     ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
-                            ConvertToCommands(thunks, options));
+                         ConvertToCommands(thunks, options));
     EXPECT_TRUE(commands.execution_graph()->is_sequential());
   }
 
@@ -140,7 +140,7 @@ TEST_F(CommandBufferCmdEmitterTest, ConcurrentAndSequentialExecutionGraphs) {
     options.synchronization_mode =
         CommandExecutor::SynchronizationMode::kConcurrentRegions;
     ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
-                            ConvertToCommands(thunks, options));
+                         ConvertToCommands(thunks, options));
     EXPECT_FALSE(commands.execution_graph()->is_sequential());
   }
 }
@@ -174,7 +174,7 @@ TEST_F(CommandBufferCmdEmitterTest,
     options.synchronization_mode =
         CommandExecutor::SynchronizationMode::kConcurrent;
     ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
-                            ConvertToCommands(thunks, options));
+                         ConvertToCommands(thunks, options));
     EXPECT_FALSE(commands.execution_graph()->is_sequential());
     EXPECT_EQ(commands.execution_graph()->nodes_defs().size(), 4);
     EXPECT_EQ(commands.execution_graph()->source().size(), 3);
@@ -190,7 +190,7 @@ TEST_F(CommandBufferCmdEmitterTest,
       thunk->set_concurrent_region_id(44);
     }
     ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
-                            ConvertToCommands(thunks, options));
+                         ConvertToCommands(thunks, options));
     EXPECT_FALSE(commands.execution_graph()->is_sequential());
     EXPECT_EQ(commands.execution_graph()->nodes_defs().size(), 4);
     EXPECT_EQ(commands.execution_graph()->source().size(), 2);
@@ -239,7 +239,7 @@ TEST_F(CommandBufferCmdEmitterTest, ConcurrentRegionsExecutesOutOfOrder) {
     thunk->set_concurrent_region_id(44);
   }
   ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
-                          ConvertToCommands(thunks, options));
+                       ConvertToCommands(thunks, options));
   EXPECT_FALSE(commands.execution_graph()->is_sequential());
   EXPECT_EQ(commands.execution_graph()->nodes_defs().size(), 4);
   EXPECT_EQ(commands.execution_graph()->source().size(), 2);
@@ -299,7 +299,7 @@ TEST_F(CommandBufferCmdEmitterTest,
   options.synchronization_mode =
       CommandExecutor::SynchronizationMode::kConcurrentRegions;
   ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
-                          ConvertToCommands(thunks, options));
+                       ConvertToCommands(thunks, options));
   // The execution graph contains dependencies between nodes in concurrent
   // regions: (a, b), (c, d) and (e).
   EXPECT_FALSE(commands.execution_graph()->is_sequential());
@@ -353,7 +353,7 @@ TEST_F(CommandBufferCmdEmitterTest,
   options.synchronization_mode =
       CommandExecutor::SynchronizationMode::kConcurrentRegions;
   ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
-                          ConvertToCommands(thunks, options));
+                       ConvertToCommands(thunks, options));
   // The execution graph contains dependencies between nodes in concurrent
   // regions: (a, b, c), (d, e).
   EXPECT_FALSE(commands.execution_graph()->is_sequential());
@@ -399,7 +399,7 @@ TEST_F(CommandBufferCmdEmitterTest, ConcurrentRegionsScheduleHasLaneAffinity) {
   options.synchronization_mode =
       CommandExecutor::SynchronizationMode::kConcurrentRegions;
   ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
-                          ConvertToCommands(thunks, options));
+                       ConvertToCommands(thunks, options));
   auto node_id = NamesToNodeIds(commands);
   EXPECT_EQ(node_id["a"], 0);
   EXPECT_EQ(node_id["b"], 1);
@@ -681,7 +681,7 @@ TEST_F(CommandBufferCmdEmitterTest, ConcurrentRegionsWithEmptyThunkAtStart) {
   options.synchronization_mode =
       CommandExecutor::SynchronizationMode::kConcurrentRegions;
   ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
-                          ConvertToCommands(thunks, options));
+                       ConvertToCommands(thunks, options));
   EXPECT_EQ(commands.size(), 1);
   auto node_id = NamesToNodeIds(commands);
   EXPECT_EQ(node_id.size(), 1);
@@ -725,7 +725,7 @@ TEST_F(CommandBufferCmdEmitterTest, ConcurrentRegionsNestedThunksMultiple) {
       CommandExecutor::SynchronizationMode::kConcurrentRegions;
 
   ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
-                          ConvertToCommands(thunks, options));
+                       ConvertToCommands(thunks, options));
 
   std::map<std::string, ExecutionGraph::NodeId> name_to_ids =
       NamesToNodeIds(commands);
@@ -783,7 +783,7 @@ TEST_F(CommandBufferCmdEmitterTest,
       CommandExecutor::SynchronizationMode::kConcurrentRegions;
 
   ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
-                          ConvertToCommands(thunks, options));
+                       ConvertToCommands(thunks, options));
 
   std::map<std::string, ExecutionGraph::NodeId> name_to_ids =
       NamesToNodeIds(commands);
@@ -830,7 +830,7 @@ TEST_F(CommandBufferCmdEmitterTest,
       CommandExecutor::SynchronizationMode::kConcurrentRegions;
 
   ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
-                          ConvertToCommands(thunks, options));
+                       ConvertToCommands(thunks, options));
 
   std::map<std::string, ExecutionGraph::NodeId> name_to_ids =
       NamesToNodeIds(commands);
@@ -875,7 +875,7 @@ TEST_F(CommandBufferCmdEmitterTest, ConcurrentRegionsForwardDependencies) {
       CommandExecutor::SynchronizationMode::kConcurrentRegions;
 
   ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
-                          ConvertToCommands(thunks, options));
+                       ConvertToCommands(thunks, options));
 
   std::map<std::string, ExecutionGraph::NodeId> name_to_ids =
       NamesToNodeIds(commands);
