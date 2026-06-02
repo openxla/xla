@@ -1773,6 +1773,7 @@ cc_library(
         "//xla/hlo/transforms:host_offload_legalize",
         "//xla/hlo/transforms:host_offloader",
         "//xla/hlo/transforms:host_offloading_prepare",
+        "//xla/hlo/transforms:metadata_interner",
         "//xla/hlo/transforms:operand_upcaster",
         "//xla/hlo/transforms:propagate_call_metadata",
         "//xla/hlo/transforms:while_loop_trip_count_annotator",
