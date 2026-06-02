@@ -20,12 +20,15 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_status_utils.h"
 #include "xla/pjrt/c/pjrt_c_api_xla_transform_extension.h"
@@ -65,34 +68,32 @@ class CApiXlaTransformAdapter : public HloXlaTransform {
     }
     callbacks_.transform_hlo_module(&callbacks_, &args);
 
+    absl::Status status = absl::OkStatus();
+    bool changed = false;
+
     if (args.header.has_error) {
-      return absl::InternalError("Error in C callback");
-    }
-
-    if (args.changed) {
+      status = absl::InternalError(args.header.error_msg.data
+                                       ? std::string(args.header.error_msg.data,
+                                                     args.header.error_msg.size)
+                                       : "Error in C callback");
+    } else if (args.changed) {
       xla::HloModuleProto transformed_proto;
-      if (!transformed_proto.ParseFromArray(args.transformed_hlo_module.data,
-                                            args.transformed_hlo_module.size)) {
-        return absl::InternalError("Failed to parse transformed HLO module");
+      if (!transformed_proto.ParseFromString(
+              absl::string_view(args.transformed_hlo_module.data,
+                                args.transformed_hlo_module.size))) {
+        status = absl::InternalError("Failed to parse transformed HLO module");
+      } else {
+        status = UpdateHloModuleFromProto(module, transformed_proto);
+        changed = status.ok();
       }
-
-      // We need a HloModuleConfig. We can use the existing module's config.
-      ASSIGN_OR_RETURN(
-          auto temp_module,
-          HloModule::CreateFromProto(transformed_proto, module->config()));
-      // Capture the entry computation pointer before calling
-      // MoveComputationsFrom, as MoveComputationsFrom can rename computations
-      // on collision.
-      HloComputation* new_entry = temp_module->entry_computation();
-      module->MoveComputationsFrom(temp_module.get());
-
-      module->ReplaceEntryComputation(new_entry);
-
-      RETURN_IF_ERROR(module->RemoveUnusedComputations());
-
-      return true;
     }
-    return false;
+
+    if (args.header.cleanup_fn != nullptr) {
+      args.header.cleanup_fn(args.header.data);
+    }
+
+    RETURN_IF_ERROR(status);
+    return changed;
   }
 
  private:

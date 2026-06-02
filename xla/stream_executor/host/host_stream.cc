@@ -17,14 +17,12 @@ limitations under the License.
 // the HostExecutor implementation.
 #include "xla/stream_executor/host/host_stream.h"
 
-#include <string.h>
-
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <utility>
 
 #include "absl/functional/any_invocable.h"
-#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/notification.h"
 #include "xla/stream_executor/device_address.h"
@@ -83,20 +81,19 @@ absl::Status HostStream::MemZero(DeviceAddressBase* location, uint64_t size) {
   return absl::OkStatus();
 }
 
-absl::Status HostStream::WaitFor(Stream* other) { return absl::OkStatus(); }
+absl::Status HostStream::WaitFor(Stream* other) {
+  return other->BlockHostUntilDone();
+}
 
 absl::Status HostStream::WaitFor(Event* event) {
-  std::shared_ptr<absl::Notification> notification =
+  const std::shared_ptr<absl::Notification>& notification =
       static_cast<HostEvent*>(event)->notification();
   notification->WaitForNotification();
   return absl::OkStatus();
 }
 
 absl::Status HostStream::RecordEvent(Event* event) {
-  std::shared_ptr<absl::Notification> notification =
-      static_cast<HostEvent*>(event)->notification();
-  CHECK(!notification->HasBeenNotified());
-  notification->Notify();
+  static_cast<HostEvent*>(event)->Record();
   return absl::OkStatus();
 }
 

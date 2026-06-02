@@ -91,7 +91,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/dynamic_slice_fusion_v2_thunk.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/fft_thunk.h"
-#include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/host_execute_thunk.h"
 #include "xla/backends/gpu/runtime/host_send_recv_thunk.h"
@@ -487,38 +486,6 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConvolutionThunk(
   return GetThunkSequence(std::move(thunk));
 }
 
-absl::StatusOr<ThunkSequence> ThunkEmitter::EmitGemmThunk(
-    const HloCustomCallInstruction* instr) {
-  ASSIGN_OR_RETURN(BufferAllocation::Slice a,
-                   GetAllocationSliceForHlo(instr->operand(0), {}));
-  ASSIGN_OR_RETURN(BufferAllocation::Slice b,
-                   GetAllocationSliceForHlo(instr->operand(1), {}));
-
-  // Result of a legacy cuBLAS custom call can be a tuple if we
-  // explicitly allocate workspace buffer in HLO. If result is an
-  // array, it means that workspace is not available, and cuBLAS
-  // will allocate its own workspace.
-  BufferAllocation::Slice c;
-  std::optional<BufferAllocation::Slice> workspace;
-
-  if (instr->shape().IsArray()) {
-    ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr, {}));
-  } else {
-    ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr, {0}));
-    ASSIGN_OR_RETURN(workspace, GetAllocationSliceForHlo(instr, {1}));
-  }
-
-  ASSIGN_OR_RETURN(
-      GemmConfig config,
-      GemmConfig::For(instr, ir_emitter_context_->gpu_compute_capability()));
-  auto thunk = std::make_unique<GemmThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(
-          instr, ir_emitter_context_->GetNextThunkId()),
-      std::move(config), a, b, c, workspace,
-      RequireDeterminism(ir_emitter_context_->hlo_module().config()));
-  return GetThunkSequence(std::move(thunk));
-}
-
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunk(
     const HloCustomCallInstruction* instr) {
   ASSIGN_OR_RETURN(const auto gpu_config,
@@ -590,8 +557,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunk(
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
       std::move(thunk_info), std::move(canonical_hlo), std::move(gemm_config),
       blas_lt_epilogue, algorithm, config.autotune_workspace_size(), a, b, c, d,
-      bias, aux, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
-      std::nullopt, workspace_buffer);
+      /*group_sizes=*/std::nullopt, bias, aux, std::nullopt, std::nullopt,
+      std::nullopt, std::nullopt, std::nullopt, workspace_buffer);
   return GetThunkSequence(std::move(thunk));
 }
 
@@ -678,8 +645,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunkF8(
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
       std::move(thunk_info), std::move(canonical_hlo), std::move(gemm_config),
       blas_lt_epilogue, algorithm, config.autotune_workspace_size(), a, b, c, d,
-      bias, std::nullopt, a_scale, b_scale, std::nullopt, d_scale, d_amax,
-      workspace_buffer);
+      /*group_sizes=*/std::nullopt, bias, std::nullopt, a_scale, b_scale,
+      std::nullopt, d_scale, d_amax, workspace_buffer);
   return GetThunkSequence(std::move(thunk));
 }
 
@@ -753,8 +720,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmulThunk(
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
       std::move(thunk_info), std::move(canonical_hlo), std::move(gemm_config),
       blas_lt_epilogue, algorithm, config.autotune_workspace_size(), a, b, c, d,
-      group_sizes, bias, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
-      std::nullopt, std::nullopt, workspace_buffer);
+      std::move(group_sizes), bias, std::nullopt, std::nullopt, std::nullopt,
+      std::nullopt, std::nullopt, std::nullopt, workspace_buffer);
   return GetThunkSequence(std::move(thunk));
 }
 
@@ -804,6 +771,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunkMx(
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
       std::move(thunk_info), std::move(canonical_hlo), std::move(gemm_config),
       blas_lt_epilogue, algorithm, config.autotune_workspace_size(), a, b, c, d,
+      /*group_sizes=*/std::nullopt,
       /*bias=*/std::nullopt, /*aux=*/std::nullopt, a_scale, b_scale,
       /*c_scale=*/std::nullopt, /*d_scale=*/std::nullopt,
       /*d_amax=*/std::nullopt, workspace_buffer);
@@ -1691,8 +1659,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitReplicaOrPartitionId(
       result_slice));
 }
 
-[[deprecated("Use NCCL 2.28+ primitives instead.")]]
-bool IsNvshmemCollective(const HloInstruction* instr) {
+[[deprecated("Use NCCL 2.28+ primitives instead.")]] bool IsNvshmemCollective(
+    const HloInstruction* instr) {
   if (instr->has_backend_config()) {
     auto gpu_config = instr->backend_config<GpuBackendConfig>();
     const CollectiveBackendConfig& backend_config =
@@ -2068,9 +2036,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectiveAsyncDone(
       it->second));
 }
 
-[[deprecated("Use NCCL 2.28+ primitives instead.")]]
-absl::StatusOr<ThunkSequence> ThunkEmitter::EmitNvshmemAsyncDone(
-    const HloInstruction* inst) {
+[[deprecated(
+    "Use NCCL 2.28+ primitives instead.")]] absl::StatusOr<ThunkSequence>
+ThunkEmitter::EmitNvshmemAsyncDone(const HloInstruction* inst) {
   bool is_send_recv =
       inst->opcode() == HloOpcode::kSendDone ||
       inst->opcode() == HloOpcode::kRecvDone ||
@@ -2098,11 +2066,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitNvshmemAsyncDone(
 }
 
 template <typename NvshmemAllReduceThunkType, typename HloAllReduceInstruction>
-[[deprecated("Use NCCL 2.28+ primitives instead.")]]
-absl::StatusOr<ThunkSequence> ThunkEmitter::EmitNvshmemThunk(
-    Thunk::Kind kind, const HloInstruction* async_start,
-    const HloAllReduceInstruction* inst,
-    std::optional<bool> use_global_device_ids) {
+[[deprecated(
+    "Use NCCL 2.28+ primitives instead.")]] absl::StatusOr<ThunkSequence>
+ThunkEmitter::EmitNvshmemThunk(Thunk::Kind kind,
+                               const HloInstruction* async_start,
+                               const HloAllReduceInstruction* inst,
+                               std::optional<bool> use_global_device_ids) {
   CHECK(kind == Thunk::Kind::kNvshmemAllReduce);
   const auto& hlo_config = ir_emitter_context_->hlo_module().config();
   int64_t replica_count = hlo_config.replica_count();
@@ -2798,9 +2767,7 @@ AsyncThunkSequence ThunkEmitter::EmitAsyncStart(const HloInstruction* instr) {
 AsyncThunkSequence ThunkEmitter::EmitCustomCallSwitch(
     const HloInstruction* hlo) {
   auto* custom_call = Cast<HloCustomCallInstruction>(hlo);
-  if (IsLegacyCublasMatmul(*hlo)) {
-    return EmitGemmThunk(custom_call);
-  }
+
   if (IsCublasLtMatmul(*hlo)) {
     return EmitCublasLtMatmulThunk(custom_call);
   }

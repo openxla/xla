@@ -569,7 +569,10 @@ xla_cc_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/service:hlo_runner",
         "//xla/tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",
@@ -1450,6 +1453,25 @@ cc_binary(
         "@riegeli//riegeli/bytes:copy_all",
         "@riegeli//riegeli/bytes:std_io",
         "@riegeli//riegeli/zstd:zstd_writer",
+        "@tsl//tsl/platform:platform_port",
+    ],
+)
+
+cc_binary(
+    name = "count_hlo_ops",
+    srcs = ["count_hlo_ops.cc"],
+    deps = [
+        ":hlo_module_loader",
+        "//xla:debug_options_flags",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/tsl/platform:status_macros",
+        "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:platform_port",
     ],
 )

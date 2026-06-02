@@ -445,8 +445,14 @@ GpuExecutable::GpuExecutable(
     *(uint64_t*)(&binary_[binary_.size() - 8]) = tsl::random::New64();
   }
   if (has_module() && enable_debug_info_manager_) {
+    std::optional<BufferAssignmentProto> proto;
+    if (buffer_assignment_proto_.has_value()) {
+      proto = buffer_assignment_proto_;
+    } else if (buffer_assignment_ != nullptr) {
+      proto = buffer_assignment_->ToProto();
+    }
     XlaDebugInfoManager::Get()->RegisterModule(shared_module(),
-                                               buffer_assignment_);
+                                               std::move(proto));
   }
   set_module_stats(std::move(module_stats));
 
@@ -481,9 +487,9 @@ GpuExecutable::GpuExecutable(
               }
               for (const BufferUse& use : cmd->buffer_uses()) {
                 BufferAllocation::Index index = use.slice().index();
-                if (buffer_assignment_) {
-                  const auto& alloc = buffer_assignment_->GetAllocation(index);
-                  if (alloc.is_constant() || alloc.size() == 0) continue;
+                if (index >= 0 && index < allocation_ptrs_.size()) {
+                  const BufferAllocation* alloc = allocation_ptrs_[index];
+                  if (alloc->is_constant() || alloc->size() == 0) continue;
                 }
                 command_buffer_allocation_indexes_.insert(index);
               }

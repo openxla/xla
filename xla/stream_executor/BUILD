@@ -823,13 +823,11 @@ cc_library(
     srcs = ["kernel_args_packing_spec.cc"],
     hdrs = ["kernel_args_packing_spec.h"],
     deps = [
-        ":device_address",
         ":kernel_args",
         ":kernel_args_packed_vector",
         ":kernel_args_packing_spec_proto_cc",
         "//xla/tsl/platform:status_macros",
-        "//xla/tsl/platform:statusor",
-        "//xla/tsl/util:safe_reinterpret_cast",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -934,9 +932,11 @@ cc_library(
     deps = [
         ":device_address",
         ":device_address_allocator",
+        ":stream",
         "//xla/tsl/platform:status_macros",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -1014,10 +1014,9 @@ cc_library(
         ":command_buffer",
         ":stream",
         ":stream_executor_h",
-        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_macros",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
     ],
@@ -1119,6 +1118,15 @@ cc_library(
 #===--------------------------------------------------------------------------------------------===#
 # StreamExecutor tests
 #===--------------------------------------------------------------------------------------------===#
+
+xla_cc_test(
+    name = "command_buffer_test",
+    srcs = ["command_buffer_test.cc"],
+    deps = [
+        ":command_buffer",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
 
 xla_cc_test(
     name = "generic_memory_allocation_test",

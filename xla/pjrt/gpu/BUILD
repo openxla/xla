@@ -344,16 +344,12 @@ xla_test(
 xla_test(
     name = "se_gpu_pjrt_client_multi_gpu_test",
     srcs = ["se_gpu_pjrt_client_multi_gpu_test.cc"],
-    backend_tags = {
-        # TODO(464116734): Re-enable once multi-device presubmits will be available in OSS.
-        "nvgpu_any": [
-            "no_oss",
-        ],
-    },
     backends = ["gpu"],
     shard_count = 3,
     tags = [
         "multi_gpu",
+        # Takes to long to run and doesn't require 8x GPUs setup.
+        "no_oss",
         "nofixdeps",
     ],
     use_legacy_runtime = True,
@@ -377,6 +373,7 @@ xla_test(
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:test",
+        "//xla/pjrt:common_pjrt_client",
         "//xla/pjrt:device_event",
         "//xla/pjrt:host_memory_spaces",
         "//xla/pjrt:local_device_state",
@@ -412,6 +409,7 @@ xla_test(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:subprocess",
         "//xla/tsl/util:command_line_flags",

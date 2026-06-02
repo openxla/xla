@@ -578,11 +578,34 @@ std::string GetPluginStablehloVersionOrDefault(PjRtClient* client) {
     return xla::GetDefaultStablehloVersion();
   }
 
-  // If plugin doesn't report it StableHLO version, use the default.
+  // If plugin doesn't report its StableHLO version, use the default.
   auto attr_map = attributes->attributes;
   auto version = attr_map.find("stablehlo_current_version");
   if (version == attr_map.end()) {
     return xla::GetDefaultStablehloVersion();
+  }
+
+  std::vector<int64_t> v = std::get<std::vector<int64_t>>(version->second);
+  return absl::StrFormat("%d.%d.%d", v[0], v[1], v[2]);
+}
+
+std::string GetPluginSdyVersionOrDefault(PjRtClient* client) {
+  // If the plugin is not set, use the default.
+  if (!client) {
+    return xla::GetDefaultSdyVersion();
+  }
+
+  // If the plugin doesn't have attributes, use the default.
+  auto attributes = client->plugin_attributes();
+  if (!attributes.has_value()) {
+    return xla::GetDefaultSdyVersion();
+  }
+
+  // If plugin doesn't report its Shardy version, use the default.
+  auto attr_map = attributes->attributes;
+  auto version = attr_map.find("sdy_current_version");
+  if (version == attr_map.end()) {
+    return xla::GetDefaultSdyVersion();
   }
 
   std::vector<int64_t> v = std::get<std::vector<int64_t>>(version->second);
@@ -598,19 +621,21 @@ absl::StatusOr<std::pair<std::string, std::string>> SerializeProgram(
     PjRtClient* client, ProgramVariant program, const CompileOptions& options) {
   tsl::profiler::TraceMe traceme("PjRtCApiClient::SerializeProgram");
 
-  const std::string version_string = GetPluginStablehloVersionOrDefault(client);
+  const std::string target_version = GetPluginStablehloVersionOrDefault(client);
+  const std::string sdy_version = GetPluginSdyVersionOrDefault(client);
   bool allow_in_place_mlir_modification =
       options.allow_in_place_mlir_modification;
 
   // TODO: Consider cleanup of the MLIR Context if mutate in place is allowed.
   return std::visit(
       absl::Overload{
-          [&version_string,
+          [&target_version, &sdy_version,
            allow_in_place_mlir_modification](xla::MaybeOwningMlirModule module)
               -> absl::StatusOr<std::pair<std::string, std::string>> {
             ASSIGN_OR_RETURN(
                 std::string code,
-                xla::Serialize(module.mlir_module(), version_string,
+                xla::Serialize(module.mlir_module(), target_version,
+                               sdy_version,
                                /*inplace=*/allow_in_place_mlir_modification));
             return {std::make_pair(code, std::string(pjrt::kMlirFormat))};
           },
@@ -761,15 +786,32 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtCApiClient::LoadSerializedExecutable(absl::string_view serialized,
                                          std::optional<CompileOptions> options,
                                          const LoadOptions& load_options) {
-  PJRT_Executable_DeserializeAndLoad_Args des_args;
+  PJRT_Executable_DeserializeAndLoad_Args des_args{};
 
   des_args.struct_size = PJRT_Executable_DeserializeAndLoad_Args_STRUCT_SIZE;
-  des_args.extension_start = nullptr;
   des_args.client = c_client_.get();
   des_args.serialized_executable = serialized.data();
   des_args.serialized_executable_size = serialized.length();
-  des_args.overridden_serialized_compile_options = nullptr;
-  des_args.overridden_serialized_compile_options_size = 0;
+
+  PJRT_LoadOptions load_options_c_api{};
+  des_args.load_options = &load_options_c_api;
+
+  load_options_c_api.struct_size = PJRT_LoadOptions_STRUCT_SIZE;
+  if (load_options.computation_origin.has_value()) {
+    load_options_c_api.computation_origin =
+        load_options.computation_origin->data();
+    load_options_c_api.computation_origin_size =
+        load_options.computation_origin->size();
+  }
+  if (load_options.multi_slice_config != nullptr) {
+    auto* c_api_config = dynamic_cast<const pjrt::PjRtCApiMultiSliceConfig*>(
+        load_options.multi_slice_config);
+    if (c_api_config == nullptr) {
+      return absl::InvalidArgumentError(
+          "PjRtCApiClient only supports PjRtCApiMultiSliceConfig.");
+    }
+    load_options_c_api.multi_slice_config = c_api_config->get();
+  }
 
   std::string options_str;
   if (options) {
@@ -2000,6 +2042,24 @@ absl::StatusOr<tsl::AllocatorStats> PjRtCApiDevice::GetAllocatorStats() const {
     result.peak_pool_bytes = args.peak_pool_bytes;
   }
   return result;
+}
+
+absl::Status PjRtCApiDevice::ClearMemoryStats() {
+  const PJRT_Api* api = client_->pjrt_c_api();
+  if (api == nullptr) {
+    return absl::InternalError("PJRT C API is null.");
+  }
+  if (api->PJRT_Device_ClearMemoryStats == nullptr) {
+    return absl::UnimplementedError(
+        "PJRT C API PJRT_Device_ClearMemoryStats is not supported by the "
+        "plugin.");
+  }
+  PJRT_Device_ClearMemoryStats_Args args;
+  args.struct_size = PJRT_Device_ClearMemoryStats_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.device = device_;
+  RETURN_STATUS_IF_PJRT_ERROR(api->PJRT_Device_ClearMemoryStats(&args), api);
+  return absl::OkStatus();
 }
 
 absl::StatusOr<std::intptr_t> PjRtCApiDevice::GetStreamForExternalReadyEvents()
@@ -4771,8 +4831,10 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCApiCompiler::Compile(
       tsl::profiler::ContextType::kPjrtLibraryCall, traceme_context_id);
 
   std::string target_version = GetPluginStablehloVersionOrDefault(client);
-  ASSIGN_OR_RETURN(std::string serialized,
-                   xla::Serialize(module.mlir_module(), target_version));
+  std::string sdy_version = GetPluginSdyVersionOrDefault(client);
+  ASSIGN_OR_RETURN(
+      std::string serialized,
+      xla::Serialize(module.mlir_module(), target_version, sdy_version));
   std::string format(pjrt::kMlirFormat);
   return InitializeArgsAndCompileAot(c_api_, client, std::move(module), options,
                                      topology);

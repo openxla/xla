@@ -308,6 +308,8 @@ cc_library(
         "//xla/backends/gpu/transforms:priority_fusion",
         "//xla/codegen/tiling:symbolic_tile_analysis",
         "//xla/codegen/tiling:tiling_specification",
+        "//xla/codegen/tiling/experimental:tile",
+        "//xla/codegen/tiling/experimental:tiled_hlo",
         "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/transforms/simplifiers:float_normalization",
@@ -888,8 +890,8 @@ xla_cc_test(
         "//xla/tsl/protobuf:dnn_proto_cc",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
-        "@com_google_protobuf//:any_cc_proto",
         "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 

@@ -215,6 +215,7 @@ limitations under the License.
 #include "xla/service/logical_buffer.h"
 #include "xla/service/map_inliner.h"
 #include "xla/service/multi_module_driver.h"
+#include "xla/service/scan_expander.h"
 #include "xla/service/scatter_expander.h"
 #include "xla/service/scatter_simplifier.h"
 #include "xla/service/select_and_scatter_expander.h"
@@ -230,6 +231,7 @@ limitations under the License.
 #include "xla/service/while_loop_constant_sinking.h"
 #include "xla/service/while_loop_invariant_code_motion.h"
 #include "xla/service/while_loop_simplifier.h"
+#include "xla/service/xla_transform.h"
 #include "xla/shape.h"
 #include "xla/shape_pool.h"
 #include "xla/shape_util.h"
@@ -856,15 +858,14 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<ConditionalCanonicalizer>();
   pipeline.AddPass<DynamicDimensionSimplifier>();
 
-  if (module->config()
-          .debug_options()
-          .xla_reduce_window_rewrite_base_length() != 0) {
-    pipeline.AddPass<HloPassFix<ReduceWindowRewriter>>(
-        module->config()
-            .debug_options()
-            .xla_reduce_window_rewrite_base_length());
+  int64_t rw_length =
+      module->config().debug_options().xla_reduce_window_rewrite_base_length();
+  pipeline.AddPass<HloPassFix<AssociativeScanRewriter>>(rw_length);
+  if (rw_length != 0) {
+    pipeline.AddPass<HloPassFix<ReduceWindowRewriter>>(rw_length);
     pipeline.AddPass<ReduceWindowResizer>();
   }
+  pipeline.AddPass<ScanExpander>();
   auto dynamic_padder_options = DynamicPadderOptions();
   // TODO(pgavin): ShapeChecks were never implemented correctly by the dynamic
   // padder.  The mode defaults to kIgnore, and it was not overridden for nested
@@ -1158,6 +1159,8 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   }
 
   pipeline.AddPass<PropagateCallMetadata>();
+  pipeline.AddPass<ApplyXlaTransforms>(
+      HloXlaTransform::PipelineStage::kPreScheduler);
   pipeline.AddPass<HloDCE>();
   return pipeline.Run(module).status();
 }
@@ -1767,6 +1770,13 @@ CpuCompiler::CompileCpuExecutable(
 
   ASSIGN_OR_RETURN(HloSchedule schedule, CreateHloSchedule(*module));
   RETURN_IF_ERROR(module->set_schedule(schedule));
+
+  {
+    HloPassPipeline post_scheduler_pipeline("HLO passes after scheduling");
+    post_scheduler_pipeline.AddPass<ApplyXlaTransforms>(
+        HloXlaTransform::PipelineStage::kPostScheduler);
+    RETURN_IF_ERROR(post_scheduler_pipeline.Run(module.get()).status());
+  }
 
   ASSIGN_OR_RETURN(std::unique_ptr<BufferAssignment> assignment,
                    CreateBufferAssignment(*module));
