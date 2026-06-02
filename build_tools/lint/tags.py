@@ -74,6 +74,7 @@ _TAGS_TO_DOCUMENTATION_MAP = {
     "requires-gpu-sm120-only": "Requires exactly sm120.",
     "full": "Test requires a full GPU, not a partitioned one. No effect in"
             " OSS.",
+    "lit": "Lit test from lit test suite",
     "gpu": "Catch-all tag for targets that should be built/tested on GPU CI",
     "cpu": "Catch-all tag for targets that should be built/tested on CPU CI.",
     "cuda-only": "Targets that require the CUDA backend to be enabled.",

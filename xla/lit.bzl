@@ -139,7 +139,7 @@ def lit_test_suite(
             visibility = visibility,
             env = env,
             timeout = timeout,
-            tags = tags + default_tags + tags_override.get(test_file, []),
+            tags = tags + ["lit"] + default_tags + tags_override.get(test_file, []),
             hermetic_cuda_data_dir = hermetic_cuda_data_dir,
             exec_properties = exec_properties,
             gpu_suffix = gpu_suffix,
