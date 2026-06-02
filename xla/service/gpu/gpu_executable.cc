@@ -229,14 +229,19 @@ class GpuExecutableThunkPassBufferAllocator : public ThunkPassBufferAllocator {
 
 absl::Status MarkCommandBufferOutputCopies(
     const ProgramShape& program_shape, ThunkExecutor& executor,
+    DebugOptions::CommandBufferUpdateMode update_mode,
     absl::flat_hash_map<ShapeIndex, GpuExecutable::OutputInfo>* output_info) {
   for (auto& output_info_entry : *output_info) {
     output_info_entry.second.copy_from_command_buffer_output = false;
   }
 
+  if (update_mode == DebugOptions::ALWAYS_UPDATE) {
+    return absl::OkStatus();
+  }
+
   absl::flat_hash_set<BufferAllocation::Index> command_buffer_outputs;
-  RETURN_IF_ERROR(executor.thunks().WalkNested(
-      [&](Thunk* thunk) -> absl::Status {
+  RETURN_IF_ERROR(
+      executor.thunks().WalkNested([&](Thunk* thunk) -> absl::Status {
         auto* command_buffer_thunk =
             dynamic_cast<const CommandBufferThunk*>(thunk);
         if (command_buffer_thunk == nullptr) {
@@ -449,8 +454,10 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
   // Extract modified thunks back into a ThunkExecutor.
   auto executor =
       std::make_unique<ThunkExecutor>(std::move(seq_thunk->thunks()));
-  RETURN_IF_ERROR(MarkCommandBufferOutputCopies(params.program_shape, *executor,
-                                                &params.output_info));
+  RETURN_IF_ERROR(MarkCommandBufferOutputCopies(
+      params.program_shape, *executor,
+      params.debug_options.xla_gpu_command_buffer_update_mode(),
+      &params.output_info));
 
   return std::unique_ptr<GpuExecutable>(new GpuExecutable(
       std::move(params.debug_module), std::move(params.asm_text),
