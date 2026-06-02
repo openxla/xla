@@ -55,6 +55,7 @@ namespace xla::gpu {
   V(kCublasLtCmd, "CublasLtCmd")                             \
   V(kCuDnnCmd, "CuDnnCmd")                                   \
   V(kConvolutionCmd, "ConvolutionCmd")                       \
+  V(kDynamicSliceCmd, "DynamicSliceCmd")                     \
   V(kGemmCmd, "GemmCmd")                                     \
   V(kMemcpyDeviceToDeviceCmd, "MemcpyDeviceToDeviceCmd")     \
   V(kMemzeroCmd, "MemzeroCmd")                               \
