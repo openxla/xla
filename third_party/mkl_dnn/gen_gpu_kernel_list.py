@@ -28,11 +28,22 @@ class Kernel(object):
   them into C++ source code with embedded string literals.
   """
   def __init__(self, path):
+    """Initialize a Kernel object from an OpenCL kernel file.
+
+    Args:
+      path: Path to the OpenCL kernel file (.cl).
+    """
     self.extern_ = self._parse_extern(path)
     self.kernels_ = self._parse_kernels(path, self.extern_)
     self.path_ = path
 
   def extern(self):
+    """Generate the C++ extern declaration for the kernel.
+
+    Returns:
+      A string containing the extern declaration 
+      (e.g., 'extern const char *kernel_name_kernel;').
+    """
     extern_prefix = "extern const char *"
     extern_suffix = "_kernel;"
     if not IS_V2:
@@ -40,16 +51,40 @@ class Kernel(object):
     return extern_prefix + self.extern_ + extern_suffix
 
   def entries(self):
+    """Generate kernel list entries for the C++ kernel registry.
+
+    Returns:
+      A list of formatted strings, each representing a kernel entry mapping
+      kernel name to its extern symbol.
+    """
     format_extern = lambda x: '        {{ "{}", {}_kernel }},'.format(
         x, self.extern_)
     return [format_extern(entry) for entry in self.kernels_]
 
   def content(self, inc_dirs):
+    """Generate the kernel content with expanded includes.
+
+    Args:
+      inc_dirs: List of include directories to search for header files.
+
+    Returns:
+      A tuple of (kernel_name, expanded_content) where expanded_content is
+      the kernel source with all #include directives recursively expanded.
+    """
     path = os.path.basename(self.path_)
     kernel_name, _ = os.path.splitext(path)
     return kernel_name, '\n'.join(self._extend_includes(inc_dirs, self.path_))
 
   def subfolder(self, sub):
+    """Extract the subfolder path relative to a base directory.
+
+    Args:
+      sub: The base directory name to search for in the kernel's path.
+
+    Returns:
+      The relative path after the base directory, or empty string if
+      the kernel is directly in the base directory.
+    """
     kernel_dir = os.path.dirname(self.path_)
     index = kernel_dir.rfind(sub)
     index += len(sub) + 1  # step to the last if possible
@@ -59,6 +94,14 @@ class Kernel(object):
       return kernel_dir[index:]
 
   def _parse_extern(self, path):
+    """Parse the extern symbol name from the kernel file path.
+
+    Args:
+      path: Path to the kernel file.
+
+    Returns:
+      The extern symbol name. In v2 format, includes parent directory name.
+    """
     dir = os.path.dirname(path)
     dir1 = os.path.basename(dir)
     path = os.path.basename(path)
@@ -68,6 +111,15 @@ class Kernel(object):
     return file_name
 
   def _parse_kernels(self, path, extern_name):
+    """Extract kernel function names from the OpenCL source file.
+
+    Args:
+      path: Path to the kernel file.
+      extern_name: The extern symbol name.
+
+    Returns:
+      A list of kernel function names found in the file.
+    """
     with open(path) as f:
       content = f.read()
       pattern = 'kernel[ \n]+void[ \n]+([a-z0-9_]+)'
@@ -75,6 +127,17 @@ class Kernel(object):
       return kernels
 
   def _extend_includes(self, inc_dirs, path):
+    """Recursively expand #include directives and format lines as C++ string literals.
+
+    Args:
+      inc_dirs: List of include directories to search for header files.
+      path: Path to the file to process.
+
+    Returns:
+      A list of strings, each representing a line of the source file formatted
+      as a C++ string literal. #include directives are replaced with the contents
+      of the included files (recursively expanded).
+    """
     ret = []
     pattern = re.compile('^\\s*#include "(.*)"')
     with open(path) as f:
@@ -112,26 +175,52 @@ class Header(Kernel):
   and content formatting requirements.
   """
   def __init__(self, path):
+    """Initialize a Header object from a header file.
+
+    Args:
+      path: Path to the header file (.h).
+    """
     self.extern_ = self._parse_extern(path)
     self.kernels_ = self._parse_kernels(path, self.extern_)
     self.path_ = path
 
   def extern(self):
+    """Generate the C++ extern declaration for the header.
+
+    Returns:
+      A string containing the extern declaration
+      (e.g., 'extern const char *header_name_header;').
+    """
     extern_prefix = "extern const char *"
     extern_suffix = "_header;"
     return extern_prefix + self.extern_ + extern_suffix
 
   def values(self):
+    """Generate header value entries for the C++ header array.
+
+    Returns:
+      A list containing a single formatted string referencing the header extern symbol.
+    """
     format_entry = lambda x: '        {}_header,'.format(x)
     return [format_entry(self.extern_)]
 
   def entries(self):
+    """Generate header list entries for the C++ header registry.
+
+    Returns:
+      A formatted string mapping the header's relative path (from src/) to its extern symbol.
+    """
     dir_path = os.path.dirname(self.path_)
     src_index = dir_path.rfind("src")
     header_path = self.path_[src_index + len("src") + 1 : ]
     return '        {{ "{}", {}_header }},'.format(header_path, self.extern_)
 
   def name(self):
+    """Generate the header name entry for the C++ name list.
+
+    Returns:
+      A formatted string containing the header's relative path (from src/).
+    """
     dir_path = os.path.dirname(self.path_)
     src_index = dir_path.rfind("src")
     header_path = self.path_[src_index + len("src") + 1 : ]
@@ -145,6 +234,12 @@ class KernelList(object):
   embedded source as string literals.
   """
   def __init__(self, folder, header_dir):
+    """Initialize a KernelList by discovering and loading kernels and headers.
+
+    Args:
+      folder: Directory to search for OpenCL kernel files (.cl).
+      header_dir: Directory to search for header files (.h), used only in v2 format.
+    """
     self.kernels_ = []
     self.headers_ = []
 
@@ -158,6 +253,15 @@ class KernelList(object):
         self.headers_.append(Header(hf))
 
   def generate_list(self, src, target):
+    """Generate the main kernel list C++ file from a template.
+
+    Reads a template file and replaces placeholders with generated extern declarations,
+    kernel entries, and (in v2 format) header information. Writes the result to target.
+
+    Args:
+      src: Path to the template file (ocl_kernel_list.cpp.in).
+      target: Path where the generated C++ file should be written.
+    """
     externs = []
     entries = ['\n']  # for style
     for kernel in self.kernels_:
@@ -201,6 +305,13 @@ class KernelList(object):
 
     Creates output directories as needed and writes formatted C++ content
     with embedded source code as string literals.
+
+    Args:
+      inc_dirs: List of include directories for resolving #include directives.
+      root: Root output directory.
+      sub: Subdirectory path relative to root.
+      impl: Kernel or Header object to generate from.
+      suffix: Suffix for the output file ("kernel" or "header").
     """
     impl_name, content = impl.content(inc_dirs)
     more_sub = impl.subfolder(sub)
@@ -239,8 +350,16 @@ class KernelList(object):
       self._generate(inc_dirs, root, sub, header, "header")
 
   def format_file_content(self, name, suffix, content, prefix):
-    """
-    Format the content. Pay attention that, there's no comma before nullptr in header.
+    """Format the kernel/header content into a C++ file with proper namespace wrapping.
+
+    Args:
+      name: Base name of the kernel or header file.
+      suffix: Type suffix ("kernel" or "header").
+      content: The formatted source content as C++ string literals.
+      prefix: Namespace prefix (usually the parent directory name).
+
+    Returns:
+      Complete C++ source code with content wrapped in dnnl::impl::gpu::intel namespace.
     """
     header = """
 namespace dnnl {{
@@ -275,6 +394,15 @@ namespace intel {{
     return header.format(prefix,name, suffix, content)
 
   def _get_suffix_files(self, folder, suffix):
+    """Recursively find all files with a specific suffix in a directory.
+
+    Args:
+      folder: Root directory to search.
+      suffix: File extension to match (e.g., ".cl", ".h").
+
+    Returns:
+      Sorted list of absolute paths to matching files.
+    """
     files = []
     for root, _, filenames in os.walk(folder):
       for filename in sorted(filenames):
@@ -285,9 +413,25 @@ namespace intel {{
     return files
 
   def _get_cl_suffix_files(self, folder):
+    """Find all OpenCL kernel files (.cl) in a directory.
+
+    Args:
+      folder: Root directory to search.
+
+    Returns:
+      Sorted list of absolute paths to .cl files.
+    """
     return self._get_suffix_files(folder, ".cl")
 
   def _get_header_files(self, folder):
+    """Find all header files (.h) in a directory.
+
+    Args:
+      folder: Root directory to search.
+
+    Returns:
+      Sorted list of absolute paths to .h files.
+    """
     print(f"Searching for header files in {folder}")
     return self._get_suffix_files(folder, ".h")
 
