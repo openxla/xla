@@ -35,12 +35,16 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/command_buffer_thunk.h"
+#include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
+#include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.pb.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/scratch_memory_requests.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_proto_deserialization.h"
+#include "xla/backends/gpu/runtime/while_loop.h"
 #include "xla/ffi/attribute_map.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_registry.h"
@@ -60,6 +64,7 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
@@ -69,6 +74,7 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -2061,6 +2067,154 @@ TEST_F(DynamicSliceThunkTest,
                               /*size=*/out_length));
 
   EXPECT_EQ(dst, std::vector<float>({5 * 4 + 6 * 3 + 7 * 2 + 8 * 1}));
+}
+
+TEST_F(DynamicSliceThunkTest,
+       CommandBufferUpdatesHostComputedOffsetInsideWhileLoopContext) {
+  se::StreamExecutor* executor = GpuExecutor();
+  if (executor->GetDeviceDescription().gpu_compute_capability().IsRocm()) {
+    GTEST_SKIP()
+        << "DynamicSliceThunk command buffer updates are not supported on ROCm";
+  }
+
+  const char* offset_hlo = R"(
+    HloModule offset
+    ENTRY main {
+      ROOT p0 = s32[] parameter(0)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto offset_module,
+                       ParseAndReturnUnverifiedModule(offset_hlo));
+  HloModule* offset_module_ptr = offset_module.get();
+  std::vector<std::unique_ptr<HloModule>> offset_modules;
+  offset_modules.push_back(std::move(offset_module));
+
+  const char* indvar_init_hlo = R"(
+    HloModule indvar_init
+    ENTRY main {
+      ROOT c0 = s32[] constant(0)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto indvar_init_module,
+                       ParseAndReturnUnverifiedModule(indvar_init_hlo));
+
+  const char* indvar_update_hlo = R"(
+    HloModule indvar_update
+    ENTRY main {
+      p0 = s32[] parameter(0)
+      c1 = s32[] constant(1)
+      ROOT add = s32[] add(p0, c1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto indvar_update_module,
+                       ParseAndReturnUnverifiedModule(indvar_update_hlo));
+
+  constexpr int64_t kSrcBytes = sizeof(int32_t) * 4;
+  constexpr int64_t kDstBytes = sizeof(int32_t);
+
+  std::vector<BufferAllocation> fake_allocations;
+  fake_allocations.reserve(2);
+  fake_allocations.emplace_back(/*index=*/0, kDstBytes, /*color=*/0);
+  BufferAllocation::Slice fake_src(&fake_allocations.back(), 0, kDstBytes);
+  fake_allocations.emplace_back(/*index=*/1, kDstBytes, /*color=*/0);
+  BufferAllocation::Slice fake_dst(&fake_allocations.back(), 0, kDstBytes);
+
+  Shape src_shape = ShapeUtil::MakeShape(S32, {4});
+  Shape dst_shape = ShapeUtil::MakeShape(S32, {1});
+
+  ThunkSequence embedded;
+  embedded.push_back(std::make_unique<DeviceToDeviceCopyThunk>(
+      Thunk::ThunkInfo(), ShapedSlice{fake_src, dst_shape},
+      ShapedSlice{fake_dst, dst_shape}, kDstBytes));
+
+  BufferAllocation src_alloc(/*index=*/0, kSrcBytes, /*color=*/0);
+  BufferAllocation dst_alloc(/*index=*/1, kDstBytes, /*color=*/0);
+  BufferAllocation::Slice src_slice(&src_alloc, 0, kSrcBytes);
+  BufferAllocation::Slice dst_slice(&dst_alloc, 0, kDstBytes);
+
+  std::vector<DynamicSliceThunk::Offset> src_offsets{offset_module_ptr};
+  DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata metadata(
+      std::move(indvar_init_module), std::move(indvar_update_module),
+      std::move(offset_modules));
+
+  auto dynamic_slice_thunk = std::make_unique<DynamicSliceThunk>(
+      Thunk::ThunkInfo(), std::make_unique<ThunkSequence>(std::move(embedded)),
+      std::vector<std::optional<BufferAllocation::Slice>>{src_slice, dst_slice},
+      std::move(fake_allocations),
+      std::vector<std::optional<std::vector<DynamicSliceThunk::Offset>>>{
+          std::move(src_offsets), std::nullopt},
+      std::vector<std::optional<Shape>>{src_shape, std::nullopt},
+      std::vector<std::optional<Shape>>{dst_shape, std::nullopt},
+      std::vector<std::optional<PrimitiveType>>{S64, std::nullopt},
+      std::move(metadata));
+
+  CommandSequence embedded_commands;
+  embedded_commands.Emplace<DeviceToDeviceCopyThunk>(
+      Thunk::ThunkInfo(), ShapedSlice{fake_src, dst_shape},
+      ShapedSlice{fake_dst, dst_shape}, kDstBytes);
+  ASSERT_OK_AND_ASSIGN(CommandExecutor embedded_executor,
+                       CommandExecutor::Create(
+                           std::move(embedded_commands),
+                           CommandExecutor::SynchronizationMode::kSerialize));
+  ASSERT_OK(dynamic_slice_thunk->SetOrUpdateCommandBufferExecutor(
+      std::move(embedded_executor)));
+
+  CommandSequence commands;
+  commands.Append(dynamic_slice_thunk.get());
+  ASSERT_OK_AND_ASSIGN(CommandExecutor command_executor,
+                       CommandExecutor::Create(
+                           std::move(commands),
+                           CommandExecutor::SynchronizationMode::kSerialize));
+
+  CommandBufferThunk command_buffer_thunk(
+      std::move(command_executor), Thunk::ThunkInfo(),
+      /*thunks=*/nullptr,
+      /*enable_command_buffers_during_profiling=*/true,
+      DebugOptions::ALWAYS_UPDATE);
+
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  se::DeviceAddress<int32_t> src = executor->AllocateArray<int32_t>(4);
+  std::vector<int32_t> src_data{10, 20, 30, 40};
+  ASSERT_OK(stream->Memcpy(&src, src_data.data(), kSrcBytes));
+
+  se::DeviceAddress<int32_t> dst = executor->AllocateArray<int32_t>(1);
+  ASSERT_OK(stream->MemZero(&dst, kDstBytes));
+
+  ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream.get());
+  stream_executor::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations allocations({src, dst}, executor->device_ordinal(),
+                                &allocator);
+
+  Thunk::PrepareParams prepare_params;
+  prepare_params.executor = executor;
+  prepare_params.buffer_allocations = &allocations;
+  ASSERT_OK(command_buffer_thunk.Prepare(prepare_params));
+
+  Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
+  ASSERT_OK(command_buffer_thunk.Initialize(
+      {executor, source, &allocations, stream.get(), stream.get()}));
+
+  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
+      run_options, allocations, stream.get(), stream.get(),
+      /*collective_params=*/nullptr, /*collective_cliques=*/nullptr,
+      /*collective_memory=*/nullptr);
+
+  ScopedWhileLoop loop("dynamic_slice_test", /*trip_count=*/2);
+  ASSERT_OK(command_buffer_thunk.ExecuteOnStream(params));
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::vector<int32_t> out(1, 0);
+  ASSERT_OK(stream->Memcpy(out.data(), dst, kDstBytes));
+  ASSERT_EQ(out, std::vector<int32_t>({10}));
+
+  loop.IncLoopIteration();
+  ASSERT_OK(command_buffer_thunk.ExecuteOnStream(params));
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  ASSERT_OK(stream->Memcpy(out.data(), dst, kDstBytes));
+  ASSERT_EQ(out, std::vector<int32_t>({20}));
 }
 
 TEST_F(DynamicSliceThunkTest,

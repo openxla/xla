@@ -26,17 +26,24 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/literal.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/command_buffer.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream_executor.h"
 
@@ -48,7 +55,7 @@ namespace gpu {
 // thunks)
 //
 // DynamicSliceThunk assumes that the slices are contiguous.
-class DynamicSliceThunk : public Thunk {
+class DynamicSliceThunk : public Command {
  public:
   // Dynamic slice offset can be either: (1) a statically known constant value
   // or (2) a truly dynamic offset that is computed on device and have to be
@@ -129,6 +136,13 @@ class DynamicSliceThunk : public Thunk {
   absl::Status Prepare(const PrepareParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override;
+  bool requires_initialization() const override;
+  bool requires_update() const override;
+  bool support_loop_unroll() const override;
 
   // Definition of a dynamic slice that extract a slice from the original buffer
   // defined by `embedded_thunk_argument` at given `offsets`.
@@ -169,6 +183,12 @@ class DynamicSliceThunk : public Thunk {
     return offset_primitive_types_;
   }
 
+  bool HasDeviceMemoryOffsets() const;
+  bool HasHostComputedOffsets() const;
+
+  absl::Status SetOrUpdateCommandBufferExecutor(
+      CommandExecutor command_executor);
+
   absl::Status WalkNested(Walker callback) override;
   absl::Status TransformNested(Transformer callback) override;
 
@@ -194,7 +214,17 @@ class DynamicSliceThunk : public Thunk {
   }
 
  private:
+  enum class OffsetEvaluationMode { kExecute, kRecord };
+
+  absl::StatusOr<absl::InlinedVector<se::DeviceAddressBase, 8>>
+  BuildSliceBuffers(const ExecuteParams& params, OffsetEvaluationMode mode,
+                    const RecordParams* record_params = nullptr);
+
+  absl::StatusOr<Literal> IndvarForCommandRecord(
+      const RecordParams& record_params) const;
+
   ThunkExecutor embedded_executor_;
+  std::optional<CommandExecutor> command_executor_;
   std::vector<std::optional<BufferAllocation::Slice>> arguments_;
   std::vector<BufferAllocation> fake_allocations_;
   std::vector<std::optional<std::vector<Offset>>> offsets_;

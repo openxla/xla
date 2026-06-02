@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -38,9 +39,12 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/STLExtras.h"
+#include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/runtime/while_loop.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
@@ -52,9 +56,11 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -181,7 +187,7 @@ DynamicSliceThunk::DynamicSliceThunk(
     std::vector<std::optional<PrimitiveType>> offset_primitive_types,
     std::optional<OffsetAsFunctionOfIndvarModulesMetadata>
         offset_as_function_of_indvar_metadata)
-    : Thunk(Kind::kDynamicSlice, thunk_info),
+    : Command(Kind::kDynamicSlice, std::move(thunk_info)),
       embedded_executor_(std::move(*embedded_thunk)),
       arguments_(arguments),
       fake_allocations_(std::move(fake_allocations)),
@@ -215,6 +221,40 @@ DynamicSliceThunk::DynamicSliceThunk(
   }
 }
 
+bool DynamicSliceThunk::HasDeviceMemoryOffsets() const {
+  for (const auto& offsets : offsets_) {
+    if (!offsets.has_value()) {
+      continue;
+    }
+    for (const Offset& offset : *offsets) {
+      if (std::holds_alternative<BufferAllocation::Slice>(offset)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool DynamicSliceThunk::HasHostComputedOffsets() const {
+  for (const auto& offsets : offsets_) {
+    if (!offsets.has_value()) {
+      continue;
+    }
+    for (const Offset& offset : *offsets) {
+      if (std::holds_alternative<HloModule*>(offset)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+absl::Status DynamicSliceThunk::SetOrUpdateCommandBufferExecutor(
+    CommandExecutor command_executor) {
+  command_executor_ = std::move(command_executor);
+  return absl::OkStatus();
+}
+
 absl::Status DynamicSliceThunk::Prepare(const PrepareParams& params) {
   for (SliceDef& slice : slices_) {
     VLOG(2) << "DynamicSliceThunk: slice: " << slice.ToString();
@@ -235,6 +275,9 @@ absl::Status DynamicSliceThunk::Prepare(const PrepareParams& params) {
   }
 
   RETURN_IF_ERROR(embedded_executor_.Prepare(params));
+  if (command_executor_.has_value()) {
+    RETURN_IF_ERROR(command_executor_->Prepare(params));
+  }
 
   if (offset_as_function_of_indvar_metadata_.has_value()) {
     Indvar(this) =
@@ -255,6 +298,9 @@ absl::Status DynamicSliceThunk::Prepare(const PrepareParams& params) {
 
 absl::Status DynamicSliceThunk::Initialize(const InitializeParams& params) {
   RETURN_IF_ERROR(embedded_executor_.Initialize(params));
+  if (command_executor_.has_value()) {
+    RETURN_IF_ERROR(command_executor_->Initialize(params));
+  }
 
   absl::MutexLock lock(mutex_);
   if (offsets_allocs_.contains(params.executor)) {
@@ -270,25 +316,80 @@ absl::Status DynamicSliceThunk::Initialize(const InitializeParams& params) {
   return absl::OkStatus();
 }
 
-absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
+bool DynamicSliceThunk::requires_initialization() const {
+  return command_executor_.has_value() &&
+         command_executor_->requires_initialization();
+}
+
+bool DynamicSliceThunk::requires_update() const {
+  return HasHostComputedOffsets() || (command_executor_.has_value() &&
+                                      command_executor_->requires_update());
+}
+
+bool DynamicSliceThunk::support_loop_unroll() const {
+  return !command_executor_.has_value() ||
+         command_executor_->support_loop_unroll();
+}
+
+absl::StatusOr<Literal> DynamicSliceThunk::IndvarForCommandRecord(
+    const RecordParams& record_params) const {
+  TF_RET_CHECK(offset_as_function_of_indvar_metadata_.has_value());
+
+  ASSIGN_OR_RETURN(
+      Literal indvar,
+      HloEvaluator().Evaluate(
+          /*module=*/*offset_as_function_of_indvar_metadata_->indvar_init,
+          /*args=*/{}));
+
+  const WhileLoopState* loop = IsInsideWhileLoop();
+  if (loop == nullptr) {
+    // CommandBufferThunk can record an initial command buffer during
+    // initialization, before a WhileThunk execution context exists. That graph
+    // is updated before execution for host-computed offsets.
+    TF_RET_CHECK(record_params.is_initialization)
+        << "Host-computed dynamic-slice offsets require a while-loop command "
+           "recording context";
+    return indvar;
+  }
+
+  for (size_t i = 0; i < loop->loop_iteration; ++i) {
+    ASSIGN_OR_RETURN(
+        Literal next_indvar,
+        HloEvaluator().Evaluate(
+            *offset_as_function_of_indvar_metadata_->indvar_update, {&indvar}));
+    indvar = std::move(next_indvar);
+  }
+  return indvar;
+}
+
+absl::StatusOr<absl::InlinedVector<se::DeviceAddressBase, 8>>
+DynamicSliceThunk::BuildSliceBuffers(const ExecuteParams& params,
+                                     OffsetEvaluationMode mode,
+                                     const RecordParams* record_params) {
   se::Stream& stream = *params.stream;
   const BufferAllocations& orig_allocations = *params.buffer_allocations;
 
   absl::InlinedVector<se::DeviceAddressBase, 8> slice_buffers(
       slices_.size(), se::DeviceAddressBase());
 
-  // Get memory allocation for copying offsets from device.
-  int64_t* offsets_alloc = [&] {
+  int64_t* offsets_alloc = nullptr;
+  if (mode == OffsetEvaluationMode::kExecute && HasDeviceMemoryOffsets()) {
     absl::MutexLock lock(mutex_);
-    return reinterpret_cast<int64_t*>(
+    offsets_alloc = reinterpret_cast<int64_t*>(
         offsets_allocs_.at(stream.parent())->address().opaque());
-  }();
+  }
 
   auto offset_value = [&](int64_t arg_idx, int64_t offset_idx) -> int64_t& {
     return offsets_alloc[offsets_allocs_base_.at(arg_idx) + offset_idx];
   };
 
-  VLOG(2) << "Execute dynamic slice thunk: slices=" << slices_.size();
+  std::optional<Literal> command_indvar;
+  if (mode == OffsetEvaluationMode::kRecord && HasHostComputedOffsets()) {
+    TF_RET_CHECK(record_params != nullptr);
+    ASSIGN_OR_RETURN(command_indvar, IndvarForCommandRecord(*record_params));
+  }
+
+  VLOG(2) << "Build dynamic-slice buffers: slices=" << slices_.size();
   for (auto [argument_idx, slice] : llvm::enumerate(slices_)) {
     // Skip arguments that do not have buffer slices (tokens).
     if (!slice.embedded_thunk_argument.has_value()) {
@@ -311,6 +412,9 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     absl::InlinedVector<int64_t, 4> slice_starts;
     slice_starts.reserve(dst_shape.dimensions().size());
+    absl::InlinedVector<int64_t, 4> slice_offset_values(
+        dst_shape.dimensions().size(), 0);
+    absl::InlinedVector<int64_t, 4> transferred_offset_indices;
 
     // Number of issues d2h transfers to copy offset values from device to
     // host.
@@ -326,21 +430,29 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
         // Forward slice offsets that are known constant values
         VLOG(2) << "  - arg " << argument_idx << "[" << offset_idx
                 << "]: constant offset = " << *const_offset;
-        offset_value(argument_idx, offset_idx) = *const_offset;
+        slice_offset_values[offset_idx] = *const_offset;
 
       } else if (HloModule** offset_module = std::get_if<HloModule*>(&offset)) {
-        ASSIGN_OR_RETURN(Literal offset, HloEvaluator().Evaluate(
-                                             **offset_module, {&Indvar(this)}));
+        Literal* indvar = mode == OffsetEvaluationMode::kRecord
+                              ? &*command_indvar
+                              : &Indvar(this);
+        ASSIGN_OR_RETURN(Literal offset,
+                         HloEvaluator().Evaluate(**offset_module, {indvar}));
         auto offset_int = LiteralUtil::LiteralAsScalarInt64(offset);
         if (offset_int.has_value()) {
-          offset_value(argument_idx, offset_idx) = *offset_int;
+          slice_offset_values[offset_idx] = *offset_int;
         } else {
           return absl::InternalError(
               absl::StrFormat("Unhandled type returned from offset module: %s",
                               offset.shape().ToString()));
         }
-        VLOG(2) << "Offset value = " << offset_value(argument_idx, offset_idx);
+        VLOG(2) << "Offset value = " << slice_offset_values[offset_idx];
       } else {
+        if (mode == OffsetEvaluationMode::kRecord) {
+          return absl::FailedPreconditionError(
+              "DynamicSliceThunk command-buffer recording does not support "
+              "device-memory offsets");
+        }
         // Transfer slice offset value from device to host.
         auto alloc_slice = std::get<BufferAllocation::Slice>(offset);
         VLOG(2) << "  - arg " << argument_idx << "[" << offset_idx
@@ -349,6 +461,7 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
         se::DeviceAddressBase offset_src =
             orig_allocations.GetDeviceAddress(alloc_slice);
         int64_t* offset_dst = &offset_value(argument_idx, offset_idx);
+        *offset_dst = 0;
 
         // Copy the `offset_idx`-th component of the offset for the
         // `argument_idx`-th argument from device to host.
@@ -356,6 +469,7 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
             offset_dst, offset_src,
             ShapeUtil::ByteSizeOfPrimitiveType(*slice.offset_primitive_type)));
         ++num_transfers;
+        transferred_offset_indices.push_back(offset_idx);
       }
     }
 
@@ -363,6 +477,10 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
     if (num_transfers > 0) {
       VLOG(2) << "Wait for completion of " << num_transfers << " transfer";
       RETURN_IF_ERROR(stream.BlockHostUntilDone());
+      for (int64_t offset_idx : transferred_offset_indices) {
+        slice_offset_values[offset_idx] =
+            offset_value(argument_idx, offset_idx);
+      }
     }
 
     // Clamp start indices:
@@ -372,10 +490,10 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
              llvm::zip(src_shape.dimensions(), dst_shape.dimensions()))) {
       auto [src_dim, dst_dim] = values;
       int64_t start_index =
-          std::min(std::max(offset_value(argument_idx, offset_idx), int64_t{0}),
+          std::min(std::max(slice_offset_values[offset_idx], int64_t{0}),
                    src_dim - dst_dim);
       VLOG(2) << "arg idx: " << argument_idx << " offset_idx " << offset_idx
-              << " with offset_value " << offset_value(argument_idx, offset_idx)
+              << " with offset_value " << slice_offset_values[offset_idx]
               << " start_idx: " << start_index << " src_dim: " << src_dim
               << " dst_dim:" << dst_dim;
       slice_starts.push_back(start_index);
@@ -398,6 +516,14 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
     slice_buffers[argument_idx] =
         argument_buffer.GetByteSlice(new_offset, new_size);
   }
+
+  return slice_buffers;
+}
+
+absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
+  ASSIGN_OR_RETURN(auto slice_buffers,
+                   BuildSliceBuffers(params, OffsetEvaluationMode::kExecute));
+  const BufferAllocations& orig_allocations = *params.buffer_allocations;
 
   // Safe to create a local BufferAllocations here since buffers are only slices
   // of bigger ones allocated elsewhere.
@@ -426,6 +552,79 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
   return absl::OkStatus();
 }
 
+absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceThunk::Record(
+    const Thunk::ExecuteParams& execute_params,
+    const RecordParams& record_params, RecordAction record_action,
+    se::CommandBuffer* command_buffer) {
+  if (!command_executor_.has_value()) {
+    return absl::FailedPreconditionError(
+        "DynamicSliceThunk command executor is not initialized");
+  }
+  if (command_executor_->empty()) {
+    return nullptr;
+  }
+
+  auto create_params =
+      [&](BufferAllocations& slice_allocations) -> Thunk::ExecuteParams {
+    return Thunk::ExecuteParams::CloneWithNewAllocations(execute_params,
+                                                         slice_allocations);
+  };
+
+  auto child_record_params = [&]() {
+    Command::RecordParams params = record_params;
+    params.updated_allocs = std::nullopt;
+    params.command_buffer_update_mode = DebugOptions::ALWAYS_UPDATE;
+    return params;
+  };
+
+  if (auto* create = std::get_if<RecordCreate>(&record_action)) {
+    return command_buffer->CreateChildCommand(
+        [&, this](se::CommandBuffer* child_command_buffer) -> absl::Status {
+          ASSIGN_OR_RETURN(
+              auto slice_buffers,
+              BuildSliceBuffers(execute_params, OffsetEvaluationMode::kRecord,
+                                &record_params));
+          const BufferAllocations& orig_allocations =
+              *execute_params.buffer_allocations;
+          BufferAllocations slice_allocations(
+              slice_buffers, orig_allocations.device_ordinal(),
+              orig_allocations.memory_allocator());
+          Thunk::ExecuteParams new_params = create_params(slice_allocations);
+          Command::RecordParams new_record_params = child_record_params();
+          RETURN_IF_ERROR(command_executor_
+                              ->RecordCreate(new_params, new_record_params,
+                                             child_command_buffer,
+                                             /*dependencies=*/{})
+                              .status());
+          return absl::OkStatus();
+        },
+        create->dependencies);
+  }
+
+  if (auto* update = std::get_if<RecordUpdate>(&record_action)) {
+    RETURN_IF_ERROR(command_buffer->UpdateChildCommand(
+        update->command,
+        [&, this](se::CommandBuffer* child_command_buffer) -> absl::Status {
+          ASSIGN_OR_RETURN(
+              auto slice_buffers,
+              BuildSliceBuffers(execute_params, OffsetEvaluationMode::kRecord,
+                                &record_params));
+          const BufferAllocations& orig_allocations =
+              *execute_params.buffer_allocations;
+          BufferAllocations slice_allocations(
+              slice_buffers, orig_allocations.device_ordinal(),
+              orig_allocations.memory_allocator());
+          Thunk::ExecuteParams new_params = create_params(slice_allocations);
+          Command::RecordParams new_record_params = child_record_params();
+          return command_executor_->RecordUpdate(new_params, new_record_params,
+                                                 child_command_buffer);
+        }));
+    return update->command;
+  }
+
+  return absl::InternalError("Invalid record action");
+}
+
 absl::Status DynamicSliceThunk::WalkNested(Walker callback) {
   return embedded_executor_.thunks().WalkNested(callback);
 }
@@ -437,14 +636,24 @@ absl::Status DynamicSliceThunk::TransformNested(Transformer callback) {
 
 Thunk::BufferUses DynamicSliceThunk::buffer_uses() const {
   Thunk::BufferUses res;
-  res.reserve(slices_.size());
-  for (const SliceDef& slice : slices_) {
-    if (!slice.embedded_thunk_argument.has_value()) {
-      continue;
-    }
-    res.push_back(
-        BufferUse::Read(*slice.embedded_thunk_argument, *slice.orig_shape));
+  res.reserve(slices_.size() + embedded_executor_.thunks().size());
+  for (const std::unique_ptr<Thunk>& thunk : embedded_executor_.thunks()) {
+    thunk->Walk([&](const Thunk* nested) {
+      for (const BufferUse& use : nested->buffer_uses()) {
+        BufferAllocation::Index index = use.slice().index();
+        if (index < 0 || index >= arguments_.size() ||
+            !arguments_[index].has_value()) {
+          continue;
+        }
+        Shape shape = orig_shapes_[index].has_value() ? *orig_shapes_[index]
+                                                      : use.shape();
+        res.push_back(BufferUse(*arguments_[index], use.access(),
+                                use.content_validity(), shape));
+      }
+    });
+  }
 
+  for (const SliceDef& slice : slices_) {
     if (!slice.offsets.has_value()) {
       continue;
     }
