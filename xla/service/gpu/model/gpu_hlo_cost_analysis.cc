@@ -19,6 +19,7 @@ limitations under the License.
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -30,10 +31,10 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "re2/re2.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/map_util.h"
 #include "xla/service/collective_ops_utils.h"
@@ -44,11 +45,7 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -345,7 +342,40 @@ absl::Status GpuHloCostAnalysis::HandleCustomCall(
     return absl::OkStatus();
   }
 
-  return HloCostAnalysis::HandleCustomCall(custom_call);
+  RETURN_IF_ERROR(HloCostAnalysis::HandleCustomCall(custom_call));
+
+  // Extract custom cost estimates from the backend config, if present.
+  // The cost estimate might be encoded as a structured GpuBackendConfig proto
+  // or as a raw JSON-like string (e.g., when passed from frontends like JAX).
+  // In the latter case, we fall back to parsing the string using regexes.
+  auto gpu_config = custom_call->backend_config<gpu::GpuBackendConfig>();
+  if (gpu_config.ok() && gpu_config->has_custom_call_cost_estimate()) {
+    const auto& cost = gpu_config->custom_call_cost_estimate();
+    if (cost.has_flops()) {
+      current_properties_[kFlopsKey] = cost.flops();
+    }
+    if (cost.has_bytes_accessed()) {
+      current_properties_[kBytesAccessedKey] = cost.bytes_accessed();
+    }
+  } else {
+    std::string backend_config_str = custom_call->raw_backend_config_string();
+    if (absl::StrContains(backend_config_str, "custom_call_cost_estimate")) {
+      int64_t flops;
+      int64_t bytes_accessed;
+      static const LazyRE2 flops_re = {"\"?flops\"?\\s*[=:]\\s*\"?([0-9]+)\"?"};
+      if (RE2::PartialMatch(backend_config_str, *flops_re, &flops)) {
+        current_properties_[kFlopsKey] = flops;
+      }
+      static const LazyRE2 bytes_accessed_re = {
+          "\"?bytes_accessed\"?\\s*[=:]\\s*\"?([0-9]+)\"?"};
+      if (RE2::PartialMatch(backend_config_str, *bytes_accessed_re,
+                            &bytes_accessed)) {
+        current_properties_[kBytesAccessedKey] = bytes_accessed;
+      }
+    }
+  }
+
+  return absl::OkStatus();
 }
 
 int64_t GpuHloCostAnalysis::GetConvolutionFlops(
