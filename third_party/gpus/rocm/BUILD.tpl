@@ -220,7 +220,9 @@ rocm_lib_import(
     name = "rocblas",
     data = glob([
         "%{rocm_root}/lib/librocblas.so*",
-        "%{rocm_root}/lib/rocblas/**",
+    ]) + glob([
+        "%{rocm_root}/lib/rocblas/library/*" + arch + "*"
+        for arch in rocm_gpu_architectures()
     ]),
     interface_library = "%{rocm_root}/lib/librocblas.so",
     deps = [
@@ -410,9 +412,11 @@ rocm_lib_import(
 rocm_lib_import(
     name = "hipblaslt",
     data = glob([
-        "%{rocm_root}/lib/hipblaslt/**",
         "%{rocm_root}/lib/libhipblaslt.so*",
         "%{rocm_root}/lib/librocroller.so*",
+    ]) + glob([
+        "%{rocm_root}/lib/hipblaslt/library/*" + arch + "*"
+        for arch in rocm_gpu_architectures()
     ]),
     interface_library = "%{rocm_root}/lib/libhipblaslt.so",
     deps = [
