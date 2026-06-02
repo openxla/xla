@@ -83,6 +83,7 @@ CommandBufferConfig GetCommandBufferConfig(
   }
 
   CommandBufferConfig config{std::move(commands), device_info,
+                             debug_options.xla_gpu_command_buffer_update_mode(),
                              num_local_devices};
 
   // Erase command buffer cmd types that are not supported by the gpu runtime.
@@ -266,6 +267,17 @@ bool IsConvertible(const RaggedAllToAllThunk& ra2a_thunk,
 // collectives are not enabled for command buffer capture.
 static bool IsConvertible(const DynamicSliceThunk& dynamic_slice_thunk,
                           const CommandBufferConfig& config) {
+  if (dynamic_slice_thunk.HasDeviceMemoryOffsets()) {
+    VLOG(2) << "DynamicSliceThunk is not convertible to command buffers "
+               "because device-memory offsets are not supported";
+    return false;
+  }
+  if (config.update_mode == DebugOptions::NEVER_UPDATE &&
+      dynamic_slice_thunk.HasHostComputedOffsets()) {
+    VLOG(2) << "DynamicSliceThunk with host-computed offsets is not "
+               "convertible in NEVER_UPDATE command-buffer mode";
+    return false;
+  }
   return ThunkSequenceIsConvertible(
       dynamic_slice_thunk.get_embedded_executor().thunks(), config);
 }

@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/convolution_thunk.h"
 #include "xla/backends/gpu/runtime/cudnn_thunk.h"
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
+#include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/replica_id_thunk.h"
@@ -152,6 +153,40 @@ std::unique_ptr<DeviceToDeviceCopyThunk> CreateCopyThunk(
   return std::make_unique<DeviceToDeviceCopyThunk>(
       Thunk::ThunkInfo(), ShapedSlice{slice0, shape},
       ShapedSlice{slice0, shape}, 1024);
+}
+
+std::unique_ptr<DynamicSliceThunk> CreateDynamicSliceCopyThunk(
+    const BufferAllocation& src_alloc, const BufferAllocation& dst_alloc,
+    std::vector<DynamicSliceThunk::Offset> src_offsets) {
+  constexpr int64_t kSrcBytes = sizeof(int32_t) * 16;
+  constexpr int64_t kSliceBytes = sizeof(int32_t) * 4;
+
+  std::vector<BufferAllocation> fake_allocations;
+  fake_allocations.reserve(2);
+  fake_allocations.emplace_back(/*index=*/0, kSliceBytes, /*color=*/0);
+  BufferAllocation::Slice fake_src(&fake_allocations.back(), 0, kSliceBytes);
+  fake_allocations.emplace_back(/*index=*/1, kSliceBytes, /*color=*/0);
+  BufferAllocation::Slice fake_dst(&fake_allocations.back(), 0, kSliceBytes);
+
+  Shape src_shape = ShapeUtil::MakeShape(S32, {16});
+  Shape slice_shape = ShapeUtil::MakeShape(S32, {4});
+
+  ThunkSequence embedded;
+  embedded.push_back(std::make_unique<DeviceToDeviceCopyThunk>(
+      Thunk::ThunkInfo(), ShapedSlice{fake_src, slice_shape},
+      ShapedSlice{fake_dst, slice_shape}, kSliceBytes));
+
+  BufferAllocation::Slice src_slice(&src_alloc, 0, kSrcBytes);
+  BufferAllocation::Slice dst_slice(&dst_alloc, 0, kSliceBytes);
+  return std::make_unique<DynamicSliceThunk>(
+      Thunk::ThunkInfo(), std::make_unique<ThunkSequence>(std::move(embedded)),
+      std::vector<std::optional<BufferAllocation::Slice>>{src_slice, dst_slice},
+      std::move(fake_allocations),
+      std::vector<std::optional<std::vector<DynamicSliceThunk::Offset>>>{
+          std::move(src_offsets), std::nullopt},
+      std::vector<std::optional<Shape>>{src_shape, std::nullopt},
+      std::vector<std::optional<Shape>>{slice_shape, std::nullopt},
+      std::vector<std::optional<PrimitiveType>>{S64, std::nullopt});
 }
 
 std::unique_ptr<CublasLtMatmulThunk> CreateCublasLtMatmulThunk(
@@ -329,6 +364,69 @@ TEST(CommandBufferConversionPassTest, ConvertsToCommandBufferThunk) {
   const auto& thunks_in_command_buffer =
       command_buffer_thunk->thunks()->thunks();
   EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kCopy));
+}
+
+TEST(CommandBufferConversionPassTest,
+     ConvertsDynamicSliceThunkWithConstantOffsetsToCommandBufferThunk) {
+  ThunkSequence thunks;
+
+  BufferAllocation src_alloc(0, sizeof(int32_t) * 16, 0);
+  BufferAllocation dst_alloc(1, sizeof(int32_t) * 4, 0);
+  thunks.push_back(CreateDynamicSliceCopyThunk(
+      src_alloc, dst_alloc, std::vector<DynamicSliceThunk::Offset>{2}));
+
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(
+      DebugOptions::DYNAMIC_SLICE_FUSION);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+
+  se::DeviceDescription device_info;
+  FakeErrorAllocator allocator;
+  CommandBufferConversionPass pass{"test"};
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(true));
+
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer));
+
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(thunks[0].get());
+  const auto& thunks_in_command_buffer =
+      command_buffer_thunk->thunks()->thunks();
+  EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kDynamicSlice));
+}
+
+TEST(CommandBufferConversionPassTest,
+     DoesNotConvertDynamicSliceThunkWithDeviceMemoryOffsets) {
+  ThunkSequence thunks;
+
+  BufferAllocation src_alloc(0, sizeof(int32_t) * 16, 0);
+  BufferAllocation dst_alloc(1, sizeof(int32_t) * 4, 0);
+  BufferAllocation offset_alloc(2, sizeof(int64_t), 0);
+  thunks.push_back(CreateDynamicSliceCopyThunk(
+      src_alloc, dst_alloc,
+      std::vector<DynamicSliceThunk::Offset>{
+          BufferAllocation::Slice(&offset_alloc, 0, sizeof(int64_t))}));
+
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(
+      DebugOptions::DYNAMIC_SLICE_FUSION);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+
+  se::DeviceDescription device_info;
+  FakeErrorAllocator allocator;
+  CommandBufferConversionPass pass{"test"};
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(false));
+
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kDynamicSlice));
 }
 
 TEST(CommandBufferConversionPassTest, PartiallyConvertsToCommandBufferThunk) {
