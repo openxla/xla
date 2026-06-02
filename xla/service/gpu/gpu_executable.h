@@ -334,17 +334,11 @@ class GpuExecutable : public Executable {
     // VMM allocator that owns deferred mappings into `va_reservation`.
     se::DeviceAddressVmmAllocator* vmm_allocator = nullptr;
 
-    // Command buffer update policy state. Static modes initialize this
-    // immediately; ADAPTIVE_UPDATE captures warmup addresses first.
+    // Command buffer update policy state.
     bool update_policy_ready = false;
     std::vector<BufferAllocation::Index> policy_va_remapped_indices;
     std::vector<BufferAllocation::Index> policy_dynamic_alloc_indices;
     absl::btree_set<BufferAllocation::Index> policy_va_remapped_index_set;
-
-    // ADAPTIVE_UPDATE warmup state. The first execution captures warmup
-    // addresses; the following execution freezes the policy above.
-    bool adaptive_warmup_captured = false;
-    std::vector<se::DeviceAddressBase> adaptive_warmup_addresses;
 
     // Returns the reservation offset recorded for `idx` in
     // `allocation_to_reservation_offset`, or an Internal error if `idx` is not
@@ -409,7 +403,6 @@ class GpuExecutable : public Executable {
       const VaRemapExecutionState* va_remap_execution_state) const;
 
   absl::Status UpdateCommandBufferAllocationPolicy(
-      const BufferAllocations& owning_buffer_allocations,
       VaRemapExecutionState& va_remap_execution_state);
 
   Thunk::CommandBufferUpdateInfo GetCommandBufferUpdateInfo(

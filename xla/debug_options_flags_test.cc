@@ -57,6 +57,22 @@ TEST(DebugOptions, GetDebugOptionsFromProtoAndFlags_WithProto) {
   EXPECT_EQ(options.xla_backend_optimization_level(), 1);
 }
 
+TEST(DebugOptionsDeathTest, CommandBufferAdaptiveUpdateModeRejected) {
+  int* pargc;
+  std::vector<char*>* pargv;
+  ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+  tsl::setenv("XLA_FLAGS",
+              "--xla_gpu_command_buffer_update_mode=ADAPTIVE_UPDATE", 1);
+
+  DebugOptions options;
+  std::vector<tsl::Flag> flag_list;
+  MakeDebugOptionsFlags(&flag_list, &options);
+
+  EXPECT_DEATH(ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_list),
+               "Flag parsing failed");
+  tsl::unsetenv("XLA_FLAGS");
+}
+
 TEST(DebugOptions, AllFieldsHavePresence) {
   absl::flat_hash_set<std::string> fields_missing_presence;
 
