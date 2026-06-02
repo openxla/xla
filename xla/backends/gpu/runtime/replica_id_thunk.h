@@ -49,7 +49,7 @@ class ReplicaOrPartitionIdThunk : public Command {
  protected:
   ReplicaOrPartitionIdThunk(Kind kind, ThunkInfo thunk_info,
                             const BufferAllocation::Slice& dest)
-      : Command(CommandType::kComputationIdCmd, kind, std::move(thunk_info)),
+      : Command(kind, std::move(thunk_info)),
         dest_(dest) {}
 
   BufferUses buffer_uses() const override {

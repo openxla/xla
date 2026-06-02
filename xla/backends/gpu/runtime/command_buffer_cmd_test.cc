@@ -84,7 +84,7 @@ static constexpr auto serialize =
 // buffer usage vector to the command buffer cmd commands.
 struct TestOnlyCommandBufferCmd : public Command {
   explicit TestOnlyCommandBufferCmd(Command::BufferUses buffers)
-      : Command(CommandType::kUnknownCmd, {}), buffers(buffers) {}
+      : Command(Thunk::Kind::kCommand), buffers(buffers) {}
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
@@ -99,7 +99,7 @@ struct TestOnlyCommandBufferCmd : public Command {
 
 class FakeCmd : public Command {
  public:
-  explicit FakeCmd() : Command(CommandType::kUnknownCmd, {}) {}
+  explicit FakeCmd() : Command(Thunk::Kind::kCommand) {}
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
@@ -165,7 +165,7 @@ TEST(CommandBufferCmdTest, SerializeExecution) {
   CommandSequence commands;
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
 
@@ -186,7 +186,7 @@ TEST(CommandBufferCmdTest, NoReadBarrier) {
   CommandSequence commands;
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
 
@@ -207,7 +207,7 @@ TEST(CommandBufferCmdTest, NoWriteBarrier) {
   CommandSequence commands;
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
 
@@ -231,7 +231,7 @@ TEST(CommandBufferCmdTest, WriteConflictBarrier) {
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
   commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use2});
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
 
@@ -274,12 +274,12 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
   commands.Append(KernelThunk::MakeKernelThunk(
       "AddI32", absl::MakeConstSpan(args), args_access, LaunchDimensions(1, 4),
       /*shmem_bytes=*/0));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
 
   // Initialize command commands and load device kernels.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::vector<uint8_t> fatbin,
       se::gpu::GetGpuTestKernelsFatbin(stream_executor->GetPlatform()->Name()));
   Thunk::ExecutableSource source = {/*text=*/{},
@@ -298,7 +298,7 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
   CommandStateManager state;
   Command::RecordParams record_params = {state};
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       stream_executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
   TF_ASSERT_OK(executor.Record(params, record_params, command_buffer.get()));
@@ -350,12 +350,12 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
       /*shmem_bytes=*/0));
   commands.back()->set_priority(se::StreamPriority::Highest);
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
 
   // Initialize command commands and load device kernels.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::vector<uint8_t> fatbin,
       se::gpu::GetGpuTestKernelsFatbin(stream_executor->GetPlatform()->Name()));
   Thunk::ExecutableSource source = {/*text=*/{},
@@ -374,7 +374,7 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
   CommandStateManager state;
   Command::RecordParams record_params = {state};
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       stream_executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
   TF_ASSERT_OK(executor.Record(params, record_params, command_buffer.get()));
@@ -424,11 +424,11 @@ TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {
       return absl::OkStatus();
     };
 
-    TF_ASSERT_OK_AND_ASSIGN(auto* command_buffer0,
+    ASSERT_OK_AND_ASSIGN(auto* command_buffer0,
                             traced_cmd_buffer.GetOrTraceCommandBuffer(
                                 &allocations, executor, stream.get(), trace));
 
-    TF_ASSERT_OK_AND_ASSIGN(auto* command_buffer1,
+    ASSERT_OK_AND_ASSIGN(auto* command_buffer1,
                             traced_cmd_buffer.GetOrTraceCommandBuffer(
                                 &allocations, executor, stream.get(), trace));
 
@@ -441,7 +441,7 @@ TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {
     se::DeviceAddressBase mem2(reinterpret_cast<void*>(0x23456701));
     allocations = BufferAllocations({mem0, mem2}, 0, &allocator);
 
-    TF_ASSERT_OK_AND_ASSIGN(auto* command_buffer2,
+    ASSERT_OK_AND_ASSIGN(auto* command_buffer2,
                             traced_cmd_buffer.GetOrTraceCommandBuffer(
                                 &allocations, executor, stream.get(), trace));
 
@@ -451,7 +451,7 @@ TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {
     // Check that we keep first command buffer in cache.
     allocations = BufferAllocations({mem0, mem1}, 0, &allocator);
 
-    TF_ASSERT_OK_AND_ASSIGN(auto* command_buffer3,
+    ASSERT_OK_AND_ASSIGN(auto* command_buffer3,
                             traced_cmd_buffer.GetOrTraceCommandBuffer(
                                 &allocations, executor, stream.get(), trace));
     ASSERT_EQ(command_buffer0, command_buffer3);
@@ -461,7 +461,7 @@ TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {
     // new.
     allocations = BufferAllocations({mem0, mem0}, 0, &allocator);
 
-    TF_ASSERT_OK_AND_ASSIGN(auto* command_buffer4,
+    ASSERT_OK_AND_ASSIGN(auto* command_buffer4,
                             traced_cmd_buffer.GetOrTraceCommandBuffer(
                                 &allocations, executor, stream.get(), trace));
     ASSERT_NE(command_buffer4, command_buffer3);
@@ -471,7 +471,7 @@ TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {
     // Check that we still keep the previous graph in cache.
     allocations = BufferAllocations({mem0, mem1}, 0, &allocator);
 
-    TF_ASSERT_OK_AND_ASSIGN(auto* command_buffer5,
+    ASSERT_OK_AND_ASSIGN(auto* command_buffer5,
                             traced_cmd_buffer.GetOrTraceCommandBuffer(
                                 &allocations, executor, stream.get(), trace));
     ASSERT_EQ(command_buffer0, command_buffer5);
@@ -516,7 +516,7 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
                                        slice_a);
   CommandSequence seq_a;
   seq_a.Append(&memset_a_thunk);
-  TF_ASSERT_OK_AND_ASSIGN(CommandExecutor exec_a,
+  ASSERT_OK_AND_ASSIGN(CommandExecutor exec_a,
                           CommandExecutor::Create(std::move(seq_a), serialize));
 
   // Executor B: b = a + a (launch kernel AddI32)
@@ -532,7 +532,7 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
                                      args_access, LaunchDimensions(1, 4),
                                      /*shmem_bytes=*/0));
   }
-  TF_ASSERT_OK_AND_ASSIGN(CommandExecutor exec_b,
+  ASSERT_OK_AND_ASSIGN(CommandExecutor exec_b,
                           CommandExecutor::Create(std::move(seq_b), serialize));
 
   // Executor C: c = b (memcpy)
@@ -540,11 +540,11 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
   seq_c.Emplace<DeviceToDeviceCopyThunk>(
       Thunk::ThunkInfo(), ShapedSlice{slice_b, shape},
       ShapedSlice{slice_c, shape}, byte_length);
-  TF_ASSERT_OK_AND_ASSIGN(CommandExecutor exec_c,
+  ASSERT_OK_AND_ASSIGN(CommandExecutor exec_c,
                           CommandExecutor::Create(std::move(seq_c), serialize));
 
   // Initialize executors (B needs kernel fatbin).
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::vector<uint8_t> fatbin,
       se::gpu::GetGpuTestKernelsFatbin(stream_executor->GetPlatform()->Name()));
   Thunk::ExecutableSource source_empty = {/*text=*/{}, /*binary=*/{}};
@@ -567,23 +567,23 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
   Command::RecordParams record_params = {state};
 
   // Create a primary command buffer and record A -> B -> C with dependencies.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       stream_executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
 
   // Record A (no deps)
   // Record A, B, C with dependencies using the Record API; finalize on B.
-  TF_ASSERT_OK_AND_ASSIGN(auto a_sinks,
+  ASSERT_OK_AND_ASSIGN(auto a_sinks,
                           exec_a.RecordCreate(exec_params, record_params,
                                               command_buffer.get(), {}));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto b_sinks,
+  ASSERT_OK_AND_ASSIGN(auto b_sinks,
                           exec_b.RecordCreate(exec_params, record_params,
                                               command_buffer.get(), a_sinks));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto c_sinks,
+  ASSERT_OK_AND_ASSIGN(auto c_sinks,
                           exec_c.RecordCreate(exec_params, record_params,
-                                              command_buffer.get(), b_sinks))
+                                              command_buffer.get(), b_sinks));
 
   // Finalize command buffer after recording multiple iterations.
   TF_ASSERT_OK(command_buffer->Finalize());
@@ -603,7 +603,7 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
 static void BM_GetOrTraceCommandBuffer(benchmark::State& state) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   BufferAllocation alloc0(/*index=*/0, /*size=*/1024, /*color=*/0);
   BufferAllocation alloc1(/*index=*/1, /*size=*/1024, /*color=*/0);
