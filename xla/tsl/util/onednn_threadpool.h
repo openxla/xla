@@ -104,7 +104,7 @@ class OneDnnThreadPool : public threadpool_iface {
   virtual void wait() override {}
 #else
   // Return ASYNCHRONOUS to work with current onednn version.
-  // TODO(intel-tf): remove this ifdefing block after making the async oneDNN default
+  // TODO(intel-tf): remove this ifdefing block after making oneDNN v3.11 (async support) default
   uint64_t get_flags() const override { return ASYNCHRONOUS; }
 #endif  // ENABLE_ONEDNN_ASYNC
   void parallel_for(int n, const std::function<void(int, int)>& fn) override {
@@ -132,7 +132,7 @@ class OneDnnThreadPool : public threadpool_iface {
     if (use_caller_thread) {
 #ifdef ENABLE_ONEDNN_ASYNC
       // Add barriers for synchronization when ENABLE_ONEDNN_ASYNC is defined.
-      // TODO(intel-tf): remove this ifdefing block after making the async oneDNN default
+      // TODO(intel-tf): remove this ifdefing block after making oneDNN v3.11 (async support) default
       absl::BlockingCounter counter(njobs_to_schedule + 1);
       for (int i = 0; i < njobs_to_schedule; i++) {
         eigen_interface_->ScheduleWithHint(
