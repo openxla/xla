@@ -234,12 +234,14 @@ cc_library(
 
 alias(
     name = "mkl_dnn",
-    actual = if_sycl_build_is_configured(":onednn_gpu", ":onednn_cpu"),
+    actual = if_sycl_build_is_configured(":onednn_gpu_and_cpu", ":onednn_cpu"),
     visibility = ["//visibility:public"],
 )
 
 cc_library(
     name = "onednn_cpu",
+    # Builds oneDNN with CPU support only (no GPU kernels).
+    # Used when SYCL is not configured. See :onednn_gpu_and_cpu for GPU variant.
     srcs = glob(
         [
             "src/common/*.cpp",
@@ -288,7 +290,8 @@ cc_library(
 )
 
 sycl_library(
-    name = "onednn_gpu",
+    name = "onednn_gpu_and_cpu",
+    # Builds oneDNN with both CPU and GPU (Intel) support using SYCL runtime.
     srcs = glob(
         [
             "src/common/*.cpp",

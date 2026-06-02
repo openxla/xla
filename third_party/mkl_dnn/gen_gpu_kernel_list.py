@@ -19,9 +19,14 @@ import re
 import os
 import sys
 
-is_v2 = False
+IS_V2 = False
 
 class Kernel(object):
+  """Represents a GPU kernel and its associated metadata.
+
+  This class processes OpenCL kernel files and converts
+  them into C++ source code with embedded string literals.
+  """
   def __init__(self, path):
     self.extern_ = self._parse_extern(path)
     self.kernels_ = self._parse_kernels(path, self.extern_)
@@ -30,7 +35,7 @@ class Kernel(object):
   def extern(self):
     extern_prefix = "extern const char *"
     extern_suffix = "_kernel;"
-    if not is_v2:
+    if not IS_V2:
       extern_suffix =  "_kernel[];"
     return extern_prefix + self.extern_ + extern_suffix
 
@@ -58,7 +63,7 @@ class Kernel(object):
     dir1 = os.path.basename(dir)
     path = os.path.basename(path)
     file_name, _ = os.path.splitext(path)
-    if is_v2:
+    if IS_V2:
       file_name = dir1 + "_" + file_name
     return file_name
 
@@ -86,7 +91,7 @@ class Kernel(object):
             ret.extend(inc_lines)
             break
         else:
-          if is_v2:
+          if IS_V2:
             line = line.strip()
             line = line.replace("\n", "")
             quoted_line = 'R"==({})==""\\n"'.format(line)
@@ -100,6 +105,12 @@ class Kernel(object):
     return ret
 
 class Header(Kernel):
+  """Represents a GPU header and its associated metadata.
+
+  This class extends Kernel to handle header files, which
+  are processed similarly but have different naming conventions
+  and content formatting requirements.
+  """
   def __init__(self, path):
     self.extern_ = self._parse_extern(path)
     self.kernels_ = self._parse_kernels(path, self.extern_)
@@ -127,6 +138,12 @@ class Header(Kernel):
     return '        "{}",'.format(header_path)
 
 class KernelList(object):
+  """Represents a collection of GPU kernels and headers.
+
+  This class manages the discovery and processing of OpenCL kernel
+  and header files, and provides methods to generate C++ code with
+  embedded source as string literals.
+  """
   def __init__(self, folder, header_dir):
     self.kernels_ = []
     self.headers_ = []
@@ -135,7 +152,7 @@ class KernelList(object):
     for clf in cl_files:
       self.kernels_.append(Kernel(clf))
 
-    if is_v2:
+    if IS_V2:
       header_files = self._get_header_files(header_dir)
       for hf in header_files:
         self.headers_.append(Header(hf))
@@ -150,7 +167,7 @@ class KernelList(object):
     externs_content = '\n'.join(externs)
     entries_content = '\n'.join(entries)
 
-    if is_v2:
+    if IS_V2:
       header_externs = []
       header_values = ['\n']
       header_names = ['\n']
@@ -170,7 +187,7 @@ class KernelList(object):
       content = f.read()
       content = content.replace('@KER_LIST_EXTERN@', externs_content)
       content = content.replace('@KER_LIST_ENTRIES@', entries_content)
-      if is_v2:
+      if IS_V2:
         content = content.replace('@KER_HEADERS_EXTERN@', header_externs_content)
         content = content.replace('@KER_HEADERS@', header_values_content)
         content = content.replace('@KER_HEADER_NAMES@', header_names_content)
@@ -238,7 +255,7 @@ namespace intel {{
 }}
         """
 
-    if not is_v2:
+    if not IS_V2:
       header = """
 namespace dnnl {{
 namespace impl {{
@@ -276,6 +293,7 @@ namespace intel {{
 
 
 class FilesHelper(object):
+  """Helper class for managing file paths for kernel generation."""
   def __init__(self, in_file, out_dir):
     """Initialize path manager for kernel generation.
 
@@ -321,8 +339,8 @@ def enable_v2(in_file):
   with open(in_file, "r") as f:
     for line in f.readlines():
       if "KER_HEADERS" in line:
-        global is_v2
-        is_v2 = True
+        global IS_V2
+        IS_V2 = True
         break
 
 def main():
@@ -343,7 +361,7 @@ def main():
                               files_helper.gen_kernel_list_cpp)
     kernel_list.generate_kernel(files_helper.inc_dirs, files_helper.out_root,
                                 files_helper.out_subfolder)
-  if only_gen_header and is_v2:
+  if only_gen_header and IS_V2:
     kernel_list.generate_header(files_helper.inc_dirs, files_helper.out_root,
                                 files_helper.header_subfolder)
 
