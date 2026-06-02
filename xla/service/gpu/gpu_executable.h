@@ -432,7 +432,6 @@ class GpuExecutable : public Executable {
       const VaRemapExecutionState* va_remap_execution_state) const;
 
   absl::Status UpdateCommandBufferAllocationPolicy(
-      const BufferAllocations& owning_buffer_allocations,
       VaRemapExecutionState& va_remap_execution_state);
 
   Thunk::CommandBufferUpdateInfo GetCommandBufferUpdateInfo(

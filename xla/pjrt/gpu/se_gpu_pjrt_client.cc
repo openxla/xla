@@ -2226,7 +2226,7 @@ StreamExecutorGpuClient::RunAsync(
   std::optional<gpu::Thunk::CommandBufferUpdateInfo> command_buffer_update_info;
   if (va_remap_execution_state != nullptr) {
     RETURN_IF_ERROR(gpu_exec->UpdateCommandBufferAllocationPolicy(
-        buffer_allocations, *va_remap_execution_state));
+        *va_remap_execution_state));
     command_buffer_update_info.emplace(
         gpu_exec->GetCommandBufferUpdateInfo(*va_remap_execution_state));
     absl::StatusOr<gpu::BufferAllocations> execution_buffer_allocations_or =

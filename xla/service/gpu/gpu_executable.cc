@@ -1192,9 +1192,20 @@ GpuExecutable::MaybeCreateVaRemapExecutionState(
     se::DeviceAddressAllocator* const memory_allocator, int device_ordinal,
     std::optional<VaRemapExecutionState>& state_storage,
     std::unique_ptr<absl::MutexLock>& va_remap_lock) {
-  if (command_buffer_allocation_indexes_.empty() || !has_module() ||
-      module_config().debug_options().xla_gpu_command_buffer_update_mode() ==
-          DebugOptions::ALWAYS_UPDATE) {
+  if (!has_module()) {
+    return nullptr;
+  }
+
+  DebugOptions::CommandBufferUpdateMode update_mode =
+      module_config().debug_options().xla_gpu_command_buffer_update_mode();
+  if (update_mode == DebugOptions::ALWAYS_UPDATE) {
+    return nullptr;
+  }
+  if (update_mode != DebugOptions::NEVER_UPDATE &&
+      update_mode != DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
+    return Internal("Unsupported command buffer update mode: %d", update_mode);
+  }
+  if (command_buffer_allocation_indexes_.empty()) {
     return nullptr;
   }
 
@@ -1329,7 +1340,6 @@ bool GpuExecutable::ShouldVaRemapAllocation(
 }
 
 absl::Status GpuExecutable::UpdateCommandBufferAllocationPolicy(
-    const BufferAllocations& /*owning_buffer_allocations*/,
     VaRemapExecutionState& va_remap_execution_state) {
   if (!has_module()) {
     return absl::OkStatus();
@@ -1341,6 +1351,11 @@ absl::Status GpuExecutable::UpdateCommandBufferAllocationPolicy(
   if (update_mode == DebugOptions::ALWAYS_UPDATE ||
       va_remap.update_policy_ready) {
     return absl::OkStatus();
+  }
+
+  if (update_mode != DebugOptions::NEVER_UPDATE &&
+      update_mode != DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
+    return Internal("Unsupported command buffer update mode: %d", update_mode);
   }
 
   va_remap.policy_va_remapped_indices.assign(
@@ -1785,8 +1800,8 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   const BufferAllocations* execution_buffers = &owning_buffer_allocations;
   std::optional<Thunk::CommandBufferUpdateInfo> command_buffer_update_info;
   if (va_remap_execution_state != nullptr) {
-    RETURN_IF_ERROR(UpdateCommandBufferAllocationPolicy(
-        owning_buffer_allocations, *va_remap_execution_state));
+    RETURN_IF_ERROR(
+        UpdateCommandBufferAllocationPolicy(*va_remap_execution_state));
     command_buffer_update_info.emplace(
         GetCommandBufferUpdateInfo(*va_remap_execution_state));
     absl::StatusOr<BufferAllocations> execution_buffer_allocations_or =
