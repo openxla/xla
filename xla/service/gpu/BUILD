@@ -1840,6 +1840,7 @@ cc_library(
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/runtime:object_pool",
+        "//xla/service:xla_transform",
         "//xla/service:all_reduce_promotion",
         "//xla/service:all_reduce_reassociate",
         "//xla/service:all_reduce_simplifier",
