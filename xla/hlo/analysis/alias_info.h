@@ -89,8 +89,16 @@ class AliasInfo {
   }
 
  private:
-  // Returns in-place input/output pairs for the given fusion instruction,
-  // according to the aliasing rules for the corresponding fusion computation.
+  // Returns in-place pairs for an output source instruction while analyzing a
+  // fusion body. Nested fusion annotations are not inherited here; only aliases
+  // discovered from the nested fusion body are visible.
+  std::vector<std::pair<HloOperandIndex, ShapeIndex>>
+  GetOutputSourceInPlaceInputOutputPairs(
+      const HloInstruction* instruction) const;
+
+  // Returns in-place input/output pairs discovered from the fusion computation
+  // body. This does not include output_to_operand_aliasing annotations on
+  // `fusion` itself; GetInPlaceInputOutputPairs adds them for the public API.
   std::vector<std::pair<HloOperandIndex, ShapeIndex>>
   GetFusionInstructionInPlaceInputOutputPairs(
       const HloFusionInstruction* fusion) const;

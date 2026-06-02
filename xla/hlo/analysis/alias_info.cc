@@ -33,10 +33,18 @@ limitations under the License.
 
 namespace xla {
 
-// Returns in-place input/output pairs for the given fusion instruction,
-// according to the aliasing rules for the corresponding fusion computation.
-//
-// `instruction` must be a fusion instruction.
+std::vector<std::pair<HloOperandIndex, ShapeIndex>>
+AliasInfo::GetOutputSourceInPlaceInputOutputPairs(
+    const HloInstruction* instruction) const {
+  if (const auto* fusion = DynCast<HloFusionInstruction>(instruction)) {
+    return GetFusionInstructionInPlaceInputOutputPairs(fusion);
+  }
+  return GetInPlaceInputOutputPairs(instruction);
+}
+
+// Returns in-place input/output pairs discovered from the fusion computation
+// body. This does not include output_to_operand_aliasing annotations on
+// `fusion` itself; GetInPlaceInputOutputPairs adds them for the public API.
 std::vector<std::pair<HloOperandIndex, ShapeIndex>>
 AliasInfo::GetFusionInstructionInPlaceInputOutputPairs(
     const HloFusionInstruction* fusion) const {
@@ -70,7 +78,8 @@ AliasInfo::GetFusionInstructionInPlaceInputOutputPairs(
     // indirections) the input of an "in-place" pair to one of the fusion's
     // inputs, and the output of this "in-place" pair to the fusion output in
     // question, then this fusion input and output must alias.
-    auto in_place_pairs = GetInPlaceInputOutputPairs(output_source_instruction);
+    auto in_place_pairs =
+        GetOutputSourceInPlaceInputOutputPairs(output_source_instruction);
     ShapeIndex in_place_input_index;
     const HloInstruction* in_place_input_source = nullptr;
 
