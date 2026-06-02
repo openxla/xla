@@ -17,12 +17,14 @@ limitations under the License.
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/execution_graph.h"
 #include "xla/runtime/resource_use.h"

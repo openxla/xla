@@ -221,6 +221,7 @@ xla_cc_test(
     deps = [
         ":command",
         ":command_executor",
+        ":thunk",
         "//xla:shape_util",
         "//xla/runtime:buffer_use",
         "//xla/runtime:execution_graph",
