@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
+#include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
@@ -162,6 +163,17 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       RETURN_IF_ERROR(
           SetOrUpdateCommandBufferBranchExecutors(conditional_thunk, options));
       cmd_sequence.Append(&conditional_thunk);
+      return absl::OkStatus();
+    }
+    case Thunk::Kind::kDynamicSlice: {
+      auto& dynamic_slice_thunk = static_cast<DynamicSliceThunk&>(thunk);
+      ASSIGN_OR_RETURN(
+          CommandExecutor cmds,
+          ConvertToCommands(
+              dynamic_slice_thunk.get_embedded_executor().thunks(), options));
+      RETURN_IF_ERROR(dynamic_slice_thunk.SetOrUpdateCommandBufferExecutor(
+          std::move(cmds)));
+      cmd_sequence.Append(&dynamic_slice_thunk);
       return absl::OkStatus();
     }
     case Thunk::Kind::kAsyncDone:
