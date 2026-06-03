@@ -1,0 +1,135 @@
+diff --git a/lib/Dialect/TritonGPU/Transforms/Prefetch.cpp b/lib/Dialect/TritonGPU/Transforms/Prefetch.cpp
+index 15000ac7e..8119793b4 100644
+--- a/lib/Dialect/TritonGPU/Transforms/Prefetch.cpp
++++ b/lib/Dialect/TritonGPU/Transforms/Prefetch.cpp
+@@ -433,6 +433,15 @@ LogicalResult Prefetcher::initialize() {
+     while (op) {
+       if (!op->getResult(0).hasOneUse())
+         break;
++      // Similar to issues faced in HoistLayoutConversion pattern in
++      // OptimizeDotOperands.cpp, we can't propagate through type casts from
++      // predicates as they aren't supported in Triton when encoded with dot_op
++      // layout.
++      if (isa<arith::UIToFPOp>(op)) {
++        Type srcType = getElementTypeOrSelf(op->getOperand(0));
++        if (srcType.isInteger(1))
++          break;
++      }
+       if (auto load = dyn_cast<triton::gpu::LocalLoadOp>(op)) {
+         rets.push_back(load.getSrc());
+         // Only handle the direct dot-operand load chain for now.
+diff --git a/lib/Target/LLVMIR/LLVMDIUtils.cpp b/lib/Target/LLVMIR/LLVMDIUtils.cpp
+index 53444bb70..07fa0cbce 100644
+--- a/lib/Target/LLVMIR/LLVMDIUtils.cpp
++++ b/lib/Target/LLVMIR/LLVMDIUtils.cpp
+@@ -96,7 +96,8 @@ LLVM::DITypeAttr LLVMDIUtils::convertStructType(MLIRContext *context,
+       mlir::StringAttr::get(context, "struct"), fileAttr, /*line=*/line,
+       /*scope=*/fileAttr, /*baseType=*/nullptr, mlir::LLVM::DIFlags::Zero,
+       sizeInBits, /*alignInBits=*/0, /*dataLocation=*/nullptr, /*rank=*/nullptr,
+-      /*allocated=*/nullptr, /*associated=*/nullptr, elTypes);
++      /*allocated=*/nullptr, /*associated=*/nullptr, /*identifier=*/nullptr,
++      /*discriminator=*/nullptr, elTypes);
+ }
+ 
+ LLVM::DITypeAttr LLVMDIUtils::convertArrayType(MLIRContext *context,
+@@ -116,7 +117,8 @@ LLVM::DITypeAttr LLVMDIUtils::convertArrayType(MLIRContext *context,
+       mlir::StringAttr::get(context, "array"), fileAttr, /*line=*/line,
+       /*scope=*/fileAttr, /*baseType=*/baseType, mlir::LLVM::DIFlags::Zero,
+       sizeInBits, /*alignInBits=*/0, /*dataLocation=*/nullptr, /*rank=*/nullptr,
+-      /*allocated=*/nullptr, /*associated=*/nullptr, elTypes);
++      /*allocated=*/nullptr, /*associated=*/nullptr, /*identifier=*/nullptr,
++      /*discriminator=*/nullptr, elTypes);
+ }
+ 
+ std::optional<unsigned> LLVMDIUtils::calcBitWidth(mlir::Type type) {
+diff --git a/third_party/amd/lib/Analysis/RangeAnalysis.cpp b/third_party/amd/lib/Analysis/RangeAnalysis.cpp
+index 1459912ea..07deb8e42 100644
+--- a/third_party/amd/lib/Analysis/RangeAnalysis.cpp
++++ b/third_party/amd/lib/Analysis/RangeAnalysis.cpp
+@@ -772,7 +772,7 @@ void TritonIntegerRangeAnalysis::visitRegionSuccessors(
+       } else {
+         // Else, propagate pred operands.
+         auto operLat = *getLatticeElementFor(point, oper);
+-        changed = argLat->join(operLat);
++        changed = argLat->join(operLat.getValue());
+         LLVM_DEBUG({
+           if (changed == ChangeResult::Change) {
+             DBGS() << "Operand lattice ";
+diff --git a/third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.h b/third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.h
+index 59e6cc2ca..4dddc9a2f 100644
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.h
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.h
+@@ -1,10 +1,11 @@
+ #ifndef TRITON_THIRD_PARTY_AMD_LIB_TRITONAMDGPUTOLLVM_TARGETINFO_H_
+ #define TRITON_THIRD_PARTY_AMD_LIB_TRITONAMDGPUTOLLVM_TARGETINFO_H_
+ 
++#include <optional>
++
+ #include "Dialect/TritonAMDGPU/IR/TargetFeatures.h"
++#include "llvm/TargetParser/AMDGPUTargetParser.h"
+ #include "triton/Conversion/TritonGPUToLLVM/TargetInfoBase.h"
+-#include "llvm/TargetParser/TargetParser.h"
+-#include <optional>
+ 
+ namespace mlir::triton::AMD {
+ class TargetInfo : public mlir::triton::TargetInfoBase {
+diff --git a/third_party/nvidia/lib/NVGPUToLLVM/NVGPUToLLVMPass.cpp b/third_party/nvidia/lib/NVGPUToLLVM/NVGPUToLLVMPass.cpp
+index 2408c40df..c7b59c5b8 100644
+--- a/third_party/nvidia/lib/NVGPUToLLVM/NVGPUToLLVMPass.cpp
++++ b/third_party/nvidia/lib/NVGPUToLLVM/NVGPUToLLVMPass.cpp
+@@ -532,9 +532,9 @@ static Value createTMAlloc(IRRewriter &rewriter, LLVM::LLVMFuncOp func,
+       {ptxBuilder.newOperand(pred, "b"), ptxBuilder.newOperand(sharedMem, "r")},
+       /*onlyAttachMLIRArgs=*/true);
+   ptxBuilder.launch(rewriter, loc, void_ty(func->getContext()));
+-  NVVM::Barrier0Op::create(rewriter, loc);
++  NVVM::BarrierOp::create(rewriter, loc);
+   Value address = b.load(i32_ty, sharedMem);
+-  NVVM::Barrier0Op::create(rewriter, loc);
++  NVVM::BarrierOp::create(rewriter, loc);
+   address = b.inttoptr(ptr_ty(func.getContext(), 6), address);
+   return address;
+ }
+@@ -559,7 +559,7 @@ void freeTMAlloc(LLVM::LLVMFuncOp func, Value alloc, size_t size, Value pred,
+       NVVM::ClusterArriveOp::create(b, loc, UnitAttr::get(ctx));
+       NVVM::ClusterWaitOp::create(b, loc, UnitAttr::get(ctx));
+     } else {
+-      NVVM::Barrier0Op::create(b, loc);
++      NVVM::BarrierOp::create(b, loc);
+     }
+     PTXBuilder ptxBuilder;
+     // Calculate the predicate in the inline asm to avoid creating long
+diff --git a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/ConvertWarpSpecializeToLLVM.cpp b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/ConvertWarpSpecializeToLLVM.cpp
+index 066c0ac77..aad292443 100644
+--- a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/ConvertWarpSpecializeToLLVM.cpp
++++ b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/ConvertWarpSpecializeToLLVM.cpp
+@@ -45,7 +45,7 @@ public:
+       : numThreadsPerWarp(numThreadsPerWarp) {}
+ 
+   bool isBarrierOp(Operation *op) const override {
+-    return isa<NVVM::Barrier0Op>(op);
++    return isa<NVVM::BarrierOp>(op);
+   }
+ 
+   Type getBarrierHandleType(MLIRContext *ctx) const override {
+@@ -77,7 +77,7 @@ public:
+       LLVM::NVIDIA::createSyncWarp(b.getLoc(), b);
+     } else {
+       NVVM::BarrierOp::create(b, b.getLoc(), TypeRange{}, handle,
+-                              b.i32_val(numThreads), {}, Value{});
++                              b.i32_val(numThreads));
+     }
+   }
+ 
+diff --git a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/PTXAsmFormat.cpp b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/PTXAsmFormat.cpp
+index b3b30c7e1..9b7df2392 100644
+--- a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/PTXAsmFormat.cpp
++++ b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/PTXAsmFormat.cpp
+@@ -144,7 +144,7 @@ std::string PTXBuilder::dump() const {
+     lines.push_back(exec->dump());
+   }
+ 
+-  return strJoin(lines, "\n\t");
++  return strJoin(lines, " ");
+ }
+ 
+ PTXInstrExecution &PTXInstrCommon::call(ArrayRef<Operand *> oprs,
