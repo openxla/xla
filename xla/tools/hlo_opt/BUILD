@@ -259,7 +259,7 @@ lit_test_suite(
     ]),
     cfg = "//xla:lit.cfg.py",
     data = [":test_utilities"],
-    default_tags = tf_gpu_tests_tags(),  # hlo-opt --platform=gpu requires GPU platform initialized
+    default_tags = tf_gpu_tests_tags(),
     hermetic_cuda_data_dir = "%S/../../../../../" + get_canonical_repo_name("cuda_nvcc"),
     tags_override = {
         "tests/gpu_hlo_ptx.hlo": ["cuda-only"],

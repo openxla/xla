@@ -52,7 +52,7 @@ lit_test_suite(
         "--param=GPU=a100_pcie_80",
     ]),
     cfg = "//xla:lit.cfg.py",
-    default_tags = tf_gpu_tests_tags(),  # ptx_opt requires CUDA runtime initialized
+    default_tags = tf_gpu_tests_tags(),
     hermetic_cuda_data_dir = "%S/../../../../../" + get_canonical_repo_name("cuda_nvcc"),
     tags = [
         "cuda-only",
