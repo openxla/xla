@@ -110,7 +110,7 @@ DynamicSliceFusionV2Thunk::DynamicSliceFusionV2Thunk(
     std::vector<BufferAllocation::Slice> result_buffers,
     std::vector<BufferAllocation> embedded_allocations,
     ThunkSequence embedded_thunks, bool verify_offsets)
-    : Thunk(Kind::kDynamicSliceFusion, std::move(thunk_info)),
+    : Command(Kind::kDynamicSliceFusion, std::move(thunk_info)),
       parameters_(std::move(parameters)),
       results_(std::move(results)),
       parameter_buffers_(std::move(parameter_buffers)),
@@ -118,6 +118,31 @@ DynamicSliceFusionV2Thunk::DynamicSliceFusionV2Thunk(
       embedded_allocations_(std::move(embedded_allocations)),
       executor_(std::move(embedded_thunks)),
       verify_offsets_(verify_offsets) {}
+
+static bool IsLoopDependent(const std::optional<DynamicSliceConfig>& config) {
+  return config.has_value() && config->has_loop_index() &&
+         config->byte_stride() != 0;
+}
+
+bool DynamicSliceFusionV2Thunk::HasLoopDependentOffsets() const {
+  for (const DynamicSliceFusion::Parameter& parameter : parameters_) {
+    if (IsLoopDependent(parameter.slice_config)) {
+      return true;
+    }
+  }
+  for (const DynamicSliceFusion::Result& result : results_) {
+    if (IsLoopDependent(result.update_config)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+absl::Status DynamicSliceFusionV2Thunk::SetOrUpdateCommandBufferExecutor(
+    CommandExecutor command_executor) {
+  command_executor_ = std::move(command_executor);
+  return absl::OkStatus();
+}
 
 std::string DynamicSliceFusionV2Thunk::ToString(int indent) const {
   std::string result;
@@ -128,11 +153,17 @@ std::string DynamicSliceFusionV2Thunk::ToString(int indent) const {
 }
 
 absl::Status DynamicSliceFusionV2Thunk::Prepare(const PrepareParams& params) {
+  if (command_executor_.has_value()) {
+    RETURN_IF_ERROR(command_executor_->Prepare(params));
+  }
   return executor_.Prepare(params);
 }
 
 absl::Status DynamicSliceFusionV2Thunk::Initialize(
     const InitializeParams& params) {
+  if (command_executor_.has_value()) {
+    RETURN_IF_ERROR(command_executor_->Initialize(params));
+  }
   return executor_.Initialize(params);
 }
 
@@ -300,6 +331,92 @@ absl::Status DynamicSliceFusionV2Thunk::ExecuteOnStream(
   ExecuteParams dynamic_slice_params =
       ExecuteParams::CloneWithNewAllocations(params, embedded_allocs);
   return executor_.ExecuteOnStream(dynamic_slice_params);
+}
+
+absl::StatusOr<const se::CommandBuffer::Command*>
+DynamicSliceFusionV2Thunk::Record(const Thunk::ExecuteParams& execute_params,
+                                  const RecordParams& record_params,
+                                  RecordAction record_action,
+                                  se::CommandBuffer* command_buffer) {
+  if (verify_offsets_) {
+    return FailedPrecondition(
+        "DynamicSliceFusionV2Thunk command-buffer recording does not support "
+        "runtime offset verification");
+  }
+  if (!command_executor_.has_value()) {
+    return FailedPrecondition(
+        "DynamicSliceFusionV2Thunk command executor is not initialized");
+  }
+  if (command_executor_->empty()) {
+    return nullptr;
+  }
+
+  auto child_record_params = [&]() {
+    Command::RecordParams params = record_params;
+    params.updated_allocs = std::nullopt;
+    params.command_buffer_update_mode = DebugOptions::ALWAYS_UPDATE;
+    return params;
+  };
+
+  auto create_params =
+      [&](BufferAllocations& embedded_allocs) -> Thunk::ExecuteParams {
+    return Thunk::ExecuteParams::CloneWithNewAllocations(execute_params,
+                                                         embedded_allocs);
+  };
+
+  if (auto* create = std::get_if<RecordCreate>(&record_action)) {
+    return command_buffer->CreateChildCommand(
+        [&, this](se::CommandBuffer* child_command_buffer) -> absl::Status {
+          std::vector<se::DeviceAddressBase> buffers =
+              BuildDynamicSliceBuffers(*execute_params.buffer_allocations,
+                                       IsInsideWhileLoopNest());
+          BufferAllocations embedded_allocs(
+              buffers, execute_params.buffer_allocations->device_ordinal(),
+              execute_params.buffer_allocations->memory_allocator());
+          Thunk::ExecuteParams params = create_params(embedded_allocs);
+          Command::RecordParams child_params = child_record_params();
+          return command_executor_
+              ->RecordCreate(params, child_params, child_command_buffer,
+                             /*dependencies=*/{})
+              .status();
+        },
+        create->dependencies);
+  }
+
+  if (auto* update = std::get_if<RecordUpdate>(&record_action)) {
+    RETURN_IF_ERROR(command_buffer->UpdateChildCommand(
+        update->command,
+        [&, this](se::CommandBuffer* child_command_buffer) -> absl::Status {
+          std::vector<se::DeviceAddressBase> buffers =
+              BuildDynamicSliceBuffers(*execute_params.buffer_allocations,
+                                       IsInsideWhileLoopNest());
+          BufferAllocations embedded_allocs(
+              buffers, execute_params.buffer_allocations->device_ordinal(),
+              execute_params.buffer_allocations->memory_allocator());
+          Thunk::ExecuteParams params = create_params(embedded_allocs);
+          Command::RecordParams child_params = child_record_params();
+          return command_executor_->RecordUpdate(params, child_params,
+                                                 child_command_buffer);
+        }));
+    return update->command;
+  }
+
+  return Internal("Invalid record action");
+}
+
+bool DynamicSliceFusionV2Thunk::requires_initialization() const {
+  return command_executor_.has_value() &&
+         command_executor_->requires_initialization();
+}
+
+bool DynamicSliceFusionV2Thunk::requires_update() const {
+  return HasLoopDependentOffsets() || (command_executor_.has_value() &&
+                                       command_executor_->requires_update());
+}
+
+bool DynamicSliceFusionV2Thunk::support_loop_unroll() const {
+  return !command_executor_.has_value() ||
+         command_executor_->support_loop_unroll();
 }
 
 std::vector<se::DeviceAddressBase>
