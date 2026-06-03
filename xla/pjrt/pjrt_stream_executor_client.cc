@@ -321,8 +321,8 @@ PjRtStreamExecutorClient::PjRtStreamExecutorClient(
       platform_name_(std::move(platform_name)),
       client_(client),
       host_memory_allocator_(std::move(host_memory_allocator)),
-      owned_allocator_(std::move(allocator)),
       owned_devices_(std::move(devices)),
+      owned_allocator_(std::move(allocator)),
       process_index_(process_index),
       owned_memory_spaces_(std::move(memory_spaces)),
       should_stage_host_to_device_transfers_(
