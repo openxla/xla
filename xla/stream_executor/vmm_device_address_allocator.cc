@@ -211,6 +211,7 @@ void DeviceAddressVmmAllocator::DoDeallocate(PerDeviceState& state,
   state.scoped_mappings.erase(mem.opaque());
   // Erase the reservation next: its destructor frees the virtual address range.
   state.reservations.erase(mem.opaque());
+  state.allocation_ids.erase(mem.opaque());
   // Erase the raw allocation last: its destructor releases the physical memory.
   state.raw_allocations.erase(mem.opaque());
 
@@ -247,7 +248,9 @@ absl::StatusOr<DeviceAddressBase> DeviceAddressVmmAllocator::AllocateWithBudget(
 
   // Store tracking entries. Destruction order matters: scoped_mappings must
   // be erased before reservations, which must be erased before raw_allocations.
+  const uint64_t allocation_id = state.next_allocation_id++;
   state.raw_allocations.emplace(va_ptr, std::move(raw_alloc));
+  state.allocation_ids.emplace(va_ptr, allocation_id);
   state.reservations.emplace(va_ptr, std::move(reservation));
   state.scoped_mappings.emplace(va_ptr, std::move(scoped_mapping));
 
@@ -396,16 +399,29 @@ absl::StatusOr<StreamExecutor*> DeviceAddressVmmAllocator::GetStreamExecutor(
 
 MemoryAllocation* DeviceAddressVmmAllocator::GetRawAllocation(
     int device_ordinal, DeviceAddressBase addr) const {
+  std::optional<AllocationInfo> info = GetAllocationInfo(device_ordinal, addr);
+  return info.has_value() ? info->allocation : nullptr;
+}
+
+std::optional<DeviceAddressVmmAllocator::AllocationInfo>
+DeviceAddressVmmAllocator::GetAllocationInfo(int device_ordinal,
+                                             DeviceAddressBase addr) const {
   PerDeviceState* state = GetPerDeviceState(device_ordinal);
   if (state == nullptr) {
-    return nullptr;
+    return std::nullopt;
   }
   absl::MutexLock lock(state->mu);
   auto it = state->raw_allocations.find(addr.opaque());
   if (it == state->raw_allocations.end()) {
-    return nullptr;
+    return std::nullopt;
   }
-  return it->second.get();
+  auto id_it = state->allocation_ids.find(addr.opaque());
+  if (id_it == state->allocation_ids.end()) {
+    return std::nullopt;
+  }
+  return AllocationInfo{/*allocation=*/it->second.get(),
+                        /*allocation_id=*/id_it->second,
+                        /*mapped_size=*/it->second->address().size()};
 }
 
 MemoryReservation* DeviceAddressVmmAllocator::GetReservation(
@@ -435,24 +451,46 @@ std::optional<DeviceAddressBase>
 DeviceAddressVmmAllocator::TryReusePendingDeallocation(PerDeviceState& state,
                                                        uint64_t size) {
   uint64_t rounded_size = RoundUpToGranularity(state, size);
+  // Among all pending deallocations of the matching rounded size, reuse the one
+  // with the SMALLEST address rather than the first (oldest) in the deque.
+  //
+  // Why: a static executable issues its per-step allocations in a deterministic
+  // order, so if same-size buffers are always handed back out in a fixed
+  // (address-sorted) order, the k-th request of a given size reuses the same
+  // physical handle every step. That keeps the VMM allocation_id stable for
+  // command-buffer buffers, which lets the NEVER_UPDATE VA remapping SKIP them.
+  // The old "first match" policy instead shuffled handles among same-size
+  // buffers, so every one of the ~12 tiny scratch buffers looked "changed" each
+  // step and had to be unmapped+remapped -- the dominant per-step cost on ROCm,
+  // where each hipMemUnmap is expensive and serializes across peer devices.
+  // Reuse remains correct for any matching entry: stream ordering guarantees
+  // the recorded deallocation completes before work submitted after this
+  // Allocate() runs, independent of which entry is chosen.
+  auto best = state.pending_deallocations.end();
   for (auto it = state.pending_deallocations.begin();
        it != state.pending_deallocations.end(); ++it) {
     if (RoundUpToGranularity(state, it->mem.size()) != rounded_size) {
       continue;
     }
-
-    DeviceAddressBase reused_mem(it->mem.opaque(), size);
-    VLOG(3) << absl::StreamFormat(
-        "Reusing pending deallocation: address=%p original_size=%uB "
-        "new_size=%uB rounded_size=%uB device=%d",
-        reused_mem.opaque(), it->mem.size(), size, rounded_size,
-        state.executor->device_ordinal());
-    state.pending_deallocations.erase(it);
-
-    return reused_mem;
+    if (best == state.pending_deallocations.end() ||
+        reinterpret_cast<uintptr_t>(it->mem.opaque()) <
+            reinterpret_cast<uintptr_t>(best->mem.opaque())) {
+      best = it;
+    }
+  }
+  if (best == state.pending_deallocations.end()) {
+    return std::nullopt;
   }
 
-  return std::nullopt;
+  DeviceAddressBase reused_mem(best->mem.opaque(), size);
+  VLOG(3) << absl::StreamFormat(
+      "Reusing pending deallocation: address=%p original_size=%uB "
+      "new_size=%uB rounded_size=%uB device=%d",
+      reused_mem.opaque(), best->mem.size(), size, rounded_size,
+      state.executor->device_ordinal());
+  state.pending_deallocations.erase(best);
+
+  return reused_mem;
 }
 
 uint64_t DeviceAddressVmmAllocator::RoundUpToGranularity(
