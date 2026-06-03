@@ -62,7 +62,9 @@ absl::StatusOr<bool> TryAnnotateAllReduce(
     bool is_multimem_enabled) {
   // Both kAllReduce and kAllReduceStart are HloAllReduceInstruction.
   const auto* all_reduce = DynCast<HloAllReduceInstruction>(instr);
-  if (all_reduce == nullptr) return false;
+  if (all_reduce == nullptr) {
+    return false;
+  }
 
   // Reuse the same eligibility check as thunk_emitter.cc, with
   // is_collective_kernel_enabled=true (this pass only runs when the flag is

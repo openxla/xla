@@ -15,20 +15,21 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/collective_kernel_strategy_annotator.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -89,7 +90,7 @@ TEST_F(CollectiveKernelStrategyAnnotatorTest,
 
   CollectiveKernelStrategyAnnotator annotator(device_info_,
                                               /*is_multimem_enabled=*/false);
-  TF_ASSERT_OK(annotator.Run(module.get()).status());
+  ASSERT_OK(annotator.Run(module.get()).status());
 
   EXPECT_EQ(GetKernelStrategy(module.get()),
             CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_CUSTOM_ONE_SHOT);
@@ -106,7 +107,7 @@ TEST_F(CollectiveKernelStrategyAnnotatorTest,
 
   CollectiveKernelStrategyAnnotator annotator(device_info_,
                                               /*is_multimem_enabled=*/false);
-  TF_ASSERT_OK(annotator.Run(module.get()).status());
+  ASSERT_OK(annotator.Run(module.get()).status());
 
   EXPECT_EQ(GetKernelStrategy(module.get()),
             CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_CUSTOM_TWO_SHOT);
@@ -123,7 +124,7 @@ TEST_F(CollectiveKernelStrategyAnnotatorTest,
 
   CollectiveKernelStrategyAnnotator annotator(device_info_,
                                               /*is_multimem_enabled=*/false);
-  TF_ASSERT_OK(annotator.Run(module.get()).status());
+  ASSERT_OK(annotator.Run(module.get()).status());
 
   EXPECT_EQ(GetKernelStrategy(module.get()),
             CollectiveBackendConfig::KERNEL_STRATEGY_DEFAULT);

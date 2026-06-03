@@ -64,7 +64,7 @@ static auto& device_to_cfg =
                 // nvlink_bw_per_lane_gbps is filled dynamically in
                 // GetPlatformConfig via GetIciBandwidthPerLaneGbps.
                 /*nvlink_bw_per_lane_gbps=*/0.0,
-                /*nvlink_barrier_latency=*/absl::Microseconds(1.5),
+                /*nvlink_barrier_latency=*/absl::Nanoseconds(1500),
             },
         },
         {
@@ -82,7 +82,7 @@ static auto& device_to_cfg =
                 /*chunk_size_bytes=*/kDefaultNcclCostModelChunkSizeBytes,
                 /*partition_size=*/0,
                 /*nvlink_bw_per_lane_gbps=*/0.0,
-                /*nvlink_barrier_latency=*/absl::Microseconds(1.0),
+                /*nvlink_barrier_latency=*/absl::Microseconds(1),
             },
         },
         {
@@ -100,7 +100,7 @@ static auto& device_to_cfg =
                 /*chunk_size_bytes=*/kDefaultNcclCostModelChunkSizeBytes,
                 /*partition_size=*/0,
                 /*nvlink_bw_per_lane_gbps=*/0.0,
-                /*nvlink_barrier_latency=*/absl::Microseconds(1.5),
+                /*nvlink_barrier_latency=*/absl::Nanoseconds(1500),
             },
         },
     }));

@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/base/no_destructor.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/strings/numbers.h"
 #include "absl/time/time.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
