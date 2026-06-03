@@ -1482,8 +1482,17 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
     // allocation up to the allocation granularity.
     uint64_t total_va_size = 0;
     for (BufferAllocation::Index i : command_buffer_allocation_indexes_) {
-      const uint64_t size = buffer_allocations.GetDeviceAddress(i).size();
-      total_va_size += round_up_to_granularity(size);
+      se::DeviceAddressBase buf = buffer_allocations.GetDeviceAddress(i);
+      // Skip buffers not handed out by the VMM allocator (e.g. constants for
+      // deserialized executables, where the index-collection pass cannot
+      // filter them out). They have stable fixed addresses and need no VA
+      // remapping, so they must not consume a slot in the contiguous
+      // reservation.
+      if (vmm_allocator->GetRawAllocation(executor->device_ordinal(), buf) ==
+          nullptr) {
+        continue;
+      }
+      total_va_size += round_up_to_granularity(buf.size());
     }
 
     // Reserve a single large VA range for all command buffer allocations.
@@ -1517,9 +1526,16 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
   absl::flat_hash_map<BufferAllocation::Index, uint64_t> allocation_va_offsets;
   uint64_t current_offset = 0;
   for (BufferAllocation::Index idx : command_buffer_allocation_indexes_) {
-    const uint64_t size = buffer_allocations.GetDeviceAddress(idx).size();
+    se::DeviceAddressBase buf = buffer_allocations.GetDeviceAddress(idx);
+    // Only VMM-managed buffers are remapped into the contiguous reservation;
+    // skip non-VMM buffers (constants) so offsets stay contiguous and match
+    // the mapping descriptors built below.
+    if (vmm_allocator->GetRawAllocation(executor->device_ordinal(), buf) ==
+        nullptr) {
+      continue;
+    }
     allocation_va_offsets[idx] = current_offset;
-    current_offset += round_up_to_granularity(size);
+    current_offset += round_up_to_granularity(buf.size());
   }
 
   if (!allocation_va_offsets.empty() && va_ranges->va_reservation == nullptr) {
