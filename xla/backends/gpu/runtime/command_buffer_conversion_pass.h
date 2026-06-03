@@ -54,6 +54,7 @@ class CommandBufferConversionPass : public ThunkPassInterface {
     const se::DeviceDescription& device_description;
     DebugOptions::CommandBufferUpdateMode update_mode =
         DebugOptions::ALWAYS_UPDATE;
+    bool enable_loop_unroll = false;
     // Number of devices in a fast-interconnect domain (host/node).
     // 0 means unknown.
     int64_t num_local_devices = 0;
