@@ -79,7 +79,8 @@ sycl_library(
     hdrs = glob([
         "include/**/*.h",
         "include/**/*.hpp",
-        "src/atl/mpi/atl_mpi.hpp",
+        "src/**/*.h",
+        "src/**/*.hpp",
     ]) + [":oneccl_config_h"],
     defines = [
     "CCL_C_COMPILER=\\\"Clang\\\"",
