@@ -86,7 +86,6 @@ cc_library(
 xla_cc_test(
     name = "sol_latency_estimator_test",
     srcs = ["sol_latency_estimator_test.cc"],
-    tags = ["pjrt_migration_candidate"],
     deps = [
         ":collective_interpolator",
         ":sol_gpu_cost_model",
@@ -577,13 +576,13 @@ cc_library(
         "//xla/backends/gpu/codegen/triton:fusion",
         "//xla/codegen/tiling:symbolic_tile_analysis",
         "//xla/codegen/tiling:tiled_hlo_computation",
-        "//xla/codegen/tiling:tiled_hlo_instruction",
         "//xla/codegen/tiling:tiling_specification",
         "//xla/codegen/tiling/experimental:tile",
         "//xla/codegen/tiling/experimental:tiled_hlo",
         "//xla/codegen/xtile/codegen:emitter_helpers",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
+        "//xla/service:decision",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:instruction_fusion",
         "//xla/service/gpu:backend_configs_cc",

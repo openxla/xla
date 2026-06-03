@@ -20,7 +20,6 @@ package_group(
 xla_cc_test(
     name = "cpu_aot_export_test",
     srcs = ["cpu_aot_export_test.cc"],
-    tags = ["pjrt_migration_candidate"],
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/service:compiler",
@@ -48,7 +47,6 @@ onednn_graph_cc_test(
     tags = [
         "no_oss",
         "notap",
-        "pjrt_migration_candidate",
     ],
     deps = [
         "//xla:error_spec",

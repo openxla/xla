@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <memory>
 #include <utility>
+#include <variant>
 
 #include "absl/functional/function_ref.h"
 #include "absl/log/log.h"
@@ -25,6 +26,7 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_state.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/traced_command_buffer.h"
 #include "xla/debug_options_flags.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -37,11 +39,10 @@ namespace xla::gpu {
 // TracedCommand
 //===----------------------------------------------------------------------===//
 
-TracedCommand::TracedCommand(CommandType cmd_type) : Command(cmd_type) {}
+TracedCommand::TracedCommand(Thunk::Kind kind) : Command(kind) {}
 
-TracedCommand::TracedCommand(CommandType cmd_type, Thunk::Kind thunk_kind,
-                             ThunkInfo thunk_info)
-    : Command(cmd_type, thunk_kind, std::move(thunk_info)) {}
+TracedCommand::TracedCommand(Thunk::Kind thunk_kind, ThunkInfo thunk_info)
+    : Command(thunk_kind, std::move(thunk_info)) {}
 
 absl::StatusOr<const se::CommandBuffer::Command*> TracedCommand::Record(
     const Thunk::ExecuteParams& execute_params,
@@ -76,14 +77,18 @@ TracedCommand::RecordTracedCommand(
           execute_params.buffer_allocations, execute_params.stream->parent(),
           execute_params.command_buffer_trace_stream, trace, priority()));
 
-  VLOG(5) << "Record traced command into command buffer: " << command_buffer;
-
   if (auto* create = std::get_if<RecordCreate>(&record_action)) {
+    VLOG(5) << "Record traced command " << nested_cmd
+            << " into parent command buffer: " << command_buffer
+            << " (CreateChildCommand)";
     return command_buffer->CreateChildCommand(*nested_cmd,
                                               create->dependencies);
   }
 
   if (auto* update = std::get_if<RecordUpdate>(&record_action)) {
+    VLOG(5) << "Record traced command " << nested_cmd
+            << " into parent command buffer: " << command_buffer
+            << " (UpdateChildCommand)";
     RETURN_IF_ERROR(
         command_buffer->UpdateChildCommand(update->command, *nested_cmd));
     return update->command;

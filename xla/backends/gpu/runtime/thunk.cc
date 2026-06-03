@@ -76,19 +76,16 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
                                  .gpu_executable_run_options()
                                  ->enable_mock_collectives()
                            : false,
+                       run_options.run_options().rng_seed(),
                        run_options.run_options().run_id().ToInt());
 }
 
 Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
     const Thunk::ExecuteParams& params,
     const BufferAllocations& buffer_allocations) {
-  return ExecuteParams(
-      &buffer_allocations, params.stream, params.command_buffer_trace_stream,
-      params.collective_params, params.collective_cliques,
-      params.collective_memory, params.device_to_host_stream,
-      params.host_to_device_stream, params.send_device_memory_function,
-      params.recv_device_memory_function, params.ffi_execution_context,
-      params.additional_compute_streams);
+  ExecuteParams new_params = params;
+  new_params.buffer_allocations = &buffer_allocations;
+  return new_params;
 }
 
 Thunk::ExecuteParams Thunk::ExecuteParams::WithComputeStream(
@@ -98,7 +95,8 @@ Thunk::ExecuteParams Thunk::ExecuteParams::WithComputeStream(
                        device_to_host_stream, host_to_device_stream,
                        send_device_memory_function, recv_device_memory_function,
                        ffi_execution_context, additional_compute_streams,
-                       execution_scoped_state, mock_collectives, execution_id);
+                       execution_scoped_state, mock_collectives, execution_id,
+                       rng_seed);
 }
 
 Thunk::ExecuteParams::ExecuteParams(
@@ -112,7 +110,7 @@ Thunk::ExecuteParams::ExecuteParams(
     const ffi::ExecutionContext* ffi_execution_context,
     std::vector<se::Stream*> additional_compute_streams,
     ExecutionScopedState* execution_scoped_state, bool mock_collectives,
-    int64_t execution_id)
+    int64_t execution_id, uint64_t rng_seed)
     : buffer_allocations(buffer_allocations),
       stream(stream),
       command_buffer_trace_stream(command_buffer_trace_stream),
@@ -127,7 +125,8 @@ Thunk::ExecuteParams::ExecuteParams(
       additional_compute_streams(additional_compute_streams),
       execution_scoped_state(execution_scoped_state),
       mock_collectives(mock_collectives),
-      execution_id(execution_id) {}
+      execution_id(execution_id),
+      rng_seed(rng_seed) {}
 
 //===----------------------------------------------------------------------===//
 
@@ -207,14 +206,6 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_MEMZERO;
     case kNorm:
       return THUNK_KIND_NORM;
-    case kNvshmemAllReduce:
-      return THUNK_KIND_NVSHMEM_ALL_REDUCE;
-    case kNvshmemCollectivePermute:
-      return THUNK_KIND_NVSHMEM_COLLECTIVE_PERMUTE;
-    case kNvshmemRecv:
-      return THUNK_KIND_NVSHMEM_RECV;
-    case kNvshmemSend:
-      return THUNK_KIND_NVSHMEM_SEND;
     case kOutfeed:
       return THUNK_KIND_OUTFEED;
     case kPartitionId:
@@ -227,6 +218,8 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_REDUCE_SCATTER;
     case kReplicaId:
       return THUNK_KIND_REPLICA_ID;
+    case kRngSeed:
+      return THUNK_KIND_RNG_SEED;
     case kSelectK:
       return THUNK_KIND_SELECT_K;
     case kSend:
@@ -314,14 +307,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kMemzero;
     case THUNK_KIND_NORM:
       return kNorm;
-    case THUNK_KIND_NVSHMEM_ALL_REDUCE:
-      return kNvshmemAllReduce;
-    case THUNK_KIND_NVSHMEM_COLLECTIVE_PERMUTE:
-      return kNvshmemCollectivePermute;
-    case THUNK_KIND_NVSHMEM_RECV:
-      return kNvshmemRecv;
-    case THUNK_KIND_NVSHMEM_SEND:
-      return kNvshmemSend;
     case THUNK_KIND_OUTFEED:
       return kOutfeed;
     case THUNK_KIND_PARTITION_ID:
@@ -334,6 +319,8 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kReduceScatter;
     case THUNK_KIND_REPLICA_ID:
       return kReplicaId;
+    case THUNK_KIND_RNG_SEED:
+      return kRngSeed;
     case THUNK_KIND_SELECT_K:
       return kSelectK;
     case THUNK_KIND_SEND:
@@ -392,16 +379,13 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kMemset32BitValue);
     CASE(kMemzero);
     CASE(kNorm);
-    CASE(kNvshmemAllReduce);
-    CASE(kNvshmemCollectivePermute);
-    CASE(kNvshmemRecv);
-    CASE(kNvshmemSend);
     CASE(kOutfeed);
     CASE(kPartitionId);
     CASE(kRaggedAllToAll);
     CASE(kRecv);
     CASE(kReduceScatter);
     CASE(kReplicaId);
+    CASE(kRngSeed);
     CASE(kSelectK);
     CASE(kSend);
     CASE(kSequential);
@@ -416,8 +400,7 @@ std::ostream& operator<<(std::ostream& os, Thunk::Kind kind) {
 }
 
 bool IsReductionCollective(Thunk::Kind kind) {
-  return kind == Thunk::kAllReduce || kind == Thunk::kReduceScatter ||
-         kind == Thunk::kNvshmemAllReduce;
+  return kind == Thunk::kAllReduce || kind == Thunk::kReduceScatter;
 }
 
 absl::StatusOr<Thunk::ThunkInfo> Thunk::ThunkInfo::FromProto(
