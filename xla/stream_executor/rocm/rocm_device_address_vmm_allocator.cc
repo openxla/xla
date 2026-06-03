@@ -101,13 +101,13 @@ absl::Status RocmDeviceAddressVmmAllocator::InitializeDeviceState(
     std::unique_ptr<ActivateContext> activation = state.executor->Activate();
     hipDevice_t hip_device;
     TF_RETURN_IF_ERROR(
-        ToStatus(wrap::hipDeviceGet(&hip_device, ordinal), "hipDeviceGet"));
+        ToStatus(hipDeviceGet(&hip_device, ordinal), "hipDeviceGet"));
     hipMemAllocationProp alloc_props = {};
     alloc_props.type = hipMemAllocationTypePinned;
     alloc_props.location.type = hipMemLocationTypeDevice;
     alloc_props.location.id = hip_device;
     alloc_props.requestedHandleTypes = hipMemHandleTypeNone;
-    TF_RETURN_IF_ERROR(ToStatus(wrap::hipMemGetAllocationGranularity(
+    TF_RETURN_IF_ERROR(ToStatus(hipMemGetAllocationGranularity(
         &granularity, &alloc_props, hipMemAllocationGranularityRecommended)));
   }
   state.allocation_granularity = static_cast<uint64_t>(granularity);
@@ -117,7 +117,7 @@ absl::Status RocmDeviceAddressVmmAllocator::InitializeDeviceState(
   // determine when deferred deallocations are safe to execute.
   void* host_ptr = nullptr;
   TF_RETURN_IF_ERROR(ToStatus(
-      wrap::hipHostMalloc(&host_ptr, sizeof(uint64_t), hipHostMallocCoherent),
+hipHostMalloc(&host_ptr, sizeof(uint64_t), hipHostMallocCoherent),
       "hipHostMalloc for timeline counter"));
   *static_cast<volatile uint64_t*>(host_ptr) = 0;
 
@@ -130,7 +130,7 @@ absl::Status RocmDeviceAddressVmmAllocator::InitializeDeviceState(
   state.timeline_dev_ptr = reinterpret_cast<uint64_t>(host_ptr);
   state.destroy_fn = [host_ptr, ordinal]() {
     auto status =
-        ToStatus(wrap::hipHostFree(host_ptr), "hipHostFree for timeline");
+        ToStatus(hipHostFree(host_ptr), "hipHostFree for timeline");
     if (!status.ok()) {
       LOG(WARNING) << "Failed to free timeline memory for device " << ordinal
                    << ": " << status;
@@ -157,7 +157,7 @@ absl::Status RocmDeviceAddressVmmAllocator::EnqueueDeferredDeallocation(
   hipStream_t hip_stream =
       static_cast<hipStream_t>(state.stream->platform_specific_handle().stream);
   return ToStatus(
-      wrap::hipStreamWriteValue64(
+hipStreamWriteValue64(
           hip_stream, reinterpret_cast<void*>(state.timeline_dev_ptr), seqno,
           0),
       "hipStreamWriteValue64");

@@ -55,7 +55,7 @@ VmmAllocate(StreamExecutor* executor, uint64_t size) {
 
   hipDevice_t device;
   TF_RETURN_IF_ERROR(
-      ToStatus(wrap::hipDeviceGet(&device, executor->device_ordinal())));
+      ToStatus(hipDeviceGet(&device, executor->device_ordinal())));
 
   hipMemAllocationProp properties = {};
   properties.type = hipMemAllocationTypePinned;
@@ -63,36 +63,36 @@ VmmAllocate(StreamExecutor* executor, uint64_t size) {
   properties.location.id = device;
   properties.requestedHandleTypes = hipMemHandleTypeNone;
   size_t granularity = 0;
-  TF_RETURN_IF_ERROR(ToStatus(wrap::hipMemGetAllocationGranularity(
+  TF_RETURN_IF_ERROR(ToStatus(hipMemGetAllocationGranularity(
       &granularity, &properties, hipMemAllocationGranularityRecommended)));
 
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, granularity);
   hipMemGenericAllocationHandle_t handle;
 
   TF_RETURN_IF_ERROR(
-      ToStatus(wrap::hipMemCreate(&handle, padded_size, &properties, 0ULL)));
+      ToStatus(hipMemCreate(&handle, padded_size, &properties, 0ULL)));
 
   hipDeviceptr_t ptr = nullptr;
   absl::Status status = ToStatus(
-      wrap::hipMemAddressReserve(&ptr, padded_size, granularity, nullptr,
+hipMemAddressReserve(&ptr, padded_size, granularity, nullptr,
                                     0ULL));
   if (!status.ok()) {
-    ToStatus(wrap::hipMemRelease(handle)).IgnoreError();
+    ToStatus(hipMemRelease(handle)).IgnoreError();
     return status;
   }
 
-  status = ToStatus(wrap::hipMemMap(ptr, padded_size, 0, handle, 0ULL));
+  status = ToStatus(hipMemMap(ptr, padded_size, 0, handle, 0ULL));
   if (!status.ok()) {
-    ToStatus(wrap::hipMemAddressFree(ptr, padded_size)).IgnoreError();
-    ToStatus(wrap::hipMemRelease(handle)).IgnoreError();
+    ToStatus(hipMemAddressFree(ptr, padded_size)).IgnoreError();
+    ToStatus(hipMemRelease(handle)).IgnoreError();
     return status;
   }
 
   // Cleanup on error: unmap + free VA + release physical memory.
   absl::Cleanup cleanup = [&]() {
-    ToStatus(wrap::hipMemUnmap(ptr, padded_size)).IgnoreError();
-    ToStatus(wrap::hipMemAddressFree(ptr, padded_size)).IgnoreError();
-    ToStatus(wrap::hipMemRelease(handle)).IgnoreError();
+    ToStatus(hipMemUnmap(ptr, padded_size)).IgnoreError();
+    ToStatus(hipMemAddressFree(ptr, padded_size)).IgnoreError();
+    ToStatus(hipMemRelease(handle)).IgnoreError();
   };
 
   VLOG(3) << "VMM allocated " << ptr
@@ -104,7 +104,7 @@ VmmAllocate(StreamExecutor* executor, uint64_t size) {
   // Set access for this device and all P2P-capable peers, matching the CUDA
   // pattern that gates on CanEnablePeerAccessTo().
   int device_count = 0;
-  TF_RETURN_IF_ERROR(ToStatus(wrap::hipGetDeviceCount(&device_count)));
+  TF_RETURN_IF_ERROR(ToStatus(hipGetDeviceCount(&device_count)));
   for (int peer = 0; peer < device_count; peer++) {
     if (peer != executor->device_ordinal()) {
       auto peer_executor_or =
@@ -117,7 +117,7 @@ VmmAllocate(StreamExecutor* executor, uint64_t size) {
     }
     hipMemAccessDesc access_desc = GetVmmAccessDescriptor(peer);
     TF_RETURN_IF_ERROR(
-        ToStatus(wrap::hipMemSetAccess(ptr, padded_size, &access_desc, 1)));
+        ToStatus(hipMemSetAccess(ptr, padded_size, &access_desc, 1)));
   }
 
   std::move(cleanup).Cancel();
@@ -133,15 +133,15 @@ static void VmmDeallocate(StreamExecutor* executor, void* ptr,
           << " padded size: " << padded_size
           << " device: " << executor->device_ordinal();
 
-  absl::Status status = ToStatus(wrap::hipMemUnmap(ptr, padded_size));
+  absl::Status status = ToStatus(hipMemUnmap(ptr, padded_size));
   if (!status.ok()) {
     LOG(ERROR) << "Failed to unmap VMM memory at " << ptr << ": " << status;
   }
-  status = ToStatus(wrap::hipMemRelease(handle));
+  status = ToStatus(hipMemRelease(handle));
   if (!status.ok()) {
     LOG(ERROR) << "Failed to release VMM handle for " << ptr << ": " << status;
   }
-  status = ToStatus(wrap::hipMemAddressFree(ptr, padded_size));
+  status = ToStatus(hipMemAddressFree(ptr, padded_size));
   if (!status.ok()) {
     LOG(ERROR) << "Failed to free VMM address at " << ptr << ": " << status;
   }

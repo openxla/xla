@@ -42,7 +42,7 @@ RocmMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
 
   hipDevice_t device;
   TF_RETURN_IF_ERROR(
-      ToStatus(wrap::hipDeviceGet(&device, executor->device_ordinal())));
+      ToStatus(hipDeviceGet(&device, executor->device_ordinal())));
 
   hipMemAllocationProp props = {};
   props.type = hipMemAllocationTypePinned;
@@ -51,14 +51,14 @@ RocmMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
   props.requestedHandleTypes = hipMemHandleTypeNone;
 
   size_t granularity = 0;
-  TF_RETURN_IF_ERROR(ToStatus(wrap::hipMemGetAllocationGranularity(
+  TF_RETURN_IF_ERROR(ToStatus(hipMemGetAllocationGranularity(
       &granularity, &props, hipMemAllocationGranularityRecommended)));
 
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, granularity);
 
   void* ptr = nullptr;
   TF_RETURN_IF_ERROR(ToStatus(
-      wrap::hipMemAddressReserve(&ptr, padded_size, granularity, nullptr,
+hipMemAddressReserve(&ptr, padded_size, granularity, nullptr,
                                     0ULL)));
 
   return std::unique_ptr<RocmMemoryReservation>(
@@ -82,7 +82,7 @@ absl::Status RocmMemoryReservation::Map(size_t reservation_offset,
         "RocmMemoryReservation::Map requires a RocmRawMemoryAllocation");
   }
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
-  return ToStatus(wrap::hipMemMap(ptr_ + reservation_offset, size,
+  return ToStatus(hipMemMap(ptr_ + reservation_offset, size,
                                   allocation_offset, rocm_alloc->GetHandle(),
                                   0ULL));
 }
@@ -93,7 +93,7 @@ absl::Status RocmMemoryReservation::SetAccess(uint64_t reservation_offset,
 
   int device_count = 0;
   TF_RETURN_IF_ERROR(
-      ToStatus(wrap::hipGetDeviceCount(&device_count), "hipGetDeviceCount"));
+      ToStatus(hipGetDeviceCount(&device_count), "hipGetDeviceCount"));
 
   for (int peer = 0; peer < device_count; ++peer) {
     if (peer != executor_->device_ordinal()) {
@@ -110,7 +110,7 @@ absl::Status RocmMemoryReservation::SetAccess(uint64_t reservation_offset,
     desc.location.id = peer;
     desc.flags = hipMemAccessFlagsProtReadWrite;
     TF_RETURN_IF_ERROR(ToStatus(
-        wrap::hipMemSetAccess(ptr_ + reservation_offset, size, &desc, 1),
+hipMemSetAccess(ptr_ + reservation_offset, size, &desc, 1),
         "hipMemSetAccess for peer device"));
   }
   return absl::OkStatus();
@@ -118,7 +118,7 @@ absl::Status RocmMemoryReservation::SetAccess(uint64_t reservation_offset,
 
 absl::Status RocmMemoryReservation::UnMap(size_t offset, size_t size) {
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
-  return ToStatus(wrap::hipMemUnmap(ptr_ + offset, size));
+  return ToStatus(hipMemUnmap(ptr_ + offset, size));
 }
 
 RocmMemoryReservation::~RocmMemoryReservation() {
@@ -127,11 +127,11 @@ RocmMemoryReservation::~RocmMemoryReservation() {
   }
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
   auto unmap_status =
-      ToStatus(wrap::hipMemUnmap(ptr_, size_), "Error unmapping ROCm memory");
+      ToStatus(hipMemUnmap(ptr_, size_), "Error unmapping ROCm memory");
   if (!unmap_status.ok()) {
     LOG(ERROR) << unmap_status.message();
   }
-  auto free_status = ToStatus(wrap::hipMemAddressFree(ptr_, size_),
+  auto free_status = ToStatus(hipMemAddressFree(ptr_, size_),
                               "Error freeing ROCm address range");
   if (!free_status.ok()) {
     LOG(ERROR) << free_status.message();
