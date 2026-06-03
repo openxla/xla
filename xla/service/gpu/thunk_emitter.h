@@ -33,7 +33,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/async_execution.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/host_send_recv_thunk.h"
-#include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -42,6 +41,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/gpu/gpu_hlo_ordering.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/service/shaped_slice.h"
@@ -69,9 +69,6 @@ class ThunkEmitter {
   llvm::Module* constants_module() { return constants_module_.get(); }
   std::unique_ptr<llvm::Module> ConsumeConstantsModule() {
     return std::move(constants_module_);
-  }
-  std::vector<std::unique_ptr<llvm::Module>> ConsumeKernelModules() {
-    return std::move(kernel_modules_);
   }
 
  private:
@@ -157,19 +154,9 @@ class ThunkEmitter {
 
   absl::StatusOr<ThunkSequence> EmitFftThunk(const HloFftInstruction* hlo);
 
-  absl::StatusOr<ThunkSequence> EmitGemmThunk(
-      const HloCustomCallInstruction* hlo);
-
   absl::StatusOr<ThunkSequence> EmitInfeed(const HloInfeedInstruction* hlo);
 
-  template <typename NvshmemAllReduceThunkType,
-            typename HloAllReduceInstruction>
-  absl::StatusOr<ThunkSequence> EmitNvshmemThunk(
-      Thunk::Kind kind, const HloInstruction* async_start,
-      const HloAllReduceInstruction* inst,
-      std::optional<bool> use_global_device_ids);
 
-  absl::StatusOr<ThunkSequence> EmitNvshmemAsyncDone(const HloInstruction* hlo);
 
   absl::StatusOr<ThunkSequence> EmitNormThunk(
       const HloCustomCallInstruction* hlo);
@@ -190,6 +177,8 @@ class ThunkEmitter {
   template <typename ThunkType>
   absl::StatusOr<ThunkSequence> EmitReplicaOrPartitionId(
       const HloInstruction* hlo);
+
+  absl::StatusOr<ThunkSequence> EmitRngSeedThunk(const HloInstruction* instr);
 
   AsyncThunkSequence EmitRngGetAndUpdateState(
       const HloRngGetAndUpdateStateInstruction* instr);
@@ -217,7 +206,7 @@ class ThunkEmitter {
 
   absl::Status AssertNonDeterminismIsOkay(const std::string& op_name);
 
-  absl::StatusOr<ThunkSequence> EmitDynamicSliceFusionV2(
+  AsyncThunkSequence EmitDynamicSliceFusionV2(
       const HloFusionInstruction* instr);
 
   absl::StatusOr<BufferAllocation::Slice> GetAllocationSliceForHlo(
@@ -234,10 +223,6 @@ class ThunkEmitter {
   // Container for async host send/recv events shared by host send/recv thunks.
   std::shared_ptr<HostSendRecvAsyncEvents> send_recv_events_;
 
-  // Shared buffer addresses registry for NVSHMEM put/get operations.
-  [[deprecated("Use NCCL 2.28+ primitives instead.")]]
-  std::shared_ptr<NvshmemBufferAddresses> nvshmem_buffer_addresses_;
-
   // Maps async-start instructions to their AsyncExecution so that the
   // corresponding async-done can emit an AsyncDoneThunk sharing the same
   // AsyncExecution.
@@ -249,9 +234,6 @@ class ThunkEmitter {
 
   // Module with constants.
   std::unique_ptr<llvm::Module> constants_module_;
-
-  // Modules for each emitted kernel.
-  std::vector<std::unique_ptr<llvm::Module>> kernel_modules_;
 
   // TODO(tjoerg): Attach the HloOrdering to the HloSchedule instead of
   // re-creating it here.
@@ -275,13 +257,15 @@ class ThunkEmitter {
   using AllocationOverrides =
       absl::flat_hash_map<const HloInstruction*,
                           std::vector<BufferAllocation::Slice>>;
-
   auto InstallAllocationOverrides(AllocationOverrides overrides) {
     allocation_overrides_ = std::move(overrides);
     return absl::MakeCleanup([this] { allocation_overrides_.clear(); });
   }
-
   AllocationOverrides allocation_overrides_;
+
+  // Stores HloFusionAnalysis objects to ensure they outlive any asynchronous
+  // operations that may hold references to them.
+  std::vector<std::unique_ptr<HloFusionAnalysis>> analysis_garbage_collector_;
 };
 
 }  // namespace xla::gpu

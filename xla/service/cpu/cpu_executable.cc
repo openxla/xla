@@ -130,7 +130,8 @@ CpuExecutable::CpuExecutable(std::unique_ptr<HloModule> hlo_module,
       target_machine_options_(std::move(target_machine_options)),
       data_layout_(std::move(data_layout)) {
   if (assignment_ && has_module()) {
-    XlaDebugInfoManager::Get()->RegisterModule(shared_module(), assignment_);
+    XlaDebugInfoManager::Get()->RegisterModule(shared_module(),
+                                               assignment_->ToProto());
   }
 
   if (assignment_) {
@@ -231,24 +232,33 @@ static int32_t GetDeviceOrdinal(const ExecutableRunOptions* run_options) {
 absl::Status CpuExecutable::ExecuteThunks(
     const ExecutableRunOptions* run_options,
     absl::Span<MaybeOwningDeviceAddress const> buffers) {
-  uint64_t start_ns = tsl::Env::Default()->NowNanos();
+  // NowNanos is otherwise dead work when no execution_profile is set.
+  uint64_t start_ns = 0;
+  if (ABSL_PREDICT_FALSE(run_options->execution_profile() != nullptr)) {
+    start_ns = tsl::Env::Default()->NowNanos();
+  }
 
   size_t profile_counters_size = 0;
   int64_t* profile_counters = nullptr;
 
   BufferAllocations allocations(buffers);
 
-  VLOG(3) << "Executing XLA:CPU thunks:";
-  VLOG(3) << absl::StrFormat("  Number of buffer allocations: %u",
-                             buffers.size());
-  auto mem_printer = [](std::string* out, const MaybeOwningDeviceAddress& mem) {
-    absl::StrAppend(out, absl::StrFormat("%p", mem.AsDeviceAddress().opaque()));
-  };
-  VLOG(3) << absl::StrFormat("  Buffer allocations: [%s]",
-                             absl::StrJoin(buffers, ", ", mem_printer));
-  VLOG(3) << absl::StrFormat("  Number of profile counters: %u",
-                             profile_counters_size);
-  VLOG(3) << absl::StrFormat("  Profile counters: %p", profile_counters);
+  // StrJoin + StrFormat operands to operator<< allocate even when VLOG off.
+  if (ABSL_PREDICT_FALSE(VLOG_IS_ON(3))) {
+    VLOG(3) << "Executing XLA:CPU thunks:";
+    VLOG(3) << absl::StrFormat("  Number of buffer allocations: %u",
+                               buffers.size());
+    auto mem_printer = [](std::string* out,
+                          const MaybeOwningDeviceAddress& mem) {
+      absl::StrAppend(out,
+                      absl::StrFormat("%p", mem.AsDeviceAddress().opaque()));
+    };
+    VLOG(3) << absl::StrFormat("  Buffer allocations: [%s]",
+                               absl::StrJoin(buffers, ", ", mem_printer));
+    VLOG(3) << absl::StrFormat("  Number of profile counters: %u",
+                               profile_counters_size);
+    VLOG(3) << absl::StrFormat("  Profile counters: %p", profile_counters);
+  }
 
   // Prepare for executing XLA program collectively.
   ASSIGN_OR_RETURN(Thunk::CollectiveExecuteParams collective_execute_params,
@@ -265,26 +275,30 @@ absl::Status CpuExecutable::ExecuteThunks(
   }
 
   // Use the intra-op thread pool to offload thunk executor tasks.
-  auto* intra_op_thread_pool = run_options->intra_op_thread_pool();
+  auto* intra_op_thread_pool =
+      run_options ? run_options->intra_op_thread_pool() : nullptr;
   ThreadPoolTaskRunner task_runner(
       intra_op_thread_pool ? intra_op_thread_pool->getPool() : nullptr);
 
   Thunk::ExecuteParams execute_params = {
-      &*function_library_,
-      &allocations,
-      GetXfeedManager(GetDeviceOrdinal(run_options)),
-      intra_op_thread_pool,
-      &task_runner,
-      &collective_execute_params,
-      &custom_call_execute_params,
-      ynn_params ? &*ynn_params : nullptr};
+      &*function_library_, &allocations,
+      GetXfeedManager(GetDeviceOrdinal(run_options)), intra_op_thread_pool,
+      &task_runner, &collective_execute_params, &custom_call_execute_params,
+      ynn_params ? &*ynn_params : nullptr,
+      /*run_id=*/-1,
+      /*device_ordinal=*/GetDeviceOrdinal(run_options),
+      /*session=*/
+      Thunk::ExecuteSession(Thunk::ExecuteSession::kMaxWorkers,
+                            Thunk::ExecuteSession::kSplitThreshold),
+      /*rng_seed=*/
+      run_options ? static_cast<uint64_t>(run_options->rng_seed()) : 0};
 
   auto executed_event = thunks_->Execute(execute_params);
 
   tsl::profiler::TraceMe trace("BlockUntilReady");
   tsl::BlockUntilReady(executed_event);
 
-  if (run_options->execution_profile()) {
+  if (run_options && run_options->execution_profile()) {
     uint64_t end_ns = tsl::Env::Default()->NowNanos();
     run_options->execution_profile()->set_compute_time_ns(
         std::max<int64_t>(end_ns - start_ns, 1));

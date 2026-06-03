@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/basic_device_list.h"
+#include "xla/python/ifrt/bundle.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/client_impl_util.h"
 #include "xla/python/ifrt/device.h"
@@ -103,7 +104,6 @@ limitations under the License.
 #include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 namespace ifrt {
@@ -1810,6 +1810,12 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PjRtClient::BitcastArrays(
   return new_arrays;
 }
 
+tsl::Future<std::vector<uint64_t>> PjRtClient::HashValues(
+    absl::Span<const ValueRef> values, HashMode mode) {
+  return absl::UnimplementedError(
+      "HashValues is not implemented in PjRtClient.");
+}
+
 absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PjRtClient::ReshardArrays(
     absl::Span<ArrayRef> arrays, absl::Span<const ArraySpec> specs,
     ArrayCopySemantics semantics) {
@@ -1828,6 +1834,16 @@ tsl::Future<> PjRtClient::GetReadyFuture(absl::Span<const ValueRef> values) {
 absl::StatusOr<tsl::RCReference<Tuple>> PjRtClient::MakeTuple(
     absl::Span<ValueRef> values) {
   return PjRtTuple::Create(this, values);
+}
+
+absl::StatusOr<BundleRef> PjRtClient::Bundle(absl::Span<ValueRef> values,
+                                             ArrayCopySemantics semantics) {
+  return absl::UnimplementedError("Bundle is not implemented.");
+}
+
+absl::StatusOr<BundleRef> PjRtClient::ConcatBundles(
+    absl::Span<BundleRef> bundles, ArrayCopySemantics semantics) {
+  return absl::UnimplementedError("ConcatBundles is not implemented.");
 }
 
 absl::StatusOr<std::shared_ptr<Topology>> PjRtClient::GetTopologyForDevices(

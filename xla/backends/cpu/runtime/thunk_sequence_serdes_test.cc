@@ -24,6 +24,7 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -50,6 +51,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/logical_id_thunk.h"
 #include "xla/backends/cpu/runtime/outfeed_thunk.h"
 #include "xla/backends/cpu/runtime/reduce_scatter_thunk.h"
+#include "xla/backends/cpu/runtime/rng_seed_thunk.h"
 #include "xla/backends/cpu/runtime/rng_state_thunk.h"
 #include "xla/backends/cpu/runtime/serdes_base.h"
 #include "xla/backends/cpu/runtime/sort_thunk.h"
@@ -180,6 +182,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
     ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateKernelThunk());
     ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateConvolutionThunk());
     ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateSortThunk());
+    ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateRngSeedThunk());
     return thunk_sequence;
   }
 
@@ -442,7 +445,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
                 buffer_allocations_[buffer_allocations_.size() - 1])},
             /*results_shapes=*/
             {literals_[buffer_allocations_.size() - 1].shape()},
-            /*is_tuple_result=*/false,
+            /*is_tuple_result=*/true,
         },
         /*backend_config=*/"", CustomCallApiVersion::API_VERSION_TYPED_FFI);
   }
@@ -674,6 +677,14 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
         /*direction=*/SortThunk::SortDirection::kAscending);
   }
 
+  absl::StatusOr<std::unique_ptr<Thunk>> CreateRngSeedThunk() {
+    RETURN_IF_ERROR(AddBufferAllocations(1));
+    return RngSeedThunk::Create(
+        Thunk::Info(),
+        CreateBufferAllocationSlice(
+            buffer_allocations_[buffer_allocations_.size() - 1]));
+  }
+
   bool VerifySliceEquality(const BufferAllocation::Slice& slice_1,
                            const BufferAllocation::Slice& slice_2) {
     return slice_1.offset() == slice_2.offset() &&
@@ -865,6 +876,10 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
                       [](const Shape& shape_1, const Shape& shape_2) {
                         return ShapeUtil::Equal(shape_1, shape_2);
                       });
+
+    are_op_buffers_equal &= (thunk_1.op_buffers().is_tuple_result ==
+                             thunk_2.op_buffers().is_tuple_result);
+
     return thunk_1.target_name() == thunk_2.target_name() &&
            thunk_1.api_version() == thunk_2.api_version() &&
            thunk_1.backend_config() == thunk_2.backend_config() &&
@@ -974,6 +989,11 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
     return VerifySliceEquality(thunk_1.state_buffer(),
                                thunk_2.state_buffer()) &&
            thunk_1.delta() == thunk_2.delta();
+  }
+
+  bool VerifyRngSeedThunkEquality(const RngSeedThunk& thunk_1,
+                                  const RngSeedThunk& thunk_2) {
+    return VerifySliceEquality(thunk_1.dest_buffer(), thunk_2.dest_buffer());
   }
 
   bool VerifySortThunkEquality(const SortThunk& thunk_1,
@@ -1095,15 +1115,16 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
            VerifySliceShapeEquality(thunk_1.convolution_slices().input_buffer,
                                     thunk_1.convolution_slices().input_shape,
                                     thunk_2.convolution_slices().input_buffer,
-                                    thunk_2.convolution_slices().input_shape);
-    VerifySliceShapeEquality(thunk_1.convolution_slices().kernel_buffer,
-                             thunk_1.convolution_slices().kernel_shape,
-                             thunk_2.convolution_slices().kernel_buffer,
-                             thunk_2.convolution_slices().kernel_shape);
-    VerifySliceShapeEquality(thunk_1.convolution_slices().output_buffer,
-                             thunk_1.convolution_slices().output_shape,
-                             thunk_2.convolution_slices().output_buffer,
-                             thunk_2.convolution_slices().output_shape);
+                                    thunk_2.convolution_slices().input_shape) &&
+           VerifySliceShapeEquality(
+               thunk_1.convolution_slices().kernel_buffer,
+               thunk_1.convolution_slices().kernel_shape,
+               thunk_2.convolution_slices().kernel_buffer,
+               thunk_2.convolution_slices().kernel_shape) &&
+           VerifySliceShapeEquality(thunk_1.convolution_slices().output_buffer,
+                                    thunk_1.convolution_slices().output_shape,
+                                    thunk_2.convolution_slices().output_buffer,
+                                    thunk_2.convolution_slices().output_shape);
   }
 
   bool VerifyReduceScatterThunkEquality(const ReduceScatterThunk& thunk_1,
@@ -1211,6 +1232,10 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
         return VerifyRngGetAndUpdateStateThunkEquality(
             absl::down_cast<const RngGetAndUpdateStateThunk&>(thunk_1),
             absl::down_cast<const RngGetAndUpdateStateThunk&>(thunk_2));
+      case Thunk::Kind::kRngSeed:
+        return VerifyRngSeedThunkEquality(
+            absl::down_cast<const RngSeedThunk&>(thunk_1),
+            absl::down_cast<const RngSeedThunk&>(thunk_2));
       case Thunk::Kind::kSort:
         return VerifySortThunkEquality(
             absl::down_cast<const SortThunk&>(thunk_1),

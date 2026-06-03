@@ -498,6 +498,7 @@ cc_library(
     deps = [
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
+        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -545,7 +546,7 @@ tsl_cc_test(
 )
 
 filegroup(
-    name = "mobile_srcs_no_runtime",
+    name = "mobile_hdrs_no_runtime",
     srcs = [
         "no_init.h",
         "trace_filter_utils.h",

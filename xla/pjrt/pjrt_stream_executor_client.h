@@ -26,6 +26,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/casts.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -341,7 +342,7 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   bool IsDmaMapped(const void* data_start, int64_t transfer_size);
 
   LocalDeviceState& device_state(int device_ordinal) const {
-    return *tensorflow::down_cast<PjRtStreamExecutorDevice*>(
+    return *absl::down_cast<PjRtStreamExecutorDevice*>(
                 LookupAddressableDevice(xla::LocalDeviceId(device_ordinal))
                     .value())
                 ->local_device_state();

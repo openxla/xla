@@ -66,6 +66,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
+#include "xla/pjrt/pjrt_device_dimensions.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
@@ -1269,8 +1270,17 @@ PJRT_Error* PJRT_Client_DefaultDeviceAssignment(
       "PJRT_Client_DefaultAssignment_Args",
       PJRT_Client_DefaultDeviceAssignment_Args_STRUCT_SIZE, args->struct_size));
 
-  const int replicas = args->num_replicas;
-  const int partitions = args->num_partitions;
+  if (args->num_replicas <= 0 || args->num_partitions <= 0) {
+    absl::Status status = absl::InvalidArgumentError(
+        absl::StrCat(__func__,
+                     ": `num_replicas` and `num_partitions` must be "
+                     "positive, got ",
+                     args->num_replicas, " and ", args->num_partitions));
+    return StatusToPjRtError(status);
+  }
+
+  const size_t replicas = args->num_replicas;
+  const size_t partitions = args->num_partitions;
   const size_t buffer_size = args->default_assignment_size;
   if (buffer_size < replicas * partitions) {
     absl::Status status = absl::FailedPreconditionError(
@@ -2525,9 +2535,13 @@ PJRT_Error* PJRT_Executable_GetCompiledMemoryStats(
 
 PJRT_Error* PJRT_Executable_DeserializeAndLoad(
     PJRT_Executable_DeserializeAndLoad_Args* args) {
+  // TODO: b/516902012 - Make this check stricter after 12week compatibility
+  // window.
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_DeserializeAndLoad_Args",
-      PJRT_Executable_DeserializeAndLoad_Args_STRUCT_SIZE, args->struct_size));
+      PJRT_STRUCT_SIZE(PJRT_Executable_DeserializeAndLoad_Args,
+                       overridden_serialized_compile_options_size),
+      args->struct_size));
   absl::string_view serialized(args->serialized_executable,
                                args->serialized_executable_size);
 
@@ -2542,10 +2556,30 @@ PJRT_Error* PJRT_Executable_DeserializeAndLoad(
             args->overridden_serialized_compile_options_size)));
   }
 
-  PJRT_ASSIGN_OR_RETURN(
-      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
-      args->client->client->LoadSerializedExecutable(
-          serialized, overridden_options, xla::LoadOptions()));
+  xla::LoadOptions load_options;
+  if (args->struct_size >=
+      PJRT_STRUCT_SIZE(PJRT_Executable_DeserializeAndLoad_Args, load_options)) {
+    if (args->load_options != nullptr) {
+      PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+          "PJRT_LoadOptions", PJRT_LoadOptions_STRUCT_SIZE,
+          args->load_options->struct_size));
+
+      if (args->load_options->computation_origin != nullptr) {
+        load_options.computation_origin = xla::PjRtDeviceDimensions(
+            absl::MakeSpan(args->load_options->computation_origin,
+                           args->load_options->computation_origin_size));
+      }
+
+      if (args->load_options->multi_slice_config != nullptr) {
+        load_options.multi_slice_config =
+            args->load_options->multi_slice_config->config.get();
+      }
+    }
+  }
+
+  PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+                        args->client->client->LoadSerializedExecutable(
+                            serialized, overridden_options, load_options));
 
   args->loaded_executable =
       new PJRT_LoadedExecutable(std::move(executable), args->client);

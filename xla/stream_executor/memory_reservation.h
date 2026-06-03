@@ -91,6 +91,9 @@ class MemoryReservation {
     absl::StatusOr<ScopedMapping> Remap(
         absl::Span<const RemappingDescriptor> mappings) &&;
 
+    // Returns true if this object does not own a mapping.
+    bool is_null() const { return reservation_ == nullptr; }
+
    private:
     // Unmaps the given range on the reservation and logs on failure.
     static void UnmapAndLogIfError(MemoryReservation* reservation,

@@ -112,10 +112,19 @@ TEST_F(NamedShardingEqualityTest, DifferentDimShardings) {
                                              {"e"}, {"b:(1)2"}));
 }
 
-TEST_F(NamedShardingEqualityTest, DifferentReplicatedAxes) {
-  EXPECT_NE(base_, test_utils::FromAxisNames(mesh_abcde_,
+TEST_F(NamedShardingEqualityTest, IgnoresReplicatedAxes) {
+  EXPECT_EQ(base_, test_utils::FromAxisNames(mesh_abcde_,
                                              {{"a", "b:(2)2"}, {"d:(4)2", "c"}},
                                              {"d:(1)4"}, {"b:(1)2"}));
+}
+
+TEST_F(NamedShardingEqualityTest,
+       IgnoresReplicatedAxesWithImplicitAndExplicitReplication) {
+  Mesh mesh({2, 2, 2, 1}, {"d", "f", "e", "c"});
+
+  EXPECT_EQ(test_utils::FromAxisNames(mesh, {{"f"}, {}, {}}),
+            test_utils::FromAxisNames(mesh, {{"f"}, {}, {}},
+                                      /*replicated_axes=*/{"d"}));
 }
 
 TEST_F(NamedShardingEqualityTest, DifferentUnreducedAxes) {
@@ -947,17 +956,6 @@ TEST(NamedShardingTest,
                                 /*unreduced_axes=*/{"b:(3)3"})
           .GetImplicitlyReplicatedAxes(),
       ElementsAre(AxisRef(0, {1, 2}), AxisRef(0, {4, 2}), AxisRef(1, {1, 3})));
-}
-
-TEST(NamedShardingTest, JaxPartitions) {
-  Mesh mesh({2, 4, 3, 5}, {"a", "b", "c", "d"});
-  NamedSharding sharding =
-      test_utils::FromAxisNames(mesh, {{"a", "b"}, {}, {"c"}});
-  EXPECT_THAT(
-      sharding.JaxPartitions(),
-      ElementsAre(ElementsAre("a", "b"), ElementsAre(), ElementsAre("c")));
-
-  EXPECT_TRUE(NamedSharding::Replicate().JaxPartitions().empty());
 }
 
 }  // namespace

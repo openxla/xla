@@ -107,6 +107,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_function_importer.h"
 #include "xla/hlo/utils/hlo_traversal.h"
+#include "xla/service/decision.h"
 #include "xla/service/dump.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -224,7 +225,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
 
     VLOG(6) << "fusion instruction: " << fusion.ToString() << "\n";
     VLOG(6) << "tiling space: " << tiling_space->ToString();
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         llvm::SmallVector<int64_t> tile_sizes,
         GetTilingSpaceConcreteSizes(*tiling_space, block_level_parameters));
     RETURN_IF_ERROR(
@@ -233,6 +234,13 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
     ASSIGN_OR_RETURN(
         TiledHloComputation tiled_computation,
         TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space)));
+    if (Decision constraints = experimental::VerifyTritonConstraints(
+            tiled_computation, device_info);
+        !constraints) {
+      return absl::InternalError(
+          absl::StrCat("Triton constraints violated during codegen: ",
+                       constraints.Explain()));
+    }
     VLOG(6) << "tiled computation: " << tiled_computation.ToString();
     return xtile::EmitXTileModule(
         fn_name, fusion, tiled_computation, mlir_context,
@@ -253,9 +261,9 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
   const auto& symbolic_tile_analysis =
       std::get<SymbolicTileAnalysis>(symbolic_tile_analysis_or);
 
-  TF_ASSIGN_OR_RETURN(Tiling tiling,
-                      TilingFromAnnotatedFusion(symbolic_tile_analysis,
-                                                block_level_parameters));
+  ASSIGN_OR_RETURN(Tiling tiling,
+                   TilingFromAnnotatedFusion(symbolic_tile_analysis,
+                                             block_level_parameters));
 
   return xtile::EmitXTileModule(
       fn_name, fusion, symbolic_tile_analysis, tiling, mlir_context,
@@ -367,22 +375,6 @@ absl::StatusOr<TritonKernelSource> CreateTritonModule(
             HloPrintOptions::ShortParsable()));
   });
   return kernel_source;
-}
-
-std::ostream& operator<<(std::ostream& os, const TritonWrapperResult& result) {
-  os << "\nTritonWrapperResult: " << "\n";
-  os << "  shmem_bytes: " << result.shmem_bytes << "\n";
-  auto tma_metadata = result.tma_metadata.ToProto();
-  os << "  tma_metadata: {\n";
-  for (const auto& tma_entry : tma_metadata.arg_index_to_tma_info()) {
-    os << "    " << tma_entry.first << " : " << tma_entry.second.DebugString()
-       << "\n";
-  }
-  os << "  }\n";
-  os << "  thread_dims: " << result.thread_dims.ToString() << "\n";
-  os << "  nvvm_annotations: " << result.nvvm_annotations.size() << "\n";
-  os << "  llvm_module: " << result.kernel_source.ToString() << "\n";
-  return os;
 }
 
 absl::StatusOr<TritonWrapperResult> TritonWrapper(

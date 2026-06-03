@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/tsl/platform/errors.h"
@@ -88,8 +89,7 @@ DeviceAddressBase MemoryReservation::ScopedMapping::mapped_address() const {
 absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::MapTo(
     size_t reservation_offset, size_t allocation_offset, size_t size,
     MemoryAllocation& allocation) {
-  TF_RETURN_IF_ERROR(
-      Map(reservation_offset, allocation_offset, size, allocation));
+  RETURN_IF_ERROR(Map(reservation_offset, allocation_offset, size, allocation));
 
   auto cleanup = absl::MakeCleanup([&] {
     absl::Status unmap_status = UnMap(reservation_offset, size);
@@ -99,7 +99,7 @@ absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::MapTo(
     }
   });
 
-  TF_RETURN_IF_ERROR(SetAccess(reservation_offset, size));
+  RETURN_IF_ERROR(SetAccess(reservation_offset, size));
 
   std::move(cleanup).Cancel();
   return ScopedMapping(this, reservation_offset, size);
@@ -136,12 +136,12 @@ absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::MapTo(
   });
 
   for (const MappingDescriptor& desc : mappings) {
-    TF_RETURN_IF_ERROR(Map(desc.reservation_offset, desc.allocation_offset,
-                           desc.size, *desc.allocation));
+    RETURN_IF_ERROR(Map(desc.reservation_offset, desc.allocation_offset,
+                        desc.size, *desc.allocation));
     total_size += desc.size;
   }
 
-  TF_RETURN_IF_ERROR(SetAccess(start_offset, total_size));
+  RETURN_IF_ERROR(SetAccess(start_offset, total_size));
 
   std::move(cleanup).Cancel();
   return ScopedMapping(this, start_offset, total_size);

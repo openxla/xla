@@ -23,9 +23,11 @@ limitations under the License.
 #include <ostream>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
@@ -88,6 +90,11 @@ inline std::ostream& operator<<(std::ostream& os, TiledDimId id) {
 class TilingSpace {
  public:
   TilingSpace() : constraints_(ConstraintExpression::GetAlwaysSatisfied()) {}
+
+  // Disable copy constructor and assignment to prevent dangling pointers
+  // inside hlo_to_dimension_.
+  TilingSpace(const TilingSpace&) = delete;
+  TilingSpace& operator=(const TilingSpace&) = delete;
 
   // Unique ID for the dimension or runtime variable.
   using ID = int64_t;
@@ -174,7 +181,9 @@ class TilingSpace {
   const DimensionInfo& GetDimensionInfo(const HloInstruction& hlo,
                                         int64_t dim_position) const;
 
-  // Assigns tile sizes to the dimensions.
+  // Assigns tile sizes to the dimensions and checks if the constraints derived
+  // from the operations are satisfied. That does NOT include backend-specific
+  // constraints.
   absl::Status AssignTileSizes(absl::Span<const int64_t> tile_sizes);
 
   // Returns the runtime variable info for `hlo` that uses it and its
@@ -216,6 +225,9 @@ class TilingSpace {
   // Simplifies an expression using actual dimension and symbol bounds
   // based on the assigned tile sizes and runtime variable bounds.
   SymbolicExpr SimplifyExpression(const SymbolicExpr& expr) const;
+
+  // Returns the list of valid tilings for the tiling space.
+  absl::StatusOr<std::vector<llvm::SmallVector<int64_t, 4>>> GetValidTilings();
 
  private:
   void ProcessDotLike(const HloInstruction& hlo);

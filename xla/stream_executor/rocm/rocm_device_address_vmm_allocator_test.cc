@@ -82,7 +82,7 @@ TEST_F(DeviceAddressVmmAllocatorTest, AllocateAndDeallocate) {
       auto scoped_address,
       allocator->Allocate(executor_->device_ordinal(), 1024,
                           /*retry_on_failure=*/true,
-                          static_cast<int64_t>(MemorySpace::kP2P)));
+                          static_cast<int64_t>(MemorySpace::kCollective)));
 
   EXPECT_FALSE(scoped_address.is_null());
   EXPECT_EQ(scoped_address->size(), 1024);
@@ -103,7 +103,7 @@ TEST_F(DeviceAddressVmmAllocatorTest, AllocateZeroSize) {
       auto scoped_address,
       allocator->Allocate(executor_->device_ordinal(), 0,
                           /*retry_on_failure=*/true,
-                          static_cast<int64_t>(MemorySpace::kP2P)));
+                          static_cast<int64_t>(MemorySpace::kCollective)));
 
   EXPECT_TRUE(scoped_address.is_null());
 }
@@ -116,12 +116,12 @@ TEST_F(DeviceAddressVmmAllocatorTest, AllocateMultiple) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto addr1, allocator->Allocate(executor_->device_ordinal(), 1024,
                                       /*retry_on_failure=*/true,
-                                      static_cast<int64_t>(MemorySpace::kP2P)));
+                                      static_cast<int64_t>(MemorySpace::kCollective)));
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto addr2, allocator->Allocate(executor_->device_ordinal(), 2048,
                                       /*retry_on_failure=*/true,
-                                      static_cast<int64_t>(MemorySpace::kP2P)));
+                                      static_cast<int64_t>(MemorySpace::kCollective)));
 
   EXPECT_FALSE(addr1.is_null());
   EXPECT_FALSE(addr2.is_null());
@@ -139,7 +139,7 @@ TEST_F(DeviceAddressVmmAllocatorTest, MemoryReadWrite) {
       auto scoped_address,
       allocator->Allocate(executor_->device_ordinal(), 1024,
                           /*retry_on_failure=*/true,
-                          static_cast<int64_t>(MemorySpace::kP2P)));
+                          static_cast<int64_t>(MemorySpace::kCollective)));
 
   ASSERT_NE(scoped_address->opaque(), nullptr);
 
@@ -201,7 +201,7 @@ TEST_F(DeviceAddressVmmAllocatorTest, ExplicitDeallocate) {
       auto scoped_address,
       allocator->Allocate(executor_->device_ordinal(), 1024,
                           /*retry_on_failure=*/true,
-                          static_cast<int64_t>(MemorySpace::kP2P)));
+                          static_cast<int64_t>(MemorySpace::kCollective)));
 
   ASSERT_NE(scoped_address->opaque(), nullptr);
   DeviceAddressBase addr = scoped_address.cref();
@@ -233,7 +233,7 @@ TEST_F(DeviceAddressVmmAllocatorTest,
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto addr1, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
-                                      static_cast<int64_t>(MemorySpace::kP2P)));
+                                      static_cast<int64_t>(MemorySpace::kCollective)));
   void* const va = addr1->opaque();
 
   DeviceAddressBase raw = addr1.cref();
@@ -242,7 +242,7 @@ TEST_F(DeviceAddressVmmAllocatorTest,
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto addr2, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
-                                      static_cast<int64_t>(MemorySpace::kP2P)));
+                                      static_cast<int64_t>(MemorySpace::kCollective)));
   EXPECT_EQ(addr2->opaque(), va);
 
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
@@ -259,7 +259,7 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   TF_ASSERT_OK_AND_ASSIGN(
       auto addr,
       allocator->Allocate(ordinal, sizeof(uint64_t), /*retry_on_failure=*/true,
-                          static_cast<int64_t>(MemorySpace::kP2P)));
+                          static_cast<int64_t>(MemorySpace::kCollective)));
 
   constexpr uint64_t kPattern = 0xCAFEBABEDEADBEEFULL;
   DeviceAddressBase dev_addr = addr.cref();
@@ -284,7 +284,7 @@ TEST_F(DeviceAddressVmmAllocatorTest,
     TF_ASSERT_OK_AND_ASSIGN(
         auto addr,
         allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
-                            static_cast<int64_t>(MemorySpace::kP2P)));
+                            static_cast<int64_t>(MemorySpace::kCollective)));
     ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
   }
 
@@ -294,7 +294,7 @@ TEST_F(DeviceAddressVmmAllocatorTest,
     TF_ASSERT_OK_AND_ASSIGN(
         auto addr,
         allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
-                            static_cast<int64_t>(MemorySpace::kP2P)));
+                            static_cast<int64_t>(MemorySpace::kCollective)));
     EXPECT_FALSE(addr.is_null());
   }
 
@@ -313,7 +313,7 @@ TEST_F(DeviceAddressVmmAllocatorTest,
     TF_ASSERT_OK_AND_ASSIGN(
         auto addr,
         allocator->Allocate(ordinal, 1024, /*retry_on_failure=*/true,
-                            static_cast<int64_t>(MemorySpace::kP2P)));
+                            static_cast<int64_t>(MemorySpace::kCollective)));
     ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
   }
 
@@ -328,7 +328,7 @@ TEST_F(DeviceAddressVmmAllocatorTest, UnknownDeviceOrdinalReturnsError) {
   const int unknown_ordinal = 9999;
   EXPECT_FALSE(allocator
                    ->Allocate(unknown_ordinal, 1024, /*retry_on_failure=*/true,
-                              static_cast<int64_t>(MemorySpace::kP2P))
+                              static_cast<int64_t>(MemorySpace::kCollective))
                    .ok());
   EXPECT_THAT(allocator->Deallocate(unknown_ordinal, DeviceAddressBase{}),
               absl_testing::IsOk());
@@ -348,7 +348,7 @@ TEST_F(DeviceAddressVmmAllocatorTest, GetAllocationInfoReportsStableId) {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto addr, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
-                                     static_cast<int64_t>(MemorySpace::kP2P)));
+                                     static_cast<int64_t>(MemorySpace::kCollective)));
 
   std::optional<DeviceAddressVmmAllocator::AllocationInfo> info =
       allocator->GetAllocationInfo(ordinal, *addr);
@@ -375,10 +375,10 @@ TEST_F(DeviceAddressVmmAllocatorTest, DistinctAllocationsHaveDistinctIds) {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto a, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
-                                  static_cast<int64_t>(MemorySpace::kP2P)));
+                                  static_cast<int64_t>(MemorySpace::kCollective)));
   TF_ASSERT_OK_AND_ASSIGN(
       auto b, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
-                                  static_cast<int64_t>(MemorySpace::kP2P)));
+                                  static_cast<int64_t>(MemorySpace::kCollective)));
 
   auto info_a = allocator->GetAllocationInfo(ordinal, *a);
   auto info_b = allocator->GetAllocationInfo(ordinal, *b);
@@ -397,7 +397,7 @@ TEST_F(DeviceAddressVmmAllocatorTest, ReusingPendingDeallocationPreservesId) {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto addr1, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
-                                      static_cast<int64_t>(MemorySpace::kP2P)));
+                                      static_cast<int64_t>(MemorySpace::kCollective)));
   auto info1 = allocator->GetAllocationInfo(ordinal, *addr1);
   ASSERT_TRUE(info1.has_value());
   const uint64_t id1 = info1->allocation_id;
@@ -412,7 +412,7 @@ TEST_F(DeviceAddressVmmAllocatorTest, ReusingPendingDeallocationPreservesId) {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto addr2, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
-                                      static_cast<int64_t>(MemorySpace::kP2P)));
+                                      static_cast<int64_t>(MemorySpace::kCollective)));
   EXPECT_EQ(addr2->opaque(), va);
 
   auto info2 = allocator->GetAllocationInfo(ordinal, *addr2);
@@ -434,10 +434,10 @@ TEST_F(DeviceAddressVmmAllocatorTest, ReuseSelectsSmallestAddressDeterministical
   // addresses.
   TF_ASSERT_OK_AND_ASSIGN(
       auto a, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
-                                  static_cast<int64_t>(MemorySpace::kP2P)));
+                                  static_cast<int64_t>(MemorySpace::kCollective)));
   TF_ASSERT_OK_AND_ASSIGN(
       auto b, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
-                                  static_cast<int64_t>(MemorySpace::kP2P)));
+                                  static_cast<int64_t>(MemorySpace::kCollective)));
   const uintptr_t va_a = reinterpret_cast<uintptr_t>(a->opaque());
   const uintptr_t va_b = reinterpret_cast<uintptr_t>(b->opaque());
   ASSERT_NE(va_a, va_b);
@@ -456,7 +456,7 @@ TEST_F(DeviceAddressVmmAllocatorTest, ReuseSelectsSmallestAddressDeterministical
   // pending address.
   TF_ASSERT_OK_AND_ASSIGN(
       auto c, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
-                                  static_cast<int64_t>(MemorySpace::kP2P)));
+                                  static_cast<int64_t>(MemorySpace::kCollective)));
   EXPECT_EQ(c->opaque(), lowest);
 
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
@@ -516,7 +516,7 @@ TEST_F(MultiDeviceVmmAllocatorTest, AllocateOnBothDevices) {
         auto addr,
         allocator->Allocate(executors_[i]->device_ordinal(), 1024,
                             /*retry_on_failure=*/true,
-                            static_cast<int64_t>(MemorySpace::kP2P)));
+                            static_cast<int64_t>(MemorySpace::kCollective)));
     EXPECT_FALSE(addr.is_null());
     EXPECT_EQ(addr->size(), 1024);
     EXPECT_NE(
@@ -546,7 +546,7 @@ TEST_F(MultiDeviceVmmAllocatorTest, AllocationOnOneDeviceDoesNotAffectOther) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto addr0, allocator->Allocate(executors_[0]->device_ordinal(), 4096,
                                       /*retry_on_failure=*/true,
-                                      static_cast<int64_t>(MemorySpace::kP2P)));
+                                      static_cast<int64_t>(MemorySpace::kCollective)));
   EXPECT_FALSE(addr0.is_null());
 
   EXPECT_EQ(

@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/nvptxcompiler_compilation_provider.h"
 
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -23,12 +22,12 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/stream_executor/cuda/compilation_options.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/ptx_compiler.h"
 #include "xla/stream_executor/gpu/gpu_asm_opts.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor::cuda {
 absl::StatusOr<Assembly> CompileHelper(const CudaComputeCapability& cc,
@@ -48,7 +47,7 @@ absl::StatusOr<Assembly> CompileHelper(const CudaComputeCapability& cc,
     asm_opts.extra_flags.push_back("--device-debug");
   }
 
-  return CompileGpuAsmUsingLibNvPtxCompiler(cc, std::string(ptx), asm_opts,
+  return CompileGpuAsmUsingLibNvPtxCompiler(cc, ptx, asm_opts,
                                             options.cancel_if_reg_spill,
                                             options.dump_compilation_log);
 }
@@ -64,9 +63,9 @@ absl::StatusOr<RelocatableModule>
 NvptxcompilerCompilationProvider::CompileToRelocatableModule(
     const CudaComputeCapability& cc, absl::string_view ptx,
     const CompilationOptions& options) const {
-  TF_ASSIGN_OR_RETURN(Assembly assembly,
-                      CompileHelper(cc, ptx, options,
-                                    /*compile_to_relocatable_module=*/true));
+  ASSIGN_OR_RETURN(Assembly assembly,
+                   CompileHelper(cc, ptx, options,
+                                 /*compile_to_relocatable_module=*/true));
   return RelocatableModule{std::move(assembly.cubin),
                            std::move(assembly.compilation_log),
                            std::move(assembly.module_stats)};
