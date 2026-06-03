@@ -133,6 +133,13 @@ XTileTestBase::CreateXTileIrAndFileCheck(
     ASSIGN_OR_RETURN(ge::TiledHloComputation tiled_computation,
                      ge::TiledHloComputation::Tile(*fusion_adaptor,
                                                    std::move(tiling_space)));
+    if (Decision constraints = ge::VerifyTritonConstraints(
+            tiled_computation, TestGpuDeviceInfo::RTXA6000DeviceInfo());
+        !constraints) {
+      return absl::InternalError(
+          absl::StrCat("Triton constraints violated during test codegen: ",
+                       constraints.Explain()));
+    }
     ASSIGN_OR_RETURN(
         xtile_dialect_module,
         xtile::EmitXTileModule("xtile_dialect_fn", *fusion, tiled_computation,

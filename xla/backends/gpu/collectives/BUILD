@@ -181,16 +181,16 @@ cc_library(
         "//xla/service:rendezvous",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:env",
-        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:status_macros",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/memory",
@@ -221,7 +221,7 @@ xla_cc_test(
         ":gpu_cliques",
         ":gpu_collectives",
         ":loopback_collectives",
-        ":nccl_or_rccl_collectives",
+        ":nccl_or_rccl_collectives",  # fixdeps: keep
         "//xla:executable_run_options",
         "//xla:future",
         "//xla/core/collectives",
@@ -242,7 +242,7 @@ xla_cc_test(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_googletest//:gtest_main",  # fixdeps: keep
         "@tsl//tsl/platform:casts",
     ],
 )
@@ -752,6 +752,56 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "rccl_symmetric_memory_test",
+    srcs = ["rccl_symmetric_memory_test.cc"],
+    tags = [
+        "gpu",
+        "no-oneapi",
+        "requires-gpu-amd",
+        "rocm-only",
+    ],
+    deps = [
+        ":rccl_errors",
+        ":rccl_symmetric_memory",
+        "//xla/stream_executor:device_address",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_rocm//rocm:hip",  # buildcleaner: keep
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+)
+
+cc_library(
+    name = "rccl_symmetric_memory",
+    srcs = ["rccl_symmetric_memory.cc"],
+    hdrs = ["rccl_symmetric_memory.h"],
+    tags = [
+        "gpu",
+        "no-oneapi",
+        "rocm-only",
+    ],
+    visibility = [
+        "//xla/backends/gpu/runtime:__subpackages__",
+    ],
+    deps = [
+        ":rccl_errors",
+        "//xla:util",
+        "//xla/core/collectives:rank_id",
+        "//xla/core/collectives:symmetric_memory",
+        "//xla/stream_executor:device_address",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@local_config_rocm//rocm:rccl",  # buildcleaner: keep
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+)
+
 cc_library(
     name = "rccl_communicator",
     srcs = ["rccl_communicator.cc"],
@@ -767,6 +817,7 @@ cc_library(
         ":gpu_collectives",
         ":gpu_communicator",
         ":rccl_errors",
+        ":rccl_symmetric_memory",
         ":single_threaded_executor",
         "//xla:future",
         "//xla:shape_util",
