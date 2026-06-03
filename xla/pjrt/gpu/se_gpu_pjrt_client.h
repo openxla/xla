@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/collectives/allocator_memory_registration.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/client/local_client.h"
@@ -121,7 +122,9 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       std::shared_ptr<KeyValueStoreInterface> kv_store,
       bool abort_collectives_on_failure,
       std::shared_ptr<const GpuTopology> gpu_topology,
-      std::optional<int> num_processes);
+      std::optional<int> num_processes,
+      std::shared_ptr<gpu::AllocatorMemoryRegistration> memory_registration =
+          nullptr);
 
   std::optional<std::shared_ptr<KeyValueStoreInterface>> key_value_store()
       const override {
@@ -208,6 +211,7 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   std::optional<int> num_nodes_;
   const bool abort_collectives_on_failure_ = false;
   std::optional<xla::StreamExecutorGpuTopologyDescription> topology_;
+  std::shared_ptr<gpu::AllocatorMemoryRegistration> memory_registration_;
   std::shared_ptr<KeyValueStoreInterface> kv_store_;
 
   // Helpers for cross host transfers.
