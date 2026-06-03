@@ -413,7 +413,6 @@ xla_test(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:verified_hlo_module",
-        "//xla/service:hlo_module_config",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
@@ -809,6 +808,7 @@ lit_test_suite_for_gpus(
             "pdl.hlo",
         ],
         "mi200": [
+            "dot_bf16.hlo",
             "element_wise_row_vectorization.hlo",
             "scatter_bf16.hlo",
             "single_instruction.hlo",

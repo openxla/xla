@@ -1328,6 +1328,7 @@ cc_library(
     srcs = ["double_buffer_loop_unrolling.cc"],
     hdrs = ["double_buffer_loop_unrolling.h"],
     deps = [
+        "//xla:side_effect_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -2336,6 +2337,7 @@ cc_library(
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu/model:block_level_parameters",
+        "//xla/service/gpu/model:combined_gpu_performance_model",
         "//xla/service/gpu/model:fusion_analysis_cache",
         "//xla/service/gpu/model:gpu_hlo_cost_analysis",
         "//xla/service/gpu/model:gpu_indexing_performance_model",
