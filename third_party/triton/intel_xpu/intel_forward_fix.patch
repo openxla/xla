@@ -1,0 +1,75 @@
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.h
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.h
+@@ -1,10 +1,11 @@
+ #ifndef TRITON_THIRD_PARTY_AMD_LIB_TRITONAMDGPUTOLLVM_TARGETINFO_H_
+ #define TRITON_THIRD_PARTY_AMD_LIB_TRITONAMDGPUTOLLVM_TARGETINFO_H_
+ 
++#include <optional>
++
+ #include "Dialect/TritonAMDGPU/IR/TargetFeatures.h"
++#include "llvm/TargetParser/AMDGPUTargetParser.h"
+ #include "triton/Conversion/TritonGPUToLLVM/TargetInfoBase.h"
+-#include "llvm/TargetParser/TargetParser.h"
+-#include <optional>
+ 
+ namespace mlir::triton::AMD {
+ class TargetInfo : public mlir::triton::TargetInfoBase {
+
+--- a/lib/Target/LLVMIR/LLVMDIUtils.cpp
++++ b/lib/Target/LLVMIR/LLVMDIUtils.cpp
+@@ -96,7 +96,8 @@ LLVM::DITypeAttr LLVMDIUtils::convertStructType(MLIRContext *context,
+       mlir::StringAttr::get(context, "struct"), fileAttr, /*line=*/line,
+       /*scope=*/fileAttr, /*baseType=*/nullptr, mlir::LLVM::DIFlags::Zero,
+       sizeInBits, /*alignInBits=*/0, /*dataLocation=*/nullptr, /*rank=*/nullptr,
+-      /*allocated=*/nullptr, /*associated=*/nullptr, elTypes);
++      /*allocated=*/nullptr, /*associated=*/nullptr, /*identifier=*/nullptr,
++      /*discriminator=*/nullptr, elTypes);
+ }
+ 
+ LLVM::DITypeAttr LLVMDIUtils::convertArrayType(MLIRContext *context,
+@@ -116,7 +117,8 @@ LLVM::DITypeAttr LLVMDIUtils::convertArrayType(MLIRContext *context,
+       mlir::StringAttr::get(context, "array"), fileAttr, /*line=*/line,
+       /*scope=*/fileAttr, /*baseType=*/baseType, mlir::LLVM::DIFlags::Zero,
+       sizeInBits, /*alignInBits=*/0, /*dataLocation=*/nullptr, /*rank=*/nullptr,
+-      /*allocated=*/nullptr, /*associated=*/nullptr, elTypes);
++      /*allocated=*/nullptr, /*associated=*/nullptr, /*identifier=*/nullptr,
++      /*discriminator=*/nullptr, elTypes);
+ }
+ 
+ std::optional<unsigned> LLVMDIUtils::calcBitWidth(mlir::Type type) {
+
+--- a/third_party/nvidia/lib/NVGPUToLLVM/NVGPUToLLVMPass.cpp
++++ b/third_party/nvidia/lib/NVGPUToLLVM/NVGPUToLLVMPass.cpp
+@@ -532,9 +532,9 @@ static Value createTMAlloc(IRRewriter &rewriter, LLVM::LLVMFuncOp func,
+       {ptxBuilder.newOperand(pred, "b"), ptxBuilder.newOperand(sharedMem, "r")},
+       /*onlyAttachMLIRArgs=*/true);
+   ptxBuilder.launch(rewriter, loc, void_ty(func->getContext()));
+-  NVVM::Barrier0Op::create(rewriter, loc);
++  NVVM::BarrierOp::create(rewriter, loc);
+   Value address = b.load(i32_ty, sharedMem);
+-  NVVM::Barrier0Op::create(rewriter, loc);
++  NVVM::BarrierOp::create(rewriter, loc);
+   address = b.inttoptr(ptr_ty(func.getContext(), 6), address);
+   return address;
+ }
+@@ -559,7 +559,7 @@ void freeTMAlloc(LLVM::LLVMFuncOp func, Value alloc, size_t size, Value pred,
+       NVVM::ClusterArriveOp::create(b, loc, UnitAttr::get(ctx));
+       NVVM::ClusterWaitOp::create(b, loc, UnitAttr::get(ctx));
+     } else {
+-      NVVM::Barrier0Op::create(b, loc);
++      NVVM::BarrierOp::create(b, loc);
+     }
+     PTXBuilder ptxBuilder;
+     // Calculate the predicate in the inline asm to avoid creating long
+
+--- a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/ConvertWarpSpecializeToLLVM.cpp
++++ b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/ConvertWarpSpecializeToLLVM.cpp
+@@ -45,7 +45,7 @@ public:
+       : numThreadsPerWarp(numThreadsPerWarp) {}
+ 
+   bool isBarrierOp(Operation *op) const override {
+-    return isa<NVVM::Barrier0Op>(op);
++    return isa<NVVM::BarrierOp>(op);
+   }
+ 
+   Type getBarrierHandleType(MLIRContext *ctx) const override {
