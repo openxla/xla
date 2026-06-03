@@ -82,9 +82,13 @@ absl::Status RocmMemoryReservation::Map(size_t reservation_offset,
         "RocmMemoryReservation::Map requires a RocmRawMemoryAllocation");
   }
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
-  return ToStatus(hipMemMap(ptr_ + reservation_offset, size,
-                                  allocation_offset, rocm_alloc->GetHandle(),
-                                  0ULL));
+  absl::Status status = ToStatus(hipMemMap(ptr_ + reservation_offset, size,
+                                           allocation_offset,
+                                           rocm_alloc->GetHandle(), 0ULL));
+  if (status.ok()) {
+    mapped_bytes_ += size;
+  }
+  return status;
 }
 
 absl::Status RocmMemoryReservation::SetAccess(uint64_t reservation_offset,
@@ -118,7 +122,11 @@ hipMemSetAccess(ptr_ + reservation_offset, size, &desc, 1),
 
 absl::Status RocmMemoryReservation::UnMap(size_t offset, size_t size) {
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
-  return ToStatus(hipMemUnmap(ptr_ + offset, size));
+  absl::Status status = ToStatus(hipMemUnmap(ptr_ + offset, size));
+  if (status.ok()) {
+    mapped_bytes_ = mapped_bytes_ >= size ? mapped_bytes_ - size : 0;
+  }
+  return status;
 }
 
 RocmMemoryReservation::~RocmMemoryReservation() {
@@ -126,10 +134,17 @@ RocmMemoryReservation::~RocmMemoryReservation() {
     return;
   }
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
-  auto unmap_status =
-      ToStatus(hipMemUnmap(ptr_, size_), "Error unmapping ROCm memory");
-  if (!unmap_status.ok()) {
-    LOG(ERROR) << unmap_status.message();
+  // Only unmap if a mapping is still active. The ScopedMapping returned by
+  // MapTo/Remap normally unmaps the range before this reservation is destroyed;
+  // calling hipMemUnmap again on an already-unmapped range fails with
+  // HIP_ERROR_InvalidValue. Tracking mapped_bytes_ avoids that redundant (and
+  // very noisy) double-unmap at teardown.
+  if (mapped_bytes_ > 0) {
+    auto unmap_status =
+        ToStatus(hipMemUnmap(ptr_, size_), "Error unmapping ROCm memory");
+    if (!unmap_status.ok()) {
+      LOG(ERROR) << unmap_status.message();
+    }
   }
   auto free_status = ToStatus(hipMemAddressFree(ptr_, size_),
                               "Error freeing ROCm address range");

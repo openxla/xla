@@ -46,8 +46,7 @@ class RocmMemoryReservation : public MemoryReservation {
   ~RocmMemoryReservation() override;
 
   // Move is disabled to prevent double-free of the virtual address range:
-  // the destructor calls hipMemUnmap + hipMemAddressFree unconditionally.
-  // Matches CudaMemoryReservation.
+  // the destructor calls hipMemAddressFree on ptr_. Matches CudaMemoryReservation.
   RocmMemoryReservation(RocmMemoryReservation&&) = delete;
   RocmMemoryReservation& operator=(RocmMemoryReservation&&) = delete;
 
@@ -65,6 +64,11 @@ class RocmMemoryReservation : public MemoryReservation {
   StreamExecutor* executor_;
   char* ptr_;  // nullptr means moved-from / released
   uint64_t size_;
+  // Bytes currently mapped into the reservation. Kept in sync by Map()/UnMap()
+  // so the destructor can skip a redundant hipMemUnmap when the ScopedMapping
+  // that owns the mapping has already unmapped the range (which would otherwise
+  // fail with HIP_ERROR_InvalidValue).
+  uint64_t mapped_bytes_ = 0;
 };
 
 }  // namespace stream_executor::gpu
