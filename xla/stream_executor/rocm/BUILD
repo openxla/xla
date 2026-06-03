@@ -1455,6 +1455,7 @@ xla_cc_test(
         "rocm-only",
     ],
     deps = [
+        ":amdhipblaslt_plugin",
         ":rocm_memory_reservation",
         ":rocm_platform",
         ":rocm_platform_id",
@@ -1464,6 +1465,7 @@ xla_cc_test(
         "//xla/stream_executor:memory_reservation",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/status",
@@ -1564,6 +1566,7 @@ xla_cc_test(
         "rocm-only",
     ],
     deps = [
+        ":amdhipblaslt_plugin",
         ":rocm_device_address_vmm_allocator",
         ":rocm_platform",
         "//xla/stream_executor:device_address",
