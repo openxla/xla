@@ -34,7 +34,7 @@ jobs:
         shell: bash
         run: |
           # hermetic llvm based on  ghcr.io/rocm/jax-ubu22.rocm7.2.4:latest
-          echo "docker-image=ghcr.io@sha256:sha256:248db525342fb7438ccbc6f5f1396ec82c783f7e0ae5667cb698edcddc8fe2fd" >> "$GITHUB_OUTPUT"
+          echo "docker-image=ghcr.io/rocm/jax-ubu22.rocm7.2.4@sha256:248db525342fb7438ccbc6f5f1396ec82c783f7e0ae5667cb698edcddc8fe2fd" >> "$GITHUB_OUTPUT"
 
   jax:
     needs: rocm-config
