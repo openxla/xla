@@ -15,7 +15,7 @@ lit_test_suite(
     name = "tests",
     srcs = glob(["**/*.hlo"]),
     cfg = "//xla:lit.cfg.py",
-    default_tags = tf_cuda_tests_tags(),
+    default_tags = tf_cuda_tests_tags(),  # These tests execute on GPU via gpu_test_correctness tool
     exec_properties = tf_exec_properties({"tags": tf_cuda_tests_tags()}),
     hermetic_cuda_data_dir = "%S/../../../../../../" + get_canonical_repo_name("cuda_nvcc"),
     tools = [
