@@ -623,6 +623,20 @@ MemoryAllocation* DeviceAddressVmmAllocator::GetRawAllocation(
   return it->second.get();
 }
 
+MemoryReservation* DeviceAddressVmmAllocator::GetReservation(
+    int device_ordinal, DeviceAddressBase addr) const {
+  PerDeviceState* state = GetPerDeviceState(device_ordinal);
+  if (state == nullptr) {
+    return nullptr;
+  }
+  absl::MutexLock lock(state->mu);
+  auto it = state->reservations.find(addr.opaque());
+  if (it == state->reservations.end()) {
+    return nullptr;
+  }
+  return it->second.get();
+}
+
 uint64_t DeviceAddressVmmAllocator::GetAllocationGranularity(
     StreamExecutor* executor) const {
   PerDeviceState* state = GetPerDeviceState(executor->device_ordinal());

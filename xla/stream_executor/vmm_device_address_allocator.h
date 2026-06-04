@@ -21,6 +21,7 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
+#include <utility>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
@@ -89,6 +90,19 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     uint64_t pa_budget = UINT64_MAX;
   };
 
+  // Creates a platform-appropriate VMM allocator for the given devices,
+  // dispatching to the CUDA or ROCm implementation based on the build platform.
+  // The pa_budget for each device is computed from `memory_fraction` (or
+  // overridden by `gpu_system_memory_size` when set). Returns an error on
+  // platforms without a VMM implementation.
+  //
+  // Defined in vmm_device_address_allocator_factory.cc so this base library
+  // does not depend on the platform-specific subclasses.
+  static absl::StatusOr<std::unique_ptr<DeviceAddressVmmAllocator>> Create(
+      const Platform* platform, double memory_fraction,
+      std::optional<int64_t> gpu_system_memory_size,
+      absl::Span<const std::pair<StreamExecutor*, Stream*>> devices);
+
   ~DeviceAddressVmmAllocator() override;
 
   absl::StatusOr<ScopedDeviceAddress<uint8_t>> Allocate(
@@ -137,6 +151,13 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // allocation is deallocated.
   MemoryAllocation* GetRawAllocation(int device_ordinal,
                                      DeviceAddressBase addr) const;
+
+  // Returns the MemoryReservation (virtual address range) for the given
+  // virtual address on the specified device, or nullptr if the address was not
+  // allocated by this allocator. The returned pointer is valid until the
+  // allocation is deallocated.
+  MemoryReservation* GetReservation(int device_ordinal,
+                                    DeviceAddressBase addr) const;
 
   // Returns the VMM allocation granularity for the device associated with
   // `executor`, or 0 if the device is not registered or granularity is unknown.
