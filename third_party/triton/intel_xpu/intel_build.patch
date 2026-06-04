@@ -2,7 +2,7 @@ diff --git b/third_party/intel/BUILD b/third_party/intel/BUILD
 new file mode 100644
 --- /dev/null
 +++ b/third_party/intel/BUILD
-@@ -0,0 +1,514 @@
+@@ -0,0 +1,521 @@
 +load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 +
 +package(
@@ -31,7 +31,7 @@ new file mode 100644
 +    name = "td_files",
 +    srcs = glob(["include/**/*.td"]),
 +    includes = ["..", "include"],
-+    deps = ["@triton//:td_files"],
++    deps = ["@triton//:td_files", "@llvm-project//mlir:GPUOpsTdFiles"],
 +)
 +
 +gentbl_cc_library(
@@ -264,18 +264,19 @@ new file mode 100644
 +filegroup(
 +    name = "TritonIntelGPU_hdrs",
 +    srcs = glob([
++        "include/Analysis/*.h",
++        "include/Analysis/*.tpp",
 +        "include/Dialect/TritonGEN/IR/*.h",
 +        "include/Dialect/TritonIntelGPU/IR/*.h",
 +    ]) + [
 +        "include/Dialect/TritonIntelGPU/Transforms/Utility.h",
-+        "include/Analysis/Utility.h",
 +    ],
 +)
 +
 +cc_library(
 +    name = "TritonIntelUtils",
 +    srcs = glob(["lib/Utils/*.cpp"]),
-+    hdrs = glob(["include/Utils/*.h"]) + glob(["lib/Utils/*.h"]),
++    hdrs = glob(["include/Utils/*.h"]) + glob(["lib/Utils/*.h"]) + ["lib/TritonGENToLLVM/Attributes.h"],
 +    copts = _no_unused_variable,
 +    includes = ["..", "include"],
 +    deps = [
@@ -300,6 +301,7 @@ new file mode 100644
 +        ":triton_intel_gpu_attr_defs_inc_gen",
 +        ":triton_intel_gpu_dialect_inc_gen",
 +        ":triton_intel_gpu_ops_inc_gen",
++        "@llvm-project//llvm:AsmParser",
 +        "@triton//:TritonDialects",
 +    ],
 +)
@@ -364,6 +366,8 @@ new file mode 100644
 +        ":triton_gen_ops_inc_gen",
 +        "@llvm-project//mlir:LLVMDialect",
 +        "@llvm-project//mlir:SPIRVDialect",
++        "@llvm-project//mlir:SPIRVToLLVM",
++        "@llvm-project//mlir:ToLLVMIRTranslation",
 +    ],
 +)
 +
@@ -373,12 +377,13 @@ new file mode 100644
 +        include = ["lib/Analysis/*.cpp"],
 +        exclude = ["lib/Analysis/Utility.cpp"],
 +    ),
-+    hdrs = glob(["include/Analysis/*.h"]),
++    hdrs = glob(["include/Analysis/*.h", "include/Analysis/*.tpp"]),
 +    copts = _no_unused_variable,
 +    includes = ["..", "include"],
 +    deps = [
 +        ":TritonIntelDialects",
 +        "@llvm-project//llvm:Support",
++        ":TritonIntelUtils",
 +        "@llvm-project//mlir:Analysis",
 +        "@llvm-project//mlir:ArithDialect",
 +        "@llvm-project//mlir:IR",
@@ -401,6 +406,7 @@ new file mode 100644
 +        ":TritonIntelAnalysis",
 +        ":TritonIntelUtils",
 +        ":triton_intel_transforms_inc_gen",
++        "@triton//:TritonTransforms",
 +        "@llvm-project//mlir:Pass",
 +        "@llvm-project//mlir:TransformUtils",
 +        "@triton//:TritonDialects",
@@ -499,6 +505,7 @@ new file mode 100644
 +        "@llvm-project//mlir:ConvertToLLVM",
 +        "@llvm-project//mlir:FuncToLLVM",
 +        "@llvm-project//mlir:GPUDialect",
++        "@llvm-project//mlir:GPUToLLVMSPVTransforms",
 +        "@llvm-project//mlir:IR",
 +        "@llvm-project//mlir:IndexDialect",
 +        "@llvm-project//mlir:LLVMCommonConversion",

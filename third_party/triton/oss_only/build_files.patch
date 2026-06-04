@@ -571,7 +571,7 @@ new file mode 100644
 +            "-Wno-implicit-fallthrough",
 +        ],
 +    }),
-+    includes = ["include"] + if_sycl_is_configured(["third_party/intel/include"]),
++    includes = ["include"] + if_sycl_is_configured(["third_party/intel/include", "third_party"]),
 +    deps = [
 +        ":Dump",
 +        ":GetEnv",  # for Utility
