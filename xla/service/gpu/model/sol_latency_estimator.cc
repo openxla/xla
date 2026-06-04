@@ -295,13 +295,22 @@ CreateCollectiveInterpolator(int num_devices_per_host, const HloModule& module,
                        .debug_options()
                        .xla_gpu_experimental_collective_perf_table_path(),
                    device_info);
-  std::unique_ptr<CollectiveInterpolator> collective_interpolator;
-  if (collective_profiles.ok()) {
-    return CollectiveInterpolator::Create(
-        num_devices_per_host, *collective_profiles, device_info, &analysis);
+  absl::StatusOr<std::unique_ptr<CollectiveInterpolator>> interpolator =
+      collective_profiles.ok()
+          ? CollectiveInterpolator::Create(num_devices_per_host,
+                                           *collective_profiles, device_info,
+                                           &analysis)
+          : CollectiveInterpolator::Create(num_devices_per_host, device_info,
+                                           &analysis);
+  if (!interpolator.ok()) {
+    // No measured table for this device. Degrade gracefully instead of failing
+    LOG_FIRST_N(WARNING, 5)
+        << "Collective interpolator unavailable; SOL will fall back to the "
+           "wrapped estimator for single-partition collectives: "
+        << interpolator.status();
+    return nullptr;
   }
-  return CollectiveInterpolator::Create(num_devices_per_host, device_info,
-                                        &analysis);
+  return interpolator;
 }
 
 absl::StatusOr<std::unique_ptr<MatmulInterpolator>> CreateMatmulInterpolator(
@@ -311,11 +320,19 @@ absl::StatusOr<std::unique_ptr<MatmulInterpolator>> CreateMatmulInterpolator(
                        .debug_options()
                        .xla_gpu_experimental_matmul_perf_table_path(),
                    device_info);
-  std::unique_ptr<MatmulInterpolator> matmul_interpolator;
-  if (matmul_profiles.ok()) {
-    return MatmulInterpolator::Create(*matmul_profiles, device_info);
+  absl::StatusOr<std::unique_ptr<MatmulInterpolator>> interpolator =
+      matmul_profiles.ok()
+          ? MatmulInterpolator::Create(*matmul_profiles, device_info)
+          : MatmulInterpolator::Create(device_info);
+  if (!interpolator.ok()) {
+    // No measured table for this device. Degrade gracefully.
+    LOG_FIRST_N(WARNING, 5)
+        << "Matmul interpolator unavailable; SOL will fall back to the wrapped "
+           "estimator for matmul node costs: "
+        << interpolator.status();
+    return nullptr;
   }
-  return MatmulInterpolator::Create(device_info);
+  return interpolator;
 }
 
 }  // namespace
@@ -368,6 +385,11 @@ SolLatencyEstimator::ComputeCollectiveTime(
       case CollectivePermuteCostModelType::kIntraPartitionOneWay:
       case CollectivePermuteCostModelType::kIntraPartitionTwoWayAllMutual:
       case CollectivePermuteCostModelType::kIntraPartitionTwoWayHasNonMutual:
+        if (collective_interpolator == nullptr) {
+          return absl::InvalidArgumentError(
+              "Collective interpolator is required for single partition "
+              "collective-permute");
+        }
         return collective_interpolator->EstimatedRuntime(*cp);
       case CollectivePermuteCostModelType::kInterPartitionOneWay:
       case CollectivePermuteCostModelType::kInterPartitionTwoWayAllMutual:
@@ -439,12 +461,15 @@ SolLatencyEstimator::Create(
 
 /*static*/ bool SolLatencyEstimator::IsSupportedForModule(
     const HloModule& module, const se::DeviceDescription& gpu_device_info) {
+  const se::GpuComputeCapability& cc =
+      gpu_device_info.gpu_compute_capability();
   bool is_supported_device =
       gpu_device_info.cuda_compute_capability().IsHopper() ||
-      gpu_device_info.cuda_compute_capability().IsBlackwell();
+      gpu_device_info.cuda_compute_capability().IsBlackwell() ||
+      (cc.IsRocm() && cc.rocm_compute_capability()->gfx9_mi300_series());
   if (IsPassEnabledAtOptimizationEffort<LatencyHidingScheduler>(module)) {
     // If the user enabled opt effort we turn the estimator on if we're
-    // compiling for Hopper/Blackwell.
+    // compiling for a supported device.
     return is_supported_device;
   }
   // If this flag is on by default then we provide users an escape hatch in case
@@ -454,8 +479,9 @@ SolLatencyEstimator::Create(
            .xla_gpu_enable_analytical_sol_latency_estimator()) {
     return false;
   }
-  // Otherwise we are more conservative and we turn it on only for
-  // Hopper/Blackwell and if `module` contains only supported collectives.
+  // Otherwise we are more conservative and we turn it on only for supported
+  // devices (Hopper/Blackwell/gfx942/gfx950) and if `module` contains only
+  // supported collectives.
   return is_supported_device && HasOnlySupportedCollectives(module);
 }
 
@@ -550,13 +576,17 @@ LatencyEstimator::TimeCost SolLatencyEstimator::NodeCost(
     return kLowCost;
   }
 
-  if (std::optional<absl::Duration> matmul_duration =
-          matmul_interpolator_->EstimatedRuntime(*instr);
-      matmul_duration.has_value()) {
-    TimeCost cost = absl::ToDoubleMicroseconds(*matmul_duration);
-    VLOG(10) << "NodeCost: Matmul cost from matmul_interpolator for "
-             << instr->name() << ": " << cost << " us";
-    return cost;
+  // matmul_interpolator_ may be null when no measured table is available for
+  // this device (graceful degrade); fall through to the perf-model/wrapped path.
+  if (matmul_interpolator_ != nullptr) {
+    if (std::optional<absl::Duration> matmul_duration =
+            matmul_interpolator_->EstimatedRuntime(*instr);
+        matmul_duration.has_value()) {
+      TimeCost cost = absl::ToDoubleMicroseconds(*matmul_duration);
+      VLOG(10) << "NodeCost: Matmul cost from matmul_interpolator for "
+               << instr->name() << ": " << cost << " us";
+      return cost;
+    }
   }
 
   LatencyEstimator::TimeCost cost_in_us;

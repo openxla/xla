@@ -1097,5 +1097,59 @@ TEST_F(TritonAllReduceSchedulerTest, AsyncNcclAllReduceNodeCostIsLow) {
   EXPECT_EQ(node_cost, absl::Microseconds(1));
 }
 
+TEST_F(IsSolLatencyEstimatorEnabledTest, EnabledBySolEstimatorFlagOnGfx942) {
+  HloModuleConfig config;
+  config.mutable_debug_options()
+      .set_xla_gpu_enable_analytical_sol_latency_estimator(true);
+  gpu_device_info_.set_rocm_compute_capability("gfx942");  // MI300
+
+  auto module = CreateTestModule(config);
+  AddAllReduce(module.get());  // Supported collective
+
+  EXPECT_TRUE(
+      SolLatencyEstimator::IsSupportedForModule(*module, gpu_device_info_));
+}
+
+TEST_F(IsSolLatencyEstimatorEnabledTest, DisabledIfFlagIsOffOnGfx942) {
+  HloModuleConfig config;
+  config.mutable_debug_options()
+      .set_xla_gpu_enable_analytical_sol_latency_estimator(false);
+  gpu_device_info_.set_rocm_compute_capability("gfx942");  // MI300
+
+  auto module = CreateTestModule(config);
+  AddAllReduce(module.get());
+
+  EXPECT_FALSE(
+      SolLatencyEstimator::IsSupportedForModule(*module, gpu_device_info_));
+}
+
+TEST_F(IsSolLatencyEstimatorEnabledTest, DisabledForUncalibratedRocmArch) {
+  HloModuleConfig config;
+  config.mutable_debug_options()
+      .set_xla_gpu_enable_analytical_sol_latency_estimator(true);
+  // gfx90a (MI200) is not on the calibrated allowlist, so SOL stays off.
+  gpu_device_info_.set_rocm_compute_capability("gfx90a");
+
+  auto module = CreateTestModule(config);
+  AddAllReduce(module.get());
+
+  EXPECT_FALSE(
+      SolLatencyEstimator::IsSupportedForModule(*module, gpu_device_info_));
+}
+
+TEST_F(IsSolLatencyEstimatorEnabledTest,
+       DisabledForGfx942WithUnsupportedCollective) {
+  HloModuleConfig config;
+  config.mutable_debug_options()
+      .set_xla_gpu_enable_analytical_sol_latency_estimator(true);
+  gpu_device_info_.set_rocm_compute_capability("gfx942");
+
+  auto module = CreateTestModule(config);
+  AddCollectiveBcast(module.get());  // Unsupported collective
+
+  EXPECT_FALSE(
+      SolLatencyEstimator::IsSupportedForModule(*module, gpu_device_info_));
+}
+
 }  // namespace
 }  // namespace xla::gpu
