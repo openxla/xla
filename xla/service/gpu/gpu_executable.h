@@ -327,6 +327,19 @@ class GpuExecutable : public Executable {
     // RAII wrapper that keeps the VA->physical mapping active.
     // Reset (auto-unmapping) before each re-use of the VA range.
     std::optional<se::MemoryReservation::ScopedMapping> scoped_mapping;
+
+    // Snapshot of the slices mapped on the previous step, in the same order as
+    // the mapping descriptors are built (reservation_offset order, matching
+    // command_buffer_allocation_indexes_ iteration). On the next step,
+    // allocation_id and mapping_size are compared per slice to decide which
+    // slices actually changed and need remapping; unchanged slices are skipped.
+    struct AllocationMappingState {
+      BufferAllocation::Index alloc_index;
+      size_t reservation_offset;
+      size_t mapping_size;
+      uint64_t allocation_id;
+    };
+    std::vector<AllocationMappingState> last_mapping_state;
   };
 
   // Additional streams borrowed at run time for the execution.

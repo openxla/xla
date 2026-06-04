@@ -40,6 +40,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
@@ -1508,8 +1509,17 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
     // allocation up to the allocation granularity.
     uint64_t total_va_size = 0;
     for (BufferAllocation::Index i : command_buffer_allocation_indexes_) {
-      const uint64_t size = buffer_allocations.GetDeviceAddress(i).size();
-      total_va_size += round_up_to_granularity(size);
+      se::DeviceAddressBase buf = buffer_allocations.GetDeviceAddress(i);
+      // Skip buffers not handed out by the VMM allocator (e.g. constants for
+      // deserialized executables, where the index-collection pass cannot
+      // filter them out). They have stable fixed addresses and need no VA
+      // remapping, so they must not consume a slot in the contiguous
+      // reservation.
+      if (vmm_allocator->GetRawAllocation(executor->device_ordinal(), buf) ==
+          nullptr) {
+        continue;
+      }
+      total_va_size += round_up_to_granularity(buf.size());
     }
 
     // Reserve a single large VA range for all command buffer allocations.
@@ -1522,20 +1532,11 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
         "VA: %p total_size: %d granularity: %d",
         module_name_, va_ranges->va_reservation->address().opaque(),
         total_va_size, granularity);
-  } else {
-    ScopedAnnotation annotation_va_unmap([&] {
-      return absl::StrFormat("command_buffer_va_range_unmap:#module=%s#",
-                             module_name_);
-    });
-
-    // VA range is already initialized; wait for the unmap event to be marked
-    // and then do the VA unmapping.
-    RETURN_IF_ERROR(va_ranges->unmap_event->Synchronize());
-
-    // Unmap physical addresses from the single reserved VA range.
-    // Clearing ScopedMappings calls UnMap via their destructors.
-    va_ranges->scoped_mapping.reset();
   }
+  // NOTE: the actual unmap of a previously established mapping is deferred to
+  // the decision point below, so it can be skipped entirely when the physical
+  // buffers are unchanged across executions (handled by ScopedMapping::Remap,
+  // which synchronizes the unmap event and unmaps only the changed slices).
 
   // Build a map from allocation index to its offset within va_reservation.
   // Iterate through command_buffer_allocation_indexes_ in order (btree_set
@@ -1543,9 +1544,16 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
   absl::flat_hash_map<BufferAllocation::Index, uint64_t> allocation_va_offsets;
   uint64_t current_offset = 0;
   for (BufferAllocation::Index idx : command_buffer_allocation_indexes_) {
-    const uint64_t size = buffer_allocations.GetDeviceAddress(idx).size();
+    se::DeviceAddressBase buf = buffer_allocations.GetDeviceAddress(idx);
+    // Only VMM-managed buffers are remapped into the contiguous reservation;
+    // skip non-VMM buffers (constants) so offsets stay contiguous and match
+    // the mapping descriptors built below.
+    if (vmm_allocator->GetRawAllocation(executor->device_ordinal(), buf) ==
+        nullptr) {
+      continue;
+    }
     allocation_va_offsets[idx] = current_offset;
-    current_offset += round_up_to_granularity(size);
+    current_offset += round_up_to_granularity(buf.size());
   }
 
   if (!allocation_va_offsets.empty() && va_ranges->va_reservation == nullptr) {
@@ -1562,72 +1570,152 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
                              module_name_);
     });
 
-    // Collect mapping descriptors for the batch MapTo call. Descriptors are
-    // accumulated in reservation_offset order (guaranteed because
-    // allocation_va_offsets was built from a sorted btree_set and the loop
-    // below iterates allocation indices in ascending order).
+    // Build mapping descriptors in reservation_offset order, parallel to the
+    // VMM-managed subset of command_buffer_allocation_indexes_ (btree_set
+    // iteration order). The i-th descriptor describes the same allocation as
+    // the i-th entry of last_mapping_state from the previous step (if it
+    // exists). Non-VMM-managed indices (e.g. constants in deserialized
+    // executables) are skipped here and pass through with their original
+    // address in the mapped_buffers loop below.
     std::vector<se::MemoryReservation::MappingDescriptor> mapping_descriptors;
+    mapping_descriptors.reserve(allocation_va_offsets.size());
+    std::vector<se::MemoryReservation::RemappingDescriptor> remap_descriptors;
+    remap_descriptors.reserve(allocation_va_offsets.size());
+    std::vector<VaRanges::AllocationMappingState> new_mapping_state;
+    new_mapping_state.reserve(allocation_va_offsets.size());
 
+    if (!va_ranges->scoped_mapping.has_value()) {
+      va_ranges->last_mapping_state.clear();
+    }
+    const bool have_prev_state = !va_ranges->last_mapping_state.empty();
+
+    int skip_count = 0;
+    int run_count = 0;
+    bool prev_was_changed = false;
+    size_t prev_idx = 0;
+
+    for (BufferAllocation::Index i : command_buffer_allocation_indexes_) {
+      se::DeviceAddressBase original_buffer =
+          buffer_allocations.GetDeviceAddress(i);
+      if (original_buffer.is_null()) {
+        return Internal("Command buffer allocation %d has null address", i);
+      }
+
+      std::optional<se::DeviceAddressVmmAllocator::AllocationInfo>
+          allocation_info = vmm_allocator->GetAllocationInfo(
+              executor->device_ordinal(), original_buffer);
+      if (!allocation_info.has_value()) {
+        // Not VMM-managed (e.g. a constant in a deserialized executable). It
+        // lives at a stable fixed address for the whole executable lifetime,
+        // so it needs no VA remapping and passes through with its original
+        // address in the mapped_buffers loop below.
+        continue;
+      }
+      se::MemoryAllocation* raw_alloc = allocation_info->allocation;
+      const uint64_t mapping_size = allocation_info->mapped_size;
+
+      // allocation_va_offsets was built from the same VMM-managed subset, so
+      // the key is guaranteed to exist.
+      const uint64_t va_offset = allocation_va_offsets[i];
+
+      // Determine whether this slice's physical allocation changed since the
+      // prior step. Compare by the VMM allocator's stable allocation_id rather
+      // than raw pointer to avoid ABA problems. A size mismatch also counts as
+      // a change.
+      uint64_t old_allocation_id = 0;
+      bool changed = true;
+      if (have_prev_state && prev_idx < va_ranges->last_mapping_state.size()) {
+        const auto& prev = va_ranges->last_mapping_state[prev_idx];
+        old_allocation_id = prev.allocation_id;
+        changed = prev.alloc_index != i ||
+                  prev.reservation_offset != va_offset ||
+                  prev.allocation_id != allocation_info->allocation_id ||
+                  prev.mapping_size != mapping_size;
+      }
+      ++prev_idx;
+
+      if (changed) {
+        if (!prev_was_changed) {
+          ++run_count;
+        }
+      } else {
+        ++skip_count;
+      }
+      prev_was_changed = changed;
+
+      XLA_VLOG_DEVICE(3, executor->device_ordinal()) << absl::StreamFormat(
+          "VA remapping %s: allocation[%d] size=%d id %d -> %d",
+          changed ? "remap" : "skip", i, mapping_size, old_allocation_id,
+          allocation_info->allocation_id);
+
+      mapping_descriptors.push_back(
+          {va_offset, /*allocation_offset=*/0, mapping_size, raw_alloc});
+      remap_descriptors.push_back({va_offset, /*allocation_offset=*/0,
+                                   mapping_size, raw_alloc, changed});
+      new_mapping_state.push_back(
+          {i, va_offset, mapping_size, allocation_info->allocation_id});
+    }
+
+    // Build mapped_buffers in buffer_allocations index order. For VMM-managed
+    // command-buffer allocations, substitute the VA address; for everything
+    // else, pass the original buffer through unchanged.
+    void* va_base = (va_ranges->va_reservation != nullptr)
+                        ? va_ranges->va_reservation->address().opaque()
+                        : nullptr;
     const BufferAllocation::Index num_allocations =
         static_cast<BufferAllocation::Index>(buffer_allocations.size());
     for (BufferAllocation::Index i = 0; i < num_allocations; ++i) {
       se::DeviceAddressBase original_buffer =
           buffer_allocations.GetDeviceAddress(i);
-
-      // Only do VA mapping for allocations accessed by CommandBufferThunk.
       auto offset_it = allocation_va_offsets.find(i);
       if (offset_it == allocation_va_offsets.end()) {
-        // Not a command buffer allocation (or zero-size), use the original
-        // buffer.
         mapped_buffers.push_back(original_buffer);
         continue;
       }
-
-      // This allocation is used by command buffer - validate it's not null.
-      if (original_buffer.is_null()) {
-        return Internal("Command buffer allocation %d has null address", i);
-      }
-
-      // Get the physical memory allocation from the VMM allocator.
-      se::MemoryAllocation* raw_alloc = vmm_allocator->GetRawAllocation(
-          executor->device_ordinal(), original_buffer);
-      if (raw_alloc == nullptr) {
-        return Internal(
-            "No raw allocation found for command buffer allocation %d", i);
-      }
-      const uint64_t mapping_size = raw_alloc->address().size();
-
-      // Calculate the sub-range VA address for this allocation.
-      uint64_t va_offset = offset_it->second;
       void* sub_range_ptr = reinterpret_cast<void*>(
-          reinterpret_cast<uintptr_t>(
-              va_ranges->va_reservation->address().opaque()) +
-          va_offset);
-      se::DeviceAddressBase sub_range_va(sub_range_ptr, original_buffer.size());
-
-      XLA_VLOG_DEVICE(3, executor->device_ordinal()) << absl::StreamFormat(
-          "Mapping allocation %d physical: %p -> VA: %p "
-          "(offset: %d) size: %d",
-          i, original_buffer.opaque(), sub_range_va.opaque(), va_offset,
-          original_buffer.size());
-
-      mapping_descriptors.push_back(
-          {va_offset, /*allocation_offset=*/0, mapping_size, raw_alloc});
-
-      // Use VA address for execution.
+          reinterpret_cast<uintptr_t>(va_base) + offset_it->second);
       mapped_buffers.push_back(
-          se::DeviceAddressBase(sub_range_va.opaque(), original_buffer.size()));
+          se::DeviceAddressBase(sub_range_ptr, original_buffer.size()));
     }
 
-    // Batch-map all command buffer allocations into the reserved VA range in
-    // a single call. This maps the contiguous range formed by the descriptors
-    // and enables device access before returning.
+    // Apply the mapping. The first successful execution uses MapTo; subsequent
+    // executions transfer the existing ScopedMapping through Remap so only
+    // changed slices incur driver round-trips (hipMemUnmap/hipMemMap/
+    // hipMemSetAccess). Synchronize the unmap event before Remap so the GPU is
+    // done using the prior mapping before we touch it.
     if (!mapping_descriptors.empty()) {
-      ASSIGN_OR_RETURN(se::MemoryReservation::ScopedMapping scoped_mapping,
-                       va_ranges->va_reservation->MapTo(
-                           absl::MakeSpan(mapping_descriptors)));
-      va_ranges->scoped_mapping = std::move(scoped_mapping);
+      if (!va_ranges->scoped_mapping.has_value()) {
+        ASSIGN_OR_RETURN(se::MemoryReservation::ScopedMapping scoped_mapping,
+                         va_ranges->va_reservation->MapTo(
+                             absl::MakeSpan(mapping_descriptors)));
+        va_ranges->scoped_mapping = std::move(scoped_mapping);
+      } else {
+        const absl::Time t_sync0 = absl::Now();
+        RETURN_IF_ERROR(va_ranges->unmap_event->Synchronize());
+        const absl::Time t_sync1 = absl::Now();
+        std::optional<se::MemoryReservation::ScopedMapping> existing_mapping =
+            std::move(va_ranges->scoped_mapping);
+        va_ranges->scoped_mapping.reset();
+        absl::StatusOr<se::MemoryReservation::ScopedMapping> remap_result =
+            std::move(*existing_mapping)
+                .Remap(absl::MakeSpan(remap_descriptors));
+        if (!remap_result.ok()) {
+          va_ranges->last_mapping_state.clear();
+          return remap_result.status();
+        }
+        va_ranges->scoped_mapping = std::move(*remap_result);
+        const absl::Time t_remap1 = absl::Now();
+        XLA_VLOG_DEVICE(2, executor->device_ordinal()) << absl::StreamFormat(
+            "VA remapping timing: sync_us=%d remap_us=%d",
+            absl::ToInt64Microseconds(t_sync1 - t_sync0),
+            absl::ToInt64Microseconds(t_remap1 - t_sync1));
+      }
+      va_ranges->last_mapping_state = std::move(new_mapping_state);
     }
+
+    XLA_VLOG_DEVICE(3, executor->device_ordinal()) << absl::StreamFormat(
+        "VA remapping: %d/%d allocations skipped, %d remap runs coalesced",
+        skip_count, static_cast<int>(allocation_va_offsets.size()), run_count);
   }
 
   if (VLOG_IS_ON(3)) {

@@ -152,6 +152,19 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   MemoryAllocation* GetRawAllocation(int device_ordinal,
                                      DeviceAddressBase addr) const;
 
+  struct AllocationInfo {
+    MemoryAllocation* allocation;
+    uint64_t allocation_id;
+    uint64_t mapped_size;
+  };
+
+  // Returns the physical allocation backing the given virtual address plus a
+  // stable ID for the current allocator entry. Reusing a pending deallocation
+  // preserves the ID; fully freeing and recreating an entry gets a new ID even
+  // if the virtual address is reused.
+  std::optional<AllocationInfo> GetAllocationInfo(int device_ordinal,
+                                                  DeviceAddressBase addr) const;
+
   // Returns the MemoryReservation (virtual address range) for the given
   // virtual address on the specified device, or nullptr if the address was not
   // allocated by this allocator. The returned pointer is valid until the
@@ -218,11 +231,14 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
     mutable absl::Mutex mu;
     uint64_t pa_allocated ABSL_GUARDED_BY(mu) = 0;
+    // Monotonically increasing counter for stable per-allocation IDs.
+    uint64_t next_allocation_id ABSL_GUARDED_BY(mu) = 1;
     // Monotonically increasing counter for timeline sequence numbers.
     uint64_t next_seqno ABSL_GUARDED_BY(mu) = 1;
     std::deque<PendingDeallocation> pending_deallocations ABSL_GUARDED_BY(mu);
     absl::flat_hash_map<void*, std::unique_ptr<MemoryAllocation>>
         raw_allocations ABSL_GUARDED_BY(mu);
+    absl::flat_hash_map<void*, uint64_t> allocation_ids ABSL_GUARDED_BY(mu);
     absl::flat_hash_map<void*, std::unique_ptr<MemoryReservation>> reservations
         ABSL_GUARDED_BY(mu);
     absl::flat_hash_map<void*, MemoryReservation::ScopedMapping> scoped_mappings

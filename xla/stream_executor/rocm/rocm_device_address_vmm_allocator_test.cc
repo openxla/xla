@@ -338,6 +338,130 @@ TEST_F(DeviceAddressVmmAllocatorTest, UnknownDeviceOrdinalReturnsError) {
   EXPECT_FALSE(allocator->GetStreamExecutor(unknown_ordinal).ok());
 }
 
+TEST_F(DeviceAddressVmmAllocatorTest, GetAllocationInfoReportsStableId) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::RocmDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  constexpr uint64_t kSize = 1024;
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
+                                     static_cast<int64_t>(MemorySpace::kCollective)));
+
+  std::optional<DeviceAddressVmmAllocator::AllocationInfo> info =
+      allocator->GetAllocationInfo(ordinal, *addr);
+  ASSERT_TRUE(info.has_value());
+  // The reported allocation must be the same physical handle GetRawAllocation
+  // returns, the ID must be non-zero, and at least the requested size mapped.
+  EXPECT_EQ(info->allocation, allocator->GetRawAllocation(ordinal, *addr));
+  EXPECT_NE(info->allocation, nullptr);
+  EXPECT_NE(info->allocation_id, 0u);
+  EXPECT_GE(info->mapped_size, kSize);
+
+  // An address never handed out by this allocator has no info.
+  DeviceAddressBase bogus(reinterpret_cast<void*>(0x1234), kSize);
+  EXPECT_FALSE(allocator->GetAllocationInfo(ordinal, bogus).has_value());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest, DistinctAllocationsHaveDistinctIds) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::RocmDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  constexpr uint64_t kSize = 1024;
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto a, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
+                                  static_cast<int64_t>(MemorySpace::kCollective)));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto b, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
+                                  static_cast<int64_t>(MemorySpace::kCollective)));
+
+  auto info_a = allocator->GetAllocationInfo(ordinal, *a);
+  auto info_b = allocator->GetAllocationInfo(ordinal, *b);
+  ASSERT_TRUE(info_a.has_value());
+  ASSERT_TRUE(info_b.has_value());
+  EXPECT_NE(info_a->allocation_id, info_b->allocation_id);
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest, ReusingPendingDeallocationPreservesId) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::RocmDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  constexpr uint64_t kSize = 1024;
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr1, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
+                                      static_cast<int64_t>(MemorySpace::kCollective)));
+  auto info1 = allocator->GetAllocationInfo(ordinal, *addr1);
+  ASSERT_TRUE(info1.has_value());
+  const uint64_t id1 = info1->allocation_id;
+  void* const va = addr1->opaque();
+
+  // Defer-deallocate, then re-allocate the same size. Because the freed slice
+  // is still pending (the GPU has not reclaimed it), it is reused in place and
+  // the tracking entry — including its stable ID — is preserved.
+  DeviceAddressBase raw = addr1.cref();
+  addr1.Release();
+  ASSERT_THAT(allocator->Deallocate(ordinal, raw), IsOk());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto addr2, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
+                                      static_cast<int64_t>(MemorySpace::kCollective)));
+  EXPECT_EQ(addr2->opaque(), va);
+
+  auto info2 = allocator->GetAllocationInfo(ordinal, *addr2);
+  ASSERT_TRUE(info2.has_value());
+  EXPECT_EQ(info2->allocation_id, id1);
+
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest, ReuseSelectsSmallestAddressDeterministically) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::RocmDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  constexpr uint64_t kSize = 1024;
+
+  // Allocate two same-size buffers and remember the lower of their two virtual
+  // addresses.
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto a, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
+                                  static_cast<int64_t>(MemorySpace::kCollective)));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto b, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
+                                  static_cast<int64_t>(MemorySpace::kCollective)));
+  const uintptr_t va_a = reinterpret_cast<uintptr_t>(a->opaque());
+  const uintptr_t va_b = reinterpret_cast<uintptr_t>(b->opaque());
+  ASSERT_NE(va_a, va_b);
+  void* const lowest = reinterpret_cast<void*>(std::min(va_a, va_b));
+
+  // Free both (order: higher address first to prove selection is by address,
+  // not deque/insertion order).
+  DeviceAddressBase raw_lo = (va_a < va_b) ? a.cref() : b.cref();
+  DeviceAddressBase raw_hi = (va_a < va_b) ? b.cref() : a.cref();
+  a.Release();
+  b.Release();
+  ASSERT_THAT(allocator->Deallocate(ordinal, raw_hi), IsOk());
+  ASSERT_THAT(allocator->Deallocate(ordinal, raw_lo), IsOk());
+
+  // The next same-size allocation must deterministically reuse the smallest
+  // pending address.
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto c, allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
+                                  static_cast<int64_t>(MemorySpace::kCollective)));
+  EXPECT_EQ(c->opaque(), lowest);
+
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
 class MultiDeviceVmmAllocatorTest : public ::testing::Test {
  protected:
   void SetUp() override {
