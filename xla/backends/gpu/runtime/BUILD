@@ -516,6 +516,7 @@ xla_test(
         ":collective_clique_requests",
         ":collective_memory_requests",
         ":collective_params",
+        ":command",
         ":command_buffer_thunk",
         ":command_executor",
         ":custom_call_thunk",
@@ -1697,16 +1698,27 @@ xla_test(
     ],
 )
 
+cc_library(
+    name = "select_k_exec",
+    hdrs = ["select_k_exec.h"],
+    deps = [
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:stream",
+        "@com_google_absl//absl/status",
+    ],
+)
+
 cuda_library(
     name = "select_k_exec_raft",
     srcs = ["select_k_exec_raft.cc"],
-    hdrs = ["select_k_exec.h"],
     copts = [
         "-fexceptions",
         "-DLIBCUDACXX_ENABLE_EXPERIMENTAL_MEMORY_RESOURCE",
     ],
     tags = ["cuda-only"],
     deps = [
+        ":select_k_exec",
         "//xla:status_macros",
         "//xla:types",
         "//xla/stream_executor:device_address",
@@ -1729,8 +1741,8 @@ cuda_library(
 cc_library(
     name = "select_k_exec_stub",
     srcs = ["select_k_exec_stub.cc"],
-    hdrs = ["select_k_exec.h"],
     deps = [
+        ":select_k_exec",
         "//xla:types",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
@@ -1749,6 +1761,7 @@ xla_test(
         "cuda-only",
     ],
     deps = [
+        ":select_k_exec",
         ":select_k_exec_raft",
         "//xla:types",
         "//xla:xla_data_proto_cc",
@@ -1776,6 +1789,7 @@ cc_library(
     srcs = ["select_k_thunk.cc"],
     hdrs = ["select_k_thunk.h"],
     deps = [
+        ":select_k_exec",
         ":thunk",
         ":thunk_id",
         ":thunk_proto_cc",
