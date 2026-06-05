@@ -71,12 +71,10 @@ class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
       : CollectiveOpsWithFlagsBase(
             enable_async, /*enable_p2p_memcpy=*/false,
             /*enable_symmetric_buffer=*/
-            collectives_mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY ||
-                impl_type == RaggedAllToAllImplType::kDeviceKernel,
+            collectives_mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY,
             /*memory_size=*/64 * kMB,
             /*collectives_memory_size=*/
-            collectives_mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY ||
-                    impl_type == RaggedAllToAllImplType::kDeviceKernel
+            collectives_mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY
                 ? 64 * kMB
                 : 0),
         impl_type_(impl_type),
@@ -1115,8 +1113,8 @@ std::string CollectivesModeName(DebugOptions::CollectivesMode mode) {
 }
 
 // Builds the test parameters: NCCL impl is exercised against all collectives
-// modes (private/symmetric/peer); other impls only need PRIVATE since they
-// don't dispatch on the mode.
+// modes (private/symmetric/peer); the device-kernel impl requires symmetric
+// memory; other impls only need PRIVATE since they don't dispatch on the mode.
 std::vector<
     std::tuple<bool, RaggedAllToAllImplType, DebugOptions::CollectivesMode>>
 BuildRaggedAllToAllTestParams() {
@@ -1134,11 +1132,12 @@ BuildRaggedAllToAllTestParams() {
          {RaggedAllToAllImplType::kDecomposer,
           RaggedAllToAllImplType::kOneShotWithMultiGpuBarrier,
           RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNccl,
-          RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNcclZeroCopy,
-          RaggedAllToAllImplType::kDeviceKernel}) {
+          RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNcclZeroCopy}) {
       params.emplace_back(enable_async, impl_type,
                           DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
     }
+    params.emplace_back(enable_async, RaggedAllToAllImplType::kDeviceKernel,
+                        DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY);
   }
   return params;
 }

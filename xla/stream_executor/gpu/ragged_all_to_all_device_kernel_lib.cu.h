@@ -32,60 +32,120 @@ struct alignas(kSize) DeviceVec {
 #if NCCL_VERSION_CODE >= 22900
 
 template <int64_t kVectorSize>
-__device__ void RaggedAllToAllLsaCopy(
+struct RaggedAllToAllUpdateMetadata {
+  int peer;
+  int update;
+  int64_t meta_idx;
+  int64_t send_size;
+  int64_t src_byte_offset;
+  int64_t dst_byte_offset;
+  int64_t byte_count;
+};
+
+template <int64_t kVectorSize>
+__device__ bool LoadRaggedAllToAllUpdateMetadata(
+    int64_t flat_idx, int64_t num_updates_per_replica,
+    int64_t num_row_elements, int64_t input_buffer_offset_bytes,
+    int64_t output_buffer_offset_bytes,
+    const int64_t* __restrict__ input_offsets_ptr,
+    const int64_t* __restrict__ send_sizes_ptr,
+    const int64_t* __restrict__ output_offsets_ptr,
+    RaggedAllToAllUpdateMetadata<kVectorSize>* meta) {
+  meta->peer = flat_idx / num_updates_per_replica;
+  meta->update = flat_idx % num_updates_per_replica;
+  meta->meta_idx = meta->peer * num_updates_per_replica + meta->update;
+  meta->send_size = send_sizes_ptr[meta->meta_idx];
+  if (meta->send_size == 0) {
+    return false;
+  }
+
+  const int64_t input_offset = input_offsets_ptr[meta->meta_idx];
+  const int64_t output_offset = output_offsets_ptr[meta->meta_idx];
+  meta->src_byte_offset = input_buffer_offset_bytes +
+                          input_offset * num_row_elements * kVectorSize;
+  meta->dst_byte_offset = output_buffer_offset_bytes +
+                          output_offset * num_row_elements * kVectorSize;
+  meta->byte_count = meta->send_size * num_row_elements * kVectorSize;
+  return true;
+}
+
+template <int64_t kVectorSize>
+__device__ void RaggedAllToAllCopy(
     ncclWindow_t send_win, ncclWindow_t recv_win,
     const int64_t* __restrict__ input_offsets_ptr,
     const int64_t* __restrict__ send_sizes_ptr,
     const int64_t* __restrict__ output_offsets_ptr,
     int64_t num_updates_per_replica, int64_t num_row_elements,
     int64_t input_buffer_offset_bytes, int64_t output_buffer_offset_bytes,
-    int start_lsa, int lsa_size, int num_ranks) {
+    int start_lsa, int lsa_size, int num_ranks, ncclGin* gin, ncclTeam world,
+    unsigned int signal_index) {
   using T = DeviceVec<kVectorSize>;
-  if (lsa_size <= 0) return;
 
-  const int grid = static_cast<int>(gridDim.x);
-  const int64_t total_lsa_updates =
-      static_cast<int64_t>(lsa_size) * num_updates_per_replica;
-  const int ctas_per_unit = max(1, grid / static_cast<int>(total_lsa_updates));
-  const int unit_step = grid / ctas_per_unit;
-  const int my_unit_start = static_cast<int>(blockIdx.x) / ctas_per_unit;
-  const int my_cta_in_unit = static_cast<int>(blockIdx.x) % ctas_per_unit;
-  if (my_unit_start >= total_lsa_updates) return;
+  if (lsa_size > 0) {
+    const int grid = static_cast<int>(gridDim.x);
+    const int64_t total_lsa_updates =
+        static_cast<int64_t>(lsa_size) * num_updates_per_replica;
+    const int ctas_per_unit =
+        max(1, grid / static_cast<int>(total_lsa_updates));
+    const int unit_step = grid / ctas_per_unit;
+    const int my_unit_start = static_cast<int>(blockIdx.x) / ctas_per_unit;
+    const int my_cta_in_unit = static_cast<int>(blockIdx.x) % ctas_per_unit;
+    if (my_unit_start < total_lsa_updates) {
+      const int unit_tid = my_cta_in_unit * static_cast<int>(blockDim.x) +
+                           static_cast<int>(threadIdx.x);
+      const int unit_nthreads = ctas_per_unit * static_cast<int>(blockDim.x);
 
-  const int unit_tid = my_cta_in_unit * static_cast<int>(blockDim.x) +
-                       static_cast<int>(threadIdx.x);
-  const int unit_nthreads = ctas_per_unit * static_cast<int>(blockDim.x);
+      for (int unit = my_unit_start; unit < total_lsa_updates;
+           unit += unit_step) {
+        const int64_t flat_idx =
+            static_cast<int64_t>(start_lsa) * num_updates_per_replica + unit;
+        RaggedAllToAllUpdateMetadata<kVectorSize> meta;
+        if (!LoadRaggedAllToAllUpdateMetadata<kVectorSize>(
+                flat_idx, num_updates_per_replica, num_row_elements,
+                input_buffer_offset_bytes, output_buffer_offset_bytes,
+                input_offsets_ptr, send_sizes_ptr, output_offsets_ptr, &meta)) {
+          continue;
+        }
 
-  for (int unit = my_unit_start; unit < total_lsa_updates; unit += unit_step) {
-    const int peer_off = unit / num_updates_per_replica;
-    const int update = unit % num_updates_per_replica;
-    const int peer = start_lsa + peer_off;
+        const int lsa_peer = unit / num_updates_per_replica;
+        const T* src = static_cast<const T*>(
+            ncclGetLocalPointer(send_win, meta.src_byte_offset));
+        T* dst = static_cast<T*>(ncclGetLsaPointer(
+            recv_win, meta.dst_byte_offset, lsa_peer));
 
-    const int64_t meta_idx = peer * num_updates_per_replica + update;
-    const int64_t send_size = send_sizes_ptr[meta_idx];
-    if (send_size == 0) continue;
-
-    const int64_t input_offset = input_offsets_ptr[meta_idx];
-    const int64_t output_offset = output_offsets_ptr[meta_idx];
-
-    const int64_t src_byte_offset =
-        input_buffer_offset_bytes +
-        input_offset * num_row_elements * kVectorSize;
-    const int64_t dst_byte_offset =
-        output_buffer_offset_bytes +
-        output_offset * num_row_elements * kVectorSize;
-    const int64_t byte_count = send_size * num_row_elements * kVectorSize;
-
-    const int lsa_peer = peer_off;
-    const T* src =
-        static_cast<const T*>(ncclGetLocalPointer(send_win, src_byte_offset));
-    T* dst =
-        static_cast<T*>(ncclGetLsaPointer(recv_win, dst_byte_offset, lsa_peer));
-
-    const int64_t num_elements = byte_count / kVectorSize;
-    for (int64_t i = unit_tid; i < num_elements; i += unit_nthreads) {
-      dst[i] = src[i];
+        const int64_t num_elements = meta.byte_count / kVectorSize;
+        for (int64_t i = unit_tid; i < num_elements; i += unit_nthreads) {
+          dst[i] = src[i];
+        }
+      }
     }
+  }
+
+  if (gin == nullptr) {
+    return;
+  }
+
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  const int nthreads = blockDim.x * gridDim.x;
+  const int64_t total_updates = num_updates_per_replica * num_ranks;
+
+  for (int64_t flat_idx = tid; flat_idx < total_updates; flat_idx += nthreads) {
+    const int peer = flat_idx / num_updates_per_replica;
+    if (peer >= start_lsa && peer < start_lsa + lsa_size) {
+      continue;
+    }
+
+    RaggedAllToAllUpdateMetadata<kVectorSize> meta;
+    if (!LoadRaggedAllToAllUpdateMetadata<kVectorSize>(
+            flat_idx, num_updates_per_replica, num_row_elements,
+            input_buffer_offset_bytes, output_buffer_offset_bytes,
+            input_offsets_ptr, send_sizes_ptr, output_offsets_ptr, &meta)) {
+      continue;
+    }
+
+    gin->put(world, meta.peer, recv_win, meta.dst_byte_offset, send_win,
+             meta.src_byte_offset, meta.byte_count,
+             ncclGin_SignalInc{signal_index});
   }
 }
 
@@ -117,41 +177,11 @@ __global__ void __launch_bounds__(512) RaggedAllToAllDeviceKernelImpl(
     bar.sync(ncclCoopCta(), ::cuda::memory_order_acquire,
              ncclGinFenceLevel::Relaxed);
 
-    RaggedAllToAllLsaCopy<kVectorSize>(
+    RaggedAllToAllCopy<kVectorSize>(
         send_win, recv_win, input_offsets_ptr, send_sizes_ptr,
         output_offsets_ptr, num_updates_per_replica, num_row_elements,
         input_buffer_offset_bytes, output_buffer_offset_bytes, start_lsa,
-        lsa_size, num_ranks);
-
-    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-    const int nthreads = blockDim.x * gridDim.x;
-    const int64_t total_updates = num_updates_per_replica * num_ranks;
-
-    for (int64_t flat_idx = tid; flat_idx < total_updates;
-         flat_idx += nthreads) {
-      const int peer = flat_idx / num_updates_per_replica;
-      const bool is_lsa_peer =
-          (peer >= start_lsa && peer < start_lsa + lsa_size);
-      if (is_lsa_peer) continue;
-
-      const int update = flat_idx % num_updates_per_replica;
-      const int64_t meta_idx = peer * num_updates_per_replica + update;
-      const int64_t send_size = send_sizes_ptr[meta_idx];
-
-      const int64_t input_offset = input_offsets_ptr[meta_idx];
-      const int64_t output_offset = output_offsets_ptr[meta_idx];
-
-      const int64_t src_byte_offset =
-          input_buffer_offset_bytes +
-          input_offset * num_row_elements * kVectorSize;
-      const int64_t dst_byte_offset =
-          output_buffer_offset_bytes +
-          output_offset * num_row_elements * kVectorSize;
-      const int64_t byte_count = send_size * num_row_elements * kVectorSize;
-
-      gin.put(world, peer, recv_win, dst_byte_offset, send_win, src_byte_offset,
-              byte_count, ncclGin_SignalInc{signal_index});
-    }
+        lsa_size, num_ranks, &gin, world, signal_index);
 
     const int num_remote_peers =
         (num_ranks - lsa_size) * num_updates_per_replica;
@@ -168,11 +198,11 @@ __global__ void __launch_bounds__(512) RaggedAllToAllDeviceKernelImpl(
                                            ncclTeamTagLsa{}, blockIdx.x};
     bar.sync(ncclCoopCta(), ::cuda::memory_order_relaxed);
 
-    RaggedAllToAllLsaCopy<kVectorSize>(
+    RaggedAllToAllCopy<kVectorSize>(
         send_win, recv_win, input_offsets_ptr, send_sizes_ptr,
         output_offsets_ptr, num_updates_per_replica, num_row_elements,
         input_buffer_offset_bytes, output_buffer_offset_bytes, start_lsa,
-        lsa_size, num_ranks);
+        lsa_size, num_ranks, /*gin=*/nullptr, world, /*signal_index=*/0);
 
     bar.sync(ncclCoopCta(), ::cuda::memory_order_release);
   }

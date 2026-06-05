@@ -309,7 +309,7 @@ CollectiveCliqueRequests::CliqueRequirements
 RaggedAllToAllThunk::GetCliqueRequirements(const GpuCliqueKey& clique_key) {
   CollectiveCliqueRequests::CliqueRequirements clique_reqs;
   if (UsesDeviceKernel()) {
-    clique_reqs.dev_comm = DeviceKernelDevCommRequirements();
+    clique_reqs.dev_comm = DeviceKernelLsaDevCommRequirements();
   } else if (config_.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel) {
     clique_reqs.dev_comm =
         GpuDeviceCommunicator::Requirements{.lsa_barrier_count = 1};
@@ -364,7 +364,7 @@ absl::StatusOr<RaggedAllToAllStreamState*> RaggedAllToAllThunk::InitializeOnce(
     } else {
       GpuDeviceCommunicator::Requirements req =
           UsesDeviceKernel()
-              ? DeviceKernelDevCommRequirements()
+              ? DeviceKernelLsaDevCommRequirements()
               : GpuDeviceCommunicator::Requirements{.lsa_barrier_count = 1};
       ASSIGN_OR_RETURN(auto* dev_comm,
                        params.collective_cliques->GetDeviceComm(
@@ -676,7 +676,7 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
   }
 
   auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(&comm);
-  if (UsesDeviceKernel() && gpu_comm->SupportsGin() &&
+  if (UsesDeviceKernel() && gpu_comm->SupportsDeviceComm() &&
       params.collective_memory != nullptr) {
     auto [input_sym, input_offset] =
         params.collective_memory->FindSymmetricMemory(
@@ -686,33 +686,50 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
             clique_key, device_buffers[1].destination_buffer);
 
     if (input_sym != nullptr && output_sym != nullptr) {
-      ASSIGN_OR_RETURN(auto* dev_comm, params.collective_cliques->GetDeviceComm(
-                                           clique_key, state->rank,
-                                           DeviceKernelDevCommRequirements()));
-
       ASSIGN_OR_RETURN(int32_t num_ranks, comm.NumRanks());
+      ASSIGN_OR_RETURN(
+          auto* lsa_dev_comm,
+          params.collective_cliques->GetDeviceComm(
+              clique_key, state->rank, DeviceKernelLsaDevCommRequirements()));
 
-      XLA_VLOG_DEVICE(3, state->device_ordinal)
-          << "Device kernel: lsa_size=" << dev_comm->lsa_size()
-          << " num_ranks=" << num_ranks << " gin=" << gpu_comm->SupportsGin()
-          << " cta_count=" << device_kernel_cta_count()
-          << " num_updates_per_replica="
-          << (config_.num_total_updates / num_ranks)
-          << " num_row_elements=" << config_.num_row_elements
-          << " element_type="
-          << primitive_util::LowercasePrimitiveTypeName(
-                 device_buffers[0].element_type);
+      const int64_t lsa_size = lsa_dev_comm->lsa_size();
+      const bool has_remote_peers = lsa_size < num_ranks;
+      if (has_remote_peers && !gpu_comm->SupportsGin()) {
+        XLA_VLOG_DEVICE(3, state->device_ordinal)
+            << "Device kernel skipped: lsa_size=" << lsa_size
+            << " num_ranks=" << num_ranks << " requires GIN";
+      } else {
+        GpuDeviceCommunicator* dev_comm = lsa_dev_comm;
+        if (has_remote_peers) {
+          ASSIGN_OR_RETURN(dev_comm,
+                           params.collective_cliques->GetDeviceComm(
+                               clique_key, state->rank,
+                               DeviceKernelDevCommRequirements()));
+        }
 
-      int64_t num_updates_per_replica = config_.num_total_updates / num_ranks;
-      PrimitiveType element_type = device_buffers[0].element_type;
+        XLA_VLOG_DEVICE(3, state->device_ordinal)
+            << "Device kernel: lsa_size=" << lsa_size
+            << " num_ranks=" << num_ranks
+            << " gin=" << (has_remote_peers && gpu_comm->SupportsGin())
+            << " cta_count=" << device_kernel_cta_count()
+            << " num_updates_per_replica="
+            << (config_.num_total_updates / num_ranks)
+            << " num_row_elements=" << config_.num_row_elements
+            << " element_type="
+            << primitive_util::LowercasePrimitiveTypeName(
+                   device_buffers[0].element_type);
 
-      return RunDeviceRaggedAllToAllKernel(
-          &stream, element_type, dev_comm, input_sym, output_sym,
-          device_buffers[2].source_buffer, device_buffers[3].source_buffer,
-          device_buffers[4].source_buffer, num_ranks, num_updates_per_replica,
-          config_.num_row_elements, device_kernel_cta_count(),
-          static_cast<int64_t>(input_offset),
-          static_cast<int64_t>(output_offset));
+        int64_t num_updates_per_replica = config_.num_total_updates / num_ranks;
+        PrimitiveType element_type = device_buffers[0].element_type;
+
+        return RunDeviceRaggedAllToAllKernel(
+            &stream, element_type, dev_comm, input_sym, output_sym,
+            device_buffers[2].source_buffer, device_buffers[3].source_buffer,
+            device_buffers[4].source_buffer, num_ranks, num_updates_per_replica,
+            config_.num_row_elements, device_kernel_cta_count(),
+            static_cast<int64_t>(input_offset),
+            static_cast<int64_t>(output_offset));
+      }
     }
   }
 
@@ -860,6 +877,19 @@ absl::Status RaggedAllToAllThunk::PrepareCollective(
     RETURN_IF_ERROR(
         params.collective_memory_requests->RequestSymmetricAllocation(
             clique_key, output_buf.destination_buffer.slice.index()));
+  }
+
+  if (UsesDeviceKernel()) {
+    const Buffer& input_buf = buffers()[0];
+    RETURN_IF_ERROR(
+        params.collective_memory_requests->RequestSymmetricAllocation(
+            clique_key, input_buf.source_buffer.slice.index()));
+
+    RETURN_IF_ERROR(device_groups().status());
+    CollectiveCliqueRequests::CliqueRequirements gin_reqs;
+    gin_reqs.dev_comm = DeviceKernelDevCommRequirements();
+    RETURN_IF_ERROR(params.collective_clique_requests->RequestClique(
+        clique_key, *device_groups(), gin_reqs));
   }
 
   return absl::OkStatus();

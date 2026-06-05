@@ -77,6 +77,17 @@ se::Stream* ToStream(const Communicator::Executor& executor) {
   return absl::down_cast<const GpuCollectives::Executor&>(executor).stream();
 }
 
+void SetDevCommGinConnection(ncclDevCommRequirements& reqs, bool use_gin,
+                             bool gin_connection_full) {
+#if NCCL_VERSION_CODE >= 22907
+  reqs.ginConnectionType = (use_gin && gin_connection_full)
+                                 ? NCCL_GIN_CONNECTION_FULL
+                                 : NCCL_GIN_CONNECTION_NONE;
+#elif NCCL_VERSION_CODE >= 22900
+  reqs.ginForceEnable = use_gin && gin_connection_full;
+#endif
+}
+
 NcclCapabilities GetCapabilities(ncclComm_t comm) {
   bool support_device_comm = false;
   bool support_one_sided_comm = false;
@@ -976,10 +987,10 @@ NcclDeviceCommunicator::CreateFrom(const NcclCommunicator& comm,
                              requirements.rail_gin_barrier_count > 0;
   const bool use_gin = gin_requested && comm.SupportsGin();
   if (gin_requested && !use_gin) {
-    LOG_FIRST_N(WARNING, 1) << absl::StreamFormat(
+    return Internal(
         "Device communicator requested GIN resources (%v) on %s but the NCCL "
-        "communicator does not support GIN; creating without GIN. Callers must "
-        "gate GIN-using device kernels on NcclCommunicator::SupportsGin().",
+        "communicator does not support GIN. Callers must gate GIN-using device "
+        "kernels on NcclCommunicator::SupportsGin().",
         requirements, comm.ToString());
   }
 
@@ -987,20 +998,13 @@ NcclDeviceCommunicator::CreateFrom(const NcclCommunicator& comm,
   memset(&reqs, 0, sizeof(reqs));
 #if NCCL_VERSION_CODE >= 22900
   reqs = NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
-#endif
   reqs.lsaBarrierCount = requirements.lsa_barrier_count;
-#if NCCL_VERSION_CODE >= 22907
   reqs.barrierCount = use_gin ? requirements.barrier_count : 0;
   reqs.railGinBarrierCount = use_gin ? requirements.rail_gin_barrier_count : 0;
   reqs.ginSignalCount = use_gin ? requirements.gin_signal_count : 0;
-  reqs.ginConnectionType = (use_gin && requirements.gin_connection_full)
-                               ? NCCL_GIN_CONNECTION_FULL
-                               : NCCL_GIN_CONNECTION_NONE;
-#elif NCCL_VERSION_CODE >= 22900
-  reqs.barrierCount = use_gin ? requirements.barrier_count : 0;
-  reqs.railGinBarrierCount = use_gin ? requirements.rail_gin_barrier_count : 0;
-  reqs.ginSignalCount = use_gin ? requirements.gin_signal_count : 0;
-  reqs.ginForceEnable = use_gin && requirements.gin_connection_full;
+  SetDevCommGinConnection(reqs, use_gin, requirements.gin_connection_full);
+#else
+  reqs.lsaBarrierCount = requirements.lsa_barrier_count;
 #endif
 
   ncclDevComm dev_comm{};

@@ -116,6 +116,11 @@ class GpuDeviceCommunicator {
     bool gin_connection_full = false;
   };
 
+  static bool RequestsGin(const Requirements& reqs) {
+    return reqs.gin_connection_full || reqs.gin_signal_count > 0 ||
+           reqs.rail_gin_barrier_count > 0;
+  }
+
   // Returns a platform-specific handle to the underlying communicator object.
   virtual PlatformCommunicatorHandle platform_comm() const {
     return PlatformCommunicatorHandle{nullptr};
