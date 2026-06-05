@@ -393,7 +393,7 @@ TEST_F(DeviceAddressVmmAllocatorTest, ExplicitDeallocate) {
 TEST_F(DeviceAddressVmmAllocatorTest, SynchronizePendingOperationsDrainsQueue) {
   ASSERT_OK_AND_ASSIGN(
       auto allocator,
-      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+      CountingCudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   const int ordinal = executor_->device_ordinal();
   ASSERT_OK_AND_ASSIGN(
@@ -404,10 +404,15 @@ TEST_F(DeviceAddressVmmAllocatorTest, SynchronizePendingOperationsDrainsQueue) {
   DeviceAddressBase addr = scoped_address.cref();
   scoped_address.Release();
   ASSERT_THAT(allocator->Deallocate(ordinal, addr), IsOk());
-  EXPECT_NE(allocator->GetRawAllocation(ordinal, addr), nullptr);
+  EXPECT_EQ(allocator->timeline_write_count(), 0);
+  EXPECT_EQ(allocator->GetRawAllocation(ordinal, addr), nullptr);
 
   ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+  EXPECT_EQ(allocator->timeline_write_count(), 1);
   EXPECT_EQ(allocator->GetRawAllocation(ordinal, addr), nullptr);
+
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+  EXPECT_EQ(allocator->timeline_write_count(), 1);
 }
 
 TEST_F(DeviceAddressVmmAllocatorTest, DeallocateNull) {
