@@ -26,18 +26,21 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/copy_thunk.pb.h"
-#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/shaped_slice.h"
+#include "xla/stream_executor/command_buffer.h"
+#include "xla/stream_executor/device_address.h"
 
 namespace xla {
 namespace gpu {
 
-class DynamicMemcpyThunk : public Thunk {
+class DynamicMemcpyThunk : public Command {
  public:
   // TODO(jreiffers): Move this to a more appropriate place.
   struct MemcpyDescriptor {
@@ -101,6 +104,11 @@ class DynamicMemcpyThunk : public Thunk {
   const ShapedSlice& destination() const { return destination_buffer_; }
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override;
+  bool requires_update() const override { return HasLoopDependentOffsets(); }
 
   BufferUses buffer_uses() const override {
     return {
@@ -115,7 +123,21 @@ class DynamicMemcpyThunk : public Thunk {
       ThunkInfo thunk_info, const DynamicMemcpyThunkProto& thunk_proto,
       absl::Span<const BufferAllocation> buffer_allocations);
 
+  bool HasLoopDependentOffsets() const { return offsets_.depends_on_loop; }
+
  private:
+  struct CopyAddresses {
+    se::DeviceAddressBase dst;
+    se::DeviceAddressBase src;
+  };
+
+  absl::StatusOr<CopyAddresses> GetCopyAddresses(
+      const BufferAllocations& allocations,
+      const RecordParams* record_params = nullptr) const;
+
+  absl::StatusOr<int64_t> GetOffsetIndex(
+      const RecordParams* record_params = nullptr) const;
+
   ShapedSlice source_buffer_;
   ShapedSlice destination_buffer_;
   uint64_t mem_size_;

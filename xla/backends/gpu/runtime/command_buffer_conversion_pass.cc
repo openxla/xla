@@ -190,10 +190,10 @@ bool ThunkSequenceIsConvertible(const ThunkSequence& thunks,
 size_t CheckAsyncRegion(absl::Span<const std::unique_ptr<Thunk>> thunks,
                         const CommandBufferConfig& config);
 
-bool HasLoopDependentDynamicSliceFusionV2(const ThunkSequence& thunks) {
-  bool has_loop_dependent_dsf = false;
+bool HasLoopDependentDynamicOffsets(const ThunkSequence& thunks) {
+  bool has_loop_dependent_dynamic_offsets = false;
   for (const std::unique_ptr<Thunk>& thunk : thunks) {
-    if (has_loop_dependent_dsf) {
+    if (has_loop_dependent_dynamic_offsets) {
       break;
     }
     thunk
@@ -201,13 +201,19 @@ bool HasLoopDependentDynamicSliceFusionV2(const ThunkSequence& thunks) {
           if (const auto* dsf =
                   dynamic_cast<const DynamicSliceFusionV2Thunk*>(nested);
               dsf != nullptr && dsf->HasLoopDependentOffsets()) {
-            has_loop_dependent_dsf = true;
+            has_loop_dependent_dynamic_offsets = true;
+          }
+          if (const auto* dynamic_memcpy =
+                  dynamic_cast<const DynamicMemcpyThunk*>(nested);
+              dynamic_memcpy != nullptr &&
+              dynamic_memcpy->HasLoopDependentOffsets()) {
+            has_loop_dependent_dynamic_offsets = true;
           }
           return absl::OkStatus();
         })
         .IgnoreError();
   }
-  return has_loop_dependent_dsf;
+  return has_loop_dependent_dynamic_offsets;
 }
 
 // Returns true if the WhileThunk is convertible to a command buffer operation.
@@ -215,11 +221,10 @@ bool HasLoopDependentDynamicSliceFusionV2(const ThunkSequence& thunks) {
 // convertible.
 bool IsConvertible(const WhileThunk& while_thunk,
                    const CommandBufferConfig& config) {
-  if (HasLoopDependentDynamicSliceFusionV2(
-          while_thunk.body_executor().thunks()) &&
+  if (HasLoopDependentDynamicOffsets(while_thunk.body_executor().thunks()) &&
       !(config.enable_loop_unroll && while_thunk.trip_count().has_value())) {
     VLOG(2) << "WhileThunk is not convertible to command buffers because its "
-               "body contains loop-dependent DynamicSliceFusionV2Thunk and "
+               "body contains loop-dependent dynamic offsets and "
                "the while loop will not be unrolled";
     return false;
   }
@@ -336,6 +341,21 @@ static bool IsConvertible(
                                     config);
 }
 
+// Returns true if the DynamicMemcpyThunk is convertible to a command buffer
+// operation. Loop-dependent offsets require command updates and are therefore
+// unsupported in NEVER_UPDATE mode.
+static bool IsConvertible(const DynamicMemcpyThunk& dynamic_memcpy_thunk,
+                          const CommandBufferConfig& config) {
+  if (config.update_mode == DebugOptions::NEVER_UPDATE &&
+      dynamic_memcpy_thunk.HasLoopDependentOffsets()) {
+    VLOG(2) << "DynamicMemcpyThunk is not convertible in NEVER_UPDATE "
+               "command-buffer mode because its offsets depend on loop "
+               "iteration";
+    return false;
+  }
+  return true;
+}
+
 // Returns true if the AsyncStartThunk is convertible to a command buffer
 // operation. This requires that all nested thunks are convertible.
 static bool IsConvertible(const AsyncStartThunk& async_start_thunk,
@@ -391,6 +411,13 @@ bool IsConvertible(const Thunk& thunk, const CommandBufferConfig& config) {
   if (thunk.kind() == Thunk::kDynamicSliceFusion) {
     return IsConvertible(static_cast<const DynamicSliceFusionV2Thunk&>(thunk),
                          config);
+  }
+
+  if (thunk.kind() == Thunk::kCopy) {
+    if (auto* dynamic_memcpy =
+            dynamic_cast<const DynamicMemcpyThunk*>(&thunk)) {
+      return IsConvertible(*dynamic_memcpy, config);
+    }
   }
 
   if (thunk.kind() == Thunk::kRaggedAllToAll) {

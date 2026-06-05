@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/convolution_thunk.h"
 #include "xla/backends/gpu/runtime/cudnn_thunk.h"
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
+#include "xla/backends/gpu/runtime/dynamic_memcpy_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_fusion_v2_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
@@ -155,6 +156,28 @@ std::unique_ptr<DeviceToDeviceCopyThunk> CreateCopyThunk(
   return std::make_unique<DeviceToDeviceCopyThunk>(
       Thunk::ThunkInfo(), ShapedSlice{slice0, shape},
       ShapedSlice{slice0, shape}, 1024);
+}
+
+std::unique_ptr<DynamicMemcpyThunk> CreateDynamicMemcpyThunk(
+    const BufferAllocation& src_alloc, const BufferAllocation& dst_alloc,
+    bool depends_on_loop = false) {
+  constexpr int64_t kBufferBytes = sizeof(int32_t) * 16;
+  constexpr int64_t kCopyBytes = sizeof(int32_t) * 4;
+
+  Shape shape = ShapeUtil::MakeShape(S32, {16});
+  BufferAllocation::Slice src_slice(&src_alloc, 0, kBufferBytes);
+  BufferAllocation::Slice dst_slice(&dst_alloc, 0, kBufferBytes);
+  return std::make_unique<DynamicMemcpyThunk>(
+      Thunk::ThunkInfo(), ShapedSlice{src_slice, shape},
+      ShapedSlice{dst_slice, shape}, kCopyBytes,
+      DynamicMemcpyThunk::Offsets{
+          /*depends_on_loop=*/depends_on_loop,
+          /*src_offsets=*/
+              depends_on_loop ? std::vector<int64_t>{0, kCopyBytes}
+                              : std::vector<int64_t>{0},
+          /*dst_offsets=*/
+              depends_on_loop ? std::vector<int64_t>{0, kCopyBytes}
+                              : std::vector<int64_t>{0}});
 }
 
 std::unique_ptr<DynamicSliceThunk> CreateDynamicSliceCopyThunk(
@@ -478,6 +501,195 @@ TEST(CommandBufferConversionPassTest,
               IsOkAndHolds(false));
 
   EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kDynamicSlice));
+}
+
+TEST(CommandBufferConversionPassTest, ConvertsDynamicMemcpyThunk) {
+  ThunkSequence thunks;
+
+  BufferAllocation src_alloc(0, sizeof(int32_t) * 16, 0);
+  BufferAllocation dst_alloc(1, sizeof(int32_t) * 16, 0);
+  thunks.push_back(CreateDynamicMemcpyThunk(src_alloc, dst_alloc));
+
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(
+      DebugOptions::DYNAMIC_SLICE_COPY_FUSION);
+
+  se::DeviceDescription device_info;
+  FakeErrorAllocator allocator;
+  CommandBufferConversionPass pass{"test"};
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(true));
+
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer));
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(thunks[0].get());
+  const auto& thunks_in_command_buffer =
+      command_buffer_thunk->thunks()->thunks();
+  EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kCopy));
+  EXPECT_NE(dynamic_cast<const DynamicMemcpyThunk*>(
+                thunks_in_command_buffer[0].get()),
+            nullptr);
+}
+
+TEST(CommandBufferConversionPassTest,
+     DoesNotConvertDynamicMemcpyThunkWithFusionOnly) {
+  ThunkSequence thunks;
+
+  BufferAllocation src_alloc(0, sizeof(int32_t) * 16, 0);
+  BufferAllocation dst_alloc(1, sizeof(int32_t) * 16, 0);
+  thunks.push_back(CreateDynamicMemcpyThunk(src_alloc, dst_alloc));
+
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+
+  se::DeviceDescription device_info;
+  FakeErrorAllocator allocator;
+  CommandBufferConversionPass pass{"test"};
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(false));
+
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCopy));
+  EXPECT_NE(dynamic_cast<const DynamicMemcpyThunk*>(thunks[0].get()), nullptr);
+}
+
+TEST(CommandBufferConversionPassTest,
+     DoesNotConvertLoopDependentDynamicMemcpyThunkInNeverUpdateMode) {
+  ThunkSequence thunks;
+
+  BufferAllocation src_alloc(0, sizeof(int32_t) * 16, 0);
+  BufferAllocation dst_alloc(1, sizeof(int32_t) * 16, 0);
+  thunks.push_back(
+      CreateDynamicMemcpyThunk(src_alloc, dst_alloc, /*depends_on_loop=*/true));
+
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.set_xla_gpu_command_buffer_update_mode(
+      DebugOptions::NEVER_UPDATE);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(
+      DebugOptions::DYNAMIC_SLICE_COPY_FUSION);
+
+  se::DeviceDescription device_info;
+  FakeErrorAllocator allocator;
+  CommandBufferConversionPass pass{"test"};
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(false));
+
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCopy));
+  EXPECT_NE(dynamic_cast<const DynamicMemcpyThunk*>(thunks[0].get()), nullptr);
+}
+
+TEST(CommandBufferConversionPassTest,
+     ConvertWhileThunkWithLoopDependentDynamicMemcpyWhenUnrolled) {
+  if (GetPlatformName() == "ROCM") {
+    GTEST_SKIP() << "Not supported on ROCm";
+  }
+
+  ThunkSequence thunks;
+  ThunkSequence condition_thunks;
+  ThunkSequence body_thunks;
+
+  BufferAllocation src_alloc(0, sizeof(int32_t) * 16, 0);
+  BufferAllocation dst_alloc(1, sizeof(int32_t) * 16, 0);
+  body_thunks.push_back(
+      CreateDynamicMemcpyThunk(src_alloc, dst_alloc, /*depends_on_loop=*/true));
+
+  BufferAllocation condition_result_alloc(2, 1024, 0);
+  thunks.push_back(CreateWhileThunk(std::move(condition_thunks),
+                                    std::move(body_thunks),
+                                    condition_result_alloc,
+                                    /*trip_count=*/2));
+
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.set_xla_gpu_command_buffer_unroll_loops(true);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::WHILE);
+  debug_options.add_xla_gpu_enable_command_buffer(
+      DebugOptions::DYNAMIC_SLICE_COPY_FUSION);
+
+  se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  FakeErrorAllocator allocator;
+  CommandBufferConversionPass pass{"test"};
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(true));
+
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer));
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(thunks[0].get());
+  const auto& thunks_in_command_buffer =
+      command_buffer_thunk->thunks()->thunks();
+  EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kWhile));
+  const auto* while_thunk =
+      static_cast<const WhileThunk*>(thunks_in_command_buffer[0].get());
+  const auto& body_thunks_after_pass = while_thunk->body_executor().thunks();
+  EXPECT_THAT(body_thunks_after_pass, ThunkKindsAre(Thunk::kCopy));
+  EXPECT_NE(
+      dynamic_cast<const DynamicMemcpyThunk*>(body_thunks_after_pass[0].get()),
+      nullptr);
+}
+
+TEST(CommandBufferConversionPassTest,
+     ConvertsBodyOfWhileThunkWithLoopDependentDynamicMemcpyWhenNotUnrolled) {
+  if (GetPlatformName() == "ROCM") {
+    GTEST_SKIP() << "Not supported on ROCm";
+  }
+
+  ThunkSequence thunks;
+  ThunkSequence condition_thunks;
+  ThunkSequence body_thunks;
+
+  BufferAllocation src_alloc(0, sizeof(int32_t) * 16, 0);
+  BufferAllocation dst_alloc(1, sizeof(int32_t) * 16, 0);
+  body_thunks.push_back(
+      CreateDynamicMemcpyThunk(src_alloc, dst_alloc, /*depends_on_loop=*/true));
+
+  BufferAllocation condition_result_alloc(2, 1024, 0);
+  thunks.push_back(CreateWhileThunk(std::move(condition_thunks),
+                                    std::move(body_thunks),
+                                    condition_result_alloc,
+                                    /*trip_count=*/2));
+
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.set_xla_gpu_command_buffer_unroll_loops(false);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::WHILE);
+  debug_options.add_xla_gpu_enable_command_buffer(
+      DebugOptions::DYNAMIC_SLICE_COPY_FUSION);
+
+  se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  FakeErrorAllocator allocator;
+  CommandBufferConversionPass pass{"test"};
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(true));
+
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kWhile));
+  const auto* while_thunk = static_cast<const WhileThunk*>(thunks[0].get());
+  const auto& body_thunks_after_pass = while_thunk->body_executor().thunks();
+  EXPECT_THAT(body_thunks_after_pass, ThunkKindsAre(Thunk::kCommandBuffer));
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(body_thunks_after_pass[0].get());
+  const auto& body_command_buffer_thunks =
+      command_buffer_thunk->thunks()->thunks();
+  EXPECT_THAT(body_command_buffer_thunks, ThunkKindsAre(Thunk::kCopy));
+  EXPECT_NE(dynamic_cast<const DynamicMemcpyThunk*>(
+                body_command_buffer_thunks[0].get()),
+            nullptr);
 }
 
 TEST(CommandBufferConversionPassTest,
