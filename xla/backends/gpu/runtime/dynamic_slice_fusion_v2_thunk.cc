@@ -358,7 +358,6 @@ DynamicSliceFusionV2Thunk::Record(const Thunk::ExecuteParams& execute_params,
   auto child_record_params = [&]() {
     Command::RecordParams params = record_params;
     params.updated_allocs = std::nullopt;
-    params.command_buffer_update_mode = DebugOptions::ALWAYS_UPDATE;
     return params;
   };
 
