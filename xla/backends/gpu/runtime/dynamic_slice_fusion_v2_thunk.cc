@@ -26,6 +26,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/btree_set.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -129,19 +130,20 @@ static bool IsLoopDependent(const std::optional<DynamicSliceConfig>& config) {
 }
 
 bool DynamicSliceFusionV2Thunk::HasLoopDependentOffsets() const {
-  for (const DynamicSliceFusion::Parameter& parameter : parameters_) {
-    if (IsLoopDependent(parameter.slice_config)) {
-      return true;
-    }
-  }
-  for (const DynamicSliceFusion::Result& result : results_) {
-    if (IsLoopDependent(result.update_config)) {
-      return true;
-    }
-  }
-  return false;
+  bool param_loop_dependent = absl::c_any_of(
+      parameters_, [](const DynamicSliceFusion::Parameter& parameter) {
+        return IsLoopDependent(parameter.slice_config);
+      });
+  bool result_loop_dependent =
+      absl::c_any_of(results_, [](const DynamicSliceFusion::Result& result) {
+        return IsLoopDependent(result.update_config);
+      });
+  return param_loop_dependent || result_loop_dependent;
 }
 
+// TODO(shawnwang18): Build command executors for thunks with nested thunk
+// executors in their constructors when nested thunks are command-buffer
+// compatible.
 absl::Status DynamicSliceFusionV2Thunk::SetOrUpdateCommandBufferExecutor(
     CommandExecutor command_executor) {
   command_executor_ = std::move(command_executor);

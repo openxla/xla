@@ -196,16 +196,13 @@ bool HasLoopDependentDynamicSliceFusionV2(const ThunkSequence& thunks) {
     if (has_loop_dependent_dsf) {
       break;
     }
-    thunk
-        ->Walk([&](const Thunk* nested) -> absl::Status {
-          if (const auto* dsf =
-                  dynamic_cast<const DynamicSliceFusionV2Thunk*>(nested);
-              dsf != nullptr && dsf->HasLoopDependentOffsets()) {
-            has_loop_dependent_dsf = true;
-          }
-          return absl::OkStatus();
-        })
-        .IgnoreError();
+    thunk->Walk([&](const Thunk* nested) {
+      if (const auto* dsf =
+              dynamic_cast<const DynamicSliceFusionV2Thunk*>(nested);
+          dsf != nullptr && dsf->HasLoopDependentOffsets()) {
+        has_loop_dependent_dsf = true;
+      }
+    });
   }
   return has_loop_dependent_dsf;
 }
