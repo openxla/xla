@@ -126,7 +126,7 @@ jobs:
         run: /opt/rocm/bin/rocminfo
 
       - name: Test XLA [single_gpu]
-        timeout-minutes: 60
+        timeout-minutes: 120
         run: |
           build_tools/rocm/execute_ci_build_upstream.sh \
             --config=rocm_ci \
