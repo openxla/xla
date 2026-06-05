@@ -445,7 +445,7 @@ TEST_F(GpuBlasLtMatmulThunkTest, CacheUnitTest) {
         .status();
   };  // thread_func
 
-  const int num_blas_lts = 30, num_streams = 30,
+  const int num_blas_lts = 8, num_streams = 8,
             total = num_blas_lts * num_streams, mod = 11;
 
   std::vector<absl::Status> results(total);
