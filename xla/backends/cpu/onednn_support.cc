@@ -15,21 +15,25 @@ limitations under the License.
 
 #include "xla/backends/cpu/onednn_support.h"
 
+#include <algorithm>
+#include <vector>
+
 #include "absl/base/no_destructor.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "oneapi/dnnl/dnnl.hpp"  // NOLINT: for DNNL_MAX_NDIMS
 #include "oneapi/dnnl/dnnl_graph.hpp"
-#include "tsl/platform/cpu_info.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/runtime/dot_dims.h"
-#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout_util.h"
 #include "xla/service/cpu/onednn_util.h"
 #include "xla/shape.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {

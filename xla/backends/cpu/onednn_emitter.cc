@@ -95,7 +95,7 @@ static absl::StatusOr<dnnl::graph::logical_tensor> FindLogicalTensor(
   if (auto it = logical_tensors.find(instr); it != logical_tensors.end()) {
     return it->second;
   }
-  return Internal("Can't fine oneDNN logical tensor for instruction %s",
+  return Internal("Can't find oneDNN logical tensor for instruction %s",
                   instr->ToString());
 }
 

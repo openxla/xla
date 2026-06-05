@@ -62,11 +62,13 @@ class LibraryRewriter : public HloModulePass {
       : target_machine_features_(target_machine_features),
         options_(std::move(options)) {
     // Initialize library matchers.
+#if XLA_ONEDNN_USE_GRAPH_API
     if (options_.use_onednn && options_.onednn_fusion_types != nullptr &&
         !options_.onednn_fusion_types->empty()) {
       libs_.push_back(std::make_unique<OneDnnMatcher>(
           target_machine_features_, options_.onednn_fusion_types));
     }
+#endif  // XLA_ONEDNN_USE_GRAPH_API
     if (options_.use_ynnpack && options_.ynn_fusion_types != nullptr &&
         !options_.ynn_fusion_types->empty()) {
       libs_.push_back(std::make_unique<YnnMatcher>(target_machine_features_,

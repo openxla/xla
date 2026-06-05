@@ -16,16 +16,17 @@ limitations under the License.
 #ifndef XLA_BACKENDS_CPU_ONEDNN_SUPPORT_H_
 #define XLA_BACKENDS_CPU_ONEDNN_SUPPORT_H_
 
+#include <vector>
+
 // oneDNN-fusion-related defines that don't depend on oneDNN Graph API.
 // For anything dependent on Graph API, put it in onednn_fusion.h.
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "oneapi/dnnl/dnnl.hpp"
 #include "oneapi/dnnl/dnnl_graph.hpp"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
