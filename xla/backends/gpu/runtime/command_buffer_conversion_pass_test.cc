@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/thunk_pass_pipeline.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
+#include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -191,8 +192,7 @@ std::unique_ptr<DynamicSliceThunk> CreateDynamicSliceCopyThunk(
 }
 
 DynamicSliceConfig CreateDsfConfig(std::optional<int64_t> loop_index,
-                                   int64_t byte_offset,
-                                   int64_t byte_stride) {
+                                   int64_t byte_offset, int64_t byte_stride) {
   DynamicSliceConfig config;
   if (loop_index.has_value()) {
     config.set_loop_index(*loop_index);
@@ -338,11 +338,10 @@ std::unique_ptr<AsyncDoneThunk> CreateAllGatherDoneThunk(Thunk* start_thunk) {
                                           std::move(async_execution));
 }
 
-std::unique_ptr<WhileThunk> CreateWhileThunk(ThunkSequence condition_thunks,
-                                             ThunkSequence body_thunks,
-                                             const BufferAllocation& alloc,
-                                             std::optional<int64_t> trip_count =
-                                                 std::nullopt) {
+std::unique_ptr<WhileThunk> CreateWhileThunk(
+    ThunkSequence condition_thunks, ThunkSequence body_thunks,
+    const BufferAllocation& alloc,
+    std::optional<int64_t> trip_count = std::nullopt) {
   BufferAllocation::Slice slice(&alloc, 0, 1024);
 
   return std::make_unique<WhileThunk>(Thunk::ThunkInfo(), slice,
@@ -1049,8 +1048,9 @@ TEST(CommandBufferConversionPassTest,
               ThunkKindsAre(Thunk::kDynamicSliceFusion));
 }
 
-TEST(CommandBufferConversionPassTest,
-     ConvertsBodyOfWhileThunkWithLoopDependentDynamicSliceFusionV2WhenNotUnrolled) {
+TEST(
+    CommandBufferConversionPassTest,
+    ConvertsBodyOfWhileThunkWithLoopDependentDynamicSliceFusionV2WhenNotUnrolled) {
   if (GetPlatformName() == "ROCM") {
     GTEST_SKIP() << "Not supported on ROCm";
   }
