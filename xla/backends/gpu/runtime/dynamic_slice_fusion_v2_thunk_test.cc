@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
@@ -642,9 +643,8 @@ TEST(DynamicSliceFusionV2ThunkTest,
      CommandBufferUpdatesLoopDependentSliceOffset) {
   ASSERT_OK_AND_ASSIGN(auto* executor, CreateExecutor());
   if (executor->GetDeviceDescription().gpu_compute_capability().IsRocm()) {
-    GTEST_SKIP()
-        << "DynamicSliceFusionV2Thunk command buffer updates are not "
-           "supported on ROCm";
+    GTEST_SKIP() << "DynamicSliceFusionV2Thunk command buffer updates are not "
+                    "supported on ROCm";
   }
   ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 

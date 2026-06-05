@@ -570,6 +570,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms:dynamic_slice_fusion",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
@@ -595,6 +596,7 @@ xla_test(
     srcs = ["dynamic_slice_fusion_v2_thunk_test.cc"],
     backends = ["gpu"],
     deps = [
+        ":command",
         ":command_buffer_thunk",
         ":command_executor",
         ":device_to_device_copy_thunk",
@@ -1745,6 +1747,7 @@ xla_test(
     ],
     deps = [
         ":select_k_exec_raft",
+        ":select_k_exec_stub",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
@@ -1771,6 +1774,7 @@ cc_library(
     srcs = ["select_k_thunk.cc"],
     hdrs = ["select_k_thunk.h"],
     deps = [
+        ":select_k_exec_stub",
         ":thunk",
         ":thunk_id",
         ":thunk_proto_cc",
@@ -4783,6 +4787,7 @@ xla_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/transforms:dynamic_slice_fusion",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "//xla/service:hlo_module_config",

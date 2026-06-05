@@ -83,11 +83,10 @@ CommandBufferConfig GetCommandBufferConfig(
     num_local_devices = hlo_module->config().partition_size();
   }
 
-  CommandBufferConfig config{std::move(commands),
-                             device_info,
-                             debug_options.xla_gpu_command_buffer_update_mode(),
-                             debug_options.xla_gpu_command_buffer_unroll_loops(),
-                             num_local_devices};
+  CommandBufferConfig config{
+      std::move(commands), device_info,
+      debug_options.xla_gpu_command_buffer_update_mode(),
+      debug_options.xla_gpu_command_buffer_unroll_loops(), num_local_devices};
 
   // Erase command buffer cmd types that are not supported by the gpu runtime.
   static constexpr auto kRequireConditionals = {DebugOptions::CONDITIONAL,
@@ -197,14 +196,16 @@ bool HasLoopDependentDynamicSliceFusionV2(const ThunkSequence& thunks) {
     if (has_loop_dependent_dsf) {
       break;
     }
-    thunk->Walk([&](const Thunk* nested) -> absl::Status {
-      if (const auto* dsf =
-              dynamic_cast<const DynamicSliceFusionV2Thunk*>(nested);
-          dsf != nullptr && dsf->HasLoopDependentOffsets()) {
-        has_loop_dependent_dsf = true;
-      }
-      return absl::OkStatus();
-    }).IgnoreError();
+    thunk
+        ->Walk([&](const Thunk* nested) -> absl::Status {
+          if (const auto* dsf =
+                  dynamic_cast<const DynamicSliceFusionV2Thunk*>(nested);
+              dsf != nullptr && dsf->HasLoopDependentOffsets()) {
+            has_loop_dependent_dsf = true;
+          }
+          return absl::OkStatus();
+        })
+        .IgnoreError();
   }
   return has_loop_dependent_dsf;
 }

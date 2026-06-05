@@ -35,6 +35,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
@@ -47,9 +49,11 @@ limitations under the License.
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -367,9 +371,8 @@ DynamicSliceFusionV2Thunk::Record(const Thunk::ExecuteParams& execute_params,
   if (auto* create = std::get_if<RecordCreate>(&record_action)) {
     return command_buffer->CreateChildCommand(
         [&, this](se::CommandBuffer* child_command_buffer) -> absl::Status {
-          std::vector<se::DeviceAddressBase> buffers =
-              BuildDynamicSliceBuffers(*execute_params.buffer_allocations,
-                                       IsInsideWhileLoopNest());
+          std::vector<se::DeviceAddressBase> buffers = BuildDynamicSliceBuffers(
+              *execute_params.buffer_allocations, IsInsideWhileLoopNest());
           BufferAllocations embedded_allocs(
               buffers, execute_params.buffer_allocations->device_ordinal(),
               execute_params.buffer_allocations->memory_allocator());
@@ -387,9 +390,8 @@ DynamicSliceFusionV2Thunk::Record(const Thunk::ExecuteParams& execute_params,
     RETURN_IF_ERROR(command_buffer->UpdateChildCommand(
         update->command,
         [&, this](se::CommandBuffer* child_command_buffer) -> absl::Status {
-          std::vector<se::DeviceAddressBase> buffers =
-              BuildDynamicSliceBuffers(*execute_params.buffer_allocations,
-                                       IsInsideWhileLoopNest());
+          std::vector<se::DeviceAddressBase> buffers = BuildDynamicSliceBuffers(
+              *execute_params.buffer_allocations, IsInsideWhileLoopNest());
           BufferAllocations embedded_allocs(
               buffers, execute_params.buffer_allocations->device_ordinal(),
               execute_params.buffer_allocations->memory_allocator());
