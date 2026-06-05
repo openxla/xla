@@ -36,7 +36,7 @@ jobs:
       - id: out
         shell: bash
         run: |
-          # rocm/tensorflow-build:latest-jammy-pythonall-rocm7.2.1-ci_official
+          # rocm/tensorflow-build:latest-jammy-pythonall-rocm7.2.1-ci_officiala
           echo "docker-image=rocm/tensorflow-build@sha256:66eb4c1e39db76fae2eb0a1029490acbe7bfce0e00d6ab435e170f743921f4c4" >> "$GITHUB_OUTPUT"
 
   jax:
