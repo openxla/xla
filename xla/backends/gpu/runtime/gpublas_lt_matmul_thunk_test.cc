@@ -359,7 +359,6 @@ ENTRY AddDotsFunc {
 }
 
 TEST_F(GpuBlasLtMatmulThunkTest, GroupedGemmWithAutotuneOneCacheEntry) {
-  GTEST_SKIP() << "Skipping grouped GEMM test";
   auto* rocm = gpu_comp().rocm_compute_capability();
   if (rocm == nullptr || !rocm->gfx9_mi300_series()) {
     GTEST_SKIP() << "Grouped GEMM is only supported on ROCm gfx942 or gfx950";
@@ -661,9 +660,13 @@ static se::StreamExecutor* GpuExecutor() {
 }
 
 // Returns true if the GPU supports CUDA graph tracing (requires CUDA 12.3+).
-static bool SupportsCudaGraphTracing(const se::StreamExecutor* executor) {
+static bool SupportsGpuGraphTracing(const se::StreamExecutor* executor) {
   const auto& desc = executor->GetDeviceDescription();
-  const auto* cuda_cc = desc.gpu_compute_capability().cuda_compute_capability();
+  const auto& gpu_cc = desc.gpu_compute_capability();
+  if (gpu_cc.IsRocm()) {
+    return true;
+  }
+  const auto* cuda_cc = gpu_cc.cuda_compute_capability();
   if (cuda_cc == nullptr) {
     return false;
   }
@@ -686,8 +689,8 @@ class CublasLtMatmulThunkCmdBufTest : public ::testing::Test {
 
   void SetUp() override {
     executor_ = GpuExecutor();
-    if (!SupportsCudaGraphTracing(executor_)) {
-      GTEST_SKIP() << "CUDA graph tracing is not supported";
+    if (!SupportsGpuGraphTracing(executor_)) {
+      GTEST_SKIP() << "GPU graph tracing is not supported";
     }
 
     TF_ASSERT_OK_AND_ASSIGN(stream_, executor_->CreateStream());
