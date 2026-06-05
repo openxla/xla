@@ -13,29 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/runtime/command.h"
+#include "xla/python/ifrt/bundle.h"
 
-#include <string>
+namespace xla {
+namespace ifrt {
 
-namespace xla::gpu {
+char Bundle::ID = 0;
 
-std::string CommandTypeString(CommandType type) {
-  switch (type) {
-#define CASE_CMD_STRING(enum_name, cmd_name, ...) \
-  case CommandType::enum_name:                    \
-    return cmd_name;
-    XLA_GPU_COMMAND_LIST(CASE_CMD_STRING)
-#undef CASE_CMD_STRING
-  }
-}
-
-bool IsCollectiveCommand(CommandType type) {
-  switch (type) {
-    case CommandType::kCollectiveCmd:
-      return true;
-    default:
-      return false;
-  }
-}
-
-}  // namespace xla::gpu
+}  // namespace ifrt
+}  // namespace xla

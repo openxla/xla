@@ -28,6 +28,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
@@ -121,7 +122,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/numa.h"
 #include "tsl/platform/protobuf.h"
@@ -137,6 +137,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/stream_executor_util.h"
+#include "xla/stream_executor/vmm_device_address_allocator.h"
 #include "xla/xla.pb.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM || TENSORFLOW_USE_SYCL
 
@@ -543,7 +544,7 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
 
   return AcquiredCliqueAndCommunicator{
       std::move(clique),
-      tsl::down_cast<gpu::GpuCommunicator*>(*maybe_communicator)};
+      absl::down_cast<gpu::GpuCommunicator*>(*maybe_communicator)};
 }
 
 // Create a `PreparedTransfer` object bundling together state needed to perform
@@ -871,10 +872,10 @@ void StreamExecutorGpuClient::ScheduleTransfersOnLocalDevice(
 
           // Launch the group of transfers.
           group_futures.push_back(gpu_communicator->GroupExecute(
-              [&launch_transfer_group, &curr_transfers = curr_transfers,
-               stream](gpu::GpuCommunicator* gpu_comm) -> absl::Status {
+              [&launch_transfer_group, &curr_transfers = curr_transfers, stream,
+               gpu_communicator]() {
                 return launch_transfer_group(
-                    gpu_comm, absl::MakeSpan(curr_transfers), stream);
+                    gpu_communicator, absl::MakeSpan(curr_transfers), stream);
               }));
         }
 
@@ -940,7 +941,7 @@ StreamExecutorGpuClient::PrepareReceiveBuffer(PjRtDevice* device, Shape shape) {
 void StreamExecutorGpuClient::ScheduleRemoteSend(
     PjRtMemorySpace* memory_space, PjRtRawBufferRef raw_buffer,
     std::vector<PjRtDeviceEventRef> definition_events,
-    tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise,
+    PjRtDeviceEventPromiseRef usage_event_promise,
     Future<std::string> serialized_descriptor,
     PjRtBuffer::RemoteSendCallback on_done) {
   // Get the default GpuCollectives instance.
@@ -950,11 +951,11 @@ void StreamExecutorGpuClient::ScheduleRemoteSend(
     on_done(collectives.status(), /*sends_were_enqueued=*/false);
   }
   gpu::GpuCollectives* gpu_collectives =
-      tsl::down_cast<gpu::GpuCollectives*>(*collectives);
+      absl::down_cast<gpu::GpuCollectives*>(*collectives);
   if (gpu_collectives == nullptr) {
     auto error = absl::InternalError("Failed to get GPU collectives");
     on_done(error, /*sends_were_enqueued=*/false);
-    usage_event_promise->SetError(error);
+    usage_event_promise.SetError(error);
     return;
   }
 
@@ -1019,7 +1020,7 @@ void StreamExecutorGpuClient::ScheduleRemoteSend(
               }
             });
       });
-  usage_event_promise->Set(PjRtDeviceEventRef(std::move(usage_event)));
+  usage_event_promise.Set(PjRtDeviceEventRef(std::move(usage_event)));
 }
 
 // Receive functionality for original cross-host transfers API.
@@ -1045,7 +1046,7 @@ StreamExecutorGpuClient::MakeCrossHostReceiveBuffers(
   ASSIGN_OR_RETURN(Collectives * collectives,
                    CollectivesRegistry::Default("gpu"));
   gpu::GpuCollectives* gpu_collectives =
-      tsl::down_cast<gpu::GpuCollectives*>(collectives);
+      absl::down_cast<gpu::GpuCollectives*>(collectives);
   if (gpu_collectives == nullptr) {
     return absl::InternalError("Failed to get GPU collectives");
   }
@@ -1643,7 +1644,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   ASSIGN_OR_RETURN(xla::Collectives * collectives,
                    xla::CollectivesRegistry::Default("gpu"));
   xla::gpu::GpuCollectives* gpu_collectives =
-      tsl::down_cast<xla::gpu::GpuCollectives*>(collectives);
+      absl::down_cast<xla::gpu::GpuCollectives*>(collectives);
 
   if (gpu_collectives == nullptr) {
     return absl::InternalError("Failed to get GPU collectives");
@@ -2003,6 +2004,11 @@ StreamExecutorGpuClient::RunAsync(
     allocate_granularity[static_cast<LogicalBuffer::Color>(
         gpu::MemorySpaceColor::kCollective)] = collective_memory_alignment;
   }
+
+  // Tag allocations made in this invocation as multi-device for VMM reuse.
+  se::DeviceAddressVmmAllocator::DeviceAssignmentScope
+      vmm_device_assignment_scope(
+          run_options->run_options().device_assignment());
 
   std::vector<se::DeviceAddressBase> buffers(allocations.size());
   {

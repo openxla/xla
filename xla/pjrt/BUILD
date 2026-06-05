@@ -157,6 +157,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/error:error_codes",
         "//xla/hlo/ir:hlo",
+        "//xla/pjrt/c:pjrt_c_api_device_event_hdrs",
         "//xla/runtime:device_id",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:future",
@@ -169,6 +170,7 @@ cc_library(
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
@@ -895,6 +897,7 @@ cc_library(
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -973,6 +976,7 @@ cc_library(
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -1490,6 +1494,14 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "staging_buffer",
+    srcs = ["staging_buffer.cc"],
+    hdrs = ["staging_buffer.h"],
+    visibility = internal_visibility([":friends"]),
+    deps = ["@com_google_absl//absl/types:span"],
+)
+
+cc_library(
     name = "raw_buffer",
     srcs = ["raw_buffer.cc"],
     hdrs = ["raw_buffer.h"],
@@ -1498,12 +1510,14 @@ cc_library(
         ":async_work_runner",
         ":device_event",
         ":pjrt_client",
+        ":staging_buffer",
         "//xla:future",
         "//xla:literal",
         "//xla:shape_util",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",

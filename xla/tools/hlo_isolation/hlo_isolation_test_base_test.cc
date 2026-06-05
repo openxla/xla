@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tests/test_utils.h"
+#include "xla/tools/hlo_isolation/hlo_isolation.pb.h"
 #include "xla/tools/hlo_isolation/hlo_isolation_api.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
@@ -54,9 +55,8 @@ namespace xla {
 namespace hlo_isolation {
 namespace {
 
-class HloIsolationTest
-    : public HloIsolationTestMixin<
-          HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>> {};
+class HloIsolationTest : public HloIsolationTestMixin<
+                             HloPjRtInterpreterReferenceMixin<HloTestBase>> {};
 
 TEST_F(HloIsolationTest, RunSimpleModule) {
   const char* hlo_text = R"(

@@ -104,6 +104,20 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "pjrt_c_api_abi_version_helpers_test",
+    srcs = ["pjrt_c_api_abi_version_helpers_test.cc"],
+    deps = [
+        ":pjrt_c_api_abi_version_extension_hdrs",
+        ":pjrt_c_api_abi_version_helpers",
+        ":pjrt_c_api_hdrs",
+        "//xla/pjrt/proto:pjrt_abi_version_proto_cc",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "pjrt_c_api_megascale_extension_hdrs",
     hdrs = ["pjrt_c_api_megascale_extension.h"],
@@ -379,6 +393,8 @@ cc_library(
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -559,6 +575,8 @@ cc_library(
         ":pjrt_c_api_shardings_extension_hdrs",
         ":pjrt_c_api_status_utils",
         ":pjrt_c_api_wrapper_impl",
+        ":pjrt_c_api_xla_transform_extension_hdrs",
+        ":pjrt_c_api_xla_transform_internal",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_executable",
@@ -637,6 +655,8 @@ cc_library(
         ":pjrt_c_api_triton_extension_hdrs",
         ":pjrt_c_api_triton_internal",
         ":pjrt_c_api_wrapper_impl",
+        ":pjrt_c_api_xla_transform_extension_hdrs",
+        ":pjrt_c_api_xla_transform_internal",
         "//xla/backends/cpu:target_machine_options",
         "//xla/backends/profiler:profiler_backends",  # To register the Host Tracers for GPU Plugin.
         "//xla/backends/profiler/gpu:device_tracer",  # To register the GPU Tracers with the GPU Plugin.

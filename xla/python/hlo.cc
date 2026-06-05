@@ -107,7 +107,9 @@ absl::StatusOr<nb::bytes> GetHloModuleSerializedProto(const HloModule& module) {
 absl::StatusOr<std::shared_ptr<HloModule>> HloModuleFromSerializedProto(
     const nb::bytes& bytes) {
   HloModuleProto proto;
-  proto.ParseFromString(absl::string_view(bytes.c_str(), bytes.size()));
+  if (!proto.ParseFromString(absl::string_view(bytes.c_str(), bytes.size()))) {
+    return InvalidArgument("Failed to deserialize HloModuleProto");
+  }
   ASSIGN_OR_RETURN(const HloModuleConfig module_config,
                    HloModule::CreateModuleConfigFromProto(
                        proto, GetDebugOptionsFromFlags()));
@@ -838,6 +840,25 @@ NB_MODULE(_hlo, m) {
                 const_cast<HloInstruction*>(new_inst->inst())));
       });
 
+  hlo_computation_class.def(
+      "create_unary_instruction",
+      [](ComputationWrapper& c, xla::HloOpcode opcode,
+         std::shared_ptr<InstructionWrapper> operand) {
+        if (operand == nullptr) {
+          throw XlaRuntimeError(
+              "create_unary_instruction operand cannot be None.");
+        }
+        // TODO(phawkins): Do not assume the output shape of a unary instruction
+        // always matches its operand's shape (e.g., for kIsFinite it returns
+        // PRED). Allow users to specify the output shape.
+        HloInstruction* new_inst =
+            const_cast<HloComputation*>(c.comp())->AddInstruction(
+                HloInstruction::CreateUnary(
+                    operand->inst()->shape(), opcode,
+                    const_cast<HloInstruction*>(operand->inst())));
+        return std::make_shared<InstructionWrapper>(new_inst, c.module());
+      });
+
   class ScheduleWrapper {
    public:
     ScheduleWrapper(const HloSchedule& schedule,
@@ -1122,12 +1143,16 @@ NB_MODULE(_hlo, m) {
       .def("__repr__",
            [](const xla::HloSharding& self) { return self.ToString(); })
       .def("to_proto", &xla::HloSharding::ToProto)
-      .def("get_axis_sizes", [](const xla::HloSharding& self) {
-        // If returning the SmallVector, we encounter the error "unable to
-        // convert function return value to a Python type!".
-        mlir::SmallVector<int64_t> mesh_shape =
-            xla::sdy::getAxisSizes(self.tile_assignment());
-        return std::vector<int64_t>(mesh_shape.begin(), mesh_shape.end());
+      .def("get_axis_sizes",
+           [](const xla::HloSharding& self) {
+             // If returning the SmallVector, we encounter the error "unable to
+             // convert function return value to a Python type!".
+             mlir::SmallVector<int64_t> mesh_shape =
+                 xla::sdy::getAxisSizes(self.tile_assignment());
+             return std::vector<int64_t>(mesh_shape.begin(), mesh_shape.end());
+           })
+      .def("v3_to_v2_sharding", [](const xla::HloSharding& self) {
+        return xla::HloSharding::V3ToV2Sharding(self);
       });
 
   m.def("hlo_module_to_dot_graph",

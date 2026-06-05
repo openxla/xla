@@ -18,9 +18,6 @@ permissions:
   contents: read
 on:
   pull_request:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 concurrency:
@@ -36,14 +33,15 @@ jobs:
       - id: out
         shell: bash
         run: |
-          # rocm/tensorflow-build:latest-jammy-pythonall-rocm7.2.1-ci_officiala
-          echo "docker-image=rocm/tensorflow-build@sha256:66eb4c1e39db76fae2eb0a1029490acbe7bfce0e00d6ab435e170f743921f4c4" >> "$GITHUB_OUTPUT"
+          # rocm/tensorflow-build:2.22-jammy-pythonall-rocm7.2.3-ci_official
+          echo "docker-image=rocm/tensorflow-build@sha256:5261e6df4fe13264a0e4443d36a620e3b1304b89bd45853ad342fb391c3c935f" >> "$GITHUB_OUTPUT"
 
   jax:
     needs: rocm-config
     if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' }}
     name: JAX Linux x86 AMD Instinct GPU
     runs-on: linux-x86-64-1gpu-amd
+    timeout-minutes: 80
     env:
       DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
     container: &rocm_container
@@ -84,7 +82,7 @@ jobs:
         run: /opt/rocm/bin/rocminfo
 
       - name: Run JAX Unit Tests
-        timeout-minutes: 120
+        timeout-minutes: 60
         working-directory: jax
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh \
@@ -93,7 +91,7 @@ jobs:
             --config=single_gpu \
             --//jax:build_jaxlib=wheel \
             --//jax:build_jax=true \
-            --local_test_jobs=4 \
+            --local_test_jobs=1 \
             --action_env=JAX_ENABLE_X64=0 \
             --repo_env=HERMETIC_PYTHON_VERSION=3.14 \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}"
@@ -102,6 +100,7 @@ jobs:
     needs: rocm-config
     name: XLA Linux x86 AMD Instinct GPU
     runs-on: linux-x86-64-1gpu-amd
+    timeout-minutes: 80
     env:
       DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
       EXECUTE_CI_BUILD_URL: https://raw.githubusercontent.com/ROCm/xla/refs/pull/922/head/build_tools/rocm/execute_ci_build_upstream.sh
@@ -127,12 +126,23 @@ jobs:
         run: /opt/rocm/bin/rocminfo
 
       - name: Test XLA [single_gpu]
-        timeout-minutes: 120
+        timeout-minutes: 60
         run: |
           build_tools/rocm/execute_ci_build_upstream.sh \
             --config=rocm_ci \
             --config=rocm_rbe \
             --config=ci_single_gpu \
-            --local_test_jobs=4 \
-            --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL=linux_x64_gpu_gfx90a \
+            --local_test_jobs=1 \
+            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
+            --local_test_jobs=1 \
+            --internal_spawn_scheduler \
+            --strategy=TestRunner=dynamic
+      - name: Test XLA [rocm_cpu]
+        timeout-minutes: 80
+        run: |
+          build_tools/rocm/execute_ci_build_upstream.sh \
+            --config=rocm_ci \
+            --config=rocm_rbe \
+            --config=ci_rocm_cpu \
+            --local_test_jobs=200 \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}"

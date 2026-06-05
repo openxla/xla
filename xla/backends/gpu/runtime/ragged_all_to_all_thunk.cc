@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -26,6 +27,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/container/node_hash_map.h"
@@ -82,7 +84,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 namespace gpu {
@@ -206,30 +207,28 @@ absl::Status RunAllToAllOnIndexBuffer(
     const se::DeviceAddressBase& destination_buffer, PrimitiveType element_type,
     se::Stream& stream, Communicator& comm) {
   ASSIGN_OR_RETURN(int32_t num_ranks, comm.NumRanks());
+  auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
 
-  auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(&comm);
-  Future<> future = gpu_comm->GroupExecute(
-      [num_ranks, num_updates_per_replica, element_type, &source_buffer,
-       &destination_buffer, &stream](GpuCommunicator* comm) -> absl::Status {
-        for (int peer = 0; peer < num_ranks; ++peer) {
-          int64_t offset = peer * num_updates_per_replica;
-          se::DeviceAddressBase send_slice =
-              GpuCollectives::Slice(source_buffer, element_type, offset,
-                                    /*count=*/num_updates_per_replica);
-          se::DeviceAddressBase recv_slice =
-              GpuCollectives::Slice(destination_buffer, element_type, offset,
-                                    /*count=*/num_updates_per_replica);
-          RETURN_IF_ERROR(comm->LaunchSend(send_slice, element_type,
+  Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
+    for (int peer = 0; peer < num_ranks; ++peer) {
+      int64_t offset = peer * num_updates_per_replica;
+      se::DeviceAddressBase send_slice =
+          GpuCollectives::Slice(source_buffer, element_type, offset,
+                                /*count=*/num_updates_per_replica);
+      se::DeviceAddressBase recv_slice =
+          GpuCollectives::Slice(destination_buffer, element_type, offset,
+                                /*count=*/num_updates_per_replica);
+      RETURN_IF_ERROR(gpu_comm->LaunchSend(send_slice, element_type,
                                            /*count=*/num_updates_per_replica,
                                            RankId(peer),
                                            GpuCollectives::On(stream)));
-          RETURN_IF_ERROR(comm->LaunchRecv(recv_slice, element_type,
+      RETURN_IF_ERROR(gpu_comm->LaunchRecv(recv_slice, element_type,
                                            /*count=*/num_updates_per_replica,
                                            RankId(peer),
                                            GpuCollectives::On(stream)));
-        }
-        return absl::OkStatus();
-      });
+    }
+    return absl::OkStatus();
+  });
   RETURN_IF_ERROR(future.Await());
   return stream.BlockHostUntilDone();
 }
@@ -247,6 +246,110 @@ absl::Status LaunchMultiGpuBarrier(
   return xla::gpu::LaunchMultiGpuBarrier(stream, num_ranks, rank,
                                          std::move(barrier_peer_addresses),
                                          local_barrier_signal_value);
+}
+
+absl::Status CheckRaggedAllToAllBounds(
+    se::Stream& stream, int64_t num_total_updates, int64_t num_row_elements,
+    const SymmetricMemory* output_sym_mem, size_t output_sym_offset,
+    absl::Span<DeviceBufferPair const> buffers) {
+  int device_ordinal = stream.parent()->device_ordinal();
+  se::StreamExecutor* stream_executor = stream.parent();
+
+  se::DeviceAddressBase input_buffer = buffers[0].source_buffer;
+  PrimitiveType element_type = buffers[0].element_type;
+
+  // Fetch buffers
+  size_t copy_bytes = num_total_updates * sizeof(int64_t);
+  se::DeviceAddressBase input_offsets_buffer = buffers[2].source_buffer;
+  se::DeviceAddressBase send_sizes_buffer = buffers[3].source_buffer;
+  se::DeviceAddressBase output_offsets_buffer = buffers[4].source_buffer;
+  se::DeviceAddressBase recv_sizes_buffer = buffers[5].source_buffer;
+
+  std::vector<int64_t> input_offsets_host(num_total_updates);
+  std::vector<int64_t> send_sizes_host(num_total_updates);
+  std::vector<int64_t> output_offsets_host(num_total_updates);
+  std::vector<int64_t> recv_sizes_host(num_total_updates);
+
+  RETURN_IF_ERROR(stream_executor->SynchronousMemcpyD2H(
+      input_offsets_buffer, copy_bytes, input_offsets_host.data()));
+
+  RETURN_IF_ERROR(stream_executor->SynchronousMemcpyD2H(
+      send_sizes_buffer, copy_bytes, send_sizes_host.data()));
+
+  RETURN_IF_ERROR(stream_executor->SynchronousMemcpyD2H(
+      output_offsets_buffer, copy_bytes, output_offsets_host.data()));
+
+  RETURN_IF_ERROR(stream_executor->SynchronousMemcpyD2H(
+      recv_sizes_buffer, copy_bytes, recv_sizes_host.data()));
+
+  int64_t max_read_index = 0;
+  int64_t max_write_index = 0;
+  int64_t total_recv_elements = 0;
+  for (size_t i = 0; i < num_total_updates; ++i) {
+    int64_t in_offset = input_offsets_host[i];
+    int64_t out_offset = output_offsets_host[i];
+    int64_t send_sz = send_sizes_host[i];
+    int64_t recv_sz = recv_sizes_host[i];
+
+    TF_RET_CHECK(in_offset >= 0 && out_offset >= 0)
+        << "RaggedAllToAll: Negative offsets detected!";
+
+    TF_RET_CHECK(send_sz >= 0 && recv_sz >= 0)
+        << "RaggedAllToAll: Negative sizes detected!";
+
+    max_read_index = std::max(max_read_index, in_offset + send_sz);
+    max_write_index = std::max(max_write_index, out_offset + send_sz);
+    total_recv_elements += recv_sz;
+  }
+
+  size_t element_width = primitive_util::ByteWidth(element_type);
+
+  size_t max_read_bytes =
+      static_cast<size_t>(max_read_index) * num_row_elements * element_width;
+
+  size_t max_write_bytes =
+      output_sym_offset +
+      (static_cast<size_t>(max_write_index) * num_row_elements * element_width);
+
+  size_t min_expected_recv_bytes = static_cast<size_t>(total_recv_elements) *
+                                   num_row_elements * element_width;
+
+  size_t actual_input_size = input_buffer.size();
+  size_t actual_output_size = output_sym_mem->addr().size();
+
+  // Check Out-of-Bounds Reads
+  TF_RET_CHECK(max_read_bytes <= actual_input_size)
+      << "RaggedAllToAll: READ violation detected! "
+      << "Input read requires " << max_read_bytes
+      << " bytes, but the input buffer is only " << actual_input_size
+      << " bytes. Kernel launch aborted to prevent "
+         "CUDA_ERROR_ILLEGAL_ADDRESS.";
+
+  // Check Out-of-Bounds Writes
+  TF_RET_CHECK(max_write_bytes <= actual_output_size)
+      << "RaggedAllToAll: WRITE violation detected! "
+      << "Output writes require " << max_write_bytes
+      << " bytes, but the symmetric memory slice is only " << actual_output_size
+      << " bytes. Kernel launch aborted to prevent "
+         "CUDA_ERROR_ILLEGAL_ADDRESS.";
+
+  // Check recv_sizes
+  TF_RET_CHECK(min_expected_recv_bytes <= actual_output_size)
+      << "RaggedAllToAll RECV size sanity check failed! "
+      << "The user's recv_sizes tensor expects to receive a total of "
+      << min_expected_recv_bytes
+      << " bytes, but the local output buffer is only " << actual_output_size
+      << " bytes. Downstream ops will overflow.";
+
+  XLA_VLOG_DEVICE(5, device_ordinal)
+      << "RaggedAllToAll: Bounds check passed. "
+      << "max_read_bytes/actual_input_size: " << max_read_bytes << "/"
+      << actual_input_size
+      << ",  max_write_bytes/actual_output_size: " << max_write_bytes << "/"
+      << actual_output_size << ",  min_expected_recv_bytes/actual_output_size: "
+      << min_expected_recv_bytes << "/" << actual_output_size;
+
+  return absl::OkStatus();
 }
 
 }  // namespace
@@ -850,8 +953,6 @@ absl::Status RunRaggedAllToAll(
   const int64_t* send_sizes = ragged_metadata_allocs[1];
   const int64_t* output_offsets = ragged_metadata_allocs[2];
 
-  auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(&comm);
-
   if (use_put_path) {
     XLA_VLOG_DEVICE(3, device_ordinal)
         << "RunRaggedAllToAll: using Put+Signal path";
@@ -859,35 +960,30 @@ absl::Status RunRaggedAllToAll(
     int64_t element_byte_width = primitive_util::ByteWidth(element_type);
     se::DeviceAddressBase input_buffer = buffers[0].source_buffer;
 
-    Future<> future = gpu_comm->GroupExecute(
-        [num_updates_per_replica, num_ranks, input_offsets, send_sizes,
-         output_offsets, ragged_row_element_size, element_type,
-         element_byte_width, output_base_offset, &input_buffer,
-         output_symmetric_memory,
-         &stream](GpuCommunicator* comm) -> absl::Status {
-          for (int peer = 0; peer < num_ranks; ++peer) {
-            for (int64_t i = 0; i < num_updates_per_replica; ++i) {
-              const int64_t idx = peer * num_updates_per_replica + i;
-              const int64_t send_count =
-                  send_sizes[idx] * ragged_row_element_size;
+    auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
+    Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
+      for (int peer = 0; peer < num_ranks; ++peer) {
+        for (int64_t i = 0; i < num_updates_per_replica; ++i) {
+          const int64_t idx = peer * num_updates_per_replica + i;
+          const int64_t send_count = send_sizes[idx] * ragged_row_element_size;
 
-              const se::DeviceAddressBase send_slice = GpuCollectives::Slice(
-                  input_buffer, element_type,
-                  input_offsets[idx] * ragged_row_element_size, send_count);
+          const se::DeviceAddressBase send_slice = GpuCollectives::Slice(
+              input_buffer, element_type,
+              input_offsets[idx] * ragged_row_element_size, send_count);
 
-              const size_t byte_offset =
-                  output_base_offset + output_offsets[idx] *
-                                           ragged_row_element_size *
-                                           element_byte_width;
-              const size_t byte_count = send_count * element_byte_width;
+          const size_t byte_offset =
+              output_base_offset + output_offsets[idx] *
+                                       ragged_row_element_size *
+                                       element_byte_width;
+          const size_t byte_count = send_count * element_byte_width;
 
-              RETURN_IF_ERROR(comm->LaunchPut(
-                  send_slice, output_symmetric_memory, byte_offset, byte_count,
-                  RankId(peer), GpuCollectives::On(stream)));
-            }
-          }
-          return absl::OkStatus();
-        });
+          RETURN_IF_ERROR(gpu_comm->LaunchPut(
+              send_slice, output_symmetric_memory, byte_offset, byte_count,
+              RankId(peer), GpuCollectives::On(stream)));
+        }
+      }
+      return absl::OkStatus();
+    });
     RETURN_IF_ERROR(future.Await());
 
     GpuSignalDesc signal_desc(/*sig_idx=*/0, /*ctx=*/0);
@@ -905,42 +1001,38 @@ absl::Status RunRaggedAllToAll(
       << "RunRaggedAllToAll: using Send/Recv path";
   const int64_t* recv_sizes = ragged_metadata_allocs[3];
 
-  Future<> future = gpu_comm->GroupExecute(
-      [num_updates_per_replica, num_ranks, input_offsets, send_sizes,
-       output_offsets, recv_sizes, ragged_row_element_size, &buffers,
-       &stream](GpuCommunicator* comm) -> absl::Status {
-        PrimitiveType element_type = buffers[0].element_type;
+  auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
+  Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
+    PrimitiveType element_type = buffers[0].element_type;
 
-        se::DeviceAddressBase input_buffer = buffers[0].source_buffer;
-        se::DeviceAddressBase output_buffer = buffers[1].destination_buffer;
+    se::DeviceAddressBase input_buffer = buffers[0].source_buffer;
+    se::DeviceAddressBase output_buffer = buffers[1].destination_buffer;
 
-        for (int64_t i = 0; i < num_updates_per_replica; ++i) {
-          for (int peer = 0; peer < num_ranks; ++peer) {
-            int64_t idx = peer * num_updates_per_replica + i;
-            se::DeviceAddressBase send_slice = GpuCollectives::Slice(
-                input_buffer, element_type,
-                input_offsets[idx] * ragged_row_element_size,
-                send_sizes[idx] * ragged_row_element_size);
+    for (int64_t i = 0; i < num_updates_per_replica; ++i) {
+      for (int peer = 0; peer < num_ranks; ++peer) {
+        int64_t idx = peer * num_updates_per_replica + i;
+        se::DeviceAddressBase send_slice =
+            GpuCollectives::Slice(input_buffer, element_type,
+                                  input_offsets[idx] * ragged_row_element_size,
+                                  send_sizes[idx] * ragged_row_element_size);
 
-            se::DeviceAddressBase recv_slice = GpuCollectives::Slice(
-                output_buffer, element_type,
-                output_offsets[idx] * ragged_row_element_size,
-                recv_sizes[idx] * ragged_row_element_size);
+        se::DeviceAddressBase recv_slice =
+            GpuCollectives::Slice(output_buffer, element_type,
+                                  output_offsets[idx] * ragged_row_element_size,
+                                  recv_sizes[idx] * ragged_row_element_size);
 
-            RETURN_IF_ERROR(
-                comm->LaunchSend(send_slice, element_type,
-                                 send_sizes[idx] * ragged_row_element_size,
-                                 RankId(peer), GpuCollectives::On(stream)));
+        RETURN_IF_ERROR(gpu_comm->LaunchSend(
+            send_slice, element_type, send_sizes[idx] * ragged_row_element_size,
+            RankId(peer), GpuCollectives::On(stream)));
 
-            RETURN_IF_ERROR(
-                comm->LaunchRecv(recv_slice, element_type,
-                                 recv_sizes[idx] * ragged_row_element_size,
-                                 RankId(peer), GpuCollectives::On(stream)));
-          }
-        }
+        RETURN_IF_ERROR(gpu_comm->LaunchRecv(
+            recv_slice, element_type, recv_sizes[idx] * ragged_row_element_size,
+            RankId(peer), GpuCollectives::On(stream)));
+      }
+    }
 
-        return absl::OkStatus();
-      });
+    return absl::OkStatus();
+  });
   return future.Await();
 }
 
@@ -970,15 +1062,15 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
   const int64_t num_ranks = clique_key.num_devices();
 
   XLA_VLOG_DEVICE(3, device_ordinal)
-      << "Performing one-shot ragged-all-to-all with NCCL barrier rank: "
-      << rank.value();
+      << "RaggedAllToAll (One-Shot NCCL) STARTED. Rank: " << rank.value()
+      << ", Total Updates: " << num_total_updates;
 
   PrimitiveType element_type = buffers[0].element_type;
   se::DeviceAddressBase input_buffer = buffers[0].source_buffer;
   se::DeviceAddressBase output_buffer = buffers[1].destination_buffer;
-  XLA_VLOG_DEVICE(3, device_ordinal)
+  XLA_VLOG_DEVICE(4, device_ordinal)
       << "Performing one-shot ragged-all-to-all "
-         "with NCCL barrier input buffer: ("
+         "with NCCL barrier. input buffer: ("
       << input_buffer.opaque() << ", size=" << input_buffer.size()
       << ") output buffer: (" << output_buffer.opaque()
       << ", size=" << output_buffer.size() << ")"
@@ -1016,6 +1108,12 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
   // 2. Execution of RunRaggedAllToAllKernel
   const int64_t num_updates_per_replica = num_total_updates / num_ranks;
 
+  if (VLOG_IS_ON(5)) {
+    RETURN_IF_ERROR(CheckRaggedAllToAllBounds(stream, num_total_updates,
+                                              num_row_elements, output_sym_mem,
+                                              output_sym_offset, buffers));
+  }
+
   RETURN_IF_ERROR(RunRaggedAllToAllWithSymmetricMemoryKernel(
       &stream, element_type, input_buffer, output_sym_mem, output_sym_offset,
       buffers[2].source_buffer, buffers[3].source_buffer,
@@ -1037,6 +1135,9 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
     RETURN_IF_ERROR(stream.MemcpyD2D(&output_buffer, output_sym_mem->addr(),
                                      output_buffer.size()));
   }
+
+  XLA_VLOG_DEVICE(3, device_ordinal)
+      << "RaggedAllToAll (One-Shot NCCL) FINISHED. Rank: " << rank.value();
 
   if (VLOG_IS_ON(6)) {
     RETURN_IF_ERROR(stream.BlockHostUntilDone());

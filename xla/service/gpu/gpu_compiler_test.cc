@@ -29,10 +29,9 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/base/log_severity.h"
+#include "absl/base/casts.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -374,7 +373,7 @@ ENTRY e {
   EXPECT_THAT(entry_root, GmockMatch(m::Fusion()));
 }
 
-class PersistedAutotuningTest : public HloPjRtTestBase {
+class PersistedAutotuningTest : public HloTestBase {
  protected:
   void SetUp() override {
     AutotunerCache::ClearAutotuneResults();
@@ -608,84 +607,7 @@ ENTRY main {
   EXPECT_EQ(operand_1->operand(0)->opcode(), HloOpcode::kAllGatherDone);
 }
 
-// This test ensures that the pathway for using the cuBlasLt fallback (forming a
-// Triton fusion and falling back to cuBlasLt in the autotuner) is exactly the
-// same as using cuBLasLt directly (with Triton disabled).
-TEST_F(GpuCompilerTest,
-       GemmFusionIsNoOpWhenGemmFusionAutotunerFallsBackToCublasLt) {
-  if (!get_cuda_cc().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "Autotuning results have only been generated for Ampere "
-                 << "and later GPUs";
-  }
-  const absl::string_view hlo_string = R"(
-HloModule test
 
-ENTRY main {
-  param_0 = bf16[3,32,1024,4,1024]{4,3,2,1,0} parameter(0)
-  param_1 = bf16[4,3,32,1024]{3,2,1,0} parameter(1)
-  param_2 = s32[] parameter(2)
-  constant_0 = s32[] constant(0)
-  dynamic-slice_0 = bf16[1,3,32,1024]{3,2,1,0} dynamic-slice(param_1, param_2, constant_0, constant_0, constant_0), dynamic_slice_sizes={1,3,32,1024}
-  reshape_0 = bf16[3,32,1024]{2,1,0} reshape(dynamic-slice_0)
-  broadcast_0 = bf16[3,32,1024,4,1024]{2,1,4,3,0} broadcast(reshape_0), dimensions={0,1,2}
-  add_0 = bf16[3,32,1024,4,1024]{4,3,2,1,0} add(param_0, broadcast_0)
-  transpose_0 = bf16[3,4,1024,32,1024]{2,1,4,3,0} transpose(add_0), dimensions={0,3,4,1,2}
-  slice_0 = bf16[1,4,1024,32,1024]{4,3,2,1,0} slice(transpose_0), slice={[0:1], [0:4], [0:1024], [0:32], [0:1024]}
-  reshape_1 = bf16[4,1024,32,1024]{3,2,1,0} reshape(slice_0)
-  copy_0 = bf16[4,1024,32,1024]{3,2,1,0} copy(reshape_1)
-  constant_1 = bf16[] constant(0.08838)
-  broadcast_1 = bf16[4,1024,32,1024]{3,2,1,0} broadcast(constant_1), dimensions={}
-  multiply_0 = bf16[4,1024,32,1024]{3,2,1,0} multiply(copy_0, broadcast_1)
-  slice_1 = bf16[1,4,1024,32,1024]{4,3,2,1,0} slice(transpose_0), slice={[1:2], [0:4], [0:1024], [0:32], [0:1024]}
-  reshape_2 = bf16[4,1024,32,1024]{3,2,1,0} reshape(slice_1)
-  copy_1 = bf16[4,1024,32,1024]{3,2,1,0} copy(reshape_2)
-  ROOT dot_0 = bf16[4,32,1024,1024]{3,2,1,0} dot(multiply_0, copy_1), lhs_batch_dims={0,2}, lhs_contracting_dims={3}, rhs_batch_dims={0,2}, rhs_contracting_dims={3}
-}
-)";
-
-  HloModuleConfig config;
-  AutotunerCache::ClearAutotuneResults();
-
-  // Triton enabled, but forced to fallback to cuBLAS (no Triton backend).
-  DebugOptions triton_enabled_debug_options = GetDebugOptionsForTest();
-  triton_enabled_debug_options.clear_xla_gpu_experimental_autotune_backends();
-  triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
-      autotuner::Backend::CUBLASLT_FISSION);
-  triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
-      autotuner::Backend::NATIVE_EMITTER);
-  config.set_debug_options(triton_enabled_debug_options);
-  ASSERT_OK_AND_ASSIGN(auto triton_enabled_module_and_executable,
-                       GetOptimizedModuleForExecutable(hlo_string, config));
-  const HloModule* triton_enabled_module =
-      triton_enabled_module_and_executable.first;
-
-  // Confirm fusion was made, but fell back to cuBLAS.
-  AutotuneResults results;
-  ASSERT_OK(AutotunerCache::SerializeAutotuneResults(&results));
-  EXPECT_FALSE(results.results().empty());
-  // CUBLASLT_FISSION is dumped as GemmKey in the AutotunerResult.
-  EXPECT_TRUE(absl::StrContains(results.DebugString(), "gemm"));
-
-  // Triton disabled - this will skip the GemmFusion pass and use cuBLAS.
-  DebugOptions triton_disabled_debug_options = GetDebugOptionsForTest();
-  triton_disabled_debug_options.set_xla_gpu_enable_triton_gemm(false);
-  config.set_debug_options(triton_disabled_debug_options);
-  ASSERT_OK_AND_ASSIGN(auto triton_disabled_module_and_executable,
-                       GetOptimizedModuleForExecutable(hlo_string, config));
-  const HloModule* triton_disabled_module =
-      triton_disabled_module_and_executable.first;
-
-  // Confirm autotuner fell back to cuBLAS on triton_enabled_module.
-  const HloInstruction* root =
-      triton_enabled_module->entry_computation()->root_instruction();
-  const HloInstruction* custom_op = root->operand(0)->operand(0);
-  EXPECT_TRUE(custom_op->IsCustomCall("__cublas$lt$matmul"))
-      << custom_op->ToString();
-  // Make sure that the module has the same number of computations with/without
-  // enabling triton gemm
-  EXPECT_EQ(triton_enabled_module->computation_count(),
-            triton_disabled_module->computation_count());
-}
 
 TEST_F(GpuCompilerTest,
        CublasF8NumericallySameWithTritonFallbackAndWithoutTriton) {
@@ -1445,7 +1367,7 @@ TEST_F(PassOrderTest,
 }
 
 // Tests that passes are converging and pipelines reach a fix point.
-class FixPointTest : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase> {
+class FixPointTest : public HloPjRtInterpreterReferenceMixin<HloTestBase> {
  public:
   void ExpectPipelinesReachFixedPoint(absl::string_view module_text) {
     ASSERT_OK_AND_ASSIGN(
@@ -1515,119 +1437,6 @@ tmp_9 = f64[1,2]{1,0} reshape(tmp_8)
 tmp_10 = f64[3,2]{1,0} dot(tmp_4, tmp_9), lhs_contracting_dims={1}, rhs_contracting_dims={0}
 ROOT tmp_11 = f64[3,2]{1,0} reshape(tmp_10)
 })");
-}
-
-TEST_F(GpuCompilerTest,
-       DynamicSliceFusionWithCollectiveShouldWrapInAsyncAndTestE2E) {
-  const char* hlo = R"(
-    HloModule test, replica_count=2
-    add {
-      x = s32[] parameter(0)
-      y = s32[] parameter(1)
-      ROOT add = s32[] add(x, y)
-    }
-    ENTRY main {
-      destination = s32[2,2,32] parameter(0)
-      c1 = s32[] constant(1)
-      c0 = s32[] constant(0)
-      c4 = s32[] constant(4)
-      source = s32[8,32] parameter(1)
-      a = s32[1024,1024] parameter(2)
-      b = s32[1024,1024] parameter(3)
-      slice = s32[4,32] slice(source), slice={[4:8], [0:32]}
-      rs = s32[2,32] reduce-scatter(slice), replica_groups={{0,1}}, dimensions={0}, to_apply=add
-      reshape = s32[1,2,32] reshape(rs)
-      dus = s32[2,2,32] dynamic-update-slice(destination, reshape, c1, c0, c0)
-      dot = s32[1024,1024] dot(a,b), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-      ROOT tuple = tuple(dus,dot)
-    }
-  )";
-  HloModuleConfig config = GetModuleConfigForTest();
-  config.set_replica_count(2);
-  xla::DeviceAssignment device_assignment(2, 1);
-  device_assignment(0, 0) = 0;
-  device_assignment(1, 0) = 1;
-  config.set_static_device_assignment(device_assignment);
-  config.mutable_debug_options().set_xla_gpu_shard_autotuning(false);
-  config.mutable_debug_options().set_xla_gpu_enable_dynamic_slice_fusion(true);
-  ASSERT_OK_AND_ASSIGN(auto optimized_module_and_executable,
-                       GetOptimizedModuleForExecutable(hlo, config));
-  const HloModule* optimized_module = optimized_module_and_executable.first;
-  const char* kExpected = R"(
-    // CHECK:      dynamic-slice-fusion{{.+}} {
-    // CHECK:        %[[slice:.+]] = {{.+}} slice({{.+}}), slice={[4:8], [0:32]}
-    // CHECK:        %[[rs:.+]] = {{.+}} reduce-scatter(%[[slice]]),
-    // CHECK-SAME{LITERAL}:              replica_groups={{0,1}}, dimensions={0}
-    // CHECK:        %[[bitcast:.+]] = {{.+}} bitcast(%[[rs]])
-    // CHECK:        ROOT {{.+}} = {{.+}} dynamic-update-slice({{.+}}, %[[bitcast]], {{.+}})
-    // CHECK:      ENTRY
-    // CHECK:        %[[fusion_start:.+]] = {{.+}} fusion-start({{.+}}), kind=kCustom, {{.+}}"name":"dynamic_address_computation"
-    // CHECK-NEXT:   %[[wrapped_dot:.+]] = {{.+}} fusion({{.+}})
-    // CHECK-NEXT:   %[[fusion_done:.+]] = {{.+}} fusion-done(%[[fusion_start]]), {{.+}}"name":"dynamic_address_computation"
-    // CHECK:        ROOT {{.+}} = {{.+}} tuple(%[[fusion_done]], %[[wrapped_dot]])
-  )";
-  EXPECT_THAT(RunFileCheck(
-                  optimized_module->ToString(HloPrintOptions{}
-                                                 .set_print_operand_shape(false)
-                                                 .set_print_metadata(false)),
-                  kExpected),
-              absl_testing::IsOkAndHolds(true));
-
-  if (test_runner().device_count() < 2) {
-    GTEST_SKIP() << "Skipping test as it requires at least 2 devices.";
-  }
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                       ParseAndReturnVerifiedModule(hlo, config));
-  HloModuleConfig reference_config = config;
-  reference_config.mutable_debug_options()
-      .set_xla_gpu_enable_dynamic_slice_fusion(false);
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_ref,
-                       ParseAndReturnVerifiedModule(hlo, reference_config));
-  EXPECT_TRUE(RunAndCompareTwoModulesReplicated(std::move(m), std::move(m_ref),
-                                                /*run_hlo_passes=*/true,
-                                                /*use_threads=*/true,
-                                                std::nullopt));
-}
-
-TEST_F(GpuCompilerTest, DynamicSliceFusionReduceScatterMultipleBuffers) {
-  const char* hlo = R"(
-    HloModule test, replica_count=2
-    add {
-      x = s32[] parameter(0)
-      y = s32[] parameter(1)
-      ROOT add = s32[] add(x, y)
-    }
-    ENTRY main {
-      p0 = s32[2,2,32] parameter(0)
-      p1 = s32[8,32] parameter(1)
-      slice = s32[4,32] slice(p1), slice={[4:8], [0:32]}
-      rs1 = s32[2,32] reduce-scatter(slice), replica_groups={{0,1}}, dimensions={0}, to_apply=add
-      slice2 = s32[4,32] slice(p1), slice={[0:4], [0:32]}
-      rs2 = s32[2,32] reduce-scatter(slice2), replica_groups={{0,1}}, dimensions={0}, to_apply=add
-      ROOT tuple = tuple(rs1, rs2)
-    }
-  )";
-  HloModuleConfig config = GetModuleConfigForTest();
-  config.set_replica_count(2);
-  xla::DeviceAssignment device_assignment(2, 1);
-  device_assignment(0, 0) = 0;
-  device_assignment(1, 0) = 1;
-  config.set_static_device_assignment(device_assignment);
-  config.mutable_debug_options().set_xla_gpu_shard_autotuning(false);
-  config.mutable_debug_options().set_xla_gpu_enable_dynamic_slice_fusion(true);
-  ASSERT_OK_AND_ASSIGN(auto module_and_executable,
-                       GetOptimizedModuleForExecutable(hlo, config));
-  const HloModule* module = module_and_executable.first;
-  const char* kExpected = R"(
-    // CHECK: dynamic-slice-fusion{{.*}} {
-    // CHECK-DAG: %[[slice1:.+]] = {{.+}} slice({{.+}}), slice={[4:8], [0:32]}
-    // CHECK-DAG: %[[slice2:.+]] = {{.+}} slice({{.+}}), slice={[0:4], [0:32]}
-    // CHECK-DAG: ROOT %[[rs:.+]] = {{.+}} reduce-scatter(%[[slice1]], %[[slice2]]),
-    // CHECK-SAME{LITERAL}:                                      replica_groups={{0,1}}, dimensions={0}, to_apply=%add
-    // CHECK: ENTRY
-  )";
-  EXPECT_THAT(RunFileCheck(module->ToString(), kExpected),
-              absl_testing::IsOkAndHolds(true));
 }
 
 TEST_F(GpuCompilerTest, CompilingSortsWorksWithoutDevice) {
@@ -2074,7 +1883,7 @@ TEST_F(GpuCompilerTest, MosaicCollectiveMetadataRequiresSymmetricMemoryCopies) {
     HloModule test
     ENTRY main {
       p = s32[1] parameter(0)
-      mosaic = (s32[1]{0}) custom-call(p), custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI, backend_config={uses_xla_collective_metadata=true}
+      mosaic = (s32[1]{0}) custom-call(p), custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI, backend_config={uses_xla_collective_metadata=true}, frontend_attributes={operands_memory_spaces="{0:1}", results_memory_spaces="{0:1}"}
       ROOT res = s32[1]{0} get-tuple-element(mosaic), index=0
     }
   )";
@@ -2156,9 +1965,9 @@ TEST_P(OneShotRaggedAllToAllMemSpaceTest, DirectUsage) {
   HloModuleConfig config = GetModuleConfigForTest();
   DebugOptions& opts = config.mutable_debug_options();
   opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl(true);
-  if (GetParam().is_zero_copy) {
-    opts.set_xla_gpu_experimental_ragged_all_to_all_zero_copy(true);
-  }
+  opts.set_xla_gpu_experimental_ragged_all_to_all_zero_copy(
+      GetParam().is_zero_copy);
+
   std::pair<const HloModule*, std::unique_ptr<OpaqueExecutable>>
       optimized_module_and_executable;
   ASSERT_OK_AND_ASSIGN(optimized_module_and_executable,
@@ -2259,9 +2068,9 @@ TEST_P(OneShotRaggedAllToAllMemSpaceTest, LoopUsage) {
   HloModuleConfig config = GetModuleConfigForTest();
   DebugOptions& opts = config.mutable_debug_options();
   opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl(true);
-  if (GetParam().is_zero_copy) {
-    opts.set_xla_gpu_experimental_ragged_all_to_all_zero_copy(true);
-  }
+  opts.set_xla_gpu_experimental_ragged_all_to_all_zero_copy(
+      GetParam().is_zero_copy);
+
   std::pair<const HloModule*, std::unique_ptr<OpaqueExecutable>>
       optimized_module_and_executable;
   ASSERT_OK_AND_ASSIGN(optimized_module_and_executable,

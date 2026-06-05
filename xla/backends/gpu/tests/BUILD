@@ -808,6 +808,7 @@ lit_test_suite_for_gpus(
             "pdl.hlo",
         ],
         "mi200": [
+            "dot_bf16.hlo",
             "element_wise_row_vectorization.hlo",
             "scatter_bf16.hlo",
             "single_instruction.hlo",
@@ -972,6 +973,7 @@ xla_test(
         "//xla:error_spec",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/backends/gpu/libraries/cub:cub_scratch_size_deviceless_lookup",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/backends/gpu/transforms:sort_rewriter",
@@ -1209,7 +1211,6 @@ xla_test(
         ],
     },
     backends = ["gpu"],
-    tags = ["pjrt_migration_candidate"],
     use_legacy_runtime = True,
     deps = [
         "//xla:literal",
@@ -1243,7 +1244,6 @@ xla_test(
     backends = [
         "gpu",
     ],
-    tags = ["pjrt_migration_candidate"],
     use_legacy_runtime = True,
     deps = [
         "//xla:error_spec",

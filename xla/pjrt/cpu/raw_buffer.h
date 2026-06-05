@@ -71,33 +71,6 @@ class CpuTrackedDeviceEventPromise : public PjRtDeviceEventPromise {
 tsl::AsyncValueRef<CpuEvent> AfterAllCpuEvents(
     absl::Span<const PjRtDeviceEventRef> events);
 
-class CpuTrackedDeviceEventSet : public PjRtDeviceEventSet {
- public:
-  explicit CpuTrackedDeviceEventSet(size_t reservation) {
-    events_.reserve(reservation);
-  }
-
-  void AddEvent(PjRtDeviceEventRef event) override;
-
-  void AddEvent(tsl::RCReference<tsl::AsyncValue> event);
-
-  void AppendTo(
-      std::vector<tsl::RCReference<tsl::AsyncValue>>& events) override;
-  void AppendTo(std::vector<PjRtDeviceEventRef>& events) override;
-  void AppendTo(PjRtDeviceEventSet& events) override;
-
-  absl::Span<const tsl::RCReference<tsl::AsyncValue>> events() const {
-    return events_;
-  }
-
-  std::vector<tsl::RCReference<tsl::AsyncValue>> Consume() && {
-    return std::move(events_);
-  }
-
- private:
-  std::vector<tsl::RCReference<tsl::AsyncValue>> events_;
-};
-
 class CpuRawBuffer : public CommonPjRtRawBufferImpl {
  public:
   CpuRawBuffer(PjRtMemorySpace* memory_space,
@@ -162,21 +135,18 @@ class CpuRawBuffer : public CommonPjRtRawBufferImpl {
       const Shape& shape, AsyncWorkRunner* async_work_runner,
       tsl::thread::ThreadPool* thread_pool, int max_transpose_threads);
 
-  void ReadDynamicShape(tsl::AsyncValueRef<xla::Shape> output_shape,
-                        xla::Shape shape) override;
-
-  void CopyToLiteralAsync(
-      Promise<> promise,
-      tsl::RCReference<PjRtDeviceEventPromise> device_promise,
-      MutableLiteralBase* literal, xla::Shape shape) override;
+  void CopyToLiteralAsync(Promise<> promise,
+                          PjRtDeviceEventPromiseRef device_promise,
+                          MutableLiteralBase* literal,
+                          xla::Shape shape) override;
 
   void CopyTo(PjRtRawBufferRef dst_raw_buffer,
-              tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
-              tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
+              PjRtDeviceEventPromiseRef definition_event_promise,
+              PjRtDeviceEventPromiseRef src_usage_event_promise,
               ::tsl::AsyncValueRef<bool> allocation_event) override;
 
-  tsl::AsyncValue* GetRawBufferAsyncValue() override {
-    return buffer_.GetAsyncValue();
+  PjRtDeviceEventPtr GetRawBufferAsyncValue() override {
+    return PjRtDeviceEventPtr::FromAsyncValue(buffer_.GetAsyncValue());
   }
 
   absl::StatusOr<PjRtDeviceEventRef> CopyRawToRemoteDevice(
