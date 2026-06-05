@@ -1222,8 +1222,8 @@ GpuExecutable::MaybeCreateVaRemapExecutionState(
     return nullptr;
   }
 
-  TF_ASSIGN_OR_RETURN(se::Stream * allocator_stream,
-                      vmm_allocator->GetStream(device_ordinal));
+  ASSIGN_OR_RETURN(se::Stream* allocator_stream,
+                   vmm_allocator->GetStream(device_ordinal));
   if (allocator_stream != run_options->stream()) {
     return Internal(
         "Command buffer VA remapping requires the VMM allocator stream "
@@ -1294,7 +1294,7 @@ absl::Status GpuExecutable::PrepareVaRemapReservation(
         va_remap.total_size +
         RoundUpToGranularity(buffer_size, va_remap.granularity);
   }
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       va_remap.va_reservation,
       va_remap_execution_state->vmm_allocator.CreateReservation(
           run_options->stream()->parent(), va_remap.total_size));
@@ -1982,7 +1982,7 @@ absl::StatusOr<BufferAllocations> GpuExecutable::BuildVaRemapBufferAllocations(
         va_offset, mapping_size,
         va_remap.va_reservation->address().GetByteSlice(va_offset,
                                                         mapping_size)};
-    TF_RETURN_IF_ERROR(va_remap_execution_state.vmm_allocator.Map(
+    RETURN_IF_ERROR(va_remap_execution_state.vmm_allocator.Map(
         device_ordinal, owning_address, va_remap.va_reservation.get(),
         alias.reservation_offset, alias.size));
     XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
