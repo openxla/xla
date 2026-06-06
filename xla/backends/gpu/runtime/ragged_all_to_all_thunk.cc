@@ -804,10 +804,9 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
       } else {
         GpuDeviceCommunicator* dev_comm = lsa_dev_comm;
         if (has_remote_peers) {
-          ASSIGN_OR_RETURN(dev_comm,
-                           params.collective_cliques->GetDeviceComm(
-                               clique_key, state->rank,
-                               DeviceKernelDevCommRequirements()));
+          ASSIGN_OR_RETURN(dev_comm, params.collective_cliques->GetDeviceComm(
+                                         clique_key, state->rank,
+                                         DeviceKernelDevCommRequirements()));
         }
 
         XLA_VLOG_DEVICE(3, state->device_ordinal)

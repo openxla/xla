@@ -44,9 +44,8 @@ struct RaggedAllToAllUpdateMetadata {
 
 template <int64_t kVectorSize>
 __device__ bool LoadRaggedAllToAllUpdateMetadata(
-    int64_t flat_idx, int64_t num_updates_per_replica,
-    int64_t num_row_elements, int64_t input_buffer_offset_bytes,
-    int64_t output_buffer_offset_bytes,
+    int64_t flat_idx, int64_t num_updates_per_replica, int64_t num_row_elements,
+    int64_t input_buffer_offset_bytes, int64_t output_buffer_offset_bytes,
     const int64_t* __restrict__ input_offsets_ptr,
     const int64_t* __restrict__ send_sizes_ptr,
     const int64_t* __restrict__ output_offsets_ptr,
@@ -61,8 +60,8 @@ __device__ bool LoadRaggedAllToAllUpdateMetadata(
 
   const int64_t input_offset = input_offsets_ptr[meta->meta_idx];
   const int64_t output_offset = output_offsets_ptr[meta->meta_idx];
-  meta->src_byte_offset = input_buffer_offset_bytes +
-                          input_offset * num_row_elements * kVectorSize;
+  meta->src_byte_offset =
+      input_buffer_offset_bytes + input_offset * num_row_elements * kVectorSize;
   meta->dst_byte_offset = output_buffer_offset_bytes +
                           output_offset * num_row_elements * kVectorSize;
   meta->byte_count = meta->send_size * num_row_elements * kVectorSize;
@@ -110,8 +109,8 @@ __device__ void RaggedAllToAllCopy(
         const int lsa_peer = unit / num_updates_per_replica;
         const T* src = static_cast<const T*>(
             ncclGetLocalPointer(send_win, meta.src_byte_offset));
-        T* dst = static_cast<T*>(ncclGetLsaPointer(
-            recv_win, meta.dst_byte_offset, lsa_peer));
+        T* dst = static_cast<T*>(
+            ncclGetLsaPointer(recv_win, meta.dst_byte_offset, lsa_peer));
 
         const int64_t num_elements = meta.byte_count / kVectorSize;
         for (int64_t i = unit_tid; i < num_elements; i += unit_nthreads) {

@@ -205,8 +205,8 @@ class RaggedAllToAllThunk : public CollectiveThunk {
 
   GpuDeviceCommunicator::Requirements DeviceKernelLsaDevCommRequirements()
       const {
-    return GpuDeviceCommunicator::Requirements{
-        .lsa_barrier_count = device_kernel_cta_count()};
+    return GpuDeviceCommunicator::Requirements{.lsa_barrier_count =
+                                                   device_kernel_cta_count()};
   }
 
   GpuDeviceCommunicator::Requirements DeviceKernelDevCommRequirements() const {

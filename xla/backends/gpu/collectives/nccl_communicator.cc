@@ -83,8 +83,8 @@ void SetDevCommGinConnection(ncclDevCommRequirements& reqs, bool use_gin,
                              bool gin_connection_full) {
 #if NCCL_VERSION_CODE >= 22907
   reqs.ginConnectionType = (use_gin && gin_connection_full)
-                                 ? NCCL_GIN_CONNECTION_FULL
-                                 : NCCL_GIN_CONNECTION_NONE;
+                               ? NCCL_GIN_CONNECTION_FULL
+                               : NCCL_GIN_CONNECTION_NONE;
 #elif NCCL_VERSION_CODE >= 22900
   reqs.ginForceEnable = use_gin && gin_connection_full;
 #endif
@@ -196,7 +196,9 @@ bool NcclCommunicator::SupportsDeviceComm() const {
   return capabilities_.supports_device_comm;
 }
 
-bool NcclCommunicator::SupportsGin() const { return capabilities_.supports_gin; }
+bool NcclCommunicator::SupportsGin() const {
+  return capabilities_.supports_gin;
+}
 
 absl::StatusOr<std::unique_ptr<GpuDeviceCommunicator>>
 NcclCommunicator::CreateDeviceComm(
