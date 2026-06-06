@@ -78,8 +78,11 @@ llvm::SmallVector<const TiledHloInstruction*, 2>
 TiledHloInstruction::runtime_variables() const {
   llvm::SmallVector<const TiledHloInstruction*, 2> runtime_variables;
   if (auto dyn_slice = DynCast<HloDynamicSliceInstruction>(hlo_)) {
-    for (int i = dyn_slice->first_index_operand_number();
-         i < hlo_->operand_count(); ++i) {
+    // `operands_` might be empty and inconsistent with `hlo_->operand_count()`
+    // if the instruction lies outside the fusion boundary (we skip populating
+    // its operands during traversal).
+    for (int i = dyn_slice->first_index_operand_number(); i < operands_.size();
+         ++i) {
       runtime_variables.push_back(operands_[i]);
     }
   }
@@ -329,8 +332,9 @@ absl::InlinedVector<const HloInstruction*, 2> ToInstructions(
           CHECK(region.size() == 1)
               << "CreateHloRegion: expected exactly 1 region for "
               << operand_hlo->ToString() << " but got " << region.size();
-          tiled_hlo->AddOperand(region.back().get());
-          tiled_hlo_instructions_set.Insert(std::move(region.back()));
+          auto [operand_tiled_hlo, inserted] =
+              tiled_hlo_instructions_set.Insert(std::move(region.back()));
+          tiled_hlo->AddOperand(operand_tiled_hlo);
         }
 
       } else {

@@ -509,7 +509,6 @@ TEST(StreamExecutorGpuClientTest, ForwardUserDataToFfiHandler) {
       *result_literal));
 }
 
-
 TEST(StreamExecutorGpuClientTest, PassAttrToFfiHandler) {
   static constexpr char const* kProgram = R"(
     HloModule ffi_handler
@@ -1209,7 +1208,6 @@ TEST(StreamExecutorGpuClientTest, GpuDeviceSharedMemoryInfo) {
   }
 }
 
-
 TEST(PjRtCpuClientTest, CopyToMemorySpace) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
@@ -1254,7 +1252,7 @@ TEST(StreamExecutorGpuClientTest, ShouldStageHostToDeviceTransfersSetToTrue) {
 
   // TODO(b/b/482307468) Switch to absl::down_cast after upgrade.
   [[deprecated("remove after absl upgrade")]] auto* staging_client =
-      tensorflow::down_cast<StreamExecutorGpuClient*>(client_staging.get());
+      absl::down_cast<StreamExecutorGpuClient*>(client_staging.get());
 
   EXPECT_TRUE(staging_client->ShouldStageHostToDeviceTransfers(
       data.data(), sizeof(float) * data.size()));
@@ -1285,7 +1283,7 @@ TEST(StreamExecutorGpuClientTest, ShouldStageHostToDeviceTransfersSetToFalse) {
 
   // TODO(b/b/482307468) Switch to absl::down_cast after upgrade.
   [[deprecated("remove after absl upgrade")]] auto* no_staging_client =
-      tensorflow::down_cast<StreamExecutorGpuClient*>(client_no_staging.get());
+      absl::down_cast<StreamExecutorGpuClient*>(client_no_staging.get());
 
   EXPECT_FALSE(no_staging_client->ShouldStageHostToDeviceTransfers(
       data.data(), sizeof(float) * data.size()));
@@ -1482,7 +1480,6 @@ TEST(StreamExecutorGpuClientTest, OpaqueDeviceMemoryDataPointer) {
 }
 
 namespace {
-
 
 constexpr char const* kD2HProgram = R"(
   HloModule f
@@ -1870,7 +1867,6 @@ TEST(StreamExecutorGpuClientTest, MlirParameterLayoutFromOptionsIsSetInHlo) {
   EXPECT_EQ(first_param_layout, Layout({0, 2, 1}));
 }
 
-
 TEST(StreamExecutorGpuClientTest, GetDefaultLayout) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
@@ -1986,13 +1982,12 @@ TEST(StreamExecutorGpuClientTest, NonZeroGPUDeviceTimeMeasurementSingleGPU) {
       absl::ZeroDuration());
 }
 
-
 TEST(StreamExecutorGpuClientTest, DmaMapUnmap) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto gpu_client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
   // TODO(b/b/482307468) Switch to absl::down_cast after upgrade.
   [[deprecated("remove after absl upgrade")]] auto client =
-      tensorflow::down_cast<PjRtStreamExecutorClient*>(gpu_client.get());
+      absl::down_cast<PjRtStreamExecutorClient*>(gpu_client.get());
   size_t dma_size = 1024;
   size_t alignment = 4096;
   auto host_dma_ptr = tsl::port::AlignedMalloc(
@@ -2124,7 +2119,7 @@ ENTRY main.5 {
 
     // TODO(b/b/482307468) Switch to absl::down_cast after upgrade.
     [[deprecated("remove after absl upgrade")]] auto* opaque_ptr =
-        tensorflow::down_cast<CommonPjRtRawBuffer*>(raw_buffer.get())
+        absl::down_cast<CommonPjRtRawBuffer*>(raw_buffer.get())
             ->OpaqueDeviceMemoryDataPointer();
     if (opaque_ptr == last_opaque_ptr) {
       clobbered = true;
@@ -2169,13 +2164,13 @@ TEST(StreamExecutorGpuClientTest, EventCaching) {
       auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
   // TODO(b/b/482307468) Switch to absl::down_cast after upgrade.
   [[deprecated("remove after absl upgrade")]] auto* async_work_runner =
-      tensorflow::down_cast<PjRtStreamExecutorClient*>(client.get())
+      absl::down_cast<PjRtStreamExecutorClient*>(client.get())
           ->async_work_runner();
   const auto& device = client->addressable_devices()[0];
   // TODO(b/b/482307468) Switch to absl::down_cast after upgrade.
   [[deprecated(
       "remove after absl upgrade")]] LocalDeviceState* local_device_state =
-      tensorflow::down_cast<const PjRtStreamExecutorDevice*>(device)
+      absl::down_cast<const PjRtStreamExecutorDevice*>(device)
           ->local_device_state();
   ASSERT_TRUE(local_device_state != nullptr);
   size_t sync_point0 = local_device_state->GetNextComputeStreamSyncPoint();
@@ -2206,7 +2201,7 @@ TEST(StreamExecutorGpuClientTest, LinkedEventPromise) {
       auto pjrt_client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
   // TODO(b/b/482307468) Switch to absl::down_cast after upgrade.
   [[deprecated("remove after absl upgrade")]] auto* client =
-      tensorflow::down_cast<PjRtStreamExecutorClient*>(pjrt_client.get());
+      absl::down_cast<PjRtStreamExecutorClient*>(pjrt_client.get());
   auto* memory_space = client->memory_spaces()[0];
   auto literal = LiteralUtil::CreateR1<float>({41.0f, 42.0f, 43.0f, 44.0f});
   TF_ASSERT_OK_AND_ASSIGN(
@@ -2221,7 +2216,7 @@ TEST(StreamExecutorGpuClientTest, LinkedEventPromise) {
       client->AllocateRawBuffer(memory_space, on_device_bytes_count,
                                 /*retry_on_oom=*/true,
                                 /*allocate_after=*/{}));
-  tsl::RCReference<PjRtDeviceEventPromise> promise;
+  PjRtDeviceEventPromiseRef promise;
   PjRtDeviceEventRef event;
   TF_ASSERT_OK_AND_ASSIGN(std::tie(promise, event),
                           client->CreateLinkedEventPromise(memory_space, ""));
@@ -2235,7 +2230,7 @@ TEST(StreamExecutorGpuClientTest, LinkedEventPromise) {
           literal, device_shape,
           PjRtClient::HostBufferSemantics::kImmutableUntilTransferCompletes,
           raw_buffer));
-  promise->Set(std::move(definition_event));
+  promise.Set(std::move(definition_event));
 
   TF_ASSERT_OK_AND_ASSIGN(auto new_literal, buffer->ToLiteral().Await());
   ASSERT_EQ(literal, *new_literal);
@@ -2323,7 +2318,7 @@ TEST_F(VmmTest, VmmAllocatorCanBeSet) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
 
   auto* pjrt_se_client =
-      tensorflow::down_cast<PjRtStreamExecutorClient*>(client.get());
+      absl::down_cast<PjRtStreamExecutorClient*>(client.get());
   EXPECT_NE(dynamic_cast<se::gpu::CudaDeviceAddressVmmAllocator*>(
                 pjrt_se_client->allocator()),
             nullptr);
@@ -2883,39 +2878,42 @@ TEST_F(VmmTest, CommandBufferVaRemappingTwoExecutables) {
   int old_vlog_cbt = absl::SetVLogLevel("command_buffer_thunk", 3);
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
 
-  // exec1 independently cycles va_range_idx: 0 (run 0), 1 (run 1), 0 (run 2).
+  // exec1 independently cycles va_range_idx: 0 (run 0), 1 (run 1), 0 (run 2), 1
+  // (run 3), 0 (run 4).
   EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
                             AllOf(HasSubstr("exec1_va_remapping"),
                                   HasSubstr("va_range_idx=0"))))
-      .Times(2);
+      .Times(3);
   EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
                             AllOf(HasSubstr("exec1_va_remapping"),
                                   HasSubstr("va_range_idx=1"))))
-      .Times(1);
+      .Times(2);
 
   // exec2 independently cycles va_range_idx the same way.
   EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
                             AllOf(HasSubstr("exec2_va_remapping"),
                                   HasSubstr("va_range_idx=0"))))
-      .Times(2);
+      .Times(3);
   EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
                             AllOf(HasSubstr("exec2_va_remapping"),
                                   HasSubstr("va_range_idx=1"))))
-      .Times(1);
+      .Times(2);
 
   // Each (exec, va_range_idx) pair creates its own CUDA graph (command buffer).
-  // Initialization fires once per new graph: 2 execs × 2 VA ranges = 4 times.
-  // Run 2 reuses the existing VA range 0 graphs → no additional initialization.
+  // Initialization fires once per graph AFTER a warmup iteration: 2 execs × 2
+  // VA ranges = 4 times.
+  // Runs 0-1 are warmup; Runs 2-3 are the first real executions (triggering
+  // initialization); Run 4 reuses the existing VA range 0 graphs.
   EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
                             HasSubstr("Initialize command buffer on device")))
       .Times(4);
 
   mock_log.StartCapturingLogs();
 
-  // 3 runs interleaved: each executable cycles VA range indices 0, 1, 0
+  // 5 runs interleaved: each executable cycles VA range indices 0, 1, 0, 1, 0
   // independently. Interleaving stresses that the two executables' VA ranges
   // do not alias or corrupt each other.
-  for (int run = 0; run < 3; ++run) {
+  for (int run = 0; run < 5; ++run) {
     float base = static_cast<float>(run + 1);
     auto x = LiteralUtil::CreateR1<float>(
         {base, base, base, base, base, base, base, base});

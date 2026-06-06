@@ -35,7 +35,6 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/gpu:tma_metadata",
         "//xla/tsl/lib/core:bits",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -128,6 +127,7 @@ cc_library(
         "//xla/hlo/utils:hlo_query",
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:hlo_cost_analysis",
+        "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu/model:block_level_parameters",
         "//xla/service/gpu/model:fusion_analysis_cache",
@@ -155,6 +155,7 @@ xla_cc_test(
     deps = [
         ":cost_model_config_optimization",
         "//xla:autotuning_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",

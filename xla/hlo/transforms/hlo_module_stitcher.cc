@@ -18,6 +18,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
@@ -38,12 +39,30 @@ namespace xla {
 absl::StatusOr<bool> HloModuleStitcher::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  // Reset visited set on top-level entry to support pass reuse.
+  if (visiting_modules_.empty()) {  // Top-level call.
+    visited_modules_.clear();
+  }
+
+  if (visiting_modules_.contains(module)) {
+    return absl::InternalError(
+        absl::StrCat("Circular dependency detected in submodule stitching: ",
+                     module->name()));
+  }
+
+  if (visited_modules_.contains(module)) {
+    return false;
+  }
+
+  visiting_modules_.insert(module);
+  auto cleanup =
+      absl::MakeCleanup([this, module]() { visiting_modules_.erase(module); });
+
   bool changed = false;
 
   std::vector<HloComputation*> computations =
       module->MakeComputationPostOrder(execution_threads);
 
-  HloCloneContext context(module);
   for (HloComputation* comp : computations) {
     std::vector<HloInstruction*> instructions =
         comp->MakeInstructionPostOrder();
@@ -72,6 +91,7 @@ absl::StatusOr<bool> HloModuleStitcher::RunImpl(
               sub_entry->num_parameters()));
         }
 
+        HloCloneContext context(module);
         HloComputation* cloned_sub_entry = context.FindComputation(sub_entry);
         if (cloned_sub_entry == nullptr) {
           cloned_sub_entry = module->DeepCloneComputation(sub_entry, &context);
@@ -121,6 +141,7 @@ absl::StatusOr<bool> HloModuleStitcher::RunImpl(
     }
   }
 
+  visited_modules_.insert(module);
   return changed;
 }
 

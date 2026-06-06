@@ -780,6 +780,8 @@ tsl_pybind_extension(
     srcs = ["xla_transform_py.cc"],
     deps = [
         "//xla/service:xla_transform",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@nanobind",
     ],
 )
@@ -793,5 +795,21 @@ py_test(
         ":xla_transform",
         "//third_party/py/numpy",
         "@absl_py//absl/testing:absltest",
+    ] + xla_py_test_deps(),
+)
+
+py_test(
+    name = "xla_hlo_test",
+    srcs = ["xla_hlo_test.py"],
+    main = "xla_hlo_test.py",
+    strict_deps = True,
+    tags = ["no_oss"],
+    deps = [
+        ":_hlo",
+        ":xla_client",
+        "//third_party/py/numpy",
+        "@absl_py//absl/logging",
+        "@absl_py//absl/testing:absltest",
+        "@absl_py//absl/testing:parameterized",
     ] + xla_py_test_deps(),
 )

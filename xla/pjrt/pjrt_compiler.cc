@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
@@ -171,13 +172,6 @@ void PjRtRegisterDefaultCompiler(absl::string_view platform_name,
   CHECK_OK(PjRtCompilerRegistry::Global().RegisterCompiler(
       platform_name,
       /*variant_name=*/"", std::move(compiler)));
-}
-
-void PjRtRegisterCompiler(absl::string_view platform_name,
-                          absl::string_view compiler_variant,
-                          std::unique_ptr<PjRtCompiler> compiler) {
-  CHECK_OK(PjRtCompilerRegistry::Global().RegisterCompiler(
-      platform_name, compiler_variant, std::move(compiler)));
 }
 
 absl::StatusOr<PjRtCompiler*> GetDefaultPjRtCompiler(

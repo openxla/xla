@@ -513,6 +513,7 @@ xla_cc_test(
         ":scheduling_annotations_util",
         "//xla:literal_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:hlo_reachability",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
@@ -2251,6 +2252,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform",
     ] + if_google(["@com_google_absl//absl/types:source_location"]),
 )
 
@@ -4877,9 +4879,9 @@ cc_library(
 )
 
 cc_library(
-    name = "hlo_runner_pjrt",
-    srcs = ["hlo_runner_pjrt.cc"],
-    hdrs = ["hlo_runner_pjrt.h"],
+    name = "hlo_runner",
+    srcs = ["hlo_runner.cc"],
+    hdrs = ["hlo_runner.h"],
     deps = [
         ":computation_layout",
         ":computation_placer_hdr",
@@ -4906,9 +4908,7 @@ cc_library(
         "//xla/tsl/lib/io:zlib_inputstream",
         "//xla/tsl/lib/io:zlib_outputbuffer",
         "//xla/tsl/platform:env",
-        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_macros",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -4930,13 +4930,22 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "hlo_runner_pjrt",
+    hdrs = ["hlo_runner_pjrt.h"],
+    deps = [
+        ":hlo_runner",
+        "@com_google_absl//absl/base:core_headers",
+    ],
+)
+
 xla_cc_test(
-    name = "hlo_runner_pjrt_test",
-    srcs = ["hlo_runner_pjrt_test.cc"],
+    name = "hlo_runner_test",
+    srcs = ["hlo_runner_test.cc"],
     deps = [
         ":computation_placer_hdr",
+        ":hlo_runner",
         ":hlo_runner_interface",
-        ":hlo_runner_pjrt",
         ":test_compilation_environment_proto_cc",
         "//xla:util",
         "//xla:xla_proto_cc",
@@ -5035,12 +5044,8 @@ cc_library(
         "//xla:side_effect_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -5058,6 +5063,7 @@ xla_cc_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
     ],
@@ -5799,7 +5805,6 @@ cc_library(
     srcs = ["xla_debug_info_manager.cc"],
     hdrs = ["xla_debug_info_manager.h"],
     deps = [
-        ":buffer_assignment",
         ":hlo_proto_cc",
         ":hlo_proto_util",
         "//xla/hlo/ir:hlo",
@@ -5814,7 +5819,6 @@ xla_cc_test(
     name = "xla_debug_info_manager_test",
     srcs = ["xla_debug_info_manager_test.cc"],
     deps = [
-        ":buffer_assignment",
         ":hlo_module_config",
         ":hlo_proto_cc",
         ":xla_debug_info_manager",
@@ -6877,9 +6881,11 @@ xla_cc_test(
     name = "xla_transform_test",
     srcs = ["xla_transform_test.cc"],
     deps = [
+        ":computation_layout",
         ":hlo_cse",
         ":hlo_proto_cc",
         ":xla_transform",
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/pass:hlo_pass_pipeline",

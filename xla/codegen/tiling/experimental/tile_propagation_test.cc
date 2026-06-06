@@ -631,7 +631,7 @@ TEST_F(TilePropagationTest, CanPropagateToInputsOfAllGatherOp) {
          strides [1, 2]
          upper bounds [64, 256]
          replica ids {
-           offsets [(tid_0 * ts_0) floordiv 64]
+           offsets [(tid_0 * ts_0) / 64]
            sizes [1]
            strides [1]
            upper bounds [2]
@@ -705,22 +705,23 @@ TEST_F(TilePropagationTest, CanPropagateThroughBitcastTransposeOp) {
           GetTestTile(*tiling_space, root->shape().dimensions()), 0));
   EXPECT_THAT(input_tiled_operands, MatchToString(R"(
     0) (tid_0, tid_1, tid_2, tid_3)
-      -> offsets [tid_0 * ts_0, tid_2 * ts_2, tid_3 * ts_3, tid_1 * ts_1]
-         sizes [ts_0, ts_2, ts_3, ts_1]
-         strides [1, 3, 4, 2]
-         upper bounds [3, 128, 12288, 6]
+      -> offsets [tid_0 * ts_0, tid_3 * ts_3, tid_1 * ts_1, tid_2 * ts_2]
+         sizes [ts_0, ts_3, ts_1, ts_2]
+         strides [1, 4, 2, 3]
+         upper bounds [3, 12288, 6, 128]
   )"));
   ASSERT_OK_AND_ASSIGN(
       auto output_tiled_operands,
       PropagateTileToOutput(
           *tiling_space, *root,
-          GetTestTile(*tiling_space, root->shape().dimensions()), 0));
+          GetTestTile(*tiling_space, root->operand(0)->shape().dimensions()),
+          0));
   EXPECT_THAT(output_tiled_operands, MatchToString(R"(
     0) (tid_0, tid_1, tid_2, tid_3)
-      -> offsets [tid_0 * ts_0, tid_3 * ts_3, tid_1 * ts_1, tid_2 * ts_2]
-         sizes [ts_0, ts_3, ts_1, ts_2]
-         strides [1, 4, 2, 3]
-         upper bounds [3, 12288, 6, 128]
+      -> offsets [tid_0 * ts_0, tid_2 * ts_2, tid_3 * ts_3, tid_1 * ts_1]
+         sizes [ts_0, ts_2, ts_3, ts_1]
+         strides [1, 3, 4, 2]
+         upper bounds [3, 6, 128, 12288]
   )"));
 }
 
@@ -1167,8 +1168,8 @@ TEST_F(TilePropagationTest, CanPropagateToInputsForScaledDotOp) {
          strides [2, 1]
          upper bounds [64, 512]
     2) (tid_0, tid_1, tid_2)
-      -> offsets [(tid_0 * ts_0) floordiv 32, (tid_2 * ts_2) floordiv 256]
-         sizes [(tid_0 * ts_0 + ts_0 - 1) floordiv 32 - (tid_0 * ts_0) floordiv 32 + 1, (tid_2 * ts_2 + ts_2 - 1) floordiv 256 - (tid_2 * ts_2) floordiv 256 + 1]
+      -> offsets [(tid_0 * ts_0) / 32, (tid_2 * ts_2) / 256]
+         sizes [(tid_0 * ts_0 + ts_0 - 1) / 32 - (tid_0 * ts_0) / 32 + 1, (tid_2 * ts_2 + ts_2 - 1) / 256 - (tid_2 * ts_2) / 256 + 1]
          strides [1, 1]
          upper bounds [32, 2]
     3) (tid_0, tid_1, tid_2)
@@ -1206,7 +1207,7 @@ TEST_F(TilePropagationTest, CanPropagateReplicaIdThroughBroadcast) {
          strides [1, 2, 3]
          upper bounds [10, 32, 5]
          replica ids {
-           offsets [(tid_1 * ts_1) floordiv 32]
+           offsets [(tid_1 * ts_1) / 32]
            sizes [1]
            strides [1]
            upper bounds [2]
@@ -1224,7 +1225,7 @@ TEST_F(TilePropagationTest, CanPropagateReplicaIdThroughBroadcast) {
          strides [1, 2]
          upper bounds [10, 32]
          replica ids {
-           offsets [(tid_1 * ts_1) floordiv 32]
+           offsets [(tid_1 * ts_1) / 32]
            sizes [1]
            strides [1]
            upper bounds [2]

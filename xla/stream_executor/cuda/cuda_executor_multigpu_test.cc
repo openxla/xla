@@ -47,7 +47,8 @@ template <typename T>
 absl::StatusOr<stream_executor::DeviceAddressBase> AllocateInitializedMemory(
     CudaExecutor* executor, size_t size, size_t offset, T value) {
   stream_executor::DeviceAddressBase device_memory = executor->Allocate(
-      size + offset, static_cast<int64_t>(stream_executor::MemorySpace::kP2P));
+      size + offset,
+      static_cast<int64_t>(stream_executor::MemorySpace::kCollective));
   if (device_memory.opaque() == nullptr) {
     return absl::InternalError("Failed to allocate memory.");
   }
@@ -147,27 +148,6 @@ TEST(CudaExecutorMultiGpuTest, CudaMulticastMemorySubscribeMoreDevices) {
   EXPECT_THAT(multicast_memory->SubscribeDevice(2),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        "All devices are already subscribed."));
-}
-
-TEST(CudaExecutorMultiGpuTest, CudaMulticastMemoryUsingNonVmmMemory) {
-  std::vector<CudaExecutor*> executors = {
-      static_cast<CudaExecutor*>(GetGpuExecutor(0)),
-      static_cast<CudaExecutor*>(GetGpuExecutor(1))};
-  if (!executors[0]->is_multicast_supported()) {
-    GTEST_SKIP() << "Test requires multicast support.";
-  }
-  const int64_t kNumDevices = 2;
-  std::unique_ptr<MulticastMemory> multicast_memory;
-  TF_ASSERT_OK_AND_ASSIGN(
-      multicast_memory, executors[0]->CreateMulticastMemory(1024, kNumDevices));
-  EXPECT_THAT(multicast_memory->SubscribeDevice(0), IsOk());
-  EXPECT_THAT(multicast_memory->SubscribeDevice(1), IsOk());
-
-  DeviceAddressBase device_memory = executors[0]->Allocate(8, 0);
-  EXPECT_THAT(
-      multicast_memory->MapMemory(device_memory, executors[0]),
-      StatusIs(absl::StatusCode::kInternal,
-               "CUDA error: : CUDA_ERROR_INVALID_VALUE: invalid argument"));
 }
 
 TEST(CudaExecutorMultiGpuTest, CudaMulticastMemoryUsingVmmMemory) {
@@ -303,17 +283,16 @@ TEST(CudaExecutorMultiGpuTest, IsVmmMemoryCheck) {
     GTEST_SKIP() << "Test requires VMM/Multicast support.";
   }
 
-  // Test with VMM memory
-  stream_executor::DeviceAddressBase vmm_mem = executor->Allocate(
-      1024, static_cast<int64_t>(stream_executor::MemorySpace::kP2P));
-  EXPECT_TRUE(executor->IsVmmMemory(vmm_mem));
-  executor->Deallocate(&vmm_mem);
-
-  // Test with non-VMM memory
   stream_executor::DeviceAddressBase device_mem = executor->Allocate(
       1024, static_cast<int64_t>(stream_executor::MemorySpace::kDevice));
-  EXPECT_FALSE(executor->IsVmmMemory(device_mem));
+  EXPECT_TRUE(executor->IsVmmMemory(device_mem));
   executor->Deallocate(&device_mem);
+
+  stream_executor::DeviceAddressBase collective_mem = executor->Allocate(
+      1024, static_cast<int64_t>(stream_executor::MemorySpace::kCollective));
+  EXPECT_TRUE(executor->IsVmmMemory(collective_mem));
+  executor->Deallocate(&collective_mem);
 }
+
 }  // namespace
 }  // namespace stream_executor::gpu

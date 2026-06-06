@@ -119,7 +119,6 @@ cc_library(
     ],
     visibility = internal_visibility([":friends"]),
     deps = [
-        ":shape_util",
         ":types",
         ":util",
         ":xla_data_proto_cc",
@@ -131,6 +130,8 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:ml_dtypes",
     ],
@@ -216,6 +217,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     visibility = internal_visibility([":friends"]),
     deps = [
+        "@com_google_absl//absl/numeric:int128",
         "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
         "@ml_dtypes_py//ml_dtypes:intn",
@@ -340,6 +342,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/numeric:bits",
+        "@com_google_absl//absl/numeric:int128",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -503,6 +506,7 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -713,10 +717,11 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@com_google_highway//:hwy",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:platform_port",
-    ] + if_google(["@com_google_highway//:hwy"]),
+    ],
 )
 
 xla_cc_test(

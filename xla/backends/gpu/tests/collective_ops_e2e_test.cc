@@ -85,6 +85,8 @@ class CollectiveOpsTestE2E : public CollectiveOpsE2ETestBase {
     if (Capability().IsCuda()) {
       return Capability().cuda_compute_capability()->IsAtLeast(8, 9);
     }
+    // TODO(Intel-tf): Update this when FP8 is supported.
+    if (Capability().IsOneAPI()) return false;
     return Capability().rocm_compute_capability()->has_fp8_support() &&
            GetDebugOptionsForTest().xla_gpu_enable_cublaslt();
   }
@@ -608,6 +610,94 @@ TEST_P(CollectivesModeOps, CollectivePermuteCombiner) {
   LiteralTestUtil::ExpectR1Equal<uint32_t>({0, 0, 0, 0, 10, 10}, results[1]);
   LiteralTestUtil::ExpectR1Equal<uint32_t>({1, 1, 2, 2, 11, 11}, results[2]);
   LiteralTestUtil::ExpectR1Equal<uint32_t>({2, 2, 4, 4, 12, 12}, results[3]);
+}
+
+TEST_F(CollectiveOpsTestE2E, CollectiveGroupAllReduceDifferentReplicaGroups) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+
+  add {
+    x = f32[] parameter(0)
+    y = f32[] parameter(1)
+    ROOT add = f32[] add(x, y)
+  }
+
+  grouped_all_reduce {
+    p0 = f32[4] parameter(0)
+    p1 = f32[4] parameter(1)
+    all-start = f32[4] all-reduce-start(p0),
+      replica_groups={{0,1,2,3}}, to_apply=add,
+      backend_config={"collective_backend_config":{"is_sync":true}}
+    pair01_23-start = f32[4] all-reduce-start(p1),
+      replica_groups={{0,1},{2,3}}, to_apply=add,
+      backend_config={"collective_backend_config":{"is_sync":true}}
+    all = f32[4] all-reduce-done(all-start)
+    pair01_23 = f32[4] all-reduce-done(pair01_23-start)
+    ROOT tuple = (f32[4], f32[4]) tuple(all, pair01_23)
+  }
+
+  ENTRY main {
+    p0 = f32[4] parameter(0)
+    p1 = f32[4] parameter(1)
+    start = ((f32[4], f32[4]), (f32[4], f32[4])) async-start(p0, p1),
+      calls=grouped_all_reduce, frontend_attributes={_collectives_group=""}
+    ROOT done = (f32[4], f32[4]) async-done(start)
+  }
+  )";
+  const int64_t kNumReplicas = 4;
+  if (device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << device_count() << " available)";
+  }
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  std::vector<Literal> all_args;
+  std::vector<Literal> pair_args;
+  all_args.reserve(kNumReplicas);
+  pair_args.reserve(kNumReplicas);
+  for (int64_t replica = 0; replica < kNumReplicas; ++replica) {
+    all_args.push_back(LiteralUtil::CreateR1<float>(
+        {static_cast<float>(replica), static_cast<float>(replica),
+         static_cast<float>(replica), static_cast<float>(replica)}));
+    pair_args.push_back(LiteralUtil::CreateR1<float>(
+        {static_cast<float>(replica), static_cast<float>(replica),
+         static_cast<float>(replica), static_cast<float>(replica)}));
+  }
+
+  std::vector<std::vector<Literal*>> args(kNumReplicas);
+  for (int64_t replica = 0; replica < kNumReplicas; ++replica) {
+    args[replica] = {&all_args[replica], &pair_args[replica]};
+  }
+
+  TF_ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                          ExecuteReplicated(std::move(module), args));
+
+  std::vector<Literal>& results = execution_result.results;
+  ASSERT_EQ(results.size(), kNumReplicas);
+
+  std::vector<Literal> replica0 = results[0].DecomposeTuple();
+  ASSERT_EQ(replica0.size(), 2);
+  LiteralTestUtil::ExpectR1Equal<float>({6, 6, 6, 6}, replica0[0]);
+  LiteralTestUtil::ExpectR1Equal<float>({1, 1, 1, 1}, replica0[1]);
+
+  std::vector<Literal> replica1 = results[1].DecomposeTuple();
+  ASSERT_EQ(replica1.size(), 2);
+  LiteralTestUtil::ExpectR1Equal<float>({6, 6, 6, 6}, replica1[0]);
+  LiteralTestUtil::ExpectR1Equal<float>({1, 1, 1, 1}, replica1[1]);
+
+  std::vector<Literal> replica2 = results[2].DecomposeTuple();
+  ASSERT_EQ(replica2.size(), 2);
+  LiteralTestUtil::ExpectR1Equal<float>({6, 6, 6, 6}, replica2[0]);
+  LiteralTestUtil::ExpectR1Equal<float>({5, 5, 5, 5}, replica2[1]);
+
+  std::vector<Literal> replica3 = results[3].DecomposeTuple();
+  ASSERT_EQ(replica3.size(), 2);
+  LiteralTestUtil::ExpectR1Equal<float>({6, 6, 6, 6}, replica3[0]);
+  LiteralTestUtil::ExpectR1Equal<float>({5, 5, 5, 5}, replica3[1]);
 }
 
 TEST_P(AsyncCollectiveOps, AsyncReduceScatter) {
@@ -3146,6 +3236,60 @@ TEST_F(CollectiveOpsTestE2E, CustomCollectiveCallShouldRun) {
   Literal expected = LiteralUtil::CreateR1<float>({2, 2, 2, 2});
   for (const Literal& result : execution_result_1.results) {
     EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
+  }
+}
+
+class SymmetricBufferCollectiveOpsTest : public CollectiveOpsTestE2E {
+ public:
+  SymmetricBufferCollectiveOpsTest()
+      : CollectiveOpsTestE2E(/*memory_size=*/128 * kMB,
+                             /*collectives_memory_size=*/64 * kMB) {}
+
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions options = CollectiveOpsTestE2E::GetDebugOptionsForTest();
+    options.set_xla_gpu_enable_nccl_user_buffers(true);
+    options.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(true);
+    return options;
+  }
+};
+
+TEST_F(SymmetricBufferCollectiveOpsTest, AllReduceWithSymmetricBuffers) {
+  absl::string_view hlo_string = R"(
+HloModule AllReduceSymmetric, entry_computation_layout={(f32[128]{0})->f32[128]{0}}, replica_count=2
+apply_op {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT apply_op = f32[] add(x, y)
+}
+ENTRY main {
+  input = f32[128]{0} parameter(0)
+  all-reduce-start = f32[128]{0} all-reduce-start(input), to_apply=apply_op, replica_groups={{0,1}}
+  ROOT all-reduce-done = f32[128]{0} all-reduce-done(all-reduce-start)
+})";
+
+  const int64_t kNumReplicas = 2;
+  const int64_t kNumPartitions = 1;
+  if (device_count() < kNumReplicas * kNumPartitions) {
+    GTEST_SKIP() << "Test requires " << kNumReplicas * kNumPartitions
+                 << " devices (" << device_count() << " available)";
+  }
+
+  HloModuleConfig config = GetModuleConfigForTest(kNumReplicas, kNumPartitions);
+  config.set_debug_options(GetDebugOptionsForTest());
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
+
+  auto input = LiteralUtil::CreateR1<float>(std::vector<float>(128, 1.0f));
+  std::vector<Literal*> args = {&input};
+  std::vector<std::vector<Literal*>> replica_args(kNumReplicas, args);
+  TF_ASSERT_OK_AND_ASSIGN(ExecutionResult result,
+                          ExecuteReplicated(std::move(module), replica_args));
+
+  for (const auto& literal : result.results) {
+    EXPECT_TRUE(LiteralTestUtil::Near(
+        LiteralUtil::CreateR1<float>(std::vector<float>(128, 2.0f)), literal,
+        ErrorSpec(1e-4)));
   }
 }
 

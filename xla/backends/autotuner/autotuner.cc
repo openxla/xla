@@ -30,7 +30,6 @@ limitations under the License.
 
 #include "google/protobuf/any.pb.h"
 #include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
@@ -39,7 +38,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
@@ -50,6 +48,7 @@ limitations under the License.
 #include "xla/backends/autotuner/autotuner_cache_interface.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/backends/autotuner/hlo_extractor.h"
 #include "xla/backends/autotuner/profiler.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -65,34 +64,14 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/util/proto/proto_utils.h"
-#include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
 #include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
 namespace {
-
-tsl::Fprint128 GetFingerprint(const HloInstruction* instr) {
-  auto options = HloPrintOptions::Fingerprint();
-  options.set_print_backend_config(true);
-  options.set_sort_backend_config(true);
-  options.set_print_operand_shape(true);
-
-  return tsl::Fingerprint128(instr->ToString(options));
-}
-
-// Returns ShortDebugString of contents of Any proto, without type URL.
-std::string UnpackedAnyShortDebugString(const google::protobuf::Any& any) {
-  std::string s = any.ShortDebugString();
-  // Any is serialized as "go/debugonly [type/url] {<serialized_proto>}".
-  std::string type_url = absl::StrCat(" [", any.type_url(), "] ");
-  absl::StrReplaceAll({{type_url, ""}}, &s);
-  return s;
-}
 
 // It is important to fingerprint the entire module not just the autotuning
 // candidates, to avoid collisions in the key-value store when several
@@ -177,7 +156,7 @@ absl::StatusOr<std::unique_ptr<Autotuner>> Autotuner::Create(
 absl::Status Autotuner::Autotune(HloModule* module,
                                  const InstructionFilterFn& should_autotune) {
   std::vector<InstructionGroup> instruction_groups =
-      GetAutotuningCandidates(module, should_autotune);
+      ExtractEquivalentInstructions(*module, should_autotune);
   if (instruction_groups.empty()) {
     VLOG(1) << "No instructions to autotune.";
     return absl::OkStatus();
@@ -211,7 +190,7 @@ absl::Status Autotuner::Autotune(HloModule* module,
 
   // 1. Get all the instructions that could be autotuned.
   std::vector<InstructionGroup> all_instruction_groups =
-      GetAutotuningCandidates(module, should_autotune);
+      ExtractEquivalentInstructions(*module, should_autotune);
   if (all_instruction_groups.empty()) {
     VLOG(1) << "No instructions to autotune.";
     return absl::OkStatus();
@@ -524,31 +503,6 @@ absl::StatusOr<std::vector<Autotuner::Config>> Autotuner::GetConfigsForAll(
   return configs;
 }
 
-std::vector<Autotuner::InstructionGroup> Autotuner::GetAutotuningCandidates(
-    const HloModule* module, const InstructionFilterFn& should_autotune) {
-  absl::flat_hash_map<tsl::Fprint128, InstructionGroup, tsl::Fprint128Hasher>
-      grouped_instructions;
-  for (HloComputation* computation : module->MakeNonfusionComputations()) {
-    for (HloInstruction* instr : computation->MakeInstructionPostOrder()) {
-      if (should_autotune(*instr)) {
-        grouped_instructions[GetFingerprint(instr)].push_back(instr);
-      }
-    }
-  }
-  // Ensures deterministic iteration using sorted range.
-  std::vector<InstructionGroup> result;
-  for (auto& [fingerprint, nodes] :
-       tsl::SortedRange(grouped_instructions, [](const auto& a, const auto& b) {
-         if (a.first.high64 != b.first.high64) {
-           return a.first.high64 < b.first.high64;
-         }
-         return a.first.low64 < b.first.low64;
-       })) {
-    result.push_back(std::move(nodes));
-  }
-  return result;
-}
-
 std::optional<Autotuner::Config> Autotuner::LookUp(
     const HloInstruction* instr) {
   if (cache_) {
@@ -557,8 +511,8 @@ std::optional<Autotuner::Config> Autotuner::LookUp(
       VLOG(1) << "Found cached config for HLO: " << instr->ToString();
       for (auto& codegen_backend : codegen_backends_) {
         if (codegen_backend->backend() == cached_config->codegen_backend) {
-          auto backend_config = std::make_unique<google::protobuf::Any>(
-              cached_config->backend_config);
+          auto backend_config =
+              std::make_unique<BackendConfig>(cached_config->backend_config);
           return Config{codegen_backend.get(), std::move(backend_config)};
         }
       }
@@ -936,9 +890,9 @@ std::string Autotuner::Failure::ToString() const {
 }
 
 std::string Autotuner::ConfigResult::ToString(bool verbose) const {
-  std::string config_str = absl::StrFormat(
-      "%s : %s", config.codegen_backend->name(),
-      verbose ? UnpackedAnyShortDebugString(*config.backend_config) : "");
+  std::string config_str =
+      absl::StrFormat("%s : %s", config.codegen_backend->name(),
+                      verbose ? config.backend_config->ShortDebugString() : "");
   if (failure.has_value()) {
     absl::StrAppend(&config_str, " ", failure->ToString());
   }
@@ -968,16 +922,15 @@ AutotuneResult::FailureResult Autotuner::Failure::ToProto() const {
 
 AutotuneResult Autotuner::ConfigResult::ToProto() const {
   AutotuneResult result;
-  if (config.backend_config->Is<AutotuneResult::GemmKey>()) {
-    config.backend_config->UnpackTo(result.mutable_gemm());
-  } else if (config.backend_config->Is<AutotuneResult::TritonGemmKey>()) {
-    config.backend_config->UnpackTo(result.mutable_triton());
-  } else if (config.backend_config
-                 ->Is<stream_executor::dnn::AlgorithmProto>()) {
-    config.backend_config->UnpackTo(result.mutable_algorithm());
+  if (config.backend_config->has_gemm()) {
+    *result.mutable_gemm() = config.backend_config->gemm();
+  } else if (config.backend_config->has_triton()) {
+    *result.mutable_triton() = config.backend_config->triton();
+  } else if (config.backend_config->has_algorithm()) {
+    *result.mutable_algorithm() = config.backend_config->algorithm();
   } else {
     result.mutable_other()->set_name(config.codegen_backend->name());
-    *result.mutable_other()->mutable_config() = *config.backend_config;
+    result.mutable_other()->mutable_config()->PackFrom(*config.backend_config);
   }
   if (failure.has_value()) {
     *result.mutable_failure() = failure->ToProto();
@@ -989,7 +942,7 @@ AutotuneResult Autotuner::ConfigResult::ToProto() const {
 
 std::string Autotuner::Config::ToString() const {
   return absl::StrFormat("%s : %s", codegen_backend->name(),
-                         UnpackedAnyShortDebugString(*backend_config));
+                         backend_config->ShortDebugString());
 }
 
 std::string AutotuneConfig::ToString() const {

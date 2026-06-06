@@ -140,6 +140,9 @@ message DebugOptions {
     // Enables loop unrolling when we have at least one collective within a
     // while loop.
     WHILE_LOOP_UNROLLING_AUTO_UNROLL = 3;
+    // Enables loop unrolling only on loops annotated with
+    // `_xla_loop_unroll_strategy`.
+    WHILE_LOOP_UNROLLING_MANUAL_UNROLL = 4;
   }
 
   //--------------------------------------------------------------------------//
@@ -263,6 +266,9 @@ message DebugOptions {
   // calculations that produce different results depending on the current
   // machine.
   optional bool xla_cpu_enable_platform_dependent_math = 425;
+
+  // If true, enable experimental tiling propagation for CPU.
+  optional bool xla_cpu_experimental_enable_tiling_propagation = 489;
 
   // Call oneDNN custom call thunks in the CPU backend
   optional bool xla_cpu_experimental_onednn_custom_call = 412;
@@ -654,6 +660,10 @@ message DebugOptions {
 
   // Rewrite layer norm patterns into cuDNN library calls.
   optional bool xla_gpu_enable_cudnn_layer_norm = 262;
+
+  // Replaces broadcast(0) scan-accumulator init with AllocateBuffer when the
+  // body's DUS covers every slot.
+  optional bool xla_gpu_enable_dus_accumulator_zero_init_elimination = 490;
 
   // Enables address computation fusion to optimize dynamic-slice and
   // dynamic-update-slice operations around library calls.
@@ -1584,7 +1594,7 @@ message DebugOptions {
   // If true, use the device-initiated (NCCL GIN + LSA) kernel for
   // ragged-all-to-all. Requires NCCL >= 2.29.
   optional bool
-      xla_gpu_experimental_ragged_all_to_all_use_device_kernel = 489;
+      xla_gpu_experimental_ragged_all_to_all_use_device_kernel = 491;
 
   // If true, enable experimental tiling propagation.
   optional bool xla_gpu_experimental_enable_tiling_propagation = 456;
@@ -1600,7 +1610,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 490
+  // Next id: 492
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

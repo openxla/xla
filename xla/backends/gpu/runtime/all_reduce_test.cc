@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/stream_executor/gpu/multicast_memory.h"
+#include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
@@ -142,7 +143,7 @@ class AllReduceKernelTest : public ::testing::Test,
           /*signal_buffer_size=*/aligned_signal_size;
       allocated_buffers.emplace_back(executor->AllocateArray<T>(
           total_size,
-          static_cast<int64_t>(stream_executor::MemorySpace::kP2P)));
+          static_cast<int64_t>(stream_executor::MemorySpace::kCollective)));
       input_buffers.emplace_back(
           allocated_buffers[i].GetByteSlice(0, aligned_input_size));
       TF_RET_CHECK(!input_buffers[i].is_null());
@@ -455,7 +456,7 @@ INSTANTIATE_TEST_SUITE_P(
                              info.param.num_elements);
     });
 
-class AllReduceHloTest : public HloPjRtTestBase {};
+class AllReduceHloTest : public HloTestBase {};
 
 TEST_F(AllReduceHloTest, DefaultDeviceAssnWithHloRunner) {
   // xla::HloRunnerPjRt passes a single device assignment. Test this returns an

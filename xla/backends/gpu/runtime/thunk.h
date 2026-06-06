@@ -132,16 +132,13 @@ class Thunk {
     kMemset32BitValue,
     kMemzero,
     kNorm,
-    kNvshmemAllReduce,
-    kNvshmemCollectivePermute,
-    kNvshmemRecv,
-    kNvshmemSend,
     kOutfeed,
     kPartitionId,
     kRaggedAllToAll,
     kRecv,
     kReduceScatter,
     kReplicaId,
+    kRngSeed,
     kSelectK,
     kSend,
     kSequential,
@@ -340,8 +337,9 @@ class Thunk {
     ExecutionScopedState* execution_scoped_state = nullptr;
 
     bool mock_collectives = false;
-
     int64_t execution_id = 0;
+
+    uint64_t rng_seed = 0;
 
    private:
     friend class CommandBufferThunk;
@@ -358,7 +356,8 @@ class Thunk {
                   const ffi::ExecutionContext* ffi_execution_context,
                   std::vector<se::Stream*> additional_compute_streams = {},
                   ExecutionScopedState* execution_scoped_state = nullptr,
-                  bool mock_collectives = false, int64_t execution_id = 0);
+                  bool mock_collectives = false, int64_t execution_id = 0,
+                  uint64_t rng_seed = 0);
   };
 
   //===--------------------------------------------------------------------===//

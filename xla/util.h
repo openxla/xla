@@ -38,8 +38,10 @@ limitations under the License.
 #include "absl/base/macros.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
 #include "absl/memory/memory.h"
 #include "absl/numeric/bits.h"
+#include "absl/numeric/int128.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -460,6 +462,12 @@ std::string RoundTripFpToString(tsl::float8_e3m4 value);
 // Returns a string which can losslessly round trip to a float8 E8M0FNU.
 std::string RoundTripFpToString(tsl::float8_e8m0fnu value);
 
+// Returns a string which can losslessly round trip to a float6 E3M2FN.
+std::string RoundTripFpToString(tsl::float6_e3m2fn value);
+
+// Returns a string which can losslessly round trip to a float6 E2M3FN.
+std::string RoundTripFpToString(tsl::float6_e2m3fn value);
+
 // Returns a string which can losslessly round trip to a bfloat.
 std::string RoundTripFpToString(tsl::bfloat16 value);
 
@@ -642,13 +650,18 @@ struct UnsignedIntegerTypeForSize<8> {
   using type = uint64_t;
 };
 
+template <>
+struct UnsignedIntegerTypeForSize<16> {
+  using type = absl::uint128;
+};
+
 template <size_t kBytes>
 using UnsignedIntegerTypeForSizeType =
     typename UnsignedIntegerTypeForSize<kBytes>::type;
 
 template <size_t kBytes>
 using SignedIntegerTypeForSizeType =
-    std::make_signed_t<UnsignedIntegerTypeForSizeType<kBytes>>;
+    make_specialized_signed_t<UnsignedIntegerTypeForSizeType<kBytes>>;
 
 template <typename T>
 auto SignAndMagnitude(T x) {
@@ -862,7 +875,12 @@ template <size_t kBitsPerElement>
 void PackIntN(absl::Span<const char> input, absl::Span<char> output) {
   static_assert(1 <= kBitsPerElement);
   static_assert(kBitsPerElement <= 7);
-  constexpr auto kElementsPerByte = 8 / kBitsPerElement;
+  constexpr size_t kElementsPerByte = 8 / kBitsPerElement;
+  const size_t required_output_size =
+      CeilOfRatio(input.size(), kElementsPerByte);
+  ABSL_CHECK_GE(output.size(), required_output_size)
+      << "Output span too small for packed elements: " << output.size() << " < "
+      << required_output_size;
   const size_t aligned_inputs = input.size() / kElementsPerByte;
   for (size_t i = 0; i < aligned_inputs; ++i) {
     char byte = 0;
@@ -910,6 +928,11 @@ void UnpackIntN(absl::Span<const char> input, absl::Span<char> output) {
   static_assert(1 <= kBitsPerElement);
   static_assert(kBitsPerElement <= 7);
   constexpr auto kElementsPerByte = 8 / kBitsPerElement;
+  const size_t required_input_size =
+      CeilOfRatio(output.size(), kElementsPerByte);
+  ABSL_CHECK_GE(input.size(), required_input_size)
+      << "Input span too small for unpacked elements: " << input.size() << " < "
+      << required_input_size;
   const size_t aligned_outputs = output.size() / kElementsPerByte;
   for (size_t i = 0; i < aligned_outputs; ++i) {
     const char byte = input[i];

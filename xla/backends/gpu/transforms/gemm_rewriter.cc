@@ -798,7 +798,11 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
   absl::Status HandleRaggedDot(HloInstruction* instr) override {
+    // The cuDNN ragged dot fusion is only available on NVIDIA/CUDA devices.
+    // On AMD ROCm, always use hipBLASLt GroupedMatMul instead, regardless of
+    // the xla_gpu_experimental_use_ragged_dot_fusion flag value.
     bool ragged_dot_fusion_enabled =
+        gpu_version_.IsCuda() &&
         instr->GetModule()
             ->config()
             .debug_options()
@@ -2302,8 +2306,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return absl::string_view(kCublasLtMatmulCallTarget);
     }
 
-    // This case is not supported by cublasLt, fallback to legacy cublas.
-    return absl::string_view(kGemmCallTarget);
+    return absl::InternalError(
+        "GEMM is not supported by cublasLt and legacy cublas fallback is "
+        "removed.");
   }
 
   absl::StatusOr<bool> TypesAreSupportedByLegacyCublas(
@@ -2583,6 +2588,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
          PrimitiveType::F8E4M3FNUZ, DataType::kHalf},
         {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2FNUZ,
          PrimitiveType::F8E4M3FNUZ, DataType::kFloat},
+
+        {ComputationType::kF64, DataType::kDouble, PrimitiveType::F64,
+         PrimitiveType::F64, DataType::kDouble},
 
         // TF32
         {ComputationType::kTF32AsF32, DataType::kFloat, PrimitiveType::F32,

@@ -1599,6 +1599,7 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
     case HloOpcode::kMultiply:
+    case HloOpcode::kMulhi:
     case HloOpcode::kPower:
     case HloOpcode::kRemainder:
     case HloOpcode::kSubtract:
@@ -2847,6 +2848,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     case HloOpcode::kComplex:
     case HloOpcode::kDivide:
     case HloOpcode::kMultiply:
+    case HloOpcode::kMulhi:
     case HloOpcode::kSubtract:
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
@@ -3347,6 +3349,7 @@ bool HloInstruction::IdenticalSlowPath(
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
     case HloOpcode::kMultiply:
+    case HloOpcode::kMulhi:
     case HloOpcode::kNegate:
     case HloOpcode::kOptimizationBarrier:
     case HloOpcode::kPartitionId:
@@ -4014,6 +4017,7 @@ bool HloInstruction::IsOpElementwise(HloOpcode opcode) {
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
     case HloOpcode::kMultiply:
+    case HloOpcode::kMulhi:
     case HloOpcode::kPower:
     case HloOpcode::kRemainder:
     case HloOpcode::kSubtract:
@@ -4149,7 +4153,8 @@ void HloInstruction::PrintWithCanonicalNameMap(
        (!metadata_->op_type().empty() || !metadata_->op_name().empty() ||
         !metadata_->source_file().empty() ||
         !metadata_->scheduling_name().empty() ||
-        metadata_->stack_frame_id() != 0))) {
+        metadata_->stack_frame_id() != 0 ||
+        metadata_->has_metadata_payload()))) {
     printer->Append(", metadata={");
     if (options.print_inline_stack_frames() &&
         metadata_->stack_frame_id() != 0 && GetModule() != nullptr) {
@@ -4616,12 +4621,38 @@ void HloInstruction::ToProto(HloInstructionProto* proto) const {
 }
 
 void HloInstruction::ToProto(HloInstructionProto* proto,
-                             HloPayloadDeduplicator* deduplicator) const {
+                             HloProtoOptions options) const {
   ToProto(proto);
-  if (deduplicator && !backend_config_->empty()) {
-    proto->mutable_backend_config_payload()->set_id(
-        deduplicator->Deduplicate(backend_config_.get()));
-    proto->clear_backend_config();
+  if (options.deduplicate_backend_config && !backend_config_->empty()) {
+    if (options.payload_deduplicator == nullptr) {
+      LOG_FIRST_N(WARNING, 1)
+          << "Backend config deduplication requested without a payload "
+             "deduplicator. Falling back to non-deduplicated serialization.";
+    } else {
+      proto->mutable_backend_config_payload()->set_id(
+          options.payload_deduplicator->Deduplicate(backend_config_.get()));
+      proto->clear_backend_config();
+    }
+  }
+  if (metadata().has_metadata_payload()) {
+    const Payload& payload = metadata().metadata_payload();
+    if (!payload.has_value()) {
+      return;
+    }
+    const std::string& value = payload.value();
+    if (options.deduplicate_metadata) {
+      if (options.payload_deduplicator == nullptr) {
+        LOG_FIRST_N(WARNING, 1)
+            << "Metadata deduplication requested without a payload "
+               "deduplicator. Falling back to non-deduplicated serialization.";
+        proto->mutable_metadata()->mutable_metadata_payload()->set_value(value);
+      } else {
+        proto->mutable_metadata()->mutable_metadata_payload()->set_id(
+            options.payload_deduplicator->Deduplicate(value));
+      }
+    } else {
+      proto->mutable_metadata()->mutable_metadata_payload()->set_value(value);
+    }
   }
 }
 
@@ -4785,6 +4816,8 @@ absl::Status HloInstruction::Visit(
         return visitor->HandleCopy(this);
       case HloOpcode::kMultiply:
         return visitor->HandleMultiply(this);
+      case HloOpcode::kMulhi:
+        return visitor->HandleMulhi(this);
       case HloOpcode::kDot:
         return visitor->HandleDot(this);
       case HloOpcode::kRaggedDot:

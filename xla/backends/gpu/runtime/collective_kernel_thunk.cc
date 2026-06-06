@@ -24,7 +24,6 @@ limitations under the License.*/
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/container/inlined_vector.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -38,9 +37,12 @@ limitations under the License.*/
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
 #include "xla/backends/gpu/runtime/collective_kernel_api.h"
+#include "xla/backends/gpu/runtime/collective_kernel_thunk.pb.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
+#include "xla/backends/gpu/runtime/collective_thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/runtime/device_id.h"
@@ -86,8 +88,8 @@ absl::StatusOr<se::DeviceAddressHandle> AllocateMemory(
     absl::string_view debug_buffer_name) {
   se::DeviceAddressHandle local_buffer_alloc(
       executor,
-      executor->Allocate(
-          size, static_cast<int64_t>(stream_executor::MemorySpace::kP2P)));
+      executor->Allocate(size, static_cast<int64_t>(
+                                   stream_executor::MemorySpace::kCollective)));
   if (local_buffer_alloc.address().is_null()) {
     return absl::InternalError(absl::StrFormat(
         "Failed to allocate %s for all-reduce.", debug_buffer_name));
@@ -238,8 +240,8 @@ absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
             std::move(local_buffers_handle), std::move(signal_buffers_handle),
             strategy, kLocalBufferSize, kSignalBufferSize}));
 
-    // If we decided to run kernel using multimem strategy we request multimem
-    // addresses for input and output buffers (both of them must be allocated
+    // If we decided to run kernel using multimem strategy we request symmetric
+    // memory for input and output buffers (both of them must be allocated
     // from the collective allocator at run time).
     auto& stream_memory = per_stream_memory_.at(params.executor);
     if (stream_memory->strategy == AllReduceStrategy::kMultimem) {
@@ -247,13 +249,11 @@ absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
           << "Request multicast address for source and destination buffers";
 
       RETURN_IF_ERROR(
-          params.collective_memory_requests->RequestMulticastAddress(
-              clique_key, params.buffer_allocations->GetDeviceAddress(
-                              buffers_[0].source_buffer.slice)));
+          params.collective_memory_requests->RequestSymmetricAllocation(
+              clique_key, buffers_[0].source_buffer.slice.index()));
       RETURN_IF_ERROR(
-          params.collective_memory_requests->RequestMulticastAddress(
-              clique_key, params.buffer_allocations->GetDeviceAddress(
-                              buffers_[0].destination_buffer.slice)));
+          params.collective_memory_requests->RequestSymmetricAllocation(
+              clique_key, buffers_[0].destination_buffer.slice.index()));
     }
   }
 
@@ -382,19 +382,25 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
           0);
 
       auto [src_mmem, src_mmem_offset] =
-          params.collective_memory->FindMultimemAddress(clique_key, src_addr);
+          params.collective_memory->FindSymmetricMemory(clique_key, src_addr);
       auto [dst_mmem, dst_mmem_offset] =
-          params.collective_memory->FindMultimemAddress(clique_key, dst_addr);
+          params.collective_memory->FindSymmetricMemory(clique_key, dst_addr);
       TF_RET_CHECK(src_mmem)
-          << "Multimem addresses for source buffer not found";
+          << "Symmetric memory addresses for source buffer not found";
       TF_RET_CHECK(dst_mmem)
           << "Multimem addresses for destination buffer not found";
 
+      ASSIGN_OR_RETURN(se::DeviceAddressBase src_multimem_address,
+                       src_mmem->multimem_addr());
+      ASSIGN_OR_RETURN(se::DeviceAddressBase dst_multimem_address,
+                       dst_mmem->multimem_addr());
       multimem_addresses[0] =
-          tsl::safe_reinterpret_cast<char*>(src_mmem) + src_mmem_offset;
+          tsl::safe_reinterpret_cast<char*>(src_multimem_address.opaque()) +
+          src_mmem_offset;
       // Kernel doesn't use multimem operations for signal buffers.
       multimem_addresses[2] =
-          tsl::safe_reinterpret_cast<char*>(dst_mmem) + dst_mmem_offset;
+          tsl::safe_reinterpret_cast<char*>(dst_multimem_address.opaque()) +
+          dst_mmem_offset;
 
       XLA_VLOG_DEVICE(3, params.executor->device_ordinal())
           << "Constructed device state {"

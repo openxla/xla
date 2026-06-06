@@ -234,6 +234,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_cpu_enable_fast_math(false);
   opts.set_xla_cpu_enable_platform_dependent_math(true);
+  opts.set_xla_cpu_experimental_enable_tiling_propagation(false);
   // Disable forms of fast math that have caused users problems in the past.
   opts.set_xla_cpu_fast_math_honor_nans(true);
   opts.set_xla_cpu_fast_math_honor_infs(true);
@@ -285,7 +286,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_reassociation_for_converted_ar(true);
 
   opts.set_xla_cpu_enable_xprof_traceme(false);
-  opts.set_xla_gpu_unsafe_fallback_to_driver_on_ptxas_not_found(true);
+  opts.set_xla_gpu_unsafe_fallback_to_driver_on_ptxas_not_found(false);
   opts.set_xla_multiheap_size_constraint_per_heap(-1);
   opts.set_xla_detailed_logging(true);
   opts.set_xla_enable_dumping(true);
@@ -293,9 +294,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_recognize_reduction_optimization_level(0);
 
   opts.set_xla_gpu_enable_dynamic_slice_fusion(false);
+  opts.set_xla_gpu_enable_dus_accumulator_zero_init_elimination(false);
   opts.set_xla_gpu_experimental_dynamic_slice_fusion_verify_offsets(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
-  opts.set_xla_gpu_enable_shared_constants(true);
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
   opts.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(false);
   opts.set_xla_gpu_experimental_enable_nvshmem(false);
@@ -470,7 +471,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel(true);
   opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
   opts.set_xla_gpu_experimental_enable_fusion_autotuner(true);
-  opts.set_xla_gpu_experimental_autotune_post_fusion(false);
+  opts.set_xla_gpu_experimental_autotune_post_fusion(true);
   opts.set_xla_gpu_experimental_max_unroll_factor(32);
   opts.set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_fix_max_iterations(false);
@@ -497,9 +498,10 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_ragged_all_to_all_mode(
       DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
   opts.set_xla_gpu_experimental_ragged_all_to_all_use_device_kernel(false);
+  opts.set_xla_gpu_experimental_ragged_all_to_all_zero_copy(true);
   opts.set_xla_gpu_experimental_use_ragged_dot_grouped_gemm(true);
   opts.set_xla_gpu_native_emitter_tune_unroll_factor_for_loops(false);
-  opts.set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+  opts.set_xla_gpu_experimental_use_ragged_dot_fusion(false);
 
   opts.set_xla_cpu_collective_call_warn_stuck_seconds(20);
   opts.set_xla_cpu_collective_call_terminate_timeout_seconds(40);
@@ -526,7 +528,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_command_buffer_update_mode(DebugOptions::ALWAYS_UPDATE);
 
   opts.set_xla_gpu_experimental_aot_compiled_thunks(true);
-  opts.set_xla_gpu_deviceless_cub_mode(DebugOptions::DEVICELESS_CUB_DISABLED);
+  opts.set_xla_gpu_deviceless_cub_mode(
+      DebugOptions::DEVICELESS_CUB_WITH_FALLBACK);
   return opts;
 }
 
@@ -1123,6 +1126,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_cpu_enable_platform_dependent_math(),
       "Enable platform dependent math in the CPU compiler; this may "
       "produce faster code at the expense of consistent results across CPUs."));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_experimental_enable_tiling_propagation",
+      bool_setter_for(
+          &DebugOptions::set_xla_cpu_experimental_enable_tiling_propagation),
+      debug_options->xla_cpu_experimental_enable_tiling_propagation(),
+      "If true, enable experimental tiling propagation for CPU."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_fast_math_honor_nans",
       bool_setter_for(&DebugOptions::set_xla_cpu_fast_math_honor_nans),
@@ -1769,7 +1778,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "`WHILE_LOOP_UNROLLING_DOUBLE_BUFFER` unrolls the loop by factor of 2, "
       "`WHILE_LOOP_UNROLLING_FULL_UNROLL` will unroll the entire loop "
       "`WHILE_LOOP_UNROLLING_AUTO_UNROLL` unrolls by a factor of 2, if there is"
-      " any collective present within a while loop."));
+      " any collective present within a while loop."
+      "`WHILE_LOOP_UNROLLING_MANUAL_UNROLL` will unroll loops annotated with"
+      " the `_xla_loop_unroll_strategy` attribute."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_all_reduce_combine_threshold_bytes",
       int64_setter_for(
@@ -1964,6 +1975,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "[Stable] Whether to enable address computation fusion to optimize "
       "dynamic-slice and dynamic-update-slice operations."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_dus_accumulator_zero_init_elimination",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_enable_dus_accumulator_zero_init_elimination),
+      debug_options->xla_gpu_enable_dus_accumulator_zero_init_elimination(),
+      "Replaces broadcast(0) scan-accumulator init with AllocateBuffer when "
+      "the body's DUS covers every slot."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_dynamic_slice_fusion_verify_offsets",
       bool_setter_for(
           &DebugOptions::
@@ -1978,11 +1997,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_nccl_termination_timeout_seconds),
       debug_options->xla_gpu_nccl_termination_timeout_seconds(),
       "Timeout in seconds before terminating jobs stuck in NCCL Rendezvous."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_enable_shared_constants",
-      bool_setter_for(&DebugOptions::set_xla_gpu_enable_shared_constants),
-      debug_options->xla_gpu_enable_shared_constants(),
-      "Enable constant sharing between GPU executables"));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_nccl_user_buffers",
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_nccl_user_buffers),
@@ -2814,8 +2828,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "the optimization pass does not support a particular scater op, it will "
       "be made deterministic using a slower implementation. "
       "Note that even when this flag is disabled, scatter operations may still "
-      "be deterministic, with the slower implemntation. This is the case when "
-      "'xla_gpu_exclude_nondeterministic_ops' is enabled."));
+      "be deterministic. This is the case when "
+      "'xla_gpu_exclude_nondeterministic_ops' or 'xla_gpu_deterministic_ops' "
+      "is enabled."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_unsupported_enable_all_reduce_decomposer",
       bool_setter_for(

@@ -39,8 +39,8 @@ limitations under the License.
 namespace xla {
 namespace {
 
-using QrTest = ClientLibraryTestRunnerMixin<
-    HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>>;
+using QrTest =
+    ClientLibraryTestRunnerMixin<HloPjRtInterpreterReferenceMixin<HloTestBase>>;
 
 TEST_F(QrTest, Simple) {
   Array2D<float> data({
@@ -136,6 +136,9 @@ TEST_F(QrTest, SimpleBatched) {
 }
 
 TEST_F(QrTest, SubnormalComplex) {
+  if (IsRocm()) {  // TODO: remove when hipblaslt get full support for c64
+    GTEST_SKIP() << "C64 support is not yet available in ROCm";
+  }
   // Verifies that we don't get NaNs in the case that the norm of a complex
   // number would be denormal but its imaginary value is not exactly 0.
   Array2D<complex64> a_vals({

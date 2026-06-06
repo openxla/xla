@@ -273,7 +273,7 @@ TEST_F(TilingSpaceTest, TwoOutputsParallelDims) {
            offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1]
            strides [1, 1] upper bounds [10, 8]
       1 root tile:
-           offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1]
+           offsets [tid_0 * ts_2, tid_1 * ts_3] sizes [ts_2, ts_3]
            strides [1, 1] upper bounds [11, 9]
   )"));
 }
@@ -321,10 +321,10 @@ TEST_F(TilingSpaceSimplifyExpressionTest,
 }
 
 TEST_F(TilingSpaceSimplifyExpressionTest, NestedFloorDivFactorsDivisor) {
-  auto expr = ParseSymbolicExpr("(d0 * 16 + d1 * 2) floordiv 200",
-                                &mlir_context_, /*num_dims=*/2);
+  auto expr = ParseSymbolicExpr("(d0 * 16 + d1 * 2) / 200", &mlir_context_,
+                                /*num_dims=*/2);
   EXPECT_EQ(tiling_space_->SimplifyExpression(expr),
-            ParseSymbolicExpr("(d0 * 8 + d1) floordiv 100", &mlir_context_,
+            ParseSymbolicExpr("(d0 * 8 + d1) / 100", &mlir_context_,
                               /*num_dims=*/2));
 }
 
