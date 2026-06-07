@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -50,6 +51,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla::gpu {
@@ -370,7 +372,7 @@ static void VlogCommandSequenceDetails(const CommandSequence& commands) {
       }
     }
 
-    std::string cmd_name = CommandTypeString(cmd->command_type());
+    std::string cmd_name = std::string(Thunk::KindToString(cmd->kind()));
 
     if (has_input && !has_output && !has_temp) {
       input_count++;
@@ -495,7 +497,7 @@ CommandExecutor::RecordCreate(
         GetKernelAnnotation(command->profile_annotation());
 
     // Skip recording collective commands if mock collectives are enabled.
-    if (execute_params.mock_collectives && IsCollectiveCommand(*command)) {
+    if (execute_params.mock_collectives && command->IsCollective()) {
       continue;
     }
 
@@ -627,7 +629,7 @@ absl::Status CommandExecutor::RecordUpdate(
         GetKernelAnnotation(command->profile_annotation());
 
     // Skip updating collective commands if mock collectives are enabled.
-    if (execute_params.mock_collectives && IsCollectiveCommand(*command)) {
+    if (execute_params.mock_collectives && command->IsCollective()) {
       continue;
     }
 

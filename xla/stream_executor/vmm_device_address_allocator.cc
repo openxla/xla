@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/service/computation_placer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -43,12 +44,43 @@ limitations under the License.
 
 namespace stream_executor {
 
+namespace {
+thread_local const xla::DeviceAssignment* current_device_assignment = nullptr;
+}  // namespace
+
+DeviceAddressVmmAllocator::DeviceAssignmentScope::DeviceAssignmentScope(
+    const xla::DeviceAssignment* device_assignment)
+    : previous_(current_device_assignment) {
+  current_device_assignment = device_assignment;
+}
+
+DeviceAddressVmmAllocator::DeviceAssignmentScope::~DeviceAssignmentScope() {
+  current_device_assignment = previous_;
+}
+
+bool DeviceAddressVmmAllocator::CurrentMultiDevice() {
+  const xla::DeviceAssignment* device_assignment = current_device_assignment;
+  return device_assignment != nullptr &&
+         device_assignment->replica_count() *
+                 device_assignment->computation_count() >
+             1;
+}
+
 static absl::Status DeviceNotFoundError(int device_ordinal) {
   return absl::NotFoundError(
       absl::StrFormat("No device with ordinal %d registered in "
                       "DeviceAddressVmmAllocator",
                       device_ordinal));
 }
+
+// Interval between CPU polls of the GPU-written deallocation timeline while
+// waiting for deferred frees to become safe. The 50us value is a conservative
+// initial tradeoff: long enough to avoid busy-spinning a CPU core and short
+// enough to keep forced allocator synchronization responsive; it has not been
+// benchmark-tuned, so workload-specific tests could refine it if this wait
+// shows up in profiles.
+static constexpr absl::Duration kGpuTimelinePollInterval =
+    absl::Microseconds(50);
 
 // Returns the completed timeline value from pinned host memory using an
 // acquire load, so all GPU writes prior to this value are visible.
@@ -107,7 +139,7 @@ DeviceAddressVmmAllocator::~DeviceAddressVmmAllocator() {
     // memory. pinned_timeline is not ABSL_GUARDED_BY and last_seqno is a local.
     if (state->pinned_timeline != nullptr && last_seqno > 0) {
       while (LoadTimeline(state->pinned_timeline) < last_seqno) {
-        absl::SleepFor(absl::Microseconds(50));
+        absl::SleepFor(kGpuTimelinePollInterval);
       }
     }
 
@@ -187,10 +219,8 @@ void DeviceAddressVmmAllocator::WaitPendingDeallocationsToComplete(
   // Poll until the GPU writes a timeline value >= target_seqno.
   // Since timeline values are written in stream order, this guarantees all
   // earlier pending deallocations have also completed.
-  // Sleep 50us per iteration to release the CPU core while waiting rather
-  // than hot-spinning.
   while (LoadTimeline(state.pinned_timeline) < target_seqno) {
-    absl::SleepFor(absl::Microseconds(50));
+    absl::SleepFor(kGpuTimelinePollInterval);
   }
 
   // Reacquire the lock before modifying the maps.
@@ -214,6 +244,7 @@ void DeviceAddressVmmAllocator::DoDeallocate(PerDeviceState& state,
   state.reservations.erase(mem.opaque());
   // Erase the raw allocation last: its destructor releases the physical memory.
   state.raw_allocations.erase(mem.opaque());
+  state.multi_device_allocations.erase(mem.opaque());
 
   uint64_t rounded_size = RoundUpToGranularity(state, mem.size());
   DCHECK_GE(state.pa_allocated, rounded_size);
@@ -313,11 +344,13 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
     return DeviceNotFoundError(device_ordinal);
   }
 
+  const bool multi_device = CurrentMultiDevice();
+
   absl::MutexLock lock(state->mu);
 
   // Try to reuse a completed pending deallocation with matching size.
   std::optional<DeviceAddressBase> reused =
-      TryReusePendingDeallocation(*state, size);
+      TryReusePendingDeallocation(*state, size, multi_device);
   if (reused.has_value()) {
     return ScopedDeviceAddress<uint8_t>(*reused, device_ordinal, this);
   }
@@ -339,6 +372,9 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
   if (!result.ok()) {
     return result.status();
   }
+
+  if (multi_device)
+    state->multi_device_allocations.insert({result->opaque(), true});
 
   VLOG(3) << absl::StreamFormat(
       "Allocated virtual address %p (%uB) on device ordinal %d",
@@ -365,13 +401,15 @@ absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
       "on device ordinal %d",
       mem.opaque(), mem.size(), device_ordinal);
 
+  bool multi_device = state->multi_device_allocations.erase(mem.opaque()) > 0;
+
   // Assign the next sequence number and enqueue a GPU write to the pinned
   // timeline when the stream reaches this point. The CPU polls the timeline
   // value to know when it is safe to free the memory.
   uint64_t seqno = state->next_seqno++;
   RETURN_IF_ERROR(EnqueueDeferredDeallocation(*state, seqno));
 
-  state->pending_deallocations.push_back({mem, seqno});
+  state->pending_deallocations.push_back({mem, seqno, multi_device});
 
   return absl::OkStatus();
 }
@@ -383,6 +421,38 @@ absl::StatusOr<Stream*> DeviceAddressVmmAllocator::GetStream(
     return DeviceNotFoundError(device_ordinal);
   }
   return state->stream;
+}
+
+absl::Status DeviceAddressVmmAllocator::SynchronizePendingOperations(
+    int device_ordinal) {
+  PerDeviceState* state = GetPerDeviceState(device_ordinal);
+  if (state == nullptr) {
+    return DeviceNotFoundError(device_ordinal);
+  }
+
+  uint64_t target_seqno;
+  {
+    absl::MutexLock lock(state->mu);
+    if (state->pending_deallocations.empty()) {
+      return absl::OkStatus();
+    }
+    target_seqno = state->pending_deallocations.back().seqno;
+  }
+
+  while (LoadTimeline(state->pinned_timeline) < target_seqno) {
+    absl::SleepFor(kGpuTimelinePollInterval);
+  }
+
+  {
+    absl::MutexLock lock(state->mu);
+    while (!state->pending_deallocations.empty() &&
+           state->pending_deallocations.front().seqno <= target_seqno) {
+      DoDeallocate(*state, state->pending_deallocations.front().mem);
+      state->pending_deallocations.pop_front();
+    }
+  }
+
+  return absl::OkStatus();
 }
 
 absl::StatusOr<StreamExecutor*> DeviceAddressVmmAllocator::GetStreamExecutor(
@@ -433,13 +503,13 @@ uint64_t DeviceAddressVmmAllocator::GetAllocationGranularity(
 
 std::optional<DeviceAddressBase>
 DeviceAddressVmmAllocator::TryReusePendingDeallocation(PerDeviceState& state,
-                                                       uint64_t size) {
+                                                       uint64_t size,
+                                                       bool multi_device) {
   uint64_t rounded_size = RoundUpToGranularity(state, size);
   for (auto it = state.pending_deallocations.begin();
        it != state.pending_deallocations.end(); ++it) {
-    if (RoundUpToGranularity(state, it->mem.size()) != rounded_size) {
-      continue;
-    }
+    if (it->multi_device != multi_device) continue;
+    if (RoundUpToGranularity(state, it->mem.size()) != rounded_size) continue;
 
     DeviceAddressBase reused_mem(it->mem.opaque(), size);
     VLOG(3) << absl::StreamFormat(
@@ -448,6 +518,8 @@ DeviceAddressVmmAllocator::TryReusePendingDeallocation(PerDeviceState& state,
         reused_mem.opaque(), it->mem.size(), size, rounded_size,
         state.executor->device_ordinal());
     state.pending_deallocations.erase(it);
+    if (multi_device)
+      state.multi_device_allocations.insert({reused_mem.opaque(), true});
 
     return reused_mem;
   }
