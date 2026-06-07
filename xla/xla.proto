@@ -1188,7 +1188,7 @@ message DebugOptions {
   optional bool xla_gpu_unsupported_enable_triton_gemm = 322;
 
   // Enable experimental triton multi-output fusion.
-  // TODO(b/390559452): Remove the flag once the feature is stable.
+  // TODO: b/502910372 - Remove the flag once the feature is stable.
   optional bool xla_gpu_unsupported_enable_triton_multi_output_fusion = 382;
 
   // Internal debug/testing flag to override the number of devices in the fast
