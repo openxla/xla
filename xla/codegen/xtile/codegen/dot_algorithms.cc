@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/translate/hlo_to_mhlo/attribute_importer.h"
+#include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
@@ -56,12 +57,16 @@ using ::mlir::Value;
 
 Type ElementType(Value v) { return mlir::getElementTypeOrSelf(v); }
 
-bool IsScaledMicroformat(PrimitiveType type) {
+// XTile passes lhs/rhs scale values to Triton only for operand dtypes that
+// Triton tt.dot_scaled treats as scaled low-precision inputs.
+bool ShouldAttachTritonDotScaledScale(PrimitiveType type) {
   return type == F4E2M1FN || type == F8E4M3FN || type == F8E5M2;
 }
 
-bool IsSubByteScaledMicroformat(PrimitiveType type) {
-  return type == F4E2M1FN;
+// Sub-byte Triton scaled-dot inputs need k_pack derived from the HLO layout.
+bool NeedsLayoutDerivedKPack(PrimitiveType type) {
+  return ShouldAttachTritonDotScaledScale(type) &&
+         primitive_util::IsSubByteNonPredType(type);
 }
 
 // tt.dot_scaled accepts scale tensors as floating point values or i8. UE8M0
@@ -100,11 +105,11 @@ absl::StatusOr<Value> ScaledDot(mlir::ImplicitLocOpBuilder& b,
   PrimitiveType rhs_primitive_type = dot.operand(1)->shape().element_type();
 
   Value lhs_scale;
-  if (IsScaledMicroformat(lhs_primitive_type)) {
+  if (ShouldAttachTritonDotScaledScale(lhs_primitive_type)) {
     lhs_scale = ReinterpretScaleIfNeeded(b, operands.lhs_scale);
   }
   Value rhs_scale;
-  if (IsScaledMicroformat(rhs_primitive_type)) {
+  if (ShouldAttachTritonDotScaledScale(rhs_primitive_type)) {
     rhs_scale = ReinterpretScaleIfNeeded(b, operands.rhs_scale);
     auto rhs_scale_type = mlir::cast<mlir::ShapedType>(rhs_scale.getType());
     int64_t rank = rhs_scale_type.getRank();
@@ -122,12 +127,12 @@ absl::StatusOr<Value> ScaledDot(mlir::ImplicitLocOpBuilder& b,
   // Non-sub-byte operands are represented as K-packed.
   bool lhs_k_pack = true;
   bool rhs_k_pack = true;
-  if (IsSubByteScaledMicroformat(lhs_primitive_type)) {
+  if (NeedsLayoutDerivedKPack(lhs_primitive_type)) {
     const int64_t lhs_c =
         dot.dot_dimension_numbers().lhs_contracting_dimensions(0);
     lhs_k_pack = dot.operand(0)->shape().layout().minor_to_major(0) == lhs_c;
   }
-  if (IsSubByteScaledMicroformat(rhs_primitive_type)) {
+  if (NeedsLayoutDerivedKPack(rhs_primitive_type)) {
     const int64_t rhs_c =
         dot.dot_dimension_numbers().rhs_contracting_dimensions(0);
     rhs_k_pack = dot.operand(1)->shape().layout().minor_to_major(0) == rhs_c;
