@@ -1,5 +1,7 @@
 """TensorFlow workspace initialization. Consult the WORKSPACE on how to use it."""
 
+load("@aspect_rules_esbuild//esbuild:dependencies.bzl", "rules_esbuild_dependencies")
+load("@aspect_rules_js//js:repositories.bzl", "rules_js_dependencies")
 load("@bazel_features//:deps.bzl", "bazel_features_deps")
 load("@bazel_skylib//lib:versions.bzl", "versions")
 load("@bazel_tools//tools/build_defs/repo:java.bzl", "java_import_external")
@@ -127,6 +129,8 @@ def _initialize_third_party():
     uv()
     xnnpack()
     cutlass()
+    rules_js_dependencies()
+    rules_esbuild_dependencies()
 
     # copybara: tsl vendor
 
