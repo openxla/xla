@@ -221,7 +221,10 @@ absl::StatusOr<PrimitiveType> GetPrimitiveType(mlir::Type t);
 
 mlir::Type StorageType(mlir::Type t);
 
-bool PrimitiveTypeUsesPackedStorage(PrimitiveType type);
+// Triton tt.dot_scaled represents F4E2M1FN operands as i8 tensors. XTile keeps
+// those operands in the packed f4 storage carrier until the Triton op receives
+// the fp4 interpretation through its lhs/rhs ScaleDotElemType attributes.
+bool PrimitiveTypeUsesPackedF4Storage(PrimitiveType type);
 
 absl::StatusOr<llvm::SmallVector<int64_t>> GetStorageShape(
     llvm::ArrayRef<int64_t> logical_shape, const Shape& shape);

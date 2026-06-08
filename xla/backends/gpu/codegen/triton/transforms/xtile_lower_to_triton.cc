@@ -56,6 +56,9 @@ absl::StatusOr<ttir::ScaleDotElemType> GetScaleDotElemType(Type value) {
   if (type == mlir::Float8E5M2Type::get(value.getContext())) {
     return ttir::ScaleDotElemType::E5M2;
   }
+  // Triton tt.dot_scaled receives packed fp4 operands as i8 tensors and records
+  // their logical fp4 element type in a dot element-type attribute. Map i8 to
+  // E2M1 so Triton decodes the packed bytes as F4E2M1FN inputs.
   if (type == mlir::Float4E2M1FNType::get(value.getContext()) ||
       type == mlir::IntegerType::get(value.getContext(), 8)) {
     return ttir::ScaleDotElemType::E2M1;
