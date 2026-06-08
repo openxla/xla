@@ -191,6 +191,32 @@ mlir::Value OnesLike(mlir::ImplicitLocOpBuilder& b, mlir::Type type) {
   return mlir::createScalarOrSplatConstant(b, b.getLoc(), type, all_ones);
 }
 
+absl::StatusOr<int64_t> PackedElementsPerByte(PrimitiveType type) {
+  if (!primitive_util::IsSubByteNonPredType(type)) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Packed storage requires a sub-byte non-predicate type, got ",
+        primitive_util::LowercasePrimitiveTypeName(type), "."));
+  }
+
+  const int64_t storage_bit_width = primitive_util::BitWidth(U8);
+  const int64_t element_bit_width = primitive_util::BitWidth(type);
+  if (storage_bit_width % element_bit_width != 0) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Packed storage bit width ", storage_bit_width,
+        " must be divisible by element bit width ", element_bit_width,
+        " for primitive type ",
+        primitive_util::LowercasePrimitiveTypeName(type), "."));
+  }
+  return storage_bit_width / element_bit_width;
+}
+
+Value DivideIndexByPackedElementsPerByte(mlir::ImplicitLocOpBuilder& b,
+                                         Value value,
+                                         int64_t packed_elements_per_byte) {
+  return ma::DivSIOp::create(
+      b, value, CreateConst(b, value.getType(), packed_elements_per_byte));
+}
+
 }  // namespace
 
 SmallVector<int64_t> GetPaddedTileSizes(ArrayRef<int64_t> tile_sizes) {
@@ -223,17 +249,16 @@ absl::StatusOr<SmallVector<int64_t>> GetStorageShape(
         "Packed storage dimension is out of bounds for shape ",
         shape.ToString()));
   }
-  if (storage_shape[packed_dim] % 2 != 0) {
+  TF_ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
+                      PackedElementsPerByte(shape.element_type()));
+  if (storage_shape[packed_dim] % packed_elements_per_byte != 0) {
     return absl::InvalidArgumentError(absl::StrCat(
-        "Packed storage dimension must have even size, got ",
-        storage_shape[packed_dim], " for shape ", shape.ToString()));
+        "Packed storage dimension must be divisible by ",
+        packed_elements_per_byte, ", got ", storage_shape[packed_dim],
+        " for shape ", shape.ToString()));
   }
-  storage_shape[packed_dim] /= 2;
+  storage_shape[packed_dim] /= packed_elements_per_byte;
   return storage_shape;
-}
-
-Value DivideIndexByTwo(mlir::ImplicitLocOpBuilder& b, Value value) {
-  return ma::DivSIOp::create(b, value, CreateConst(b, value.getType(), 2));
 }
 
 absl::Status CheckPackedStorageTile(const Shape& shape,
@@ -256,11 +281,13 @@ absl::Status CheckPackedStorageTile(const Shape& shape,
         "Packed storage requires unit stride in dimension ", packed_dim,
         " for shape ", shape.ToString()));
   }
-  if (!tile_offsets[packed_dim].IsMultipleOf(2)) {
+  TF_ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
+                      PackedElementsPerByte(shape.element_type()));
+  if (!tile_offsets[packed_dim].IsMultipleOf(packed_elements_per_byte)) {
     return absl::InvalidArgumentError(absl::StrCat(
-        "Packed storage requires even offset in dimension ", packed_dim,
-        " for shape ", shape.ToString(), ", got ",
-        tile_offsets[packed_dim].ToString()));
+        "Packed storage requires offset in dimension ", packed_dim,
+        " to be divisible by ", packed_elements_per_byte, " for shape ",
+        shape.ToString(), ", got ", tile_offsets[packed_dim].ToString()));
   }
   return absl::OkStatus();
 }
@@ -693,7 +720,10 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
   if (PrimitiveTypeUsesPackedF4Storage(shape.element_type()) &&
       !minor_to_major_layout.empty()) {
     int64_t packed_dim = minor_to_major_layout.front();
-    offsets[packed_dim] = DivideIndexByTwo(b, offsets[packed_dim]);
+    TF_ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
+                        PackedElementsPerByte(shape.element_type()));
+    offsets[packed_dim] = DivideIndexByPackedElementsPerByte(
+        b, offsets[packed_dim], packed_elements_per_byte);
   }
 
   // Replica id is only supported for ge::TiledHloInstruction.
@@ -750,8 +780,10 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
   if (PrimitiveTypeUsesPackedF4Storage(shape.element_type()) &&
       !minor_to_major_layout.empty()) {
     int64_t packed_dim = minor_to_major_layout.front();
-    offsets[packed_dim] =
-        DivideIndexByTwo(emitter_ctx.b(), offsets[packed_dim]);
+    TF_ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
+                        PackedElementsPerByte(shape.element_type()));
+    offsets[packed_dim] = DivideIndexByPackedElementsPerByte(
+        emitter_ctx.b(), offsets[packed_dim], packed_elements_per_byte);
   }
 
   return TileInfo(std::move(offsets), std::move(tile_strides),
