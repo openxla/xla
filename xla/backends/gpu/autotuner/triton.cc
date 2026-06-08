@@ -387,17 +387,19 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
     }
     if (const auto* cuda_cc =
             device_info.gpu_compute_capability().cuda_compute_capability()) {
-      for (HloInstruction* scaled_dot :
-           fusion->fused_instructions_computation()->instructions()) {
-        if (scaled_dot->opcode() != HloOpcode::kScaledDot) {
-          continue;
-        }
-        if (!IsTritonSupportedScaledDot(
-                *Cast<HloScaledDotInstruction>(scaled_dot), *cuda_cc)) {
-          VLOG(1) << "Triton scaled-dot unsupported on this CC for: "
-                  << scaled_dot->ToString();
-          return false;
-        }
+      std::string unsupported_scaled_dot;
+      hlo_query::ForEachInstructionWithOpcode(
+          *fusion->fused_instructions_computation(), HloOpcode::kScaledDot,
+          [&](HloInstruction* scaled_dot) {
+            if (!IsTritonSupportedScaledDot(
+                    *Cast<HloScaledDotInstruction>(scaled_dot), *cuda_cc)) {
+              unsupported_scaled_dot = scaled_dot->ToString();
+            }
+          });
+      if (!unsupported_scaled_dot.empty()) {
+        VLOG(1) << "Triton scaled-dot unsupported on this CC for: "
+                << unsupported_scaled_dot;
+        return false;
       }
     }
     return true;

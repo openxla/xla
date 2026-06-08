@@ -41,6 +41,7 @@ cc_library(
         "//xla/backends/gpu/transforms:triton_scaled_dot_support",
         "//xla/codegen/emitters:kernel_arguments",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:gpu_constants",

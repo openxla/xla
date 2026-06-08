@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_constants.h"
@@ -105,18 +106,20 @@ xla::Future<TritonWrapperResult> TritonFusion::GenerateTritonKernelAndWrapper(
   }
   if (const auto* cuda_cc =
           device_info.gpu_compute_capability().cuda_compute_capability()) {
-    for (HloInstruction* scaled_dot :
-         fusion.fused_instructions_computation()->instructions()) {
-      if (scaled_dot->opcode() != HloOpcode::kScaledDot) {
-        continue;
-      }
-      if (!IsTritonSupportedScaledDot(
-              *Cast<HloScaledDotInstruction>(scaled_dot), *cuda_cc)) {
-        return absl::InvalidArgumentError(
-            absl::StrCat("Triton scaled-dot is not supported for this operand "
-                         "dtype/layout/CC combination: ",
-                         scaled_dot->ToString()));
-      }
+    std::string unsupported_scaled_dot;
+    hlo_query::ForEachInstructionWithOpcode(
+        *fusion.fused_instructions_computation(), HloOpcode::kScaledDot,
+        [&](HloInstruction* scaled_dot) {
+          if (!IsTritonSupportedScaledDot(
+                  *Cast<HloScaledDotInstruction>(scaled_dot), *cuda_cc)) {
+            unsupported_scaled_dot = scaled_dot->ToString();
+          }
+        });
+    if (!unsupported_scaled_dot.empty()) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Triton scaled-dot is not supported for this operand dtype/layout/CC "
+          "combination: ",
+          unsupported_scaled_dot));
     }
   }
   BlockLevelParameters block_level_parameters =
