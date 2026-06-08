@@ -109,7 +109,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/double_buffer_loop_unrolling.h"
 #include "xla/backends/gpu/transforms/dus_accumulator_zero_init_elimination.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_annotator.h"
-#include "xla/backends/gpu/transforms/dynamic_slice_fusion_rewriter.h"
+#include "xla/backends/gpu/transforms/dynamic_slice_fusion_rewriter_v2.h"
 #include "xla/backends/gpu/transforms/estimate_cub_scan_scratch_size.h"
 #include "xla/backends/gpu/transforms/estimate_cub_sort_scratch_size.h"
 #include "xla/backends/gpu/transforms/explicit_collectives_group_async_wrapper.h"
@@ -151,6 +151,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/windowed_einsum_handler.h"
 #include "xla/core/host_offloading/hlo_host_device_type_call_wrapper.h"
 #include "xla/core/host_offloading/host_compute_asyncifier.h"
+#include "xla/ffi/ffi_registry.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -322,6 +323,7 @@ limitations under the License.
 #include "xla/service/while_loop_all_reduce_code_motion.h"
 #include "xla/service/while_loop_constant_sinking.h"
 #include "xla/service/while_loop_simplifier.h"
+#include "xla/service/xla_transform.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -915,6 +917,8 @@ absl::Status RunOptimizationPasses(
 
   pipeline.AddPass<HloComputationDeduplicator>(
       /*mark_fusion_duplications=*/false);
+  pipeline.AddPass<ApplyXlaTransforms>(
+      HloXlaTransform::PipelineStage::kPreScheduler);
   return pipeline.Run(hlo_module, {HloInstruction::kMainExecutionThread})
       .status();
 }
@@ -1483,6 +1487,17 @@ absl::Status RunAsyncDotPasses(HloModule* hlo_module,
       .status();
 }
 
+bool IsFfiCustomCall(const HloInstruction* hlo, se::Platform::Id platform_id) {
+  auto* custom_call = DynCast<HloCustomCallInstruction>(hlo);
+  if (!custom_call || custom_call->api_version() !=
+                          CustomCallApiVersion::API_VERSION_TYPED_FFI) {
+    return false;
+  }
+  return ffi::FindHandler(custom_call->custom_call_target(),
+                          platform_id->ToName())
+      .ok();
+}
+
 absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
                                          se::Platform::Id platform_id,
                                          CompilationStats* compilation_stats) {
@@ -1495,23 +1510,13 @@ absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
   pipeline.AddPass<DynamicSliceAnnotator>();
 
   if (opts.xla_gpu_enable_dynamic_slice_fusion()) {
-    pipeline.AddPass<GpuReduceScatterCombiner>(
-        kDefaultReduceScatterCombineThreshold,
-        opts.xla_gpu_reduce_scatter_combine_threshold_bytes(),
-        opts.xla_gpu_collective_combine_threshold_count(),
-        opts.xla_gpu_enable_reduce_scatter_combine_by_dim());
-    pipeline.AddPass<DynamicSliceFusionRewriter>(platform_id);
-    pipeline.AddPass<AsyncWrapper>([](const HloInstruction* instr) {
-      if (!IsDynamicSliceFusion(instr)) {
-        return false;
-      }
-      std::optional<const HloInstruction*> hero_op = HloBfsFindIf(
-          {instr->fused_instructions_computation()->root_instruction()},
-          [](const HloInstruction* instr) -> bool {
-            return IsCollective(instr);
-          });
-      return hero_op.has_value();
-    });
+    DynamicSliceFusionRewriterV2::Options opts;
+    opts.predicate = [platform_id](const HloInstruction* instr) {
+      return IsNonFusedCublasLtMatmul(*instr) ||
+             IsFfiCustomCall(instr, platform_id);
+    };
+    pipeline.AddPass<DynamicSliceFusionRewriterV2>(platform_id,
+                                                   std::move(opts));
   }
 
   RETURN_IF_ERROR(
@@ -1560,6 +1565,7 @@ AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
   opts.set_enable_unconditional_reduce_of_concat_replacement(false);
   opts.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
   opts.set_enable_conditional_simplification(true);
+  opts.set_enable_fold_transpose_into_scatter(true);
 
   switch (mode) {
     case AlgebraicSimplifierMode::kPostFusionSimplification:
@@ -3223,6 +3229,12 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
     mlir::MLIRContext* mlir_context) {
   tsl::profiler::TraceMe traceme("RunPostSchedulingPipelines");
   RETURN_IF_ERROR(RunPostSchedulingCopyInsertion(module, alias_info));
+  {
+    HloPassPipeline post_scheduler_pipeline("post-scheduler-xla-transforms");
+    post_scheduler_pipeline.AddPass<ApplyXlaTransforms>(
+        HloXlaTransform::PipelineStage::kPostScheduler);
+    RETURN_IF_ERROR(post_scheduler_pipeline.Run(module).status());
+  }
   HloPassPipeline main_pipeline("post-scheduling-passes");
 
   // Pipeline for async -> sync conversion on for non-overlapped async ops.
@@ -3451,6 +3463,7 @@ GpuCompiler::LoadExecutableFromAotResult(
                      xla::cpu::TargetMachineOptions::FromProto(
                          proto.cpu_target_machine_options()));
   }
+  BufferAssignmentProto buffer_assignment_proto = buffer_assignment->ToProto();
   {
     tsl::profiler::TraceMe traceme("CreateGpuExecutable");
     std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(device_description);
@@ -3466,8 +3479,8 @@ GpuCompiler::LoadExecutableFromAotResult(
         /*output_info=*/std::move(output_info),
         /*module_name=*/std::move(hlo_module_name),
         /*program_shape=*/std::move(program_shape),
-        /*mlir_allocations=*/std::nullopt,
-        /*buffer_assignment=*/std::move(buffer_assignment),
+        /*mlir_allocations=*/std::move(*buffer_assignment).TakeAllocations(),
+        /*buffer_assignment=*/nullptr,
         /*alias_info=*/std::move(alias_info),
         /*debug_options=*/std::move(debug_options),
         /*device_description=*/device_description,
@@ -3476,6 +3489,7 @@ GpuCompiler::LoadExecutableFromAotResult(
         /*module_stats=*/{},
         /*executable_abi_version=*/executable_abi_version,
         /*cpu_target_machine_options=*/std::move(cpu_target_machine_options),
+        /*buffer_assignment_proto=*/std::move(buffer_assignment_proto),
     });
   }
 }
@@ -3533,13 +3547,6 @@ absl::Status GpuCompiler::AddAutotunerPass(
   // Post autotuning transformations needed after autotuning happens.
   pipeline->AddPass<ConvertTritonGemmConfig>(target_config->device_description,
                                              mlir_context);
-  pipeline->AddPass<ReshapeDecomposer>();
-  pipeline->AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
-  auto simplifier_options = GetAlgebraicSimplifierOptions(
-      AlgebraicSimplifierMode::kLayoutNormalization, debug_options,
-      target_config->platform_name == "ROCM");
-  pipeline->AddPass<HloPassFix<GpuAlgebraicSimplifier>>(simplifier_options,
-                                                        gpu_version);
   return absl::OkStatus();
 }
 

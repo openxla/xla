@@ -1373,7 +1373,7 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
 
   // Usage event promises that set the usage events on owned_buffers
   // corresponding to the data transfers.
-  std::vector<tsl::RCReference<PjRtDeviceEventPromise>> usage_event_promises;
+  std::vector<PjRtDeviceEventPromiseRef> usage_event_promises;
   usage_event_promises.reserve(num_transfers);
 
   // Passed as input to CrossHostTransferBuffers; contains raw buffers wrapped
@@ -1402,7 +1402,7 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
             default_memory_space, /*device_layout=*/nullptr));
 
     // Create a usage event for the transfer of this buffer.
-    tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise;
+    PjRtDeviceEventPromiseRef usage_event_promise;
     PjRtDeviceEventRef usage_event;
     ASSIGN_OR_RETURN(
         std::tie(usage_event_promise, usage_event),
@@ -1450,7 +1450,7 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
   // Populate usage events.
   LOG(INFO) << log_prefix << ": setting usage events";
   for (int i = 0; i < usage_events.size(); ++i) {
-    usage_event_promises[i]->Set(usage_events[i]);
+    usage_event_promises[i].Set(usage_events[i]);
   }
 
   // Wait until the transfers are complete.
@@ -1552,7 +1552,7 @@ TEST_P(ShardedAutotuningTest, ShardedAutotuningWorks) {
                   "Shard %d/%d: finding configs for %d/1 unique instructions",
                   node_id, kNumNodes, num_fusions_to_autotune)));
         } else {
-          EXPECT_THAT(stderr_str, HasSubstr("No instructions to autotune."));
+          EXPECT_THAT(stderr_str, HasSubstr("Found cached config for HLO"));
         }
       } else {
         stderr_str = absl::StrReplaceAll(

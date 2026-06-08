@@ -364,6 +364,7 @@ cc_library(
         ":platform",
         ":stream",
         ":stream_executor_h",
+        "//xla/service:computation_placer_hdr",
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
@@ -1289,6 +1290,7 @@ xla_cc_test(
     deps = [
         ":dnn",
         "//xla/tsl/platform:test",
+        "//xla/tsl/protobuf:dnn_proto_cc",
         "@com_google_googletest//:gtest_main",
     ],
 )
