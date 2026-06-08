@@ -107,9 +107,8 @@ static size_t ToMoriByteCount(PrimitiveType dtype, size_t count) {
 }
 
 absl::StatusOr<std::unique_ptr<MoriCommunicator>> MoriCommunicator::Create(
-    MoriCollectives* coll) {
-  auto comm = absl::WrapUnique(new MoriCommunicator(coll));
-  //TF_RETURN_IF_ERROR(comm->InitSignals());
+    MoriCollectives* coll, std::shared_ptr<CancellationToken> cancel) {
+  auto comm = absl::WrapUnique(new MoriCommunicator(coll, cancel));
   VLOG(1) << "Created " << *comm << " with npes: " << shmem::ShmemNPes();
   return comm;
 }
@@ -127,12 +126,20 @@ MoriCommunicator::~MoriCommunicator() {
   // collectives_->Deallocate(teams_).IgnoreError();
 }
 
-#define CHECK_ABORTED() \
-  if (aborted_) return FailedPrecondition("MoriCommunicator aborted");
+#define CHECK_CANCELLED() \
+if (cancel_->IsCancelled()) { \
+  return absl::FailedPreconditionError("MoriCommunicator cancelled"); \
+}
 
 absl::Status MoriCommunicator::Abort() {
+  // By setting the cancellation token all pending collectives scheduled on
+  // executor_ will cancel. This will allow the aborting lambda below to run.
+  cancel_->Cancel();
+
   VLOG(1) << "Abort MORI communicator: " << ToString();
-  CHECK_ABORTED()
+  if (aborted_) {
+    return FailedPrecondition("RcclCommunicator already aborted");
+  }
   aborted_ = true;
   // Call rocm_mori_global_exit with a non-zero return code to abort the program.
   // rocm_mori_global_exit(1);
@@ -142,14 +149,14 @@ absl::Status MoriCommunicator::Abort() {
 absl::Status MoriCommunicator::Barrier(
     const Communicator::Executor& executor) {
   VLOG(1) << "Barrier: " << ToString();
-  CHECK_ABORTED()
+  CHECK_CANCELLED()
   TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   return roc_mori::BarrierOnStream(AsRocmStream(stream));
 }
 
 absl::StatusOr<size_t> MoriCommunicator::NumRanks() const {
   VLOG(5) << "Get the number of ranks in MORI communicator: " << ToString();
-  CHECK_ABORTED()
+  CHECK_CANCELLED()
 
   int32_t count = shmem::ShmemNPes();
   if (count < 0) {
@@ -160,7 +167,7 @@ absl::StatusOr<size_t> MoriCommunicator::NumRanks() const {
 
 absl::StatusOr<size_t> MoriCommunicator::CurrentRank() {
   VLOG(5) << "Get current rank in MORI communicator: " << ToString();
-  CHECK_ABORTED()
+  CHECK_CANCELLED()
 
   int32_t rank = shmem::ShmemMyPe();
   if (rank < 0) {
@@ -272,7 +279,7 @@ Future<> MoriCommunicator::Recv(se::DeviceAddressBase recv_buffer,
 absl::Status MoriCommunicator::LaunchAllGather(se::DeviceAddressBase send_buffer,
   se::DeviceAddressBase recv_buffer, PrimitiveType dtype, size_t count,
   const Executor& executor) {
-  CHECK_ABORTED()
+  CHECK_CANCELLED()
   TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   VLOG(3) << "LaunchAllGather: send_buffer=" << send_buffer.opaque() 
           << " recv_buffer=" << recv_buffer.opaque() 
@@ -288,7 +295,7 @@ absl::Status MoriCommunicator::LaunchAllReduce(
         se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
         PrimitiveType dtype, size_t count, ReductionKind reduction_kind,
         const Executor& executor) {
-  CHECK_ABORTED()
+  CHECK_CANCELLED()
 
   TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   auto gpu_stream = AsRocmStream(stream);
@@ -331,7 +338,7 @@ absl::Status MoriCommunicator::LaunchCollectivePermute(
      se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer, 
      PrimitiveType dtype, size_t count, std::optional<RankId> source_rank, 
      absl::Span<const RankId> target_ranks, const Executor& executor) {
-  CHECK_ABORTED()
+  CHECK_CANCELLED()
   TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   size_t bytes = ToMoriByteCount(dtype, count);
 
@@ -387,7 +394,7 @@ absl::Status MoriCommunicator::P2P(P2PType p2p_type,
   VLOG(1) << CurrentRank().value() << stype << " to " << peer.value() 
           << " count " << count
           << " MORI communicator: " << ToString() ;
-  CHECK_ABORTED()
+  CHECK_CANCELLED()
 
   void* source_ptr = send_buffer.opaque();
   void* dest_ptr = recv_buffer.opaque();
@@ -408,15 +415,19 @@ absl::Status MoriCommunicator::P2P(P2PType p2p_type,
 }
 
 Future<> MoriCommunicator::GroupExecute(
-  absl::AnyInvocable<absl::Status(GpuCommunicator*)> f) {
-  return Execute([f = std::move(f), this]() mutable -> absl::Status {
-    return f(this);
+  absl::AnyInvocable<absl::Status() &&> group) {
+  return Execute([group = std::move(group), this]() mutable {
+    return GroupLaunch([&] { return std::move(group)(); });
   });
+}
+
+absl::Status MoriCommunicator::GroupLaunch(absl::FunctionRef<absl::Status()> group) {
+  return group();
 }
 
 absl::Status MoriCommunicator::Quiet(const Executor& executor) {
   VLOG(1) << "Quiet MORI communicator: " << ToString();
-  CHECK_ABORTED()
+  CHECK_CANCELLED()
   TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   auto gpu_stream = AsRocmStream(stream);
   (void)gpu_stream;
@@ -427,8 +438,13 @@ absl::Status MoriCommunicator::Quiet(const Executor& executor) {
 
 absl::Status MoriCommunicator::Fence() {
   VLOG(1) << "Fence MORI communicator: " << ToString();
-  CHECK_ABORTED()
+  CHECK_CANCELLED()
   // rocm_mori_fence();
+  return absl::UnimplementedError("Not implementedB");
+}
+
+absl::Status MoriCommunicator::PollUntilDone() const {
+  CHECK_CANCELLED()
   return absl::UnimplementedError("Not implementedB");
 }
 

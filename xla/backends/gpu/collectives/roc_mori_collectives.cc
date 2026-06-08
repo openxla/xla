@@ -239,7 +239,7 @@ MoriCollectives::CreateCommunicatorsWithCancel(
         ranks[i].rank.value(), clique_key.num_devices(), &uid, &init_attr));
     XLA_MORI_RETURN_IF_ERROR(shmem::ShmemInitAttr(
           shmem::MORI_SHMEM_INIT_WITH_UNIQUEID, &init_attr));
-    return MoriCommunicator::Create(this);
+    return MoriCommunicator::Create(this, cancel);
   };
 
   // Create all communicators. Each communicator is created on its own thread.

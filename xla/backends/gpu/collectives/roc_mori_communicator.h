@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
+#include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/future.h"
@@ -47,7 +48,7 @@ class MoriCommunicator : public GpuCommunicator {
   ~MoriCommunicator() override;
 
   static absl::StatusOr<std::unique_ptr<MoriCommunicator>> Create(
-    MoriCollectives* coll);
+    MoriCollectives* coll, std::shared_ptr<CancellationToken> cancel);
 
   // MoriCommunicator is not copyable or movable.
   MoriCommunicator(const MoriCommunicator&) = delete;
@@ -64,8 +65,7 @@ class MoriCommunicator : public GpuCommunicator {
 
   absl::Status Barrier(const Executor& executor) final;
 
-  Future<> GroupExecute(
-    absl::AnyInvocable<absl::Status(GpuCommunicator*)> f) final;
+  Future<> GroupExecute(absl::AnyInvocable<absl::Status() &&> group) final;
 
   Future<> AllReduce(se::DeviceMemoryBase send_buffer,
                      se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
@@ -115,6 +115,12 @@ class MoriCommunicator : public GpuCommunicator {
   Future<> Recv(se::DeviceMemoryBase recv_buffer,
                 se::DeviceMemoryBase send_buffer, PrimitiveType dtype,
                 size_t count, RankId peer, const Executor& executor) final;
+
+  // Polls the communicator until any pending non-blocking operations are done
+  // or aborted.
+  absl::Status PollUntilDone() const;
+private:
+  absl::Status GroupLaunch(absl::FunctionRef<absl::Status()> group);
 
   absl::Status LaunchAllReduce(se::DeviceAddressBase send_buffer,
                                se::DeviceAddressBase recv_buffer,
@@ -178,7 +184,9 @@ class MoriCommunicator : public GpuCommunicator {
   // Executes f on executor_, or calls f directly if executor_ is null.
   Future<> Execute(absl::AnyInvocable<absl::Status() &&> f) const;
 
-  MoriCommunicator(MoriCollectives* coll) : collectives_(coll) {}
+  MoriCommunicator(MoriCollectives* coll, 
+        std::shared_ptr<CancellationToken> cancel) : 
+        collectives_(coll), cancel_(std::move(cancel)) {}
 
   enum class P2PType : int32_t {
     Send,
@@ -195,6 +203,8 @@ class MoriCommunicator : public GpuCommunicator {
   static absl::StatusOr<se::Stream*> ToStream(const Executor& executor);
 
   MoriCollectives* collectives_;  // Parent MoriCollectives instance
+  // Should all pending collectives cancel?
+  std::shared_ptr<CancellationToken> cancel_;
   bool aborted_ = false;             // Has Abort() been called?
 
   // Per-peer completion signal flags in MORI symmetric heap.
