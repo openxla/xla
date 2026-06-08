@@ -34,10 +34,6 @@ namespace xla {
 namespace gpu {
 namespace {
 
-constexpr se::CudaComputeCapability kAmpere{8, 0};
-constexpr se::CudaComputeCapability kHopper{9, 0};
-constexpr se::CudaComputeCapability kBlackwell{10, 0};
-
 constexpr absl::string_view kCanonical = R"(
 HloModule m
 ENTRY e {
@@ -92,35 +88,42 @@ void ExpectSupported(absl::string_view layout, absl::string_view lhs_type,
 }
 
 TEST(IsSupportedTest, RejectsFp4BeforeHopper) {
-  ExpectSupported(kCanonical, "f4e2m1fn", "f4e2m1fn", kAmpere, false);
+  ExpectSupported(kCanonical, "f4e2m1fn", "f4e2m1fn",
+                  se::CudaComputeCapability::Ampere(), false);
 }
 
 TEST(IsSupportedTest, RejectsFp4OnOnlyLhs) {
-  ExpectSupported(kCanonical, "f4e2m1fn", "f8e4m3fn", kBlackwell, false);
+  ExpectSupported(kCanonical, "f4e2m1fn", "f8e4m3fn",
+                  se::CudaComputeCapability::Blackwell(), false);
 }
 
 TEST(IsSupportedTest, RejectsFp4OnOnlyRhs) {
-  ExpectSupported(kCanonical, "f8e4m3fn", "f4e2m1fn", kBlackwell, false);
+  ExpectSupported(kCanonical, "f8e4m3fn", "f4e2m1fn",
+                  se::CudaComputeCapability::Blackwell(), false);
 }
 
 TEST(IsSupportedTest, RejectsNvfp4OnHopper) {
-  ExpectSupported(kTransposedRhs, "f4e2m1fn", "f4e2m1fn", kHopper, false,
-                  "f8e4m3fn", "f8e4m3fn");
+  ExpectSupported(kTransposedRhs, "f4e2m1fn", "f4e2m1fn",
+                  se::CudaComputeCapability::Hopper(), false, "f8e4m3fn",
+                  "f8e4m3fn");
 }
 
 TEST(IsSupportedTest, RejectsNvfp4CanonicalLayout) {
-  ExpectSupported(kCanonical, "f4e2m1fn", "f4e2m1fn", kBlackwell, false,
-                  "f8e4m3fn", "f8e4m3fn");
+  ExpectSupported(kCanonical, "f4e2m1fn", "f4e2m1fn",
+                  se::CudaComputeCapability::Blackwell(), false, "f8e4m3fn",
+                  "f8e4m3fn");
 }
 
 TEST(IsSupportedTest, AllowsNvfp4KPackedOperandsOnBlackwell) {
-  ExpectSupported(kTransposedRhs, "f4e2m1fn", "f4e2m1fn", kBlackwell, true,
-                  "f8e4m3fn", "f8e4m3fn");
+  ExpectSupported(kTransposedRhs, "f4e2m1fn", "f4e2m1fn",
+                  se::CudaComputeCapability::Blackwell(), true, "f8e4m3fn",
+                  "f8e4m3fn");
 }
 
 TEST(IsSupportedTest, RejectsScaleEncodingMismatch) {
-  ExpectSupported(kCanonical, "f4e2m1fn", "f4e2m1fn", kBlackwell, false,
-                  "f8e8m0fnu", "f8e4m3fn");
+  ExpectSupported(kCanonical, "f4e2m1fn", "f4e2m1fn",
+                  se::CudaComputeCapability::Blackwell(), false, "f8e8m0fnu",
+                  "f8e4m3fn");
 }
 
 TEST(IsSupportedTest, RejectsBlackwell10TransposedLhsFp4Layout) {
@@ -135,11 +138,13 @@ ENTRY e {
     lhs_contracting_dims={0}, rhs_contracting_dims={0}
 }
 )";
-  ExpectSupported(kHloText, "f4e2m1fn", "f4e2m1fn", kBlackwell, false);
+  ExpectSupported(kHloText, "f4e2m1fn", "f4e2m1fn",
+                  se::CudaComputeCapability::Blackwell(), false);
 }
 
 TEST(IsSupportedTest, RejectsBlackwell10TransposedRhsFp4Layout) {
-  ExpectSupported(kTransposedRhs, "f4e2m1fn", "f4e2m1fn", kBlackwell, false);
+  ExpectSupported(kTransposedRhs, "f4e2m1fn", "f4e2m1fn",
+                  se::CudaComputeCapability::Blackwell(), false);
 }
 
 }  // namespace
