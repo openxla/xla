@@ -375,6 +375,16 @@ absl::StatusOr<Shape> AdjustAddendShape(const HloInstruction* contraction,
           },
           addend->shape());
     }
+
+    // oneDNN requires binary post-op source dimensions to match
+    // the destination dimensions. Prepend dimensions with size 1 if needed.
+    auto addend_rank = addend->shape().dimensions().size();
+    auto output_rank = contraction->shape().dimensions().size();
+    if (addend_rank < output_rank) {
+      std::vector<int64_t> ones(output_rank - addend_rank, 1);
+      return ShapeUtil::InsertDimensionsAtIndex(addend->shape(), 0, ones);
+    }
+
     return addend->shape();
   }
   if (broadcast_instr->opcode() != HloOpcode::kBroadcast) {
