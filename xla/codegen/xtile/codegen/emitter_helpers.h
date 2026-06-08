@@ -221,10 +221,17 @@ absl::StatusOr<PrimitiveType> GetPrimitiveType(mlir::Type t);
 
 mlir::Type StorageType(mlir::Type t);
 
-// Triton tt.dot_scaled represents F4E2M1FN operands as i8 tensors. XTile keeps
-// those operands in the packed f4 storage carrier until the Triton op receives
-// the fp4 interpretation through its lhs/rhs ScaleDotElemType attributes.
-bool PrimitiveTypeUsesPackedF4Storage(PrimitiveType type);
+// Triton tt.dot_scaled takes scale operands only for low-precision lhs/rhs
+// value dtypes that it interprets through a dot-scaled element-type attribute.
+// Other HLO scaled-dot operand dtypes are emitted without attaching a scale
+// operand to tt.dot_scaled.
+bool IsTritonDotScaledOperandType(PrimitiveType type);
+
+// Some Triton dot-scaled value dtypes are smaller than one byte. XTile stores
+// those logical elements inside byte-sized carrier elements, so storage shapes
+// and offsets are expressed in carrier elements rather than logical elements.
+// For these operands, Triton's k_pack attribute is derived from the HLO layout.
+bool IsPackedTritonDotScaledOperandType(PrimitiveType type);
 
 absl::StatusOr<llvm::SmallVector<int64_t>> GetStorageShape(
     llvm::ArrayRef<int64_t> logical_shape, const Shape& shape);

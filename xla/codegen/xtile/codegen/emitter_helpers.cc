@@ -229,15 +229,20 @@ SmallVector<int64_t> GetPaddedTileSizes(ArrayRef<int64_t> tile_sizes) {
   return result;
 }
 
-bool PrimitiveTypeUsesPackedF4Storage(PrimitiveType type) {
-  return type == F4E2M1FN;
+bool IsTritonDotScaledOperandType(PrimitiveType type) {
+  return type == F4E2M1FN || type == F8E4M3FN || type == F8E5M2;
+}
+
+bool IsPackedTritonDotScaledOperandType(PrimitiveType type) {
+  return IsTritonDotScaledOperandType(type) &&
+         primitive_util::IsSubByteNonPredType(type);
 }
 
 absl::StatusOr<SmallVector<int64_t>> GetStorageShape(
     ArrayRef<int64_t> logical_shape, const Shape& shape) {
   SmallVector<int64_t> storage_shape(logical_shape.begin(),
                                      logical_shape.end());
-  if (!PrimitiveTypeUsesPackedF4Storage(shape.element_type()) ||
+  if (!IsPackedTritonDotScaledOperandType(shape.element_type()) ||
       storage_shape.empty()) {
     return storage_shape;
   }
@@ -264,7 +269,7 @@ absl::StatusOr<SmallVector<int64_t>> GetStorageShape(
 absl::Status CheckPackedStorageTile(const Shape& shape,
                                     ArrayRef<int64_t> tile_strides,
                                     ArrayRef<SymbolicExpr> tile_offsets) {
-  if (!PrimitiveTypeUsesPackedF4Storage(shape.element_type()) ||
+  if (!IsPackedTritonDotScaledOperandType(shape.element_type()) ||
       LayoutUtil::MinorToMajor(shape).empty()) {
     return absl::OkStatus();
   }
@@ -717,7 +722,7 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
   auto storage_type = StorageType(expected_element_type);
 
   auto minor_to_major_layout = llvm::to_vector(LayoutUtil::MinorToMajor(shape));
-  if (PrimitiveTypeUsesPackedF4Storage(shape.element_type()) &&
+  if (IsPackedTritonDotScaledOperandType(shape.element_type()) &&
       !minor_to_major_layout.empty()) {
     int64_t packed_dim = minor_to_major_layout.front();
     TF_ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
@@ -777,7 +782,7 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
     replica_id_offsets = std::move(evaluated_offsets);
     replica_id_bounds = std::move(evaluated_bounds);
   }
-  if (PrimitiveTypeUsesPackedF4Storage(shape.element_type()) &&
+  if (IsPackedTritonDotScaledOperandType(shape.element_type()) &&
       !minor_to_major_layout.empty()) {
     int64_t packed_dim = minor_to_major_layout.front();
     TF_ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,

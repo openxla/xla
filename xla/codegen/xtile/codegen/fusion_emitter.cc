@@ -933,7 +933,7 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
             "while lowering ",
             fusion.called_computation()->ToString()));
       }
-      if (!PrimitiveTypeUsesPackedF4Storage(hlo->shape().element_type())) {
+      if (!IsPackedTritonDotScaledOperandType(hlo->shape().element_type())) {
         parameter =
             mlir::cast<TensorValue>(Cast(b, parameter, expected_element_type));
       }
