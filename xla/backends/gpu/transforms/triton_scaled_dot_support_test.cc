@@ -50,18 +50,6 @@ ENTRY e {
 }
 )";
 
-constexpr absl::string_view kTransposedLhs = R"(
-HloModule m
-ENTRY e {
-  lhs = $lhs[256,128] parameter(0)
-  rhs = $rhs[256,128] parameter(1)
-  lhs_scale = $lhs_scale[8,128] parameter(2)
-  rhs_scale = $rhs_scale[8,128] parameter(3)
-  ROOT _ = bf16[128,128] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
-    lhs_contracting_dims={0}, rhs_contracting_dims={0}
-}
-)";
-
 constexpr absl::string_view kTransposedRhs = R"(
 HloModule m
 ENTRY e {
@@ -136,7 +124,18 @@ TEST(IsSupportedTest, RejectsScaleEncodingMismatch) {
 }
 
 TEST(IsSupportedTest, RejectsBlackwell10TransposedLhsFp4Layout) {
-  ExpectSupported(kTransposedLhs, "f4e2m1fn", "f4e2m1fn", kBlackwell, false);
+  constexpr absl::string_view kHloText = R"(
+HloModule m
+ENTRY e {
+  lhs = $lhs[256,128] parameter(0)
+  rhs = $rhs[256,128] parameter(1)
+  lhs_scale = $lhs_scale[8,128] parameter(2)
+  rhs_scale = $rhs_scale[8,128] parameter(3)
+  ROOT _ = bf16[128,128] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0}
+}
+)";
+  ExpectSupported(kHloText, "f4e2m1fn", "f4e2m1fn", kBlackwell, false);
 }
 
 TEST(IsSupportedTest, RejectsBlackwell10TransposedRhsFp4Layout) {

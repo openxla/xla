@@ -2609,7 +2609,13 @@ TEST_F(TritonScaledDotTest, Mxfp4CanonicalTcgen05Executes) {
       std::move(optimized_module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-constexpr absl::string_view kMxfp4TransposedLhsHlo = R"hlo(
+TEST_F(TritonScaledDotTest, RejectsExplicitMxfp4TransposedLhsBlackwellConfig) {
+  if (!GetCudaComputeCapability().HasTcgen05() ||
+      GetCudaComputeCapability().major ==
+          se::CudaComputeCapability::kBlackwell_12) {
+    GTEST_SKIP() << "Requires a Blackwell target with tcgen05 before SM120.";
+  }
+  constexpr absl::string_view kHloText = R"hlo(
 HloModule m
 fusion__ {
   parameter_0 = f4e2m1fn[256,128]{1,0:E(4)} parameter(0)
@@ -2633,15 +2639,7 @@ ENTRY e {
         "num_warps":"4","num_ctas":"1","num_stages":"1"}}}
 }
 )hlo";
-
-TEST_F(TritonScaledDotTest, RejectsExplicitMxfp4TransposedLhsBlackwellConfig) {
-  if (!GetCudaComputeCapability().HasTcgen05() ||
-      GetCudaComputeCapability().major ==
-          se::CudaComputeCapability::kBlackwell_12) {
-    GTEST_SKIP() << "Requires a Blackwell target with tcgen05 before SM120.";
-  }
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(kMxfp4TransposedLhsHlo));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   ::testing::AssertionResult result = RunAndCompareNoHloPasses(
       std::move(module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3});
   EXPECT_FALSE(result);
@@ -2651,7 +2649,12 @@ TEST_F(TritonScaledDotTest, RejectsExplicitMxfp4TransposedLhsBlackwellConfig) {
                            "operand dtype/layout/CC combination"));
 }
 
-constexpr absl::string_view kMxfp4KPackedRhsHlo = R"hlo(
+TEST_F(TritonScaledDotTest, Mxfp4KPackedRhsSm120Executes) {
+  if (GetCudaComputeCapability().major !=
+      se::CudaComputeCapability::kBlackwell_12) {
+    GTEST_SKIP() << "Requires SM120.";
+  }
+  constexpr absl::string_view kHloText = R"hlo(
 HloModule m
 fusion__ {
   parameter_0 = f4e2m1fn[128,256]{1,0:E(4)} parameter(0)
@@ -2675,14 +2678,7 @@ ENTRY e {
         "num_warps":"4","num_ctas":"1","num_stages":"1"}}}
 }
 )hlo";
-
-TEST_F(TritonScaledDotTest, Mxfp4KPackedRhsSm120Executes) {
-  if (GetCudaComputeCapability().major !=
-      se::CudaComputeCapability::kBlackwell_12) {
-    GTEST_SKIP() << "Requires SM120.";
-  }
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kMxfp4KPackedRhsHlo));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   HloComputation* scaled_dot_computation =
       GetFirstComputationWithInstruction(*module, HloOpcode::kScaledDot);
   EXPECT_THAT(CreateTritonIrAndFileCheckForDot(
@@ -2698,7 +2694,11 @@ TEST_F(TritonScaledDotTest, Mxfp4KPackedRhsSm120Executes) {
       std::move(module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-constexpr absl::string_view kNvfp4KPackedOperandsHlo = R"hlo(
+TEST_F(TritonScaledDotTest, Nvfp4KPackedOperandsBlackwellExecutes) {
+  if (!GetCudaComputeCapability().IsAtLeastBlackwell()) {
+    GTEST_SKIP() << "Requires Blackwell.";
+  }
+  constexpr absl::string_view kHloText = R"hlo(
 HloModule m
 fusion__ {
   parameter_0 = f4e2m1fn[128,256]{1,0:E(4)} parameter(0)
@@ -2722,13 +2722,7 @@ ENTRY e {
         "num_warps":"4","num_ctas":"1","num_stages":"1"}}}
 }
 )hlo";
-
-TEST_F(TritonScaledDotTest, Nvfp4KPackedOperandsBlackwellExecutes) {
-  if (!GetCudaComputeCapability().IsAtLeastBlackwell()) {
-    GTEST_SKIP() << "Requires Blackwell.";
-  }
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(kNvfp4KPackedOperandsHlo));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   HloComputation* scaled_dot_computation =
       GetFirstComputationWithInstruction(*module, HloOpcode::kScaledDot);
   EXPECT_THAT(CreateTritonIrAndFileCheckForDot(
