@@ -62,7 +62,8 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
     CollectiveParams* collective_params, CollectiveCliques* collective_cliques,
     CollectiveMemory* collective_memory,
     std::vector<se::Stream*> additional_compute_streams,
-    ExecutionScopedState* execution_scoped_state) {
+    ExecutionScopedState* execution_scoped_state,
+    const CommandBufferUpdateInfo* command_buffer_update_info) {
   return ExecuteParams(&buffer_allocations, stream, command_buffer_trace_stream,
                        collective_params, collective_cliques, collective_memory,
                        run_options.run_options().device_to_host_stream(),
@@ -77,7 +78,8 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
                                  ->enable_mock_collectives()
                            : false,
                        run_options.run_options().rng_seed(),
-                       run_options.run_options().run_id().ToInt());
+                       run_options.run_options().run_id().ToInt(),
+                       command_buffer_update_info);
 }
 
 Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
@@ -96,7 +98,8 @@ Thunk::ExecuteParams Thunk::ExecuteParams::WithComputeStream(
                        send_device_memory_function, recv_device_memory_function,
                        ffi_execution_context, additional_compute_streams,
                        execution_scoped_state, mock_collectives, execution_id,
-                       rng_seed);
+                       rng_seed,
+                       command_buffer_update_info);
 }
 
 Thunk::ExecuteParams::ExecuteParams(
@@ -110,7 +113,8 @@ Thunk::ExecuteParams::ExecuteParams(
     const ffi::ExecutionContext* ffi_execution_context,
     std::vector<se::Stream*> additional_compute_streams,
     ExecutionScopedState* execution_scoped_state, bool mock_collectives,
-    int64_t execution_id, uint64_t rng_seed)
+    int64_t execution_id, uint64_t rng_seed,
+    const CommandBufferUpdateInfo* command_buffer_update_info)
     : buffer_allocations(buffer_allocations),
       stream(stream),
       command_buffer_trace_stream(command_buffer_trace_stream),
@@ -126,7 +130,8 @@ Thunk::ExecuteParams::ExecuteParams(
       execution_scoped_state(execution_scoped_state),
       mock_collectives(mock_collectives),
       execution_id(execution_id),
-      rng_seed(rng_seed) {}
+      rng_seed(rng_seed),
+      command_buffer_update_info(command_buffer_update_info) {}
 
 //===----------------------------------------------------------------------===//
 

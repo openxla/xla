@@ -508,14 +508,14 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   // Allocator to be used for staging memory transfers to devices.
   std::unique_ptr<HostMemoryAllocator> host_memory_allocator_;
 
-  // Device memory allocator. If owned, the allocator must outlive the devices,
-  // because it is the device destructor that waits for any outstanding work to
-  // complete.
+  // Device memory allocator. If owned, the allocator is destroyed before the
+  // devices so allocator implementations can flush stream-ordered deallocations
+  // while device streams are still alive.
   se::DeviceAddressAllocator* allocator_;
-  std::unique_ptr<se::DeviceAddressAllocator> owned_allocator_;
 
   // Includes all devices, including non-local devices on multi-host platforms.
   std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> owned_devices_;
+  std::unique_ptr<se::DeviceAddressAllocator> owned_allocator_;
   // Pointers to `owned_devices_`.
   std::vector<PjRtDevice*> devices_;
   // Maps Device::id() to the corresponding Device. Includes all devices.
