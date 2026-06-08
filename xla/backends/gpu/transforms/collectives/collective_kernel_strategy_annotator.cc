@@ -15,8 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/collective_kernel_strategy_annotator.h"
 
+#include <utility>
+
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
@@ -45,9 +48,9 @@ CollectiveBackendConfig::CollectiveKernelStrategy ToProtoStrategy(
     AllReduceStrategy strategy) {
   switch (strategy) {
     case AllReduceStrategy::kOneShot:
-      return CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_CUSTOM_ONE_SHOT;
+      return CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_ONE_SHOT;
     case AllReduceStrategy::kTwoShot:
-      return CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_CUSTOM_TWO_SHOT;
+      return CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_TWO_SHOT;
     default:
       // kMultimem: not yet modelled in the cost model; fall back to default.
       return CollectiveBackendConfig::KERNEL_STRATEGY_DEFAULT;
@@ -66,22 +69,19 @@ absl::StatusOr<bool> TryAnnotateAllReduce(
     return false;
   }
 
-  // Reuse the same eligibility check as thunk_emitter.cc, with
-  // is_collective_kernel_enabled=true (this pass only runs when the flag is
-  // set).
-  absl::StatusOr<AllReduceInfo> info =
-      BuildAllReduceInfo(/*is_collective_kernel_enabled=*/true,
-                         is_multimem_enabled, device_info, all_reduce);
-  if (!info.ok()) {
-    // Collective kernel not supported for this instruction; leave default.
+  absl::StatusOr<AllReduceInfo> maybe_info = BuildAllReduceInfo(
+      /*is_collective_kernel_enabled=*/true, is_multimem_enabled, device_info,
+      all_reduce);
+  if (absl::IsUnimplemented(maybe_info.status())) {
     VLOG(3) << "[CollectiveKernelStrategyAnnotator] Collective kernel not "
                "supported for "
-            << instr->name() << ": " << info.status();
+            << instr->name() << ": " << maybe_info.status();
     return false;
   }
+  ASSIGN_OR_RETURN(AllReduceInfo info, std::move(maybe_info));
 
   CollectiveBackendConfig::CollectiveKernelStrategy proto_strategy =
-      ToProtoStrategy(info->all_reduce_strategy);
+      ToProtoStrategy(info.all_reduce_strategy);
 
   ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
                    instr->backend_config<GpuBackendConfig>());
@@ -89,7 +89,7 @@ absl::StatusOr<bool> TryAnnotateAllReduce(
       proto_strategy);
   RETURN_IF_ERROR(instr->set_backend_config(gpu_config));
 
-  VLOG(2) << "[CollectiveKernelStrategyAnnotator] Annotated " << instr->name()
+  VLOG(3) << "[CollectiveKernelStrategyAnnotator] Annotated " << instr->name()
           << " with kernel strategy "
           << CollectiveBackendConfig::CollectiveKernelStrategy_Name(
                  proto_strategy);

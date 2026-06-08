@@ -167,11 +167,11 @@ message CollectiveBackendConfig {
     // built-in custom C++ kernel; both use the same NVLink-based cost formula
     // so no distinction is needed in the cost model.
     // Set by CollectiveKernelStrategyAnnotator before scheduling.
-    KERNEL_STRATEGY_TRITON_CUSTOM_ONE_SHOT = 1;
+    KERNEL_STRATEGY_TRITON_ONE_SHOT = 1;
     // Intra-node two-shot GPU kernel using NVLink / xGMI P2P symmetric memory
     // (256 KB < size <= 4 MB).  Same coverage as TRITON_ONE_SHOT above.
     // Set by CollectiveKernelStrategyAnnotator before scheduling.
-    KERNEL_STRATEGY_TRITON_CUSTOM_TWO_SHOT = 2;
+    KERNEL_STRATEGY_TRITON_TWO_SHOT = 2;
   }
   CollectiveKernelStrategy kernel_strategy = 7;
 }

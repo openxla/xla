@@ -21,8 +21,10 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -62,14 +64,14 @@ class CollectiveKernelStrategyAnnotatorTest
   CollectiveKernelStrategyAnnotatorTest()
       : device_info_(TestGpuDeviceInfo::H100SXMDeviceInfo()) {}
 
-  CollectiveBackendConfig::CollectiveKernelStrategy GetKernelStrategy(
-      HloModule* module) {
+  absl::StatusOr<CollectiveBackendConfig::CollectiveKernelStrategy>
+  GetKernelStrategy(HloModule* module) {
     for (HloComputation* comp : module->computations()) {
       for (HloInstruction* instr : comp->instructions()) {
         if (instr->opcode() == HloOpcode::kAllReduceStart) {
-          auto cfg = instr->backend_config<GpuBackendConfig>();
-          EXPECT_OK(cfg.status());
-          return cfg->collective_backend_config().kernel_strategy();
+          ASSIGN_OR_RETURN(GpuBackendConfig cfg,
+                           instr->backend_config<GpuBackendConfig>());
+          return cfg.collective_backend_config().kernel_strategy();
         }
       }
     }
@@ -80,7 +82,7 @@ class CollectiveKernelStrategyAnnotatorTest
 };
 
 // 32768 F32 elements = 128 KB ≤ 256 KB → kOneShot →
-// KERNEL_STRATEGY_TRITON_CUSTOM_ONE_SHOT
+// KERNEL_STRATEGY_TRITON_ONE_SHOT
 TEST_F(CollectiveKernelStrategyAnnotatorTest,
        SmallAllReduceIsAnnotatedOneShot) {
   constexpr int64_t kNumElements = 32768;  // 128 KB
@@ -92,12 +94,13 @@ TEST_F(CollectiveKernelStrategyAnnotatorTest,
                                               /*is_multimem_enabled=*/false);
   ASSERT_OK(annotator.Run(module.get()).status());
 
-  EXPECT_EQ(GetKernelStrategy(module.get()),
-            CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_CUSTOM_ONE_SHOT);
+  ASSERT_OK_AND_ASSIGN(auto strategy_one, GetKernelStrategy(module.get()));
+  EXPECT_EQ(strategy_one,
+            CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_ONE_SHOT);
 }
 
 // 262144 F32 elements = 1 MB (256 KB < 1 MB ≤ 4 MB) → kTwoShot →
-// KERNEL_STRATEGY_TRITON_CUSTOM_TWO_SHOT
+// KERNEL_STRATEGY_TRITON_TWO_SHOT
 TEST_F(CollectiveKernelStrategyAnnotatorTest,
        MediumAllReduceIsAnnotatedTwoShot) {
   constexpr int64_t kNumElements = 262144;  // 1 MB
@@ -109,8 +112,9 @@ TEST_F(CollectiveKernelStrategyAnnotatorTest,
                                               /*is_multimem_enabled=*/false);
   ASSERT_OK(annotator.Run(module.get()).status());
 
-  EXPECT_EQ(GetKernelStrategy(module.get()),
-            CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_CUSTOM_TWO_SHOT);
+  ASSERT_OK_AND_ASSIGN(auto strategy_two, GetKernelStrategy(module.get()));
+  EXPECT_EQ(strategy_two,
+            CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_TWO_SHOT);
 }
 
 // 2097152 F32 elements = 8 MB > 4 MB → custom kernel not supported →
@@ -126,8 +130,8 @@ TEST_F(CollectiveKernelStrategyAnnotatorTest,
                                               /*is_multimem_enabled=*/false);
   ASSERT_OK(annotator.Run(module.get()).status());
 
-  EXPECT_EQ(GetKernelStrategy(module.get()),
-            CollectiveBackendConfig::KERNEL_STRATEGY_DEFAULT);
+  ASSERT_OK_AND_ASSIGN(auto strategy_default, GetKernelStrategy(module.get()));
+  EXPECT_EQ(strategy_default, CollectiveBackendConfig::KERNEL_STRATEGY_DEFAULT);
 }
 
 }  // namespace
