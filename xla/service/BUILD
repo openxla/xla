@@ -2212,6 +2212,7 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test_helpers",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
@@ -2221,6 +2222,7 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
     ],
 )
