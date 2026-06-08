@@ -141,7 +141,13 @@ bool GpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
     case HloOpcode::kExp:
     case HloOpcode::kLog:
       if (LowPrecisionType() == BF16) {
-        return compute_capability_.IsCuda();
+        if (compute_capability_.IsCuda()) {
+          return true;
+        }
+        if (auto* rocm_compute_capability =
+                compute_capability_.rocm_compute_capability()) {
+          return rocm_compute_capability->has_bf16_dtype_support();
+        }
       }
       return false;
     case HloOpcode::kAbs:
@@ -149,20 +155,28 @@ bool GpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
     case HloOpcode::kMinimum:
     case HloOpcode::kNegate:
       if (LowPrecisionType() == BF16) {
-        auto* cuda_compute_capability =
-            compute_capability_.cuda_compute_capability();
-        return cuda_compute_capability != nullptr &&
-               cuda_compute_capability->IsAtLeastAmpere();
+        if (auto* cuda_compute_capability =
+                compute_capability_.cuda_compute_capability()) {
+          return cuda_compute_capability->IsAtLeastAmpere();
+        }
+        if (auto* rocm_compute_capability =
+                compute_capability_.rocm_compute_capability()) {
+          return rocm_compute_capability->has_bf16_dtype_support();
+        }
       }
       return false;
     case HloOpcode::kAdd:
     case HloOpcode::kMultiply:
     case HloOpcode::kSubtract: {
       if (LowPrecisionType() == BF16) {
-        auto* cuda_compute_capability =
-            compute_capability_.cuda_compute_capability();
-        return cuda_compute_capability != nullptr &&
-               cuda_compute_capability->IsAtLeastHopper();
+        if (auto* cuda_compute_capability =
+                compute_capability_.cuda_compute_capability()) {
+          return cuda_compute_capability->IsAtLeastHopper();
+        }
+        if (auto* rocm_compute_capability =
+                compute_capability_.rocm_compute_capability()) {
+          return rocm_compute_capability->has_packed_bf16_atomics_support();
+        }
       }
       return false;
     }
