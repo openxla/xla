@@ -23,6 +23,9 @@ sycl_library(
 
 sycl_library(
     name = "ccl_legacy",
+    hdrs = glob([
+        "src/**/*.hpp",
+    ]),
     srcs = glob([
         "plugins/legacy/ccl_legacy.cpp",
     ]),

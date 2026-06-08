@@ -49,6 +49,46 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "level_zero",
+    hdrs = glob([
+        "deps/level_zero/**/*.h",
+    ]),
+    includes = [
+        "deps/level_zero/include",
+    ],
+)
+
+cc_library(
+    name = "pmix",
+    hdrs = glob([
+        "deps/pmix/include/**/*.h",
+    ]),
+    includes = [
+        "deps/pmix/include",
+    ],
+)
+
+cc_library(
+    name = "umf",
+    hdrs = glob([
+        "deps/umf/include/**/*.h",
+    ]),
+    includes = [
+        "deps/umf/include",
+    ],
+)
+
+cc_library(
+    name = "ofi",
+    hdrs = glob([
+        "deps/ofi/include/**/*.h",
+    ]),
+    includes = [
+        "deps/ofi/include",
+    ],
+)
+
 sycl_library(
     name = "oneccl_v1",
     srcs = glob([
@@ -81,6 +121,8 @@ sycl_library(
         "include/**/*.hpp",
         "src/**/*.h",
         "src/**/*.hpp",
+        "src/**/*.list",
+        "src/atl/util/pm/pmi_rt/pmi_rt.c",
     ]) + [":oneccl_config_h"],
     defines = [
     "CCL_C_COMPILER=\\\"Clang\\\"",
@@ -129,5 +171,9 @@ sycl_library(
         "@hwloc",
         ":mpi",
         ":pmi_c_files",
+        ":level_zero",
+        ":pmix",
+        ":umf",
+        ":ofi",
     ],
 )
