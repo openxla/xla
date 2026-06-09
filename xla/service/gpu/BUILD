@@ -1766,6 +1766,7 @@ cc_library(
         "//xla/backends/gpu/transforms/collectives:async_collective_annotator",
         "//xla/backends/gpu/transforms/collectives:collective_backend_assigner",
         "//xla/backends/gpu/transforms/collectives:collective_combiner_annotator",
+        "//xla/backends/gpu/transforms/collectives:collective_kernel_strategy_annotator",
         "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
         "//xla/backends/gpu/transforms/collectives:collective_permute_cycle_decomposer",
         "//xla/backends/gpu/transforms/collectives:collective_pipelining_analyzer",
