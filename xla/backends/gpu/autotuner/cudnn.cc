@@ -250,13 +250,13 @@ GetCudnnFusionConfigs(const HloInstruction& instr,
   std::vector<std::unique_ptr<BackendConfig>> configs;
   bool use_deviceless = false;
   switch (debug_options.xla_gpu_cudnn_deviceless_compilation_mode()) {
+    case DebugOptions::CUDNN_DEVICELESS_COMPILATION_UNSET:
     case DebugOptions::CUDNN_DEVICELESS_COMPILATION_DISABLED:
       use_deviceless = false;
       break;
     case DebugOptions::CUDNN_DEVICELESS_COMPILATION_ALWAYS:
       use_deviceless = true;
       break;
-    case DebugOptions::CUDNN_DEVICELESS_COMPILATION_UNSET:
     case DebugOptions::CUDNN_DEVICELESS_COMPILATION_AUTO:
     default:
       use_deviceless = (stream_executor == nullptr);

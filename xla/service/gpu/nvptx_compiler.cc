@@ -337,6 +337,7 @@ absl::Status NVPTXCompiler::RunCudnnCompilerPasses(
   // Decide whether to run cuDNN compilation deviceless (no live cuDNN handle).
   bool use_deviceless_cudnn = false;
   switch (debug_options.xla_gpu_cudnn_deviceless_compilation_mode()) {
+    case DebugOptions::CUDNN_DEVICELESS_COMPILATION_UNSET:
     case DebugOptions::CUDNN_DEVICELESS_COMPILATION_DISABLED:
       use_deviceless_cudnn = false;
       break;
@@ -344,7 +345,6 @@ absl::Status NVPTXCompiler::RunCudnnCompilerPasses(
       // Force deviceless even if we have a device.
       use_deviceless_cudnn = true;
       break;
-    case DebugOptions::CUDNN_DEVICELESS_COMPILATION_UNSET:
     case DebugOptions::CUDNN_DEVICELESS_COMPILATION_AUTO:
     default:
       // Deviceless only when there is no live device to query.

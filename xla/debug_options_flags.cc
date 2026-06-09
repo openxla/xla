@@ -530,7 +530,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_deviceless_cub_mode(
       DebugOptions::DEVICELESS_CUB_WITH_FALLBACK);
   opts.set_xla_gpu_cudnn_deviceless_compilation_mode(
-      DebugOptions::CUDNN_DEVICELESS_COMPILATION_AUTO);
+      DebugOptions::CUDNN_DEVICELESS_COMPILATION_DISABLED);
   return opts;
 }
 
