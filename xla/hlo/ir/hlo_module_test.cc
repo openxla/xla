@@ -2185,5 +2185,39 @@ TEST(HloModuleTest, CombinedDeduplicationSharesPayloadId) {
   EXPECT_EQ(inst_proto.metadata().metadata_payload().id(), 0);
 }
 
+TEST(HloModuleTest, VerifyScheduleWithMalformedOperandDoesNotCrash) {
+  HloModule m("temp_module", HloModuleConfig());
+  HloComputation::Builder builder("TestComputation");
+  Shape shape = ShapeUtil::MakeShape(F32, {2, 3});
+  HloInstruction* p0 =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0"));
+
+  HloComputation::Builder malformed_builder("MalformedComputation");
+  HloInstruction* p1 = malformed_builder.AddInstruction(
+      HloInstruction::CreateParameter(0, shape, "p1"));
+  HloInstruction* p2 = malformed_builder.AddInstruction(
+      HloInstruction::CreateParameter(1, shape, "p2"));
+  HloInstruction* add = malformed_builder.AddInstruction(
+      HloInstruction::CreateBinary(shape, HloOpcode::kAdd, p1, p2));
+
+  HloComputation* malformed_c =
+      m.AddComputationAndUnifyNamesAndIds(malformed_builder.Build(), true);
+  // Add secondary computation purely to hold p0.
+  m.AddComputationAndUnifyNamesAndIds(builder.Build(), false);
+
+  // Mutate add to have p0 as an operand. p0 is not in 'malformed_c' causing the
+  // mapping lookup to fail.
+  CHECK_OK(add->ReplaceOperandWith(0, p0));
+
+  HloSchedule schedule(&m);
+  // Add instructions to the schedule to bypass the strict size checks.
+  schedule.set_sequence(malformed_c, {p1, p2, add});
+
+  absl::Status status = schedule.Verify();
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.code(), absl::StatusCode::kInternal);
+  EXPECT_THAT(status.message(), ::testing::HasSubstr("is not in schedule"));
+}
+
 }  // namespace
 }  // namespace xla

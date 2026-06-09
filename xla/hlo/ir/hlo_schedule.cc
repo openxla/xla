@@ -425,16 +425,24 @@ absl::Status HloSchedule::Verify(const HloComputation* computation) const {
   }
 
   for (const HloInstruction* instruction : computation->instructions()) {
+    int instruction_pos = instruction_position.at(instruction);
+
     for (const HloInstruction* operand : instruction->operands()) {
-      TF_RET_CHECK(instruction_position.at(operand) <
-                   instruction_position.at(instruction))
+      auto it = instruction_position.find(operand);
+      TF_RET_CHECK(it != instruction_position.end())
+          << "Operand " << operand->name() << " of instruction "
+          << instruction->name() << " is not in schedule";
+      TF_RET_CHECK(it->second < instruction_pos)
           << "Instruction " << instruction->name()
           << " is not scheduled after its operand " << operand->name();
     }
 
     for (const HloInstruction* pred : instruction->control_predecessors()) {
-      TF_RET_CHECK(instruction_position.at(pred) <
-                   instruction_position.at(instruction))
+      auto it = instruction_position.find(pred);
+      TF_RET_CHECK(it != instruction_position.end())
+          << "Control predecessor " << pred->name() << " of instruction "
+          << instruction->name() << " is not in schedule";
+      TF_RET_CHECK(it->second < instruction_pos)
           << "Instruction " << instruction->name()
           << " is not scheduled after its control predecessor " << pred->name();
     }
