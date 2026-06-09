@@ -16,7 +16,11 @@ limitations under the License.
 #ifndef XLA_BACKENDS_PROFILER_CPU_METADATA_UTILS_H_
 #define XLA_BACKENDS_PROFILER_CPU_METADATA_UTILS_H_
 
+#include <cstddef>
+#include <cstdint>
+
 #include "xla/service/hlo.pb.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/profiler/convert/xla_op_utils.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
@@ -35,6 +39,17 @@ class MetadataXPlaneBuilder {
             GetStatTypeStr(tsl::profiler::StatType::kProgramId))) {}
 
   void AddHloProto(uint64_t program_id, const xla::HloProto& hlo_proto) {
+    // Prevent excessively large HLO protos from crashing the profiling session.
+    // HloProto can exceed 2GB which causes protobuf to crash, or it can
+    // make the overall XSpace exceed the 2GB limit.
+    constexpr size_t kMaxHloProtoSize = 512 * 1024 * 1024;  // 512 MB
+    if (hlo_proto.SpaceUsedLong() > kMaxHloProtoSize) {
+      LOG(WARNING) << "HLO proto for program_id " << program_id
+                   << " is too large (" << hlo_proto.SpaceUsedLong()
+                   << " bytes). Skipping serialization to avoid crashes.";
+      return;
+    }
+
     auto name = tsl::profiler::HloModuleNameWithProgramId(
         hlo_proto.hlo_module().name(), program_id);
     tsl::profiler::XEventMetadata* event_metadata =

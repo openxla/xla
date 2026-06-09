@@ -119,6 +119,7 @@ cc_library(
     ]),
     deps = [
         "//xla/service:hlo_proto_cc",
+        "//xla/tsl/platform:logging",
         "//xla/tsl/profiler/convert:xla_op_utils",
         "//xla/tsl/profiler/utils:xplane_builder",
         "//xla/tsl/profiler/utils:xplane_schema",
@@ -164,6 +165,18 @@ cc_binary(
     deps = [
         "//xla/backends/profiler/cpu:host_tracer",
         "//xla/tsl/profiler/backends/cpu:traceme_benchmark",
+    ],
+)
+
+xla_cc_test(
+    name = "metadata_utils_test",
+    srcs = ["metadata_utils_test.cc"],
+    deps = [
+        ":metadata_utils",
+        "//xla/service:hlo_proto_cc",
+        "//xla/tsl/profiler/utils:xplane_builder",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
 
