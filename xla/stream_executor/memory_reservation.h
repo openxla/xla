@@ -55,6 +55,17 @@ class MemoryReservation {
     MemoryAllocation* allocation;
   };
 
+  // Describes a desired post-Remap mapping for a slice of the reservation.
+  struct RemappingDescriptor {
+    size_t reservation_offset;
+    size_t allocation_offset;
+    size_t size;
+    MemoryAllocation* allocation;  // current physical handle, never null
+    // Whether this slice needs UnMap/Map/SetAccess calls. When false, the
+    // existing mapping is preserved.
+    bool remap_required;
+  };
+
   // An RAII wrapper that gives access to a contiguous slice of a memory
   // reservation backed by one or more physical memory allocations.
   // Unmaps the mapped range from the reservation on destruction.
@@ -69,6 +80,16 @@ class MemoryReservation {
     // Returns the device address range that is mapped to the physical memory
     // allocation(s) and can be accessed from the device.
     DeviceAddressBase mapped_address() const;
+
+    // Re-maps this mapping's reservation range as described by `mappings`.
+    // The descriptors must cover the same full range. For each mapping where
+    // remap_required is false, the current mapping is preserved. For the rest,
+    // the slice is unmapped and mapped to `allocation`; SetAccess is invoked
+    // once per maximal run of consecutive remapped mappings. On failure after
+    // remapping starts, Remap unmaps all slices described by `mappings`,
+    // leaving the reservation with no active mapping for the range.
+    absl::StatusOr<ScopedMapping> Remap(
+        absl::Span<const RemappingDescriptor> mappings) &&;
 
     // Returns true if this object does not own a mapping.
     bool is_null() const { return reservation_ == nullptr; }
