@@ -51,8 +51,10 @@ CollectiveBackendConfig::CollectiveKernelStrategy ToProtoStrategy(
       return CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_ONE_SHOT;
     case AllReduceStrategy::kTwoShot:
       return CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_TWO_SHOT;
+    case AllReduceStrategy::kMultimem:
+      // Not yet modelled in the cost model; fall back to default.
+      [[fallthrough]];
     default:
-      // kMultimem: not yet modelled in the cost model; fall back to default.
       return CollectiveBackendConfig::KERNEL_STRATEGY_DEFAULT;
   }
 }
