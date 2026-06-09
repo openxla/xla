@@ -1383,3 +1383,27 @@ rocm_library(
     ],
     alwayslink = 1,
 )
+
+xla_cc_test(
+    name = "rocm_device_address_vmm_allocator_test",
+    srcs = ["rocm_device_address_vmm_allocator_test.cc"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        ":amdhipblaslt_plugin",
+        ":rocm_device_address_vmm_allocator",
+        ":rocm_platform",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor:vmm_device_address_allocator",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
