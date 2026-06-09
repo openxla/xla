@@ -330,6 +330,21 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "rocm_runtime_abi_version_test",
+    srcs = ["rocm_runtime_abi_version_test.cc"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        ":rocm_runtime_abi_version",
+        "//xla/stream_executor/abi:executable_abi_version",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
 
 cc_library(
     name = "rocm_platform_id",
