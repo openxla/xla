@@ -45,7 +45,8 @@ class LowerTranspose : public mlir::OpRewritePattern<stablehlo::TransposeOp> {
   using OpRewritePattern::OpRewritePattern;
 
   mlir::LogicalResult matchAndRewrite(
-      stablehlo::TransposeOp op, mlir::PatternRewriter& rewriter) const override;
+      stablehlo::TransposeOp op,
+      mlir::PatternRewriter& rewriter) const override;
 };
 
 // Returns the AddOp and its non-dot operand (accumulator) if the 'op' is

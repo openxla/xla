@@ -60,14 +60,13 @@ ENTRY e {
 
 absl::StatusOr<std::unique_ptr<HloModule>> ParseScaledDot(
     absl::string_view layout_template, absl::string_view lhs_type,
-    absl::string_view rhs_type,
-    absl::string_view lhs_scale_type = "f8e8m0fnu",
+    absl::string_view rhs_type, absl::string_view lhs_scale_type = "f8e8m0fnu",
     absl::string_view rhs_scale_type = "f8e8m0fnu") {
-  return ParseAndReturnUnverifiedModule(absl::StrReplaceAll(
-      layout_template, {{"$lhs", lhs_type},
-                        {"$rhs", rhs_type},
-                        {"$lhs_scale", lhs_scale_type},
-                        {"$rhs_scale", rhs_scale_type}}));
+  return ParseAndReturnUnverifiedModule(
+      absl::StrReplaceAll(layout_template, {{"$lhs", lhs_type},
+                                            {"$rhs", rhs_type},
+                                            {"$lhs_scale", lhs_scale_type},
+                                            {"$rhs_scale", rhs_scale_type}}));
 }
 
 const HloScaledDotInstruction& GetScaledDot(const HloModule& module) {

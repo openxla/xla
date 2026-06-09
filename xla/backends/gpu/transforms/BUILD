@@ -4062,7 +4062,7 @@ xla_cc_test(
 )
 
 xla_cc_test(
-name = "triton_scaled_dot_support_test",
+    name = "triton_scaled_dot_support_test",
     srcs = ["triton_scaled_dot_support_test.cc"],
     deps = [
         ":triton_scaled_dot_support",

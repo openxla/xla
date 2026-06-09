@@ -37,9 +37,13 @@ bool IsTritonSupportedScaledDot(const HloScaledDotInstruction& dot,
     // Triton's verifier derives the contracting dimension size from each
     // operand's fp4 packing. Mixing fp4 and non-fp4 makes the two sides
     // disagree.
-    if (!lhs_fp4 || !rhs_fp4) return false;
+    if (!lhs_fp4 || !rhs_fp4) {
+      return false;
+    }
 
-    if (!cc.IsAtLeastHopper()) return false;
+    if (!cc.IsAtLeastHopper()) {
+      return false;
+    }
 
     // XLA emits fp4 pack flags from the operand minor dimension.
     const int64_t lhs_c =
@@ -55,7 +59,9 @@ bool IsTritonSupportedScaledDot(const HloScaledDotInstruction& dot,
 
     // Triton's fp4 scaled-MMA path expects both scales to use the same
     // encoding.
-    if (lhs_scale != rhs_scale) return false;
+    if (lhs_scale != rhs_scale) {
+      return false;
+    }
 
     // F4E2M1FN operands use the same payload for MXFP4 and NVFP4; the scale
     // element type selects the NVFP4 lowering.
@@ -69,7 +75,9 @@ bool IsTritonSupportedScaledDot(const HloScaledDotInstruction& dot,
     // On tcgen05 targets, the MXFP4 path accepts XLA's canonical operand
     // layout: lhs is K-packed and rhs is N-packed. Other Hopper-or-newer
     // targets can unpack fp4 operands before using the scaled dot.
-    if (cc.HasTcgen05() && (!lhs_k_pack || rhs_k_pack)) return false;
+    if (cc.HasTcgen05() && (!lhs_k_pack || rhs_k_pack)) {
+      return false;
+    }
   }
 
   return true;

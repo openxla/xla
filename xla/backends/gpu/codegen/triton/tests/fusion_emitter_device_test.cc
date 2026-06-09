@@ -631,12 +631,12 @@ ENTRY e {
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(kHloText));
-  EXPECT_THAT(CreateXTileIrAndFileCheck(std::move(module), "triton_dot", ""),
-              absl_testing::StatusIs(
-                  absl::StatusCode::kInvalidArgument,
-                  ::testing::HasSubstr(
-                      "Packed storage requires offset in dimension 1 "
-                      "to be divisible by 2")));
+  EXPECT_THAT(
+      CreateXTileIrAndFileCheck(std::move(module), "triton_dot", ""),
+      absl_testing::StatusIs(
+          absl::StatusCode::kInvalidArgument,
+          ::testing::HasSubstr("Packed storage requires offset in dimension 1 "
+                               "to be divisible by 2")));
 }
 
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
@@ -2682,8 +2682,7 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   HloComputation* scaled_dot_computation =
       GetFirstComputationWithInstruction(*module, HloOpcode::kScaledDot);
-  EXPECT_THAT(CreateTritonIrAndFileCheckForDot(
-                  *scaled_dot_computation, R"(
+  EXPECT_THAT(CreateTritonIrAndFileCheckForDot(*scaled_dot_computation, R"(
       CHECK: tt.trans
       CHECK: tensor<128x32xi8> -> tensor<32x128xi8>
       CHECK-NOT: unrealized_conversion_cast
@@ -2726,8 +2725,7 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   HloComputation* scaled_dot_computation =
       GetFirstComputationWithInstruction(*module, HloOpcode::kScaledDot);
-  EXPECT_THAT(CreateTritonIrAndFileCheckForDot(
-                  *scaled_dot_computation, R"(
+  EXPECT_THAT(CreateTritonIrAndFileCheckForDot(*scaled_dot_computation, R"(
       CHECK: tt.trans
       CHECK: tensor<128x32xi8> -> tensor<32x128xi8>
       CHECK-NOT: unrealized_conversion_cast
@@ -2771,8 +2769,7 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   HloComputation* scaled_dot_computation =
       GetFirstComputationWithInstruction(*module, HloOpcode::kScaledDot);
-  EXPECT_THAT(CreateTritonIrAndFileCheckForDot(
-                  *scaled_dot_computation, R"(
+  EXPECT_THAT(CreateTritonIrAndFileCheckForDot(*scaled_dot_computation, R"(
       CHECK-NOT: unrealized_conversion_cast
       CHECK: tt.dot_scaled
       CHECK-NOT: unrealized_conversion_cast

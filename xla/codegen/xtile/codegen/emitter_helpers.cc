@@ -201,11 +201,11 @@ absl::StatusOr<int64_t> PackedElementsPerByte(PrimitiveType type) {
   const int64_t storage_bit_width = primitive_util::BitWidth(U8);
   const int64_t element_bit_width = primitive_util::BitWidth(type);
   if (storage_bit_width % element_bit_width != 0) {
-    return absl::InvalidArgumentError(absl::StrCat(
-        "Packed storage bit width ", storage_bit_width,
-        " must be divisible by element bit width ", element_bit_width,
-        " for primitive type ",
-        primitive_util::LowercasePrimitiveTypeName(type), "."));
+    return absl::InvalidArgumentError(
+        absl::StrCat("Packed storage bit width ", storage_bit_width,
+                     " must be divisible by element bit width ",
+                     element_bit_width, " for primitive type ",
+                     primitive_util::LowercasePrimitiveTypeName(type), "."));
   }
   return storage_bit_width / element_bit_width;
 }
@@ -250,9 +250,9 @@ absl::StatusOr<SmallVector<int64_t>> GetStorageShape(
   int64_t packed_dim = LayoutUtil::MinorToMajor(shape).front();
   if (packed_dim < 0 ||
       packed_dim >= static_cast<int64_t>(storage_shape.size())) {
-    return absl::InvalidArgumentError(absl::StrCat(
-        "Packed storage dimension is out of bounds for shape ",
-        shape.ToString()));
+    return absl::InvalidArgumentError(
+        absl::StrCat("Packed storage dimension is out of bounds for shape ",
+                     shape.ToString()));
   }
   TF_ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
                       PackedElementsPerByte(shape.element_type()));
@@ -277,14 +277,14 @@ absl::Status CheckPackedStorageTile(const Shape& shape,
   if (packed_dim < 0 ||
       packed_dim >= static_cast<int64_t>(tile_strides.size()) ||
       packed_dim >= static_cast<int64_t>(tile_offsets.size())) {
-    return absl::InvalidArgumentError(absl::StrCat(
-        "Packed storage dimension is out of bounds for shape ",
-        shape.ToString()));
+    return absl::InvalidArgumentError(
+        absl::StrCat("Packed storage dimension is out of bounds for shape ",
+                     shape.ToString()));
   }
   if (tile_strides[packed_dim] != 1) {
-    return absl::InvalidArgumentError(absl::StrCat(
-        "Packed storage requires unit stride in dimension ", packed_dim,
-        " for shape ", shape.ToString()));
+    return absl::InvalidArgumentError(
+        absl::StrCat("Packed storage requires unit stride in dimension ",
+                     packed_dim, " for shape ", shape.ToString()));
   }
   TF_ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
                       PackedElementsPerByte(shape.element_type()));
@@ -704,8 +704,7 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
   TF_ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
                       tiled_hlo.tile_offsets_indexing());
   auto tile_offsets = tile_offsets_indexing.GetSymbolicMap().GetResults();
-  TF_RETURN_IF_ERROR(
-      CheckPackedStorageTile(shape, tile_strides, tile_offsets));
+  TF_RETURN_IF_ERROR(CheckPackedStorageTile(shape, tile_strides, tile_offsets));
   ASSIGN_OR_RETURN(SmallVector<Value> offsets,
                    ComputeOffsetsForTile(b, pid, runtime_values, tiled_hlo));
 

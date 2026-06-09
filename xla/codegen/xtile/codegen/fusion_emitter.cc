@@ -275,8 +275,9 @@ absl::StatusOr<TensorValue> EmitTiledBitcast(
   TF_ASSIGN_OR_RETURN(
       SmallVector<int64_t> input_tile_sizes,
       GetStorageShape(tiled_bitcast.operand(0)->tile_sizes(), input_shape));
-  TF_ASSIGN_OR_RETURN(SmallVector<int64_t> output_tile_sizes,
-                      GetStorageShape(tiled_bitcast.tile_sizes(), output_shape));
+  TF_ASSIGN_OR_RETURN(
+      SmallVector<int64_t> output_tile_sizes,
+      GetStorageShape(tiled_bitcast.tile_sizes(), output_shape));
   // If the bitcast changes the element type to an element type of the same
   // bitwidth, we need to emit a ttir::BitcastOp.
   if (input_shape.element_type() != output_shape.element_type()) {
