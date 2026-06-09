@@ -2279,6 +2279,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "will try to make Triton fusions first and foremost where it is "
       "possible."));
   flag_list->push_back(tsl::Flag(
+      "xla_priority_fusion_log_skipped_candidates",
+      bool_setter_for(
+          &DebugOptions::set_xla_priority_fusion_log_skipped_candidates),
+      debug_options->xla_priority_fusion_log_skipped_candidates(),
+      "Log skipped fusion candidates in PriorityFusion pass."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_dump_autotune_results_to",
       string_setter_for(&DebugOptions::set_xla_gpu_dump_autotune_results_to),
       debug_options->xla_gpu_dump_autotune_results_to(),
