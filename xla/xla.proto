@@ -1612,6 +1612,9 @@ message DebugOptions {
   // interpretation of these values is left to the backend.
   map<string, string> xla_backend_extra_options = 500;
 
+  // Log skipped fusion candidates in PriorityFusion pass.
+  optional bool xla_priority_fusion_log_skipped_candidates = 513;
+
   reserved "hlo_reduce_precision_options";
   reserved "legacy_command_buffer_custom_call_targets";
   reserved "xla_allow_get_default_platform";
