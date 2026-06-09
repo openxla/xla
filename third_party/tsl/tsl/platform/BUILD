@@ -412,12 +412,9 @@ filegroup(
         "denormal.cc",
         "hash.cc",
         "numbers.cc",
-        "path.cc",
         "protobuf.cc",
         "protobuf_util.cc",
-        "scanner.cc",
         "setround.cc",
-        "str_util.cc",
         "@xla//xla/tsl/platform:mobile_srcs_no_runtime",
     ] + select({
         "@xla//xla/tsl:fuchsia": tf_google_mobile_srcs_no_runtime(),
