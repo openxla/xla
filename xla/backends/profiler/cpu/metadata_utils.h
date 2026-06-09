@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_PROFILER_CPU_METADATA_UTILS_H_
 #define XLA_BACKENDS_PROFILER_CPU_METADATA_UTILS_H_
 
+#include "absl/log/log.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/tsl/profiler/convert/xla_op_utils.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
@@ -43,7 +44,17 @@ class MetadataXPlaneBuilder {
       event_metadata->set_display_name(name);
       tsl::profiler::XStatsBuilder<tsl::profiler::XEventMetadata> event_stats(
           event_metadata, &plane_);
-      event_stats.AddStatValue(*hlo_proto_stat_, hlo_proto);
+      // Protobuf has a hard 2GB limit. Prevent SIGSEGV/OOM by dropping
+      // >1.5GB protos.
+      constexpr size_t kMaxHloProtoSize =
+          1536ULL * 1024ULL * 1024ULL;  // 1.5 GB
+      if (hlo_proto.ByteSizeLong() > kMaxHloProtoSize) {
+        LOG(WARNING) << "HloProto for program_id " << program_id
+                     << " exceeds size limit (" << hlo_proto.ByteSizeLong()
+                     << " bytes). Dropping it to prevent crash.";
+      } else {
+        event_stats.AddStatValue(*hlo_proto_stat_, hlo_proto);
+      }
       event_stats.AddStatValue(*program_id_stat_, program_id);
     }
   }
