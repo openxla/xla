@@ -15,8 +15,10 @@ limitations under the License.
 
 #include "xla/service/float8_fnuz_ir_emitter.h"
 
+#include <cstdint>
 #include <string>
 
+#include "absl/status/statusor.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/IR/Constants.h"
@@ -24,6 +26,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
