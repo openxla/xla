@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/convolution_thunk.h"
 #include "xla/backends/gpu/runtime/cudnn_thunk.h"
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
+#include "xla/backends/gpu/runtime/dynamic_memcpy_thunk.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/replica_id_thunk.h"
@@ -152,6 +153,20 @@ std::unique_ptr<DeviceToDeviceCopyThunk> CreateCopyThunk(
   return std::make_unique<DeviceToDeviceCopyThunk>(
       Thunk::ThunkInfo(), ShapedSlice{slice0, shape},
       ShapedSlice{slice0, shape}, 1024);
+}
+
+std::unique_ptr<DynamicMemcpyThunk> CreateDynamicMemcpyThunk(
+    const BufferAllocation& src_alloc, const BufferAllocation& dst_alloc,
+    DynamicMemcpyThunk::Offsets offsets) {
+  constexpr int64_t kBufferBytes = sizeof(int32_t) * 4;
+  constexpr int64_t kCopyBytes = sizeof(int32_t);
+
+  Shape shape = ShapeUtil::MakeShape(S32, {4});
+  BufferAllocation::Slice src_slice(&src_alloc, 0, kBufferBytes);
+  BufferAllocation::Slice dst_slice(&dst_alloc, 0, kBufferBytes);
+  return std::make_unique<DynamicMemcpyThunk>(
+      Thunk::ThunkInfo(), ShapedSlice{src_slice, shape},
+      ShapedSlice{dst_slice, shape}, kCopyBytes, std::move(offsets));
 }
 
 std::unique_ptr<CublasLtMatmulThunk> CreateCublasLtMatmulThunk(
@@ -329,6 +344,72 @@ TEST(CommandBufferConversionPassTest, ConvertsToCommandBufferThunk) {
   const auto& thunks_in_command_buffer =
       command_buffer_thunk->thunks()->thunks();
   EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kCopy));
+}
+
+TEST(CommandBufferConversionPassTest,
+     ConvertsDynamicMemcpyThunkWithStaticOffsetsToCommandBufferThunk) {
+  ThunkSequence thunks;
+
+  BufferAllocation src_alloc(0, sizeof(int32_t) * 4, 0);
+  BufferAllocation dst_alloc(1, sizeof(int32_t) * 4, 0);
+  thunks.push_back(CreateDynamicMemcpyThunk(
+      src_alloc, dst_alloc,
+      DynamicMemcpyThunk::Offsets{/*depends_on_loop=*/false,
+                                  /*src_offsets=*/{sizeof(int32_t)},
+                                  /*dst_offsets=*/{0}}));
+
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(
+      DebugOptions::DYNAMIC_SLICE_COPY_FUSION);
+
+  se::DeviceDescription device_info;
+  FakeErrorAllocator allocator;
+  CommandBufferConversionPass pass{"test"};
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(true));
+
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer));
+
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(thunks[0].get());
+  const auto& thunks_in_command_buffer =
+      command_buffer_thunk->thunks()->thunks();
+  EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kCopy));
+}
+
+TEST(CommandBufferConversionPassTest,
+     DoesNotConvertLoopDependentDynamicMemcpyThunkInNeverUpdateMode) {
+  ThunkSequence thunks;
+
+  BufferAllocation src_alloc(0, sizeof(int32_t) * 4, 0);
+  BufferAllocation dst_alloc(1, sizeof(int32_t) * 4, 0);
+  thunks.push_back(CreateDynamicMemcpyThunk(
+      src_alloc, dst_alloc,
+      DynamicMemcpyThunk::Offsets{/*depends_on_loop=*/true,
+                                  /*src_offsets=*/{0, sizeof(int32_t)},
+                                  /*dst_offsets=*/{0, 0}}));
+
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.set_xla_gpu_command_buffer_update_mode(
+      DebugOptions::NEVER_UPDATE);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(
+      DebugOptions::DYNAMIC_SLICE_COPY_FUSION);
+
+  se::DeviceDescription device_info;
+  FakeErrorAllocator allocator;
+  CommandBufferConversionPass pass{"test"};
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(false));
+
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCopy));
 }
 
 TEST(CommandBufferConversionPassTest, PartiallyConvertsToCommandBufferThunk) {

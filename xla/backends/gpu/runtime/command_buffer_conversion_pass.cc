@@ -83,6 +83,7 @@ CommandBufferConfig GetCommandBufferConfig(
   }
 
   CommandBufferConfig config{std::move(commands), device_info,
+                             debug_options.xla_gpu_command_buffer_update_mode(),
                              num_local_devices};
 
   // Erase command buffer cmd types that are not supported by the gpu runtime.
@@ -270,6 +271,21 @@ static bool IsConvertible(const DynamicSliceThunk& dynamic_slice_thunk,
       dynamic_slice_thunk.get_embedded_executor().thunks(), config);
 }
 
+// Returns true if the DynamicMemcpyThunk is convertible to a command buffer
+// operation. Loop-dependent offsets require command-buffer updates because the
+// memcpy source/destination addresses can change between executions even when
+// the underlying buffer allocations are unchanged.
+static bool IsConvertible(const DynamicMemcpyThunk& dynamic_memcpy_thunk,
+                          const CommandBufferConfig& config) {
+  if (config.update_mode == DebugOptions::NEVER_UPDATE &&
+      dynamic_memcpy_thunk.offsets().depends_on_loop) {
+    VLOG(2) << "DynamicMemcpyThunk with loop-dependent offsets is not "
+               "convertible in NEVER_UPDATE command-buffer mode";
+    return false;
+  }
+  return true;
+}
+
 // Returns true if the AsyncStartThunk is convertible to a command buffer
 // operation. This requires that all nested thunks are convertible.
 static bool IsConvertible(const AsyncStartThunk& async_start_thunk,
@@ -320,6 +336,11 @@ bool IsConvertible(const Thunk& thunk, const CommandBufferConfig& config) {
 
   if (thunk.kind() == Thunk::kDynamicSlice) {
     return IsConvertible(static_cast<const DynamicSliceThunk&>(thunk), config);
+  }
+
+  if (auto* dynamic_memcpy_thunk =
+          dynamic_cast<const DynamicMemcpyThunk*>(&thunk)) {
+    return IsConvertible(*dynamic_memcpy_thunk, config);
   }
 
   if (thunk.kind() == Thunk::kRaggedAllToAll) {
