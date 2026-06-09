@@ -833,9 +833,8 @@ absl::StatusOr<TensorValue> EmitParameterExtract(mlir::ImplicitLocOpBuilder& b,
     xla::Shape spatial_shape = xla::ShapeUtil::MakeShapeWithDenseLayout(
         element_type, tile_info.original_shape(),
         tile_info.minor_to_major_layout());
-    ASSIGN_OR_RETURN(
-        mlir::MemRefType spatial_memref_type,
-        GetMemRefType(spatial_shape, tile_info.storage_type()));
+    ASSIGN_OR_RETURN(mlir::MemRefType spatial_memref_type,
+                     GetMemRefType(spatial_shape, tile_info.storage_type()));
     source_buffer = b.create<xtile::SelectBufferOp>(spatial_memref_type,
                                                     source_buffer, replica_id);
   }
