@@ -1159,6 +1159,7 @@ xla_test(
     srcs = ["dynamic_memcpy_thunk_test.cc"],
     backends = ["gpu"],
     deps = [
+        ":command",
         ":command_buffer_thunk",
         ":command_executor",
         ":dynamic_memcpy_thunk",
@@ -1166,6 +1167,7 @@ xla_test(
         ":thunk_proto_cc",
         ":while_loop",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/service:buffer_assignment",
         "//xla/service:platform_util",
@@ -1178,7 +1180,6 @@ xla_test(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util/proto:parse_text_proto",
         "//xla/tsl/util/proto:proto_matchers",
