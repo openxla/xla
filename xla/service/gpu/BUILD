@@ -3658,7 +3658,6 @@ xla_cc_test(
         "//xla:xla_proto_cc",
         "//xla/stream_executor/cuda:compilation_options",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:test",
     ],
 )
 
