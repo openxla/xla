@@ -18,7 +18,7 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/status/status.h"
-#include "xla/backends/gpu/collectives/roc_mori_kernels.h"
+#include "xla/backends/gpu/collectives/mori_kernels.h"
 #include "mori/shmem/shmem.hpp"
 
 using namespace mori;

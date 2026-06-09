@@ -12,7 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "xla/backends/gpu/collectives/roc_mori_collectives.h"
+#include "xla/backends/gpu/collectives/mori_collectives.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -28,7 +28,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
-#include "xla/backends/gpu/collectives/roc_mori_communicator.h"
+#include "xla/backends/gpu/collectives/mori_communicator.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
@@ -43,7 +43,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
-#include "xla/backends/gpu/collectives/roc_mori_kernels.h"
+#include "xla/backends/gpu/collectives/mori_kernels.h"
 #include "xla/core/collectives/clique_id.h"
 #include "xla/core/collectives/clique_key.h"
 #include "xla/core/collectives/collectives.h"

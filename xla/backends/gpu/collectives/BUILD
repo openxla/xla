@@ -50,7 +50,7 @@ cc_library(
     ] + if_cuda_or_rocm_is_configured([
         ":nccl_or_rccl_collectives",
     ]) + if_rocm_is_configured([
-        ":roc_mori_collectives",
+        ":mori_collectives",
     ]) + if_cuda_is_configured([
         ":nvshmem_collectives_if_supported",
     ]) + if_sycl_is_configured([
@@ -932,10 +932,10 @@ cc_library(
 
 
 rocm_library(
-    name = "roc_mori_kernels",
-    hdrs = ["roc_mori_kernels.h"],
+    name = "mori_kernels",
+    hdrs = ["mori_kernels.h"],
     srcs = [
-        "roc_mori_kernels.cu.cc",
+        "mori_kernels.cu.cc",
     ],
     copts = ["-U__HIP_DISABLE_CPP_FUNCTIONS__"],   # <-- only if needed
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
@@ -963,14 +963,14 @@ rocm_library(
 )
 
 cc_library(
-    name = "roc_mori_collectives",
+    name = "mori_collectives",
     hdrs = if_rocm_is_configured([
-            "roc_mori_collectives.h",
-            "roc_mori_communicator.h",
+            "mori_collectives.h",
+            "mori_communicator.h",
             ]),
     srcs = if_rocm_is_configured([
-            "roc_mori_collectives.cc",
-            "roc_mori_communicator.cc",
+            "mori_collectives.cc",
+            "mori_communicator.cc",
             ]),
     tags = [
         "gpu",
@@ -1011,7 +1011,7 @@ cc_library(
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:numbers",
     ] + if_rocm_is_configured([
-        ":roc_mori_kernels",
+        ":mori_kernels",
     ]),
     alwayslink = True,
 )

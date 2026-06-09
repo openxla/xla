@@ -32,14 +32,14 @@ package_group(
 
 # Allows to explicitely disable MORI collectives using invocation flag.
 bool_flag(
-    name = "roc_mori_enabled",
+    name = "mori_enabled",
     build_setting_default = True,
 )
 
 config_setting(
-    name = "roc_mori_supported",
+    name = "mori_supported",
     constraint_values = ["@platforms//os:linux"],
-    flag_values = {":roc_mori_enabled": "True"},
+    flag_values = {":mori_enabled": "True"},
 )
 
 cc_library(

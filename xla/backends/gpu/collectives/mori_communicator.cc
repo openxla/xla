@@ -10,7 +10,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/collectives/roc_mori_communicator.h"
+#include "xla/backends/gpu/collectives/mori_communicator.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -23,8 +23,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
-#include "xla/backends/gpu/collectives/roc_mori_collectives.h"
-#include "xla/backends/gpu/collectives/roc_mori_kernels.h"
+#include "xla/backends/gpu/collectives/mori_collectives.h"
+#include "xla/backends/gpu/collectives/mori_kernels.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"

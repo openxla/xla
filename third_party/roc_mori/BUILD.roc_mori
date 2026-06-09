@@ -112,8 +112,8 @@ cc_library(
 
 # Small compile-time identifier some XLA call sites reference.
 write_file(
-    name = "roc_mori_config_h",
-    out = "roc_mori_config.h",
+    name = "mori_config_h",
+    out = "mori_config.h",
     content = [
         "#ifndef THIRD_PARTY_ROCM_MORI_CONFIG_H_",
         "#define THIRD_PARTY_ROCM_MORI_CONFIG_H_",
@@ -124,7 +124,7 @@ write_file(
 )
 
 cc_library(
-    name = "roc_mori_config",
-    hdrs = ["roc_mori_config.h"],
+    name = "mori_config",
+    hdrs = ["mori_config.h"],
     include_prefix = "third_party",
 )

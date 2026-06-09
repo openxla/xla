@@ -47,8 +47,8 @@ cc_library(
 )
 
 cc_library(
-    name = "roc_mori_config",
-    hdrs = ["roc_mori_config.h"],
+    name = "mori_config",
+    hdrs = ["mori_config.h"],
     include_prefix = "third_party",
 )
 """
@@ -67,7 +67,7 @@ constexpr static char XLA_ROCM_MORI_VERSION[] = "local";
 
 #endif  // THIRD_PARTY_ROCM_MORI_CONFIG_H_
 """
-    repository_ctx.file("roc_mori_config.h", config_header)
+    repository_ctx.file("mori_config.h", config_header)
 
 local_mori_configure = repository_rule(
     implementation = _mori_impl,
