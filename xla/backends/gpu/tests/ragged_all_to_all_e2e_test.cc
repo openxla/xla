@@ -60,6 +60,7 @@ enum class RaggedAllToAllImplType {
   kOneShotWithMultiGpuBarrierWithNccl,
   // TODO: b/482045400 - Remove double-copy approach once testing is done.
   kOneShotWithMultiGpuBarrierWithNcclZeroCopy,
+  kDeviceKernel,
 };
 
 class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
@@ -283,6 +284,9 @@ class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
       opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl(
           true);
       opts.set_xla_gpu_experimental_ragged_all_to_all_zero_copy(true);
+    }
+    if (impl_type_ == RaggedAllToAllImplType::kDeviceKernel) {
+      opts.set_xla_gpu_experimental_ragged_all_to_all_use_device_kernel(true);
     }
     return opts;
   }
@@ -1088,6 +1092,8 @@ std::string RaggedAllToAllImplTypeName(
     // TODO: b/482045400 - Remove double-copy approach once testing is done.
     case RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNcclZeroCopy:
       return "one_shot_with_multi_gpu_barrier_with_nccl_zero_copy";
+    case RaggedAllToAllImplType::kDeviceKernel:
+      return "device_kernel";
     default:
       LOG(FATAL) << "Unknown ragged all-to-all implementation type.";
   }
@@ -1107,8 +1113,8 @@ std::string CollectivesModeName(DebugOptions::CollectivesMode mode) {
 }
 
 // Builds the test parameters: NCCL impl is exercised against all collectives
-// modes (private/symmetric/peer); other impls only need PRIVATE since they
-// don't dispatch on the mode.
+// modes (private/symmetric/peer); the device-kernel impl requires symmetric
+// memory; other impls only need PRIVATE since they don't dispatch on the mode.
 std::vector<
     std::tuple<bool, RaggedAllToAllImplType, DebugOptions::CollectivesMode>>
 BuildRaggedAllToAllTestParams() {
@@ -1131,6 +1137,8 @@ BuildRaggedAllToAllTestParams() {
       params.emplace_back(enable_async, impl_type,
                           DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
     }
+    params.emplace_back(enable_async, RaggedAllToAllImplType::kDeviceKernel,
+                        DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY);
   }
   return params;
 }

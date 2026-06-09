@@ -70,6 +70,10 @@ struct RaggedAllToAllConfig {
   CollectiveThunk::CollectivesMode collectives_mode =
       DebugOptions::COLLECTIVES_PRIVATE_MEMORY;
 
+  // If true, the thunk will use the device-initiated (NCCL GIN + LSA) kernel
+  // for ragged-all-to-all when symmetric buffers are available.
+  bool use_device_kernel = false;
+
   // If set, this will be used to determine if optimized kernels that assume a
   // fast interconnect can be used.
   std::optional<int64_t> fast_interconnect_slice_size_override = std::nullopt;
@@ -191,6 +195,29 @@ class RaggedAllToAllThunk : public CollectiveThunk {
     return config_.zero_copy_in_one_shot_kernel;
   }
 
+  bool UsesDeviceKernel() const {
+    return config_.use_device_kernel && config_.config.use_symmetric_buffer;
+  }
+
+  static constexpr int32_t device_kernel_cta_count() {
+    return kDeviceKernelCtaCount;
+  }
+
+  GpuDeviceCommunicator::Requirements DeviceKernelLsaDevCommRequirements()
+      const {
+    return GpuDeviceCommunicator::Requirements{.lsa_barrier_count =
+                                                   device_kernel_cta_count()};
+  }
+
+  GpuDeviceCommunicator::Requirements DeviceKernelDevCommRequirements() const {
+    return GpuDeviceCommunicator::Requirements{
+        .barrier_count = device_kernel_cta_count(),
+        .lsa_barrier_count = device_kernel_cta_count(),
+        .rail_gin_barrier_count = device_kernel_cta_count(),
+        .gin_signal_count = device_kernel_cta_count(),
+        .gin_connection_full = true};
+  }
+
   // Returns true if one shot kernel is supported
   bool IsOneShotKernelSupported() const;
 
@@ -220,6 +247,8 @@ class RaggedAllToAllThunk : public CollectiveThunk {
   }
 
   const RaggedAllToAllConfig config_;
+
+  static constexpr int32_t kDeviceKernelCtaCount = 64;
 
   mutable absl::Mutex mutex_;
   absl::flat_hash_map<se::StreamExecutor*,

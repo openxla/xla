@@ -232,6 +232,13 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
 
       auto* comm = dynamic_cast<GpuCommunicator*>(*(*clique)->comm(*rank));
       DCHECK(comm) << "Communicator must be in the acquired clique";
+      if (GpuDeviceCommunicator::RequestsGin(reqs) && !comm->SupportsGin()) {
+        XLA_VLOG_DEVICE(2, params.executor->device_ordinal())
+            << absl::StreamFormat(
+                   "Skip GIN device communicator: rank=%v clique=%v reqs=%v",
+                   *rank, r.key, reqs);
+        continue;
+      }
       ASSIGN_OR_RETURN(std::unique_ptr<GpuDeviceCommunicator> dev_comm,
                        comm->CreateDeviceComm(reqs));
       RETURN_IF_ERROR(
