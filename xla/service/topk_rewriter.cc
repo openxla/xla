@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -285,6 +286,33 @@ std::optional<int64_t> TopkRewriter::SortIsInTopK(HloInstruction* inst) {
   return k;
 }
 
+// A variadic sort over {values, indices} needs a 4-parameter comparator. A
+// "TopK" custom call can carry a 2-parameter comparator when it originated from
+// a values-only top-k whose index output was dead at rewrite time (e.g. before
+// SPMD partitioning cloned the call and added an index consumer). Return an
+// equivalent comparator that preserves the original value comparison and adds
+// two trailing S32 index parameters that are ignored.
+static absl::StatusOr<HloComputation*> AddIgnoredIndexParameters(
+    HloComputation* comparator) {
+  CHECK_EQ(comparator->num_parameters(), 2);
+  HloComputation::Builder b(absl::StrCat(comparator->name(), ".with_index"));
+  absl::flat_hash_map<const HloInstruction*, HloInstruction*> clone_map;
+  for (HloInstruction* inst : comparator->MakeInstructionPostOrder()) {
+    std::vector<HloInstruction*> new_operands;
+    new_operands.reserve(inst->operand_count());
+    for (HloInstruction* operand : inst->operands()) {
+      new_operands.push_back(clone_map.at(operand));
+    }
+    clone_map[inst] = b.AddInstruction(
+        inst->CloneWithNewOperands(inst->shape(), new_operands));
+  }
+  const Shape index = ShapeUtil::MakeShape(S32, {});
+  b.AddInstruction(HloInstruction::CreateParameter(2, index, "lhs.index"));
+  b.AddInstruction(HloInstruction::CreateParameter(3, index, "rhs.index"));
+  return comparator->parent()->AddEmbeddedComputation(
+      b.Build(clone_map.at(comparator->root_instruction())));
+}
+
 struct TopKCustomCall {
   HloInstruction* topk;
   HloInstruction* value_gte;
@@ -521,11 +549,16 @@ class TopkDecomposerVisitor : public DfsHloRewriteVisitor {
               call->shape().tuple_shapes(0), sort, zeroes,
               call->shape().tuple_shapes(0).dimensions(), ones))));
     } else {
+      HloComputation* comparator = variadic_comparator;
+      if (comparator->num_parameters() == 2) {
+        ASSIGN_OR_RETURN(comparator,
+                         AddIgnoredIndexParameters(variadic_comparator));
+      }
       HloInstruction* iota = call->AddInstruction(HloInstruction::CreateIota(
           iota_shape, iota_shape.dimensions().size() - 1));
       HloInstruction* sort = call->AddInstruction(HloInstruction::CreateSort(
           ShapeUtil::MakeTupleShape({input->shape(), iota_shape}),
-          sort_dimension, {input, iota}, variadic_comparator,
+          sort_dimension, {input, iota}, comparator,
           /*is_stable=*/true));
       // Apply a slice to a tuple.
       auto slice_tuple = [&](const size_t index) {
