@@ -516,6 +516,7 @@ xla_test(
         ":collective_clique_requests",
         ":collective_memory_requests",
         ":collective_params",
+        ":command",
         ":command_buffer_thunk",
         ":command_executor",
         ":custom_call_thunk",
