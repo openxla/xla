@@ -235,7 +235,8 @@ absl::Status MarkCommandBufferOutputCopies(
     output_info_entry.second.copy_from_command_buffer_output = false;
   }
 
-  if (update_mode == DebugOptions::ALWAYS_UPDATE) {
+  if (update_mode == DebugOptions::ALWAYS_UPDATE ||
+      update_mode == DebugOptions::TEMP_NEVER_UPDATE) {
     return absl::OkStatus();
   }
 
@@ -554,6 +555,7 @@ GpuExecutable::GpuExecutable(
                      : DebugOptions::ALWAYS_UPDATE;
 
     if (update_mode == DebugOptions::NEVER_UPDATE ||
+        update_mode == DebugOptions::TEMP_NEVER_UPDATE ||
         update_mode == DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
       CHECK_OK(thunk_executor_->thunks().WalkNested(
           [&](const Thunk* t) -> absl::Status {
@@ -566,14 +568,20 @@ GpuExecutable::GpuExecutable(
               }
               for (const BufferUse& use : cmd->buffer_uses()) {
                 BufferAllocation::Index index = use.slice().index();
+                bool is_preallocated_temp_buffer = false;
                 if (index >= 0 &&
                     static_cast<size_t>(index) < allocation_ptrs_.size()) {
                   const BufferAllocation& alloc = *allocation_ptrs_[index];
                   if (alloc.is_constant() || alloc.size() == 0) continue;
+                  is_preallocated_temp_buffer =
+                      alloc.IsPreallocatedTempBuffer();
                 }
                 command_buffer_update_allocation_indexes_.insert(index);
-                if (update_mode != DebugOptions::CAPTURE_CMD_NEVER_UPDATE ||
-                    cmd->IsTracedCommand()) {
+                if (update_mode == DebugOptions::NEVER_UPDATE ||
+                    (update_mode == DebugOptions::CAPTURE_CMD_NEVER_UPDATE &&
+                     cmd->IsTracedCommand()) ||
+                    (update_mode == DebugOptions::TEMP_NEVER_UPDATE &&
+                     is_preallocated_temp_buffer)) {
                   command_buffer_allocation_indexes_.insert(index);
                 }
               }
@@ -1209,6 +1217,7 @@ GpuExecutable::MaybeCreateVaRemapExecutionState(
     return nullptr;
   }
   if (update_mode != DebugOptions::NEVER_UPDATE &&
+      update_mode != DebugOptions::TEMP_NEVER_UPDATE &&
       update_mode != DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
     return Internal("Unsupported command buffer update mode: %d", update_mode);
   }
@@ -1361,6 +1370,7 @@ absl::Status GpuExecutable::UpdateCommandBufferAllocationPolicy(
   }
 
   if (update_mode != DebugOptions::NEVER_UPDATE &&
+      update_mode != DebugOptions::TEMP_NEVER_UPDATE &&
       update_mode != DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
     return Internal("Unsupported command buffer update mode: %d", update_mode);
   }

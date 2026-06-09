@@ -260,6 +260,24 @@ TEST_F(GpuExecutableTest,
 }
 
 TEST_F(GpuExecutableTest,
+       UnaliasedCommandBufferOutputTempNeverUpdateIsNotMarkedForCopy) {
+  GpuExecutable::OutputInfo output_info{/*allocation_index=*/0,
+                                        /*passthrough=*/false,
+                                        /*alias_config=*/std::nullopt};
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> executable,
+      CreateCommandBufferOutputInfoExecutable(std::move(output_info),
+                                              DebugOptions::TEMP_NEVER_UPDATE));
+
+  ASSERT_THAT(executable->thunk_executor().thunks(), SizeIs(1));
+  EXPECT_EQ(executable->thunk_executor().thunks().front()->kind(),
+            Thunk::kCommandBuffer);
+  auto it = executable->output_info().find(ShapeIndex{});
+  ASSERT_NE(it, executable->output_info().end());
+  EXPECT_FALSE(it->second.copy_from_command_buffer_output);
+}
+
+TEST_F(GpuExecutableTest,
        UnaliasedCommandBufferOutputWithConservativeWriteIsMarkedForCopy) {
   GpuExecutable::OutputInfo output_info{/*allocation_index=*/0,
                                         /*passthrough=*/false,
@@ -449,6 +467,66 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationIndexesSkipMlirConstants) {
       executable->thunk_executor().thunks(),
       ElementsAre(Pointee(Property(&Thunk::kind, Thunk::kCommandBuffer))));
   EXPECT_THAT(executable->command_buffer_allocation_indexes(), ElementsAre(1));
+}
+
+TEST_F(GpuExecutableTest, TempNeverUpdateVaRemapsOnlyTempAllocations) {
+  DebugOptions debug_options = GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+  debug_options.set_xla_gpu_command_buffer_update_mode(
+      DebugOptions::TEMP_NEVER_UPDATE);
+
+  std::vector<BufferAllocation> allocations;
+  allocations.reserve(3);
+  allocations.emplace_back(0, 4, 0);
+  allocations.back().set_entry_computation_parameter(
+      /*parameter_number=*/0, /*param_shape_index=*/{},
+      /*parameter_aliased_with_output=*/false);
+  allocations.emplace_back(1, 4, 0);
+  allocations.back().set_maybe_live_out(true);
+  allocations.emplace_back(2, 4, 0);
+
+  Shape shape = ShapeUtil::MakeShape(S32, {});
+  BufferAllocation::Slice parameter_slice(&allocations[0], 0, 4);
+  BufferAllocation::Slice live_out_slice(&allocations[1], 0, 4);
+  BufferAllocation::Slice temp_slice(&allocations[2], 0, 4);
+
+  emitters::KernelArgument parameter_arg(shape, parameter_slice);
+  parameter_arg.set_written(false);
+  emitters::KernelArgument live_out_arg(shape, live_out_slice);
+  emitters::KernelArgument temp_arg(shape, temp_slice);
+
+  ThunkSequence thunk_sequence;
+  thunk_sequence.push_back(std::make_unique<KernelThunk>(
+      ThunkInfoWithId(123),
+      /*kernel_name=*/"test_kernel",
+      /*kernel_arguments=*/
+      emitters::KernelArguments(std::vector<emitters::KernelArgument>{
+          parameter_arg, live_out_arg, temp_arg}),
+      /*launch_dimensions=*/LaunchDimensions(),
+      /*cluster_dim=*/std::nullopt,
+      /*shmem_bytes=*/0,
+      /*tma_metadata=*/se::gpu::TmaMetadata()));
+
+  GpuExecutable::Params params;
+  params.executable =
+      std::make_unique<ThunkExecutor>(std::move(thunk_sequence));
+  params.debug_options = debug_options;
+  params.module_name = "test_module";
+  params.mlir_allocations = std::move(allocations);
+  params.device_description = CommandBufferDeviceDescription();
+  params.enable_debug_info_manager = false;
+  params.debug_module =
+      std::make_unique<HloModule>(params.module_name, HloModuleConfig());
+  params.debug_module->mutable_config().set_debug_options(debug_options);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> executable,
+                       GpuExecutable::Create(std::move(params)));
+
+  EXPECT_THAT(
+      executable->thunk_executor().thunks(),
+      ElementsAre(Pointee(Property(&Thunk::kind, Thunk::kCommandBuffer))));
+  EXPECT_THAT(executable->command_buffer_allocation_indexes(), ElementsAre(2));
 }
 
 TEST_F(GpuExecutableTest, ComputeComputationLayout) {
