@@ -635,7 +635,8 @@ ENTRY e {
               absl_testing::StatusIs(
                   absl::StatusCode::kInvalidArgument,
                   ::testing::HasSubstr(
-                      "Packed storage requires even offset in dimension 1")));
+                      "Packed storage requires offset in dimension 1 "
+                      "to be divisible by 2")));
 }
 
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
