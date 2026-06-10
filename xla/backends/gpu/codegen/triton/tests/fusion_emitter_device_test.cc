@@ -2560,15 +2560,29 @@ TEST_F(TritonScaledDotTest, Fp4Succeeds) {
                        GetOptimizedModule(kHloTextTemplate));
   HloComputation* scaled_dot_computation = GetFirstComputationWithInstruction(
       *optimized_module, HloOpcode::kScaledDot);
-  constexpr absl::string_view kExpectedTritonIr = R"(
+  ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
+                       scaled_dot_computation->FusionInstruction()
+                           ->backend_config<GpuBackendConfig>());
+  const BlockLevelFusionConfig& block_level_fusion_config =
+      gpu_config.fusion_backend_config().block_level_fusion_config();
+  ASSERT_EQ(block_level_fusion_config.output_tiles_size(), 1);
+  const auto& output_tile_sizes =
+      block_level_fusion_config.output_tiles(0).sizes();
+  ASSERT_EQ(output_tile_sizes.size(), 3);
+  const int64_t output_m = output_tile_sizes.Get(1);
+  const int64_t output_n = output_tile_sizes.Get(2);
+  ASSERT_EQ(output_n % 2, 0);
+  const std::string expected_triton_ir =
+      absl::Substitute(R"(
       CHECK: tt.dot_scaled
-      CHECK: tensor<128x64xi8>, tensor<128x4xi8>
-      CHECK: tensor<128x16xi8>, tensor<32x4xi8>
-      CHECK: -> tensor<128x32xf32>
-  )";
+      CHECK: tensor<$0x64xi8>, tensor<$0x4xi8>
+      CHECK: tensor<128x$1xi8>, tensor<$2x4xi8>
+      CHECK: -> tensor<$0x$2xf32>
+  )",
+                       output_m, output_n / 2, output_n);
 
   EXPECT_THAT(CreateTritonIrAndFileCheckForDot(*scaled_dot_computation,
-                                               kExpectedTritonIr),
+                                               expected_triton_ir),
               absl_testing::IsOk());
 
   EXPECT_TRUE(RunAndCompareNoHloPasses(
