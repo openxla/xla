@@ -78,7 +78,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
-#include "xla/map_util.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/device_id.h"
@@ -120,11 +119,9 @@ limitations under the License.
 #include "xla/stream_executor/kernel_stats.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_reservation.h"
-#include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_id.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
-#include "xla/stream_executor/scoped_module_handle.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
@@ -476,6 +473,12 @@ GpuExecutable::GpuExecutable(
                                                std::move(proto));
   }
   set_module_stats(std::move(module_stats));
+
+  module_cache_constants_.reserve(constants_.size());
+  for (const ConstantInfo& info : constants_) {
+    module_cache_constants_.push_back(
+        {info.symbol_name, info.content.span(), info.allocation_index});
+  }
 
   // Populate command_buffer_allocation_indexes_ with buffer indices accessed by
   // command buffer thunks. Skip constant and zero-size allocations since they
@@ -1019,73 +1022,9 @@ absl::Status BarrierAfterExecutable(
 
 absl::StatusOr<const GpuExecutable::BufferAllocToDeviceMemoryMap*>
 GpuExecutable::ResolveConstantGlobals(se::Stream* stream) {
-  se::StreamExecutor* executor = stream->parent();
-
-  absl::MutexLock lock(module_handle_mutex_);
-  auto it = module_globals_.find(executor);
-  if (it != module_globals_.end()) {
-    return it->second.get();
-  }
-
-  se::MultiModuleLoaderSpec module_spec;
-  if (!binary().empty()) {
-    module_spec.AddCudaCubinInMemory(binary());
-  }
-  module_spec.AddCudaPtxInMemory(text().c_str());
-
-  auto globals = std::make_unique<BufferAllocToDeviceMemoryMap>();
-  se::ModuleHandle module_handle;
-  // The CUDA driver isn't able to load a PTX and a binary which are both empty.
-  // It's okay if we skip loading in this case; if the module isn't loaded, all
-  // symbol lookups will fail, just as they should for an empty module.
-  if (!(executor->GetPlatform()->id() == se::cuda::kCudaPlatformId &&
-        binary().empty() && text().empty())) {
-    ASSIGN_OR_RETURN(module_handle, executor->LoadModule(module_spec));
-  }
-
-  // A flag signalling if constant initialization submitted memcpy operations
-  // to the `stream`.
-  int submitted_mem_copies = 0;
-
-  for (const ConstantInfo& info : constants_) {
-    absl::StatusOr<se::DeviceAddressBase> global_status;
-    if (static_cast<bool>(module_handle)) {
-      global_status = executor->GetSymbol(info.symbol_name, module_handle);
-    }
-
-    se::DeviceAddressBase global;
-
-    CHECK(static_cast<bool>(module_handle) && global_status.ok());
-    // The constant was defined in the PTX and has been allocated by the CUDA
-    // driver.
-    global = *global_status;
-    XLA_VLOG_DEVICE(3, executor->device_ordinal()) << absl::StreamFormat(
-        "Resolved global %s to %p", info.symbol_name, global.opaque());
-
-    if (!info.content.span().empty()) {
-      // This means the constant did not have an initializer in the PTX and
-      // therefore must be initialized by XLA here.
-      RETURN_IF_ERROR(stream->Memcpy(&global, info.content.span().data(),
-                                     info.content.span().size()));
-      submitted_mem_copies = true;
-    }
-
-    if (info.allocation_index != -1) {
-      InsertOrDie(globals.get(), info.allocation_index, global);
-    }
-  }
-
-  // Wait for the completion of all host->device transfers, to guarantee that
-  // destructor will not race with any operations in flight (deallocate
-  // xla::Literal owned by the HLO module).
-  if (submitted_mem_copies) {
-    CHECK_OK(stream->BlockHostUntilDone());
-  }
-
-  module_handles_.emplace(executor,
-                          se::ScopedModuleHandle(executor, module_handle));
-  return module_globals_.emplace(executor, std::move(globals))
-      .first->second.get();
+  return module_cache_.ResolveConstantGlobals(
+      stream, text_, absl::MakeConstSpan(binary_),
+      absl::MakeConstSpan(module_cache_constants_));
 }
 
 absl::StatusOr<se::DeviceAddressBase> GpuExecutable::BufferForAllocation(
@@ -1722,7 +1661,7 @@ absl::Status GpuExecutable::ExecuteThunks(
     // Collect the set of allocations that changed between executions.
     std::vector<std::pair<int32_t, std::string>> changed_allocations;
 
-    absl::MutexLock lock(module_handle_mutex_);
+    absl::MutexLock lock(module_allocations_mutex_);
     if (module_allocations_.find(executor) == module_allocations_.end()) {
       std::vector<se::DeviceAddressBase> allocs_addr;
       allocs_addr.reserve(buffer_allocations.size());
