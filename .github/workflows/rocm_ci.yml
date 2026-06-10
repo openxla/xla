@@ -59,6 +59,7 @@ jobs:
         --security-opt=seccomp=unconfined
         --tmpfs /root/.cache/bazel:rw,exec,size=80g
         --group-add video
+        --env-file /etc/podinfo/gha-gpu-isolation-settings
     defaults:
       run:
         shell: bash
