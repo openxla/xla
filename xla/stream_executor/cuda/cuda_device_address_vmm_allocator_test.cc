@@ -39,7 +39,7 @@ limitations under the License.
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/vmm_device_address_allocator.h"
+#include "xla/stream_executor/device_address_vmm_allocator.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor {
@@ -1327,9 +1327,9 @@ TEST_F(DeviceAddressVmmAllocatorTest, DestructorLogsDebugStatisticsAtVlog1) {
   const uint64_t granularity = GetVmmGranularity();
   ASSERT_GT(granularity, 0);
 
-  const int old_vlog = absl::SetVLogLevel("vmm_device_address_allocator", 1);
+  const int old_vlog = absl::SetVLogLevel("device_address_vmm_allocator", 1);
   absl::Cleanup restore_vlog = [old_vlog] {
-    absl::SetVLogLevel("vmm_device_address_allocator", old_vlog);
+    absl::SetVLogLevel("device_address_vmm_allocator", old_vlog);
   };
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
   EXPECT_CALL(mock_log,
