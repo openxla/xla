@@ -22,7 +22,6 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -30,6 +29,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -75,7 +75,7 @@ absl::StatusOr<bool> DynamicSliceCopyFusionAsyncWrapper::RunImpl(
 
       // Use the same async-start context shape as the existing generic async
       // wrapper. LHS classifies this pair as async memcpy, not async compute.
-      TF_ASSIGN_OR_RETURN(
+      ASSIGN_OR_RETURN(
           HloInstruction * async_done,
           computation->CreateAsyncInstructions(
               instruction, {ShapeUtil::MakeScalarShape(U32)},

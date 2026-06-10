@@ -1130,7 +1130,7 @@ ENTRY main {
   EXPECT_EQ(done_resources[0].first, memcpy_resource);
   EXPECT_EQ(done_resources[0].second, ResourceUsageType::kResourceOccupy);
 
-  TF_EXPECT_OK(ScheduleModule(module.get(), /*num_parallel_resources=*/2));
+  EXPECT_OK(ScheduleModule(module.get(), /*num_parallel_resources=*/2));
   const HloSchedule& schedule = module->schedule();
   std::vector<HloInstruction*> instruction_sequence =
       schedule.sequence(module->entry_computation()).instructions();
