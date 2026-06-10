@@ -116,7 +116,7 @@ struct HloRunnerConfig {
   int64_t gpu_client_initialization_timeout_sec = 300;
   float gpu_client_mem_fraction = xla::GpuAllocatorConfig{}.memory_fraction;
   bool profile_execution = false;
-  std::string profile_to_csv = "";
+  std::string append_profile_to_csv_file = "";
   std::string xla_gpu_dump_xspace_to = "";
 };
 
@@ -234,8 +234,14 @@ RawCompileOptionsFromFlags(const HloRunnerConfig& opts) {
 struct CSVProfileTimeWriter {
   constexpr static const char kCSVSep = ',';
 
-  explicit CSVProfileTimeWriter(absl::string_view csv_file)
-      : csv_file_path_(csv_file) {
+  explicit CSVProfileTimeWriter(const HloRunnerConfig& opts)
+      : csv_file_path_(opts.append_profile_to_csv_file) {
+    // Use different CSV file for each node since they can use shared file
+    // system.
+    if (opts.num_nodes > 1) {
+      csv_file_path_ = absl::StrCat(csv_file_path_, "_", opts.task_id);
+    }
+    csv_file_path_ += ".csv";
     new_file_ = !tsl::Env::Default()->FileExists(csv_file_path_).ok();
     run_time_ = absl::FormatTime("%Y-%m-%d %H:%M:%S", absl::Now(),
                                  absl::LocalTimeZone());
@@ -258,12 +264,12 @@ struct CSVProfileTimeWriter {
   }
 
   ~CSVProfileTimeWriter() {
+    if (exec_time_ms_.empty()) {
+      return;
+    }
     std::unique_ptr<tsl::WritableFile> fout;
     if (!tsl::Env::Default()->NewAppendableFile(csv_file_path_, &fout).ok()) {
       LOG(ERROR) << "Failed to open CSV file " << csv_file_path_;
-      return;
-    }
-    if (exec_time_ms_.empty()) {
       return;
     }
     // Column headers are appended only once if a CSV file does not exist.
@@ -369,10 +375,8 @@ static absl::Status RunMultihostHloRunner(int argc, char** argv,
 
   if (opts.profile_execution) {
     running_options.execution_profiles = &execution_profiles;
-    // If we run with distributed client, only the master process will write
-    // to the CSV file.
-    if (!opts.profile_to_csv.empty() && opts.task_id == 0) {
-      csv_writer = std::make_unique<CSVProfileTimeWriter>(opts.profile_to_csv);
+    if (!opts.append_profile_to_csv_file.empty()) {
+      csv_writer = std::make_unique<CSVProfileTimeWriter>(opts);
     }
   }
 
@@ -526,12 +530,13 @@ int main(int argc, char** argv) {
                 "client. Only used with the BFC allocator."),
       tsl::Flag("profile_execution", &opts.profile_execution,
                 "If set, we will profile the execution and print the results."),
-      tsl::Flag("profile_to_csv", &opts.profile_to_csv,
-                "A path to a CSV file to save the averaged profile results to. "
-                "Takes effect only if --profile_execution is set. If the file "
-                "does not exist, it will be created with a header row listing "
-                "all input hlo files. Otherwise, new results will be appended "
-                "to the existing file."),
+      tsl::Flag(
+          "append_profile_to_csv_file", &opts.append_profile_to_csv_file,
+          "A path to a CSV file ('.csv' extension is added automatically) "
+          "to save the averaged profile results to. Takes effect only if "
+          "--profile_execution is set. If the file does not exist, it "
+          "will be created with a header row listing all input hlo files. "
+          "Otherwise, new results will be appended to the existing file."),
       tsl::Flag("xla_gpu_dump_xspace_to", &opts.xla_gpu_dump_xspace_to,
                 "A directory to dump xspace data for GPU profiling."),
       // This option is not used during parsing, but it is added here for
