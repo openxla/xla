@@ -22,10 +22,11 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// Returns true when XLA can route `dot` through Triton's CUDA scaled-dot
-// lowering on `cc`.
-bool IsTritonSupportedScaledDot(const HloScaledDotInstruction& dot,
-                                const se::CudaComputeCapability& cc);
+// Returns true for a scaled-dot instruction with F4E2M1FN data operands when
+// its data operand types, layouts, scale types, or target CC are unsupported by
+// Triton. Scaled-dot instructions without F4E2M1FN data operands return false.
+bool ShouldRejectTritonF4ScaledDot(const HloScaledDotInstruction& dot,
+                                   const se::CudaComputeCapability& cc);
 
 }  // namespace gpu
 }  // namespace xla

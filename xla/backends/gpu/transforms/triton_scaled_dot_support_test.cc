@@ -83,7 +83,8 @@ void ExpectSupported(absl::string_view layout, absl::string_view lhs_type,
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseScaledDot(layout, lhs_type, rhs_type, lhs_scale_type,
                                   rhs_scale_type));
-  EXPECT_EQ(IsTritonSupportedScaledDot(GetScaledDot(*module), cc), expected);
+  EXPECT_EQ(!ShouldRejectTritonF4ScaledDot(GetScaledDot(*module), cc),
+            expected);
 }
 
 TEST(IsSupportedTest, RejectsFp4BeforeHopper) {

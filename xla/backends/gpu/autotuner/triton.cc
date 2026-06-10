@@ -391,7 +391,7 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
       hlo_query::ForEachInstructionWithOpcode(
           *fusion->fused_instructions_computation(), HloOpcode::kScaledDot,
           [&](HloInstruction* scaled_dot) {
-            if (!IsTritonSupportedScaledDot(
+            if (ShouldRejectTritonF4ScaledDot(
                     *Cast<HloScaledDotInstruction>(scaled_dot), *cuda_cc)) {
               unsupported_scaled_dot = scaled_dot->ToString();
             }
