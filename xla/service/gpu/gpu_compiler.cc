@@ -3064,13 +3064,12 @@ GpuCompiler::LegacyCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
                                           nullptr, borrowed_context->get()));
 
   std::vector<std::unique_ptr<CompiledModule>> results;
-  ASSIGN_OR_RETURN(
-      results.emplace_back(),
-      LegacyGpuAotCompilationResult::FromModule(
-          hlo_module.get(),
-          res.compile_module_results.buffer_assignment->ToProto(),
-          res.backend_result.asm_text, res.backend_result.binary,
-          res.backend_result.dnn_compiled_graphs, pointer_size_, this));
+  ASSIGN_OR_RETURN(results.emplace_back(),
+                   LegacyGpuAotCompilationResult::FromModule(
+                       hlo_module.get(),
+                       res.compile_module_results.buffer_assignment->ToProto(),
+                       res.backend_result.asm_text, res.backend_result.binary,
+                       {}, pointer_size_, this));
 
   return std::move(results);
 }

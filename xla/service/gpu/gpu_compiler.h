@@ -168,7 +168,6 @@ class GpuCompiler : public LLVMCompiler {
   struct BackendCompileResult {
     std::string asm_text;
     std::vector<uint8_t> binary;
-    BinaryMap dnn_compiled_graphs;
     ModuleStats module_stats;
   };
 
