@@ -2,8 +2,8 @@
 
 load("//third_party:repo.bzl", "tf_mirror_urls")
 
-XPU_TRITON_COMMIT = "4ebe8309f671a08b94360e73ba9f3b99dd0e344a"
-XPU_TRITON_SHA256 = "c0c4deca10d3c9331d14f5c744642161cd9a6c4671100f0ce0537b7d13270fc0"
+XPU_TRITON_COMMIT = "0ba44beb6746a3f4935198bfcc353ee0abe0b5ac"
+XPU_TRITON_SHA256 = "c7ac24d81221f33c57e02246a342bc26dc00a11f12217137efa6c0d220cb01f1"
 
 def _use_xpu_triton(repository_ctx):
     return repository_ctx.getenv("ENABLE_INTEL_XPU_TRITON", "").strip() == "1"
@@ -21,7 +21,6 @@ def _triton_archive_impl(repository_ctx):
         patch_files = [
             "//third_party/triton:oss_only/build_files.patch",
             "//third_party/triton:intel_xpu/intel_build.patch",
-            "//third_party/triton:intel_xpu/intel_forward_fix.patch",
         ]
         strip_prefix = "intel-xpu-backend-for-triton-" + commit
         url = tf_mirror_urls("https://github.com/intel/intel-xpu-backend-for-triton/archive/{}.tar.gz".format(commit))
