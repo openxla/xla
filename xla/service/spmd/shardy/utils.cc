@@ -273,8 +273,7 @@ CustomCallOp cloneCustomCallWithNewResultTypes(CustomCallOp op,
       op.getCallTargetNameAttr(), op.getHasSideEffectAttr(),
       op.getBackendConfigAttr(), op.getApiVersionAttr(),
       op.getCalledComputations(), op.getOperandLayoutsAttr(),
-      op.getResultLayoutsAttr(), op.getOutputOperandAliases(),
-      op.getResultTilingsAttr());
+      op.getResultLayoutsAttr(), op.getOutputOperandAliases());
   customCallOp->setDiscardableAttrs(mlir::DictionaryAttr::get(
       op->getContext(), llvm::to_vector(op->getDiscardableAttrs())));
   return customCallOp;
