@@ -27,18 +27,17 @@ limitations under the License.
 #include "xla/stream_executor/abi/executable_abi_version.h"
 #include "xla/stream_executor/abi/executable_abi_version.pb.h"
 #include "xla/stream_executor/abi/runtime_abi_version.pb.h"
-#include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/platform_id.h"
+#include "xla/stream_executor/rocm/rocm_platform_id.h"
 
 namespace stream_executor::gpu {
-
 
 absl::StatusOr<PlatformId> ROCmRuntimeAbiVersion::platform_id() const {
   return rocm::kROCmPlatformId;
 }
 
 absl::StatusOr<RuntimeAbiVersionProto> ROCmRuntimeAbiVersion::ToProto() const {
-    return RuntimeAbiVersionProto();
+  return RuntimeAbiVersionProto();
 }
 
 absl::Status ROCmRuntimeAbiVersion::IsCompatibleWith(

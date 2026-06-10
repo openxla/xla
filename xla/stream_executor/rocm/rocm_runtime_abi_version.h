@@ -31,13 +31,11 @@ namespace stream_executor::gpu {
 
 class ROCmRuntimeAbiVersion : public RuntimeAbiVersion {
  public:
-
   absl::StatusOr<RuntimeAbiVersionProto> ToProto() const override;
   absl::StatusOr<PlatformId> platform_id() const override;
 
   absl::Status IsCompatibleWith(
       const ExecutableAbiVersion& executable_abi_version) const override;
-
 };
 
 }  // namespace stream_executor::gpu

@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/stream_executor/rocm/rocm_runtime_abi_version.h"
 
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
@@ -24,7 +23,6 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 namespace {
-
 
 TEST(RocmRuntimeAbiVersionTest, IsCompatibleWith) {
   ROCmRuntimeAbiVersion current_runtime_abi_version;
@@ -38,7 +36,6 @@ TEST(RocmRuntimeAbiVersionTest, IsCompatibleWith) {
   // ABI versions.
   EXPECT_OK(current_runtime_abi_version.IsCompatibleWith(
       current_executable_abi_version));
-
 }
 }  // namespace
-}  // namespace stream_executor::cuda
+}  // namespace stream_executor::gpu
