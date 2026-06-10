@@ -219,6 +219,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -252,11 +253,11 @@ cc_library(
     srcs = ["kernel_api_builder.cc"],
     hdrs = ["kernel_api_builder.h"],
     deps = [
-        "//xla:frontend_attributes",
         ":computation_partitioner",
         ":elemental_hlo_to_mlir",
         ":kernel_arguments",
         ":type_util",
+        "//xla:frontend_attributes",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -310,6 +311,7 @@ xla_cc_test(
         "//xla/service:buffer_value",
         "//xla/service:logical_buffer",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:AffineDialect",
         "@llvm-project//mlir:IR",

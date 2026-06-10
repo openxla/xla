@@ -172,13 +172,14 @@ absl::StatusOr<mlir::func::FuncOp> EmitKernelApi(
     attrs.push_back(builder.getNamedAttr(
         mlir::LLVM::LLVMDialect::getDereferenceableAttrName(),
         builder.getIndexAttr(arg.slice().size())));
-    if (!arg.written() && arg.invariant()) {
-      attrs.push_back(
-          builder.getNamedAttr(kXlaInvariantAttr, builder.getUnitAttr()));
-    }
-    if (!arg.written() && !arg.invariant()) {
-      attrs.push_back(
-          builder.getNamedAttr(kXlaNotInvariantAttr, builder.getUnitAttr()));
+    if (!arg.written()) {
+      if (arg.invariant()) {
+        attrs.push_back(
+            builder.getNamedAttr(kXlaInvariantAttr, builder.getUnitAttr()));
+      } else {
+        attrs.push_back(
+            builder.getNamedAttr(kXlaNotInvariantAttr, builder.getUnitAttr()));
+      }
     }
     return builder.getDictionaryAttr(attrs);
   };

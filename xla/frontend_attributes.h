@@ -33,7 +33,8 @@ void SetDisjointReadWriteRegionsAttr(HloInstruction* instruction);
 // frontend attribute set (returns false otherwise).
 bool HasDisjointReadWriteRegionsAttr(HloInstruction* instruction);
 
-// Comma-separated list of operand indices that should not be assumed invariant.
+// Frontend attribute name for operands that should not be assumed invariant.
+// The attribute value is a comma-separated list of operand indices.
 inline constexpr absl::string_view kXlaNoInvariantOperands =
     "xla.no_invariant_operands";
 

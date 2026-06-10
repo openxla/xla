@@ -19,6 +19,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status_matchers.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/MLIRContext.h"
@@ -94,15 +95,15 @@ TEST(DefaultWorkItemIndexingMap, MultiDimensionTile) {
 using KernelApiBuilderTest = HloHardwareIndependentTestBase;
 
 TEST_F(KernelApiBuilderTest, NoInvariantOperandsFrontendAttribute) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
 e {
   a = s8[0] parameter(0)
   b = s8[0] parameter(1)
   c = s8[0] add(a, b), frontend_attributes={xla.no_invariant_operands="0"}
 })"));
   AliasInfo alias_info;
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<BufferAssignment> assignment,
       BufferAssigner::Run(
           module.get(), std::make_unique<DependencyHloOrdering>(module.get()),
@@ -112,7 +113,7 @@ e {
           &alias_info, [](LogicalBuffer::Color) { return 0; },
           BufferAssigner::Options{.allocate_buffers_for_constants = true}));
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       KernelSpec spec,
       GetKernelSpec("test", *module->entry_computation()->root_instruction(),
                     assignment.get(), WorkDimensions{}));

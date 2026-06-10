@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "llvm/ADT/STLExtras.h"
 #include "xla/frontend_attributes.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
@@ -157,8 +158,7 @@ absl::StatusOr<KernelArguments> CreateKernelArguments(
   absl::flat_hash_set<int> no_invariant_operands =
       NonInvariantOperands(*hlo_instruction);
 
-  int op_idx = 0;
-  for (const HloInstruction* operand : hlo_instruction->operands()) {
+  for (auto [op_idx, operand] : llvm::enumerate(hlo_instruction->operands())) {
     ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
                      buffer_assignment.GetUniqueSlice(operand, {}));
     KernelArgument arg(operand->shape(), slice);
@@ -166,7 +166,6 @@ absl::StatusOr<KernelArguments> CreateKernelArguments(
       arg.set_invariant(false);
     }
     kernel_arguments.emplace_back(std::move(arg));
-    ++op_idx;
   }
 
   ASSIGN_OR_RETURN(OutputArguments output_result,

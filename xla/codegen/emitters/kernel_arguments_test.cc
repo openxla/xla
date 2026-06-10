@@ -385,8 +385,8 @@ TEST_F(KernelArgumentsTest, UnmanagedArguments) {
 
 TEST_F(KernelArgumentsTest,
        NoInvariantFrontendAnnotationPropagatesToArguments) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
     e {
       a = s4[5] parameter(0)
       b = s4[6] parameter(1)
@@ -396,14 +396,14 @@ TEST_F(KernelArgumentsTest,
     }
   )"));
   AliasInfo alias_info;
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<BufferAssignment> assignment,
       BufferAssigner::Run(
           module.get(), std::make_unique<DependencyHloOrdering>(module.get()),
           &BufferSizeBytes, &alias_info, [](LogicalBuffer::Color) { return 0; },
           BufferAssigner::Options{.allocate_buffers_for_constants = true}));
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto kernel_arguments,
       KernelArguments::Create(*assignment, gpu::GetDefaultBufferAlignment(),
                               module->entry_computation()->root_instruction()));
