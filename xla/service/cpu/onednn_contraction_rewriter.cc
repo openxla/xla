@@ -381,6 +381,9 @@ absl::StatusOr<Shape> AdjustAddendShape(const HloInstruction* contraction,
     auto addend_rank = addend->shape().dimensions().size();
     auto output_rank = contraction->shape().dimensions().size();
     if (addend_rank < output_rank) {
+      VLOG(2) << "AdjustAddendShape: addend_rank=" << addend_rank
+                << " < output_rank=" << output_rank
+                << ", prepending " << (output_rank - addend_rank) << " dimensions";
       std::vector<int64_t> ones(output_rank - addend_rank, 1);
       return ShapeUtil::InsertDimensionsAtIndex(addend->shape(), 0, ones);
     }
