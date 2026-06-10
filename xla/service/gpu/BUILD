@@ -696,7 +696,14 @@ bool_flag(
 
 cc_library(
     name = "gpu_executable",
-    srcs = ["gpu_executable.cc"],
+    srcs = [
+        "gpu_executable.cc",
+        "gpu_executable_buffers.cc",
+        "gpu_executable_command_buffer_va_remapping.cc",
+        "gpu_executable_output_info.cc",
+        "gpu_executable_serialization.cc",
+        "gpu_executable_thunks.cc",
+    ],
     hdrs = ["gpu_executable.h"],
     deps = [
         ":alias_info",
@@ -768,6 +775,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:event",
         "//xla/stream_executor:event_based_timer",
+        "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:kernel_stats",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:memory_reservation",

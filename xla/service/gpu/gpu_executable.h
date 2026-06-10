@@ -99,9 +99,8 @@ class GpuExecutable : public Executable {
 
     static absl::StatusOr<ConstantInfo> FromProto(
         const GpuExecutableProto::ConstantInfoProto& proto,
-        const absl::flat_hash_map<std::string,
-                                  const HloInstruction*>* absl_nullable
-            content_overrides = nullptr);
+        const absl::flat_hash_map<std::string, const HloInstruction*>*
+            absl_nullable content_overrides = nullptr);
   };
 
   struct OutputInfo {
@@ -224,7 +223,7 @@ class GpuExecutable : public Executable {
       absl::FunctionRef<absl::StatusOr<ParameterBuffer>(
           const BufferAllocation& allocation)>;
 
-  absl::Span<const BufferAllocation* absl_nonnull const> GetAllocations()
+  absl::Span<const BufferAllocation * absl_nonnull const> GetAllocations()
       const override {
     return allocation_ptrs_;
   }
@@ -378,6 +377,10 @@ class GpuExecutable : public Executable {
   static absl::StatusOr<BorrowedStreams> BorrowStreams(
       const ServiceExecutableRunOptions& run_options, int device_ordinal,
       int num_streams, se::StreamPriority priority);
+
+  // Collects buffer allocation indices accessed by command buffer thunks for
+  // optional virtual-address remapping.
+  void CollectCommandBufferAllocationIndexes();
 
   // Handles the VA remapping path of ExecuteThunks: reserves or remaps the
   // virtual address range for command buffer allocations, then delegates to
