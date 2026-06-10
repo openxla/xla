@@ -120,20 +120,14 @@ class GpuExecutable : public Executable {
     // would indicate the aliased parameter), and what kind of alias it is.
     std::optional<HloInputOutputAliasConfig::Alias> alias_config;
 
-    // Whether this unaliased live-out output is written by a CommandBufferThunk
-    // and must be copied before being returned to the caller for update modes
-    // that VA-remap returned live-out outputs.
-    bool copy_from_command_buffer_output = false;
-
     GpuExecutableProto::OutputInfoProto ToProto() const;
     static absl::StatusOr<OutputInfo> FromProto(
         const GpuExecutableProto::OutputInfoProto& proto);
 
     friend bool operator==(const OutputInfo& lhs, const OutputInfo& rhs) {
       return std::tie(lhs.allocation_index, lhs.passthrough,
-                      lhs.alias_config, lhs.copy_from_command_buffer_output) ==
-             std::tie(rhs.allocation_index, rhs.passthrough, rhs.alias_config,
-                      rhs.copy_from_command_buffer_output);
+                      lhs.alias_config) ==
+             std::tie(rhs.allocation_index, rhs.passthrough, rhs.alias_config);
     }
 
     friend bool operator!=(const OutputInfo& lhs, const OutputInfo& rhs) {

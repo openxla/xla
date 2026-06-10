@@ -860,7 +860,6 @@ xla_cc_test(
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/pjrt/proto:compile_options_proto_cc",
-        "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "//xla/service:buffer_value",
         "//xla/service:hlo_module_config",

@@ -85,7 +85,6 @@ CommandBufferConfig GetCommandBufferConfig(
 
   CommandBufferConfig config{
       std::move(commands), device_info,
-      debug_options.xla_gpu_command_buffer_update_mode(),
       debug_options.xla_gpu_command_buffer_unroll_loops(), num_local_devices};
 
   // Erase command buffer cmd types that are not supported by the gpu runtime.
@@ -309,12 +308,6 @@ static bool IsConvertible(const DynamicSliceThunk& dynamic_slice_thunk,
                "because device-memory offsets are not supported";
     return false;
   }
-  if (config.update_mode == DebugOptions::NEVER_UPDATE &&
-      dynamic_slice_thunk.HasHostComputedOffsets()) {
-    VLOG(2) << "DynamicSliceThunk with host-computed offsets is not "
-               "convertible in NEVER_UPDATE command-buffer mode";
-    return false;
-  }
   return ThunkSequenceIsConvertible(
       dynamic_slice_thunk.get_embedded_executor().thunks(), config);
 }
@@ -330,29 +323,14 @@ static bool IsConvertible(
                "buffers because runtime offset verification is enabled";
     return false;
   }
-  if (config.update_mode == DebugOptions::NEVER_UPDATE &&
-      dynamic_slice_fusion_thunk.HasLoopDependentOffsets()) {
-    VLOG(2) << "DynamicSliceFusionV2Thunk is not convertible in NEVER_UPDATE "
-               "command-buffer mode because its offsets depend on loop "
-               "iteration";
-    return false;
-  }
   return ThunkSequenceIsConvertible(dynamic_slice_fusion_thunk.thunks(),
                                     config);
 }
 
 // Returns true if the DynamicMemcpyThunk is convertible to a command buffer
-// operation. Loop-dependent offsets require command updates and are therefore
-// unsupported in NEVER_UPDATE mode.
-static bool IsConvertible(const DynamicMemcpyThunk& dynamic_memcpy_thunk,
-                          const CommandBufferConfig& config) {
-  if (config.update_mode == DebugOptions::NEVER_UPDATE &&
-      dynamic_memcpy_thunk.HasLoopDependentOffsets()) {
-    VLOG(2) << "DynamicMemcpyThunk is not convertible in NEVER_UPDATE "
-               "command-buffer mode because its offsets depend on loop "
-               "iteration";
-    return false;
-  }
+// operation.
+static bool IsConvertible(const DynamicMemcpyThunk&,
+                          const CommandBufferConfig&) {
   return true;
 }
 
@@ -529,13 +507,11 @@ ConvertThunksToCommandBuffer(
     CommandExecutor::SynchronizationMode synchronization_mode,
     const DebugOptions& debug_options) {
   bool enable_loop_unroll = debug_options.xla_gpu_command_buffer_unroll_loops();
-  DebugOptions::CommandBufferUpdateMode update_mode =
-      debug_options.xla_gpu_command_buffer_update_mode();
   ASSIGN_OR_RETURN(CommandExecutor cmd_executor,
                    ConvertToCommands(thunks_to_convert,
                                      ConvertToCommandsOptions{
                                          synchronization_mode,
-                                         enable_loop_unroll, update_mode}));
+                                         enable_loop_unroll}));
 
   std::string command_buffer_profile_annotation = absl::StrCat(
       "command_buffer",

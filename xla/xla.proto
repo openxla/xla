@@ -398,16 +398,10 @@ message DebugOptions {
   // Controls the VA remapping strategy for command buffer thunks.
   //   ALWAYS_UPDATE: VA remapping disabled; all commands update on every
   //     execution.
-  //   NEVER_UPDATE: All allocations VA-remapped to fixed addresses; no
-  //     command buffer update needed after initial recording.
-  //   CAPTURE_CMD_NEVER_UPDATE: Only traced/collective commands are
-  //     VA-remapped; other commands still update on each execution.
   //   TEMP_NEVER_UPDATE: Only temp allocations are VA-remapped; input/output
   //     allocations still update when their addresses change.
   enum CommandBufferUpdateMode {
     ALWAYS_UPDATE = 0;
-    NEVER_UPDATE = 1;
-    CAPTURE_CMD_NEVER_UPDATE = 2;
     TEMP_NEVER_UPDATE = 3;
   }
 

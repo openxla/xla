@@ -561,7 +561,7 @@ TEST(CommandBufferConversionPassTest,
 }
 
 TEST(CommandBufferConversionPassTest,
-     DoesNotConvertLoopDependentDynamicMemcpyThunkInNeverUpdateMode) {
+     ConvertsLoopDependentDynamicMemcpyThunkToCommandBufferThunk) {
   ThunkSequence thunks;
 
   BufferAllocation src_alloc(0, sizeof(int32_t) * 16, 0);
@@ -571,8 +571,6 @@ TEST(CommandBufferConversionPassTest,
 
   DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
   debug_options.set_xla_gpu_graph_min_graph_size(1);
-  debug_options.set_xla_gpu_command_buffer_update_mode(
-      DebugOptions::NEVER_UPDATE);
   debug_options.clear_xla_gpu_enable_command_buffer();
   debug_options.add_xla_gpu_enable_command_buffer(
       DebugOptions::DYNAMIC_SLICE_COPY_FUSION);
@@ -583,10 +581,16 @@ TEST(CommandBufferConversionPassTest,
 
   ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
                        device_info, allocator),
-              IsOkAndHolds(false));
+              IsOkAndHolds(true));
 
-  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCopy));
-  EXPECT_NE(dynamic_cast<const DynamicMemcpyThunk*>(thunks[0].get()), nullptr);
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer));
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(thunks[0].get());
+  EXPECT_THAT(command_buffer_thunk->thunks()->thunks(),
+              ThunkKindsAre(Thunk::kCopy));
+  EXPECT_NE(dynamic_cast<const DynamicMemcpyThunk*>(
+                command_buffer_thunk->thunks()->thunks()[0].get()),
+            nullptr);
 }
 
 TEST(CommandBufferConversionPassTest,
@@ -755,7 +759,7 @@ TEST(CommandBufferConversionPassTest,
 }
 
 TEST(CommandBufferConversionPassTest,
-     DoesNotConvertLoopDependentDynamicSliceFusionV2ThunkInNeverUpdateMode) {
+     ConvertsLoopDependentDynamicSliceFusionV2ThunkToCommandBufferThunk) {
   ThunkSequence thunks;
 
   BufferAllocation src_alloc(0, sizeof(int32_t) * 16, 0);
@@ -767,8 +771,6 @@ TEST(CommandBufferConversionPassTest,
 
   DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
   debug_options.set_xla_gpu_graph_min_graph_size(1);
-  debug_options.set_xla_gpu_command_buffer_update_mode(
-      DebugOptions::NEVER_UPDATE);
   debug_options.clear_xla_gpu_enable_command_buffer();
   debug_options.add_xla_gpu_enable_command_buffer(
       DebugOptions::DYNAMIC_SLICE_FUSION);
@@ -780,8 +782,12 @@ TEST(CommandBufferConversionPassTest,
 
   ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
                        device_info, allocator),
-              IsOkAndHolds(false));
-  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kDynamicSliceFusion));
+              IsOkAndHolds(true));
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer));
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(thunks[0].get());
+  EXPECT_THAT(command_buffer_thunk->thunks()->thunks(),
+              ThunkKindsAre(Thunk::kDynamicSliceFusion));
 }
 
 TEST(CommandBufferConversionPassTest, PartiallyConvertsToCommandBufferThunk) {

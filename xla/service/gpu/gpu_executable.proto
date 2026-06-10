@@ -73,10 +73,8 @@ message GpuExecutableProto {
     // Describes whether and how this output aliases with an input parameter
     optional xla.HloInputOutputAliasProto.AliasEntryProto alias_config = 3;
 
-    // True when this unaliased output is written by a CommandBufferThunk and
-    // must be copied before returning it to the caller for update modes that
-    // VA-remap returned live-out outputs.
-    bool copy_from_command_buffer_output = 4;
+    reserved 4;
+    reserved "copy_from_command_buffer_output";
   }
 
   message OutputInfoMapEntry {
