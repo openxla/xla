@@ -124,10 +124,16 @@ absl::StatusOr<Value> ScaledDot(mlir::ImplicitLocOpBuilder& b,
         dot.dot_dimension_numbers().rhs_contracting_dimensions(0);
     rhs_k_pack = dot.operand(1)->shape().layout().minor_to_major(0) == rhs_c;
   }
+
+  ASSIGN_OR_RETURN(Type lhs_elem_type,
+                   PrimitiveTypeToMlirType(b, lhs_primitive_type));
+  ASSIGN_OR_RETURN(Type rhs_elem_type,
+                   PrimitiveTypeToMlirType(b, rhs_primitive_type));
+
   auto dot_scaled_op = xtile::DotScaledOp::create(
       b, operands.accumulator.getType(), operands.lhs, operands.rhs, lhs_scale,
       rhs_scale, /*fastMath=*/true, lhs_k_pack, rhs_k_pack,
-      operands.dot_dimension_numbers);
+      lhs_elem_type, rhs_elem_type, operands.dot_dimension_numbers);
 
   auto add_result =
       mlir::isa<mlir::IntegerType>(

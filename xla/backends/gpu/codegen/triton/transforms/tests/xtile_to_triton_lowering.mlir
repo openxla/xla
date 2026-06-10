@@ -13,7 +13,7 @@ func.func @lower_dot_scaled_add_to_triton(
   // CHECK-NOT: arith.addf
   %0 = xtile.dot_scaled %lhs scale %lhs_scale, %rhs scale %rhs_scale
     {dot_dimension_numbers = #stablehlo.dot<lhs_batching_dimensions = [], rhs_batching_dimensions = [], lhs_contracting_dimensions = [1], rhs_contracting_dimensions = [0]>,
-     fastMath = true} : tensor<128x128xf8E5M2>,
+     fastMath = true, lhs_elem_type = f8E5M2, rhs_elem_type = f8E5M2} : tensor<128x128xf8E5M2>,
     tensor<128x4xi8> * tensor<128x256xf8E5M2>, tensor<256x4xi8> -> tensor<128x256xf32>
   %1 = arith.addf %acc, %0 : tensor<128x256xf32>
   // CHECK: return %[[RES]] : tensor<128x256xf32>
@@ -36,7 +36,7 @@ func.func @lower_dot_scaled_in_loop_non_canonical(
     // CHECK: scf.yield %[[DOT]] : tensor<128x256xf32>
     %0 = xtile.dot_scaled %lhs scale %lhs_scale, %rhs scale %rhs_scale
       {dot_dimension_numbers = #stablehlo.dot<lhs_batching_dimensions = [0], rhs_batching_dimensions = [0], lhs_contracting_dimensions = [2], rhs_contracting_dimensions = [1]>,
-       fastMath = true} : tensor<1x128x128xf8E5M2>, tensor<1x128x4xi8> * tensor<1x128x256xf8E5M2>, tensor<1x256x4xi8> -> tensor<1x128x256xf32>
+       fastMath = true, lhs_elem_type = f8E5M2, rhs_elem_type = f8E5M2} : tensor<1x128x128xf8E5M2>, tensor<1x128x4xi8> * tensor<1x128x256xf8E5M2>, tensor<1x256x4xi8> -> tensor<1x128x256xf32>
     %1 = arith.addf %accum, %0 : tensor<1x128x256xf32>
     scf.yield %1 : tensor<1x128x256xf32>
   }
@@ -53,7 +53,7 @@ func.func @lower_dot_scaled_without_add_falls_back_to_xtile(
   // CHECK: %[[RES:.*]] = xtile.dot_scaled %[[LHS]] scale %[[LHS_SCALE]], %[[RHS]] scale %[[RHS_SCALE]] {{.*}}fastMath = true{{.*}} : tensor<128x128xf8E5M2>, tensor<128x4xi8> * tensor<128x256xf8E5M2>, tensor<256x4xi8> -> tensor<128x256xf32>
   %0 = xtile.dot_scaled %lhs scale %lhs_scale, %rhs scale %rhs_scale
     {dot_dimension_numbers = #stablehlo.dot<lhs_batching_dimensions = [], rhs_batching_dimensions = [], lhs_contracting_dimensions = [1], rhs_contracting_dimensions = [0]>,
-     fastMath = true} : tensor<128x128xf8E5M2>,
+     fastMath = true, lhs_elem_type = f8E5M2, rhs_elem_type = f8E5M2} : tensor<128x128xf8E5M2>,
     tensor<128x4xi8> * tensor<128x256xf8E5M2>, tensor<256x4xi8> -> tensor<128x256xf32>
   // CHECK: return %[[RES]] : tensor<128x256xf32>
   return %0 : tensor<128x256xf32>
