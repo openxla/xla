@@ -26,9 +26,8 @@ limitations under the License.
 #include "rocm/include/hip/hip_runtime.h"
 #include "xla/stream_executor/rocm/rocm_status.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace stream_executor::gpu {
 
@@ -37,7 +36,7 @@ RocmRawMemoryAllocation::Create(StreamExecutor* executor, uint64_t size) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
 
   hipDevice_t device;
-  TF_RETURN_IF_ERROR(
+  RETURN_IF_ERROR(
       ToStatus(hipDeviceGet(&device, executor->device_ordinal())));
 
   hipMemAllocationProp props = {};
@@ -47,13 +46,13 @@ RocmRawMemoryAllocation::Create(StreamExecutor* executor, uint64_t size) {
   props.requestedHandleTypes = hipMemHandleTypeNone;
 
   size_t granularity = 0;
-  TF_RETURN_IF_ERROR(ToStatus(hipMemGetAllocationGranularity(
+  RETURN_IF_ERROR(ToStatus(hipMemGetAllocationGranularity(
       &granularity, &props, hipMemAllocationGranularityRecommended)));
 
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, granularity);
 
   hipMemGenericAllocationHandle_t handle;
-  TF_RETURN_IF_ERROR(
+  RETURN_IF_ERROR(
       ToStatus(hipMemCreate(&handle, padded_size, &props, 0ULL)));
 
   return std::unique_ptr<RocmRawMemoryAllocation>(
