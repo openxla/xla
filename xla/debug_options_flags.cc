@@ -247,6 +247,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_enable_cublaslt(true);
 
+  opts.set_xla_gpu_enable_cuda_graphs_telemetry(false);
+
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONAL);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLASLT);
@@ -1929,6 +1931,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       " can either be a list of command types or a list of command types with"
       " + and - as prefix, which indicate adding or removing a command type"
       " to/from the default list."));
+
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_cuda_graphs_telemetry",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_cuda_graphs_telemetry),
+      debug_options->xla_gpu_enable_cuda_graphs_telemetry(),
+      "Enables host-side tracking of CUDA Graphs to resolve XLA metadata for "
+      "profiling."));
 
   flag_list->push_back(tsl::Flag(
       "xla_gpu_graph_min_graph_size",
