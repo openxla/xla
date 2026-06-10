@@ -696,6 +696,32 @@ bool_flag(
 )
 
 cc_library(
+    name = "gpu_executable_module_cache",
+    srcs = ["gpu_executable_module_cache.cc"],
+    hdrs = ["gpu_executable_module_cache.h"],
+    deps = [
+        "//xla:status_macros",
+        "//xla:util",
+        "//xla/service:buffer_assignment",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:module_spec",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:scoped_module_handle",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cuda_platform_id",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
     name = "gpu_executable",
     srcs = ["gpu_executable.cc"],
     hdrs = ["gpu_executable.h"],
@@ -705,6 +731,7 @@ cc_library(
         ":buffer_allocations",
         ":dense_data_intermediate",
         ":gpu_constants",
+        ":gpu_executable_module_cache",
         ":gpu_executable_proto_cc",
         ":gpu_executable_run_options",
         ":ir_emission_utils",
@@ -773,10 +800,8 @@ cc_library(
         "//xla/stream_executor:kernel_stats",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:memory_reservation",
-        "//xla/stream_executor:module_spec",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_id",
-        "//xla/stream_executor:scoped_module_handle",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:vmm_device_address_allocator",
