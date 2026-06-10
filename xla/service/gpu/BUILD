@@ -1523,6 +1523,7 @@ cc_library(
         "//xla/backends/gpu/runtime:execution_stream_id",
         "//xla/backends/gpu/runtime:runtime_intrinsics",
         "//xla/backends/gpu/runtime:sequential_thunk",
+        "//xla/codegen:llvm_kernel_source",
         "//xla/hlo/analysis:hlo_ordering",
         "//xla/hlo/ir:hlo",
         "//xla/runtime:object_pool",
