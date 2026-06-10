@@ -31,8 +31,8 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_status.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace stream_executor::gpu {
 
@@ -41,7 +41,7 @@ RocmMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
 
   hipDevice_t device;
-  TF_RETURN_IF_ERROR(
+  RETURN_IF_ERROR(
       ToStatus(hipDeviceGet(&device, executor->device_ordinal())));
 
   hipMemAllocationProp props = {};
@@ -51,13 +51,13 @@ RocmMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
   props.requestedHandleTypes = hipMemHandleTypeNone;
 
   size_t granularity = 0;
-  TF_RETURN_IF_ERROR(ToStatus(hipMemGetAllocationGranularity(
+  RETURN_IF_ERROR(ToStatus(hipMemGetAllocationGranularity(
       &granularity, &props, hipMemAllocationGranularityRecommended)));
 
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, granularity);
 
   void* ptr = nullptr;
-  TF_RETURN_IF_ERROR(ToStatus(
+  RETURN_IF_ERROR(ToStatus(
 hipMemAddressReserve(&ptr, padded_size, granularity, nullptr,
                                     0ULL)));
 
@@ -96,7 +96,7 @@ absl::Status RocmMemoryReservation::SetAccess(uint64_t reservation_offset,
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
 
   int device_count = 0;
-  TF_RETURN_IF_ERROR(
+  RETURN_IF_ERROR(
       ToStatus(hipGetDeviceCount(&device_count), "hipGetDeviceCount"));
 
   for (int peer = 0; peer < device_count; ++peer) {
@@ -113,7 +113,7 @@ absl::Status RocmMemoryReservation::SetAccess(uint64_t reservation_offset,
     desc.location.type = hipMemLocationTypeDevice;
     desc.location.id = peer;
     desc.flags = hipMemAccessFlagsProtReadWrite;
-    TF_RETURN_IF_ERROR(ToStatus(
+    RETURN_IF_ERROR(ToStatus(
 hipMemSetAccess(ptr_ + reservation_offset, size, &desc, 1),
         "hipMemSetAccess for peer device"));
   }
