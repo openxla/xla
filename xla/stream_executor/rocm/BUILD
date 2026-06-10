@@ -1447,14 +1447,13 @@ cc_library(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/cleanup",
+        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@local_config_rocm//rocm:hip",  # buildcleaner: keep
         "@local_config_rocm//rocm:rocm_headers",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 

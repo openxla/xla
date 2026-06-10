@@ -32,9 +32,8 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/rocm/rocm_status.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace stream_executor::gpu {
 
@@ -54,7 +53,7 @@ VmmAllocate(StreamExecutor* executor, uint64_t size) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
 
   hipDevice_t device;
-  TF_RETURN_IF_ERROR(
+  RETURN_IF_ERROR(
       ToStatus(hipDeviceGet(&device, executor->device_ordinal())));
 
   hipMemAllocationProp properties = {};
@@ -63,13 +62,13 @@ VmmAllocate(StreamExecutor* executor, uint64_t size) {
   properties.location.id = device;
   properties.requestedHandleTypes = hipMemHandleTypeNone;
   size_t granularity = 0;
-  TF_RETURN_IF_ERROR(ToStatus(hipMemGetAllocationGranularity(
+  RETURN_IF_ERROR(ToStatus(hipMemGetAllocationGranularity(
       &granularity, &properties, hipMemAllocationGranularityRecommended)));
 
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, granularity);
   hipMemGenericAllocationHandle_t handle;
 
-  TF_RETURN_IF_ERROR(
+  RETURN_IF_ERROR(
       ToStatus(hipMemCreate(&handle, padded_size, &properties, 0ULL)));
 
   hipDeviceptr_t ptr = nullptr;
@@ -104,7 +103,7 @@ hipMemAddressReserve(&ptr, padded_size, granularity, nullptr,
   // Set access for this device and all P2P-capable peers, matching the CUDA
   // pattern that gates on CanEnablePeerAccessTo().
   int device_count = 0;
-  TF_RETURN_IF_ERROR(ToStatus(hipGetDeviceCount(&device_count)));
+  RETURN_IF_ERROR(ToStatus(hipGetDeviceCount(&device_count)));
   for (int peer = 0; peer < device_count; peer++) {
     if (peer != executor->device_ordinal()) {
       auto peer_executor_or =
@@ -116,7 +115,7 @@ hipMemAddressReserve(&ptr, padded_size, granularity, nullptr,
       }
     }
     hipMemAccessDesc access_desc = GetVmmAccessDescriptor(peer);
-    TF_RETURN_IF_ERROR(
+    RETURN_IF_ERROR(
         ToStatus(hipMemSetAccess(ptr, padded_size, &access_desc, 1)));
   }
 
@@ -196,7 +195,7 @@ absl::StatusOr<std::unique_ptr<MemoryAllocation>> RocmVmmAllocator::Allocate(
                                                      nullptr);
   }
 
-  TF_ASSIGN_OR_RETURN(auto result, VmmAllocate(executor_, size));
+  ASSIGN_OR_RETURN(auto result, VmmAllocate(executor_, size));
   auto [ptr, padded_size, handle] = result;
 
   return std::make_unique<RocmVmmMemoryAllocation>(executor_, ptr, size,
