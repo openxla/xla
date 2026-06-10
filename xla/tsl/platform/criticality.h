@@ -24,6 +24,11 @@ namespace tsl {
 
 namespace criticality {
 
+// The number of distinct criticality bands defined by `Criticality` above.
+// Keep in sync with the enum. Callers that maintain per-criticality bookkeeping
+// indexed by static_cast<int>(Criticality) should size their arrays with this.
+inline constexpr int kNumCriticalities = 4;
+
 enum class Criticality {
   // Frequent full and partial unavailability is expected and not a cause for
   // concern.
