@@ -6869,6 +6869,24 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "io_param",
+    srcs = ["io_param.cc"],
+    hdrs = ["io_param.h"],
+    deps = [
+        ":hlo_buffer",
+        ":hlo_value",
+        "//xla:shape_util",
+        "//xla/hlo/analysis:hlo_alias_analysis",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
 xla_cc_test(
     name = "xla_transform_test",
     srcs = ["xla_transform_test.cc"],
@@ -6890,6 +6908,20 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "io_param_test",
+    srcs = ["io_param_test.cc"],
+    deps = [
+        ":io_param",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:hlo_value",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
