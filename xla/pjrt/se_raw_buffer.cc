@@ -366,7 +366,7 @@ void PjRtStreamExecutorRawBuffer::CopyTo(
 // they are complete).
 void PjRtStreamExecutorRawBuffer::ScheduleCopyTo(
     AsyncWorkRunner* async_work_runner,
-    std::vector<PjRtDeviceEventRef> transfer_dependency_events,
+    PjRtDeviceEventRefVector transfer_dependency_events,
     PjRtRawBufferRef dst_raw_buffer,
     PjRtDeviceEventPromiseRef definition_event_promise,
     PjRtDeviceEventPromiseRef src_usage_event_promise,
@@ -393,8 +393,7 @@ void PjRtStreamExecutorRawBuffer::ScheduleCopyTo(
 }
 
 void PjRtStreamExecutorRawBuffer::IntraClientCopyToWithDependencies(
-    std::vector<PjRtDeviceEventRef> dependencies,
-    PjRtRawBufferRef dst_raw_buffer,
+    PjRtDeviceEventRefVector dependencies, PjRtRawBufferRef dst_raw_buffer,
     PjRtDeviceEventPromiseRef definition_event_promise,
     PjRtDeviceEventPromiseRef src_usage_event_promise,
     absl::AnyInvocable<void(absl::Status) &&> allocation_event) {
@@ -484,7 +483,7 @@ void PjRtStreamExecutorRawBuffer::IntraClientCopyToWithDependencies(
 absl::StatusOr<PjRtDeviceEventRef>
 PjRtStreamExecutorRawBuffer::CopyRawToRemoteDevice(
     Future<std::string> serialized_descriptor, RemoteSendCallback on_done,
-    std::vector<PjRtDeviceEventRef> transfer_dependency_avs) {
+    PjRtDeviceEventRefVector transfer_dependency_avs) {
   return absl::UnimplementedError(
       "PjRtStreamExecutorRawBuffer does not support CopyRawToRemoteDevice.");
 }

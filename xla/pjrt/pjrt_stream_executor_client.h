@@ -572,8 +572,8 @@ class PjRtStreamExecutorRawLoadedExecutable : public PjRtRawLoadedExecutable {
   PjRtRawLoadedExecutable::RawExecuteResult Execute(
       const ExecuteOptions& options, absl::Span<const PjRtRawBufferRef> inputs,
       absl::Span<const PjRtRawBufferRef> results,
-      std::vector<PjRtDeviceEventRef> extra_deps,
-      std::vector<PjRtDeviceEventRef> control_deps, bool is_predetermined_error,
+      PjRtDeviceEventRefVector extra_deps,
+      PjRtDeviceEventRefVector control_deps, bool is_predetermined_error,
       bool fill_future) &&
       override;
 
