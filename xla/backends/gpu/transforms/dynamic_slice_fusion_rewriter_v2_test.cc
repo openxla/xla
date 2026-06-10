@@ -1160,6 +1160,74 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
 }
 
 TEST_F(DynamicSliceFusionRewriterV2Test,
+       RepeatedOffsetExpressionOperandClonedOnce) {
+  const char* hlo = R"(
+    HloModule test
+
+    ENTRY main {
+      input = f32[8,8,8] parameter(0)
+      ivar = s32[] parameter(1)
+      c0 = s32[] constant(0)
+      c1 = s32[] constant(1)
+      offset_base = s32[] add(ivar, c1)
+      offset = s32[] subtract(offset_base, offset_base)
+      ds = f32[1,8,8] dynamic-slice(input, offset, c0, c0),
+          dynamic_slice_sizes={1,8,8},
+          backend_config={"dynamic_slice_config":{"byte_offset":0,"byte_stride":0}}
+      bitcast = f32[8,8] bitcast(ds)
+      ROOT hero = f32[8,8] custom-call(bitcast),
+          custom_call_target="fake_target"
+    }
+  )";
+
+  const char* expected = R"(
+    ; CHECK:     %dynamic-slice-fusion{{.*}} {
+    ; CHECK:       [[OFFSET_BASE:%[^ ]+]] = s32[] add(
+    ; CHECK:       [[OFFSET:%[^ ]+]] = s32[] subtract([[OFFSET_BASE]], [[OFFSET_BASE]])
+    ; CHECK:       {{.*}} dynamic-slice({{.*}}, [[OFFSET]],
+    ; CHECK:       ROOT {{.*}} custom-call(
+    ; CHECK:              custom_call_target="fake_target"
+    ; CHECK:     }
+    ; CHECK:     ENTRY %main{{.*}} {
+    ; CHECK:       ROOT {{.*}} fusion(%input, %ivar),
+    ; CHECK:              kind=kCustom
+    ; CHECK:              "name":"dynamic_slice_fusion"
+    ; CHECK:     }
+  )";
+
+  auto f32_888 = ShapeUtil::MakeShape(F32, {8, 8, 8});
+  auto f32_188 = ShapeUtil::MakeShape(F32, {1, 8, 8});
+  auto f32_88 = ShapeUtil::MakeShape(F32, {8, 8});
+  auto offset_base = [] {
+    return Offset::Add(Offset::Parameter(1), Offset::Constant(1));
+  };
+  std::vector<Offset> offsets = {
+      {0, Offset::Subtract(offset_base(), offset_base())},
+      {1, Offset::Constant(0)},
+      {2, Offset::Constant(0)}};
+
+  auto fusion_checks = [&](HloModule* module) {
+    const HloComputation* body = FindDsfBody(module);
+    ASSERT_NE(body, nullptr);
+    EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kAdd), 1);
+    EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kSubtract), 1);
+
+    auto* hero = DynamicSliceFusion::FindHero(body);
+
+    ASSERT_OK_AND_ASSIGN(auto params,
+                         DynamicSliceFusion::ResolveParameters(hero));
+    EXPECT_THAT(params, ElementsAre(Param{0, f32_888, f32_188,
+                                          MakeStaticConfig(0), offsets}));
+
+    ASSERT_OK_AND_ASSIGN(auto results,
+                         DynamicSliceFusion::ResolveResults(hero));
+    EXPECT_THAT(results, ElementsAre(Result{std::nullopt, 0, f32_88, f32_88}));
+  };
+
+  RunAndFilecheckHloRewrite(hlo, MakePipeline(), expected, fusion_checks);
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
        DynamicUpdateSliceCapturesOffsetExpression) {
   const char* hlo = R"(
     HloModule test

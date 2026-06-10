@@ -399,20 +399,18 @@ void AddOffsetExpressionInstructions(
     return;
   }
 
-  if (clone_instruction_set.contains(instr)) {
+  if (!clone_instruction_set.insert(instr).second) {
     return;
   }
 
+  offset_instruction_set.insert(instr);
   for (HloInstruction* operand : instr->operands()) {
     AddOffsetExpressionInstructions(operand, clone_instructions,
                                     clone_instruction_set,
                                     offset_instruction_set);
   }
 
-  if (clone_instruction_set.insert(instr).second) {
-    offset_instruction_set.insert(instr);
-    clone_instructions.push_back(instr);
-  }
+  clone_instructions.push_back(instr);
 }
 
 void AddDynamicSliceOffsetExpressionInstructions(
@@ -530,6 +528,7 @@ std::optional<DynamicSliceFusionPlan> BuildFusionPlan(
   // buffer-first parameter order.
   std::vector<HloInstruction*> external_operands;
   absl::flat_hash_set<HloInstruction*> external_operand_set;
+  absl::flat_hash_set<HloInstruction*> visited_offset_instruction_set;
 
   auto collect_external_operand = [&](auto& self, HloInstruction* operand) {
     // Constants have already been sunk into the fusion body.
@@ -547,6 +546,9 @@ std::optional<DynamicSliceFusionPlan> BuildFusionPlan(
     // Only cloned offset expressions are transparent for this traversal; other
     // cloned instructions are already represented inside the fusion body.
     if (!offset_instruction_set.contains(operand)) {
+      return;
+    }
+    if (!visited_offset_instruction_set.insert(operand).second) {
       return;
     }
     // Recurse through offset expressions to find scalar leaves.
