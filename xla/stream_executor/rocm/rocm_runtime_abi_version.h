@@ -16,12 +16,8 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_ROCM_ROCM_RUNTIME_ABI_VERSION_H_
 #define XLA_STREAM_EXECUTOR_ROCM_ROCM_RUNTIME_ABI_VERSION_H_
 
-#include <memory>
-
-#include "absl/base/nullability.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "xla/stream_executor/abi/executable_abi_version.h"
 #include "xla/stream_executor/abi/runtime_abi_version.h"
 #include "xla/stream_executor/abi/runtime_abi_version.pb.h"
