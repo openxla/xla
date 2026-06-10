@@ -236,7 +236,7 @@ MemoryReservation::ScopedMapping::Remap(
       ++changed_count;
       ++j;
     }
-    TF_RETURN_IF_ERROR(reservation->UnMap(run_start, run_end - run_start));
+    RETURN_IF_ERROR(reservation->UnMap(run_start, run_end - run_start));
     for (size_t m = k; m < j; ++m) {
       slice_mapped[m] = false;
     }
@@ -252,9 +252,9 @@ MemoryReservation::ScopedMapping::Remap(
       continue;
     }
     const auto& dk = mappings[k];
-    TF_RETURN_IF_ERROR(reservation->Map(dk.reservation_offset,
-                                        dk.allocation_offset, dk.size,
-                                        *dk.allocation));
+    RETURN_IF_ERROR(reservation->Map(dk.reservation_offset,
+                                     dk.allocation_offset, dk.size,
+                                     *dk.allocation));
     slice_mapped[k] = true;
   }
 
@@ -267,7 +267,7 @@ MemoryReservation::ScopedMapping::Remap(
   // calls.
   const absl::Time t_map1 = absl::Now();
   if (any_remapped) {
-    TF_RETURN_IF_ERROR(reservation->SetAccess(start_offset, total_size));
+    RETURN_IF_ERROR(reservation->SetAccess(start_offset, total_size));
   }
   const absl::Time t_sa1 = absl::Now();
   VLOG(2) << "Remap timing: slices=" << mappings.size()
