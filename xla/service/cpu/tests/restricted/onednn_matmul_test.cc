@@ -1927,5 +1927,33 @@ TEST_F(MatmulTest, BiasAlongNonLastDimShouldNotFuseAsBias) {
   MatchOptimizedHlo(matmul_module_str, fused_matmul_binary_add_);
 }
 
+TEST_F(MatmulTest, AddendRankLessThanOutputRankLayoutPreserved) {
+  // This test verifies that when an addend has lower rank than the output
+  // and dimensions need to be prepended in AdjustAddendShape (with NO
+  // broadcast instruction in the matched pattern), the layout (including
+  // minor_to_major) is correctly preserved via ShapeUtil::InsertDimensionsAtIndex.
+  // Previously, manual dimension manipulation would clear and re-add
+  // dimensions without updating the layout, causing shape mismatch issues.
+  //
+  // The addend comes from a bitcast (which matches the m::Op(&addend) pattern,
+  // so optional_addend_broadcast is NULL), and has lower rank than the output,
+  // triggering the addend_rank < output_rank path with InsertDimensionsAtIndex.
+  const char* matmul_module_str = R"(
+  HloModule matmul.addend.rank.test.f32
+
+  ENTRY matmul.addend.rank.test.f32 {
+    arg0.1 = f32[4,8,128,64] parameter(0)
+    arg0.2 = f32[4,8,64,128] parameter(1)
+    dot.0 = f32[4,8,128,128] dot(arg0.1, arg0.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+    arg0.3 = f32[16384] parameter(2)
+    bitcast.0 = f32[128,128] bitcast(arg0.3)
+    broadcast.0 = f32[4,8,128,128] broadcast(bitcast.0), dimensions={2,3}
+    ROOT add.0 = f32[4,8,128,128] add(dot.0, broadcast.0)
+  })";
+
+  EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_binary_add_);
+}
+
 }  // namespace cpu
 }  // namespace xla
