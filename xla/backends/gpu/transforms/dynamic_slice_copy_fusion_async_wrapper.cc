@@ -15,22 +15,40 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/dynamic_slice_copy_fusion_async_wrapper.h"
 
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
-#include "xla/backends/gpu/transforms/dynamic_slice_copy_fusion_analysis.h"
-#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
+
+bool IsCopyHeroDynamicSliceFusion(const HloInstruction* instr) {
+  if (instr == nullptr || instr->opcode() != HloOpcode::kFusion) {
+    return false;
+  }
+
+  std::optional<std::string> custom_name = GetCustomFusionConfigName(instr);
+  if (!custom_name.has_value() ||
+      *custom_name != kDynamicSliceFusionConfigName) {
+    return false;
+  }
+
+  const HloInstruction* hero =
+      DynamicSliceFusion::FindHero(instr->fused_instructions_computation());
+  return hero != nullptr && hero->opcode() == HloOpcode::kCopy;
+}
 
 absl::StatusOr<bool> DynamicSliceCopyFusionAsyncWrapper::RunImpl(
     HloModule* module,
@@ -51,13 +69,7 @@ absl::StatusOr<bool> DynamicSliceCopyFusionAsyncWrapper::RunImpl(
     std::vector<HloInstruction*> instructions =
         computation->MakeInstructionPostOrder();
     for (HloInstruction* instruction : instructions) {
-      auto* fusion = DynCast<HloFusionInstruction>(instruction);
-      if (fusion == nullptr) {
-        continue;
-      }
-
-      ASSIGN_OR_RETURN(auto analysis, AnalyzeDynamicSliceCopyFusion(*fusion));
-      if (!analysis.has_value()) {
+      if (!IsCopyHeroDynamicSliceFusion(instruction)) {
         continue;
       }
 

@@ -20,7 +20,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
-#include "xla/backends/gpu/transforms/dynamic_slice_copy_fusion_analysis.h"
+#include "xla/backends/gpu/transforms/fusion_dynamic_memcpy_rewriter.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -50,6 +50,9 @@ TEST_F(DynamicSliceCopyFusionAsyncWrapperTest, WrapsDynamicMemcpyFusion) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kHlo));
 
+  EXPECT_THAT(FusionDynamicMemcpyRewriter().Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
   DynamicSliceCopyFusionAsyncWrapper wrapper;
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(true));
 
@@ -60,7 +63,7 @@ TEST_F(DynamicSliceCopyFusionAsyncWrapperTest, WrapsDynamicMemcpyFusion) {
 
   HloInstruction* wrapped = async_start->async_wrapped_instruction();
   ASSERT_EQ(wrapped->opcode(), HloOpcode::kFusion);
-  EXPECT_TRUE(IsDynamicSliceCopyFusion(wrapped));
+  EXPECT_TRUE(IsCopyHeroDynamicSliceFusion(wrapped));
 
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(false));
 }

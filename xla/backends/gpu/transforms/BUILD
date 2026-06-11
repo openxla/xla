@@ -266,25 +266,12 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "dynamic_slice_copy_fusion_analysis",
-    srcs = ["dynamic_slice_copy_fusion_analysis.cc"],
-    hdrs = ["dynamic_slice_copy_fusion_analysis.h"],
-    deps = [
-        ":dynamic_slice_fusion",
-        "//xla:shape_util",
-        "//xla/hlo/ir:hlo",
-        "//xla/service/gpu:backend_configs_cc",
-        "//xla/service/gpu:ir_emission_utils",
-        "@com_google_absl//absl/status:statusor",
-    ],
-)
-
-cc_library(
     name = "fusion_dynamic_memcpy_rewriter",
     srcs = ["fusion_dynamic_memcpy_rewriter.cc"],
     hdrs = ["fusion_dynamic_memcpy_rewriter.h"],
     deps = [
-        ":dynamic_slice_copy_fusion_analysis",
+        ":dynamic_slice_fusion",
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/service/gpu:backend_configs_cc",
@@ -301,11 +288,12 @@ cc_library(
     srcs = ["dynamic_slice_copy_fusion_async_wrapper.cc"],
     hdrs = ["dynamic_slice_copy_fusion_async_wrapper.h"],
     deps = [
-        ":dynamic_slice_copy_fusion_analysis",
+        ":dynamic_slice_fusion",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status:statusor",
@@ -318,8 +306,8 @@ xla_cc_test(
     srcs = ["dynamic_slice_copy_fusion_async_wrapper_test.cc"],
     tags = ["gpu"],
     deps = [
-        ":dynamic_slice_copy_fusion_analysis",
         ":dynamic_slice_copy_fusion_async_wrapper",
+        ":fusion_dynamic_memcpy_rewriter",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "@com_google_absl//absl/status:status_matchers",

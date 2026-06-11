@@ -32,7 +32,7 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
-#include "xla/backends/gpu/transforms/dynamic_slice_copy_fusion_analysis.h"
+#include "xla/backends/gpu/transforms/dynamic_slice_copy_fusion_async_wrapper.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
@@ -141,7 +141,7 @@ bool IsSlicingMemcpy(const HloInstruction& hlo) {
   if (hlo.opcode() == HloOpcode::kFusion) {
     return ShapeHasHostMemorySpace(hlo.shape()) ||
            ShapeHasHostMemorySpace(hlo.operand(0)->shape()) ||
-           IsDynamicSliceCopyFusion(&hlo);
+           IsCopyHeroDynamicSliceFusion(&hlo);
   }
   return false;
 }
@@ -166,10 +166,10 @@ bool IsMemcpyAsyncDoneOp(const HloInstruction& hlo) {
   return IsSlicingMemcpy(*hlo.async_wrapped_instruction());
 }
 
-bool IsDynamicSliceCopyFusionAsyncOp(const HloInstruction& hlo) {
+bool IsCopyHeroDynamicSliceFusionAsyncOp(const HloInstruction& hlo) {
   return (hlo.opcode() == HloOpcode::kAsyncStart ||
           hlo.opcode() == HloOpcode::kAsyncDone) &&
-         IsDynamicSliceCopyFusion(hlo.async_wrapped_instruction());
+         IsCopyHeroDynamicSliceFusion(hlo.async_wrapped_instruction());
 }
 
 // Marks async start operations to be scheduled as early as possible.
@@ -443,9 +443,9 @@ ResourcesVector GpuAsyncTracker::GetResourcesFromInstructionImpl(
     GpuResourceType resource;
 
     // Keep existing copy-start/copy-done and host-memory slicing fusions on the
-    // async-compute resource path. Only dynamic-slice copy fusion async
+    // async-compute resource path. Only copy-hero DynamicSliceFusionV2 async
     // wrappers use the dedicated memcpy resource added for D2D copy overlap.
-    if (IsDynamicSliceCopyFusionAsyncOp(instr)) {
+    if (IsCopyHeroDynamicSliceFusionAsyncOp(instr)) {
       resource = GpuResourceType::kGpuAsyncStreamMemcpy;
       usage = op.outer == HloOpcode::kAsyncStart
                   ? ResourceUsageType::kResourceRelease

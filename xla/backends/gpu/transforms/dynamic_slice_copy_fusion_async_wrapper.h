@@ -19,12 +19,18 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 
 namespace xla::gpu {
 
-// Wraps memcpy-like dynamic slice/update fusions in async-start/done pairs
+// Returns true for a DynamicSliceFusionV2 custom fusion whose hero instruction
+// is a device-to-device copy. These fusions lower to DynamicSliceFusionV2Thunk
+// with an embedded DeviceToDeviceCopyThunk.
+bool IsCopyHeroDynamicSliceFusion(const HloInstruction* instr);
+
+// Wraps copy-hero DynamicSliceFusionV2 custom fusions in async-start/done pairs
 // before scheduling so that latency hiding can overlap the copy with compute.
 class DynamicSliceCopyFusionAsyncWrapper : public HloModulePass {
  public:

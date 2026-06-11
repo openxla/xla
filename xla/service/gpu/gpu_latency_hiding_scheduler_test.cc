@@ -1110,8 +1110,9 @@ HloModule test, num_partitions=4
   %param_1 = s32[] parameter(1)
   %param_2 = s32[] parameter(2)
   %param_3 = s32[] parameter(3)
-  ROOT %dynamic-slice = f32[1,2,2]{2,1,0} dynamic-slice(%param_0, %param_1, %param_2, %param_3), dynamic_slice_sizes={1,2,2},
+  %dynamic-slice = f32[1,2,2]{2,1,0} dynamic-slice(%param_0, %param_1, %param_2, %param_3), dynamic_slice_sizes={1,2,2},
       backend_config={"dynamic_slice_config":{"byte_offset":"0","byte_stride":"0"}}
+  ROOT %copy = f32[1,2,2]{2,1,0} copy(%dynamic-slice)
 }
 
 %async_computation (param_0: f32[2,2,2], param_1: s32[], param_2: s32[], param_3: s32[]) -> f32[1,2,2] {
@@ -1119,7 +1120,8 @@ HloModule test, num_partitions=4
   %param_1 = s32[] parameter(1)
   %param_2 = s32[] parameter(2)
   %param_3 = s32[] parameter(3)
-  ROOT %dynamic-slice-fusion = f32[1,2,2]{2,1,0} fusion(%param_0, %param_1, %param_2, %param_3), kind=kLoop, calls=%dsf_computation
+  ROOT %dynamic-slice-fusion = f32[1,2,2]{2,1,0} fusion(%param_0, %param_1, %param_2, %param_3), kind=kCustom, calls=%dsf_computation,
+      backend_config={"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_slice_fusion"}}}
 }
 
 ENTRY main {

@@ -15,11 +15,14 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/fusion_dynamic_memcpy_rewriter.h"
 
+#include <memory>
+#include <optional>
+
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
-#include "xla/backends/gpu/transforms/dynamic_slice_copy_fusion_analysis.h"
+#include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -28,8 +31,114 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/shape_util.h"
 
 namespace xla::gpu {
+namespace {
+
+bool HasDynamicSliceConfig(const HloInstruction* instr) {
+  auto config = instr->backend_config<GpuBackendConfig>();
+  return config.ok() && config->has_dynamic_slice_config();
+}
+
+bool IsSlicingInstruction(const HloInstruction* instr) {
+  return instr->opcode() == HloOpcode::kSlice ||
+         instr->opcode() == HloOpcode::kDynamicSlice ||
+         instr->opcode() == HloOpcode::kDynamicUpdateSlice;
+}
+
+bool IsSlicingInstructionCompatible(const HloInstruction* instr) {
+  if (instr->opcode() == HloOpcode::kSlice) {
+    return IsContiguousSlice(*instr) &&
+           ShapeUtil::ByteStrides(instr->operand(0)->shape()).has_value();
+  }
+
+  return HasDynamicSliceConfig(instr);
+}
+
+bool AllSlicingInstructionsCompatible(const HloComputation* computation) {
+  for (const HloInstruction* instr : computation->instructions()) {
+    if (IsSlicingInstruction(instr) && !IsSlicingInstructionCompatible(instr)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool IsBitcastOrReshape(const HloInstruction* instr) {
+  return instr->opcode() == HloOpcode::kBitcast ||
+         instr->opcode() == HloOpcode::kReshape;
+}
+
+HloInstruction* WalkThroughBitcastsAndReshapes(HloInstruction* instr) {
+  while (IsBitcastOrReshape(instr)) {
+    instr = instr->mutable_operand(0);
+  }
+  return instr;
+}
+
+struct MemcpyFusionCandidate {
+  HloInstruction* slicing;
+  HloInstruction* copy_operand;
+};
+
+// Detects DS/DUS-root memcpy fusions before they have a copy hero. `slicing` is
+// the DS/DUS instruction carrying DynamicSliceConfig, and `copy_operand` is the
+// value that would become the operand of the inserted copy hero.
+std::optional<MemcpyFusionCandidate> FindMemcpyFusionCandidate(
+    HloComputation* computation) {
+  HloInstruction* root = computation->root_instruction();
+  HloInstruction* ds_or_dus = WalkThroughBitcastsAndReshapes(root);
+
+  if (!HasDynamicSliceConfig(ds_or_dus)) {
+    return std::nullopt;
+  }
+
+  if (ds_or_dus->opcode() == HloOpcode::kDynamicSlice) {
+    return MemcpyFusionCandidate{ds_or_dus, root};
+  }
+
+  if (ds_or_dus->opcode() == HloOpcode::kDynamicUpdateSlice) {
+    return MemcpyFusionCandidate{ds_or_dus, ds_or_dus->mutable_operand(1)};
+  }
+
+  return std::nullopt;
+}
+
+bool CanRewriteAsDynamicSliceFusion(const MemcpyFusionCandidate& candidate) {
+  auto resolve_copy_hero_parameters = [](HloInstruction* operand) {
+    std::unique_ptr<HloInstruction> copy = HloInstruction::CreateUnary(
+        operand->shape(), HloOpcode::kCopy, operand);
+    return DynamicSliceFusion::ResolveParameters(copy.get());
+  };
+
+  auto parameters = resolve_copy_hero_parameters(candidate.copy_operand);
+  if (!parameters.ok()) {
+    return false;
+  }
+
+  for (const DynamicSliceFusion::Parameter& parameter : *parameters) {
+    if (parameter.slice_config.has_value()) {
+      continue;
+    }
+
+    // Without DynamicSliceConfig, DynamicSliceFusion will pass the original
+    // parameter buffer base address to the embedded copy thunk. This is only
+    // correct for unsliced pass-through operands.
+    if (ShapeUtil::ByteSizeOf(parameter.slice_shape) !=
+        ShapeUtil::ByteSizeOf(parameter.parameter_shape)) {
+      return false;
+    }
+  }
+
+  if (candidate.slicing->opcode() == HloOpcode::kDynamicSlice) {
+    return true;
+  }
+
+  return DynamicSliceFusion::ResolveResults(candidate.copy_operand).ok();
+}
+
+}  // namespace
 
 absl::StatusOr<bool> FusionDynamicMemcpyRewriter::RunImpl(
     HloModule* module,
@@ -51,8 +160,11 @@ absl::StatusOr<bool> FusionDynamicMemcpyRewriter::RunImpl(
       continue;
     }
 
-    ASSIGN_OR_RETURN(auto analysis, AnalyzeDynamicSliceCopyFusion(*fusion));
-    if (!analysis.has_value()) {
+    std::optional<MemcpyFusionCandidate> candidate =
+        FindMemcpyFusionCandidate(computation);
+    if (!candidate.has_value() ||
+        !AllSlicingInstructionsCompatible(computation) ||
+        !CanRewriteAsDynamicSliceFusion(*candidate)) {
       continue;
     }
 
@@ -63,21 +175,20 @@ absl::StatusOr<bool> FusionDynamicMemcpyRewriter::RunImpl(
     fusion_config->mutable_custom_fusion_config()->set_name(
         kDynamicSliceFusionConfigName);
 
-    if (analysis->slicing->opcode() == HloOpcode::kDynamicSlice) {
+    if (candidate->slicing->opcode() == HloOpcode::kDynamicSlice) {
       // DS case: insert copy after the root (which is DS or bitcast of DS).
       HloInstruction* copy =
           computation->AddInstruction(HloInstruction::CreateUnary(
-              analysis->copy_operand->shape(), HloOpcode::kCopy,
-              const_cast<HloInstruction*>(analysis->copy_operand)));
+              candidate->copy_operand->shape(), HloOpcode::kCopy,
+              candidate->copy_operand));
       computation->set_root_instruction(copy);
     } else {
       // DUS case: insert copy before the DUS update operand (operand 1).
       HloInstruction* copy =
           computation->AddInstruction(HloInstruction::CreateUnary(
-              analysis->copy_operand->shape(), HloOpcode::kCopy,
-              const_cast<HloInstruction*>(analysis->copy_operand)));
-      RETURN_IF_ERROR(const_cast<HloInstruction*>(analysis->slicing)
-                          ->ReplaceOperandWith(1, copy));
+              candidate->copy_operand->shape(), HloOpcode::kCopy,
+              candidate->copy_operand));
+      RETURN_IF_ERROR(candidate->slicing->ReplaceOperandWith(1, copy));
     }
 
     // Set backend config to target dynamic slice custom fusion.

@@ -109,7 +109,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/triangular_solve_thunk.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
-#include "xla/backends/gpu/transforms/dynamic_slice_copy_fusion_analysis.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/kernel_definition.h"
@@ -311,9 +310,10 @@ ThunkSequence FlattenThunkSequence(std::vector<ThunkSequence>&& sequences) {
 
 }  // namespace
 
-ThunkEmitter::ThunkEmitter(IrEmitterContext* absl_nonnull ir_emitter_context,
-                           llvm_ir::LLVMCommandLineOptionsReleasableLock*
-                               absl_nonnull llvm_options_lock)
+ThunkEmitter::ThunkEmitter(
+    IrEmitterContext* absl_nonnull ir_emitter_context,
+    llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
+        llvm_options_lock)
     : ir_emitter_context_(ir_emitter_context),
       send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
       call_graph_(CallGraph::Build(&ir_emitter_context->hlo_module())),
@@ -1362,12 +1362,6 @@ AsyncThunkSequence ThunkEmitter::EmitAsyncComputation(
 }
 
 AsyncThunkSequence ThunkEmitter::EmitFusion(const HloFusionInstruction* instr) {
-  ASSIGN_OR_RETURN(std::optional<DynamicSliceCopyFusionAnalysis> analysis,
-                   AnalyzeDynamicSliceCopyFusion(*instr));
-  if (analysis.has_value()) {
-    return EmitDynamicSliceCopyFusion(instr, *analysis);
-  }
-
   analysis_garbage_collector_.push_back(
       std::make_unique<HloFusionAnalysis>(HloFusionAnalysis::Create(
           *instr, ir_emitter_context_->gpu_device_info())));
@@ -1486,97 +1480,6 @@ AsyncThunkSequence ThunkEmitter::EmitDynamicSliceFusionV2(
             std::move(embedded_allocations), std::move(embedded_thunks),
             verify_offsets));
       });
-}
-
-absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDynamicSliceCopyFusion(
-    const HloFusionInstruction* instr,
-    const DynamicSliceCopyFusionAnalysis& analysis) {
-  std::unique_ptr<HloInstruction> synthetic_copy;
-  const HloInstruction* copy_hero = analysis.existing_copy_hero;
-  const HloInstruction* result_source = analysis.existing_copy_hero;
-
-  if (copy_hero == nullptr) {
-    TF_RET_CHECK(analysis.slicing != nullptr);
-    synthetic_copy = HloInstruction::CreateUnary(
-        analysis.copy_operand->shape(), HloOpcode::kCopy,
-        const_cast<HloInstruction*>(analysis.copy_operand));
-    copy_hero = synthetic_copy.get();
-    result_source = analysis.slicing->opcode() == HloOpcode::kDynamicUpdateSlice
-                        ? analysis.copy_operand
-                        : copy_hero;
-  }
-
-  ASSIGN_OR_RETURN(std::vector<DynamicSliceFusion::Parameter> parameters,
-                   DynamicSliceFusion::ResolveParameters(copy_hero));
-  ASSIGN_OR_RETURN(std::vector<DynamicSliceFusion::Result> results,
-                   DynamicSliceFusion::ResolveResults(result_source));
-
-  std::vector<BufferAllocation::Slice> parameter_buffers;
-  parameter_buffers.reserve(instr->operand_count());
-  for (const auto* operand : instr->operands()) {
-    ASSIGN_OR_RETURN(parameter_buffers.emplace_back(),
-                     GetAllocationSliceForHlo(operand));
-  }
-
-  std::vector<BufferAllocation::Slice> result_buffers;
-  RETURN_IF_ERROR(ShapeUtil::ForEachLeafShapeWithStatus(
-      instr->shape(),
-      [&](const Shape&, const ShapeIndex& index) -> absl::Status {
-        ASSIGN_OR_RETURN(result_buffers.emplace_back(),
-                         GetAllocationSliceForHlo(instr, index));
-        return absl::OkStatus();
-      }));
-
-  RETURN_IF_ERROR(DynamicSliceFusionV2Thunk::VerifyBufferAssignment(
-      results, parameter_buffers, result_buffers));
-
-  std::vector<BufferAllocation> embedded_allocations;
-  embedded_allocations.reserve(parameters.size() + results.size());
-
-  for (const auto& param : parameters) {
-    embedded_allocations.emplace_back(embedded_allocations.size(),
-                                      ShapeUtil::ByteSizeOf(param.slice_shape),
-                                      0);
-  }
-
-  for (const auto& res : results) {
-    embedded_allocations.emplace_back(embedded_allocations.size(),
-                                      ShapeUtil::ByteSizeOf(res.update_shape),
-                                      0);
-  }
-
-  absl::flat_hash_map<const HloInstruction*,
-                      std::vector<BufferAllocation::Slice>>
-      overrides;
-
-  for (int64_t i = 0; i < parameters.size(); ++i) {
-    int64_t byte_size = ShapeUtil::ByteSizeOf(parameters[i].slice_shape);
-    overrides[copy_hero->operand(i)] = {
-        BufferAllocation::Slice(&embedded_allocations[i], 0, byte_size)};
-  }
-
-  ShapeUtil::ForEachLeafShape(
-      copy_hero->shape(), [&](const Shape& subshape, const ShapeIndex&) {
-        int64_t leaf_idx = overrides[copy_hero].size();
-        int64_t byte_size = ShapeUtil::ByteSizeOf(subshape);
-        overrides[copy_hero].push_back(BufferAllocation::Slice(
-            &embedded_allocations[parameters.size() + leaf_idx], 0, byte_size));
-      });
-
-  auto overrides_cleanup = InstallAllocationOverrides(std::move(overrides));
-  ASSIGN_OR_RETURN(ThunkSequence embedded_thunks, EmitCopy(copy_hero));
-
-  Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
-      instr, ir_emitter_context_->GetNextThunkId());
-  bool verify_offsets =
-      ir_emitter_context_->debug_options()
-          .xla_gpu_experimental_dynamic_slice_fusion_verify_offsets();
-
-  return ThunkSequence::Of(std::make_unique<DynamicSliceFusionV2Thunk>(
-      std::move(thunk_info), std::move(parameters), std::move(results),
-      std::move(parameter_buffers), std::move(result_buffers),
-      std::move(embedded_allocations), std::move(embedded_thunks),
-      verify_offsets));
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCopy(
