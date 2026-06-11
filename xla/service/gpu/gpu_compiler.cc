@@ -533,6 +533,9 @@ void MergeModuleStatsInPlace(const ModuleStats& from, ModuleStats& to) {
 
 }  // namespace
 
+// Preallocate MLIR contexts for parallel compilation.
+static constexpr int32_t kPreallocateMlirContexts = 32;
+
 GpuCompiler::GpuCompiler(se::Platform::Id platform_id,
                          const char* target_triple, const char* data_layout)
     : platform_id_(platform_id),
@@ -540,7 +543,7 @@ GpuCompiler::GpuCompiler(se::Platform::Id platform_id,
       data_layout_(data_layout),
       pointer_size_(llvm::DataLayout(data_layout)
                         .getPointerSize(0 /* default address space */)),
-      mlir_context_pool_([]() { return CreateMlirContext(); }) {}
+      mlir_context_pool_(CreateMlirContext, kPreallocateMlirContexts) {}
 
 namespace {
 // Adds the HloVerifier for GPU to the given pipeline.
@@ -3075,7 +3078,7 @@ GpuCompiler::LegacyCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
                        hlo_module.get(),
                        res.compile_module_results.buffer_assignment->ToProto(),
                        std::move(buffer_assignment_debug_summary),
-          res.backend_result.asm_text, res.backend_result.binary,
+                       res.backend_result.asm_text, res.backend_result.binary,
                        {}, pointer_size_, this));
 
   return std::move(results);
