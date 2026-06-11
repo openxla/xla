@@ -1644,13 +1644,8 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   gpu_executable_run_options->set_gpu_global_device_ids(
       std::move(gpu_device_ids));
 
-  std::optional<std::string> collectives_impl_name;
-  auto debug_options = xla::GetDebugOptionsFromFlags();
-  if (!debug_options.xla_gpu_collectives_implementation().empty()) {
-    collectives_impl_name = debug_options.xla_gpu_collectives_implementation();
-  }
   auto *gpu_collectives = gpu::ResolveCollectives(gpu_executable_run_options, 
-            platform_name, std::move(collectives_impl_name));
+            platform_name);
 
   size_t num_processes = global_topology.processes().size();
   if (gpu_collectives->IsImplemented()) {
@@ -1998,14 +1993,9 @@ StreamExecutorGpuClient::RunAsync(
   // larger alignment than the BFC allocator guarantees (256 bytes).
   absl::flat_hash_map<LogicalBuffer::Color, int64_t> allocate_granularity;
 
-  std::optional<std::string> collectives_impl_name;
-  auto debug_options = xla::GetDebugOptionsFromFlags();
-  if (!debug_options.xla_gpu_collectives_implementation().empty()) {
-    collectives_impl_name = debug_options.xla_gpu_collectives_implementation();
-  }
   auto *collectives = gpu::ResolveCollectives(
             run_options->run_options().gpu_executable_run_options(), 
-            executor->GetPlatform()->Name(), std::move(collectives_impl_name));
+            executor->GetPlatform()->Name());
             
   if (collectives != nullptr) {
     const int64_t collective_memory_alignment =

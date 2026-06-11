@@ -40,7 +40,6 @@ class MoriCollectives : public GpuCollectives {
  public:
   ~MoriCollectives() override;
 
-  static MoriCollectives* Default();
   bool IsInitialized() { return initialized_; }
 
   bool IsImplemented() const final { return true; }

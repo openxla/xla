@@ -135,18 +135,6 @@ MoriCollectives::~MoriCollectives() {
   if (initialized_) Finalize();
 }
 
-MoriCollectives* MoriCollectives::Default() {
-  absl::StatusOr<Collectives*> collectives =
-      CollectivesRegistry::Get("ROCM", "nvshmem");
-  CHECK_OK(collectives) << "Failed to get MORI collectives";  // Crash OK
-
-  if (auto* mori_collectives =
-          tsl::down_cast<MoriCollectives*>(*collectives)) {
-    return mori_collectives;
-  }
-  LOG(FATAL) << "Unsupported collectives implementation for MORI";
-}
-
 absl::StatusOr<CliqueId> MoriCollectives::CreateUniqueCliqueId() const {
   VLOG(3) << "Create MORI unique clique id";
   shmem::mori_shmem_uniqueid_t id;

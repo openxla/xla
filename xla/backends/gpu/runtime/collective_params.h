@@ -48,7 +48,6 @@ struct CollectiveParams {
       const ServiceExecutableRunOptions& run_options,
       absl::Span<se::Stream* const> async_streams,
       LocalDeviceId local_device_id,
-      std::optional<std::string> implementation_name = std::nullopt,
       int64_t collective_max_nchannels = 0, int64_t p2p_max_nchannels = 0,
       bool collective_use_minimal_resource = false);
 
@@ -91,8 +90,11 @@ struct CollectiveParams {
 };
 
 GpuCollectives* ResolveCollectives(
+    const GpuExecutableRunOptions* gpu_options, absl::string_view platform_name);
+
+GpuCollectives* ResolveCollectives(
     const GpuExecutableRunOptions* gpu_options, absl::string_view platform_name,
-    const std::optional<std::string>& implementation_name);
+    std::optional<std::string> implementation_name);
 
 }  // namespace xla::gpu
 
