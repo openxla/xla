@@ -199,42 +199,6 @@ class GpuCompiler : public LLVMCompiler {
       HloCostAnalysis::ShapeSizeFunction shape_size_fn,
       const MultiProcessKeyValueStore& key_value_store);
 
-  // TODO(b/511979384): Remove once xla_gpu_experimental_autotune_post_fusion is
-  // enabled by default.
-  virtual absl::Status AddConvAndGemmAutotuningPass(
-      HloPassPipeline* pipeline, HloModule* hlo_module,
-      const se::GpuComputeCapability& gpu_version,
-      const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
-      se::StreamExecutor* stream_exec,
-      const Compiler::GpuTargetConfig* target_config,
-      const MultiProcessKeyValueStore& key_value_store,
-      const se::SemanticVersion& toolkit_version, const AliasInfo* alias_info,
-      const DebugOptions& debug_options, mlir::MLIRContext* mlir_context,
-      HloCostAnalysis::ShapeSizeFunction shape_size_fn);
-
-  // TODO(b/511979384): Remove once xla_gpu_experimental_autotune_post_fusion is
-  // enabled by default.
-  absl::Status AddFusionAutotuningPass(
-      HloPassPipeline* pipeline, HloModule* hlo_module,
-      const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
-      stream_executor::StreamExecutor* stream_executor,
-      const Compiler::GpuTargetConfig* target_config,
-      HloCostAnalysis::ShapeSizeFunction shape_size_fn,
-      const MultiProcessKeyValueStore& key_value_store);
-
-  // TODO(b/511979384): Remove once xla_gpu_experimental_autotune_post_fusion is
-  // enabled by default.
-  absl::Status AutotunerAndPostCleanup(
-      HloPassPipeline& pipeline, HloModule* hlo_module,
-      const se::GpuComputeCapability& gpu_version,
-      const DebugOptions& debug_options, mlir::MLIRContext* mlir_context,
-      const se::DeviceDescription& device_description,
-      const std::string& platform_name, const CompileOptions& options,
-      tsl::thread::ThreadPool* thread_pool, se::StreamExecutor* stream_exec,
-      const Compiler::GpuTargetConfig* target_config,
-      const MultiProcessKeyValueStore& key_value_store,
-      const se::SemanticVersion& toolkit_version, const AliasInfo* alias_info,
-      HloCostAnalysis::ShapeSizeFunction shape_size_fn);
 
   // Runs cuDNN fusion and custom call compiler passes.
   virtual absl::Status RunCudnnCompilerPasses(HloModule* module,
