@@ -374,6 +374,11 @@ absl::Status CudaStream::RefreshStatus() ABSL_NO_THREAD_SAFETY_ANALYSIS {
   absl::Cleanup cleanup = [this]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
     capture_state_mutex_.unlock_shared();
   };
+  // Backup check in case capturing was started using raw CUDA APIs.
+  ASSIGN_OR_RETURN(bool is_capturing, StreamIsCapturing(stream_handle_));
+  if (is_capturing) {
+    return absl::OkStatus();
+  }
   CUresult res = cuStreamQuery(stream_handle_);
   if (res == CUDA_SUCCESS || res == CUDA_ERROR_NOT_READY) {
     return absl::OkStatus();
