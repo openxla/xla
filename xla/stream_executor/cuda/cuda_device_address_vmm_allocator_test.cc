@@ -175,7 +175,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, AllocateAndDeallocate) {
   // scope.
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest,
        ConsecutiveDeallocationsUseOneTimelineWriteOnSync) {
   ASSERT_OK_AND_ASSIGN(
@@ -199,7 +198,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
   EXPECT_EQ(allocator->timeline_write_count(), 1);
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        ConsecutiveUnmapAndDeallocateUseOneTimelineWriteOnSync) {
@@ -230,7 +228,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   EXPECT_EQ(allocator->timeline_write_count(), 1);
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest,
        ReusingOnlyOpenBatchEntryDoesNotFlushEmptyBatch) {
   ASSERT_OK_AND_ASSIGN(
@@ -258,7 +255,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   EXPECT_EQ(allocator->timeline_write_count(), 1);
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest, AllocateZeroSize) {
   ASSERT_OK_AND_ASSIGN(
       auto allocator,
@@ -274,7 +270,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, AllocateZeroSize) {
   // Zero-size allocation should return a null address.
   EXPECT_TRUE(scoped_address.is_null());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest, AllocateMultiple) {
   ASSERT_OK_AND_ASSIGN(
@@ -301,7 +296,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, AllocateMultiple) {
   EXPECT_EQ(addr1.cref().size(), 1024);
   EXPECT_EQ(addr2.cref().size(), 2048);
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest, MemoryReadWrite) {
   ASSERT_OK_AND_ASSIGN(
@@ -336,7 +330,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, MemoryReadWrite) {
   EXPECT_EQ(read_value, kTestValue);
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest, GetStream) {
   ASSERT_OK_AND_ASSIGN(
       auto allocator,
@@ -354,7 +347,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, GetStream) {
   EXPECT_EQ(stream, stream2);
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest, GetStreamExecutor) {
   ASSERT_OK_AND_ASSIGN(
       auto allocator,
@@ -365,7 +357,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, GetStreamExecutor) {
   EXPECT_EQ(se, executor_);
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest, AllowsAsynchronousDeallocation) {
   ASSERT_OK_AND_ASSIGN(
       auto allocator,
@@ -375,7 +366,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, AllowsAsynchronousDeallocation) {
   // GPU timeline-based processing.
   EXPECT_TRUE(allocator->AllowsAsynchronousDeallocation());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest, ExplicitDeallocate) {
   ASSERT_OK_AND_ASSIGN(
@@ -400,7 +390,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, ExplicitDeallocate) {
   scoped_address.Release();
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest, DeallocateNull) {
   ASSERT_OK_AND_ASSIGN(
       auto allocator,
@@ -412,7 +401,17 @@ TEST_F(DeviceAddressVmmAllocatorTest, DeallocateNull) {
               absl_testing::IsOk());
 }
 
+// --- Timeline / sequence-number design tests ---
+//
+// These tests exercise the cuStreamWriteValue64-based deferred deallocation
+// mechanism. Each pending Deallocate() call records an increasing seqno and
+// enqueues a GPU timeline write; the CPU checks the pinned counter to decide
+// when memory is safe to free.
 
+// Verifies that TryReusePendingDeallocation returns the same virtual address
+// when a new allocation of the same rounded size is requested immediately
+// after a Deallocate. The reuse is safe because stream ordering guarantees
+// all prior GPU work finishes before any new work submitted after Allocate.
 TEST_F(DeviceAddressVmmAllocatorTest,
        PendingDeallocationReusesSameVirtualAddress) {
   ASSERT_OK_AND_ASSIGN(
@@ -445,7 +444,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   // is destroyed.
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        AllocateExternalMappedAndDeallocateTrackExternalReservation) {
@@ -482,7 +480,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest,
        MappedAllocateRejectsAllocationAndMappingSizeMismatch) {
   const uint64_t granularity = GetVmmGranularity();
@@ -503,7 +500,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
                    /*reservation_offset=*/0, granularity / 2)
                    .ok());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        InternalMappedAllocateRequiresUnMapBeforeDeallocate) {
@@ -547,7 +543,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(
     DeviceAddressVmmAllocatorTest,
     InternalMappedAllocateUnMapDeallocateCanReuseAllocatorAndReservationRecord) {
@@ -589,7 +584,6 @@ TEST_F(
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest,
        InternalMappedAllocateExternalRangeCanBeReusedAfterUnMap) {
   const uint64_t granularity = GetVmmGranularity();
@@ -626,7 +620,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest,
        DeallocateRejectsInternalMappedExternalAddress) {
   const uint64_t granularity = GetVmmGranularity();
@@ -656,7 +649,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(allocator->Deallocate(ordinal, mapped.Release()), IsOk());
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        InternalMappedAllocateAllowsPhysicalReclaimAfterUnMap) {
@@ -688,7 +680,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest, MapCanReclaimPendingDeallocate) {
   ASSERT_OK_AND_ASSIGN(auto probe, gpu::CudaDeviceAddressVmmAllocator::Create(
                                        executor_, stream_.get()));
@@ -717,7 +708,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, MapCanReclaimPendingDeallocate) {
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest, AllocateCanReclaimPendingUnMap) {
   ASSERT_OK_AND_ASSIGN(auto probe, gpu::CudaDeviceAddressVmmAllocator::Create(
                                        executor_, stream_.get()));
@@ -745,7 +735,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, AllocateCanReclaimPendingUnMap) {
   ASSERT_FALSE(addr.is_null());
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        ReclaimSkipsUnrelatedPendingReservationUnMap) {
@@ -789,7 +778,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest,
        AllocateInternalMappedCanReclaimPendingUnMap) {
   ASSERT_OK_AND_ASSIGN(auto probe, gpu::CudaDeviceAddressVmmAllocator::Create(
@@ -827,7 +815,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest,
        AllocateCanReclaimPendingInternalMappedDeallocate) {
   ASSERT_OK_AND_ASSIGN(auto probe, gpu::CudaDeviceAddressVmmAllocator::Create(
@@ -859,7 +846,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_FALSE(addr.is_null());
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        MapCanReclaimPendingInternalMappedDeallocate) {
@@ -898,7 +884,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest,
        AllocateInternalMappedCanReclaimPendingDeallocate) {
   ASSERT_OK_AND_ASSIGN(auto probe, gpu::CudaDeviceAddressVmmAllocator::Create(
@@ -931,7 +916,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(allocator->Deallocate(ordinal, mapped.Release()), IsOk());
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest, MapTracksRawAllocation) {
   const uint64_t granularity = GetVmmGranularity();
@@ -966,7 +950,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, MapTracksRawAllocation) {
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest, UnMapWithZeroSizeMappingIsNoOp) {
   ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
                                              executor_, kVmmTestSize));
@@ -990,7 +973,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, UnMapWithZeroSizeMappingIsNoOp) {
   ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        MapRejectsSecondActiveMappingForSameAllocatorAddress) {
@@ -1038,7 +1020,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest,
        UnMapRejectsPartialRangeOfActiveReservationMapping) {
   const uint64_t granularity = GetVmmGranularity();
@@ -1071,7 +1052,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        MapRejectsPartialOverlapWithActiveReservationMapping) {
@@ -1111,7 +1091,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(allocator->Deallocate(ordinal, addr2.Release()), IsOk());
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        MapReactivatesPendingUnMapForSameRawAndRange) {
@@ -1154,7 +1133,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest,
        MapRejectsPartialOverlapWithStaleReservationMapping) {
   const uint64_t granularity = GetVmmGranularity();
@@ -1194,7 +1172,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest, DeallocateRejectsActiveMapMapping) {
   const uint64_t granularity = GetVmmGranularity();
   ASSERT_GT(granularity, 0);
@@ -1232,7 +1209,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, DeallocateRejectsActiveMapMapping) {
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest,
        ExternalMappedAllocateRejectsPartialOverlapWithStaleAllocatorRange) {
   const uint64_t granularity = GetVmmGranularity();
@@ -1258,7 +1234,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
 
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        ReusingRegularAllocatorAddressPreservesExplicitUnMapPending) {
@@ -1302,7 +1277,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(allocator->Deallocate(ordinal, reused.Release()), IsOk());
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        ReusingReservationBackedAllocatorAddressPreservesExplicitUnMapPending) {
@@ -1349,6 +1323,118 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
+TEST_F(DeviceAddressVmmAllocatorTest, DestructorLogsDebugStatisticsAtVlog1) {
+  const uint64_t granularity = GetVmmGranularity();
+  ASSERT_GT(granularity, 0);
+
+  const int old_vlog = absl::SetVLogLevel("device_address_vmm_allocator", 1);
+  absl::Cleanup restore_vlog = [old_vlog] {
+    absl::SetVLogLevel("device_address_vmm_allocator", old_vlog);
+  };
+  absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(mock_log,
+              Log(absl::LogSeverity::kInfo, ::testing::_,
+                  ::testing::AllOf(
+                      ::testing::HasSubstr(
+                          "DeviceAddressVmmAllocator debug statistics"),
+                      ::testing::HasSubstr("| Allocate(size)"),
+                      ::testing::HasSubstr(
+                          "| Allocate(..., return_reservation_address=true)"),
+                      ::testing::HasSubstr(
+                          "| Allocate(..., return_reservation_address=false)"),
+                      ::testing::HasSubstr("| Map(addr, reservation, ...)"),
+                      ::testing::HasSubstr("| Deallocate()"),
+                      ::testing::HasSubstr("| UnMap()"),
+                      ::testing::HasSubstr("1 (50.00%)"),
+                      ::testing::HasSubstr("|         6 |"))))
+      .Times(1);
+  mock_log.StartCapturingLogs();
+
+  {
+    ASSERT_OK_AND_ASSIGN(
+        auto source_reservation,
+        gpu::CudaMemoryReservation::Create(executor_, granularity));
+    ASSERT_OK_AND_ASSIGN(
+        auto map_reservation,
+        gpu::CudaMemoryReservation::Create(executor_, granularity));
+    ASSERT_OK_AND_ASSIGN(
+        auto internal_reservation,
+        gpu::CudaMemoryReservation::Create(executor_, granularity));
+    ASSERT_OK_AND_ASSIGN(
+        auto allocator,
+        gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+    const int ordinal = executor_->device_ordinal();
+
+    ASSERT_OK_AND_ASSIGN(
+        auto regular,
+        allocator->Allocate(ordinal, granularity, /*retry_on_failure=*/true,
+                            static_cast<int64_t>(MemorySpace::kCollective)));
+    ASSERT_THAT(allocator->Deallocate(ordinal, regular.Release()), IsOk());
+    ASSERT_OK_AND_ASSIGN(
+        auto reused_regular,
+        allocator->Allocate(ordinal, granularity, /*retry_on_failure=*/true,
+                            static_cast<int64_t>(MemorySpace::kCollective)));
+    ASSERT_THAT(allocator->Deallocate(ordinal, reused_regular.Release()),
+                IsOk());
+
+    ASSERT_OK_AND_ASSIGN(
+        auto external_mapped,
+        AllocateExternalMappedForTest(*allocator, ordinal, granularity,
+                                      source_reservation.get(),
+                                      /*reservation_offset=*/0, granularity));
+    ASSERT_THAT(
+        allocator->Map(ordinal, external_mapped.cref(), map_reservation.get(),
+                       /*reservation_offset=*/0, granularity),
+        IsOk());
+    ASSERT_THAT(allocator->UnMap(ordinal, map_reservation.get(),
+                                 /*reservation_offset=*/0, granularity),
+                IsOk());
+    ASSERT_THAT(
+        allocator->Map(ordinal, external_mapped.cref(), map_reservation.get(),
+                       /*reservation_offset=*/0, granularity),
+        IsOk());
+    ASSERT_THAT(allocator->UnMap(ordinal, map_reservation.get(),
+                                 /*reservation_offset=*/0, granularity),
+                IsOk());
+    ASSERT_THAT(allocator->Deallocate(ordinal, external_mapped.Release()),
+                IsOk());
+    ASSERT_OK_AND_ASSIGN(
+        auto reused_external_mapped,
+        AllocateExternalMappedForTest(*allocator, ordinal, granularity,
+                                      source_reservation.get(),
+                                      /*reservation_offset=*/0, granularity));
+    ASSERT_THAT(
+        allocator->Deallocate(ordinal, reused_external_mapped.Release()),
+        IsOk());
+
+    ASSERT_OK_AND_ASSIGN(
+        auto internal_mapped,
+        AllocateInternalMappedForTest(*allocator, ordinal, granularity,
+                                      internal_reservation.get(),
+                                      /*reservation_offset=*/0, granularity));
+    ASSERT_THAT(allocator->UnMap(ordinal, internal_reservation.get(),
+                                 /*reservation_offset=*/0, granularity),
+                IsOk());
+    ASSERT_THAT(allocator->Deallocate(ordinal, internal_mapped.Release()),
+                IsOk());
+    ASSERT_OK_AND_ASSIGN(
+        auto reused_internal_mapped,
+        AllocateInternalMappedForTest(*allocator, ordinal, granularity,
+                                      internal_reservation.get(),
+                                      /*reservation_offset=*/0, granularity));
+    ASSERT_THAT(allocator->UnMap(ordinal, internal_reservation.get(),
+                                 /*reservation_offset=*/0, granularity),
+                IsOk());
+    ASSERT_THAT(
+        allocator->Deallocate(ordinal, reused_internal_mapped.Release()),
+        IsOk());
+
+    ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+  }
+
+  mock_log.StopCapturingLogs();
+}
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        MapRemapsPendingUnMapForDifferentRawAllocation) {
@@ -1402,7 +1488,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(allocator->Deallocate(ordinal, addr2.Release()), IsOk());
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        MapConflictSkipsUnrelatedPendingReservationUnMap) {
@@ -1467,7 +1552,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest,
        PendingDeallocationWithPendingMapUnMapCanBeReused) {
   const uint64_t granularity = GetVmmGranularity();
@@ -1503,7 +1587,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest,
        PendingMapUnMapsAreCompletedOnAllocatorDestruction) {
   const int ordinal = executor_->device_ordinal();
@@ -1533,7 +1616,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest, MapRejectsNullAddress) {
   ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
                                              executor_, kVmmTestSize));
@@ -1546,7 +1628,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, MapRejectsNullAddress) {
                          kVmmTestSize)
                    .ok());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest, MapRejectsAddressFromDifferentAllocator) {
   ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
@@ -1573,7 +1654,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, MapRejectsAddressFromDifferentAllocator) {
               IsOk());
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        MapAcceptsReservationBackedAllocatorAddress) {
@@ -1614,7 +1694,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(allocator->Deallocate(ordinal, mapped.Release()), IsOk());
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        MapAcceptsAllocatorAddressFromMappedAllocate) {
@@ -1665,7 +1744,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest,
        MapRejectsSizeLargerThanSourceAllocation) {
   const uint64_t granularity = GetVmmGranularity();
@@ -1692,7 +1770,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest, MapRejectsDeallocatedAddress) {
   const uint64_t granularity = GetVmmGranularity();
   ASSERT_GT(granularity, 0);
@@ -1718,7 +1795,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, MapRejectsDeallocatedAddress) {
 
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
-
 
 TEST_F(DeviceAddressVmmAllocatorTest, UnMapRejectsUntrackedMapping) {
   const uint64_t granularity = GetVmmGranularity();
@@ -1752,7 +1828,9 @@ TEST_F(DeviceAddressVmmAllocatorTest, UnMapRejectsUntrackedMapping) {
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
+// Verifies that deallocating memory while the GPU is still writing to it is
+// safe. The timeline write for the deallocation is enqueued on the stream
+// AFTER the memcpy, so the physical memory is not freed until the GPU finishes.
 TEST_F(DeviceAddressVmmAllocatorTest,
        DeferredDeallocationSafeWhileGpuWritesData) {
   ASSERT_OK_AND_ASSIGN(
@@ -1781,7 +1859,9 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
+// Allocates and deallocates N buffers, recording a distinct seqno for each.
+// After a single stream sync all seqnos have been written by the GPU, so
+// re-allocating the same size should succeed by reusing the pending entries.
 TEST_F(DeviceAddressVmmAllocatorTest,
        MultipleSeqnosAllCompleteAfterStreamSync) {
   ASSERT_OK_AND_ASSIGN(
@@ -1819,7 +1899,9 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
-
+// Verifies that the destructor correctly spin-waits on the pinned timeline
+// counter until all pending GPU timeline writes complete, then frees the
+// physical memory without crashing.
 TEST_F(DeviceAddressVmmAllocatorTest,
        DestructorWithPendingDeallocationsDoesNotCrash) {
   ASSERT_OK_AND_ASSIGN(
@@ -1843,7 +1925,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   allocator.reset();  // Must not crash or leak.
 }
 
-
 TEST_F(DeviceAddressVmmAllocatorTest, UnknownDeviceOrdinalReturnsError) {
   ASSERT_OK_AND_ASSIGN(
       auto allocator,
@@ -1863,7 +1944,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, UnknownDeviceOrdinalReturnsError) {
   EXPECT_FALSE(allocator->GetStream(unknown_ordinal).ok());
   EXPECT_FALSE(allocator->GetStreamExecutor(unknown_ordinal).ok());
 }
-
 
 // Multi-device fixture: skips the test if fewer than two CUDA devices are
 // available.
@@ -1940,7 +2020,6 @@ TEST_F(MultiDeviceVmmAllocatorTest, AllocateOnBothDevices) {
   }
 }
 
-
 TEST_F(MultiDeviceVmmAllocatorTest, AllocationOnOneDeviceDoesNotAffectOther) {
   std::vector<DeviceAddressVmmAllocator::DeviceConfig> configs;
   for (int i = 0; i < 2; ++i) {
@@ -1964,8 +2043,6 @@ TEST_F(MultiDeviceVmmAllocatorTest, AllocationOnOneDeviceDoesNotAffectOther) {
       allocator->GetRawAllocation(executors_[1]->device_ordinal(), *addr0),
       nullptr);
 }
-
-
 
 }  // namespace
 }  // namespace stream_executor
