@@ -2405,7 +2405,7 @@ cc_library(
         "//xla/service/gpu:backend_configs_cc",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
-        "//xla/stream_executor:device_address_handle",
+        "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:memory_allocator",
         "//xla/stream_executor:memory_space",
