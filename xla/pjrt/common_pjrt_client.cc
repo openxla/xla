@@ -1591,7 +1591,7 @@ CommonPjRtLoadedExecutable::ExecuteLaunch(ExecuteLaunchArgs& launch_args,
   return PjRtLoadedExecutable::Result(
       {/*future=*/std::move(results.future),
        /*buffers=*/client()->CreateOutputs(
-           output_device_shape_, results.primary_execute_event,
+           output_device_shape_, std::move(results.primary_execute_event),
            launch_args.device, output_memory_space_kind_ids_,
            std::move(launch_args.output_leaf_buffers),
            launch_args.is_predetermined_error)});
