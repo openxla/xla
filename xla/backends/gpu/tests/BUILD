@@ -137,35 +137,6 @@ cc_library(
 )
 
 xla_test(
-    name = "dynamic_slice_fusion_test",
-    srcs = if_gpu_is_configured(["dynamic_slice_fusion_test.cc"]),
-    backends = ["gpu"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
-    tags = [
-        "no-oneapi",  # TODO(intel-tf): Enable this test for SYCL when IntelGpuCompiler is implemented.
-    ],
-    deps = if_gpu_is_configured(
-        #keep sorted
-        [
-            "//xla:error_spec",
-            "//xla:shape_util",
-            "//xla/backends/gpu:ffi",
-            "//xla/ffi",
-            "//xla/ffi:ffi_api",
-            "//xla/stream_executor:device_address",
-            "//xla/stream_executor:stream",
-            "//xla/tests:hlo_pjrt_test_base",
-            "@com_google_absl//absl/algorithm:container",
-            "@com_google_absl//absl/status",
-            "@tsl//tsl/platform:test",
-        ],
-    ) + [
-        "//xla/tests:xla_internal_test_main",
-        "//xla/tsl/platform:test",
-    ],
-)
-
-xla_test(
     name = "element_wise_row_vectorization_test",
     srcs = ["element_wise_row_vectorization_test.cc"],
     backends = ["gpu"],
