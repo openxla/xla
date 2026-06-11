@@ -38,6 +38,9 @@ class EigenTanh : public Intrinsic<EigenTanh> {
 
   static std::vector<std::vector<Type>> SupportedVectorTypes(
       absl::string_view features) {
+    if (!AreEigenIntrinsicsAvailable()) {
+      return {};
+    }
     return {
         {Type::S(xla::F32)},     {Type::V(xla::F32, 4)}, {Type::V(xla::F32, 8)},
         {Type::V(xla::F32, 16)}, {Type::S(xla::F64)},    {Type::V(xla::F64, 4)},
@@ -57,6 +60,9 @@ class EigenAtan : public Intrinsic<EigenAtan> {
 
   static std::vector<std::vector<Type>> SupportedVectorTypes(
       absl::string_view features) {
+    if (!AreEigenIntrinsicsAvailable()) {
+      return {};
+    }
     // On ARM NEON, Remez reciprocal division (1.0f / abs_x) can trigger
     // division traps or underflow near zero under hardware Flush-To-Zero (FTZ)
     // execution. We advertise scalar support only so that MLIR automatically
