@@ -812,7 +812,10 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
             ->config()
             .debug_options()
             .xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
-        instr->GetModule()->config().debug_options().xla_gpu_enable_cublaslt();
+        instr->GetModule()
+            ->config()
+            .debug_options()
+            .xla_gpu_enable_cublaslt();  // NOLINT(clang-diagnostic-deprecated-declarations)
     if (ragged_dot_fusion_enabled || !grouped_gemm_enabled ||
         !IsGpublasLtSupportedGroupedMatMul(*instr)) {
       return absl::OkStatus();
