@@ -10,8 +10,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_BACKENDS_GPU_COLLECTIVES_ROC_MORI_COMMUNICATOR_H_
-#define XLA_BACKENDS_GPU_COLLECTIVES_ROC_MORI_COMMUNICATOR_H_
+#ifndef XLA_BACKENDS_GPU_COLLECTIVES_MORI_COMMUNICATOR_H_
+#define XLA_BACKENDS_GPU_COLLECTIVES_MORI_COMMUNICATOR_H_
 
 #include <cstddef>
 #include <optional>
@@ -39,7 +39,7 @@ namespace xla::gpu {
 
 class MoriCollectives;
 
-// XLA collectives communicator wrapping an ROC_MORI communicator.
+// XLA collectives communicator wrapping a MORI communicator.
 class MoriCommunicator : public GpuCommunicator {
  public:
   constexpr static uint32_t kMaxTeams = 24;
@@ -210,10 +210,8 @@ private:
   // Per-peer completion signal flags in MORI symmetric heap.
   // signal_flags_[i] is set by PE i when it finishes sending data to us.
   uint32_t* signal_flags_ = nullptr;
-  // rocshmem::rocm_mori_team_t *teams_ = nullptr;
-  // rocshmem::rocm_mori_team_t host_team_ = rocshmem::ROC_MORI_TEAM_WORLD;
 };
 
 }  // namespace xla::gpu
 
-#endif  // XLA_BACKENDS_GPU_COLLECTIVES_ROC_MORI_COMMUNICATOR_H_
+#endif  // XLA_BACKENDS_GPU_COLLECTIVES_MORI_COMMUNICATOR_H_

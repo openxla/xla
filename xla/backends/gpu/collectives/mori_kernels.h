@@ -10,8 +10,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_BACKENDS_GPU_COLLECTIVES_ROC_MORI_KERNELS_H_
-#define XLA_BACKENDS_GPU_COLLECTIVES_ROC_MORI_KERNELS_H_
+#ifndef XLA_BACKENDS_GPU_COLLECTIVES_MORI_KERNELS_H_
+#define XLA_BACKENDS_GPU_COLLECTIVES_MORI_KERNELS_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -48,4 +48,4 @@ void RegisterMemObjPtr(void *ptr, mori::application::SymmMemObjPtr obj);
 void DeregisterMemObjPtr(void* ptr);
 } // namespace roc_mori
 
-#endif // XLA_BACKENDS_GPU_COLLECTIVES_ROC_MORI_KERNELS_H_
+#endif // XLA_BACKENDS_GPU_COLLECTIVES_MORI_KERNELS_H_

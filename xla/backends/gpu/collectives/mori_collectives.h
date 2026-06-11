@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_BACKENDS_GPU_COLLECTIVES_ROC_MORI_COLLECTIVES_H_
-#define XLA_BACKENDS_GPU_COLLECTIVES_ROC_MORI_COLLECTIVES_H_
+#ifndef XLA_BACKENDS_GPU_COLLECTIVES_MORI_COLLECTIVES_H_
+#define XLA_BACKENDS_GPU_COLLECTIVES_MORI_COLLECTIVES_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -96,4 +96,4 @@ class MoriCollectives : public GpuCollectives {
 
 }  // namespace xla::gpu
 
-#endif  // XLA_BACKENDS_GPU_COLLECTIVES_ROC_MORI_COLLECTIVES_H_
+#endif  // XLA_BACKENDS_GPU_COLLECTIVES_MORI_COLLECTIVES_H_
