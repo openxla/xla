@@ -3124,6 +3124,10 @@ absl::Status GpuCompiler::RunPreSchedulingPasses(
   const auto* cuda_cc =
       gpu_device_info.gpu_compute_capability().cuda_compute_capability();
   if (cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere()) {
+    // FusionDispatchPipeline also runs FusionDynamicMemcpyRewriter after
+    // scheduling for fusions created by post-scheduling passes. Run it here as
+    // well so copy-hero dynamic slice fusions exist before LHS and can be
+    // wrapped as async memcpy.
     pipeline.AddPass<FusionDynamicMemcpyRewriter>();
     pipeline.AddPass<DynamicSliceCopyFusionAsyncWrapper>();
   }
