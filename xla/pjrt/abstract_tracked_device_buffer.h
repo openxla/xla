@@ -78,7 +78,9 @@ class AbstractTrackedDeviceBuffer {
         result.push_back(ev);
       }
     }
-    result.insert(result.end(), usage_events_.begin(), usage_events_.end());
+    for (const auto& ev : usage_events_) {
+      result.push_back(ev);
+    }
     return result;
   }
 

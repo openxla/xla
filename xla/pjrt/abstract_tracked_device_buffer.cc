@@ -145,8 +145,9 @@ void AbstractTrackedDeviceBuffer::Delete(PjRtMemorySpace* memory_space) {
   for (const auto& ev : device_buffer->definition_events()) {
     events.push_back(ev);
   }
-  events.insert(events.end(), device_buffer->usage_events_.begin(),
-                device_buffer->usage_events_.end());
+  for (const auto& ev : device_buffer->usage_events_) {
+    events.push_back(ev);
+  }
 
   device_buffer->LockUsageEvents();
   auto raw_buffer = device_buffer->raw_buffer();

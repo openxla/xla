@@ -412,7 +412,8 @@ void PjRtStreamExecutorRawBuffer::IntraClientCopyToWithDependencies(
     bool allocation_set = false;
     auto status = [&]() -> absl::Status {
       // Handle errors in pre-scheduling async values.
-      for (const auto& dep : dependencies) {
+      for (size_t i = 0; i < dependencies.size(); ++i) {
+        const auto& dep = dependencies[i];
         if (auto event_ref = dep.down_cast<BufferSequencingEvent>()) {
           if (auto* error = event_ref->event().GetErrorIfPresent()) {
             return *error;
@@ -423,7 +424,8 @@ void PjRtStreamExecutorRawBuffer::IntraClientCopyToWithDependencies(
       }
 
       // Wait for BufferSequencingEvent based dependencies on the stream.
-      for (const auto& dep : dependencies) {
+      for (size_t i = 0; i < dependencies.size(); ++i) {
+        const auto& dep = dependencies[i];
         if (auto event_ref = dep.down_cast<BufferSequencingEvent>()) {
           event_ref->WaitForEventOnStream(stream);
         } else {

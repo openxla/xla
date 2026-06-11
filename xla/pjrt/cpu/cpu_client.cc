@@ -1572,11 +1572,11 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
 
   PjRtDeviceEventRefVector input_deps = std::move(control_deps);
   size_t num_control_deps = input_deps.size();
-  for (auto& event : extra_deps) {
+  ConsumeEvents(std::move(extra_deps), [&](PjRtDeviceEventRef&& event) {
     if (event) {
       input_deps.push_back(std::move(event));
     }
-  }
+  });
   auto execute_event = tsl::MakeConstructedAsyncValueRef<CpuEvent>();
   MarkEventReadyOnExit ready_on_exit(execute_event);
   result.primary_execute_event = PjRtDeviceEventRef(execute_event);
@@ -1841,8 +1841,8 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
           buffer_alloc.Allocate(*allocator);
           buffer_alloc_and_copy.AllocateAndCopy(*allocator);
 
-          size_t i = 0;
-          for (const auto& event : input_deps_avs) {
+          for (size_t i = 0; i < input_deps_avs.size(); ++i) {
+            const auto& event = input_deps_avs[i];
             if (i >= num_control_deps) {
               if (auto error = event.GetErrorIfPresent()) {
                 scoped_async_execution.SetError(Internal(
@@ -1851,7 +1851,6 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
                 return;
               }
             }
-            ++i;
           }
           auto status = [&]() -> absl::Status {
             ASSIGN_OR_RETURN(auto thunks_execute_event, execute_thunks());

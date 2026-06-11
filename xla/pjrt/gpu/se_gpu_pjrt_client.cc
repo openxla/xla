@@ -694,8 +694,8 @@ StreamExecutorGpuClient::CrossHostTransferBuffers(
   // We will register a single transfer event for all transfers to/from the same
   // device. We will collect the references to those events inside
   // output_transfer_events. This will eventually be returned to the user.
-  PjRtDeviceEventRefVector output_transfer_events(transfer_specs.size(),
-                                                  PjRtDeviceEventRef());
+  std::vector<PjRtDeviceEventRef> output_transfer_events(transfer_specs.size(),
+                                                         PjRtDeviceEventRef());
 
   // Schedule transfers.
   for (const auto& [device, transfer_idxs] : transfers_by_device) {
@@ -749,7 +749,12 @@ StreamExecutorGpuClient::CrossHostTransferBuffers(
     }
   }
 
-  return output_transfer_events;
+  PjRtDeviceEventRefVector result;
+  result.reserve(output_transfer_events.size());
+  for (auto& ev : output_transfer_events) {
+    result.push_back(std::move(ev));
+  }
+  return result;
 }
 
 void StreamExecutorGpuClient::ScheduleTransfersOnLocalDevice(

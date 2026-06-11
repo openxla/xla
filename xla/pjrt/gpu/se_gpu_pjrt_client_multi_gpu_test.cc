@@ -1420,9 +1420,11 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
                     PjRtDeviceEventRefVector buf_definition_events) mutable
                     -> absl::StatusOr<PjRtDeviceEventRef> {
                   raw_buffer = std::move(buf_raw_buffer);
-                  for (PjRtDeviceEventRef& event : buf_definition_events) {
-                    transfer_dependencies.push_back(std::move(event));
-                  }
+                  ConsumeEvents(
+                      std::move(buf_definition_events),
+                      [&](PjRtDeviceEventRef&& ev) {
+                        transfer_dependencies.push_back(std::move(ev));
+                      });
                   return PjRtDeviceEventRef(usage_event);
                 },
                 "SuccessfulCrossHostTransferTestBody"));

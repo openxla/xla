@@ -1117,7 +1117,8 @@ CommonPjRtClient::MakeCrossHostReceiveBuffers(
     ASSIGN_OR_RETURN(
         std::unique_ptr<PjRtBuffer> output_buffer,
         DefineBuffer(std::move(dst_shapes[i]), memory_space,
-                     tsl::FormRef(common_raw_buffer), {definition_events[i]}));
+                     tsl::FormRef(common_raw_buffer),
+                     {PjRtDeviceEventPtr(definition_events[i]).CopyRef()}));
     buffers.push_back(std::move(output_buffer));
   }
   return buffers;
@@ -1206,11 +1207,11 @@ absl::StatusOr<std::vector<Future<>>> CommonPjRtClient::CrossHostSendBuffers(
                   // a reference to buf_raw_buffer is retained
                   // for the duration of the transfer.
                   raw_buffers.push_back(std::move(buf_raw_buffer));
-                  for (PjRtDeviceEventRef& definition_event :
-                       buf_definition_events) {
-                    transfer_dependencies.push_back(
-                        std::move(definition_event));
-                  }
+                  ConsumeEvents(
+                      std::move(buf_definition_events),
+                      [&](PjRtDeviceEventRef&& ev) {
+                        transfer_dependencies.push_back(std::move(ev));
+                      });
                   return PjRtDeviceEventRef(usage_event);
                 },
                 "CrossHostSendBuffers"));
@@ -1237,10 +1238,10 @@ absl::StatusOr<std::vector<Future<>>> CommonPjRtClient::CrossHostSendBuffers(
   }
   PjRtDeviceEventRefVector usage_events = std::move(usage_events_or).value();
 
-  // Populate usage events.
-  for (int i = 0; i < buffers.size(); ++i) {
-    usage_event_promises[i].Set(usage_events[i]);
-  }
+  int usage_event_index = 0;
+  ConsumeEvents(std::move(usage_events), [&](PjRtDeviceEventRef&& ev) {
+    usage_event_promises[usage_event_index++].Set(std::move(ev));
+  });
 
   return futures;
 }
@@ -1355,7 +1356,13 @@ CommonPjRtClient::CrossHostReceiveBuffers(
   // device (the 'device' given as input to this function), and because
   // CrossHostTransferBuffers will only assign different definition events for
   // transfers into different devices.
-  definition_event_promise.Set(std::move(definition_events[0]));
+  bool definition_event_set = false;
+  ConsumeEvents(std::move(definition_events), [&](PjRtDeviceEventRef&& ev) {
+    if (!definition_event_set) {
+      definition_event_promise.Set(std::move(ev));
+      definition_event_set = true;
+    }
+  });
 
   return buffers;
 }
@@ -2074,10 +2081,10 @@ static absl::Status CommonCopyToMemorySpace(
           if (definition_events.empty()) {
             definition_events = std::move(buf_definition_events);
           } else {
-            definition_events.insert(
-                definition_events.end(),
-                std::make_move_iterator(buf_definition_events.begin()),
-                std::make_move_iterator(buf_definition_events.end()));
+            ConsumeEvents(std::move(buf_definition_events),
+                          [&](PjRtDeviceEventRef&& ev) {
+                            definition_events.push_back(std::move(ev));
+                          });
           }
           if (src_client->event_tracking_enabled()) {
             ASSIGN_OR_RETURN(
@@ -2547,7 +2554,8 @@ Future<> CommonPjRtBufferImpl::ToLiteralImpl(
                 return;
               }
               // Errors in src buffer are surfaced to user.
-              for (const auto& ev : src_definition_events) {
+              for (size_t i = 0; i < src_definition_events.size(); ++i) {
+                const auto& ev = src_definition_events[i];
                 if (auto error = ev.GetErrorIfPresent()) {
                   notify_all(std::move(*error));
                   return;
@@ -2775,7 +2783,8 @@ Future<> CommonPjRtBufferImpl::CopyRawToHostFuture(Future<void*> dst,
          definition_events = std::move(definition_events),
          usage_event_promise = std::move(usage_event_promise)]() mutable {
           // Errors in src buffer are surfaced to user.
-          for (const auto& ev : definition_events) {
+          for (size_t i = 0; i < definition_events.size(); ++i) {
+            const auto& ev = definition_events[i];
             if (auto error = ev.GetErrorIfPresent()) {
               // Signal the usage event to unblock consumers of buffer.
               usage_event_promise.SetError(std::move(*error));
