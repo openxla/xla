@@ -25,7 +25,6 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "oneapi/dnnl/dnnl_common.hpp"
 #include "oneapi/dnnl/dnnl_graph.hpp"  // NOLINT
 #include "xla/backends/cpu/onednn_fusion.h"
@@ -37,6 +36,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -68,32 +68,6 @@ static absl::StatusOr<dnnl::graph::logical_tensor::data_type> OneDnnDatatype(
   }
 }
 
-static absl::StatusOr<dnnl::graph::op::kind> OneDnnUnaryOperator(
-    const HloOpcode& opcode) {
-  switch (opcode) {
-    case HloOpcode::kExp:
-      return dnnl::graph::op::kind::Exp;
-    default:
-      return InvalidArgument("Unsupported oneDNN unary operator: %s",
-                             HloOpcodeString(opcode));
-  }
-}
-
-static absl::StatusOr<dnnl::graph::op::kind> OneDnnBinaryOperator(
-    const HloOpcode& opcode) {
-  switch (opcode) {
-    case HloOpcode::kAdd:
-      return dnnl::graph::op::kind::Add;
-    case HloOpcode::kMultiply:
-      return dnnl::graph::op::kind::Multiply;
-    case HloOpcode::kDot:
-      return dnnl::graph::op::kind::MatMul;
-    default:
-      return InvalidArgument("Unsupported oneDNN unary operator: %s",
-                             HloOpcodeString(opcode));
-  }
-}
-
 static dnnl::graph::logical_tensor::dims OneDnnDimensions(const Shape& shape) {
   dnnl::graph::logical_tensor::dims dims;
   for (auto& dim : shape.dimensions()) {
@@ -121,7 +95,7 @@ static absl::StatusOr<dnnl::graph::logical_tensor> FindLogicalTensor(
   if (auto it = logical_tensors.find(instr); it != logical_tensors.end()) {
     return it->second;
   }
-  return Internal("Can't fine oneDNN logical tensor for instruction %s",
+  return Internal("Can't find oneDNN logical tensor for instruction %s",
                   instr->ToString());
 }
 
@@ -200,7 +174,7 @@ static absl::StatusOr<dnnl::graph::logical_tensor> DefineMatMul(
   const Shape& rhs_shape = instr->operand(1)->shape();
   ASSIGN_OR_RETURN(
       bool is_supported,
-      IsOneDnnDotSupported(dnums, lhs_shape, rhs_shape, instr->shape()));
+      IsDotSupportedByOneDnn(dnums, lhs_shape, rhs_shape, instr->shape()));
 
   if (!is_supported) {
     return InvalidArgument("Unsupported oneDNN Dot op variation: %s",
@@ -266,14 +240,22 @@ static absl::StatusOr<OneDnnFusion> EmitOneDnnFusion(
       } break;
 
       // Unary elementwise ops.
-      case HloOpcode::kExp: {
+      case HloOpcode::kAbs:
+      case HloOpcode::kExp:
+      case HloOpcode::kLog:
+      case HloOpcode::kSqrt:
+      case HloOpcode::kTanh: {
         ASSIGN_OR_RETURN(logical_tensors[instr],
                          DefineUnaryOp(graph, op_id++, logical_tensors, instr));
       } break;
 
       // Binary elementwise ops.
       case HloOpcode::kAdd:
-      case HloOpcode::kMultiply: {
+      case HloOpcode::kDivide:
+      case HloOpcode::kMaximum:
+      case HloOpcode::kMinimum:
+      case HloOpcode::kMultiply:
+      case HloOpcode::kSubtract: {
         ASSIGN_OR_RETURN(
             logical_tensors[instr],
             DefineBinaryOp(graph, op_id++, logical_tensors, instr));
