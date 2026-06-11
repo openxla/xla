@@ -4047,6 +4047,7 @@ cc_library(
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_handle",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/gpu:buffer_comparator_kernel",
@@ -4065,9 +4066,47 @@ cc_library(
 
 xla_test(
     name = "buffer_comparator_test",
-    srcs = ["buffer_comparator_test.cc"],
+    srcs = [
+        "buffer_comparator_test.cc",
+        "buffer_comparator_test.h",
+    ],
     backends = ["gpu"],
     disabled_backends = [],
+    deps = [
+        ":buffer_comparator",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/service:platform_util",
+        "//xla/service/gpu:stream_executor_util",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_address_handle",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:ml_dtypes",
+    ],
+)
+
+xla_test(
+    name = "buffer_comparator_cuda_test",
+    srcs = if_cuda_is_configured(
+        ["buffer_comparator_cuda_test.cc"],
+        [],
+    ) + ["buffer_comparator_test.h"],
+    backends = ["gpu"],
+    disabled_backends = ["rocm"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":buffer_comparator",
         "//xla:shape_util",
@@ -4080,13 +4119,21 @@ xla_test(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
-        "@com_google_absl//absl/cleanup",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:ml_dtypes",
-    ],
+    ] + if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+        "//xla/stream_executor/cuda:cuda_stream",
+        "//xla/stream_executor/cuda:cuda_status",
+    ]),
 )
 
 cc_library(
