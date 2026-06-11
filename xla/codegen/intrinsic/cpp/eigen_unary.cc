@@ -45,7 +45,24 @@ inline VecType VectorAtan(const VecType x) {
   return *reinterpret_cast<const VecType*>(&result);
 }
 
+template <typename VecType>
+inline VecType VectorSin(const VecType x) {
+  using ArrayType = typename ArrayMap<VecType>::type;
+  ArrayType x_array = *reinterpret_cast<const ArrayType*>(&x);
+  ArrayType result = x_array.sin();
+  return *reinterpret_cast<const VecType*>(&result);
+}
+
+template <typename VecType>
+inline VecType VectorCos(const VecType x) {
+  using ArrayType = typename ArrayMap<VecType>::type;
+  ArrayType x_array = *reinterpret_cast<const ArrayType*>(&x);
+  ArrayType result = x_array.cos();
+  return *reinterpret_cast<const VecType*>(&result);
+}
+
 //===--------------------------------------------------------------------===//
+
 // XLA entrypoints, renamed with asm in header file.
 //===--------------------------------------------------------------------===//
 
@@ -161,6 +178,29 @@ double atan_f64(double x_in) {
 Vec4d atan_v4f64(Vec4d x) { return VectorAtan(x); }
 Vec8d atan_v8f64(Vec8d x) { return VectorAtan(x); }
 
+// Single precision
+float sin_f32(float x) { return VectorSin(Vec4f{x, 0.0f, 0.0f, 0.0f})[0]; }
+Vec4f sin_v4f32(Vec4f x) { return VectorSin(x); }
+Vec8f sin_v8f32(Vec8f x) { return VectorSin(x); }
+Vec16f sin_v16f32(Vec16f x) { return VectorSin(x); }
+
+// Double precision
+double sin_f64(double x) { return VectorSin(Vec2d{x, 0.0})[0]; }
+Vec4d sin_v4f64(Vec4d x) { return VectorSin(x); }
+Vec8d sin_v8f64(Vec8d x) { return VectorSin(x); }
+
+// Single precision
+float cos_f32(float x) { return VectorCos(Vec4f{x, 0.0f, 0.0f, 0.0f})[0]; }
+Vec4f cos_v4f32(Vec4f x) { return VectorCos(x); }
+Vec8f cos_v8f32(Vec8f x) { return VectorCos(x); }
+Vec16f cos_v16f32(Vec16f x) { return VectorCos(x); }
+
+// Double precision
+double cos_f64(double x) { return VectorCos(Vec2d{x, 0.0})[0]; }
+Vec4d cos_v4f64(Vec4d x) { return VectorCos(x); }
+Vec8d cos_v8f64(Vec8d x) { return VectorCos(x); }
+
 }  // namespace xla::codegen
+
 #endif  // defined(__has_attribute) && __has_attribute(vector_size) &&
         // defined(__has_builtin) && __has_builtin(__builtin_vectorelements)
