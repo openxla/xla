@@ -5484,15 +5484,28 @@ std::string AsynchronousCopyResource::Dump(
 }
 
 AliasedOffset* MsaAlgorithm::GetAliasedOffset(const Allocation& allocation) {
+  if (allocation.is_mirrored_allocation()) {
+    const MirroredAllocation* mirrored_allocation =
+        dynamic_cast<const MirroredAllocation*>(&allocation);
+    CHECK(mirrored_allocation != nullptr);
+    return GetAliasedOffset(mirrored_allocation->original_allocation());
+  }
   auto aliased_offset_it = aliased_offset_map_.find(&allocation);
-  CHECK(aliased_offset_it != aliased_offset_map_.end());
+  CHECK(aliased_offset_it != aliased_offset_map_.end())
+      << "Allocation not found in aliased offset map: "
+      << allocation.ToString();
   return aliased_offset_it->second;
 }
 
-void MsaAlgorithm::CreateOrAddToAliasedOffset(const Allocation& allocation,
-                                              AliasedOffset* aliased_offset) {
-  CHECK(allocation.memory_space() == MemorySpace::kAlternate);
-  CHECK(!aliased_offset_map_.contains(&allocation));
+void MsaAlgorithm::MaybeCreateOrAddToAliasedOffset(
+    const Allocation& allocation, AliasedOffset* aliased_offset) {
+  CHECK(allocation.memory_space() == MemorySpace::kAlternate)
+      << "Allocation is not in the alternate memory: " << allocation.ToString();
+  if (allocation.is_mirrored_allocation()) {
+    return;
+  }
+  CHECK(!aliased_offset_map_.contains(&allocation))
+      << "Allocation already has an aliased offset: " << allocation.ToString();
   if (!aliased_offset) {
     aliased_offsets_.push_back({allocation.chunk().offset});
     aliased_offset = &aliased_offsets_.back();
@@ -5830,6 +5843,16 @@ MsaAlgorithm::RequiredMemoryAssignmentAt(const HloValue* buffer,
     }
   }
   return required_assignment_at_time;
+}
+
+std::optional<MsaAlgorithm::RequiredMemoryAssignment>
+MsaAlgorithm::RequiredAssignmentForUse(const AllocationValue::Use& use) const {
+  HloUse hlo_use = use.hlo_use;
+  const HloValue* value = &alias_analysis_.dataflow_analysis().GetUniqueValueAt(
+      hlo_use.instruction->operand(hlo_use.operand_number),
+      hlo_use.operand_index);
+  int64_t time = GetCorrectedUseTime(hlo_use);
+  return RequiredMemoryAssignmentAt(value, time);
 }
 
 std::optional<MsaAlgorithm::RequiredMemoryAssignment>
@@ -6940,8 +6963,8 @@ AllocationResult MsaAlgorithm::AllocateSegment(AllocationRequest& request) {
           request.inclusive_start_time));
       if (required_assignment_at_start->memory_space ==
           MemorySpace::kAlternate) {
-        CreateOrAddToAliasedOffset(*allocation_sequence->back(),
-                                   required_assignment_at_start->offset);
+        MaybeCreateOrAddToAliasedOffset(*allocation_sequence->back(),
+                                        required_assignment_at_start->offset);
       }
     }
   }
@@ -7248,7 +7271,7 @@ void MsaAlgorithm::RegisterAsyncCopy(
     if (options_.enforce_prefetch_fifo_order) {
       async_copy_ordering_.AddCopy(pending_async_copies_.back());
     }
-    CreateOrAddToAliasedOffset(*allocations->back(), aliased_offset);
+    MaybeCreateOrAddToAliasedOffset(*allocations->back(), aliased_offset);
   } else {
     eviction_interval_tree_.Add(
         /*start=*/
@@ -7326,7 +7349,7 @@ void MsaAlgorithm::AddAsyncSlicesForPrefetch(
       async_copy_ordering_.AddCopy(pending_async_copies_.back());
     }
   }
-  CreateOrAddToAliasedOffset(*allocations->back(), aliased_offset);
+  MaybeCreateOrAddToAliasedOffset(*allocations->back(), aliased_offset);
 }
 
 bool MsaAlgorithm::ViolatesMaximumOutstandingAsyncCopies(
@@ -7384,7 +7407,7 @@ AllocationResult MsaAlgorithm::ForceAlternateMemoryAllocationForMinTime(
           alternate_mem_interval.start, alternate_mem_interval.end));
   // Since we did not use request.preferred_offset, we pass nullptr to
   // CreateOrAddToAliasedOffset.
-  CreateOrAddToAliasedOffset(
+  MaybeCreateOrAddToAliasedOffset(
       *request.allocation_value->allocation_sequence()->back(),
       /*aliased_offset=*/nullptr);
   return AllocationResult::kSuccess;
@@ -7511,7 +7534,7 @@ AllocationResult MsaAlgorithm::AllocateInAlternateMemoryNoCopy(
           std::make_unique<PinnedAllocation>(
               defining_position, MemorySpace::kAlternate, chunk_candidate,
               request.inclusive_start_time, request.end_time));
-      CreateOrAddToAliasedOffset(
+      MaybeCreateOrAddToAliasedOffset(
           *request.allocation_value->allocation_sequence()->back(),
           preferred_offset);
     }
@@ -7826,8 +7849,8 @@ void MsaAlgorithm::WindowPrefetchOperand(const HloUse& use, int64_t bytes) {
           std::make_unique<WindowPrefetchedAllocation>(
               dummy_prev_allocation, use, *candidate_chunk, end_time - 1,
               end_time, options));
-      CreateOrAddToAliasedOffset(*allocation_sequence->back(),
-                                 /*aliased_offset=*/nullptr);
+      MaybeCreateOrAddToAliasedOffset(*allocation_sequence->back(),
+                                      /*aliased_offset=*/nullptr);
       allocation_sequence->back()->AddUse(use);
     }
   }
