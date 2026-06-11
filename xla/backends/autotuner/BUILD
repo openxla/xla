@@ -100,6 +100,7 @@ cc_library(
         ":codegen_backend",
         ":codegen_orchestrator",
         ":hlo_extractor",
+        ":profiler",
         ":tuner",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt/distributed:key_value_store_interface",
