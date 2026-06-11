@@ -919,6 +919,11 @@ xla_test(
     name = "gpu_cub_sort_test",
     size = "medium",
     srcs = ["gpu_cub_sort_test.cc"],
+    # Exclude deviceless parameterized tests which are run by gpu_cub_sort_deviceless_test in the cub TAP.
+    args = if_google(
+        ["--gunit_filter=-*deviceless*"],
+        ["--gtest_filter=-*deviceless*"],
+    ),
     backends = ["gpu"],
     local_defines = ["XLA_CUB_TEST_NO_DEVICELESS"],
     shard_count = 15,
