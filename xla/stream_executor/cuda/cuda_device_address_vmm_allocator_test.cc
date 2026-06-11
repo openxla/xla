@@ -176,6 +176,89 @@ TEST_F(DeviceAddressVmmAllocatorTest, AllocateAndDeallocate) {
 }
 
 
+TEST_F(DeviceAddressVmmAllocatorTest,
+       ConsecutiveDeallocationsUseOneTimelineWriteOnSync) {
+  ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      CountingCudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  ASSERT_OK_AND_ASSIGN(
+      auto first,
+      allocator->Allocate(ordinal, 1024, /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kCollective)));
+  ASSERT_OK_AND_ASSIGN(
+      auto second,
+      allocator->Allocate(ordinal, 1024, /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kCollective)));
+
+  ASSERT_THAT(allocator->Deallocate(ordinal, first.Release()), IsOk());
+  ASSERT_THAT(allocator->Deallocate(ordinal, second.Release()), IsOk());
+  EXPECT_EQ(allocator->timeline_write_count(), 0);
+
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+  EXPECT_EQ(allocator->timeline_write_count(), 1);
+}
+
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       ConsecutiveUnmapAndDeallocateUseOneTimelineWriteOnSync) {
+  const uint64_t granularity = GetVmmGranularity();
+  ASSERT_GT(granularity, 0);
+  ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                             executor_, granularity));
+  ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      CountingCudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  ASSERT_OK_AND_ASSIGN(
+      auto source,
+      allocator->Allocate(ordinal, granularity, /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kCollective)));
+  ASSERT_THAT(allocator->Map(ordinal, source.cref(), reservation.get(),
+                             /*reservation_offset=*/0, granularity),
+              IsOk());
+
+  ASSERT_THAT(allocator->UnMap(ordinal, reservation.get(),
+                               /*reservation_offset=*/0, granularity),
+              IsOk());
+  ASSERT_THAT(allocator->Deallocate(ordinal, source.Release()), IsOk());
+  EXPECT_EQ(allocator->timeline_write_count(), 0);
+
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+  EXPECT_EQ(allocator->timeline_write_count(), 1);
+}
+
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       ReusingOnlyOpenBatchEntryDoesNotFlushEmptyBatch) {
+  ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      CountingCudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  ASSERT_OK_AND_ASSIGN(
+      auto original,
+      allocator->Allocate(ordinal, 1024, /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kCollective)));
+  void* const original_ptr = original->opaque();
+  ASSERT_THAT(allocator->Deallocate(ordinal, original.Release()), IsOk());
+
+  ASSERT_OK_AND_ASSIGN(
+      auto reused,
+      allocator->Allocate(ordinal, 1024, /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kCollective)));
+  EXPECT_EQ(reused->opaque(), original_ptr);
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+  EXPECT_EQ(allocator->timeline_write_count(), 0);
+
+  ASSERT_THAT(allocator->Deallocate(ordinal, reused.Release()), IsOk());
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+  EXPECT_EQ(allocator->timeline_write_count(), 1);
+}
+
+
 TEST_F(DeviceAddressVmmAllocatorTest, AllocateZeroSize) {
   ASSERT_OK_AND_ASSIGN(
       auto allocator,
@@ -1417,6 +1500,36 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   EXPECT_EQ(fresh->opaque(), old_va);
 
   ASSERT_THAT(allocator->Deallocate(ordinal, fresh.Release()), IsOk());
+  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+}
+
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       PendingMapUnMapsAreCompletedOnAllocatorDestruction) {
+  const int ordinal = executor_->device_ordinal();
+  const uint64_t granularity = GetVmmGranularity();
+  ASSERT_GT(granularity, 0);
+
+  ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                             executor_, granularity));
+  {
+    ASSERT_OK_AND_ASSIGN(
+        auto allocator,
+        gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+    ASSERT_OK_AND_ASSIGN(
+        auto addr,
+        allocator->Allocate(ordinal, kVmmTestSize,
+                            /*retry_on_failure=*/true,
+                            static_cast<int64_t>(MemorySpace::kCollective)));
+    ASSERT_THAT(allocator->Map(ordinal, addr.cref(), reservation.get(),
+                               /*reservation_offset=*/0, granularity),
+                IsOk());
+    ASSERT_THAT(allocator->UnMap(ordinal, reservation.get(),
+                                 /*reservation_offset=*/0, granularity),
+                IsOk());
+    ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
+  }
+
   ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
 }
 
