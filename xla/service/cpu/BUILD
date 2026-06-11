@@ -830,6 +830,7 @@ cc_library(
         "//xla/backends/cpu/runtime/onednn:onednn_fusion_thunk",
         "//xla/backends/cpu/runtime/ynnpack:ynn_fusion_thunk",
         "//xla/backends/cpu/runtime/ynnpack:ynn_interop",
+        "//xla/backends/cpu/transforms:library_fusion_kinds",
         "//xla/codegen:kernel_definition",
         "//xla/codegen:kernel_spec",
         "//xla/codegen:llvm_kernel_source",
