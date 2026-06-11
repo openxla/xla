@@ -190,6 +190,17 @@ bool ThunkSequenceIsConvertible(const ThunkSequence& thunks,
 size_t CheckAsyncRegion(absl::Span<const std::unique_ptr<Thunk>> thunks,
                         const CommandBufferConfig& config);
 
+bool SupportsMovedChildCommands(const se::DeviceDescription& device_info) {
+  const auto* cuda_cc =
+      device_info.gpu_compute_capability().cuda_compute_capability();
+  if (cuda_cc == nullptr) {
+    return false;
+  }
+  return std::min({device_info.runtime_version(), device_info.driver_version(),
+                   device_info.compile_time_toolkit_version()}) >=
+         se::SemanticVersion{12, 9, 0};
+}
+
 bool HasLoopDependentDynamicSliceFusionV2(const ThunkSequence& thunks) {
   bool has_loop_dependent_dsf = false;
   for (const std::unique_ptr<Thunk>& thunk : thunks) {
@@ -306,6 +317,11 @@ static bool IsConvertible(const DynamicSliceThunk& dynamic_slice_thunk,
 static bool IsConvertible(
     const DynamicSliceFusionV2Thunk& dynamic_slice_fusion_thunk,
     const CommandBufferConfig& config) {
+  if (!SupportsMovedChildCommands(config.device_description)) {
+    VLOG(2) << "DynamicSliceFusionV2Thunk is not convertible to command "
+               "buffers because child command nodes require CUDA 12.9+";
+    return false;
+  }
   if (dynamic_slice_fusion_thunk.verify_offsets()) {
     VLOG(2) << "DynamicSliceFusionV2Thunk is not convertible to command "
                "buffers because runtime offset verification is enabled";

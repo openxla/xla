@@ -69,6 +69,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/xla.pb.h"
@@ -98,6 +99,14 @@ se::StreamExecutor* GpuExecutor() {
   stream_executor::Platform* platform =
       se::PlatformManager::PlatformWithName(GetPlatformName()).value();
   return platform->ExecutorForDevice(0).value();
+}
+
+se::DeviceDescription CudaDeviceInfoWithVersion(se::SemanticVersion version) {
+  se::DeviceDescription device_info = TestGpuDeviceInfo::RTXA6000DeviceInfo();
+  device_info.set_runtime_version(version);
+  device_info.set_driver_version(version);
+  device_info.set_compile_time_toolkit_version(version);
+  return device_info;
 }
 
 std::unique_ptr<AllGatherThunk> CreateAllGatherThunk(
@@ -400,7 +409,8 @@ TEST(CommandBufferConversionPassTest,
       DebugOptions::DYNAMIC_SLICE_FUSION);
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
 
-  se::DeviceDescription device_info;
+  se::DeviceDescription device_info =
+      CudaDeviceInfoWithVersion(se::SemanticVersion{12, 9, 0});
   FakeErrorAllocator allocator;
   CommandBufferConversionPass pass{"test"};
 
@@ -413,6 +423,35 @@ TEST(CommandBufferConversionPassTest,
       static_cast<const CommandBufferThunk*>(thunks[0].get());
   EXPECT_THAT(command_buffer_thunk->thunks()->thunks(),
               ThunkKindsAre(Thunk::kDynamicSliceFusion));
+}
+
+TEST(CommandBufferConversionPassTest,
+     DoesNotConvertDynamicSliceFusionV2ThunkBeforeCuda129) {
+  ThunkSequence thunks;
+
+  BufferAllocation src_alloc(0, sizeof(int32_t) * 16, 0);
+  BufferAllocation dst_alloc(1, sizeof(int32_t) * 4, 0);
+  thunks.push_back(CreateDynamicSliceFusionV2Thunk(
+      src_alloc, dst_alloc,
+      CreateDsfConfig(/*loop_index=*/std::nullopt, /*byte_offset=*/0,
+                      /*byte_stride=*/0)));
+
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(
+      DebugOptions::DYNAMIC_SLICE_FUSION);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+
+  se::DeviceDescription device_info =
+      CudaDeviceInfoWithVersion(se::SemanticVersion{12, 8, 0});
+  FakeErrorAllocator allocator;
+  CommandBufferConversionPass pass{"test"};
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(false));
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kDynamicSliceFusion));
 }
 
 TEST(CommandBufferConversionPassTest,
@@ -434,7 +473,8 @@ TEST(CommandBufferConversionPassTest,
       DebugOptions::DYNAMIC_SLICE_FUSION);
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
 
-  se::DeviceDescription device_info;
+  se::DeviceDescription device_info =
+      CudaDeviceInfoWithVersion(se::SemanticVersion{12, 9, 0});
   FakeErrorAllocator allocator;
   CommandBufferConversionPass pass{"test"};
 
@@ -464,7 +504,8 @@ TEST(CommandBufferConversionPassTest,
       DebugOptions::DYNAMIC_SLICE_FUSION);
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
 
-  se::DeviceDescription device_info;
+  se::DeviceDescription device_info =
+      CudaDeviceInfoWithVersion(se::SemanticVersion{12, 9, 0});
   FakeErrorAllocator allocator;
   CommandBufferConversionPass pass{"test"};
 
@@ -930,7 +971,8 @@ TEST(CommandBufferConversionPassTest,
       DebugOptions::DYNAMIC_SLICE_FUSION);
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
 
-  se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  se::DeviceDescription device_info =
+      CudaDeviceInfoWithVersion(se::SemanticVersion{12, 9, 0});
   FakeErrorAllocator allocator;
   CommandBufferConversionPass pass{"test"};
 
@@ -984,7 +1026,8 @@ TEST(
       DebugOptions::DYNAMIC_SLICE_FUSION);
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
 
-  se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  se::DeviceDescription device_info =
+      CudaDeviceInfoWithVersion(se::SemanticVersion{12, 9, 0});
   FakeErrorAllocator allocator;
   CommandBufferConversionPass pass{"test"};
 

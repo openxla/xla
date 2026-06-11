@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/dynamic_slice_fusion_v2_thunk.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -50,6 +51,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
@@ -75,6 +77,17 @@ static absl::StatusOr<se::StreamExecutor*> CreateExecutor() {
   ASSIGN_OR_RETURN(se::Platform * platform,
                    se::PlatformManager::PlatformWithName(platform_name));
   return platform->ExecutorForDevice(0);
+}
+
+bool IsAtLeastCuda12900(const se::StreamExecutor* executor) {
+  const auto& desc = executor->GetDeviceDescription();
+  const auto* cuda_cc = desc.gpu_compute_capability().cuda_compute_capability();
+  if (cuda_cc == nullptr) {
+    return false;
+  }
+  return std::min({desc.runtime_version(), desc.driver_version(),
+                   desc.compile_time_toolkit_version()}) >=
+         se::SemanticVersion(12, 9, 0);
 }
 
 DynamicSliceConfig MakeConfig(int64_t loop_index, int64_t offset,
@@ -642,9 +655,8 @@ TEST(DynamicSliceFusionV2ThunkTest, OneSlicedOnePassthrough) {
 TEST(DynamicSliceFusionV2ThunkTest,
      CommandBufferUpdatesLoopDependentSliceOffset) {
   ASSERT_OK_AND_ASSIGN(auto* executor, CreateExecutor());
-  if (executor->GetDeviceDescription().gpu_compute_capability().IsRocm()) {
-    GTEST_SKIP() << "DynamicSliceFusionV2Thunk command buffer updates are not "
-                    "supported on ROCm";
+  if (!IsAtLeastCuda12900(executor)) {
+    GTEST_SKIP() << "Child command nodes require CUDA 12.9+";
   }
   ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
