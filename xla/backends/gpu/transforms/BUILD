@@ -745,7 +745,6 @@ xla_cc_test(
     ],
     deps = [
         ":cublas_pad_for_gemms",
-        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
@@ -862,6 +861,7 @@ cc_library(
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
         "//xla/tests/restricted:hlo_test_base_legacy",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:dnn_proto_cc",
         "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -949,12 +949,6 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ]) + [
-        "//xla:status_macros",
-        "//xla/service:matmul_indexing_utils",
-        "//xla/stream_executor:engine_options",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
         "@cudnn_frontend_archive//:cudnn_frontend",
     ],
@@ -1150,11 +1144,6 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ]) + [
-        "//xla:xla_data_proto_cc",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
-        "//xla/tsl/platform:statusor",
-        "//xla/tsl/protobuf:dnn_proto_cc",
         "@com_google_absl//absl/container:flat_hash_map",
     ],
 )
@@ -1270,15 +1259,12 @@ xla_test(
             "//xla/hlo/ir:hlo",
             "//xla/hlo/utils:hlo_matchers",
             "//xla/service:pattern_matcher",
-            "@tsl//tsl/platform:statusor",
         ],
         [
             # b/317293391
             "@com_google_googletest//:gtest_main",
         ],
-    ) + [
-        "//xla/tsl/platform:statusor",
-    ],
+    ),
 )
 
 cc_library(
