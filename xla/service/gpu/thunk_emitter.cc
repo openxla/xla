@@ -55,7 +55,6 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
-#include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/fusions.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
@@ -67,6 +66,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/triton_kernel_source.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
+#include "xla/backends/gpu/runtime/all_reduce.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/async_execution.h"
@@ -77,7 +77,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
-#include "xla/backends/gpu/runtime/convolution_filter_thunk.pb.h"
 #include "xla/backends/gpu/runtime/convolution_reorder_thunk.h"
 #include "xla/backends/gpu/runtime/convolution_thunk.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
@@ -94,18 +93,13 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/host_send_recv_thunk.h"
 #include "xla/backends/gpu/runtime/host_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/infeed_thunk.h"
-#include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/legacy_custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/norm_thunk.h"
-#include "xla/backends/gpu/runtime/nvshmem_all_reduce_thunk.h"
-#include "xla/backends/gpu/runtime/nvshmem_collective_permute_thunk.h"
-#include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
-#include "xla/backends/gpu/runtime/nvshmem_recv_thunk.h"
-#include "xla/backends/gpu/runtime/nvshmem_send_thunk.h"
 #include "xla/backends/gpu/runtime/outfeed_thunk.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/recv_thunk.h"
 #include "xla/backends/gpu/runtime/replica_id_thunk.h"
+#include "xla/backends/gpu/runtime/rng_seed_thunk.h"
 #include "xla/backends/gpu/runtime/select_k_thunk.h"
 #include "xla/backends/gpu/runtime/send_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
@@ -143,6 +137,7 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/custom_kernel_emitter.h"
+#include "xla/service/gpu/dense_data_intermediate.h"
 #include "xla/service/gpu/execution_stream_assignment.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_conv_runner.h"
@@ -162,28 +157,28 @@ limitations under the License.
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/llvm_ir/buffer_assignment_util.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
+#include "xla/service/pattern_matcher.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/all_reduce_kernel.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/memory_space.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/concurrency/future.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
-#include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 #include "tsl/platform/human_readable_json.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace xla::gpu {
 namespace {
+
+namespace m = ::xla::match;
 
 absl::StatusOr<TritonKernelSource> EmitTritonFrom(
     const TritonCall& call, const std::string& kernel_name,
@@ -244,6 +239,8 @@ xla::Future<std::unique_ptr<CollectiveKernelThunk>> EmitCollectiveKernelThunk(
       NewModuleWithFusion(instr, HloInstruction::FusionKind::kLoop);
   HloFusionInstruction* fusion_instr = Cast<HloFusionInstruction>(
       fused_module->entry_computation()->root_instruction());
+  const bool has_rank_higher_than_1 =
+      instr->shape().IsArray() && instr->shape().dimensions().size() > 1;
   const se::DeviceDescription& device_info =
       ir_emitter_context->gpu_device_info();
   bool is_collective_kernel_enabled =
@@ -251,6 +248,18 @@ xla::Future<std::unique_ptr<CollectiveKernelThunk>> EmitCollectiveKernelThunk(
           ->config()
           .debug_options()
           .xla_gpu_unsupported_use_all_reduce_one_shot_kernel();
+  static constexpr bool kMultimemDisabled = false;
+  if (is_collective_kernel_enabled && has_rank_higher_than_1) {
+    const int64_t size_bytes =
+        ShapeUtil::ElementsIn(instr->shape()) *
+        primitive_util::ByteWidth(instr->shape().element_type());
+    const bool is_two_shot =
+        GetAllReduceStrategy(size_bytes, kMultimemDisabled) ==
+        se::gpu::AllReduceStrategy::kTwoShot;
+    if (is_two_shot) {
+      RETURN_IF_ERROR(FlattenCollectiveFusion(fusion_instr));
+    }
+  }
   const auto make_thunk =
       [thunk_info = std::move(thunk_info), buffers = std::move(buffers), config,
        is_async = !IsGPUSyncCollective(*instr), is_collective_kernel_enabled](
@@ -260,8 +269,7 @@ xla::Future<std::unique_ptr<CollectiveKernelThunk>> EmitCollectiveKernelThunk(
         return std::make_unique<CollectiveKernelThunk>(
             thunk_info, config.config, config.reduction_kind, is_async,
             std::move(buffers), is_collective_kernel_enabled, kernel_name,
-            launch_dimensions, shmem_bytes,
-            /*is_multimem_enabled=*/false,
+            launch_dimensions, shmem_bytes, kMultimemDisabled,
             !cubin.empty() ? std::make_optional(cubin) : std::nullopt, use_pdl);
       };
   ASSIGN_OR_RETURN(bool did_set_config, TrySetGpuBackendConfigForCollective(
@@ -321,10 +329,11 @@ ThunkEmitter::ThunkEmitter(
         llvm_options_lock)
     : ir_emitter_context_(ir_emitter_context),
       send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
-      nvshmem_buffer_addresses_(std::make_shared<NvshmemBufferAddresses>()),
       call_graph_(CallGraph::Build(&ir_emitter_context->hlo_module())),
+      constants_module_context_(std::make_unique<llvm::LLVMContext>()),
       constants_module_(ir_emitter_context_->CreateLLVMModule(
-          absl::StrCat(ir_emitter_context_->hlo_module().name(), "_consts"))),
+          absl::StrCat(ir_emitter_context_->hlo_module().name(), "_consts"),
+          *constants_module_context_)),
       llvm_options_lock_(llvm_options_lock) {}
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConstant(
@@ -468,9 +477,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConvolutionThunk(
   ASSIGN_OR_RETURN(auto gpu_config, instr->backend_config<GpuBackendConfig>());
   const CudnnConvBackendConfig& backend_config =
       gpu_config.cudnn_conv_backend_config();
-  ASSIGN_OR_RETURN(BufferAllocation::Slice scratch_slice,
-                   GetAllocationSliceForHlo(
-                       instr, {instr->shape().tuple_shapes_size() - 1}));
+  ASSIGN_OR_RETURN(
+      BufferAllocation::Slice scratch_slice,
+      GetAllocationSliceForHlo(
+          instr,
+          {static_cast<int64_t>(instr->shape().tuple_shapes().size()) - 1}));
   GpuConvDescriptor descriptor = {kind,
                                   backend_config,
                                   instr->operand(0)->shape(),
@@ -537,7 +548,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunk(
         (!has_aux_output && instr->shape().tuple_shapes().size() == 2));
     ASSIGN_OR_RETURN(
         workspace_buffer,
-        GetShapedSliceForHlo(instr, {instr->shape().tuple_shapes_size() - 1}));
+        GetShapedSliceForHlo(
+            instr,
+            {static_cast<int64_t>(instr->shape().tuple_shapes().size()) - 1}));
   }
 
   ASSIGN_OR_RETURN(
@@ -636,7 +649,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunkF8(
   if (instr->shape().tuple_shapes().size() - config.damax_output() == 2) {
     ASSIGN_OR_RETURN(
         workspace_buffer,
-        GetShapedSliceForHlo(instr, {instr->shape().tuple_shapes_size() - 1}));
+        GetShapedSliceForHlo(
+            instr,
+            {static_cast<int64_t>(instr->shape().tuple_shapes().size()) - 1}));
   }
 
   ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
@@ -697,7 +712,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmulThunk(
   if (instr->shape().IsTuple() && (instr->shape().tuple_shapes().size() - 1)) {
     ASSIGN_OR_RETURN(
         workspace_buffer,
-        GetShapedSliceForHlo(instr, {instr->shape().tuple_shapes_size() - 1}));
+        GetShapedSliceForHlo(
+            instr,
+            {static_cast<int64_t>(instr->shape().tuple_shapes().size()) - 1}));
   }
   ASSIGN_OR_RETURN(
       auto gemm_config,
@@ -762,7 +779,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunkMx(
   if (instr->shape().tuple_shapes().size() == 2) {
     ASSIGN_OR_RETURN(
         workspace_buffer,
-        GetShapedSliceForHlo(instr, {instr->shape().tuple_shapes_size() - 1}));
+        GetShapedSliceForHlo(
+            instr,
+            {static_cast<int64_t>(instr->shape().tuple_shapes().size()) - 1}));
   }
 
   ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
@@ -848,7 +867,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitNormThunk(
   }
   ASSIGN_OR_RETURN(
       ShapedSlice scratch_slice,
-      GetShapedSliceForHlo(instr, {instr->shape().tuple_shapes_size() - 1}));
+      GetShapedSliceForHlo(
+          instr,
+          {static_cast<int64_t>(instr->shape().tuple_shapes().size()) - 1}));
 
   GpuNormDescriptor descriptor;
   descriptor.backend_config = backend_config;
@@ -1368,6 +1389,12 @@ AsyncThunkSequence ThunkEmitter::EmitAsyncComputation(
 }
 
 AsyncThunkSequence ThunkEmitter::EmitFusion(const HloFusionInstruction* instr) {
+  ASSIGN_OR_RETURN(std::optional<ThunkSequence> slice_thunks,
+                   TryEmitTrivialSliceFusion(instr));
+  if (slice_thunks.has_value()) {
+    return std::move(*slice_thunks);
+  }
+
   analysis_garbage_collector_.push_back(
       std::make_unique<HloFusionAnalysis>(HloFusionAnalysis::Create(
           *instr, ir_emitter_context_->gpu_device_info())));
@@ -1384,12 +1411,59 @@ AsyncThunkSequence ThunkEmitter::EmitFusion(const HloFusionInstruction* instr) {
     }
   }
 
-  VLOG(3) << "ThunkEmitter::EmitFusion:start";
   std::unique_ptr<FusionInterface> emitter = GetFusionEmitter(
       HloFusionInfo(fusion_analysis, instr,
-                    &ir_emitter_context_->buffer_assignment(), *call_graph_),
-      ir_emitter_context_->mlir_context());
+                    &ir_emitter_context_->buffer_assignment(), *call_graph_));
   return emitter->Emit(*ir_emitter_context_, *instr);
+}
+
+// Pattern match wrapped slice instruction that slices a contiguous buffer out
+// of the fusion parameter. Such trivial slices can be emitted as d2d copy.
+absl::StatusOr<std::optional<ThunkSequence>>
+ThunkEmitter::TryEmitTrivialSliceFusion(const HloFusionInstruction* instr) {
+  const HloInstruction* slice_instr = nullptr;
+  const HloInstruction* src = nullptr;
+
+  if (!Match(instr->fused_expression_root(),
+             m::Slice(&slice_instr, m::Parameter(&src, 0)))) {
+    return std::nullopt;
+  }
+  const HloSliceInstruction* slice = Cast<HloSliceInstruction>(slice_instr);
+
+  const Shape& src_shape = src->shape();
+  const Shape& dst_shape = instr->shape();
+  if (!Layout::Equal().MinorToMajorOnly()(src_shape.layout(),
+                                          dst_shape.layout()) ||
+      !IsContiguousSlice(*slice)) {
+    return std::nullopt;
+  }
+
+  auto byte_strides = ShapeUtil::ByteStrides(src_shape);
+  if (!byte_strides.has_value()) {
+    return std::nullopt;
+  }
+
+  int64_t src_byte_offset = 0;
+  for (int64_t dim = 0; dim < src_shape.dimensions().size(); ++dim) {
+    src_byte_offset += slice->slice_starts(dim) * (*byte_strides)[dim];
+  }
+
+  ASSIGN_OR_RETURN(BufferAllocation::Slice arg_slice,
+                   GetAllocationSliceForHlo(instr->operand(0)));
+  ASSIGN_OR_RETURN(BufferAllocation::Slice dst_slice,
+                   GetAllocationSliceForHlo(instr));
+
+  // Slice of the parameter buffer copied to the result buffer.
+  int64_t byte_size = ShapeUtil::ByteSizeOf(dst_shape);
+  BufferAllocation::Slice src_slice(arg_slice.allocation(),
+                                    arg_slice.offset() + src_byte_offset,
+                                    byte_size, arg_slice.element_type());
+
+  return GetThunkSequence(std::make_unique<DeviceToDeviceCopyThunk>(
+      Thunk::ThunkInfo::WithProfileAnnotation(
+          instr, ir_emitter_context_->GetNextThunkId()),
+      ShapedSlice{src_slice, dst_shape}, ShapedSlice{dst_slice, dst_shape},
+      byte_size));
 }
 
 AsyncThunkSequence ThunkEmitter::EmitDynamicSliceFusionV2(
@@ -1676,17 +1750,15 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitReplicaOrPartitionId(
       result_slice));
 }
 
-[[deprecated("Use NCCL 2.28+ primitives instead.")]] bool IsNvshmemCollective(
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRngSeedThunk(
     const HloInstruction* instr) {
-  if (instr->has_backend_config()) {
-    auto gpu_config = instr->backend_config<GpuBackendConfig>();
-    const CollectiveBackendConfig& backend_config =
-        gpu_config.value().collective_backend_config();
-    return backend_config.backend() == CollectiveBackendConfig::NVSHMEM;
-  }
-  return false;
+  ASSIGN_OR_RETURN(BufferAllocation::Slice result_slice,
+                   GetAllocationSliceForHlo(instr, {}));
+  return GetThunkSequence(std::make_unique<RngSeedThunk>(
+      Thunk::ThunkInfo::WithProfileAnnotation(
+          instr, ir_emitter_context_->GetNextThunkId()),
+      result_slice));
 }
-
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectivePermute(
     const HloCollectivePermuteInstruction* instr) {
   // First output is aliased.
@@ -1745,25 +1817,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectivePermute(
   }
   if (!CollectivePermuteThunk::IsDegenerate(instr, replica_count,
                                             partition_count)) {
-    if (IsNvshmemCollective(instr)) {
-      // Note: xla_gpu_use_memcpy_local_p2p flag won't be used for now since the
-      // NVSHMEM collective permute thunk doesn't perform any memcpy operations
-      // at the moment.
-      thunks.push_back(std::make_unique<NvshmemCollectivePermuteThunk>(
-          Thunk::ThunkInfo::WithProfileAnnotation(
-              instr, ir_emitter_context_->GetNextThunkId()),
-          instr, replica_count, partition_count, buffers,
-          ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p()));
-    } else {
-      thunks.push_back(std::make_unique<CollectivePermuteThunk>(
-          Thunk::ThunkInfo::WithProfileAnnotation(
-              instr, ir_emitter_context_->GetNextThunkId()),
-          instr, replica_count, partition_count, buffers,
-          ir_emitter_context_->debug_options()
-              .xla_gpu_collective_permute_mode(),
-          ir_emitter_context_->debug_options()
-              .xla_gpu_collective_permute_connected_components()));
-    }
+    thunks.push_back(std::make_unique<CollectivePermuteThunk>(
+        Thunk::ThunkInfo::WithProfileAnnotation(
+            instr, ir_emitter_context_->GetNextThunkId()),
+        instr, replica_count, partition_count, buffers,
+        ir_emitter_context_->debug_options().xla_gpu_collective_permute_mode(),
+        ir_emitter_context_->debug_options()
+            .xla_gpu_collective_permute_connected_components()));
   }
 
   // For synchronous collectives, emit thunks directly without async wrapping.
@@ -1901,9 +1961,10 @@ AsyncThunkSequence ThunkEmitter::EmitCollectiveThunk(
   if constexpr (kRequiresCollectiveKernelThunk<CollectiveThunkType>) {
     thunks =
         EmitCollectiveKernelThunk(
-            ir_emitter_context_, call_graph_.get(), thunk_info, buffers,
-            Cast<HloAllReduceInstruction>(inst), GetAllReduceConfigInst(inst),
-            this, analysis_garbage_collector_)
+            ir_emitter_context_,
+            call_graph_.get(),  // NOLINT(readability-redundant-smartptr-get)
+            thunk_info, buffers, Cast<HloAllReduceInstruction>(inst),
+            GetAllReduceConfigInst(inst), this, analysis_garbage_collector_)
             .Map([thunk_info = std::move(thunk_info),
                   use_memcpy_local_p2p = ir_emitter_context_->debug_options()
                                              .xla_gpu_use_memcpy_local_p2p(),
@@ -2053,136 +2114,6 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectiveAsyncDone(
       it->second));
 }
 
-[[deprecated(
-    "Use NCCL 2.28+ primitives instead.")]] absl::StatusOr<ThunkSequence>
-ThunkEmitter::EmitNvshmemAsyncDone(const HloInstruction* inst) {
-  bool is_send_recv =
-      inst->opcode() == HloOpcode::kSendDone ||
-      inst->opcode() == HloOpcode::kRecvDone ||
-      (inst->opcode() == HloOpcode::kAsyncDone &&
-       (inst->async_wrapped_instruction()->opcode() == HloOpcode::kSend ||
-        inst->async_wrapped_instruction()->opcode() == HloOpcode::kRecv));
-  const HloInstruction* start =
-      is_send_recv ? FindCanonicalSendRecvStartOp(inst) : inst->operand(0);
-
-  // Find the async execution for the start operation.
-  auto it = hlo_async_executions_.find(start);
-  TF_RET_CHECK(it != hlo_async_executions_.end())
-      << "couldn't find async execution for start operation";
-
-  // Can be null if no start thunk was created (e.g. if the start op is
-  // degenerate), in which case there's nothing to do here.
-  if (!it->second) {
-    return ThunkSequence{};
-  }
-
-  return GetThunkSequence(std::make_unique<AsyncDoneThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(
-          inst, ir_emitter_context_->GetNextThunkId()),
-      it->second));
-}
-
-template <typename NvshmemAllReduceThunkType, typename HloAllReduceInstruction>
-[[deprecated(
-    "Use NCCL 2.28+ primitives instead.")]] absl::StatusOr<ThunkSequence>
-ThunkEmitter::EmitNvshmemThunk(Thunk::Kind kind,
-                               const HloInstruction* async_start,
-                               const HloAllReduceInstruction* inst,
-                               std::optional<bool> use_global_device_ids) {
-  CHECK(kind == Thunk::Kind::kNvshmemAllReduce);
-  const auto& hlo_config = ir_emitter_context_->hlo_module().config();
-  int64_t replica_count = hlo_config.replica_count();
-  int64_t partition_count = hlo_config.num_partitions();
-  VLOG(2) << NvshmemAllReduceThunkType::GetHloOpName()
-          << "; replica count: " << replica_count
-          << "; partition count: " << partition_count
-          << "; operand count: " << inst->operand_count();
-
-  // A given collective op can be degenerate if across all groups formed
-  // by it are singleton. In such a case, we don't need to do any communication
-  // and we can just copy the input to the output.
-  bool is_degenerate = GetCollectiveConfig(inst, use_global_device_ids)
-                           .IsDegenerate(replica_count, partition_count);
-  absl::Status implementable_status =
-      NvshmemAllReduceThunkType::CheckImplementable(inst, replica_count,
-                                                    partition_count);
-  bool should_use_nvshmem_thunk = !is_degenerate && implementable_status.ok();
-
-  // Stash relevant information in CollectiveThunk::Buffer even if we may
-  // not generate an NvshmemCollectiveThunk.
-  std::vector<CollectiveThunk::Buffer> buffers;
-
-  int64_t operand_count = inst->operand_count();
-  buffers.reserve(operand_count);
-
-  // Adds a source and destination buffers pair to `buffers`.
-  auto add_buffer = [&](int64_t element_count, const ShapedSlice& src,
-                        int64_t src_memory_space, const ShapedSlice& dst,
-                        int64_t dst_memory_space) {
-    buffers.push_back(
-        CollectiveThunk::Buffer{/*element_count=*/element_count,
-                                /*source_buffer=*/src,
-                                /*destination_buffer=*/dst,
-                                /*source_memory_space=*/src_memory_space,
-                                /*destination_memory_space=*/dst_memory_space});
-  };
-
-  // For other operations simply zip operands with results.
-  for (int64_t i = 0; i < operand_count; i++) {
-    ShapeIndex idx = operand_count > 1 ? ShapeIndex({i}) : ShapeIndex({});
-    const Shape& src_shape = inst->operand(i)->shape();
-    const Shape& dst_shape = ShapeUtil::GetSubshape(inst->shape(), idx);
-    ASSIGN_OR_RETURN(auto src, GetAllocationSliceForHlo(inst->operand(i)));
-    ASSIGN_OR_RETURN(auto dst, GetAllocationSliceForHlo(inst, idx));
-    add_buffer(ShapeUtil::ElementsIn(src_shape), {src, src_shape},
-               src_shape.layout().memory_space(), {dst, dst_shape},
-               dst_shape.layout().memory_space());
-  }
-
-  if (should_use_nvshmem_thunk) {
-    auto thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
-        inst, ir_emitter_context_->GetNextThunkId());
-    // The wrapper name is used when syntactic sugar is turned on.
-    if (ir_emitter_context_->debug_options().xla_syntax_sugar_async_ops()) {
-      thunk_info.profile_annotation = async_start->name();
-    }
-    auto thunk = std::make_unique<NvshmemAllReduceThunkType>(
-        thunk_info, inst, /*buffers=*/std::move(buffers),
-        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
-
-    // For synchronous collectives, emit thunk directly without async wrapping.
-    if (IsGPUSyncCollective(*async_start)) {
-      hlo_async_executions_.try_emplace(async_start, nullptr);
-      return ThunkSequence::Of(std::move(thunk));
-    }
-
-    // Wrap in AsyncStartThunk for asynchronous execution.
-    const ExecutionStreamAssignment& stream_assignment =
-        ir_emitter_context_->execution_stream_assignment();
-    ASSIGN_OR_RETURN(ExecutionStreamId execution_stream_id,
-                     stream_assignment.GetExecutionStreamId(async_start));
-
-    auto start_thunk = std::make_unique<AsyncStartThunk>(
-        Thunk::ThunkInfo::WithProfileAnnotation(
-            async_start, ir_emitter_context_->GetNextThunkId()),
-        execution_stream_id, ThunkSequence::Of(std::move(thunk)));
-
-    auto [it, inserted] = hlo_async_executions_.emplace(
-        async_start, start_thunk->async_execution());
-    if (!inserted) {
-      return Internal("Async execution already exists for instruction %s",
-                      async_start->ToString());
-    }
-
-    return GetThunkSequence(std::move(start_thunk));
-  }
-
-  if (!is_degenerate) {
-    return implementable_status;
-  }
-  return EmitDegeneratedCollectiveThunk(buffers, async_start, inst);
-}
-
 template <typename HloInstType>
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDegeneratedCollectiveThunk(
     std::vector<CollectiveThunk::Buffer>& buffers,
@@ -2268,6 +2199,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitOutfeed(
 static absl::flat_hash_map<std::string, std::string> ConvertFrontendAttributes(
     const FrontendAttributes& attrs) {
   absl::flat_hash_map<std::string, std::string> result;
+  // NOLINTNEXTLINE
   for (auto& [k, v] : attrs.map()) {
     result[k] = v;
   }
@@ -2403,18 +2335,10 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSendThunk(
         /*destination_buffer=*/slice,
         /*source_memory_space=*/memory_space,
         /*destination_memory_space=*/memory_space};
-    if (IsNvshmemCollective(instr)) {
-      thunk = std::make_unique<NvshmemSendThunk>(
-          Thunk::ThunkInfo::WithProfileAnnotation(
-              instr, ir_emitter_context_->GetNextThunkId()),
-          instr, replica_count, partition_count, buffer,
-          nvshmem_buffer_addresses_);
-    } else {
-      thunk = std::make_unique<SendThunk>(
-          Thunk::ThunkInfo::WithProfileAnnotation(
-              instr, ir_emitter_context_->GetNextThunkId()),
-          instr, replica_count, partition_count, buffer);
-    }
+    thunk = std::make_unique<SendThunk>(
+        Thunk::ThunkInfo::WithProfileAnnotation(
+            instr, ir_emitter_context_->GetNextThunkId()),
+        instr, replica_count, partition_count, buffer);
     // Wrap in AsyncStartThunk if not emitted as part of a group thunk.
     if (!emit_group_thunks) {
       const HloInstruction* canonical_send_instr =
@@ -2466,9 +2390,6 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSendThunk(
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSendDoneThunk(
     const HloSendDoneInstruction* instr) {
   if (!instr->is_host_transfer()) {
-    if (IsNvshmemCollective(instr)) {
-      return EmitNvshmemAsyncDone(instr);
-    }
     return EmitCollectiveAsyncDone(instr);
   }
 
@@ -2506,18 +2427,10 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRecvThunk(
         /*destination_buffer=*/slice,
         /*source_memory_space=*/memory_space,
         /*destination_memory_space=*/memory_space};
-    if (IsNvshmemCollective(instr)) {
-      thunk = std::make_unique<NvshmemRecvThunk>(
-          Thunk::ThunkInfo::WithProfileAnnotation(
-              instr, ir_emitter_context_->GetNextThunkId()),
-          instr, replica_count, partition_count, buffer,
-          nvshmem_buffer_addresses_);
-    } else {
-      thunk = std::make_unique<RecvThunk>(
-          Thunk::ThunkInfo::WithProfileAnnotation(
-              instr, ir_emitter_context_->GetNextThunkId()),
-          instr, replica_count, partition_count, buffer);
-    }
+    thunk = std::make_unique<RecvThunk>(
+        Thunk::ThunkInfo::WithProfileAnnotation(
+            instr, ir_emitter_context_->GetNextThunkId()),
+        instr, replica_count, partition_count, buffer);
     // Wrap in AsyncStartThunk if not emitted as part of a group thunk.
     if (!emit_group_thunks) {
       const HloInstruction* canonical_recv_instr =
@@ -2570,9 +2483,6 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRecvThunk(
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRecvDoneThunk(
     const HloRecvDoneInstruction* instr) {
   if (!instr->is_host_transfer()) {
-    if (IsNvshmemCollective(instr)) {
-      return EmitNvshmemAsyncDone(instr);
-    }
     return EmitCollectiveAsyncDone(instr);
   }
   if (!instr->channel_id().has_value()) {
@@ -2839,6 +2749,9 @@ AsyncThunkSequence ThunkEmitter::EmitCustomCallSwitch(
       hlo->custom_call_target() == kCreateBufferCustomCallTarget) {
     return ThunkSequence{};
   }
+  if (hlo->custom_call_target() == "GetRngSeed") {
+    return EmitRngSeedThunk(hlo);
+  }
   return EmitCustomCallThunk(custom_call);
 }
 
@@ -2854,15 +2767,9 @@ AsyncThunkSequence ThunkEmitter::EmitHloInstruction(const HloInstruction* hlo,
           all_gather->use_global_device_ids());
     }
     case HloOpcode::kAllReduceDone:
-      return IsNvshmemCollective(hlo) ? EmitNvshmemAsyncDone(hlo)
-                                      : EmitCollectiveAsyncDone(hlo);
+      return EmitCollectiveAsyncDone(hlo);
     case HloOpcode::kAllReduceStart: {
       auto* all_reduce = Cast<HloAllReduceInstruction>(hlo);
-      if (IsNvshmemCollective(hlo)) {
-        return EmitNvshmemThunk<NvshmemAllReduceThunk, HloAllReduceInstruction>(
-            Thunk::kNvshmemAllReduce, all_reduce, all_reduce,
-            all_reduce->use_global_device_ids());
-      }
       return EmitCollectiveThunk<AllReduceThunk, HloAllReduceInstruction>(
           Thunk::kAllReduce, all_reduce, all_reduce,
           all_reduce->use_global_device_ids());
@@ -2874,8 +2781,7 @@ AsyncThunkSequence ThunkEmitter::EmitHloInstruction(const HloInstruction* hlo,
     case HloOpcode::kCall:
       return EmitCallComputation(hlo);
     case HloOpcode::kCollectivePermuteDone:
-      return IsNvshmemCollective(hlo) ? EmitNvshmemAsyncDone(hlo)
-                                      : EmitCollectiveAsyncDone(hlo);
+      return EmitCollectiveAsyncDone(hlo);
     case HloOpcode::kCollectivePermuteStart:
       return EmitCollectivePermute(Cast<HloCollectivePermuteInstruction>(hlo));
     case HloOpcode::kConditional:

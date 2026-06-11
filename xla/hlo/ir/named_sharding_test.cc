@@ -112,10 +112,19 @@ TEST_F(NamedShardingEqualityTest, DifferentDimShardings) {
                                              {"e"}, {"b:(1)2"}));
 }
 
-TEST_F(NamedShardingEqualityTest, DifferentReplicatedAxes) {
-  EXPECT_NE(base_, test_utils::FromAxisNames(mesh_abcde_,
+TEST_F(NamedShardingEqualityTest, IgnoresReplicatedAxes) {
+  EXPECT_EQ(base_, test_utils::FromAxisNames(mesh_abcde_,
                                              {{"a", "b:(2)2"}, {"d:(4)2", "c"}},
                                              {"d:(1)4"}, {"b:(1)2"}));
+}
+
+TEST_F(NamedShardingEqualityTest,
+       IgnoresReplicatedAxesWithImplicitAndExplicitReplication) {
+  Mesh mesh({2, 2, 2, 1}, {"d", "f", "e", "c"});
+
+  EXPECT_EQ(test_utils::FromAxisNames(mesh, {{"f"}, {}, {}}),
+            test_utils::FromAxisNames(mesh, {{"f"}, {}, {}},
+                                      /*replicated_axes=*/{"d"}));
 }
 
 TEST_F(NamedShardingEqualityTest, DifferentUnreducedAxes) {
@@ -734,6 +743,16 @@ TEST(NamedShardingPredicatesTest, IsUnreducedWithAxisOfSize1) {
   EXPECT_FALSE(sharding3.IsUnreduced());
 }
 
+TEST(NamedShardingPredicatesTest, IsUnreducedOnSize1Mesh) {
+  Mesh mesh({1}, {"a"});
+  NamedSharding sharding1 = test_utils::FromAxisNames(mesh, {}, {}, {});
+  EXPECT_FALSE(sharding1.IsUnreduced());
+
+  NamedSharding sharding2 = test_utils::FromAxisNames(mesh, {}, {},
+                                                      /*unreduced_axes=*/{"a"});
+  EXPECT_TRUE(sharding2.IsUnreduced());
+}
+
 TEST(NamedShardingPredicatesTest, IsManual) {
   Mesh mesh({2, 2}, {"a", "b"});
   NamedSharding sharding =
@@ -774,6 +793,16 @@ TEST(NamedShardingPredicatesTest, IsManualWithAxisOfSize1) {
       /*manual_axes=*/{"a"});
 
   EXPECT_FALSE(sharding3.IsManual());
+}
+
+TEST(NamedShardingPredicatesTest, IsManualOnSize1Mesh) {
+  Mesh mesh({1}, {"a"});
+  NamedSharding sharding1 = test_utils::FromAxisNames(mesh, {}, {}, {}, {});
+  EXPECT_FALSE(sharding1.IsManual());
+
+  NamedSharding sharding2 =
+      test_utils::FromAxisNames(mesh, {}, {}, {}, /*manual_axes=*/{"a"});
+  EXPECT_TRUE(sharding2.IsManual());
 }
 
 TEST(NamedShardingTest, NamedShardingProtoConversion) {

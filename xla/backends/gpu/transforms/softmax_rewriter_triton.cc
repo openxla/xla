@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/layout_util.h"
+#include "xla/service/decision.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/fusion_pipeline.h"
@@ -66,8 +67,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tools/hlo_decomposer.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -329,7 +328,7 @@ EstimateOptimizedHloRunTimeWithoutSoftMaxRewriterTriton(
 
   absl::Duration total_run_time = absl::ZeroDuration();
 
-  GpuPerformanceModelOwning gpu_performance_model(device_info, mlir_context);
+  GpuPerformanceModelOwning gpu_performance_model(device_info);
   for (const HloInstruction* instr : entry_computation->instructions()) {
     total_run_time += gpu_performance_model.Get()
                           .EstimateRunTimeForInstruction(instr, &cost_analysis)
@@ -467,12 +466,20 @@ absl::StatusOr<bool> CanSymbolicTileAnalysisTileDiamond(
         TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space));
     // We don't have concrete tile sizes here and don't validate Triton
     // constraints here.
+    if (!tiled_computation_or.ok()) {
+      VLOG(2) << absl::StrCat("TiledHloComputation::Tile failed: ",
+                              tiled_computation_or.status());
+    }
     can_tile = tiled_computation_or.ok();
   } else {
     SymbolicTileAnalysisOrError symbolic_tile_analysis_or_error =
         SymbolicTileAnalysis::AnalyzeComputation(
             *normalization_fusion->called_computation(), &mlir_context,
             TritonEmitterConstraints::GetBuilder(device_info));
+    if (std::holds_alternative<Decision>(symbolic_tile_analysis_or_error)) {
+      VLOG(2) << "SymbolicTileAnalysis failed: "
+              << std::get<Decision>(symbolic_tile_analysis_or_error).Explain();
+    }
     can_tile = std::holds_alternative<SymbolicTileAnalysis>(
         symbolic_tile_analysis_or_error);
   }
@@ -665,7 +672,8 @@ absl::StatusOr<bool> SoftmaxRewriterTriton::MaybeFuseNormalizationDiamond(
     const DiamondDescriptor& diamond) {
   HloFusionAnalysisCache fusion_analysis_cache(device_info_);
   GpuPerformanceModelWithIndexingAnalysis indexing_performance_model(
-      &device_info_, &fusion_analysis_cache, shape_size_, mlir_context_);
+      &device_info_, &fusion_analysis_cache, shape_size_, mlir_context_,
+      use_experimental_tiling_);
 
   return MaybeFuseDiamondImpl(diamond, indexing_performance_model, device_info_,
                               shape_size_, alias_info_, mlir_context_,
@@ -688,8 +696,13 @@ absl::StatusOr<bool> SoftmaxRewriterTriton::RunImpl(
   // the producer of diamond n+1.
   for (auto diamond = diamonds.rbegin(); diamond != diamonds.rend();
        ++diamond) {
-    ASSIGN_OR_RETURN(bool fused, MaybeFuseNormalizationDiamond(*diamond));
-    changed |= fused;
+    auto fused_statusor = MaybeFuseNormalizationDiamond(*diamond);
+    if (!fused_statusor.ok()) {
+      VLOG(2) << "MaybeFuseNormalizationDiamond failed: "
+              << fused_statusor.status();
+      return fused_statusor.status();
+    }
+    changed |= fused_statusor.value();
   }
   return changed;
 }

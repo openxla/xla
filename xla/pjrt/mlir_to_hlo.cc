@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -314,10 +315,6 @@ absl::StatusOr<std::string> SerializeUsingVersionedStablehlo(
   if (!allow_mixed_serialization) {
     xla::sdy::addSdyRoundTripExportPipeline(pm);
   }
-
-  pm.addNestedPass<mlir::func::FuncOp>(
-      mlir::stablehlo_ext::createChloScanToReduceWindowPass({target}));
-
   pm.addPass(mlir::stablehlo_ext::createChloPreserveHighLevelOpsPass());
   pm.addNestedPass<mlir::func::FuncOp>(
       mlir::stablehlo::createChloLegalizeToStablehloPass());

@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/node_hash_map.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -44,12 +45,14 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/dense_data_intermediate.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo.pb.h"
@@ -93,10 +96,14 @@ class GpuExecutable : public Executable {
     DenseDataIntermediate content;
     int allocation_index = -1;
 
-    GpuExecutableProto::ConstantInfoProto ToProto() const;
+    GpuExecutableProto::ConstantInfoProto ToProto(
+        bool skip_content_serialization = false) const;
 
-    static ConstantInfo FromProto(
-        const GpuExecutableProto::ConstantInfoProto& proto);
+    static absl::StatusOr<ConstantInfo> FromProto(
+        const GpuExecutableProto::ConstantInfoProto& proto,
+        const absl::flat_hash_map<std::string,
+                                  const HloInstruction*>* absl_nullable
+            content_overrides = nullptr);
   };
 
   struct OutputInfo {
@@ -145,6 +152,7 @@ class GpuExecutable : public Executable {
     se::ExecutableAbiVersion executable_abi_version;
     std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options;
     std::optional<BufferAssignmentProto> buffer_assignment_proto;
+    std::string buffer_allocations_debug_summary;
   };
 
   static absl::StatusOr<std::unique_ptr<GpuExecutable>> Create(Params params);
@@ -206,6 +214,19 @@ class GpuExecutable : public Executable {
       const ServiceExecutableRunOptions* run_options,
       VariantArguments arguments);
 
+  struct ParameterBuffer {
+    se::DeviceAddressBase buffer;
+    int64_t parameter_number;
+  };
+
+  // Resolves the device address backing an entry-computation-parameter
+  // allocation. Returning a null DeviceAddressBase means "leave the buffer
+  // unset" (e.g. a skipped tuple index-table allocation). The parameter number
+  // is used only for diagnostics.
+  using ParameterBufferResolver =
+      absl::FunctionRef<absl::StatusOr<ParameterBuffer>(
+          const BufferAllocation& allocation)>;
+
   absl::Span<const BufferAllocation* absl_nonnull const> GetAllocations()
       const override {
     return allocation_ptrs_;
@@ -218,6 +239,13 @@ class GpuExecutable : public Executable {
   // BufferAssignment and will return nullptr.
   const BufferAssignment* buffer_assignment() const {
     return buffer_assignment_.get();
+  }
+
+  // Human readable summary of the buffer allocations. Tailored to debugging
+  // OOMs, includes the Hlo op metadata for every buffer associated with each
+  // allocation.
+  const std::string& buffer_allocations_debug_summary() const {
+    return buffer_allocations_debug_summary_;
   }
 
   // Returns the proto representation of `buffer_assignment()` if available,
@@ -248,7 +276,26 @@ class GpuExecutable : public Executable {
   absl::StatusOr<const BufferAllocToDeviceMemoryMap*> ResolveConstantGlobals(
       se::Stream* stream);
 
-  absl::Status VerboseAllocationError(absl::Status s);
+  // Builds the BufferAllocations for an execution. Entry-computation-parameter
+  // buffers are obtained from `get_parameter_buffer`; all other allocations
+  // (thread-local, constant, temp/maybe-live-out) are resolved internally,
+  // including collective-memory granularity rounding and alignment checking.
+  absl::StatusOr<BufferAllocations> GenerateBufferAllocations(
+      const ServiceExecutableRunOptions* run_options,
+      ParameterBufferResolver get_parameter_buffer,
+      const BufferAllocToDeviceMemoryMap* globals,
+      se::DeviceAddressAllocator* memory_allocator, int device_ordinal);
+
+  // Copy-protection for an aliased output that was not donated at runtime:
+  // allocates a fresh result buffer for the output at `index`, copies the
+  // contents of the aliased buffer (allocation `allocation`) into it, and
+  // redirects the aliased entry in `buffer_allocations` to the fresh buffer.
+  // Returns the newly allocated result buffer.
+  absl::StatusOr<se::DeviceAddressBase> AllocateCopyProtectedOutputBuffer(
+      const ServiceExecutableRunOptions* run_options,
+      BufferAllocations& buffer_allocations, const ShapeIndex& index,
+      const BufferAllocation& allocation, int device_ordinal,
+      se::DeviceAddressAllocator* memory_allocator);
 
   static absl::StatusOr<std::unique_ptr<GpuExecutable>> FromProto(
       const GpuExecutableProto&,
@@ -320,21 +367,16 @@ class GpuExecutable : public Executable {
       absl::StatusOr<std::vector<ThunkProto>> thunk_sequence_proto,
       se::ExecutableAbiVersion executable_abi_version,
       std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options,
-      std::optional<BufferAssignmentProto> buffer_assignment_proto);
+      std::optional<BufferAssignmentProto> buffer_assignment_proto,
+      std::string buffer_allocations_debug_summary);
 
   // GpuExecutable check with either AMD's ISA version, or Nvidia's major minor
   // version for compute capability, depending on the hardware.
   absl::Status CheckCompatibilityWithServiceExecutableRunOptions(
       const ServiceExecutableRunOptions* run_options);
 
-  absl::StatusOr<BufferAllocations> GenerateBufferAllocations(
-      const ServiceExecutableRunOptions* run_options,
-      VariantArguments arguments,
-      const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
-      se::DeviceAddressAllocator* memory_allocator, int device_ordinal);
-
   absl::StatusOr<se::DeviceAddressBase> BufferForAllocation(
-      VariantArguments arguments,
+      ParameterBufferResolver get_parameter_buffer,
       const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
       const BufferAllocation& allocation,
       se::DeviceAddressAllocator* memory_allocator, int device_ordinal,
@@ -491,10 +533,21 @@ class GpuExecutable : public Executable {
   std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options_;
 
   CollectiveMemoryCache collective_memory_cache_;
+
+  // Human readable summary of the buffer allocations. Tailored to debugging
+  // OOMs, includes the Hlo op metadata for every buffer associated with each
+  // allocation.
+  std::string buffer_allocations_debug_summary_;
 };
 
 absl::StatusOr<absl::flat_hash_map<ShapeIndex, GpuExecutable::OutputInfo>>
 GetOutputInfo(const HloModule& hlo_module, const BufferAssignment& assignment);
+
+// Verifies that `buffer` satisfies the alignment required for `allocation`'s
+// kind (entry parameter, constant, or XLA-allocated). `arg_idx` is used only
+// for error messages.
+absl::Status CheckAlignment(const BufferAllocation& allocation,
+                            se::DeviceAddressBase buffer, int arg_idx);
 
 }  // namespace gpu
 }  // namespace xla

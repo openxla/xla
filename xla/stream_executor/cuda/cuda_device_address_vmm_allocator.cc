@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/activate_context.h"
+#include "xla/stream_executor/cuda/cuda_device_allocator.h"
 #include "xla/stream_executor/cuda/cuda_memory_reservation.h"
 #include "xla/stream_executor/cuda/cuda_raw_memory_allocation.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/vmm_device_address_allocator.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor::gpu {
 
@@ -69,7 +69,7 @@ CudaDeviceAddressVmmAllocator::Create(
     const Platform* platform, double memory_fraction,
     std::optional<int64_t> gpu_system_memory_size,
     absl::Span<const std::pair<StreamExecutor*, Stream*>> devices) {
-  LOG(INFO) << "Using VMM (Virtual Memory Management) allocator.";
+  LOG(INFO) << "Using VMM device-address allocator.";
   std::vector<DeviceConfig> device_configs;
   device_configs.reserve(devices.size());
   for (const auto& [executor, stream] : devices) {
@@ -86,7 +86,7 @@ CudaDeviceAddressVmmAllocator::Create(
     if (gpu_system_memory_size.has_value()) {
       pa_budget = gpu_system_memory_size.value();
     }
-    LOG(INFO) << "VMM allocator pa_budget for device "
+    LOG(INFO) << "VMM device-address allocator pa_budget for device "
               << executor->device_ordinal() << ": " << pa_budget << " bytes.";
     device_configs.push_back({executor, stream, pa_budget});
   }
@@ -139,12 +139,10 @@ absl::Status CudaDeviceAddressVmmAllocator::InitializeDeviceState(
     }
   }
 
-  CUmemAllocationProp alloc_props = {};
-  alloc_props.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-  alloc_props.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  alloc_props.location.id = cu_device;
-  alloc_props.requestedHandleTypes =
-      static_cast<CUmemAllocationHandleType>(CU_MEM_HANDLE_TYPE_NONE);
+  ASSIGN_OR_RETURN(CudaDeviceAllocator::Options device_allocator_options,
+                   QueryDeviceAllocatorOptions(cu_device));
+  CUmemAllocationProp alloc_props =
+      BuildVmmAllocationProp(cu_device, device_allocator_options);
   size_t granularity = 0;
   if (auto s = cuda::ToStatus(
           cuMemGetAllocationGranularity(&granularity, &alloc_props,

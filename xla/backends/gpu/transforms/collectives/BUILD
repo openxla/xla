@@ -56,7 +56,6 @@ cc_library(
     srcs = ["collective_backend_assigner.cc"],
     hdrs = ["collective_backend_assigner.h"],
     deps = [
-        ":collective_ops_utils",
         "//xla:shape_util",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -731,6 +730,45 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "collective_kernel_strategy_annotator",
+    srcs = ["collective_kernel_strategy_annotator.cc"],
+    hdrs = ["collective_kernel_strategy_annotator.h"],
+    deps = [
+        "//xla/backends/gpu/runtime:all_reduce",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/gpu:all_reduce_kernel",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "collective_kernel_strategy_annotator_test",
+    srcs = ["collective_kernel_strategy_annotator_test.cc"],
+    deps = [
+        ":collective_kernel_strategy_annotator",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_googletest//:gtest",
     ],
 )
 

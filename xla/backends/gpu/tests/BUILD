@@ -76,6 +76,7 @@ cc_library(
         "//xla/service:gpu_plugin",
         "//xla/service:gpu_topology",
         "//xla/service:hlo_module_config",
+        "//xla/service:hlo_runner_interface",
         "//xla/service:llvm_compiler",
         "//xla/service/gpu:gpu_compiler",
         "//xla/tests:codegen_utils",
@@ -84,6 +85,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_for_library",
     ],
 )
@@ -413,9 +415,9 @@ xla_test(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:verified_hlo_module",
-        "//xla/service:hlo_module_config",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
         "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
@@ -587,8 +589,9 @@ xla_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -809,6 +812,7 @@ lit_test_suite_for_gpus(
             "pdl.hlo",
         ],
         "mi200": [
+            "dot_bf16.hlo",
             "element_wise_row_vectorization.hlo",
             "scatter_bf16.hlo",
             "single_instruction.hlo",
@@ -973,6 +977,7 @@ xla_test(
         "//xla:error_spec",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/backends/gpu/libraries/cub:cub_scratch_size_deviceless_lookup",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/backends/gpu/transforms:sort_rewriter",
@@ -1210,7 +1215,6 @@ xla_test(
         ],
     },
     backends = ["gpu"],
-    tags = ["pjrt_migration_candidate"],
     use_legacy_runtime = True,
     deps = [
         "//xla:literal",
@@ -1244,7 +1248,6 @@ xla_test(
     backends = [
         "gpu",
     ],
-    tags = ["pjrt_migration_candidate"],
     use_legacy_runtime = True,
     deps = [
         "//xla:error_spec",

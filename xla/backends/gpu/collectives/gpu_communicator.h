@@ -21,6 +21,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
@@ -30,6 +31,7 @@ limitations under the License.
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
+#include "xla/core/collectives/registered_memory.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
 #include "xla/stream_executor/device_address.h"
@@ -137,6 +139,16 @@ class GpuCommunicator : public Communicator {
     return Unimplemented("Device communicator is not implementing");
   }
 
+  // Registers an existing device address range with this communicator for
+  // accelerated ("zero-copy") collectives. Unlike CreateSymmetricMemory this
+  // makes no symmetry assumption about the buffer's address across ranks and is
+  // NOT a collective operation -- each rank may register independently. Returns
+  // an RAII handle; destroying it deregisters the range from this communicator.
+  virtual absl::StatusOr<std::unique_ptr<RegisteredMemory>>
+  CreateRegisteredMemory(se::DeviceAddressBase addr) {
+    return Unimplemented("Registered memory is not implemented");
+  }
+
   // Creates a symmetric memory from the existing device address range. This is
   // a collective operation, and all ranks in a clique must call this operation
   // in order to make a progress.
@@ -149,10 +161,12 @@ class GpuCommunicator : public Communicator {
   // Host-side collective communication APIs
   //===--------------------------------------------------------------------===//
 
-  // Executes f in a group. f should invoke synchronous collective methods like
-  // LaunchAllReduce and not asynchronous collective methods like AllReduce.
-  virtual Future<> GroupExecute(
-      absl::AnyInvocable<absl::Status(GpuCommunicator*)> f) = 0;
+  // Executes a group of collective launches on this communicator. All
+  // collective operations in the `group` must use only *this communicator,
+  // otherwise behavior is undefined.
+  virtual Future<> GroupExecute(absl::AnyInvocable<absl::Status() &&> group) {
+    return Future<>(std::move(group)());
+  }
 
   virtual absl::Status LaunchAllReduce(se::DeviceAddressBase send_buffer,
                                        se::DeviceAddressBase recv_buffer,

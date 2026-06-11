@@ -151,12 +151,12 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
 
   // ScheduleRemoteSend and MakeCrossHostReceiveBuffers are methods implemented
   // to support the legacy cross-host transfers API.
-  void ScheduleRemoteSend(
-      PjRtMemorySpace* memory_space, PjRtRawBufferRef raw_buffer,
-      std::vector<PjRtDeviceEventRef> definition_events,
-      tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise,
-      Future<std::string> serialized_descriptor,
-      PjRtBuffer::RemoteSendCallback on_done) override;
+  void ScheduleRemoteSend(PjRtMemorySpace* memory_space,
+                          PjRtRawBufferRef raw_buffer,
+                          PjRtDeviceEventRefVector definition_events,
+                          PjRtDeviceEventPromiseRef usage_event_promise,
+                          Future<std::string> serialized_descriptor,
+                          PjRtBuffer::RemoteSendCallback on_done) override;
 
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
@@ -213,14 +213,14 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   // Helpers for cross host transfers.
   absl::Duration cross_host_transfer_timeout_ = absl::Minutes(3);
 
-  absl::StatusOr<std::vector<PjRtDeviceEventRef>> CrossHostTransferBuffers(
-      std::vector<PjRtDeviceEventRef> transfer_dependencies,
+  absl::StatusOr<PjRtDeviceEventRefVector> CrossHostTransferBuffers(
+      PjRtDeviceEventRefVector transfer_dependencies,
       std::vector<CrossHostTransferSpec> transfer_specs) override;
 
   void ScheduleTransfersOnLocalDevice(
       LocalDeviceState* local_device_state, GlobalDeviceId device_id,
       tsl::AsyncValueRef<BufferSequencingEvent> transfer_event,
-      std::vector<PjRtDeviceEventRef> transfer_dependencies,
+      PjRtDeviceEventRefVector transfer_dependencies,
       std::vector<CrossHostTransferSpec> transfer_specs);
 
   struct PrepareReceiveBufferResult {

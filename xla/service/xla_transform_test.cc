@@ -34,8 +34,10 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_xla_transform_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_xla_transform_internal.h"
+#include "xla/service/computation_layout.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cse.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/tsl/platform/statusor.h"
@@ -70,6 +72,36 @@ TEST_F(XlaTransformTest, Registration) {
   EXPECT_NE(transforms[0], nullptr);
 }
 
+TEST_F(XlaTransformTest, ClearTransforms) {
+  auto axl = std::make_shared<TrivialTransform>("test_transform");
+  RegisterHloXlaTransform(HloXlaTransform::PipelineStage::kPreScheduler, axl);
+
+  EXPECT_TRUE(ClearHloXlaTransforms());
+  EXPECT_FALSE(ClearHloXlaTransforms());
+}
+
+TEST_F(XlaTransformTest, ClearTransform) {
+  auto axl1 = std::make_shared<TrivialTransform>("test_transform1");
+  auto axl2 = std::make_shared<TrivialTransform>("test_transform2");
+  RegisterHloXlaTransform(HloXlaTransform::PipelineStage::kPreScheduler, axl1);
+  RegisterHloXlaTransform(HloXlaTransform::PipelineStage::kPreScheduler, axl2);
+
+  EXPECT_TRUE(ClearHloXlaTransform(
+      HloXlaTransform::PipelineStage::kPreScheduler, "test_transform1"));
+
+  const auto& transforms =
+      GetHloXlaTransforms(HloXlaTransform::PipelineStage::kPreScheduler);
+  ASSERT_EQ(transforms.size(), 1);
+  EXPECT_EQ(transforms[0]->name(), "test_transform2");
+
+  EXPECT_FALSE(ClearHloXlaTransform(
+      HloXlaTransform::PipelineStage::kPreScheduler, "test_transform1"));
+  EXPECT_TRUE(ClearHloXlaTransform(
+      HloXlaTransform::PipelineStage::kPreScheduler, "test_transform2"));
+  EXPECT_TRUE(GetHloXlaTransforms(HloXlaTransform::PipelineStage::kPreScheduler)
+                  .empty());
+}
+
 TEST_F(XlaTransformTest, ApplyTransforms) {
   absl::string_view hlo_text = R"(
     HloModule test_module
@@ -90,6 +122,38 @@ TEST_F(XlaTransformTest, ApplyTransforms) {
       bool changed,
       ApplyXlaTransformsToModule(HloXlaTransform::PipelineStage::kPreScheduler,
                                  module.get()));
+  EXPECT_TRUE(changed);
+}
+
+TEST_F(XlaTransformTest, TransformMixedPrecisionPad) {
+  absl::string_view hlo_text = R"(
+    HloModule test_module
+    ENTRY test_computation {
+      p0 = bf16[1,1,4,4] parameter(0)
+      p1 = bf16[1,1,4,4] parameter(1)
+      c0 = f32[] constant(0)
+      ROOT pad.0 = bf16[1,1,8,4] pad(p1, c0), padding=0_0x0_0x0_4x0_0
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          xla::ParseAndReturnUnverifiedModule(hlo_text));
+
+  auto transform = std::make_shared<TrivialTransform>("trivial_transform");
+  RegisterHloXlaTransform(HloXlaTransform::PipelineStage::kPreScheduler,
+                          transform);
+
+  HloPassPipeline pipeline("test_pipeline");
+
+  AlgebraicSimplifierOptions options;
+  pipeline.AddPass<AlgebraicSimplifier>(options);
+  pipeline.AddPass<ApplyXlaTransforms>(
+      HloXlaTransform::PipelineStage::kPreScheduler);
+  pipeline.AddPass<HloTrivialScheduler>();
+  pipeline.AddPass<ApplyXlaTransforms>(
+      HloXlaTransform::PipelineStage::kPostScheduler);
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, pipeline.Run(module.get()));
   EXPECT_TRUE(changed);
 }
 
@@ -206,6 +270,104 @@ TEST_F(XlaTransformTest, PjrtCApiExtension) {
 
   EXPECT_EQ(module->entry_computation()->root_instruction()->opcode(),
             HloOpcode::kNegate);
+}
+
+TEST_F(XlaTransformTest, PjrtCApiExtensionClear) {
+  PJRT_Xla_Transform_Extension extension = pjrt::CreateXlaTransformExtension();
+
+  // Register a transform.
+  PJRT_XlaTransform_Callbacks callbacks;
+  callbacks.version = PJRT_API_XLA_TRANSFORM_EXTENSION_VERSION;
+  callbacks.dtor = nullptr;
+  callbacks.transform_hlo_module = [](PJRT_XlaTransform_Callbacks* callbacks,
+                                      PJRT_XlaTransform_Args* args) {};
+
+  PJRT_Register_Xla_Transform_Args reg_args;
+  reg_args.struct_size = PJRT_Register_Xla_Transform_Args_STRUCT_SIZE;
+  reg_args.name = "pjrt_c_api_transform";
+  reg_args.name_size = sizeof("pjrt_c_api_transform") - 1;
+  reg_args.stage = PJRT_XlaTransform_PipelineStage_kPreScheduler;
+  reg_args.callbacks = &callbacks;
+
+  PJRT_Error* error = extension.register_xla_transform(&reg_args);
+  EXPECT_EQ(error, nullptr);
+
+  // Clear with wrong name should return false.
+  {
+    PJRT_Clear_Xla_Transform_Args args;
+    args.struct_size = PJRT_Clear_Xla_Transform_Args_STRUCT_SIZE;
+    args.stage = PJRT_XlaTransform_PipelineStage_kPreScheduler;
+    args.name = "wrong_name";
+    args.name_size = sizeof("wrong_name") - 1;
+    args.callbacks = nullptr;
+    args.cleared = true;  // initialize to true to make sure it changes
+    PJRT_Error* error = extension.clear_xla_transform(&args);
+    EXPECT_EQ(error, nullptr);
+    EXPECT_FALSE(args.cleared);
+  }
+
+  // Clear with correct name should return true.
+  {
+    PJRT_Clear_Xla_Transform_Args args;
+    args.struct_size = PJRT_Clear_Xla_Transform_Args_STRUCT_SIZE;
+    args.stage = PJRT_XlaTransform_PipelineStage_kPreScheduler;
+    args.name = "pjrt_c_api_transform";
+    args.name_size = sizeof("pjrt_c_api_transform") - 1;
+    args.callbacks = nullptr;
+    args.cleared = false;
+    PJRT_Error* error = extension.clear_xla_transform(&args);
+    EXPECT_EQ(error, nullptr);
+    EXPECT_TRUE(args.cleared);
+  }
+
+  // Clear again should return false.
+  {
+    PJRT_Clear_Xla_Transform_Args args;
+    args.struct_size = PJRT_Clear_Xla_Transform_Args_STRUCT_SIZE;
+    args.stage = PJRT_XlaTransform_PipelineStage_kPreScheduler;
+    args.name = "pjrt_c_api_transform";
+    args.name_size = sizeof("pjrt_c_api_transform") - 1;
+    args.callbacks = nullptr;
+    args.cleared = true;
+    PJRT_Error* error = extension.clear_xla_transform(&args);
+    EXPECT_EQ(error, nullptr);
+    EXPECT_FALSE(args.cleared);
+  }
+}
+
+TEST_F(XlaTransformTest, PjrtCApiExtensionClearByCallbacks) {
+  PJRT_Xla_Transform_Extension extension = pjrt::CreateXlaTransformExtension();
+
+  // Register a transform without a name.
+  PJRT_XlaTransform_Callbacks callbacks;
+  callbacks.version = PJRT_API_XLA_TRANSFORM_EXTENSION_VERSION;
+  callbacks.dtor = nullptr;
+  callbacks.transform_hlo_module = [](PJRT_XlaTransform_Callbacks* callbacks,
+                                      PJRT_XlaTransform_Args* args) {};
+
+  PJRT_Register_Xla_Transform_Args reg_args;
+  reg_args.struct_size = PJRT_Register_Xla_Transform_Args_STRUCT_SIZE;
+  reg_args.name = nullptr;
+  reg_args.name_size = 0;
+  reg_args.stage = PJRT_XlaTransform_PipelineStage_kPreScheduler;
+  reg_args.callbacks = &callbacks;
+
+  PJRT_Error* error = extension.register_xla_transform(&reg_args);
+  EXPECT_EQ(error, nullptr);
+
+  // Clear with correct callbacks should return true.
+  {
+    PJRT_Clear_Xla_Transform_Args args;
+    args.struct_size = PJRT_Clear_Xla_Transform_Args_STRUCT_SIZE;
+    args.stage = PJRT_XlaTransform_PipelineStage_kPreScheduler;
+    args.name = nullptr;
+    args.name_size = 0;
+    args.callbacks = &callbacks;
+    args.cleared = false;
+    PJRT_Error* error = extension.clear_xla_transform(&args);
+    EXPECT_EQ(error, nullptr);
+    EXPECT_TRUE(args.cleared);
+  }
 }
 
 TEST_F(XlaTransformTest, PjrtCApiExtensionPreservesSchedule) {
@@ -388,6 +550,130 @@ TEST_F(XlaTransformTest, PjrtCApiExtensionUnusedComputationScheduleUAF) {
   EXPECT_TRUE(module->has_schedule());
   auto status = module->schedule().Verify();
   EXPECT_TRUE(status.ok());
+}
+
+class UpdateHloModuleFromProtoTest : public XlaTransformTest {
+ protected:
+  absl::StatusOr<std::unique_ptr<HloModule>>
+  CreateModuleWithNonDefaultLayout() {
+    absl::string_view hlo_text = R"(
+      HloModule test_module
+      ENTRY main {
+        p0 = f32[2,3] parameter(0)
+        ROOT neg = f32[2,3] negate(p0)
+      }
+    )";
+    ASSIGN_OR_RETURN(auto module, ParseAndReturnUnverifiedModule(hlo_text));
+    Shape non_default_shape = NonDefaultShape();
+    *module->mutable_entry_computation_layout()->mutable_parameter_layout(0) =
+        ShapeLayout(non_default_shape);
+    *module->mutable_entry_computation_layout()->mutable_result_layout() =
+        ShapeLayout(non_default_shape);
+    return module;
+  }
+
+  absl::StatusOr<HloModuleProto> HloTextToProto(absl::string_view hlo_text) {
+    ASSIGN_OR_RETURN(auto module, ParseAndReturnUnverifiedModule(hlo_text));
+    return module->ToProto();
+  }
+
+  Shape NonDefaultShape() {
+    return ShapeUtil::MakeShapeWithDenseLayout(F32, {2, 3}, {0, 1});
+  }
+};
+
+TEST_F(UpdateHloModuleFromProtoTest, PropagatesNewLayout) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, CreateModuleWithNonDefaultLayout());
+
+  absl::string_view hlo_text = R"(
+    HloModule test_module
+    ENTRY main {
+      p0 = f32[2,3] parameter(0)
+      ROOT neg = f32[2,3] negate(p0)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(HloModuleProto transformed_proto,
+                          HloTextToProto(hlo_text));
+
+  EXPECT_TRUE(UpdateHloModuleFromProto(module.get(), transformed_proto).ok());
+
+  // The layout should be updated to the default layout from the proto,
+  // instead of preserving the original non-default layout.
+  Shape default_shape = ShapeUtil::MakeShape(F32, {2, 3});
+  EXPECT_EQ(module->entry_computation_layout().parameter_layout(0),
+            ShapeLayout(default_shape));
+  EXPECT_EQ(module->entry_computation_layout().result_layout(),
+            ShapeLayout(default_shape));
+}
+
+TEST_F(UpdateHloModuleFromProtoTest, PropagatesNonDefaultLayout) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+    HloModule test_module
+    ENTRY main {
+      p0 = f32[2,3] parameter(0)
+      ROOT neg = f32[2,3] negate(p0)
+    }
+  )"));
+
+  absl::string_view transformed_hlo = R"(
+    HloModule test_module
+    ENTRY main {
+      p0 = f32[2,3]{0,1} parameter(0)
+      ROOT neg = f32[2,3]{0,1} negate(p0)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto transformed_module,
+                          ParseAndReturnUnverifiedModule(transformed_hlo));
+  HloModuleProto transformed_proto = transformed_module->ToProto();
+
+  EXPECT_TRUE(UpdateHloModuleFromProto(module.get(), transformed_proto).ok());
+
+  // The layout should be updated to the non-default layout from the proto.
+  EXPECT_EQ(module->entry_computation_layout().parameter_layout(0),
+            ShapeLayout(NonDefaultShape()));
+  EXPECT_EQ(module->entry_computation_layout().result_layout(),
+            ShapeLayout(NonDefaultShape()));
+}
+
+TEST_F(UpdateHloModuleFromProtoTest, IncompatibleShape) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, CreateModuleWithNonDefaultLayout());
+
+  absl::string_view transformed_hlo_text = R"(
+    HloModule test_module
+    ENTRY main {
+      p0 = f32[3,4] parameter(0)
+      ROOT neg = f32[3,4] negate(p0)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(HloModuleProto transformed_proto,
+                          HloTextToProto(transformed_hlo_text));
+
+  EXPECT_FALSE(UpdateHloModuleFromProto(module.get(), transformed_proto).ok());
+
+  EXPECT_EQ(module->entry_computation_layout().parameter_layout(0),
+            ShapeLayout(NonDefaultShape()));
+  EXPECT_EQ(module->entry_computation_layout().result_layout(),
+            ShapeLayout(NonDefaultShape()));
+}
+
+TEST_F(UpdateHloModuleFromProtoTest, IncompatibleParamCount) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, CreateModuleWithNonDefaultLayout());
+
+  absl::string_view transformed_hlo_text = R"(
+    HloModule test_module
+    ENTRY main {
+      p0 = f32[2,3] parameter(0)
+      p1 = f32[2,3] parameter(1)
+      ROOT add = f32[2,3] add(p0, p1)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(HloModuleProto transformed_proto,
+                          HloTextToProto(transformed_hlo_text));
+
+  EXPECT_FALSE(UpdateHloModuleFromProto(module.get(), transformed_proto).ok());
+
+  EXPECT_EQ(module->entry_computation_layout().parameter_layout(0),
+            ShapeLayout(NonDefaultShape()));
 }
 
 }  // namespace

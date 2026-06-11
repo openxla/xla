@@ -65,9 +65,36 @@ std::vector<std::shared_ptr<HloXlaTransform>> GetHloXlaTransforms(
   return transforms[stage];
 }
 
-void ClearHloXlaTransforms() {
+bool ClearHloXlaTransforms() {
   absl::MutexLock transforms_lock(&transforms_mutex);
-  GetHloXlaTransformsInternal().clear();
+  auto& transforms = GetHloXlaTransformsInternal();
+  if (transforms.empty()) {
+    return false;
+  }
+  transforms.clear();
+  return true;
+}
+
+bool ClearHloXlaTransform(HloXlaTransform::PipelineStage stage,
+                          absl::string_view name) {
+  absl::MutexLock transforms_lock(&transforms_mutex);
+  auto& transforms_map = GetHloXlaTransformsInternal();
+  auto it = transforms_map.find(stage);
+  if (it == transforms_map.end()) {
+    return false;
+  }
+  auto& stage_transforms = it->second;
+  for (auto transform_it = stage_transforms.begin();
+       transform_it != stage_transforms.end(); ++transform_it) {
+    if ((*transform_it)->name() == name) {
+      stage_transforms.erase(transform_it);
+      if (stage_transforms.empty()) {
+        transforms_map.erase(it);
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 absl::StatusOr<bool> ApplyXlaTransformsToModule(
@@ -101,7 +128,7 @@ absl::StatusOr<bool> ApplyXlaTransforms::RunImpl(
   ASSIGN_OR_RETURN(bool changed, ApplyXlaTransformsToModule(stage_, module));
   if (changed) {
     HloVerifier verifier(/*layout_sensitive=*/false,
-                         /*allow_mixed_precision=*/false);
+                         /*allow_mixed_precision=*/true);
     auto verifier_status = verifier.Run(module);
     if (!verifier_status.status().ok()) {
       return verifier_status.status();
@@ -133,6 +160,8 @@ absl::Status UpdateHloModuleFromProto(HloModule* module,
   HloComputation* new_entry = temp_module->entry_computation();
   module->MoveComputationsFrom(temp_module.get());
   module->ReplaceEntryComputation(new_entry);
+  module->mutable_config().SetComputationLayoutIfExists(
+      new_entry->ComputeProgramShape());
 
   RETURN_IF_ERROR(module->RemoveUnusedComputations());
 

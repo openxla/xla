@@ -142,6 +142,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
 #include "xla/hlo/transforms/simplifiers/float_normalization.h"
 #include "xla/hlo/transforms/simplifiers/gather_simplifier.h"
+#include "xla/hlo/transforms/simplifiers/gemv_rewriter.h"
 #include "xla/hlo/transforms/simplifiers/hlo_computation_deduplicator.h"
 #include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
@@ -490,7 +491,7 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
                  /*debug_only=*/true);
 
   AlgebraicSimplifierOptions options;
-  options.set_enable_dot_strength_reduction(false);
+  options.set_enable_dot_strength_reduction(true);
   // "slow" minmax means we propagate nan.
   options.set_minmax_propagate_nan(
       !module->config().debug_options().xla_cpu_enable_fast_min_max());
@@ -509,32 +510,23 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
     pipeline->AddPass<GatherSimplifier>();
   }
 
-  if (!absl::c_contains(module->config()
-                            .debug_options()
-                            .xla_cpu_experimental_ynn_fusion_type(),
-                        DebugOptions::LIBRARY_FUSION_TYPE_REDUCE)) {
-    pipeline->AddPass<TreeReductionRewriter>();
-  }
-
   if (absl::c_contains(module->config()
                            .debug_options()
                            .xla_cpu_experimental_ynn_fusion_type(),
                        DebugOptions::LIBRARY_FUSION_TYPE_REDUCE)) {
-    // We use different window sizes for offloaded and non-offloaded reductions
-    // because internally YNNPACK already performs tiled reduction for the
-    // innermost dimension with a tile size of 16.
-    pipeline->AddPass<TreeReductionRewriter>(
-        /*reduce_window_size=*/32,
-        /*reduce_window_size_stride_one_dim=*/512,
-        [](const HloInstruction* hlo) {
-          return IsReduceLikeOpOffloadedToYnn(hlo);
-        });
+    // TreeReductionRewriter serves two purposes:
+    // - Improving numerical properties by hierarchically performing reductions.
+    // - Improving performance by allowing parallelism.
+    // YNNPACK doesn't need TreeReductionRewriter to do either of these.
     pipeline->AddPass<TreeReductionRewriter>(
         /*reduce_window_size=*/32,
         /*reduce_window_size_stride_one_dim=*/std::nullopt,
         [](const HloInstruction* hlo) {
-          return !IsReduceLikeOpOffloadedToYnn(hlo);
+          return !(IsInstructionPreferredByYnn(hlo) &&
+                   IsReduceLikeOpSupportedByYnn(hlo));
         });
+  } else {
+    pipeline->AddPass<TreeReductionRewriter>();
   }
 
   // BatchNormExpander can create zero-sized ops, so zero-sized HLO
@@ -566,7 +558,8 @@ auto LibrarySupportsConvolution(
       module->config().debug_options().xla_cpu_experimental_ynn_fusion_type(),
       DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_CONVOLUTION);
   return [=](const HloInstruction& instr) {
-    return ynnpack_convolution_enabled && IsConvolutionOpSupportedByYnn(&instr);
+    return ynnpack_convolution_enabled && IsInstructionPreferredByYnn(&instr) &&
+           IsConvolutionOpSupportedByYnn(&instr);
   };
 }
 
@@ -576,7 +569,8 @@ auto LibrarySupportsDot(HloModule* module,
       module->config().debug_options().xla_cpu_experimental_ynn_fusion_type(),
       DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_DOT);
   return [=](const HloInstruction& instr) {
-    if (ynnpack_dot_enabled && IsDotSupportedByYnn(&instr).value_or(false)) {
+    if (ynnpack_dot_enabled && IsInstructionPreferredByYnn(&instr) &&
+        IsDotSupportedByYnn(&instr).value_or(false)) {
       return true;
     }
 
@@ -710,7 +704,8 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
         return library_supports_convolution(instr);
       case HloOpcode::kReduce:
       case HloOpcode::kReduceWindow:
-        return IsReduceLikeOpOffloadedToYnn(&instr);
+        return IsInstructionPreferredByYnn(&instr) &&
+               IsReduceLikeOpSupportedByYnn(&instr);
       default:
         return false;
     }
@@ -935,6 +930,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass(CreateSimplificationPipeline(
       "post_scatter_expansion_simplification", module, use_fusion_emitters,
       use_onednn_custom_call));
+  pipeline.AddPass<GemvRewriter>(/*is_layout_sensitive=*/false);
 
   pipeline.AddPass<BitcastDtypesExpander>();
 
@@ -1108,7 +1104,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     AlgebraicSimplifierOptions options;
     options.set_is_layout_sensitive(true);
     options.set_supports_non_canonical_dots(false);
-    options.set_enable_dot_strength_reduction(false);
+    options.set_enable_dot_strength_reduction(true);
     // "slow" minmax means we propagate nan.
     options.set_minmax_propagate_nan(
         !module->config().debug_options().xla_cpu_enable_fast_min_max());

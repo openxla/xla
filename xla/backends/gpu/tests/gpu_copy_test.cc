@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
+#include "absl/strings/string_view.h"
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -26,7 +27,6 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/service/hlo_module_config.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/statusor.h"
@@ -78,6 +78,32 @@ TEST_F(GpuCopyTest, CopyTranspose) {
                           ParseAndReturnVerifiedModule(hlo_text));
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
+}
+
+TEST_F(GpuCopyTest, UseMemcpyForTrivialStaticSliceFusion) {
+  constexpr absl::string_view hlo_text = R"(
+    HloModule Test
+
+    wrapped_slice_computation {
+      param_0 = f32[8,16]{1,0} parameter(0)
+      ROOT slice = f32[3,16]{1,0} slice(param_0),
+          slice={[2:5], [0:16]}
+    }
+
+    ENTRY main {
+      param_0 = f32[8,16]{1,0} parameter(0)
+      ROOT wrapped_slice = f32[3,16]{1,0} fusion(param_0),
+          kind=kLoop, calls=wrapped_slice_computation
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(hlo_text));
+
+  ASSERT_OK(CompileAndVerifyIr(std::move(hlo_module),
+                               "; CHECK-NOT: void @wrapped_slice",
+                               /*match_optimized_ir=*/false,
+                               /*run_optimization_passes=*/false));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, ErrorSpec{1e-5, 1e-5}));
 }
 
 constexpr char kSliceMemcpyModule[] = R"(
@@ -423,12 +449,9 @@ TEST_F(GpuCopyTest, UseDynamicMemcpyIntegrationTest) {
   // This is an integration test to verify that the pipeline for replacing
   // dynamic-slices that depend on while loop iteration variables with memcpy
   // works as a whole.
-  HloModuleConfig config = GetModuleConfigForTest();
-  config.mutable_debug_options().set_xla_gpu_enable_dynamic_slice_fusion(true);
-
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<VerifiedHloModule> hlo_module,
-      ParseAndReturnVerifiedModule(kSliceMemcpyModuleUnfused, config));
+      ParseAndReturnVerifiedModule(kSliceMemcpyModuleUnfused));
 
   // Check that there are exactly two fusions:
   // 1. A `compare` fusion for the loop condition.

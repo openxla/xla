@@ -140,6 +140,9 @@ message DebugOptions {
     // Enables loop unrolling when we have at least one collective within a
     // while loop.
     WHILE_LOOP_UNROLLING_AUTO_UNROLL = 3;
+    // Enables loop unrolling only on loops annotated with
+    // `_xla_loop_unroll_strategy`.
+    WHILE_LOOP_UNROLLING_MANUAL_UNROLL = 4;
   }
 
   //--------------------------------------------------------------------------//
@@ -600,8 +603,8 @@ message DebugOptions {
   optional bool xla_gpu_default_to_alg_dot_bf16_bf16_f32 = 441;
 
   // Guarantees run-to-run determinism.
-  // This flag implies --xla_gpu_exclude_nondeterministic_ops and in addition
-  // disables autotuning.
+  // This flag disables autotuning and selects the first __valid__ autotune
+  // config.
   optional bool xla_gpu_deterministic_ops = 148;
 
   repeated CollectiveOpType xla_gpu_disable_async_collectives = 289;
@@ -746,10 +749,8 @@ message DebugOptions {
   optional WhileLoopUnrolling xla_gpu_enable_while_loop_unrolling = 294;
 
   // Excludes non-deterministic ops from compiled executables.
-  // Unlike --xla_gpu_deterministic_ops does not disable autotuning - the
-  // compilation itself can be non-deterministic.
-  // Scatter ops can non-deterministic by default; these get converted to
-  // a deterministic implementation.
+  // This flag disables autotuning and selects the first __valid__ autotune
+  // config.
   optional bool xla_gpu_exclude_nondeterministic_ops = 297;
 
   optional bool xla_gpu_executable_embed_debug_info = 437;
@@ -1094,6 +1095,9 @@ message DebugOptions {
   // Prints statistics about the HLO passes: how many times each pass
   // was run, and how long it took.
   optional bool xla_gpu_print_compilation_stats = 454;
+
+  // Extra flags to pass to the ptxas compiler, e.g. "--maxregcount=32".
+  repeated string xla_gpu_ptx_compiler_extra_flags = 491;
 
   // Paths to files with ptx code.
   repeated string xla_gpu_ptx_file = 127;
@@ -1498,6 +1502,11 @@ message DebugOptions {
   // This will log the values for all thunks affected by float checks.
   optional bool xla_gpu_log_minmax = 453;
 
+  // Whether to enable runtime instrumentation (float check, checksum, buffer
+  // saver) on all output buffers of an XLA module after all computation is
+  // finished.
+  optional bool xla_gpu_experimental_thunk_buffer_debug_module_outputs = 492;
+
   // If true, large constants will be printed out when dumping HLOs.
   optional bool xla_dump_large_constants = 290;
 
@@ -1602,7 +1611,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 491
+  // Next id: 493
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
