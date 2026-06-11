@@ -456,6 +456,75 @@ TEST_F(GpuCopyTest, UseDynamicMemcpyIntegrationTest) {
                                /*run_optimization_passes=*/true));
 }
 
+constexpr char kAsyncDynamicSliceCopyFusionModule[] = R"(
+    HloModule AsyncDynamicSliceCopyFusion, is_scheduled=true
+
+    dynamic_slice_copy {
+      p0 = s32[4,4] parameter(0)
+      p1 = s32[] parameter(1)
+      p2 = s32[] parameter(2)
+      ROOT slice = s32[1,4] dynamic-slice(p0, p1, p2),
+          dynamic_slice_sizes={1,4},
+          backend_config={"dynamic_slice_config":
+              {"loop_index":0,"byte_offset":0,"byte_stride":16}}
+    }
+
+    async_computation {
+      p0 = s32[4,4] parameter(0)
+      p1 = s32[] parameter(1)
+      p2 = s32[] parameter(2)
+      ROOT dynamic_slice_copy = s32[1,4] fusion(p0, p1, p2),
+          kind=kLoop, calls=dynamic_slice_copy
+    }
+
+    body {
+      p0 = (s32[], s32[4,4], s32[4,4]) parameter(0)
+      ivar = s32[] get-tuple-element(p0), index=0
+      input = s32[4,4] get-tuple-element(p0), index=1
+      acc = s32[4,4] get-tuple-element(p0), index=2
+      c0 = s32[] constant(0)
+      dynamic_slice_copy_start = ((s32[4,4], s32[], s32[]), s32[1,4], u32[])
+          async-start(input, ivar, c0), calls=async_computation
+      slice = s32[1,4] async-done(dynamic_slice_copy_start)
+      updated = s32[4,4] dynamic-update-slice(acc, slice, ivar, c0)
+      c1 = s32[] constant(1)
+      next_ivar = s32[] add(ivar, c1)
+      ROOT result = (s32[], s32[4,4], s32[4,4])
+          tuple(next_ivar, input, updated)
+    }
+
+    compare {
+      p0 = (s32[], s32[4,4], s32[4,4]) parameter(0)
+      ivar = s32[] get-tuple-element(p0), index=0
+      c4 = s32[] constant(4)
+      ROOT cmp = pred[] compare(ivar, c4), direction=LT
+    }
+
+    ENTRY main {
+      iota = s32[16] iota(), iota_dimension=0
+      input = s32[4,4] bitcast(iota)
+      c0 = s32[] constant(0)
+      zero = s32[] constant(0)
+      init_acc = s32[4,4] broadcast(zero), dimensions={}
+      tuple = (s32[], s32[4,4], s32[4,4]) tuple(c0, input, init_acc)
+      while = (s32[], s32[4,4], s32[4,4]) while(tuple),
+          condition=compare, body=body
+      ROOT result = s32[4,4] get-tuple-element(while), index=2
+    })";
+
+TEST_F(GpuCopyTest, AsyncDynamicSliceCopyFusionUsesMemcpy) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> hlo_module,
+      ParseAndReturnVerifiedModule(kAsyncDynamicSliceCopyFusionModule));
+
+  ASSERT_OK(CompileAndVerifyIr(std::move(hlo_module),
+                               "; CHECK-NOT: void @dynamic_slice_copy",
+                               /*match_optimized_ir=*/false,
+                               /*run_optimization_passes=*/false));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kAsyncDynamicSliceCopyFusionModule,
+                                       ErrorSpec{0, 0}));
+}
+
 TEST_F(GpuCopyTest, UseDynamicMemcpyIntegrationTestControl) {
   // Control for UseDynamicMemcpyIntegrationTest. Verify that without
   // fusion-dynamic-memcpy-rewriter, we have a third fusion.

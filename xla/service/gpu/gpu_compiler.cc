@@ -115,7 +115,6 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/estimate_cub_sort_scratch_size.h"
 #include "xla/backends/gpu/transforms/explicit_collectives_group_async_wrapper.h"
 #include "xla/backends/gpu/transforms/explicit_stream_annotation_async_wrapper.h"
-#include "xla/backends/gpu/transforms/fusion_dynamic_memcpy_rewriter.h"
 #include "xla/backends/gpu/transforms/fusion_wrapper.h"
 #include "xla/backends/gpu/transforms/gemm_broadcast_folding_rewriter.h"
 #include "xla/backends/gpu/transforms/gemm_fusion.h"
@@ -3124,11 +3123,10 @@ absl::Status GpuCompiler::RunPreSchedulingPasses(
   const auto* cuda_cc =
       gpu_device_info.gpu_compute_capability().cuda_compute_capability();
   if (cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere()) {
-    // FusionDispatchPipeline also runs FusionDynamicMemcpyRewriter after
-    // scheduling for fusions created by post-scheduling passes. Run it here as
-    // well so copy-hero dynamic slice fusions exist before LHS and can be
-    // wrapped as async memcpy.
-    pipeline.AddPass<FusionDynamicMemcpyRewriter>();
+    // Wrap memcpy-like dynamic slice/update fusions before LHS. Thunk emission
+    // pattern-matches the same fusions and lowers them to D2D copy thunks
+    // wrapped in DynamicSliceFusionV2Thunk when runtime offset handling is
+    // needed.
     pipeline.AddPass<DynamicSliceCopyFusionAsyncWrapper>();
   }
   if (module->config().debug_options().xla_gpu_collect_cost_model_stats()) {
