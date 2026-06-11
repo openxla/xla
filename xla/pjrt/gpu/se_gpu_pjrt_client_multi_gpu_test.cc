@@ -1498,7 +1498,7 @@ TEST_P(ShardedAutotuningTest, ShardedAutotuningWorks) {
 
   if (tsl::kIsOpenSource) {
     // Test relies on VLOG(1) messages. Enable VLOG(1) in OSS.
-    tsl::setenv("TF_CPP_VMODULE", "autotuner_pass=10,autotuner=10",
+    tsl::setenv("TF_CPP_VMODULE", "autotuner_pass=10,config_assigner=10",
                 /*overwrite=*/true);
   }
 
@@ -1519,7 +1519,7 @@ TEST_P(ShardedAutotuningTest, ShardedAutotuningWorks) {
       argv.push_back(absl::StrFormat("--cache_dir=%s", cache_dir));
       // Test relies on VLOG(1) messages. Enable VLOG(1) in Non-OSS.
       if (!tsl::kIsOpenSource) {
-        argv.push_back("--vmodule=autotuner_pass=10,autotuner=10");
+        argv.push_back("--vmodule=autotuner_pass=10,config_assigner=10");
         argv.push_back("--logtostderr");
       }
       child[node_id].SetProgram(test_binary_name, argv);
