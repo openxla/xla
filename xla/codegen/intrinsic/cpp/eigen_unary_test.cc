@@ -53,6 +53,10 @@ std::string GetFunctionIr(const llvm::Module& module, llvm::StringRef name) {
 constexpr int kTanhUlps = 5;
 constexpr int kAtanF32Ulps = 3;
 constexpr int kAtanF64Ulps = 2;
+constexpr int kSinF32Ulps = 3;
+constexpr int kSinF64Ulps = 2;
+constexpr int kCosF32Ulps = 3;
+constexpr int kCosF64Ulps = 2;
 
 TEST(EigenUnaryTest, FastTanhfIsCorrect) {
   Vec16f x = {1.0f,  2.0f,  -1.0f, 4.0f,   8.0f,   16.0f,  32.0f, 200.0f,
@@ -324,5 +328,84 @@ TEST(EigenUnaryTest, AtanEdgeCases) {
   EXPECT_NEAR(atan_f64(-inf_d), -kPiOver2, 1e-14);
 }
 
+TEST(EigenUnaryTest, FastSinfIsCorrect) {
+  Vec16f x = {1.0f,  2.0f,  -1.0f, 4.0f,   8.0f,   16.0f,  32.0f, 200.0f,
+              -2.0f, -4.0f, -8.0f, -16.0f, -32.0f, -64.0f, 0.0f,  0.5f};
+  Vec16f y = sin_v16f32(x);
+  for (int i = 0; i < 16; ++i) {
+    EXPECT_THAT(y[i], NearUlps(std::sin(x[i]), kSinF32Ulps))
+        << x[i] << " " << std::sin(x[i]);
+  }
+}
+
+TEST(EigenUnaryTest, FastSindIsCorrect) {
+  Vec4d x = {1.0, 2.0, -1.0, 4.0};
+  Vec4d y = sin_v4f64(x);
+  for (int i = 0; i < 4; ++i) {
+    EXPECT_THAT(y[i], NearUlps(std::sin(x[i]), kSinF64Ulps));
+  }
+}
+
+TEST(EigenUnaryTest, v4f32SinIsCorrect) {
+  Vec4f x = {1.0f, 2.0f, -1.0f, 4.0f};
+  Vec4f y = sin_v4f32(x);
+  for (int i = 0; i < 4; ++i) {
+    EXPECT_THAT(y[i], NearUlps(std::sin(x[i]), kSinF32Ulps));
+  }
+}
+
+TEST(EigenUnaryTest, FastCosfIsCorrect) {
+  Vec16f x = {1.0f,  2.0f,  -1.0f, 4.0f,   8.0f,   16.0f,  32.0f, 200.0f,
+              -2.0f, -4.0f, -8.0f, -16.0f, -32.0f, -64.0f, 0.0f,  0.5f};
+  Vec16f y = cos_v16f32(x);
+  for (int i = 0; i < 16; ++i) {
+    EXPECT_THAT(y[i], NearUlps(std::cos(x[i]), kCosF32Ulps))
+        << x[i] << " " << std::cos(x[i]);
+  }
+}
+
+TEST(EigenUnaryTest, FastCosdIsCorrect) {
+  Vec4d x = {1.0, 2.0, -1.0, 4.0};
+  Vec4d y = cos_v4f64(x);
+  for (int i = 0; i < 4; ++i) {
+    EXPECT_THAT(y[i], NearUlps(std::cos(x[i]), kCosF64Ulps));
+  }
+}
+
+TEST(EigenUnaryTest, v4f32CosIsCorrect) {
+  Vec4f x = {1.0f, 2.0f, -1.0f, 4.0f};
+  Vec4f y = cos_v4f32(x);
+  for (int i = 0; i < 4; ++i) {
+    EXPECT_THAT(y[i], NearUlps(std::cos(x[i]), kCosF32Ulps));
+  }
+}
+
+TEST(EigenUnaryTest, SinIsVectorized32) {
+  llvm::LLVMContext context;
+  std::unique_ptr<llvm::Module> module =
+      ParseEmbeddedBitcode(context, llvm_ir::kEigenUnary32LlIr);
+
+  std::string ir;
+  llvm::raw_string_ostream stream(ir);
+  module->print(stream, nullptr);
+
+  EXPECT_THAT(ir, ContainsRegex("xla.sin.v16f32"));
+  EXPECT_THAT(ir, ContainsRegex("xla.sin.v8f64"));
+}
+
+TEST(EigenUnaryTest, CosIsVectorized32) {
+  llvm::LLVMContext context;
+  std::unique_ptr<llvm::Module> module =
+      ParseEmbeddedBitcode(context, llvm_ir::kEigenUnary32LlIr);
+
+  std::string ir;
+  llvm::raw_string_ostream stream(ir);
+  module->print(stream, nullptr);
+
+  EXPECT_THAT(ir, ContainsRegex("xla.cos.v16f32"));
+  EXPECT_THAT(ir, ContainsRegex("xla.cos.v8f64"));
+}
+
 }  // namespace
+
 }  // namespace xla::codegen
