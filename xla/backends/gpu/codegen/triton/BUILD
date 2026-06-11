@@ -27,6 +27,7 @@ cc_library(
     deps = [
         ":triton_kernel_source",
         ":xtile_compiler",
+        "//xla:frontend_attributes",
         "//xla:future",
         "//xla:shape_util",
         "//xla:util",
@@ -229,6 +230,7 @@ cc_library(
         ":triton_kernel_source",
         ":triton_wrapper_result",
         "//xla:autotuning_proto_cc",
+        "//xla:frontend_attributes",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
@@ -511,6 +513,7 @@ cc_library(
     hdrs = ["xtile_test_base.h"],
     deps = [
         ":xtile_compiler",
+        "//xla:frontend_attributes",
         "//xla:status_macros",
         "//xla:util",
         "//xla/codegen/tiling:symbolic_tile_analysis",
