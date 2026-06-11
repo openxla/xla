@@ -15,15 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/dynamic_slice_copy_fusion_async_wrapper.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/transforms/fusion_dynamic_memcpy_rewriter.h"
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_module.h"
-#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 
 namespace xla::gpu {
@@ -47,8 +43,7 @@ TEST_F(DynamicSliceCopyFusionAsyncWrapperTest, WrapsDynamicMemcpyFusion) {
       ROOT fusion = s32[1] fusion(p0), kind=kLoop, calls=dynamic_slice
     })";
 
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
 
   EXPECT_THAT(FusionDynamicMemcpyRewriter().Run(module.get()),
               absl_testing::IsOkAndHolds(true));
@@ -56,14 +51,20 @@ TEST_F(DynamicSliceCopyFusionAsyncWrapperTest, WrapsDynamicMemcpyFusion) {
   DynamicSliceCopyFusionAsyncWrapper wrapper;
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(true));
 
-  HloInstruction* async_done = module->entry_computation()->root_instruction();
-  ASSERT_EQ(async_done->opcode(), HloOpcode::kAsyncDone);
-  HloInstruction* async_start = async_done->mutable_operand(0);
-  ASSERT_EQ(async_start->opcode(), HloOpcode::kAsyncStart);
-
-  HloInstruction* wrapped = async_start->async_wrapped_instruction();
-  ASSERT_EQ(wrapped->opcode(), HloOpcode::kFusion);
-  EXPECT_TRUE(IsCopyHeroDynamicSliceFusion(wrapped));
+  EXPECT_THAT(RunFileCheck(module->ToString({}), R"(
+    ; CHECK: %dynamic_slice
+    ; CHECK:   ROOT {{.*}} = s32[1]{0} copy(
+    ; CHECK: %dynamic_slice.clone
+    ; CHECK:   ROOT {{.*}} = s32[1]{0} copy(
+    ; CHECK: ENTRY %main
+    ; CHECK:   [[P0:%[^ ]+]] = s32[4]{0} parameter(0)
+    ; CHECK:   [[START:%[^ ]+]] = ((s32[4]{0}), s32[1]{0}, u32[]) fusion-start([[P0]]), kind=kCustom, calls=%dynamic_slice.clone
+    ; CHECK-SAME: custom_fusion_config
+    ; CHECK-SAME: dynamic_slice_fusion
+    ; CHECK:   ROOT {{.*}} = s32[1]{0} fusion-done([[START]])
+    ; CHECK-SAME: dynamic_slice_fusion
+  )"),
+              absl_testing::IsOkAndHolds(true));
 
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(false));
 }
@@ -86,13 +87,18 @@ TEST_F(DynamicSliceCopyFusionAsyncWrapperTest, DoesNotWrapNonCopyHeroFusion) {
               "custom_fusion_config":{"name":"dynamic_slice_fusion"}}}
     })";
 
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
 
   DynamicSliceCopyFusionAsyncWrapper wrapper;
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(false));
-  EXPECT_EQ(module->entry_computation()->root_instruction()->opcode(),
-            HloOpcode::kFusion);
+  EXPECT_THAT(RunFileCheck(module->ToString({}), R"(
+    ; CHECK: ENTRY %main
+    ; CHECK-NOT: fusion-start
+    ; CHECK:   ROOT {{.*}} = s32[1]{0} fusion(
+    ; CHECK: custom_fusion_config
+    ; CHECK: dynamic_slice_fusion
+  )"),
+              absl_testing::IsOkAndHolds(true));
 }
 
 }  // namespace
