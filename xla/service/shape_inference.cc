@@ -2784,7 +2784,24 @@ ShapeInference::InferScalarBroadcastShape(absl::Span<const Shape> shapes) {
 
 /* static */ absl::StatusOr<Shape>
 ShapeInference::InferCollectiveBroadcastShape(
-    absl::Span<const Shape* const> operand_shapes) {
+    absl::Span<const Shape* const> operand_shapes, bool has_dynamic_root) {
+  if (has_dynamic_root) {
+    RETURN_IF_ERROR(
+        ExpectArray(*(operand_shapes.back()),
+                    "last operand of collective-broadcast with dynamic root"));
+    const Shape& dynamic_root = *operand_shapes.back();
+
+    TF_RET_CHECK(dynamic_root.IsArray() && dynamic_root.element_type() == S32 &&
+                 dynamic_root.dimensions().size() == 1 &&
+                 ShapeUtil::ElementsIn(dynamic_root) ==
+                     (operand_shapes.size() - 1))
+        << "The last operand of collective-broadcast with dynamic root must be "
+           "a 1-D array of S32 with the same number of elements as the number "
+           "of "
+           "non-root operands, but got "
+        << ShapeUtil::HumanString(dynamic_root);
+    return ShapeUtil::MakeTupleShapeWithPtrs(operand_shapes);
+  }
   RETURN_IF_ERROR(
       ExpectArray(*(operand_shapes[0]), "operand of collective-broadcast"));
   return *(operand_shapes[0]);
