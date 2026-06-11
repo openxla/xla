@@ -1063,6 +1063,43 @@ ENTRY main {
   EXPECT_FALSE(async_tracker.IsSupportedAsyncStart(*dynamic_slice_done));
 }
 
+TEST_F(GpuLatencyHidingSchedulerBaseTest, CopyStartDoneUsesComputeResource) {
+  absl::string_view kHloModule = R"(
+HloModule test
+
+ENTRY main {
+  p0 = f32[2,3]{1,0} parameter(0)
+  copy-start = (f32[2,3]{1,0:S(5)}, f32[2,3]{1,0}, u32[]) copy-start(p0)
+  ROOT copy-done = f32[2,3]{1,0:S(5)} copy-done(copy-start)
+})";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+
+  HloComputation* comp = module->entry_computation();
+  HloInstruction* copy_start = comp->GetInstructionWithName("copy-start");
+  HloInstruction* copy_done = comp->GetInstructionWithName("copy-done");
+
+  SchedulerConfig sched_config;
+  GpuAsyncTracker async_tracker(sched_config);
+  EXPECT_TRUE(async_tracker.IsSupportedAsyncStart(*copy_start));
+  EXPECT_TRUE(async_tracker.IsSupportedAsyncDone(*copy_done));
+
+  int64_t compute_resource =
+      ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamComputes);
+  auto start_resources = async_tracker.GetResourcesFromInstruction(*copy_start);
+  ASSERT_EQ(start_resources.size(), 1);
+  EXPECT_EQ(start_resources[0].first, compute_resource);
+  EXPECT_EQ(start_resources[0].second, ResourceUsageType::kResourceRelease);
+  EXPECT_EQ(async_tracker.GetResourceName(compute_resource),
+            "kGpuAsyncStreamComputes");
+
+  auto done_resources = async_tracker.GetResourcesFromInstruction(*copy_done);
+  ASSERT_EQ(done_resources.size(), 1);
+  EXPECT_EQ(done_resources[0].first, compute_resource);
+  EXPECT_EQ(done_resources[0].second, ResourceUsageType::kResourceOccupy);
+}
+
 TEST_F(GpuLatencyHidingSchedulerBaseTest,
        ScheduleDynamicSliceCopyFusionAsMemcpy) {
   absl::string_view kHloModule = R"(
@@ -1134,10 +1171,10 @@ ENTRY main {
   const HloSchedule& schedule = module->schedule();
   std::vector<HloInstruction*> instruction_sequence =
       schedule.sequence(module->entry_computation()).instructions();
-  EXPECT_TRUE(GetIndexByName(instruction_sequence, "dynamic-slice-start") <
-                  GetIndexByName(instruction_sequence, "add") ||
-              GetIndexByName(instruction_sequence, "add") <
-                  GetIndexByName(instruction_sequence, "dynamic-slice-done"));
+  EXPECT_LT(GetIndexByName(instruction_sequence, "dynamic-slice-start"),
+            GetIndexByName(instruction_sequence, "add"));
+  EXPECT_LT(GetIndexByName(instruction_sequence, "add"),
+            GetIndexByName(instruction_sequence, "dynamic-slice-done"));
 }
 
 TEST_F(GpuLatencyHidingSchedulerBaseTest, ParallelThreadsShouldBeScheduled) {
