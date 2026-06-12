@@ -24,19 +24,19 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/stream_executor/device_address_vmm_allocator.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_reservation.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/device_address_vmm_allocator.h"
 
 namespace stream_executor::gpu {
 
 // CUDA implementation of DeviceAddressVmmAllocator.
 //
 // Uses cuMemCreate/cuMemAddressReserve for physical and virtual memory
-// management, and cuStreamWriteValue64 for GPU timeline-based deferred
+// management, and cuStreamWriteValue64 for batched GPU timeline-based deferred
 // deallocation. Requires compute capability >= 7.0 (Volta and later) for
 // cuStreamWriteValue64 support.
 //
@@ -44,6 +44,8 @@ namespace stream_executor::gpu {
 // the device does not meet the compute capability requirement.
 class CudaDeviceAddressVmmAllocator : public DeviceAddressVmmAllocator {
  public:
+  ~CudaDeviceAddressVmmAllocator() override;
+
   // Creates an allocator supporting multiple devices.
   //
   // Returns an error if any device does not support cuStreamWriteValue64
@@ -95,11 +97,11 @@ class CudaDeviceAddressVmmAllocator : public DeviceAddressVmmAllocator {
       StreamExecutor* executor, uint64_t size) override;
 
   // Enqueues a cuStreamWriteValue64 on the device's stream to write `seqno`
-  // to the pinned timeline when the GPU reaches this point in the stream.
+  // to the pinned timeline when the GPU reaches this batched deallocation point
+  // in the stream.
   absl::Status EnqueueDeferredDeallocation(PerDeviceState& state,
                                            uint64_t seqno) override;
 
- private:
   explicit CudaDeviceAddressVmmAllocator(const Platform* platform);
 };
 
