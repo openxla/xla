@@ -24,12 +24,12 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/stream_executor/device_address_vmm_allocator.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_reservation.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/device_address_vmm_allocator.h"
 
 namespace stream_executor::gpu {
 
@@ -101,7 +101,6 @@ class CudaDeviceAddressVmmAllocator : public DeviceAddressVmmAllocator {
   absl::Status EnqueueDeferredDeallocation(PerDeviceState& state,
                                            uint64_t seqno) override;
 
- private:
   explicit CudaDeviceAddressVmmAllocator(const Platform* platform);
 };
 
