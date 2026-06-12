@@ -42,7 +42,9 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           BASE_REF="${GITHUB_BASE_REF:-main}"
-          git fetch origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" --depth=100
+          # Keep this fetch unshallow so clang-tidy can find the merge base even
+          # when the PR branch is more than checkout fetch-depth commits behind.
+          git fetch origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
       - name: Configure Workspace
       # The actual compute capability does not matter. This allows deviceless run for this pipeline.
       # The common configs ensure that bazel query and bazel build don't refetch repo mappings.
