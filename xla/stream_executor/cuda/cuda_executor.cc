@@ -1605,6 +1605,7 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
     // lane.
     desc.set_memory_bandwidth(2 * int64_t{mem_clock_khz.value()} * 1000 *
                               int64_t{mem_bus_width_bits.value()} / 8);
+    desc.set_mem_clock_ghz(static_cast<float>(mem_clock_khz.value()) / 1e6);
   }
 
   if (absl::StatusOr<nvmlDevice_t> device = GetNvmlDevice(pci_bus_id);

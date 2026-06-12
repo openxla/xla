@@ -200,10 +200,14 @@ class GpuCompiler : public LLVMCompiler {
       const MultiProcessKeyValueStore& key_value_store);
 
 
-  // Runs cuDNN fusion and custom call compiler passes.
-  virtual absl::Status RunCudnnCompilerPasses(HloModule* module,
-                                              se::dnn::DnnSupport& dnn_support,
-                                              BinaryMap* dnn_compiled_graphs) {
+  // Runs cuDNN fusion and custom call compiler passes. Decides internally
+  // whether to compile deviceless (no live cuDNN handle) based on the
+  // xla_gpu_cudnn_deviceless_compilation_mode debug option and whether a live
+  // device (stream_exec) is available.
+  virtual absl::Status RunCudnnCompilerPasses(
+      HloModule* module, se::StreamExecutor* stream_exec,
+      const Compiler::GpuTargetConfig& gpu_target_config,
+      BinaryMap* dnn_compiled_graphs) {
     return absl::OkStatus();
   }
 
