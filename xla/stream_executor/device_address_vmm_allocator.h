@@ -189,6 +189,23 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       uint64_t reservation_offset, uint64_t mapping_size,
       bool return_reservation_address);
 
+  // Pull in two-arg overload that sets retry_on_failure to true.
+  using DeviceAddressAllocator::Allocate;
+
+  // RAII: while in scope, Allocate() treats allocations as multi-device iff
+  // the assignment has replica * computation > 1.
+  class DeviceAssignmentScope {
+   public:
+    explicit DeviceAssignmentScope(
+        const xla::DeviceAssignment* device_assignment);
+    ~DeviceAssignmentScope();
+    DeviceAssignmentScope(const DeviceAssignmentScope&) = delete;
+    DeviceAssignmentScope& operator=(const DeviceAssignmentScope&) = delete;
+
+   private:
+    const xla::DeviceAssignment* previous_;
+  };
+
   // Deallocates an allocator address asynchronously. `mem` must be an address
   // returned by Allocate(), including reservation-derived addresses returned by
   // Allocate(..., return_reservation_address=true). Reservation addresses
@@ -233,23 +250,6 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // zero-size Map(), are treated as no-ops.
   absl::Status UnMap(int device_ordinal, MemoryReservation* reservation,
                      uint64_t reservation_offset, uint64_t size);
-
-  // Pull in two-arg overload that sets retry_on_failure to true.
-  using DeviceAddressAllocator::Allocate;
-
-  // RAII: while in scope, Allocate() treats allocations as multi-device iff
-  // the assignment has replica * computation > 1.
-  class DeviceAssignmentScope {
-   public:
-    explicit DeviceAssignmentScope(
-        const xla::DeviceAssignment* device_assignment);
-    ~DeviceAssignmentScope();
-    DeviceAssignmentScope(const DeviceAssignmentScope&) = delete;
-    DeviceAssignmentScope& operator=(const DeviceAssignmentScope&) = delete;
-
-   private:
-    const xla::DeviceAssignment* previous_;
-  };
 
   // Returns true: this allocator supports asynchronous deallocation.
   bool AllowsAsynchronousDeallocation() const override { return true; }
