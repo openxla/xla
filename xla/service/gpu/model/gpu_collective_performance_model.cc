@@ -425,14 +425,13 @@ GpuPerformanceWithCollectiveModel::GetIciBandwidthPerLaneGbps(
           gpu_device_info.gpu_compute_capability().cuda_compute_capability()) {
     return CreateSettings(*cuda_cc).GetNvlinkBw();
   }
-  auto* rocm_cc =
-      gpu_device_info.gpu_compute_capability().rocm_compute_capability();
-  if (rocm_cc == nullptr) {
-    return absl::InvalidArgumentError(
-        "GetIciBandwidthPerLaneGbps: unsupported compute capability "
-        "(neither CUDA nor ROCm)");
+  if (const auto* rocm_cc =
+          gpu_device_info.gpu_compute_capability().rocm_compute_capability()) {
+    return CreateSettings(*rocm_cc).GetNvlinkBw();
   }
-  return CreateSettings(*rocm_cc).GetNvlinkBw();
+  return absl::InvalidArgumentError(
+      "GetIciBandwidthPerLaneGbps: unsupported compute capability "
+      "(neither CUDA nor ROCm)");
 }
 
 }  // namespace gpu
