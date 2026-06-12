@@ -1506,6 +1506,7 @@ xla_test(
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "//xla/service:executable",
+        "//xla/service:hlo_module_config",
         "//xla/service:platform_util",
         "//xla/service:shaped_slice",
         "//xla/service/gpu:backend_configs_cc",
