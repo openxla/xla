@@ -2170,9 +2170,7 @@ StreamExecutorGpuClient::RunAsync(
                                        /*retry_on_failure=*/true,
                                        /*memory_space=*/allocation->color());
         if (!allocated_buffer.ok()) {
-          return ResourceExhausted(
-              "%s\n%s\n", allocated_buffer.status().message(),
-              gpu_exec->buffer_allocations_debug_summary());
+          return gpu_exec->VerboseAllocationError(allocated_buffer.status());
         }
         result_buffer = allocated_buffer->Release();
         se::DeviceAddressBase& aliased_buffer =
