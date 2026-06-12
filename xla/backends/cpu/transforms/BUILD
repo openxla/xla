@@ -51,13 +51,13 @@ cc_library(
 xla_cc_test(
     name = "library_rewriter_test",
     srcs = ["library_rewriter_test.cc"],
-    local_defines = if_graph_api(["XLA_ONEDNN_USE_GRAPH_API=1"]),
     deps = [
         ":library_rewriter",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/cpu/codegen:target_machine_features",
         "//xla/backends/cpu/codegen:target_machine_test_base",
+        "//xla/backends/cpu/transforms:library_fusion_kinds",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
         "//xla/tests:xla_internal_test_main",
