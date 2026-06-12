@@ -16,11 +16,13 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_DEVICE_ADDRESS_VMM_ALLOCATOR_H_
 #define XLA_STREAM_EXECUTOR_DEVICE_ADDRESS_VMM_ALLOCATOR_H_
 
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
@@ -473,6 +475,40 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
                                                    uint64_t seqno) = 0;
 
  private:
+  struct DebugStats {
+    std::atomic<uint64_t> allocate_calls{0};
+    std::atomic<uint64_t> allocate_allocation_reuse{0};
+
+    std::atomic<uint64_t> mapped_allocate_return_reservation_address_calls{0};
+    std::atomic<uint64_t>
+        mapped_allocate_return_reservation_address_allocation_reuse{0};
+    std::atomic<uint64_t>
+        mapped_allocate_return_reservation_address_allocator_va_reuse{0};
+
+    std::atomic<uint64_t> mapped_allocate_return_allocator_address_calls{0};
+    std::atomic<uint64_t>
+        mapped_allocate_return_allocator_address_allocation_reuse{0};
+    std::atomic<uint64_t>
+        mapped_allocate_return_allocator_address_allocator_va_reuse{0};
+    std::atomic<uint64_t>
+        mapped_allocate_return_allocator_address_reservation_va_reuse{0};
+
+    std::atomic<uint64_t> map_calls{0};
+    std::atomic<uint64_t> map_reservation_va_reuse{0};
+
+    std::atomic<uint64_t> deallocate_calls{0};
+    std::atomic<uint64_t> unmap_calls{0};
+
+    std::atomic<uint64_t> deallocation_batch_flushes{0};
+    std::atomic<uint64_t> deallocation_batch_flushes_by_entry_limit{0};
+    std::atomic<uint64_t> deallocation_batch_flushes_by_byte_limit{0};
+    std::atomic<uint64_t> deallocation_batch_flushes_by_wait{0};
+    std::atomic<uint64_t> deallocation_batch_flushes_by_sync{0};
+    std::atomic<uint64_t> deallocation_batch_flushes_by_destructor{0};
+    std::atomic<uint64_t> deallocation_batch_entries_flushed{0};
+    std::atomic<uint64_t> deallocation_batch_bytes_flushed{0};
+  };
+
   enum class DeallocationBatchFlushReason {
     kEntryLimit,
     kByteLimit,
@@ -480,6 +516,8 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     kSync,
     kDestructor,
   };
+
+  std::string DebugStatsTable() const;
 
   // Common helpers.
 
@@ -655,6 +693,7 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // without an allocator-wide lock. Each PerDeviceState owns its own mutex for
   // mutable allocation and pending-deallocation state.
   absl::flat_hash_map<int, std::unique_ptr<PerDeviceState>> per_device_;
+  DebugStats debug_stats_;
 };
 
 }  // namespace stream_executor
