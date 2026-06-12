@@ -1428,3 +1428,57 @@ xla_cc_test(
         "@tsl//tsl/platform:test",
     ],
 )
+
+cc_library(
+    name = "rocm_device_address_vmm_allocator",
+    srcs = ["rocm_device_address_vmm_allocator.cc"],
+    hdrs = ["rocm_device_address_vmm_allocator.h"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        ":rocm_memory_reservation",
+        ":rocm_raw_memory_allocation",
+        ":rocm_status",
+        "//xla/stream_executor:activate_context",
+        "//xla/stream_executor:memory_allocation",
+        "//xla/stream_executor:memory_reservation",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor:vmm_device_address_allocator",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@local_config_rocm//rocm:hip",  # buildcleaner: keep
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+)
+
+xla_cc_test(
+    name = "rocm_device_address_vmm_allocator_test",
+    srcs = ["rocm_device_address_vmm_allocator_test.cc"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        ":amdhipblaslt_plugin",
+        ":rocm_device_address_vmm_allocator",
+        ":rocm_platform",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor:vmm_device_address_allocator",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
