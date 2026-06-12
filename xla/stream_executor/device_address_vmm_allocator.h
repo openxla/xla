@@ -290,6 +290,33 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     MemoryReservation::ScopedMapping scoped_mapping;
   };
 
+  // Lifetime record for one raw physical allocation. The initial migration adds
+  // this next to the existing maps; later changes move allocator and reservation
+  // address ownership into this record.
+  struct AllocationRecord {
+    PendingDeallocationKind kind = PendingDeallocationKind::kAllocate;
+    DeviceAddressBase allocator_address;
+    std::shared_ptr<MemoryAllocation> raw_allocation;
+    bool multi_device = false;
+
+    // Present for Allocate() and
+    // Allocate(..., return_reservation_address=false).
+    std::unique_ptr<MemoryReservation> allocator_address_reservation;
+    // Present while the allocator address is active or stale.
+    std::optional<MemoryReservation::ScopedMapping> allocator_address_mapping;
+
+    // Present while a reservation alias is active or stale.
+    std::optional<DeviceAddressBase> reservation_address;
+    std::optional<MemoryReservation::ScopedMapping> reservation_address_mapping;
+
+    bool allocator_active = false;
+    bool allocator_stale = false;
+    bool reservation_active = false;
+    bool reservation_stale = false;
+    uint64_t allocator_stale_seqno = 0;
+    uint64_t reservation_stale_seqno = 0;
+  };
+
   struct PerDeviceState {
     StreamExecutor* executor;
     Stream* stream;
@@ -329,6 +356,8 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
         ABSL_GUARDED_BY(mu);
     absl::flat_hash_map<void*, bool> multi_device_allocations
         ABSL_GUARDED_BY(mu);
+    absl::flat_hash_map<void*, std::unique_ptr<AllocationRecord>>
+        records_by_allocator_address ABSL_GUARDED_BY(mu);
     absl::flat_hash_map<void*, ReservationMapping> active_reservation_mappings
         ABSL_GUARDED_BY(mu);
     absl::flat_hash_map<void*, ReservationMapping> stale_reservation_mappings
@@ -363,9 +392,9 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
                                                    uint64_t seqno) = 0;
 
  private:
-  // Returns pointer into per_device_ map; null if device_ordinal not
-  // registered. No lock needed — per_device_ is read-only after construction.
-  PerDeviceState* GetPerDeviceState(int device_ordinal) const;
+  // Returns pointer into per_device_ map, or NotFound if device_ordinal is not
+  // registered. No lock needed: per_device_ is read-only after construction.
+  absl::StatusOr<PerDeviceState*> GetPerDeviceState(int device_ordinal) const;
 
   // Validates a caller-owned reservation slice and returns the corresponding
   // DeviceAddressBase.
