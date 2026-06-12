@@ -6756,6 +6756,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/analysis:shape_tracker",
         "//xla/hlo/ir:hlo",
         "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/algorithm:container",
@@ -6773,8 +6774,10 @@ xla_cc_test(
     srcs = ["matmul_indexing_utils_test.cc"],
     deps = [
         ":matmul_indexing_utils",
+        "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:test",
         "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
