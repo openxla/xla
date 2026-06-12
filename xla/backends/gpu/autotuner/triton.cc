@@ -21,7 +21,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "google/protobuf/any.pb.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -29,6 +28,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "google/protobuf/any.pb.h"
 #include "google/protobuf/text_format.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/backends/gpu/transforms/fusion_wrapper.h"
 #include "xla/backends/gpu/transforms/priority_fusion.h"
+#include "xla/backends/gpu/transforms/triton_scaled_dot_support.h"
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
@@ -383,6 +384,23 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
             std::get_if<FusionDecision>(&analysis_or_error)) {
       VLOG(1) << "Fusion not tileable: " << fusion_decision->Explain();
       return false;
+    }
+    if (const auto* cuda_cc =
+            device_info.gpu_compute_capability().cuda_compute_capability()) {
+      std::string unsupported_scaled_dot;
+      hlo_query::ForEachInstructionWithOpcode(
+          *fusion->fused_instructions_computation(), HloOpcode::kScaledDot,
+          [&](HloInstruction* scaled_dot) {
+            if (ShouldRejectTritonF4ScaledDot(
+                    *Cast<HloScaledDotInstruction>(scaled_dot), *cuda_cc)) {
+              unsupported_scaled_dot = scaled_dot->ToString();
+            }
+          });
+      if (!unsupported_scaled_dot.empty()) {
+        VLOG(1) << "Triton scaled-dot unsupported on this CC for: "
+                << unsupported_scaled_dot;
+        return false;
+      }
     }
     return true;
   }

@@ -48,18 +48,18 @@ namespace ttir = ::mlir::triton;
 
 namespace {
 
-absl::StatusOr<ttir::ScaleDotElemType> GetScaleDotElemType(Type value) {
-  Type type = getElementTypeOrSelf(value);
-  if (type == mlir::Float8E4M3FNType::get(value.getContext())) {
+absl::StatusOr<ttir::ScaleDotElemType> GetScaleDotElemType(Type type) {
+  MLIRContext* context = type.getContext();
+  if (type == mlir::Float8E4M3FNType::get(context)) {
     return ttir::ScaleDotElemType::E4M3;
   }
-  if (type == mlir::Float8E5M2Type::get(value.getContext())) {
+  if (type == mlir::Float8E5M2Type::get(context)) {
     return ttir::ScaleDotElemType::E5M2;
   }
-  if (type == mlir::Float4E2M1FNType::get(value.getContext())) {
+  if (type == mlir::Float4E2M1FNType::get(context)) {
     return ttir::ScaleDotElemType::E2M1;
   }
-  if (type == mlir::BFloat16Type::get(value.getContext())) {
+  if (type == mlir::BFloat16Type::get(context)) {
     return ttir::ScaleDotElemType::BF16;
   }
   return absl::InvalidArgumentError(
@@ -80,6 +80,16 @@ bool IsDotScaledCanonical(::xla::xtile::DotScaledOp op) {
 
   return is_rank_2(op.getLhs()) && is_rank_2(op.getRhs()) &&
          is_rank_2(op.getLhsScale()) && is_rank_2(op.getRhsScale());
+}
+
+RankedTensorType CollapseUnitDims(RankedTensorType type) {
+  llvm::SmallVector<int64_t> shape;
+  for (int64_t dim : type.getShape()) {
+    if (dim != 1) {
+      shape.push_back(dim);
+    }
+  }
+  return RankedTensorType::get(shape, type.getElementType());
 }
 
 LogicalResult CanonicalDotScaled(::xla::xtile::DotScaledOp op,
@@ -134,17 +144,20 @@ LogicalResult CanonicalDotScaled(::xla::xtile::DotScaledOp op,
   }
 
   RankedTensorType result_type = mlir::cast<RankedTensorType>(op.getType());
-  RankedTensorType new_result_type = RankedTensorType::get(
-      {mlir::cast<ShapedType>(lhs.getType()).getShape()[0],
-       mlir::cast<ShapedType>(rhs.getType()).getShape()[1]},
-      result_type.getElementType());
+  RankedTensorType new_result_type = CollapseUnitDims(result_type);
+  if (new_result_type.getRank() != 2) {
+    return rewriter.notifyMatchFailure(op_loc,
+                                       "Failed to canonicalize result.");
+  }
 
   auto canonical_dims = mlir::stablehlo::DotDimensionNumbersAttr::get(
       rewriter.getContext(), {}, {}, {1}, {0});
 
   canonical_dot = ::xla::xtile::DotScaledOp::create(
       builder, new_result_type, lhs, rhs, lhs_scale, rhs_scale,
-      op.getFastMath(), op.getLhsKPack(), op.getRhsKPack(), canonical_dims);
+      op.getFastMath(), op.getLhsKPack(), op.getRhsKPack(),
+      op.getLhsElemTypeAttr().getValue(), op.getRhsElemTypeAttr().getValue(),
+      canonical_dims);
   return mlir::success();
 }
 
@@ -193,7 +206,7 @@ class LowerDotScaled
     }
 
     absl::StatusOr<ttir::ScaleDotElemType> lhs_dot_elem_type =
-        GetScaleDotElemType(op.getLhs().getType());
+        GetScaleDotElemType(op.getLhsElemTypeAttr().getValue());
     if (!lhs_dot_elem_type.ok()) {
       return rewriter.notifyMatchFailure(
           op_loc, absl::StrCat("Failed to get dot element type for LHS: ",
@@ -201,7 +214,7 @@ class LowerDotScaled
     }
 
     absl::StatusOr<ttir::ScaleDotElemType> rhs_dot_elem_type =
-        GetScaleDotElemType(op.getRhs().getType());
+        GetScaleDotElemType(op.getRhsElemTypeAttr().getValue());
     if (!rhs_dot_elem_type.ok()) {
       return rewriter.notifyMatchFailure(
           op_loc, absl::StrCat("Failed to get dot element type for RHS: ",
@@ -228,8 +241,8 @@ class XTileLowerToTritonPass
 
     {
       mlir::RewritePatternSet patterns(mlir_context);
-      patterns.add<CanonicalizeDotScaled, LowerDotScaled, LowerReshape>(
-          mlir_context);
+      patterns.add<CanonicalizeDotScaled, LowerDotScaled, LowerReshape,
+                   LowerTranspose>(mlir_context);
       if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),
                                                    std::move(patterns)))) {
         return signalPassFailure();

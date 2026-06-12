@@ -38,5 +38,6 @@ common_patch_list = [
     "//third_party/triton:common/llvm_cl921066454.patch",
     "//third_party/triton:common/llvm_cl924784793.patch",
     "//third_party/triton:common/tmemfix.patch",
+    "//third_party/triton:common/sm120_fp4_non_kpacked_dot_scaled_guard.patch",
     # Add new patches just above this line
 ]

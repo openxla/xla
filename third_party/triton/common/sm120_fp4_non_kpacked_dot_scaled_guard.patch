@@ -1,0 +1,16 @@
+diff --git a/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp b/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp
+index 1f7c63b76aef..c0ad91a55183 100644
+--- a/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp
++++ b/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp
+@@ -704,6 +704,11 @@ public:
+           dotOp, "only FP8xFP8 and FP4xFP4 are supported on sm120");
+     }
+
++    if (isFP4(aElemType) && isFP4(bElemType) &&
++        (!dotOp.getLhsKPack() || !dotOp.getRhsKPack())) {
++      return failure();
++    }
++
+     auto scaleElemType = dotOp.getAScale().getType().getElementType();
+     if (scaleElemType != dotOp.getBScale().getType().getElementType()) {
+       return failure();
