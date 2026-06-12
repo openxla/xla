@@ -3039,7 +3039,7 @@ PJRT_HloOutputCallbackInfo CppHloOutputCallbackToC(
         std::vector<std::shared_ptr<const Literal>> accumulated_to_call;
         bool all_received = false;
         {
-          absl::MutexLock lock(&callback_state->mu);
+          absl::MutexLock lock(callback_state->mu);
           if (operand_index < 0 ||
               operand_index >= callback_state->num_operands) {
             LOG(ERROR) << "HloOutputCallback: operand_index " << operand_index
