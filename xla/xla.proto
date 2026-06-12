@@ -708,6 +708,10 @@ message DebugOptions {
   // Enable PDL - Programmatic Dependent Launch.
   optional bool xla_gpu_enable_pdl = 460;
 
+  // Enable selective insertion of PDL launch instructions
+  // (on top of basic use of PDL without them enabled by xla_gpu_enable_pdl).
+  optional bool xla_gpu_enable_pdl_launch = 493;
+
   optional bool xla_gpu_enable_pipelined_all_gather = 227;
 
   optional bool xla_gpu_enable_pipelined_all_reduce = 217;

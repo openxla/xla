@@ -45,6 +45,7 @@ cc_library(
         "//xla/backends/gpu/codegen/emitters/ir:xla_gpu",
         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
         "//xla/codegen/emitters/ir:xla",
+        "//xla:frontend_attributes",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/service/gpu:gpu_fusible",
         "//xla/stream_executor:device_description",
@@ -75,5 +76,6 @@ cc_library(
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:VectorDialect",
+        "@triton//:TritonDialects",
     ],
 )
