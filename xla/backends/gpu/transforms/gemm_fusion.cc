@@ -1071,10 +1071,13 @@ bool CanTile(mlir::MLIRContext& mlir_context, const HloFusionAdaptor& fusion) {
           .debug_options()
           .xla_gpu_experimental_enable_tiling_propagation()) {
     namespace ge = ::xla::gpu::experimental;
-    std::unique_ptr<ge::TilingSpace> ts =
-        ge::TilingSpace::Create(fusion, &mlir_context);
+    auto ts = ge::TilingSpace::Create(fusion, &mlir_context);
+    if (!ts.ok()) {
+      VLOG(1) << "Failed to create tiling space: " << ts.status().message();
+      return false;
+    }
     auto tiled_computation_or =
-        ge::TiledHloComputation::Tile(fusion, std::move(ts));
+        ge::TiledHloComputation::Tile(fusion, std::move(ts.value()));
     if (!tiled_computation_or.ok()) {
       VLOG(1) << "Fusion is not tileable with experimental tiling: "
               << tiled_computation_or.status().message();
