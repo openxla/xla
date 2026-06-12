@@ -2112,7 +2112,7 @@ static absl::Status CommonCopyToMemorySpace(
   }
 
   if (!src_raw_buffer) {
-    absl::Span<const PjRtDeviceEventRef> deps_span = definition_events;
+    PjRtDeviceEventSpan deps_span(definition_events);
     xla::ExecuteWhenReady(
         deps_span, src_client->async_work_runner(),
         [dst_raw_buffer = std::move(dst_raw_buffer),
@@ -2168,7 +2168,7 @@ CommonPjRtBufferImpl::CopyFromCpuToMemorySpace(
       src_usage_event_promise, src_raw_buffer, dst_raw_buffer, dst_buffer,
       definition_events, allocation_event));
   if (src_raw_buffer) {
-    absl::Span<const PjRtDeviceEventRef> deps_span = definition_events;
+    PjRtDeviceEventSpan deps_span(definition_events);
     xla::ExecuteWhenReady(
         deps_span, src_client->async_work_runner(),
         [dst_raw_buffer = std::move(dst_raw_buffer),
@@ -2506,10 +2506,9 @@ Future<> CommonPjRtBufferImpl::ToLiteralImpl(
   // D2H dispatch should be in parallel, e.g. one Execute event finish may
   // trigger multiple outputs' D2H, they should happen in different threads in
   // parallel.
-  absl::Span<const PjRtDeviceEventRef> src_definition_events_ref =
-      src_definition_events;
+  PjRtDeviceEventSpan deps_span(src_definition_events);
   xla::ExecuteWhenReady(
-      src_definition_events_ref, common_client->async_work_runner(),
+      deps_span, common_client->async_work_runner(),
       [common_client, shape = *std::move(logical_shape),
        device_shape = std::move(device_shape),
        src_definition_events = std::move(src_definition_events),
@@ -2775,8 +2774,7 @@ Future<> CommonPjRtBufferImpl::CopyRawToHostFuture(Future<void*> dst,
 
     // We do this before the call to EnqueueWorkWhenReady because we are going
     // to std::move(definition_events) and indirect_usage_event.
-    absl::Span<const PjRtDeviceEventRef> definition_events_ref =
-        definition_events;
+    PjRtDeviceEventSpan definition_events_ref = definition_events;
     xla::ExecuteWhenReady(
         definition_events_ref, buf_client->async_work_runner(),
         [dst = *dst, transfer_size, offset, raw_buffer = std::move(raw_buffer),
@@ -2818,8 +2816,9 @@ absl::StatusOr<Shape> CommonPjRtBufferImpl::logical_on_device_shape() {
           PjRtDeviceEventRefVector definition_events)
           -> absl::StatusOr<PjRtDeviceEventRef> {
         auto ds_kind = client()->GetDynamicShapeKind(memory_space()->kind_id());
+        PjRtDeviceEventSpan deps_span(definition_events);
         xla::ExecuteWhenReady(
-            absl::MakeSpan(definition_events), buf_client->async_work_runner(),
+            deps_span, buf_client->async_work_runner(),
             [definition_events = std::move(definition_events),
              raw_buffer = raw_buffer, output_shape = output_shape,
              device_shape = std::move(device_shape), ds_kind]() mutable {

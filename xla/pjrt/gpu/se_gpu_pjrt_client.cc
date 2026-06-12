@@ -627,10 +627,10 @@ void FulfillDeviceEvent(PjRtStreamExecutorClient* client,
 }
 
 absl::Status WaitForDeviceEventRefsOnStream(
-    absl::Span<const PjRtDeviceEventRef> device_event_refs,
-    se::Stream* stream) {
-  for (const auto& event : device_event_refs) {
-    tsl::AsyncValueRef<BufferSequencingEvent> event_ref =
+    PjRtDeviceEventSpan device_event_refs, se::Stream* stream) {
+  for (size_t i = 0; i < device_event_refs.size(); ++i) {
+    PjRtDeviceEventPtr event = device_event_refs[i];
+    tsl::AsyncValuePtr<BufferSequencingEvent> event_ref =
         event.down_cast<BufferSequencingEvent>();
     if (!event_ref) {
       return InvalidArgument(
@@ -638,7 +638,8 @@ absl::Status WaitForDeviceEventRefsOnStream(
           "PjRtDeviceEventRefs are backed by BufferSequencingEventRefs.");
     }
     event_ref->WaitForEventOnStream(stream);
-    if (auto* status = event_ref.GetErrorIfPresent(); status != nullptr) {
+    if (auto* status = event_ref.value()->GetErrorIfPresent();
+        status != nullptr) {
       return *status;
     }
   }
@@ -981,7 +982,7 @@ void StreamExecutorGpuClient::ScheduleRemoteSend(
                   /*sends_were_enqueued=*/false);
           SetEventAsError(usage_event, serialized_descriptor.status());
         }
-        auto definition_events_span = absl::MakeSpan(definition_events);
+        PjRtDeviceEventSpan definition_events_span(definition_events);
         ExecuteWhenReady(
             definition_events_span, async_work_runner(),
             [this, on_done = std::move(on_done),

@@ -1819,7 +1819,7 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     CpuScopedAsyncExecution scoped_async_execution =
         device_->async_execution_tracker()->NewAsyncExecution(
             run_id_.ToInt(), std::move(ready_on_exit).Release());
-    absl::Span<const PjRtDeviceEventRef> events_ref = input_deps;
+    PjRtDeviceEventSpan events_ref(input_deps);
     xla::ExecuteWhenReady(
         events_ref, client->async_work_runner(),
         [cpu_executable, buffer_alloc = std::move(buffer_alloc),

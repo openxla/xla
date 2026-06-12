@@ -400,7 +400,7 @@ void PjRtStreamExecutorRawBuffer::IntraClientCopyToWithDependencies(
   auto usage_event =
       BufferSequencingEvent::Create(client_->async_work_runner());
 
-  absl::Span<const PjRtDeviceEventRef> deps_span = dependencies;
+  PjRtDeviceEventSpan deps_span(dependencies);
 
   auto task = [client = client_, local_device = local_device_,
                src_buffer = device_buffer_,
@@ -469,7 +469,8 @@ void PjRtStreamExecutorRawBuffer::IntraClientCopyToWithDependencies(
 
   {
     ScopedLauncher launcher(std::move(task), client_->async_work_runner());
-    for (const auto& dep : deps_span) {
+    for (size_t i = 0; i < deps_span.size(); ++i) {
+      const auto& dep = deps_span[i];
       if (auto event_ref = dep.down_cast<BufferSequencingEvent>()) {
         launcher.AddDependency(event_ref->event().GetAsyncValue());
       } else {

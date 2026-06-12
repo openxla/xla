@@ -345,7 +345,7 @@ class CommonPjRtClient : public PjRtClient {
   virtual absl::StatusOr<PjRtDeviceEventRefVector> CrossHostReceiveBuffersInto(
       absl::Span<const tsl::RCReference<PjRtRawBuffer>> buffers,
       PjRtCrossHostRecvNotifier notifier,
-      absl::Span<const PjRtDeviceEventRef> transfer_dependency_avs) {
+      PjRtDeviceEventSpan transfer_dependency_avs) {
     return absl::UnimplementedError(
         "CrossHostReceiveBuffersInto is not implemented.");
   }
@@ -417,6 +417,9 @@ class CommonPjRtClient : public PjRtClient {
   virtual void AddEventDependencies(
       PjRtMemorySpace* memory_space, PjRtDeviceEventPtr device_event,
       absl::Span<const PjRtDeviceEventRef> dependencies) {}
+  virtual void AddEventDependencies(PjRtMemorySpace* memory_space,
+                                    PjRtDeviceEventPtr device_event,
+                                    PjRtDeviceEventSpan dependencies) {}
 
   virtual void RegisterClientThreadWait(PjRtMemorySpace* memory_space,
                                         PjRtDeviceEventPtr device_event,

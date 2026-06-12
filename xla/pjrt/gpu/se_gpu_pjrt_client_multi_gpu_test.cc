@@ -1451,13 +1451,13 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
   // Populate usage events.
   LOG(INFO) << log_prefix << ": setting usage events";
   for (int i = 0; i < usage_events.size(); ++i) {
-    usage_event_promises[i].Set(usage_events[i]);
+    usage_event_promises[i].Set(usage_events[i].CopyRef());
   }
 
   // Wait until the transfers are complete.
   LOG(INFO) << log_prefix << ": waiting for transfers to complete";
-  for (PjRtDeviceEventRef& usage_event : usage_events) {
-    BlockUntilReady(usage_event.down_cast<BufferSequencingEvent>());
+  for (int i = 0; i < usage_events.size(); ++i) {
+    BlockUntilReady(usage_events[i].down_cast<BufferSequencingEvent>());
   }
 
   // Verify we received the correct data, and that the data we sent is

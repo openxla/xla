@@ -98,7 +98,7 @@ void CommonPjRtRawBuffer::ScheduleCopyTo(
     PjRtDeviceEventPromiseRef definition_event_promise,
     PjRtDeviceEventPromiseRef src_usage_event_promise,
     absl::AnyInvocable<void(absl::Status) &&> allocation_event) {
-  absl::Span<const PjRtDeviceEventRef> events_span = transfer_dependency_events;
+  PjRtDeviceEventSpan events_span(transfer_dependency_events);
   xla::ExecuteWhenReady(
       events_span, async_work_runner,
       [src_raw_buffer = tsl::FormRef(this),

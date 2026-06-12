@@ -81,10 +81,12 @@ Future<> AbstractTrackedDeviceBuffer::GetReadyFuture(
         PjRtDeviceEventPtr::FromAsyncValue(definition_future.async_value()),
         dependencies);
   }
-  auto deps = absl::Span<const PjRtDeviceEventRef>(dependencies);
-  xla::RunWhenReady(deps, [definition_event = std::move(definition_promise),
-                           first_event_is_buffer_alloc,
-                           dependencies = std::move(dependencies)]() mutable {
+  PjRtDeviceEventSpan deps_span(dependencies);
+  xla::RunWhenReady(deps_span, [definition_event =
+                                    std::move(definition_promise),
+                                first_event_is_buffer_alloc,
+                                dependencies =
+                                    std::move(dependencies)]() mutable {
     absl::Status status;
     for (size_t i = 0; i < dependencies.size(); ++i) {
       const auto& e = dependencies[i];
@@ -429,8 +431,11 @@ absl::Status CommonPjRtBuffer::AcquireScopedRawBuffer(
   }
 
   auto definition_events_span = device_buffer.buffer()->definition_events();
-  PjRtDeviceEventRefVector definition_events(definition_events_span.begin(),
-                                             definition_events_span.end());
+  PjRtDeviceEventRefVector definition_events;
+  definition_events.reserve(definition_events_span.size());
+  for (const auto& ev : definition_events_span) {
+    definition_events.push_back(ev);
+  }
 
   ASSIGN_OR_RETURN(auto device_event, std::move(scoped_acquire)(
                                           device_buffer.buffer()->raw_buffer(),
