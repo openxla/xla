@@ -314,6 +314,10 @@ tsl::Future<ConfigAssigner::Config> ConfigAssigner::GetConfig(
       if (executable.ok()) {
         VLOG(1) << "Using first compilable config: " << config.ToString();
         return std::move(config);
+      } else {
+        std::cerr << "DEBUG CONFIG ASSIGNER compile failure: "
+                  << executable.status().ToString()
+                  << " for config: " << config.ToString() << std::endl;
       }
     }
     return absl::InternalError(

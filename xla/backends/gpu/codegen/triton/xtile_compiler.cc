@@ -194,10 +194,14 @@ absl::StatusOr<std::unique_ptr<llvm::Module>> TranslateLLVMToLLVMIR(
 
 absl::Status CreateInternalError(absl::string_view message,
                                  const HloFusionInstruction& fusion,
-                                 mlir::ModuleOp triton_module) {
+                                 mlir::ModuleOp triton_module,
+                                 absl::Status status = absl::OkStatus()) {
   std::string err;
   llvm::raw_string_ostream os(err);
   os << message << "\n";
+  if (!status.ok()) {
+    os << "Status error: " << status.ToString() << "\n";
+  }
   os << "fusion instruction: " << fusion.ToString() << "\n";
   os << "HLO module to reproduce:\n"
      << ExtractInstructionIntoNewModule(fusion)->ToString();
@@ -354,7 +358,8 @@ absl::StatusOr<TritonKernelSource> CreateTritonModule(
       triton_module.get(), mlir_context, fusion, device_info,
       block_level_parameters));
 
-  VLOG(6) << GetModuleIrString(triton_module.get());
+  LOG(ERROR) << "!!! TRITON IR DUMP !!!\n"
+             << GetModuleIrString(triton_module.get());
   if (DumpingEnabledForHloModule(*hlo_computation->parent()) &&
       DumpingEnabledForEmitter("triton-fusion", debug_options)) {
     std::string suffix = absl::StrCat(fusion.name(), ".ttir.txt");
@@ -627,7 +632,7 @@ absl::Status LowerXTileToTriton(
         !status.ok()) {
       return CreateInternalError(
           "Failed to lower from shared dialect to Triton.", fusion,
-          xtile_dialect_module);
+          xtile_dialect_module, status);
     }
   }
 
