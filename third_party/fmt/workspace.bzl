@@ -14,4 +14,5 @@ def repo():
         strip_prefix = "fmt-{version}".format(version = FMT_VERSION),
         urls = tf_mirror_urls("https://github.com/fmtlib/fmt/archive/refs/tags/{version}.tar.gz".format(version = FMT_VERSION)),
         build_file = "//third_party/fmt:fmt.BUILD",
+        patch_file = ["//third_party/fmt:clang18_lambda_return_type.patch"],
     )
