@@ -18,7 +18,6 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
-#include "xla/backends/gpu/transforms/fusion_dynamic_memcpy_rewriter.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 
@@ -45,28 +44,58 @@ TEST_F(DynamicSliceCopyFusionAsyncWrapperTest, WrapsDynamicMemcpyFusion) {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
 
-  EXPECT_THAT(FusionDynamicMemcpyRewriter().Run(module.get()),
-              absl_testing::IsOkAndHolds(true));
-
   DynamicSliceCopyFusionAsyncWrapper wrapper;
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(true));
 
   EXPECT_THAT(RunFileCheck(module->ToString({}), R"(
     ; CHECK: %dynamic_slice
-    ; CHECK:   ROOT {{.*}} = s32[1]{0} copy(
     ; CHECK: %dynamic_slice.clone
-    ; CHECK:   ROOT {{.*}} = s32[1]{0} copy(
+    ; CHECK:   ROOT {{.*}} = s32[1]{0} dynamic-slice(
     ; CHECK: ENTRY %main
     ; CHECK:   [[P0:%[^ ]+]] = s32[4]{0} parameter(0)
-    ; CHECK:   [[START:%[^ ]+]] = ((s32[4]{0}), s32[1]{0}, u32[]) fusion-start([[P0]]), kind=kCustom, calls=%dynamic_slice.clone
-    ; CHECK-SAME: custom_fusion_config
-    ; CHECK-SAME: dynamic_slice_fusion
+    ; CHECK:   [[START:%[^ ]+]] = ((s32[4]{0}), s32[1]{0}, u32[]) fusion-start([[P0]]), kind=kLoop, calls=%dynamic_slice.clone
     ; CHECK:   ROOT {{.*}} = s32[1]{0} fusion-done([[START]])
-    ; CHECK-SAME: dynamic_slice_fusion
   )"),
               absl_testing::IsOkAndHolds(true));
 
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(false));
+}
+
+TEST_F(DynamicSliceCopyFusionAsyncWrapperTest,
+       WrapsDynamicUpdateSliceMemcpyFusion) {
+  constexpr char kHlo[] = R"(
+    dynamic_update_slice {
+      p0 = s32[4] parameter(0)
+      p1 = s32[1] parameter(1)
+      c1 = s32[] constant(1)
+
+      ROOT update = s32[4] dynamic-update-slice(p0, p1, c1),
+          backend_config={"dynamic_slice_config":
+              {"byte_offset":"4","byte_stride":"0"}}
+    }
+
+    ENTRY main {
+      p0 = s32[4] parameter(0)
+      p1 = s32[1] parameter(1)
+      ROOT fusion = s32[4] fusion(p0, p1), kind=kLoop,
+          calls=dynamic_update_slice
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+
+  DynamicSliceCopyFusionAsyncWrapper wrapper;
+  EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(true));
+
+  EXPECT_THAT(RunFileCheck(module->ToString({}), R"(
+    ; CHECK: %dynamic_update_slice.clone
+    ; CHECK:   ROOT {{.*}} = s32[4]{0} dynamic-update-slice(
+    ; CHECK: ENTRY %main
+    ; CHECK:   [[P0:%[^ ]+]] = s32[4]{0} parameter(0)
+    ; CHECK:   [[P1:%[^ ]+]] = s32[1]{0} parameter(1)
+    ; CHECK:   [[START:%[^ ]+]] = ((s32[4]{0}, s32[1]{0}), s32[4]{0}, u32[]) fusion-start([[P0]], [[P1]]), kind=kLoop, calls=%dynamic_update_slice.clone
+    ; CHECK:   ROOT {{.*}} = s32[4]{0} fusion-done([[START]])
+  )"),
+              absl_testing::IsOkAndHolds(true));
 }
 
 TEST_F(DynamicSliceCopyFusionAsyncWrapperTest, DoesNotWrapNonCopyHeroFusion) {

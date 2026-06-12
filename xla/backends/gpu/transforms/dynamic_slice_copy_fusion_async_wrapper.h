@@ -26,12 +26,16 @@ limitations under the License.
 namespace xla::gpu {
 
 // Returns true for a DynamicSliceFusionV2 custom fusion whose hero instruction
-// is a device-to-device copy. These fusions lower to DynamicSliceFusionV2Thunk
-// with an embedded DeviceToDeviceCopyThunk.
+// is a device-to-device copy.
 bool IsCopyHeroDynamicSliceFusion(const HloInstruction* instr);
 
-// Wraps copy-hero DynamicSliceFusionV2 custom fusions in async-start/done pairs
-// before scheduling so that latency hiding can overlap the copy with compute.
+// Returns true for raw DS/DUS-root memcpy fusions or copy-hero
+// DynamicSliceFusionV2 custom fusions. These lower to DynamicSliceFusionV2Thunk
+// with an embedded DeviceToDeviceCopyThunk.
+bool IsDynamicSliceMemcpyFusion(const HloInstruction* instr);
+
+// Wraps dynamic-slice memcpy fusions in async-start/done pairs before
+// scheduling so that latency hiding can overlap the copy with compute.
 class DynamicSliceCopyFusionAsyncWrapper : public HloModulePass {
  public:
   absl::string_view name() const override {

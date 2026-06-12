@@ -307,7 +307,6 @@ xla_cc_test(
     tags = ["gpu"],
     deps = [
         ":dynamic_slice_copy_fusion_async_wrapper",
-        ":fusion_dynamic_memcpy_rewriter",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "@com_google_absl//absl/status:status_matchers",

@@ -206,6 +206,21 @@ struct DynamicSliceFusion {
   static absl::StatusOr<std::vector<Result>> ResolveResults(
       const HloInstruction* hero);
 
+  // Raw DS/DUS-root fusion that can be converted to a copy-hero
+  // dynamic-slice fusion.
+  struct MemcpyFusionCandidate {
+    const HloInstruction* slicing;
+    const HloInstruction* copy_operand;
+  };
+
+  // Detects DS/DUS-root memcpy fusions before they have a copy hero. `slicing`
+  // is the DS/DUS instruction carrying DynamicSliceConfig, and `copy_operand`
+  // is the value that would become the operand of the inserted copy hero.
+  static std::optional<MemcpyFusionCandidate> FindMemcpyFusionCandidate(
+      const HloInstruction* instr);
+
+  static bool IsMemcpyFusionCandidate(const HloInstruction* instr);
+
   // Evaluates an offset expression with parameter values represented as
   // (fusion parameter number, scalar value) pairs.
   static absl::StatusOr<int64_t> Evaluate(

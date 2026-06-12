@@ -50,6 +50,11 @@ bool IsCopyHeroDynamicSliceFusion(const HloInstruction* instr) {
   return hero != nullptr && hero->opcode() == HloOpcode::kCopy;
 }
 
+bool IsDynamicSliceMemcpyFusion(const HloInstruction* instr) {
+  return DynamicSliceFusion::IsMemcpyFusionCandidate(instr) ||
+         IsCopyHeroDynamicSliceFusion(instr);
+}
+
 absl::StatusOr<bool> DynamicSliceCopyFusionAsyncWrapper::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -69,7 +74,7 @@ absl::StatusOr<bool> DynamicSliceCopyFusionAsyncWrapper::RunImpl(
     std::vector<HloInstruction*> instructions =
         computation->MakeInstructionPostOrder();
     for (HloInstruction* instruction : instructions) {
-      if (!IsCopyHeroDynamicSliceFusion(instruction)) {
+      if (!IsDynamicSliceMemcpyFusion(instruction)) {
         continue;
       }
 

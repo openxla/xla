@@ -141,7 +141,7 @@ bool IsSlicingMemcpy(const HloInstruction& hlo) {
   if (hlo.opcode() == HloOpcode::kFusion) {
     return ShapeHasHostMemorySpace(hlo.shape()) ||
            ShapeHasHostMemorySpace(hlo.operand(0)->shape()) ||
-           IsCopyHeroDynamicSliceFusion(&hlo);
+           IsDynamicSliceMemcpyFusion(&hlo);
   }
   return false;
 }
@@ -166,10 +166,10 @@ bool IsMemcpyAsyncDoneOp(const HloInstruction& hlo) {
   return IsSlicingMemcpy(*hlo.async_wrapped_instruction());
 }
 
-bool IsCopyHeroDynamicSliceFusionAsyncOp(const HloInstruction& hlo) {
+bool IsDynamicSliceMemcpyFusionAsyncOp(const HloInstruction& hlo) {
   return (hlo.opcode() == HloOpcode::kAsyncStart ||
           hlo.opcode() == HloOpcode::kAsyncDone) &&
-         IsCopyHeroDynamicSliceFusion(hlo.async_wrapped_instruction());
+         IsDynamicSliceMemcpyFusion(hlo.async_wrapped_instruction());
 }
 
 // Marks async start operations to be scheduled as early as possible.
@@ -443,9 +443,9 @@ ResourcesVector GpuAsyncTracker::GetResourcesFromInstructionImpl(
     GpuResourceType resource;
 
     // Keep existing copy-start/copy-done and host-memory slicing fusions on the
-    // async-compute resource path. Only copy-hero DynamicSliceFusionV2 async
-    // wrappers use the dedicated memcpy resource added for D2D copy overlap.
-    if (IsCopyHeroDynamicSliceFusionAsyncOp(instr)) {
+    // async-compute resource path. Only dynamic-slice memcpy async wrappers use
+    // the dedicated memcpy resource added for D2D copy overlap.
+    if (IsDynamicSliceMemcpyFusionAsyncOp(instr)) {
       resource = GpuResourceType::kGpuAsyncStreamMemcpy;
       usage = op.outer == HloOpcode::kAsyncStart
                   ? ResourceUsageType::kResourceRelease
