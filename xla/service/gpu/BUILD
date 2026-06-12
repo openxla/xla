@@ -776,7 +776,7 @@ cc_library(
         "//xla/stream_executor:scoped_module_handle",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor:vmm_device_address_allocator",
+        "//xla/stream_executor:device_address_vmm_allocator",
         "//xla/stream_executor/abi:executable_abi_version",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/cuda:cuda_platform_id",
