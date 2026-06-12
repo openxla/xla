@@ -55,10 +55,11 @@ CollectiveBroadcastThunk::CollectiveBroadcastThunk(ThunkInfo thunk_info,
 
 CollectiveBroadcastThunk::CollectiveBroadcastThunk(
     ThunkInfo thunk_info, const HloCollectiveBroadcastInstruction* instr,
-    std::vector<Buffer> buffers, bool p2p_memcpy_enabled)
+    std::vector<Buffer> buffers, bool p2p_memcpy_enabled, bool has_dynamic_root)
     : CollectiveThunk(Thunk::kCollectiveBroadcast, thunk_info,
                       std::move(buffers)),
-      config_(GetCollectiveConfig(instr, std::nullopt)) {}
+      config_(GetCollectiveConfig(instr, std::nullopt)),
+      cb_metadata_({has_dynamic_root, {}}) {}
 
 /*static*/ absl::Status CollectiveBroadcastThunk::CheckImplementable(
     const HloInstruction* instr, int64_t replica_count,
@@ -69,6 +70,21 @@ CollectiveBroadcastThunk::CollectiveBroadcastThunk(
 /*static*/ CollectiveOpGroupMode CollectiveBroadcastThunk::GetGroupMode(
     const HloCollectiveBroadcastInstruction* inst) {
   return GetCollectiveConfig(inst, std::nullopt).group_mode;
+}
+
+absl::Status CollectiveBroadcastThunk::Initialize(
+    const InitializeParams& params) {
+  if (cb_metadata_.has_dynamic_root && !initialized_) {
+    se::StreamExecutor* executor = params.executor;
+    // Last operand is the dynamic root buffer which contains actual root ranks
+    cb_metadata_.num_roots = buffers().size() - 1;
+    ASSIGN_OR_RETURN(
+        std::unique_ptr<se::MemoryAllocation> alloc,
+        executor->HostMemoryAllocate(cb_metadata_.num_roots * sizeof(int32_t)));
+    cb_metadata_.bcast_roots = std::move(alloc);
+    initialized_ = true;
+  }
+  return absl::OkStatus();
 }
 
 absl::StatusOr<std::unique_ptr<CollectiveBroadcastThunk>>
@@ -106,28 +122,58 @@ absl::StatusOr<ThunkProto> CollectiveBroadcastThunk::ToProto() const {
 
   return proto;
 }
+absl::Status LoadCollectiveBroadcastRoots(
+    se::Stream& stream, DeviceBufferPair roots_device_buffer,
+    CollectiveBroadcastMetadata& cb_metadata) {
+  RETURN_IF_ERROR(stream.Memcpy(cb_metadata.bcast_roots->address().opaque(),
+                                roots_device_buffer.source_buffer,
+                                roots_device_buffer.source_buffer.size()));
+  // Wait for the copies to complete.
+  if (absl::Status blocked = stream.BlockHostUntilDone(); !blocked.ok()) {
+    return absl::InternalError(
+        absl::StrFormat("Failed to copy dynamic roots on stream %p: %s",
+                        &stream, blocked.message()));
+  }
 
+  return absl::OkStatus();
+}
 absl::Status CollectiveBroadcastThunk::RunCollective(
     const ExecuteParams& params, const GpuCliqueKey& clique_key,
     se::Stream& stream, Communicator& comm) {
   ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
                    ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                                           config_.operand_element_type));
-  return ::xla::gpu::RunCollectiveBroadcast(device_buffers, stream, comm);
+  if (cb_metadata_.has_dynamic_root) {
+    RETURN_IF_ERROR(LoadCollectiveBroadcastRoots(stream, device_buffers.back(),
+                                                 cb_metadata_));
+  }
+
+  return ::xla::gpu::RunCollectiveBroadcast(device_buffers, stream, comm,
+                                            cb_metadata_);
 }
 
 absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,
-                                    se::Stream& stream, Communicator& comm) {
+                                    se::Stream& stream, Communicator& comm,
+                                    CollectiveBroadcastMetadata& cb_metadata) {
   auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
   Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
-    for (auto buffer : buffers) {
+    RankId root = RankId(0);
+    for (int64_t i = 0; i < buffers.size(); ++i) {
+      const DeviceBufferPair& buffer = buffers[i];
+      if (cb_metadata.has_dynamic_root) {
+        // If dynamic root is enabled, the actual root rank is read from the
+        // last buffer and can be different for each broadcast.
+        int32_t* roots_ptr = reinterpret_cast<int32_t*>(
+            cb_metadata.bcast_roots->address().opaque());
+        root = RankId(roots_ptr[i]);
+      }
       se::DeviceAddressBase src_addr = buffer.source_buffer;
       se::DeviceAddressBase dest_addr = buffer.destination_buffer;
       RETURN_IF_ERROR(gpu_comm->LaunchBroadcast(
           // Always use rank 0 since we always broadcast from the first id
           // in replica_groups
-          src_addr, dest_addr, buffer.element_type, buffer.element_count,
-          RankId(0), GpuCollectives::On(stream)));
+          src_addr, dest_addr, buffer.element_type, buffer.element_count, root,
+          GpuCollectives::On(stream)));
     }
     return absl::OkStatus();
   });
