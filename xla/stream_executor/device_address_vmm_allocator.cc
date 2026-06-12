@@ -92,6 +92,20 @@ DeviceAddressVmmAllocator::AllocationRecord::AllocationRecord(
   CHECK(allocator_address_mapping_.has_value());
 }
 
+DeviceAddressVmmAllocator::PendingDeallocationKind
+DeviceAddressVmmAllocator::AllocationRecord::pending_deallocation_kind() const {
+  switch (kind_) {
+    case Kind::kAllocate:
+      return PendingDeallocationKind::kAllocate;
+    case Kind::kAllocateAndMapReturnMapAddr:
+      return PendingDeallocationKind::kAllocateAndMapReturnMapAddr;
+    case Kind::kAllocateAndMapReturnNewAddr:
+      return PendingDeallocationKind::kAllocateAndMapReturnNewAddr;
+  }
+  LOG(FATAL) << "Unknown AllocationRecord kind";
+  return PendingDeallocationKind::kAllocate;
+}
+
 DeviceAddressBase
 DeviceAddressVmmAllocator::AllocationRecord::reservation_address() const {
   CHECK(reservation_address_.has_value());
@@ -102,6 +116,36 @@ bool DeviceAddressVmmAllocator::AllocationRecord::reservation_mapping_matches(
     DeviceAddressBase address) const {
   return reservation_address_mapping_.has_value() &&
          reservation_address_mapping_->mapped_address().IsSameAs(address);
+}
+
+void DeviceAddressVmmAllocator::AllocationRecord::MarkAllocatorStale(
+    uint64_t seqno) {
+  CHECK(allocator_active());
+  CHECK(!allocator_stale());
+  CHECK(has_allocator_address_mapping());
+  CHECK_NE(seqno, 0);
+  allocator_state_ = AllocatorState::kStale;
+  allocator_stale_seqno_ = seqno;
+}
+
+void DeviceAddressVmmAllocator::AllocationRecord::ReactivateAllocator(
+    uint64_t new_size) {
+  CHECK(!allocator_active());
+  CHECK(allocator_stale());
+  CHECK(has_allocator_address_mapping());
+  allocator_address_ = DeviceAddressBase(allocator_address_.opaque(), new_size);
+  allocator_state_ = AllocatorState::kActive;
+  allocator_stale_seqno_ = 0;
+}
+
+void DeviceAddressVmmAllocator::AllocationRecord::CompleteStaleAllocator() {
+  CHECK(!allocator_active());
+  CHECK(allocator_stale());
+  CHECK(!reservation_active());
+  CHECK(!reservation_stale());
+  allocator_address_mapping_.reset();
+  allocator_address_reservation_.reset();
+  raw_allocation_.reset();
 }
 
 // Interval between CPU polls of the GPU-written deallocation timeline while
@@ -214,11 +258,11 @@ void DeviceAddressVmmAllocator::ProcessCompletedPendingDeallocations(
     if (state.pending_deallocations.front().seqno > completed) {
       break;
     }
-    if (state.pending_deallocations.front().kind ==
-        PendingDeallocationKind::kAllocate) {
-      DoDeallocate(state, state.pending_deallocations.front().mem);
+    if (state.pending_deallocations.front().kind !=
+        PendingDeallocationKind::kMap) {
+      DoDeallocate(state, state.pending_deallocations.front().addr);
     } else {
-      DoUnMap(state, state.pending_deallocations.front().mem);
+      DoUnMap(state, state.pending_deallocations.front().addr);
     }
     state.pending_deallocations.pop_front();
   }
@@ -239,8 +283,8 @@ void DeviceAddressVmmAllocator::WaitPendingDeallocationsToComplete(
   uint64_t target_size = rounded_size + rounded_size / 10;
 
   for (const auto& pending : state.pending_deallocations) {
-    if (pending.kind == PendingDeallocationKind::kAllocate) {
-      accumulated_size += RoundUpToGranularity(state, pending.mem.size());
+    if (pending.kind != PendingDeallocationKind::kMap) {
+      accumulated_size += pending.reclaimable_bytes;
     }
     target_seqno = pending.seqno;
     ++count_to_wait;
@@ -273,10 +317,10 @@ void DeviceAddressVmmAllocator::WaitPendingDeallocationsToComplete(
   state.mu.lock();
 
   for (auto& item : selected) {
-    if (item.kind == PendingDeallocationKind::kAllocate) {
-      DoDeallocate(state, item.mem);
+    if (item.kind != PendingDeallocationKind::kMap) {
+      DoDeallocate(state, item.addr);
     } else {
-      DoUnMap(state, item.mem);
+      DoUnMap(state, item.addr);
     }
   }
 }
@@ -287,18 +331,20 @@ void DeviceAddressVmmAllocator::DoDeallocate(PerDeviceState& state,
       "Actually freeing virtual address %p (size=%uB) on device ordinal %d",
       mem.opaque(), mem.size(), state.executor->device_ordinal());
 
-  // Erase the ScopedMapping first: its destructor unmaps the physical memory
-  // from the virtual address range.
-  state.scoped_mappings.erase(mem.opaque());
-  // Erase the reservation next: its destructor frees the virtual address range.
-  state.reservations.erase(mem.opaque());
-  // Erase the raw allocation last: its destructor releases the physical memory.
-  state.raw_allocations.erase(mem.opaque());
-  state.multi_device_allocations.erase(mem.opaque());
-
-  uint64_t rounded_size = RoundUpToGranularity(state, mem.size());
-  DCHECK_GE(state.pa_allocated, rounded_size);
-  state.pa_allocated -= rounded_size;
+  auto record_it = state.records_by_allocator_address.find(mem.opaque());
+  CHECK(record_it != state.records_by_allocator_address.end());
+  CHECK(record_it->second->allocator_stale());
+  CHECK(record_it->second->allocator_matches(mem));
+  AllocationRecord& record = *record_it->second;
+  CHECK(!record.allocator_active());
+  if (record.raw_allocation() != nullptr) {
+    uint64_t rounded_size =
+        RoundUpToGranularity(state, record.raw_allocation()->address().size());
+    DCHECK_GE(state.pa_allocated, rounded_size);
+    state.pa_allocated -= rounded_size;
+  }
+  record.CompleteStaleAllocator();
+  CHECK_EQ(state.records_by_allocator_address.erase(mem.opaque()), 1);
 }
 
 void DeviceAddressVmmAllocator::DoUnMap(PerDeviceState& state,
@@ -310,8 +356,26 @@ void DeviceAddressVmmAllocator::DoUnMap(PerDeviceState& state,
   state.stale_reservation_mappings.erase(mem.opaque());
 }
 
+void* DeviceAddressVmmAllocator::TrackAllocatorAddressMappedAllocation(
+    PerDeviceState& state, AllocationRecord::Kind kind,
+    DeviceAddressBase allocator_address,
+    std::shared_ptr<MemoryAllocation> raw_allocation,
+    std::unique_ptr<MemoryReservation> reservation,
+    MemoryReservation::ScopedMapping mapping, uint64_t allocated_size,
+    bool multi_device) {
+  void* va_ptr = allocator_address.opaque();
+  auto record = std::make_unique<AllocationRecord>(
+      kind, allocator_address, std::move(raw_allocation),
+      std::move(reservation), std::move(mapping), multi_device);
+  auto insert_result =
+      state.records_by_allocator_address.emplace(va_ptr, std::move(record));
+  CHECK(insert_result.second);
+  state.pa_allocated += allocated_size;
+  return va_ptr;
+}
+
 absl::StatusOr<DeviceAddressBase> DeviceAddressVmmAllocator::AllocateWithBudget(
-    PerDeviceState& state, uint64_t size) {
+    PerDeviceState& state, uint64_t size, bool multi_device) {
   uint64_t rounded_size = RoundUpToGranularity(state, size);
   if (state.pa_allocated + rounded_size > state.pa_budget) {
     return absl::ResourceExhaustedError(absl::StrFormat(
@@ -333,15 +397,12 @@ absl::StatusOr<DeviceAddressBase> DeviceAddressVmmAllocator::AllocateWithBudget(
       reservation->MapTo(/*reservation_offset=*/0, /*allocation_offset=*/0,
                          padded_size, *raw_alloc));
 
-  void* va_ptr = reservation->address().opaque();
-
-  // Store tracking entries. Destruction order matters: scoped_mappings must
-  // be erased before reservations, which must be erased before raw_allocations.
-  state.raw_allocations.emplace(va_ptr, std::move(raw_alloc));
-  state.reservations.emplace(va_ptr, std::move(reservation));
-  state.scoped_mappings.emplace(va_ptr, std::move(scoped_mapping));
-
-  state.pa_allocated += rounded_size;
+  auto shared_raw = std::shared_ptr<MemoryAllocation>(std::move(raw_alloc));
+  DeviceAddressBase allocator_address(reservation->address().opaque(), size);
+  void* va_ptr = TrackAllocatorAddressMappedAllocation(
+      state, AllocationRecord::Kind::kAllocate, allocator_address,
+      std::move(shared_raw), std::move(reservation), std::move(scoped_mapping),
+      rounded_size, multi_device);
   // Return the original requested size, not the padded size.
   return DeviceAddressBase(va_ptr, size);
 }
@@ -374,7 +435,8 @@ DeviceAddressVmmAllocator::Allocate(
           reservation_address.opaque()) ||
       state->stale_reservation_mappings.contains(
           reservation_address.opaque()) ||
-      state->raw_allocations.contains(reservation_address.opaque())) {
+      state->records_by_allocator_address.contains(
+          reservation_address.opaque())) {
     return absl::FailedPreconditionError(
         "Reservation address is already tracked by this allocator");
   }
@@ -400,41 +462,35 @@ DeviceAddressVmmAllocator::Allocate(
       MemoryReservation::ScopedMapping reservation_mapping,
       reservation->MapTo(reservation_offset, /*allocation_offset=*/0,
                          mapping_size, *raw_alloc));
+  auto shared_raw = std::shared_ptr<MemoryAllocation>(std::move(raw_alloc));
 
-  std::unique_ptr<MemoryReservation> allocator_reservation;
-  MemoryReservation::ScopedMapping allocator_mapping;
-  DeviceAddressBase allocator_address = reservation_address;
-
-  if (!return_reservation_address) {
-    ASSIGN_OR_RETURN(allocator_reservation,
-                     CreateReservation(state->executor, allocation_size));
-    ASSIGN_OR_RETURN(allocator_mapping,
-                     allocator_reservation->MapTo(
-                         /*reservation_offset=*/0, /*allocation_offset=*/0,
-                         padded_size, *raw_alloc));
-    allocator_address = DeviceAddressBase(
-        allocator_reservation->address().opaque(), allocation_size);
+  if (return_reservation_address) {
+    TrackAllocatorAddressMappedAllocation(
+        *state, AllocationRecord::Kind::kAllocateAndMapReturnMapAddr,
+        reservation_address, std::move(shared_raw), nullptr,
+        std::move(reservation_mapping), rounded_size, multi_device);
+    return ScopedDeviceAddress<uint8_t>(reservation_address, device_ordinal,
+                                        this);
   }
 
-  void* allocator_ptr = allocator_address.opaque();
-  state->raw_allocations.emplace(allocator_ptr, std::move(raw_alloc));
-  state->scoped_mappings.emplace(allocator_ptr, std::move(allocator_mapping));
-  if (allocator_reservation != nullptr) {
-    state->reservations.emplace(allocator_ptr,
-                                std::move(allocator_reservation));
-    state->active_reservation_mappings.emplace(
-        reservation_address.opaque(),
-        ReservationMapping{allocator_address, reservation_address, reservation,
-                           reservation_offset, mapping_size,
-                           std::move(reservation_mapping)});
-  } else {
-    state->scoped_mappings[allocator_ptr] = std::move(reservation_mapping);
-  }
+  ASSIGN_OR_RETURN(auto allocator_reservation,
+                   CreateReservation(state->executor, allocation_size));
+  ASSIGN_OR_RETURN(auto allocator_mapping,
+                   allocator_reservation->MapTo(
+                       /*reservation_offset=*/0, /*allocation_offset=*/0,
+                       padded_size, *shared_raw));
+  DeviceAddressBase allocator_address(allocator_reservation->address().opaque(),
+                                      allocation_size);
+  TrackAllocatorAddressMappedAllocation(
+      *state, AllocationRecord::Kind::kAllocateAndMapReturnNewAddr,
+      allocator_address, std::move(shared_raw), std::move(allocator_reservation),
+      std::move(allocator_mapping), rounded_size, multi_device);
+  state->active_reservation_mappings.emplace(
+      reservation_address.opaque(),
+      ReservationMapping{allocator_address, reservation_address, reservation,
+                         reservation_offset, mapping_size,
+                         std::move(reservation_mapping)});
 
-  state->pa_allocated += rounded_size;
-  if (multi_device) {
-    state->multi_device_allocations.insert({allocator_ptr, true});
-  }
   return ScopedDeviceAddress<uint8_t>(allocator_address, device_ordinal, this);
 }
 
@@ -503,26 +559,24 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
     return ScopedDeviceAddress<uint8_t>(*reused, device_ordinal, this);
   }
 
-  absl::StatusOr<DeviceAddressBase> result = AllocateWithBudget(*state, size);
+  absl::StatusOr<DeviceAddressBase> result =
+      AllocateWithBudget(*state, size, multi_device);
 
   // If allocation failed (e.g., out of memory), try processing pending
   // deallocations to free memory, then retry.
   if (!result.ok()) {
     ProcessCompletedPendingDeallocations(*state);
-    result = AllocateWithBudget(*state, size);
+    result = AllocateWithBudget(*state, size, multi_device);
   }
 
   if (!result.ok()) {
     WaitPendingDeallocationsToComplete(*state, size);
-    result = AllocateWithBudget(*state, size);
+    result = AllocateWithBudget(*state, size, multi_device);
   }
 
   if (!result.ok()) {
     return result.status();
   }
-
-  if (multi_device)
-    state->multi_device_allocations.insert({result->opaque(), true});
 
   VLOG(3) << absl::StreamFormat(
       "Allocated virtual address %p (%uB) on device ordinal %d",
@@ -541,7 +595,10 @@ absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
 
   absl::MutexLock lock(state->mu);
 
-  if (!state->raw_allocations.contains(mem.opaque())) {
+  auto record_it = state->records_by_allocator_address.find(mem.opaque());
+  if (record_it == state->records_by_allocator_address.end() ||
+      !record_it->second->allocator_active() ||
+      !record_it->second->allocator_matches(mem)) {
     if (state->active_reservation_mappings.contains(mem.opaque()) ||
         state->stale_reservation_mappings.contains(mem.opaque())) {
       return absl::InvalidArgumentError(
@@ -552,6 +609,7 @@ absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
         "DeviceAddressVmmAllocator::Deallocate received an unknown address %p",
         mem.opaque()));
   }
+  AllocationRecord& record = *record_it->second;
 
   for (const auto& [_, mapping] : state->active_reservation_mappings) {
     if (mapping.allocator_address.IsSameAs(mem)) {
@@ -566,16 +624,21 @@ absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
       "on device ordinal %d",
       mem.opaque(), mem.size(), device_ordinal);
 
-  bool multi_device = state->multi_device_allocations.erase(mem.opaque()) > 0;
-
   // Assign the next sequence number and enqueue a GPU write to the pinned
   // timeline when the stream reaches this point. The CPU polls the timeline
   // value to know when it is safe to free the memory.
   uint64_t seqno = state->next_seqno++;
   RETURN_IF_ERROR(EnqueueDeferredDeallocation(*state, seqno));
 
-  state->pending_deallocations.push_back(
-      {PendingDeallocationKind::kAllocate, mem, seqno, multi_device});
+  CHECK(record.allocator_active());
+  CHECK(!record.allocator_stale());
+  CHECK(record.has_allocator_address_mapping());
+  const uint64_t reclaimable_bytes =
+      RoundUpToGranularity(*state, record.raw_allocation()->address().size());
+  record.MarkAllocatorStale(seqno);
+  state->pending_deallocations.push_back({record.pending_deallocation_kind(),
+                                          seqno, record.allocator_address(),
+                                          reclaimable_bytes});
 
   return absl::OkStatus();
 }
@@ -599,18 +662,22 @@ absl::Status DeviceAddressVmmAllocator::Map(int device_ordinal,
   ASSIGN_OR_RETURN(auto state, GetPerDeviceState(device_ordinal));
 
   absl::MutexLock lock(state->mu);
-  auto raw_it = state->raw_allocations.find(addr.opaque());
-  if (raw_it == state->raw_allocations.end()) {
+  auto record_it = state->records_by_allocator_address.find(addr.opaque());
+  if (record_it == state->records_by_allocator_address.end() ||
+      !record_it->second->allocator_active() ||
+      !record_it->second->allocator_matches(addr)) {
     return absl::InvalidArgumentError(absl::StrFormat(
         "DeviceAddressVmmAllocator::Map received an unknown allocator address "
         "%p",
         addr.opaque()));
   }
-  if (size > raw_it->second->address().size()) {
+  AllocationRecord& record = *record_it->second;
+  MemoryAllocation* raw_allocation = record.raw_allocation();
+  if (size > raw_allocation->address().size()) {
     return absl::InvalidArgumentError(absl::StrFormat(
         "DeviceAddressVmmAllocator::Map size %u exceeds raw allocation size "
         "%u",
-        size, raw_it->second->address().size()));
+        size, raw_allocation->address().size()));
   }
   if (state->active_reservation_mappings.contains(
           reservation_address.opaque()) ||
@@ -629,7 +696,7 @@ absl::Status DeviceAddressVmmAllocator::Map(int device_ordinal,
   ASSIGN_OR_RETURN(
       MemoryReservation::ScopedMapping scoped_mapping,
       reservation->MapTo(reservation_offset, /*allocation_offset=*/0, size,
-                         *raw_it->second));
+                         *raw_allocation));
   state->active_reservation_mappings.emplace(
       reservation_address.opaque(),
       ReservationMapping{addr, reservation_address, reservation,
@@ -674,7 +741,8 @@ absl::Status DeviceAddressVmmAllocator::UnMap(int device_ordinal,
   state->stale_reservation_mappings.emplace(reservation_address.opaque(),
                                             std::move(mapping));
   state->pending_deallocations.push_back(
-      {PendingDeallocationKind::kMap, reservation_address, seqno});
+      {PendingDeallocationKind::kMap, seqno, reservation_address,
+       /*reclaimable_bytes=*/0});
   return absl::OkStatus();
 }
 
@@ -705,11 +773,11 @@ absl::Status DeviceAddressVmmAllocator::SynchronizePendingOperations(
     absl::MutexLock lock(state->mu);
     while (!state->pending_deallocations.empty() &&
            state->pending_deallocations.front().seqno <= target_seqno) {
-      if (state->pending_deallocations.front().kind ==
-          PendingDeallocationKind::kAllocate) {
-        DoDeallocate(*state, state->pending_deallocations.front().mem);
+      if (state->pending_deallocations.front().kind !=
+          PendingDeallocationKind::kMap) {
+        DoDeallocate(*state, state->pending_deallocations.front().addr);
       } else {
-        DoUnMap(*state, state->pending_deallocations.front().mem);
+        DoUnMap(*state, state->pending_deallocations.front().addr);
       }
       state->pending_deallocations.pop_front();
     }
@@ -732,11 +800,13 @@ MemoryAllocation* DeviceAddressVmmAllocator::GetRawAllocation(
   }
   PerDeviceState* state = *state_or;
   absl::MutexLock lock(state->mu);
-  auto it = state->raw_allocations.find(addr.opaque());
-  if (it == state->raw_allocations.end()) {
+  auto it = state->records_by_allocator_address.find(addr.opaque());
+  if (it == state->records_by_allocator_address.end() ||
+      !it->second->allocator_active() ||
+      !it->second->allocator_matches(addr)) {
     return nullptr;
   }
-  return it->second.get();
+  return it->second->raw_allocation();
 }
 
 MemoryReservation* DeviceAddressVmmAllocator::GetReservation(
@@ -747,11 +817,13 @@ MemoryReservation* DeviceAddressVmmAllocator::GetReservation(
   }
   PerDeviceState* state = *state_or;
   absl::MutexLock lock(state->mu);
-  auto it = state->reservations.find(addr.opaque());
-  if (it == state->reservations.end()) {
+  auto it = state->records_by_allocator_address.find(addr.opaque());
+  if (it == state->records_by_allocator_address.end() ||
+      !it->second->allocator_active() ||
+      !it->second->allocator_matches(addr)) {
     return nullptr;
   }
-  return it->second.get();
+  return it->second->allocator_address_reservation();
 }
 
 uint64_t DeviceAddressVmmAllocator::GetAllocationGranularity(
@@ -765,6 +837,18 @@ uint64_t DeviceAddressVmmAllocator::GetAllocationGranularity(
   return state->allocation_granularity;
 }
 
+void DeviceAddressVmmAllocator::MoveAllocatorRecordToActive(
+    PerDeviceState& state, AllocationRecord& record, uint64_t new_size) {
+  CHECK(!record.allocator_active());
+  CHECK(record.allocator_stale());
+  CHECK(record.has_allocator_address_mapping());
+  void* allocator_va = record.allocator_key();
+  auto record_it = state.records_by_allocator_address.find(allocator_va);
+  CHECK(record_it != state.records_by_allocator_address.end());
+  CHECK_EQ(record_it->second.get(), &record);
+  record.ReactivateAllocator(new_size);
+}
+
 std::optional<DeviceAddressBase>
 DeviceAddressVmmAllocator::TryReusePendingDeallocation(PerDeviceState& state,
                                                        uint64_t size,
@@ -775,25 +859,27 @@ DeviceAddressVmmAllocator::TryReusePendingDeallocation(PerDeviceState& state,
     if (it->kind != PendingDeallocationKind::kAllocate) {
       continue;
     }
-    if (it->multi_device != multi_device) {
+    auto record_it = state.records_by_allocator_address.find(it->addr.opaque());
+    CHECK(record_it != state.records_by_allocator_address.end());
+    AllocationRecord& record = *record_it->second;
+    CHECK(record.allocator_stale());
+    CHECK(record.allocator_matches(it->addr));
+    if (record.multi_device() != multi_device) {
       continue;
     }
-    if (!state.reservations.contains(it->mem.opaque())) {
-      continue;
-    }
-    if (RoundUpToGranularity(state, it->mem.size()) != rounded_size) {
+    if (RoundUpToGranularity(state, record.allocator_address().size()) !=
+        rounded_size) {
       continue;
     }
 
-    DeviceAddressBase reused_mem(it->mem.opaque(), size);
+    DeviceAddressBase reused_mem(record.allocator_key(), size);
     VLOG(3) << absl::StreamFormat(
         "Reusing pending deallocation: address=%p original_size=%uB "
         "new_size=%uB rounded_size=%uB device=%d",
-        reused_mem.opaque(), it->mem.size(), size, rounded_size,
+        reused_mem.opaque(), record.allocator_address().size(), size, rounded_size,
         state.executor->device_ordinal());
+    MoveAllocatorRecordToActive(state, record, size);
     state.pending_deallocations.erase(it);
-    if (multi_device)
-      state.multi_device_allocations.insert({reused_mem.opaque(), true});
 
     return reused_mem;
   }
