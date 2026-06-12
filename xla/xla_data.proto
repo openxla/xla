@@ -1471,8 +1471,7 @@ message WhileLoopBackendConfig {
     // `init + iteration * step`. They are optional: a writer that knows a
     // tuple position is a dynamic variable but does not (yet) know the affine
     // parameters can leave them unset, in which case consumers should fall
-    // back to `known_init_step` (e.g. for FusionDynamicMemcpyRewriter offset
-    // computation).
+    // back to `known_init_step` for dynamic-slice offset computation.
     optional int64 init = 2;
     optional int64 step = 3;
   }

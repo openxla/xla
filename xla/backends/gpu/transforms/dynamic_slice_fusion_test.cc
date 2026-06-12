@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -804,6 +805,247 @@ TEST_F(DynamicSliceFusionTest, ResolveResultsNestedTuplePartialDUS) {
   EXPECT_EQ(results[2], (Result{1, 2, ShapeUtil::MakeShape(F32, {4, 8}),
                                 ShapeUtil::MakeShape(F32, {1, 8}),
                                 MakeConfig(0, 0, 32), const_2d}));
+}
+
+//===----------------------------------------------------------------------===//
+// DynamicSliceFusion::FindMemcpyFusionCandidate tests
+//===----------------------------------------------------------------------===//
+
+TEST_F(DynamicSliceFusionTest, FindsMemcpyCandidateForDynamicSliceRoot) {
+  const char* hlo = R"(
+    HloModule test
+
+    %dynamic_slice {
+      %p0 = s32[4] parameter(0)
+      %c1 = s32[] constant(1)
+      ROOT %slice = s32[1] dynamic-slice(%p0, %c1), dynamic_slice_sizes={1},
+          backend_config={"dynamic_slice_config":
+              {"byte_offset":"4","byte_stride":"0"}}
+    }
+
+    ENTRY main {
+      %p0 = s32[4] parameter(0)
+      ROOT %fusion = s32[1] fusion(%p0), kind=kLoop, calls=%dynamic_slice
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction();
+  std::optional<DynamicSliceFusion::MemcpyFusionCandidate> candidate =
+      DynamicSliceFusion::FindMemcpyFusionCandidate(fusion);
+  ASSERT_TRUE(candidate.has_value());
+
+  ASSERT_OK_AND_ASSIGN(auto parameters,
+                       DynamicSliceFusion::ResolveParameters(*candidate));
+  EXPECT_THAT(
+      parameters,
+      ::testing::ElementsAre(Parameter{
+          0, ShapeUtil::MakeShape(S32, {4}), ShapeUtil::MakeShape(S32, {1}),
+          MakeStaticConfig(4), Offsets{{0, Offset::Constant(1)}}}));
+
+  ASSERT_OK_AND_ASSIGN(auto results,
+                       DynamicSliceFusion::ResolveResults(*candidate));
+  EXPECT_THAT(results,
+              ::testing::ElementsAre(Result{
+                  std::nullopt, 0, ShapeUtil::MakeShape(S32, {1}),
+                  ShapeUtil::MakeShape(S32, {1}), std::nullopt, std::nullopt}));
+}
+
+TEST_F(DynamicSliceFusionTest, FindsMemcpyCandidateForDynamicUpdateSliceRoot) {
+  const char* hlo = R"(
+    HloModule test
+
+    %dynamic_update_slice {
+      %p0 = s32[4,8,8] parameter(0)
+      %p1 = s32[1,8,8] parameter(1)
+      %p2 = s32[] parameter(2)
+      %c0 = s32[] constant(0)
+      ROOT %update-slice = s32[4,8,8] dynamic-update-slice(%p0, %p1, %p2, %c0, %c0),
+          backend_config={"dynamic_slice_config":
+              {"byte_offset":"0","byte_stride":"256","loop_index":"0"}}
+    }
+
+    ENTRY main {
+      %input = s32[4,8,8] parameter(0)
+      %val = s32[1,8,8] parameter(1)
+      %ivar = s32[] parameter(2)
+      ROOT %updated = s32[4,8,8] fusion(%input, %val, %ivar), kind=kLoop, calls=%dynamic_update_slice
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction();
+  std::optional<DynamicSliceFusion::MemcpyFusionCandidate> candidate =
+      DynamicSliceFusion::FindMemcpyFusionCandidate(fusion);
+  ASSERT_TRUE(candidate.has_value());
+
+  ASSERT_OK_AND_ASSIGN(auto parameters,
+                       DynamicSliceFusion::ResolveParameters(*candidate));
+  EXPECT_THAT(parameters, ::testing::ElementsAre(
+                              Parameter{1, ShapeUtil::MakeShape(S32, {1, 8, 8}),
+                                        ShapeUtil::MakeShape(S32, {1, 8, 8}),
+                                        std::nullopt, std::nullopt}));
+
+  ASSERT_OK_AND_ASSIGN(auto results,
+                       DynamicSliceFusion::ResolveResults(*candidate));
+  EXPECT_THAT(results,
+              ::testing::ElementsAre(Result{
+                  0, 0, ShapeUtil::MakeShape(S32, {4, 8, 8}),
+                  ShapeUtil::MakeShape(S32, {1, 8, 8}), MakeConfig(0, 0, 256),
+                  Offsets{{0, Offset::Parameter(2)},
+                          {1, Offset::Constant(0)},
+                          {2, Offset::Constant(0)}}}));
+}
+
+TEST_F(DynamicSliceFusionTest, FindsMemcpyCandidateWithComputedDusOffset) {
+  const char* hlo = R"(
+    HloModule test
+
+    %dynamic_update_slice {
+      %p0 = s32[4,8,8] parameter(0)
+      %p1 = s32[1,8,8] parameter(1)
+      %p2 = s32[] parameter(2)
+      %c1 = s32[] constant(1)
+      %c0 = s32[] constant(0)
+      %offset = s32[] add(%p2, %c1)
+      ROOT %update-slice = s32[4,8,8] dynamic-update-slice(%p0, %p1, %offset, %c0, %c0),
+          backend_config={"dynamic_slice_config":
+              {"byte_offset":"256","byte_stride":"256","loop_index":"0"}}
+    }
+
+    ENTRY main {
+      %input = s32[4,8,8] parameter(0)
+      %val = s32[1,8,8] parameter(1)
+      %ivar = s32[] parameter(2)
+      ROOT %updated = s32[4,8,8] fusion(%input, %val, %ivar), kind=kLoop, calls=%dynamic_update_slice
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction();
+  std::optional<DynamicSliceFusion::MemcpyFusionCandidate> candidate =
+      DynamicSliceFusion::FindMemcpyFusionCandidate(fusion);
+  ASSERT_TRUE(candidate.has_value());
+
+  ASSERT_OK_AND_ASSIGN(auto results,
+                       DynamicSliceFusion::ResolveResults(*candidate));
+  EXPECT_THAT(
+      results,
+      ::testing::ElementsAre(Result{
+          0, 0, ShapeUtil::MakeShape(S32, {4, 8, 8}),
+          ShapeUtil::MakeShape(S32, {1, 8, 8}), MakeConfig(0, 256, 256),
+          Offsets{{0, Offset::Add(Offset::Parameter(2), Offset::Constant(1))},
+                  {1, Offset::Constant(0)},
+                  {2, Offset::Constant(0)}}}));
+}
+
+TEST_F(DynamicSliceFusionTest, RejectsRuntimeDusWithPartialMinorDimensions) {
+  const char* hlo = R"(
+    HloModule test
+
+    %dynamic_update_slice {
+      %p0 = s32[4,8,8] parameter(0)
+      %p1 = s32[1,1,8] parameter(1)
+      %p2 = s32[] parameter(2)
+      %c0 = s32[] constant(0)
+      ROOT %update-slice = s32[4,8,8] dynamic-update-slice(%p0, %p1, %p2, %c0, %c0),
+          backend_config={"dynamic_slice_config":
+              {"byte_offset":"0","byte_stride":"256","loop_index":"0"}}
+    }
+
+    ENTRY main {
+      %input = s32[4,8,8] parameter(0)
+      %val = s32[1,1,8] parameter(1)
+      %ivar = s32[] parameter(2)
+      ROOT %updated = s32[4,8,8] fusion(%input, %val, %ivar), kind=kLoop, calls=%dynamic_update_slice
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  EXPECT_FALSE(DynamicSliceFusion::IsMemcpyFusionCandidate(
+      module->entry_computation()->root_instruction()));
+}
+
+TEST_F(DynamicSliceFusionTest, FindsMemcpyCandidateWithStaticSliceUpdate) {
+  const char* hlo = R"(
+    HloModule test
+
+    %dynamic_update_slice {
+      %p0 = s32[4,8] parameter(0)
+      %p1 = s32[4,8] parameter(1)
+      %p2 = s32[] parameter(2)
+      %c0 = s32[] constant(0)
+      %update = s32[1,8] slice(%p1), slice={[1:2], [0:8]}
+      ROOT %update-slice = s32[4,8] dynamic-update-slice(%p0, %update, %p2, %c0),
+          backend_config={"dynamic_slice_config":
+              {"byte_offset":"0","byte_stride":"32","loop_index":"0"}}
+    }
+
+    ENTRY main {
+      %input = s32[4,8] parameter(0)
+      %val = s32[4,8] parameter(1)
+      %ivar = s32[] parameter(2)
+      ROOT %updated = s32[4,8] fusion(%input, %val, %ivar), kind=kLoop, calls=%dynamic_update_slice
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction();
+  std::optional<DynamicSliceFusion::MemcpyFusionCandidate> candidate =
+      DynamicSliceFusion::FindMemcpyFusionCandidate(fusion);
+  ASSERT_TRUE(candidate.has_value());
+
+  ASSERT_OK_AND_ASSIGN(auto parameters,
+                       DynamicSliceFusion::ResolveParameters(*candidate));
+  EXPECT_THAT(parameters, ::testing::ElementsAre(
+                              Parameter{1, ShapeUtil::MakeShape(S32, {4, 8}),
+                                        ShapeUtil::MakeShape(S32, {1, 8}),
+                                        MakeStaticConfig(32), std::nullopt}));
+}
+
+TEST_F(DynamicSliceFusionTest, RejectsComputedDusUpdate) {
+  const char* hlo = R"(
+    HloModule test
+
+    %dynamic_update_slice {
+      %p0 = s32[4] parameter(0)
+      %p1 = s32[1] parameter(1)
+      %one = s32[1] constant({1})
+      %update = s32[1] add(%p1, %one)
+      %c0 = s32[] constant(0)
+      ROOT %update-slice = s32[4] dynamic-update-slice(%p0, %update, %c0),
+          backend_config={"dynamic_slice_config":
+              {"byte_offset":"0","byte_stride":"4","loop_index":"0"}}
+    }
+
+    ENTRY main {
+      %input = s32[4] parameter(0)
+      %val = s32[1] parameter(1)
+      ROOT %updated = s32[4] fusion(%input, %val), kind=kLoop, calls=%dynamic_update_slice
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  EXPECT_FALSE(DynamicSliceFusion::IsMemcpyFusionCandidate(
+      module->entry_computation()->root_instruction()));
+}
+
+TEST_F(DynamicSliceFusionTest, RejectsFusionWithoutDynamicSliceConfig) {
+  const char* hlo = R"(
+    HloModule test
+
+    %dynamic_slice {
+      %p0 = s32[4] parameter(0)
+      %c1 = s32[] constant(1)
+      ROOT %slice = s32[1] dynamic-slice(%p0, %c1), dynamic_slice_sizes={1}
+    }
+
+    ENTRY main {
+      %p0 = s32[4] parameter(0)
+      ROOT %fusion = s32[1] fusion(%p0), kind=kLoop, calls=%dynamic_slice
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  EXPECT_FALSE(DynamicSliceFusion::IsMemcpyFusionCandidate(
+      module->entry_computation()->root_instruction()));
 }
 
 //===----------------------------------------------------------------------===//

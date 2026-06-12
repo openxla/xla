@@ -1569,7 +1569,6 @@ cc_library(
     deps = [
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms:fusion_block_level_rewriter",
-        "//xla/backends/gpu/transforms:fusion_dynamic_memcpy_rewriter",
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/service:hlo_cost_analysis",

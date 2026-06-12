@@ -310,10 +310,9 @@ ThunkSequence FlattenThunkSequence(std::vector<ThunkSequence>&& sequences) {
 
 }  // namespace
 
-ThunkEmitter::ThunkEmitter(
-    IrEmitterContext* absl_nonnull ir_emitter_context,
-    llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
-        llvm_options_lock)
+ThunkEmitter::ThunkEmitter(IrEmitterContext* absl_nonnull ir_emitter_context,
+                           llvm_ir::LLVMCommandLineOptionsReleasableLock*
+                               absl_nonnull llvm_options_lock)
     : ir_emitter_context_(ir_emitter_context),
       send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
       call_graph_(CallGraph::Build(&ir_emitter_context->hlo_module())),
@@ -1362,6 +1361,19 @@ AsyncThunkSequence ThunkEmitter::EmitAsyncComputation(
 }
 
 AsyncThunkSequence ThunkEmitter::EmitFusion(const HloFusionInstruction* instr) {
+  if (std::optional<DynamicSliceFusion::MemcpyFusionCandidate> candidate =
+          DynamicSliceFusion::FindMemcpyFusionCandidate(instr);
+      candidate.has_value()) {
+    std::unique_ptr<HloInstruction> copy =
+        DynamicSliceFusion::CreateMemcpyFusionHero(*candidate);
+    ASSIGN_OR_RETURN(std::vector<DynamicSliceFusion::Parameter> parameters,
+                     DynamicSliceFusion::ResolveParameters(*candidate));
+    ASSIGN_OR_RETURN(std::vector<DynamicSliceFusion::Result> results,
+                     DynamicSliceFusion::ResolveResults(*candidate));
+    return EmitDynamicSliceFusionV2(instr, copy.get(), std::move(parameters),
+                                    std::move(results));
+  }
+
   analysis_garbage_collector_.push_back(
       std::make_unique<HloFusionAnalysis>(HloFusionAnalysis::Create(
           *instr, ir_emitter_context_->gpu_device_info())));
@@ -1398,6 +1410,14 @@ AsyncThunkSequence ThunkEmitter::EmitDynamicSliceFusionV2(
   ASSIGN_OR_RETURN(std::vector<DynamicSliceFusion::Result> results,
                    DynamicSliceFusion::ResolveResults(hero));
 
+  return EmitDynamicSliceFusionV2(instr, hero, std::move(parameters),
+                                  std::move(results));
+}
+
+AsyncThunkSequence ThunkEmitter::EmitDynamicSliceFusionV2(
+    const HloFusionInstruction* instr, const HloInstruction* hero,
+    std::vector<DynamicSliceFusion::Parameter> parameters,
+    std::vector<DynamicSliceFusion::Result> results) {
   // parameter_buffers: one slice per fusion operand, indexed by parameter
   // number.
   std::vector<BufferAllocation::Slice> parameter_buffers;

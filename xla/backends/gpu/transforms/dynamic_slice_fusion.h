@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_TRANSFORMS_DYNAMIC_SLICE_FUSION_H_
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <ostream>
 #include <type_traits>
@@ -200,26 +201,40 @@ struct DynamicSliceFusion {
   // if it feeds multiple hero operands.
   static absl::StatusOr<std::vector<Parameter>> ResolveParameters(
       const HloInstruction* hero);
-
   // Resolves results for the hero instruction. Returns an entry for all results
   // of the dynamic slice fusion (root of the hero, or for each tuple entry).
   static absl::StatusOr<std::vector<Result>> ResolveResults(
       const HloInstruction* hero);
 
-  // Raw DS/DUS-root fusion that can be converted to a copy-hero
-  // dynamic-slice fusion.
+  // A memcpy-like fusion whose body can be lowered to a D2D copy, optionally
+  // wrapped in a DynamicSliceFusionV2Thunk for runtime DS/DUS offsets.
   struct MemcpyFusionCandidate {
+    // DS/DUS instruction carrying DynamicSliceConfig.
     const HloInstruction* slicing;
+
+    // Value copied by the embedded copy thunk. For DS this is the fusion root
+    // after bitcasts/reshapes; for DUS this is the update operand.
     const HloInstruction* copy_operand;
   };
 
-  // Detects DS/DUS-root memcpy fusions before they have a copy hero. `slicing`
-  // is the DS/DUS instruction carrying DynamicSliceConfig, and `copy_operand`
-  // is the value that would become the operand of the inserted copy hero.
+  // Returns a memcpy-like raw fusion candidate. This matches DS roots and
+  // in-place DUS roots that can be lowered as dynamic-slice fusions wrapping a
+  // D2D copy.
   static std::optional<MemcpyFusionCandidate> FindMemcpyFusionCandidate(
       const HloInstruction* instr);
 
   static bool IsMemcpyFusionCandidate(const HloInstruction* instr);
+
+  // Builds a synthetic copy hero for a memcpy-like raw fusion candidate. The
+  // returned instruction is not inserted into the HLO graph.
+  static std::unique_ptr<HloInstruction> CreateMemcpyFusionHero(
+      const MemcpyFusionCandidate& candidate);
+
+  static absl::StatusOr<std::vector<Parameter>> ResolveParameters(
+      const MemcpyFusionCandidate& candidate);
+
+  static absl::StatusOr<std::vector<Result>> ResolveResults(
+      const MemcpyFusionCandidate& candidate);
 
   // Evaluates an offset expression with parameter values represented as
   // (fusion parameter number, scalar value) pairs.
