@@ -231,6 +231,15 @@ struct DynamicSliceFusion {
   static std::vector<int64_t> CollectOffsetParameters(const Offset::Expr& expr);
 };
 
+// Returns true for a DynamicSliceFusionV2 custom fusion whose hero instruction
+// is a device-to-device copy.
+bool IsCopyHeroDynamicSliceFusion(const HloInstruction* instr);
+
+// Returns true for raw DS/DUS-root memcpy fusions or copy-hero
+// DynamicSliceFusionV2 custom fusions. These lower to DynamicSliceFusionV2Thunk
+// with an embedded DeviceToDeviceCopyThunk.
+bool IsDynamicSliceMemcpyFusion(const HloInstruction* instr);
+
 //===----------------------------------------------------------------------===//
 // DynamicSliceFusion comparison and stringification
 //===----------------------------------------------------------------------===//

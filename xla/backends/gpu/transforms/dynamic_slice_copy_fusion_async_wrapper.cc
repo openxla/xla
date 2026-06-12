@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/dynamic_slice_copy_fusion_async_wrapper.h"
 
-#include <optional>
-#include <string>
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
@@ -27,33 +25,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
-
-bool IsCopyHeroDynamicSliceFusion(const HloInstruction* instr) {
-  if (instr == nullptr || instr->opcode() != HloOpcode::kFusion) {
-    return false;
-  }
-
-  std::optional<std::string> custom_name = GetCustomFusionConfigName(instr);
-  if (!custom_name.has_value() ||
-      *custom_name != kDynamicSliceFusionConfigName) {
-    return false;
-  }
-
-  const HloInstruction* hero =
-      DynamicSliceFusion::FindHero(instr->fused_instructions_computation());
-  return hero != nullptr && hero->opcode() == HloOpcode::kCopy;
-}
-
-bool IsDynamicSliceMemcpyFusion(const HloInstruction* instr) {
-  return DynamicSliceFusion::IsMemcpyFusionCandidate(instr) ||
-         IsCopyHeroDynamicSliceFusion(instr);
-}
 
 absl::StatusOr<bool> DynamicSliceCopyFusionAsyncWrapper::RunImpl(
     HloModule* module,

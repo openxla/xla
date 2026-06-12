@@ -319,6 +319,39 @@ bool DynamicSliceFusion::IsMemcpyFusionCandidate(const HloInstruction* instr) {
          CanLowerMemcpyFusionCandidate(*candidate);
 }
 
+bool IsCopyHeroDynamicSliceFusion(const HloInstruction* instr) {
+  static constexpr char kDynamicSliceFusionV2ConfigName[] =
+      "dynamic_slice_fusion";
+
+  if (instr == nullptr || instr->opcode() != HloOpcode::kFusion ||
+      instr->fusion_kind() != HloInstruction::FusionKind::kCustom) {
+    return false;
+  }
+
+  absl::StatusOr<GpuBackendConfig> backend_config =
+      instr->backend_config<GpuBackendConfig>();
+  if (!backend_config.ok() || !backend_config->has_fusion_backend_config()) {
+    return false;
+  }
+
+  const FusionBackendConfig& fusion_config =
+      backend_config->fusion_backend_config();
+  if (!fusion_config.has_custom_fusion_config() ||
+      fusion_config.custom_fusion_config().name() !=
+          kDynamicSliceFusionV2ConfigName) {
+    return false;
+  }
+
+  const HloInstruction* hero =
+      DynamicSliceFusion::FindHero(instr->fused_instructions_computation());
+  return hero != nullptr && hero->opcode() == HloOpcode::kCopy;
+}
+
+bool IsDynamicSliceMemcpyFusion(const HloInstruction* instr) {
+  return DynamicSliceFusion::IsMemcpyFusionCandidate(instr) ||
+         IsCopyHeroDynamicSliceFusion(instr);
+}
+
 static absl::Status VerifyArgCount(const Offset::Expr& expr,
                                    absl::Span<const Offset::Expr> args,
                                    size_t expected) {

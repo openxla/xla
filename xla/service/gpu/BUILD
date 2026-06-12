@@ -3586,7 +3586,7 @@ cc_library(
         "//xla:side_effect_util",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
-        "//xla/backends/gpu/transforms:dynamic_slice_copy_fusion_async_wrapper",
+        "//xla/backends/gpu/transforms:dynamic_slice_fusion",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
         "//xla/service:collective_ops_utils",
