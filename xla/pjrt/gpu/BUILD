@@ -63,6 +63,7 @@ cc_library(
         ":gpu_metrics",
         ":se_gpu_pjrt_runtime_abi_version",
         ":se_gpu_topology_description",
+        "//xla:debug_options_flags",
         "//xla:executable_run_options",
         "//xla:future",
         "//xla:literal",
@@ -88,6 +89,7 @@ cc_library(
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/hlo/builder:xla_computation",
+        "//xla/hlo/ir:hlo",
         "//xla/pjrt:async_work_runner",
         "//xla/pjrt:common_pjrt_client",
         "//xla/pjrt:device_event",
@@ -134,8 +136,10 @@ cc_library(
         "//xla/service:transfer_manager",
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:gpu_constants",
+        "//xla/service/gpu:gpu_executable",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/service/gpu:gpu_memory_space_assignment",
+        "//xla/service/gpu:stream_executor_util",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:device_description",
@@ -146,6 +150,9 @@ cc_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:vmm_device_address_allocator",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
+        "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator",
         "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/stream_executor/integrations:tf_allocator_adapter",
         "//xla/tsl/concurrency:async_value",
@@ -155,6 +162,7 @@ cc_library(
         "//xla/tsl/framework:bfc_allocator",
         "//xla/tsl/framework:device_id",
         "//xla/tsl/framework:device_id_impl",
+        "//xla/tsl/framework:scoped_allocation_trace",
         "//xla/tsl/lib/strings:proto_serialization",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
@@ -183,6 +191,7 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
+        "@local_config_cuda//cuda:cudart_headers",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
@@ -196,25 +205,16 @@ cc_library(
         "@tsl//tsl/profiler/lib:traceme",
     ] + if_cuda_or_rocm([
         # keep sorted
-        "//xla:debug_options_flags",
         "//xla/service/gpu:gpu_compiler",
-        "//xla/service/gpu:gpu_executable",
-        "//xla/service/gpu:stream_executor_util",
     ]) + if_cuda([
         # keep sorted
-        "//xla/stream_executor/cuda:cuda_compute_capability",
-        "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
-        "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator",
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_rocm([
         # keep sorted
         "@local_config_rocm//rocm:rocm_headers",
     ]) + if_sycl([
         # keep sorted
-        "//xla:debug_options_flags",
         "//xla/service/gpu:gpu_compiler",
-        "//xla/service/gpu:gpu_executable",
-        "//xla/service/gpu:stream_executor_util",
         "@local_config_sycl//sycl:sycl_headers",
     ]),
 )
