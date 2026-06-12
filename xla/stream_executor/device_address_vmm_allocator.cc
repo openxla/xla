@@ -16,12 +16,15 @@ limitations under the License.
 #include "xla/stream_executor/device_address_vmm_allocator.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -29,8 +32,10 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
@@ -236,6 +241,64 @@ static bool AddressRangesOverlap(DeviceAddressBase lhs, DeviceAddressBase rhs) {
          AddressStart(rhs) < AddressEnd(lhs);
 }
 
+struct DebugStatsRow {
+  std::string operation;
+  std::string api_calls;
+  std::string allocation_reuse;
+  std::string allocator_va_reuse;
+  std::string reservation_va_reuse;
+};
+
+struct DebugStatsWidths {
+  size_t operation;
+  size_t api_calls;
+  size_t allocation_reuse;
+  size_t allocator_va_reuse;
+  size_t reservation_va_reuse;
+};
+
+static std::string DebugStatsCount(uint64_t count) {
+  return absl::StrFormat("%u", count);
+}
+
+static std::string DebugStatsReuse(uint64_t reuse, uint64_t api_calls) {
+  double percent = api_calls == 0 ? 0.0 : 100.0 * reuse / api_calls;
+  return absl::StrFormat("%u (%5.2f%%)", reuse, percent);
+}
+
+static std::string PadLeft(std::string value, size_t width) {
+  if (value.size() < width) {
+    value.insert(0, width - value.size(), ' ');
+  }
+  return value;
+}
+
+static std::string PadRight(std::string value, size_t width) {
+  if (value.size() < width) {
+    value.append(width - value.size(), ' ');
+  }
+  return value;
+}
+
+static void AppendDebugStatsSeparator(std::string* table,
+                                      const DebugStatsWidths& widths) {
+  absl::StrAppend(table, "|", std::string(widths.operation + 2, '-'), "|",
+                  std::string(widths.api_calls + 2, '-'), "|",
+                  std::string(widths.allocation_reuse + 2, '-'), "|",
+                  std::string(widths.allocator_va_reuse + 2, '-'), "|",
+                  std::string(widths.reservation_va_reuse + 2, '-'), "|\n");
+}
+
+static void AppendDebugStatsRow(std::string* table, const DebugStatsRow& row,
+                                const DebugStatsWidths& widths) {
+  absl::StrAppend(
+      table, "| ", PadRight(row.operation, widths.operation), " | ",
+      PadLeft(row.api_calls, widths.api_calls), " | ",
+      PadLeft(row.allocation_reuse, widths.allocation_reuse), " | ",
+      PadLeft(row.allocator_va_reuse, widths.allocator_va_reuse), " | ",
+      PadLeft(row.reservation_va_reuse, widths.reservation_va_reuse), " |\n");
+}
+
 DeviceAddressVmmAllocator::DeviceAddressVmmAllocator(const Platform* platform)
     : DeviceAddressAllocator(platform) {}
 
@@ -295,6 +358,10 @@ DeviceAddressVmmAllocator::~DeviceAddressVmmAllocator() {
       state->destroy_fn();
     }
   }
+
+  if (VLOG_IS_ON(1)) {
+    VLOG(1) << "\n" << DebugStatsTable();
+  }
 }
 
 absl::Status DeviceAddressVmmAllocator::SynchronizeAllPendingOperations() {
@@ -309,6 +376,112 @@ absl::Status DeviceAddressVmmAllocator::SynchronizeAllPendingOperations() {
     }
   }
   return absl::OkStatus();
+}
+
+std::string DeviceAddressVmmAllocator::DebugStatsTable() const {
+  auto load = [](const std::atomic<uint64_t>& counter) {
+    return counter.load(std::memory_order_relaxed);
+  };
+
+  const uint64_t allocate_calls = load(debug_stats_.allocate_calls);
+  const uint64_t mapped_allocate_return_reservation_address_calls =
+      load(debug_stats_.mapped_allocate_return_reservation_address_calls);
+  const uint64_t mapped_allocate_return_allocator_address_calls =
+      load(debug_stats_.mapped_allocate_return_allocator_address_calls);
+  const uint64_t map_calls = load(debug_stats_.map_calls);
+
+  std::array<DebugStatsRow, 7> rows = {{
+      {"Operation", "API Calls", "Allocation Reuse", "Allocator VA Reuse",
+       "Reservation VA Reuse"},
+      {"Allocate(size)", DebugStatsCount(allocate_calls),
+       DebugStatsReuse(load(debug_stats_.allocate_allocation_reuse),
+                       allocate_calls),
+       "-", "-"},
+      {"Allocate(..., return_reservation_address=true)",
+       DebugStatsCount(mapped_allocate_return_reservation_address_calls),
+       DebugStatsReuse(
+           load(
+               debug_stats_
+                   .mapped_allocate_return_reservation_address_allocation_reuse),
+           mapped_allocate_return_reservation_address_calls),
+       DebugStatsReuse(
+           load(
+               debug_stats_
+                   .mapped_allocate_return_reservation_address_allocator_va_reuse),
+           mapped_allocate_return_reservation_address_calls),
+       "-"},
+      {"Allocate(..., return_reservation_address=false)",
+       DebugStatsCount(mapped_allocate_return_allocator_address_calls),
+       DebugStatsReuse(
+           load(debug_stats_
+                    .mapped_allocate_return_allocator_address_allocation_reuse),
+           mapped_allocate_return_allocator_address_calls),
+       DebugStatsReuse(
+           load(
+               debug_stats_
+                   .mapped_allocate_return_allocator_address_allocator_va_reuse),
+           mapped_allocate_return_allocator_address_calls),
+       DebugStatsReuse(
+           load(
+               debug_stats_
+                   .mapped_allocate_return_allocator_address_reservation_va_reuse),
+           mapped_allocate_return_allocator_address_calls)},
+      {"Map(addr, reservation, ...)", DebugStatsCount(map_calls), "-", "-",
+       DebugStatsReuse(load(debug_stats_.map_reservation_va_reuse), map_calls)},
+      {"Deallocate()", DebugStatsCount(load(debug_stats_.deallocate_calls)),
+       "-", "-", "-"},
+      {"UnMap()", DebugStatsCount(load(debug_stats_.unmap_calls)), "-", "-",
+       "-"},
+  }};
+
+  DebugStatsWidths widths{
+      /*operation=*/0,
+      /*api_calls=*/0,
+      /*allocation_reuse=*/0,
+      /*allocator_va_reuse=*/0,
+      /*reservation_va_reuse=*/0,
+  };
+  for (const DebugStatsRow& row : rows) {
+    widths.operation = std::max(widths.operation, row.operation.size());
+    widths.api_calls = std::max(widths.api_calls, row.api_calls.size());
+    widths.allocation_reuse =
+        std::max(widths.allocation_reuse, row.allocation_reuse.size());
+    widths.allocator_va_reuse =
+        std::max(widths.allocator_va_reuse, row.allocator_va_reuse.size());
+    widths.reservation_va_reuse =
+        std::max(widths.reservation_va_reuse, row.reservation_va_reuse.size());
+  }
+
+  std::string table = "DeviceAddressVmmAllocator debug statistics:\n";
+  AppendDebugStatsSeparator(&table, widths);
+  AppendDebugStatsRow(&table, rows[0], widths);
+  AppendDebugStatsSeparator(&table, widths);
+  for (size_t i = 1; i < rows.size(); ++i) {
+    AppendDebugStatsRow(&table, rows[i], widths);
+  }
+  AppendDebugStatsSeparator(&table, widths);
+  absl::StrAppend(
+      &table, "\nDeferred deallocation batch statistics:\n", "  Flushes: ",
+      DebugStatsCount(load(debug_stats_.deallocation_batch_flushes)), "\n",
+      "    by entry limit: ",
+      DebugStatsCount(
+          load(debug_stats_.deallocation_batch_flushes_by_entry_limit)),
+      "\n", "    by byte limit: ",
+      DebugStatsCount(
+          load(debug_stats_.deallocation_batch_flushes_by_byte_limit)),
+      "\n", "    by wait/reclaim: ",
+      DebugStatsCount(load(debug_stats_.deallocation_batch_flushes_by_wait)),
+      "\n", "    by sync: ",
+      DebugStatsCount(load(debug_stats_.deallocation_batch_flushes_by_sync)),
+      "\n", "    by destructor: ",
+      DebugStatsCount(
+          load(debug_stats_.deallocation_batch_flushes_by_destructor)),
+      "\n", "  Entries flushed: ",
+      DebugStatsCount(load(debug_stats_.deallocation_batch_entries_flushed)),
+      "\n", "  Reclaimable bytes flushed: ",
+      DebugStatsCount(load(debug_stats_.deallocation_batch_bytes_flushed)),
+      "\n");
+  return table;
 }
 
 // Common helpers and accessors.
@@ -564,6 +737,7 @@ absl::StatusOr<ScopedDeviceAddress<uint8_t>>
 DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
                                     bool /*retry_on_failure*/,
                                     int64_t /*memory_space*/) {
+  debug_stats_.allocate_calls.fetch_add(1, std::memory_order_relaxed);
   if (size == 0) {
     return ScopedDeviceAddress<uint8_t>(DeviceAddressBase(), device_ordinal,
                                         this);
@@ -596,6 +770,8 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
       }
 
       DeviceAddressBase reused_mem(record.allocator_key(), size);
+      debug_stats_.allocate_allocation_reuse.fetch_add(
+          1, std::memory_order_relaxed);
       MoveAllocatorRecordToActive(*state, record, size);
       ErasePendingDeallocationAt(*state, it);
 
@@ -659,6 +835,14 @@ DeviceAddressVmmAllocator::Allocate(
     int64_t /*memory_space*/, MemoryReservation* reservation,
     uint64_t reservation_offset, uint64_t mapping_size,
     bool return_reservation_address) {
+  if (return_reservation_address) {
+    debug_stats_.mapped_allocate_return_reservation_address_calls.fetch_add(
+        1, std::memory_order_relaxed);
+  } else {
+    debug_stats_.mapped_allocate_return_allocator_address_calls.fetch_add(
+        1, std::memory_order_relaxed);
+  }
+
   // Keep zero-sized mapped allocation consistent with regular Allocate(): no
   // physical allocation or mapping is created, so the requested mapping size
   // must also be zero.
@@ -739,6 +923,13 @@ DeviceAddressVmmAllocator::Allocate(
         }
 
         DeviceAddressBase reused_mem(record.allocator_key(), allocation_size);
+        debug_stats_.mapped_allocate_return_allocator_address_allocation_reuse
+            .fetch_add(1, std::memory_order_relaxed);
+        debug_stats_.mapped_allocate_return_allocator_address_allocator_va_reuse
+            .fetch_add(1, std::memory_order_relaxed);
+        debug_stats_
+            .mapped_allocate_return_allocator_address_reservation_va_reuse
+            .fetch_add(1, std::memory_order_relaxed);
         // Reactivate both aliases: the returned allocator VA and the external
         // reservation VA. This cancels the pending allocator teardown and the
         // paired pending kMap unmap for the reservation mapping.
@@ -788,6 +979,10 @@ DeviceAddressVmmAllocator::Allocate(
       return std::nullopt;
     }
 
+    debug_stats_.mapped_allocate_return_reservation_address_allocation_reuse
+        .fetch_add(1, std::memory_order_relaxed);
+    debug_stats_.mapped_allocate_return_reservation_address_allocator_va_reuse
+        .fetch_add(1, std::memory_order_relaxed);
     auto pending_it = state->pending_deallocations.end();
     // The record is indexed by allocator address, but the FIFO queue owns the
     // stream-ordered allocator teardown. Find the queue entry so reuse can
@@ -974,6 +1169,7 @@ DeviceAddressVmmAllocator::Allocate(
 
 absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
                                                    DeviceAddressBase mem) {
+  debug_stats_.deallocate_calls.fetch_add(1, std::memory_order_relaxed);
   if (mem.is_null()) {
     return absl::OkStatus();
   }
@@ -1131,6 +1327,7 @@ absl::Status DeviceAddressVmmAllocator::Map(int device_ordinal,
                                             MemoryReservation* reservation,
                                             uint64_t reservation_offset,
                                             uint64_t size) {
+  debug_stats_.map_calls.fetch_add(1, std::memory_order_relaxed);
   ASSIGN_OR_RETURN(auto state, GetPerDeviceState(device_ordinal));
   if (size == 0) {
     return absl::OkStatus();
@@ -1234,6 +1431,8 @@ absl::Status DeviceAddressVmmAllocator::Map(int device_ordinal,
         CHECK(stale_record.has_reservation_address());
         CHECK(stale_record.reservation_matches(reservation_address));
         if (stale_record.raw_allocation() == raw_allocation) {
+          debug_stats_.map_reservation_va_reuse.fetch_add(
+              1, std::memory_order_relaxed);
           MoveReservationRecordToActive(*state, stale_record);
           ErasePendingDeallocation(*state, PendingDeallocationKind::kMap,
                                    reservation_address);
@@ -1399,7 +1598,7 @@ void DeviceAddressVmmAllocator::ErasePendingDeallocationAt(
 }
 
 absl::Status DeviceAddressVmmAllocator::FlushOpenDeallocationBatch(
-    PerDeviceState& state, DeallocationBatchFlushReason /*reason*/) {
+    PerDeviceState& state, DeallocationBatchFlushReason reason) {
   if (state.open_deallocation_batch_seqno == 0) {
     CHECK_EQ(state.open_deallocation_batch_entries, 0);
     CHECK_EQ(state.open_deallocation_batch_bytes, 0);
@@ -1413,7 +1612,38 @@ absl::Status DeviceAddressVmmAllocator::FlushOpenDeallocationBatch(
   }
 
   const uint64_t seqno = state.open_deallocation_batch_seqno;
+  const int64_t entries = state.open_deallocation_batch_entries;
+  const uint64_t bytes = state.open_deallocation_batch_bytes;
   RETURN_IF_ERROR(EnqueueDeferredDeallocation(state, seqno));
+
+  debug_stats_.deallocation_batch_flushes.fetch_add(1,
+                                                    std::memory_order_relaxed);
+  debug_stats_.deallocation_batch_entries_flushed.fetch_add(
+      static_cast<uint64_t>(entries), std::memory_order_relaxed);
+  debug_stats_.deallocation_batch_bytes_flushed.fetch_add(
+      bytes, std::memory_order_relaxed);
+  switch (reason) {
+    case DeallocationBatchFlushReason::kEntryLimit:
+      debug_stats_.deallocation_batch_flushes_by_entry_limit.fetch_add(
+          1, std::memory_order_relaxed);
+      break;
+    case DeallocationBatchFlushReason::kByteLimit:
+      debug_stats_.deallocation_batch_flushes_by_byte_limit.fetch_add(
+          1, std::memory_order_relaxed);
+      break;
+    case DeallocationBatchFlushReason::kWait:
+      debug_stats_.deallocation_batch_flushes_by_wait.fetch_add(
+          1, std::memory_order_relaxed);
+      break;
+    case DeallocationBatchFlushReason::kSync:
+      debug_stats_.deallocation_batch_flushes_by_sync.fetch_add(
+          1, std::memory_order_relaxed);
+      break;
+    case DeallocationBatchFlushReason::kDestructor:
+      debug_stats_.deallocation_batch_flushes_by_destructor.fetch_add(
+          1, std::memory_order_relaxed);
+      break;
+  }
 
   state.open_deallocation_batch_seqno = 0;
   state.open_deallocation_batch_entries = 0;
@@ -1645,6 +1875,7 @@ absl::Status DeviceAddressVmmAllocator::UnMap(int device_ordinal,
                                               MemoryReservation* reservation,
                                               uint64_t reservation_offset,
                                               uint64_t size) {
+  debug_stats_.unmap_calls.fetch_add(1, std::memory_order_relaxed);
   ASSIGN_OR_RETURN(auto state, GetPerDeviceState(device_ordinal));
   if (size == 0) {
     return absl::OkStatus();
