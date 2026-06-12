@@ -116,6 +116,10 @@ class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
     return allocator;
   }
 
+  ~TestDeviceAddressVmmAllocator() override {
+    EXPECT_THAT(SynchronizeAllPendingOperations(), absl_testing::IsOk());
+  }
+
   int allocation_count() const { return allocation_count_; }
 
  protected:
@@ -274,6 +278,39 @@ TEST_F(DeviceAddressVmmAllocatorTest,
       auto second,
       allocator->Allocate(/*device_ordinal=*/0, kGranularity,
                           /*retry_on_failure=*/false, /*memory_space=*/0));
+  EXPECT_EQ(allocator->allocation_count(), 2);
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       BatchedUnmapAndDeallocateReclaimSelectedAllocation) {
+  auto reservation = std::make_unique<TestMemoryReservation>(kGranularity);
+  const DeviceAddressVmmAllocator::DeviceConfig config = Config(kGranularity);
+  ASSERT_OK_AND_ASSIGN(auto allocator, TestDeviceAddressVmmAllocator::Create(
+                                           &platform_, {config}));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto mapped,
+      allocator->Allocate(
+          /*device_ordinal=*/0, /*allocation_size=*/kGranularity,
+          /*retry_on_failure=*/false, /*memory_space=*/0, reservation.get(),
+          /*reservation_offset=*/0, /*mapping_size=*/kGranularity,
+          /*return_reservation_address=*/false));
+  EXPECT_EQ(reservation->active_mapping_count(), 1);
+
+  ASSERT_THAT(allocator->UnMap(/*device_ordinal=*/0, reservation.get(),
+                               /*reservation_offset=*/0, kGranularity),
+              absl_testing::IsOk());
+  ASSERT_THAT(allocator->Deallocate(/*device_ordinal=*/0, mapped.Release()),
+              absl_testing::IsOk());
+
+  // UnMap() and Deallocate() share one batch sequence number. Reclaim must
+  // select the allocation entry rather than the earlier map entry with the
+  // same sequence number, then complete the paired stale mapping.
+  ASSERT_OK_AND_ASSIGN(
+      auto replacement,
+      allocator->Allocate(/*device_ordinal=*/0, kGranularity,
+                          /*retry_on_failure=*/false, /*memory_space=*/0));
+  EXPECT_EQ(reservation->active_mapping_count(), 0);
   EXPECT_EQ(allocator->allocation_count(), 2);
 }
 
