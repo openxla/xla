@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/executable_run_options.h"
 #include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/layout.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/buffer_sequencing_event.h"
@@ -118,6 +119,7 @@ limitations under the License.
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/framework/allocator.h"
+#include "xla/tsl/framework/scoped_allocation_trace.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -1329,14 +1331,20 @@ GetStreamExecutorGpuDeviceAllocator(
     const std::map<int, std::unique_ptr<LocalDeviceState>>&
         addressable_devices) {
   std::vector<se::MultiDeviceAdapter::AllocatorInfo> allocators;
+  const DebugOptions& debug_options = xla::GetDebugOptionsFromFlags();
   GpuAllocatorConfig::Kind effective_kind = allocator_config.kind;
-  if (GetDebugOptionsFromFlags().xla_gpu_command_buffer_update_mode() !=
+  if (debug_options.xla_gpu_command_buffer_update_mode() !=
           DebugOptions::ALWAYS_UPDATE &&
       effective_kind != GpuAllocatorConfig::Kind::kVmm) {
     LOG(WARNING) << "xla_gpu_command_buffer_update_mode requires the "
                     "VMM allocator. Overriding allocator kind to kVmm.";
     effective_kind = GpuAllocatorConfig::Kind::kVmm;
   }
+
+  // Set when a single preallocated BFC allocator serves both default and
+  // collective memory via spatial partitioning; suppresses the separate
+  // collective allocator below.
+  bool shared_collective_pool = false;
   switch (effective_kind) {
     case GpuAllocatorConfig::Kind::kCudaAsync: {
       for (const auto& ordinal_and_device : addressable_devices) {
@@ -1356,6 +1364,13 @@ GetStreamExecutorGpuDeviceAllocator(
     case GpuAllocatorConfig::Kind::kDefault:
     case GpuAllocatorConfig::Kind::kBFC: {
       LOG(INFO) << "Using BFC allocator.";
+      // With the spatial-partitioning flag enabled, preallocation lets one BFC
+      // allocator over a fixed address range serve both default (lower end) and
+      // collective (upper end) memory, so no separate collective allocator is
+      // created. Otherwise, use the separate collective allocator below.
+      shared_collective_pool =
+          allocator_config.preallocate &&
+          debug_options.xla_gpu_enable_allocator_spatial_partitioning();
       for (const auto& ordinal_and_device : addressable_devices) {
         ASSIGN_OR_RETURN(
             auto bfc_allocator,
@@ -1364,11 +1379,29 @@ GetStreamExecutorGpuDeviceAllocator(
                                allocator_config.preallocate,
                                allocator_config.gpu_system_memory_size,
                                allocator_config.sub_allocator_alloc_visitors,
-                               allocator_config.sub_allocator_free_visitors));
+                               allocator_config.sub_allocator_free_visitors,
+                               /*enable_spatial_partitioning=*/
+                               shared_collective_pool));
         allocators.push_back(
-            {std::move(bfc_allocator),
-             ordinal_and_device.second->compute_stream(),
+            {bfc_allocator, ordinal_and_device.second->compute_stream(),
              /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kDefault});
+        if (shared_collective_pool) {
+          size_t collective_memory_alignment =
+              tsl::Allocator::kAllocatorAlignment;
+          if (auto* collectives =
+                  gpu::GpuCollectives::Default(platform->Name())) {
+            collective_memory_alignment =
+                collectives->SymmetricMemoryAlignment();
+          }
+          allocators.push_back(
+              {std::move(bfc_allocator),
+               ordinal_and_device.second->compute_stream(),
+               /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kCollective,
+               /*device_ordinal=*/std::nullopt,
+               /*platform=*/nullptr,
+               /*min_alignment=*/collective_memory_alignment,
+               /*allocation_end=*/tsl::AllocationEnd::kUpper});
+        }
       }
       break;
     }
@@ -1402,18 +1435,22 @@ GetStreamExecutorGpuDeviceAllocator(
     }
   }
 
-  // Add any additional allocators for alternate memory spaces.
-  for (const auto& ordinal_and_device : addressable_devices) {
-    ASSIGN_OR_RETURN(
-        auto collective_bfc_allocator,
-        CreateCollectiveBFCAllocator(
-            ordinal_and_device.second->executor(),
-            /*memory_fraction=*/1.0 - allocator_config.memory_fraction,
-            allocator_config.collective_memory_size));
-    allocators.push_back(
-        {std::move(collective_bfc_allocator),
-         ordinal_and_device.second->compute_stream(),
-         /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kCollective});
+  // Add a separate collective allocator unless the default BFC allocator
+  // already serves collective memory from its shared, spatially partitioned
+  // pool.
+  if (!shared_collective_pool) {
+    for (const auto& ordinal_and_device : addressable_devices) {
+      ASSIGN_OR_RETURN(
+          auto collective_bfc_allocator,
+          CreateCollectiveBFCAllocator(
+              ordinal_and_device.second->executor(),
+              /*memory_fraction=*/1.0 - allocator_config.memory_fraction,
+              allocator_config.collective_memory_size));
+      allocators.push_back(
+          {std::move(collective_bfc_allocator),
+           ordinal_and_device.second->compute_stream(),
+           /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kCollective});
+    }
   }
 
   for (const auto& ordinal_and_device : addressable_devices) {
@@ -1426,7 +1463,6 @@ GetStreamExecutorGpuDeviceAllocator(
   }
 
 #if defined(GOOGLE_CUDA) && CUDA_VERSION >= 11020
-  const auto& debug_options = xla::GetDebugOptionsFromFlags();
   if (debug_options.xla_gpu_temp_buffer_use_separate_color()) {
     // Add memory allocator to allocate memory buffers with persistent temp
     // memory space color.
@@ -2003,6 +2039,11 @@ StreamExecutorGpuClient::RunAsync(
       "[", device_ordinal, "] GpuExecutable::ExecuteAsyncOnStreamImpl(",
       gpu_exec->name(), ")"));
 
+  // Attribute all device memory allocation to the gpu executable.
+  tsl::ScopedAllocationTrace allocation_trace(
+      "xla.execute",
+      {{"executable", gpu_exec->name()}, {"device", device_ordinal}});
+
   // GpuExecutable always bound to a single GpuContext during its execution, so
   // we activate it once to skip expensive context activations later.
   auto activation = executor->Activate();
@@ -2093,14 +2134,21 @@ StreamExecutorGpuClient::RunAsync(
         }
       } else {
         // Allocate each allocation that might escape, or is the temp buffer.
-        CHECK(allocation.maybe_live_out() ||
-              allocation.IsPreallocatedTempBuffer());
+        bool is_live_out = allocation.maybe_live_out();
+        bool is_temp_buffer = allocation.IsPreallocatedTempBuffer();
+        CHECK(is_live_out || is_temp_buffer);  // Crash OK
+
         int64_t buffer_size = allocation.size();
         if (auto it = allocate_granularity.find(allocation.color());
             it != allocate_granularity.end()) {
           buffer_size = RoundUpTo(buffer_size, it->second);
         }
         if (buffer_size > 0) {
+          tsl::ScopedAllocationTrace allocation_trace(
+              "xla.buffer", {{"kind", is_temp_buffer ? "temp" : "live_out"},
+                             {"allocation_index", i},
+                             {"requested_bytes", buffer_size},
+                             {"memory_space", allocation.color()}});
           ASSIGN_OR_RETURN(
               se::ScopedDeviceAddress<uint8_t> owning_buffer,
               memory_allocator->Allocate(device_ordinal, buffer_size,
@@ -2165,6 +2213,16 @@ StreamExecutorGpuClient::RunAsync(
                "buffer is not donated; allocating a fresh buffer";
         int64_t allocation_size = ShapeUtil::ByteSizeOf(
             ShapeUtil::GetSubshape(gpu_exec->result_shape(), index));
+        const HloInputOutputAliasConfig::Alias& alias =
+            *output_info.alias_config;
+        const bool must_alias = alias.must_alias();
+        tsl::ScopedAllocationTrace copy_protection_trace(
+            "xla.buffer",
+            {{"kind", "live_out_copy_protection"},
+             {"allocation_index", output_info.allocation_index},
+             {"requested_bytes", allocation_size},
+             {"memory_space", allocation->color()},
+             {"alias_kind", must_alias ? "must_alias" : "may_alias"}});
         absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> allocated_buffer =
             memory_allocator->Allocate(device_ordinal, allocation_size,
                                        /*retry_on_failure=*/true,
