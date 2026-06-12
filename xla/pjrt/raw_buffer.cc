@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/future.h"
 #include "xla/pjrt/async_work_runner.h"
+#include "xla/pjrt/c/pjrt_c_api_raw_buffer_extension.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/device_event_utils.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -93,12 +94,12 @@ absl::StatusOr<std::vector<PjRtRawBufferRef>> CommonPjRtRawBuffer::MultiSlice(
 
 void CommonPjRtRawBuffer::ScheduleCopyTo(
     AsyncWorkRunner* async_work_runner,
-    std::vector<PjRtDeviceEventRef> transfer_dependency_events,
+    PjRtDeviceEventRefVector transfer_dependency_events,
     PjRtRawBufferRef dst_raw_buffer,
     PjRtDeviceEventPromiseRef definition_event_promise,
     PjRtDeviceEventPromiseRef src_usage_event_promise,
     absl::AnyInvocable<void(absl::Status) &&> allocation_event) {
-  absl::Span<const PjRtDeviceEventRef> events_span = transfer_dependency_events;
+  PjRtDeviceEventSpan events_span(transfer_dependency_events);
   xla::ExecuteWhenReady(
       events_span, async_work_runner,
       [src_raw_buffer = tsl::FormRef(this),
@@ -124,7 +125,7 @@ void CommonPjRtRawBuffer::ScheduleCopyTo(
       });
 }
 
-void CommonPjRtRawBuffer::DecrefAfter(std::vector<PjRtDeviceEventRef> events) {
+void CommonPjRtRawBuffer::DecrefAfter(PjRtDeviceEventRefVector events) {
   xla::RunWhenReady(events, [this]() { DropRef(); });
 }
 
@@ -209,5 +210,35 @@ tsl::AsyncValueRef<PjRtStagingBuffer> ToStagingBuffer(
         std::move(returned_staging_buffer_av));
   }
 }
+
+const PJRT_RawBuffer_FunctionTable PjRtRawBuffer::kRawBufferVtable = {
+    /*struct_size=*/PJRT_RawBuffer_FunctionTable_STRUCT_SIZE,
+    /*instance_size=*/PJRT_RawBuffer_STRUCT_SIZE,
+    /*extension_start=*/nullptr,
+    /*inc_ref=*/
+    +[](PJRT_RawBuffer* raw_buffer) {
+      static_cast<PjRtRawBuffer*>(raw_buffer)->AddRef();
+    },
+    /*dec_ref=*/
+    +[](PJRT_RawBuffer* raw_buffer) {
+      static_cast<PjRtRawBuffer*>(raw_buffer)->DropRef();
+    },
+    /*get_on_device_size_in_bytes=*/
+    +[](PJRT_RawBuffer* raw_buffer) -> size_t {
+      return static_cast<PjRtRawBuffer*>(raw_buffer)->GetOnDeviceSizeInBytes();
+    },
+    /*get_memory_space=*/
+    +[](PJRT_RawBuffer* raw_buffer) -> PJRT_Memory* {
+      return static_cast<PjRtRawBuffer*>(raw_buffer)
+          ->memory_space()
+          ->ToCApiPtr();
+    },
+    /*get_host_pointer=*/
+    +[](PJRT_RawBuffer* raw_buffer) -> void* {
+      return static_cast<PjRtRawBuffer*>(raw_buffer)->GetHostPointer();
+    },
+};
+
+PjRtRawBuffer::PjRtRawBuffer() { vtable = &kRawBufferVtable; }
 
 }  // namespace xla

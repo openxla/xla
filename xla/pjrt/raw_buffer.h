@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/literal.h"
 #include "xla/pjrt/async_work_runner.h"
+#include "xla/pjrt/c/pjrt_c_api_raw_buffer_extension.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/staging_buffer.h"
 #include "xla/shape.h"
@@ -46,8 +47,10 @@ class PjRtBuffer;
 // Experimental. Don't use unless you know what you're doing.
 // A raw buffer is an unsafe API for directly transferring into device
 // memory while existing processes are consuming or mutating the same buffer.
-class PjRtRawBuffer : public tsl::ReferenceCounted<PjRtRawBuffer> {
+class PjRtRawBuffer : public PJRT_RawBuffer,
+                      public tsl::ReferenceCounted<PjRtRawBuffer> {
  public:
+  PjRtRawBuffer();
   virtual ~PjRtRawBuffer() = default;
 
   static absl::StatusOr<tsl::RCReference<PjRtRawBuffer>> CreateRawAliasOfBuffer(
@@ -83,6 +86,9 @@ class PjRtRawBuffer : public tsl::ReferenceCounted<PjRtRawBuffer> {
   // this method for specific alignment requirements.
   virtual Future<> CopyRawDeviceToHost(void* dst, int64_t offset,
                                        int64_t transfer_size) = 0;
+
+ private:
+  static const PJRT_RawBuffer_FunctionTable kRawBufferVtable;
 };
 
 class CommonPjRtRawBuffer;
@@ -127,7 +133,7 @@ class CommonPjRtRawBuffer : public PjRtRawBuffer {
       std::function<void(absl::Status status, bool sends_were_enqueued)>;
   virtual absl::StatusOr<PjRtDeviceEventRef> CopyRawToRemoteDevice(
       Future<std::string> serialized_descriptor, RemoteSendCallback on_done,
-      std::vector<PjRtDeviceEventRef> transfer_dependency_avs) = 0;
+      PjRtDeviceEventRefVector transfer_dependency_avs) = 0;
 
   // A sliced buffer is a view into the offset and range of this buffer.
   //
@@ -164,7 +170,7 @@ class CommonPjRtRawBuffer : public PjRtRawBuffer {
   // and src_usage_event_promise when done using this buffer.
   virtual void ScheduleCopyTo(
       AsyncWorkRunner* async_work_runner,
-      std::vector<PjRtDeviceEventRef> transfer_dependency_events,
+      PjRtDeviceEventRefVector transfer_dependency_events,
       PjRtRawBufferRef dst_raw_buffer,
       PjRtDeviceEventPromiseRef definition_event_promise,
       PjRtDeviceEventPromiseRef src_usage_event_promise,
@@ -177,7 +183,7 @@ class CommonPjRtRawBuffer : public PjRtRawBuffer {
 
   // TODO(parkers): This should not be needed, but some backends
   // require deleting after all events.
-  virtual void DecrefAfter(std::vector<PjRtDeviceEventRef> avs);
+  virtual void DecrefAfter(PjRtDeviceEventRefVector avs);
 };
 
 tsl::AsyncValueRef<PjRtStagingBuffer> ToStagingBuffer(
