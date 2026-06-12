@@ -414,6 +414,8 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",

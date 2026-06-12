@@ -1105,29 +1105,26 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
   absl::string_view kHloModule = R"(
 HloModule test, num_partitions=4
 
-%dsf_computation (param_0: f32[2,2,2], param_1: s32[], param_2: s32[], param_3: s32[]) -> f32[1,2,2] {
+%dsf_computation (param_0: f32[2,2,2], param_1: s32[]) -> f32[1,2,2] {
   %param_0 = f32[2,2,2]{2,1,0} parameter(0)
   %param_1 = s32[] parameter(1)
-  %param_2 = s32[] parameter(2)
-  %param_3 = s32[] parameter(3)
-  ROOT %dynamic-slice = f32[1,2,2]{2,1,0} dynamic-slice(%param_0, %param_1, %param_2, %param_3), dynamic_slice_sizes={1,2,2},
+  %c0 = s32[] constant(0)
+  ROOT %dynamic-slice = f32[1,2,2]{2,1,0} dynamic-slice(%param_0, %param_1, %c0, %c0), dynamic_slice_sizes={1,2,2},
       backend_config={"dynamic_slice_config":{"byte_offset":"0","byte_stride":"0"}}
 }
 
-%async_computation (param_0: f32[2,2,2], param_1: s32[], param_2: s32[], param_3: s32[]) -> f32[1,2,2] {
+%async_computation (param_0: f32[2,2,2], param_1: s32[]) -> f32[1,2,2] {
   %param_0 = f32[2,2,2]{2,1,0} parameter(0)
   %param_1 = s32[] parameter(1)
-  %param_2 = s32[] parameter(2)
-  %param_3 = s32[] parameter(3)
-  ROOT %dynamic-slice-fusion = f32[1,2,2]{2,1,0} fusion(%param_0, %param_1, %param_2, %param_3), kind=kLoop, calls=%dsf_computation
+  ROOT %dynamic-slice-fusion = f32[1,2,2]{2,1,0} fusion(%param_0, %param_1), kind=kLoop, calls=%dsf_computation
 }
 
 ENTRY main {
  p0 = f32[1,2,2]{2,1,0} parameter(0)
  p1 = f32[2,2,2]{2,1,0} parameter(1)
  %c0 = s32[] constant(0)
- %dynamic-slice-start = ((f32[2,2,2]{2,1,0}, s32[], s32[], s32[]), f32[1,2,2]{2,1,0}, u32[]) async-start(
-      %p1, %c0, %c0, %c0), calls=%async_computation
+ %dynamic-slice-start = ((f32[2,2,2]{2,1,0}, s32[]), f32[1,2,2]{2,1,0}, u32[]) async-start(
+      %p1, %c0), calls=%async_computation
  %dynamic-slice-done = f32[1,2,2]{2,1,0} async-done(%dynamic-slice-start)
  %add = f32[1,2,2]{2,1,0} add(p0, p0)
  ROOT tuple = (f32[1,2,2]{2,1,0}, f32[1,2,2]{2,1,0}) tuple(%dynamic-slice-done, %add)

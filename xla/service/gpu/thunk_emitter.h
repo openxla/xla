@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/host_send_recv_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -56,10 +57,9 @@ class ThunkEmitter {
     return ir_emitter_context_->platform_name();
   }
 
-  explicit ThunkEmitter(
-      IrEmitterContext* absl_nonnull ir_emitter_context,
-      llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
-          llvm_options_lock);
+  explicit ThunkEmitter(IrEmitterContext* absl_nonnull ir_emitter_context,
+                        llvm_ir::LLVMCommandLineOptionsReleasableLock*
+                            absl_nonnull llvm_options_lock);
   ThunkEmitter(const ThunkEmitter&) = delete;
   ThunkEmitter& operator=(const ThunkEmitter&) = delete;
 
@@ -156,8 +156,6 @@ class ThunkEmitter {
 
   absl::StatusOr<ThunkSequence> EmitInfeed(const HloInfeedInstruction* hlo);
 
-
-
   absl::StatusOr<ThunkSequence> EmitNormThunk(
       const HloCustomCallInstruction* hlo);
 
@@ -208,6 +206,10 @@ class ThunkEmitter {
 
   AsyncThunkSequence EmitDynamicSliceFusionV2(
       const HloFusionInstruction* instr);
+  AsyncThunkSequence EmitDynamicSliceFusionV2(
+      const HloFusionInstruction* instr, const HloInstruction* hero,
+      std::vector<DynamicSliceFusion::Parameter> parameters,
+      std::vector<DynamicSliceFusion::Result> results);
 
   absl::StatusOr<BufferAllocation::Slice> GetAllocationSliceForHlo(
       const HloInstruction* instr, const ShapeIndex& index = {}) const;

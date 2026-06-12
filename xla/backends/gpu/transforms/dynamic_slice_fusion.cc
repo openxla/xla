@@ -249,107 +249,58 @@ static bool AllSlicingInstructionsCompatible(const HloComputation* body) {
   return true;
 }
 
-std::optional<DynamicSliceFusion::MemcpyFusionCandidate>
-DynamicSliceFusion::FindMemcpyFusionCandidate(const HloInstruction* instr) {
-  if (instr == nullptr || instr->opcode() != HloOpcode::kFusion) {
-    return std::nullopt;
-  }
-
-  const HloComputation* body = instr->fused_instructions_computation();
-  const HloInstruction* root = body->root_instruction();
-  const HloInstruction* ds_or_dus = WalkThroughBitcastsAndReshapes(root);
-
-  if (!HasDynamicSliceConfig(ds_or_dus)) {
-    return std::nullopt;
-  }
-
-  if (ds_or_dus->opcode() == HloOpcode::kDynamicSlice) {
-    return MemcpyFusionCandidate{ds_or_dus, root};
-  }
-
-  if (ds_or_dus->opcode() == HloOpcode::kDynamicUpdateSlice) {
-    return MemcpyFusionCandidate{ds_or_dus, ds_or_dus->operand(1)};
-  }
-
-  return std::nullopt;
+static bool IsRuntimeOffset(const Offset::Expr& expr) {
+  return !DynamicSliceFusion::CollectOffsetParameters(expr).empty();
 }
 
-static bool CanLowerMemcpyFusionCandidate(
-    const DynamicSliceFusion::MemcpyFusionCandidate& candidate) {
-  auto resolve_copy_hero_parameters = [](const HloInstruction* operand) {
-    std::unique_ptr<HloInstruction> copy =
-        HloInstruction::CreateUnary(operand->shape(), HloOpcode::kCopy,
-                                    const_cast<HloInstruction*>(operand));
-    return DynamicSliceFusion::ResolveParameters(copy.get());
-  };
+static bool IsStaticZeroOffset(const Offset::Expr& expr) {
+  absl::StatusOr<int64_t> value = DynamicSliceFusion::Evaluate(expr, {});
+  return value.ok() && *value == 0;
+}
 
-  absl::StatusOr<std::vector<DynamicSliceFusion::Parameter>> parameters =
-      resolve_copy_hero_parameters(candidate.copy_operand);
-  if (!parameters.ok()) {
+static bool CanClampWithLinearByteOffset(
+    const Shape& full_shape, const Shape& slice_shape,
+    const std::optional<std::vector<Offset>>& offsets) {
+  if (!offsets.has_value()) {
+    return true;
+  }
+
+  std::optional<int64_t> runtime_dim;
+  for (const Offset& offset : *offsets) {
+    if (!IsRuntimeOffset(offset.expr)) {
+      continue;
+    }
+    if (runtime_dim.has_value() && *runtime_dim != offset.dimension_number) {
+      return false;
+    }
+    runtime_dim = offset.dimension_number;
+  }
+  if (!runtime_dim.has_value()) {
+    return true;
+  }
+
+  auto byte_strides = ShapeUtil::ByteStrides(full_shape);
+  if (!byte_strides.has_value() ||
+      *runtime_dim != full_shape.layout().minor_to_major().back()) {
     return false;
   }
 
-  for (const DynamicSliceFusion::Parameter& parameter : *parameters) {
-    if (parameter.slice_config.has_value()) {
+  for (int64_t dim = 0; dim < full_shape.dimensions().size(); ++dim) {
+    if (dim == *runtime_dim) {
       continue;
     }
-
-    // Without DynamicSliceConfig, DynamicSliceFusion will pass the original
-    // parameter buffer base address to the embedded copy thunk. This is only
-    // correct for unsliced pass-through operands.
-    if (ShapeUtil::ByteSizeOf(parameter.slice_shape) !=
-        ShapeUtil::ByteSizeOf(parameter.parameter_shape)) {
+    if (slice_shape.dimensions(dim) != full_shape.dimensions(dim)) {
       return false;
     }
   }
 
-  if (candidate.slicing->opcode() == HloOpcode::kDynamicSlice) {
-    return true;
+  for (const Offset& offset : *offsets) {
+    if (offset.dimension_number != *runtime_dim &&
+        !IsStaticZeroOffset(offset.expr)) {
+      return false;
+    }
   }
-
-  return DynamicSliceFusion::ResolveResults(candidate.copy_operand).ok();
-}
-
-bool DynamicSliceFusion::IsMemcpyFusionCandidate(const HloInstruction* instr) {
-  std::optional<MemcpyFusionCandidate> candidate =
-      FindMemcpyFusionCandidate(instr);
-  return candidate.has_value() &&
-         AllSlicingInstructionsCompatible(
-             instr->fused_instructions_computation()) &&
-         CanLowerMemcpyFusionCandidate(*candidate);
-}
-
-bool IsCopyHeroDynamicSliceFusion(const HloInstruction* instr) {
-  static constexpr char kDynamicSliceFusionV2ConfigName[] =
-      "dynamic_slice_fusion";
-
-  if (instr == nullptr || instr->opcode() != HloOpcode::kFusion ||
-      instr->fusion_kind() != HloInstruction::FusionKind::kCustom) {
-    return false;
-  }
-
-  absl::StatusOr<GpuBackendConfig> backend_config =
-      instr->backend_config<GpuBackendConfig>();
-  if (!backend_config.ok() || !backend_config->has_fusion_backend_config()) {
-    return false;
-  }
-
-  const FusionBackendConfig& fusion_config =
-      backend_config->fusion_backend_config();
-  if (!fusion_config.has_custom_fusion_config() ||
-      fusion_config.custom_fusion_config().name() !=
-          kDynamicSliceFusionV2ConfigName) {
-    return false;
-  }
-
-  const HloInstruction* hero =
-      DynamicSliceFusion::FindHero(instr->fused_instructions_computation());
-  return hero != nullptr && hero->opcode() == HloOpcode::kCopy;
-}
-
-bool IsDynamicSliceMemcpyFusion(const HloInstruction* instr) {
-  return DynamicSliceFusion::IsMemcpyFusionCandidate(instr) ||
-         IsCopyHeroDynamicSliceFusion(instr);
+  return true;
 }
 
 static absl::Status VerifyArgCount(const Offset::Expr& expr,
@@ -508,6 +459,146 @@ const HloInstruction* DynamicSliceFusion::FindHero(const HloComputation* body) {
     }
   }
   return nullptr;
+}
+
+std::unique_ptr<HloInstruction> DynamicSliceFusion::CreateMemcpyFusionHero(
+    const MemcpyFusionCandidate& candidate) {
+  auto copy = HloInstruction::CreateUnary(
+      candidate.copy_operand->shape(), HloOpcode::kCopy,
+      const_cast<HloInstruction*>(candidate.copy_operand));
+  copy->SetAndSanitizeName("dynamic_memcpy_copy");
+  return copy;
+}
+
+absl::StatusOr<std::vector<DynamicSliceFusion::Parameter>>
+DynamicSliceFusion::ResolveParameters(const MemcpyFusionCandidate& candidate) {
+  std::unique_ptr<HloInstruction> copy = CreateMemcpyFusionHero(candidate);
+  return ResolveParameters(copy.get());
+}
+
+absl::StatusOr<std::vector<DynamicSliceFusion::Result>>
+DynamicSliceFusion::ResolveResults(const MemcpyFusionCandidate& candidate) {
+  if (candidate.slicing->opcode() == HloOpcode::kDynamicSlice) {
+    std::unique_ptr<HloInstruction> copy = CreateMemcpyFusionHero(candidate);
+    return ResolveResults(copy.get());
+  }
+
+  return ResolveResults(candidate.copy_operand);
+}
+
+static bool CanLowerMemcpyFusionCandidate(
+    const DynamicSliceFusion::MemcpyFusionCandidate& candidate) {
+  absl::StatusOr<std::vector<DynamicSliceFusion::Parameter>> parameters =
+      DynamicSliceFusion::ResolveParameters(candidate);
+  if (!parameters.ok()) {
+    return false;
+  }
+
+  for (const DynamicSliceFusion::Parameter& parameter : *parameters) {
+    if (!CanClampWithLinearByteOffset(parameter.parameter_shape,
+                                      parameter.slice_shape,
+                                      parameter.slice_offsets)) {
+      return false;
+    }
+
+    if (parameter.slice_config.has_value()) {
+      continue;
+    }
+
+    // Without DynamicSliceConfig, DynamicSliceFusionV2 passes the original
+    // parameter buffer base address to the embedded copy thunk. This is correct
+    // only for unsliced pass-through operands.
+    if (ShapeUtil::ByteSizeOf(parameter.slice_shape) !=
+        ShapeUtil::ByteSizeOf(parameter.parameter_shape)) {
+      return false;
+    }
+  }
+
+  if (candidate.slicing->opcode() == HloOpcode::kDynamicSlice) {
+    return true;
+  }
+
+  absl::StatusOr<std::vector<DynamicSliceFusion::Result>> results =
+      DynamicSliceFusion::ResolveResults(candidate);
+  if (!results.ok()) {
+    return false;
+  }
+  for (const DynamicSliceFusion::Result& result : *results) {
+    if (!CanClampWithLinearByteOffset(result.result_shape, result.update_shape,
+                                      result.update_offsets)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::optional<DynamicSliceFusion::MemcpyFusionCandidate>
+DynamicSliceFusion::FindMemcpyFusionCandidate(const HloInstruction* instr) {
+  if (instr == nullptr || instr->opcode() != HloOpcode::kFusion) {
+    return std::nullopt;
+  }
+
+  const HloFusionInstruction* fusion = Cast<HloFusionInstruction>(instr);
+  const HloComputation* body = fusion->fused_instructions_computation();
+  const HloInstruction* root = body->root_instruction();
+  const HloInstruction* ds_or_dus = WalkThroughBitcastsAndReshapes(root);
+
+  if (!HasDynamicSliceConfig(ds_or_dus)) {
+    return std::nullopt;
+  }
+
+  MemcpyFusionCandidate candidate;
+  if (ds_or_dus->opcode() == HloOpcode::kDynamicSlice) {
+    candidate = MemcpyFusionCandidate{ds_or_dus, root};
+  } else if (ds_or_dus->opcode() == HloOpcode::kDynamicUpdateSlice) {
+    candidate = MemcpyFusionCandidate{ds_or_dus, ds_or_dus->operand(1)};
+  } else {
+    return std::nullopt;
+  }
+
+  if (!AllSlicingInstructionsCompatible(body) ||
+      !CanLowerMemcpyFusionCandidate(candidate)) {
+    return std::nullopt;
+  }
+
+  return candidate;
+}
+
+bool DynamicSliceFusion::IsMemcpyFusionCandidate(const HloInstruction* instr) {
+  return FindMemcpyFusionCandidate(instr).has_value();
+}
+
+bool IsCopyHeroDynamicSliceFusion(const HloInstruction* instr) {
+  static constexpr char kDynamicSliceFusionV2ConfigName[] =
+      "dynamic_slice_fusion";
+
+  if (instr == nullptr || instr->opcode() != HloOpcode::kFusion ||
+      instr->fusion_kind() != HloInstruction::FusionKind::kCustom) {
+    return false;
+  }
+
+  absl::StatusOr<GpuBackendConfig> backend_config =
+      instr->backend_config<GpuBackendConfig>();
+  if (!backend_config.ok() || !backend_config->has_fusion_backend_config()) {
+    return false;
+  }
+
+  const FusionBackendConfig& fusion_config =
+      backend_config->fusion_backend_config();
+  if (!fusion_config.has_custom_fusion_config() ||
+      fusion_config.custom_fusion_config().name() !=
+          kDynamicSliceFusionV2ConfigName) {
+    return false;
+  }
+
+  const HloInstruction* hero =
+      DynamicSliceFusion::FindHero(instr->fused_instructions_computation());
+  return hero != nullptr && hero->opcode() == HloOpcode::kCopy;
+}
+
+bool IsDynamicSliceMemcpyFusion(const HloInstruction* instr) {
+  return DynamicSliceFusion::IsMemcpyFusionCandidate(instr) ||
+         IsCopyHeroDynamicSliceFusion(instr);
 }
 
 static std::optional<DynamicSliceConfig> ComputeStaticSliceConfig(
