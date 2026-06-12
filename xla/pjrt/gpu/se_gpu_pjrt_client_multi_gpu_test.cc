@@ -340,7 +340,7 @@ TEST(StreamExecutorGpuClientTest, MockNcclClientWithGpuTopologyTest) {
   [[deprecated(
       "remove after absl upgrade")]] const StreamExecutorGpuTopologyDescription&
       gpu_topology =
-          tensorflow::down_cast<const StreamExecutorGpuTopologyDescription&>(
+          absl::down_cast<const StreamExecutorGpuTopologyDescription&>(
               *topology);
 
   EXPECT_EQ(gpu_topology.gpu_topology().num_partitions(), 2);
@@ -1221,8 +1221,7 @@ absl::Status SuccessfulCrossHostSendReceiveTestBody(bool is_sender,
 TEST(StreamExecutorGpuClientTest, FailedCrossHostTransferSrcAndDstAddressable) {
   ASSERT_OK_AND_ASSIGN(auto pjrt_client,
                        GetStreamExecutorGpuClient(GetTestGpuClientOptions(2)));
-  auto* client =
-      tensorflow::down_cast<PjRtStreamExecutorClient*>(pjrt_client.get());
+  auto* client = absl::down_cast<PjRtStreamExecutorClient*>(pjrt_client.get());
   auto* memory_space = client->memory_spaces()[0];
   auto literal = LiteralUtil::CreateR1<float>({41.0f, 42.0f, 43.0f, 44.0f});
   ASSERT_OK_AND_ASSIGN(
@@ -1406,7 +1405,7 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
     PjRtDeviceEventRef usage_event;
     ASSIGN_OR_RETURN(
         std::tie(usage_event_promise, usage_event),
-        tensorflow::down_cast<CommonPjRtClient*>(client.get())
+        absl::down_cast<CommonPjRtClient*>(client.get())
             ->CreateLinkedEventPromise(default_memory_space,
                                        absl::StrFormat("buffer %i", i)));
     usage_event_promises.push_back(std::move(usage_event_promise));
@@ -1414,7 +1413,7 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
     // Get a raw buffer.
     tsl::RCReference<CommonPjRtRawBuffer> raw_buffer;
     RETURN_IF_ERROR(
-        tensorflow::down_cast<CommonPjRtBufferImpl*>(buffer.get())
+        absl::down_cast<CommonPjRtBufferImpl*>(buffer.get())
             ->AcquireScopedRawBuffer(
                 [&](tsl::RCReference<CommonPjRtRawBuffer> buf_raw_buffer,
                     PjRtDeviceEventRefVector buf_definition_events) mutable
@@ -1443,7 +1442,7 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
   LOG(INFO) << log_prefix << ": enqueuing transfers";
   ASSIGN_OR_RETURN(
       PjRtDeviceEventRefVector usage_events,
-      tensorflow::down_cast<CommonPjRtClient*>(client.get())
+      absl::down_cast<CommonPjRtClient*>(client.get())
           ->CrossHostTransferBuffers(std::move(transfer_dependencies),
                                      std::move(transfer_specs)));
   EXPECT_EQ(usage_events.size(), num_transfers);
