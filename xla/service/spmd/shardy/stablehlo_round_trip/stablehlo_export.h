@@ -54,6 +54,11 @@ struct StablehloExportPipelineOptions
       llvm::cl::desc("Whether to simplify replicated shardings during export "
                      "to make final sharding strings shorter."),
       llvm::cl::init(false)};
+  Option<bool> eraseManualComputations{
+      *this, "erase-manual-computations",
+      llvm::cl::desc("Whether to drop manual computations and convert them "
+                     "into regular func/calls."),
+      llvm::cl::init(false)};
 };
 
 // Register the xla-sdy-stablehlo-export-pipeline.
