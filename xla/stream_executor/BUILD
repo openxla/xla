@@ -351,9 +351,9 @@ cc_library(
 )
 
 cc_library(
-    name = "vmm_device_address_allocator",
-    srcs = ["vmm_device_address_allocator.cc"],
-    hdrs = ["vmm_device_address_allocator.h"],
+    name = "device_address_vmm_allocator",
+    srcs = ["device_address_vmm_allocator.cc"],
+    hdrs = ["device_address_vmm_allocator.h"],
     deps = [
         ":device_address",
         ":device_address_allocator",
@@ -370,8 +370,10 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
