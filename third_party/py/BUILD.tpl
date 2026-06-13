@@ -44,6 +44,11 @@ alias(
     actual = ":python_headers",
 )
 
+alias(
+    name = "tensorflow",
+    actual = "//tensorflow:tensorflow_py",
+)
+
 
 config_setting(
     name = "windows",
