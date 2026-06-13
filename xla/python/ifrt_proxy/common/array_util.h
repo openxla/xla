@@ -90,11 +90,12 @@ absl::StatusOr<std::unique_ptr<std::string>> SerializeStringHostBuffer(
 absl::StatusOr<std::vector<absl::Cord>> DeserializeStringHostBufferFromString(
     absl::string_view serialized_string_buffer);
 
-// Callers must ensure that the `preallocated_buffer` consists of `N`
-// `absl::Cord` objects, where N is the number of string elements in the
-// `serialized_string_buffer`.
+// `preallocated_buffer` points to `num_elements` default-constructed
+// `absl::Cord` objects. The number of string elements encoded in
+// `serialized_string_buffer` is provided by the (potentially untrusted) peer,
+// so it is validated against `num_elements` before any element is written.
 absl::Status DeserializeFromCordIntoPreallocatedStringHostBuffer(
-    const absl::Cord& serialized_string_buffer,
+    const absl::Cord& serialized_string_buffer, size_t num_elements,
     absl::Cord* preallocated_buffer);
 
 }  // namespace proxy

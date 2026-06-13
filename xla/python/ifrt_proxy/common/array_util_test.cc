@@ -209,7 +209,8 @@ TEST(StringHostBufferTest,
 
   std::vector<absl::Cord> deserialized(input.size());
   ASSERT_THAT(DeserializeFromCordIntoPreallocatedStringHostBuffer(
-                  absl::Cord(*serialized), deserialized.data()),
+                  absl::Cord(*serialized), deserialized.size(),
+                  deserialized.data()),
               absl_testing::IsOk());
 
   EXPECT_EQ(deserialized, input);
