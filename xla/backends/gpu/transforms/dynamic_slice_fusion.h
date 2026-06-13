@@ -212,6 +212,21 @@ struct DynamicSliceFusion {
   static absl::StatusOr<std::vector<Result>> ResolveResults(
       const HloInstruction* hero);
 
+  // Raw DS/DUS-root fusion that can be converted to a copy-hero
+  // dynamic-slice fusion.
+  struct MemcpyFusionCandidate {
+    const HloInstruction* slicing;
+    const HloInstruction* copy_operand;
+  };
+
+  // Detects DS/DUS-root memcpy fusions before they have a copy hero. `slicing`
+  // is the DS/DUS instruction carrying DynamicSliceConfig, and `copy_operand`
+  // is the value that would become the operand of the inserted copy hero.
+  static std::optional<MemcpyFusionCandidate> FindMemcpyFusionCandidate(
+      const HloInstruction* instr);
+
+  static bool IsMemcpyFusionCandidate(const HloInstruction* instr);
+
   // Evaluates an offset expression with parameter values represented as
   // (fusion parameter number, scalar value) pairs.
   static absl::StatusOr<int64_t> Evaluate(
@@ -221,6 +236,15 @@ struct DynamicSliceFusion {
   // Returns fusion parameters referenced by an offset expression.
   static std::vector<int64_t> CollectOffsetParameters(const Offset::Expr& expr);
 };
+
+// Returns true for a DynamicSliceFusionV2 custom fusion whose hero instruction
+// is a device-to-device copy.
+bool IsCopyHeroDynamicSliceFusion(const HloInstruction* instr);
+
+// Returns true for raw DS/DUS-root memcpy fusions or copy-hero
+// DynamicSliceFusionV2 custom fusions. These lower to DynamicSliceFusionV2Thunk
+// with an embedded DeviceToDeviceCopyThunk.
+bool IsDynamicSliceMemcpyFusion(const HloInstruction* instr);
 
 //===----------------------------------------------------------------------===//
 // DynamicSliceFusion comparison and stringification

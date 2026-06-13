@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -235,6 +236,153 @@ static std::optional<DynamicSliceConfig> ExtractDynamicSliceConfig(
     return std::nullopt;
   }
   return config->dynamic_slice_config();
+}
+
+static bool HasDynamicSliceConfig(const HloInstruction* instr) {
+  return ExtractDynamicSliceConfig(instr).has_value();
+}
+
+static bool IsContiguousStaticSlice(const HloSliceInstruction* slice) {
+  const Shape& orig = slice->operand(0)->shape();
+  const Shape& sliced = slice->shape();
+  std::optional<int64_t> sliced_dim;
+
+  for (int64_t dim : orig.layout().minor_to_major()) {
+    // All dimensions before the sliced one must be 1.
+    if (sliced_dim.has_value() && sliced.dimensions(dim) != 1) {
+      return false;
+    }
+
+    // Striding the sliced dimension means we cannot take a contiguous slice.
+    if (sliced.dimensions(dim) < orig.dimensions(dim)) {
+      if (slice->slice_strides(dim) != 1 && sliced.dimensions(dim) > 1) {
+        return false;
+      }
+      sliced_dim = dim;
+    }
+  }
+  return true;
+}
+
+static bool IsSlicingInstructionCompatible(const HloInstruction* instr) {
+  if (instr->opcode() == HloOpcode::kSlice) {
+    return IsContiguousStaticSlice(Cast<HloSliceInstruction>(instr)) &&
+           ShapeUtil::ByteStrides(instr->operand(0)->shape()).has_value();
+  }
+
+  return HasDynamicSliceConfig(instr);
+}
+
+static bool AllSlicingInstructionsCompatible(const HloComputation* body) {
+  for (const HloInstruction* instr : body->instructions()) {
+    if (IsSlicingInstruction(instr) && !IsSlicingInstructionCompatible(instr)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::optional<DynamicSliceFusion::MemcpyFusionCandidate>
+DynamicSliceFusion::FindMemcpyFusionCandidate(const HloInstruction* instr) {
+  if (instr == nullptr || instr->opcode() != HloOpcode::kFusion) {
+    return std::nullopt;
+  }
+
+  const HloComputation* body = instr->fused_instructions_computation();
+  const HloInstruction* root = body->root_instruction();
+  const HloInstruction* ds_or_dus = WalkThroughBitcastsAndReshapes(root);
+
+  if (!HasDynamicSliceConfig(ds_or_dus)) {
+    return std::nullopt;
+  }
+
+  if (ds_or_dus->opcode() == HloOpcode::kDynamicSlice) {
+    return MemcpyFusionCandidate{ds_or_dus, root};
+  }
+
+  if (ds_or_dus->opcode() == HloOpcode::kDynamicUpdateSlice) {
+    return MemcpyFusionCandidate{ds_or_dus, ds_or_dus->operand(1)};
+  }
+
+  return std::nullopt;
+}
+
+static bool CanLowerMemcpyFusionCandidate(
+    const DynamicSliceFusion::MemcpyFusionCandidate& candidate) {
+  auto resolve_copy_hero_parameters = [](const HloInstruction* operand) {
+    std::unique_ptr<HloInstruction> copy =
+        HloInstruction::CreateUnary(operand->shape(), HloOpcode::kCopy,
+                                    const_cast<HloInstruction*>(operand));
+    return DynamicSliceFusion::ResolveParameters(copy.get());
+  };
+
+  absl::StatusOr<std::vector<DynamicSliceFusion::Parameter>> parameters =
+      resolve_copy_hero_parameters(candidate.copy_operand);
+  if (!parameters.ok()) {
+    return false;
+  }
+
+  for (const DynamicSliceFusion::Parameter& parameter : *parameters) {
+    if (parameter.slice_config.has_value()) {
+      continue;
+    }
+
+    // Without DynamicSliceConfig, DynamicSliceFusion will pass the original
+    // parameter buffer base address to the embedded copy thunk. This is only
+    // correct for unsliced pass-through operands.
+    if (ShapeUtil::ByteSizeOf(parameter.slice_shape) !=
+        ShapeUtil::ByteSizeOf(parameter.parameter_shape)) {
+      return false;
+    }
+  }
+
+  if (candidate.slicing->opcode() == HloOpcode::kDynamicSlice) {
+    return true;
+  }
+
+  return DynamicSliceFusion::ResolveResults(candidate.copy_operand).ok();
+}
+
+bool DynamicSliceFusion::IsMemcpyFusionCandidate(const HloInstruction* instr) {
+  std::optional<MemcpyFusionCandidate> candidate =
+      FindMemcpyFusionCandidate(instr);
+  return candidate.has_value() &&
+         AllSlicingInstructionsCompatible(
+             instr->fused_instructions_computation()) &&
+         CanLowerMemcpyFusionCandidate(*candidate);
+}
+
+bool IsCopyHeroDynamicSliceFusion(const HloInstruction* instr) {
+  static constexpr char kDynamicSliceFusionV2ConfigName[] =
+      "dynamic_slice_fusion";
+
+  if (instr == nullptr || instr->opcode() != HloOpcode::kFusion ||
+      instr->fusion_kind() != HloInstruction::FusionKind::kCustom) {
+    return false;
+  }
+
+  absl::StatusOr<GpuBackendConfig> backend_config =
+      instr->backend_config<GpuBackendConfig>();
+  if (!backend_config.ok() || !backend_config->has_fusion_backend_config()) {
+    return false;
+  }
+
+  const FusionBackendConfig& fusion_config =
+      backend_config->fusion_backend_config();
+  if (!fusion_config.has_custom_fusion_config() ||
+      fusion_config.custom_fusion_config().name() !=
+          kDynamicSliceFusionV2ConfigName) {
+    return false;
+  }
+
+  const HloInstruction* hero =
+      DynamicSliceFusion::FindHero(instr->fused_instructions_computation());
+  return hero != nullptr && hero->opcode() == HloOpcode::kCopy;
+}
+
+bool IsDynamicSliceMemcpyFusion(const HloInstruction* instr) {
+  return DynamicSliceFusion::IsMemcpyFusionCandidate(instr) ||
+         IsCopyHeroDynamicSliceFusion(instr);
 }
 
 static absl::Status VerifyArgCount(const Offset::Expr& expr,
