@@ -381,7 +381,7 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
             TritonEmitterConstraints::GetBuilder(device_info));
     if (const auto* fusion_decision =
             std::get_if<FusionDecision>(&analysis_or_error)) {
-      VLOG(1) << "Fusion not tileable: " << fusion_decision->Explain();
+      LOG(WARNING) << "Fusion not tileable: " << fusion_decision->Explain();
       return false;
     }
     return true;
