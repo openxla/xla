@@ -633,6 +633,7 @@ ENTRY main {
 }
 
 TEST_F(FloatSupportTest, BF16LogAndExpOnRocmIsNormalized) {
+  // Default/unknown ROCm arch has no bf16 dtype support → normalize.
   auto cc = se::RocmComputeCapability();
   constexpr absl::string_view kHloModule = R"(
 HloModule module
@@ -653,6 +654,110 @@ ENTRY main {
                               absl::Substitute(kHloModule, "exponential")));
   EXPECT_TRUE(
       Normalize(module_exp.get(), se::GpuComputeCapability{cc}, BF16, F32));
+}
+
+TEST_F(FloatSupportTest, BF16LogAndExpOnRocmMI300IsNotNormalized) {
+  // MI300 (gfx942) has bf16 dtype support → no normalization needed.
+  auto cc = se::RocmComputeCapability("gfx942");
+  constexpr absl::string_view kHloModule = R"(
+HloModule module
+
+ENTRY main {
+      p0 = bf16[4] parameter(0)
+      ROOT r = bf16[4] $0(p0)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module_log,
+      ParseAndReturnVerifiedModule(absl::Substitute(kHloModule, "log")));
+  EXPECT_FALSE(
+      Normalize(module_log.get(), se::GpuComputeCapability{cc}, BF16, F32));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module_exp,
+                          ParseAndReturnVerifiedModule(
+                              absl::Substitute(kHloModule, "exponential")));
+  EXPECT_FALSE(
+      Normalize(module_exp.get(), se::GpuComputeCapability{cc}, BF16, F32));
+}
+
+class Bf16UnaryOpRocmTest : public FloatSupportTest,
+                            public ::testing::WithParamInterface<HloOpcode> {};
+
+TEST_P(Bf16UnaryOpRocmTest, IsNotNormalizedOnMI300) {
+  // MI300 (gfx942) has bf16 dtype support → kAbs/kNegate should not normalize.
+  auto cc = se::RocmComputeCapability("gfx942");
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(
+                              absl::Substitute(R"(
+entry {
+  a = bf16[] parameter(0)
+  r = bf16[] $0(a)
+})",
+                                               HloOpcodeString(GetParam()))));
+  EXPECT_FALSE(
+      Normalize(module.get(), se::GpuComputeCapability{cc}, BF16, F32));
+}
+
+INSTANTIATE_TEST_SUITE_P(Bf16UnaryOpsRocm, Bf16UnaryOpRocmTest,
+                         ::testing::Values(HloOpcode::kNegate,
+                                           HloOpcode::kAbs));
+
+TEST_F(FloatSupportTest, Bf16MinMaxOnRocmMI300IsNotNormalized) {
+  // MI300 (gfx942) has bf16 dtype support → kMinimum/kMaximum should not
+  // normalize.
+  auto cc = se::RocmComputeCapability("gfx942");
+  constexpr absl::string_view kHloModule = R"(
+HloModule m
+
+ENTRY main {
+  p0 = bf16[] parameter(0)
+  p1 = bf16[] parameter(1)
+  ROOT r = bf16[] $0(p0, p1)
+})";
+
+  for (const char* op : {"minimum", "maximum"}) {
+    TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
+                                             absl::Substitute(kHloModule, op)));
+    EXPECT_FALSE(
+        Normalize(module.get(), se::GpuComputeCapability{cc}, BF16, F32))
+        << "Expected no normalization for bf16 " << op << " on gfx942";
+  }
+}
+
+TEST_F(FloatSupportTest, BF16AddOnRocmMI300IsNotNormalized) {
+  // MI300 (gfx942) has packed bf16 atomics → kAdd should not normalize, so the
+  // scatter reducer stays as a 2-op bf16 body and gets a direct atomic.
+  auto cc = se::RocmComputeCapability("gfx942");
+  constexpr absl::string_view kHloModule = R"(
+HloModule m
+
+ENTRY main {
+  p0 = bf16[] parameter(0)
+  p1 = bf16[] parameter(1)
+  ROOT r = bf16[] add(p0, p1)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kHloModule));
+  EXPECT_FALSE(
+      Normalize(module.get(), se::GpuComputeCapability{cc}, BF16, F32));
+}
+
+TEST_F(FloatSupportTest, BF16AddOnRocmMI200IsNormalized) {
+  // MI200 (gfx90a) lacks packed bf16 atomics → kAdd normalizes to f32.
+  auto cc = se::RocmComputeCapability("gfx90a");
+  constexpr absl::string_view kHloModule = R"(
+HloModule m
+
+ENTRY main {
+  p0 = bf16[] parameter(0)
+  p1 = bf16[] parameter(1)
+  ROOT r = bf16[] add(p0, p1)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kHloModule));
+  EXPECT_TRUE(Normalize(module.get(), se::GpuComputeCapability{cc}, BF16, F32));
 }
 
 TEST_F(FloatSupportTest, ScaledDotIsIgnored) {
