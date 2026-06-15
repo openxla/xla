@@ -195,7 +195,7 @@ class GpuExecutable : public Executable {
       absl::FunctionRef<absl::StatusOr<ParameterBuffer>(
           const BufferAllocation& allocation)>;
 
-  absl::Span<const BufferAllocation* absl_nonnull const> GetAllocations()
+  absl::Span<const BufferAllocation * absl_nonnull const> GetAllocations()
       const override {
     return allocation_ptrs_;
   }
