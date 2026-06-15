@@ -419,7 +419,7 @@ class Executable {
 
   // Returns the allocations resulting from buffer assignment, or an empty span
   // if unimplemented.
-  virtual absl::Span<const BufferAllocation* absl_nonnull const>
+  virtual absl::Span<const BufferAllocation * absl_nonnull const>
   GetAllocations() const {
     return {};
   }
@@ -438,12 +438,6 @@ class Executable {
   GetExecutableAbiVersion() const {
     return absl::UnimplementedError(
         "ExecutableAbiVersion is not supported by this executable.");
-  }
-
-  // Returns the next VA range index for the given device ordinal. Cycle wraps
-  // at num_sets. Default implementation returns 0 (used for non-GPU backends).
-  virtual int GetNextCommandBufferVaRangeIdx(int device_ordinal, int num_sets) {
-    return 0;
   }
 
  private:
