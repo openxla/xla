@@ -240,6 +240,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_fast_math_honor_functions(true);
   opts.set_xla_cpu_fast_math_honor_division(true);
 
+  // Default to true for backwards compatibility (always flush denormals).
+  opts.set_xla_cpu_ftz(true);
+
   opts.set_xla_gpu_fused_attention_use_cudnn_rng(false);
 
   // By default, copy TF's Eigen style min_max behavior with nans.
@@ -470,7 +473,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel(true);
   opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
   opts.set_xla_gpu_experimental_enable_fusion_autotuner(true);
-  opts.set_xla_gpu_experimental_autotune_post_fusion(false);
   opts.set_xla_gpu_experimental_max_unroll_factor(32);
   opts.set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_fix_max_iterations(false);
@@ -499,18 +501,19 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_ragged_all_to_all_zero_copy(true);
   opts.set_xla_gpu_experimental_use_ragged_dot_grouped_gemm(true);
   opts.set_xla_gpu_native_emitter_tune_unroll_factor_for_loops(false);
-  opts.set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+  opts.set_xla_gpu_experimental_use_ragged_dot_fusion(false);
 
   opts.set_xla_cpu_collective_call_warn_stuck_seconds(20);
   opts.set_xla_cpu_collective_call_terminate_timeout_seconds(40);
   opts.set_xla_cpu_collective_timeout_seconds(30 * 60);
 
   opts.set_xla_keep_shardings_after_spmd(false);
-  opts.set_xla_enable_hlo_sharding_v3(false);
+  opts.set_xla_enable_hlo_sharding_v3(true);
   opts.set_xla_enable_rgv3_materialization(true);
   opts.set_xla_sdy_export_all_reduce_scatter(false);
   opts.set_xla_gpu_experimental_enable_checksum_tracing_on_thunks(false);
   opts.set_xla_gpu_experimental_enable_buffer_saver_on_thunks(false);
+  opts.set_xla_gpu_experimental_thunk_buffer_debug_module_outputs(false);
 
   // Disable float checks.
   opts.set_xla_gpu_detect_nan(DebugOptions::DETECTION_MODE_NONE);
@@ -1103,6 +1106,21 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         return true;
       };
 
+  // Custom "sub-parser" lambda for xla_gpu_ptx_compiler_extra_flags.
+  // Flags are split on whitespace rather than commas to allow passing
+  // `--key=value1,value2` flags that include commas, such as
+  // `--maxntid=nx,ny,nz`.
+  auto setter_for_xla_gpu_ptx_compiler_extra_flags =
+      [debug_options](const std::string& whitespace_separated_values) {
+        for (const absl::string_view flag :
+             absl::StrSplit(whitespace_separated_values,
+                            absl::ByAsciiWhitespace(), absl::SkipEmpty())) {
+          debug_options->add_xla_gpu_ptx_compiler_extra_flags(
+              std::string(flag));
+        }
+        return true;
+      };
+
   // Don't use an initializer list for initializing the vector; this would
   // create a temporary copy, and exceeds the stack space when compiling with
   // certain configurations.
@@ -1158,6 +1176,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "When xla_cpu_enable_fast_math is true then this controls whether we "
       "forbid to approximate calculations for functions. Ignored when "
       "xla_cpu_enable_fast_math is false."));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_ftz", bool_setter_for(&DebugOptions::set_xla_cpu_ftz),
+      debug_options->xla_cpu_ftz(),
+      "If true, flush-to-zero semantics are enabled in the code generated for "
+      "CPUs. Default is true."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_enable_fast_min_max",
       bool_setter_for(&DebugOptions::set_xla_cpu_enable_fast_min_max),
@@ -1970,7 +1993,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_gpu_enable_dynamic_slice_fusion",
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_dynamic_slice_fusion),
       debug_options->xla_gpu_enable_dynamic_slice_fusion(),
-      "[Stable] Whether to enable address computation fusion to optimize "
+      "[Stable] Whether to enable dynamic slice fusion to optimize "
       "dynamic-slice and dynamic-update-slice operations."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_dus_accumulator_zero_init_elimination",
@@ -3149,6 +3172,16 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "When provided, enables an experimental feature to save results of "
       "selected thunks."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_thunk_buffer_debug_module_outputs",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_thunk_buffer_debug_module_outputs),
+      debug_options->xla_gpu_experimental_thunk_buffer_debug_module_outputs(),
+      "Whether to enable runtime instrumentation (float check, checksum, "
+      "buffer saver) on all output buffers of an XLA module after all "
+      "computation is finished. Setting this flag disables instrumentation "
+      "of thunks not explicitly enabled by other filter flags."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_thunk_buffer_debug_filter_by_thunk_id_ranges",
       setter_for_thunk_buffer_debug_filter_by_thunk_id, "(none)",
       "Limits the thunk buffer debug instrumentation to thunks with IDs "
@@ -3166,12 +3199,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_experimental_enable_fusion_autotuner),
       debug_options->xla_gpu_experimental_enable_fusion_autotuner(),
       "Enable autotuning between the native & triton fusion emitters."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_autotune_post_fusion",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_experimental_autotune_post_fusion),
-      debug_options->xla_gpu_experimental_autotune_post_fusion(),
-      "All autotuning executes after fusion passes."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_rocm_max_trace_events",
       int64_setter_for(&DebugOptions::set_xla_gpu_rocm_max_trace_events),
@@ -3259,6 +3286,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Experimental options for adjusting cost-model guided GEMM tiling "
       "selection; comma-separated list of 'key=val' strings (=val may be "
       "omitted); no whitespace around commas."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_ptx_compiler_extra_flags",
+      setter_for_xla_gpu_ptx_compiler_extra_flags,
+      /*default_value_for_display=*/"",
+      "Whitespace-separated extra flags to pass to the ptxas compiler, e.g. "
+      "'--maxregcount=32'."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

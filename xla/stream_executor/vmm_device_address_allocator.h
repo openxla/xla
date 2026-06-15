@@ -36,6 +36,10 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 
+namespace xla {
+class DeviceAssignment;
+}  // namespace xla
+
 namespace stream_executor {
 
 // Abstract base class for virtual memory map (VMM) allocators that separate
@@ -58,9 +62,9 @@ namespace stream_executor {
 //
 // The allocator tracks the ScopedMapping and underlying MemoryAllocation and
 // MemoryReservation objects for each returned DeviceAddressBase. Callers can
-// retrieve the raw physical allocation via GetRawAllocation(). Callers can
-// also create non-owning aliases into caller-owned MemoryReservation ranges
-// with Map(), then release those aliases with UnMap().
+// retrieve these via GetRawAllocation() and GetReservation(). Callers can also
+// create non-owning aliases into caller-owned MemoryReservation ranges with
+// Map(), then release those aliases with UnMap().
 //
 // This allocator supports asynchronous deallocation: when Deallocate() is
 // called, it records a GPU timeline write on the device's stream and defers
@@ -95,8 +99,38 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       int device_ordinal, uint64_t size, bool retry_on_failure,
       int64_t memory_space) override;
 
+  // Allocates raw physical memory and maps it into a caller-owned
+  // MemoryReservation range. `allocation_size` and `mapping_size` must be
+  // equal.
+  //
+  // If `return_reservation_address` is true, the returned allocator address is
+  // the reservation slice and must be released with Deallocate(); `reservation`
+  // must outlive the returned address and any pending deallocation. If false,
+  // the returned allocator address is a separate allocator-owned VA and the
+  // reservation slice is a non-owning alias that must be released with UnMap()
+  // before the returned allocator address is deallocated.
+  absl::StatusOr<ScopedDeviceAddress<uint8_t>> Allocate(
+      int device_ordinal, uint64_t allocation_size, bool retry_on_failure,
+      int64_t memory_space, MemoryReservation* reservation,
+      uint64_t reservation_offset, uint64_t mapping_size,
+      bool return_reservation_address);
+
   // Pull in two-arg overload that sets retry_on_failure to true.
   using DeviceAddressAllocator::Allocate;
+
+  // RAII: while in scope, Allocate() treats allocations as multi-device iff
+  // the assignment has replica * computation > 1.
+  class DeviceAssignmentScope {
+   public:
+    explicit DeviceAssignmentScope(
+        const xla::DeviceAssignment* device_assignment);
+    ~DeviceAssignmentScope();
+    DeviceAssignmentScope(const DeviceAssignmentScope&) = delete;
+    DeviceAssignmentScope& operator=(const DeviceAssignmentScope&) = delete;
+
+   private:
+    const xla::DeviceAssignment* previous_;
+  };
 
   // Deallocates memory asynchronously. The caller can call this function even
   // if device kernels are still consuming the data — the actual deallocation
@@ -138,6 +172,13 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   MemoryAllocation* GetRawAllocation(int device_ordinal,
                                      DeviceAddressBase addr) const;
 
+  // Returns the MemoryReservation (virtual address range) for the given
+  // virtual address on the specified device, or nullptr if the address was not
+  // allocated by this allocator. The returned pointer is valid until the
+  // allocation is deallocated.
+  MemoryReservation* GetReservation(int device_ordinal,
+                                    DeviceAddressBase addr) const;
+
   // Returns the VMM allocation granularity for the device associated with
   // `executor`, or 0 if the device is not registered or granularity is unknown.
   uint64_t GetAllocationGranularity(StreamExecutor* executor) const;
@@ -158,6 +199,7 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     // GPU stream sequence number recorded at deallocation time. When the
     // pinned_timeline value reaches this seqno, the memory is safe to free.
     uint64_t seqno = 0;
+    bool multi_device = false;
   };
 
   struct ReservationMapping {
@@ -205,6 +247,8 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     absl::flat_hash_map<void*, std::unique_ptr<MemoryReservation>> reservations
         ABSL_GUARDED_BY(mu);
     absl::flat_hash_map<void*, MemoryReservation::ScopedMapping> scoped_mappings
+        ABSL_GUARDED_BY(mu);
+    absl::flat_hash_map<void*, bool> multi_device_allocations
         ABSL_GUARDED_BY(mu);
     absl::flat_hash_map<void*, ReservationMapping> active_reservation_mappings
         ABSL_GUARDED_BY(mu);
@@ -272,8 +316,11 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // enqueued on the same stream after the recorded deallocation event, so GPU
   // stream ordering guarantees the old work finishes before the new work runs.
   std::optional<DeviceAddressBase> TryReusePendingDeallocation(
-      PerDeviceState& state, uint64_t size)
+      PerDeviceState& state, uint64_t size, bool multi_device)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // True iff the calling thread is inside a multi-device DeviceAssignmentScope.
+  static bool CurrentMultiDevice();
 
   // Round up size to the device's allocation granularity.
   uint64_t RoundUpToGranularity(const PerDeviceState& state,

@@ -314,9 +314,7 @@ cc_library(
     name = "pjrt_c_api_raw_buffer_extension_hdrs",
     hdrs = ["pjrt_c_api_raw_buffer_extension.h"],
     visibility = ["//visibility:public"],
-    deps = [
-        ":pjrt_c_api_hdrs",
-    ],
+    deps = [":pjrt_c_api_hdrs"],
 )
 
 cc_library(
@@ -331,7 +329,6 @@ cc_library(
         ":pjrt_c_api_status_utils",
         ":pjrt_c_api_wrapper_impl",
         "//xla/pjrt:raw_buffer",
-        "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/status",
     ],
 )
@@ -655,6 +652,8 @@ cc_library(
         ":pjrt_c_api_triton_extension_hdrs",
         ":pjrt_c_api_triton_internal",
         ":pjrt_c_api_wrapper_impl",
+        ":pjrt_c_api_xla_transform_extension_hdrs",
+        ":pjrt_c_api_xla_transform_internal",
         "//xla/backends/cpu:target_machine_options",
         "//xla/backends/profiler:profiler_backends",  # To register the Host Tracers for GPU Plugin.
         "//xla/backends/profiler/gpu:device_tracer",  # To register the GPU Tracers with the GPU Plugin.

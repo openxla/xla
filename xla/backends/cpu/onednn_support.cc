@@ -33,7 +33,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/service/cpu/onednn_util.h"
 #include "xla/shape.h"
-#include "xla/tsl/platform/errors.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {

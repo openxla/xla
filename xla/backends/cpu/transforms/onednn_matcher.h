@@ -25,6 +25,7 @@ limitations under the License.
 #include "tsl/platform/protobuf.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/onednn_support.h"
+#include "xla/backends/cpu/transforms/library_fusion_kinds.h"
 #include "xla/backends/cpu/transforms/library_matcher.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -32,8 +33,6 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 
 namespace xla::cpu {
-// TODO(intel-tf): Use oneDNN defined constant
-static constexpr int kMaxOneDnnFusionSize = 10;
 
 class OneDnnMatcher : public LibraryMatcher {
  public:

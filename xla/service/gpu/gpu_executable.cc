@@ -73,11 +73,11 @@ limitations under the License.
 #include "xla/core/collectives/clique_key.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
-#include "xla/core/collectives/communicator.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/literal.h"
 #include "xla/map_util.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/runtime/buffer_use.h"
@@ -97,6 +97,7 @@ limitations under the License.
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_value.h"
+#include "xla/service/llvm_ir/buffer_assignment_util.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/service/maybe_owning_device_address.h"
 #include "xla/service/rendezvous.h"
@@ -140,10 +141,31 @@ limitations under the License.
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
 
-namespace xla {
-namespace gpu {
-
+namespace xla::gpu {
 namespace {
+
+std::optional<absl::flat_hash_map<std::string, const HloInstruction*>>
+MakeConstantsMap(HloModule* absl_nullable debug_module) {
+  if (!debug_module) {
+    return std::nullopt;
+  }
+  absl::flat_hash_map<std::string, const HloInstruction*> constants;
+  for (const HloComputation* computation :
+       debug_module->MakeComputationSorted()) {
+    for (const HloInstruction* instr : computation->instructions()) {
+      if (instr->opcode() != HloOpcode::kConstant) {
+        continue;
+      }
+      if (llvm_ir::SanitizeConstantName(*instr) != instr->name()) {
+        continue;
+      }
+      auto [it, inserted] = constants.try_emplace(
+          llvm_ir::ConstantHloToGlobalName(*instr), instr);
+      CHECK(inserted) << "Duplicate constant global name found: " << it->first;
+    }
+  }
+  return constants;
+}
 
 // Chooses the correct allocations to be used within the GpuExecutable code.
 std::vector<const BufferAllocation*> GatherAllocationPtrs(
@@ -291,24 +313,28 @@ static absl::Status RunThunkPasses(const DebugOptions& debug_options,
                                    const se::DeviceDescription& device_info,
                                    SequentialThunk* root_thunk,
                                    HloModule* hlo_module,
+                                   const BufferAssignment* buffer_assignment,
                                    ThunkPassBufferAllocator& allocator) {
   ThunkPassPipeline pipeline("thunk-passes");
-  if (debug_options.xla_gpu_experimental_enable_checksum_tracing_on_thunks()) {
+  if (debug_options.xla_gpu_experimental_enable_checksum_tracing_on_thunks() ||
+      debug_options.xla_gpu_experimental_thunk_buffer_debug_module_outputs()) {
     pipeline.AddPass(std::make_unique<ThunkBufferDebugPass>(
-        ThunkBufferDebugPass::Mode::kChecksum));
+        ThunkBufferDebugPass::Mode::kChecksum, buffer_assignment));
   }
-  if (debug_options.xla_gpu_experimental_enable_buffer_saver_on_thunks()) {
+  if (debug_options.xla_gpu_experimental_enable_buffer_saver_on_thunks() ||
+      debug_options.xla_gpu_experimental_thunk_buffer_debug_module_outputs()) {
     pipeline.AddPass(std::make_unique<ThunkBufferDebugPass>(
-        ThunkBufferDebugPass::Mode::kBufferSaver));
+        ThunkBufferDebugPass::Mode::kBufferSaver, buffer_assignment));
   }
   if ((debug_options.xla_gpu_detect_nan() !=
        DebugOptions::DETECTION_MODE_NONE) ||
       (debug_options.xla_gpu_detect_inf() !=
        DebugOptions::DETECTION_MODE_NONE) ||
-      debug_options.xla_gpu_log_minmax()) {
+      debug_options.xla_gpu_log_minmax() ||
+      debug_options.xla_gpu_experimental_thunk_buffer_debug_module_outputs()) {
     LOG(ERROR) << "Adding ThunkBufferDebugPass for nan/inf/minmax checking";
     pipeline.AddPass(std::make_unique<ThunkBufferDebugPass>(
-        ThunkBufferDebugPass::Mode::kFloatChecker));
+        ThunkBufferDebugPass::Mode::kFloatChecker, buffer_assignment));
   }
   pipeline.AddPass(std::make_unique<CommandBufferConversionPass>(
       hlo_module ? hlo_module->name() : "Anonymous"));
@@ -370,9 +396,9 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
   // thunk passes (which operate on SequentialThunk).
   auto seq_thunk = std::make_unique<SequentialThunk>(
       Thunk::ThunkInfo(), std::move(params.executable->thunks()));
-  RETURN_IF_ERROR(RunThunkPasses(params.debug_options,
-                                 params.device_description, seq_thunk.get(),
-                                 params.debug_module.get(), allocator));
+  RETURN_IF_ERROR(RunThunkPasses(
+      params.debug_options, params.device_description, seq_thunk.get(),
+      params.debug_module.get(), params.buffer_assignment.get(), allocator));
   // Extract modified thunks back into a ThunkExecutor.
   auto executor =
       std::make_unique<ThunkExecutor>(std::move(seq_thunk->thunks()));
@@ -1196,6 +1222,11 @@ absl::StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
         collectives->SymmetricMemoryAlignment();
   }
 
+  // Tag allocations made in this invocation as multi-device for VMM reuse.
+  se::DeviceAddressVmmAllocator::DeviceAssignmentScope
+      vmm_device_assignment_scope(
+          run_options->run_options().device_assignment());
+
   absl::Span<const BufferAllocation* const> allocations = GetAllocations();
   const int64_t num_buffers = allocations.size();
   std::vector<se::DeviceAddressBase> buffers;
@@ -1887,21 +1918,39 @@ absl::StatusOr<GpuExecutable::OutputInfo> GpuExecutable::OutputInfo::FromProto(
   return output_info;
 }
 
-GpuExecutableProto::ConstantInfoProto GpuExecutable::ConstantInfo::ToProto()
-    const {
+GpuExecutableProto::ConstantInfoProto GpuExecutable::ConstantInfo::ToProto(
+    bool skip_content_serialization) const {
   GpuExecutableProto::ConstantInfoProto proto;
   proto.set_symbol_name(symbol_name);
-  *proto.mutable_content() = content.ToProto();
+  if (!skip_content_serialization) {
+    *proto.mutable_content() = content.ToProto();
+  }
   proto.set_allocation_index(allocation_index);
   return proto;
 }
 
-GpuExecutable::ConstantInfo GpuExecutable::ConstantInfo::FromProto(
-    const GpuExecutableProto::ConstantInfoProto& proto) {
-  return ConstantInfo{
-      /*symbol_name=*/proto.symbol_name(),
-      /*content=*/DenseDataIntermediate::FromProto(proto.content()),
-      /*allocation_index=*/static_cast<int>(proto.allocation_index())};
+absl::StatusOr<GpuExecutable::ConstantInfo>
+GpuExecutable::ConstantInfo::FromProto(
+    const GpuExecutableProto::ConstantInfoProto& proto,
+    const absl::flat_hash_map<std::string, const HloInstruction*>* absl_nullable
+        content_overrides) {
+  if (content_overrides) {
+    auto it = content_overrides->find(proto.symbol_name());
+    if (it == content_overrides->end()) {
+      return absl::FailedPreconditionError(absl::StrCat(
+          "Instruction for ", proto.symbol_name(), " constant missing."));
+    }
+    const HloInstruction* instr = it->second;
+    const Literal& literal = instr->literal();
+    auto base = static_cast<const uint8_t*>(literal.untyped_data());
+    return ConstantInfo{proto.symbol_name(),
+                        DenseDataIntermediate::Alias(
+                            absl::MakeSpan(base, base + literal.size_bytes())),
+                        static_cast<int>(proto.allocation_index())};
+  }
+  return ConstantInfo{proto.symbol_name(),
+                      DenseDataIntermediate::FromProto(proto.content()),
+                      static_cast<int>(proto.allocation_index())};
 }
 
 absl::StatusOr<GpuExecutableProto> GpuExecutable::ToProto() const {
@@ -1954,7 +2003,7 @@ absl::StatusOr<GpuExecutableProto> GpuExecutable::ToProto() const {
 
   proto.mutable_constants()->Reserve(constants_.size());
   for (const auto& constant : constants_) {
-    *proto.add_constants() = constant.ToProto();
+    *proto.add_constants() = constant.ToProto(has_module());
   }
 
   *proto.mutable_executable_abi_version() = executable_abi_version_.proto();
@@ -2042,9 +2091,16 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
   params.executable =
       std::make_unique<ThunkExecutor>(std::move(thunk_sequence));
 
+  std::optional<absl::flat_hash_map<std::string, const HloInstruction*>>
+      name_to_const = MakeConstantsMap(params.debug_module.get());
+
   params.constants.reserve(proto.constants().size());
   for (const auto& constant_proto : proto.constants()) {
-    params.constants.push_back(ConstantInfo::FromProto(constant_proto));
+    ASSIGN_OR_RETURN(
+        params.constants.emplace_back(),
+        ConstantInfo::FromProto(constant_proto, name_to_const.has_value()
+                                                    ? &*name_to_const
+                                                    : nullptr));
   }
 
   params.output_info.reserve(proto.output_info_map().size());
@@ -2106,5 +2162,4 @@ absl::Status GpuExecutable::DumpExecutableIfEnabled(
   return absl::OkStatus();
 }
 
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu

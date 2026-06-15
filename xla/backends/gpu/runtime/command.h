@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -159,6 +160,14 @@ class Command : public Thunk {
   // deadlocks. By forcing the command update at thunk initialization time, we
   // ensure that all ranks execute NCCL command update.
   virtual bool requires_initialization() const { return false; }
+
+  // Returns true if command requires a one-time fallback execution before it is
+  // recorded into a command buffer.
+  virtual bool requires_warmup() const { return false; }
+
+  // Returns true if command buffer command parameters can change even when
+  // buffer allocation base addresses are unchanged.
+  virtual bool requires_update() const { return false; }
 
   // Returns true if this command is implemented via CUDA stream activity
   // tracing (i.e. a subclass of TracedCommand).

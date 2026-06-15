@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -50,6 +51,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla::gpu {
@@ -565,6 +567,10 @@ absl::Status CommandExecutor::RecordUpdate(
     }
 
     Command* command = commands_[id];
+
+    if (command->requires_update()) {
+      return false;
+    }
 
     // For CAPTURE_CMD_NEVER_UPDATE mode, always skip updates for commands
     // implemented via tracing. This includes CollectiveThunk command/thunk

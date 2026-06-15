@@ -24,17 +24,13 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "tsl/platform/protobuf.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
+#include "xla/backends/cpu/transforms/library_fusion_kinds.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/xla.pb.h"
 
 namespace xla::cpu {
-
-// The maximum number of instructions allowed in a library fusion. This avoids
-// crashing libraries with too large graphs. It could break good fusions, e.g.,
-// Softmax, etc. We should deploy a smarter logic in the future.
-static constexpr int kMaxFusionSize = 100;
 
 enum class FusionDirection {
   kUp,    // Traverse up (to parents).

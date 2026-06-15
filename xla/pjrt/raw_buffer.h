@@ -23,13 +23,17 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/functional/any_invocable.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/future.h"
 #include "xla/literal.h"
 #include "xla/pjrt/async_work_runner.h"
+#include "xla/pjrt/c/pjrt_c_api_raw_buffer_extension.h"
 #include "xla/pjrt/device_event.h"
+#include "xla/pjrt/staging_buffer.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
@@ -43,8 +47,10 @@ class PjRtBuffer;
 // Experimental. Don't use unless you know what you're doing.
 // A raw buffer is an unsafe API for directly transferring into device
 // memory while existing processes are consuming or mutating the same buffer.
-class PjRtRawBuffer : public tsl::ReferenceCounted<PjRtRawBuffer> {
+class PjRtRawBuffer : public PJRT_RawBuffer,
+                      public tsl::ReferenceCounted<PjRtRawBuffer> {
  public:
+  PjRtRawBuffer();
   virtual ~PjRtRawBuffer() = default;
 
   static absl::StatusOr<tsl::RCReference<PjRtRawBuffer>> CreateRawAliasOfBuffer(
@@ -80,6 +86,9 @@ class PjRtRawBuffer : public tsl::ReferenceCounted<PjRtRawBuffer> {
   // this method for specific alignment requirements.
   virtual Future<> CopyRawDeviceToHost(void* dst, int64_t offset,
                                        int64_t transfer_size) = 0;
+
+ private:
+  static const PJRT_RawBuffer_FunctionTable kRawBufferVtable;
 };
 
 class CommonPjRtRawBuffer;
@@ -124,7 +133,7 @@ class CommonPjRtRawBuffer : public PjRtRawBuffer {
       std::function<void(absl::Status status, bool sends_were_enqueued)>;
   virtual absl::StatusOr<PjRtDeviceEventRef> CopyRawToRemoteDevice(
       Future<std::string> serialized_descriptor, RemoteSendCallback on_done,
-      std::vector<PjRtDeviceEventRef> transfer_dependency_avs) = 0;
+      PjRtDeviceEventRefVector transfer_dependency_avs) = 0;
 
   // A sliced buffer is a view into the offset and range of this buffer.
   //
@@ -146,30 +155,14 @@ class CommonPjRtRawBuffer : public PjRtRawBuffer {
   // Creates an event which signals when the allocation is complete.
   virtual absl::StatusOr<PjRtDeviceEventRef> MakeAllocationReadyEvent() = 0;
 
-  // Slices out any dynamic shape information (if present).
-  virtual absl::StatusOr<PjRtRawBufferRef> RemoveDynamicShapeMetadataIfPresent(
-      const xla::Shape& device_shape, const xla::Shape& logical_shape);
-
-  // Reads the dynamic shape for a raw buffer. output_shape must be a
-  // constructed AsyncValueRef which will have its dimensions updated.
-  virtual void ReadDynamicShape(tsl::AsyncValueRef<xla::Shape> output_shape,
-                                xla::Shape shape) = 0;
-
-  // Interprets buffer contents as having shape and linearizes these contents
-  // async into the provided literal.
-  virtual void CopyToLiteralAsync(
-      Promise<> promise,
-      tsl::RCReference<PjRtDeviceEventPromise> device_promise,
-      MutableLiteralBase* literal, xla::Shape shape) = 0;
-
   // Copies directly into dst_raw_buffer. Must set definition_event_promise,
   // when dst_raw_buffer is ready, allocation_event before using dst_raw_buffer
   // and src_usage_event_promise when done using this buffer.
   virtual void CopyTo(
       PjRtRawBufferRef dst_raw_buffer,
-      tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
-      tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
-      tsl::AsyncValueRef<bool> allocation_event) = 0;
+      PjRtDeviceEventPromiseRef definition_event_promise,
+      PjRtDeviceEventPromiseRef src_usage_event_promise,
+      absl::AnyInvocable<void(absl::Status) &&> allocation_event) = 0;
 
   // Blocks on a list of dependencies and then copies directly into
   // dst_raw_buffer. Must set definition_event_promise,
@@ -177,21 +170,27 @@ class CommonPjRtRawBuffer : public PjRtRawBuffer {
   // and src_usage_event_promise when done using this buffer.
   virtual void ScheduleCopyTo(
       AsyncWorkRunner* async_work_runner,
-      std::vector<PjRtDeviceEventRef> transfer_dependency_events,
+      PjRtDeviceEventRefVector transfer_dependency_events,
       PjRtRawBufferRef dst_raw_buffer,
-      tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
-      tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
-      tsl::AsyncValueRef<bool> allocation_event);
+      PjRtDeviceEventPromiseRef definition_event_promise,
+      PjRtDeviceEventPromiseRef src_usage_event_promise,
+      absl::AnyInvocable<void(absl::Status) &&> allocation_event);
 
   // Returns the async value associated with the buffer.
-  virtual tsl::AsyncValue* GetRawBufferAsyncValue() = 0;
+  virtual PjRtDeviceEventPtr GetRawBufferAsyncValue() = 0;
 
   virtual bool is_mutable() const { return true; }
 
   // TODO(parkers): This should not be needed, but some backends
   // require deleting after all events.
-  virtual void DecrefAfter(std::vector<PjRtDeviceEventRef> avs);
+  virtual void DecrefAfter(PjRtDeviceEventRefVector avs);
 };
+
+tsl::AsyncValueRef<PjRtStagingBuffer> ToStagingBuffer(
+    PjRtRawBufferRef raw_buffer, PjRtDeviceEventPromiseRef usage_promise,
+    absl::FunctionRef<tsl::AsyncValueRef<PjRtStagingBuffer>(size_t,
+                                                            PjRtMemorySpace*)>
+        allocate_staging_buffer);
 
 class RegisterRawBufferFactory {
  public:

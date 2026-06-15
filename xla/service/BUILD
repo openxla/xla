@@ -2943,6 +2943,7 @@ cc_library(
         ":call_inliner",
         "//xla:literal",
         "//xla:shape_util",
+        "//xla:side_effect_util",
         "//xla:status_macros",
         "//xla:types",
         "//xla:util",
@@ -3495,10 +3496,6 @@ cc_library(
     hdrs = ["computation_placer.h"],
     deps = [
         "//xla:array2d",
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/runtime:device_id",
@@ -3507,7 +3504,6 @@ cc_library(
         "//xla/stream_executor/host:host_platform_id",
         "//xla/stream_executor/rocm:rocm_platform_id",
         "//xla/stream_executor/sycl:sycl_platform_id",
-        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
@@ -3515,15 +3511,11 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
     ] + if_libtpu([":tpu_computation_placer"]),
     alwayslink = True,  # Contains per-platform computation placer registration
 )
@@ -3562,11 +3554,11 @@ cc_library(
     deps = [
         ":computation_placer_hdr",
         "//xla:array2d",
-        "//xla/stream_executor/tpu:c_api_decl",
-        "//xla/stream_executor/tpu:status_helper",
-        "//xla/stream_executor/tpu:tpu_executor_api",
         "//xla/stream_executor/tpu:tpu_platform_id",
-        "//xla/stream_executor/tpu:tpu_topology_external",
+        "//xla/tpu:c_api_decl",
+        "//xla/tpu:status_helper",
+        "//xla/tpu:tpu_executor_api",
+        "//xla/tpu:tpu_topology_external",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
     ],
@@ -4864,6 +4856,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/pjrt:pjrt_executable",
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:nullability",
@@ -6195,6 +6188,7 @@ xla_cc_test(
     srcs = ["batched_gather_scatter_normalizer_test.cc"],
     deps = [
         ":batched_gather_scatter_normalizer",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings:string_view",
@@ -6764,7 +6758,6 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/tsl/platform:status_macros",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -6877,6 +6870,24 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "io_param",
+    srcs = ["io_param.cc"],
+    hdrs = ["io_param.h"],
+    deps = [
+        ":hlo_buffer",
+        ":hlo_value",
+        "//xla:shape_util",
+        "//xla/hlo/analysis:hlo_alias_analysis",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
 xla_cc_test(
     name = "xla_transform_test",
     srcs = ["xla_transform_test.cc"],
@@ -6898,6 +6909,20 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "io_param_test",
+    srcs = ["io_param_test.cc"],
+    deps = [
+        ":io_param",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:hlo_value",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],

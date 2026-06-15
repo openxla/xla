@@ -33,7 +33,6 @@ limitations under the License.
 
 namespace xla::cpu {
 
-inline constexpr absl::string_view kOneDnnFusionKind = "__onednn_fusion";
 using dnnl::graph::op;
 
 bool IsOneDnnSupportedDType(PrimitiveType dtype,

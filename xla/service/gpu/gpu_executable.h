@@ -45,12 +45,14 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/dense_data_intermediate.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo.pb.h"
@@ -94,10 +96,14 @@ class GpuExecutable : public Executable {
     DenseDataIntermediate content;
     int allocation_index = -1;
 
-    GpuExecutableProto::ConstantInfoProto ToProto() const;
+    GpuExecutableProto::ConstantInfoProto ToProto(
+        bool skip_content_serialization = false) const;
 
-    static ConstantInfo FromProto(
-        const GpuExecutableProto::ConstantInfoProto& proto);
+    static absl::StatusOr<ConstantInfo> FromProto(
+        const GpuExecutableProto::ConstantInfoProto& proto,
+        const absl::flat_hash_map<std::string,
+                                  const HloInstruction*>* absl_nullable
+            content_overrides = nullptr);
   };
 
   struct OutputInfo {

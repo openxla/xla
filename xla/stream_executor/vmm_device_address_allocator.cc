@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/service/computation_placer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -42,6 +43,28 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor {
+
+namespace {
+thread_local const xla::DeviceAssignment* current_device_assignment = nullptr;
+}  // namespace
+
+DeviceAddressVmmAllocator::DeviceAssignmentScope::DeviceAssignmentScope(
+    const xla::DeviceAssignment* device_assignment)
+    : previous_(current_device_assignment) {
+  current_device_assignment = device_assignment;
+}
+
+DeviceAddressVmmAllocator::DeviceAssignmentScope::~DeviceAssignmentScope() {
+  current_device_assignment = previous_;
+}
+
+bool DeviceAddressVmmAllocator::CurrentMultiDevice() {
+  const xla::DeviceAssignment* device_assignment = current_device_assignment;
+  return device_assignment != nullptr &&
+         device_assignment->replica_count() *
+                 device_assignment->computation_count() >
+             1;
+}
 
 static absl::Status DeviceNotFoundError(int device_ordinal) {
   return absl::NotFoundError(
@@ -236,6 +259,7 @@ void DeviceAddressVmmAllocator::DoDeallocate(PerDeviceState& state,
   state.reservations.erase(mem.opaque());
   // Erase the raw allocation last: its destructor releases the physical memory.
   state.raw_allocations.erase(mem.opaque());
+  state.multi_device_allocations.erase(mem.opaque());
 
   uint64_t rounded_size = RoundUpToGranularity(state, mem.size());
   DCHECK_GE(state.pa_allocated, rounded_size);
@@ -285,6 +309,112 @@ absl::StatusOr<DeviceAddressBase> DeviceAddressVmmAllocator::AllocateWithBudget(
   state.pa_allocated += rounded_size;
   // Return the original requested size, not the padded size.
   return DeviceAddressBase(va_ptr, size);
+}
+
+absl::StatusOr<ScopedDeviceAddress<uint8_t>>
+DeviceAddressVmmAllocator::Allocate(
+    int device_ordinal, uint64_t allocation_size, bool /*retry_on_failure*/,
+    int64_t /*memory_space*/, MemoryReservation* reservation,
+    uint64_t reservation_offset, uint64_t mapping_size,
+    bool return_reservation_address) {
+  if (allocation_size != mapping_size) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "VMM mapped allocation size (%u) must equal mapping size (%u)",
+        allocation_size, mapping_size));
+  }
+  if (allocation_size == 0) {
+    return ScopedDeviceAddress<uint8_t>(DeviceAddressBase(), device_ordinal,
+                                        this);
+  }
+  if (reservation == nullptr) {
+    return absl::InvalidArgumentError(
+        "VMM mapped allocation requires a non-null reservation");
+  }
+  DeviceAddressBase reservation_range = reservation->address();
+  if (reservation_offset > reservation_range.size() ||
+      mapping_size > reservation_range.size() - reservation_offset) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Reservation range [%u, %u) is outside reservation size %u",
+        reservation_offset, reservation_offset + mapping_size,
+        reservation_range.size()));
+  }
+  DeviceAddressBase reservation_address =
+      reservation_range.GetByteSlice(reservation_offset, mapping_size);
+
+  PerDeviceState* state = GetPerDeviceState(device_ordinal);
+  if (state == nullptr) {
+    return DeviceNotFoundError(device_ordinal);
+  }
+
+  const bool multi_device = CurrentMultiDevice();
+
+  absl::MutexLock lock(state->mu);
+  if (state->active_reservation_mappings.contains(
+          reservation_address.opaque()) ||
+      state->stale_reservation_mappings.contains(
+          reservation_address.opaque()) ||
+      state->raw_allocations.contains(reservation_address.opaque())) {
+    return absl::FailedPreconditionError(
+        "Reservation address is already tracked by this allocator");
+  }
+
+  uint64_t rounded_size = RoundUpToGranularity(*state, allocation_size);
+  if (state->pa_allocated + rounded_size > state->pa_budget) {
+    return absl::ResourceExhaustedError(absl::StrFormat(
+        "Not enough PA budget for allocation: pa_allocated=%uB, "
+        "rounded_size=%uB, pa_budget=%uB",
+        state->pa_allocated, rounded_size, state->pa_budget));
+  }
+
+  ASSIGN_OR_RETURN(auto raw_alloc,
+                   CreateAllocation(state->executor, allocation_size));
+  const uint64_t padded_size = raw_alloc->address().size();
+  if (mapping_size > padded_size) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("Mapping size %u exceeds raw allocation size %u",
+                        mapping_size, padded_size));
+  }
+
+  ASSIGN_OR_RETURN(
+      MemoryReservation::ScopedMapping reservation_mapping,
+      reservation->MapTo(reservation_offset, /*allocation_offset=*/0,
+                         mapping_size, *raw_alloc));
+
+  std::unique_ptr<MemoryReservation> allocator_reservation;
+  MemoryReservation::ScopedMapping allocator_mapping;
+  DeviceAddressBase allocator_address = reservation_address;
+
+  if (!return_reservation_address) {
+    ASSIGN_OR_RETURN(allocator_reservation,
+                     CreateReservation(state->executor, allocation_size));
+    ASSIGN_OR_RETURN(allocator_mapping,
+                     allocator_reservation->MapTo(
+                         /*reservation_offset=*/0, /*allocation_offset=*/0,
+                         padded_size, *raw_alloc));
+    allocator_address = DeviceAddressBase(
+        allocator_reservation->address().opaque(), allocation_size);
+  }
+
+  void* allocator_ptr = allocator_address.opaque();
+  state->raw_allocations.emplace(allocator_ptr, std::move(raw_alloc));
+  state->scoped_mappings.emplace(allocator_ptr, std::move(allocator_mapping));
+  if (allocator_reservation != nullptr) {
+    state->reservations.emplace(allocator_ptr,
+                                std::move(allocator_reservation));
+    state->active_reservation_mappings.emplace(
+        reservation_address.opaque(),
+        ReservationMapping{allocator_address, reservation_address, reservation,
+                           reservation_offset, mapping_size,
+                           std::move(reservation_mapping)});
+  } else {
+    state->scoped_mappings[allocator_ptr] = std::move(reservation_mapping);
+  }
+
+  state->pa_allocated += rounded_size;
+  if (multi_device) {
+    state->multi_device_allocations.insert({allocator_ptr, true});
+  }
+  return ScopedDeviceAddress<uint8_t>(allocator_address, device_ordinal, this);
 }
 
 // Allocation flow with retry:
@@ -344,11 +474,13 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
     return DeviceNotFoundError(device_ordinal);
   }
 
+  const bool multi_device = CurrentMultiDevice();
+
   absl::MutexLock lock(state->mu);
 
   // Try to reuse a completed pending deallocation with matching size.
   std::optional<DeviceAddressBase> reused =
-      TryReusePendingDeallocation(*state, size);
+      TryReusePendingDeallocation(*state, size, multi_device);
   if (reused.has_value()) {
     return ScopedDeviceAddress<uint8_t>(*reused, device_ordinal, this);
   }
@@ -370,6 +502,9 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
   if (!result.ok()) {
     return result.status();
   }
+
+  if (multi_device)
+    state->multi_device_allocations.insert({result->opaque(), true});
 
   VLOG(3) << absl::StreamFormat(
       "Allocated virtual address %p (%uB) on device ordinal %d",
@@ -416,6 +551,8 @@ absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
       "on device ordinal %d",
       mem.opaque(), mem.size(), device_ordinal);
 
+  bool multi_device = state->multi_device_allocations.erase(mem.opaque()) > 0;
+
   // Assign the next sequence number and enqueue a GPU write to the pinned
   // timeline when the stream reaches this point. The CPU polls the timeline
   // value to know when it is safe to free the memory.
@@ -423,7 +560,7 @@ absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
   RETURN_IF_ERROR(EnqueueDeferredDeallocation(*state, seqno));
 
   state->pending_deallocations.push_back(
-      {PendingDeallocationKind::kAllocate, mem, seqno});
+      {PendingDeallocationKind::kAllocate, mem, seqno, multi_device});
 
   return absl::OkStatus();
 }
@@ -623,6 +760,20 @@ MemoryAllocation* DeviceAddressVmmAllocator::GetRawAllocation(
   return it->second.get();
 }
 
+MemoryReservation* DeviceAddressVmmAllocator::GetReservation(
+    int device_ordinal, DeviceAddressBase addr) const {
+  PerDeviceState* state = GetPerDeviceState(device_ordinal);
+  if (state == nullptr) {
+    return nullptr;
+  }
+  absl::MutexLock lock(state->mu);
+  auto it = state->reservations.find(addr.opaque());
+  if (it == state->reservations.end()) {
+    return nullptr;
+  }
+  return it->second.get();
+}
+
 uint64_t DeviceAddressVmmAllocator::GetAllocationGranularity(
     StreamExecutor* executor) const {
   PerDeviceState* state = GetPerDeviceState(executor->device_ordinal());
@@ -634,11 +785,18 @@ uint64_t DeviceAddressVmmAllocator::GetAllocationGranularity(
 
 std::optional<DeviceAddressBase>
 DeviceAddressVmmAllocator::TryReusePendingDeallocation(PerDeviceState& state,
-                                                       uint64_t size) {
+                                                       uint64_t size,
+                                                       bool multi_device) {
   uint64_t rounded_size = RoundUpToGranularity(state, size);
   for (auto it = state.pending_deallocations.begin();
        it != state.pending_deallocations.end(); ++it) {
     if (it->kind != PendingDeallocationKind::kAllocate) {
+      continue;
+    }
+    if (it->multi_device != multi_device) {
+      continue;
+    }
+    if (!state.reservations.contains(it->mem.opaque())) {
       continue;
     }
     if (RoundUpToGranularity(state, it->mem.size()) != rounded_size) {
@@ -652,6 +810,8 @@ DeviceAddressVmmAllocator::TryReusePendingDeallocation(PerDeviceState& state,
         reused_mem.opaque(), it->mem.size(), size, rounded_size,
         state.executor->device_ordinal());
     state.pending_deallocations.erase(it);
+    if (multi_device)
+      state.multi_device_allocations.insert({reused_mem.opaque(), true});
 
     return reused_mem;
   }

@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/repeated_field.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/transforms/library_matcher.h"
 #include "xla/backends/cpu/transforms/ynn_matcher.h"
@@ -33,12 +34,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
-#include "tsl/platform/protobuf.h"
 
 #if XLA_ONEDNN_USE_GRAPH_API
 #include "xla/backends/cpu/transforms/onednn_matcher.h"
 #endif  // XLA_ONEDNN_USE_GRAPH_API
-
 
 namespace xla::cpu {
 
@@ -121,6 +120,16 @@ class LibraryRewriter : public HloModulePass {
 
   // Finds and creates fusions in the given computation.
   absl::StatusOr<bool> ProcessComputation(HloComputation* computation);
+
+  // Returns true if the library is in the list of matchers.
+  bool IsLibraryRegistered(absl::string_view lib_fusion_kind) const {
+    for (const auto& lib : libs_) {
+      if (lib->fusion_kind() == lib_fusion_kind) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   absl::string_view name() const override { return "dot-library-rewriter"; }
 
