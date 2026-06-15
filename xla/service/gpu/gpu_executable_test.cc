@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/literal_util.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
@@ -110,6 +111,68 @@ Thunk::ThunkInfo ThunkInfoWithId(int thunk_id) {
   return thunk_info;
 }
 
+se::DeviceDescription CommandBufferDeviceDescription() {
+  se::DeviceDescription device_description;
+  device_description.set_gpu_compute_capability(
+      se::GpuComputeCapability{se::CudaComputeCapability::Volta()});
+  device_description.set_driver_version({12, 3, 0});
+  device_description.set_runtime_version({12, 3, 0});
+  return device_description;
+}
+
+class ConservativeDeviceToDeviceCopyThunk : public DeviceToDeviceCopyThunk {
+ public:
+  using DeviceToDeviceCopyThunk::DeviceToDeviceCopyThunk;
+
+  BufferUses buffer_uses() const override {
+    return {
+        BufferUse::Read(source().slice, source().shape),
+        BufferUse::Consume(destination().slice, destination().shape),
+    };
+  }
+};
+
+absl::StatusOr<std::unique_ptr<GpuExecutable>>
+CreateCommandBufferOutputInfoExecutable(
+    GpuExecutable::OutputInfo output_info,
+    DebugOptions::CommandBufferUpdateMode update_mode,
+    bool enable_command_buffer = true, bool conservative_write = false) {
+  BufferAllocation alloc(0, 1024, 0);
+  Shape shape = ShapeUtil::MakeShape(S32, {256});
+  BufferAllocation::Slice slice(&alloc, 0, 1024);
+
+  ThunkSequence thunk_sequence;
+  if (conservative_write) {
+    thunk_sequence.push_back(
+        std::make_unique<ConservativeDeviceToDeviceCopyThunk>(
+            ThunkInfoWithId(1), ShapedSlice{slice, shape},
+            ShapedSlice{slice, shape}, 1024));
+  } else {
+    thunk_sequence.push_back(std::make_unique<DeviceToDeviceCopyThunk>(
+        ThunkInfoWithId(1), ShapedSlice{slice, shape},
+        ShapedSlice{slice, shape}, 1024));
+  }
+
+  DebugOptions debug_options = GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.set_xla_gpu_command_buffer_update_mode(update_mode);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  if (enable_command_buffer) {
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+  }
+
+  GpuExecutable::Params params;
+  params.executable =
+      std::make_unique<ThunkExecutor>(std::move(thunk_sequence));
+  params.debug_options = debug_options;
+  params.module_name = "test_module";
+  *params.program_shape.mutable_result() = shape;
+  params.output_info.emplace(ShapeIndex{}, std::move(output_info));
+  params.device_description = CommandBufferDeviceDescription();
+  params.enable_debug_info_manager = false;
+  return GpuExecutable::Create(std::move(params));
+}
+
 TEST_F(GpuExecutableTest, OutputInfoToAndFromProto) {
   const GpuExecutable::OutputInfo output_info0{/*allocation_index=*/42,
                                                /*passthrough=*/true,
@@ -153,6 +216,119 @@ TEST_F(GpuExecutableTest, OutputInfoToAndFromProto) {
               )pb"));
   EXPECT_THAT(GpuExecutable::OutputInfo::FromProto(output_info2.ToProto()),
               absl_testing::IsOkAndHolds(output_info2));
+
+  const GpuExecutable::OutputInfo output_info3{
+      /*allocation_index=*/45, /*passthrough=*/false,
+      /*alias_config=*/std::nullopt,
+      /*copy_from_command_buffer_output=*/true};
+  EXPECT_THAT(output_info3.ToProto(), EqualsProto(R"pb(
+                allocation_index: 45,
+                copy_from_command_buffer_output: true
+              )pb"));
+  EXPECT_THAT(GpuExecutable::OutputInfo::FromProto(output_info3.ToProto()),
+              absl_testing::IsOkAndHolds(output_info3));
+}
+
+TEST_F(GpuExecutableTest, UnaliasedCommandBufferOutputIsMarkedForCopy) {
+  GpuExecutable::OutputInfo output_info{/*allocation_index=*/0,
+                                        /*passthrough=*/false,
+                                        /*alias_config=*/std::nullopt};
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> executable,
+      CreateCommandBufferOutputInfoExecutable(std::move(output_info),
+                                              DebugOptions::NEVER_UPDATE));
+
+  ASSERT_THAT(executable->thunk_executor().thunks(), SizeIs(1));
+  EXPECT_EQ(executable->thunk_executor().thunks().front()->kind(),
+            Thunk::kCommandBuffer);
+  auto it = executable->output_info().find(ShapeIndex{});
+  ASSERT_NE(it, executable->output_info().end());
+  EXPECT_TRUE(it->second.copy_from_command_buffer_output);
+}
+
+TEST_F(GpuExecutableTest,
+       UnaliasedCommandBufferOutputAlwaysUpdateIsNotMarkedForCopy) {
+  GpuExecutable::OutputInfo output_info{/*allocation_index=*/0,
+                                        /*passthrough=*/false,
+                                        /*alias_config=*/std::nullopt};
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> executable,
+      CreateCommandBufferOutputInfoExecutable(std::move(output_info),
+                                              DebugOptions::ALWAYS_UPDATE));
+
+  ASSERT_THAT(executable->thunk_executor().thunks(), SizeIs(1));
+  EXPECT_EQ(executable->thunk_executor().thunks().front()->kind(),
+            Thunk::kCommandBuffer);
+  auto it = executable->output_info().find(ShapeIndex{});
+  ASSERT_NE(it, executable->output_info().end());
+  EXPECT_FALSE(it->second.copy_from_command_buffer_output);
+}
+
+TEST_F(GpuExecutableTest,
+       UnaliasedCommandBufferOutputWithConservativeWriteIsMarkedForCopy) {
+  GpuExecutable::OutputInfo output_info{/*allocation_index=*/0,
+                                        /*passthrough=*/false,
+                                        /*alias_config=*/std::nullopt};
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> executable,
+      CreateCommandBufferOutputInfoExecutable(
+          std::move(output_info), DebugOptions::NEVER_UPDATE,
+          /*enable_command_buffer=*/true,
+          /*conservative_write=*/true));
+
+  ASSERT_THAT(executable->thunk_executor().thunks(), SizeIs(1));
+  EXPECT_EQ(executable->thunk_executor().thunks().front()->kind(),
+            Thunk::kCommandBuffer);
+  auto it = executable->output_info().find(ShapeIndex{});
+  ASSERT_NE(it, executable->output_info().end());
+  EXPECT_TRUE(it->second.copy_from_command_buffer_output);
+}
+
+TEST_F(GpuExecutableTest, AliasedCommandBufferOutputIsNotMarkedForCopy) {
+  GpuExecutable::OutputInfo output_info{
+      /*allocation_index=*/0,
+      /*passthrough=*/false,
+      /*alias_config=*/
+      HloInputOutputAliasConfig::Alias{
+          /*parameter_number=*/0, /*parameter_index=*/ShapeIndex{},
+          /*kind=*/HloInputOutputAliasConfig::kMayAlias}};
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> executable,
+      CreateCommandBufferOutputInfoExecutable(std::move(output_info),
+                                              DebugOptions::NEVER_UPDATE));
+
+  auto it = executable->output_info().find(ShapeIndex{});
+  ASSERT_NE(it, executable->output_info().end());
+  EXPECT_FALSE(it->second.copy_from_command_buffer_output);
+}
+
+TEST_F(GpuExecutableTest, PassthroughCommandBufferOutputIsNotMarkedForCopy) {
+  GpuExecutable::OutputInfo output_info{/*allocation_index=*/0,
+                                        /*passthrough=*/true,
+                                        /*alias_config=*/std::nullopt};
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> executable,
+      CreateCommandBufferOutputInfoExecutable(std::move(output_info),
+                                              DebugOptions::NEVER_UPDATE));
+
+  auto it = executable->output_info().find(ShapeIndex{});
+  ASSERT_NE(it, executable->output_info().end());
+  EXPECT_FALSE(it->second.copy_from_command_buffer_output);
+}
+
+TEST_F(GpuExecutableTest, NonCommandBufferOutputIsNotMarkedForCopy) {
+  GpuExecutable::OutputInfo output_info{/*allocation_index=*/0,
+                                        /*passthrough=*/false,
+                                        /*alias_config=*/std::nullopt};
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> executable,
+      CreateCommandBufferOutputInfoExecutable(std::move(output_info),
+                                              DebugOptions::NEVER_UPDATE,
+                                              /*enable_command_buffer=*/false));
+
+  auto it = executable->output_info().find(ShapeIndex{});
+  ASSERT_NE(it, executable->output_info().end());
+  EXPECT_FALSE(it->second.copy_from_command_buffer_output);
 }
 
 TEST_F(GpuExecutableTest, RunThunkPasses) {
@@ -217,6 +393,67 @@ TEST_F(GpuExecutableTest, RunThunkPasses) {
       &dump_files));
 
   EXPECT_EQ(dump_files.size(), 1);
+}
+
+TEST_F(GpuExecutableTest, CommandBufferAllocationIndexesSkipMlirConstants) {
+  DebugOptions debug_options = GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+  debug_options.set_xla_gpu_command_buffer_update_mode(
+      DebugOptions::NEVER_UPDATE);
+
+  std::vector<BufferAllocation> allocations;
+  allocations.reserve(2);
+  allocations.emplace_back(0, 4, 0);
+  allocations.back().set_constant(true);
+  allocations.emplace_back(1, 4, 0);
+
+  Shape shape = ShapeUtil::MakeShape(S32, {});
+  BufferAllocation::Slice constant_slice(&allocations[0], 0, 4);
+  BufferAllocation::Slice temp_slice(&allocations[1], 0, 4);
+
+  emitters::KernelArgument constant_arg(shape, constant_slice);
+  constant_arg.set_written(false);
+  emitters::KernelArgument temp_arg(shape, temp_slice);
+
+  ThunkSequence thunk_sequence;
+  thunk_sequence.push_back(std::make_unique<KernelThunk>(
+      ThunkInfoWithId(123),
+      /*kernel_name=*/"test_kernel",
+      /*kernel_arguments=*/
+      emitters::KernelArguments(
+          std::vector<emitters::KernelArgument>{constant_arg, temp_arg}),
+      /*launch_dimensions=*/LaunchDimensions(),
+      /*cluster_dim=*/std::nullopt,
+      /*shmem_bytes=*/0,
+      /*tma_metadata=*/se::gpu::TmaMetadata()));
+
+  GpuExecutable::Params params;
+  params.executable =
+      std::make_unique<ThunkExecutor>(std::move(thunk_sequence));
+  params.debug_options = debug_options;
+  params.module_name = "test_module";
+  params.mlir_allocations = std::move(allocations);
+  se::DeviceDescription device_description;
+  device_description.set_gpu_compute_capability(
+      se::GpuComputeCapability{se::CudaComputeCapability::Volta()});
+  device_description.set_driver_version({12, 3, 0});
+  device_description.set_runtime_version({12, 3, 0});
+  params.device_description = device_description;
+  params.enable_debug_info_manager = false;
+  params.debug_module =
+      std::make_unique<HloModule>(params.module_name, HloModuleConfig());
+  params.debug_module->mutable_config().set_debug_options(debug_options);
+
+  absl::StatusOr<std::unique_ptr<GpuExecutable>> executable_or =
+      GpuExecutable::Create(std::move(params));
+  ASSERT_THAT(executable_or, absl_testing::IsOk());
+  std::unique_ptr<GpuExecutable> executable = std::move(executable_or).value();
+
+  EXPECT_THAT(
+      executable->thunk_executor().thunks(),
+      ElementsAre(Pointee(Property(&Thunk::kind, Thunk::kCommandBuffer))));
+  EXPECT_THAT(executable->command_buffer_allocation_indexes(), ElementsAre(1));
 }
 
 TEST_F(GpuExecutableTest, ComputeComputationLayout) {
