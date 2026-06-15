@@ -72,11 +72,6 @@ message GpuExecutableProto {
 
     // Describes whether and how this output aliases with an input parameter
     optional xla.HloInputOutputAliasProto.AliasEntryProto alias_config = 3;
-
-    // True when this unaliased output is written by a CommandBufferThunk and
-    // must be copied before returning it to the caller when command buffer
-    // update mode is not ALWAYS_UPDATE.
-    bool copy_from_command_buffer_output = 4;
   }
 
   message OutputInfoMapEntry {

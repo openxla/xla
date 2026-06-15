@@ -227,54 +227,6 @@ class GpuExecutableThunkPassBufferAllocator : public ThunkPassBufferAllocator {
   std::deque<BufferAllocation> allocations_;
 };
 
-absl::Status MarkCommandBufferOutputCopies(
-    const ProgramShape& program_shape, ThunkExecutor& executor,
-    DebugOptions::CommandBufferUpdateMode update_mode,
-    absl::flat_hash_map<ShapeIndex, GpuExecutable::OutputInfo>* output_info) {
-  for (auto& output_info_entry : *output_info) {
-    output_info_entry.second.copy_from_command_buffer_output = false;
-  }
-
-  if (update_mode == DebugOptions::ALWAYS_UPDATE) {
-    return absl::OkStatus();
-  }
-
-  absl::flat_hash_set<BufferAllocation::Index> command_buffer_outputs;
-  RETURN_IF_ERROR(
-      executor.thunks().WalkNested([&](Thunk* thunk) -> absl::Status {
-        auto* command_buffer_thunk =
-            dynamic_cast<const CommandBufferThunk*>(thunk);
-        if (command_buffer_thunk == nullptr) {
-          return absl::OkStatus();
-        }
-
-        return command_buffer_thunk->WalkCommands(
-            [&](const Command* command) -> absl::Status {
-              for (const BufferUse& use : command->buffer_uses()) {
-                if (use.access() == BufferUse::MemoryAccess::kWrite) {
-                  command_buffer_outputs.insert(use.slice().index());
-                }
-              }
-              return absl::OkStatus();
-            });
-      }));
-
-  if (command_buffer_outputs.empty()) {
-    return absl::OkStatus();
-  }
-
-  const Shape& result_shape = program_shape.result();
-  for (auto& [index, info] : *output_info) {
-    if (info.alias_config.has_value() || info.passthrough ||
-        !command_buffer_outputs.contains(info.allocation_index) ||
-        ShapeUtil::GetSubshape(result_shape, index).IsTuple()) {
-      continue;
-    }
-    info.copy_from_command_buffer_output = true;
-  }
-  return absl::OkStatus();
-}
-
 absl::StatusOr<bool> ShouldCollectiveUseMinimalResource(
     const HloModule& module) {
   int64_t sync_collective_count = 0;
@@ -458,10 +410,6 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
   // Extract modified thunks back into a ThunkExecutor.
   auto executor =
       std::make_unique<ThunkExecutor>(std::move(seq_thunk->thunks()));
-  RETURN_IF_ERROR(MarkCommandBufferOutputCopies(
-      params.program_shape, *executor,
-      params.debug_options.xla_gpu_command_buffer_update_mode(),
-      &params.output_info));
 
   return std::unique_ptr<GpuExecutable>(new GpuExecutable(
       std::move(params.debug_module), std::move(params.asm_text),
@@ -1678,9 +1626,7 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
 
   absl::flat_hash_set<BufferAllocation::Index> returned_output_allocations;
   for (const auto& [_, output_info] : output_info_) {
-    if (!output_info.copy_from_command_buffer_output) {
-      returned_output_allocations.insert(output_info.allocation_index);
-    }
+    returned_output_allocations.insert(output_info.allocation_index);
   }
 
   std::optional<VaRemapExecutionState> va_remap_execution_state_storage;
@@ -1702,11 +1648,6 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   absl::Span<const BufferAllocation* const> allocations = GetAllocations();
 
   std::set<se::DeviceAddressBase> buffers_in_result;
-  struct CommandBufferOutputCopy {
-    ShapeIndex index;
-    BufferAllocation::Index allocation_index;
-  };
-  std::vector<CommandBufferOutputCopy> command_buffer_outputs_to_copy;
 
   const bool is_entire_tuple_contents_aliased = [&] {
     for (auto& p : result.MutableResult()->buffers().leaves()) {
@@ -1786,12 +1727,6 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
       }
     }
 
-    if (output_info.copy_from_command_buffer_output) {
-      command_buffer_outputs_to_copy.push_back(
-          {index, output_info.allocation_index});
-      continue;
-    }
-
     if (result_buffer.is_null()) {
       // The source instruction should have a non-parameter buffer
       // assigned.
@@ -1847,59 +1782,11 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
           : UnMapMemoryReservationAliases(device_ordinal,
                                           *va_remap_execution_state);
 
-  absl::Status copy_status;
-  bool submitted_command_buffer_output_copy = false;
-  if (execute_status.ok()) {
-    for (const CommandBufferOutputCopy& copy : command_buffer_outputs_to_copy) {
-      const BufferAllocation* allocation = allocations[copy.allocation_index];
-      se::DeviceAddressBase source_buffer =
-          owning_buffer_allocations.GetDeviceAddress(copy.allocation_index);
-      uint64_t allocation_size = static_cast<uint64_t>(allocation->size());
-      CHECK_GE(source_buffer.size(), allocation_size);
-
-      absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> allocated_buffer =
-          memory_allocator->Allocate(device_ordinal, allocation_size,
-                                     /*retry_on_failure=*/true,
-                                     /*memory_space=*/allocation->color());
-      if (!allocated_buffer.ok()) {
-        copy_status = buffer_assignment_ == nullptr
-                          ? allocated_buffer.status()
-                          : VerboseAllocationError(allocated_buffer.status());
-        break;
-      }
-
-      se::ScopedDeviceAddress<uint8_t> owned_buffer =
-          std::move(*allocated_buffer);
-      se::DeviceAddressBase result_buffer = *owned_buffer;
-      if (allocation_size > 0) {
-        absl::Status memcpy_status = run_options->stream()->MemcpyD2D(
-            &result_buffer, source_buffer, allocation_size);
-        submitted_command_buffer_output_copy = true;
-        if (!memcpy_status.ok()) {
-          copy_status = memcpy_status;
-          break;
-        }
-      }
-
-      buffers_in_result.insert(result_buffer);
-      result.MutableResult()->set_buffer(std::move(owned_buffer), copy.index);
-    }
-
-    if (submitted_command_buffer_output_copy &&
-        !memory_allocator->AllowsAsynchronousDeallocation()) {
-      absl::Status block_status = run_options->stream()->BlockHostUntilDone();
-      if (copy_status.ok()) {
-        copy_status = block_status;
-      }
-    }
-  }
-
   absl::Status teardown_status =
       owning_buffer_allocations.TearDown(buffers_in_result, GetAllocations());
 
   RETURN_IF_ERROR(execute_status);
   RETURN_IF_ERROR(unmap_status);
-  RETURN_IF_ERROR(copy_status);
   RETURN_IF_ERROR(teardown_status);
 
   // Free allocations for arguments.
@@ -2191,7 +2078,6 @@ GpuExecutableProto::OutputInfoProto GpuExecutable::OutputInfo::ToProto() const {
   GpuExecutableProto::OutputInfoProto proto;
   proto.set_allocation_index(allocation_index);
   proto.set_passthrough(passthrough);
-  proto.set_copy_from_command_buffer_output(copy_from_command_buffer_output);
 
   if (alias_config.has_value()) {
     proto.mutable_alias_config()->set_parameter_number(
@@ -2218,8 +2104,6 @@ absl::StatusOr<GpuExecutable::OutputInfo> GpuExecutable::OutputInfo::FromProto(
   OutputInfo output_info;
   output_info.allocation_index = proto.allocation_index();
   output_info.passthrough = proto.passthrough();
-  output_info.copy_from_command_buffer_output =
-      proto.copy_from_command_buffer_output();
   if (proto.has_alias_config()) {
     xla::HloInputOutputAliasConfig::AliasKind alias_kind;
     switch (proto.alias_config().kind()) {
