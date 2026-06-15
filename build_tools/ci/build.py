@@ -480,6 +480,7 @@ nvidia_gpu_build_with_compute_capability(
 )
 
 oneapi_build_tag_filter = (
+    "oneapi-only",
     "requires-gpu-intel",
     "-requires-gpu-amd",
     "-requires-gpu-nvidia",
@@ -493,6 +494,7 @@ oneapi_build_tag_filter = (
 oneapi_test_tag_filter = (
     # This build of oneAPI backend runs on X86 host without an Intel GPU,so
     # we are excluding the tests requiring Intel GPU
+    "oneapi-only",
     "-requires-gpu-intel",
     "-requires-gpu-amd",
     "-requires-gpu-nvidia",
