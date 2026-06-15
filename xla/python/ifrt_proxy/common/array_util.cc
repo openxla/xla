@@ -206,17 +206,15 @@ absl::Status DeserializeFromCordIntoPreallocatedStringHostBuffer(
         "Failed to parse serialized string buffer");
   }
 
-  // The element count is supplied by the peer (the proxy server, or an attacker
-  // on an insecure transport). `preallocated_buffer` was sized from the local
-  // array shape, so a peer that reports a different number of strings than the
-  // buffer holds would otherwise cause an out-of-bounds write. Require an exact
-  // match before writing any element.
+  // `preallocated_buffer` was sized from the array shape, while the serialized
+  // buffer carries its own string count. Reject a mismatch before writing any
+  // element so an inconsistent buffer cannot write past the end of
+  // `preallocated_buffer`. This mirrors the element-count validation on the
+  // server-side string deserialization path.
   if (static_cast<size_t>(string_array_proto.strings_size()) != num_elements) {
     return absl::InvalidArgumentError(absl::StrCat(
-        "Number of strings in serialized buffer (",
-        string_array_proto.strings_size(),
-        ") does not match the preallocated host buffer element count (",
-        num_elements, ")"));
+        "String host buffer has ", string_array_proto.strings_size(),
+        " elements but shape requires ", num_elements, " elements"));
   }
 
   auto* current_cord = preallocated_buffer;
