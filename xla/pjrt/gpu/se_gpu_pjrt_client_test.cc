@@ -2406,7 +2406,7 @@ CompileOptions CmdBufVaRemappingOptions() {
 
 // Tests that element-wise fusion operations (FUSION command type) produce
 // correct results under command buffer VA remapping across multiple runs,
-// exercising both VA reservation sets (indices 0, 1, 0).
+// reusing one VA reservation.
 TEST_F(VmmTest, CommandBufferVaRemappingFusionOps) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(VmmClientOptions()));
@@ -2426,7 +2426,7 @@ TEST_F(VmmTest, CommandBufferVaRemappingFusionOps) {
   auto* device = client->addressable_devices()[0];
   TF_ASSERT_OK_AND_ASSIGN(auto* mem, device->default_memory_space());
 
-  // 3 runs cover VA reservation set indices 0, 1, 0.
+  // 3 runs reuse the same VA reservation with different physical allocations.
   int old_vlog = absl::SetVLogLevel("gpu_executable", 3);
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
   EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
@@ -2548,7 +2548,7 @@ TEST_F(VmmTest, CommandBufferVaRemappingConditional) {
   auto* device = client->addressable_devices()[0];
   TF_ASSERT_OK_AND_ASSIGN(auto* mem, device->default_memory_space());
 
-  // Alternate true/false to exercise both VA reservation sets.
+  // Alternate true/false to exercise repeated VA remapping.
   struct RunConfig {
     bool cond;
     float val;
@@ -2710,16 +2710,16 @@ TEST_F(VmmTest, CommandBufferVaRemappingDynamicSliceFusion) {
   absl::SetVLogLevel("gpu_executable", old_vlog);
 }
 
-// Tests the kNumVaReservationSets=2 multiplexing: runs 6 iterations so the
-// VA range index cycles 0,1,0,1,0,1. Verifies no memory corruption from the
-// alternating remapping across all runs.
-TEST_F(VmmTest, CommandBufferVaRemappingMultiplexing) {
+// Tests repeated reuse of the single command-buffer VA range across multiple
+// executions. Verifies no memory corruption from remapping new physical
+// allocations into the same reserved VA addresses.
+TEST_F(VmmTest, CommandBufferVaRemappingSingleRangeReuse) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(VmmClientOptions()));
 
   // add-constant: expected = input + {1,2,3,4}.
   static constexpr char kHlo[] = R"(
-    HloModule multiplexing_va_remapping_test
+    HloModule single_range_va_remapping_test
     ENTRY main {
       x = f32[4] parameter(0)
       c = f32[4] constant({1.0, 2.0, 3.0, 4.0})
@@ -2733,7 +2733,7 @@ TEST_F(VmmTest, CommandBufferVaRemappingMultiplexing) {
   auto* device = client->addressable_devices()[0];
   TF_ASSERT_OK_AND_ASSIGN(auto* mem, device->default_memory_space());
 
-  // 6 runs → VA range indices: 0, 1, 0, 1, 0, 1.
+  // Reuse the same VA range across multiple remaps.
   int old_vlog = absl::SetVLogLevel("gpu_executable", 3);
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
   EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
@@ -2752,7 +2752,7 @@ TEST_F(VmmTest, CommandBufferVaRemappingMultiplexing) {
     EXPECT_TRUE(LiteralTestUtil::Equal(
         LiteralUtil::CreateR1<float>({base + 1, base + 2, base + 3, base + 4}),
         *result_lit))
-        << "Mismatch on run " << run << " (VA range index " << (run % 2) << ")";
+        << "Mismatch on run " << run;
   }
   mock_log.StopCapturingLogs();
   absl::SetVLogLevel("gpu_executable", old_vlog);
@@ -2762,7 +2762,7 @@ TEST_F(VmmTest, CommandBufferVaRemappingMultiplexing) {
 // multiple runs. The GEMM is routed through cuBLAS (GemmCmd/CublasLtCmd), which
 // are traced commands. In CAPTURE_CMD_NEVER_UPDATE mode only traced commands
 // populate command_buffer_allocation_indexes_, activating VA remapping so that
-// traced commands skip command buffer updates across alternating VA ranges.
+// traced commands skip command buffer updates across single-range remaps.
 TEST_F(VmmTest, CommandBufferVaRemappingCustomLibraryUpdateFree) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(VmmClientOptions()));
@@ -2813,7 +2813,7 @@ TEST_F(VmmTest, CommandBufferVaRemappingCustomLibraryUpdateFree) {
       .Times(::testing::AtLeast(1));
   mock_log.StartCapturingLogs();
 
-  // 3 runs cover VA reservation set indices 0, 1, 0.
+  // 3 runs reuse the same VA reservation with different physical allocations.
   for (int run = 0; run < 3; ++run) {
     float s = static_cast<float>(run + 1);
     // lhs = s * identity → s * identity * identity = s * identity.
@@ -2835,10 +2835,10 @@ TEST_F(VmmTest, CommandBufferVaRemappingCustomLibraryUpdateFree) {
   absl::SetVLogLevel("gpu_executable", old_vlog);
 }
 
-// Tests that two different executables using NEVER_UPDATE can coexist
-// and interleave executions without interfering with each other's VA ranges.
-// Each executable maintains its own per-(executable, device) VA reservation,
-// so remapping in one does not corrupt the other.
+// Tests that two different executables using NEVER_UPDATE can coexist and
+// interleave executions without interfering with each other's VA range.
+// Each executable maintains its own per-executor VA reservation, so remapping
+// in one does not corrupt the other.
 TEST_F(VmmTest, CommandBufferVaRemappingTwoExecutables) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(VmmClientOptions()));

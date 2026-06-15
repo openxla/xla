@@ -18,11 +18,10 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
+#include "absl/base/call_once.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/function_ref.h"
@@ -40,18 +39,14 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 
 class CommandBufferThunk : public Thunk {
  public:
-  CommandBufferThunk(
-      CommandExecutor commands, ThunkInfo thunk_info,
-      std::unique_ptr<SequentialThunk> thunks = nullptr,
-      bool enable_command_buffers_during_profiling = false,
-      DebugOptions::CommandBufferUpdateMode command_buffer_update_mode =
-          DebugOptions::ALWAYS_UPDATE);
+  CommandBufferThunk(CommandExecutor commands, ThunkInfo thunk_info,
+                     std::unique_ptr<SequentialThunk> thunks = nullptr,
+                     bool enable_command_buffers_during_profiling = false);
 
   const std::unique_ptr<SequentialThunk>& thunks() const { return thunks_; }
 
@@ -126,6 +121,13 @@ class CommandBufferThunk : public Thunk {
     // change.
     std::vector<se::DeviceAddressBase> recorded_allocs ABSL_GUARDED_BY(mutex);
 
+    // Cached intersection of this command buffer's allocation indices with the
+    // dynamic allocation set. The update policy is fixed after it becomes
+    // ready, so this only has to be computed once.
+    absl::once_flag policy_allocs_to_check_once;
+    std::vector<BufferAllocation::Index> policy_allocs_to_check
+        ABSL_GUARDED_BY(mutex);
+
     // Number of command buffer executions since last update.
     int64_t num_executions ABSL_GUARDED_BY(mutex) = 0;
 
@@ -139,23 +141,17 @@ class CommandBufferThunk : public Thunk {
     bool warmup_done ABSL_GUARDED_BY(mutex) = false;
   };
 
-  // Command buffer thunk owns commands buffers instantiated on all executors.
-  // When VA remapping is enabled, the key includes the first allocation's VA
-  // address to distinguish between command buffers for different VA ranges.
+  // Command buffer thunk owns one command buffer for each executor it runs on.
   struct State {
     absl::Mutex mutex;
-    absl::flat_hash_map<std::pair<se::StreamExecutor*, void*>,
+    absl::flat_hash_map<se::StreamExecutor*,
                         std::shared_ptr<ExecutorCommandBuffer>>
         command_buffers ABSL_GUARDED_BY(mutex);
   };
 
-  // Returns a command buffer for (executor, buffer_allocations) or creates a
-  // new one. When VA remapping is enabled the key includes the first
-  // allocation's device address to distinguish per-VA-range command buffers;
-  // otherwise the key uses nullptr.
+  // Returns a command buffer for `executor` or creates a new one.
   absl::StatusOr<std::shared_ptr<ExecutorCommandBuffer>>
-  GetOrCreateCommandBuffer(se::StreamExecutor* executor,
-                           const BufferAllocations& buffer_allocations);
+  GetOrCreateCommandBuffer(se::StreamExecutor* executor);
 
   // Each individual command buffer allocates state on device (CUDA graph) and
   // it adds up pretty quickly. To prevent OOM errors we proactively evict
@@ -184,13 +180,6 @@ class CommandBufferThunk : public Thunk {
   // When true, allows command buffers to be used while profiling active.
   // TODO(b/355487968): Remove this option when validation complete.
   bool enable_command_buffers_during_profiling_;
-
-  // The update mode controlling VA remapping strategy for this command buffer.
-  DebugOptions::CommandBufferUpdateMode command_buffer_update_mode_;
-
-  // Cached minimum allocation index of the first traced command. Computed once
-  // in the constructor for CAPTURE_CMD_NEVER_UPDATE mode.
-  std::optional<BufferAllocation::Index> first_traced_cmd_alloc_idx_;
 
   // Command buffer thunk state allocated in heap to allow global (per-process)
   // management of instantiated command buffers.
