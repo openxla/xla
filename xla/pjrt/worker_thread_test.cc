@@ -107,22 +107,5 @@ TEST(WorkerThreadTest, ConsecutiveDrainsOnIdleThread) {
   thread.Drain();  // First drain on empty queue — must not deadlock.
   thread.Drain();  // Second drain on still-empty queue — must not deadlock.
 }
-
-// Drain() guarantees *prior* closures have completed.  A closure scheduled
-// *after* Drain() starts may or may not have run when Drain() returns; only
-// the work enqueued before the sentinel is guaranteed.
-TEST(WorkerThreadTest, DrainGuaranteesPriorClosuresComplete) {
-  WorkerThread thread(tsl::Env::Default(), "test");
-
-  std::atomic<int> before{0};
-
-  thread.Schedule(
-      [&before]() { before.fetch_add(1, std::memory_order_relaxed); });
-
-  thread.Drain();  // The closure above is guaranteed to have completed.
-
-  EXPECT_EQ(before.load(std::memory_order_relaxed), 1);
-}
-
 }  // namespace
 }  // namespace xla

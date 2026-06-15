@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/casts.h"
+#include "absl/base/no_destructor.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/btree_map.h"
 #include "absl/functional/any_invocable.h"
@@ -74,9 +75,10 @@ namespace {
 //     state is destroyed rather than cached.
 //   - The GPU context is activated (executor->Activate()) for all HIP calls.
 //
-// Intentional leak: the singleton (new, never delete) holds at most one
-// vector of handles per (device, flags, priority) for the process lifetime.
-// The OS reclaims all GPU resources on exit.
+// Intentional no-destructor: the singleton holds at most one vector of handles
+// per (device, flags, priority) for the process lifetime.  absl::NoDestructor
+// avoids running the destructor at program exit (which would call
+// hipStreamDestroy after the driver may already be torn down).
 //
 // Thread safety: mu guards all map accesses.
 struct HipStreamHandleCache {
@@ -87,7 +89,7 @@ struct HipStreamHandleCache {
 };
 
 HipStreamHandleCache& GetHipStreamHandleCache() {
-  static auto* cache = new HipStreamHandleCache();  // Intentional leak.
+  static absl::NoDestructor<HipStreamHandleCache> cache;
   return *cache;
 }
 
