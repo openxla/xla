@@ -9,6 +9,11 @@ package(
     licenses = ["notice"],
 )
 
+exports_files(
+    ["hlo_benchmark_test.cc"],
+    visibility = [":friends"],
+)
+
 package_group(
     name = "friends",
     includes = [
@@ -733,5 +738,32 @@ xla_cc_test(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_benchmark_test",
+    srcs = ["hlo_benchmark_test.cc"],
+    data = [
+        "//xla/backends/cpu/benchmarks/hlo:hlo_files",
+    ],
+    deps = [
+        ":aot_benchmark_helper",
+        ":hlo_benchmark_runner",
+        "//third_party/py/jax/jaxlib/cpu:cpu_kernels",
+        "//xla:literal",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_proto_cc",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_benchmark//:benchmark",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:stacktrace_handler",
     ],
 )
