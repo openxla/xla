@@ -2804,8 +2804,7 @@ TEST_F(VmmTest, CommandBufferVaRemappingCustomLibraryUpdateFree) {
   auto identity = LiteralUtil::CreateR2<float>(
       {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}});
 
-  // Verify VA remapping is active: traced GEMM allocations are in
-  // command_buffer_allocation_indexes_, so ExecuteThunksWithVaRemapping fires.
+  // Verify VA remapping is active for traced GEMM allocations.
   int old_vlog = absl::SetVLogLevel("gpu_executable", 3);
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
   EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
