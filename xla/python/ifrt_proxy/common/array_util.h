@@ -95,7 +95,7 @@ absl::StatusOr<std::vector<absl::Cord>> DeserializeStringHostBufferFromString(
 // elements encoded in `serialized_string_buffer` is validated against
 // `num_elements` before any element is written; a mismatch returns an error.
 absl::Status DeserializeFromCordIntoPreallocatedStringHostBuffer(
-    const absl::Cord& serialized_string_buffer, size_t num_elements,
+    const absl::Cord& serialized_string_buffer, int64_t num_elements,
     absl::Cord* preallocated_buffer);
 
 }  // namespace proxy

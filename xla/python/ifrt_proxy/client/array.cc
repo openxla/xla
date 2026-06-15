@@ -723,7 +723,7 @@ tsl::Future<> Array::CopyToStringHostBuffer(
                    host_buffer_store = rpc_helper_->host_buffer_store(),
                    host_buffer_handle,
                    dst_buffer = static_cast<absl::Cord*>(data),
-                   num_elements = static_cast<size_t>(shape_.num_elements())](
+                   num_elements = shape_.num_elements()](
                       absl::StatusOr<std::shared_ptr<CopyToHostBufferResponse>>
                           resp) mutable {
     if (!resp.ok()) {
