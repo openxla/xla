@@ -1702,6 +1702,10 @@ uint64_t CuptiTracer::GetLegacyTimestamp() const {
       cupti_interface_->GetTimestamp(&tsc) == CUPTI_SUCCESS) {
     return tsc;
   }
+  LOG_FIRST_N(WARNING, 1)
+      << "CUPTI GetTimestamp failed; returning timestamp 0. Events that "
+         "depend on this timestamp may be dropped during time normalization.";
+  // Return 0 to mark the timestamp unavailable so profiling can continue.
   return 0;
 }
 
@@ -1740,7 +1744,12 @@ uint64_t CuptiTracer::GetTimestampForCurrentSubscriber() const {
   if (use_legacy_timestamp_with_v2_subscriber_) {
     return GetLegacyTimestamp();
   }
-  // Return 0 rather than mixing V1 and V2 timestamp domains.
+  LOG_FIRST_N(WARNING, 1)
+      << "CUPTI timestamp is unavailable for the current V2 subscriber state; "
+         "returning timestamp 0.";
+  // Return 0 to mark the timestamp unavailable for this V2 subscriber state so
+  // profiling can continue. Events that depend on this timestamp may be dropped
+  // during time normalization.
   return 0;
 }
 
