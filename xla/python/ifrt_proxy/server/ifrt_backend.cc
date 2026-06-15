@@ -110,7 +110,7 @@ absl::StatusOr<IfrtArrayRef> MakeStringArrayFromHostBuffer(
   if (static_cast<size_t>(num_elements) != string_host_buffer.size()) {
     return absl::InvalidArgumentError(absl::StrCat(
         "String host buffer has ", string_host_buffer.size(),
-        " element(s) but shape requires ", num_elements, " element(s)"));
+        " elements but shape requires ", num_elements, " elements"));
   }
   const void* data = string_host_buffer.data();
 
@@ -163,13 +163,13 @@ ParseMakeArraysFromHostBufferShardsSpecHostBufferProto(
   if (dtype.kind() == DType::kString) {
     ASSIGN_OR_RETURN(std::vector<absl::Cord> string_host_buffer,
                      DeserializeStringHostBufferFromString(*host_buffer));
-    const int64_t num_elements_shards = shape.num_elements();
-    if (static_cast<size_t>(num_elements_shards) !=
+    const int64_t num_elements = shape.num_elements();
+    if (static_cast<size_t>(num_elements) !=
             string_host_buffer.size()) {
       return absl::InvalidArgumentError(absl::StrCat(
           "String host buffer has ", string_host_buffer.size(),
-          " element(s) but shape requires ", num_elements_shards,
-          " element(s)"));
+          " elements but shape requires ", num_elements,
+          " elements"));
     }
     data = string_host_buffer.data();
     on_done_with_host_buffer = [host_buffer = std::move(host_buffer),
