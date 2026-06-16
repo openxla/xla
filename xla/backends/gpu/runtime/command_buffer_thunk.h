@@ -21,6 +21,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/base/call_once.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/function_ref.h"
@@ -38,18 +39,14 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 
 class CommandBufferThunk : public Thunk {
  public:
-  CommandBufferThunk(
-      CommandExecutor commands, ThunkInfo thunk_info,
-      std::unique_ptr<SequentialThunk> thunks = nullptr,
-      bool enable_command_buffers_during_profiling = false,
-      DebugOptions::CommandBufferUpdateMode command_buffer_update_mode =
-          DebugOptions::ALWAYS_UPDATE);
+  CommandBufferThunk(CommandExecutor commands, ThunkInfo thunk_info,
+                     std::unique_ptr<SequentialThunk> thunks = nullptr,
+                     bool enable_command_buffers_during_profiling = false);
 
   const std::unique_ptr<SequentialThunk>& thunks() const { return thunks_; }
 
@@ -126,6 +123,13 @@ class CommandBufferThunk : public Thunk {
     // change.
     std::vector<se::DeviceAddressBase> recorded_allocs ABSL_GUARDED_BY(mutex);
 
+    // Cached intersection of this command buffer's allocation indices with the
+    // dynamic allocation set. The update policy is fixed after it becomes
+    // ready, so this only has to be computed once.
+    absl::once_flag policy_allocs_to_check_once;
+    std::vector<BufferAllocation::Index> policy_allocs_to_check
+        ABSL_GUARDED_BY(mutex);
+
     // Number of command buffer executions since last update.
     int64_t num_executions ABSL_GUARDED_BY(mutex) = 0;
 
@@ -178,9 +182,6 @@ class CommandBufferThunk : public Thunk {
   // When true, allows command buffers to be used while profiling active.
   // TODO(b/355487968): Remove this option when validation complete.
   bool enable_command_buffers_during_profiling_;
-
-  // The update mode controlling VA remapping strategy for this command buffer.
-  DebugOptions::CommandBufferUpdateMode command_buffer_update_mode_;
 
   // Command buffer thunk state allocated in heap to allow global (per-process)
   // management of instantiated command buffers.

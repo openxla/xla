@@ -57,6 +57,20 @@ limitations under the License.
 namespace xla::gpu {
 
 namespace {
+bool IsSubsetOfSorted(absl::Span<const BufferAllocation::Index> subset,
+                      absl::Span<const BufferAllocation::Index> superset) {
+  auto superset_it = superset.begin();
+  for (BufferAllocation::Index value : subset) {
+    while (superset_it != superset.end() && *superset_it < value) {
+      ++superset_it;
+    }
+    if (superset_it == superset.end() || *superset_it != value) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // An adaptor from Command to ExecutionGraph::Operation for building an
 // execution graph from a command sequence.
 class CommandOperation : public ExecutionGraph::Operation {
@@ -555,6 +569,42 @@ absl::Status CommandExecutor::RecordUpdate(
     return absl::OkStatus();
   }
 
+  auto* state = command_buffer->GetOrConstructResource<CommandExecutorsState>();
+  CommandExecutorsState::Key key = std::make_pair(this, record_id);
+  RecordedCommands& recorded_commands = state->recorded_commands[key];
+
+  const std::vector<bool>* update_policy_skip_commands = nullptr;
+  if (execute_params.command_buffer_update_info != nullptr &&
+      execute_params.command_buffer_update_info->update_policy_ready) {
+    CommandExecutorsState::UpdatePolicyCache& update_policy_cache =
+        state->update_policy_caches[key];
+    if (!update_policy_cache.initialized) {
+      DCHECK(absl::c_is_sorted(
+          execute_params.command_buffer_update_info->va_remapped_indices))
+          << "VA-remapped allocs must be sorted: "
+          << absl::StrJoin(
+                 execute_params.command_buffer_update_info->va_remapped_indices,
+                 ", ");
+
+      update_policy_cache.skip_commands.assign(commands_.size(), false);
+      for (CommandId id = 0; id < commands_.size(); ++id) {
+        size_t command_index = static_cast<size_t>(id);
+        DCHECK(absl::c_is_sorted(cmd_allocs_indices_[id]))
+            << "Command allocs must be sorted: "
+            << absl::StrJoin(cmd_allocs_indices_[id], ", ");
+
+        if (IsSubsetOfSorted(cmd_allocs_indices_[id],
+                             execute_params.command_buffer_update_info
+                                 ->va_remapped_indices)) {
+          update_policy_cache.skip_commands[command_index] = true;
+        }
+      }
+
+      update_policy_cache.initialized = true;
+    }
+    update_policy_skip_commands = &update_policy_cache.skip_commands;
+  }
+
   // Check if command `id` has to be updated based on the buffer allocations
   // that changed since the last call to `Record`. We keep intersection vector
   // outside of a lambda to avoid repeated heap allocations on every call.
@@ -572,23 +622,17 @@ absl::Status CommandExecutor::RecordUpdate(
       return false;
     }
 
-    // For CAPTURE_CMD_NEVER_UPDATE mode, always skip updates for commands
-    // implemented via tracing. This includes CollectiveThunk command/thunk
-    // hybrids: their buffer allocations are VA-remapped to fixed offsets within
-    // the reserved VA range, so their recorded addresses remain valid across
-    // executions and no update is needed.
-    //
-    // Note: CollectiveThunk satisfies both IsTracedCommand() and
-    // requires_update_on_initialize(), but the
-    // requires_update_on_initialize() check below is intentionally unreachable
-    // for traced commands in this mode. Because their buffer addresses are
-    // stable (VA-mapped), re-initialization is unnecessary.
-    if (record_params.command_buffer_update_mode ==
-            DebugOptions::CAPTURE_CMD_NEVER_UPDATE &&
-        command->IsTracedCommand()) {
-      VLOG(3) << "Skipping update for traced command " << id
-              << " (CAPTURE_CMD_NEVER_UPDATE mode)";
-      return true;
+    // VA-remapped allocations keep stable command-buffer-visible addresses. If
+    // every allocation referenced by this command is VA-remapped, the command
+    // does not need an update, including traced collective commands that also
+    // require initialization.
+    if (execute_params.command_buffer_update_info != nullptr &&
+        execute_params.command_buffer_update_info->update_policy_ready) {
+      size_t command_index = static_cast<size_t>(id);
+      if (update_policy_skip_commands != nullptr &&
+          (*update_policy_skip_commands)[command_index]) {
+        return true;
+      }
     }
 
     // We always update commands that require updates on initialization, even if
@@ -613,10 +657,6 @@ absl::Status CommandExecutor::RecordUpdate(
     return alloc_intersection.empty();
   };
 
-  auto* state = command_buffer->GetOrConstructResource<CommandExecutorsState>();
-  RecordedCommands& recorded_commands =
-      state->recorded_commands[std::make_pair(this, record_id)];
-
   // Check this this executor was correctly recorded into the command buffer.
   if (recorded_commands.size() != commands_.size()) {
     return Internal(
@@ -630,9 +670,6 @@ absl::Status CommandExecutor::RecordUpdate(
   for (CommandId id = 0; id < commands_.size(); ++id) {
     Command* command = commands_[id];
 
-    std::optional<tsl::profiler::ScopedAnnotation> annotation =
-        GetKernelAnnotation(command->profile_annotation());
-
     // Skip updating collective commands if mock collectives are enabled.
     if (execute_params.mock_collectives && command->IsCollective()) {
       continue;
@@ -644,6 +681,9 @@ absl::Status CommandExecutor::RecordUpdate(
       ++num_skipped_command_updates;
       continue;
     }
+
+    std::optional<tsl::profiler::ScopedAnnotation> annotation =
+        GetKernelAnnotation(command->profile_annotation());
 
     Command::RecordUpdate record_action{recorded_commands[id]};
     ASSIGN_OR_RETURN(recorded_commands[id],

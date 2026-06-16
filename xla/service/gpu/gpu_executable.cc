@@ -551,6 +551,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
     Thunk::ExecutableSource executable_source,
     const ServiceExecutableRunOptions* run_options,
     const BufferAllocations& buffer_allocations, bool block_host_until_done,
+    const Thunk::CommandBufferUpdateInfo* command_buffer_update_info,
     GpuExecutable::NumAdditionalStreams num_additional_streams,
     CollectiveMemoryCache& collective_memory_cache,
     bool collective_use_minimal_resource) {
@@ -783,6 +784,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
         run_options->run_options().ffi_execution_context(),
         run_options->local_device_count(),
         &execution_scoped_state};
+    initialize_params.command_buffer_update_info = command_buffer_update_info;
 
     tsl::profiler::TraceMe trace_initialize("Thunks::Initialize");
     RETURN_IF_ERROR(thunk_executor.Initialize(initialize_params));
@@ -802,7 +804,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
       *run_options, buffer_allocations, main_stream,
       command_buffer_trace_stream, &collective_params, &collective_cliques,
       &collective_memory, std::move(compute_streams.streams),
-      &execution_scoped_state);
+      &execution_scoped_state, command_buffer_update_info);
 
   XLA_VLOG_DEVICE(1, run_options->device_ordinal())
       << "Start GpuExecutable::ExecuteOnStream module: " << module_name;
@@ -1176,8 +1178,10 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
 
   absl::Status execute_status = allocation_scope.ExecuteWithBufferAllocations(
       buffer_allocations, device_ordinal,
-      [&](const BufferAllocations& execution_buffers) {
-        return ExecuteThunks(execution_buffers, run_options);
+      [&](const BufferAllocations& execution_buffers,
+          const Thunk::CommandBufferUpdateInfo* command_buffer_update_info) {
+        return ExecuteThunks(execution_buffers, run_options,
+                             command_buffer_update_info);
       });
   absl::Status teardown_status =
       buffer_allocations.TearDown(buffers_in_result, GetAllocations());
@@ -1242,7 +1246,8 @@ std::optional<BufferAssignmentProto> GpuExecutable::buffer_assignment_proto()
 }
 absl::Status GpuExecutable::ExecuteThunks(
     const BufferAllocations& buffer_allocations,
-    const ServiceExecutableRunOptions* run_options) {
+    const ServiceExecutableRunOptions* run_options,
+    const Thunk::CommandBufferUpdateInfo* command_buffer_update_info) {
   tsl::profiler::TraceMe trace([&] {
     return tsl::profiler::TraceMeEncode(
         absl::StrFormat("[%d] GpuExecutable::ExecuteThunks",
@@ -1283,8 +1288,9 @@ absl::Status GpuExecutable::ExecuteThunks(
   RETURN_IF_ERROR(ExecuteThunksImpl(
       has_module() ? &module_config().debug_options() : nullptr, module_name_,
       unique_id, *thunk_executor_, executable_source, run_options,
-      buffer_allocations, block_host_until_done, num_additional_streams_,
-      collective_memory_cache_, collective_use_minimal_resource));
+      buffer_allocations, block_host_until_done, command_buffer_update_info,
+      num_additional_streams_, collective_memory_cache_,
+      collective_use_minimal_resource));
   return absl::OkStatus();
 }
 
