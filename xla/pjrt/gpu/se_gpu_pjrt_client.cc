@@ -2063,32 +2063,6 @@ StreamExecutorGpuClient::RunAsync(
           run_options->run_options().device_assignment());
 
   std::vector<se::DeviceAddressBase> buffers(allocations.size());
-
-  {
-    static absl::Mutex mu(absl::kConstInit);
-    static absl::flat_hash_set<se::StreamExecutor*> init_execs;
-    
-    auto* gpu_opts = run_options->run_options().gpu_executable_run_options();
-    auto* device_assn = run_options->run_options().device_assignment();
-    bool needs_init = gpu_opts && device_assn;
-
-    if(needs_init) {
-      int64_t num_locals = device_assn->replica_count() * device_assn->computation_count();
-      needs_init = num_locals > 1;
-    }
-    if(needs_init) {
-      absl::MutexLock lock(mu);
-      needs_init = init_execs.insert(executor).second;
-    }
-    if (needs_init) {
-      // run_options->mutable_run_options()->set_dry_run(true);
-      // TF_RETURN_IF_ERROR(gpu_exec->ExecuteThunks(
-      //        gpu::BufferAllocations(buffers, device_ordinal, memory_allocator), 
-      //            run_options));
-      // run_options->mutable_run_options()->set_dry_run(false);
-    }
-  }
-
   {
     tsl::profiler::TraceMe hlo_module_activity(
         [&] { return std::string("Build buffer allocations"); },

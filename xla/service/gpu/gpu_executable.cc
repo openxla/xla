@@ -596,7 +596,6 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
       debug_options
           ? debug_options->xla_gpu_enable_highest_priority_async_stream()
           : false;
-  bool is_dry_run = run_options->run_options().dry_run();
   se::Stream* main_stream = run_options->stream();
   se::StreamExecutor* executor = main_stream->parent();
   se::StreamPriority communication_stream_priority =
@@ -692,7 +691,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
   // Borrow stream for tracing command buffers.
   se::Stream* command_buffer_trace_stream = nullptr;
   StreamPool::Ptr borrowed_command_buffer_trace_stream;
-  if (run_options->HasStreamBorrower() && !is_dry_run) {
+  if (run_options->HasStreamBorrower()) {
     ASSIGN_OR_RETURN(borrowed_command_buffer_trace_stream,
                      run_options->BorrowStream(executor->device_ordinal()));
     command_buffer_trace_stream = borrowed_command_buffer_trace_stream.get();
@@ -701,7 +700,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
   // Borrow streams for communication.
   BorrowedStreams communication_streams = BorrowedStreams::Assign(
       main_stream, num_additional_streams.communication);
-  if (run_options->HasStreamBorrower() && !is_dry_run) {
+  if (run_options->HasStreamBorrower()) {
     ASSIGN_OR_RETURN(communication_streams,
                      BorrowStreams(*run_options, executor->device_ordinal(),
                                    num_additional_streams.communication,
@@ -714,7 +713,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
   // Borrow streams for computations.
   BorrowedStreams compute_streams =
       BorrowedStreams::Assign(main_stream, num_additional_streams.compute);
-  if (run_options->HasStreamBorrower() && !is_dry_run) {
+  if (run_options->HasStreamBorrower()) {
     ASSIGN_OR_RETURN(compute_streams,
                      BorrowStreams(*run_options, executor->device_ordinal(),
                                    num_additional_streams.compute,
@@ -786,13 +785,6 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
                                               collective_clique_requests));
   }
 
-  if(is_dry_run) {
-    VLOG(0) << "Dry run mode: skipping thunk initialization "
-        << " device_ordinal=" << run_options->device_ordinal()
-        << " module_name=" << module_name;
-    return absl::OkStatus();
-  }
-  
   ASSIGN_OR_RETURN(ScratchMemory scratch_memory,
                    AcquireScratchMemory(
                        collective_params, scratch_memory_requests,
@@ -1658,7 +1650,7 @@ absl::Status GpuExecutable::ExecuteThunks(
         {{"module_name", module_name_}});
   });
 
-  if (VLOG_IS_ON(5) && !run_options->run_options().dry_run()) {
+  if (VLOG_IS_ON(5)) {
     // Debug code to compare current allocation's address with previous run's
     // address, and report the allocation info if memory addressed changed.
     // Useful for identify in user's model if it is command buffer perf friendly
