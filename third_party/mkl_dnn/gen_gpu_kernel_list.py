@@ -38,7 +38,7 @@ class Kernel(object):
     self.path_ = path
 
   def extern(self):
-    """Generate the C++ extern declaration for the kernel.
+    """Generates the C++ extern declaration for the kernel.
 
     Returns:
       A string containing the extern declaration 
@@ -100,7 +100,7 @@ class Kernel(object):
       path: Path to the kernel file.
 
     Returns:
-      The extern symbol name. In v2 format, includes parent directory name.
+      The extern symbol name. V2 format includes parent directory name.
     """
     dir = os.path.dirname(path)
     dir1 = os.path.basename(dir)
@@ -315,7 +315,7 @@ class KernelList(object):
     """
     impl_name, content = impl.content(inc_dirs)
     more_sub = impl.subfolder(sub)
-    # construct the file xxx_suffix.cpp
+    # Constructs the file xxx_suffix.cpp
     file_name = impl_name + "_" + suffix + ".cpp"
     print(f"Generating {file_name} in {root}/{sub}/{more_sub}")
     target = os.path.join(root, sub, more_sub)
@@ -362,32 +362,20 @@ class KernelList(object):
       Complete C++ source code with content wrapped in dnnl::impl::gpu::intel namespace.
     """
     header = """
-namespace dnnl {{
-namespace impl {{
-namespace gpu {{
-namespace intel {{
+namespace dnnl::impl::gpu::intel {{
     const char* {}_{}_{} =
 {};
-}}
-}}
-}}
-}}
+}} // namespace dnnl::impl::gpu::intel
         """
 
     if not IS_V2:
       header = """
-namespace dnnl {{
-namespace impl {{
-namespace gpu {{
-namespace intel {{
+namespace dnnl::impl::gpu::intel {{
     const char* {}_kernel[] = {{
 {}
         nullptr
     }};
-}}
-}}
-}}
-}}
+}} // namespace dnnl::impl::gpu::intel
 """
       return header.format(name, content)
 
@@ -438,6 +426,7 @@ namespace intel {{
 
 class FilesHelper(object):
   """Helper class for managing file paths for kernel generation."""
+
   def __init__(self, in_file, out_dir):
     """Initialize path manager for kernel generation.
 
@@ -468,8 +457,8 @@ class FilesHelper(object):
     if not os.path.exists(kernels_out):
       os.makedirs(kernels_out)
 
-    self.header_dir = os.path.join(in_dir, HEADER_ROOT_DIR)
-    self.header_subfolder = HEADER_ROOT_DIR
+    self.header_dir = os.path.join(in_dir, OCL_IMPL_DIR)
+    self.header_subfolder = OCL_IMPL_DIR
 
 def parse_args(argv):
   result = {}
@@ -489,6 +478,7 @@ def enable_v2(in_file):
 
 def main():
   args = parse_args(sys.argv[1:])
+
   # The --in argument is the ocl_kernel_list.cpp.in file path.
   # The --out argument is the output folder
   files_helper = FilesHelper(args["--in"], args["--out"])

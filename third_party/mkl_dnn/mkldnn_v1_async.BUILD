@@ -144,13 +144,7 @@ _COPTS_LIST = select({
 
 _INCLUDES_LIST = [
     "include",
-] + if_sycl_build_is_configured(
-    [
-        "include/oneapi",
-        "include/oneapi/dnnl",
-    ],
-    [],
-) + [
+] + [
     "src",
     "src/common",
     "src/cpu/gemm",
@@ -158,6 +152,8 @@ _INCLUDES_LIST = [
     "third_party",
 ] + if_sycl_build_is_configured(
     [
+        "include/oneapi",
+        "include/oneapi/dnnl",
         "src/gpu/intel/gemm/jit",
         "src/gpu/intel/gemm/jit/include",
         "src/gpu/intel/gemm/jit/include/gemmstone",
