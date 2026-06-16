@@ -2065,7 +2065,7 @@ struct ParallelState {
     // If this method is changed, please remember to change
     // GetForEachIndexParallelThreadCount() as well.
     static absl::NoDestructor<tsl::thread::ThreadPool> global_pool(
-        tsl::Env::Default(), "foreach", 8);
+        tsl::Env::Default(), "foreach", tsl::port::MaxParallelism());
     pool = global_pool.get();
   }
   ~ParallelState() = default;
