@@ -959,10 +959,6 @@ ENTRY e {
     auto estimator = *SolLatencyEstimator::Create(
         scheduler_config_, std::make_unique<DummyLatencyEstimator>(),
         gpu_device_info_, HloCostAnalysis::DefaultShapeSize, computation);
-    // Patch sol_flags_ into the estimator via Create's sol_config derivation:
-    // sol_config is read from GetConfig(module, device_info) in Create, so we
-    // can't inject it directly here.  Instead we call ComputeCollectiveTime
-    // directly for the sync test, which uses our patched sol_flags_.
     return absl::Microseconds(
         static_cast<int64_t>(estimator->NodeCost(&instr)));
   }

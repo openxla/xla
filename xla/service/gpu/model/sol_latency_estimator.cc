@@ -59,6 +59,12 @@ namespace {
 
 using ::mlir::MLIRContext;
 
+bool IsTritonCollectiveKernel(
+    CollectiveBackendConfig::CollectiveKernelStrategy ks) {
+  return ks == CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_ONE_SHOT ||
+         ks == CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_TWO_SHOT;
+}
+
 bool IsSupportedCollectiveOp(const HloInstruction& instr) {
   return HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllReduce,
                           HloOpcode::kReduceScatter, HloOpcode::kAllGatherStart,
@@ -253,15 +259,13 @@ absl::StatusOr<absl::Duration> DispatchEstimation(
     }
     case GPUCommunicationType::SINGLE_PARTITION: {
       // If an intra-node collective kernel will be used (Triton codegen kernel
-      // or the built-in custom C++ kernel — both use the same NVLink-based
-      // cost formula), apply the NVLink model instead of the NCCL-calibrated
-      // CollectiveInterpolator.
-      auto backend_cfg = instr.backend_config<GpuBackendConfig>();
+      // — uses the NVLink-based cost formula), apply the NVLink model instead
+      // of the NCCL-calibrated CollectiveInterpolator.
+      absl::StatusOr<GpuBackendConfig> backend_cfg =
+          instr.backend_config<GpuBackendConfig>();
       if (backend_cfg.ok()) {
-        const auto ks =
-            backend_cfg->collective_backend_config().kernel_strategy();
-        if (ks == CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_ONE_SHOT ||
-            ks == CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_TWO_SHOT) {
+        if (IsTritonCollectiveKernel(
+                backend_cfg->collective_backend_config().kernel_strategy())) {
           SolGPUCostModel sol_model(sol_flags);
           const int num_gpus = num_groups_and_devices->second;
           const int active_links =
@@ -474,18 +478,17 @@ LatencyEstimator::TimeCost SolLatencyEstimator::GetLatencyBetween(
     return kLowLatency;
   }
 
-  // For sync intra-node AllReduce (Triton codegen or built-in custom C++
-  // kernel — both annotated as TRITON_ONE_SHOT / TRITON_TWO_SHOT) the kernel
-  // runs on the compute stream and fully blocks further compute — no overlap
-  // is possible between start and done.  NodeCost() already reports the full
-  // blocking latency on the critical path, so return kLowLatency here to
-  // avoid double-counting.
-  if (IsGPUSyncCollective(from.GetInstr())) {
-    auto cfg = from.GetInstr().backend_config<GpuBackendConfig>();
-    if (cfg.ok()) {
-      const auto ks = cfg->collective_backend_config().kernel_strategy();
-      if (ks == CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_ONE_SHOT ||
-          ks == CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_TWO_SHOT) {
+  // For sync intra-node AllReduce (Triton codegen kernel annotated as
+  // TRITON_ONE_SHOT / TRITON_TWO_SHOT) the kernel runs on the compute stream
+  // and fully blocks further compute — no overlap is possible between start
+  // and done.  NodeCost() already reports the full blocking latency on the
+  // critical path, so return kLowLatency here to avoid double-counting.
+  {
+    absl::StatusOr<GpuBackendConfig> cfg =
+        from.GetInstr().backend_config<GpuBackendConfig>();
+    if (cfg.ok() && cfg->collective_backend_config().is_sync()) {
+      if (IsTritonCollectiveKernel(
+              cfg->collective_backend_config().kernel_strategy())) {
         VLOG(10) << "GetLatencyBetween: Returning kLowLatency for sync "
                     "intra-node AllReduce (cost already in NodeCost): "
                  << from.GetInstr().name();
@@ -526,18 +529,16 @@ LatencyEstimator::TimeCost SolLatencyEstimator::NodeCost(
   if (const std::optional<TimeCost> latency = GetLatencyFromMetadata(*instr)) {
     return *latency;
   }
-  // Sync intra-node AllReduce kernels (Triton codegen or built-in custom C++,
-  // both annotated as TRITON_ONE_SHOT / TRITON_TWO_SHOT) run on the compute
-  // stream and block compute entirely.  Their full latency is on the critical
-  // path, so we must report it here as NodeCost rather than as a hidden
-  // GetLatencyBetween.
-  if (hlo_query::IsAsyncCollectiveStartOp(instr, /*include_send_recv=*/true) &&
-      IsGPUSyncCollective(*instr)) {
-    auto cfg = instr->backend_config<GpuBackendConfig>();
-    if (cfg.ok()) {
-      const auto ks = cfg->collective_backend_config().kernel_strategy();
-      if (ks == CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_ONE_SHOT ||
-          ks == CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_TWO_SHOT) {
+  // Sync intra-node AllReduce kernels (Triton codegen, annotated as
+  // TRITON_ONE_SHOT / TRITON_TWO_SHOT) run on the compute stream and block
+  // compute entirely.  Their full latency is on the critical path, so we must
+  // report it here as NodeCost rather than as a hidden GetLatencyBetween.
+  if (hlo_query::IsAsyncCollectiveStartOp(instr, /*include_send_recv=*/true)) {
+    absl::StatusOr<GpuBackendConfig> cfg =
+        instr->backend_config<GpuBackendConfig>();
+    if (cfg.ok() && cfg->collective_backend_config().is_sync()) {
+      if (IsTritonCollectiveKernel(
+              cfg->collective_backend_config().kernel_strategy())) {
         absl::StatusOr<absl::Duration> t = ComputeCollectiveTime(
             *instr, gpu_info_, shape_size_function_, sol_flags_,
             *cost_analysis_, collective_interpolator_.get());
