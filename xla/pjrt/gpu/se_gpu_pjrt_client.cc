@@ -22,6 +22,7 @@ limitations under the License.
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <variant>
@@ -31,6 +32,7 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -43,6 +45,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
@@ -2100,14 +2103,20 @@ StreamExecutorGpuClient::RunAsync(
         param_no};
   };
 
+  absl::flat_hash_set<BufferAllocation::Index> output_allocations;
+  for (const auto& [_, output_info] : gpu_exec->output_info()) {
+    output_allocations.insert(output_info.allocation_index);
+  }
+
   ASSIGN_OR_RETURN(
       gpu::GpuExecutableBufferAllocator::ExecutionScope allocation_scope,
       gpu_exec->buffer_allocator().CreateExecutionScope(
           run_options, memory_allocator, device_ordinal));
+
   ASSIGN_OR_RETURN(xla::gpu::BufferAllocations buffer_allocations,
                    allocation_scope.GenerateBufferAllocations(
                        run_options, get_parameter_buffer, globals,
-                       memory_allocator, device_ordinal));
+                       memory_allocator, device_ordinal, output_allocations));
   XLA_VLOG_DEVICE(3, device_ordinal)
       << "Buffer allocations: " << buffer_allocations.ToString();
 

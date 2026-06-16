@@ -189,7 +189,7 @@ class GpuExecutableThunkPassBufferAllocator : public ThunkPassBufferAllocator {
       BufferAllocation::Index start_idx)
       : next_idx_(start_idx) {}
 
-  absl::StatusOr<BufferAllocation* absl_nonnull> NewEmptyAllocation(
+  absl::StatusOr<BufferAllocation * absl_nonnull> NewEmptyAllocation(
       int64_t size) override {
     allocations_.push_back(BufferAllocation(next_idx_++, size, /*color=*/0));
     return &allocations_.back();
@@ -485,22 +485,24 @@ GpuExecutable::GpuExecutable(
   }
   set_module_stats(std::move(module_stats));
 
+  const DebugOptions* allocation_debug_options =
+      has_module() ? &module_config().debug_options() : nullptr;
   DebugOptions::CommandBufferUpdateMode update_mode =
-      has_module()
-          ? module_config().debug_options().xla_gpu_command_buffer_update_mode()
+      allocation_debug_options != nullptr
+          ? allocation_debug_options->xla_gpu_command_buffer_update_mode()
           : DebugOptions::ALWAYS_UPDATE;
-  absl::StatusOr<GpuExecutableBufferAllocator::AllocationIndexSet>
-      command_buffer_allocation_indexes =
-          GpuExecutableBufferAllocator::CollectCommandBufferAllocationIndexes(
-              thunk_executor_.get(), allocation_ptrs_, update_mode);
+  auto command_buffer_allocation_indexes =
+      GpuExecutableBufferAllocator::CollectCommandBufferAllocationIndexes(
+          thunk_executor_.get(), allocation_ptrs_, update_mode);
   CHECK_OK(command_buffer_allocation_indexes.status());
   buffer_allocator_ = std::make_unique<GpuExecutableBufferAllocator>(
       module_name_, allocation_ptrs_, program_shape_.result(),
-      has_module() ? &module_config().debug_options() : nullptr, update_mode,
-      std::move(*command_buffer_allocation_indexes));
+      allocation_debug_options, update_mode,
+      std::move(command_buffer_allocation_indexes).value());
 }
 
 GpuExecutable::~GpuExecutable() {
+  buffer_allocator_.reset();
   if (has_module() && enable_debug_info_manager_) {
     XlaDebugInfoManager::Get()->UnregisterModule(module().unique_id());
   }
@@ -1064,15 +1066,23 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
             .AsDeviceAddress(),
         param_no};
   };
+
+  absl::flat_hash_set<BufferAllocation::Index> returned_output_allocations;
+  for (const auto& [_, output_info] : output_info_) {
+    returned_output_allocations.insert(output_info.allocation_index);
+  }
+
   ASSIGN_OR_RETURN(
       GpuExecutableBufferAllocator::ExecutionScope allocation_scope,
       buffer_allocator_->CreateExecutionScope(run_options, memory_allocator,
                                               device_ordinal));
-  ASSIGN_OR_RETURN(BufferAllocations buffer_allocations,
-                   allocation_scope.GenerateBufferAllocations(
-                       run_options, get_parameter_buffer, globals,
-                       memory_allocator, device_ordinal));
-  XLA_VLOG_DEVICE(3, device_ordinal) << buffer_allocations.ToString();
+
+  ASSIGN_OR_RETURN(
+      BufferAllocations owning_buffer_allocations,
+      allocation_scope.GenerateBufferAllocations(
+          run_options, get_parameter_buffer, globals, memory_allocator,
+          device_ordinal, returned_output_allocations));
+  XLA_VLOG_DEVICE(3, device_ordinal) << owning_buffer_allocations.ToString();
   absl::Span<const BufferAllocation* const> allocations = GetAllocations();
 
   std::set<se::DeviceAddressBase> buffers_in_result;
@@ -1150,7 +1160,7 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
         ASSIGN_OR_RETURN(
             result_buffer,
             allocation_scope.AllocateCopyProtectedOutputBuffer(
-                run_options, buffer_allocations, index, *allocation,
+                run_options, owning_buffer_allocations, index, *allocation,
                 device_ordinal, memory_allocator, [&](absl::Status status) {
                   return ResourceExhausted("%s\n%s\n", status.message(),
                                            buffer_allocations_debug_summary());
@@ -1161,8 +1171,8 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
     if (result_buffer.is_null()) {
       // The source instruction should have a non-parameter buffer
       // assigned.
-      result_buffer =
-          buffer_allocations.GetDeviceAddress(output_info.allocation_index);
+      result_buffer = owning_buffer_allocations.GetDeviceAddress(
+          output_info.allocation_index);
 
       // If the entire tuple contents is aliased, the copy insertion will *not*
       // materialize a new tuple, so we mark it as aliased as well.
@@ -1174,13 +1184,12 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   }
 
   absl::Status execute_status = allocation_scope.ExecuteWithBufferAllocations(
-      buffer_allocations, device_ordinal,
+      owning_buffer_allocations, device_ordinal,
       [&](const BufferAllocations& execution_buffers) {
         return ExecuteThunks(execution_buffers, run_options);
       });
-
   absl::Status teardown_status =
-      buffer_allocations.TearDown(buffers_in_result, GetAllocations());
+      owning_buffer_allocations.TearDown(buffers_in_result, GetAllocations());
 
   RETURN_IF_ERROR(execute_status);
   RETURN_IF_ERROR(teardown_status);
