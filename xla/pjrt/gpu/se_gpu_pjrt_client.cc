@@ -138,7 +138,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/stream_executor_util.h"
-#include "xla/stream_executor/vmm_device_address_allocator.h"
+#include "xla/stream_executor/device_address_vmm_allocator.h"
 #include "xla/xla.pb.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM || TENSORFLOW_USE_SYCL
 
@@ -447,14 +447,13 @@ class PreparedTransfer {
  public:
   StreamExecutorGpuClient* client_;
   gpu::GpuCliqueKey clique_key_;
-  tsl::RCReference<PjRtRawBuffer> raw_buffer_;
+  PjRtRawBufferRef raw_buffer_;
   tsl::AsyncValueRef<BufferSequencingEvent> transfer_event_;
   AcquiredCliqueAndCommunicator clique_and_communicator_;
   bool is_sender_;
 
   PreparedTransfer(StreamExecutorGpuClient* client,
-                   gpu::GpuCliqueKey clique_key,
-                   tsl::RCReference<PjRtRawBuffer> raw_buffer,
+                   gpu::GpuCliqueKey clique_key, PjRtRawBufferRef raw_buffer,
                    tsl::AsyncValueRef<BufferSequencingEvent> transfer_event,
                    AcquiredCliqueAndCommunicator clique_and_communicator,
                    bool is_sender)
@@ -555,8 +554,7 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
 absl::StatusOr<PreparedTransfer> PrepareTransfer(
     StreamExecutorGpuClient* client, gpu::GpuCollectives* gpu_collectives,
     se::Stream* stream, GlobalDeviceId src_global_device_id,
-    GlobalDeviceId dst_global_device_id,
-    tsl::RCReference<PjRtRawBuffer> raw_buffer,
+    GlobalDeviceId dst_global_device_id, PjRtRawBufferRef raw_buffer,
     gpu::AcquiredCliquesMap& acquired_cliques_map,
     tsl::AsyncValueRef<BufferSequencingEvent> transfer_event, bool is_sender) {
   GlobalDeviceId src_device(src_global_device_id.value());
@@ -813,8 +811,8 @@ void StreamExecutorGpuClient::ScheduleTransfersOnLocalDevice(
          se::Stream* stream) -> absl::Status {
     for (PreparedTransfer& prepared_transfer : prepared_transfers) {
       // Launch the transfer.
-      auto mem = tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
-                     prepared_transfer.raw_buffer_.get())
+      auto mem = prepared_transfer.raw_buffer_
+                     ->down_cast<PjRtStreamExecutorRawBuffer>()
                      ->device_buffer();
 
       // We always set `peer` to RankId(1) if we are the sender, and RankId(0)
@@ -996,14 +994,11 @@ void StreamExecutorGpuClient::ScheduleRemoteSend(
                  *std::move(serialized_descriptor)]() mutable {
               auto status = [&]() -> absl::Status {
                 RETURN_IF_ERROR(GetErrors(definition_events));
-                auto* local_device =
-                    tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
-                        raw_buffer.get())
-                        ->local_device();
+                auto* se_raw_buffer =
+                    raw_buffer->down_cast<PjRtStreamExecutorRawBuffer>();
+                auto* local_device = se_raw_buffer->local_device();
                 auto* stream = local_device->GetDeviceToDeviceStream();
-                auto mem = tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
-                               raw_buffer.get())
-                               ->device_buffer();
+                auto mem = se_raw_buffer->device_buffer();
                 CliqueId clique_id(serialized_descriptor);
 
                 // Create a communicator.
@@ -1078,8 +1073,7 @@ StreamExecutorGpuClient::MakeCrossHostReceiveBuffers(
       ASSIGN_OR_RETURN(CliqueId clique_id,
                        gpu_collectives->CreateUniqueCliqueId());
       auto mem =
-          tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(raw_buffer.get())
-              ->device_buffer();
+          raw_buffer->down_cast<PjRtStreamExecutorRawBuffer>()->device_buffer();
 
       // Notify the caller with the CliqueId. They will send the id to the
       // sender.
@@ -1329,14 +1323,20 @@ GetStreamExecutorGpuDeviceAllocator(
     const std::map<int, std::unique_ptr<LocalDeviceState>>&
         addressable_devices) {
   std::vector<se::MultiDeviceAdapter::AllocatorInfo> allocators;
+  const DebugOptions& debug_options = xla::GetDebugOptionsFromFlags();
   GpuAllocatorConfig::Kind effective_kind = allocator_config.kind;
-  if (GetDebugOptionsFromFlags().xla_gpu_command_buffer_update_mode() !=
+  if (debug_options.xla_gpu_command_buffer_update_mode() !=
           DebugOptions::ALWAYS_UPDATE &&
       effective_kind != GpuAllocatorConfig::Kind::kVmm) {
     LOG(WARNING) << "xla_gpu_command_buffer_update_mode requires the "
                     "VMM allocator. Overriding allocator kind to kVmm.";
     effective_kind = GpuAllocatorConfig::Kind::kVmm;
   }
+
+  // Set when a single preallocated BFC allocator serves both default and
+  // collective memory via spatial partitioning; suppresses the separate
+  // collective allocator below.
+  bool shared_collective_pool = false;
   switch (effective_kind) {
     case GpuAllocatorConfig::Kind::kCudaAsync: {
       for (const auto& ordinal_and_device : addressable_devices) {
@@ -1356,6 +1356,13 @@ GetStreamExecutorGpuDeviceAllocator(
     case GpuAllocatorConfig::Kind::kDefault:
     case GpuAllocatorConfig::Kind::kBFC: {
       LOG(INFO) << "Using BFC allocator.";
+      // With the spatial-partitioning flag enabled, preallocation lets one BFC
+      // allocator over a fixed address range serve both default (lower end) and
+      // collective (upper end) memory, so no separate collective allocator is
+      // created. Otherwise, use the separate collective allocator below.
+      shared_collective_pool =
+          allocator_config.preallocate &&
+          debug_options.xla_gpu_enable_allocator_spatial_partitioning();
       for (const auto& ordinal_and_device : addressable_devices) {
         ASSIGN_OR_RETURN(
             auto bfc_allocator,
@@ -1364,11 +1371,29 @@ GetStreamExecutorGpuDeviceAllocator(
                                allocator_config.preallocate,
                                allocator_config.gpu_system_memory_size,
                                allocator_config.sub_allocator_alloc_visitors,
-                               allocator_config.sub_allocator_free_visitors));
+                               allocator_config.sub_allocator_free_visitors,
+                               /*enable_spatial_partitioning=*/
+                               shared_collective_pool));
         allocators.push_back(
-            {std::move(bfc_allocator),
-             ordinal_and_device.second->compute_stream(),
+            {bfc_allocator, ordinal_and_device.second->compute_stream(),
              /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kDefault});
+        if (shared_collective_pool) {
+          size_t collective_memory_alignment =
+              tsl::Allocator::kAllocatorAlignment;
+          if (auto* collectives =
+                  gpu::GpuCollectives::Default(platform->Name())) {
+            collective_memory_alignment =
+                collectives->SymmetricMemoryAlignment();
+          }
+          allocators.push_back(
+              {std::move(bfc_allocator),
+               ordinal_and_device.second->compute_stream(),
+               /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kCollective,
+               /*device_ordinal=*/std::nullopt,
+               /*platform=*/nullptr,
+               /*min_alignment=*/collective_memory_alignment,
+               /*allocation_end=*/tsl::AllocationEnd::kUpper});
+        }
       }
       break;
     }
@@ -1402,18 +1427,22 @@ GetStreamExecutorGpuDeviceAllocator(
     }
   }
 
-  // Add any additional allocators for alternate memory spaces.
-  for (const auto& ordinal_and_device : addressable_devices) {
-    ASSIGN_OR_RETURN(
-        auto collective_bfc_allocator,
-        CreateCollectiveBFCAllocator(
-            ordinal_and_device.second->executor(),
-            /*memory_fraction=*/1.0 - allocator_config.memory_fraction,
-            allocator_config.collective_memory_size));
-    allocators.push_back(
-        {std::move(collective_bfc_allocator),
-         ordinal_and_device.second->compute_stream(),
-         /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kCollective});
+  // Add a separate collective allocator unless the default BFC allocator
+  // already serves collective memory from its shared, spatially partitioned
+  // pool.
+  if (!shared_collective_pool) {
+    for (const auto& ordinal_and_device : addressable_devices) {
+      ASSIGN_OR_RETURN(
+          auto collective_bfc_allocator,
+          CreateCollectiveBFCAllocator(
+              ordinal_and_device.second->executor(),
+              /*memory_fraction=*/1.0 - allocator_config.memory_fraction,
+              allocator_config.collective_memory_size));
+      allocators.push_back(
+          {std::move(collective_bfc_allocator),
+           ordinal_and_device.second->compute_stream(),
+           /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kCollective});
+    }
   }
 
   for (const auto& ordinal_and_device : addressable_devices) {
@@ -1426,7 +1455,6 @@ GetStreamExecutorGpuDeviceAllocator(
   }
 
 #if defined(GOOGLE_CUDA) && CUDA_VERSION >= 11020
-  const auto& debug_options = xla::GetDebugOptionsFromFlags();
   if (debug_options.xla_gpu_temp_buffer_use_separate_color()) {
     // Add memory allocator to allocate memory buffers with persistent temp
     // memory space color.
@@ -2033,19 +2061,6 @@ StreamExecutorGpuClient::RunAsync(
   absl::Span<const BufferAllocation* const> allocations =
       gpu_exec->GetAllocations();
 
-  // Build a map of per-color allocation granularity. Collective memory requires
-  // larger alignment than the BFC allocator guarantees (256 bytes).
-  absl::flat_hash_map<LogicalBuffer::Color, int64_t> allocate_granularity;
-  if (auto* collectives =
-          gpu::GpuCollectives::Default(executor->GetPlatform()->Name())) {
-    const int64_t collective_memory_alignment =
-        collectives->SymmetricMemoryAlignment();
-    XLA_VLOG_DEVICE(5, device_ordinal)
-        << "Using collective memory alignment: " << collective_memory_alignment;
-    allocate_granularity[static_cast<LogicalBuffer::Color>(
-        gpu::MemorySpaceColor::kCollective)] = collective_memory_alignment;
-  }
-
   // Tag allocations made in this invocation as multi-device for VMM reuse.
   se::DeviceAddressVmmAllocator::DeviceAssignmentScope
       vmm_device_assignment_scope(
@@ -2074,8 +2089,8 @@ StreamExecutorGpuClient::RunAsync(
         } else {
           param_no = allocation.parameter_number();
         }
-        buffer = tensorflow::down_cast<const xla::PjRtStreamExecutorRawBuffer*>(
-                     flat_arguments[param_no].get())
+        buffer = flat_arguments[param_no]
+                     ->down_cast<const xla::PjRtStreamExecutorRawBuffer>()
                      ->device_buffer()
                      ->mem();
         if (buffer.is_null() && buffer.size() > 0) {
@@ -2096,10 +2111,6 @@ StreamExecutorGpuClient::RunAsync(
         CHECK(allocation.maybe_live_out() ||
               allocation.IsPreallocatedTempBuffer());
         int64_t buffer_size = allocation.size();
-        if (auto it = allocate_granularity.find(allocation.color());
-            it != allocate_granularity.end()) {
-          buffer_size = RoundUpTo(buffer_size, it->second);
-        }
         if (buffer_size > 0) {
           ASSIGN_OR_RETURN(
               se::ScopedDeviceAddress<uint8_t> owning_buffer,
@@ -2130,15 +2141,15 @@ StreamExecutorGpuClient::RunAsync(
         << "Looking at: allocation " << output_info.allocation_index
         << " @ index: " << index.ToString();
 
-    auto buf =
-        tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(results[i].get())
-            ->device_buffer();
+    auto buf = results[i]
+                   .get()
+                   ->down_cast<PjRtStreamExecutorRawBuffer>()
+                   ->device_buffer();
     if (output_info.alias_config) {
-      auto input = tensorflow::down_cast<xla::PjRtStreamExecutorRawBuffer*>(
-                       flat_arguments[parameter_is_tupled_arguments
-                                          ? allocation->param_shape_index()[0]
-                                          : allocation->parameter_number()]
-                           .get())
+      auto input = flat_arguments[parameter_is_tupled_arguments
+                                      ? allocation->param_shape_index()[0]
+                                      : allocation->parameter_number()]
+                       ->down_cast<PjRtStreamExecutorRawBuffer>()
                        ->device_buffer();
       bool is_donated = input == buf;
       if (output_info.alias_config->must_alias() && !is_donated) {
@@ -2170,9 +2181,7 @@ StreamExecutorGpuClient::RunAsync(
                                        /*retry_on_failure=*/true,
                                        /*memory_space=*/allocation->color());
         if (!allocated_buffer.ok()) {
-          return ResourceExhausted(
-              "%s\n%s\n", allocated_buffer.status().message(),
-              gpu_exec->buffer_allocations_debug_summary());
+          return gpu_exec->VerboseAllocationError(allocated_buffer.status());
         }
         result_buffer = allocated_buffer->Release();
         se::DeviceAddressBase& aliased_buffer =

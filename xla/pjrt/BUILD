@@ -51,6 +51,18 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "worker_thread_test",
+    srcs = ["worker_thread_test.cc"],
+    deps = [
+        ":worker_thread",
+        "//xla/hlo/testlib:test",
+        "//xla/tsl/platform:env",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "pjrt_c_api_client",
     hdrs = ["pjrt_c_api_client.h"],
@@ -1535,11 +1547,14 @@ cc_library(
         "//xla:future",
         "//xla:literal",
         "//xla:shape_util",
+        "//xla/pjrt/c:pjrt_c_api_raw_buffer_extension_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_status_utils",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",

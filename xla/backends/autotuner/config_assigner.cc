@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/codegen_orchestrator.h"
 #include "xla/backends/autotuner/hlo_extractor.h"
+#include "xla/backends/autotuner/profiler.h"
 #include "xla/backends/autotuner/tuner.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -52,6 +53,7 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/autotuner_status_key.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/concurrency/future.h"
+#include "xla/tsl/lib/math/math_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "tsl/platform/fingerprint.h"
 
@@ -106,7 +108,19 @@ absl::StatusOr<std::unique_ptr<ConfigAssigner>> ConfigAssigner::Create(
     Options options,
     std::unique_ptr<AutotunerCacheInterface> absl_nonnull cache,
     std::unique_ptr<CodegenOrchestrator> absl_nonnull orchestrator,
-    std::unique_ptr<Tuner> tuner) {
+    std::unique_ptr<Profiler> absl_nullable profiler) {
+  std::unique_ptr<Tuner> tuner = nullptr;
+  if (profiler != nullptr) {
+    Tuner::Options tuner_options;
+    tuner_options.check_buffers = options.check_buffers;
+    tuner_options.relative_tolerance = options.relative_tolerance;
+    tuner_options.crash_on_check_failure = options.crash_on_check_failure;
+    tuner_options.scratch_bytes_window_size_us =
+        options.scratch_bytes_window_size_us;
+    tuner_options.dump_logs_to = options.dump_logs_to;
+    ASSIGN_OR_RETURN(tuner, Tuner::Create(std::move(profiler),
+                                          orchestrator.get(), tuner_options));
+  }
   return absl::WrapUnique(
       new ConfigAssigner(std::move(options), std::move(cache),
                          std::move(orchestrator), std::move(tuner)));
@@ -165,10 +179,10 @@ absl::Status ConfigAssigner::AssignConfigs(
   }
 
   // 2. Shard and get configs for instructions in the current shard.
-  const size_t bucket_size =
-      std::ceil(static_cast<double>(all_instruction_groups.size()) /
-                static_cast<double>(total_shards));
-  const size_t start = bucket_size * my_shard_index;
+  const size_t bucket_size = tsl::MathUtil::CeilOfRatio<size_t>(
+      all_instruction_groups.size(), static_cast<size_t>(total_shards));
+  const size_t start =
+      std::min(bucket_size * my_shard_index, all_instruction_groups.size());
   const size_t end =
       std::min(start + bucket_size, all_instruction_groups.size());
   std::vector<EquivalentInstructions> instruction_groups;

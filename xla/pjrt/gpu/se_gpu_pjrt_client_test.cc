@@ -2117,10 +2117,7 @@ ENTRY main.5 {
         auto raw_buffer,
         xla::PjRtRawBuffer::CreateRawAliasOfBuffer(buffer.get()));
 
-    // TODO(b/b/482307468) Switch to absl::down_cast after upgrade.
-    [[deprecated("remove after absl upgrade")]] auto* opaque_ptr =
-        absl::down_cast<CommonPjRtRawBuffer*>(raw_buffer.get())
-            ->OpaqueDeviceMemoryDataPointer();
+    auto* opaque_ptr = raw_buffer->OpaqueDeviceMemoryDataPointer();
     if (opaque_ptr == last_opaque_ptr) {
       clobbered = true;
     }
@@ -2876,8 +2873,9 @@ TEST_F(VmmTest, CommandBufferVaRemappingTwoExecutables) {
 
   // --- Assertions for VA range index cycling and command buffer separation ---
   //
-  // VA range index per-executable: GetNextCommandBufferVaRangeIdx is keyed by
-  // (executable_ptr, device_ordinal), so exec1 and exec2 cycle independently:
+  // VA range index per-executable: GetNextCommandBufferVaRangeIdx is a member
+  // of Executable, and its state is stored inside each Executable instance
+  // (keyed by device_ordinal), so exec1 and exec2 cycle independently:
   //   run 0: exec1→idx=0, exec2→idx=0
   //   run 1: exec1→idx=1, exec2→idx=1
   //   run 2: exec1→idx=0, exec2→idx=0  (wraps)

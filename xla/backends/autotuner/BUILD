@@ -71,6 +71,7 @@ cc_library(
     srcs = ["codegen_orchestrator.cc"],
     hdrs = ["codegen_orchestrator.h"],
     deps = [
+        ":backends_proto_cc",
         ":codegen_backend",
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
@@ -100,6 +101,7 @@ cc_library(
         ":codegen_backend",
         ":codegen_orchestrator",
         ":hlo_extractor",
+        ":profiler",
         ":tuner",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt/distributed:key_value_store_interface",
@@ -107,6 +109,7 @@ cc_library(
         "//xla/service/gpu/autotuning:autotuner_status_key",
         "//xla/tools:hlo_decomposer_lib",
         "//xla/tsl/concurrency:future",
+        "//xla/tsl/lib/math:math_util",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/algorithm:container",

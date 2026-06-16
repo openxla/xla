@@ -442,10 +442,13 @@ void PjRtStreamExecutorRawBuffer::IntraClientCopyToWithDependencies(
         std::move(allocation_event)(absl::OkStatus());
       }
 
-      auto dst_buffer =
-          tensorflow::down_cast<const PjRtStreamExecutorRawBuffer*>(
-              dst_raw_buffer.get())
-              ->device_buffer();
+      auto* dst_cpp_buffer =
+          dst_raw_buffer->down_cast<const PjRtStreamExecutorRawBuffer>();
+      if (dst_cpp_buffer == nullptr) {
+        return absl::InvalidArgumentError(
+            "Destination buffer is not a StreamExecutor raw buffer");
+      }
+      auto dst_buffer = dst_cpp_buffer->device_buffer();
       auto dst_buffer_mem = dst_buffer->mem();
       RETURN_IF_ERROR(client->WaitForAllocation(stream, *src_raw_buffer));
       RETURN_IF_ERROR(client->WaitForAllocation(stream, *dst_raw_buffer));
@@ -481,14 +484,6 @@ void PjRtStreamExecutorRawBuffer::IntraClientCopyToWithDependencies(
 
   definition_event_promise.Set(PjRtDeviceEventRef(usage_event));
   src_usage_event_promise.Set(PjRtDeviceEventRef(std::move(usage_event)));
-}
-
-absl::StatusOr<PjRtDeviceEventRef>
-PjRtStreamExecutorRawBuffer::CopyRawToRemoteDevice(
-    Future<std::string> serialized_descriptor, RemoteSendCallback on_done,
-    PjRtDeviceEventRefVector transfer_dependency_avs) {
-  return absl::UnimplementedError(
-      "PjRtStreamExecutorRawBuffer does not support CopyRawToRemoteDevice.");
 }
 
 }  // namespace xla

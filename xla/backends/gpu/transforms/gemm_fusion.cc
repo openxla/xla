@@ -45,7 +45,6 @@ limitations under the License.
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -1054,6 +1053,7 @@ absl::StatusOr<bool> FusionSearchSpace::SinkBitcast(HloInstruction* instr) {
   if (auto it = fused_to_original_.find(user); it != fused_to_original_.end()) {
     HloInstruction* original_op = it->second;
     fused_to_original_[new_instr] = original_op;
+    fused_to_original_[new_bitcast] = original_op;
     original_to_fused_[original_op] = new_instr;
   }
   RETURN_IF_ERROR(user->ReplaceAllUsesWith(new_bitcast));
@@ -1193,7 +1193,6 @@ absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateTileableFusion(
   HloInstruction* dot =
       fusion_search_space.original_to_fused().at(original_dot);
   mlir::MLIRContext mlir_context;
-  RegisterSymbolicExprStorage(&mlir_context);
   if (!CanTile(mlir_context, *HloFusionAdaptor::ForInstruction(dot))) {
     return FusionDecision::Forbid("Cannot tile the dot instruction.");
   }

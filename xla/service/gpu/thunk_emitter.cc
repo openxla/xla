@@ -229,7 +229,7 @@ static constexpr bool kRequiresCollectiveKernelThunk =
 // collective thunks such as AllReduceStart. So this function is only
 // responsible for emitting the collective kernel thunk and its dependencies.
 xla::Future<std::unique_ptr<CollectiveKernelThunk>> EmitCollectiveKernelThunk(
-    IrEmitterContext* ir_emitter_context, const CallGraph* call_graph,
+    IrEmitterContext* ir_emitter_context, const CallGraph& call_graph,
     Thunk::ThunkInfo thunk_info, std::vector<CollectiveThunk::Buffer> buffers,
     const HloAllReduceInstruction* instr, const AllReduceConfig& config,
     ThunkEmitter* compiler,
@@ -264,8 +264,8 @@ xla::Future<std::unique_ptr<CollectiveKernelThunk>> EmitCollectiveKernelThunk(
       [thunk_info = std::move(thunk_info), buffers = std::move(buffers), config,
        is_async = !IsGPUSyncCollective(*instr), is_collective_kernel_enabled](
           absl::string_view kernel_name, int32_t shmem_bytes,
-          std::optional<LaunchDimensions> launch_dimensions,
-          const std::vector<uint8_t>& cubin, bool use_pdl) {
+          LaunchDimensions launch_dimensions, const std::vector<uint8_t>& cubin,
+          bool use_pdl) {
         return std::make_unique<CollectiveKernelThunk>(
             thunk_info, config.config, config.reduction_kind, is_async,
             std::move(buffers), is_collective_kernel_enabled, kernel_name,
@@ -275,9 +275,11 @@ xla::Future<std::unique_ptr<CollectiveKernelThunk>> EmitCollectiveKernelThunk(
   ASSIGN_OR_RETURN(bool did_set_config, TrySetGpuBackendConfigForCollective(
                                             device_info, fusion_instr));
   if (!did_set_config) {
-    return make_thunk(/*kernel_name=*/"",
-                      /*shmem_bytes=*/0,
-                      /*launch_dimensions=*/std::nullopt, {}, false);
+    // TODO(b/522693539):
+    // Because of lack of topology information in the CollectiveKernelThunk,
+    // we cannot know during emission if we can use the collective kernel
+    // thunk or not.
+    return nullptr;
   }
   analysis_garbage_collector.push_back(
       std::make_unique<HloFusionAnalysis>(HloFusionAnalysis::Create(
@@ -319,6 +321,22 @@ ThunkSequence FlattenThunkSequence(std::vector<ThunkSequence>&& sequences) {
     AppendThunkSequence(result, seq);
   }
   return result;
+}
+
+absl::StatusOr<std::string> CanonicalGemmHlo(
+    const HloCustomCallInstruction* instr) {
+  ASSIGN_OR_RETURN(auto gpu_config, instr->backend_config<GpuBackendConfig>());
+
+  auto* gemm_config = gpu_config.has_grouped_gemm_backend_config()
+                          ? gpu_config.mutable_grouped_gemm_backend_config()
+                                ->mutable_gemm_backend_config()
+                          : gpu_config.mutable_gemm_backend_config();
+
+  // Clear algorithm-specific fields from the cache key
+  gemm_config->clear_selected_algorithm();
+  gemm_config->set_autotune_workspace_size(0);
+  return instr->ToString(HloPrintOptions::Fingerprint()) +
+         BackendConfigWrapper(gpu_config).GetRawString();
 }
 
 }  // namespace
@@ -568,8 +586,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunk(
                    gpublas_lt::AsBlasLtEpilogue(epilogue));
   Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
-  std::string canonical_hlo = instr->ToString(
-      HloPrintOptions::Fingerprint().set_print_backend_config(true));
+
+  ASSIGN_OR_RETURN(std::string canonical_hlo, CanonicalGemmHlo(instr));
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
       std::move(thunk_info), std::move(canonical_hlo), std::move(gemm_config),
       blas_lt_epilogue, algorithm, config.autotune_workspace_size(), a, b, c, d,
@@ -658,8 +676,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunkF8(
                    gpublas_lt::AsBlasLtEpilogue(epilogue));
   Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
-  std::string canonical_hlo = instr->ToString(
-      HloPrintOptions::Fingerprint().set_print_backend_config(true));
+  ASSIGN_OR_RETURN(std::string canonical_hlo, CanonicalGemmHlo(instr));
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
       std::move(thunk_info), std::move(canonical_hlo), std::move(gemm_config),
       blas_lt_epilogue, algorithm, config.autotune_workspace_size(), a, b, c, d,
@@ -734,8 +751,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmulThunk(
 
   Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
-  std::string canonical_hlo = instr->ToString(
-      HloPrintOptions::Fingerprint().set_print_backend_config(true));
+  ASSIGN_OR_RETURN(std::string canonical_hlo, CanonicalGemmHlo(instr));
 
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
       std::move(thunk_info), std::move(canonical_hlo), std::move(gemm_config),
@@ -788,8 +804,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunkMx(
                    gpublas_lt::AsBlasLtEpilogue(epilogue));
   Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
-  std::string canonical_hlo = instr->ToString(
-      HloPrintOptions::Fingerprint().set_print_backend_config(true));
+  ASSIGN_OR_RETURN(std::string canonical_hlo, CanonicalGemmHlo(instr));
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
       std::move(thunk_info), std::move(canonical_hlo), std::move(gemm_config),
       blas_lt_epilogue, algorithm, config.autotune_workspace_size(), a, b, c, d,
@@ -1960,11 +1975,10 @@ AsyncThunkSequence ThunkEmitter::EmitCollectiveThunk(
   // lifted out of the all reduce thunk.
   if constexpr (kRequiresCollectiveKernelThunk<CollectiveThunkType>) {
     thunks =
-        EmitCollectiveKernelThunk(
-            ir_emitter_context_,
-            call_graph_.get(),  // NOLINT(readability-redundant-smartptr-get)
-            thunk_info, buffers, Cast<HloAllReduceInstruction>(inst),
-            GetAllReduceConfigInst(inst), this, analysis_garbage_collector_)
+        EmitCollectiveKernelThunk(ir_emitter_context_, *call_graph_, thunk_info,
+                                  buffers, Cast<HloAllReduceInstruction>(inst),
+                                  GetAllReduceConfigInst(inst), this,
+                                  analysis_garbage_collector_)
             .Map([thunk_info = std::move(thunk_info),
                   use_memcpy_local_p2p = ir_emitter_context_->debug_options()
                                              .xla_gpu_use_memcpy_local_p2p(),
@@ -2846,13 +2860,13 @@ AsyncThunkSequence ThunkEmitter::EmitHloInstruction(const HloInstruction* hlo,
   return Internal("Unhandled HLO instruction");
 }
 
-absl::StatusOr<std::unique_ptr<SequentialThunk>>
+xla::Future<std::unique_ptr<SequentialThunk>>
 ThunkEmitter::EmitHloEntryComputation(const HloModule* module) {
-  ASSIGN_OR_RETURN(
-      ThunkSequence thunks,
-      std::move(EmitHloComputation(module->entry_computation())).Await());
-  return std::make_unique<SequentialThunk>(Thunk::ThunkInfo{},
-                                           std::move(thunks));
+  return EmitHloComputation(module->entry_computation())
+      .Map([](ThunkSequence thunks) {
+        return std::make_unique<SequentialThunk>(Thunk::ThunkInfo{},
+                                                 std::move(thunks));
+      });
 }
 
 AsyncThunkSequence ThunkEmitter::EmitHloComputation(
