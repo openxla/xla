@@ -553,6 +553,7 @@ cc_library(
         "//xla/backends/gpu/runtime:topk",
         "//xla/backends/gpu/runtime:triangular_solve_thunk",
         "//xla/backends/gpu/runtime:while_thunk",
+        "//xla/backends/gpu/transforms:dynamic_slice_copy",
         "//xla/backends/gpu/transforms:dynamic_slice_fusion",
         "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
         "//xla/codegen:kernel_definition",
@@ -1564,7 +1565,6 @@ cc_library(
     deps = [
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms:fusion_block_level_rewriter",
-        "//xla/backends/gpu/transforms:fusion_dynamic_memcpy_rewriter",
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/service:hlo_cost_analysis",
