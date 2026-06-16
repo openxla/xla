@@ -95,8 +95,8 @@ OnecclCollectives::CreateCommunicators(
     return comm;
   };
 
-// Create all communicators. Each communicator is crated on its own thread.
-std::vector<std::unique_ptr<Communicator>> comms(ranks.size());
+  // Create all communicators. Each communicator is crated on its own thread.
+  std::vector<std::unique_ptr<Communicator>> comms(ranks.size());
   absl::Status status;
   absl::once_flag once;
 
@@ -116,7 +116,7 @@ std::vector<std::unique_ptr<Communicator>> comms(ranks.size());
         comms[i] = *std::move(comm);
       });
     }
-    }
+  }
   TF_RETURN_IF_ERROR(status);
   return comms;
 }
