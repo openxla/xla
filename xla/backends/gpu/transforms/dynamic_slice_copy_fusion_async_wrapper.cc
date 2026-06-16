@@ -33,6 +33,10 @@ namespace xla::gpu {
 absl::StatusOr<bool> DynamicSliceCopyFusionAsyncWrapper::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  // Offset verification runs the dynamic-slice fusion thunk in a runtime
+  // checking mode that compares host-computed offsets with device-computed
+  // offsets, so leave those fusions synchronous instead of wrapping them in
+  // async-start/done.
   if (module->config()
           .debug_options()
           .xla_gpu_experimental_dynamic_slice_fusion_verify_offsets()) {
