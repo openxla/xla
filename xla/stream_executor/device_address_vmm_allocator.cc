@@ -66,6 +66,44 @@ bool DeviceAddressVmmAllocator::CurrentMultiDevice() {
              1;
 }
 
+DeviceAddressVmmAllocator::AllocationRecord::AllocationRecord(
+    Kind kind, DeviceAddressBase allocator_address,
+    std::shared_ptr<MemoryAllocation> raw_allocation,
+    std::unique_ptr<MemoryReservation> allocator_address_reservation,
+    MemoryReservation::ScopedMapping allocator_address_mapping,
+    bool multi_device)
+    : kind_(kind),
+      allocator_address_(allocator_address),
+      raw_allocation_(std::move(raw_allocation)),
+      multi_device_(multi_device),
+      allocator_address_reservation_(std::move(allocator_address_reservation)),
+      allocator_address_mapping_(std::move(allocator_address_mapping)) {
+  CHECK(raw_allocation_ != nullptr);
+  CHECK(!allocator_address_.is_null());
+  switch (kind_) {
+    case Kind::kAllocate:
+    case Kind::kAllocateAndMapReturnNewAddr:
+      CHECK(allocator_address_reservation_ != nullptr);
+      break;
+    case Kind::kAllocateAndMapReturnMapAddr:
+      CHECK(allocator_address_reservation_ == nullptr);
+      break;
+  }
+  CHECK(allocator_address_mapping_.has_value());
+}
+
+DeviceAddressBase
+DeviceAddressVmmAllocator::AllocationRecord::reservation_address() const {
+  CHECK(reservation_address_.has_value());
+  return *reservation_address_;
+}
+
+bool DeviceAddressVmmAllocator::AllocationRecord::reservation_mapping_matches(
+    DeviceAddressBase address) const {
+  return reservation_address_mapping_.has_value() &&
+         reservation_address_mapping_->mapped_address().IsSameAs(address);
+}
+
 // Interval between CPU polls of the GPU-written deallocation timeline while
 // waiting for deferred frees to become safe. The 50us value is a conservative
 // initial tradeoff: long enough to avoid busy-spinning a CPU core and short
