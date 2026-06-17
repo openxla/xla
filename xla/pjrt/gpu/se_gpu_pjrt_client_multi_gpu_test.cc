@@ -1108,6 +1108,7 @@ absl::StatusOr<PreparedCrossHostTransferTest> PrepareCrossHostTransferTest(
   options.num_nodes = 2;
   options.kv_store =
       GetDistributedKeyValueStore(distributed_client, /*key_prefix=*/"cross:");
+  options.distributed_client = distributed_client;
   options.allowed_devices = {rank_id};
 
   LOG(INFO) << log_prefix << ": creating PjRtClient";
