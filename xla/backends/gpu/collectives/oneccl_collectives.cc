@@ -84,7 +84,7 @@ OnecclCollectives::CreateCommunicators(
             << "; fingerprint(id)=" << clique_ids->fingerprint()
             << "; size(id)=" << clique_ids->data().size();
     auto* device = absl::down_cast<GpuCollectives::Device*>(ranks[i].device);
-    int device_ordinal = device->stream_executor()->device_ordinal();
+    int32_t device_ordinal = device->stream_executor()->device_ordinal();
     XLA_ONECCL_RETURN_IF_ERROR(onecclSetDevice(device_ordinal));
     ASSIGN_OR_RETURN(auto oneccl_unique_id,
                      AsOnecclUniqueId(clique_ids->at(0)));
