@@ -416,6 +416,35 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
       std::move(params.buffer_assignment_proto)));
 }
 
+class GpuModuleGlobals {
+ public:
+  using BufferAllocToDeviceMemoryMap =
+      GpuExecutable::BufferAllocToDeviceMemoryMap;
+
+  GpuModuleGlobals(const std::vector<uint8_t>& binary,
+                   const std::vector<GpuExecutable::ConstantInfo>& constants)
+      : binary_(binary), constants_(constants) {}
+
+  // Loads the executable module for `stream` and initializes constant globals.
+  // Loaded modules and resolved global addresses are cached per executor.
+  absl::StatusOr<const BufferAllocToDeviceMemoryMap*> Resolve(
+      se::Stream* stream);
+
+ private:
+  const std::vector<uint8_t>& binary_;
+  const std::vector<GpuExecutable::ConstantInfo>& constants_;
+
+  absl::Mutex mutex_;
+  // Cache of module handles. Required to keep loaded modules alive until this
+  // helper is destroyed.
+  absl::flat_hash_map<se::StreamExecutor*, se::ScopedModuleHandle>
+      module_handles_ ABSL_GUARDED_BY(mutex_);
+  // Cache of constant buffer allocation maps used by `Resolve`.
+  absl::flat_hash_map<se::StreamExecutor*,
+                      std::unique_ptr<BufferAllocToDeviceMemoryMap>>
+      globals_ ABSL_GUARDED_BY(mutex_);
+};
+
 // Implementation note: HLO profiling is always enabled for GPU executables,
 // since we can use timers around thunks.
 GpuExecutable::GpuExecutable(
@@ -453,6 +482,7 @@ GpuExecutable::GpuExecutable(
       debug_buffer_assignment_show_max_(
           debug_options.xla_debug_buffer_assignment_show_max()),
       constants_(std::move(constants)),
+      module_globals_(std::make_unique<GpuModuleGlobals>(binary_, constants_)),
       output_info_(std::move(output_info)),
       enable_debug_info_manager_(enable_debug_info_manager),
       thunk_sequence_proto_(std::move(thunk_sequence_proto)),
@@ -1017,19 +1047,19 @@ absl::Status BarrierAfterExecutable(
               : 30));
 }
 
-absl::StatusOr<const GpuExecutable::BufferAllocToDeviceMemoryMap*>
-GpuExecutable::ResolveConstantGlobals(se::Stream* stream) {
+absl::StatusOr<const GpuModuleGlobals::BufferAllocToDeviceMemoryMap*>
+GpuModuleGlobals::Resolve(se::Stream* stream) {
   se::StreamExecutor* executor = stream->parent();
 
-  absl::MutexLock lock(module_handle_mutex_);
-  auto it = module_globals_.find(executor);
-  if (it != module_globals_.end()) {
+  absl::MutexLock lock(mutex_);
+  auto it = globals_.find(executor);
+  if (it != globals_.end()) {
     return it->second.get();
   }
 
   se::MultiModuleLoaderSpec module_spec;
-  if (!binary().empty()) {
-    module_spec.AddCudaCubinInMemory(binary());
+  if (!binary_.empty()) {
+    module_spec.AddCudaCubinInMemory(binary_);
   }
 
   auto globals = std::make_unique<BufferAllocToDeviceMemoryMap>();
@@ -1038,7 +1068,7 @@ GpuExecutable::ResolveConstantGlobals(se::Stream* stream) {
   // It's okay if we skip loading in this case; if the module isn't loaded, all
   // symbol lookups will fail, just as they should for an empty module.
   if (!(executor->GetPlatform()->id() == se::cuda::kCudaPlatformId &&
-        binary().empty())) {
+        binary_.empty())) {
     ASSIGN_OR_RETURN(module_handle, executor->LoadModule(module_spec));
   }
 
@@ -1046,7 +1076,7 @@ GpuExecutable::ResolveConstantGlobals(se::Stream* stream) {
   // to the `stream`.
   int submitted_mem_copies = 0;
 
-  for (const ConstantInfo& info : constants_) {
+  for (const GpuExecutable::ConstantInfo& info : constants_) {
     absl::StatusOr<se::DeviceAddressBase> global_status;
     if (static_cast<bool>(module_handle)) {
       global_status = executor->GetSymbol(info.symbol_name, module_handle);
@@ -1083,8 +1113,12 @@ GpuExecutable::ResolveConstantGlobals(se::Stream* stream) {
 
   module_handles_.emplace(executor,
                           se::ScopedModuleHandle(executor, module_handle));
-  return module_globals_.emplace(executor, std::move(globals))
-      .first->second.get();
+  return globals_.emplace(executor, std::move(globals)).first->second.get();
+}
+
+absl::StatusOr<const GpuExecutable::BufferAllocToDeviceMemoryMap*>
+GpuExecutable::ResolveConstantGlobals(se::Stream* stream) {
+  return module_globals_->Resolve(stream);
 }
 
 absl::StatusOr<se::DeviceAddressBase> GpuExecutable::BufferForAllocation(
@@ -1667,7 +1701,7 @@ absl::Status GpuExecutable::ExecuteThunks(
     // Collect the set of allocations that changed between executions.
     std::vector<std::pair<int32_t, std::string>> changed_allocations;
 
-    absl::MutexLock lock(module_handle_mutex_);
+    absl::MutexLock lock(module_allocations_mutex_);
     if (module_allocations_.find(executor) == module_allocations_.end()) {
       std::vector<se::DeviceAddressBase> allocs_addr;
       allocs_addr.reserve(buffer_allocations.size());

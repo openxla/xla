@@ -70,13 +70,14 @@ limitations under the License.
 #include "xla/stream_executor/kernel_stats.h"
 #include "xla/stream_executor/memory_reservation.h"
 #include "xla/stream_executor/platform.h"
-#include "xla/stream_executor/scoped_module_handle.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {
+
+class GpuModuleGlobals;
 
 // GPU-targeting implementation of the XLA Executable interface.
 //
@@ -459,22 +460,14 @@ class GpuExecutable : public Executable {
 
   int64_t debug_buffer_assignment_show_max_;
 
-  absl::Mutex module_handle_mutex_;
-  // Cache of module handles. Required to keep loaded modules alive until this
-  // executable is destroyed.
-  absl::flat_hash_map<se::StreamExecutor*, se::ScopedModuleHandle>
-      module_handles_ ABSL_GUARDED_BY(module_handle_mutex_);
-  // Cache of constant buffer allocation maps used by `ResolveConstantGlobals`.
-  absl::flat_hash_map<se::StreamExecutor*,
-                      std::unique_ptr<BufferAllocToDeviceMemoryMap>>
-      module_globals_ ABSL_GUARDED_BY(module_handle_mutex_);
-
   // Cache previous memory allocations for current module, this is used to help
   // identify if user's model have unstable pointers by turning on VLOG(5).
+  absl::Mutex module_allocations_mutex_;
   absl::flat_hash_map<se::StreamExecutor*, std::vector<se::DeviceAddressBase>>
-      module_allocations_ ABSL_GUARDED_BY(module_handle_mutex_);
+      module_allocations_ ABSL_GUARDED_BY(module_allocations_mutex_);
 
   std::vector<ConstantInfo> constants_;
+  std::unique_ptr<GpuModuleGlobals> module_globals_;
   const absl::flat_hash_map<ShapeIndex, OutputInfo> output_info_;
   bool enable_debug_info_manager_;
 
@@ -482,8 +475,9 @@ class GpuExecutable : public Executable {
   // btree_set for deterministic iteration order.
   absl::btree_set<BufferAllocation::Index> command_buffer_allocation_indexes_;
 
-  // Separate mutex for VA ranges to avoid contention with module_handle_mutex_
-  // during VA remapping operations which may involve GPU synchronization.
+  // Separate mutex for VA ranges to avoid contention with
+  // module_allocations_mutex_ during VA remapping operations which may involve
+  // GPU synchronization.
   absl::Mutex va_ranges_mutex_;
   absl::node_hash_map<std::pair<se::StreamExecutor*, int>, VaRanges>
       module_va_ranges_ ABSL_GUARDED_BY(va_ranges_mutex_);
