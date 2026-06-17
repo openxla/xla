@@ -18,11 +18,16 @@ limitations under the License.
 #include <memory>
 
 #include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/tsl/platform/status_macros.h"
+#include "absl/types/span.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/literal.h"
 #include "xla/map_util.h"
+#include "xla/service/gpu/dense_data_intermediate.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/module_spec.h"
@@ -31,9 +36,45 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 
 namespace xla::gpu {
+
+GpuExecutableProto::ConstantInfoProto GpuModuleGlobals::ConstantInfo::ToProto(
+    bool skip_content_serialization) const {
+  GpuExecutableProto::ConstantInfoProto proto;
+  proto.set_symbol_name(symbol_name);
+  if (!skip_content_serialization) {
+    *proto.mutable_content() = content.ToProto();
+  }
+  proto.set_allocation_index(allocation_index);
+  return proto;
+}
+
+absl::StatusOr<GpuModuleGlobals::ConstantInfo>
+GpuModuleGlobals::ConstantInfo::FromProto(
+    const GpuExecutableProto::ConstantInfoProto& proto,
+    const absl::flat_hash_map<std::string, const HloInstruction*>* absl_nullable
+        content_overrides) {
+  if (content_overrides) {
+    auto it = content_overrides->find(proto.symbol_name());
+    if (it == content_overrides->end()) {
+      return absl::FailedPreconditionError(absl::StrCat(
+          "Instruction for ", proto.symbol_name(), " constant missing."));
+    }
+    const HloInstruction* instr = it->second;
+    const Literal& literal = instr->literal();
+    auto base = static_cast<const uint8_t*>(literal.untyped_data());
+    return ConstantInfo{proto.symbol_name(),
+                        DenseDataIntermediate::Alias(
+                            absl::MakeSpan(base, base + literal.size_bytes())),
+                        static_cast<int>(proto.allocation_index())};
+  }
+  return ConstantInfo{proto.symbol_name(),
+                      DenseDataIntermediate::FromProto(proto.content()),
+                      static_cast<int>(proto.allocation_index())};
+}
 
 absl::StatusOr<const GpuModuleGlobals::BufferAllocToDeviceMemoryMap*>
 GpuModuleGlobals::Resolve(se::Stream* stream) {
@@ -64,7 +105,7 @@ GpuModuleGlobals::Resolve(se::Stream* stream) {
   // to the `stream`.
   int submitted_mem_copies = 0;
 
-  for (const GpuExecutable::ConstantInfo& info : constants_) {
+  for (const ConstantInfo& info : constants_) {
     absl::StatusOr<se::DeviceAddressBase> global_status;
     if (static_cast<bool>(module_handle)) {
       global_status = executor->GetSymbol(info.symbol_name, module_handle);

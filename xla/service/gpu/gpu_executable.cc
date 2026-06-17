@@ -1788,41 +1788,6 @@ absl::StatusOr<GpuExecutable::OutputInfo> GpuExecutable::OutputInfo::FromProto(
   return output_info;
 }
 
-GpuExecutableProto::ConstantInfoProto GpuExecutable::ConstantInfo::ToProto(
-    bool skip_content_serialization) const {
-  GpuExecutableProto::ConstantInfoProto proto;
-  proto.set_symbol_name(symbol_name);
-  if (!skip_content_serialization) {
-    *proto.mutable_content() = content.ToProto();
-  }
-  proto.set_allocation_index(allocation_index);
-  return proto;
-}
-
-absl::StatusOr<GpuExecutable::ConstantInfo>
-GpuExecutable::ConstantInfo::FromProto(
-    const GpuExecutableProto::ConstantInfoProto& proto,
-    const absl::flat_hash_map<std::string, const HloInstruction*>* absl_nullable
-        content_overrides) {
-  if (content_overrides) {
-    auto it = content_overrides->find(proto.symbol_name());
-    if (it == content_overrides->end()) {
-      return absl::FailedPreconditionError(absl::StrCat(
-          "Instruction for ", proto.symbol_name(), " constant missing."));
-    }
-    const HloInstruction* instr = it->second;
-    const Literal& literal = instr->literal();
-    auto base = static_cast<const uint8_t*>(literal.untyped_data());
-    return ConstantInfo{proto.symbol_name(),
-                        DenseDataIntermediate::Alias(
-                            absl::MakeSpan(base, base + literal.size_bytes())),
-                        static_cast<int>(proto.allocation_index())};
-  }
-  return ConstantInfo{proto.symbol_name(),
-                      DenseDataIntermediate::FromProto(proto.content()),
-                      static_cast<int>(proto.allocation_index())};
-}
-
 absl::StatusOr<GpuExecutableProto> GpuExecutable::ToProto() const {
   GpuExecutableProto proto;
   proto.set_binary(binary_.data(), binary_.size());

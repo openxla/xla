@@ -18,26 +18,49 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/service/gpu/gpu_executable.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/dense_data_intermediate.h"
+#include "xla/service/gpu/gpu_executable.pb.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/scoped_module_handle.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 
-namespace xla::gpu {
+namespace xla {
+
+class HloInstruction;
+
+namespace gpu {
 
 class GpuModuleGlobals {
  public:
   using BufferAllocToDeviceMemoryMap =
-      GpuExecutable::BufferAllocToDeviceMemoryMap;
+      absl::flat_hash_map<BufferAllocation::Index, se::DeviceAddressBase>;
+
+  struct ConstantInfo {
+    std::string symbol_name;
+    DenseDataIntermediate content;
+    int allocation_index = -1;
+
+    GpuExecutableProto::ConstantInfoProto ToProto(
+        bool skip_content_serialization = false) const;
+
+    static absl::StatusOr<ConstantInfo> FromProto(
+        const GpuExecutableProto::ConstantInfoProto& proto,
+        const absl::flat_hash_map<std::string, const HloInstruction*>*
+            absl_nullable content_overrides = nullptr);
+  };
 
   GpuModuleGlobals(const std::vector<uint8_t>& binary,
-                   const std::vector<GpuExecutable::ConstantInfo>& constants)
+                   const std::vector<ConstantInfo>& constants)
       : binary_(binary), constants_(constants) {}
 
   // Loads the executable module for `stream` and initializes constant globals.
@@ -47,7 +70,7 @@ class GpuModuleGlobals {
 
  private:
   const std::vector<uint8_t>& binary_;
-  const std::vector<GpuExecutable::ConstantInfo>& constants_;
+  const std::vector<ConstantInfo>& constants_;
 
   absl::Mutex mutex_;
   // Cache of module handles. Required to keep loaded modules alive until this
@@ -60,6 +83,7 @@ class GpuModuleGlobals {
       globals_ ABSL_GUARDED_BY(mutex_);
 };
 
-}  // namespace xla::gpu
+}  // namespace gpu
+}  // namespace xla
 
 #endif  // XLA_SERVICE_GPU_GPU_MODULE_GLOBALS_H_

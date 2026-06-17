@@ -52,8 +52,8 @@ limitations under the License.
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/dense_data_intermediate.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
+#include "xla/service/gpu/gpu_module_globals.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/service_executable_run_options.h"
@@ -77,8 +77,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-class GpuModuleGlobals;
-
 // GPU-targeting implementation of the XLA Executable interface.
 //
 // Launches the given GPU kernel via the StreamExecutor.
@@ -91,20 +89,7 @@ class GpuExecutable : public Executable {
     int communication = 0;
   };
 
-  struct ConstantInfo {
-    std::string symbol_name;
-    DenseDataIntermediate content;
-    int allocation_index = -1;
-
-    GpuExecutableProto::ConstantInfoProto ToProto(
-        bool skip_content_serialization = false) const;
-
-    static absl::StatusOr<ConstantInfo> FromProto(
-        const GpuExecutableProto::ConstantInfoProto& proto,
-        const absl::flat_hash_map<std::string,
-                                  const HloInstruction*>* absl_nullable
-            content_overrides = nullptr);
-  };
+  using ConstantInfo = GpuModuleGlobals::ConstantInfo;
 
   struct OutputInfo {
     // Corresponding allocation index.
@@ -241,7 +226,7 @@ class GpuExecutable : public Executable {
                              const ServiceExecutableRunOptions* run_options);
 
   using BufferAllocToDeviceMemoryMap =
-      absl::flat_hash_map<BufferAllocation::Index, se::DeviceAddressBase>;
+      GpuModuleGlobals::BufferAllocToDeviceMemoryMap;
 
   // Loads the PTX or CUBIN for this executable and initializes all
   // constants that haven't already been initialized by the CUDA driver. Loaded
