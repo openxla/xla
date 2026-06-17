@@ -434,7 +434,7 @@ class FilesHelper(object):
     OCL implementations at src/gpu/intel/ocl, headers at src/gpu/intel.
     """
     OCL_IMPL_DIR = "src/gpu/intel"
-    HEADER_ROOT_DIR = "src/gpu/intel"
+    HEADER_ROOT_DIR = OCL_IMPL_DIR
     IN_FILE = "ocl_kernel_list.cpp.in"
 
     in_file = os.path.expanduser(in_file)
@@ -457,8 +457,8 @@ class FilesHelper(object):
     if not os.path.exists(kernels_out):
       os.makedirs(kernels_out)
 
-    self.header_dir = os.path.join(in_dir, OCL_IMPL_DIR)
-    self.header_subfolder = OCL_IMPL_DIR
+    self.header_dir = os.path.join(in_dir, HEADER_ROOT_DIR)
+    self.header_subfolder = HEADER_ROOT_DIR
 
 def parse_args(argv):
   result = {}

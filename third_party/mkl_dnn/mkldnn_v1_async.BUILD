@@ -144,7 +144,6 @@ _COPTS_LIST = select({
 
 _INCLUDES_LIST = [
     "include",
-] + [
     "src",
     "src/common",
     "src/cpu/gemm",
