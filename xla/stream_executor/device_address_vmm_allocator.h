@@ -67,6 +67,7 @@ namespace stream_executor {
 //    with UnMap(), not Deallocate().
 //
 // clang-format off
+// NOLINTBEGIN(whitespace/line_length)
 // Allowed address behavior:
 //
 // +--------------------------------------------------------+---------------------+------------+-----+-------+
@@ -78,6 +79,7 @@ namespace stream_executor {
 // | reservation slice from Allocate(..., false)            | reservation address | no         | no  | yes   |
 // | reservation slice from Map()                           | reservation address | no         | no  | yes   |
 // +--------------------------------------------------------+---------------------+------------+-----+-------+
+// NOLINTEND(whitespace/line_length)
 // clang-format on
 //
 // The table uses "yes" for API calls that accept the address in that row. For
