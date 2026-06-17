@@ -56,7 +56,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo.pb.h"
-#include "xla/service/logical_buffer.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/service/stream_pool.h"
@@ -133,7 +132,6 @@ class GpuExecutable : public Executable {
   };
 
   struct Params {
-    std::string asm_text;
     std::vector<uint8_t> binary;
     BinaryMap dnn_compiled_graphs;
     std::unique_ptr<ThunkExecutor> executable;
@@ -159,8 +157,10 @@ class GpuExecutable : public Executable {
 
   int64_t SizeOfGeneratedCodeInBytes() const override;
 
-  // This should be called after set_ir_module_string.
-  const std::string& ir_module_string() const { return ir_module_string_; }
+  // Returns the next VA range index for the given device ordinal. Cycle wraps
+  // at num_sets. Keeping this state in the Executable avoids ABA pointer reuse
+  // issues and memory leaks that happen when using global pointer maps.
+  int GetNextCommandBufferVaRangeIdx(int device_ordinal, int num_sets) override;
 
   absl::string_view name() const override { return module_name_; }
 
@@ -173,19 +173,6 @@ class GpuExecutable : public Executable {
   ComputationLayout compute_computation_layout() const override {
     return ComputationLayout(program_shape_, /*ignore_layouts=*/false);
   }
-
-  // This should be called before ExecuteOnStream.
-  void set_ir_module_string(const std::string& ir_module_string) {
-    ir_module_string_ = ir_module_string;
-  }
-
-  // Returns the compiled code for the computation.
-  //
-  // The compiled code is PTX in Cuda and unused empty string in ROCm.
-  // This may be left empty for saving memory if we have a non-empty binary.
-  // If both text() and binary() are empty, that means the HLO required no
-  // custom kernels to be compiled.
-  const std::string& text() const { return text_; }
 
   // Returns the binary stored in this GpuExecutable.
   //
@@ -346,9 +333,8 @@ class GpuExecutable : public Executable {
 
   // Use GpuExecutable::Create() to create an instance.
   explicit GpuExecutable(
-      std::unique_ptr<HloModule> debug_module, std::string asm_text,
-      std::vector<uint8_t> binary, BinaryMap dnn_compiled_graphs,
-      se::DeviceDescription device_description,
+      std::unique_ptr<HloModule> debug_module, std::vector<uint8_t> binary,
+      BinaryMap dnn_compiled_graphs, se::DeviceDescription device_description,
       std::unique_ptr<ThunkExecutor> executable, std::string module_name,
       ProgramShape program_shape,
       std::optional<std::vector<BufferAllocation>> mlir_allocations,
@@ -373,9 +359,7 @@ class GpuExecutable : public Executable {
       const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
       const BufferAllocation& allocation,
       se::DeviceAddressAllocator* memory_allocator, int device_ordinal,
-      int64_t arg_idx,
-      const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
-          allocate_granularity);
+      int64_t arg_idx);
 
   static absl::StatusOr<BorrowedStreams> BorrowStreams(
       const ServiceExecutableRunOptions& run_options, int device_ordinal,
@@ -401,16 +385,6 @@ class GpuExecutable : public Executable {
       CollectiveMemoryCache& collective_memory_cache,
       bool collective_use_minimal_resource);
 
-  // The LLVM IR, in string format, of the unoptimized module generated for
-  // this GpuExecutable. We save a string instead of an llvm::Module* because
-  // leaving llvm::Module* in a singleton can cause the heap checker to emit
-  // false positives.
-  //
-  // This string should be modified only before ExecuteOnStream.
-  std::string ir_module_string_;
-
-  // The compiled code for the computation.
-  const std::string text_;
 
   // The GPU machine code for the computation, targeting GPUs at
   // compute_capability_.
@@ -513,6 +487,12 @@ class GpuExecutable : public Executable {
   absl::Mutex va_ranges_mutex_;
   absl::node_hash_map<std::pair<se::StreamExecutor*, int>, VaRanges>
       module_va_ranges_ ABSL_GUARDED_BY(va_ranges_mutex_);
+  absl::Mutex command_buffer_va_range_idx_mutex_;
+  // Map from device ordinal (key) to virtual address (VA) range index (value).
+  // Kept per GPU executable so each compiled module independently alternates
+  // between VA range sets.
+  absl::flat_hash_map<int, int> command_buffer_va_range_idx_
+      ABSL_GUARDED_BY(command_buffer_va_range_idx_mutex_);
 
   GpuExecutable(const GpuExecutable&) = delete;
   GpuExecutable& operator=(const GpuExecutable&) = delete;

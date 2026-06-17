@@ -39,7 +39,6 @@ limitations under the License.
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -446,8 +445,6 @@ absl::StatusOr<bool> CanSymbolicTileAnalysisTileDiamond(
   ASSIGN_OR_RETURN(HloFusionInstruction * normalization_fusion,
                    MakeFusionForDiamond(diamond));
   mlir::MLIRContext mlir_context;
-  RegisterSymbolicExprStorage(&mlir_context);
-
   bool use_experimental_tiling =
       normalization_fusion->GetModule()
           ->config()
@@ -460,8 +457,8 @@ absl::StatusOr<bool> CanSymbolicTileAnalysisTileDiamond(
     using experimental::TilingSpace;
     std::unique_ptr<HloFusionAdaptor> fusion_adaptor =
         HloFusionAdaptor::ForInstruction(normalization_fusion);
-    std::unique_ptr<TilingSpace> tiling_space =
-        TilingSpace::Create(*fusion_adaptor, &mlir_context);
+    ASSIGN_OR_RETURN(std::unique_ptr<TilingSpace> tiling_space,
+                     TilingSpace::Create(*fusion_adaptor, &mlir_context));
     absl::StatusOr<TiledHloComputation> tiled_computation_or =
         TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space));
     // We don't have concrete tile sizes here and don't validate Triton

@@ -206,6 +206,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_dump_enable_mlir_pretty_form(true);
   opts.set_xla_dump_full_hlo_config(true);
   opts.set_xla_dump_buffer_assignment_analysis(true);
+  opts.set_xla_dump_compact_gte(false);
   opts.set_xla_debug_buffer_assignment_show_max(15);
   opts.set_xla_cpu_use_onednn(false);
   opts.set_xla_cpu_experimental_onednn_custom_call(false);
@@ -239,6 +240,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_fast_math_honor_infs(true);
   opts.set_xla_cpu_fast_math_honor_functions(true);
   opts.set_xla_cpu_fast_math_honor_division(true);
+
+  // Default to true for backwards compatibility (always flush denormals).
+  opts.set_xla_cpu_ftz(true);
 
   opts.set_xla_gpu_fused_attention_use_cudnn_rng(false);
 
@@ -297,6 +301,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_dynamic_slice_fusion_verify_offsets(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
+  opts.set_xla_gpu_enable_allocator_spatial_partitioning(true);
   opts.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(false);
   opts.set_xla_gpu_experimental_enable_nvshmem(false);
   opts.set_xla_gpu_enable_nccl_comm_splitting(true);
@@ -410,7 +415,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 #endif
 
   opts.set_xla_gpu_use_memcpy_local_p2p(false);
-  opts.set_xla_gpu_collective_permute_connected_components(false);
+  opts.set_xla_gpu_collective_permute_connected_components(true);
 
   opts.set_xla_reduce_window_rewrite_base_length(16);
 
@@ -470,7 +475,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel(true);
   opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
   opts.set_xla_gpu_experimental_enable_fusion_autotuner(true);
-  opts.set_xla_gpu_experimental_autotune_post_fusion(true);
   opts.set_xla_gpu_experimental_max_unroll_factor(32);
   opts.set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_fix_max_iterations(false);
@@ -506,7 +510,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_collective_timeout_seconds(30 * 60);
 
   opts.set_xla_keep_shardings_after_spmd(false);
-  opts.set_xla_enable_hlo_sharding_v3(true);
+  opts.set_xla_enable_hlo_sharding_v3(false);
   opts.set_xla_enable_rgv3_materialization(true);
   opts.set_xla_sdy_export_all_reduce_scatter(false);
   opts.set_xla_gpu_experimental_enable_checksum_tracing_on_thunks(false);
@@ -1104,6 +1108,21 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         return true;
       };
 
+  // Custom "sub-parser" lambda for xla_gpu_ptx_compiler_extra_flags.
+  // Flags are split on whitespace rather than commas to allow passing
+  // `--key=value1,value2` flags that include commas, such as
+  // `--maxntid=nx,ny,nz`.
+  auto setter_for_xla_gpu_ptx_compiler_extra_flags =
+      [debug_options](const std::string& whitespace_separated_values) {
+        for (const absl::string_view flag :
+             absl::StrSplit(whitespace_separated_values,
+                            absl::ByAsciiWhitespace(), absl::SkipEmpty())) {
+          debug_options->add_xla_gpu_ptx_compiler_extra_flags(
+              std::string(flag));
+        }
+        return true;
+      };
+
   // Don't use an initializer list for initializing the vector; this would
   // create a temporary copy, and exceeds the stack space when compiling with
   // certain configurations.
@@ -1159,6 +1178,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "When xla_cpu_enable_fast_math is true then this controls whether we "
       "forbid to approximate calculations for functions. Ignored when "
       "xla_cpu_enable_fast_math is false."));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_ftz", bool_setter_for(&DebugOptions::set_xla_cpu_ftz),
+      debug_options->xla_cpu_ftz(),
+      "If true, flush-to-zero semantics are enabled in the code generated for "
+      "CPUs. Default is true."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_enable_fast_min_max",
       bool_setter_for(&DebugOptions::set_xla_cpu_enable_fast_min_max),
@@ -1971,7 +1995,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_gpu_enable_dynamic_slice_fusion",
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_dynamic_slice_fusion),
       debug_options->xla_gpu_enable_dynamic_slice_fusion(),
-      "[Stable] Whether to enable address computation fusion to optimize "
+      "[Stable] Whether to enable dynamic slice fusion to optimize "
       "dynamic-slice and dynamic-update-slice operations."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_dus_accumulator_zero_init_elimination",
@@ -2003,6 +2027,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Enables NCCL User Buffer Registration. collective_memory_size in the "
       "allocator config must also be set to a non-zero value that is large "
       "enough to meet peak collective memory usage."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_allocator_spatial_partitioning",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_enable_allocator_spatial_partitioning),
+      debug_options->xla_gpu_enable_allocator_spatial_partitioning(),
+      "Enables spatial partitioning of the GPU BFC allocator so default and "
+      "collective allocations share one fixed address range. Requires BFC "
+      "preallocation."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_nccl_symmetric_buffers",
       bool_setter_for(
@@ -2913,6 +2945,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_hlo_pass_fix_detect_cycles(),
       "Perform hash-based cycle detection in fixed-point loops."));
   flag_list->push_back(tsl::Flag(
+      "xla_dump_compact_gte",
+      bool_setter_for(&DebugOptions::set_xla_dump_compact_gte),
+      debug_options->xla_dump_compact_gte(),
+      "If true, GTE (get-tuple-element) instructions will be compacted when "
+      "printing HLO."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_heuristic_collective_combining",
       bool_setter_for(
           &DebugOptions::
@@ -3178,12 +3216,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_enable_fusion_autotuner(),
       "Enable autotuning between the native & triton fusion emitters."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_autotune_post_fusion",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_experimental_autotune_post_fusion),
-      debug_options->xla_gpu_experimental_autotune_post_fusion(),
-      "All autotuning executes after fusion passes."));
-  flag_list->push_back(tsl::Flag(
       "xla_gpu_rocm_max_trace_events",
       int64_setter_for(&DebugOptions::set_xla_gpu_rocm_max_trace_events),
       debug_options->xla_gpu_rocm_max_trace_events(),
@@ -3234,7 +3266,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 bool_setter_for(&DebugOptions::set_xla_gpu_log_minmax),
                 debug_options->xla_gpu_log_minmax(),
                 "If true, log min/max values from kernel outputs."));
-
   flag_list->push_back(tsl::Flag(
       "xla_early_exit_with_layouts",
       bool_setter_for(&DebugOptions::set_xla_early_exit_with_layouts),
@@ -3270,6 +3301,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Experimental options for adjusting cost-model guided GEMM tiling "
       "selection; comma-separated list of 'key=val' strings (=val may be "
       "omitted); no whitespace around commas."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_ptx_compiler_extra_flags",
+      setter_for_xla_gpu_ptx_compiler_extra_flags,
+      /*default_value_for_display=*/"",
+      "Whitespace-separated extra flags to pass to the ptxas compiler, e.g. "
+      "'--maxregcount=32'."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

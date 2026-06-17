@@ -138,6 +138,16 @@ BasicBundle::BasicBundle(Client* client, std::vector<ValueRef> values)
       values_(std::move(values)),
       user_context_(UserContextScope::current()) {}
 
+BasicBundle::~BasicBundle() {
+  std::vector<ValueRef> to_delete;
+  for (const auto& value : values_) {
+    if (value->IsUnique()) {
+      to_delete.push_back(value);
+    }
+  }
+  client_->DeleteValues(absl::MakeSpan(to_delete));
+}
+
 tsl::Future<> BasicBundle::GetReadyFuture() const {
   if (values_.empty()) {
     return absl::OkStatus();
@@ -153,12 +163,8 @@ tsl::Future<> BasicBundle::GetReadyFuture() const {
 tsl::Future<> BasicBundle::Delete() {
   absl::MutexLock lock(mu_);
   if (!delete_future_.IsValid()) {
-    std::vector<tsl::Future<>> futures;
-    futures.reserve(values_.size());
-    for (const ValueRef& value : values_) {
-      futures.push_back(value->Delete());
-    }
-    delete_future_ = tsl::JoinFutures(futures);
+    std::vector<ValueRef> to_delete = values_;
+    delete_future_ = client_->DeleteValues(absl::MakeSpan(to_delete));
   }
   return delete_future_;
 }

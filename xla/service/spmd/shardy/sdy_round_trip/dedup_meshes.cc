@@ -99,15 +99,6 @@ struct MeshDeviceIdentifier {
 };
 
 struct MeshDeviceIdentifierInfo : public DenseMapInfo<MeshDeviceIdentifier> {
-  static inline MeshDeviceIdentifier getEmptyKey() {
-    return {TotalDeviceCountMapInfo::getEmptyKey(),
-            DeviceIdsMapInfo::getEmptyKey()};
-  }
-
-  static inline MeshDeviceIdentifier getTombstoneKey() {
-    return {TotalDeviceCountMapInfo::getTombstoneKey(),
-            DeviceIdsMapInfo::getTombstoneKey()};
-  }
   static unsigned getHashValue(const MeshDeviceIdentifier& inputs) {
     return llvm::hash_combine(
         TotalDeviceCountMapInfo::getHashValue(inputs.totalDeviceCount),

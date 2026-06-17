@@ -100,7 +100,6 @@ limitations under the License.
 #include "xla/codegen/xtile/codegen/fusion_emitter.h"
 #include "xla/codegen/xtile/ir/transforms/passes.h"
 #include "xla/codegen/xtile/ir/xtile_dialect.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -220,8 +219,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
     using experimental::TilingSpace;
 
     auto fusion_adaptor = HloFusionAdaptor::ForInstruction(&fusion);
-    std::unique_ptr<TilingSpace> tiling_space =
-        TilingSpace::Create(*fusion_adaptor, &mlir_context);
+    ASSIGN_OR_RETURN(std::unique_ptr<TilingSpace> tiling_space,
+                     TilingSpace::Create(*fusion_adaptor, &mlir_context));
 
     VLOG(6) << "fusion instruction: " << fusion.ToString() << "\n";
     VLOG(6) << "tiling space: " << tiling_space->ToString();
@@ -285,7 +284,6 @@ absl::StatusOr<TritonKernelSource> CreateTritonModule(
           .xla_gpu_experimental_enable_tiling_propagation();
 
   LoadMlirDialectsForTriton(mlir_context);
-  RegisterSymbolicExprStorage(&mlir_context);
 
   const HloComputation* hlo_computation =
       fusion.fused_instructions_computation();

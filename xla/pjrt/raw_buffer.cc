@@ -15,10 +15,12 @@ limitations under the License.
 
 #include "xla/pjrt/raw_buffer.h"
 
+#include <cstddef>
 #include <utility>
 #include <vector>
 
 #include "absl/functional/any_invocable.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -26,6 +28,8 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/future.h"
 #include "xla/pjrt/async_work_runner.h"
+#include "xla/pjrt/c/pjrt_c_api_raw_buffer_extension.h"
+#include "xla/pjrt/c/pjrt_c_api_status_utils.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/device_event_utils.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -72,6 +76,19 @@ class WrappedPjRtStagingBuffer : public PjRtStagingBuffer {
  private:
   tsl::AsyncValueRef<PjRtStagingBuffer> real_buffer_;
 };
+
+Future<> ConvertEventToFuture(PjRtDeviceEventRef event) {
+  auto [promise, future] = tsl::MakePromise<void>();
+  event.AndThen([promise = std::move(promise), event]() mutable {
+    auto error = event.GetErrorIfPresent();
+    if (error.has_value() && !error->ok()) {
+      promise.Set(*error);
+    } else {
+      promise.Set();
+    }
+  });
+  return std::move(future);
+}
 }  // namespace
 
 std::vector<RegisterRawBufferFactory::FactoryFuncT>& GetFactoryFuncs() {
@@ -80,7 +97,7 @@ std::vector<RegisterRawBufferFactory::FactoryFuncT>& GetFactoryFuncs() {
   return *funcs;
 }
 
-absl::StatusOr<std::vector<PjRtRawBufferRef>> CommonPjRtRawBuffer::MultiSlice(
+absl::StatusOr<std::vector<PjRtRawBufferRef>> PjRtRawBuffer::MultiSlice(
     absl::Span<const SliceInfo> slices) {
   std::vector<PjRtRawBufferRef> results;
   results.reserve(slices.size());
@@ -91,14 +108,14 @@ absl::StatusOr<std::vector<PjRtRawBufferRef>> CommonPjRtRawBuffer::MultiSlice(
   return results;
 }
 
-void CommonPjRtRawBuffer::ScheduleCopyTo(
+void PjRtRawBuffer::ScheduleCopyTo(
     AsyncWorkRunner* async_work_runner,
-    std::vector<PjRtDeviceEventRef> transfer_dependency_events,
+    PjRtDeviceEventRefVector transfer_dependency_events,
     PjRtRawBufferRef dst_raw_buffer,
     PjRtDeviceEventPromiseRef definition_event_promise,
     PjRtDeviceEventPromiseRef src_usage_event_promise,
     absl::AnyInvocable<void(absl::Status) &&> allocation_event) {
-  absl::Span<const PjRtDeviceEventRef> events_span = transfer_dependency_events;
+  PjRtDeviceEventSpan events_span(transfer_dependency_events);
   xla::ExecuteWhenReady(
       events_span, async_work_runner,
       [src_raw_buffer = tsl::FormRef(this),
@@ -124,12 +141,12 @@ void CommonPjRtRawBuffer::ScheduleCopyTo(
       });
 }
 
-void CommonPjRtRawBuffer::DecrefAfter(std::vector<PjRtDeviceEventRef> events) {
+void PjRtRawBuffer::DecrefAfter(PjRtDeviceEventRefVector events) {
   xla::RunWhenReady(events, [this]() { DropRef(); });
 }
 
-absl::StatusOr<tsl::RCReference<PjRtRawBuffer>>
-PjRtRawBuffer::CreateRawAliasOfBuffer(PjRtBuffer* buffer) {
+absl::StatusOr<PjRtRawBufferRef> PjRtRawBuffer::CreateRawAliasOfBuffer(
+    PjRtBuffer* buffer) {
   for (auto* func : GetFactoryFuncs()) {
     auto res = (*func)(buffer);
     if (res.has_value()) {
@@ -207,6 +224,274 @@ tsl::AsyncValueRef<PjRtStagingBuffer> ToStagingBuffer(
 
     return tsl::AsyncValueRef<PjRtStagingBuffer>(
         std::move(returned_staging_buffer_av));
+  }
+}
+
+const PJRT_RawBuffer_FunctionTable PjRtRawBuffer::kRawBufferVtable = {
+    /*struct_size=*/PJRT_RawBuffer_FunctionTable_STRUCT_SIZE,
+    /*instance_size=*/PJRT_RawBuffer_STRUCT_SIZE,
+    /*extension_start=*/nullptr,
+    /*inc_ref=*/
+    +[](PJRT_RawBuffer* raw_buffer) {
+      static_cast<PjRtRawBuffer*>(raw_buffer)->AddRef();
+    },
+    /*dec_ref=*/
+    +[](PJRT_RawBuffer* raw_buffer) {
+      static_cast<PjRtRawBuffer*>(raw_buffer)->DropRef();
+    },
+    /*get_on_device_size_in_bytes=*/
+    +[](const PJRT_RawBuffer* raw_buffer) -> size_t {
+      return static_cast<const PjRtRawBuffer*>(raw_buffer)
+          ->GetOnDeviceSizeInBytes();
+    },
+    /*get_memory_space=*/
+    +[](const PJRT_RawBuffer* raw_buffer) -> PJRT_Memory* {
+      return static_cast<const PjRtRawBuffer*>(raw_buffer)
+          ->memory_space()
+          ->ToCApiPtr();
+    },
+    /*get_host_pointer=*/
+    +[](const PJRT_RawBuffer* raw_buffer) -> void* {
+      return static_cast<const PjRtRawBuffer*>(raw_buffer)->GetHostPointer();
+    },
+    /*copy_raw_host_to_device_and_return_event=*/
+    +[](PJRT_RawBuffer* raw_buffer, const void* src, int64_t offset,
+        int64_t transfer_size, PJRT_DeviceEvent* event) -> PJRT_Error* {
+      auto result =
+          static_cast<PjRtRawBuffer*>(raw_buffer)
+              ->CopyRawHostToDeviceAndReturnEvent(src, offset, transfer_size);
+      if (!result.ok()) {
+        return pjrt::StatusToPjRtError(result.status());
+      }
+      *event = std::move(*result).release().ToC();
+      return nullptr;
+    },
+    /*copy_raw_device_to_host_and_return_event=*/
+    +[](PJRT_RawBuffer* raw_buffer, void* dst, int64_t offset,
+        int64_t transfer_size, PJRT_DeviceEvent* event) -> PJRT_Error* {
+      auto result =
+          static_cast<PjRtRawBuffer*>(raw_buffer)
+              ->CopyRawDeviceToHostAndReturnEvent(dst, offset, transfer_size);
+      if (!result.ok()) {
+        return pjrt::StatusToPjRtError(result.status());
+      }
+      *event = std::move(*result).release().ToC();
+      return nullptr;
+    },
+    /*opaque_device_memory_data_pointer=*/
+    +[](const PJRT_RawBuffer* raw_buffer) -> void* {
+      return static_cast<const PjRtRawBuffer*>(raw_buffer)
+          ->OpaqueDeviceMemoryDataPointer();
+    },
+    /*make_allocation_ready_event=*/
+    +[](PJRT_RawBuffer* raw_buffer, PJRT_DeviceEvent* event) -> PJRT_Error* {
+      auto result =
+          static_cast<PjRtRawBuffer*>(raw_buffer)->MakeAllocationReadyEvent();
+      if (!result.ok()) {
+        return pjrt::StatusToPjRtError(result.status());
+      }
+      *event = std::move(*result).release().ToC();
+      return nullptr;
+    },
+    /*get_raw_buffer_async_value=*/
+    +[](PJRT_RawBuffer* raw_buffer, PJRT_DeviceEvent* event) -> PJRT_Error* {
+      auto result =
+          static_cast<PjRtRawBuffer*>(raw_buffer)->GetRawBufferAsyncValue();
+      *event = result.ToC();
+      return nullptr;
+    },
+    /*is_mutable=*/
+    +[](const PJRT_RawBuffer* raw_buffer) -> bool {
+      return static_cast<const PjRtRawBuffer*>(raw_buffer)->is_mutable();
+    },
+    /*slice=*/
+    +[](PJRT_RawBuffer* raw_buffer, int64_t offset, int64_t slice_size,
+        PJRT_RawBuffer** sliced_buffer) -> PJRT_Error* {
+      auto result =
+          static_cast<PjRtRawBuffer*>(raw_buffer)->Slice(offset, slice_size);
+      if (!result.ok()) {
+        return pjrt::StatusToPjRtError(result.status());
+      }
+      *sliced_buffer = std::move(*result).release();
+      return nullptr;
+    },
+};
+
+PjRtRawBuffer::PjRtRawBuffer() { vtable = &kRawBufferVtable; }
+
+absl::StatusOr<PjRtDeviceEventRef>
+PjRtRawBufferInterface::CopyRawHostToDeviceAndReturnEvent(
+    const void* src, int64_t offset, int64_t transfer_size) {
+  PJRT_DeviceEvent device_event;
+  PJRT_Error* error = vtable->copy_raw_host_to_device_and_return_event(
+      this, src, offset, transfer_size, &device_event);
+  if (error != nullptr) {
+    return pjrt::PjrtErrorToStatus(error);
+  }
+  return PjRtDeviceEventRef::TakeRef(PjRtDeviceEventPtr(device_event));
+}
+
+absl::StatusOr<PjRtDeviceEventRef>
+PjRtRawBufferInterface::CopyRawDeviceToHostAndReturnEvent(
+    void* dst, int64_t offset, int64_t transfer_size) {
+  PJRT_DeviceEvent device_event;
+  PJRT_Error* error = vtable->copy_raw_device_to_host_and_return_event(
+      this, dst, offset, transfer_size, &device_event);
+  if (error != nullptr) {
+    return pjrt::PjrtErrorToStatus(error);
+  }
+  return PjRtDeviceEventRef::TakeRef(PjRtDeviceEventPtr(device_event));
+}
+
+void* PjRtRawBufferInterface::OpaqueDeviceMemoryDataPointer() const {
+  return vtable->opaque_device_memory_data_pointer(this);
+}
+
+void PjRtRawBufferInterface::AddRef() { vtable->inc_ref(this); }
+
+void PjRtRawBufferInterface::DropRef() { vtable->dec_ref(this); }
+
+PjRtMemorySpace* PjRtRawBufferInterface::memory_space() const {
+  return PjRtMemorySpace::FromC(vtable->get_memory_space(this));
+}
+
+void* PjRtRawBufferInterface::GetHostPointer() const {
+  return vtable->get_host_pointer(this);
+}
+
+size_t PjRtRawBufferInterface::GetOnDeviceSizeInBytes() const {
+  return vtable->get_on_device_size_in_bytes(this);
+}
+
+Future<> PjRtRawBufferInterface::CopyRawHostToDevice(const void* src,
+                                                     int64_t offset,
+                                                     int64_t transfer_size) {
+  ASSIGN_OR_RETURN(auto event, CopyRawHostToDeviceAndReturnEvent(
+                                   src, offset, transfer_size));
+  return ConvertEventToFuture(std::move(event));
+}
+
+Future<> PjRtRawBufferInterface::CopyRawDeviceToHost(void* dst, int64_t offset,
+                                                     int64_t transfer_size) {
+  ASSIGN_OR_RETURN(auto event, CopyRawDeviceToHostAndReturnEvent(
+                                   dst, offset, transfer_size));
+  return ConvertEventToFuture(std::move(event));
+}
+
+bool PjRtRawBufferInterface::is_mutable() const {
+  return vtable->is_mutable(this);
+}
+
+absl::StatusOr<PjRtDeviceEventRef>
+PjRtRawBufferInterface::MakeAllocationReadyEvent() {
+  PJRT_DeviceEvent device_event;
+  PJRT_Error* error = vtable->make_allocation_ready_event(this, &device_event);
+  if (error != nullptr) {
+    return pjrt::PjrtErrorToStatus(error);
+  }
+  return PjRtDeviceEventRef::TakeRef(PjRtDeviceEventPtr(device_event));
+}
+
+PjRtDeviceEventPtr PjRtRawBufferInterface::GetRawBufferAsyncValue() {
+  PJRT_DeviceEvent device_event;
+  PJRT_Error* error = vtable->get_raw_buffer_async_value(this, &device_event);
+  if (error != nullptr) {
+    LOG(FATAL) << "Failed to get raw buffer async value: "
+               << pjrt::PjrtErrorToStatus(error);
+  }
+  return PjRtDeviceEventPtr(device_event);
+}
+
+absl::StatusOr<PjRtRawBufferRef> PjRtRawBufferInterface::Slice(int64_t offset,
+                                                               int64_t size) {
+  PJRT_RawBuffer* sliced_c_buffer;
+  PJRT_Error* error = vtable->slice(this, offset, size, &sliced_c_buffer);
+  if (error != nullptr) {
+    return pjrt::PjrtErrorToStatus(error);
+  }
+  if (sliced_c_buffer->vtable != &PjRtRawBuffer::kRawBufferVtable) {
+    tsl::TakeRef(static_cast<PjRtRawBufferInterface*>(sliced_c_buffer));
+    return absl::UnimplementedError("Slice not supported");
+  }
+  return tsl::TakeRef(static_cast<PjRtRawBuffer*>(sliced_c_buffer));
+}
+
+absl::StatusOr<std::vector<PjRtRawBufferRef>>
+PjRtRawBufferInterface::MultiSlice(absl::Span<const SliceInfo> slices) {
+  if (auto* cpp_buf = down_cast<PjRtRawBuffer>()) {
+    return cpp_buf->MultiSlice(slices);
+  }
+  std::vector<PjRtRawBufferRef> results;
+  results.reserve(slices.size());
+  for (const auto& slice : slices) {
+    ASSIGN_OR_RETURN(auto sub_slice, Slice(slice.offset, slice.size));
+    results.push_back(std::move(sub_slice));
+  }
+  return results;
+}
+
+void PjRtRawBufferInterface::CopyTo(
+    PjRtRawBufferRef dst_raw_buffer,
+    PjRtDeviceEventPromiseRef definition_event_promise,
+    PjRtDeviceEventPromiseRef src_usage_event_promise,
+    absl::AnyInvocable<void(absl::Status) &&> allocation_event) {
+  if (auto* cpp_buf = down_cast<PjRtRawBuffer>()) {
+    cpp_buf->CopyTo(
+        std::move(dst_raw_buffer), std::move(definition_event_promise),
+        std::move(src_usage_event_promise), std::move(allocation_event));
+  } else {
+    definition_event_promise.SetError(
+        absl::UnimplementedError("CopyTo not supported"));
+    src_usage_event_promise.SetError(
+        absl::UnimplementedError("CopyTo not supported"));
+  }
+}
+
+void PjRtRawBufferInterface::ScheduleCopyTo(
+    AsyncWorkRunner* async_work_runner,
+    PjRtDeviceEventRefVector transfer_dependency_events,
+    PjRtRawBufferRef dst_raw_buffer,
+    PjRtDeviceEventPromiseRef definition_event_promise,
+    PjRtDeviceEventPromiseRef src_usage_event_promise,
+    absl::AnyInvocable<void(absl::Status) &&> allocation_event) {
+  if (auto* cpp_buf = down_cast<PjRtRawBuffer>()) {
+    cpp_buf->ScheduleCopyTo(
+        async_work_runner, std::move(transfer_dependency_events),
+        std::move(dst_raw_buffer), std::move(definition_event_promise),
+        std::move(src_usage_event_promise), std::move(allocation_event));
+  } else {
+    PjRtDeviceEventSpan events_span(transfer_dependency_events);
+    xla::ExecuteWhenReady(
+        events_span, async_work_runner,
+        [src_raw_buffer = tsl::FormRef(this),
+         dst_raw_buffer = std::move(dst_raw_buffer),
+         definition_event_promise = std::move(definition_event_promise),
+         src_usage_event_promise = std::move(src_usage_event_promise),
+         allocation_event = std::move(allocation_event),
+         transfer_dependency_events =
+             std::move(transfer_dependency_events)]() mutable {
+          absl::Status status = xla::GetErrors(transfer_dependency_events);
+          if (!status.ok()) {
+            if (allocation_event) {
+              std::move(allocation_event)(status);
+            }
+            definition_event_promise.SetError(status);
+            src_usage_event_promise.SetError(status);
+            return;
+          }
+
+          src_raw_buffer->CopyTo(
+              std::move(dst_raw_buffer), std::move(definition_event_promise),
+              std::move(src_usage_event_promise), std::move(allocation_event));
+        });
+  }
+}
+
+void PjRtRawBufferInterface::DecrefAfter(PjRtDeviceEventRefVector events) {
+  if (auto* cpp_buf = down_cast<PjRtRawBuffer>()) {
+    cpp_buf->DecrefAfter(std::move(events));
+  } else {
+    xla::RunWhenReady(events, [this]() { DropRef(); });
   }
 }
 
