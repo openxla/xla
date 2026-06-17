@@ -77,7 +77,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
-#include "xla/map_util.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/device_id.h"
@@ -92,6 +91,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
+#include "xla/service/gpu/gpu_module_globals.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/hlo.pb.h"
@@ -119,11 +119,9 @@ limitations under the License.
 #include "xla/stream_executor/kernel_stats.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_reservation.h"
-#include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_id.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
-#include "xla/stream_executor/scoped_module_handle.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
@@ -415,35 +413,6 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
       std::move(params.cpu_target_machine_options),
       std::move(params.buffer_assignment_proto)));
 }
-
-class GpuModuleGlobals {
- public:
-  using BufferAllocToDeviceMemoryMap =
-      GpuExecutable::BufferAllocToDeviceMemoryMap;
-
-  GpuModuleGlobals(const std::vector<uint8_t>& binary,
-                   const std::vector<GpuExecutable::ConstantInfo>& constants)
-      : binary_(binary), constants_(constants) {}
-
-  // Loads the executable module for `stream` and initializes constant globals.
-  // Loaded modules and resolved global addresses are cached per executor.
-  absl::StatusOr<const BufferAllocToDeviceMemoryMap*> Resolve(
-      se::Stream* stream);
-
- private:
-  const std::vector<uint8_t>& binary_;
-  const std::vector<GpuExecutable::ConstantInfo>& constants_;
-
-  absl::Mutex mutex_;
-  // Cache of module handles. Required to keep loaded modules alive until this
-  // helper is destroyed.
-  absl::flat_hash_map<se::StreamExecutor*, se::ScopedModuleHandle>
-      module_handles_ ABSL_GUARDED_BY(mutex_);
-  // Cache of constant buffer allocation maps used by `Resolve`.
-  absl::flat_hash_map<se::StreamExecutor*,
-                      std::unique_ptr<BufferAllocToDeviceMemoryMap>>
-      globals_ ABSL_GUARDED_BY(mutex_);
-};
 
 // Implementation note: HLO profiling is always enabled for GPU executables,
 // since we can use timers around thunks.
@@ -1045,75 +1014,6 @@ absl::Status BarrierAfterExecutable(
           debug_options
               ? debug_options->xla_gpu_executable_terminate_timeout_seconds()
               : 30));
-}
-
-absl::StatusOr<const GpuModuleGlobals::BufferAllocToDeviceMemoryMap*>
-GpuModuleGlobals::Resolve(se::Stream* stream) {
-  se::StreamExecutor* executor = stream->parent();
-
-  absl::MutexLock lock(mutex_);
-  auto it = globals_.find(executor);
-  if (it != globals_.end()) {
-    return it->second.get();
-  }
-
-  se::MultiModuleLoaderSpec module_spec;
-  if (!binary_.empty()) {
-    module_spec.AddCudaCubinInMemory(binary_);
-  }
-
-  auto globals = std::make_unique<BufferAllocToDeviceMemoryMap>();
-  se::ModuleHandle module_handle;
-  // The CUDA driver isn't able to load a PTX and a binary which are both empty.
-  // It's okay if we skip loading in this case; if the module isn't loaded, all
-  // symbol lookups will fail, just as they should for an empty module.
-  if (!(executor->GetPlatform()->id() == se::cuda::kCudaPlatformId &&
-        binary_.empty())) {
-    ASSIGN_OR_RETURN(module_handle, executor->LoadModule(module_spec));
-  }
-
-  // A flag signalling if constant initialization submitted memcpy operations
-  // to the `stream`.
-  int submitted_mem_copies = 0;
-
-  for (const GpuExecutable::ConstantInfo& info : constants_) {
-    absl::StatusOr<se::DeviceAddressBase> global_status;
-    if (static_cast<bool>(module_handle)) {
-      global_status = executor->GetSymbol(info.symbol_name, module_handle);
-    }
-
-    se::DeviceAddressBase global;
-
-    CHECK(static_cast<bool>(module_handle) && global_status.ok());
-    // The constant was defined in the PTX and has been allocated by the CUDA
-    // driver.
-    global = *global_status;
-    XLA_VLOG_DEVICE(3, executor->device_ordinal()) << absl::StreamFormat(
-        "Resolved global %s to %p", info.symbol_name, global.opaque());
-
-    if (!info.content.span().empty()) {
-      // This means the constant did not have an initializer in the PTX and
-      // therefore must be initialized by XLA here.
-      RETURN_IF_ERROR(stream->Memcpy(&global, info.content.span().data(),
-                                     info.content.span().size()));
-      submitted_mem_copies = true;
-    }
-
-    if (info.allocation_index != -1) {
-      InsertOrDie(globals.get(), info.allocation_index, global);
-    }
-  }
-
-  // Wait for the completion of all host->device transfers, to guarantee that
-  // destructor will not race with any operations in flight (deallocate
-  // xla::Literal owned by the HLO module).
-  if (submitted_mem_copies) {
-    CHECK_OK(stream->BlockHostUntilDone());
-  }
-
-  module_handles_.emplace(executor,
-                          se::ScopedModuleHandle(executor, module_handle));
-  return globals_.emplace(executor, std::move(globals)).first->second.get();
 }
 
 absl::StatusOr<const GpuExecutable::BufferAllocToDeviceMemoryMap*>
