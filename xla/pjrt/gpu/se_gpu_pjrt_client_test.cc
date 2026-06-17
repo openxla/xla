@@ -2817,13 +2817,13 @@ TEST_F(VmmTest, CommandBufferVaRemappingCustomLibraryUpdateFree) {
     auto lhs = LiteralUtil::CreateR2<float>(
         {{s, 0, 0, 0}, {0, s, 0, 0}, {0, 0, s, 0}, {0, 0, 0, s}});
 
-    TF_ASSERT_OK_AND_ASSIGN(auto lhs_buf,
-                            client->BufferFromHostLiteral(lhs, mem));
-    TF_ASSERT_OK_AND_ASSIGN(auto rhs_buf,
-                            client->BufferFromHostLiteral(identity, mem));
+    ASSERT_OK_AND_ASSIGN(auto lhs_buf,
+                         client->BufferFromHostLiteral(lhs, mem));
+    ASSERT_OK_AND_ASSIGN(auto rhs_buf,
+                         client->BufferFromHostLiteral(identity, mem));
 
     auto result = executable->Execute({{lhs_buf.get(), rhs_buf.get()}}, {});
-    TF_ASSERT_OK_AND_ASSIGN(auto result_lit, ExtractSingleResult(result));
+    ASSERT_OK_AND_ASSIGN(auto result_lit, ExtractSingleResult(result));
 
     EXPECT_TRUE(LiteralTestUtil::Near(lhs, *result_lit, ErrorSpec{1e-5}))
         << "Mismatch on run " << run;
