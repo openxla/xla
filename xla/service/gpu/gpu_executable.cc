@@ -76,7 +76,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/literal.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/device_id.h"
