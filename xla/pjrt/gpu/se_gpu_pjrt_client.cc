@@ -70,8 +70,10 @@ limitations under the License.
 #include "xla/pjrt/common_pjrt_client.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/device_event_utils.h"
+#include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/pjrt/distributed/coordination/coordination_service_agent.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/distributed/topology_util.h"
 #include "xla/pjrt/gpu/gpu_helpers.h"
@@ -1853,6 +1855,37 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
   auto gpu_run_options = std::make_unique<gpu::GpuExecutableRunOptions>();
   if (options.enable_mock_nccl) {
     gpu_run_options->set_enable_mock_collectives();
+  }
+
+  if (options.abort_collectives_on_failure) {
+    int process_index = options.node_id;
+    std::shared_ptr<DistributedRuntimeClient> distributed_client =
+        options.distributed_client;
+    gpu_run_options->set_execution_timeout_handler(
+        [process_index,
+         distributed_client = std::move(distributed_client)](
+            absl::string_view action, absl::Duration timeout) {
+          absl::Status error = absl::DeadlineExceededError(absl::StrFormat(
+              "%s failed to finish in %v", action, timeout));
+
+          if (absl::Status s =
+                  gpu::AbortCollectivesOnTaskFailure(process_index, error);
+              !s.ok()) {
+            LOG(WARNING) << s;
+          }
+
+          if (distributed_client != nullptr) {
+            absl::StatusOr<CoordinationServiceAgent*> agent =
+                distributed_client->GetCoordinationServiceAgent();
+            if (agent.ok()) {
+              if (absl::Status s = (*agent)->ReportError(error); !s.ok()) {
+                LOG(WARNING) << "Failed to report execution timeout to "
+                                "coordination service: "
+                             << s;
+              }
+            }
+          }
+        });
   }
 
   static const bool xla_gpu_require_exclusive_lock =

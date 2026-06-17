@@ -121,6 +121,7 @@ cc_library(
         "//xla/pjrt:utils",
         "//xla/pjrt:worker_thread",
         "//xla/pjrt/distributed:client",
+        "//xla/pjrt/distributed/coordination:coordination_service_agent",
         "//xla/pjrt/distributed:in_memory_key_value_store",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed:protocol_proto_cc",
