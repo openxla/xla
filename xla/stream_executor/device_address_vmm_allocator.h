@@ -293,28 +293,106 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // Lifetime record for one raw physical allocation. The initial migration adds
   // this next to the existing maps; later changes move allocator and reservation
   // address ownership into this record.
-  struct AllocationRecord {
-    PendingDeallocationKind kind = PendingDeallocationKind::kAllocate;
-    DeviceAddressBase allocator_address;
-    std::shared_ptr<MemoryAllocation> raw_allocation;
-    bool multi_device = false;
+  //
+  // TODO(b/44173): Add transition methods as allocator and reservation
+  // bookkeeping migrate to AllocationRecord. Callers should not directly mutate
+  // record state because allocator-address and reservation-address lifetimes
+  // must move through active/stale/completed states consistently.
+  class AllocationRecord {
+   public:
+    enum class Kind {
+      kAllocate,
+      kAllocateAndMapReturnMapAddr,
+      kAllocateAndMapReturnNewAddr,
+    };
+
+    enum class AllocatorState {
+      kActive,
+      kStale,
+    };
+
+    enum class ReservationState {
+      kNone,
+      kActive,
+      kStale,
+    };
+
+    AllocationRecord(Kind kind, DeviceAddressBase allocator_address,
+                     std::shared_ptr<MemoryAllocation> raw_allocation,
+                     std::unique_ptr<MemoryReservation>
+                         allocator_address_reservation,
+                     MemoryReservation::ScopedMapping allocator_address_mapping,
+                     bool multi_device);
+    AllocationRecord(const AllocationRecord&) = delete;
+    AllocationRecord& operator=(const AllocationRecord&) = delete;
+    AllocationRecord(AllocationRecord&&) = default;
+    AllocationRecord& operator=(AllocationRecord&&) = default;
+
+    Kind kind() const { return kind_; }
+    DeviceAddressBase allocator_address() const { return allocator_address_; }
+    void* allocator_key() const { return allocator_address_.opaque(); }
+    bool allocator_active() const {
+      return allocator_state_ == AllocatorState::kActive;
+    }
+    bool allocator_stale() const {
+      return allocator_state_ == AllocatorState::kStale;
+    }
+    bool allocator_matches(DeviceAddressBase address) const {
+      return allocator_address_.IsSameAs(address);
+    }
+    uint64_t allocator_stale_seqno() const { return allocator_stale_seqno_; }
+    bool multi_device() const { return multi_device_; }
+    MemoryAllocation* raw_allocation() const { return raw_allocation_.get(); }
+    MemoryReservation* allocator_address_reservation() const {
+      return allocator_address_reservation_.get();
+    }
+    bool has_allocator_address_mapping() const {
+      return allocator_address_mapping_.has_value();
+    }
+
+    bool has_reservation_alias() const {
+      return reservation_state_ != ReservationState::kNone;
+    }
+    bool reservation_active() const {
+      return reservation_state_ == ReservationState::kActive;
+    }
+    bool reservation_stale() const {
+      return reservation_state_ == ReservationState::kStale;
+    }
+    bool has_reservation_address() const {
+      return reservation_address_.has_value();
+    }
+    DeviceAddressBase reservation_address() const;
+    void* reservation_key() const { return reservation_address().opaque(); }
+    bool reservation_matches(DeviceAddressBase address) const {
+      return has_reservation_address() &&
+             reservation_address_->IsSameAs(address);
+    }
+    uint64_t reservation_stale_seqno() const {
+      return reservation_stale_seqno_;
+    }
+    bool reservation_mapping_matches(DeviceAddressBase address) const;
+
+   private:
+    Kind kind_;
+    DeviceAddressBase allocator_address_;
+    std::shared_ptr<MemoryAllocation> raw_allocation_;
+    bool multi_device_;
 
     // Present for Allocate() and
     // Allocate(..., return_reservation_address=false).
-    std::unique_ptr<MemoryReservation> allocator_address_reservation;
+    std::unique_ptr<MemoryReservation> allocator_address_reservation_;
     // Present while the allocator address is active or stale.
-    std::optional<MemoryReservation::ScopedMapping> allocator_address_mapping;
+    std::optional<MemoryReservation::ScopedMapping> allocator_address_mapping_;
 
     // Present while a reservation alias is active or stale.
-    std::optional<DeviceAddressBase> reservation_address;
-    std::optional<MemoryReservation::ScopedMapping> reservation_address_mapping;
+    std::optional<DeviceAddressBase> reservation_address_;
+    std::optional<MemoryReservation::ScopedMapping> reservation_address_mapping_;
 
-    bool allocator_active = false;
-    bool allocator_stale = false;
-    bool reservation_active = false;
-    bool reservation_stale = false;
-    uint64_t allocator_stale_seqno = 0;
-    uint64_t reservation_stale_seqno = 0;
+    AllocatorState allocator_state_ = AllocatorState::kActive;
+    ReservationState reservation_state_ = ReservationState::kNone;
+    uint64_t allocator_stale_seqno_ = 0;
+    uint64_t reservation_stale_seqno_ = 0;
   };
 
   struct PerDeviceState {
