@@ -1465,7 +1465,7 @@ AsyncThunkSequence ThunkEmitter::EmitDynamicSliceCopyFusion(
       std::move(embedded_thunks), verify_offsets));
 }
 
-absl::StatusOr<ThunkSequence> ThunkEmitter::EmitStaticSliceCopyFusion(
+AsyncThunkSequence ThunkEmitter::EmitStaticSliceCopyFusion(
     const HloFusionInstruction* instr, const StaticSliceCopyFusion& copy) {
   if (copy.parameter_number < 0 ||
       copy.parameter_number >= instr->operand_count()) {

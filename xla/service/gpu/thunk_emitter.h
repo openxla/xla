@@ -159,7 +159,7 @@ class ThunkEmitter {
   AsyncThunkSequence EmitDynamicSliceCopyFusion(
       const HloFusionInstruction* instr, DynamicSliceCopyFusion copy);
 
-  absl::StatusOr<ThunkSequence> EmitStaticSliceCopyFusion(
+  AsyncThunkSequence EmitStaticSliceCopyFusion(
       const HloFusionInstruction* instr, const StaticSliceCopyFusion& copy);
 
   absl::StatusOr<ThunkSequence> EmitFftThunk(const HloFftInstruction* instr);
