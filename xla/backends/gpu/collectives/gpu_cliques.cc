@@ -1159,24 +1159,19 @@ absl::Status AbortCollectivesOnTaskFailure(int failed_task_id,
   }
 
   std::vector<coordination::TaskInfo> updated = state.task_state_infos;
-  bool found = false;
-  for (coordination::TaskInfo& info : updated) {
-    if (info.task_id() != failed_task_id) {
-      continue;
-    }
-    info.set_state(coordination::TaskState::ERROR);
-    info.set_error_code(error.raw_code());
-    info.set_error_message(std::string(error.message()));
-    info.mutable_error_payload()->set_source_task_id(failed_task_id);
-    info.mutable_error_payload()->set_is_reported_error(true);
-    found = true;
-    break;
-  }
-  if (!found) {
+  auto it = absl::c_find_if(updated, [failed_task_id](coordination::TaskInfo& info) {
+    return info.task_id() == failed_task_id;
+  });
+  if (it == updated.end()) {
     return absl::NotFoundError(
         absl::StrFormat("Task %d not found in global process info",
                         failed_task_id));
   }
+  it->set_state(coordination::TaskState::ERROR);
+  it->set_error_code(error.raw_code());
+  it->set_error_message(std::string(error.message()));
+  it->mutable_error_payload()->set_source_task_id(failed_task_id);
+  it->mutable_error_payload()->set_is_reported_error(true);
 
   absl::Status s =
       AbortOnFailure(state.cliques, state.task_state_infos, updated);
