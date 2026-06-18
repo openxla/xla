@@ -681,7 +681,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
         run_options->run_options().gpu_executable_run_options();
 
     HangWatchdog::CancelCallback on_timeout;
-    if (gpu_run_options != nullptr &&
+    if (gpu_run_options &&
         gpu_run_options->execution_timeout_handler()) {
       on_timeout = [watchdog_name, watchdog_timeout,
                     pre_abort = std::move(pre_abort),

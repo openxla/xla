@@ -24,6 +24,7 @@ limitations under the License.
 #include <optional>
 #include <set>
 #include <string>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -1858,13 +1859,19 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
   }
 
   if (options.abort_collectives_on_failure) {
-    int process_index = options.node_id;
-    std::shared_ptr<DistributedRuntimeClient> distributed_client =
-        options.distributed_client;
     gpu_run_options->set_execution_timeout_handler(
-        [process_index,
-         distributed_client = std::move(distributed_client)](
+        [process_index = options.node_id,
+         distributed_client = options.distributed_client](
             absl::string_view action, absl::Duration timeout) {
+          std::thread([action = std::string(action)] {
+            absl::SleepFor(absl::Seconds(60));
+            LOG(ERROR) << absl::StrFormat(
+                "%s: collective abort did not complete within 60 seconds; "
+                "aborting process to avoid infinite hang.",
+                action);
+            std::abort();
+          }).detach();
+
           absl::Status error = absl::DeadlineExceededError(absl::StrFormat(
               "%s failed to finish in %v", action, timeout));
 
