@@ -257,6 +257,7 @@ cc_library(
     name = "tpu_executor_api",
     srcs = ["tpu_executor_api.cc"],
     hdrs = ["tpu_executor_api.h"],
+    visibility = ["//visibility:public"],
     deps = [
         ":libtftpu_header",
         ":tpu_executor_c_api_hdrs",
