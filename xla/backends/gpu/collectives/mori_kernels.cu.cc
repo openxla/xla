@@ -20,6 +20,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "xla/backends/gpu/collectives/mori_kernels.h"
 #include "mori/shmem/shmem.hpp"
+#include "mori/shmem/reduce_scatter_kernels.hpp"
 
 using namespace mori;
 
@@ -32,7 +33,7 @@ using namespace mori;
     return absl::InternalError(absl::StrCat("MORI error: ", hipGetErrorString(status))); \
   }
 
-namespace roc_mori {
+namespace xla_mori {
 
 static std::mutex g_memObjMapMutex;
 using MemObjMap = std::map< void*, application::SymmMemObjPtr >;
@@ -85,88 +86,8 @@ std::tuple<application::SymmMemObjPtr, uintptr_t>
 }
 
 
-  namespace {
+namespace {
 
-constexpr int kWarpSize = 64, kWarpsPerBlock = 2;
-constexpr int kBlockSize = kWarpSize * kWarpsPerBlock;
-constexpr int kMaxBlocks = 16;
-constexpr size_t kBytesPerWarp = 2*1024;
-
-// --------------------------------------------------------------------------
-// MoriPutKernel – single kernel that:
-//   1. Copies data from local send_buffer to peer's recv_buffer via P2P.
-//   2. Uses a retirement counter so that the LAST block to finish sets
-//      a completion flag on the remote peer's signal_flags[myPe].
-//
-// signal_flags  – base of the per-PE signal array (in symmetric heap).
-// block_counter – a single uint32_t in device memory, initialised to 0.
-//                 It is used only within this kernel and reset before exit.
-// --------------------------------------------------------------------------
-__global__ void MoriPutKernel(void* recv_buffer, void* send_buffer,
-                              size_t bytes, int peer,
-                              uint32_t* signal_flags) {
-  using T = uint8_t;
-  T *src = static_cast<T *>(send_buffer), *dst;
-  uint32_t *remote_sig;
-  {
-    int myPe = shmem::ShmemMyPe();
-    // Translate the local symmetric address of recv_buffer to the
-    // P2P-mapped address on the remote peer.
-    uint64_t remote_addr = shmem::ShmemPtrP2p(
-      reinterpret_cast<uint64_t>(recv_buffer), myPe, peer);
-    dst = reinterpret_cast<T*>(remote_addr);
-    remote_addr = shmem::ShmemPtrP2p(
-      reinterpret_cast<uint64_t>(signal_flags + myPe + 1), myPe, peer);
-    remote_sig = reinterpret_cast<uint32_t*>(remote_addr);
-    if (threadIdx.x == 0) {
-      while (core::AtomicLoadRelaxedSystem(remote_sig) != 0) {
-        __builtin_amdgcn_s_sleep(1);
-      }
-    }
-  }
-  __syncthreads();
-
-  uint32_t warpId = blockIdx.x * blockDim.x + threadIdx.x,
-           totalWarps = gridDim.x * blockDim.x;
-  if (warpSize == 64) {
-    warpId /= 64, totalWarps /= 64;
-  } else {
-    warpId /= 32, totalWarps /= 32;
-  }
-  for (size_t off = static_cast<size_t>(warpId) * kBytesPerWarp; off < bytes;
-              off += static_cast<size_t>(totalWarps) * kBytesPerWarp) {
-    size_t n = std::min(kBytesPerWarp, bytes - off);
-    core::WarpCopy<T>(dst + off, src + off, n);
-  }
-
-  // Ensure all P2P writes from this thread are globally visible.
-  __threadfence_system();
-  // Intra-block barrier: every thread in this block has completed its
-  // WarpCopy + fence before we touch the retirement counter.
-  __syncthreads();
-
-  if (threadIdx.x == 0) {
-    // no need to transfer this flag => it lives on this node
-    auto prev = core::AtomicAddRelaxed(signal_flags, uint32_t{1});
-    if (prev + 1 == gridDim.x) { // all blocks are done => set global flag
-      core::AtomicStoreRelaxed(signal_flags, uint32_t{0}); // reset counter
-      core::AtomicStoreRelaxedSystem(remote_sig, uint32_t{1});
-    }
-  }
-}
-
-// --------------------------------------------------------------------------
-// RecvWaitKernel – spins on a local signal location until the remote
-// peer has written a non-zero value (via MoriPutKernel), then resets it.
-// --------------------------------------------------------------------------
-__global__ void RecvWaitKernel(uint32_t* signal) {
-  while (core::AtomicLoadRelaxedSystem(signal) == 0) {
-    __builtin_amdgcn_s_sleep(1);
-  }
-  // Reset for the next round.
-  core::AtomicStoreRelaxedSystem(signal, uint32_t{0});
-  // __threadfence_system(); ???
-}
 
 __global__ void BarrierKernel() {
   shmem::ShmemBarrierAllThread();
@@ -195,10 +116,6 @@ __global__ void AllGatherKernel(int myPe, int npes, int numQ,
         application::SymmMemObjPtr inBuf, size_t inOfs,
         application::SymmMemObjPtr outBuf, size_t outOfs, size_t chunkSz) {
   const int tid = threadIdx.x;
-/*
-inline __device__ void ShmemPutMemNbiThreadKernel<application::TransportType::SDMA>(
-    const application::SymmMemObjPtr dest, size_t destOffset,
-    const application::SymmMemObjPtr source, size_t sourceOffset, size_t bytes, int pe, int qpId) {*/
 
   // so we split data sending across numQ queues
   // each queue sends chunkBytes / numQ bytes
@@ -235,10 +152,6 @@ inline __device__ void ShmemPutMemNbiThreadKernel<application::TransportType::SD
 
 }  // anonymous namespace
 
-void InitSignalMemory(void* ptr, size_t bytes) {
-  hipMemset(ptr, 0, bytes);
-}
-
 absl::Status SendSDMA(void* recv_buffer, void* send_buffer, size_t bytes, int peer,
          std::intptr_t stream_handle, int device_id) {
   auto stream = reinterpret_cast< hipStream_t >(stream_handle);
@@ -254,34 +167,6 @@ absl::Status SendSDMA(void* recv_buffer, void* send_buffer, size_t bytes, int pe
                              inBuf, inOfs, outBuf, outOfs, bytes);
   MORI_HIP_ERROR(hipGetLastError());
   return absl::OkStatus();
-}
-
-int Send(void* recv_buffer, void* send_buffer, size_t bytes, int peer,
-         uint32_t* signal_flags, std::intptr_t stream_handle) {
-
-  size_t total = kBytesPerWarp * kWarpsPerBlock;
-
-  // 4K - handled by 1 block
-  // 8K - by 2 blocks
-  // anything until 6K - also handled by 1 block
-  
-  int numBlocks = static_cast<int>((bytes + total / 2) / total);
-  numBlocks = std::max(1, std::min(numBlocks, kMaxBlocks));
-
-  // fprintf(stderr, "MORI send Using blocks %d\n", numBlocks);
-
-  auto stream = reinterpret_cast< hipStream_t >(stream_handle);
-  MoriPutKernel<<<numBlocks, kBlockSize, 0, stream>>>(
-      recv_buffer, send_buffer, bytes, peer, signal_flags);
-  return 0;
-}
-
-int Recv(void* /*recv_buffer*/, void* /*send_buffer*/, size_t /*bytes*/,
-         int peer, uint32_t* signal_flags, std::intptr_t stream_handle) {
-
-  auto stream = reinterpret_cast< hipStream_t >(stream_handle);
-  RecvWaitKernel<<<1, 1, 0, stream>>>(&signal_flags[peer + 1]);
-  return 0;
 }
 
 absl::Status BarrierOnStream(std::intptr_t stream_handle) {
@@ -307,4 +192,61 @@ absl::Status AllGather(void* send_buffer, void* recv_buffer, size_t bytes,
   return absl::OkStatus();
 }
 
-}  // namespace roc_mori
+absl::Status ReduceScatter(void* send_buffer, void* recv_buffer, 
+      void* staging_buffer, xla::PrimitiveType dtype, size_t chunkElems, 
+      int gen_counter, std::intptr_t stream_handle, int device_id) {
+  int myPe = ShmemMyPe();
+  int npes = ShmemNPes();
+
+  // the input count is the size of the output buffer (one shard)
+  if (dtype != xla::PrimitiveType::F32) {
+    return absl::InternalError(absl::StrCat("ReduceScatter: Unsupported data type: ", dtype));
+  }
+  auto stream = reinterpret_cast<hipStream_t>(stream_handle);
+
+  using ElemT = float;
+  // numElems is the TOTAL input element count (matches XLA's num_elems); the
+  // per-rank output shard is chunkElems = numElems / npes.
+  const size_t numElems = chunkElems * npes;
+  const size_t chunkBytes = chunkElems * sizeof(ElemT);
+
+  // if (info.deviceId == 0) {
+  //   XPUT("reduce_scatter_test: %d PEs, %zu bytes/shard (%zu elems), %zu bytes input/PE", npes,
+  //        chunkBytes, chunkElems, inBytes);
+  
+  // Channel sizing. With the receiver-side completion signal (Phase 2) the push
+  // kernel no longer has a cross-block flag handoff or co-residency requirement,
+  // so BOTH push and pull use full SM occupancy.
+  const int numQ = 1;/// static_cast<int>(std::max(1u, baseObj->sdmaNumQueue));
+
+  constexpr int kThreads = 256;
+  constexpr int VecBytes = 16,  NumVecs = 8;
+  constexpr int VecSize = VecBytes / sizeof(ElemT);
+  size_t totalVecs = chunkElems / (VecSize * NumVecs);
+  int wantBlocks = static_cast<int>(std::max<size_t>(1, (totalVecs + kThreads - 1) / kThreads));
+  int blocks = std::min(wantBlocks, std::max(1, 256));
+  // Push: split each shard into S slices, sent as sequential SDMA sub-chunks on a
+  // SINGLE queue (RS_PUSH_SLICES, default 4). Consumers form S groups (group g
+  // reduces slice g). Clamp S so each slice has >= 1 vector, and round the grid to
+  // a multiple of S (>= 1 block per slice).
+  int pushSlices = 4;
+  if (const char* s = std::getenv("RS_PUSH_SLICES")) {
+    int v = std::atoi(s);
+    if (v >= 1) pushSlices = v;
+  }
+  const int maxSlices = static_cast<int>(std::max<size_t>(1, chunkElems / VecSize));
+  pushSlices = std::max(1, std::min(pushSlices, maxSlices));
+  int pushBlocks = std::max(pushSlices, (blocks / pushSlices) * pushSlices);
+
+  ReduceScatterPushKernel<VecBytes, NumVecs, ElemT, SumOp><<<pushBlocks, kThreads, 0, stream>>>(
+          myPe, npes, pushSlices, 
+          static_cast<const ElemT*>(send_buffer), static_cast<ElemT*>(staging_buffer), 
+          static_cast<ElemT*>(recv_buffer), chunkElems,
+          static_cast<uint64_t>(gen_counter) + 1);
+  MORI_HIP_ERROR(hipGetLastError());  
+  MORI_HIP_ERROR(hipStreamSynchronize(stream));
+  return absl::OkStatus();
+}
+
+
+}  // namespace xla_mori

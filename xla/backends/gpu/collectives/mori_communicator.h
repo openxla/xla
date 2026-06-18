@@ -139,9 +139,7 @@ private:
                                    se::DeviceAddressBase recv_buffer,
                                    PrimitiveType dtype, size_t count,
                                    ReductionKind reduction_kind,
-                                   const Executor& executor) final {
-    return absl::UnimplementedError("Not implemented4");
-  }
+                                   const Executor& executor) final;
 
   absl::Status LaunchAllGather(se::DeviceAddressBase send_buffer,
                                se::DeviceAddressBase recv_buffer,
@@ -198,18 +196,14 @@ private:
                    se::DeviceMemoryBase send_buffer, size_t count, RankId peer,
                    const Executor& executor);
 
-  absl::Status InitSignals();
-
   static absl::StatusOr<se::Stream*> ToStream(const Executor& executor);
 
   MoriCollectives* collectives_;  // Parent MoriCollectives instance
+  se::DeviceAddressBase staging_buffer_;
+  int generation_counter_ = 0;
   // Should all pending collectives cancel?
   std::shared_ptr<CancellationToken> cancel_;
   bool aborted_ = false;             // Has Abort() been called?
-
-  // Per-peer completion signal flags in MORI symmetric heap.
-  // signal_flags_[i] is set by PE i when it finishes sending data to us.
-  uint32_t* signal_flags_ = nullptr;
 };
 
 }  // namespace xla::gpu

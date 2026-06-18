@@ -885,7 +885,7 @@ TEST_F(GpuCollectivesSpeedTest, TestAllReduce) {
 
 TEST_F(GpuCollectivesSpeedTest, TestReduceScatter) {
 
-  absl::string_view collectives_backend = "rccl";
+  absl::string_view collectives_backend = "mori";
   using Type = float;
   size_t n_peers = 4;
 
@@ -916,7 +916,7 @@ TEST_F(GpuCollectivesSpeedTest, TestReduceScatter) {
       size_t recv_count = n_elems / n_peers;
       auto future = gpu_comm->ReduceScatter(send_buf, recv_buf, params.dtype, recv_count,
             ReductionKind::SUM, executor);
-      TF_RETURN_IF_ERROR(gpu_comm->Barrier(executor));
+      // TF_RETURN_IF_ERROR(gpu_comm->Barrier(executor));
       //TF_RETURN_IF_ERROR(comm->Quiet(executor));
       return future;
   };

@@ -52,7 +52,7 @@ class MoriSymmetricMemory final : public SymmetricMemory {
 
 
     // Remove the object from our global map
-    // roc_mori::DeregisterMemObjPtr(addr_.opaque());
+    // xla_mori::DeregisterMemObjPtr(addr_.opaque());
     // shmem::ShmemSymmetricDeregister(addr_.opaque(), addr_.size());
   }
 
@@ -63,7 +63,7 @@ class MoriSymmetricMemory final : public SymmetricMemory {
         return absl::InternalError("Failed to register symmetric memory");
       }
       // Add the object to our global map
-      roc_mori::RegisterMemObjPtr(addr.opaque(), obj);
+      xla_mori::RegisterMemObjPtr(addr.opaque(), obj);
       VLOG(1) << "Registered symmetric memory: "
               << obj.cpu->localPtr << " size: " << obj.cpu->size;
       return absl::WrapUnique(new MoriSymmetricMemory(addr));
@@ -109,21 +109,18 @@ static size_t ToMoriByteCount(PrimitiveType dtype, size_t count) {
 absl::StatusOr<std::unique_ptr<MoriCommunicator>> MoriCommunicator::Create(
     MoriCollectives* coll, std::shared_ptr<CancellationToken> cancel) {
   auto comm = absl::WrapUnique(new MoriCommunicator(coll, cancel));
+
+  const size_t buffer_size = 2UL<<30; // 2GB
+  TF_ASSIGN_OR_RETURN(void* addr, coll->Allocate(buffer_size));
+  comm->staging_buffer_ = se::DeviceAddressBase(addr, buffer_size);
   VLOG(1) << "Created " << *comm << " with npes: " << shmem::ShmemNPes();
   return comm;
 }
 
 MoriCommunicator::~MoriCommunicator() {
-  if (signal_flags_ != nullptr) {
-    collectives_->Deallocate(signal_flags_).IgnoreError();
-    signal_flags_ = nullptr;
+  if (staging_buffer_ != nullptr) {
+    collectives_->Deallocate(staging_buffer_.opaque()).IgnoreError();
   }
-  // if (teams_ != nullptr) {
-  //   for (uint32_t i = 0; i < kMaxTeams; i++) {
-  //     rocm_mori_team_destroy(teams_[i]);
-  //   }
-  // }
-  // collectives_->Deallocate(teams_).IgnoreError();
 }
 
 #define CHECK_CANCELLED() \
@@ -151,7 +148,7 @@ absl::Status MoriCommunicator::Barrier(
   VLOG(1) << "Barrier: " << ToString();
   CHECK_CANCELLED()
   TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
-  return roc_mori::BarrierOnStream(AsRocmStream(stream));
+  return xla_mori::BarrierOnStream(AsRocmStream(stream));
 }
 
 absl::StatusOr<size_t> MoriCommunicator::NumRanks() const {
@@ -286,9 +283,9 @@ absl::Status MoriCommunicator::LaunchAllGather(se::DeviceAddressBase send_buffer
           << " count=" << count 
           << " dtype=" << primitive_util::LowercasePrimitiveTypeName(dtype) 
           << " stream=" << AsRocmStream(stream);
-  return roc_mori::AllGather(send_buffer.opaque(), recv_buffer.opaque(), 
-                      ToMoriByteCount(dtype, count), 
-                      AsRocmStream(stream), stream->parent()->device_ordinal());
+  return xla_mori::AllGather(send_buffer.opaque(), recv_buffer.opaque(),
+                      ToMoriByteCount(dtype, count), AsRocmStream(stream), 
+                      stream->parent()->device_ordinal());
 }
 
 absl::Status MoriCommunicator::LaunchAllReduce(
@@ -334,19 +331,36 @@ absl::Status MoriCommunicator::LaunchAllReduce(
   return absl::InternalError("Invalid MORI reduction type.");
 }
 
+absl::Status MoriCommunicator::LaunchReduceScatter(se::DeviceAddressBase send_buffer,
+          se::DeviceAddressBase recv_buffer, PrimitiveType dtype, size_t count,
+          ReductionKind kind, const Executor& executor) {
+  CHECK_CANCELLED()
+  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+
+  // TODO: check if staging buffer is large enough for the operation
+  if (staging_buffer_.size() < ToMoriByteCount(dtype, count)) {
+    return absl::InternalError("Staging buffer is too small for the operation");
+  }
+
+  VLOG(3) << "LaunchReduceScatter: send_buffer=" << send_buffer.opaque() 
+          << " recv_buffer=" << recv_buffer.opaque() 
+          << " count=" << count 
+          << " dtype=" << primitive_util::LowercasePrimitiveTypeName(dtype) 
+          << " stream=" << AsRocmStream(stream);
+  return xla_mori::ReduceScatter(send_buffer.opaque(), recv_buffer.opaque(), 
+                 staging_buffer_.opaque(), dtype, count, generation_counter_++, 
+                 AsRocmStream(stream), 
+                 stream->parent()->device_ordinal());
+}
+
 absl::Status MoriCommunicator::LaunchCollectivePermute(
-     se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer, 
-     PrimitiveType dtype, size_t count, std::optional<RankId> source_rank, 
-     absl::Span<const RankId> target_ranks, const Executor& executor) {
+  se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
+  PrimitiveType dtype, size_t count, std::optional<RankId> source_rank,
+  absl::Span<const RankId> target_ranks, const Executor& executor) {
   CHECK_CANCELLED()
   TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   size_t bytes = ToMoriByteCount(dtype, count);
-
-  if (target_ranks.empty()) {
-    VLOG(3) << "No target ranks, skipping CollectivePermute";
-    return absl::OkStatus();
-  }
-
+  (void)bytes;
   auto rank_formatter = [](std::string* out, RankId rank) {
     absl::StrAppendFormat(out, "%d", rank.value());
   };
@@ -361,21 +375,10 @@ absl::Status MoriCommunicator::LaunchCollectivePermute(
 
   // NOTE normally we could merge these to a single kernel
   for (auto target_rank : target_ranks) {
-    TF_RETURN_IF_ERROR(roc_mori::SendSDMA(recv_buffer.opaque(), send_buffer.opaque(), 
+    TF_RETURN_IF_ERROR(xla_mori::SendSDMA(recv_buffer.opaque(), send_buffer.opaque(), 
                 bytes, target_rank.value(), AsRocmStream(stream), 
                 stream->parent()->device_ordinal()));
   }
-  return absl::OkStatus();
-}
-
-// Lazily allocate per-peer signal flags and block retirement counter.
-absl::Status MoriCommunicator::InitSignals() {
-  TF_ASSIGN_OR_RETURN(auto npes, NumRanks());
-  size_t alloc_size = (npes + 1) * sizeof(uint32_t);
-  TF_ASSIGN_OR_RETURN(auto *ptr, collectives_->Allocate(alloc_size));
-  signal_flags_ = static_cast< uint32_t *>(ptr);
-  // Zero-initialise everything (signals must start at 0).
-  roc_mori::InitSignalMemory(signal_flags_, alloc_size);
   return absl::OkStatus();
 }
 
@@ -403,14 +406,24 @@ absl::Status MoriCommunicator::P2P(P2PType p2p_type,
   auto gpu_stream = AsRocmStream(stream); 
   size_t bytes = ToMoriByteCount(dtype, count);
   int res = 0;
-  if (p2p_type == P2PType::Send) {
-    res = roc_mori::Send(dest_ptr, source_ptr, bytes, peer.value(),
-                         signal_flags_, gpu_stream);
-  } else {
-    res = roc_mori::Recv(dest_ptr, source_ptr, bytes, peer.value(),
-                         signal_flags_, gpu_stream);
-  }
-  if (res == 0) return absl::OkStatus();
+  (void)bytes;
+  (void)res;
+  (void)gpu_stream;
+  (void)source_ptr;
+  (void)dest_ptr;
+  (void)peer;
+  (void)stream;
+  (void)dtype;
+  (void)count;
+  (void)p2p_type;
+  // if (p2p_type == P2PType::Send) {
+  //   res = xla_mori::Send(dest_ptr, source_ptr, bytes, peer.value(),
+  //                        signal_flags_, gpu_stream);
+  // } else {
+  //   res = xla_mori::Recv(dest_ptr, source_ptr, bytes, peer.value(),
+  //                        signal_flags_, gpu_stream);
+  // }
+  // if (res == 0) return absl::OkStatus();
   return absl::InternalError(absl::StrFormat("MORI %s failed", stype));
 }
 

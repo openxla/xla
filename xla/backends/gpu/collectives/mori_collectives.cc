@@ -157,8 +157,17 @@ static absl::StatusOr<shmem::mori_shmem_uniqueid_t> AsMoriUniqueId(
 
 void MoriCollectives::Finalize() {
   VLOG(3) << "Finilizing MORI";
-  shmem::ShmemFinalize();
+  shmem::ShmemFinalize();   
 }
+
+// absl::Status MoriCollectives::InitializeOnce() {
+//   // All peers shall call this function before any other MORI functions.
+//   // TODO for multi-process we need to use MoriIdStore!
+//   // but we cannot use it since we do not know the number of peers!
+  
+//   // we can count them of course..
+//   return absl::OkStatus();
+// }
 
 absl::StatusOr<void*> MoriCollectives::Allocate(uint64_t bytes) {
   void* buffer = shmem::ShmemMalloc(bytes); // ShmemMallocAlign
@@ -167,7 +176,7 @@ absl::StatusOr<void*> MoriCollectives::Allocate(uint64_t bytes) {
         "Failed to allocate %s (%llu bytes) from MORI memory",
         tsl::strings::HumanReadableNumBytes(bytes), bytes));
   }
-  roc_mori::RegisterMemObjPtr(buffer, shmem::ShmemQueryMemObjPtr(buffer));
+  xla_mori::RegisterMemObjPtr(buffer, shmem::ShmemQueryMemObjPtr(buffer));
   VLOG(3) << absl::StreamFormat(
     "Allocated %s (%llu bytes) for MORI: %p",
     tsl::strings::HumanReadableNumBytes(bytes), bytes, buffer);
@@ -179,7 +188,7 @@ absl::Status MoriCollectives::Deallocate(void* buffer) {
   VLOG(3) << absl::StreamFormat("Start de-allocation for MORI buffer: %p",
                                 buffer);
   shmem::ShmemFree(buffer);
-  roc_mori::DeregisterMemObjPtr(buffer);
+  xla_mori::DeregisterMemObjPtr(buffer);
   return absl::OkStatus();
 }
 

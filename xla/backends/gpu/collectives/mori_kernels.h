@@ -16,9 +16,10 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include "absl/status/status.h"
+#include "xla/primitive_util.h"
 #include "mori/shmem/shmem_api.hpp"
 
-namespace roc_mori {
+namespace xla_mori {
 
 //using stream_executor::gpu::GpuStreamHandle;
 
@@ -29,7 +30,7 @@ void InitSignalMemory(void* ptr, size_t bytes);
 
 absl::Status SendSDMA(void* recv_buffer, void* send_buffer, size_t bytes, int peer,
     std::intptr_t stream_handle, int device_id);
-
+ 
 // Intra-node P2P Send via MORI (put model, single kernel).
 int Send(void* recv_buffer, void* send_buffer, size_t bytes, int peer,
          uint32_t* signal_flags, std::intptr_t stream_handle);
@@ -44,8 +45,12 @@ absl::Status BarrierOnStream(std::intptr_t stream_handle);
 absl::Status AllGather(void* send_buffer, void* recv_buffer, size_t bytes,
                std::intptr_t stream_handle, int device_id);
 
+absl::Status ReduceScatter(void* send_buffer, void* recv_buffer, void* staging_buffer, 
+    xla::PrimitiveType dtype, size_t count, int gen_counter, 
+    std::intptr_t stream_handle, int device_id);
+
 void RegisterMemObjPtr(void *ptr, mori::application::SymmMemObjPtr obj);
 void DeregisterMemObjPtr(void* ptr);
-} // namespace roc_mori
+} // namespace xla_mori
 
 #endif // XLA_BACKENDS_GPU_COLLECTIVES_MORI_KERNELS_H_
