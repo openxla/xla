@@ -375,7 +375,6 @@ absl::StatusOr<Shape> AdjustAddendShape(const HloInstruction* contraction,
           },
           addend->shape());
     }
-
     return addend->shape();
   }
   if (broadcast_instr->opcode() != HloOpcode::kBroadcast) {
