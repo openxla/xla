@@ -43,6 +43,7 @@ absl::StatusOr<void*> GetNvInferDsoHandle();
 absl::StatusOr<void*> GetNvInferPluginDsoHandle();
 absl::StatusOr<void*> GetNvmlDsoHandle();
 absl::StatusOr<void*> GetNvrtcDsoHandle();
+absl::StatusOr<void*> GetRocblasDsoHandle();
 
 // The following method tries to dlopen all necessary GPU libraries for the GPU
 // platform TF is built with (CUDA or ROCm) only when these libraries should be
@@ -69,6 +70,7 @@ absl::StatusOr<void*> GetCusolverDsoHandle();
 absl::StatusOr<void*> GetCusparseDsoHandle();
 absl::StatusOr<void*> GetCuptiDsoHandle();
 absl::StatusOr<void*> GetCudnnDsoHandle();
+absl::StatusOr<void*> GetRocblasDsoHandle();
 }  // namespace CachedDsoLoader
 
 }  // namespace internal

@@ -14,8 +14,6 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/tsl/platform/default/dso_loader.h"
 
-#include <stdlib.h>
-
 #include <string>
 
 #include "absl/status/status.h"
@@ -25,11 +23,12 @@ limitations under the License.
 #include "third_party/gpus/cuda/cuda_config.h"
 #include "third_party/nccl/nccl_config.h"
 #include "third_party/nvshmem/nvshmem_config.h"
+#include "third_party/tensorrt/tensorrt_config.h"
+#include <stdlib.h>
 #include "xla/tsl/platform/logging.h"
 #include "tsl/platform/load_library.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/platform.h"
-#include "third_party/tensorrt/tensorrt_config.h"
 
 #if TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"
@@ -50,6 +49,8 @@ absl::string_view GetCusparseVersion() { return TF_CUSPARSE_VERSION; }
 absl::string_view GetNcclVersion() { return TF_NCCL_VERSION; }
 absl::string_view GetTensorRTVersion() { return TF_TENSORRT_VERSION; }
 absl::string_view GetNvshmemVersion() { return XLA_NVSHMEM_VERSION; }
+
+absl::string_view GetRocblasVersion() { return ""; }
 
 absl::StatusOr<void*> GetDsoHandle(const std::string& name,
                                    absl::string_view version) {
@@ -158,6 +159,10 @@ absl::StatusOr<void*> GetNvInferPluginDsoHandle() {
 #endif
 }
 
+absl::StatusOr<void*> GetRocblasDsoHandle() {
+  return GetDsoHandle("rocblas", GetRocblasVersion());
+}
+
 }  // namespace DsoLoader
 
 namespace CachedDsoLoader {
@@ -203,6 +208,11 @@ absl::StatusOr<void*> GetCuptiDsoHandle() {
 
 absl::StatusOr<void*> GetCudnnDsoHandle() {
   static auto result = new auto(DsoLoader::GetCudnnDsoHandle());
+  return *result;
+}
+
+absl::StatusOr<void*> GetRocblasDsoHandle() {
+  static auto result = new auto(DsoLoader::GetRocblasDsoHandle());
   return *result;
 }
 

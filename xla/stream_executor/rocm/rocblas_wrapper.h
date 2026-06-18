@@ -21,28 +21,53 @@ limitations under the License.
 
 #include "rocm/include/rocblas/rocblas.h"
 #include "rocm/rocm_config.h"
-
-// Undefine function-like macros to allow wrapping the actual functions
-#undef rocblas_gemm_ex
-#undef rocblas_gemm_strided_batched_ex
-#undef rocblas_gemm_ex_get_solutions
-#undef rocblas_gemm_ex_get_solutions_by_type
-#undef rocblas_gemm_batched_ex_get_solutions
-#undef rocblas_gemm_batched_ex_get_solutions_by_type
-#undef rocblas_gemm_strided_batched_ex_get_solutions
+#include "xla/tsl/platform/env.h"
+#include "tsl/platform/dso_loader.h"
+#include "tsl/platform/platform.h"
 
 namespace stream_executor {
 namespace wrap {
 
+#ifdef PLATFORM_GOOGLE
 #define ROCBLAS_API_WRAPPER(__name)               \
   struct WrapperShim__##__name {                  \
     constexpr static const char* kName = #__name; \
     template <typename... Args>                   \
-    auto operator()(Args... args) const {         \
-      return ::__name(args...);                   \
+    rocblas_status operator()(Args... args) {     \
+      return (::__name)(args...);                 \
     }                                             \
-  };                                              \
-  inline constexpr WrapperShim__##__name __name{};
+  } __name;
+
+#else
+using tsl::internal::CachedDsoLoader::GetRocblasDsoHandle;
+
+#define ROCBLAS_API_WRAPPER(__name)                                      \
+  static struct DynLoadShim__##__name {                                  \
+    constexpr static const char* kName = #__name;                        \
+    using FuncPtrT = std::add_pointer<decltype(::__name)>::type;         \
+    static void* GetDsoHandle() {                                        \
+      auto s = GetRocblasDsoHandle();                                    \
+      return s.value();                                                  \
+    }                                                                    \
+    static FuncPtrT LoadOrDie() {                                        \
+      void* f;                                                           \
+      auto s = tsl::Env::Default()->GetSymbolFromLibrary(GetDsoHandle(), \
+                                                         kName, &f);     \
+      CHECK(s.ok()) << "could not find " << kName                        \
+                    << " in rocblas DSO; dlerror: " << s.message();      \
+      return reinterpret_cast<FuncPtrT>(f);                              \
+    }                                                                    \
+    static FuncPtrT DynLoad() {                                          \
+      static FuncPtrT f = LoadOrDie();                                   \
+      return f;                                                          \
+    }                                                                    \
+    template <typename... Args>                                          \
+    auto operator()(Args... args) {                                      \
+      return DynLoad()(args...);                                         \
+    }                                                                    \
+  } __name;
+
+#endif
 
 // clang-format off
 #define FOREACH_ROCBLAS_API(__macro)            \

@@ -436,7 +436,6 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":hipblas_lt_header",
-        ":rocblas_if_static",  # buildcleaner: keep
         ":rocblas_wrapper",
         ":rocm_complex_converters",
         ":rocm_executor",
@@ -454,12 +453,14 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_blas_lt",
         "//xla/stream_executor/gpu:gpu_helpers_header",
         "//xla/stream_executor/platform:initialize",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:determinism",
+        "@tsl//tsl/platform:dso_loader",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
