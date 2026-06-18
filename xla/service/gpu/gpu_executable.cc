@@ -623,7 +623,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
         << "Failed to parse XLA execution terminate timeout";
   }
 
-  std::shared_ptr<HangWatchdog::Guard> guard = nullptr;
+  auto guard_holder = std::make_shared<std::shared_ptr<HangWatchdog::Guard>>();
   if (watchdog_timeout < absl::InfiniteDuration()) {
     int32_t device_ordinal = executor->device_ordinal();
     std::string watchdog_name = absl::StrFormat("[%d] XLA GPU execution `%s`",
@@ -684,23 +684,24 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
     if (gpu_run_options &&
         gpu_run_options->execution_timeout_handler()) {
       on_timeout = [watchdog_name, watchdog_timeout,
-                    pre_abort = std::move(pre_abort),
-                    gpu_run_options]() mutable {
+                    pre_abort = std::move(pre_abort), gpu_run_options,
+                    guard_holder]() mutable {
         LOG(ERROR) << absl::StreamFormat("%s failed to finish in %v.",
                                          watchdog_name, watchdog_timeout);
         if (pre_abort) {
           std::move(pre_abort)();
         }
         gpu_run_options->execution_timeout_handler()(watchdog_name,
-                                                     watchdog_timeout);
+                                                     watchdog_timeout,
+                                                     *guard_holder);
       };
     } else {
       on_timeout = HangWatchdog::Abort(watchdog_name, watchdog_timeout,
                                        std::move(pre_abort));
     }
 
-    guard = HangWatchdog::Global().Watch(watchdog_name, watchdog_timeout,
-                                         std::move(on_timeout));
+    *guard_holder = HangWatchdog::Global().Watch(watchdog_name, watchdog_timeout,
+                                                 std::move(on_timeout));
   }
 
   // Borrow stream for tracing command buffers.

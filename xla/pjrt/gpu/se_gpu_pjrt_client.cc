@@ -24,7 +24,6 @@ limitations under the License.
 #include <optional>
 #include <set>
 #include <string>
-#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -1862,15 +1861,15 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
     gpu_run_options->set_execution_timeout_handler(
         [process_index = options.node_id,
          distributed_client = options.distributed_client](
-            absl::string_view action, absl::Duration timeout) {
-          std::thread([action = std::string(action)] {
-            absl::SleepFor(absl::Seconds(60));
-            LOG(ERROR) << absl::StrFormat(
-                "%s: collective abort did not complete within 60 seconds; "
-                "aborting process to avoid infinite hang.",
-                action);
-            std::abort();
-          }).detach();
+            absl::string_view action, absl::Duration timeout,
+            std::shared_ptr<HangWatchdog::Guard>& guard) {
+          constexpr absl::Duration kCollectiveAbortTimeout = absl::Seconds(60);
+          std::string collective_abort_watchdog_name = absl::StrFormat(
+              "%s: waiting for collective abort", action);
+          guard = HangWatchdog::Global().Watch(
+              collective_abort_watchdog_name, kCollectiveAbortTimeout,
+              HangWatchdog::Abort(collective_abort_watchdog_name,
+                                  kCollectiveAbortTimeout));
 
           absl::Status error = absl::DeadlineExceededError(absl::StrFormat(
               "%s failed to finish in %v", action, timeout));
