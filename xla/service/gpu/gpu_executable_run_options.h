@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_GPU_GPU_EXECUTABLE_RUN_OPTIONS_H_
 
 #include <functional>
+#include <memory>
 #include <optional>
 
 #include "absl/container/btree_map.h"
@@ -29,6 +30,7 @@ limitations under the License.
 #include "xla/core/collectives/clique_key.h"
 #include "xla/executable_run_options.h"
 #include "xla/runtime/device_id.h"
+#include "xla/runtime/hang_watchdog.h"
 
 namespace xla::gpu {
 
@@ -37,9 +39,12 @@ using CliqueIdCallback =  // NOLINT
     std::function<absl::StatusOr<CliqueIds>(const CliqueKey&)>;
 
 // Called when GPU execution exceeds the HangWatchdog timeout. Used to abort
-// local collectives and report the failure to the coordination service.
-using ExecutionTimeoutHandler =
-    std::function<void(absl::string_view action, absl::Duration timeout)>;
+// local collectives and report the failure to the coordination service. The
+// handler may re-arm `guard` with a new HangWatchdog before performing
+// collective cancellation.
+using ExecutionTimeoutHandler = std::function<void(
+    absl::string_view action, absl::Duration timeout,
+    std::shared_ptr<HangWatchdog::Guard>& guard)>;
 
 // GPU-specific executable options.
 // We keep these separate from ExecutableRunOptions to avoid adding
