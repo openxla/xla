@@ -18,7 +18,6 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <deque>
 #include <memory>
 #include <optional>
@@ -686,13 +685,17 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
         gpu_run_options->execution_timeout_handler()) {
       on_timeout = [watchdog_name, watchdog_timeout,
                     pre_abort = std::move(pre_abort),
-                    gpu_run_options]() mutable {
+                    gpu_run_options, &guard]() mutable {
         if (pre_abort) {
           std::move(pre_abort)();
         }
+
+        guard = HangWatchdog::Global().Watch(
+            "post-abort ...", absl::Minutes(1),
+            HangWatchdog::Abort("post-abort ...", absl::Minutes(1)));
+
         gpu_run_options->execution_timeout_handler()(watchdog_name,
                                                      watchdog_timeout);
-        std::abort();
       };
     } else {
       on_timeout = HangWatchdog::Abort(watchdog_name, watchdog_timeout,
