@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_helpers.h"
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/rocm/rocblas_wrapper.h"
 #include "xla/stream_executor/rocm/rocm_complex_converters.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/scratch_allocator.h"
@@ -62,58 +63,6 @@ limitations under the License.
 using tsl::OpDeterminismRequired;
 
 namespace stream_executor {
-
-namespace wrap {
-
-namespace {
-
-#define ROCBLAS_API_WRAPPER(__name)               \
-  struct WrapperShim__##__name {                  \
-    constexpr static const char* kName = #__name; \
-    template <typename... Args>                   \
-    rocblas_status operator()(Args... args) {     \
-      return (::__name)(args...);                 \
-    }                                             \
-  } __name;
-
-// clang-format off
-#define FOREACH_ROCBLAS_API(__macro)            \
-  __macro(rocblas_sscal)                        \
-  __macro(rocblas_dscal)                        \
-  __macro(rocblas_cscal)                        \
-  __macro(rocblas_csscal)                       \
-  __macro(rocblas_zscal)                        \
-  __macro(rocblas_zdscal)                       \
-  __macro(rocblas_strsm)                        \
-  __macro(rocblas_dtrsm)                        \
-  __macro(rocblas_ctrsm)                        \
-  __macro(rocblas_ztrsm)                        \
-  __macro(rocblas_sgemv)                        \
-  __macro(rocblas_dgemv)                        \
-  __macro(rocblas_cgemv)                        \
-  __macro(rocblas_zgemv)                        \
-  __macro(rocblas_sgemm)                        \
-  __macro(rocblas_dgemm)                        \
-  __macro(rocblas_hgemm)                        \
-  __macro(rocblas_cgemm)                        \
-  __macro(rocblas_zgemm)                        \
-  __macro(rocblas_hgemm_strided_batched)        \
-  __macro(rocblas_sgemm_strided_batched)        \
-  __macro(rocblas_dgemm_strided_batched)        \
-  __macro(rocblas_cgemm_strided_batched)        \
-  __macro(rocblas_zgemm_strided_batched)        \
-  __macro(rocblas_gemm_ex)                      \
-  __macro(rocblas_gemm_strided_batched_ex)      \
-  __macro(rocblas_strsm_batched)                \
-  __macro(rocblas_dtrsm_batched)                \
-  __macro(rocblas_ctrsm_batched)                \
-  __macro(rocblas_ztrsm_batched)
-
-// clang-format on
-
-FOREACH_ROCBLAS_API(ROCBLAS_API_WRAPPER)
-}  // namespace
-}  // namespace wrap
 
 namespace gpu {
 
@@ -176,7 +125,7 @@ static std::string ToString(rocblas_status status) {
 
 bool ROCMBlas::Init() {
   std::unique_ptr<ActivateContext> activation = parent_->Activate();
-  rocblas_status ret = rocblas_create_handle(&blas_);
+  rocblas_status ret = wrap::rocblas_create_handle(&blas_);
   if (ret != rocblas_status_success) {
     LOG(ERROR) << "failed to create rocBLAS handle: " << ToString(ret);
     return false;
@@ -206,7 +155,7 @@ ROCMBlas::ROCMBlas(StreamExecutor* parent)
 ROCMBlas::~ROCMBlas() {
   if (blas_ != nullptr) {
     std::unique_ptr<ActivateContext> activation = parent_->Activate();
-    rocblas_destroy_handle(blas_);
+    wrap::rocblas_destroy_handle(blas_);
   }
 }
 

@@ -437,6 +437,7 @@ cc_library(
     deps = [
         ":hipblas_lt_header",
         ":rocblas_if_static",  # buildcleaner: keep
+        ":rocblas_wrapper",
         ":rocm_complex_converters",
         ":rocm_executor",
         ":rocm_helpers",

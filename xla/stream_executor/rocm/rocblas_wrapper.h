@@ -22,10 +22,27 @@ limitations under the License.
 #include "rocm/include/rocblas/rocblas.h"
 #include "rocm/rocm_config.h"
 
+// Undefine function-like macros to allow wrapping the actual functions
+#undef rocblas_gemm_ex
+#undef rocblas_gemm_strided_batched_ex
+#undef rocblas_gemm_ex_get_solutions
+#undef rocblas_gemm_ex_get_solutions_by_type
+#undef rocblas_gemm_batched_ex_get_solutions
+#undef rocblas_gemm_batched_ex_get_solutions_by_type
+#undef rocblas_gemm_strided_batched_ex_get_solutions
+
 namespace stream_executor {
 namespace wrap {
 
-#define ROCBLAS_API_WRAPPER(__name) using ::__name;
+#define ROCBLAS_API_WRAPPER(__name)               \
+  struct WrapperShim__##__name {                  \
+    constexpr static const char* kName = #__name; \
+    template <typename... Args>                   \
+    auto operator()(Args... args) const {         \
+      return ::__name(args...);                   \
+    }                                             \
+  };                                              \
+  inline constexpr WrapperShim__##__name __name{};
 
 // clang-format off
 #define FOREACH_ROCBLAS_API(__macro)            \
