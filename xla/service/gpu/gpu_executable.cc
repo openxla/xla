@@ -623,7 +623,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
         << "Failed to parse XLA execution terminate timeout";
   }
 
-  auto guard_holder = std::make_shared<std::shared_ptr<HangWatchdog::Guard>>();
+  std::shared_ptr<HangWatchdog::Guard> guard = nullptr;
   if (watchdog_timeout < absl::InfiniteDuration()) {
     int32_t device_ordinal = executor->device_ordinal();
     std::string watchdog_name = absl::StrFormat("[%d] XLA GPU execution `%s`",
@@ -685,23 +685,29 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
         gpu_run_options->execution_timeout_handler()) {
       on_timeout = [watchdog_name, watchdog_timeout,
                     pre_abort = std::move(pre_abort), gpu_run_options,
-                    guard_holder]() mutable {
+                    &guard]() mutable {
         LOG(ERROR) << absl::StreamFormat("%s failed to finish in %v.",
                                          watchdog_name, watchdog_timeout);
         if (pre_abort) {
           std::move(pre_abort)();
         }
+        constexpr absl::Duration kCollectiveAbortTimeout = absl::Seconds(60);
+        std::string collective_abort_watchdog_name = absl::StrFormat(
+            "%s: waiting for collective abort", watchdog_name);
+        guard = HangWatchdog::Global().Watch(
+            collective_abort_watchdog_name, kCollectiveAbortTimeout,
+            HangWatchdog::Abort(collective_abort_watchdog_name,
+                                kCollectiveAbortTimeout));
         gpu_run_options->execution_timeout_handler()(watchdog_name,
-                                                     watchdog_timeout,
-                                                     *guard_holder);
+                                                     watchdog_timeout);
       };
     } else {
       on_timeout = HangWatchdog::Abort(watchdog_name, watchdog_timeout,
                                        std::move(pre_abort));
     }
 
-    *guard_holder = HangWatchdog::Global().Watch(watchdog_name, watchdog_timeout,
-                                                 std::move(on_timeout));
+    guard = HangWatchdog::Global().Watch(watchdog_name, watchdog_timeout,
+                                         std::move(on_timeout));
   }
 
   // Borrow stream for tracing command buffers.
