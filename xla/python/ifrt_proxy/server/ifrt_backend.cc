@@ -968,12 +968,11 @@ IfrtBackend::HandleMakeArraysFromHostBufferShardsRequest(
     buffers.reserve(spec_proto.host_buffers_size());
     if (spec_proto.addressable_shard_indices_size() !=
         spec_proto.host_buffers_size()) {
-      return absl::InvalidArgumentError(absl::StrCat(
-          "MakeArraysFromHostBufferShardsSpec has ",
-          spec_proto.addressable_shard_indices_size(),
-          " addressable_shard_indices but ", spec_proto.host_buffers_size(),
-          " host_buffers; these parallel repeated fields must have equal "
-          "length."));
+      return absl::InvalidArgumentError(
+          absl::StrCat("MakeArraysFromHostBufferShardsSpec has ",
+                       spec_proto.addressable_shard_indices_size(),
+                       " addressable_shard_indices but ",
+                       spec_proto.host_buffers_size(), " host_buffers."));
     }
     for (int buffer_idx = 0; buffer_idx < spec_proto.host_buffers_size();
          ++buffer_idx) {
@@ -1101,11 +1100,6 @@ IfrtBackend::HandleRemapArraysRequest(ArrayStore::Reservation& asr,
                    array_store_.Find(remap_request.array_handles()));
   ASSIGN_OR_RETURN(RemapPlan plan,
                    RemapPlan::FromProto(client_.get(), remap_request.plan()));
-  // The plan is deserialized from an untrusted peer and `FromProto` performs no
-  // bounds checking; the executor (`RemapArrays`) indexes runtime arrays and
-  // per-shard buffers with the plan's `in_array`/`out_array`/intervals. Reject
-  // an out-of-bounds plan before executing it.
-  RETURN_IF_ERROR(plan.Validate());
   ASSIGN_OR_RETURN(auto semantics,
                    FromArrayCopySemanticsProto(remap_request.copy_semantics()));
 
