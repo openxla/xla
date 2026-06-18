@@ -999,7 +999,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*should_add_loop_invariant_op_in_chain=*/false,
         /*postprocess_pipelined_ops=*/AppendPipelinedInstruction,
     };
-    collectives_pipeline.AddPass<CollectivePipeliner>(config);
+    collectives_pipeline.AddPass(CreateCollectivePipelinerPass(std::move(config)));
   }
   if (debug_options.xla_gpu_enable_pipelined_all_gather() ||
       IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)) {
@@ -1023,7 +1023,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*should_add_loop_invariant_op_in_chain=*/true,
         /*postprocess_pipelined_ops=*/AppendPipelinedInstruction,
     };
-    collectives_pipeline.AddPass<CollectivePipeliner>(config);
+    collectives_pipeline.AddPass(CreateCollectivePipelinerPass(std::move(config)));
   }
   if (debug_options.xla_gpu_enable_pipelined_reduce_scatter() ||
       IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)) {
@@ -1047,7 +1047,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*should_add_loop_invariant_op_in_chain=*/false,
         /*postprocess_pipelined_ops=*/AppendPipelinedInstruction,
     };
-    collectives_pipeline.AddPass<CollectivePipeliner>(config);
+    collectives_pipeline.AddPass(CreateCollectivePipelinerPass(std::move(config)));
   }
 
   if (debug_options.xla_gpu_enable_pipelined_host_offloading()) {
@@ -1077,7 +1077,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*unique_channel_id=*/true,
         /*postprocess_transformed_while_loop=*/{},
     };
-    collectives_pipeline.AddPass<CollectivePipeliner>(config);
+    collectives_pipeline.AddPass(CreateCollectivePipelinerPass(std::move(config)));
   }
 
   if (debug_options.xla_gpu_enable_pipelined_host_offloading()) {
@@ -1142,7 +1142,8 @@ absl::Status RunCollectiveOptimizationPasses(
         /*postprocess_transformed_while_loop=*/{},
     };
 
-    collectives_pipeline.AddPass<CollectivePipeliner>(config_backward);
+    collectives_pipeline.AddPass(
+        CreateCollectivePipelinerPass(std::move(config_backward)));
   }
 
   DebugOptions::PipelineParallelismOptLevel pipeline_parallelism_opt_level =

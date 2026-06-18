@@ -3639,4 +3639,9 @@ absl::StatusOr<bool> CollectivePipeliner::RunImpl(
   return iter > 1 || changed;
 }
 
+std::unique_ptr<HloPassInterface> CreateCollectivePipelinerPass(
+    CollectivePipeliner::Config config) {
+  return std::make_unique<CollectivePipeliner>(std::move(config));
+}
+
 }  // namespace xla

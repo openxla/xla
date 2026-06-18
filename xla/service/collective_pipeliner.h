@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_COLLECTIVE_PIPELINER_H_
 
 #include <cstdint>
+#include <memory>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
@@ -173,6 +174,10 @@ class CollectivePipeliner : public HloModulePass {
  private:
   Config config_;
 };
+
+// Creates a CollectivePipeliner for HLO pass pipelines. Defined in the .cc file
+// so consumers reference a non-inline symbol from collective_pipeliner.o.
+std::unique_ptr<HloPassInterface> CreateCollectivePipelinerPass(Config config);
 
 }  // namespace xla
 
