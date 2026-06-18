@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <memory>
 #include <optional>
@@ -684,22 +685,14 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
     if (gpu_run_options &&
         gpu_run_options->execution_timeout_handler()) {
       on_timeout = [watchdog_name, watchdog_timeout,
-                    pre_abort = std::move(pre_abort), gpu_run_options,
-                    &guard]() mutable {
-        LOG(ERROR) << absl::StreamFormat("%s failed to finish in %v.",
-                                         watchdog_name, watchdog_timeout);
+                    pre_abort = std::move(pre_abort),
+                    gpu_run_options]() mutable {
         if (pre_abort) {
           std::move(pre_abort)();
         }
-        constexpr absl::Duration kCollectiveAbortTimeout = absl::Seconds(60);
-        std::string collective_abort_watchdog_name = absl::StrFormat(
-            "%s: waiting for collective abort", watchdog_name);
-        guard = HangWatchdog::Global().Watch(
-            collective_abort_watchdog_name, kCollectiveAbortTimeout,
-            HangWatchdog::Abort(collective_abort_watchdog_name,
-                                kCollectiveAbortTimeout));
         gpu_run_options->execution_timeout_handler()(watchdog_name,
                                                      watchdog_timeout);
+        std::abort();
       };
     } else {
       on_timeout = HangWatchdog::Abort(watchdog_name, watchdog_timeout,
