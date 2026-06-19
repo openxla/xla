@@ -341,6 +341,43 @@ CodegenDecision CanTritonHandleReduce(
       "Reduction is not a row-reduction of a single operand.");
 }
 
+CodegenDecision IsTritonSupportedAllGather(
+    const HloAllGatherInstruction& all_gather,
+    const se::GpuComputeCapability& gpu_version) {
+  bool flag_enabled =
+      all_gather.GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_unsupported_use_all_gather_triton_backend();
+
+  VLOG(1) << "IsTritonSupportedAllGather called for: " << all_gather.name()
+          << ", flag_enabled=" << flag_enabled;
+
+  if (!flag_enabled) {
+    VLOG(1) << "AllGather Triton backend is DISABLED for: "
+            << all_gather.name();
+    return CodegenDecision::Forbid(
+        "Triton backend for all-gather is disabled. Enable with "
+        "--xla_gpu_unsupported_use_all_gather_triton_backend=true");
+  }
+
+  // S4, F8E4M3FN and F8E5M2 are not supported for all-gathers.
+  if (all_gather.operand_count() > 0) {
+    PrimitiveType element_type =
+        all_gather.operand(0)->shape().element_type();
+    if (element_type == F8E4M3FN || element_type == F8E5M2 ||
+        element_type == S4) {
+      VLOG(1) << "AllGather rejected due to unsupported data type: "
+              << PrimitiveType_Name(element_type);
+      return CodegenDecision::Forbid(
+          "S4, F8E4M3FN and F8E5M2 are not supported for all-gathers.");
+    }
+  }
+
+  VLOG(1) << "AllGather Triton backend ALLOWED for: " << all_gather.name();
+  return CodegenDecision::Allow();
+}
+
 CodegenDecision IsTritonSupportedAllReduce(
     const HloAllReduceInstruction& all_reduce,
     const se::GpuComputeCapability& gpu_version) {
@@ -627,6 +664,22 @@ CodegenDecision IsTritonSupportedInstructionImpl(
     return IsTritonSupportedConversion(instr.shape().element_type(),
                                        instr.operand(0)->shape().element_type(),
                                        gpu_version);
+  }
+
+  // Special handling for AllGatherStart and related ops before the data type
+  // check. AllGatherStart has a tuple shape which would fail the type check.
+  if (instr.opcode() == HloOpcode::kAllGatherStart) {
+    return IsTritonSupportedAllGather(*Cast<HloAllGatherInstruction>(&instr),
+                                      gpu_version);
+  }
+  if (instr.opcode() == HloOpcode::kAllGatherDone) {
+    return IsTritonSupportedAllGather(
+        *Cast<HloAllGatherInstruction>(instr.operand(0)), gpu_version);
+  }
+  if (instr.opcode() == HloOpcode::kGetTupleElement &&
+      instr.operand(0)->opcode() == HloOpcode::kAllGatherStart) {
+    return IsTritonSupportedAllGather(
+        *Cast<HloAllGatherInstruction>(instr.operand(0)), gpu_version);
   }
 
   auto type = instr.shape().element_type();
