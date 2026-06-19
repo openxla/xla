@@ -25,6 +25,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 
 namespace xla::emitters {
 
@@ -127,6 +128,22 @@ class KernelArguments {
       const BufferAlignment& buffer_alignment,
       const HloInstruction* hlo_instruction,
       absl::Span<const int32_t> interleaved_output_indices);
+
+  // Special overload for collective operations where the fusion has a different
+  // output shape than the original instruction (e.g., AllGather with tuple
+  // unpacking).
+  // - shape_instruction: Used to determine argument shapes (typically the
+  //   fusion)
+  // - buffer_instruction: Used to look up buffer assignments (typically the
+  //   original instruction)
+  // - output_index: ShapeIndex to use when looking up output buffers from
+  //   buffer_instruction
+  static absl::StatusOr<KernelArguments> Create(
+      const BufferAssignment& buffer_assignment,
+      const BufferAlignment& buffer_alignment,
+      const HloInstruction* shape_instruction,
+      const HloInstruction* buffer_instruction, const ShapeIndex& output_index,
+      absl::Span<const Shape> unmanaged_arguments);
 
   explicit KernelArguments(std::vector<KernelArgument>&& args)
       : args_(std::move(args)) {}
