@@ -5,6 +5,7 @@ load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "if_nccl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -22,7 +23,6 @@ package_group(
 cc_library(
     name = "nccl_collectives_if_nccl",
     tags = [
-        "cuda-only",
         "gpu",
     ],
     deps = if_nccl([":nccl_collectives"]),
@@ -233,14 +233,18 @@ cc_library(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "gpu_cliques_test",
     srcs = ["gpu_cliques_test.cc"],
-    tags = [
-        "cuda-only",
-        "gpu",
+    backend_tags = {
+        "gpu": [
+            "multi_gpu",
+        ],
+    },
+    backends = ["gpu"],
+    tags = if_cuda_is_configured([
         "requires-gpu-nvidia:2",
-    ],
+    ]),
     deps = [
         ":gpu_clique",
         ":gpu_clique_key",
@@ -260,7 +264,7 @@ xla_cc_test(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor/cuda:cuda_platform",
+        "//xla/service:platform_util",
         "//xla/tsl/concurrency:executor",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:status_macros",
@@ -269,6 +273,7 @@ xla_cc_test(
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",  # fixdeps: keep
     ],
@@ -340,14 +345,18 @@ cc_library(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "gpu_collectives_test",
     srcs = ["gpu_collectives_test.cc"],
-    tags = [
-        "cuda-only",
-        "gpu",
+    backend_tags = {
+        "gpu": [
+            "multi_gpu",
+        ],
+    },
+    backends = ["gpu"],
+    tags = if_cuda_is_configured([
         "requires-gpu-nvidia:2",
-    ],
+    ]),
     deps = [
         ":allocator_memory_registration",
         ":cancellation_token",
@@ -371,7 +380,6 @@ xla_cc_test(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_compute_capability",
-        "//xla/stream_executor/cuda:cuda_platform",
         "//xla/tsl/concurrency:executor",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:status_macros",
@@ -381,9 +389,14 @@ xla_cc_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",  # buildcleaner: keep
-    ],
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor/cuda:cuda_platform",
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor/rocm:rocm_platform",
+    ]),
 )
 
 xla_test(
@@ -522,14 +535,13 @@ cc_library(
     alwayslink = True,  # registers collectives implementation
 )
 
-xla_cc_test(
+xla_test(
     name = "loopback_collectives_test",
     srcs = ["loopback_collectives_test.cc"],
-    tags = [
-        "cuda-only",
-        "gpu",
+    backends = ["gpu"],
+    tags = if_cuda_is_configured([
         "requires-gpu-nvidia",
-    ],
+    ]),
     deps = [
         ":gpu_clique_key",
         ":gpu_collectives",
@@ -545,13 +557,17 @@ xla_cc_test(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor/cuda:cuda_platform",
         "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-    ],
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor/cuda:cuda_platform",
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor/rocm:rocm_platform",
+    ]),
 )
 
 cc_library(
