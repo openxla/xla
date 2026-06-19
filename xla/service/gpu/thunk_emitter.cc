@@ -222,6 +222,16 @@ static constexpr bool kRequiresCollectiveKernelThunk =
                             std::unique_ptr<CollectiveKernelThunk>,
                             /*p2p_memcpy_enabled=*/bool>;
 
+// Checks whether a CollectiveThunkType requires an AllGather-specific
+// CollectiveKernelThunk (i.e., takes HloAllGatherInstruction*).
+template <typename ThunkType>
+static constexpr bool kRequiresAllGatherCollectiveKernelThunk =
+    std::is_constructible_v<ThunkType, Thunk::ThunkInfo,
+                            const HloAllGatherInstruction*,
+                            std::vector<CollectiveThunk::Buffer>,
+                            std::unique_ptr<CollectiveKernelThunk>,
+                            /*p2p_memcpy_enabled=*/bool>;
+
 // The signature of this function would change to absl::Status once we lift the
 // CollectiveKernelThunk out as a top level thunk. It would then become a member
 // function of ThunkEmitter.
@@ -298,6 +308,85 @@ xla::Future<std::unique_ptr<CollectiveKernelThunk>> EmitCollectiveKernelThunk(
         return make_thunk(result.entry.kernel_name, result.entry.shmem_bytes,
                           result.entry.launch_dimensions,
                           std::move(result.entry.binary), result.entry.use_pdl);
+      });
+}
+
+// Overload for AllGather
+xla::Future<std::unique_ptr<CollectiveKernelThunk>> EmitCollectiveKernelThunk(
+    IrEmitterContext* ir_emitter_context, const CallGraph* call_graph,
+    Thunk::ThunkInfo thunk_info, std::vector<CollectiveThunk::Buffer> buffers,
+    const HloAllGatherInstruction* instr,
+    std::vector<std::unique_ptr<HloFusionAnalysis>>&
+        analysis_garbage_collector) {
+  bool is_collective_kernel_enabled =
+      instr->GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_unsupported_use_all_gather_triton_backend();
+  CollectiveConfig collective_config =
+      GetCollectiveConfig(instr, instr->use_global_device_ids());
+  bool is_async = !IsGPUSyncCollective(*instr);
+
+  const auto make_thunk =
+      [thunk_info = std::move(thunk_info), buffers = std::move(buffers),
+       collective_config, is_async, is_collective_kernel_enabled](
+          absl::string_view kernel_name, int32_t shmem_bytes,
+          LaunchDimensions launch_dimensions, const std::vector<uint8_t>& cubin,
+          bool use_pdl) {
+        return std::make_unique<CollectiveKernelThunk>(
+            thunk_info, collective_config,
+            std::nullopt,  // No reduction kind for AllGather
+            is_async, std::move(buffers), is_collective_kernel_enabled,
+            kernel_name, launch_dimensions, shmem_bytes,
+            /*is_multimem_enabled=*/false,
+            !cubin.empty() ? std::make_optional(cubin) : std::nullopt, use_pdl,
+            CollectiveOpKind::kAllGather);
+      };
+
+  // Variadic AllGather (multiple operands) is not supported by the Triton
+  // collective kernel. Return an empty-kernel thunk so AllGatherThunk falls
+  // back to NCCL/RCCL at runtime (AllGatherThunk checks IsSupported first).
+  if (instr->operand_count() != 1) {
+    return nullptr;
+  }
+
+  // If the Triton AllGather backend is not explicitly enabled, return an
+  // empty-kernel thunk so AllGatherThunk falls back to NCCL/RCCL at runtime.
+  if (!is_collective_kernel_enabled) {
+    return nullptr;
+  }
+
+  std::unique_ptr<HloModule> fused_module =
+      NewModuleWithFusion(instr, HloInstruction::FusionKind::kLoop);
+  HloFusionInstruction* fusion_instr = Cast<HloFusionInstruction>(
+      fused_module->entry_computation()->root_instruction());
+  const se::DeviceDescription& device_info =
+      ir_emitter_context->gpu_device_info();
+
+  ASSIGN_OR_RETURN(bool did_set_config, TrySetGpuBackendConfigForCollective(
+                                            device_info, fusion_instr));
+  if (!did_set_config) {
+    return nullptr;
+  }
+
+  analysis_garbage_collector.push_back(
+      std::make_unique<HloFusionAnalysis>(HloFusionAnalysis::Create(
+          *fusion_instr, ir_emitter_context->gpu_device_info())));
+  auto emitter =
+      std::make_unique<TritonFusion>(*analysis_garbage_collector.back());
+
+  ASSIGN_OR_RETURN(std::vector<Shape> unmanaged_arguments,
+                   GetCollectiveUnmanagedKernelArguments(fusion_instr));
+
+  return emitter
+      ->Emit(*ir_emitter_context, *fusion_instr,
+             /*instr_override=*/instr, unmanaged_arguments)
+      .Map([make_thunk = std::move(make_thunk),
+            fused_module =
+                std::move(fused_module)](TritonFusion::EmitResult result) {
+        return make_thunk(result.entry.kernel_name, result.entry.shmem_bytes,
+                          result.entry.launch_dimensions, result.entry.binary,
+                          result.entry.use_pdl);
       });
 }
 
@@ -1979,6 +2068,25 @@ AsyncThunkSequence ThunkEmitter::EmitCollectiveThunk(
                                   buffers, Cast<HloAllReduceInstruction>(inst),
                                   GetAllReduceConfigInst(inst), this,
                                   analysis_garbage_collector_)
+            .Map([thunk_info = std::move(thunk_info),
+                  use_memcpy_local_p2p = ir_emitter_context_->debug_options()
+                                             .xla_gpu_use_memcpy_local_p2p(),
+                  buffers = std::move(buffers),
+                  inst](std::unique_ptr<CollectiveKernelThunk>
+                            collective_kernel_thunk) {
+              return ThunkSequence::Of(std::make_unique<CollectiveThunkType>(
+                  thunk_info, inst, /*buffers=*/std::move(buffers),
+                  std::move(collective_kernel_thunk), use_memcpy_local_p2p));
+            });
+  } else if constexpr (kRequiresAllGatherCollectiveKernelThunk<
+                           CollectiveThunkType>) {
+    // AllGather with Triton collective kernel backend.
+    thunks =
+        EmitCollectiveKernelThunk(
+            ir_emitter_context_,
+            call_graph_.get(),  // NOLINT(readability-redundant-smartptr-get)
+            thunk_info, buffers, Cast<HloAllGatherInstruction>(inst),
+            analysis_garbage_collector_)
             .Map([thunk_info = std::move(thunk_info),
                   use_memcpy_local_p2p = ir_emitter_context_->debug_options()
                                              .xla_gpu_use_memcpy_local_p2p(),

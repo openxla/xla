@@ -48,6 +48,13 @@ limitations under the License.*/
 
 namespace xla::gpu {
 
+// Identifies which type of collective operation this thunk implements.
+// AllGather does not use a reduction, so reduction_kind_ is optional.
+enum class CollectiveOpKind {
+  kAllReduce,
+  kAllGather,
+};
+
 // A thunk that runs single-host collective operations in a single shot.
 // Assumes multiple devices are present, but all on the same host.
 // Basic mode of operation is as follows:
@@ -67,7 +74,7 @@ class CollectiveKernelThunk : public Thunk {
 
   CollectiveKernelThunk(
       ThunkInfo info, CollectiveConfig collective_config,  //
-      ReductionKind reduction_kind,                        //
+      std::optional<ReductionKind> reduction_kind,         //
       bool is_async,                                       //
       std::vector<CollectiveThunk::Buffer> buffers,        //
       bool is_collective_kernel_enabled,                   //
@@ -76,7 +83,8 @@ class CollectiveKernelThunk : public Thunk {
       int32_t shmem_bytes = 0,                             //
       bool is_multimem_enabled = false,
       std::optional<std::vector<uint8_t>> cubin = std::nullopt,
-      bool use_pdl = false)
+      bool use_pdl = false,
+      CollectiveOpKind collective_op_kind = CollectiveOpKind::kAllReduce)
       : Thunk{Thunk::kCollectiveKernel, info},
         collective_kernel_enabled_(is_collective_kernel_enabled),
         is_async_(is_async),
@@ -88,7 +96,8 @@ class CollectiveKernelThunk : public Thunk {
         shmem_bytes_(shmem_bytes),
         buffers_(std::move(buffers)),
         is_multimem_enabled_(is_multimem_enabled),
-        use_pdl_(use_pdl) {
+        use_pdl_(use_pdl),
+        collective_op_kind_(collective_op_kind) {
     per_stream_state_.reserve(kMaxNumExecutors);
   }
 
@@ -195,8 +204,9 @@ class CollectiveKernelThunk : public Thunk {
   const bool is_async_;
   // Collective config being used. Copied over to avoid lifetime issues.
   const CollectiveConfig collective_config_;
-  // Reduction kind being to use for AllReduce collective.
-  const ReductionKind reduction_kind_;
+  // Reduction kind to use for AllReduce collective.
+  // Optional because AllGather does not use reduction.
+  const std::optional<ReductionKind> reduction_kind_;
   // Launch dimensions for the kernel. Only relevant when the codegen kernel
   // is used.
   LaunchDimensions launch_dimensions_;
@@ -222,6 +232,9 @@ class CollectiveKernelThunk : public Thunk {
 
   // Programmatic Dependent Launch.
   const bool use_pdl_;
+
+  // Identifies the type of collective (AllReduce or AllGather).
+  const CollectiveOpKind collective_op_kind_;
 };
 }  // namespace xla::gpu
 

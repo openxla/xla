@@ -35,6 +35,7 @@ limitations under the License.*/
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/runtime/all_gather.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
 #include "xla/backends/gpu/runtime/collective_kernel_api.h"
 #include "xla/backends/gpu/runtime/collective_kernel_thunk.pb.h"
@@ -160,23 +161,42 @@ absl::StatusOr<bool> CollectiveKernelThunk::IsSupported(
   if (kernel_name_.empty()) {
     return false;
   }
-  absl::Status status = IsAllReduceKernelSupported(
-      collective_kernel_enabled_, executor.GetDeviceDescription(),
-      /*num_operands= */ buffers_.size(), reduction_kind_,
-      clique_key.num_local_participants(), buffers_[0].element_count,
-      collective_config_.operand_element_type[0], clique_key.is_local(),
-      is_multimem_enabled_, collective_config_.replica_groups);
-  if (absl::IsUnimplemented(status)) {
-    VLOG(3) << "Collective kernel not supported: " << status.message();
-    return false;
+  const bool is_all_gather =
+      (collective_op_kind_ == CollectiveOpKind::kAllGather);
+
+  if (!is_all_gather) {
+    absl::Status status = IsAllReduceKernelSupported(
+        collective_kernel_enabled_, executor.GetDeviceDescription(),
+        /*num_operands= */ buffers_.size(), reduction_kind_,
+        clique_key.num_local_participants(), buffers_[0].element_count,
+        collective_config_.operand_element_type[0], clique_key.is_local(),
+        is_multimem_enabled_, collective_config_.replica_groups);
+    if (absl::IsUnimplemented(status)) {
+      VLOG(3) << "Collective kernel not supported: " << status.message();
+      return false;
+    }
+    TF_RETURN_IF_ERROR(status);
+  } else {
+    absl::Status status = IsAllGatherKernelSupported(
+        collective_kernel_enabled_, executor.GetDeviceDescription(),
+        /*num_operands=*/static_cast<int32_t>(buffers_.size()),
+        clique_key.num_local_participants(), buffers_[0].element_count,
+        collective_config_.operand_element_type[0], clique_key.is_local(),
+        collective_config_.replica_groups);
+    if (absl::IsUnimplemented(status)) {
+      VLOG(3) << "Collective kernel not supported: " << status.message();
+      return false;
+    }
+    TF_RETURN_IF_ERROR(status);
   }
-  RETURN_IF_ERROR(status);
+
   for (const GlobalDeviceId& device : clique_key.devices()) {
     ASSIGN_OR_RETURN(const int peer_device_id,
                      GetLocalDeviceId(device, collective_params));
     if (!executor.CanEnablePeerAccessTo(peer_device_id)) {
-      XLA_VLOG_DEVICE(3, executor.device_ordinal())
-          << "Peer access is not supported with device " << peer_device_id;
+      VLOG(3) << "CollectiveKernelThunk::IsSupported: peer access not "
+                 "supported to device "
+              << peer_device_id;
       return false;
     }
   }
@@ -221,8 +241,15 @@ absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
         clique_key.num_local_participants() * launch_dimensions_.num_blocks();
     const int64_t kSignalBufferSize = xla::RoundUpTo<uint64_t>(
         kNumSignalFlags * sizeof(int32_t), kXlaAllocatedBufferAlignBytes);
+    // For AllGather the scratch buffer must hold the full gathered output
+    // (num_replicas × source_size); for AllReduce source == destination size.
+    const bool is_all_gather =
+        (collective_op_kind_ == CollectiveOpKind::kAllGather);
+    const int64_t buffer_size_to_allocate =
+        is_all_gather ? buffers_[0].destination_buffer.slice.size()
+                      : buffers_[0].source_buffer.slice.size();
     const int64_t kLocalBufferSize = xla::RoundUpTo<uint64_t>(
-        buffers_[0].source_buffer.slice.size(), kXlaAllocatedBufferAlignBytes);
+        buffer_size_to_allocate, kXlaAllocatedBufferAlignBytes);
     ASSIGN_OR_RETURN(
         se::DeviceAddressHandle local_buffers_handle,
         AllocateMemory(params.executor, kLocalBufferSize * kNumBuffers,
@@ -575,7 +602,10 @@ absl::StatusOr<ThunkProto> CollectiveKernelThunk::ToProto() const {
       proto.mutable_collective_kernel_thunk();
 
   *thunk_proto->mutable_collective_config() = collective_config_.ToProto();
-  thunk_proto->set_reduction_kind(ToReductionKindProto(reduction_kind_));
+  // For AllGather, reduction_kind_ is not set; serialize a default (kSum = 0).
+  if (reduction_kind_.has_value()) {
+    thunk_proto->set_reduction_kind(ToReductionKindProto(*reduction_kind_));
+  }
   thunk_proto->set_is_async(is_async_);
 
   for (const CollectiveThunk::Buffer& buffer : buffers_) {

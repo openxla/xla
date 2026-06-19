@@ -1840,6 +1840,7 @@ cc_library(
     deps = [
         ":collective_memory",
         ":collective_memory_requests",
+        ":collective_kernel_thunk",
         ":collective_thunk",
         ":collective_thunk_proto_cc",
         ":thunk",
@@ -1938,6 +1939,7 @@ cc_library(
     srcs = ["collective_kernel_thunk.cc"],
     hdrs = ["collective_kernel_thunk.h"],
     deps = [
+        ":all_gather",
         ":all_reduce",
         ":collective_kernel_api",
         ":collective_kernel_thunk_proto_cc",
