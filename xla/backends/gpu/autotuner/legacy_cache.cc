@@ -32,7 +32,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/autotuning/autotune_cache_key.h"
 #include "xla/service/gpu/autotuning/autotuner_cache.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 
 namespace xla {
@@ -42,7 +41,8 @@ namespace gpu {
 using autotuner::Backend;
 
 std::optional<LegacyCache::Config> LegacyCache::Lookup(
-    const HloInstruction* instr) {
+    const HloInstruction* instr,
+    absl::string_view codegen_options_fingerprint) {
   AutotuneCacheKey key = GetAutotuneCacheKey(*instr);
   absl::StatusOr<std::optional<AutotuneResult>> result =
       AutotunerCache::TryFindInCache(key, cache_dir_);
@@ -59,6 +59,7 @@ std::optional<LegacyCache::Config> LegacyCache::Lookup(
 }
 
 absl::Status LegacyCache::Insert(const HloInstruction* instr,
+                                 absl::string_view codegen_options_fingerprint,
                                  const Config& best_config) {
   AutotuneCacheKey key = GetAutotuneCacheKey(*instr);
   AutotuneResult autotune_result = GetAutotuneResult(best_config);

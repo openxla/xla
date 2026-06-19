@@ -135,7 +135,7 @@ cc_library(
         ":llvm_kernel_backend",
         "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/backends/autotuner:autotuner_cache_interface",
+        "//xla/backends/autotuner:autotune_cache",
         "//xla/backends/autotuner:codegen_backend",
         "//xla/backends/autotuner:codegen_orchestrator",
         "//xla/backends/autotuner:config_assigner",

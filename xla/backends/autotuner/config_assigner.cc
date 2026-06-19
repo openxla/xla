@@ -39,7 +39,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "google/protobuf/text_format.h"
-#include "xla/backends/autotuner/autotuner_cache_interface.h"
+#include "xla/backends/autotuner/autotune_cache.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/codegen_orchestrator.h"
 #include "xla/backends/autotuner/config_runner.h"
@@ -109,8 +109,7 @@ std::string GetKvStoreKey(
 }  // namespace
 
 absl::StatusOr<std::unique_ptr<ConfigAssigner>> ConfigAssigner::Create(
-    Options options,
-    std::unique_ptr<AutotunerCacheInterface> absl_nonnull cache,
+    Options options, std::unique_ptr<AutotuneCache> absl_nonnull cache,
     std::unique_ptr<CodegenOrchestrator> absl_nonnull orchestrator,
     std::unique_ptr<Profiler> absl_nullable profiler) {
   std::unique_ptr<ConfigRunner> config_runner = nullptr;
@@ -449,7 +448,7 @@ std::optional<ConfigAssigner::Config> ConfigAssigner::LookUp(
 
 absl::Status ConfigAssigner::Insert(const HloInstruction* instr,
                                     const ConfigAssigner::Config& config) {
-  AutotunerCacheInterface::Config cached_config;
+  AutotuneCache::Config cached_config;
   cached_config.codegen_backend = config.codegen_backend->backend();
   cached_config.backend_config = *config.backend_config;
   return optimal_config_cache_->Insert(instr, cached_config);
@@ -582,7 +581,7 @@ std::string AutotuneConfig::ToString() const {
       allow_reg_spills_fn ? "dynamic" : "null");
 }
 
-AutotunerCacheInterface::CacheStats ConfigAssigner::GetCacheStats() const {
+AutotuneCache::CacheStats ConfigAssigner::GetCacheStats() const {
   return optimal_config_cache_->GetCacheStats();
 }
 

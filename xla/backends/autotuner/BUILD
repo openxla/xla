@@ -98,7 +98,7 @@ cc_library(
     srcs = ["config_assigner.cc"],
     hdrs = ["config_assigner.h"],
     deps = [
-        ":autotuner_cache_interface",
+        ":autotune_cache",
         ":codegen_backend",
         ":codegen_orchestrator",
         ":config_runner",
@@ -138,7 +138,7 @@ xla_cc_test(
     name = "config_assigner_test",
     srcs = ["config_assigner_test.cc"],
     deps = [
-        ":autotuner_cache_interface",
+        ":autotune_cache",
         ":backends_proto_cc",
         ":codegen_backend",
         ":codegen_orchestrator",
@@ -227,12 +227,13 @@ cc_library(
 )
 
 cc_library(
-    name = "autotuner_cache_interface",
-    hdrs = ["autotuner_cache_interface.h"],
+    name = "autotune_cache",
+    hdrs = ["autotune_cache.h"],
     deps = [
         ":backend_config_proto_cc",
         ":backends_proto_cc",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",

@@ -32,8 +32,8 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/backends/autotuner/autotune_cache.h"
 #include "xla/backends/autotuner/autotuner.h"
-#include "xla/backends/autotuner/autotuner_cache_interface.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/codegen_orchestrator.h"
 #include "xla/backends/autotuner/config_assigner.h"
@@ -78,13 +78,19 @@ namespace {
 
 // An AutotunerCache that prints the cached configs to stdout. Used for
 // debugging and testing.
-class PrintingAutotunerCache : public AutotunerCacheInterface {
+class PrintingAutotunerCache : public AutotuneCache {
  public:
-  std::optional<Config> Lookup(const HloInstruction* instr) override {
+  using AutotuneCache::Insert;
+  using AutotuneCache::Lookup;
+
+  std::optional<Config> Lookup(
+      const HloInstruction* instr,
+      absl::string_view codegen_options_fingerprint) override {
     return std::nullopt;
   }
 
   absl::Status Insert(const HloInstruction* instr,
+                      absl::string_view codegen_options_fingerprint,
                       const Config& best_config) override {
     std::cout << "PrintingAutotunerCache:\n"
               << "  Instruction: " << instr->ToString() << "\n"
@@ -96,6 +102,7 @@ class PrintingAutotunerCache : public AutotunerCacheInterface {
   }
 
   CacheStats GetCacheStats() const override { return {}; }
+  CacheMode GetMode() const override { return CacheMode::kReadWrite; }
 
   absl::StatusOr<std::string> Serialize(
       absl::Span<const HloInstruction* const> instructions_to_serialize)
@@ -242,7 +249,7 @@ absl::Status RunAutotuning(const std::vector<std::string>& hlo_files,
         env.autotuner->TuneConfigs(*module, should_autotune,
                                    /*tolerate_no_supported_configs=*/true));
     for (const auto& result : results) {
-      AutotunerCacheInterface::Config cached_config;
+      AutotuneCache::Config cached_config;
       cached_config.codegen_backend = result.config.codegen_backend->backend();
       cached_config.backend_config = *result.config.backend_config;
       RETURN_IF_ERROR(

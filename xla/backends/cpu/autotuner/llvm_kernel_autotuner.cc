@@ -26,7 +26,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
-#include "xla/backends/autotuner/autotuner_cache_interface.h"
+#include "xla/backends/autotuner/autotune_cache.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/codegen_orchestrator.h"
 #include "xla/backends/autotuner/config_assigner.h"
@@ -61,7 +61,7 @@ absl::StatusOr<bool> LlvmKernelAutotuner::RunImpl(
     assigner_options.check_buffers = false;
   }
 
-  auto cache = std::make_unique<NoOpAutotunerCache>();
+  auto cache = std::make_unique<NoOpAutotuneCache>();
 
   ASSIGN_OR_RETURN(
       auto config_assigner,

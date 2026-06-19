@@ -31,7 +31,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "mlir/IR/MLIRContext.h"
-#include "xla/backends/autotuner/autotuner_cache_interface.h"
+#include "xla/backends/autotuner/autotune_cache.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/codegen_orchestrator.h"
@@ -394,10 +394,9 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
   if (cache_dir.empty()) {
     cache_dir = debug_options.xla_gpu_experimental_autotuner_cache_dir();
   }
-  std::unique_ptr<AutotunerCacheInterface> cache =
-      std::make_unique<LegacyCache>(
-          cache_dir, debug_options.xla_gpu_experimental_autotune_cache_mode(),
-          target_config->device_description);
+  std::unique_ptr<AutotuneCache> cache = std::make_unique<LegacyCache>(
+      cache_dir, debug_options.xla_gpu_experimental_autotune_cache_mode(),
+      target_config->device_description);
 
   CodegenOrchestrator::Options orchestrator_options;
   orchestrator_options.allow_reg_spills_fn =

@@ -25,7 +25,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/autotuning.pb.h"
-#include "xla/backends/autotuner/autotuner_cache_interface.h"
+#include "xla/backends/autotuner/autotune_cache.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/gpu/autotuning/autotune_cache_key.h"
 #include "xla/stream_executor/device_description.h"
@@ -37,15 +37,22 @@ namespace gpu {
 
 // Wrapper around the legacy autotune cache from the AutotunerUtil which uses
 // AutotuneResult proto.
-class LegacyCache : public AutotunerCacheInterface {
+class LegacyCache : public AutotuneCache {
  public:
   LegacyCache(std::string cache_dir, DebugOptions::AutotuneCacheMode cache_mode,
               se::DeviceDescription device_desc)
       : cache_dir_(std::move(cache_dir)),
         cache_mode_(cache_mode),
         device_desc_(std::move(device_desc)) {}
-  std::optional<Config> Lookup(const HloInstruction* instr) override;
+
+  using AutotuneCache::Insert;
+  using AutotuneCache::Lookup;
+
+  std::optional<Config> Lookup(
+      const HloInstruction* instr,
+      absl::string_view codegen_options_fingerprint) override;
   absl::Status Insert(const HloInstruction* instr,
+                      absl::string_view codegen_options_fingerprint,
                       const Config& best_config) override;
 
   absl::StatusOr<std::string> Serialize(absl::Span<const HloInstruction* const>
@@ -53,6 +60,18 @@ class LegacyCache : public AutotunerCacheInterface {
   absl::Status Deserialize(absl::string_view serialized_cache) override;
 
   CacheStats GetCacheStats() const override { return stats_; }
+  CacheMode GetMode() const override {
+    switch (cache_mode_) {
+      case DebugOptions::AUTOTUNE_CACHE_MODE_UNSPECIFIED:
+        return CacheMode::kReadUpdate;
+      case DebugOptions::AUTOTUNE_CACHE_MODE_READ:
+        return CacheMode::kReadOnly;
+      case DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE:
+        return CacheMode::kReadUpdate;
+      default:
+        return CacheMode::kReadUpdate;
+    }
+  }
 
   void ClearCache();
 

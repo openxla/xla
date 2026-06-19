@@ -26,7 +26,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "xla/autotuning.pb.h"
-#include "xla/backends/autotuner/autotuner_cache_interface.h"
+#include "xla/backends/autotuner/autotune_cache.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -44,7 +44,7 @@ namespace xla {
 namespace gpu {
 namespace {
 
-using Config = ::xla::AutotunerCacheInterface::Config;
+using Config = ::xla::AutotuneCache::Config;
 using autotuner::Backend;
 using ::testing::Eq;
 using ::testing::Optional;

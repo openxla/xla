@@ -38,7 +38,7 @@ limitations under the License.
 #include "google/protobuf/text_format.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
-#include "xla/backends/autotuner/autotuner_cache_interface.h"
+#include "xla/backends/autotuner/autotune_cache.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/codegen_orchestrator.h"
@@ -187,20 +187,31 @@ class MockProfiler : public Profiler {
               (override));
 };
 
-class MockAutotunerCache : public AutotunerCacheInterface {
+class MockAutotunerCache : public AutotuneCache {
  public:
-  MOCK_METHOD(std::optional<AutotunerCacheInterface::Config>, Lookup,
+  MOCK_METHOD(std::optional<AutotuneCache::Config>, Lookup,
+              (const HloInstruction* instr,
+               absl::string_view codegen_options_fingerprint),
+              (override));
+  MOCK_METHOD(absl::Status, Insert,
+              (const HloInstruction* instr,
+               absl::string_view codegen_options_fingerprint,
+               const AutotuneCache::Config& best_config),
+              (override));
+  MOCK_METHOD(std::optional<AutotuneCache::Config>, Lookup,
               (const HloInstruction* instr), (override));
   MOCK_METHOD(absl::Status, Insert,
               (const HloInstruction* instr,
-               const AutotunerCacheInterface::Config& best_config),
+               const AutotuneCache::Config& best_config),
               (override));
-  MOCK_METHOD(absl::StatusOr<std::string>, Serialize,
-              (absl::Span<const HloInstruction* const> instructions),
-              (override));
+  MOCK_METHOD(
+      absl::StatusOr<std::string>, Serialize,
+      (absl::Span<const HloInstruction* const> instructions_to_serialize),
+      (override));
   MOCK_METHOD(absl::Status, Deserialize, (absl::string_view serialized_cache),
               (override));
   MOCK_METHOD(CacheStats, GetCacheStats, (), (const, override));
+  MOCK_METHOD(CacheMode, GetMode, (), (const, override));
 };
 
 se::DeviceDescription CreateDummyDeviceDescription() {
@@ -212,7 +223,7 @@ se::DeviceDescription CreateDummyDeviceDescription() {
 absl::StatusOr<std::unique_ptr<ConfigAssigner>> CreateConfigAssigner(
     std::vector<std::unique_ptr<CodegenBackend>> codegen_backends,
     std::unique_ptr<Profiler> profiler, AutotuneConfig autotune_config,
-    std::unique_ptr<AutotunerCacheInterface> cache,
+    std::unique_ptr<AutotuneCache> cache,
     tsl::thread::ThreadPool* thread_pool = nullptr) {
   CodegenOrchestrator::Options orchestrator_options;
   orchestrator_options.allow_reg_spills_fn =
@@ -225,7 +236,7 @@ absl::StatusOr<std::unique_ptr<ConfigAssigner>> CreateConfigAssigner(
                                           orchestrator_options, thread_pool));
 
   if (cache == nullptr) {
-    cache = std::make_unique<NoOpAutotunerCache>();
+    cache = std::make_unique<NoOpAutotuneCache>();
   }
 
   ConfigAssigner::Options assigner_options;
@@ -607,7 +618,7 @@ TEST_F(ConfigAssignerTest, AutotuneButOneBackendFails) {
 
 TEST_F(ConfigAssignerTest, CacheHit) {
   auto cache_manager = std::make_unique<MockAutotunerCache>();
-  AutotunerCacheInterface::Config config;
+  AutotuneCache::Config config;
   config.codegen_backend = autotuner::Backend::UNSPECIFIED_BACKEND;
   config.backend_config = *GetTestConfig("test_config_2");
 
@@ -1366,8 +1377,8 @@ class MockKeyValueStore : public KeyValueStoreInterface {
               (override));
 };
 
-AutotunerCacheInterface::Config GetCacheConfig(absl::string_view name) {
-  AutotunerCacheInterface::Config config;
+AutotuneCache::Config GetCacheConfig(absl::string_view name) {
+  AutotuneCache::Config config;
   config.codegen_backend = autotuner::Backend::UNSPECIFIED_BACKEND;
   config.backend_config = *GetTestConfig(std::string(name));
   return config;

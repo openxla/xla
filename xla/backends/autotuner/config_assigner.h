@@ -27,7 +27,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "xla/backends/autotuner/autotuner_cache_interface.h"
+#include "xla/backends/autotuner/autotune_cache.h"
 #include "xla/backends/autotuner/codegen_orchestrator.h"
 #include "xla/backends/autotuner/config_runner.h"
 #include "xla/backends/autotuner/hlo_extractor.h"
@@ -84,8 +84,7 @@ class ConfigAssigner {
 
   static absl::StatusOr<std::unique_ptr<ConfigAssigner>> Create(
       Options options,
-      std::unique_ptr<AutotunerCacheInterface> absl_nonnull
-      optimal_config_cache,
+      std::unique_ptr<AutotuneCache> absl_nonnull optimal_config_cache,
       std::unique_ptr<CodegenOrchestrator> absl_nonnull orchestrator,
       std::unique_ptr<Profiler> absl_nullable profiler);
 
@@ -101,11 +100,11 @@ class ConfigAssigner {
   // Single instruction entry point.
   absl::Status AssignConfig(HloInstruction* instr);
 
-  AutotunerCacheInterface::CacheStats GetCacheStats() const;
+  AutotuneCache::CacheStats GetCacheStats() const;
 
  private:
   ConfigAssigner(Options options,
-                 std::unique_ptr<AutotunerCacheInterface> absl_nonnull cache,
+                 std::unique_ptr<AutotuneCache> absl_nonnull cache,
                  std::unique_ptr<CodegenOrchestrator> absl_nonnull orchestrator,
                  std::unique_ptr<ConfigRunner> absl_nullable config_runner)
       : options_(options),
@@ -152,7 +151,7 @@ class ConfigAssigner {
   absl::Status DumpTuningLogs();
 
   Options options_;
-  std::unique_ptr<AutotunerCacheInterface> absl_nonnull optimal_config_cache_;
+  std::unique_ptr<AutotuneCache> absl_nonnull optimal_config_cache_;
   std::unique_ptr<CodegenOrchestrator> absl_nonnull orchestrator_;
   std::unique_ptr<ConfigRunner> absl_nullable config_runner_;
   AutotuningLogs logs_;
