@@ -7,7 +7,7 @@ load(
     "if_rocm_is_configured",
 )
 load("//xla:package_groups.bzl", "xla_test_friend_package_group")
-load("//xla:xla.default.bzl", "tests_build_defs_bzl_deps", "xla_cc_test", "xla_internal")
+load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal")
 load("//xla/tests:build_defs.bzl", "generate_backend_suites", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "if_oss", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
@@ -220,6 +220,8 @@ cc_library(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test_helpers",
         "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/hlo/transforms:despecializer",
+        "//xla/hlo/transforms/simplifiers:float_normalization",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_module_util",
@@ -3467,15 +3469,22 @@ xla_test(
 )
 
 bzl_library(
-    name = "plugin_bzl",
-    srcs = ["plugin.bzl"],
-    deps = ["//xla/tsl:package_groups_bzl"],
+    name = "backend_defs_bzl",
+    srcs = ["backend_defs.bzl"],
+    deps = [
+        ":plugin_bzl",
+        "//xla/tsl:package_groups_bzl",
+        "//xla/tsl:tsl_bzl",
+        "//xla/tsl/platform:build_config_root_bzl",
+    ],
 )
 
+# copybara:comment_begin(oss-only)
 bzl_library(
     name = "build_defs_bzl",
     srcs = ["build_defs.bzl"],
     deps = [
+        ":backend_defs_bzl",
         ":plugin_bzl",
         "//xla:xla_bzl",
         "//xla/stream_executor:build_defs_bzl",
@@ -3485,7 +3494,14 @@ bzl_library(
         "//xla/tsl/platform/default:build_config_bzl",
         "//xla/tsl/platform/default:cuda_build_defs_bzl",
         "@local_config_rocm//rocm:build_defs_bzl",
-    ] + tests_build_defs_bzl_deps(),
+    ],
+)
+# copybara:comment_end
+
+bzl_library(
+    name = "plugin_bzl",
+    srcs = ["plugin.bzl"],
+    deps = ["//xla/tsl:package_groups_bzl"],
 )
 
 xla_test(

@@ -100,10 +100,12 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBufferImpl {
   ShapedBuffer AsShapedBuffer(const xla::Shape&);
 
   absl::StatusOr<PjRtDeviceEventRef> CopyRawHostToDeviceAndReturnEvent(
-      const void* src, int64_t offset, int64_t transfer_size) override;
+      const void* src, int64_t offset, int64_t transfer_size,
+      PjRtDeviceEventRefVector dependencies) override;
 
   absl::StatusOr<PjRtDeviceEventRef> CopyRawDeviceToHostAndReturnEvent(
-      void* dst, int64_t offset, int64_t transfer_size) override;
+      void* dst, int64_t offset, int64_t transfer_size,
+      PjRtDeviceEventRefVector dependencies) override;
 
   absl::StatusOr<PjRtDeviceEventRef> MakeAllocationReadyEvent() override;
 
@@ -116,7 +118,6 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBufferImpl {
       absl::AnyInvocable<void(absl::Status) &&> allocation_event) override;
 
   void ScheduleCopyTo(
-      AsyncWorkRunner* async_work_runner,
       PjRtDeviceEventRefVector transfer_dependency_events,
       PjRtRawBufferRef dst_raw_buffer,
       PjRtDeviceEventPromiseRef definition_event_promise,

@@ -488,6 +488,7 @@ oneapi_build_tag_filter = (
     "-cuda-only",
     "-rocm-only",
     "-no-oneapi",
+    "gpu",
 )
 
 oneapi_test_tag_filter = (
@@ -501,6 +502,7 @@ oneapi_test_tag_filter = (
     "-cuda-only",
     "-rocm-only",
     "-no-oneapi",
+    "gpu",
 )
 
 Build(
@@ -878,7 +880,7 @@ Build(
         **_DEFAULT_BAZEL_OPTIONS,
         "@local_config_cuda//cuda:override_include_cuda_libs": True,
     },
-    repo_env={"HERMETIC_PYTHON_VERSION": "3.11"},
+    repo_env={"HERMETIC_PYTHON_VERSION": "3.12"},
     extra_setup_commands=(["nvidia-smi"],),
 )
 

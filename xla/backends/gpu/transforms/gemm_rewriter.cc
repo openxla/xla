@@ -76,6 +76,7 @@ limitations under the License.
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/types.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/ml_dtypes.h"
 
@@ -613,8 +614,8 @@ absl::StatusOr<HloInstruction*> NormalizeBatchDimensions(HloInstruction* dot) {
       dims[i].ApplyPermutation(permutation);
     }
 
-    RETURN_IF_ERROR(
-        dims[i].Collapse(DotOperandDims::kBatch, /*remove_if_empty=*/false));
+    RETURN_IF_ERROR(dims[i].CollapseCategory(DotOperandDims::kBatch,
+                                             /*remove_if_empty=*/false));
     ASSIGN_OR_RETURN(operands[i], MakeReshapeHlo(dims[i].shape(), operands[i]));
   }
 
