@@ -615,6 +615,46 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "rccl_types",
+    srcs = ["rccl_types.cc"],
+    hdrs = ["rccl_types.h"],
+    tags = [
+        "rocm-only",
+        "gpu",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/core/collectives:reduction_kind",
+        "//xla/stream_executor/rocm:rocm_compute_capability",
+        "@com_google_absl//absl/status:statusor",
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+)
+
+xla_cc_test(
+    name = "rccl_types_test",
+    srcs = ["rccl_types_test.cc"],
+    tags = [
+        "rocm-only",
+        "gpu",
+    ],
+    deps = [
+        ":rccl_types",
+        "//xla:xla_data_proto_cc",
+        "//xla/core/collectives:reduction_kind",
+        "//xla/stream_executor/rocm:rocm_compute_capability",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_rocm//rocm:rccl", 
+    ],
+)
+
+cc_library(
     name = "nccl_errors",
     srcs = ["nccl_errors.cc"],
     hdrs = ["nccl_errors.h"],
@@ -1020,6 +1060,7 @@ cc_library(
         ":rccl_errors",
         ":rccl_group",
         ":rccl_symmetric_memory",
+        ":rccl_types",
         ":single_threaded_executor",
         "//xla:future",
         "//xla:shape_util",
