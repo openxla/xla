@@ -38,7 +38,7 @@ limitations under the License.
 #include "xla/service/logical_buffer.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/shape.h"
-#include "xla/shape_tree.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/event.h"
