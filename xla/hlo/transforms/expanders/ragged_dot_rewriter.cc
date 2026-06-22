@@ -371,7 +371,8 @@ bool CanBeHandledByCuDNNFusion(const HloInstruction* instruction) {
   int lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
   RaggedDotMode mode =
       GetRaggedDotMode(lhs_ragged_dim, ragged_dims.dot_dimension_numbers());
-  return mode == RaggedDotMode::kRaggedNonContracting;
+  return mode == RaggedDotMode::kRaggedNonContracting ||
+         mode == RaggedDotMode::kRaggedContracting;
 }
 
 bool CanBeHandledByGpublasltGroupGemm(
