@@ -27,9 +27,13 @@ licenses(["notice"])  # MIT
 # ----------------------------------------------------------------------------
 
 # libibverbs (rdma-core). Used by transport/rdma/ providers and shmem fabric.
+# Headers are vendored hermetically via @rdma_core (see //third_party/rdma_core);
+# the shared library itself is resolved at link time from the host (-libverbs),
+# which works because the hermetic ROCm toolchain links with CppLink=local.
 cc_library(
     name = "ibverbs",
     linkopts = ["-libverbs"],
+    deps = ["@rdma_core//:verbs_headers"],
 )
 
 # libdrm + libdrm_amdgpu. Pulled in transitively by libhsakmt.a (amdgpu_*,
@@ -50,9 +54,12 @@ cc_library(
 )
 
 # libpci (pciutils). Used by topology/pci.cpp (pci_alloc / pci_scan_bus /...).
+# Headers come from the ROCm CI image via @system_libpci (the hermetic sysroot
+# has none); libpci.so is linked from the image (-lpci, resolved CppLink=local).
 cc_library(
     name = "libpci",
     linkopts = ["-lpci"],
+    deps = ["@system_libpci//:pci_headers"],
 )
 
 # Public shmem headers (everything under include/mori/shmem). Sources live
