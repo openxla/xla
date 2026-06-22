@@ -22,11 +22,11 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/strings/ascii.h"
 #include "absl/algorithm/container.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/ascii.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
@@ -40,10 +40,10 @@ limitations under the License.
 #include "xla/executable_run_options.h"
 #include "xla/future.h"
 #include "xla/runtime/device_id.h"
+#include "xla/service/platform_util.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/service/platform_util.h"
 #include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
@@ -159,7 +159,7 @@ TEST(GpuCliquesTest, AcquireCliques) {
 TEST(GpuCliquesTest, OnGpuCliqueCreatedCallback) {
   auto cleanup = absl::MakeCleanup([] { internal::DestroyAcquiredCliques(); });
   auto name = absl::AsciiStrToUpper(
-    xla::PlatformUtil::CanonicalPlatformName("gpu").value());
+      xla::PlatformUtil::CanonicalPlatformName("gpu").value());
 
   ASSERT_OK_AND_ASSIGN(se::Platform * platform,
                        se::PlatformManager::PlatformWithName(name));
@@ -204,7 +204,7 @@ TEST(GpuCliquesTest, OnGpuCliqueCreatedCallback) {
 TEST(GpuCliquesTest, SplitCliques) {
   auto cleanup = absl::MakeCleanup([] { internal::DestroyAcquiredCliques(); });
   auto name = absl::AsciiStrToUpper(
-    xla::PlatformUtil::CanonicalPlatformName("gpu").value());
+      xla::PlatformUtil::CanonicalPlatformName("gpu").value());
 
   ASSERT_OK_AND_ASSIGN(se::Platform * platform,
                        se::PlatformManager::PlatformWithName(name));

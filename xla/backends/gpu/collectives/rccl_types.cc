@@ -67,8 +67,9 @@ absl::StatusOr<ncclDataType_t> ToNcclDataType(
     case U16:
       // For reductions we expect 16 bit integer types to be promoted to 32-bit.
       if (is_reduction_op) {
-        return InvalidArgument("Unsupported data type for reduction operation: %s",
-                            primitive_util::LowercasePrimitiveTypeName(dtype));
+        return InvalidArgument(
+            "Unsupported data type for reduction operation: %s",
+            primitive_util::LowercasePrimitiveTypeName(dtype));
       }
       // For collectives that just move data around, we can use ncclFloat16 for
       // 16-bit integer data types.
@@ -77,7 +78,7 @@ absl::StatusOr<ncclDataType_t> ToNcclDataType(
       return ncclBfloat16;
     default:
       return InvalidArgument("Unsupported data type: %s",
-                          primitive_util::LowercasePrimitiveTypeName(dtype));
+                             primitive_util::LowercasePrimitiveTypeName(dtype));
   }
 }
 
