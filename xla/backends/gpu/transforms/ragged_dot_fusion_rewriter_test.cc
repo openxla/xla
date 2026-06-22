@@ -122,6 +122,24 @@ TEST_F(RaggedDotFusionRewriterUnitTest, TestSupportedRaggedDot) {
                   .WithShape(BF16, {128, 256}));
 }
 
+// Wgrad: contracts over the ragged M dimension, producing dweight [G, K, N].
+// Corresponds to cuDNN moe_grouped_matmul_bwd.
+TEST_F(RaggedDotFusionRewriterUnitTest, TestSupportedRaggedDotWgrad) {
+  RunAndMatch(R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = bf16[128,512]{1,0} parameter(0)
+      doutput = bf16[128,256]{1,0} parameter(1)
+      group_sizes = s32[16]{0} parameter(2)
+      ROOT rd = bf16[16,512,256]{2,1,0} ragged-dot(input, doutput, group_sizes),
+             lhs_contracting_dims={0}, rhs_contracting_dims={0}, lhs_ragged_dims={0}
+    })",
+              m::Fusion()
+                  .WithFusionKind(HloInstruction::FusionKind::kCustom)
+                  .WithShape(BF16, {16, 512, 256}));
+}
+
 // This class performs end-to-end integration testing of the RaggedDotRewriter.
 // It verifies that the rewriter works correctly within the full GPU
 // optimization pipeline and produces numerically correct results on hardware.
@@ -189,6 +207,38 @@ TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotOnly) {
       group_sizes = GROUP_TYPE[16]{0} constant({7,9,6,10,8,8,8,8,8,8,8,8,8,8,8,8})
       ROOT rd = TYPE[128,256]{1,0} ragged-dot(input, weight, group_sizes),
              lhs_contracting_dims={1}, rhs_contracting_dims={1}, lhs_ragged_dims={0}, rhs_group_dims={0}
+    })",
+                          {{"TYPE", data_type}, {"GROUP_TYPE", group_type}});
+  std::string optimized_hlo_string = GetOptimizedHlo(hlo_with_new_type);
+  EXPECT_THAT(optimized_hlo_string, HasSubstr(kCuDnnFusionKind));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_with_new_type));
+  DebugOptions debug_opts = module->config().debug_options();
+  debug_opts.set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+  module->mutable_config().set_debug_options(debug_opts);
+  EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{0.01, 0.01}))
+      << optimized_hlo_string;
+}
+
+// Wgrad: contracts over the ragged M dimension (kRaggedContracting).
+// Uses cuDNN moe_grouped_matmul_bwd to compute dweight[G,K,N].
+TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotWgrad) {
+  if (GetDnnVersion() < se::dnn::VersionInfo{9, 22, 0}) {
+    GTEST_SKIP() << "CuDNN ragged dot wgrad requires cuDNN 9.22+.";
+  }
+
+  const auto& [data_type, group_type] = GetParam();
+  const std::string hlo_with_new_type =
+      absl::StrReplaceAll(R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = TYPE[128,512]{1,0} parameter(0)
+      doutput = TYPE[128,256]{1,0} parameter(1)
+      group_sizes = GROUP_TYPE[16]{0} constant({7,9,6,10,8,8,8,8,8,8,8,8,8,8,8,8})
+      ROOT rd = TYPE[16,512,256]{2,1,0} ragged-dot(input, doutput, group_sizes),
+             lhs_contracting_dims={0}, rhs_contracting_dims={0}, lhs_ragged_dims={0}
     })",
                           {{"TYPE", data_type}, {"GROUP_TYPE", group_type}});
   std::string optimized_hlo_string = GetOptimizedHlo(hlo_with_new_type);
