@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_MEMORY_RESERVATION_H_
 
 #include <cstddef>
+#include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -98,6 +99,30 @@ class MemoryReservation {
     // Unmaps the given range on the reservation and logs on failure.
     static void UnmapAndLogIfError(MemoryReservation* reservation,
                                    size_t reservation_offset, size_t size);
+
+    // Remap helpers. ----------------------------------------------------------
+
+    // Validates that `mappings` are contiguous, have non-null allocations, and
+    // exactly cover [existing_reservation_offset,
+    // existing_reservation_offset + existing_size). Returns the covered size.
+    static absl::StatusOr<size_t> ValidateRemapDescriptors(
+        absl::Span<const RemappingDescriptor> mappings,
+        size_t existing_reservation_offset, size_t existing_size);
+
+    // Unmaps the slices whose backing handle changed, coalescing contiguous
+    // remapped runs into a single UnMap. Clears the corresponding entries in
+    // `slice_mapped` and returns the number of changed slices.
+    static absl::StatusOr<int> UnmapChangedRuns(
+        MemoryReservation* reservation,
+        absl::Span<const RemappingDescriptor> mappings,
+        std::vector<bool>& slice_mapped);
+
+    // Maps each changed slice to its new physical handle and sets the
+    // corresponding entries in `slice_mapped`.
+    static absl::Status MapChangedSlices(
+        MemoryReservation* reservation,
+        absl::Span<const RemappingDescriptor> mappings,
+        std::vector<bool>& slice_mapped);
 
     friend class MemoryReservation;
     ScopedMapping(MemoryReservation* reservation, size_t reservation_offset,

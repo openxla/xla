@@ -149,20 +149,10 @@ absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::MapTo(
 
 // ScopedMapping::Remap
 
-absl::StatusOr<MemoryReservation::ScopedMapping>
-MemoryReservation::ScopedMapping::Remap(
-    absl::Span<const MemoryReservation::RemappingDescriptor> mappings) && {
-  if (reservation_ == nullptr) {
-    return absl::FailedPreconditionError("Remap: mapping is empty");
-  }
-  if (mappings.empty()) {
-    return absl::InvalidArgumentError("Remap: mappings must not be empty");
-  }
-
-  MemoryReservation* reservation = reservation_;
-  const size_t existing_reservation_offset = reservation_offset_;
-  const size_t existing_size = size_;
-
+absl::StatusOr<size_t>
+MemoryReservation::ScopedMapping::ValidateRemapDescriptors(
+    absl::Span<const MemoryReservation::RemappingDescriptor> mappings,
+    size_t existing_reservation_offset, size_t existing_size) {
   const size_t start_offset = mappings[0].reservation_offset;
   size_t expected_offset = start_offset;
   for (const MemoryReservation::RemappingDescriptor& desc : mappings) {
@@ -187,6 +177,79 @@ MemoryReservation::ScopedMapping::Remap(
         existing_reservation_offset + existing_size, start_offset,
         start_offset + total_size));
   }
+  return total_size;
+}
+
+absl::StatusOr<int> MemoryReservation::ScopedMapping::UnmapChangedRuns(
+    MemoryReservation* reservation,
+    absl::Span<const MemoryReservation::RemappingDescriptor> mappings,
+    std::vector<bool>& slice_mapped) {
+  // Unmap the slices whose backing physical handle changed, coalescing
+  // contiguous runs into a single UnMap. A single hipMemUnmap can release a
+  // range spanning several separately-mapped slices (the ScopedMapping
+  // destructor relies on exactly this to unmap the whole reservation in one
+  // call), so unmapping per contiguous run instead of per slice cuts the number
+  // of driver round-trips on the hot path. Unchanged slices keep their mapping,
+  // which is the whole point: it avoids the page-table churn of remapping every
+  // slice on every step.
+  int changed_count = 0;
+  for (size_t k = 0; k < mappings.size();) {
+    if (!mappings[k].remap_required) {
+      ++k;
+      continue;
+    }
+    const size_t run_start = mappings[k].reservation_offset;
+    size_t run_end = run_start;
+    size_t j = k;
+    while (j < mappings.size() && mappings[j].remap_required) {
+      run_end = mappings[j].reservation_offset + mappings[j].size;
+      ++changed_count;
+      ++j;
+    }
+    RETURN_IF_ERROR(reservation->UnMap(run_start, run_end - run_start));
+    for (size_t m = k; m < j; ++m) {
+      slice_mapped[m] = false;
+    }
+    k = j;
+  }
+  return changed_count;
+}
+
+absl::Status MemoryReservation::ScopedMapping::MapChangedSlices(
+    MemoryReservation* reservation,
+    absl::Span<const MemoryReservation::RemappingDescriptor> mappings,
+    std::vector<bool>& slice_mapped) {
+  // Map each changed slice to its new physical handle. Map must be per slice
+  // because each slice has its own backing allocation and offset.
+  for (size_t k = 0; k < mappings.size(); ++k) {
+    if (!mappings[k].remap_required) {
+      continue;
+    }
+    const MemoryReservation::RemappingDescriptor& dk = mappings[k];
+    RETURN_IF_ERROR(reservation->Map(dk.reservation_offset,
+                                     dk.allocation_offset, dk.size,
+                                     *dk.allocation));
+    slice_mapped[k] = true;
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<MemoryReservation::ScopedMapping>
+MemoryReservation::ScopedMapping::Remap(
+    absl::Span<const MemoryReservation::RemappingDescriptor> mappings) && {
+  // Checks.
+  if (reservation_ == nullptr) {
+    return absl::FailedPreconditionError("Remap: mapping is empty");
+  }
+  if (mappings.empty()) {
+    return absl::InvalidArgumentError("Remap: mappings must not be empty");
+  }
+  ASSIGN_OR_RETURN(
+      const size_t total_size,
+      ValidateRemapDescriptors(mappings, reservation_offset_, size_));
+
+  MemoryReservation* reservation = reservation_;
+  const size_t start_offset = mappings[0].reservation_offset;
 
   // Track per-slice mapped state for cleanup on failure. Every slice starts
   // mapped because this ScopedMapping owns the full range. Changed slices are
@@ -213,50 +276,15 @@ MemoryReservation::ScopedMapping::Remap(
     }
   });
 
-  // Phase 1: unmap the slices whose backing physical handle changed, coalescing
-  // contiguous runs into a single UnMap. A single hipMemUnmap can release a
-  // range spanning several separately-mapped slices (the ScopedMapping
-  // destructor relies on exactly this to unmap the whole reservation in one
-  // call), so unmapping per contiguous run instead of per slice cuts the number
-  // of driver round-trips on the hot path. Unchanged slices keep their mapping,
-  // which is the whole point: it avoids the page-table churn of remapping every
-  // slice on every step.
+  // Phase 1: unmap the slices whose backing physical handle changed.
   const absl::Time t_unmap0 = absl::Now();
-  int changed_count = 0;
-  for (size_t k = 0; k < mappings.size();) {
-    if (!mappings[k].remap_required) {
-      ++k;
-      continue;
-    }
-    const size_t run_start = mappings[k].reservation_offset;
-    size_t run_end = run_start;
-    size_t j = k;
-    while (j < mappings.size() && mappings[j].remap_required) {
-      run_end = mappings[j].reservation_offset + mappings[j].size;
-      ++changed_count;
-      ++j;
-    }
-    RETURN_IF_ERROR(reservation->UnMap(run_start, run_end - run_start));
-    for (size_t m = k; m < j; ++m) {
-      slice_mapped[m] = false;
-    }
-    k = j;
-  }
+  ASSIGN_OR_RETURN(const int changed_count,
+                   UnmapChangedRuns(reservation, mappings, slice_mapped));
   const bool any_remapped = changed_count > 0;
 
-  // Phase 2: map each changed slice to its new physical handle. Map must be per
-  // slice because each slice has its own backing allocation and offset.
+  // Phase 2: map each changed slice to its new physical handle.
   const absl::Time t_map0 = absl::Now();
-  for (size_t k = 0; k < mappings.size(); ++k) {
-    if (!mappings[k].remap_required) {
-      continue;
-    }
-    const auto& dk = mappings[k];
-    RETURN_IF_ERROR(reservation->Map(dk.reservation_offset,
-                                     dk.allocation_offset, dk.size,
-                                     *dk.allocation));
-    slice_mapped[k] = true;
-  }
+  RETURN_IF_ERROR(MapChangedSlices(reservation, mappings, slice_mapped));
 
   // Grant device access once over the FULL reservation range. On ROCm,
   // hipMemSetAccess for peer devices rejects any partial range (sub-range or

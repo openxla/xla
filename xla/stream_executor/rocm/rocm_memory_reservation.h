@@ -45,8 +45,11 @@ class RocmMemoryReservation : public MemoryReservation {
 
   ~RocmMemoryReservation() override;
 
-  // Move is disabled to prevent double-free of the virtual address range:
-  // the destructor calls hipMemAddressFree on ptr_. Matches CudaMemoryReservation.
+  // Non-movable: the base class MemoryReservation already deletes its move
+  // operations, and instances are only ever created through Create(), which
+  // returns a std::unique_ptr. Ownership is therefore transferred via the
+  // pointer, never by moving the object, so there is no moved-from state to
+  // reason about. Matches CudaMemoryReservation.
   RocmMemoryReservation(RocmMemoryReservation&&) = delete;
   RocmMemoryReservation& operator=(RocmMemoryReservation&&) = delete;
 
@@ -62,7 +65,10 @@ class RocmMemoryReservation : public MemoryReservation {
   absl::Status UnMap(size_t reservation_offset, size_t size) override;
 
   StreamExecutor* executor_;
-  char* ptr_;  // nullptr means moved-from / released
+  // Base of the reserved virtual address range. Non-null after construction
+  // (the class is non-movable and exposes no release path); the destructor's
+  // null check is purely defensive.
+  char* ptr_;
   uint64_t size_;
   // Bytes currently mapped into the reservation. Kept in sync by Map()/UnMap()
   // so the destructor can skip a redundant hipMemUnmap when the ScopedMapping
