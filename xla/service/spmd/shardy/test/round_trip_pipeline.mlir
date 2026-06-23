@@ -364,3 +364,45 @@ func.func @main(%arg0: !stablehlo.token) -> tensor<8x4xf32> {
 // TODO(b/335481977): Add more tests for StableHLO ops. So far tested all SDY
 // compiler APIs other than shard as/like (doesn't exist yet). See
 // round_trip_pipeline_manual_computation.mlir for ManualComputationOp tests.
+
+// -----
+
+sdy.mesh @mesh_unreduced = <["x"=2, "y"=2]>
+
+// CHECK-LABEL: func @main
+// CHECK-V2-NEXT: %[[SC:.*]] = sdy.sharding_constraint %arg0 <@mesh_unreduced, [{}, {"x"}], unreduced={"y"}> : tensor<8x16xf32>
+// CHECK-V3-NEXT: %[[SC:.*]] = sdy.sharding_constraint %arg0 <@mesh, [{}, {"x"}], unreduced={"y"}> : tensor<8x16xf32>
+// CHECK-NEXT: return %[[SC]] : tensor<8x16xf32>
+func.func @main(
+  %arg0: tensor<8x16xf32>) -> (tensor<8x16xf32>) {
+  %0 = sdy.sharding_constraint %arg0 <@mesh_unreduced, [{}, {"x"}], unreduced=[sum{"y"}]> : tensor<8x16xf32>
+  return %0 : tensor<8x16xf32>
+}
+
+// -----
+
+sdy.mesh @mesh_unreduced_max = <["x"=2, "y"=2]>
+
+// CHECK-LABEL: func @main
+// CHECK-V2-NEXT: %[[SC:.*]] = sdy.sharding_constraint %arg0 <@mesh_unreduced_max, [{}, {"x"}], unreduced=[max{"y"}]> : tensor<8x16xf32>
+// CHECK-V3-NEXT: %[[SC:.*]] = sdy.sharding_constraint %arg0 <@mesh, [{}, {"x"}], unreduced=[max{"y"}]> : tensor<8x16xf32>
+// CHECK-NEXT: return %[[SC]] : tensor<8x16xf32>
+func.func @main(
+  %arg0: tensor<8x16xf32>) -> (tensor<8x16xf32>) {
+  %0 = sdy.sharding_constraint %arg0 <@mesh_unreduced_max, [{}, {"x"}], unreduced=[max{"y"}]> : tensor<8x16xf32>
+  return %0 : tensor<8x16xf32>
+}
+
+// -----
+
+sdy.mesh @mesh_unreduced_mixed = <["x"=2, "y"=2, "z"=2]>
+
+// CHECK-LABEL: func @main
+// CHECK-V2-NEXT: %[[SC:.*]] = sdy.sharding_constraint %arg0 <@mesh_unreduced_mixed, [{}, {"x"}], unreduced=[sum{"y"}, max{"z"}]> : tensor<8x16xf32>
+// CHECK-V3-NEXT: %[[SC:.*]] = sdy.sharding_constraint %arg0 <@mesh, [{}, {"x"}], unreduced=[sum{"y"}, max{"z"}]> : tensor<8x16xf32>
+// CHECK-NEXT: return %[[SC]] : tensor<8x16xf32>
+func.func @main(
+  %arg0: tensor<8x16xf32>) -> (tensor<8x16xf32>) {
+  %0 = sdy.sharding_constraint %arg0 <@mesh_unreduced_mixed, [{}, {"x"}], unreduced=[sum{"y"}, max{"z"}]> : tensor<8x16xf32>
+  return %0 : tensor<8x16xf32>
+}

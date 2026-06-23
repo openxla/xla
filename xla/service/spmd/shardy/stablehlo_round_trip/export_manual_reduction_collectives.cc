@@ -74,6 +74,7 @@ using ::mlir::sdy::AxisRefAttr;
 using ::mlir::sdy::AxisRefListAttr;
 using ::mlir::sdy::ManualComputationOp;
 using ::mlir::sdy::MeshAttr;
+
 using ::mlir::sdy::TensorShardingAttr;
 
 inline constexpr absl::string_view kNonDivisibleShardingError =
@@ -149,16 +150,31 @@ void convertAllReduce(sdy::AllReduceOp op, int64_t channelId,
             op->getContext(), /*handle=*/channelId, /*type=*/1);
         // Setting `use_global_device_ids=true` as we are targeting the
         // `CollectiveOpGroupMode::kFlattenedID` mode.
+        auto reductionAxesAttr = op.getReductionAxesAttr();
         auto newAllReduce = stablehlo::AllReduceOp::create(
             blockBuilder, op.getLoc(), arg.getType(), arg,
-            getReplicaGroups(op.getReductionAxesAttr(), mesh, blockBuilder),
+            getReplicaGroups(reductionAxesAttr, mesh, blockBuilder),
             channelHandle,
             /*use_global_device_ids=*/true);
         // No need to add a sharding to the all-reduce, since it's inside a
         // fully manual computation.
-        stablehlo::buildReduceBody<stablehlo::AddOp>(
-            mlir::cast<mlir::ShapedType>(arg.getType()).getElementType(),
-            newAllReduce.getComputation(), blockBuilder);
+        switch (op.getReductionOp()) {
+          case sdy::ReductionOp::SUM:
+            stablehlo::buildReduceBody<stablehlo::AddOp>(
+                mlir::cast<mlir::ShapedType>(arg.getType()).getElementType(),
+                newAllReduce.getComputation(), blockBuilder);
+            break;
+          case sdy::ReductionOp::MAX:
+            stablehlo::buildReduceBody<stablehlo::MaxOp>(
+                mlir::cast<mlir::ShapedType>(arg.getType()).getElementType(),
+                newAllReduce.getComputation(), blockBuilder);
+            break;
+          case sdy::ReductionOp::MIN:
+            stablehlo::buildReduceBody<stablehlo::MinOp>(
+                mlir::cast<mlir::ShapedType>(arg.getType()).getElementType(),
+                newAllReduce.getComputation(), blockBuilder);
+            break;
+        }
         return newAllReduce.getResult(0);
       });
   rewriter.replaceOp(op, manualComputation);
@@ -203,9 +219,23 @@ int64_t convertReduceScatter(sdy::ReduceScatterOp op, int64_t nextChannelId,
               /*use_global_device_ids=*/true);
           // No need to add a sharding to the reduce-scatter, since it's inside
           // a fully manual computation.
-          stablehlo::buildReduceBody<stablehlo::AddOp>(
-              mlir::cast<mlir::ShapedType>(arg.getType()).getElementType(),
-              newReduceScatter.getComputation(), blockBuilder);
+          switch (op.getReductionOp()) {
+            case sdy::ReductionOp::SUM:
+              stablehlo::buildReduceBody<stablehlo::AddOp>(
+                  mlir::cast<mlir::ShapedType>(arg.getType()).getElementType(),
+                  newReduceScatter.getComputation(), blockBuilder);
+              break;
+            case sdy::ReductionOp::MAX:
+              stablehlo::buildReduceBody<stablehlo::MaxOp>(
+                  mlir::cast<mlir::ShapedType>(arg.getType()).getElementType(),
+                  newReduceScatter.getComputation(), blockBuilder);
+              break;
+            case sdy::ReductionOp::MIN:
+              stablehlo::buildReduceBody<stablehlo::MinOp>(
+                  mlir::cast<mlir::ShapedType>(arg.getType()).getElementType(),
+                  newReduceScatter.getComputation(), blockBuilder);
+              break;
+          }
           curInput = newReduceScatter.getResult();
         }
         return curInput;
@@ -423,10 +453,12 @@ class StablehloExportManualReductionCollectivesPass
         sdy::setSharding(constant, newSharding);
 
         rewriter.setInsertionPointAfter(constant);
+        ArrayRef<AxisRefAttr> flatAxes = oldSharding.getUnreducedAxes();
         sdy::ReplicatedToUnreducedOp replicatedToUnreduced =
             sdy::ReplicatedToUnreducedOp::create(
                 rewriter, constant.getLoc(), constant,
-                oldSharding.getUnreducedAxes(), oldSharding);
+                AxisRefListAttr::get(constant.getContext(), flatAxes),
+                oldSharding);
         rewriter.replaceAllUsesExcept(constant, replicatedToUnreduced,
                                       replicatedToUnreduced);
       }

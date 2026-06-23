@@ -538,6 +538,7 @@ mlir::sdy::TensorShardingAttr convertToSdyShardingAttr(
   }
 
   SmallVector<mlir::sdy::AxisRefAttr> unreducedAxes;
+  unreducedAxes.reserve(namedSharding.unreduced_axes().size());
   for (const auto& axisRef : namedSharding.unreduced_axes()) {
     unreducedAxes.push_back(
         toSdyAxisRefAttr(axisRef, namedSharding.mesh(), context));
@@ -546,8 +547,9 @@ mlir::sdy::TensorShardingAttr convertToSdyShardingAttr(
   CHECK(namedSharding.manual_axes().empty())
       << "Manual axes should be handled by shard maps import.";
 
-  return mlir::sdy::TensorShardingAttr::get(context, meshAttr, dimShardings,
-                                            replicatedAxes, unreducedAxes);
+  return mlir::sdy::TensorShardingAttr::get(
+      context, meshAttr, dimShardings, replicatedAxes, unreducedAxes,
+      static_cast<mlir::sdy::ReductionOp>(namedSharding.reduction_op()));
 }
 
 mlir::sdy::TensorShardingPerValueAttr convertToSdySharding(

@@ -295,3 +295,18 @@ func.func @trivial_manual_computation(%arg0: tensor<8x16xf32> {sdy.sharding = #s
   } : (tensor<8x16xf32>) -> tensor<8x16xf32>
   return %0 : tensor<8x16xf32>
 }
+
+// -----
+
+sdy.mesh @mesh_1 = <["x"=8, "y"=4]>
+
+// CHECK-LABEL: func @main
+// CHECK-SAME:      %arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+  // CHECK: stablehlo.custom_call @Sharding(%arg0)
+  // CHECK-V2-SAME: {has_side_effect = true, mhlo.frontend_attributes = {xla.sdy.sharding = "#sdy.sharding_per_value<[<@mesh_1, [{}, {?}], unreduced=[sum{\22y\22}, max{\22x\22}]>]>"}
+  // CHECK-V3-NOT: mhlo.frontend_attributes
+  // CHECK-V3-SAME: {has_side_effect = true, mhlo.sharding = "{mesh['x'=8,'y'=4], [{}, {?}], unreduced=[sum{'y'}, max{'x'}]}"}
+  %0 = sdy.sharding_constraint %arg0 <@mesh_1, [{}, {?}], unreduced=[sum{"y"}, max{"x"}]> :  tensor<8x8xf32>
+  return %0 : tensor<8x8xf32>
+}
