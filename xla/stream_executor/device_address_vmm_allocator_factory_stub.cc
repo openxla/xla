@@ -21,17 +21,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/stream_executor/device_address_vmm_allocator.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/device_address_vmm_allocator.h"
-#include "xla/tsl/platform/status_macros.h"
-
-#if GOOGLE_CUDA
-#include "xla/stream_executor/cuda/cuda_device_address_vmm_allocator.h"
-#elif TENSORFLOW_USE_ROCM
-#include "xla/stream_executor/rocm/rocm_device_address_vmm_allocator.h"
-#endif  // GOOGLE_CUDA
 
 namespace stream_executor {
 
@@ -40,22 +33,8 @@ DeviceAddressVmmAllocator::Create(
     const Platform* platform, double memory_fraction,
     std::optional<int64_t> gpu_system_memory_size,
     absl::Span<const std::pair<StreamExecutor*, Stream*>> devices) {
-#if GOOGLE_CUDA
-  ASSIGN_OR_RETURN(
-      std::unique_ptr<gpu::CudaDeviceAddressVmmAllocator> allocator,
-      gpu::CudaDeviceAddressVmmAllocator::Create(
-          platform, memory_fraction, gpu_system_memory_size, devices));
-  return std::unique_ptr<DeviceAddressVmmAllocator>(std::move(allocator));
-#elif TENSORFLOW_USE_ROCM
-  ASSIGN_OR_RETURN(
-      std::unique_ptr<gpu::RocmDeviceAddressVmmAllocator> allocator,
-      gpu::RocmDeviceAddressVmmAllocator::Create(
-          platform, memory_fraction, gpu_system_memory_size, devices));
-  return std::unique_ptr<DeviceAddressVmmAllocator>(std::move(allocator));
-#else
   return absl::UnimplementedError(
       "VMM allocator is only supported with CUDA or ROCm.");
-#endif  // GOOGLE_CUDA
 }
 
 }  // namespace stream_executor
