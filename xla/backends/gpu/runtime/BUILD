@@ -4307,6 +4307,7 @@ xla_test(
         ":ragged_all_to_all",
         "//xla:shape_util",
         "//xla/backends/gpu/collectives:nccl_symmetric_memory",
+        "//xla/backends/gpu/collectives:nccl_types",
         "//xla/core/collectives:symmetric_memory",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_handle",
