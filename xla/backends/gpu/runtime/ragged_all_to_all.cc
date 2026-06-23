@@ -93,7 +93,7 @@ absl::Status RunRaggedAllToAllKernelImpl(Fn&& launch_kernel, se::Stream* stream,
   static constexpr size_t kThreads = 128;
 
   int64_t num_vectorized_row_elements = num_row_elements;
-  int64_t vector_size_bytes = xla::primitive_util::BitWidth(element_type) / 8;
+  int64_t vector_size_bytes = xla::primitive_util::ByteWidth(element_type);
 
   while (num_vectorized_row_elements % 2 == 0 && vector_size_bytes < 8) {
     num_vectorized_row_elements /= 2;
@@ -259,7 +259,7 @@ absl::Status RunDeviceRaggedAllToAllKernel(
   static constexpr size_t kThreadsPerCta = 512;
 
   int64_t num_vectorized_row_elements = num_row_elements;
-  int64_t vector_size_bytes = xla::primitive_util::BitWidth(element_type) / 8;
+  int64_t vector_size_bytes = xla::primitive_util::ByteWidth(element_type);
 
   while (num_vectorized_row_elements % 2 == 0 && vector_size_bytes < 16) {
     num_vectorized_row_elements /= 2;

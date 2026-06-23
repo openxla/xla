@@ -72,6 +72,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_handle.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/multi_gpu_barrier_kernel.h"
 #include "xla/stream_executor/gpu/ragged_all_to_all_kernel.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -803,32 +804,37 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
             << " num_ranks=" << num_ranks << " requires GIN";
       } else {
         GpuDeviceCommunicator* dev_comm = lsa_dev_comm;
+        const bool gin = has_remote_peers && gpu_comm->SupportsGin();
         if (has_remote_peers) {
           ASSIGN_OR_RETURN(dev_comm, params.collective_cliques->GetDeviceComm(
                                          clique_key, state->rank,
                                          DeviceKernelDevCommRequirements()));
         }
 
+        const int64_t num_updates_per_replica =
+            config_.num_total_updates / num_ranks;
+        // Remote peers are reached via GIN puts; local peers via LSA copies.
+        const int64_t num_active_updates =
+            (gin ? num_ranks : lsa_size) * num_updates_per_replica;
+        const int32_t cta_count = DeviceKernelLaunchCtaCount(
+            stream.parent()->GetDeviceDescription().core_count(),
+            num_active_updates);
+        const PrimitiveType element_type = device_buffers[0].element_type;
+
         XLA_VLOG_DEVICE(3, state->device_ordinal)
             << "Device kernel: lsa_size=" << lsa_size
-            << " num_ranks=" << num_ranks
-            << " gin=" << (has_remote_peers && gpu_comm->SupportsGin())
-            << " cta_count=" << device_kernel_cta_count()
-            << " num_updates_per_replica="
-            << (config_.num_total_updates / num_ranks)
+            << " num_ranks=" << num_ranks << " gin=" << gin
+            << " cta_count=" << cta_count
+            << " num_updates_per_replica=" << num_updates_per_replica
             << " num_row_elements=" << config_.num_row_elements
             << " element_type="
-            << primitive_util::LowercasePrimitiveTypeName(
-                   device_buffers[0].element_type);
-
-        int64_t num_updates_per_replica = config_.num_total_updates / num_ranks;
-        PrimitiveType element_type = device_buffers[0].element_type;
+            << primitive_util::LowercasePrimitiveTypeName(element_type);
 
         return RunDeviceRaggedAllToAllKernel(
             &stream, element_type, dev_comm, input_sym, output_sym,
             device_buffers[2].source_buffer, device_buffers[3].source_buffer,
             device_buffers[4].source_buffer, num_ranks, num_updates_per_replica,
-            config_.num_row_elements, device_kernel_cta_count(),
+            config_.num_row_elements, cta_count,
             static_cast<int64_t>(input_offset),
             static_cast<int64_t>(output_offset));
       }

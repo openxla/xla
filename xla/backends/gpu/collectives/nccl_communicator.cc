@@ -126,6 +126,8 @@ NcclCapabilities GetCapabilities(ncclComm_t comm) {
     support_device_comm = true;
   }
 
+  // ginType reports FULL any-to-any GIN; rail-only support lives in
+  // railedGinType, which we skip since our kernels need full connectivity.
   if (props.ginType != NCCL_GIN_TYPE_NONE) {
     support_gin = true;
   }
