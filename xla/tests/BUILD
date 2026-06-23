@@ -1087,7 +1087,7 @@ xla_test(
         # TODO(b/445172709): Re-enable once fixed.
         "b200": ["broken"],
     },
-    shard_count = 50,
+    shard_count = 20,
     tags = ["optonly"],
     deps = [
         ":client_library_test_runner_mixin",
