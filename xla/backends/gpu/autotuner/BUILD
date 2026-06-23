@@ -908,6 +908,7 @@ xla_cc_binary(
         ":gpu_profiler",
         ":legacy_cache",
         "//xla:debug_options_flags",
+        "//xla:status_macros",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner",
         "//xla/backends/autotuner:autotuner_cache_interface",
@@ -974,6 +975,7 @@ xla_test(
     deps = [
         ":gpu_profiler",
         "//xla:debug_options_flags",
+        "//xla:status_macros",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner",
         "//xla/backends/autotuner:autotuner_cache_interface",
