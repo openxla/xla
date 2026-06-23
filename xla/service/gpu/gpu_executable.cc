@@ -487,18 +487,15 @@ GpuExecutable::GpuExecutable(
 
   const DebugOptions* allocation_debug_options =
       has_module() ? &module_config().debug_options() : nullptr;
-  DebugOptions::CommandBufferUpdateMode update_mode =
-      allocation_debug_options != nullptr
-          ? allocation_debug_options->xla_gpu_command_buffer_update_mode()
-          : DebugOptions::ALWAYS_UPDATE;
-  auto command_buffer_allocation_indexes =
-      GpuExecutableBufferAllocator::CollectCommandBufferAllocationIndexes(
-          thunk_executor_.get(), allocation_ptrs_, update_mode);
-  CHECK_OK(command_buffer_allocation_indexes.status());
+  GpuExecutableBufferAllocator::AllocationIndexSet
+      returned_output_allocation_indexes;
+  for (const auto& [_, output_info] : output_info_) {
+    returned_output_allocation_indexes.insert(output_info.allocation_index);
+  }
   buffer_allocator_ = std::make_unique<GpuExecutableBufferAllocator>(
       module_name_, allocation_ptrs_, program_shape_.result(),
-      allocation_debug_options, update_mode,
-      std::move(command_buffer_allocation_indexes).value());
+      allocation_debug_options, thunk_executor_.get(),
+      std::move(returned_output_allocation_indexes));
 }
 
 GpuExecutable::~GpuExecutable() {
@@ -1067,21 +1064,15 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
         param_no};
   };
 
-  absl::flat_hash_set<BufferAllocation::Index> returned_output_allocations;
-  for (const auto& [_, output_info] : output_info_) {
-    returned_output_allocations.insert(output_info.allocation_index);
-  }
-
   ASSIGN_OR_RETURN(
       GpuExecutableBufferAllocator::ExecutionScope allocation_scope,
       buffer_allocator_->CreateExecutionScope(run_options, memory_allocator,
                                               device_ordinal));
 
-  ASSIGN_OR_RETURN(
-      BufferAllocations owning_buffer_allocations,
-      allocation_scope.GenerateBufferAllocations(
-          run_options, get_parameter_buffer, globals, memory_allocator,
-          device_ordinal, returned_output_allocations));
+  ASSIGN_OR_RETURN(BufferAllocations owning_buffer_allocations,
+                   allocation_scope.GenerateBufferAllocations(
+                       run_options, get_parameter_buffer, globals,
+                       memory_allocator, device_ordinal));
   XLA_VLOG_DEVICE(3, device_ordinal) << owning_buffer_allocations.ToString();
   absl::Span<const BufferAllocation* const> allocations = GetAllocations();
 

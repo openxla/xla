@@ -32,7 +32,6 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -2103,11 +2102,6 @@ StreamExecutorGpuClient::RunAsync(
         param_no};
   };
 
-  absl::flat_hash_set<BufferAllocation::Index> output_allocations;
-  for (const auto& [_, output_info] : gpu_exec->output_info()) {
-    output_allocations.insert(output_info.allocation_index);
-  }
-
   ASSIGN_OR_RETURN(
       gpu::GpuExecutableBufferAllocator::ExecutionScope allocation_scope,
       gpu_exec->buffer_allocator().CreateExecutionScope(
@@ -2116,7 +2110,7 @@ StreamExecutorGpuClient::RunAsync(
   ASSIGN_OR_RETURN(xla::gpu::BufferAllocations buffer_allocations,
                    allocation_scope.GenerateBufferAllocations(
                        run_options, get_parameter_buffer, globals,
-                       memory_allocator, device_ordinal, output_allocations));
+                       memory_allocator, device_ordinal));
   XLA_VLOG_DEVICE(3, device_ordinal)
       << "Buffer allocations: " << buffer_allocations.ToString();
 

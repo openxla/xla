@@ -243,9 +243,7 @@ GpuExecutableBufferAllocator::ExecutionScope::BufferForAllocation(
     se::DeviceAddressAllocator* const memory_allocator, int device_ordinal,
     int64_t arg_idx,
     const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
-        allocate_granularity,
-    const absl::flat_hash_set<BufferAllocation::Index>&
-        returned_output_allocations) {
+        allocate_granularity) {
   if (allocation.is_thread_local()) {
     return se::DeviceAddressBase{};
   }
@@ -287,7 +285,8 @@ GpuExecutableBufferAllocator::ExecutionScope::BufferForAllocation(
     if (ShouldRemapAllocation(allocation.index())) {
       bool return_reservation_address =
           !(allocation.maybe_live_out() &&
-            returned_output_allocations.contains(allocation.index()));
+            owner_->returned_output_allocation_indexes_.contains(
+                allocation.index()));
       buffer = AllocateBuffer(device_ordinal, allocation, buffer_size,
                               return_reservation_address);
     } else {
@@ -307,9 +306,7 @@ GpuExecutableBufferAllocator::ExecutionScope::GenerateBufferAllocations(
     const ServiceExecutableRunOptions* run_options,
     ParameterBufferResolver get_parameter_buffer,
     const BufferAllocToDeviceMemoryMap* globals,
-    se::DeviceAddressAllocator* const memory_allocator, int device_ordinal,
-    const absl::flat_hash_set<BufferAllocation::Index>&
-        returned_output_allocations) {
+    se::DeviceAddressAllocator* const memory_allocator, int device_ordinal) {
   tsl::profiler::TraceMe hlo_module_activity(
       [&] { return std::string("Build buffer allocations"); },
       tsl::profiler::TraceMeLevel::kInfo);
@@ -344,7 +341,7 @@ GpuExecutableBufferAllocator::ExecutionScope::GenerateBufferAllocations(
         buffers.emplace_back(),
         BufferForAllocation(get_parameter_buffer, globals, allocation,
                             memory_allocator, device_ordinal, i,
-                            allocate_granularity, returned_output_allocations));
+                            allocate_granularity));
     RETURN_IF_ERROR(CheckAlignment(allocation, buffers.back(), i));
   }
   return BufferAllocations(buffers, device_ordinal, memory_allocator);
@@ -576,14 +573,24 @@ GpuExecutableBufferAllocator::GpuExecutableBufferAllocator(
     absl::string_view module_name,
     absl::Span<const BufferAllocation* const> allocations,
     const Shape& result_shape, const DebugOptions* debug_options,
-    DebugOptions::CommandBufferUpdateMode update_mode,
-    AllocationIndexSet allocation_indexes)
+    ThunkExecutor* thunk_executor,
+    AllocationIndexSet returned_output_allocation_indexes)
     : module_name_(module_name),
       allocations_(allocations.begin(), allocations.end()),
       result_shape_(result_shape),
       debug_options_(debug_options),
-      update_mode_(update_mode),
-      command_buffer_allocation_indexes_(std::move(allocation_indexes)) {
+      update_mode_(debug_options_ != nullptr
+                       ? debug_options_->xla_gpu_command_buffer_update_mode()
+                       : DebugOptions::ALWAYS_UPDATE),
+      returned_output_allocation_indexes_(
+          std::move(returned_output_allocation_indexes)) {
+  auto command_buffer_allocation_indexes =
+      CollectCommandBufferAllocationIndexes(thunk_executor, allocations_,
+                                            update_mode_);
+  CHECK_OK(command_buffer_allocation_indexes.status());
+  command_buffer_allocation_indexes_ =
+      std::move(command_buffer_allocation_indexes).value();
+
   VLOG(3) << "VA remapping: collected "
           << command_buffer_allocation_indexes_.size()
           << " allocation indexes for module " << module_name_;

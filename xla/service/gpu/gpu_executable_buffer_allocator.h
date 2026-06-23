@@ -25,7 +25,6 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/container/flat_hash_set.h"
 #include "absl/container/node_hash_map.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
@@ -99,9 +98,7 @@ class GpuExecutableBufferAllocator {
         const ServiceExecutableRunOptions* run_options,
         ParameterBufferResolver get_parameter_buffer,
         const BufferAllocToDeviceMemoryMap* globals,
-        se::DeviceAddressAllocator* memory_allocator, int device_ordinal,
-        const absl::flat_hash_set<BufferAllocation::Index>&
-            returned_output_allocations);
+        se::DeviceAddressAllocator* memory_allocator, int device_ordinal);
 
     // Copy-protection for an aliased output that was not donated at runtime:
     // allocates a fresh result buffer for the output at `index`, copies the
@@ -142,9 +139,7 @@ class GpuExecutableBufferAllocator {
         se::DeviceAddressAllocator* memory_allocator, int device_ordinal,
         int64_t arg_idx,
         const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
-            allocate_granularity,
-        const absl::flat_hash_set<BufferAllocation::Index>&
-            returned_output_allocations);
+            allocate_granularity);
     absl::StatusOr<BufferAllocations> BuildExecutionBufferAllocations(
         const BufferAllocations& owning_buffer_allocations, int device_ordinal);
     absl::Status UnmapAliases(int device_ordinal);
@@ -170,8 +165,8 @@ class GpuExecutableBufferAllocator {
       absl::string_view module_name,
       absl::Span<const BufferAllocation* const> allocations,
       const Shape& result_shape, const DebugOptions* debug_options,
-      DebugOptions::CommandBufferUpdateMode update_mode,
-      AllocationIndexSet allocation_indexes);
+      ThunkExecutor* thunk_executor,
+      AllocationIndexSet returned_output_allocation_indexes);
   ~GpuExecutableBufferAllocator();
 
   size_t command_buffer_allocation_count() const {
@@ -207,6 +202,7 @@ class GpuExecutableBufferAllocator {
   Shape result_shape_;
   const DebugOptions* debug_options_ = nullptr;
   DebugOptions::CommandBufferUpdateMode update_mode_;
+  AllocationIndexSet returned_output_allocation_indexes_;
   AllocationIndexSet command_buffer_allocation_indexes_;
 
   absl::Mutex remappings_mutex_;
