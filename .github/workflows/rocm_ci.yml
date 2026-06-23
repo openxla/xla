@@ -108,7 +108,7 @@ jobs:
     timeout-minutes: 220
     env:
       DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
-      EXECUTE_CI_BUILD_URL: https://raw.githubusercontent.com/ROCm/xla/refs/heads/rocm-dev-infra/build_tools/rocm/execute_ci_build_upstream.sh
+      EXECUTE_CI_BUILD_URL: https://raw.githubusercontent.com/ROCm/xla/refs/pull/984/head/build_tools/rocm/execute_ci_build_upstream.sh
     container: *rocm_container
     defaults:
       run:
@@ -136,6 +136,7 @@ jobs:
           build_tools/rocm/execute_ci_build_upstream.sh \
             --config=rocm_ci \
             --config=rocm_rbe \
+            --cache_test_results=no \
             --config=ci_single_gpu \
             --local_test_jobs=1 \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
@@ -145,7 +146,7 @@ jobs:
             --bes_keywords=xla \
             --bes_keywords=upstream \
             --bes_keywords=gpu \
-            --bes_keywords=pull_request
+            --bes_keywords=pull_request \
       - name: Test XLA [rocm_cpu]
         timeout-minutes: 80
         run: |
