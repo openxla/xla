@@ -105,7 +105,7 @@ struct GemmConfig : public se::gpu::GemmConfig {
   static constexpr int64_t kGFX950Workspace = 64 * 1024 * 1024;  // 64 MiB
   static constexpr int64_t kDefaultWorkspace = 4 * 1024 * 1024;  // 4 MiB
   // the number of algorithms to consider for autotuning by default
-  static constexpr int64_t kNumAlgorithms = 128;
+  static constexpr int64_t kNumAlgorithms = 8;
 
   static absl::StatusOr<GemmConfig> For(
       const HloInstruction* gemm, const se::GpuComputeCapability& gpu_version);
