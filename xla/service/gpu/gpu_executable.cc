@@ -1069,11 +1069,11 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
       buffer_allocator_->CreateExecutionScope(run_options, memory_allocator,
                                               device_ordinal));
 
-  ASSIGN_OR_RETURN(BufferAllocations owning_buffer_allocations,
+  ASSIGN_OR_RETURN(BufferAllocations buffer_allocations,
                    allocation_scope.GenerateBufferAllocations(
                        run_options, get_parameter_buffer, globals,
                        memory_allocator, device_ordinal));
-  XLA_VLOG_DEVICE(3, device_ordinal) << owning_buffer_allocations.ToString();
+  XLA_VLOG_DEVICE(3, device_ordinal) << buffer_allocations.ToString();
   absl::Span<const BufferAllocation* const> allocations = GetAllocations();
 
   std::set<se::DeviceAddressBase> buffers_in_result;
@@ -1151,7 +1151,7 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
         ASSIGN_OR_RETURN(
             result_buffer,
             allocation_scope.AllocateCopyProtectedOutputBuffer(
-                run_options, owning_buffer_allocations, index, *allocation,
+                run_options, buffer_allocations, index, *allocation,
                 device_ordinal, memory_allocator, [&](absl::Status status) {
                   return ResourceExhausted("%s\n%s\n", status.message(),
                                            buffer_allocations_debug_summary());
@@ -1162,8 +1162,8 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
     if (result_buffer.is_null()) {
       // The source instruction should have a non-parameter buffer
       // assigned.
-      result_buffer = owning_buffer_allocations.GetDeviceAddress(
-          output_info.allocation_index);
+      result_buffer =
+          buffer_allocations.GetDeviceAddress(output_info.allocation_index);
 
       // If the entire tuple contents is aliased, the copy insertion will *not*
       // materialize a new tuple, so we mark it as aliased as well.
@@ -1175,12 +1175,12 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   }
 
   absl::Status execute_status = allocation_scope.ExecuteWithBufferAllocations(
-      owning_buffer_allocations, device_ordinal,
+      buffer_allocations, device_ordinal,
       [&](const BufferAllocations& execution_buffers) {
         return ExecuteThunks(execution_buffers, run_options);
       });
   absl::Status teardown_status =
-      owning_buffer_allocations.TearDown(buffers_in_result, GetAllocations());
+      buffer_allocations.TearDown(buffers_in_result, GetAllocations());
 
   RETURN_IF_ERROR(execute_status);
   RETURN_IF_ERROR(teardown_status);
