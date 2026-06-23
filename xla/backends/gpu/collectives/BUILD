@@ -23,6 +23,7 @@ package_group(
 cc_library(
     name = "nccl_collectives_if_nccl",
     tags = [
+        "cuda-only",
         "gpu",
     ],
     deps = if_nccl([":nccl_collectives"]),
@@ -250,7 +251,6 @@ xla_test(
         ":gpu_cliques",
         ":gpu_collectives",
         ":loopback_collectives",
-        ":nccl_or_rccl_collectives",  # fixdeps: keep
         "//xla:executable_run_options",
         "//xla:future",
         "//xla/core/collectives",
@@ -274,7 +274,9 @@ xla_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",  # fixdeps: keep
         "@tsl//tsl/platform:casts",
-    ] + if_cuda_is_configured([
+    ] + if_cuda_or_rocm_is_configured([
+        ":nccl_or_rccl_collectives",
+    ]) + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_platform",
     ]) + if_rocm_is_configured([
         "//xla/stream_executor/rocm:rocm_platform",
@@ -367,7 +369,6 @@ xla_test(
         ":gpu_clique_key",
         ":gpu_collectives",
         ":gpu_communicator",
-        ":nccl_or_rccl_collectives",  # buildcleaner: keep
         "//xla:future",
         "//xla:xla_data_proto_cc",
         "//xla/core/collectives:communicator",
@@ -395,7 +396,9 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",  # buildcleaner: keep
-    ] + if_cuda_is_configured([
+    ] + if_cuda_or_rocm_is_configured([
+        ":nccl_or_rccl_collectives",
+    ])  + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_platform",
     ]) + if_rocm_is_configured([
         "//xla/stream_executor/rocm:rocm_platform",
