@@ -214,10 +214,10 @@ class GpuExecutable : public Executable {
     return *buffer_allocator_;
   }
 
-  absl::Status ExecuteThunks(const BufferAllocations& buffer_allocations,
-                             const ServiceExecutableRunOptions* run_options,
-                             const Thunk::CommandBufferUpdateInfo*
-                                 command_buffer_update_info = nullptr);
+  absl::Status ExecuteThunks(
+      const BufferAllocations& buffer_allocations,
+      const ServiceExecutableRunOptions* run_options,
+      const Thunk::AllocationAddressInfo* allocation_address_info = nullptr);
 
   using BufferAllocToDeviceMemoryMap =
       GpuModuleGlobals::BufferAllocToDeviceMemoryMap;
@@ -302,7 +302,7 @@ class GpuExecutable : public Executable {
       Thunk::ExecutableSource executable_source,
       const ServiceExecutableRunOptions* run_options,
       const BufferAllocations& buffer_allocations, bool block_host_until_done,
-      const Thunk::CommandBufferUpdateInfo* command_buffer_update_info,
+      const Thunk::AllocationAddressInfo* allocation_address_info,
       NumAdditionalStreams num_additional_streams,
       CollectiveMemoryCache& collective_memory_cache,
       bool collective_use_minimal_resource);

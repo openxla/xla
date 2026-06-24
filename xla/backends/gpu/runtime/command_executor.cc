@@ -573,20 +573,20 @@ absl::Status CommandExecutor::RecordUpdate(
   CommandExecutorsState::Key key = std::make_pair(this, record_id);
   RecordedCommands& recorded_commands = state->recorded_commands[key];
 
-  const std::vector<bool>* update_policy_skip_commands = nullptr;
-  if (execute_params.command_buffer_update_info != nullptr &&
-      execute_params.command_buffer_update_info->update_policy_ready) {
-    CommandExecutorsState::UpdatePolicyCache& update_policy_cache =
-        state->update_policy_caches[key];
-    if (!update_policy_cache.initialized) {
+  const std::vector<bool>* address_policy_skip_commands = nullptr;
+  if (execute_params.allocation_address_info != nullptr &&
+      execute_params.allocation_address_info->address_policy_ready) {
+    CommandExecutorsState::AddressPolicyCache& address_policy_cache =
+        state->address_policy_caches[key];
+    if (!address_policy_cache.initialized) {
       DCHECK(absl::c_is_sorted(
-          execute_params.command_buffer_update_info->va_remapped_indices))
-          << "VA-remapped allocs must be sorted: "
-          << absl::StrJoin(
-                 execute_params.command_buffer_update_info->va_remapped_indices,
-                 ", ");
+          execute_params.allocation_address_info->persistent_alloc_indices))
+          << "Persistent allocs must be sorted: "
+          << absl::StrJoin(execute_params.allocation_address_info
+                               ->persistent_alloc_indices,
+                           ", ");
 
-      update_policy_cache.skip_commands.assign(commands_.size(), false);
+      address_policy_cache.skip_commands.assign(commands_.size(), false);
       for (CommandId id = 0; id < commands_.size(); ++id) {
         size_t command_index = static_cast<size_t>(id);
         DCHECK(absl::c_is_sorted(cmd_allocs_indices_[id]))
@@ -594,15 +594,15 @@ absl::Status CommandExecutor::RecordUpdate(
             << absl::StrJoin(cmd_allocs_indices_[id], ", ");
 
         if (IsSubsetOfSorted(cmd_allocs_indices_[id],
-                             execute_params.command_buffer_update_info
-                                 ->va_remapped_indices)) {
-          update_policy_cache.skip_commands[command_index] = true;
+                             execute_params.allocation_address_info
+                                 ->persistent_alloc_indices)) {
+          address_policy_cache.skip_commands[command_index] = true;
         }
       }
 
-      update_policy_cache.initialized = true;
+      address_policy_cache.initialized = true;
     }
-    update_policy_skip_commands = &update_policy_cache.skip_commands;
+    address_policy_skip_commands = &address_policy_cache.skip_commands;
   }
 
   // Check if command `id` has to be updated based on the buffer allocations
@@ -622,15 +622,15 @@ absl::Status CommandExecutor::RecordUpdate(
       return false;
     }
 
-    // VA-remapped allocations keep stable command-buffer-visible addresses. If
-    // every allocation referenced by this command is VA-remapped, the command
+    // Persistent allocations keep stable command-buffer-visible addresses. If
+    // every allocation referenced by this command is persistent, the command
     // does not need an update, including traced collective commands that also
     // require initialization.
-    if (execute_params.command_buffer_update_info != nullptr &&
-        execute_params.command_buffer_update_info->update_policy_ready) {
+    if (execute_params.allocation_address_info != nullptr &&
+        execute_params.allocation_address_info->address_policy_ready) {
       size_t command_index = static_cast<size_t>(id);
-      if (update_policy_skip_commands != nullptr &&
-          (*update_policy_skip_commands)[command_index]) {
+      if (address_policy_skip_commands != nullptr &&
+          (*address_policy_skip_commands)[command_index]) {
         return true;
       }
     }

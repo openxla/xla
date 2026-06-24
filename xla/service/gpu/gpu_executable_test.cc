@@ -225,7 +225,7 @@ TEST_F(GpuExecutableTest, RunThunkPasses) {
   EXPECT_EQ(dump_files.size(), 1);
 }
 
-TEST_F(GpuExecutableTest, CommandBufferAllocationIndexesSkipMlirConstants) {
+TEST_F(GpuExecutableTest, CommandBufferAllocationIndexesIncludeMlirConstants) {
   DebugOptions debug_options = GetDebugOptionsFromFlags();
   debug_options.set_xla_gpu_graph_min_graph_size(1);
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
@@ -286,7 +286,7 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationIndexesSkipMlirConstants) {
       ElementsAre(Pointee(Property(&Thunk::kind, Thunk::kCommandBuffer))));
   EXPECT_THAT(
       executable->buffer_allocator().command_buffer_allocation_indexes(),
-      ElementsAre(1));
+      ElementsAre(0, 1));
 }
 
 TEST_F(GpuExecutableTest, ComputeComputationLayout) {

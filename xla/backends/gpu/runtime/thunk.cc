@@ -63,7 +63,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
     CollectiveMemory* collective_memory,
     std::vector<se::Stream*> additional_compute_streams,
     ExecutionScopedState* execution_scoped_state,
-    const CommandBufferUpdateInfo* command_buffer_update_info) {
+    const AllocationAddressInfo* allocation_address_info) {
   const gpu::GpuExecutableRunOptions* gpu_opts =
       run_options.run_options().gpu_executable_run_options();
 
@@ -83,7 +83,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
                        additional_compute_streams, execution_scoped_state,
                        enable_mock_collectives,
                        run_options.run_options().run_id().ToInt(), rng_seed,
-                       command_buffer_update_info);
+                       allocation_address_info);
 }
 
 Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
@@ -102,7 +102,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::WithComputeStream(
                        send_device_memory_function, recv_device_memory_function,
                        ffi_execution_context, additional_compute_streams,
                        execution_scoped_state, mock_collectives, execution_id,
-                       rng_seed, command_buffer_update_info);
+                       rng_seed, allocation_address_info);
 }
 
 Thunk::ExecuteParams::ExecuteParams(
@@ -117,7 +117,7 @@ Thunk::ExecuteParams::ExecuteParams(
     std::vector<se::Stream*> additional_compute_streams,
     ExecutionScopedState* execution_scoped_state, bool mock_collectives,
     int64_t execution_id, uint64_t rng_seed,
-    const CommandBufferUpdateInfo* command_buffer_update_info)
+    const AllocationAddressInfo* allocation_address_info)
     : buffer_allocations(buffer_allocations),
       stream(stream),
       command_buffer_trace_stream(command_buffer_trace_stream),
@@ -134,7 +134,7 @@ Thunk::ExecuteParams::ExecuteParams(
       mock_collectives(mock_collectives),
       execution_id(execution_id),
       rng_seed(rng_seed),
-      command_buffer_update_info(command_buffer_update_info) {}
+      allocation_address_info(allocation_address_info) {}
 
 //===----------------------------------------------------------------------===//
 

@@ -123,9 +123,9 @@ class CommandBufferThunk : public Thunk {
     // change.
     std::vector<se::DeviceAddressBase> recorded_allocs ABSL_GUARDED_BY(mutex);
 
-    // Cached intersection of this command buffer's allocation indices with the
-    // dynamic allocation set. The update policy is fixed after it becomes
-    // ready, so this only has to be computed once.
+    // Cached command buffer allocation indices that are not persistent. The
+    // address policy is fixed after it becomes ready, so this only has to be
+    // computed once.
     absl::once_flag policy_allocs_to_check_once;
     std::vector<BufferAllocation::Index> policy_allocs_to_check
         ABSL_GUARDED_BY(mutex);

@@ -54,9 +54,15 @@ using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
 
 static bool CommandBufferUpdatesEnabled(
-    const Thunk::CommandBufferUpdateInfo* update_info) {
-  return update_info == nullptr || !update_info->update_policy_ready ||
-         !update_info->dynamic_alloc_indices.empty();
+    const CommandExecutor& commands,
+    const Thunk::AllocationAddressInfo* address_info) {
+  if (address_info == nullptr || !address_info->address_policy_ready) {
+    return true;
+  }
+  DCHECK(absl::c_is_sorted(commands.allocs_indices()));
+  DCHECK(absl::c_is_sorted(address_info->persistent_alloc_indices));
+  return !absl::c_includes(address_info->persistent_alloc_indices,
+                           commands.allocs_indices());
 }
 
 //===----------------------------------------------------------------------===//
@@ -111,16 +117,16 @@ CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
   absl::Span<const BufferAllocation::Index> allocs_to_check =
       commands.allocs_indices();
 
-  if (params.command_buffer_update_info != nullptr &&
-      params.command_buffer_update_info->update_policy_ready) {
+  if (params.allocation_address_info != nullptr &&
+      params.allocation_address_info->address_policy_ready) {
     absl::call_once(
         policy_allocs_to_check_once, [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
           DCHECK(absl::c_is_sorted(commands.allocs_indices()));
           DCHECK(absl::c_is_sorted(
-              params.command_buffer_update_info->dynamic_alloc_indices));
-          absl::c_set_intersection(
+              params.allocation_address_info->persistent_alloc_indices));
+          absl::c_set_difference(
               commands.allocs_indices(),
-              params.command_buffer_update_info->dynamic_alloc_indices,
+              params.allocation_address_info->persistent_alloc_indices,
               std::back_inserter(policy_allocs_to_check));
         });
     allocs_to_check = policy_allocs_to_check;
@@ -221,7 +227,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
       /*recv_device_memory_function=*/nullptr, params.ffi_execution_context,
       /*additional_compute_streams=*/{}, params.execution_scoped_state,
       /*mock_collectives=*/false, /*execution_id=*/0,
-      /*rng_seed=*/0, params.command_buffer_update_info);
+      /*rng_seed=*/0, params.allocation_address_info);
 
   if (!cmd_buffer->warmup_done) {
     return absl::OkStatus();
@@ -238,7 +244,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   // This is required to guarantee that collective commands are recorded on all
   // participating ranks to avoid deadlocks.
   bool updates_enabled =
-      CommandBufferUpdatesEnabled(params.command_buffer_update_info);
+      CommandBufferUpdatesEnabled(commands_, params.allocation_address_info);
   if (cmd_buffer->command_buffer->state() ==
           se::CommandBuffer::State::kCreate ||
       (updates_enabled && commands_.requires_update_on_initialize())) {
@@ -310,7 +316,7 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
   auto updated_allocs = cmd_buffer->UpdateBufferAllocations(commands_, params);
 
   bool updates_enabled =
-      CommandBufferUpdatesEnabled(params.command_buffer_update_info);
+      CommandBufferUpdatesEnabled(commands_, params.allocation_address_info);
   bool is_first_record =
       cmd_buffer->command_buffer->state() == se::CommandBuffer::State::kCreate;
   bool needs_update =

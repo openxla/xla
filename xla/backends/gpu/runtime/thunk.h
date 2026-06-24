@@ -200,20 +200,22 @@ class Thunk {
   // for a GPU program run sequentially from a single thread.
   using ExecutionScopedState = absl::flat_hash_map<ThunkId, tsl::UniqueAny>;
 
-  // Command-buffer-specific update policy derived by GpuExecutable for the
-  // current execution. Non-command-buffer thunks ignore this field.
-  struct CommandBufferUpdateInfo {
-    // False until GpuExecutable has frozen the selected VA-remapped and dynamic
-    // allocation sets for this command buffer execution.
-    bool update_policy_ready = false;
+  // Allocation address policy derived by GpuExecutable for the current
+  // execution. Thunks can use this optional policy when they need to
+  // distinguish allocations with stable addresses from allocations whose
+  // addresses are dynamically assigned for each execution.
+  struct AllocationAddressInfo {
+    // False until GpuExecutable has finalized the selected persistent
+    // allocation set for this execution.
+    bool address_policy_ready = false;
 
-    // Allocation indices whose command-buffer-visible addresses are stable
-    // reservation VAs for this execution.
-    absl::Span<const BufferAllocation::Index> va_remapped_indices;
-
-    // Allocation indices that are not VA-remapped and must be checked by
-    // command buffer update logic.
-    absl::Span<const BufferAllocation::Index> dynamic_alloc_indices;
+    // Allocation indices whose device addresses are stable for this execution.
+    // This can include global constant allocations, allocations backed by
+    // reusable VMM reservation addresses, and any other allocations whose
+    // addresses are known to be persistent. Allocations not listed here should
+    // be treated as dynamically allocated by consumers that need address-change
+    // checks.
+    absl::Span<const BufferAllocation::Index> persistent_alloc_indices;
   };
 
   //===--------------------------------------------------------------------===//
@@ -281,8 +283,8 @@ class Thunk {
     // Execution scoped state shared between prepare, initialize and execute.
     ExecutionScopedState* execution_scoped_state = nullptr;
 
-    // Optional command-buffer update policy for the current execution.
-    const CommandBufferUpdateInfo* command_buffer_update_info = nullptr;
+    // Optional allocation address policy for the current execution.
+    const AllocationAddressInfo* allocation_address_info = nullptr;
   };
 
   //===--------------------------------------------------------------------===//
@@ -304,7 +306,7 @@ class Thunk {
         CollectiveMemory* collective_memory,
         std::vector<se::Stream*> additional_compute_streams = {},
         ExecutionScopedState* execution_scoped_state = nullptr,
-        const CommandBufferUpdateInfo* command_buffer_update_info = nullptr);
+        const AllocationAddressInfo* allocation_address_info = nullptr);
 
     // Constructs execute parameters from an existing parameters but with
     // different buffer allocations.
@@ -355,8 +357,8 @@ class Thunk {
 
     uint64_t rng_seed = 0;
 
-    // Optional command-buffer update policy for the current execution.
-    const CommandBufferUpdateInfo* command_buffer_update_info = nullptr;
+    // Optional allocation address policy for the current execution.
+    const AllocationAddressInfo* allocation_address_info = nullptr;
 
    private:
     friend class CommandBufferThunk;
@@ -375,7 +377,7 @@ class Thunk {
         ExecutionScopedState* execution_scoped_state = nullptr,
         bool mock_collectives = false, int64_t execution_id = 0,
         uint64_t rng_seed = 0,
-        const CommandBufferUpdateInfo* command_buffer_update_info = nullptr);
+        const AllocationAddressInfo* allocation_address_info = nullptr);
   };
 
   //===--------------------------------------------------------------------===//

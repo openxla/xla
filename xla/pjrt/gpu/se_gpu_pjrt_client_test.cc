@@ -2817,15 +2817,15 @@ TEST_F(VmmTest, CommandBufferVaRemappingSingleRangeReuse) {
 // Tests that CAPTURE_CMD_NEVER_UPDATE mode produces correct results across
 // multiple runs. The GEMM is routed through cuBLAS (GemmCmd/CublasLtCmd), which
 // are traced commands. In CAPTURE_CMD_NEVER_UPDATE mode only traced commands
-// populate command_buffer_allocation_indexes_, activating VA remapping so that
-// traced commands skip command buffer updates across single-range remaps.
+// populate the persistent allocation index set and activate VA remapping so
+// that traced commands skip command buffer updates across single-range remaps.
 TEST_F(VmmTest, CommandBufferVaRemappingCustomLibraryUpdateFree) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(VmmClientOptions()));
 
   // Pure GEMM: lhs * rhs. With Triton disabled the dot is lowered to a
   // GemmCmd/CublasLtCmd (TracedCommandBufferCmd subclass), so its allocations
-  // populate the VA-remapped allocation index set under
+  // populate the persistent and VA-remapped allocation index sets under
   // CAPTURE_CMD_NEVER_UPDATE.
   static constexpr char kHlo[] = R"(
     HloModule custom_lib_update_free_test

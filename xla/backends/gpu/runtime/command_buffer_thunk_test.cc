@@ -247,11 +247,10 @@ TEST(CommandBufferThunkTest, UpdatePolicyIgnoresVaRemappedAllocations) {
 
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
-  std::vector<BufferAllocation::Index> va_remapped_indices = {0};
-  std::vector<BufferAllocation::Index> dynamic_alloc_indices = {1};
-  Thunk::CommandBufferUpdateInfo update_info{
-      /*update_policy_ready=*/true, absl::MakeConstSpan(va_remapped_indices),
-      absl::MakeConstSpan(dynamic_alloc_indices)};
+  std::vector<BufferAllocation::Index> persistent_alloc_indices = {0};
+  Thunk::AllocationAddressInfo allocation_address_info{
+      /*address_policy_ready=*/true,
+      absl::MakeConstSpan(persistent_alloc_indices)};
 
   stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   ServiceExecutableRunOptions run_options;
@@ -259,7 +258,7 @@ TEST(CommandBufferThunkTest, UpdatePolicyIgnoresVaRemappedAllocations) {
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr,
       nullptr, /*additional_compute_streams=*/{},
-      /*execution_scoped_state=*/nullptr, &update_info);
+      /*execution_scoped_state=*/nullptr, &allocation_address_info);
 
   ASSERT_OK(thunk.ExecuteOnStream(params));
   ASSERT_OK(stream->BlockHostUntilDone());
@@ -273,7 +272,7 @@ TEST(CommandBufferThunkTest, UpdatePolicyIgnoresVaRemappedAllocations) {
   params = Thunk::ExecuteParams::Create(
       run_options, source_changed_allocations, stream.get(), stream.get(),
       nullptr, nullptr, nullptr, /*additional_compute_streams=*/{},
-      /*execution_scoped_state=*/nullptr, &update_info);
+      /*execution_scoped_state=*/nullptr, &allocation_address_info);
 
   ASSERT_OK(thunk.ExecuteOnStream(params));
   ASSERT_OK(stream->BlockHostUntilDone());
@@ -286,7 +285,7 @@ TEST(CommandBufferThunkTest, UpdatePolicyIgnoresVaRemappedAllocations) {
   params = Thunk::ExecuteParams::Create(
       run_options, dynamic_changed_allocations, stream.get(), stream.get(),
       nullptr, nullptr, nullptr, /*additional_compute_streams=*/{},
-      /*execution_scoped_state=*/nullptr, &update_info);
+      /*execution_scoped_state=*/nullptr, &allocation_address_info);
 
   ASSERT_OK(thunk.ExecuteOnStream(params));
   ASSERT_OK(stream->BlockHostUntilDone());
