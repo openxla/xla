@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
@@ -217,6 +218,15 @@ mlir::LogicalResult LowerReshape::matchAndRewrite(
   bool allow_reorder = false;
   rewriter.replaceOpWithNewOp<ttir::ReshapeOp>(op, op.getResult().getType(),
                                                op.getOperand(), allow_reorder);
+  return mlir::success();
+}
+
+mlir::LogicalResult LowerTranspose::matchAndRewrite(
+    stablehlo::TransposeOp op, mlir::PatternRewriter& rewriter) const {
+  SmallVector<int32_t> permutation =
+      llvm::to_vector_of<int32_t>(op.getPermutation());
+  rewriter.replaceOpWithNewOp<ttir::TransOp>(op, op.getResult().getType(),
+                                             op.getOperand(), permutation);
   return mlir::success();
 }
 
