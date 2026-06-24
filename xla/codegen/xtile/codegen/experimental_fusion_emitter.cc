@@ -724,6 +724,10 @@ absl::StatusOr<TensorValue> EmitBitcast(
                    tiled_bitcast.operand(0)->tile().GetStaticTileSizes());
   ASSIGN_OR_RETURN(SmallVector<int64_t> output_tile_sizes,
                    tiled_bitcast.tile().GetStaticTileSizes());
+  ASSIGN_OR_RETURN(operand_tile_sizes,
+                   GetStorageShape(operand_tile_sizes, input_shape));
+  ASSIGN_OR_RETURN(output_tile_sizes,
+                   GetStorageShape(output_tile_sizes, output_shape));
 
   // If the bitcast changes the element type to an element type of the same
   // bitwidth, we need to emit a ttir::BitcastOp.
@@ -1035,8 +1039,10 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
             "while lowering ",
             fusion.called_computation()->ToString()));
       }
-      parameter =
-          mlir::cast<TensorValue>(Cast(b, parameter, expected_element_type));
+      if (!IsPackedTritonDotScaledOperandType(hlo->shape().element_type())) {
+        parameter =
+            mlir::cast<TensorValue>(Cast(b, parameter, expected_element_type));
+      }
     }
     return parameter;
   }
@@ -1103,6 +1109,7 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
     }
     case HloOpcode::kReshape: {
       ASSIGN_OR_RETURN(auto tile_sizes, tiled_hlo.tile().GetStaticTileSizes());
+      ASSIGN_OR_RETURN(tile_sizes, GetStorageShape(tile_sizes, hlo->shape()));
       return EmitTiledReshape(
           emitter_ctx.b(), tile_sizes,
           emitter_ctx.TiledHloToTensorValue(*tiled_hlo.operand(0)));
@@ -1112,6 +1119,7 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
     }
     case HloOpcode::kTranspose: {
       ASSIGN_OR_RETURN(auto tile_sizes, tiled_hlo.tile().GetStaticTileSizes());
+      ASSIGN_OR_RETURN(tile_sizes, GetStorageShape(tile_sizes, hlo->shape()));
       return EmitTranspose(b, tile_sizes, hlo->dimensions(),
                            mlir::cast<TensorValue>(operands[0]));
     }
