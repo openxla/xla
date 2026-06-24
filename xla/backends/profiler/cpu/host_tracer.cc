@@ -14,6 +14,8 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/profiler/cpu/host_tracer.h"
 
+#include <any>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -22,6 +24,7 @@ limitations under the License.
 
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "xla/tsl/profiler/backends/cpu/host_tracer_utils.h"
 #include "xla/tsl/profiler/backends/cpu/threadpool_listener.h"
 #include "xla/tsl/profiler/backends/cpu/traceme_recorder.h"
@@ -54,6 +57,12 @@ class HostTracer : public tsl::profiler::ProfilerInterface {
 
   absl::Status CollectData(  // TENSORFLOW_STATUS_OK
       tensorflow::profiler::XSpace* space) override;
+
+  absl::StatusOr<tsl::profiler::ProfilerInterface::ConsumeResult> Consume()
+      override;
+
+  absl::Status Serialize(std::any data,
+                         tensorflow::profiler::XSpace* space) override;
 
  private:
   // Level of host tracing.
@@ -89,6 +98,7 @@ HostTracer::HostTracer(int host_trace_level, uint64_t filter_mask,
 HostTracer::~HostTracer() { Stop().IgnoreError(); }  // NOLINT
 
 absl::Status HostTracer::Start() {  // TENSORFLOW_STATUS_OK
+  LOG(INFO) << "HostTracer::Start called";
   if (recording_) {
     return absl::InternalError("TraceMeRecorder already started");
   }
@@ -128,6 +138,67 @@ absl::Status HostTracer::CollectData(  // TENSORFLOW_STATUS_OK
           space, tsl::profiler::kHostThreadsPlaneName);
   ConvertCompleteEventsToXPlane(start_timestamp_ns_, std::exchange(events_, {}),
                                 plane);
+  return absl::OkStatus();
+}
+
+absl::StatusOr<tsl::profiler::ProfilerInterface::ConsumeResult>
+HostTracer::Consume() {
+  LOG(INFO) << "HostTracer::Consume called, recording=" << recording_;
+  tsl::profiler::TraceMeRecorder::Events events;
+  if (recording_) {
+    events = tsl::profiler::TraceMeRecorder::Flush();
+  } else {
+    events = std::exchange(events_, {});
+  }
+  size_t total_events = 0;
+  for (const auto& thread : events) {
+    total_events += thread.events.size();
+  }
+  LOG(INFO) << "HostTracer::Consume: flushed " << events.size()
+            << " threads, total events=" << total_events;
+
+  size_t estimated_size = 0;
+  for (const auto& thread : events) {
+    estimated_size += sizeof(thread.thread);
+    estimated_size += thread.thread.name.capacity();
+    estimated_size +=
+        thread.events.size() * sizeof(tsl::profiler::TraceMeRecorder::Event);
+    for (const auto& event : thread.events) {
+      estimated_size += event.name.capacity();
+    }
+  }
+
+  tsl::profiler::ProfilerInterface::ConsumeResult result;
+  result.data = std::any(std::move(events));
+  result.estimated_size_bytes = estimated_size;
+  return result;
+}
+
+absl::Status HostTracer::Serialize(std::any data,
+                                   tensorflow::profiler::XSpace* space) {
+  LOG(INFO) << "HostTracer::Serialize called";
+  if (space == nullptr) {
+    return absl::InvalidArgumentError("XSpace pointer cannot be null.");
+  }
+  auto* events = std::any_cast<tsl::profiler::TraceMeRecorder::Events>(&data);
+  if (events == nullptr) {
+    return absl::InvalidArgumentError("Invalid data type passed to Serialize.");
+  }
+  if (events->empty()) {
+    LOG(INFO) << "HostTracer::Serialize: events is empty, doing nothing";
+    return absl::OkStatus();
+  }
+  size_t total_events = 0;
+  for (const auto& thread : *events) {
+    total_events += thread.events.size();
+  }
+  LOG(INFO) << "HostTracer::Serialize: serializing " << events->size()
+            << " threads, total events=" << total_events;
+  tensorflow::profiler::XPlane* plane =
+      tsl::profiler::FindOrAddMutablePlaneWithName(
+          space, tsl::profiler::kHostThreadsPlaneName);
+  ConvertCompleteEventsToXPlane(start_timestamp_ns_, std::move(*events), plane);
+  events->clear();
   return absl::OkStatus();
 }
 
