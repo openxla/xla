@@ -53,18 +53,6 @@ namespace xla::gpu {
 using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
 
-static bool CommandBufferUpdatesEnabled(
-    const CommandExecutor& commands,
-    const Thunk::AllocationAddressInfo* address_info) {
-  if (address_info == nullptr || !address_info->address_info_ready) {
-    return true;
-  }
-  DCHECK(absl::c_is_sorted(commands.allocs_indices()));
-  DCHECK(absl::c_is_sorted(address_info->persistent_alloc_indices));
-  return !absl::c_includes(address_info->persistent_alloc_indices,
-                           commands.allocs_indices());
-}
-
 //===----------------------------------------------------------------------===//
 // CommandBufferThunk
 //===----------------------------------------------------------------------===//
@@ -72,6 +60,24 @@ static bool CommandBufferUpdatesEnabled(
 CommandBufferThunk::ExecutorCommandBuffer::ExecutorCommandBuffer(
     std::unique_ptr<se::CommandBuffer> command_buffer)
     : command_buffer(std::move(command_buffer)) {}
+
+bool CommandBufferThunk::ExecutorCommandBuffer::HasDynamicAllocations(
+    const CommandExecutor& commands,
+    const Thunk::AllocationAddressInfo* address_info) {
+  if (address_info == nullptr || !address_info->address_info_ready) {
+    return true;
+  }
+
+  absl::call_once(
+      has_dynamic_allocations_once, [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+        DCHECK(absl::c_is_sorted(commands.allocs_indices()));
+        DCHECK(absl::c_is_sorted(address_info->persistent_alloc_indices));
+        has_dynamic_allocations = !absl::c_includes(
+            address_info->persistent_alloc_indices, commands.allocs_indices());
+      });
+
+  return has_dynamic_allocations;
+}
 
 CommandBufferThunk::CommandBufferThunk(
     CommandExecutor commands, ThunkInfo thunk_info,
@@ -243,11 +249,11 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   // not enabled), we also record them into the command buffer before execution.
   // This is required to guarantee that collective commands are recorded on all
   // participating ranks to avoid deadlocks.
-  bool updates_enabled =
-      CommandBufferUpdatesEnabled(commands_, params.allocation_address_info);
+  bool has_dynamic_allocations = cmd_buffer->HasDynamicAllocations(
+      commands_, params.allocation_address_info);
   if (cmd_buffer->command_buffer->state() ==
           se::CommandBuffer::State::kCreate ||
-      (updates_enabled && commands_.requires_update_on_initialize())) {
+      (has_dynamic_allocations && commands_.requires_update_on_initialize())) {
     VLOG(3) << "Initialize command buffer on device #"
             << params.executor->device_ordinal()
             << " by recoding command buffer cmd sequence"
@@ -315,12 +321,12 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   auto updated_allocs = cmd_buffer->UpdateBufferAllocations(commands_, params);
 
-  bool updates_enabled =
-      CommandBufferUpdatesEnabled(commands_, params.allocation_address_info);
+  bool has_dynamic_allocations = cmd_buffer->HasDynamicAllocations(
+      commands_, params.allocation_address_info);
   bool is_first_record =
       cmd_buffer->command_buffer->state() == se::CommandBuffer::State::kCreate;
   bool needs_update =
-      updates_enabled &&
+      has_dynamic_allocations &&
       (commands_.requires_update_on_execute() || !updated_allocs.empty());
 
   if (is_first_record || needs_update) {
@@ -345,7 +351,7 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     Command::RecordParams record_params = {
         cmd_buffer->state, std::move(updated_allocs),
-        /*is_initialization=*/is_first_record && !updates_enabled};
+        /*is_initialization=*/is_first_record && !has_dynamic_allocations};
     RETURN_IF_ERROR(commands_.Record(params, record_params,
                                      cmd_buffer->command_buffer.get()));
 

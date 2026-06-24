@@ -101,6 +101,13 @@ class CommandBufferThunk : public Thunk {
         const CommandExecutor& commands, const Thunk::ExecuteParams& params)
         ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
 
+    // Returns true if `commands` references any allocation whose address is not
+    // persistent under the finalized allocation address policy. If address
+    // information is absent or not ready, conservatively returns true.
+    bool HasDynamicAllocations(const CommandExecutor& commands,
+                               const Thunk::AllocationAddressInfo* address_info)
+        ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
+
     // se::CommandBuffer is not thread safe, and we guard it with a mutex to
     // guarantee that we do not mutate it concurrently.
     absl::Mutex mutex;
@@ -129,6 +136,12 @@ class CommandBufferThunk : public Thunk {
     absl::once_flag policy_allocs_to_check_once;
     std::vector<BufferAllocation::Index> policy_allocs_to_check
         ABSL_GUARDED_BY(mutex);
+
+    // Cached result of checking whether this command buffer references any
+    // allocation outside the persistent allocation set. The address policy is
+    // fixed after it becomes ready, so this only has to be computed once.
+    absl::once_flag has_dynamic_allocations_once;
+    bool has_dynamic_allocations ABSL_GUARDED_BY(mutex) = true;
 
     // Number of command buffer executions since last update.
     int64_t num_executions ABSL_GUARDED_BY(mutex) = 0;
