@@ -5,6 +5,7 @@ load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm", "if_rocm_is_configured")
 load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl", "if_sycl_is_configured")
+load("//xla:pytype.bzl", "pytype_strict_library")
 load(
     "//xla:xla.default.bzl",
     "xla_cc_binary",
@@ -4738,6 +4739,14 @@ cc_library(
 )
 
 genrule(
+    name = "viewer_server_h",
+    srcs = ["fusion_explorer/viewer_server.py"],
+    outs = ["viewer_server.h"],
+    cmd = "echo 'const char* kPythonServerCode = R\"python(' > $@ && cat $< >> $@ && echo ')python\";' >> $@",
+    compatible_with = get_compatible_with_portable(),
+)
+
+genrule(
     name = "viewer_html_h",
     srcs = ["fusion_explorer/viewer.html"],
     outs = ["viewer_html.h"],
@@ -4750,6 +4759,7 @@ cc_library(
     srcs = [
         "hlo_graph_dumper.cc",
         ":viewer_html_h",
+        ":viewer_server_h",
     ],
     hdrs = ["hlo_graph_dumper.h"],
     deps = [
@@ -4764,6 +4774,7 @@ cc_library(
         "//xla/service/gpu:cublas_cudnn",
         "//xla/stream_executor:dnn",
         "//xla/tsl/lib/gtl:map_util",
+        "//xla/tsl/lib/io:zip_writer",
         "//xla/tsl/lib/io:zlib_compression_options",
         "//xla/tsl/lib/io:zlib_outputbuffer",
         "//xla/tsl/platform:env",
@@ -4772,6 +4783,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/hash",
@@ -4782,7 +4794,9 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@org_sqlite//:sqlite3",
         "@tsl//tsl/platform:base64",
+        "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:thread_annotations",
     ],
     alwayslink = 1,
@@ -7067,4 +7081,10 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
+)
+
+pytype_strict_library(
+    name = "fusion_explorer/viewer_server",
+    srcs = ["fusion_explorer/viewer_server.py"],
+    deps = ["//third_party/py/sqlite3"],
 )

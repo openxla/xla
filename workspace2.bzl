@@ -380,6 +380,15 @@ def _tf_repositories():
     )
 
     tf_http_archive(
+        name = "org_sqlite",
+        build_file = "//third_party:sqlite.BUILD",
+        sha256 = "8a310d0a16c7a90cacd4c884e70faa51c902afed2a89f63aaa0126ab83558a32",
+        strip_prefix = "sqlite-amalgamation-3530200",
+        system_build_file = "//third_party/systemlibs:sqlite.BUILD",
+        urls = tf_mirror_urls("https://sqlite.org/2026/sqlite-amalgamation-3530200.zip"),
+    )
+
+    tf_http_archive(
         name = "boringssl",
         sha256 = "9dc53f851107eaf87b391136d13b815df97ec8f76dadb487b58b2fc45e624d2c",
         strip_prefix = "boringssl-c00d7ca810e93780bd0c8ee4eea28f4f2ea4bcdc",

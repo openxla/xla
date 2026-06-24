@@ -16,66 +16,68 @@ limitations under the License.
 #include "xla/service/hlo_graph_dumper.h"
 
 #include <cstdint>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <tuple>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/base/const_init.h"
 #include "absl/base/thread_annotations.h"
+#include "absl/cleanup/cleanup.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
-#include "absl/synchronization/mutex.h"
-#include "xla/comparison_util.h"
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_module_metadata.h"
-#include "xla/hlo/ir/hlo_print_options.h"
-#include "xla/hlo/ir/hlo_sharding.h"
-#include "xla/service/gpu/cublas_cudnn.h"
-#include "xla/service/viewer_html.h"
-#include "xla/shape.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/file_system.h"
-#include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/thread_annotations.h"
-
-#ifndef _WIN32
-#include <unistd.h>
-#endif
-
-#include <deque>
-#include <functional>
-#include <optional>
-#include <string>
-#include <tuple>
-#include <utility>
-#include <vector>
-
-#include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_map.h"
-#include "absl/container/flat_hash_set.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_replace.h"
+#include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "sqlite3.h"
+#include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_module_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_print_options.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/literal.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/pattern_matcher.h"
+#include "xla/service/viewer_html.h"
+#include "xla/service/viewer_server.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/tsl/lib/gtl/map_util.h"
+#include "xla/tsl/lib/io/zip_writer.h"
 #include "xla/tsl/lib/io/zlib_compression_options.h"
 #include "xla/tsl/lib/io/zlib_outputbuffer.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/file_system.h"
 #include "xla/util.h"
-#include "tsl/platform/base64.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/thread_annotations.h"
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 namespace xla {
 namespace {
@@ -1976,28 +1978,30 @@ static std::pair<int, int> FusionVisualizerStateKey(
                         computation.unique_id());
 }
 
-}  // namespace
+class WritableStringFile : public tsl::WritableFile {
+ public:
+  explicit WritableStringFile(std::string* data) : data_(data) {};
+  ~WritableStringFile() override = default;
 
-// Compress with zlib + b64 encode.
-static absl::StatusOr<std::string> CompressAndEncode(absl::string_view input) {
-  class WritableStringFile : public tsl::WritableFile {
-   public:
-    explicit WritableStringFile(std::string* data) : data_(data) {};
-    ~WritableStringFile() override = default;
+  absl::Status Append(absl::string_view data) override {
+    absl::StrAppend(data_, data);
+    return absl::OkStatus();
+  }
 
-    absl::Status Append(absl::string_view data) override {
-      absl::StrAppend(data_, data);
-      return absl::OkStatus();
-    }
+  absl::Status Close() override { return absl::OkStatus(); }
+  absl::Status Flush() override { return absl::OkStatus(); }
+  absl::Status Sync() override { return absl::OkStatus(); }
 
-    absl::Status Close() override { return absl::OkStatus(); }
-    absl::Status Flush() override { return absl::OkStatus(); }
-    absl::Status Sync() override { return absl::OkStatus(); }
+  absl::Status Tell(int64_t* position) override {
+    *position = data_->size();
+    return absl::OkStatus();
+  }
 
-   private:
-    std::string* data_;
-  };
+ private:
+  std::string* data_;
+};
 
+static absl::StatusOr<std::string> Compress(absl::string_view input) {
   std::string compressed;
   WritableStringFile f(&compressed);
 
@@ -2008,17 +2012,130 @@ static absl::StatusOr<std::string> CompressAndEncode(absl::string_view input) {
   RETURN_IF_ERROR(gz_file.Append(input));
   RETURN_IF_ERROR(gz_file.Close());
 
-  std::string encoded;
-  RETURN_IF_ERROR(tsl::Base64Encode(compressed, &encoded));
-  return absl::StrReplaceAll(encoded, {{"_", "/"}, {"-", "+"}});
+  return compressed;
 }
 
-static std::string EscapeJSONString(absl::string_view raw) {
-  return absl::StrCat(
-      "\"",
-      absl::StrReplaceAll(raw, {{"\n", "\\n"}, {"\"", "\\\""}, {"\\", "\\\\"}}),
-      "\"");
+static absl::StatusOr<std::string> CreateSqliteDb(
+    const FusionVisualizerProgress& visualizer_progress,
+    absl::string_view graph_title) {
+  std::string db_path = tsl::io::GetTempFilename("db");
+  auto cleanup = absl::MakeCleanup(
+      [&db_path] { tsl::Env::Default()->DeleteFile(db_path).IgnoreError(); });
+
+  sqlite3* db_raw = nullptr;
+  int rc = sqlite3_open(db_path.c_str(), &db_raw);
+  std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(db_raw, sqlite3_close);
+  if (rc != SQLITE_OK) {
+    return Internal("Failed to open SQLite DB at %s: %s", db_path,
+                    sqlite3_errmsg(db.get()));
+  }
+
+  const char* create_metadata_table =
+      "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT);";
+  const char* create_graphs_table =
+      "CREATE TABLE graphs (id INTEGER PRIMARY KEY, content BLOB);";
+  const char* create_frames_table =
+      "CREATE TABLE frames (id INTEGER PRIMARY KEY, label TEXT, graph_id "
+      "INTEGER, to_highlight TEXT);";
+
+  char* raw_err_msg = nullptr;
+  if (sqlite3_exec(db.get(), create_metadata_table, nullptr, nullptr,
+                   &raw_err_msg) != SQLITE_OK) {
+    std::unique_ptr<char, decltype(&sqlite3_free)> err_msg(raw_err_msg,
+                                                           sqlite3_free);
+    return Internal("Failed to create metadata table: %s",
+                    err_msg ? err_msg.get() : "unknown error");
+  }
+  if (sqlite3_exec(db.get(), create_graphs_table, nullptr, nullptr,
+                   &raw_err_msg) != SQLITE_OK) {
+    std::unique_ptr<char, decltype(&sqlite3_free)> err_msg(raw_err_msg,
+                                                           sqlite3_free);
+    return Internal("Failed to create graphs table: %s",
+                    err_msg ? err_msg.get() : "unknown error");
+  }
+  if (sqlite3_exec(db.get(), create_frames_table, nullptr, nullptr,
+                   &raw_err_msg) != SQLITE_OK) {
+    std::unique_ptr<char, decltype(&sqlite3_free)> err_msg(raw_err_msg,
+                                                           sqlite3_free);
+    return Internal("Failed to create frames table: %s",
+                    err_msg ? err_msg.get() : "unknown error");
+  }
+
+  // Insert title into metadata
+  const char* insert_metadata_sql =
+      "INSERT INTO metadata (key, value) VALUES ('title', ?);";
+  sqlite3_stmt* metadata_stmt_raw = nullptr;
+  if (sqlite3_prepare_v2(db.get(), insert_metadata_sql, -1, &metadata_stmt_raw,
+                         nullptr) != SQLITE_OK) {
+    return Internal("Failed to prepare metadata insert statement: %s",
+                    sqlite3_errmsg(db.get()));
+  }
+  std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> metadata_stmt(
+      metadata_stmt_raw, sqlite3_finalize);
+
+  sqlite3_bind_text(metadata_stmt.get(), 1, graph_title.data(),
+                    graph_title.size(), SQLITE_TRANSIENT);
+  if (sqlite3_step(metadata_stmt.get()) != SQLITE_DONE) {
+    return Internal("Failed to insert title metadata: %s",
+                    sqlite3_errmsg(db.get()));
+  }
+
+  const char* insert_graph_sql =
+      "INSERT INTO graphs (id, content) VALUES (?, ?);";
+  sqlite3_stmt* graph_stmt_raw = nullptr;
+  if (sqlite3_prepare_v2(db.get(), insert_graph_sql, -1, &graph_stmt_raw,
+                         nullptr) != SQLITE_OK) {
+    return Internal("Failed to prepare graph insert statement: %s",
+                    sqlite3_errmsg(db.get()));
+  }
+  std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> graph_stmt(
+      graph_stmt_raw, sqlite3_finalize);
+
+  for (int i = 0; i < visualizer_progress.dot_graphs.size(); ++i) {
+    ASSIGN_OR_RETURN(std::string compressed,
+                     Compress(visualizer_progress.dot_graphs[i]));
+    sqlite3_bind_int(graph_stmt.get(), 1, i);
+    sqlite3_bind_blob(graph_stmt.get(), 2, compressed.data(), compressed.size(),
+                      SQLITE_TRANSIENT);
+    if (sqlite3_step(graph_stmt.get()) != SQLITE_DONE) {
+      return Internal("Failed to insert graph %d: %s", i,
+                      sqlite3_errmsg(db.get()));
+    }
+    sqlite3_reset(graph_stmt.get());
+  }
+
+  const char* insert_frame_sql =
+      "INSERT INTO frames (id, label, graph_id, to_highlight) VALUES (?, ?, ?, "
+      "?);";
+  sqlite3_stmt* frame_stmt_raw = nullptr;
+  if (sqlite3_prepare_v2(db.get(), insert_frame_sql, -1, &frame_stmt_raw,
+                         nullptr) != SQLITE_OK) {
+    return Internal("Failed to prepare frame insert statement: %s",
+                    sqlite3_errmsg(db.get()));
+  }
+  std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> frame_stmt(
+      frame_stmt_raw, sqlite3_finalize);
+
+  for (int i = 0; i < visualizer_progress.frames.size(); ++i) {
+    const auto& f = visualizer_progress.frames[i];
+    sqlite3_bind_int(frame_stmt.get(), 1, i);
+    sqlite3_bind_text(frame_stmt.get(), 2, f.label.c_str(), -1,
+                      SQLITE_TRANSIENT);
+    sqlite3_bind_int(frame_stmt.get(), 3, f.dot_graph);
+    sqlite3_bind_text(frame_stmt.get(), 4, f.to_highlight.c_str(), -1,
+                      SQLITE_TRANSIENT);
+    if (sqlite3_step(frame_stmt.get()) != SQLITE_DONE) {
+      return Internal("Failed to insert frame %d: %s", i,
+                      sqlite3_errmsg(db.get()));
+    }
+    sqlite3_reset(frame_stmt.get());
+  }
+
+  std::move(cleanup).Cancel();
+  return db_path;
 }
+
+}  // namespace
 
 absl::StatusOr<std::string> WrapFusionExplorer(
     const FusionVisualizerProgress& visualizer_progress,
@@ -2027,25 +2144,30 @@ absl::StatusOr<std::string> WrapFusionExplorer(
     return Internal("Empty");
   }
 
-  std::string dot_graphs =
-      StrFormat("[%s]", StrJoin(visualizer_progress.dot_graphs, ", ",
-                                [&](std::string* out, const std::string& dot) {
-                                  StrAppend(out, EscapeJSONString(dot));
-                                }));
+  ASSIGN_OR_RETURN(std::string db_path,
+                   CreateSqliteDb(visualizer_progress, graph_title));
 
-  std::string frames = StrJoin(
-      visualizer_progress.frames, ", ", [&](std::string* out, const auto& p) {
-        StrAppend(out, StrFormat("[%d, %s, %s]", p.dot_graph,
-                                 EscapeJSONString(p.label),
-                                 EscapeJSONString(p.to_highlight)));
-      });
+  auto cleanup = absl::MakeCleanup(
+      [&db_path] { tsl::Env::Default()->DeleteFile(db_path).IgnoreError(); });
 
-  ASSIGN_OR_RETURN(std::string dot_graphs_compressed,
-                   CompressAndEncode(dot_graphs));
+  std::string db_content;
+  RETURN_IF_ERROR(
+      tsl::ReadFileToString(tsl::Env::Default(), db_path, &db_content));
 
-  return absl::StrReplaceAll(kViewerHtmlCode, {{"$DOTS", dot_graphs_compressed},
-                                               {"$FRAMES", frames},
-                                               {"$TITLE", graph_title}});
+  std::string zip_data = "#!/usr/bin/env python3\n";
+
+  {
+    auto file = std::make_unique<WritableStringFile>(&zip_data);
+    ASSIGN_OR_RETURN(tsl::io::ZipWriter zip_writer,
+                     tsl::io::ZipWriter::Create(std::move(file)));
+
+    RETURN_IF_ERROR(zip_writer.AddFile("__main__.py", kPythonServerCode));
+    RETURN_IF_ERROR(zip_writer.AddFile("viewer.html", kViewerHtmlCode));
+    RETURN_IF_ERROR(zip_writer.AddFile("fusions.db", db_content));
+    RETURN_IF_ERROR(std::move(zip_writer).Finish());
+  }
+
+  return zip_data;
 }
 
 static std::string GraphTitle(const HloComputation& computation) {
