@@ -108,6 +108,19 @@ AllGatherThunk::AllGatherThunk(ThunkInfo thunk_info, CollectiveConfig config,
                       CommunicationId(0), collectives_mode),
       config_(AllGatherConfig{std::move(config)}) {}
 
+AllGatherThunk::AllGatherThunk(
+    ThunkInfo thunk_info, const HloAllGatherInstruction* inst,
+    std::vector<Buffer> buffers,
+    std::unique_ptr<CollectiveKernelThunk> collective_kernel_thunk,
+    bool p2p_memcpy_enabled)
+    : CollectiveThunk(Thunk::kAllGather, thunk_info, std::move(buffers)),
+      config_(GetAllGatherConfig(inst)),
+      collective_kernel_thunk_(std::move(collective_kernel_thunk)) {
+  CHECK_EQ(config_.config.operand_element_type.size(), this->buffers().size());
+  VLOG(3) << "AllGatherStartThunk created with CollectiveKernelThunk for: "
+          << inst->name();
+}
+
 absl::Status AllGatherThunk::CheckImplementable(
     const HloAllGatherInstruction* inst, int64_t replica_count,
     int64_t partition_count) {
@@ -129,6 +142,26 @@ absl::Status AllGatherThunk::PrepareCollective(const PrepareParams& params,
           clique_key, buffer.source_buffer.slice));
       RETURN_IF_ERROR(mem_requests.RequestSymmetricAllocationSlice(
           clique_key, buffer.destination_buffer.slice));
+    }
+  }
+  if (collective_kernel_thunk_) {
+    return collective_kernel_thunk_->Prepare(params);
+  }
+  return absl::OkStatus();
+}
+
+absl::Status AllGatherThunk::Initialize(const InitializeParams& params) {
+  TF_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
+  if (collective_kernel_thunk_) {
+    TF_ASSIGN_OR_RETURN(
+        GpuCliqueKey clique_key,
+        GetCollectiveGpuCliqueKey(*params.collective_params, config()));
+    TF_ASSIGN_OR_RETURN(
+        bool use_collective_kernel,
+        collective_kernel_thunk_->IsSupported(clique_key, *params.executor,
+                                              *params.collective_params));
+    if (use_collective_kernel) {
+      TF_RETURN_IF_ERROR(collective_kernel_thunk_->Initialize(params));
     }
   }
   return absl::OkStatus();
@@ -172,6 +205,21 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
                                            Communicator& comm) {
   int device_ordinal = stream.parent()->device_ordinal();
 
+  // Try to use Triton collective kernel if available.
+  if (collective_kernel_thunk_) {
+    TF_ASSIGN_OR_RETURN(
+        bool use_collective_kernel,
+        collective_kernel_thunk_->IsSupported(clique_key, *stream.parent(),
+                                              *params.collective_params));
+    if (use_collective_kernel) {
+      return collective_kernel_thunk_->ExecuteOnStream(params);
+    }
+    LOG(WARNING) << "AllGatherThunk: Triton backend was requested but the "
+                    "Triton kernel is not supported for this configuration "
+                    "at runtime. Falling back to NCCL/RCCL.";
+  }
+
+  // Fallback to NCCL/RCCL
   ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
                    ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                                           config_.config.operand_element_type));
