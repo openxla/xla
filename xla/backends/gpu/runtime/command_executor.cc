@@ -588,7 +588,6 @@ absl::Status CommandExecutor::RecordUpdate(
 
       address_policy_cache.skip_commands.assign(commands_.size(), false);
       for (CommandId id = 0; id < commands_.size(); ++id) {
-        size_t command_index = static_cast<size_t>(id);
         DCHECK(absl::c_is_sorted(cmd_allocs_indices_[id]))
             << "Command allocs must be sorted: "
             << absl::StrJoin(cmd_allocs_indices_[id], ", ");
@@ -596,7 +595,7 @@ absl::Status CommandExecutor::RecordUpdate(
         if (IsSubsetOfSorted(cmd_allocs_indices_[id],
                              execute_params.allocation_address_info
                                  ->persistent_alloc_indices)) {
-          address_policy_cache.skip_commands[command_index] = true;
+          address_policy_cache.skip_commands[id] = true;
         }
       }
 
@@ -626,13 +625,9 @@ absl::Status CommandExecutor::RecordUpdate(
     // every allocation referenced by this command is persistent, the command
     // does not need an update, including traced collective commands that also
     // require initialization.
-    if (execute_params.allocation_address_info != nullptr &&
-        execute_params.allocation_address_info->address_info_ready) {
-      size_t command_index = static_cast<size_t>(id);
-      if (address_policy_skip_commands != nullptr &&
-          (*address_policy_skip_commands)[command_index]) {
-        return true;
-      }
+    if (address_policy_skip_commands != nullptr &&
+        (*address_policy_skip_commands)[id]) {
+      return true;
     }
 
     // We always update commands that require updates on initialization, even if
