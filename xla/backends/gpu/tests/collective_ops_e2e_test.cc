@@ -214,9 +214,22 @@ class CollectivesModeOps
  protected:
   void SetUp() override {
     CollectiveOpsE2ETestBase::SetUp();
-    if (!IsHopperAndHigher() &&
-        (collectives_mode_ == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY ||
-         collectives_mode_ == DebugOptions::COLLECTIVES_PEER_MEMORY)) {
+    // Symmetric memory relies on one-sided Put/Signal/WaitSignal primitives.
+    // These require NCCL support (Hopper or higher on CUDA) and are not yet
+    // implemented in RCCL (LaunchPut/LaunchSignal/LaunchWaitSignal return
+    // Unimplemented in RcclCommunicator).
+    if (collectives_mode_ == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY &&
+        !IsHopperAndHigher()) {
+      GTEST_SKIP()
+          << "Symmetric memory requires Hopper or higher on CUDA; "
+             "one-sided Put/Signal/WaitSignal are not yet implemented in RCCL";
+    }
+    // Peer memory uses host rendezvous + D2D memcpy (stream.MemcpyD2D) and
+    // event-based synchronisation, all of which are supported on AMD via HIP
+    // peer access (hipDeviceEnablePeerAccess /
+    // RocmExecutor::EnablePeerAccessTo). On CUDA it requires Hopper or higher.
+    if (collectives_mode_ == DebugOptions::COLLECTIVES_PEER_MEMORY &&
+        !IsHopperAndHigher() && !Capability().IsRocm()) {
       GTEST_SKIP() << "Test requires Hopper or higher";
     }
   }
@@ -439,6 +452,143 @@ TEST_P(CollectivesModeOps, AllGatherMixedTypes) {
                                              tuple_results[0]);
     LiteralTestUtil::ExpectR1Equal<float>({10.0, 15.0, 11.0, 16.0},
                                           tuple_results[1]);
+  }
+}
+
+// Test fixture for AllGather via the Triton custom kernel backend.
+//
+// Derives from the same base as CollectivesModeOps but specialises for the
+// AllGather Triton path: always uses COLLECTIVES_PRIVATE_MEMORY mode (the only
+// mode in which the custom kernel is emitted) and enables the Triton backend
+// flag at class level so individual tests are not cluttered with flag setup.
+//
+// Parameterised by:
+//   - bool is_async              — whether the async stream is used
+//   - bool use_experimental_tiling — legacy (false) vs TilingSpace (true) path
+//
+// This mirrors the CollectivesModeOps / all_reduce_e2e structure: the tiling
+// variant is expressed through the test parameter, not the test name.
+class AllGatherKernelOps : public CollectiveOpsE2ETestBase,
+                           public ::testing::WithParamInterface<bool> {
+ public:
+  AllGatherKernelOps()
+      : CollectiveOpsE2ETestBase(/*memory_size=*/32 * kMB,
+                                 /*collectives_memory_size=*/0),
+        enable_async_(GetParam()) {}
+
+ protected:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options =
+        CollectiveOpsE2ETestBase::GetDebugOptionsForTest();
+    if (!enable_async_) {
+      debug_options.add_xla_gpu_disable_async_collectives(
+          DebugOptions::ALLGATHER);
+    }
+    debug_options.add_xla_disable_hlo_passes(
+        "gpu-convert-async-collectives-to-sync");
+    // Always private memory: the Triton kernel is only emitted in this mode.
+    debug_options.set_xla_gpu_all_gather_mode(
+        DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
+    // Enable the Triton AllGather backend at class level.
+    debug_options.set_xla_gpu_unsupported_use_all_gather_triton_backend(true);
+    // Experimental tiling is the only supported path (legacy removed).
+    debug_options.set_xla_gpu_experimental_enable_tiling_propagation(true);
+    return debug_options;
+  }
+
+  bool enable_async() const { return enable_async_; }
+
+ private:
+  bool enable_async_;
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    AllGatherKernelOps, AllGatherKernelOps, ::testing::Bool(),
+    [](const ::testing::TestParamInfo<bool>& info) {
+      return GetAsyncTestName(info.param);
+    });
+
+// Tests AllGather via the Triton custom kernel backend with a 2D input shape.
+// Both legacy and experimental tiling paths exercise the same HLO and produce
+// identical results; the tiling variant is expressed through the test
+// parameter.
+TEST_P(AllGatherKernelOps, AllGather) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+  ENTRY test_computation {
+    id = u32[] replica-id()
+    id_f32 = f32[] convert(id)
+    id2 = f32[1, 4] broadcast(id_f32), dimensions={}
+    a0 = f32[1, 4] constant({{10, 15, 20, 25}})
+    a1 = f32[1, 4] add(id2, a0)
+    allgather = f32[2, 4] all-gather(a1), replica_groups={{0,1}}, dimensions={0}
+    ROOT out = f32[8] reshape(allgather)
+  }
+  )";
+  const int64_t kNumReplicas = 2;
+  ASSERT_GE(device_count(), kNumReplicas)
+      << "Test requires at least " << kNumReplicas << " devices ("
+      << device_count() << " available)";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
+
+  TF_ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                          ExecuteReplicated(std::move(module)));
+
+  const HloModule* hlo_module = execution_result.optimized_module;
+  EXPECT_THAT(FindInstruction(hlo_module, HloOpcode::kAllGatherStart),
+              NotNull());
+  EXPECT_THAT(FindInstruction(hlo_module, HloOpcode::kAllGatherDone),
+              NotNull());
+
+  const std::vector<Literal>& results = execution_result.results;
+  ASSERT_EQ(results.size(), kNumReplicas);
+  for (const Literal& result : results) {
+    // Rank 0: a1=[10,15,20,25]; Rank 1: a1=[11,16,21,26].
+    // After gather on dim 0 and reshape to 1D:
+    LiteralTestUtil::ExpectR1Equal<float>(
+        {10.0f, 15.0f, 20.0f, 25.0f, 11.0f, 16.0f, 21.0f, 26.0f}, result);
+  }
+}
+
+// Tests AllGather via the Triton kernel with a 3D input shape to exercise
+// multi-dimensional tiling. The tiling variant (legacy vs experimental) comes
+// from the test parameter rather than an inner loop, keeping the test body
+// clean and the parameterisation explicit.
+TEST_P(AllGatherKernelOps, AllGather3D) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+  ENTRY test_computation {
+    id = u32[] replica-id()
+    id_f32 = f32[] convert(id)
+    id2 = f32[1, 2, 4] broadcast(id_f32), dimensions={}
+    a0 = f32[1, 2, 4] constant({{{1, 2, 3, 4}, {5, 6, 7, 8}}})
+    a1 = f32[1, 2, 4] add(id2, a0)
+    allgather = f32[2, 2, 4] all-gather(a1), replica_groups={{0,1}}, dimensions={0}
+    ROOT out = f32[16] reshape(allgather)
+  }
+  )";
+  const int64_t kNumReplicas = 2;
+  ASSERT_GE(device_count(), kNumReplicas)
+      << "Test requires at least " << kNumReplicas << " devices ("
+      << device_count() << " available)";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
+
+  TF_ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                          ExecuteReplicated(std::move(module)));
+
+  const std::vector<Literal>& results = execution_result.results;
+  ASSERT_EQ(results.size(), kNumReplicas);
+  // Rank 0: a1={{{1,2,3,4},{5,6,7,8}}}; Rank 1: a1={{{2,3,4,5},{6,7,8,9}}}.
+  // After gather on dim 0 and reshape to [16]:
+  for (const Literal& result : results) {
+    LiteralTestUtil::ExpectR1Equal<float>(
+        {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 2.0f, 3.0f, 4.0f, 5.0f,
+         6.0f, 7.0f, 8.0f, 9.0f},
+        result);
   }
 }
 

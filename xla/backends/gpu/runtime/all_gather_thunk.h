@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/runtime/collective_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -49,6 +50,13 @@ class AllGatherThunk : public CollectiveThunk {
                  std::vector<Buffer> buffers,
                  CollectivesMode collectives_mode =
                      DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
+  // Constructor that supports the Triton collective kernel backend.
+  // When collective_kernel_thunk is non-null, the Triton kernel will be tried
+  // first at runtime; if unsupported, falls back to NCCL/RCCL.
+  AllGatherThunk(ThunkInfo thunk_info, const HloAllGatherInstruction* inst,
+                 std::vector<Buffer> buffers,
+                 std::unique_ptr<CollectiveKernelThunk> collective_kernel_thunk,
+                 bool p2p_memcpy_enabled = false);
 
   static const char* GetHloOpName() { return "all-gather-start"; }
 
@@ -60,6 +68,8 @@ class AllGatherThunk : public CollectiveThunk {
       const HloAllGatherInstruction* inst);
 
   const CollectiveConfig& config() const override { return config_.config; }
+
+  absl::Status Initialize(const InitializeParams& params) override;
 
   static absl::StatusOr<std::unique_ptr<AllGatherThunk>> FromProto(
       ThunkInfo thunk_info, const AllGatherThunkProto& thunk_proto,
@@ -81,6 +91,7 @@ class AllGatherThunk : public CollectiveThunk {
 
  private:
   const AllGatherConfig config_;
+  std::unique_ptr<CollectiveKernelThunk> collective_kernel_thunk_;
 };
 
 absl::Status RunAllGather(std::vector<DeviceBufferPair>& buffers,

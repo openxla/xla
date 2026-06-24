@@ -146,12 +146,27 @@ xla::Future<TritonFusion::EmitResult> TritonFusion::Emit(
     absl::Span<const Shape> unmanaged_arguments) const {
   std::string suggested_kernel_name = std::string(fusion.name());
   VLOG(3) << fusion.ToString();
-  ASSIGN_OR_RETURN(
-      emitters::KernelArguments kernel_arguments,
-      emitters::KernelArguments::Create(
-          ir_emitter_context.buffer_assignment(), GetDefaultBufferAlignment(),
-          instr_override != nullptr ? instr_override : &fusion,
-          unmanaged_arguments));
+  // Special handling for AllGather with tuple unpacking
+  absl::StatusOr<emitters::KernelArguments> kernel_arguments_or;
+  if (instr_override != nullptr &&
+      instr_override->opcode() == HloOpcode::kAllGatherStart &&
+      instr_override->shape().IsTuple() && !fusion.shape().IsTuple()) {
+    // Use the new overload: fusion for shapes, AllGather for buffers at index
+    // {1}
+    kernel_arguments_or = emitters::KernelArguments::Create(
+        ir_emitter_context.buffer_assignment(), GetDefaultBufferAlignment(),
+        &fusion,         // shape_instruction
+        instr_override,  // buffer_instruction
+        ShapeIndex{1},   // output_index (element 1 of AllGather tuple)
+        unmanaged_arguments);
+  } else {
+    // Regular path for AllReduce and other operations
+    kernel_arguments_or = emitters::KernelArguments::Create(
+        ir_emitter_context.buffer_assignment(), GetDefaultBufferAlignment(),
+        instr_override != nullptr ? instr_override : &fusion,
+        unmanaged_arguments);
+  }
+  TF_ASSIGN_OR_RETURN(auto kernel_arguments, std::move(kernel_arguments_or));
 
   const HloComputation* hlo_computation =
       fusion.fused_instructions_computation();
@@ -289,6 +304,11 @@ std::optional<TritonFusion::LaunchConfig> TritonFusion::GetLaunchConfig(
 
   // We expect all roots to have the same number of blocks. Otherwise we
   // cannot codegen it.
+  if (analysis->fusion_root_count() == 0) {
+    LOG(ERROR) << "GetLaunchConfig: No fusion roots found!";
+    return std::nullopt;
+  }
+
   int64_t num_blocks =
       GetNumberOfBlocks(analysis->fusion_root(0).shape().dimensions(),
                         block_level_parameters.output_tile_sizes[0]);

@@ -57,6 +57,7 @@ limitations under the License.
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/backends/gpu/codegen/triton/lowering_util.h"
+#include "xla/backends/gpu/runtime/all_gather.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"  // IWYU pragma: keep
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
@@ -916,6 +917,323 @@ class AllReduceEmitter {
   bool initialized_ = false;
 };
 
+// =========================================================================
+// AllGather emitter
+// =========================================================================
+// When use_experimental_tiling=true
+// (xla_gpu_experimental_enable_tiling_propagation), TilingSpace +
+// TiledHloComputation compute tile sizes and create ExtractTileOps for the
+// AllGather input. The AllGatherEmitter below reads those tile offsets
+// (ctx.input_extract.getOffsets()) to correctly address the symmetric buffer.
+// Unimplemented in the legacy path, i.e., use_experimental_tiling=false
+// =========================================================================
+
+// Context for AllGather emitter.
+struct AllGatherEmitterContext {
+  mlir::stablehlo::AllGatherOp op;
+  int32_t num_input_output_args{0};
+  int32_t num_scratch_buffers{0};
+  xtile::EntryFuncOp xtile_entry_fn;
+  xtile::TensorValue input_tile;
+  xtile::ExtractTileOp input_extract;
+  llvm::SmallVector<int64_t, 4> non_tiled_input_shape;
+  PrimitiveType element_type;
+  int64_t world_size{0};
+  int64_t num_elements{0};
+  int64_t all_gather_dimension{0};
+};
+
+absl::StatusOr<AllGatherEmitterContext> CreateAllGatherEmitterContext(
+    mlir::stablehlo::AllGatherOp op) {
+  AllGatherEmitterContext ctx;
+  if (op.getOperands().size() != 1) {
+    return absl::InvalidArgumentError(
+        "AllGather op must have exactly one operand in order to be lowered "
+        "to triton.");
+  }
+
+  mlir::Type element_type =
+      mlir::cast<mlir::ShapedType>(op.getOperand(0).getType()).getElementType();
+  ctx.element_type = xla::ConvertMlirTypeToPrimitiveType(element_type);
+  if (ctx.element_type == PrimitiveType::PRIMITIVE_TYPE_INVALID) {
+    std::string type_string;
+    llvm::raw_string_ostream stream(type_string);
+    op.getOperand(0).print(stream);
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Could not convert operand type to a valid PrimitiveType. "
+        "Operand Type: %s",
+        type_string));
+  }
+
+  ctx.xtile_entry_fn = op->getParentOfType<xtile::EntryFuncOp>();
+  if (!ctx.xtile_entry_fn) {
+    return absl::InvalidArgumentError(
+        "AllGather op must be in an XTile entry function in order to be "
+        "lowered to triton.");
+  }
+
+  ctx.num_input_output_args = op->getNumOperands() * 2;
+  ctx.num_scratch_buffers = op->getNumOperands();
+  const int32_t expected_num_args =
+      ctx.num_input_output_args + ctx.num_scratch_buffers +
+      kNumCollectiveMetadataArgs + kNumTileIndexArgs;
+  if (ctx.xtile_entry_fn.getNumArguments() != expected_num_args) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("AllGather op must have ", expected_num_args,
+                     " arguments in order to "
+                     "be lowered to triton, but it has ",
+                     ctx.xtile_entry_fn.getNumArguments()));
+  }
+
+  ctx.input_tile = mlir::cast<xtile::TensorValue>(op->getOperand(0));
+  ctx.input_extract =
+      llvm::dyn_cast<xtile::ExtractTileOp>(ctx.input_tile.getDefiningOp());
+  if (!ctx.input_extract &&
+      ctx.input_tile.getDefiningOp()->getNumOperands() > 0) {
+    // Workaround for boolean types (stored as i8, cast to i1).
+    ctx.input_extract = llvm::dyn_cast<xtile::ExtractTileOp>(
+        ctx.input_tile.getDefiningOp()->getOperand(0).getDefiningOp());
+  }
+  if (!ctx.input_extract) {
+    return absl::InvalidArgumentError(
+        "AllGather op must have an extract tile op as operand in order to be "
+        "lowered to triton.");
+  }
+
+  ctx.non_tiled_input_shape = llvm::SmallVector<int64_t, 4>(
+      ctx.input_extract.getSource().getType().getShape());
+  ctx.num_elements = Product(ctx.non_tiled_input_shape);
+  // Get world_size from replica_groups dimension 1.
+  ctx.world_size = mlir::cast<mlir::DenseIntElementsAttr>(op.getReplicaGroups())
+                       .getType()
+                       .getDimSize(1);
+  ctx.all_gather_dimension = op.getAllGatherDim();
+  ctx.op = op;
+
+  return ctx;
+}
+
+class AllGatherEmitter {
+ public:
+  static mlir::LogicalResult Emit(AllGatherEmitterContext ctx,
+                                  mlir::PatternRewriter& rewriter) {
+    AllGatherEmitter emitter(std::move(ctx), rewriter);
+    if (auto result = emitter.Initialize(); !result.ok()) {
+      LOG(ERROR) << "Failed to initialize AllGatherEmitter: "
+                 << result.message();
+      return mlir::failure();
+    }
+    return emitter.EmitAllGather();
+  }
+
+ private:
+  AllGatherEmitter(AllGatherEmitterContext ctx, mlir::PatternRewriter& rewriter)
+      : ctx_(std::move(ctx)),
+        rewriter_(rewriter),
+        builder_(ctx_.op->getLoc(), rewriter) {}
+
+  absl::Status Initialize() {
+    CHECK(!initialized_);
+
+    // 1. Opaque arguments (start after input/output args).
+    const int32_t start_idx = ctx_.num_input_output_args;
+    device_rank_ = ctx_.xtile_entry_fn.getArgument(start_idx);
+    CHECK(device_rank_.getType().isInteger(32));
+    signal_value_ = ctx_.xtile_entry_fn.getArgument(start_idx + 1);
+    CHECK(signal_value_.getType().isInteger(32));
+    signal_buffers_ = ctx_.xtile_entry_fn.getArgument(start_idx + 2);
+    // remote_input_buffers: !tt.ptr<!tt.ptr<elem_type>>
+    remote_input_buffers_ = ctx_.xtile_entry_fn.getArgument(start_idx + 3);
+
+    // 2. Constants and types.
+    elem_type_ = mlir::getElementTypeOrSelf(ctx_.input_tile.getType());
+    elem_storage_type_ = xtile::StorageType(elem_type_);
+    ptr_to_i64_type_ =
+        ttir::PointerType::get(builder_.getI64Type(), kGlobalAddressSpace);
+    ptr_to_elem_type_ =
+        ttir::PointerType::get(elem_storage_type_, kGlobalAddressSpace);
+    ASSIGN_OR_RETURN(layout_, xtile::GetPermutationMinorToMajor(
+                                  ctx_.input_extract.getSource().getType()));
+
+    // 3. Emit double-buffer setup IR.
+    remote_input_buffers_i64_ = ttir::BitcastOp::create(
+        builder_, ptr_to_i64_type_, remote_input_buffers_);
+    const mlir::Type i64_type = builder_.getI64Type();
+
+    // buffer_index = signal_value & 1 (double buffering: 0 or 1)
+    mlir::Value buffer_index = arith::AndIOp::create(
+        builder_, i64_type,
+        arith::ExtSIOp::create(builder_, i64_type, signal_value_),
+        arith::ConstantOp::create(builder_, i64_type,
+                                  builder_.getI64IntegerAttr(1)));
+
+    const int64_t buffer_size = xla::RoundUpTo<uint64_t>(
+        ctx_.num_elements *
+            ShapeUtil::ByteSizeOfPrimitiveType(ctx_.element_type),
+        kXlaAllocatedBufferAlignBytes);
+    const int64_t elements_per_buffer =
+        buffer_size / ShapeUtil::ByteSizeOfPrimitiveType(ctx_.element_type);
+    buffer_offset_ = arith::MulIOp::create(
+        builder_, i64_type, buffer_index,
+        arith::ConstantOp::create(
+            builder_, i64_type,
+            builder_.getI64IntegerAttr(elements_per_buffer)));
+
+    initialized_ = true;
+    return absl::OkStatus();
+  }
+
+  // Returns a pointer into the symmetric buffer of the given rank.
+  mlir::Value GetRemoteBufferPtr(mlir::Value rank_idx) {
+    CHECK(initialized_);
+    // remote_input_buffers_i64_ is a !tt.ptr<!tt.ptr<i64>> (table of pointers).
+    // Load pointer for the given rank, then add the double-buffer offset.
+    mlir::Value remote_buf_ptr_addr = ttir::AddPtrOp::create(
+        builder_, ptr_to_i64_type_, remote_input_buffers_i64_, rank_idx);
+    mlir::Value remote_buf_i64 = ttir::LoadOp::create(
+        builder_, remote_buf_ptr_addr, ttir::CacheModifier::NONE,
+        ttir::EvictionPolicy::NORMAL, /*isVolatile=*/false);
+    mlir::Value remote_buf_ptr_base =
+        ttir::IntToPtrOp::create(builder_, ptr_to_elem_type_, remote_buf_i64,
+                                 llvm::ArrayRef<mlir::NamedAttribute>{
+                                     xtile::GetDivisibilityAttr(builder_)});
+    return ttir::AddPtrOp::create(builder_, ptr_to_elem_type_,
+                                  remote_buf_ptr_base, buffer_offset_);
+  }
+
+  // Loads a tile from the symmetric buffer of the given rank.
+  // The offsets are global offsets within the input buffer.
+  xtile::TensorValue LoadTileForRank(mlir::Value rank_idx,
+                                     mlir::ValueRange offsets,
+                                     llvm::ArrayRef<int64_t> shape) {
+    CHECK(initialized_);
+    mlir::Value remote_buf_ptr = GetRemoteBufferPtr(rank_idx);
+    auto [ptrs, mask] = triton::CreateTensorOfPointersAndMask(
+        builder_, remote_buf_ptr,
+        ctx_.non_tiled_input_shape,  // full global input shape
+        layout_,
+        offsets,  // global offsets within input
+        shape,    // tile shape (= input tile size)
+        ctx_.input_extract.getStrides(),
+        /*reduced_dims=*/{},  // AllGather does not reduce
+        shape);
+
+    auto next_tile = mlir::cast<xtile::TensorValue>(
+        ttir::LoadOp::create(builder_, ptrs, mask, /*other=*/mlir::Value(),
+                             ttir::CacheModifier::NONE,
+                             ttir::EvictionPolicy::NORMAL,
+                             /*isVolatile=*/false)
+            .getResult());
+
+    // Handle boolean storage type (i1 stored as i8).
+    if (elem_storage_type_ != elem_type_) {
+      next_tile = mlir::cast<xtile::TensorValue>(
+          xtile::Cast(builder_, next_tile, elem_type_));
+    }
+    return next_tile;
+  }
+
+  // Copies the local input tile into the symmetric buffer at device_rank_.
+  mlir::LogicalResult EmitCopyToSymmetric(mlir::Value tile_to_store,
+                                          mlir::ValueRange offsets,
+                                          llvm::ArrayRef<int64_t> shape) {
+    CHECK(initialized_);
+    mlir::Value remote_buf_ptr = GetRemoteBufferPtr(device_rank_);
+    mlir::Value storage_tile = tile_to_store;
+    if (elem_storage_type_ != elem_type_) {
+      storage_tile = mlir::cast<xtile::TensorValue>(
+          xtile::Cast(builder_, tile_to_store, elem_storage_type_));
+    }
+    auto [ptrs, mask] = triton::CreateTensorOfPointersAndMask(
+        builder_, remote_buf_ptr, ctx_.non_tiled_input_shape, layout_, offsets,
+        shape, ctx_.input_extract.getStrides(),
+        /*reduced_dims=*/{}, shape);
+    ttir::StoreOp::create(builder_, ptrs, storage_tile, mask,
+                          ttir::CacheModifier::NONE,
+                          ttir::EvictionPolicy::NORMAL);
+    return mlir::success();
+  }
+
+  // Barrier synchronization across all ranks using the signal buffer.
+  mlir::LogicalResult EmitSync(mlir::Value signal_value) {
+    CHECK(initialized_);
+    // Block-level barrier: all threads in the block complete their writes.
+    mlir::triton::gpu::BarrierOp::create(builder_,
+                                         mlir::triton::gpu::AddrSpace::Local);
+    // Cross-device barrier via signal buffer.
+    mtx::BlockBarrierOp::create(builder_, signal_buffers_, device_rank_,
+                                signal_value,
+                                builder_.getI32IntegerAttr(ctx_.world_size));
+    return mlir::success();
+  }
+
+  // Emits the three-phase AllGather protocol:
+  //   1. Each rank copies its input tile to its own symmetric buffer.
+  //   2. All ranks synchronize (barrier).
+  //   3. Each block reads the data from the source rank (program_id % W)
+  //      and writes it to the output tile.
+  mlir::LogicalResult EmitAllGather() {
+    CHECK(initialized_);
+
+    llvm::ArrayRef<int64_t> shape = ctx_.input_tile.getType().getShape();
+
+    // source_rank: which rank this block gathers data from.
+    const int64_t local_size_in_gather_dim =
+        ctx_.non_tiled_input_shape[ctx_.all_gather_dimension];
+    const int64_t tile_size_in_gather_dim =
+        ctx_.input_tile.getType().getShape()[ctx_.all_gather_dimension];
+    const int64_t tiles_per_rank =
+        local_size_in_gather_dim / tile_size_in_gather_dim;
+
+    mlir::Value tile_id = ctx_.xtile_entry_fn.getTileId();
+    mlir::Value tiles_per_rank_idx =
+        arith::ConstantIndexOp::create(builder_, tiles_per_rank);
+    mlir::Value source_rank_idx =
+        arith::DivSIOp::create(builder_, tile_id, tiles_per_rank_idx);
+    mlir::Value source_rank = arith::IndexCastOp::create(
+        builder_, builder_.getI64Type(), source_rank_idx);
+
+    // Phase 1: Copy local input tile to the symmetric buffer.
+    if (mlir::failed(EmitCopyToSymmetric(
+            ctx_.input_tile, ctx_.input_extract.getOffsets(),
+            ctx_.input_tile.getType().getShape()))) {
+      return rewriter_.notifyMatchFailure(ctx_.op,
+                                          "Failed to emit copy to symmetric");
+    }
+
+    // Phase 2: All-ranks barrier.
+    if (mlir::failed(EmitSync(signal_value_))) {
+      return rewriter_.notifyMatchFailure(ctx_.op,
+                                          "Failed to emit sync for all-gather");
+    }
+
+    // Phase 3: Load source rank's tile — no program_id used.
+    xtile::TensorValue result =
+        LoadTileForRank(source_rank, ctx_.input_extract.getOffsets(), shape);
+    rewriter_.replaceOp(ctx_.op, result);
+    return mlir::success();
+  }
+
+  AllGatherEmitterContext ctx_;
+  mlir::PatternRewriter& rewriter_;
+  mlir::ImplicitLocOpBuilder builder_;
+
+  mlir::Value device_rank_;
+  mlir::Value signal_value_;
+  mlir::Value signal_buffers_;
+  mlir::Value remote_input_buffers_;
+  mlir::Value remote_input_buffers_i64_;
+  mlir::Value buffer_offset_;
+
+  llvm::SmallVector<int64_t> layout_;
+  mlir::Type elem_type_;
+  mlir::Type elem_storage_type_;
+  ttir::PointerType ptr_to_i64_type_;
+  ttir::PointerType ptr_to_elem_type_;
+
+  bool initialized_ = false;
+};
+
 }  // namespace
 
 absl::Status FlattenCollectiveFusion(
@@ -985,14 +1303,117 @@ llvm::SmallVector<int64_t> GreedyPowerOfTwoTiles(const Shape& output_shape,
   return tile_sizes;
 }
 
+// Returns the block level fusion config for all-gather if supported.
+// Tile sizes are computed over the INPUT shape of AllGather.
+// This makes the experimental tiling (TilingSpace) tile the output [N*W] with
+// size T_in, which gives W*num_input_blocks total kernel blocks — exactly one
+// block per rank per input tile.
+absl::StatusOr<std::optional<BlockLevelFusionConfig>>
+GetBlockLevelFusionConfigForAllGather(
+    const se::DeviceDescription& device_info,
+    const HloAllGatherInstruction* all_gather) {
+  const bool triton_backend_requested =
+      all_gather->GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_unsupported_use_all_gather_triton_backend();
+  absl::StatusOr<AllGatherInfo> maybe_all_gather_info = BuildAllGatherInfo(
+      /*is_collective_kernel_enabled=*/triton_backend_requested, device_info,
+      all_gather);
+  if (absl::IsUnimplemented(maybe_all_gather_info.status())) {
+    if (triton_backend_requested) {
+      LOG(WARNING) << "Triton backend was requested for all-gather '"
+                   << all_gather->name()
+                   << "' but the configuration is not supported: "
+                   << maybe_all_gather_info.status().message()
+                   << ". Falling back to NCCL/RCCL.";
+    } else {
+      VLOG(3) << "Codegen for all-gather is not supported: "
+              << maybe_all_gather_info.status();
+    }
+    return std::nullopt;
+  }
+  TF_ASSIGN_OR_RETURN(AllGatherInfo all_gather_info,
+                      std::move(maybe_all_gather_info));
+
+  // Compute tile sizes based on the INPUT shape.
+  // GetLaunchConfig will use fusion_root(0).shape() (output = N*W) with these
+  // tile sizes to compute num_blocks = N*W / T_in = W * num_input_blocks.
+  const Shape& input_shape = all_gather->operand(0)->shape();
+  const LaunchDimensions launch_dims = AllGatherLaunchDimensions(
+      all_gather_info.num_elements, all_gather_info.num_devices);
+
+  BlockLevelFusionConfig block_level_config;
+  const int64_t num_warps = std::max(
+      int64_t{1}, static_cast<int64_t>(launch_dims.num_threads_per_block() /
+                                       WarpSize(device_info)));
+  block_level_config.set_num_warps(num_warps);
+  block_level_config.set_num_ctas(1);
+  block_level_config.set_num_stages(1);
+
+  Tile* output_tile = block_level_config.add_output_tiles();
+  const llvm::SmallVector<int64_t> tile_sizes =
+      GreedyPowerOfTwoTiles(input_shape, launch_dims.num_blocks());
+  output_tile->mutable_sizes()->Assign(tile_sizes.begin(), tile_sizes.end());
+
+  VLOG(3) << "Block level fusion config for " << all_gather->name() << ": "
+          << block_level_config;
+  return block_level_config;
+}
+
+// Returns the unmanaged kernel arguments for all-gather.
+// Same structure as AllReduce: rank, signal_value, signal_buffers, scratch.
+absl::StatusOr<std::vector<Shape>> GetAllGatherUnmanagedKernelArguments(
+    const HloComputation* computation,
+    const HloAllGatherInstruction* all_gather) {
+  if (!all_gather->device_list()) {
+    return absl::InternalError(absl::StrCat("AllGather instruction ",
+                                            all_gather->name(),
+                                            " has null device_list."));
+  }
+  const int32_t num_devices =
+      all_gather->device_list()->num_devices_per_group();
+  static constexpr int32_t kMaxBlocksForSignal = 32;
+
+  std::vector<Shape> unmanaged_arguments;
+  unmanaged_arguments.reserve(computation->num_parameters() +
+                              kNumCollectiveMetadataArgs);
+  // rank and signal_value
+  unmanaged_arguments.push_back(ShapeUtil::MakeShape(S32, {}));
+  unmanaged_arguments.push_back(ShapeUtil::MakeShape(S32, {}));
+  // Signal buffers (num_devices x num_blocks).
+  unmanaged_arguments.push_back(
+      ShapeUtil::MakeShape(S32, {num_devices, kMaxBlocksForSignal}));
+  // Scratch buffers (one per parameter, each holding num_devices copies).
+  for (const HloInstruction* instr : computation->parameter_instructions()) {
+    Shape shape =
+        ShapeUtil::InsertDimensionAtIndex(instr->shape(), 0, num_devices);
+    unmanaged_arguments.push_back(shape);
+  }
+  TF_RET_CHECK(unmanaged_arguments.size() ==
+               computation->num_parameters() + kNumCollectiveMetadataArgs);
+  return unmanaged_arguments;
+}
+
 absl::StatusOr<std::optional<BlockLevelFusionConfig>>
 GetCollectiveBlockLevelFusionConfig(const se::DeviceDescription& device_info,
                                     const HloFusionInstruction* fusion_instr) {
   const HloInstruction* root = fusion_instr->fused_expression_root();
+
+  // For AllGather-start wrapped in GetTupleElement.
+  if (root->opcode() == HloOpcode::kGetTupleElement &&
+      root->operand(0)->opcode() == HloOpcode::kAllGatherStart) {
+    return GetBlockLevelFusionConfigForAllGather(
+        device_info, Cast<HloAllGatherInstruction>(root->operand(0)));
+  }
+
   switch (root->opcode()) {
     case HloOpcode::kAllReduceStart:
       return GetBlockLevelFusionConfigForAllReduce(
           device_info, Cast<HloAllReduceInstruction>(root));
+    case HloOpcode::kAllGatherStart:
+      return GetBlockLevelFusionConfigForAllGather(
+          device_info, Cast<HloAllGatherInstruction>(root));
     default:
       return std::nullopt;
   }
@@ -1025,10 +1446,21 @@ absl::StatusOr<std::vector<Shape>> GetCollectiveUnmanagedKernelArguments(
     const HloFusionInstruction* fusion) {
   const HloComputation* computation = fusion->fused_instructions_computation();
   const HloInstruction* root = computation->root_instruction();
+
+  // For AllGather-start wrapped in GetTupleElement.
+  if (root->opcode() == HloOpcode::kGetTupleElement &&
+      root->operand(0)->opcode() == HloOpcode::kAllGatherStart) {
+    return GetAllGatherUnmanagedKernelArguments(
+        computation, Cast<HloAllGatherInstruction>(root->operand(0)));
+  }
+
   switch (root->opcode()) {
     case HloOpcode::kAllReduceStart:
       return GetAllReduceUnmanagedKernelArguments(
           computation, Cast<HloAllReduceInstruction>(root));
+    case HloOpcode::kAllGatherStart:
+      return GetAllGatherUnmanagedKernelArguments(
+          computation, Cast<HloAllGatherInstruction>(root));
     default:
       return std::vector<Shape>();
   }
@@ -1081,6 +1513,22 @@ mlir::LogicalResult RewriteAllReduce(mlir::stablehlo::AllReduceOp op,
   VLOG(3) << "AllReduceEmitter::Emit using strategy: "
           << maybe_context->strategy;
   return AllReduceEmitter::Emit(maybe_context.value(), rewriter);
+}
+
+mlir::LogicalResult RewriteAllGather(mlir::stablehlo::AllGatherOp op,
+                                     mlir::PatternRewriter& rewriter) {
+  const mlir::Location loc = op->getLoc();
+  absl::StatusOr<AllGatherEmitterContext> maybe_context =
+      CreateAllGatherEmitterContext(op);
+  if (!maybe_context.ok()) {
+    VLOG(3) << "Failed to create AllGatherEmitterContext: "
+            << maybe_context.status().message();
+    return rewriter.notifyMatchFailure(
+        loc, absl::StrCat("Failed to create AllGatherEmitterContext: ",
+                          maybe_context.status().message()));
+  }
+  VLOG(3) << "AllGatherEmitter::Emit for all-gather";
+  return AllGatherEmitter::Emit(maybe_context.value(), rewriter);
 }
 
 }  // namespace xla::gpu
