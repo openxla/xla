@@ -751,5 +751,47 @@ ENTRY TopK {
   EXPECT_TRUE(decomposer_changed);
 }
 
+// Regression: a "TopK" custom call may carry a 2-parameter (values-only)
+// comparator while its index output is consumed -- the post-SPMD state, where
+// the partitioner clones the custom call (keeping the 2-parameter comparator)
+// and adds a GetTupleElement reading index=1. Decomposition must emit a
+// 2-operand sort with a 4-parameter comparator; reusing the 2-parameter one
+// produces an invalid sort.
+TEST_F(TopkRewriterTest, DecomposeCustomCallValuesOnlyComparatorWithIndexUser) {
+  const std::string hlo_string = R"(
+HloModule topk
+
+%compare {
+  %lhs = f32[] parameter(0)
+  %rhs = f32[] parameter(1)
+  ROOT %gt = pred[] compare(%lhs, %rhs), direction=GT, type=TOTALORDER
+}
+
+ENTRY %TopK {
+  %p = f32[10,50] parameter(0)
+  %cc = (f32[10,5], s32[10,5]) custom-call(%p),
+      custom_call_target="TopK", called_computations={%compare}
+  %values = f32[10,5] get-tuple-element(%cc), index=0
+  %indices = s32[10,5] get-tuple-element(%cc), index=1
+  ROOT %result = (f32[10,5], s32[10,5]) tuple(%values, %indices)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, TopkDecomposer().Run(module.get()));
+  EXPECT_TRUE(changed);
+  // FAILS AT HEAD: 2-operand sort {values, iota} keeps the 2-parameter
+  // comparator -> "Expected computation %compare ... to have 4 parameters,
+  // has 2".
+  TF_EXPECT_OK(module->Verify());
+
+  TF_ASSERT_OK(HloDCE().Run(module.get()).status());
+  TF_ASSERT_OK(TupleSimplifier().Run(module.get()).status());
+  auto sort = op::Sort(op::Parameter(0), op::Iota());
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Tuple(op::Slice(op::GetTupleElement(sort, 0)),
+                        op::Slice(op::GetTupleElement(sort, 1))));
+}
+
 }  // namespace
 }  // namespace xla
