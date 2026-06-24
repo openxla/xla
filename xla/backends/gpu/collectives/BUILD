@@ -5,7 +5,6 @@ load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "if_nccl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
-load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -273,10 +272,6 @@ xla_test(
         "@tsl//tsl/platform:casts",
     ] + if_cuda_or_rocm_is_configured([
         ":nccl_or_rccl_collectives",
-    ]) + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:cuda_platform",
-    ]) + if_rocm_is_configured([
-        "//xla/stream_executor/rocm:rocm_platform",
     ]),
 )
 
@@ -392,10 +387,6 @@ xla_test(
         "@com_google_googletest//:gtest_main",  # buildcleaner: keep
     ] + if_cuda_or_rocm_is_configured([
         ":nccl_or_rccl_collectives",
-    ])  + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:cuda_platform",
-    ]) + if_rocm_is_configured([
-        "//xla/stream_executor/rocm:rocm_platform",
     ]),
 )
 
@@ -561,11 +552,7 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-    ] + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:cuda_platform",
-    ]) + if_rocm_is_configured([
-        "//xla/stream_executor/rocm:rocm_platform",
-    ]),
+    ],
 )
 
 cc_library(
