@@ -107,6 +107,79 @@ bool BlockSubcomputationFusion(const HloInstruction* instruction,
   return false;
 }
 
+bool FusionInstructionContainsOpcode(const HloInstruction& fusion,
+                                     HloOpcode opcode) {
+  if (!fusion.IsFusion()) {
+    return fusion.opcode() == opcode;
+  }
+  return absl::c_any_of(
+      fusion.fused_instructions(),
+      [opcode](const HloInstruction* instr) { return instr->opcode() == opcode; });
+}
+
+bool MultiplyFeedsReduceAndSubtract(const HloInstruction& multiply) {
+  bool feeds_reduce = false;
+  bool feeds_subtract = false;
+  auto note_user = [&](const HloInstruction& user) {
+    if (user.opcode() == HloOpcode::kReduce) {
+      feeds_reduce = true;
+    }
+    if (user.opcode() == HloOpcode::kSubtract) {
+      feeds_subtract = true;
+    }
+    if (user.IsFusion()) {
+      if (FusionInstructionContainsOpcode(user, HloOpcode::kReduce)) {
+        feeds_reduce = true;
+      }
+      if (FusionInstructionContainsOpcode(user, HloOpcode::kSubtract)) {
+        feeds_subtract = true;
+      }
+    }
+  };
+  for (const HloInstruction* user : multiply.users()) {
+    note_user(*user);
+  }
+  return feeds_reduce && feeds_subtract;
+}
+
+bool WouldSplitSoftmaxScaledMultiply(const HloInstruction* producer,
+                                     const HloInstruction* consumer) {
+  if (producer->opcode() != HloOpcode::kMultiply) {
+    return false;
+  }
+  if (!MultiplyFeedsReduceAndSubtract(*producer)) {
+    return false;
+  }
+  if (consumer->opcode() == HloOpcode::kReduce ||
+      consumer->opcode() == HloOpcode::kSubtract) {
+    return true;
+  }
+  if (consumer->IsFusion() &&
+      (FusionInstructionContainsOpcode(*consumer, HloOpcode::kReduce) ||
+       FusionInstructionContainsOpcode(*consumer, HloOpcode::kSubtract))) {
+    return true;
+  }
+  return false;
+}
+
+bool WouldFuseDotIntoSplitSoftmaxFusion(const HloInstruction* producer,
+                                        const HloInstruction* consumer) {
+  if (producer->opcode() != HloOpcode::kDot || !consumer->IsFusion()) {
+    return false;
+  }
+  if (!FusionInstructionContainsOpcode(*consumer, HloOpcode::kSubtract) ||
+      !FusionInstructionContainsOpcode(*consumer, HloOpcode::kExp)) {
+    return false;
+  }
+  for (const HloInstruction* user : producer->users()) {
+    if (user->opcode() == HloOpcode::kMultiply &&
+        MultiplyFeedsReduceAndSubtract(*user)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 bool CpuInstructionFusion::IsExpensive(const HloInstruction& instruction) {
@@ -386,6 +459,20 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
   if (producer->opcode() != HloOpcode::kFusion && is_expensive(*producer) &&
       ReusesOperandElements(consumer, operand_index)) {
     return FusionDecision::Forbid("Fusion is not profitable.");
+  }
+
+  // Stable softmax lowers as: dot -> multiply(scale) -> reduce(max) and
+  // subtract(multiply, broadcast(max)) -> exponential. Fusing multiply only into
+  // reduce, then fusing dot into subtract+exponential separately, recomputes
+  // scaled logits in a second kernel and can miscompile for large values.
+  if (WouldSplitSoftmaxScaledMultiply(producer, consumer)) {
+    return FusionDecision::Forbid(
+        "Don't split softmax scaled logits across separate fusions.");
+  }
+  if (WouldFuseDotIntoSplitSoftmaxFusion(producer, consumer)) {
+    return FusionDecision::Forbid(
+        "Don't fuse dot into softmax subtract-exponential fusion separately "
+        "from its scaled-logits reduce.");
   }
 
   RETURN_IF_NOT_FUSIBLE(InstructionFusion::ShouldFuse(consumer, operand_index));
