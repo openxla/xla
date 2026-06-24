@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -108,8 +109,11 @@ TEST_P(GpuCollectiveMemorySpaceAssignmentTest,
   HloModuleConfig config = GetModuleConfigForTest();
   DebugOptions debug_options = config.debug_options();
   debug_options.set_xla_gpu_enable_nccl_user_buffers(UseNcclUserBuffers());
-  debug_options.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(
-      UseNcclSymmetricBuffers());
+  if (UseNcclSymmetricBuffers()) {
+    auto* filter =
+        debug_options.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+    filter->set_collective(DebugOptions::ALLCOLLECTIVES);
+  }
   config.set_debug_options(debug_options);
   BufferAssigner::Colorer colorer = CreateColorer(config.debug_options());
 
@@ -163,10 +167,75 @@ INSTANTIATE_TEST_SUITE_P(
                               : "without_nccl_symmetric_buffers");
     });
 
+TEST_F(GpuMemorySpaceAssignmentTest,
+       TestCollectiveMemorySpaceAssignmentFilters) {
+  absl::string_view kHloModule = R"(
+    HloModule m, replica_count=2
 
+    add_f32 {
+      Arg_0 = f32[] parameter(0)
+      Arg_1 = f32[] parameter(1)
+      ROOT add = f32[] add(Arg_0, Arg_1)
+    }
 
+    add_s32 {
+      Arg_0 = s32[] parameter(0)
+      Arg_1 = s32[] parameter(1)
+      ROOT add = s32[] add(Arg_0, Arg_1)
+    }
 
+    ENTRY main {
+      p_f32_1024 = f32[1024]{0} parameter(0)
+      p_s32_1024 = s32[1024]{0} parameter(1)
+      p_f32_2048 = f32[2048]{0} parameter(2)
 
+      ar_f32 = f32[1024]{0} all-reduce(p_f32_1024), replica_groups={}, to_apply=add_f32
+      ar_s32 = s32[1024]{0} all-reduce(p_s32_1024), replica_groups={}, to_apply=add_s32
+      ar_f32_large = f32[2048]{0} all-reduce(p_f32_2048), replica_groups={}, to_apply=add_f32
+
+      ROOT tuple = (f32[1024]{0}, s32[1024]{0}, f32[2048]{0}) tuple(ar_f32, ar_s32, ar_f32_large)
+    }
+  )";
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  DebugOptions debug_options = config.debug_options();
+
+  // Enable symmetric buffers only for AllReduce F32 up to 4096 bytes.
+  auto* filter =
+      debug_options.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+  filter->set_collective(DebugOptions::ALLREDUCE);
+  filter->set_max_size_bytes(4096);
+  filter->set_op_type(xla::F32);
+
+  config.set_debug_options(debug_options);
+  BufferAssigner::Colorer colorer = CreateColorer(config.debug_options());
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(kHloModule, config));
+  AliasInfo alias_info;
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                          HloAliasAnalysis::Run(module.get(), &alias_info));
+  DependencyHloOrdering ordering(module.get());
+  TF_EXPECT_OK(colorer(alias_analysis.get(), ordering));
+
+  auto get_color = [&](absl::string_view name) {
+    const HloInstruction* instr =
+        module->entry_computation()->GetInstructionWithName(name);
+    const HloBuffer& buffer = alias_analysis->GetUniqueBufferAt(instr);
+    EXPECT_EQ(buffer.values().size(), 1);
+    EXPECT_TRUE(buffer.values()[0]->has_color());
+    return buffer.values()[0]->color();
+  };
+
+  // ar_f32 (F32, 4096 bytes) -> should be colored as Collective
+  EXPECT_EQ(get_color("ar_f32"), (int)MemorySpaceColor::kCollective);
+
+  // ar_s32 (S32, 4096 bytes) -> should be colored as Default (wrong type)
+  EXPECT_EQ(get_color("ar_s32"), (int)MemorySpaceColor::kDefault);
+
+  // ar_f32_large (F32, 8192 bytes) -> should be colored as Default (too large)
+  EXPECT_EQ(get_color("ar_f32_large"), (int)MemorySpaceColor::kDefault);
+}
 
 TEST_F(GpuMemorySpaceAssignmentTest, TestMultimemMosaicMemorySpaceAssignment) {
   constexpr absl::string_view kHloModule = R"(
