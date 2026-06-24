@@ -24,6 +24,7 @@ limitations under the License.
 #include "google/protobuf/descriptor.h"
 #include "xla/parse_flags_from_env.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/protobuf.h"

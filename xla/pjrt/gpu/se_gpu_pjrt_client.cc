@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/client/local_client.h"
 #include "xla/core/collectives/clique_id.h"
