@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/collective_ops_utils.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -937,6 +938,147 @@ int64_t GetSubgroupSize(const HloCollectiveInstruction* hlo,
     default:
       LOG(FATAL) << "Invalid collective op group mode: " << group_mode;
   }
+}
+
+namespace {
+const HloInstruction* FindCollectiveInstruction(
+    const HloInstruction* instruction) {
+  if (IsNonFusionCollective(instruction)) {
+    return instruction;
+  }
+  if (instruction->opcode() == HloOpcode::kFusion &&
+      instruction->IsCustomFusion()) {
+    for (const auto* inner_inst : instruction->fused_instructions()) {
+      const HloInstruction* found = FindCollectiveInstruction(inner_inst);
+      if (found != nullptr) {
+        return found;
+      }
+    }
+  }
+  return nullptr;
+}
+
+std::optional<DebugOptions::CollectiveOpType> GetCollectiveOpType(
+    const HloInstruction* instruction) {
+  const HloInstruction* collective = FindCollectiveInstruction(instruction);
+  if (collective == nullptr) {
+    return std::nullopt;
+  }
+  HloOpcode opcode = collective->opcode();
+  if (opcode == HloOpcode::kAsyncStart || opcode == HloOpcode::kAsyncDone) {
+    opcode = collective->async_wrapped_opcode();
+  }
+  switch (opcode) {
+    case HloOpcode::kAllReduce:
+    case HloOpcode::kAllReduceStart:
+    case HloOpcode::kAllReduceDone:
+      return DebugOptions::ALLREDUCE;
+    case HloOpcode::kAllGather:
+    case HloOpcode::kAllGatherStart:
+    case HloOpcode::kAllGatherDone:
+      return DebugOptions::ALLGATHER;
+    case HloOpcode::kReduceScatter:
+      return DebugOptions::REDUCESCATTER;
+    case HloOpcode::kCollectiveBroadcast:
+      return DebugOptions::COLLECTIVEBROADCAST;
+    case HloOpcode::kAllToAll:
+      return DebugOptions::ALLTOALL;
+    case HloOpcode::kCollectivePermute:
+    case HloOpcode::kCollectivePermuteStart:
+    case HloOpcode::kCollectivePermuteDone:
+      return DebugOptions::COLLECTIVEPERMUTE;
+    case HloOpcode::kRaggedAllToAll:
+      return DebugOptions::RAGGEDALLTOALL;
+    default:
+      return std::nullopt;
+  }
+}
+
+}  // namespace
+
+NcclSymmetricBuffersSpec::NcclSymmetricBuffersSpec(
+    const DebugOptions& debug_options) {
+  for (const auto& filter_proto :
+       debug_options.xla_enable_nccl_symmetric_buffers_for_collectives()) {
+    Filter filter;
+    filter.collective = filter_proto.collective();
+    if (filter_proto.has_max_size_bytes()) {
+      filter.max_size_bytes = filter_proto.max_size_bytes();
+    }
+    if (filter_proto.has_op_type()) {
+      filter.op_type = filter_proto.op_type();
+    }
+    filters_.push_back(filter);
+  }
+}
+
+bool NcclSymmetricBuffersSpec::IsEnabled(const HloInstruction& inst) const {
+  const HloInstruction* collective = &inst;
+  if (collective->opcode() == HloOpcode::kAsyncStart ||
+      collective->opcode() == HloOpcode::kAsyncDone) {
+    collective = collective->async_wrapped_instruction();
+  }
+
+  auto op_type_opt = GetCollectiveOpType(collective);
+  if (!op_type_opt.has_value()) {
+    return false;
+  }
+  DebugOptions::CollectiveOpType op_type = *op_type_opt;
+
+  size_t size_in_bytes = 0;
+  for (const auto* operand : collective->operands()) {
+    size_in_bytes += ShapeUtil::ByteSizeOf(operand->shape());
+  }
+
+  std::optional<PrimitiveType> operand_type;
+  if (collective->operand_count() > 0) {
+    operand_type = collective->operand(0)->shape().element_type();
+  }
+
+  for (const auto& filter : filters_) {
+    // Check the collective type.
+    if (filter.collective != DebugOptions::ALLCOLLECTIVES &&
+        filter.collective != op_type) {
+      continue;
+    }
+    bool match = true;
+    // Check the size.
+    if (filter.max_size_bytes.has_value() &&
+        size_in_bytes > *filter.max_size_bytes) {
+      match = false;
+    }
+
+    // Check the operand type.
+    if (filter.op_type.has_value()) {
+      if (!operand_type.has_value() || *operand_type != *filter.op_type) {
+        match = false;
+      }
+    }
+    if (match) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool IsNcclSymmetricBuffersEnabledForCollective(
+    const HloInstruction* instruction, const DebugOptions& opts) {
+  if (opts.xla_gpu_experimental_enable_nccl_symmetric_buffers()) {
+    return true;
+  }
+  if (opts.xla_enable_nccl_symmetric_buffers_for_collectives().empty()) {
+    return false;
+  }
+  if (instruction == nullptr) {
+    return false;
+  }
+  const HloInstruction* collective = FindCollectiveInstruction(instruction);
+  if (collective == nullptr) {
+    return false;
+  }
+  NcclSymmetricBuffersSpec spec(opts);
+  return spec.IsEnabled(*collective);
 }
 
 }  // end namespace xla

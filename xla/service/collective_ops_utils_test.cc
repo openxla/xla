@@ -1290,4 +1290,203 @@ TEST(GetReductionIdentity, NoCrashForComplexType) {
 }
 
 }  // namespace GetPariticipantCountsForReplicaGroupsTest
+class IsNcclSymmetricBuffersEnabledForCollectiveTest : public ::testing::Test {
+ protected:
+  IsNcclSymmetricBuffersEnabledForCollectiveTest()
+      : module_("test_module", HloModuleConfig()),
+        builder_("test_computation") {}
+
+  void SetUp() override {
+    Shape f32_1024 = ShapeUtil::MakeShape(F32, {1024});  // 4096 bytes
+    Shape s32_1024 = ShapeUtil::MakeShape(S32, {1024});  // 4096 bytes
+    Shape f32_2048 = ShapeUtil::MakeShape(F32, {2048});  // 8192 bytes
+
+    HloInstruction* p_f32_1024 = builder_.AddInstruction(
+        HloInstruction::CreateParameter(0, f32_1024, "p_f32_1024"));
+    HloInstruction* p_s32_1024 = builder_.AddInstruction(
+        HloInstruction::CreateParameter(1, s32_1024, "p_s32_1024"));
+    HloInstruction* p_f32_2048 = builder_.AddInstruction(
+        HloInstruction::CreateParameter(2, f32_2048, "p_f32_2048"));
+
+    std::vector<ReplicaGroup> replica_groups = CreateReplicaGroups({{0, 1}});
+
+    // Create AllReduce SUM F32 (4096 bytes)
+    HloComputation::Builder reducer_builder("add");
+    HloInstruction* reducer_x =
+        reducer_builder.AddInstruction(HloInstruction::CreateParameter(
+            0, ShapeUtil::MakeScalarShape(F32), "x"));
+    HloInstruction* reducer_y =
+        reducer_builder.AddInstruction(HloInstruction::CreateParameter(
+            1, ShapeUtil::MakeScalarShape(F32), "y"));
+    reducer_builder.AddInstruction(
+        HloInstruction::CreateBinary(ShapeUtil::MakeScalarShape(F32),
+                                     HloOpcode::kAdd, reducer_x, reducer_y));
+    HloComputation* add_computation =
+        module_.AddEmbeddedComputation(reducer_builder.Build());
+
+    ar_f32_1024_ = builder_.AddInstruction(HloInstruction::CreateAllReduce(
+        f32_1024, {p_f32_1024}, add_computation, replica_groups,
+        /*constrain_layout=*/false, /*channel_id=*/std::nullopt,
+        /*use_global_device_ids=*/false));
+
+    // Create AllReduce SUM S32 (4096 bytes)
+    HloComputation::Builder reducer_s32_builder("add_s32");
+    HloInstruction* reducer_s32_x =
+        reducer_s32_builder.AddInstruction(HloInstruction::CreateParameter(
+            0, ShapeUtil::MakeScalarShape(S32), "x"));
+    HloInstruction* reducer_s32_y =
+        reducer_s32_builder.AddInstruction(HloInstruction::CreateParameter(
+            1, ShapeUtil::MakeScalarShape(S32), "y"));
+    reducer_s32_builder.AddInstruction(HloInstruction::CreateBinary(
+        ShapeUtil::MakeScalarShape(S32), HloOpcode::kAdd, reducer_s32_x,
+        reducer_s32_y));
+    HloComputation* add_s32_computation =
+        module_.AddEmbeddedComputation(reducer_s32_builder.Build());
+
+    ar_s32_1024_ = builder_.AddInstruction(HloInstruction::CreateAllReduce(
+        s32_1024, {p_s32_1024}, add_s32_computation, replica_groups,
+        /*constrain_layout=*/false, /*channel_id=*/std::nullopt,
+        /*use_global_device_ids=*/false));
+
+    // Create AllReduce SUM F32 (8192 bytes)
+    ar_f32_2048_ = builder_.AddInstruction(HloInstruction::CreateAllReduce(
+        f32_2048, {p_f32_2048}, add_computation, replica_groups,
+        /*constrain_layout=*/false, /*channel_id=*/std::nullopt,
+        /*use_global_device_ids=*/false));
+
+    // Create AllGather F32 (4096 bytes input, 8192 bytes output)
+    Shape ag_output_shape = ShapeUtil::MakeShape(F32, {2048});
+    ag_f32_1024_ = builder_.AddInstruction(HloInstruction::CreateAllGather(
+        ag_output_shape, {p_f32_1024}, /*all_gather_dimension=*/0,
+        replica_groups,
+        /*constrain_layout=*/false, /*channel_id=*/std::nullopt,
+        /*use_global_device_ids=*/false));
+  }
+
+  HloModule module_;
+  HloComputation::Builder builder_;
+  HloInstruction* ar_f32_1024_;
+  HloInstruction* ar_s32_1024_;
+  HloInstruction* ar_f32_2048_;
+  HloInstruction* ag_f32_1024_;
+};
+
+TEST_F(IsNcclSymmetricBuffersEnabledForCollectiveTest, MasterSwitchEnablesAll) {
+  DebugOptions opts;
+  opts.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(true);
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_1024_, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_s32_1024_, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_2048_, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ag_f32_1024_, opts));
+}
+
+TEST_F(IsNcclSymmetricBuffersEnabledForCollectiveTest, AllFilterEnablesAll) {
+  DebugOptions opts;
+  auto* filter = opts.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+  filter->set_collective(DebugOptions::ALLCOLLECTIVES);
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_1024_, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_s32_1024_, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_2048_, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ag_f32_1024_, opts));
+}
+
+TEST_F(IsNcclSymmetricBuffersEnabledForCollectiveTest, AllFilterWithSizeLimit) {
+  DebugOptions opts;
+  auto* filter = opts.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+  filter->set_collective(DebugOptions::ALLCOLLECTIVES);
+  filter->set_max_size_bytes(4096);
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_1024_, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_s32_1024_, opts));
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_2048_, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ag_f32_1024_, opts));
+}
+
+TEST_F(IsNcclSymmetricBuffersEnabledForCollectiveTest,
+       SingleCollectiveNoOtherFilters) {
+  DebugOptions opts;
+  auto* filter = opts.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+  filter->set_collective(DebugOptions::ALLREDUCE);
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_1024_, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_s32_1024_, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_2048_, opts));
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(ag_f32_1024_, opts));
+}
+
+TEST_F(IsNcclSymmetricBuffersEnabledForCollectiveTest,
+       SingleCollectiveWithSizeFilter) {
+  DebugOptions opts;
+  auto* filter = opts.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+  filter->set_collective(DebugOptions::ALLREDUCE);
+  filter->set_max_size_bytes(4096);
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_1024_, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_s32_1024_, opts));
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_2048_, opts));
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(ag_f32_1024_, opts));
+}
+
+TEST_F(IsNcclSymmetricBuffersEnabledForCollectiveTest,
+       SingleCollectiveWithTypeFilter) {
+  DebugOptions opts;
+  auto* filter = opts.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+  filter->set_collective(DebugOptions::ALLREDUCE);
+  filter->set_op_type(F32);
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_1024_, opts));
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(ar_s32_1024_, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_2048_, opts));
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(ag_f32_1024_, opts));
+}
+
+TEST_F(IsNcclSymmetricBuffersEnabledForCollectiveTest,
+       SingleCollectiveWithSizeAndTypeFilter) {
+  DebugOptions opts;
+  auto* filter = opts.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+  filter->set_collective(DebugOptions::ALLREDUCE);
+  filter->set_max_size_bytes(4096);
+  filter->set_op_type(F32);
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_1024_, opts));
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(ar_s32_1024_, opts));
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_2048_, opts));
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(ag_f32_1024_, opts));
+}
+
+TEST_F(IsNcclSymmetricBuffersEnabledForCollectiveTest,
+       OverlappingFiltersDifferentTypes) {
+  DebugOptions opts;
+  {
+    auto* filter = opts.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+    filter->set_collective(DebugOptions::ALLREDUCE);
+    filter->set_max_size_bytes(4096);
+    filter->set_op_type(F32);
+  }
+  {
+    auto* filter = opts.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+    filter->set_collective(DebugOptions::ALLREDUCE);
+    filter->set_max_size_bytes(8192);
+    filter->set_op_type(S32);
+  }
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_1024_, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_s32_1024_, opts));
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_2048_, opts));
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(ag_f32_1024_, opts));
+}
+
+TEST_F(IsNcclSymmetricBuffersEnabledForCollectiveTest,
+       OverlappingFiltersDifferentSizes) {
+  DebugOptions opts;
+  {
+    auto* filter = opts.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+    filter->set_collective(DebugOptions::ALLREDUCE);
+    filter->set_max_size_bytes(4096);
+    filter->set_op_type(F32);
+  }
+  {
+    auto* filter = opts.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+    filter->set_collective(DebugOptions::ALLREDUCE);
+    filter->set_max_size_bytes(8192);
+    filter->set_op_type(F32);
+  }
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_1024_, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_2048_, opts));
+}
+
 }  // namespace xla
