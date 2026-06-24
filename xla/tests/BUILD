@@ -1089,6 +1089,7 @@ xla_test(
     },
     shard_count = 50,
     tags = ["optonly"],
+    args = if_rocm_is_configured(["--xla_gpu_blas_max_algorithms=8"]),
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
