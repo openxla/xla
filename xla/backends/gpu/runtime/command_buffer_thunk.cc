@@ -56,7 +56,7 @@ using tsl::profiler::TraceMeEncode;
 static bool CommandBufferUpdatesEnabled(
     const CommandExecutor& commands,
     const Thunk::AllocationAddressInfo* address_info) {
-  if (address_info == nullptr || !address_info->address_policy_ready) {
+  if (address_info == nullptr || !address_info->address_info_ready) {
     return true;
   }
   DCHECK(absl::c_is_sorted(commands.allocs_indices()));
@@ -118,7 +118,7 @@ CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
       commands.allocs_indices();
 
   if (params.allocation_address_info != nullptr &&
-      params.allocation_address_info->address_policy_ready) {
+      params.allocation_address_info->address_info_ready) {
     absl::call_once(
         policy_allocs_to_check_once, [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
           DCHECK(absl::c_is_sorted(commands.allocs_indices()));

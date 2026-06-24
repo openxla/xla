@@ -211,7 +211,7 @@ bool GpuExecutableBufferAllocator::ExecutionScope::ShouldRemapAllocation(
       !owner_->command_buffer_va_remapped_allocation_indexes_.contains(index)) {
     return false;
   }
-  if (!remapping_->address_policy_ready) {
+  if (!remapping_->address_info_ready) {
     return true;
   }
   return remapping_->policy_va_remapped_index_set.contains(index);
@@ -397,7 +397,7 @@ absl::Status
 GpuExecutableBufferAllocator::ExecutionScope::UpdateAllocationAddressPolicy() {
   if (!command_buffer_active() ||
       owner_->update_mode_ == DebugOptions::ALWAYS_UPDATE ||
-      remapping_->address_policy_ready) {
+      remapping_->address_info_ready) {
     return absl::OkStatus();
   }
 
@@ -412,7 +412,7 @@ GpuExecutableBufferAllocator::ExecutionScope::UpdateAllocationAddressPolicy() {
       owner_->command_buffer_persistent_allocation_indexes_.end());
   remapping_->policy_va_remapped_index_set =
       owner_->command_buffer_va_remapped_allocation_indexes_;
-  remapping_->address_policy_ready = true;
+  remapping_->address_info_ready = true;
   return absl::OkStatus();
 }
 
@@ -420,11 +420,11 @@ Thunk::AllocationAddressInfo
 GpuExecutableBufferAllocator::ExecutionScope::GetAllocationAddressInfo() const {
   if (command_buffer_active()) {
     return Thunk::AllocationAddressInfo{
-        remapping_->address_policy_ready,
+        remapping_->address_info_ready,
         absl::MakeConstSpan(remapping_->policy_persistent_alloc_indices)};
   }
   return Thunk::AllocationAddressInfo{
-      /*address_policy_ready=*/true,
+      /*address_info_ready=*/true,
       absl::MakeConstSpan(owner_->command_buffer_persistent_alloc_indices_)};
 }
 

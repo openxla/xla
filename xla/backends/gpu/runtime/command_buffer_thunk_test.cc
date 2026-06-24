@@ -249,7 +249,7 @@ TEST(CommandBufferThunkTest, UpdatePolicyIgnoresVaRemappedAllocations) {
 
   std::vector<BufferAllocation::Index> persistent_alloc_indices = {0};
   Thunk::AllocationAddressInfo allocation_address_info{
-      /*address_policy_ready=*/true,
+      /*address_info_ready=*/true,
       absl::MakeConstSpan(persistent_alloc_indices)};
 
   stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);

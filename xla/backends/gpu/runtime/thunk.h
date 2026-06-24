@@ -205,9 +205,11 @@ class Thunk {
   // distinguish allocations with stable addresses from allocations whose
   // addresses are dynamically assigned for each execution.
   struct AllocationAddressInfo {
-    // False until GpuExecutable has finalized the selected persistent
-    // allocation set for this execution.
-    bool address_policy_ready = false;
+    // False until GpuExecutable has finalized the address information for this
+    // execution. Some runtimes choose which allocation addresses to stabilize
+    // after profiling or warmup, so the persistent allocation set can be empty
+    // or incomplete for initial executions.
+    bool address_info_ready = false;
 
     // Allocation indices whose device addresses are stable for this execution.
     // This can include global constant allocations, allocations backed by

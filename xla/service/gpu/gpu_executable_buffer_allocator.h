@@ -224,7 +224,7 @@ class GpuExecutableBufferAllocator {
         allocation_to_reservation_offset;
     std::unique_ptr<se::MemoryReservation> va_reservation;
     se::DeviceAddressVmmAllocator* vmm_allocator = nullptr;
-    bool address_policy_ready = false;
+    bool address_info_ready = false;
     std::vector<BufferAllocation::Index> policy_persistent_alloc_indices;
     AllocationIndexSet policy_va_remapped_index_set;
 

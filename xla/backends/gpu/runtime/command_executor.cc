@@ -575,7 +575,7 @@ absl::Status CommandExecutor::RecordUpdate(
 
   const std::vector<bool>* address_policy_skip_commands = nullptr;
   if (execute_params.allocation_address_info != nullptr &&
-      execute_params.allocation_address_info->address_policy_ready) {
+      execute_params.allocation_address_info->address_info_ready) {
     CommandExecutorsState::AddressPolicyCache& address_policy_cache =
         state->address_policy_caches[key];
     if (!address_policy_cache.initialized) {
@@ -627,7 +627,7 @@ absl::Status CommandExecutor::RecordUpdate(
     // does not need an update, including traced collective commands that also
     // require initialization.
     if (execute_params.allocation_address_info != nullptr &&
-        execute_params.allocation_address_info->address_policy_ready) {
+        execute_params.allocation_address_info->address_info_ready) {
       size_t command_index = static_cast<size_t>(id);
       if (address_policy_skip_commands != nullptr &&
           (*address_policy_skip_commands)[command_index]) {
