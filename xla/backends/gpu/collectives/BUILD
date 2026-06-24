@@ -243,9 +243,6 @@ xla_test(
         ],
     },
     backends = ["gpu"],
-    tags = if_cuda_is_configured([
-        "requires-gpu-nvidia:2",
-    ]),
     deps = [
         ":gpu_clique",
         ":gpu_clique_key",
@@ -361,9 +358,6 @@ xla_test(
         ],
     },
     backends = ["gpu"],
-    tags = if_cuda_is_configured([
-        "requires-gpu-nvidia:2",
-    ]),
     deps = [
         ":allocator_memory_registration",
         ":cancellation_token",
@@ -548,9 +542,6 @@ xla_test(
     name = "loopback_collectives_test",
     srcs = ["loopback_collectives_test.cc"],
     backends = ["gpu"],
-    tags = if_cuda_is_configured([
-        "requires-gpu-nvidia",
-    ]),
     deps = [
         ":gpu_clique_key",
         ":gpu_collectives",
