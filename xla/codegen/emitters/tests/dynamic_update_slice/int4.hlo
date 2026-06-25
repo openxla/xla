@@ -22,3 +22,5 @@ ENTRY main {
 // CHECK: vector.transfer_read
 // CHECK: tensor.insert
 // CHECK: tensor.insert
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

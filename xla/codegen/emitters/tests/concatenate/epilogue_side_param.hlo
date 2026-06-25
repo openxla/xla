@@ -10,3 +10,5 @@ fusion {
   concat = f32[192] concatenate(neg, exp), dimensions={0}
   ROOT add = f32[192] add(concat, param1)
 }
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

@@ -25,3 +25,5 @@ ENTRY main {
 // CHECK:     %[[CST:.*]] = arith.constant dense<[-2, -3, -4]>
 // CHECK:     %[[EXTRACTED:.*]] = tensor.extract %[[CST]][%[[RA]]]
 // CHECK:     %[[INSERTED:.*]] = tensor.insert %[[EXTRACTED]] into %[[ITER]][%[[RA]], %[[RB]]]
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

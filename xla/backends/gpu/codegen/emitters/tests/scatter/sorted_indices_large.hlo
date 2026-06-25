@@ -25,3 +25,5 @@ scatter {
     to_apply=mul
 }
 // CHECK: arith.constant dense<0> : vector<2xi32>
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

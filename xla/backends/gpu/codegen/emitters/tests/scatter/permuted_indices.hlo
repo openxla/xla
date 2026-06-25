@@ -22,3 +22,4 @@ scatter {
     unique_indices=false,
     to_apply=add
 }
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

@@ -12,3 +12,5 @@ fusion {
 // CHECK: xla.loop ({{.*}})[] ->
 // CHECK-SAME: th_x in [0, 127]
 // CHECK-SAME: bl_x in [0, 124]
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

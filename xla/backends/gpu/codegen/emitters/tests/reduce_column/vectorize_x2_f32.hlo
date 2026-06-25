@@ -17,3 +17,4 @@ fusion {
 }
 
 // CHECK: vector<2xf32>
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

@@ -44,3 +44,5 @@ fusion {
 // CHECK-GPU:   xla.apply_indexing #[[MAP]]
 // CHECK:   %[[VAL_3:.*]] = xla.pure_call @fusion_param2
 // CHECK:   %[[INSERTED_3:.*]] = tensor.insert %[[VAL_3:.*]] into {{.*}}[%[[RA]]]
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

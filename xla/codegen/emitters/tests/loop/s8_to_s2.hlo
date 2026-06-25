@@ -5,3 +5,5 @@ fusion {
   %p0 = s8[256] parameter(0)
   ROOT %add = s2[256] convert(%p0)
 }
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

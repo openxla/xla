@@ -37,3 +37,5 @@ fusion {
 
 // CHECK: xla.pure_call @add_f32_add
 // CHECK: xla.pure_call @add_f32_2_add_1
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

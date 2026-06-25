@@ -19,3 +19,4 @@ fused_transpose {
 }
 // CHECK:  xla_gpu.allocate_shared : tensor<128x128xi8>
 // CHECK-NOT:  xla_gpu.allocate_shared
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

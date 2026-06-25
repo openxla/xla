@@ -6,3 +6,4 @@ fusion {
   ROOT atanh = f32[256] atanh(p0)
 }
 // CHECK: llvm.call @__nv_atanhf(
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

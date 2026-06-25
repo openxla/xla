@@ -17,3 +17,5 @@ fusion {
 // CHECK:       func.func private @fusion_tuple
 // CHECK-DAG:     arith.minimumf
 // CHECK-DAG:     arith.maximumf
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

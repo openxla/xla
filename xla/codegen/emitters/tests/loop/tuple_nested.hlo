@@ -35,3 +35,4 @@ fusion {
 // CHECK:   %[[REDUCTION:.*]]:2 = scf.for
 // CHECK:   %[[LOG:.*]] = math.log
 // CHECK:   return %[[REDUCTION]]#0, %[[REDUCTION]]#1, %[[LOG]]
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

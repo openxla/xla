@@ -19,3 +19,5 @@ fusion {
 // There should be 8 elements per warp.
 // CHECK: shuffle_reduce(%{{.*}}) to 2
 // CHECK-NOT: allocate_shared
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

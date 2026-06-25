@@ -9,3 +9,4 @@ fusion {
   ROOT concat = f32[1280002] concatenate(param0, param1), dimensions={0}
 }
 // CHECK-COUNT-2: xla.loop ({{.*}})[%{{.+}}] ->
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

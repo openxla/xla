@@ -28,3 +28,5 @@ fusion {
 // CHECK:   %[[VAL_2_1:.*]] = xla.pure_call @fusion_exp({{.*}}, %[[IDX]])
 // CHECK:   %[[VAL_2_2:.*]] = xla.pure_call @fusion__epilogue__neg({{.*}}, %[[RA]], %[[VAL_2_1]])
 // CHECK:   tensor.insert %[[VAL_2_2:.*]] into {{.*}}[%[[RA]]]
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

@@ -6,3 +6,5 @@ fusion {
   param1 = f32[16,16] parameter(1)
   ROOT concat = f32[32,16] concatenate(param0, param1), dimensions={0}
 }
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

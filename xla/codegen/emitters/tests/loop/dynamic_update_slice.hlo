@@ -29,3 +29,5 @@ fusion {
 // CHECK:   tensor.extract %[[UPDATES]]
 // CHECK: } else {
 // CHECK:   tensor.extract %[[IN]]
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

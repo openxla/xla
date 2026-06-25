@@ -44,3 +44,5 @@ scatter {
 // CHECK:         xla.yield %[[SUM]] : f32
 // CHECK:       }
 // CHECK:       xla.yield %[[RMW]] : tensor<10x5xf32>
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

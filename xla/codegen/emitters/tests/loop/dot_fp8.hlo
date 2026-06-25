@@ -9,3 +9,4 @@ fusion {
 }
 // CHECK: arith.bitcast %{{.*}} : i8 to f8E4M3FN
 // CHECK: arith.bitcast %{{.*}} : f8E4M3FN to i8
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

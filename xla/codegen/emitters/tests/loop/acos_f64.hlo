@@ -8,3 +8,4 @@ fusion {
 }
 
 // CHECK: llvm.call @__nv_acos(
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

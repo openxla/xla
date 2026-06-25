@@ -16836,3 +16836,4 @@ HloModule m
 }
 // CHECK-PARTITIONED-HLO-COUNT-80:  func.func private
 // CHECK-COUNT-80:       func.func private
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

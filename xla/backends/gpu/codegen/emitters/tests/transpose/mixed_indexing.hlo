@@ -14,3 +14,4 @@ fusion {
   ROOT %t = (f64[6,4,2,24], f64[24,2,24]) tuple(%a1, %a2)
 }
 // CHECK: xla_gpu.allocate_shared
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

@@ -10,3 +10,5 @@ fusion {
 }
 // CHECK: arith.bitcast
 // CHECK: arith.addi
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

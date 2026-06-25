@@ -7,3 +7,4 @@ fusion {
   ROOT %t = f64[24,2,24] transpose(%p0), dimensions={2,1,0}
 }
 // CHECK: xla_gpu.allocate_shared
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

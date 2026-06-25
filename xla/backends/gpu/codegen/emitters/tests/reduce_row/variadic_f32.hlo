@@ -23,3 +23,5 @@ fusion {
 
 // CHECK: allocate_shared
 // CHECK: allocate_shared
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

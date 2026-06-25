@@ -42,3 +42,5 @@ fusion {
 // CHECK:          tensor.insert
 // CHECK:          xla.yield %{{.*}} : tensor<4x2x6x10x64xi16>
 // CHECK:        }
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

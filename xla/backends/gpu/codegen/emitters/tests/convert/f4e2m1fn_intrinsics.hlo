@@ -9,3 +9,5 @@ f {
 
 // CHECK: llvm.nvvm.ff.to.e2m1x2.rn
 // CHECK: llvm.nvvm.e2m1x2.to.f16x2.rn
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

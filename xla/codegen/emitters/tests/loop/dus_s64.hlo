@@ -13,3 +13,5 @@ ENTRY main {
   ROOT %fusion = f64[4]{0} fusion(%c, %p0), kind=kInput, calls=fusion
 }
 // CHECK: dlti.dl_spec = #dlti.dl_spec<index = 64 : i32>
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

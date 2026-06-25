@@ -27,3 +27,4 @@ scatter {
 }
 // CHECK:      tensor.insert
 // CHECK-NOT: arith.constant dense<0.0 {{.*}} : vector
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

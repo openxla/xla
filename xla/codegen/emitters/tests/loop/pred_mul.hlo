@@ -17,3 +17,5 @@ fusion {
 // CHECK: %[[B:.*]] = arith.cmpi ne,
 // CHECK: %[[R:.*]] = arith.andi %[[A]], %[[B]]
 // CHECK: arith.extui %[[R]] : i1 to i8
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.
