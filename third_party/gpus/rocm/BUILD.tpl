@@ -7,12 +7,18 @@ licenses(["restricted"])  # MPL2, portions GPL v3, LGPL v3, BSD-like
 
 package(default_visibility = ["//visibility:private"])
 
-exports_files(["rocm_dist"], visibility = ["//visibility:public"])
+exports_files(
+    ["rocm_dist"],
+    visibility = ["//visibility:public"],
+)
 
 # Filegroup containing all ROCm distribution files for hipcc_configure
 filegroup(
     name = "rocm_root",
-    srcs = glob(["rocm_dist/**"], allow_empty = True),
+    srcs = glob(
+        ["rocm_dist/**"],
+        allow_empty = True,
+    ),
     visibility = ["//visibility:public"],
 )
 
@@ -442,10 +448,12 @@ rocm_lib_import(
 
 rocm_lib_import(
     name = "hipblaslt",
-    data = glob([
-        "%{rocm_root}/lib/libhipblaslt.so*",
-        "%{rocm_root}/lib/librocroller.so*",
-    ]) + glob([
+    data = glob(
+        [
+            "%{rocm_root}/lib/libhipblaslt.so*",
+            "%{rocm_root}/lib/librocroller.so*",
+        ],
+    ) + glob([
         pattern
         for arch in rocm_gpu_architectures()
         for pattern in [
