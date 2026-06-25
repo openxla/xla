@@ -7,6 +7,8 @@ licenses(["restricted"])  # MPL2, portions GPL v3, LGPL v3, BSD-like
 
 package(default_visibility = ["//visibility:private"])
 
+exports_files(["rocm_dist"], visibility = ["//visibility:public"])
+
 string_flag(
     name = "rocm_path_type",
     build_setting_default = "system",
