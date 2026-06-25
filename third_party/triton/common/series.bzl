@@ -40,5 +40,6 @@ common_patch_list = [
     "//third_party/triton:common/convert_layout_heuristic.patch",
     "//third_party/triton:common/llvm_cl947230825.patch",
     "//third_party/triton:common/llvm_cl948082775.patch",
+    "//third_party/triton:common/tmem_scale_padding_second_half.patch",
     # Add new patches just above this line
 ]
