@@ -1700,6 +1700,7 @@ xla_test(
     ],
     deps = [
         ":select_k_exec_raft",
+        ":select_k_exec_stub",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
@@ -1726,6 +1727,7 @@ cc_library(
     srcs = ["select_k_thunk.cc"],
     hdrs = ["select_k_thunk.h"],
     deps = [
+        ":select_k_exec_stub",
         ":thunk",
         ":thunk_id",
         ":thunk_proto_cc",
