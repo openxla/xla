@@ -249,9 +249,7 @@ class RaggedAllToAllThunk : public CollectiveThunk {
   const RaggedAllToAllConfig config_;
 
   // Upper bound on the device-kernel launch grid and the number of barrier
-  // slots registered on the device communicator. Chosen to comfortably exceed
-  // the SM count of current datacenter GPUs (e.g. H100 132, B200 148).
-  static constexpr int32_t kMaxDeviceKernelCtaCount = 256;
+  static constexpr int32_t kMaxDeviceKernelCtaCount = 64;
   // Floor on the launch grid so small shapes still get some parallelism.
   static constexpr int32_t kMinDeviceKernelCtaCount = 8;
   // Target number of CTAs per (peer, update) copy unit before the grid

@@ -1086,15 +1086,19 @@ NcclDeviceCommunicator::CreateFrom(const NcclCommunicator& comm,
   ncclDevCommRequirements reqs{};
   memset(&reqs, 0, sizeof(reqs));
 #if NCCL_VERSION_CODE >= 22900
-  reqs = NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
-  reqs.lsaBarrierCount = requirements.lsa_barrier_count;
-  reqs.barrierCount = use_gin ? requirements.barrier_count : 0;
-  reqs.railGinBarrierCount = use_gin ? requirements.rail_gin_barrier_count : 0;
-  reqs.ginSignalCount = use_gin ? requirements.gin_signal_count : 0;
-  SetDevCommGinConnection(reqs, use_gin, requirements.gin_connection_full);
-#else
-  reqs.lsaBarrierCount = requirements.lsa_barrier_count;
+  if (use_gin) {
+    reqs = NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
+    reqs.barrierCount = requirements.barrier_count;
+    reqs.railGinBarrierCount = requirements.rail_gin_barrier_count;
+    reqs.ginSignalCount = requirements.gin_signal_count;
+    SetDevCommGinConnection(reqs, use_gin, requirements.gin_connection_full);
+  } else {
+    reqs.size = sizeof(reqs);
+    reqs.magic = NCCL_API_MAGIC;
+    reqs.version = NCCL_VERSION_CODE;
+  }
 #endif
+  reqs.lsaBarrierCount = requirements.lsa_barrier_count;
 
   std::shared_ptr<NcclCommState> comm_state = comm.comm_state();
   ncclDevComm dev_comm{};

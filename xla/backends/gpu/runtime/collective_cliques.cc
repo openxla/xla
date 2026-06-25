@@ -221,9 +221,13 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
     std::optional<RankId> rank = r.key.rank(params.global_device_id);
     std::shared_ptr<LockableGpuClique::Lock> clique = cliques_map.at(r.key);
 
+    GpuDeviceCommunicator* lsa_dev_comm = nullptr;
     for (const GpuDeviceCommunicator::Requirements& reqs : r.dev_comms) {
       // Device communicator already exists in the GPU clique.
-      if ((*clique)->device_comm(*rank, reqs)) {
+      if (auto existing = (*clique)->device_comm(*rank, reqs); existing) {
+        if (!GpuDeviceCommunicator::RequestsGin(reqs)) {
+          lsa_dev_comm = *existing;
+        }
         continue;
       }
 
@@ -240,10 +244,28 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
                    *rank, r.key, reqs);
         continue;
       }
+      if (GpuDeviceCommunicator::RequestsGin(reqs) &&
+          lsa_dev_comm != nullptr) {
+        ASSIGN_OR_RETURN(size_t num_ranks, comm->NumRanks());
+        if (lsa_dev_comm->lsa_size() == static_cast<int64_t>(num_ranks)) {
+          XLA_VLOG_DEVICE(2, params.executor->device_ordinal())
+              << absl::StreamFormat(
+                     "Skip GIN device communicator (single LSA domain, "
+                     "lsa_size=%d == num_ranks=%d): rank=%v clique=%v "
+                     "reqs=%v",
+                     lsa_dev_comm->lsa_size(), num_ranks, *rank, r.key,
+                     reqs);
+          continue;
+        }
+      }
       ASSIGN_OR_RETURN(std::unique_ptr<GpuDeviceCommunicator> dev_comm,
                        comm->CreateDeviceComm(reqs));
+      GpuDeviceCommunicator* dev_comm_ptr = dev_comm.get();
       RETURN_IF_ERROR(
           (*clique)->AddDeviceComm(*rank, reqs, std::move(dev_comm)));
+      if (!GpuDeviceCommunicator::RequestsGin(reqs)) {
+        lsa_dev_comm = dev_comm_ptr;
+      }
     }
   }
 
