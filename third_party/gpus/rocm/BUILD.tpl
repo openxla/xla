@@ -9,6 +9,13 @@ package(default_visibility = ["//visibility:private"])
 
 exports_files(["rocm_dist"], visibility = ["//visibility:public"])
 
+# Filegroup containing all ROCm distribution files for hipcc_configure
+filegroup(
+    name = "rocm_root",
+    srcs = glob(["rocm_dist/**"], allow_empty = True),
+    visibility = ["//visibility:public"],
+)
+
 string_flag(
     name = "rocm_path_type",
     build_setting_default = "system",
