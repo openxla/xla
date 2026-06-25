@@ -57,20 +57,6 @@ limitations under the License.
 namespace xla::gpu {
 
 namespace {
-bool IsSubsetOfSorted(absl::Span<const BufferAllocation::Index> subset,
-                      absl::Span<const BufferAllocation::Index> superset) {
-  auto superset_it = superset.begin();
-  for (BufferAllocation::Index value : subset) {
-    while (superset_it != superset.end() && *superset_it < value) {
-      ++superset_it;
-    }
-    if (superset_it == superset.end() || *superset_it != value) {
-      return false;
-    }
-  }
-  return true;
-}
-
 // An adaptor from Command to ExecutionGraph::Operation for building an
 // execution graph from a command sequence.
 class CommandOperation : public ExecutionGraph::Operation {
@@ -592,9 +578,9 @@ absl::Status CommandExecutor::RecordUpdate(
             << "Command allocs must be sorted: "
             << absl::StrJoin(cmd_allocs_indices_[id], ", ");
 
-        if (IsSubsetOfSorted(cmd_allocs_indices_[id],
-                             execute_params.allocation_address_info
-                                 ->persistent_alloc_indices)) {
+        if (absl::c_includes(execute_params.allocation_address_info
+                                 ->persistent_alloc_indices,
+                             cmd_allocs_indices_[id])) {
           address_policy_cache.skip_commands[id] = true;
         }
       }
