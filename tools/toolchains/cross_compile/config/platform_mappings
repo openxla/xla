@@ -1,11 +1,85 @@
 platforms:
+#  Maps "--platforms=//tools/toolchains/cross_compile/config:linux_x86_64"
+#  to "--cpu=k8".
+  //tools/toolchains/cross_compile/config:linux_x86_64
+    --cpu=k8
+
+#  Maps "--platforms=//tools/toolchains/cross_compile/config:linux_aarch64"
+#  to "--cpu=aarch64".
+  //tools/toolchains/cross_compile/config:linux_aarch64
+    --cpu=aarch64
+
 #  Maps "--platforms=//tools/toolchains/cross_compile/config:darwin_x86_64"
 #  to "--cpu=darwin".
   //tools/toolchains/cross_compile/config:darwin_x86_64
     --cpu=darwin
 
+#  Maps the Apple support macOS platforms used by XLA release configs to
+#  legacy Darwin CPU flags.
+  @build_bazel_apple_support//platforms:darwin_x86_64
+    --cpu=darwin
+
+  @build_bazel_apple_support//platforms:darwin_arm64
+    --cpu=darwin_arm64
+
+#  Maps Android platforms to legacy Android crosstool flags.
+  //tools/toolchains/android:x86
+    --crosstool_top=//external:android/crosstool
+    --cpu=x86
+
+  //tools/toolchains/android:x86_64
+    --crosstool_top=//external:android/crosstool
+    --cpu=x86_64
+
+  //tools/toolchains/android:armeabi-v7a
+    --crosstool_top=//external:android/crosstool
+    --cpu=armeabi-v7a
+
+  //tools/toolchains/android:arm64-v8a
+    --crosstool_top=//external:android/crosstool
+    --cpu=arm64-v8a
+
+#  Maps the Emscripten platform to its legacy crosstool flag.
+  //tools/toolchains/cross_compile/config:emscripten_wasm32
+    --crosstool_top=//external:android/emscripten
+
 flags:
+  # Maps "--cpu=k8" to
+  # "--platforms=//tools/toolchains/cross_compile/config:linux_x86_64".
+  --cpu=k8
+    //tools/toolchains/cross_compile/config:linux_x86_64
+
+  # Maps "--cpu=aarch64" to
+  # "--platforms=//tools/toolchains/cross_compile/config:linux_aarch64".
+  --cpu=aarch64
+    //tools/toolchains/cross_compile/config:linux_aarch64
+
   # Maps "--cpu=darwin" to
   # "--platforms=//tools/toolchains/cross_compile/config:darwin_x86_64".
   --cpu=darwin
     //tools/toolchains/cross_compile/config:darwin_x86_64
+
+  # Maps "--cpu=darwin_arm64" to the Apple support macOS arm64 platform.
+  --cpu=darwin_arm64
+    @build_bazel_apple_support//platforms:darwin_arm64
+
+  # Maps legacy Android crosstool flags to Android platforms.
+  --crosstool_top=//external:android/crosstool
+  --cpu=x86
+    //tools/toolchains/android:x86
+
+  --crosstool_top=//external:android/crosstool
+  --cpu=x86_64
+    //tools/toolchains/android:x86_64
+
+  --crosstool_top=//external:android/crosstool
+  --cpu=armeabi-v7a
+    //tools/toolchains/android:armeabi-v7a
+
+  --crosstool_top=//external:android/crosstool
+  --cpu=arm64-v8a
+    //tools/toolchains/android:arm64-v8a
+
+  # Maps the legacy Emscripten crosstool flag to an Emscripten platform.
+  --crosstool_top=//external:android/emscripten
+    //tools/toolchains/cross_compile/config:emscripten_wasm32

@@ -30,6 +30,14 @@ platform(
     ],
 )
 
+platform(
+    name = "emscripten_wasm32",
+    constraint_values = [
+        "@platforms//os:emscripten",
+        "@platforms//cpu:wasm32",
+    ],
+)
+
 toolchain(
     name = "macos-x86-cross-compile-cc-toolchain",
     exec_compatible_with = [
