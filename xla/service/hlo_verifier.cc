@@ -3115,9 +3115,10 @@ absl::Status VerifyNoCollectiveDeadlocks(const HloModule& module) {
 absl::Status VerifyAsyncComputation(const HloComputation* async_computation) {
   if (!async_computation->CanExpandIntoSingleInstruction()) {
     return FailedPrecondition(
-        "Asynchronous computation %s expected to contain only the root and "
+        "Asynchronous computation %s '%s' expected to contain only the root "
+        "and "
         "parameter instructions.",
-        async_computation->name());
+        async_computation->name(), async_computation->ToString());
   }
   return absl::OkStatus();
 }

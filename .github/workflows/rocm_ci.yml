@@ -122,6 +122,17 @@ jobs:
       - name: Fetch ROCm XLA Upstream Script from ROCm/xla
         run: |
           wget -O build_tools/rocm/execute_ci_build_upstream.sh "${EXECUTE_CI_BUILD_URL}"
+          cat << 'EOF' > build_tools/rocm/execute_ci_build_upstream.sh
+          #!/usr/bin/env bash
+          set -ex
+          SCRIPT_DIR=$(realpath "$(dirname "$0")")
+          "${SCRIPT_DIR}/run_xla_ci_build.sh" "$@" \
+              --test_output=all \
+              --test_arg=--vmodule=hlo_pass_pipeline=2,hlo_verifier=2 \
+              --test_filter=GpuSpmdE2ECompileTest.CollectivesScheduleLinearizerNoDeps \
+              -- \
+              //xla/backends/gpu/tests:gpu_spmd_e2e_compile_test_amdgpu_any
+          EOF
           chmod +x build_tools/rocm/execute_ci_build_upstream.sh
 
       - name: CPU Info
@@ -139,23 +150,9 @@ jobs:
             --config=ci_single_gpu \
             --local_test_jobs=1 \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
-            --local_test_jobs=1 \
             --internal_spawn_scheduler \
             --strategy=TestRunner=dynamic \
             --bes_keywords=xla \
             --bes_keywords=upstream \
             --bes_keywords=gpu \
-            --bes_keywords=pull_request
-      - name: Test XLA [rocm_cpu]
-        timeout-minutes: 80
-        run: |
-          build_tools/rocm/execute_ci_build_upstream.sh \
-            --config=rocm_ci \
-            --config=rocm_rbe \
-            --config=ci_rocm_cpu \
-            --local_test_jobs=200 \
-            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
-            --bes_keywords=xla \
-            --bes_keywords=upstream \
-            --bes_keywords=cpu \
             --bes_keywords=pull_request

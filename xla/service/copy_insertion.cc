@@ -1240,10 +1240,20 @@ absl::Status CopyInsertion::AddSpecialCaseCopies(
   HloInstructionMap<ShapeTree<bool>> instructions_to_copy;
   auto add_index_to_copy = [&instructions_to_copy](HloInstruction* instruction,
                                                    const ShapeIndex& index) {
-    // Buffers are non-copyable and needed copies are added to transition
-    // in and out non-copyable values.
     if (ShapeUtil::GetSubshape(instruction->shape(), index).IsBuffer()) {
       return;
+    }
+    if (instruction->parent()->IsAsyncComputation()) {
+      if (instruction == instruction->parent()->root_instruction()) {
+        return;
+      }
+      auto maybe_caller =
+          instruction->parent()->GetUniqueCaller(HloOpcode::kAsyncStart);
+      if (maybe_caller.has_value() &&
+          instruction->opcode() == HloOpcode::kParameter) {
+        instruction =
+            (*maybe_caller)->mutable_operand(instruction->parameter_number());
+      }
     }
     VLOG(2) << "Adding index to copy: " << instruction->ToString() << "@"
             << index.ToString();
