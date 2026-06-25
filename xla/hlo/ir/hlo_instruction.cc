@@ -1854,8 +1854,7 @@ HloInstruction::CreateReduceScatter(
       channel_id, use_global_device_ids, scatter_dimension);
 }
 
-/* static */ std::unique_ptr<HloInstruction>
-HloInstruction::CreateReduceToRoot(
+/* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateReduceToRoot(
     const Shape& shape, absl::Span<HloInstruction* const> operands,
     HloComputation* reduce_computation,
     std::shared_ptr<CollectiveDeviceListBase> device_list,
@@ -1866,8 +1865,7 @@ HloInstruction::CreateReduceToRoot(
       constrain_layout, channel_id, use_global_device_ids);
 }
 
-/* static */ std::unique_ptr<HloInstruction>
-HloInstruction::CreateReduceToRoot(
+/* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateReduceToRoot(
     const Shape& shape, absl::Span<HloInstruction* const> operands,
     HloComputation* reduce_computation,
     absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,

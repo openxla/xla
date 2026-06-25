@@ -68,8 +68,7 @@ bool IsTritonCollectiveKernel(
 bool IsSupportedCollectiveOp(const HloInstruction& instr) {
   return HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllReduce,
                           HloOpcode::kReduceScatter, HloOpcode::kAllGatherStart,
-                          HloOpcode::kReduceToRoot,
-                          HloOpcode::kAllToAll,
+                          HloOpcode::kReduceToRoot, HloOpcode::kAllToAll,
                           HloOpcode::kCollectivePermuteStart,
                           HloOpcode::kCollectivePermute, HloOpcode::kAllGather>(
       &instr);

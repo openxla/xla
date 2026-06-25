@@ -158,9 +158,9 @@ class ReduceToRootThunk : public AllReduceReduceScatterThunkBase {
 
   static absl::string_view GetHloOpName() { return "reduce-to-root"; }
 
-  static absl::Status CheckImplementable(
-      const HloReduceToRootInstruction* inst, int64_t replica_count,
-      int64_t partition_count);
+  static absl::Status CheckImplementable(const HloReduceToRootInstruction* inst,
+                                         int64_t replica_count,
+                                         int64_t partition_count);
 
   static CollectiveOpGroupMode GetGroupMode(
       const HloReduceToRootInstruction* inst);

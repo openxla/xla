@@ -2639,8 +2639,7 @@ AsyncThunkSequence ThunkEmitter::EmitAsyncStart(const HloInstruction* instr) {
     }
     case HloOpcode::kReduceToRoot: {
       auto* reduce_to_root = Cast<HloReduceToRootInstruction>(wrapped);
-      return EmitCollectiveThunk<ReduceToRootThunk,
-                                 HloReduceToRootInstruction>(
+      return EmitCollectiveThunk<ReduceToRootThunk, HloReduceToRootInstruction>(
           Thunk::kReduceToRoot, instr, reduce_to_root,
           reduce_to_root->use_global_device_ids());
     }
@@ -2888,8 +2887,7 @@ AsyncThunkSequence ThunkEmitter::EmitHloInstruction(const HloInstruction* hlo,
 
     case HloOpcode::kReduceToRoot: {
       auto* reduce_to_root = Cast<HloReduceToRootInstruction>(hlo);
-      return EmitCollectiveThunk<ReduceToRootThunk,
-                                 HloReduceToRootInstruction>(
+      return EmitCollectiveThunk<ReduceToRootThunk, HloReduceToRootInstruction>(
           Thunk::kReduceToRoot, reduce_to_root, reduce_to_root,
           reduce_to_root->use_global_device_ids());
     }

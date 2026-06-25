@@ -400,10 +400,12 @@ absl::Status RcclCommunicator::LaunchAllReduce(
   return absl::OkStatus();
 }
 
-absl::Status RcclCommunicator::LaunchReduce(
-    se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
-    PrimitiveType dtype, size_t count, ReductionKind reduction_kind,
-    RankId root, const Executor& executor) {
+absl::Status RcclCommunicator::LaunchReduce(se::DeviceAddressBase send_buffer,
+                                            se::DeviceAddressBase recv_buffer,
+                                            PrimitiveType dtype, size_t count,
+                                            ReductionKind reduction_kind,
+                                            RankId root,
+                                            const Executor& executor) {
   if (cancel_->IsCancelled()) {
     return absl::FailedPreconditionError("RcclCommunicator aborted");
   }

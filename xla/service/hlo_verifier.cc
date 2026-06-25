@@ -625,9 +625,8 @@ absl::Status ShapeVerifier::HandleReduceToRoot(HloInstruction* hlo) {
         CollectiveOpGroupMode group_mode,
         GetCollectiveOpGroupMode(reduce_to_root->channel_id().has_value(),
                                  reduce_to_root->use_global_device_ids()));
-    RETURN_IF_ERROR(CheckReplicaGroups(
-        reduce_to_root, group_mode,
-        /*uniform_replica_group_size=*/false));
+    RETURN_IF_ERROR(CheckReplicaGroups(reduce_to_root, group_mode,
+                                       /*uniform_replica_group_size=*/false));
   }
   std::vector<const Shape*> operand_shapes;
   for (const HloInstruction* operand : hlo->operands()) {

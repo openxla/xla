@@ -594,8 +594,7 @@ absl::Status GpuHloCostAnalysis::HandleReduceScatter(
   return absl::OkStatus();
 }
 
-absl::Status GpuHloCostAnalysis::HandleReduceToRoot(
-    const HloInstruction* hlo) {
+absl::Status GpuHloCostAnalysis::HandleReduceToRoot(const HloInstruction* hlo) {
   ASSIGN_OR_RETURN(int64_t num_ranks,
                    NumRanks(*Cast<HloReduceToRootInstruction>(hlo)));
 
