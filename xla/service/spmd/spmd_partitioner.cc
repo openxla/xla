@@ -4444,6 +4444,37 @@ absl::Status SpmdPartitioningVisitor::HandleConstant(HloInstruction* hlo) {
   return absl::OkStatus();
 }
 
+// Rewrites a replicated dynamic-slice from an operand that is tiled only along
+// the sliced dimension into a single-slice collective broadcast.
+//
+// The targeted pattern is intentionally narrow:
+//
+//   operand: T[N, ...] sharded as {devices=[P,1,...]<=[P]}
+//   index:   s32[] replicated
+//   result = dynamic-slice(operand, index, 0, ...),
+//            dynamic_slice_sizes={1, ..., ...}, sharding={replicated}
+//
+// Without this rewrite, producing the replicated result generally reshares the
+// whole operand first, which becomes an all-gather of T[N, ...]. Instead, this
+// helper computes the clamped global index, derives the owning tile as
+// `owner = clamped_index / shard_size`, slices the local shard at
+// `local_index = clamped_index % shard_size`, and then builds:
+//
+//   conditional(owner,
+//     branch 0: collective-broadcast(local_slice),  // source is tile 0
+//     branch 1: collective-broadcast(local_slice),  // source is tile 1
+//     ...)
+//
+// Each branch's replica group lists the owning partition first. Collective
+// broadcast therefore forwards only that partition's local one-element slice to
+// every partition, yielding the same replicated result without all-gathering
+// the full operand.
+//
+// Keep the guard conditions conservative. The rewrite relies on one-to-one
+// ownership between tiles of the sliced dimension and partitions: no tuple
+// shapes, one sliced dimension of size 1, scalar S32 index, no partial
+// replication, no sharding on non-sliced dimensions, and an evenly divisible
+// shard size.
 absl::StatusOr<bool>
 SpmdPartitioningVisitor::TryDynamicSliceWithCollectiveBroadcast(
     HloInstruction* hlo) {
