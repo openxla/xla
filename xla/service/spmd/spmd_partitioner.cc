@@ -3840,8 +3840,7 @@ absl::Status SpmdPartitioningVisitor::HandleConstant(HloInstruction* hlo) {
 absl::StatusOr<bool>
 SpmdPartitioningVisitor::TryDynamicSliceWithCollectiveBroadcast(
     HloInstruction* hlo) {
-  if (!options_.enable_dynamic_slice_collective_broadcast ||
-      !hlo->sharding().IsReplicated() || hlo->shape().IsTuple()) {
+  if (!hlo->sharding().IsReplicated() || hlo->shape().IsTuple()) {
     return false;
   }
 
