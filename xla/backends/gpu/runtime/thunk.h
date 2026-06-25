@@ -135,6 +135,7 @@ class Thunk {
     kRaggedAllToAll,
     kRecv,
     kReduceScatter,
+    kReduceToRoot,
     kReplicaId,
     kRngSeed,
     kSelectK,

@@ -68,6 +68,7 @@ bool IsTritonCollectiveKernel(
 bool IsSupportedCollectiveOp(const HloInstruction& instr) {
   return HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllReduce,
                           HloOpcode::kReduceScatter, HloOpcode::kAllGatherStart,
+                          HloOpcode::kReduceToRoot,
                           HloOpcode::kAllToAll,
                           HloOpcode::kCollectivePermuteStart,
                           HloOpcode::kCollectivePermute, HloOpcode::kAllGather>(
@@ -169,8 +170,32 @@ absl::StatusOr<absl::Duration> DCNCollectiveDuration(
       result += runtime;
       break;
     }
+    case HloOpcode::kReduceToRoot: {
+      result += gpu_performance_model.Get()
+                    .EstimateRunTimeForInstruction(&instr, &analysis)
+                    .compute_time;
+      ASSIGN_OR_RETURN(
+          absl::Duration runtime,
+          sol_model.RingLatency(msg_size, num_participating_hosts,
+                                SolGPUCostModel::CollectiveType::kReduceScatter,
+                                num_communicators));
+      result += runtime;
+      break;
+    }
     case HloOpcode::kAsyncStart: {
       if (instr.async_wrapped_opcode() == HloOpcode::kReduceScatter) {
+        result += gpu_performance_model.Get()
+                      .EstimateRunTimeForInstruction(
+                          instr.async_wrapped_instruction(), &analysis)
+                      .compute_time;
+        ASSIGN_OR_RETURN(absl::Duration runtime,
+                         sol_model.RingLatency(
+                             msg_size, num_participating_hosts,
+                             SolGPUCostModel::CollectiveType::kReduceScatter,
+                             num_communicators));
+        result += runtime;
+      }
+      if (instr.async_wrapped_opcode() == HloOpcode::kReduceToRoot) {
         result += gpu_performance_model.Get()
                       .EstimateRunTimeForInstruction(
                           instr.async_wrapped_instruction(), &analysis)

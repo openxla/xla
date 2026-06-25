@@ -145,6 +145,41 @@ class ReduceScatterThunk : public AllReduceReduceScatterThunkBase {
 };
 
 // -----------------------------------------------------------------------------
+// ReduceToRoot thunk
+// -----------------------------------------------------------------------------
+
+class ReduceToRootThunk : public AllReduceReduceScatterThunkBase {
+ public:
+  ReduceToRootThunk(ThunkInfo thunk_info,
+                    const HloReduceToRootInstruction* inst,
+                    std::vector<Buffer> buffers);
+  ReduceToRootThunk(ThunkInfo thunk_info, AllReduceConfig config,
+                    std::vector<Buffer> buffers);
+
+  static absl::string_view GetHloOpName() { return "reduce-to-root"; }
+
+  static absl::Status CheckImplementable(
+      const HloReduceToRootInstruction* inst, int64_t replica_count,
+      int64_t partition_count);
+
+  static CollectiveOpGroupMode GetGroupMode(
+      const HloReduceToRootInstruction* inst);
+
+  static absl::StatusOr<std::unique_ptr<ReduceToRootThunk>> FromProto(
+      ThunkInfo thunk_info, const ReduceToRootThunkProto& thunk_proto,
+      absl::Span<const BufferAllocation> buffer_allocations);
+
+  absl::StatusOr<ThunkProto> ToProto() const override;
+
+ protected:
+  bool RequiresRendezvous() const override { return true; }
+
+  absl::Status RunCollective(const ExecuteParams& params,
+                             const GpuCliqueKey& clique_key, se::Stream& stream,
+                             Communicator& comm) override;
+};
+
+// -----------------------------------------------------------------------------
 
 absl::Status RunAllReduce(ReductionKind reduction_kind,
                           std::vector<DeviceBufferPair>& buffers,
@@ -155,6 +190,10 @@ absl::Status RunReduceScatter(ReductionKind reduction_kind,
                               std::vector<DeviceBufferPair>& buffers,
                               se::Stream& stream, Communicator& comm,
                               bool use_symmetric_buffer = false);
+
+absl::Status RunReduceToRoot(ReductionKind reduction_kind,
+                             std::vector<DeviceBufferPair>& buffers,
+                             se::Stream& stream, Communicator& comm);
 
 }  // namespace gpu
 }  // namespace xla

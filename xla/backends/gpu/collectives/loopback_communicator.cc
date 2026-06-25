@@ -88,6 +88,15 @@ Future<> LoopbackCommunicator::AllReduce(se::DeviceAddressBase send_buffer,
                                   reduction_kind, executor));
 }
 
+Future<> LoopbackCommunicator::Reduce(se::DeviceAddressBase send_buffer,
+                                      se::DeviceAddressBase recv_buffer,
+                                      PrimitiveType dtype, size_t count,
+                                      ReductionKind reduction_kind, RankId root,
+                                      const Executor& executor) {
+  return Future<>(LaunchReduce(send_buffer, recv_buffer, dtype, count,
+                               reduction_kind, root, executor));
+}
+
 Future<> LoopbackCommunicator::Broadcast(se::DeviceAddressBase send_buffer,
                                          se::DeviceAddressBase recv_buffer,
                                          PrimitiveType dtype, size_t count,
@@ -156,6 +165,17 @@ absl::Status LoopbackCommunicator::LaunchAllReduce(
   VLOG(5) << absl::StreamFormat(
       "Loopback AllReduce: rank=%d, count=%d, bytes=%d", rank_, count,
       ByteSize(dtype, count));
+  return Memcpy(executor, recv_buffer, send_buffer, ByteSize(dtype, count));
+}
+
+// Reduce: output = input. Only the root rank's result is semantically used.
+absl::Status LoopbackCommunicator::LaunchReduce(
+    se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
+    PrimitiveType dtype, size_t count, ReductionKind reduction_kind,
+    RankId root, const Executor& executor) {
+  VLOG(5) << absl::StreamFormat(
+      "Loopback Reduce: rank=%d, root=%d, count=%d, bytes=%d", rank_,
+      root.value(), count, ByteSize(dtype, count));
   return Memcpy(executor, recv_buffer, send_buffer, ByteSize(dtype, count));
 }
 

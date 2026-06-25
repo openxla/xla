@@ -91,6 +91,16 @@ class Communicator {
                              ReductionKind reduction_kind,
                              const Executor& executor) = 0;
 
+  // Reduce buffers of length `count` in `send_buff` using `reduction_kind`
+  // reduction and leave the result on `recv_buff` of the root rank.
+  virtual Future<> Reduce(se::DeviceAddressBase send_buffer,
+                          se::DeviceAddressBase recv_buffer,
+                          PrimitiveType dtype, size_t count,
+                          ReductionKind reduction_kind, RankId root,
+                          const Executor& executor) {
+    return Unimplemented("Reduce is not implemented");
+  }
+
   // Copy data in `send_buff` from the root device to the `recv_buff` on
   // all other devices.
   virtual Future<> Broadcast(se::DeviceAddressBase send_buffer,
