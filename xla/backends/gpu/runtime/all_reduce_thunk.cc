@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/core/collectives/communicator.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/future.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -381,8 +382,7 @@ ReduceToRootThunk::ReduceToRootThunk(ThunkInfo thunk_info,
     : AllReduceReduceScatterThunkBase(Thunk::kReduceToRoot, thunk_info,
                                       std::move(config), std::move(buffers)) {}
 
-absl::StatusOr<std::unique_ptr<ReduceToRootThunk>>
-ReduceToRootThunk::FromProto(
+absl::StatusOr<std::unique_ptr<ReduceToRootThunk>> ReduceToRootThunk::FromProto(
     ThunkInfo thunk_info, const ReduceToRootThunkProto& thunk_proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   std::vector<CollectiveThunk::Buffer> buffers;

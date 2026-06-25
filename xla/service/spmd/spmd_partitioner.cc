@@ -4057,7 +4057,8 @@ SpmdPartitioningVisitor::TryDynamicUpdateSliceWithReduceToRoot(
   const int64_t rank = hlo->shape().dimensions().size();
   std::optional<int64_t> sliced_dim;
   for (int64_t dim = 0; dim < rank; ++dim) {
-    if (update_tensor->shape().dimensions(dim) != hlo->shape().dimensions(dim)) {
+    if (update_tensor->shape().dimensions(dim) !=
+        hlo->shape().dimensions(dim)) {
       if (sliced_dim.has_value()) {
         return false;
       }
@@ -4090,10 +4091,8 @@ SpmdPartitioningVisitor::TryDynamicUpdateSliceWithReduceToRoot(
     return false;
   }
 
-  const int64_t num_slice_partitions =
-      output_sharding.dimension(*sliced_dim);
-  if (num_slice_partitions <= 1 ||
-      input_dim_size % num_slice_partitions != 0) {
+  const int64_t num_slice_partitions = output_sharding.dimension(*sliced_dim);
+  if (num_slice_partitions <= 1 || input_dim_size % num_slice_partitions != 0) {
     return false;
   }
   for (int64_t dim = 0; dim < rank; ++dim) {
@@ -4174,9 +4173,8 @@ SpmdPartitioningVisitor::TryDynamicUpdateSliceWithReduceToRoot(
   HloInstruction* rhs =
       reduction_builder.AddInstruction(HloInstruction::CreateParameter(
           /*parameter_number=*/1, scalar_shape, "rhs"));
-  HloInstruction* add =
-      reduction_builder.AddInstruction(HloInstruction::CreateBinary(
-          scalar_shape, HloOpcode::kAdd, lhs, rhs));
+  HloInstruction* add = reduction_builder.AddInstruction(
+      HloInstruction::CreateBinary(scalar_shape, HloOpcode::kAdd, lhs, rhs));
   HloComputation* reduction =
       module_->AddEmbeddedComputation(reduction_builder.Build(add));
 
@@ -4204,13 +4202,14 @@ SpmdPartitioningVisitor::TryDynamicUpdateSliceWithReduceToRoot(
     HloInstruction* reduce_to_root =
         branch_builder.AddInstruction(HloInstruction::CreateReduceToRoot(
             replicated_update->shape(), {branch_param}, reduction,
-            replica_groups, /*constrain_layout=*/false, NewChannel(),
+            std::make_shared<CollectiveDeviceList>(replica_groups),
+            /*constrain_layout=*/false, NewChannel(),
             /*use_global_device_ids=*/false));
     reduce_to_root->set_metadata(hlo->metadata());
     reduce_to_root->set_frontend_attributes(hlo->frontend_attributes());
     reduce_to_root->set_frontend_attribute(kSpmdGeneratedAttr, "true");
-    branch_computations.push_back(module_->AddEmbeddedComputation(
-        branch_builder.Build(reduce_to_root)));
+    branch_computations.push_back(
+        module_->AddEmbeddedComputation(branch_builder.Build(reduce_to_root)));
   }
 
   HloInstruction* reduced_update =
@@ -4230,11 +4229,12 @@ SpmdPartitioningVisitor::TryDynamicUpdateSliceWithReduceToRoot(
   std::vector<HloInstruction*> partition_ordinals = MakeTiledPartitionOrdinals(
       output_sharding, MakePartitioningState().partition_id, &b_);
   const Shape pred_shape = ShapeUtil::MakeShape(PRED, {});
-  HloInstruction* is_owner = b_.AddInstruction(HloInstruction::CreateCompare(
-      pred_shape, partition_ordinals[*sliced_dim], owner,
-      ComparisonDirection::kEq));
-  HloInstruction* pred_bcast = b_.AddInstruction(HloInstruction::CreateBroadcast(
-      ShapeUtil::ChangeElementType(dus->shape(), PRED), is_owner, {}));
+  HloInstruction* is_owner = b_.AddInstruction(
+      HloInstruction::CreateCompare(pred_shape, partition_ordinals[*sliced_dim],
+                                    owner, ComparisonDirection::kEq));
+  HloInstruction* pred_bcast =
+      b_.AddInstruction(HloInstruction::CreateBroadcast(
+          ShapeUtil::ChangeElementType(dus->shape(), PRED), is_owner, {}));
   HloInstruction* result = b_.AddInstruction(HloInstruction::CreateTernary(
       dus->shape(), HloOpcode::kSelect, pred_bcast, dus, partitioned_input));
 
@@ -4931,8 +4931,8 @@ absl::Status SpmdPartitioningVisitor::HandleDynamicUpdateSlice(
     }
   }
 
-  TF_ASSIGN_OR_RETURN(bool handled,
-                      TryDynamicUpdateSliceWithReduceToRoot(hlo, new_indices));
+  ASSIGN_OR_RETURN(bool handled,
+                   TryDynamicUpdateSliceWithReduceToRoot(hlo, new_indices));
   if (handled) {
     return absl::OkStatus();
   }

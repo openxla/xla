@@ -90,11 +90,10 @@ void VerifyNoShardingOnCollectives(HloModule* module) {
   for (const HloComputation* c : module->computations()) {
     for (const HloInstruction* inst : c->instructions()) {
       bool is_collective = absl::c_linear_search(
-          std::vector<HloOpcode>{HloOpcode::kAllToAll, HloOpcode::kAllReduce,
-                                 HloOpcode::kAllGather,
-                                 HloOpcode::kCollectivePermute,
-                                 HloOpcode::kReduceScatter,
-                                 HloOpcode::kReduceToRoot},
+          std::vector<HloOpcode>{
+              HloOpcode::kAllToAll, HloOpcode::kAllReduce,
+              HloOpcode::kAllGather, HloOpcode::kCollectivePermute,
+              HloOpcode::kReduceScatter, HloOpcode::kReduceToRoot},
           inst->opcode());
       if (is_collective) {
         EXPECT_FALSE(inst->has_sharding());
@@ -2656,9 +2655,9 @@ ENTRY entry {
 
   SpmdPartitionerOptions options;
   options.enable_dynamic_update_slice_reduce_to_root = true;
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module,
-      PartitionComputation(hlo_string, /*num_devices=*/4, options));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string,
+                                            /*num_devices=*/4, options));
 
   auto count_opcode = [&](HloOpcode opcode) {
     int64_t count = 0;

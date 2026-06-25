@@ -2063,6 +2063,7 @@ cc_library(
         "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/backends/gpu/collectives:gpu_communicator",
         "//xla/core/collectives:communicator",
+        "//xla/core/collectives:rank_id",
         "//xla/core/collectives:reduction_kind",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
