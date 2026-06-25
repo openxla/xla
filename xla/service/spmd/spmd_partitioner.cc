@@ -4614,7 +4614,8 @@ SpmdPartitioningVisitor::TryDynamicSliceWithCollectiveBroadcast(
             /*parameter_number=*/0, local_slice->shape(), "operand"));
     HloInstruction* broadcast =
         branch_builder.AddInstruction(HloInstruction::CreateCollectiveBroadcast(
-            local_slice->shape(), {branch_param}, replica_groups,
+            local_slice->shape(), {branch_param},
+            std::make_shared<CollectiveDeviceList>(replica_groups),
             /*constrain_layout=*/false, NewChannel()));
     broadcast->set_metadata(hlo->metadata());
     broadcast->set_frontend_attributes(hlo->frontend_attributes());
@@ -4633,8 +4634,7 @@ SpmdPartitioningVisitor::TryDynamicSliceWithCollectiveBroadcast(
 }
 
 absl::Status SpmdPartitioningVisitor::HandleDynamicSlice(HloInstruction* hlo) {
-  TF_ASSIGN_OR_RETURN(bool handled,
-                      TryDynamicSliceWithCollectiveBroadcast(hlo));
+  ASSIGN_OR_RETURN(bool handled, TryDynamicSliceWithCollectiveBroadcast(hlo));
   if (handled) {
     return absl::OkStatus();
   }
