@@ -307,10 +307,17 @@ static std::vector<bool> MakeDynamicDimensions(
         dynamic_dimensions.size(), dimensions.size());
   }
 
+  if (!primitive_util::IsArrayType(element_type)) {
+    if (!dimensions.empty()) {
+      return InvalidArgument(
+          "Invalid dimensions size %d for non-array shape of type %s",
+          dimensions.size(), PrimitiveType_Name(element_type));
+    }
+    return Shape(element_type);
+  }
+
   Shape shape;
-  int64_t dense_shape_size = primitive_util::IsArrayType(element_type)
-                                 ? primitive_util::ByteWidth(element_type)
-                                 : -1;
+  int64_t dense_shape_size = primitive_util::ByteWidth(element_type);
 
   // Verify that array-based lookup is consistent with public API.
   DCHECK_EQ(dense_shape_size, ByteSizeOfPrimitiveType(element_type))

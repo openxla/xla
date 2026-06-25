@@ -85,11 +85,9 @@ limitations under the License.
 #include "xla/side_effect_util.h"
 #include "xla/sort_json.h"
 #include "xla/status_macros.h"
-#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/tsl/lib/gtl/map_util.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -434,8 +432,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       break;
     }
     case HloOpcode::kAsyncUpdate: {
-      TF_RET_CHECK(proto.operand_ids_size() == 1)
-          << "Async update requires one singular operand";
+      TF_RET_CHECK(proto.operand_ids_size() >= 1)
+          << "Async update requires at least one operand";
       HloInstruction* prev_op = operands(0);
       TF_RET_CHECK(prev_op->IsAsynchronous())
           << "Async update requires its operand to be an asynchronous op";
@@ -453,7 +451,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
             << " async_wrapped_computation, but sees "
             << computations(0)->name();
       }
-      instruction = CreateAsyncUpdate(shape, prev_op);
+      instruction = CreateAsyncUpdate(shape, all_operands());
       break;
     }
     case HloOpcode::kAsyncDone: {
@@ -1675,14 +1673,23 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateAsyncUpdate(
     const Shape& shape, HloInstruction* operand) {
-  return std::make_unique<HloAsyncInstruction>(HloOpcode::kAsyncUpdate, shape,
-                                               operand);
+  return absl::WrapUnique(
+      new HloAsyncInstruction(HloOpcode::kAsyncUpdate, shape, operand));
+}
+
+/* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateAsyncUpdate(
+    const Shape& shape, absl::Span<HloInstruction* const> operands) {
+  CHECK_GE(operands.size(), 1);
+  HloInstruction* prev_async = operands[0];
+  return absl::WrapUnique(new HloAsyncInstruction(
+      HloOpcode::kAsyncUpdate, shape, operands,
+      Cast<HloAsyncInstruction>(prev_async)->async_wrapped_opcode()));
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateAsyncDone(
     const Shape& shape, HloInstruction* operand) {
-  return std::make_unique<HloAsyncInstruction>(HloOpcode::kAsyncDone, shape,
-                                               operand);
+  return absl::WrapUnique(
+      new HloAsyncInstruction(HloOpcode::kAsyncDone, shape, operand));
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateCopyStart(
@@ -3008,7 +3015,7 @@ HloInstruction::LatestNonGteAncestorAndIndex() const {
   }
 
   // We built up index in the reverse order from what we want.
-  std::reverse(index.begin(), index.end());
+  absl::c_reverse(index);
 
   return {hlo, index};
 }

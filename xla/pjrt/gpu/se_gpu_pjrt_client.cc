@@ -155,6 +155,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
 #elif TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"
+#include "xla/stream_executor/rocm/rocm_device_address_vmm_allocator.h"
 #endif
 
 #include "xla/service/gpu/gpu_executable_run_options.h"
@@ -1425,9 +1426,19 @@ GetStreamExecutorGpuDeviceAllocator(
       return se::gpu::CudaDeviceAddressVmmAllocator::Create(
           platform, allocator_config.memory_fraction,
           allocator_config.gpu_system_memory_size, executor_streams);
+#elif TENSORFLOW_USE_ROCM
+      std::vector<std::pair<se::StreamExecutor*, se::Stream*>> executor_streams;
+      executor_streams.reserve(addressable_devices.size());
+      for (const auto& [ordinal, device] : addressable_devices) {
+        executor_streams.push_back(
+            {device->executor(), device->compute_stream()});
+      }
+      return se::gpu::RocmDeviceAddressVmmAllocator::Create(
+          platform, allocator_config.memory_fraction,
+          allocator_config.gpu_system_memory_size, executor_streams);
 #else
       return absl::UnimplementedError(
-          "VMM allocator is only supported with CUDA.");
+          "VMM allocator is only supported with CUDA or ROCm.");
 #endif  // GOOGLE_CUDA
     }
 
@@ -2177,14 +2188,16 @@ StreamExecutorGpuClient::RunAsync(
     RETURN_IF_ERROR(set_result({}, 0));
   }
 
-  RETURN_IF_ERROR(allocation_scope.ExecuteWithBufferAllocations(
+  absl::Status execute_status = allocation_scope.ExecuteWithBufferAllocations(
       buffer_allocations, device_ordinal,
       [&](const gpu::BufferAllocations& execution_buffers) {
         return gpu_exec->ExecuteThunks(execution_buffers, run_options);
-      }));
+      });
+  absl::Status teardown_status = buffer_allocations.TearDown(
+      buffers_in_result, gpu_exec->GetAllocations());
 
-  RETURN_IF_ERROR(buffer_allocations.TearDown(buffers_in_result,
-                                              gpu_exec->GetAllocations()));
+  RETURN_IF_ERROR(execute_status);
+  RETURN_IF_ERROR(teardown_status);
 
   std::vector<tsl::AsyncValueRef<RawSEDeviceMemory>> to_be_released;
 
