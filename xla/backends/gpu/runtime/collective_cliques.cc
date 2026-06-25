@@ -244,8 +244,7 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
                    *rank, r.key, reqs);
         continue;
       }
-      if (GpuDeviceCommunicator::RequestsGin(reqs) &&
-          lsa_dev_comm != nullptr) {
+      if (GpuDeviceCommunicator::RequestsGin(reqs) && lsa_dev_comm != nullptr) {
         ASSIGN_OR_RETURN(size_t num_ranks, comm->NumRanks());
         if (lsa_dev_comm->lsa_size() == static_cast<int64_t>(num_ranks)) {
           XLA_VLOG_DEVICE(2, params.executor->device_ordinal())
@@ -253,8 +252,7 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
                      "Skip GIN device communicator (single LSA domain, "
                      "lsa_size=%d == num_ranks=%d): rank=%v clique=%v "
                      "reqs=%v",
-                     lsa_dev_comm->lsa_size(), num_ranks, *rank, r.key,
-                     reqs);
+                     lsa_dev_comm->lsa_size(), num_ranks, *rank, r.key, reqs);
           continue;
         }
       }
