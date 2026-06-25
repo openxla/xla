@@ -351,9 +351,9 @@ cc_library(
 )
 
 cc_library(
-    name = "vmm_device_address_allocator",
-    srcs = ["vmm_device_address_allocator.cc"],
-    hdrs = ["vmm_device_address_allocator.h"],
+    name = "device_address_vmm_allocator",
+    srcs = ["device_address_vmm_allocator.cc"],
+    hdrs = ["device_address_vmm_allocator.h"],
     deps = [
         ":device_address",
         ":device_address_allocator",
@@ -443,6 +443,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -1295,7 +1296,6 @@ xla_cc_test(
         "//xla/backends/gpu/target_config",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/rocm:rocm_compute_capability",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
     ],

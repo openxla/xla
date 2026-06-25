@@ -23,6 +23,7 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -238,6 +239,57 @@ ENTRY e {
 CHECK: %[[INIT:.*]] = arith.constant dense<0.000000e+00> : tensor<f32>
 CHECK: %[[MASKED_INPUT:.*]] = xtile.mask {{.*}}
 CHECK: %[[RES:.*]] = stablehlo.reduce(%[[MASKED_INPUT]] init: %[[INIT]]) applies stablehlo.add across dimensions = [0] : (tensor<256x16xf32>, tensor<f32>) -> tensor<16xf32>
+)"));
+}
+
+TEST_P(XTileDialectTestParameterized, HloScanIsLoweredToXTileScan) {
+  if (!GetParam()) {
+    GTEST_SKIP() << "Skipping test for legacy emitter.";
+  }
+
+  constexpr absl::string_view kHloText = R"(
+HloModule t
+
+scan_computation {
+  p_carry = f32[] parameter(0)
+  p_input = f32[] parameter(1)
+  add = f32[] add(p_carry, p_input)
+  ROOT tuple = (f32[], f32[]) tuple(add, add)
+}
+
+scan_fusion {
+  p0 = f32[1024] parameter(0)
+  p1 = f32[] parameter(1)
+  scan = (f32[1024], f32[]) scan(p0, p1), dimensions={0}, num_carries=1, is_associative=true, to_apply=scan_computation
+  ROOT gte = f32[1024] get-tuple-element(scan), index=0
+}
+
+ENTRY e {
+  p0 = f32[1024] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT custom-call = f32[1024] fusion(p0, p1), kind=kCustom,
+    calls=scan_fusion,
+    backend_config={"fusion_backend_config": {kind: "__triton"}}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {{1024}};
+
+  EXPECT_OK(CreateXTileIrAndFileCheck(
+      *module->GetComputationWithName("scan_fusion"), block_level_parameters,
+      R"(
+// CHECK-LABEL: @xtile_dialect_fn
+// CHECK:         %[[EXTRACT0:.*]] = xtile.extract %arg0[%c0] [1024] [1] : memref<1024xf32> -> tensor<1024xf32>
+// CHECK:         %[[EXTRACT1:.*]] = xtile.extract %arg1[] [] [] : memref<f32> -> tensor<f32>
+// CHECK:         %[[OUTPUT:.*]], %{{.*}} = xtile.scan(%[[EXTRACT0]]) inits(%[[EXTRACT1]])
+// CHECK-SAME:        dimension = 0 {scan_dim_size = 1024 : i64}
+// CHECK-SAME:        : (tensor<1024xf32>), (tensor<f32>) -> (tensor<1024xf32>), (tensor<1024xf32>) {
+// CHECK:         ^bb0(%[[INPUT:.*]]: tensor<f32>, %[[CARRY:.*]]: tensor<f32>):
+// CHECK:           %[[ADD:.*]] = stablehlo.add %[[INPUT]], %[[CARRY]] : tensor<f32>
+// CHECK:           stablehlo.return %[[ADD]], %[[ADD]] : tensor<f32>, tensor<f32>
+// CHECK:         xtile.insert %[[OUTPUT]] into %arg2
 )"));
 }
 

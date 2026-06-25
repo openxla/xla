@@ -45,6 +45,7 @@ cc_library(
         "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt",
         "//xla/python/ifrt:serdes",
+        "//xla/python/ifrt:serdes_version",
         "//xla/service:computation_placer_hdr",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_macros",
@@ -310,6 +311,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:protobuf",
     ],
@@ -320,6 +322,29 @@ cc_library(
 build_test(
     name = "xla_executable_test_no_impl",
     targets = [":xla_executable_impl_test_lib"],
+)
+
+cc_library(
+    name = "pjrt_executable_impl_test_lib",
+    testonly = True,
+    srcs = ["pjrt_executable_impl_test_lib.cc"],
+    deps = [
+        ":pjrt_ifrt",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla/pjrt:pjrt_executable",
+        "//xla/python/ifrt:test_util",
+        "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/types:span",
+    ],
+    alwayslink = True,
+)
+
+build_test(
+    name = "pjrt_executable_test_no_impl",
+    targets = [":pjrt_executable_impl_test_lib"],
 )
 
 # TODO(hyeontaek): Move this target out of pjrt_ifrt.
@@ -857,6 +882,7 @@ xla_cc_test(
     srcs = [],
     deps = [
         ":pjrt_cpu_client_multi_process_test_lib",
+        ":pjrt_executable_impl_test_lib",
         ":xla_executable_impl_test_lib",
         "//xla/python/ifrt:test_util",
         "@com_google_absl//absl/strings",
