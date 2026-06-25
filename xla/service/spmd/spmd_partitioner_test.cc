@@ -2741,11 +2741,8 @@ ENTRY entry {
     dynamic_slice_sizes={1,8,16}, sharding={replicated}
 })";
 
-  SpmdPartitionerOptions options;
-  options.enable_dynamic_slice_collective_broadcast = true;
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module,
-      PartitionComputation(hlo_string, /*num_devices=*/4, options));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/4));
 
   auto count_opcode = [&](HloOpcode opcode) {
     int64_t count = 0;
