@@ -4444,7 +4444,171 @@ absl::Status SpmdPartitioningVisitor::HandleConstant(HloInstruction* hlo) {
   return absl::OkStatus();
 }
 
+absl::StatusOr<bool>
+SpmdPartitioningVisitor::TryDynamicSliceWithCollectiveBroadcast(
+    HloInstruction* hlo) {
+  if (!options_.enable_dynamic_slice_collective_broadcast ||
+      !hlo->sharding().IsReplicated() || hlo->shape().IsTuple()) {
+    return false;
+  }
+
+  HloInstruction* input = hlo->mutable_operand(0);
+  if (input->shape().IsTuple()) {
+    return false;
+  }
+
+  const int64_t rank = input->shape().dimensions().size();
+  std::optional<int64_t> sliced_dim;
+  for (int64_t dim = 0; dim < rank; ++dim) {
+    if (hlo->dynamic_slice_sizes()[dim] != input->shape().dimensions(dim)) {
+      if (sliced_dim.has_value()) {
+        return false;
+      }
+      sliced_dim = dim;
+    }
+  }
+  if (!sliced_dim.has_value() || hlo->dynamic_slice_sizes()[*sliced_dim] != 1) {
+    return false;
+  }
+
+  const Shape& index_shape = hlo->operand(*sliced_dim + 1)->shape();
+  if (!ShapeUtil::IsScalar(index_shape) || index_shape.element_type() != S32) {
+    return false;
+  }
+
+  PartitionedHlo input_partitioned = GetPartitionedHlo(input);
+  const HloSharding& input_sharding = input_partitioned.sharding();
+  if (!input_sharding.IsTiled() || input_sharding.HasPartialReplication() ||
+      input_sharding.num_devices() != num_partitions_) {
+    return false;
+  }
+
+  const int64_t input_dim_size = input->shape().dimensions(*sliced_dim);
+  if (input_dim_size > std::numeric_limits<int32_t>::max()) {
+    return false;
+  }
+
+  const int64_t num_slice_partitions = input_sharding.dimension(*sliced_dim);
+  if (num_slice_partitions <= 1 || input_dim_size % num_slice_partitions != 0) {
+    return false;
+  }
+  for (int64_t dim = 0; dim < rank; ++dim) {
+    if (dim == *sliced_dim) {
+      continue;
+    }
+    if (input_sharding.dimension(dim) != 1) {
+      return false;
+    }
+  }
+
+  std::vector<int64_t> owner_partition(num_slice_partitions, -1);
+  bool valid_tile_assignment = true;
+  input_sharding.EachTile(
+      [&](absl::Span<const int64_t> indices, int64_t device) {
+        if (indices.size() <= *sliced_dim || device < 0 ||
+            device >= num_partitions_) {
+          valid_tile_assignment = false;
+          return;
+        }
+        for (int64_t dim = 0; dim < rank; ++dim) {
+          if (dim != *sliced_dim && indices[dim] != 0) {
+            valid_tile_assignment = false;
+            return;
+          }
+        }
+        const int64_t owner = indices[*sliced_dim];
+        if (owner < 0 || owner >= num_slice_partitions ||
+            owner_partition[owner] != -1) {
+          valid_tile_assignment = false;
+          return;
+        }
+        owner_partition[owner] = device;
+      });
+  if (!valid_tile_assignment ||
+      absl::c_any_of(owner_partition,
+                     [](int64_t device) { return device < 0; })) {
+    return false;
+  }
+
+  HloInstruction* index =
+      GetPartitionedHlo(hlo->operand(*sliced_dim + 1)).Replicate().hlo();
+  auto constant_s32 = [&](int32_t value) {
+    return b_.AddInstruction(
+        HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(value)));
+  };
+  HloInstruction* zero = constant_s32(0);
+  HloInstruction* max_index =
+      constant_s32(static_cast<int32_t>(input_dim_size - 1));
+  HloInstruction* clamped_index =
+      b_.AddInstruction(HloInstruction::CreateTernary(
+          index_shape, HloOpcode::kClamp, zero, index, max_index));
+
+  const int64_t shard_size = input_dim_size / num_slice_partitions;
+  if (shard_size > std::numeric_limits<int32_t>::max()) {
+    return false;
+  }
+  HloInstruction* shard_size_hlo =
+      constant_s32(static_cast<int32_t>(shard_size));
+  HloInstruction* owner = b_.AddInstruction(HloInstruction::CreateBinary(
+      index_shape, HloOpcode::kDivide, clamped_index, shard_size_hlo));
+  HloInstruction* owner_offset = b_.AddInstruction(HloInstruction::CreateBinary(
+      index_shape, HloOpcode::kMultiply, owner, shard_size_hlo));
+  HloInstruction* local_index = b_.AddInstruction(HloInstruction::CreateBinary(
+      index_shape, HloOpcode::kSubtract, clamped_index, owner_offset));
+
+  std::vector<HloInstruction*> local_indices(rank, zero);
+  local_indices[*sliced_dim] = local_index;
+  HloInstruction* local_slice =
+      b_.AddInstruction(HloInstruction::CreateDynamicSlice(
+          hlo->shape(), input_partitioned.hlo(), local_indices,
+          hlo->dynamic_slice_sizes()));
+
+  std::vector<HloComputation*> branch_computations;
+  branch_computations.reserve(num_slice_partitions);
+  std::vector<HloInstruction*> branch_args(num_slice_partitions, local_slice);
+  for (int64_t branch_owner = 0; branch_owner < num_slice_partitions;
+       ++branch_owner) {
+    std::vector<ReplicaGroup> replica_groups(1);
+    replica_groups[0].add_replica_ids(owner_partition[branch_owner]);
+    for (int64_t i = 0; i < num_slice_partitions; ++i) {
+      if (i != branch_owner) {
+        replica_groups[0].add_replica_ids(owner_partition[i]);
+      }
+    }
+
+    SpmdBuilder branch_builder(
+        absl::StrCat("dynamic_slice_collective_broadcast_owner_", branch_owner),
+        hlo);
+    HloInstruction* branch_param =
+        branch_builder.AddInstruction(HloInstruction::CreateParameter(
+            /*parameter_number=*/0, local_slice->shape(), "operand"));
+    HloInstruction* broadcast =
+        branch_builder.AddInstruction(HloInstruction::CreateCollectiveBroadcast(
+            local_slice->shape(), {branch_param}, replica_groups,
+            /*constrain_layout=*/false, NewChannel()));
+    broadcast->set_metadata(hlo->metadata());
+    broadcast->set_frontend_attributes(hlo->frontend_attributes());
+    broadcast->set_frontend_attribute(kSpmdGeneratedAttr, "true");
+    branch_computations.push_back(
+        module_->AddEmbeddedComputation(branch_builder.Build(broadcast)));
+  }
+
+  HloInstruction* conditional =
+      b_.AddInstruction(HloInstruction::CreateConditional(
+          hlo->shape(), owner, branch_computations, branch_args));
+  conditional->set_metadata(hlo->metadata());
+  conditional->set_frontend_attributes(hlo->frontend_attributes());
+  SetPartitionedHlo(hlo, conditional);
+  return true;
+}
+
 absl::Status SpmdPartitioningVisitor::HandleDynamicSlice(HloInstruction* hlo) {
+  TF_ASSIGN_OR_RETURN(bool handled,
+                      TryDynamicSliceWithCollectiveBroadcast(hlo));
+  if (handled) {
+    return absl::OkStatus();
+  }
+
   if (hlo->sharding().IsReplicatedOrSingleDevice()) {
     return DefaultAction(hlo);
   }

@@ -107,6 +107,10 @@ struct SpmdPartitionerOptions {
   // Enables windowed einsum for result reduce-scatter.
   bool enable_windowed_einsum_for_reduce_scatter = true;
 
+  // Enables a narrow dynamic-slice lowering that broadcasts a single slice from
+  // its sharded owner instead of all-gathering the full operand first.
+  bool enable_dynamic_slice_collective_broadcast = false;
+
   // Whether disable rewrite for dots that share the same
   // operand as an already rewritten windowed einsum loop.
   bool disable_ag_rewrite_for_multiple_consumers = false;
@@ -893,6 +897,9 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   HloInstruction* partition_id_;
 
  private:
+  absl::StatusOr<bool> TryDynamicSliceWithCollectiveBroadcast(
+      HloInstruction* hlo);
+
   PartitionedHlo::ReshardCache reshard_cache_;
 
   // Mapping from the instruction in the original computation to the new SPMD
