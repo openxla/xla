@@ -369,6 +369,7 @@ HLO_MATCHER(RecvDone);
 HLO_MATCHER(Reduce);
 HLO_MATCHER(ReducePrecision);
 HLO_MATCHER(ReduceScatter);
+HLO_MATCHER(ReduceToRoot);
 HLO_MATCHER(ReduceWindow);
 HLO_MATCHER(Remainder);
 HLO_MATCHER(ReplicaId);

@@ -502,6 +502,7 @@ PostorderDFSVisitor::AnalyzeConstantValueFallback(int64_t handle,
     case HloOpcode::kRng:
     case HloOpcode::kAllReduce:
     case HloOpcode::kReduceScatter:
+    case HloOpcode::kReduceToRoot:
     case HloOpcode::kInfeed:
     case HloOpcode::kOutfeed:
     case HloOpcode::kRngBitGenerator:

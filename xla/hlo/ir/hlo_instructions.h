@@ -903,6 +903,33 @@ class HloReduceScatterInstruction : public HloAllReduceInstructionBase {
   int64_t scatter_dimension_;
 };
 
+class HloReduceToRootInstruction : public HloAllReduceInstructionBase {
+ public:
+  explicit HloReduceToRootInstruction(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
+      HloComputation* reduce_computation,
+      std::shared_ptr<CollectiveDeviceListBase> device_list,
+      bool constrain_layout, const std::optional<int64_t>& channel_id,
+      bool use_global_device_ids);
+
+  ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
+  explicit HloReduceToRootInstruction(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
+      HloComputation* reduce_computation,
+      absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
+      const std::optional<int64_t>& channel_id, bool use_global_device_ids);
+
+  static bool ClassOf(const HloInstruction* hlo) {
+    return hlo->opcode() == HloOpcode::kReduceToRoot;
+  }
+
+ private:
+  // Implementation for non-common logic of CloneWithNewOperands.
+  std::unique_ptr<HloInstruction> CloneWithNewOperandsImpl(
+      const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+      HloCloneContext* context) const override;
+};
+
 class HloAllToAllInstruction : public HloCollectiveInstruction {
  public:
   explicit HloAllToAllInstruction(
@@ -1063,7 +1090,8 @@ class HloCollectivePermuteInstruction : public HloChannelInstruction {
 
 inline bool HloAllReduceInstructionBase::ClassOf(const HloInstruction* hlo) {
   return HloAllReduceInstruction::ClassOf(hlo) ||
-         hlo->opcode() == HloOpcode::kReduceScatter;
+         HloReduceScatterInstruction::ClassOf(hlo) ||
+         HloReduceToRootInstruction::ClassOf(hlo);
 }
 
 inline bool HloCollectiveInstruction::ClassOf(const HloInstruction* hlo) {

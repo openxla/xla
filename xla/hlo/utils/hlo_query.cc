@@ -46,6 +46,7 @@ bool IsCollectiveCommunicationOp(HloOpcode op) {
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kCollectiveBroadcast:
     case HloOpcode::kReduceScatter:
+    case HloOpcode::kReduceToRoot:
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kAllGatherStart:
     case HloOpcode::kCollectivePermuteStart:

@@ -618,6 +618,25 @@ absl::Status ShapeVerifier::HandleReduceScatter(HloInstruction* hlo) {
                         operand_shapes, ars->scatter_dimension(), shard_count));
 }
 
+absl::Status ShapeVerifier::HandleReduceToRoot(HloInstruction* hlo) {
+  auto reduce_to_root = Cast<HloReduceToRootInstruction>(hlo);
+  if (opts_.ShouldCheckReplicaGroups()) {
+    ASSIGN_OR_RETURN(
+        CollectiveOpGroupMode group_mode,
+        GetCollectiveOpGroupMode(reduce_to_root->channel_id().has_value(),
+                                 reduce_to_root->use_global_device_ids()));
+    RETURN_IF_ERROR(CheckReplicaGroups(
+        reduce_to_root, group_mode,
+        /*uniform_replica_group_size=*/false));
+  }
+  std::vector<const Shape*> operand_shapes;
+  for (const HloInstruction* operand : hlo->operands()) {
+    operand_shapes.push_back(&operand->shape());
+  }
+  return CheckShape(hlo,
+                    ShapeInference::InferReduceToRootShape(operand_shapes));
+}
+
 absl::Status ShapeVerifier::HandleAllReduceStart(HloInstruction* hlo) {
   auto ar = Cast<HloAllReduceInstruction>(hlo);
   if (opts_.ShouldCheckReplicaGroups()) {
@@ -2997,6 +3016,7 @@ bool IsOtherCollective(const HloInstruction* instruction) {
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kReduceScatter:
+    case HloOpcode::kReduceToRoot:
     case HloOpcode::kCollectiveBroadcast:
       return true;
     default:
@@ -3997,6 +4017,15 @@ absl::Status InstructionVerifier::HandleAllReduce(HloInstruction* crs) {
     TF_RET_CHECK(crs->channel_id().value() > 0)
         << "All reduce channel id must be greater than 0 for "
         << crs->ToShortString();
+  }
+  return absl::OkStatus();
+}
+
+absl::Status InstructionVerifier::HandleReduceToRoot(HloInstruction* hlo) {
+  if (hlo->channel_id().has_value()) {
+    TF_RET_CHECK(hlo->channel_id().value() > 0)
+        << "ReduceToRoot channel id must be greater than 0 for "
+        << hlo->ToShortString();
   }
   return absl::OkStatus();
 }
