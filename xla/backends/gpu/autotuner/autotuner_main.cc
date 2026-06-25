@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/platform_util.h"
+#include "xla/status_macros.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
@@ -130,7 +131,10 @@ struct AutotunerEnvironment {
 
 absl::StatusOr<AutotunerEnvironment> CreateAutotunerEnvironment(
     const DebugOptions& debug_options) {
-  xla::AutotuneConfig autotune_config = GetAutotuneConfig(debug_options);
+  ConfigAssigner::Options assigner_options =
+      GetConfigAssignerOptions(debug_options);
+  CodegenOrchestrator::Options orchestrator_options =
+      GetCodegenOrchestratorOptions(debug_options);
   ASSIGN_OR_RETURN(std::string platform_name,
                    PlatformUtil::CanonicalPlatformName("gpu"));
 
@@ -143,16 +147,17 @@ absl::StatusOr<AutotunerEnvironment> CreateAutotunerEnvironment(
 
   ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler,
                    xla::Compiler::GetForPlatform(platform->id()));
-  se::StreamExecutor* stream_executor = platform->ExecutorForDevice(0).value();
+  ASSIGN_OR_RETURN(se::StreamExecutor * stream_executor_0,
+                   platform->ExecutorForDevice(0));
   auto* gpu_compiler = absl::down_cast<GpuCompiler*>(compiler.get());
   auto alias_info =
-      gpu_compiler->GetAliasInfo(stream_executor->GetDeviceDescription());
+      gpu_compiler->GetAliasInfo(stream_executor_0->GetDeviceDescription());
   auto target_config =
-      std::make_unique<Compiler::GpuTargetConfig>(stream_executor);
+      std::make_unique<Compiler::GpuTargetConfig>(stream_executor_0);
 
   std::unique_ptr<se::DeviceAddressAllocator> allocator =
       std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
-          stream_executor);
+          stream_executor_0);
 
   auto mlir_context = std::make_unique<mlir::MLIRContext>();
   xla::RegisterSymbolicExprStorage(mlir_context.get());
@@ -160,43 +165,49 @@ absl::StatusOr<AutotunerEnvironment> CreateAutotunerEnvironment(
   auto thread_pool = std::make_unique<tsl::thread::ThreadPool>(
       tsl::Env::Default(), "autotuner", tsl::port::MaxParallelism());
 
-  auto profiler = GpuProfiler::Create(
-      stream_executor, GetProfileOptions(debug_options, autotune_config));
-  if (profiler == nullptr) {
-    return absl::InternalError("Failed to create profiler to autotune.");
+  std::vector<std::unique_ptr<Profiler>> autotuner_profilers;
+
+  int device_count = platform->VisibleDeviceCount();
+  autotuner_profilers.reserve(device_count);
+
+  for (int i = 0; i < device_count; ++i) {
+    ASSIGN_OR_RETURN(se::StreamExecutor * stream_executor,
+                     platform->ExecutorForDevice(i));
+    TF_RET_CHECK(stream_executor->GetDeviceDescription().name() ==
+                 stream_executor_0->GetDeviceDescription().name())
+        << "Devices are not the same: device 0 is "
+        << stream_executor_0->GetDeviceDescription().name() << ", device " << i
+        << " is " << stream_executor->GetDeviceDescription().name();
+    auto profiler = GpuProfiler::Create(
+        stream_executor, GetProfileOptions(debug_options, assigner_options));
+    TF_RET_CHECK(profiler != nullptr)
+        << "Failed to create profiler for device " << i;
+
+    autotuner_profilers.push_back(std::move(profiler));
   }
 
   ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<CodegenBackend>> autotuner_backends,
       AutotunerPass::GetGpuAutotunerBackends(
-          stream_executor, allocator.get(), target_config.get(),
+          stream_executor_0, allocator.get(), target_config.get(),
           alias_info.get(), debug_options, mlir_context.get(),
           gpu_compiler->ShapeSizeBytesFunction(), gpu_compiler,
           platform->id()));
 
-  CodegenOrchestrator::Options autotuner_orchestrator_options;
-  autotuner_orchestrator_options.allow_reg_spills_fn =
-      autotune_config.allow_reg_spills_fn;
-  autotuner_orchestrator_options.exclude_cublas_config =
-      autotune_config.exclude_cublas_config;
-
-  ASSIGN_OR_RETURN(auto autotuner_orchestrator,
-                   CodegenOrchestrator::Create(std::move(autotuner_backends),
-                                               autotuner_orchestrator_options,
-                                               thread_pool.get()));
-
-  std::vector<std::unique_ptr<Profiler>> autotuner_profilers;
-  autotuner_profilers.push_back(std::move(profiler));
+  ASSIGN_OR_RETURN(
+      auto autotuner_orchestrator,
+      CodegenOrchestrator::Create(std::move(autotuner_backends),
+                                  orchestrator_options, thread_pool.get()));
 
   Autotuner::Options autotuner_options;
   autotuner_options.scratch_bytes_window_size_us =
-      autotune_config.scratch_bytes_window_size_us;
+      assigner_options.scratch_bytes_window_size_us;
   autotuner_options.correctness_check_options.enable_correctness_check =
-      autotune_config.check_buffers;
+      assigner_options.check_buffers;
   autotuner_options.correctness_check_options.relative_tolerance =
-      autotune_config.relative_tolerance;
+      assigner_options.relative_tolerance;
   autotuner_options.correctness_check_options.crash_on_failure =
-      autotune_config.crash_on_check_failure;
+      assigner_options.crash_on_check_failure;
 
   ASSIGN_OR_RETURN(auto autotuner,
                    Autotuner::Create(std::move(autotuner_orchestrator),

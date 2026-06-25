@@ -40,7 +40,7 @@ jobs:
     needs: rocm-config
     if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' }}
     name: JAX Linux x86 AMD Instinct GPU
-    runs-on: linux-x86-64-1gpu-amd
+    runs-on: amd-do-linux-xla-gpu-gfx950-1
     timeout-minutes: 80
     env:
       DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
@@ -65,12 +65,12 @@ jobs:
         shell: bash
     steps:
       - name: Checking out openxla/xla
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Checkout JAX
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: jax-ml/jax
           path: jax
@@ -104,7 +104,7 @@ jobs:
   xla:
     needs: rocm-config
     name: XLA Linux x86 AMD Instinct GPU
-    runs-on: linux-x86-64-1gpu-amd
+    runs-on: amd-do-linux-xla-gpu-gfx950-1
     timeout-minutes: 220
     env:
       DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
@@ -115,7 +115,7 @@ jobs:
         shell: bash
     steps:
       - name: Checking out openxla/xla
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
