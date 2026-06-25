@@ -2363,6 +2363,25 @@ ENTRY AllToAll {
 
 )"
 },
+// reduce-to-root
+{
+"ReduceToRoot",
+R"(HloModule ReduceToRoot, entry_computation_layout={(f32[128,32]{0,1})->f32[128,32]{0,1}}, replica_count=4
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY ReduceToRoot {
+  input = f32[128,32]{0,1} parameter(0)
+  ROOT rtr = f32[128,32]{0,1} reduce-to-root(input), replica_groups={{1,0},{2,3}}, to_apply=add
+}
+
+)",
+/*replica_count=*/4,
+},
 // collective-broadcast
 {
 "CollectiveBroadcast",

@@ -4033,6 +4033,215 @@ absl::Status SpmdPartitioningVisitor::HandleDUSSinglePartitionUpdate(
   return absl::OkStatus();
 };
 
+absl::StatusOr<bool>
+SpmdPartitioningVisitor::TryDynamicUpdateSliceWithReduceToRoot(
+    HloInstruction* hlo, std::vector<HloInstruction*>& /*new_indices*/) {
+  if (!options_.enable_dynamic_update_slice_reduce_to_root ||
+      hlo->shape().IsTuple()) {
+    return false;
+  }
+
+  const HloInstruction* input_tensor = hlo->operand(0);
+  const HloInstruction* update_tensor = hlo->operand(1);
+  if (input_tensor->shape().IsTuple() || update_tensor->shape().IsTuple()) {
+    return false;
+  }
+
+  const PrimitiveType update_type = update_tensor->shape().element_type();
+  if (!primitive_util::IsFloatingPointType(update_type) &&
+      !primitive_util::IsIntegralType(update_type) &&
+      !primitive_util::IsComplexType(update_type)) {
+    return false;
+  }
+
+  const int64_t rank = hlo->shape().dimensions().size();
+  std::optional<int64_t> sliced_dim;
+  for (int64_t dim = 0; dim < rank; ++dim) {
+    if (update_tensor->shape().dimensions(dim) != hlo->shape().dimensions(dim)) {
+      if (sliced_dim.has_value()) {
+        return false;
+      }
+      sliced_dim = dim;
+    }
+  }
+  if (!sliced_dim.has_value() ||
+      update_tensor->shape().dimensions(*sliced_dim) != 1) {
+    return false;
+  }
+
+  const Shape& index_shape = hlo->operand(*sliced_dim + 2)->shape();
+  if (!ShapeUtil::IsScalar(index_shape) || index_shape.element_type() != S32) {
+    return false;
+  }
+
+  const HloSharding& output_sharding = hlo->sharding();
+  if (!output_sharding.IsTiled() || output_sharding.HasPartialReplication() ||
+      output_sharding.num_devices() != num_partitions_) {
+    return false;
+  }
+
+  PartitionedHlo update_partitioned = GetPartitionedHlo(update_tensor);
+  if (!update_partitioned.sharding().IsReplicatedOrSingleDevice()) {
+    return false;
+  }
+
+  const int64_t input_dim_size = hlo->shape().dimensions(*sliced_dim);
+  if (input_dim_size > std::numeric_limits<int32_t>::max()) {
+    return false;
+  }
+
+  const int64_t num_slice_partitions =
+      output_sharding.dimension(*sliced_dim);
+  if (num_slice_partitions <= 1 ||
+      input_dim_size % num_slice_partitions != 0) {
+    return false;
+  }
+  for (int64_t dim = 0; dim < rank; ++dim) {
+    if (dim == *sliced_dim) {
+      continue;
+    }
+    if (output_sharding.dimension(dim) != 1) {
+      return false;
+    }
+  }
+
+  std::vector<int64_t> owner_partition(num_slice_partitions, -1);
+  bool valid_tile_assignment = true;
+  output_sharding.EachTile(
+      [&](absl::Span<const int64_t> indices, int64_t device) {
+        if (indices.size() <= *sliced_dim || device < 0 ||
+            device >= num_partitions_) {
+          valid_tile_assignment = false;
+          return;
+        }
+        for (int64_t dim = 0; dim < rank; ++dim) {
+          if (dim != *sliced_dim && indices[dim] != 0) {
+            valid_tile_assignment = false;
+            return;
+          }
+        }
+        const int64_t owner = indices[*sliced_dim];
+        if (owner < 0 || owner >= num_slice_partitions ||
+            owner_partition[owner] != -1) {
+          valid_tile_assignment = false;
+          return;
+        }
+        owner_partition[owner] = device;
+      });
+  if (!valid_tile_assignment ||
+      absl::c_any_of(owner_partition,
+                     [](int64_t device) { return device < 0; })) {
+    return false;
+  }
+
+  auto constant_s32 = [&](int32_t value) {
+    return b_.AddInstruction(
+        HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(value)));
+  };
+
+  HloInstruction* index =
+      GetPartitionedHlo(hlo->operand(*sliced_dim + 2)).Replicate().hlo();
+  HloInstruction* zero = constant_s32(0);
+  HloInstruction* max_index =
+      constant_s32(static_cast<int32_t>(input_dim_size - 1));
+  HloInstruction* clamped_index =
+      b_.AddInstruction(HloInstruction::CreateTernary(
+          index_shape, HloOpcode::kClamp, zero, index, max_index));
+
+  const int64_t shard_size = input_dim_size / num_slice_partitions;
+  if (shard_size > std::numeric_limits<int32_t>::max()) {
+    return false;
+  }
+  HloInstruction* shard_size_hlo =
+      constant_s32(static_cast<int32_t>(shard_size));
+  HloInstruction* owner = b_.AddInstruction(HloInstruction::CreateBinary(
+      index_shape, HloOpcode::kDivide, clamped_index, shard_size_hlo));
+  HloInstruction* owner_offset = b_.AddInstruction(HloInstruction::CreateBinary(
+      index_shape, HloOpcode::kMultiply, owner, shard_size_hlo));
+  HloInstruction* local_index = b_.AddInstruction(HloInstruction::CreateBinary(
+      index_shape, HloOpcode::kSubtract, clamped_index, owner_offset));
+
+  HloInstruction* partitioned_input =
+      GetPartitionedHlo(input_tensor).Reshard(output_sharding).hlo();
+  HloInstruction* replicated_update = update_partitioned.Replicate().hlo();
+
+  HloComputation::Builder reduction_builder(
+      "dynamic_update_slice_reduce_to_root_add");
+  Shape scalar_shape = ShapeUtil::MakeShape(update_type, {});
+  HloInstruction* lhs =
+      reduction_builder.AddInstruction(HloInstruction::CreateParameter(
+          /*parameter_number=*/0, scalar_shape, "lhs"));
+  HloInstruction* rhs =
+      reduction_builder.AddInstruction(HloInstruction::CreateParameter(
+          /*parameter_number=*/1, scalar_shape, "rhs"));
+  HloInstruction* add =
+      reduction_builder.AddInstruction(HloInstruction::CreateBinary(
+          scalar_shape, HloOpcode::kAdd, lhs, rhs));
+  HloComputation* reduction =
+      module_->AddEmbeddedComputation(reduction_builder.Build(add));
+
+  std::vector<HloComputation*> branch_computations;
+  branch_computations.reserve(num_slice_partitions);
+  std::vector<HloInstruction*> branch_args(num_slice_partitions,
+                                           replicated_update);
+  for (int64_t branch_owner = 0; branch_owner < num_slice_partitions;
+       ++branch_owner) {
+    std::vector<ReplicaGroup> replica_groups(1);
+    replica_groups[0].add_replica_ids(owner_partition[branch_owner]);
+    for (int64_t i = 0; i < num_slice_partitions; ++i) {
+      if (i != branch_owner) {
+        replica_groups[0].add_replica_ids(owner_partition[i]);
+      }
+    }
+
+    SpmdBuilder branch_builder(
+        absl::StrCat("dynamic_update_slice_reduce_to_root_owner_",
+                     branch_owner),
+        hlo);
+    HloInstruction* branch_param =
+        branch_builder.AddInstruction(HloInstruction::CreateParameter(
+            /*parameter_number=*/0, replicated_update->shape(), "update"));
+    HloInstruction* reduce_to_root =
+        branch_builder.AddInstruction(HloInstruction::CreateReduceToRoot(
+            replicated_update->shape(), {branch_param}, reduction,
+            replica_groups, /*constrain_layout=*/false, NewChannel(),
+            /*use_global_device_ids=*/false));
+    reduce_to_root->set_metadata(hlo->metadata());
+    reduce_to_root->set_frontend_attributes(hlo->frontend_attributes());
+    reduce_to_root->set_frontend_attribute(kSpmdGeneratedAttr, "true");
+    branch_computations.push_back(module_->AddEmbeddedComputation(
+        branch_builder.Build(reduce_to_root)));
+  }
+
+  HloInstruction* reduced_update =
+      b_.AddInstruction(HloInstruction::CreateConditional(
+          replicated_update->shape(), owner, branch_computations, branch_args));
+  reduced_update->set_metadata(hlo->metadata());
+  reduced_update->set_frontend_attributes(hlo->frontend_attributes());
+
+  std::vector<HloInstruction*> local_indices(rank, zero);
+  local_indices[*sliced_dim] = local_index;
+
+  HloInstruction* dus =
+      b_.AddInstruction(HloInstruction::CreateDynamicUpdateSlice(
+          partitioned_input->shape(), partitioned_input, reduced_update,
+          local_indices));
+
+  std::vector<HloInstruction*> partition_ordinals = MakeTiledPartitionOrdinals(
+      output_sharding, MakePartitioningState().partition_id, &b_);
+  const Shape pred_shape = ShapeUtil::MakeShape(PRED, {});
+  HloInstruction* is_owner = b_.AddInstruction(HloInstruction::CreateCompare(
+      pred_shape, partition_ordinals[*sliced_dim], owner,
+      ComparisonDirection::kEq));
+  HloInstruction* pred_bcast = b_.AddInstruction(HloInstruction::CreateBroadcast(
+      ShapeUtil::ChangeElementType(dus->shape(), PRED), is_owner, {}));
+  HloInstruction* result = b_.AddInstruction(HloInstruction::CreateTernary(
+      dus->shape(), HloOpcode::kSelect, pred_bcast, dus, partitioned_input));
+
+  SetPartitionedHlo(hlo, result);
+  return true;
+}
+
 absl::StatusOr<HloInstruction*> SpmdPartitioningVisitor::ProcessUpdatePiece(
     HloInstruction* hlo, const HloInstruction* input_tensor,
     const HloInstruction* piece_update_tensor,
@@ -4720,6 +4929,12 @@ absl::Status SpmdPartitioningVisitor::HandleDynamicUpdateSlice(
       // Replicate the indices.
       new_indices.emplace_back(GetPartitionedHlo(index).Replicate().hlo());
     }
+  }
+
+  TF_ASSIGN_OR_RETURN(bool handled,
+                      TryDynamicUpdateSliceWithReduceToRoot(hlo, new_indices));
+  if (handled) {
+    return absl::OkStatus();
   }
 
   // Refer to go/dus-spmd for more details.
@@ -6257,6 +6472,7 @@ int64_t SpmdPartitioner::CommunicationCostInBytes(HloInstruction* hlo) {
   CHECK(IsCollective(hlo));
   switch (hlo->opcode()) {
     case HloOpcode::kAllReduce:
+    case HloOpcode::kReduceToRoot:
       return ShapeSizeInBytes(hlo->shape()) * 2;
     case HloOpcode::kCollectivePermute:
       return ShapeSizeInBytes(hlo->shape());

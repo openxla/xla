@@ -156,7 +156,8 @@ bool IsSupportedAsyncOp(HloInstruction* instr, bool supports_async_start,
   }
   if (check_sync_versions) {
     if (HloPredicateIsOp<HloOpcode::kAllGather, HloOpcode::kAllReduce,
-                         HloOpcode::kReduceScatter, HloOpcode::kRaggedAllToAll,
+                         HloOpcode::kReduceScatter, HloOpcode::kReduceToRoot,
+                         HloOpcode::kRaggedAllToAll,
                          HloOpcode::kCollectivePermute, HloOpcode::kSendDone,
                          HloOpcode::kSend, HloOpcode::kRecvDone,
                          HloOpcode::kRecv>(instr)) {

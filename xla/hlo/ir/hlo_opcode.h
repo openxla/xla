@@ -142,6 +142,7 @@ namespace xla {
   V(kReduce, "reduce", kHloOpcodeIsVariadic)                                   \
   V(kReducePrecision, "reduce-precision", 1)                                   \
   V(kReduceScatter, "reduce-scatter", kHloOpcodeIsVariadic)                    \
+  V(kReduceToRoot, "reduce-to-root", kHloOpcodeIsVariadic)                     \
   V(kReduceWindow, "reduce-window", kHloOpcodeIsVariadic)                      \
   V(kRemainder, "remainder", 2)                                                \
   V(kReplicaId, "replica-id", 0)                                               \

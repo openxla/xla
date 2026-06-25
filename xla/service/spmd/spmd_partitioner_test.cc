@@ -93,7 +93,8 @@ void VerifyNoShardingOnCollectives(HloModule* module) {
           std::vector<HloOpcode>{HloOpcode::kAllToAll, HloOpcode::kAllReduce,
                                  HloOpcode::kAllGather,
                                  HloOpcode::kCollectivePermute,
-                                 HloOpcode::kReduceScatter},
+                                 HloOpcode::kReduceScatter,
+                                 HloOpcode::kReduceToRoot},
           inst->opcode());
       if (is_collective) {
         EXPECT_FALSE(inst->has_sharding());
@@ -2635,6 +2636,61 @@ ENTRY entry {
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       AllOf(op::DynamicSlice(root_replicated, _), op::Shape("f32[64]")));
+}
+
+TEST_P(SpmdPartitioningTest,
+       DynamicUpdateSliceUsesReduceToRootForReplicatedUpdate) {
+  const char* const hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param = f32[4,8,16] parameter(0), sharding={devices=[4,1,1]<=[4]}
+  %update = f32[1,8,16] parameter(1), sharding={replicated}
+  %index = s32[] parameter(2), sharding={replicated}
+  %zero.0 = s32[] constant(0)
+  %zero.1 = s32[] constant(0)
+  ROOT %dynamic-update-slice = f32[4,8,16] dynamic-update-slice(
+    %param, %update, %index, %zero.0, %zero.1),
+    sharding={devices=[4,1,1]<=[4]}
+})";
+
+  SpmdPartitionerOptions options;
+  options.enable_dynamic_update_slice_reduce_to_root = true;
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/4, options));
+
+  auto count_opcode = [&](HloOpcode opcode) {
+    int64_t count = 0;
+    for (const HloComputation* computation : module->computations()) {
+      count += NumOfInstructions(computation, opcode);
+    }
+    return count;
+  };
+
+  EXPECT_EQ(count_opcode(HloOpcode::kAllReduce), 0);
+  EXPECT_EQ(count_opcode(HloOpcode::kReduceToRoot), 4);
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kSelect);
+  ASSERT_EQ(root->operand(1)->opcode(), HloOpcode::kDynamicUpdateSlice);
+  const HloInstruction* reduced_update = root->operand(1)->operand(1);
+  ASSERT_EQ(reduced_update->opcode(), HloOpcode::kConditional);
+  ASSERT_EQ(reduced_update->branch_count(), 4);
+
+  std::vector<int64_t> reduce_roots;
+  for (int64_t branch = 0; branch < reduced_update->branch_count(); ++branch) {
+    const HloInstruction* reduce_to_root =
+        reduced_update->branch_computation(branch)->root_instruction();
+    ASSERT_EQ(reduce_to_root->opcode(), HloOpcode::kReduceToRoot);
+    const std::vector<std::vector<int64_t>> replica_groups =
+        ReplicaGroupsToVecOfVec(reduce_to_root->replica_groups());
+    ASSERT_EQ(replica_groups.size(), 1);
+    ASSERT_EQ(replica_groups[0].size(), 4);
+    reduce_roots.push_back(replica_groups[0][0]);
+    EXPECT_THAT(replica_groups[0], UnorderedElementsAre(0, 1, 2, 3));
+  }
+  EXPECT_THAT(reduce_roots, UnorderedElementsAre(0, 1, 2, 3));
 }
 
 TEST_P(SpmdPartitioningTest, PadAlongNonPartitionedDimension) {
