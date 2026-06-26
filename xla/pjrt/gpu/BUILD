@@ -202,6 +202,7 @@ cc_library(
         "//xla:debug_options_flags",
         "//xla/service/gpu:gpu_compiler",
         "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu:gpu_executable_buffer_allocator",
         "//xla/service/gpu:stream_executor_util",
     ]) + if_cuda([
         # keep sorted
@@ -211,12 +212,14 @@ cc_library(
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_rocm([
         # keep sorted
+        "//xla/stream_executor/rocm:rocm_device_address_vmm_allocator",
         "@local_config_rocm//rocm:rocm_headers",
     ]) + if_sycl([
         # keep sorted
         "//xla:debug_options_flags",
         "//xla/service/gpu:gpu_compiler",
         "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu:gpu_executable_buffer_allocator",
         "//xla/service/gpu:stream_executor_util",
         "@local_config_sycl//sycl:sycl_headers",
     ]),
@@ -259,6 +262,22 @@ cc_library(
         "@com_google_googletest//:gtest_for_library",
     ],
     alwayslink = 1,
+)
+
+xla_test(
+    name = "pjrt_client_test_gpu",
+    srcs = ["pjrt_client_test_gpu.cc"],
+    backends = ["gpu"],
+    tags = [
+        "multi_gpu",
+        "no_oss",
+    ],
+    deps = [
+        ":se_gpu_pjrt_client",
+        ":se_gpu_pjrt_client_test_lib",
+        "//xla/pjrt:pjrt_client_test_common",
+        "//xla/tsl/platform:test_main",
+    ],
 )
 
 xla_test(
@@ -342,6 +361,8 @@ xla_test(
     ] + if_cuda([
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
+    ]) + if_rocm([
+        "//xla/stream_executor/rocm:rocm_device_address_vmm_allocator",
     ]) + if_google([
         # In OSS this dependency is added automatically for xla_test targets. See
         # third_party/tensorflow/compiler/xla/xla.default.bzl.

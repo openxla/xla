@@ -403,7 +403,13 @@ MaybeOwningThreadPool CreateMaybeOwningThreadPool(
   }
 }
 
-absl::StatusOr<int32_t> GetNumDevicesFromPlatform(se::PlatformId platform_id) {
+struct NumDevicesForPlatform {
+  int32_t num_devices_per_host;
+  int32_t num_devices_per_process;
+};
+
+absl::StatusOr<NumDevicesForPlatform> GetNumDevicesFromPlatform(
+    se::PlatformId platform_id) {
   absl::StatusOr<se::Platform*> platform =
       se::PlatformManager::PlatformWithId(platform_id);
   if (!platform.ok()) {
@@ -413,7 +419,20 @@ absl::StatusOr<int32_t> GetNumDevicesFromPlatform(se::PlatformId platform_id) {
             platform.status().message(),
             ". Are you missing gpu_plugin or stream_executor dependency?"));
   }
-  return platform.value()->VisibleDeviceCount();
+  // VisibleDeviceCount() returns the number of devices visible to the driver.
+  // This is not necessarily the same number as the devices registered with
+  // this XLA process. FindExisting will only return success if a stream
+  // executor has already been registered/created for the given device
+  // ordinal.
+  const int32_t num_devices = platform.value()->VisibleDeviceCount();
+  int32_t num_devices_per_process = 0;
+  for (int i = 0; i < num_devices; ++i) {
+    if (const auto executor = platform.value()->FindExisting(i);
+        executor.ok()) {
+      num_devices_per_process++;
+    }
+  }
+  return NumDevicesForPlatform{num_devices, num_devices_per_process};
 }
 
 // Returns a `GpuTopology` that will be populated with all the information about
@@ -424,14 +443,20 @@ absl::StatusOr<int32_t> GetNumDevicesFromPlatform(se::PlatformId platform_id) {
 // CompileOptions or from the xla_gpu_target_config_filename.
 //
 // For JIT compilations this will be constructed from the stream_exec.
+//
+// When loading a legacy AOT result when we don't have a stream executor this
+// will be constructed from the device_description.
 absl::StatusOr<GpuTopology> InferGpuTopology(
     const HloModuleConfig& hlo_config,
     se::StreamExecutor* absl_nullable stream_exec,
+
     const Compiler::CompileOptions& options, const DebugOptions& debug_opts,
-    se::PlatformId platform_id) {
+    se::PlatformId platform_id,
+    const se::DeviceDescription* absl_nullable device_description = nullptr) {
   int32_t num_partitions;
   int32_t num_hosts_per_partition;
   int32_t num_devices_per_host;
+  std::optional<int32_t> num_devices_per_process = std::nullopt;
   std::optional<GpuTargetConfig> gpu_target_config;
   std::optional<cpu::TargetMachineOptions> cpu_target_options;
 
@@ -453,14 +478,34 @@ absl::StatusOr<GpuTopology> InferGpuTopology(
     if (gpu_topology.host_target_machine_options().has_value()) {
       cpu_target_options = gpu_topology.host_target_machine_options();
     }
+    num_devices_per_process = gpu_topology.num_devices_per_process_opt();
   } else {
+    // If GPU Topology is not provided, we infer it from the HLO config and the
+    // platform. This is not foolproof, but is used as a fallback when the
+    // topology is not explicitly specified (e.g., JIT compilation or legacy
+    // AOT workflows).
+    // A partition in GpuTopology is a slice. A slice depends on physical
+    // layout but in general devices in a slice are laid as close as possible.
+    // Since the layout is unknown in this case, we assume an hlo partition
+    // first layout. So P0R0, P0R1, ... , P1R0, P1R1, ... and so on.
     num_partitions = hlo_config.num_partitions();
-    // If the caller didn't pass this in the GPU Topology assume single host.
-    num_hosts_per_partition = 1;
     // This looks wrong, but it's the current behavior, so keep it for now.
+    // Note that using GetNumDevicesFromPlatform() implies  a device must be
+    // present.
     // TODO: b/491510579 - Check if we can do something better in this case.
-    ASSIGN_OR_RETURN(num_devices_per_host,
+    ASSIGN_OR_RETURN(NumDevicesForPlatform device_counts,
                      GetNumDevicesFromPlatform(platform_id));
+    num_devices_per_host = device_counts.num_devices_per_host;
+    num_devices_per_process = device_counts.num_devices_per_process;
+    if (num_devices_per_host > 0) {
+      // NB: replica_count is the number of devices per partition.
+      num_hosts_per_partition =
+          CeilOfRatio(static_cast<int32_t>(hlo_config.replica_count()),
+                      num_devices_per_host);
+    } else {
+      // If the caller didn't pass this in the GPU Topology assume single host.
+      num_hosts_per_partition = 1;
+    }
   }
 
   if (!gpu_target_config.has_value() &&
@@ -468,6 +513,21 @@ absl::StatusOr<GpuTopology> InferGpuTopology(
     ASSIGN_OR_RETURN(
         gpu_target_config,
         GetTargetConfigFromFile(debug_opts.xla_gpu_target_config_filename()));
+  }
+
+  // When loading a legacy AOT result, we don't have a stream executor or the
+  // topology, but we have a device description. See:
+  // LoadExecutableFromLegacyAotResult
+  if (!gpu_target_config.has_value() && stream_exec == nullptr &&
+      device_description != nullptr) {
+    se::GpuTargetConfigProto target_config_proto;
+    *target_config_proto.mutable_gpu_device_info() =
+        device_description->ToProto();
+    target_config_proto.set_platform_name(platform_id->ToName());
+    target_config_proto.set_device_description_str(device_description->name());
+    ASSIGN_OR_RETURN(GpuTargetConfig target_config,
+                     gpu::GpuTargetConfig::FromProto(target_config_proto));
+    gpu_target_config = std::move(target_config);
   }
 
   if (!gpu_target_config.has_value() && stream_exec == nullptr) {
@@ -485,6 +545,13 @@ absl::StatusOr<GpuTopology> InferGpuTopology(
     cpu_target_options.emplace(debug_opts);
   }
 
+  // Populate the number of devices per process if not yet resolved.
+  if (stream_exec != nullptr && !num_devices_per_process.has_value()) {
+    ASSIGN_OR_RETURN(NumDevicesForPlatform device_counts,
+                     GetNumDevicesFromPlatform(platform_id));
+    num_devices_per_process = device_counts.num_devices_per_process;
+  }
+
   if (gpu_target_config.has_value()) {
     VLOG(2) << "Found target compilation environment, and "
             << (stream_exec == nullptr
@@ -495,7 +562,8 @@ absl::StatusOr<GpuTopology> InferGpuTopology(
                        num_hosts_per_partition,
                        num_devices_per_host,
                        std::move(gpu_target_config),
-                       std::move(cpu_target_options)};
+                       std::move(cpu_target_options),
+                       num_devices_per_process};
   }
 
   VLOG(1) << "Found stream executor, and not a target compilation environment. "
@@ -515,7 +583,8 @@ absl::StatusOr<GpuTopology> InferGpuTopology(
                      num_hosts_per_partition,
                      num_devices_per_host,
                      std::move(local_target_config),
-                     std::move(cpu_target_options)};
+                     std::move(cpu_target_options),
+                     num_devices_per_process};
 }
 
 void MergeModuleStatsInPlace(const ModuleStats& from, ModuleStats& to) {
@@ -744,7 +813,15 @@ absl::Status RunOptimizationPasses(
                                    is_deviceless, is_early_exit_with_layouts);
   }
   // Comparison total order expander
-  pipeline.AddPass<ComparisonExpander>(std::array{std::make_pair(BF16, F32)});
+  std::vector<std::pair<PrimitiveType, PrimitiveType>>
+      comparison_expander_upcasts = {{BF16, F32}};
+  // On Intel GPUs, additionally upcast F4E2M1FN to F16 to avoid an fp4 compare
+  // that SPIR-V backend cannot lower.
+  // TODO(intel-tf): Remove this once SPIR-V backend can lower fp4 compares.
+  if (gpu_version.IsOneAPI()) {
+    comparison_expander_upcasts.push_back({F4E2M1FN, F16});
+  }
+  pipeline.AddPass<ComparisonExpander>(comparison_expander_upcasts);
 
   // Remove zero-sized HLO from the input so that other passes don't have to
   // handle it.
@@ -1313,8 +1390,8 @@ void AddCollectiveCombinerPasses(
     HloPassPipeline& pipeline, const HloModule& module,
     const se::DeviceDescription& device_description,
     const GpuAliasInfo* alias_info, int pointer_size,
-    const GpuCompiler::CompileOptions& options,
-    int num_visible_devices_per_process, mlir::MLIRContext* mlir_context) {
+    const GpuCompiler::CompileOptions& options, const GpuTopology& gpu_topology,
+    mlir::MLIRContext* mlir_context) {
   const DebugOptions& opts = module.config().debug_options();
 
   if (EnableHeuristicCollectiveCombining(module.config(), device_description,
@@ -1344,9 +1421,7 @@ void AddCollectiveCombinerPasses(
 
   // Assign collective backends after combining, so that combined collectives
   // get the correct backend config.
-  pipeline.AddPass<CollectiveBackendAssigner>(
-      device_description.gpu_compute_capability(),
-      num_visible_devices_per_process, options.slice_size);
+  pipeline.AddPass<CollectiveBackendAssigner>();
 
   // Annotate AllReduce ops with the Triton kernel strategy (one-shot /
   // two-shot) that will be used at runtime. This annotation is consumed by
@@ -1356,24 +1431,23 @@ void AddCollectiveCombinerPasses(
   // KERNEL_STRATEGY_DEFAULT.
   if (opts.xla_gpu_unsupported_use_all_reduce_one_shot_kernel()) {
     pipeline.AddPass<CollectiveKernelStrategyAnnotator>(
-        device_description, /*is_multimem_enabled=*/false);
+        gpu_topology, /*is_multimem_enabled=*/false);
   }
 }
 
 absl::Status RunPostFusionPasses(
     HloModule* hlo_module, const se::DeviceDescription& device_description,
     const GpuAliasInfo* alias_info, int pointer_size,
-    const GpuCompiler::CompileOptions& options,
-    int num_visible_devices_per_process, mlir::MLIRContext* mlir_context,
-    CompilationStats* compilation_stats) {
+    const GpuCompiler::CompileOptions& options, const GpuTopology& gpu_topology,
+    mlir::MLIRContext* mlir_context, CompilationStats* compilation_stats) {
   HloPassPipeline pipeline("post-fusion optimization", compilation_stats);
   pipeline.AddPass<RenameFusions>();
   pipeline.AddPass<DusAccumulatorZeroInitElimination>();
   pipeline.AddPass<HloDCE>();
   pipeline.AddPass<TupleSimplifier>();
   AddCollectiveCombinerPasses(pipeline, *hlo_module, device_description,
-                              alias_info, pointer_size, options,
-                              num_visible_devices_per_process, mlir_context);
+                              alias_info, pointer_size, options, gpu_topology,
+                              mlir_context);
 
   pipeline.AddPass<AllReduceContiguous>();
 
@@ -1739,7 +1813,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
       ShapeSizeBytesFunction(), alias_info, mlir_context, compilation_stats));
   RETURN_IF_ERROR(RunPostFusionPasses(
       hlo_module, device_description, alias_info, pointer_size_, options,
-      gpu_topology.number_of_devices(), mlir_context, compilation_stats));
+      gpu_topology, mlir_context, compilation_stats));
   RETURN_IF_ERROR(RunAsyncCollectivesConversionPasses(hlo_module));
   RETURN_IF_ERROR(RunPostFusionSimplificationPasses(
       hlo_module,
@@ -1916,6 +1990,9 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
         ((cuda_cc != nullptr &&
           cuda_cc->IsAtLeast(se::CudaComputeCapability::kAmpere)) ||
          rocm_cc != nullptr)) {
+      pipeline.AddPass<DotDimensionNormalizer>(
+          /*normalize_noncontracting_dimensions=*/!debug_options
+              .xla_gpu_experimental_gemm_fusion_v2());
       pipeline.AddPass<GemvRewriter>();
       pipeline.AddPass<SplitkRewriter>(gpu_target_config.device_description);
       pipeline.AddPass<GemmFusion>(gpu_version);
@@ -2288,12 +2365,6 @@ bool RequiresCollectiveInput(const HloUse& use, const DebugOptions& opts) {
     return true;
   }
 
-  // Check Mosaic with nvshmem attribute
-  if (opts.xla_gpu_experimental_enable_nvshmem() &&
-      IsMosaicWithNvshmem(*user)) {
-    return true;
-  }
-
   // Check Mosaic with multimem_parameters attribute
   if (IsMosaicWithMultimem(*user)) {
     return true;
@@ -2328,11 +2399,6 @@ bool RequiresCollectiveOutput(const HloValue* value, const DebugOptions& opts) {
 
   // Check custom calls with results_memory_spaces attribute
   if (DefinesCollectiveMemorySpaceFrontendAttr(value)) {
-    return true;
-  }
-
-  // Check Mosaic with nvshmem attribute
-  if (opts.xla_gpu_experimental_enable_nvshmem() && IsMosaicWithNvshmem(*def)) {
     return true;
   }
 
@@ -2770,6 +2836,14 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
 
   RecordGpuCompilerStacktrace();
 
+  const DebugOptions& debug_opts = module->config().debug_options();
+  XLA_SCOPED_LOGGING_TIMER_IF(
+      absl::StrCat("GpuCompiler::RunBackend for ", module->name()),
+      debug_opts.xla_enable_scoped_logging_timers());
+  std::string slow_compilation_msg =
+      absl::StrCat("Compiling module ", module->name(), " for GPU");
+  auto slow_compile_alarm = SlowCompilationAlarm(slow_compilation_msg);
+
   BinaryMap dnn_compiled_graphs;
   if (stream_exec) {
     se::dnn::DnnSupport* dnn_support = stream_exec->AsDnn();
@@ -2778,7 +2852,6 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
                                            &dnn_compiled_graphs));
   }
 
-  const DebugOptions& debug_opts = module->config().debug_options();
   ASSIGN_OR_RETURN(GpuTopology gpu_topology,
                    InferGpuTopology(module->config(), stream_exec, options,
                                     debug_opts, platform_id_));
@@ -2789,13 +2862,6 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
         gpu_topology.gpu_target_config().ToProto(), &textproto);
     DumpToFileInDirOrStdout(*module, "", "gpu_target_config.pbtxt", textproto);
   }
-
-  XLA_SCOPED_LOGGING_TIMER_IF(
-      absl::StrCat("GpuCompiler::RunBackend for ", module->name()),
-      debug_opts.xla_enable_scoped_logging_timers());
-  std::string slow_compilation_msg =
-      absl::StrCat("Compiling module ", module->name(), " for GPU");
-  auto slow_compile_alarm = SlowCompilationAlarm(slow_compilation_msg);
 
   llvm::LLVMContext llvm_context;
   const se::DeviceDescription& gpu_device_info =
@@ -3284,10 +3350,10 @@ GpuCompiler::LoadAotCompilationResult(
 }
 
 absl::StatusOr<std::unique_ptr<Executable>>
-GpuCompiler::LoadExecutableFromAotResult(
+GpuCompiler::LoadExecutableFromLegacyAotResult(
     const CompiledModule& aot_result,
     const se::DeviceDescription& device_description) {
-  tsl::profiler::TraceMe traceme("LoadExecutableFromAotResult");
+  tsl::profiler::TraceMe traceme("LoadExecutableFromLegacyAotResult");
 
   const auto* gpu_aot_result =
       dynamic_cast<const LegacyGpuAotCompilationResult*>(&aot_result);
@@ -3344,9 +3410,16 @@ GpuCompiler::LoadExecutableFromAotResult(
   ASSIGN_OR_RETURN(BorrowedMlirContext borrowed_context,
                    mlir_context_pool_.GetOrCreate());
 
+  Compiler::CompileOptions compile_options;
+  ASSIGN_OR_RETURN(
+      GpuTopology gpu_topology,
+      InferGpuTopology(hlo_module->config(), /*stream_exec=*/nullptr,
+                       compile_options, hlo_module->config().debug_options(),
+                       PlatformId(), &device_description));
+
   IrEmitterContext ir_emitter_context(
       hlo_module.get(), buffer_assignment.get(), &execution_stream_assignment,
-      platform_name, device_description, borrowed_context->get(),
+      platform_name, gpu_topology, borrowed_context->get(),
       llvm::Triple(target_triple()), data_layout(), &kernel_compiler,
       cpu::TargetMachineOptions(hlo_module->config().debug_options()),
       &mlir_context_pool_);

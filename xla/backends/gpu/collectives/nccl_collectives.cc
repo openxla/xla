@@ -256,7 +256,9 @@ static auto DevicesToString(absl::Span<const GlobalDeviceId> devices) {
 static ncclComm_t Cast(const Communicator* comm) {
   auto* nccl_communicator = absl::down_cast<const NcclCommunicator*>(comm);
   CHECK(nccl_communicator != nullptr) << "Unsupported XLA communicator";
-  return nccl_communicator->comm();
+  std::shared_ptr<NcclCommState> comm_state = nccl_communicator->comm_state();
+  absl::MutexLock lock(comm_state->mutex);
+  return comm_state->comm;
 }
 
 absl::StatusOr<CliqueId> NcclCollectives::CreateUniqueCliqueId() const {
@@ -548,24 +550,9 @@ NcclCollectives::SplitCommunicatorsWithCancel(
   return JoinFutures(absl::MakeSpan(futures)).Await();
 }
 
-static absl::StatusOr<xla::gpu::GpuCollectives*> GetNvshmemCollectives() {
-  ASSIGN_OR_RETURN(xla::Collectives * collectives,
-                   xla::CollectivesRegistry::Get("gpu", "nvshmem"));
-  auto* nvshmem_collectives = absl::down_cast<GpuCollectives*>(collectives);
-  if (nvshmem_collectives == nullptr) {
-    return Internal("Failed to get NVSHMEM collectives");
-  }
-
-  return nvshmem_collectives;
-}
 
 absl::StatusOr<GpuCollectives::CliqueIdCallback>
 NcclCollectives::InitializeTopology(const Topology& topology) {
-  if (xla::GetDebugOptionsFromFlags().xla_gpu_experimental_enable_nvshmem()) {
-    ASSIGN_OR_RETURN(auto* nvshmem_collectives, GetNvshmemCollectives());
-    RETURN_IF_ERROR(nvshmem_collectives->InitializeTopology(topology).status());
-  }
-
   if (topology.num_processes > 1) {
     auto nccl_id_store = std::make_shared<NcclIdStore>(
         topology.process_id, topology.device_to_process,

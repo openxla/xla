@@ -78,24 +78,6 @@ bool_flag(
     ),
 )
 
-# Allows to explicitely disable nvshmem collectives using invocation flag.
-bool_flag(
-    name = "nvshmem_enabled",
-    build_setting_default = True,
-)
-
-# NVSHMEM requires builtin functions since it uses printf's for debugging.
-config_setting(
-    name = "no_builtin_used",
-    values = {"copt": "-fno-builtin"},
-)
-
-config_setting(
-    name = "nvshmem_supported",
-    constraint_values = ["@platforms//os:linux"],
-    flag_values = {":nvshmem_enabled": "True"},
-)
-
 config_setting(
     name = "libnvjitlink_support_enabled",
     flag_values = {
@@ -1362,33 +1344,6 @@ xla_test(
 )
 
 cc_library(
-    name = "nvshmem",
-    srcs = ["nvshmem.cc"],
-    hdrs = ["nvshmem.h"],
-    tags = [
-        "cuda-only",
-        "gpu",
-    ],
-    deps = [
-        "//xla/pjrt/distributed:key_value_store_interface",
-        "//xla/runtime:process_id",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/base:no_destructor",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/time",
-        "@local_config_cuda//cuda:cuda_headers",
-        "@nvshmem//:nvshmem_lib",
-    ],
-)
-
-cc_library(
     name = "nvjitlink_support",
     srcs = ["nvjitlink_support.cc"],
     hdrs = ["nvjitlink_support.h"],
@@ -1815,9 +1770,11 @@ xla_test(
         ":cuda_executor_multigpu_test_kernels",
         ":cuda_platform",
         "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_description",
         "//xla/stream_executor:memory_space",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:semantic_version",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/gpu:gpu_init",
         "//xla/stream_executor/gpu:multicast_memory",
