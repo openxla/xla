@@ -64,7 +64,6 @@ cc_library(
     deps = [
         ":subprocess_registry",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/profiler/utils:timestamp_utils",
         "//xla/tsl/profiler/utils:xplane_schema",
@@ -77,6 +76,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/profiler/lib:profiler_interface",
         "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
         "@tsl//tsl/profiler/protobuf:profiler_service_proto_cc",

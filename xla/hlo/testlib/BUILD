@@ -36,10 +36,10 @@ cc_library(
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:status",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -67,7 +67,6 @@ cc_library(
         "//xla/service:hlo_verifier",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/algorithm:container",
@@ -81,6 +80,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -96,7 +96,6 @@ cc_library(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:resource_loader",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:subprocess",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -104,6 +103,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
     ],

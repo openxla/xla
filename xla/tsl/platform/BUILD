@@ -401,7 +401,6 @@ cc_library(
         ":threadpool_interface",
         ":types",
         "//xla/tsl/concurrency:executor",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:nullability",
@@ -412,6 +411,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@com_google_protobuf//:protobuf",
         "@com_google_protobuf//:protobuf_lite",
         "@tsl//tsl/platform",
@@ -473,8 +473,8 @@ tsl_cc_test(
     deps = [
         ":errors",
         ":test",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/status",
+        "@com_google_absl//status:status_macros",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -490,7 +490,6 @@ cc_library(
         ":env",
         ":errors",
         ":file_statistics",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
@@ -499,6 +498,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/platform:cord",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
@@ -690,9 +690,9 @@ tsl_cc_test(
         ":test",
         ":test_benchmark",
         ":test_main",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//status:status_macros",
     ],
 )
 

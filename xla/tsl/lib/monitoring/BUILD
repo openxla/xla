@@ -214,12 +214,12 @@ cc_library(
         ":test_utils",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//status:status_macros",
     ],
 )
 

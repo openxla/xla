@@ -39,11 +39,11 @@ xla_cc_binary(
         "//xla/stream_executor:platform",
         "//xla/tools/hlo_isolation:hlo_isolation_api",
         "//xla/tools/hlo_isolation:hlo_isolation_proto_cc",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/platform:platform_port",
     ],
 )

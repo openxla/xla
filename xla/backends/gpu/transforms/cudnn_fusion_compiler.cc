@@ -33,7 +33,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/status_macros.h"
+#include "absl/status/status_macros.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/codegen/emitters/computation_fingerprint.h"

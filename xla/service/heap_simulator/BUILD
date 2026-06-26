@@ -53,7 +53,6 @@ cc_library(
         "//xla/service:logical_buffer",
         "//xla/service:time_utils",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:nullability",
@@ -72,6 +71,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
     ],
 )
 

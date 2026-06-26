@@ -53,12 +53,12 @@ cc_library(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/platform:initialize",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//status:status_macros",
     ],
     alwayslink = True,  # Registers itself with the PlatformManager.
 )
@@ -185,9 +185,9 @@ sycl_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_common",
         "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -256,12 +256,12 @@ sycl_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -300,7 +300,6 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/gpu:gpu_executor_header",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -314,6 +313,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/platform:fingerprint",
     ],
 )
@@ -394,9 +394,9 @@ sycl_library(
         "//xla/stream_executor:event_based_timer",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -438,13 +438,13 @@ sycl_library(
     deps = [
         ":sycl_status",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -460,8 +460,8 @@ xla_test(
         ":sycl_gpu_runtime",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//status:status_macros",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -477,9 +477,9 @@ sycl_library(
     deps = [
         ":sycl_gpu_runtime",
         "//xla/stream_executor/gpu:context",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -514,12 +514,12 @@ sycl_library(
         ":sycl_gpu_runtime",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/gpu:read_numa_node",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:platform_port",
     ],

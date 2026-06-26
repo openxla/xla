@@ -75,7 +75,6 @@ cc_library(
         "//xla/tsl/distributed_runtime:call_options",
         "//xla/tsl/distributed_runtime/coordination:coordination_service_agent",
         "//xla/tsl/platform:env",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:coordination_config_proto_cc",
         "//xla/tsl/protobuf:coordination_service_proto_cc",
@@ -87,6 +86,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -126,7 +126,6 @@ cc_library(
         "//xla/service:gpu_topology_proto_cc",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",
@@ -140,6 +139,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -162,7 +162,6 @@ xla_cc_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/util/proto:proto_matchers",
@@ -175,6 +174,7 @@ xla_cc_test(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@com_google_googletest//:gtest_main",
     ],
 )

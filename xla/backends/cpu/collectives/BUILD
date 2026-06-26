@@ -60,7 +60,6 @@ cc_library(
         "//xla/core/collectives:rank_id",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -68,6 +67,7 @@ cc_library(
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -153,7 +153,6 @@ cc_library(
         "//xla/stream_executor:device_address",
         "//xla/tsl/lib/math:math_util",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:inlined_vector",
@@ -166,6 +165,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -240,13 +240,13 @@ xla_cc_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@com_google_googletest//:gtest_main",
     ] + select({
         # Gloo's transport_tcp is not available on MacOS
@@ -281,7 +281,6 @@ cc_library(
         "//xla/service:collective_ops_utils",
         "//xla/stream_executor:device_address",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
@@ -290,6 +289,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@gloo",
     ],
 )
@@ -348,13 +348,13 @@ cc_library(
         "//xla/stream_executor:device_address",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@mpitrampoline",
     ],
 )

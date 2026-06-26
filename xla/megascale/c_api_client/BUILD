@@ -47,7 +47,6 @@ cc_library(
         "//xla/stream_executor:device_address",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:macros",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -64,6 +63,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/platform:casts",
     ],
 )
@@ -102,13 +102,13 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_megascale_extension_hdrs",
         "//xla/pjrt/plugin:plugin_names",
         "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
+        "@com_google_absl//status:status_macros",
     ],
 )
 

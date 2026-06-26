@@ -23,10 +23,10 @@ cc_library(
         ":communicator",
         ":rank_id",
         "//xla:util",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/status",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -53,7 +53,6 @@ cc_library(
         ":collectives",
         "//xla:util",
         "//xla/service:platform_util",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:btree",
@@ -63,6 +62,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/platform:logging",
     ],
 )

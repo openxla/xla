@@ -169,7 +169,6 @@ tsl_cc_test(
         ":executor",
         ":future",
         "//xla/tsl/platform:env",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
@@ -178,6 +177,7 @@ tsl_cc_test(
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
     ],
 )
 

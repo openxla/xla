@@ -60,7 +60,6 @@ cc_library(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/protobuf:coordination_config_proto_cc",
         "//xla/tsl/protobuf:coordination_service_proto_cc",
         "//xla/tsl/util:device_name_utils",
@@ -81,6 +80,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/platform:random",
     ],
 )
@@ -290,7 +290,6 @@ tsl_cc_test(
         "//xla/tsl/platform:env_impl",  # buildcleaner: keep
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:test",
         "//xla/tsl/protobuf:coordination_config_proto_cc_impl",
         "//xla/tsl/protobuf:coordination_service_proto_cc_impl",
@@ -303,6 +302,7 @@ tsl_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@com_google_absl//status:status_macros",
         "@com_google_googletest//:gtest_main",
     ],
 )

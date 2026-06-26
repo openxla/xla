@@ -60,7 +60,6 @@ cc_library(
         "//xla/tsl/distributed_runtime:call_options",
         "//xla/tsl/lib/monitoring:gauge",
         "//xla/tsl/platform:env",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log",
@@ -71,6 +70,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@com_google_absl//status:status_macros",
     ],
 )
 

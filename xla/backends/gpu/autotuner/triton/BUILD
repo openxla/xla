@@ -136,7 +136,6 @@ cc_library(
         "//xla/service/gpu/model:triton_emitter_constraints",
         "//xla/stream_executor:device_description",
         "//xla/tools:hlo_decomposer_lib",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/util:sorted_range",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -145,6 +144,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
+        "@com_google_absl//status:status_macros",
         "@llvm-project//mlir:IR",
     ],
 )

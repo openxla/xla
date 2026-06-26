@@ -36,11 +36,11 @@ cc_library(
         ":custom_kernel_proto_cc",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:launch_dim",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//status:status_macros",
     ],
 )
 

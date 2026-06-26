@@ -145,7 +145,6 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:any_invocable",
@@ -156,6 +155,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -242,8 +242,8 @@ cc_library(
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -278,7 +278,6 @@ cc_library(
     deps = [
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:subprocess",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/log",
@@ -287,6 +286,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/platform:path",
     ],
 )
@@ -325,7 +325,6 @@ cc_library(
         "//xla/tsl/framework:allocator",
         "//xla/tsl/lib/math:math_util",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/log",
@@ -334,6 +333,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -429,7 +429,6 @@ cc_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_platform_id",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:dnn_proto_cc",
         "@com_google_absl//absl/algorithm:container",
@@ -442,6 +441,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
     ] + if_static([
@@ -523,11 +523,11 @@ cc_library(
         ":gpu_init_impl",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//status:status_macros",
         "@llvm-project//llvm:Object",
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:env",
@@ -615,7 +615,6 @@ xla_test(
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
@@ -624,6 +623,7 @@ xla_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@com_google_googletest//:gtest",
     ],
 )
@@ -701,7 +701,6 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -713,6 +712,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@llvm-project//llvm:Support",
     ],
 )
@@ -744,11 +744,11 @@ cc_library(
         "//xla/stream_executor:typed_kernel_factory",
         "//xla/stream_executor/platform:initialize",
         "//xla/stream_executor/platform:platform_object_registry",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -918,11 +918,11 @@ cc_library(
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:stream",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//status:status_macros",
     ],
 )
 

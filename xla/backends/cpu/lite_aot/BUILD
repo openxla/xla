@@ -18,7 +18,6 @@ cc_library(
         "//xla/service:executable",
         "//xla/service/cpu:executable_proto_cc",
         "//xla/tsl/concurrency:async_value",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -29,6 +28,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/platform:path",
     ],
 )

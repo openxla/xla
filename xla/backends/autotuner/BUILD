@@ -82,7 +82,6 @@ cc_library(
         "//xla/tsl/concurrency:executor",
         "//xla/tsl/concurrency:future",
         "//xla/tsl/platform:env",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -90,6 +89,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -115,7 +115,6 @@ cc_library(
         "//xla/tsl/lib/math:math_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/log",
@@ -128,6 +127,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform:fingerprint",
     ],
@@ -218,11 +218,11 @@ cc_library(
     deps = [
         "//xla/service:executable",
         "//xla/service:shaped_buffer",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -254,7 +254,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
         "//xla/service:shaped_buffer",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/util/proto:proto_utils",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
@@ -268,6 +267,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@com_google_absl//status:status_macros",
         "@com_google_protobuf//:any_cc_proto",
     ],
 )

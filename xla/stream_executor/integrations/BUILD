@@ -51,7 +51,6 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/framework:allocator",
         "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -63,6 +62,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/platform:numbers",
     ],
 )

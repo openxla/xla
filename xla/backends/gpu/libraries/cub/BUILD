@@ -65,11 +65,11 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_proto_cc",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
@@ -111,10 +111,10 @@ cuda_library(
     deps = [
         ":scratch_space_lookup_table_proto_cc",
         "//xla/tsl/platform:env",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//status:status_macros",
         "@com_google_googletest//:gtest",
         "@local_config_cuda//cuda:cub_headers",  # buildcleaner: keep
         "@tsl//tsl/platform:path",

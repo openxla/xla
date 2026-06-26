@@ -73,7 +73,6 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
-        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:subprocess",
         "//xla/tsl/util:command_line_flags",
@@ -86,6 +85,7 @@ xla_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@com_google_googletest//:gtest",
     ],
 )

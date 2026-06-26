@@ -92,13 +92,13 @@ cc_library(
         "//xla/pjrt:utils",
         "//xla/runtime:device_id",
         "//xla/tsl/lib/strings:proto_serialization",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
         "@tsl//tsl/platform:fingerprint",
     ],
 )
@@ -117,9 +117,9 @@ cc_library(
         ":cpu_topology_proto_cc",
         "//xla/backends/cpu:target_machine_options",
         "//xla/pjrt:pjrt_common",
-        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//status:status_macros",
     ],
 )
 
