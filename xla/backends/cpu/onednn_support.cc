@@ -43,7 +43,9 @@ bool IsOneDnnSupportedDType(PrimitiveType dtype) {
     case F8E5M2:
     case F8E4M3FN:
     case F8E4M3:
-      if (TestCPUFeature(CPUFeature::AMX_FP8)) return true;
+      if (TestCPUFeature(CPUFeature::AMX_FP8)) {
+        return true;
+      }
       if (TestCPUFeature(CPUFeature::AVX512BW) &&
           TestCPUFeature(CPUFeature::AMX_FP16)) {
         LOG_FIRST_N(INFO, 1) << "XLA:CPU FP8 dispatched via oneDNN AMX-FP16 "
@@ -72,7 +74,9 @@ bool IsOneDnnSupportedDType(PrimitiveType dtype,
     case F8E5M2:
     case F8E4M3FN:
     case F8E4M3:
-      if (cpu_features->has_amx_fp8()) return true;
+      if (cpu_features->has_amx_fp8()) {
+        return true;
+      }
       if (cpu_features->has_amx_fp16()) {
         LOG_FIRST_N(INFO, 1) << "XLA:CPU FP8 dispatched via oneDNN AMX-FP16 "
                                 "emulation path (target ISA lacks AMX-FP8).";
