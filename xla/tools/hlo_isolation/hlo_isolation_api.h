@@ -124,6 +124,15 @@ bool ModuleTestsFloatsForEquality(const HloModule& module);
 bool ComputationHasRng(const HloComputation* computation);
 bool LiteralContainsInfOrNan(const LiteralSlice& literal);
 
+struct FusionDebuggerCleanup {
+  ~FusionDebuggerCleanup();
+};
+
+std::string GetFusionDebuggerDir();
+std::string GetFusionDebuggerFilePath(absl::string_view op_name);
+void CleanUpAllFusionDebuggerFiles();
+std::vector<std::string> GetLeftoverFusionDebuggerFiles();
+
 }  // namespace hlo_isolation
 }  // namespace xla
 

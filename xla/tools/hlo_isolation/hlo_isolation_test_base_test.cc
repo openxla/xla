@@ -921,6 +921,117 @@ TEST_F(HloIsolationTest, TestPopulateNumericCheckMismatches) {
   EXPECT_DOUBLE_EQ(numeric_check.top_mismatch().rel_error(), 2.5);
 }
 
+TEST(FusionDebuggerTest, DirUsesUndeclaredOutputsDir) {
+  // Save environment variable
+  const char* original_env = std::getenv("TEST_UNDECLARED_OUTPUTS_DIR");
+  std::string original_val = original_env ? original_env : "";
+
+  // Set custom undeclared outputs dir
+  std::string custom_dir = "/some/custom/undeclared/outputs/dir";
+  tsl::setenv("TEST_UNDECLARED_OUTPUTS_DIR", custom_dir.c_str(),
+              /*overwrite=*/1);
+
+  EXPECT_EQ(GetFusionDebuggerDir(), custom_dir);
+
+  // Restore environment variable
+  if (!original_val.empty()) {
+    tsl::setenv("TEST_UNDECLARED_OUTPUTS_DIR", original_val.c_str(),
+                /*overwrite=*/1);
+  } else {
+    tsl::unsetenv("TEST_UNDECLARED_OUTPUTS_DIR");
+  }
+}
+
+TEST(FusionDebuggerTest, FilePathUsesUndeclaredOutputsDir) {
+  // Save environment variable
+  const char* original_env = std::getenv("TEST_UNDECLARED_OUTPUTS_DIR");
+  std::string original_val = original_env ? original_env : "";
+
+  // Set custom undeclared outputs dir
+  std::string custom_dir = "/some/custom/undeclared/outputs/dir";
+  tsl::setenv("TEST_UNDECLARED_OUTPUTS_DIR", custom_dir.c_str(),
+              /*overwrite=*/1);
+
+  EXPECT_EQ(
+      GetFusionDebuggerFilePath("my_op"),
+      tsl::io::JoinPath(custom_dir, "fusion-debugger-reference-my_op.bin"));
+
+  // Restore environment variable
+  if (!original_val.empty()) {
+    tsl::setenv("TEST_UNDECLARED_OUTPUTS_DIR", original_val.c_str(),
+                /*overwrite=*/1);
+  } else {
+    tsl::unsetenv("TEST_UNDECLARED_OUTPUTS_DIR");
+  }
+}
+
+TEST(FusionDebuggerTest, CleanUpAndGetLeftoverFiles) {
+  // Save environment variable to avoid messing up real outputs
+  const char* original_env = std::getenv("TEST_UNDECLARED_OUTPUTS_DIR");
+  std::string original_val = original_env ? original_env : "";
+
+  // We can write to the directory from GetFusionDebuggerDir().
+  std::string debugger_dir = GetFusionDebuggerDir();
+
+  // Make sure it is cleaned up before starting
+  CleanUpAllFusionDebuggerFiles();
+  EXPECT_TRUE(GetLeftoverFusionDebuggerFiles().empty());
+
+  // Create a debug file
+  std::string file_path = GetFusionDebuggerFilePath("test_cleanup_op");
+
+  // Write a dummy string to file
+  tsl::Env* env = tsl::Env::Default();
+  ASSERT_TRUE(tsl::WriteStringToFile(env, file_path, "dummy data").ok());
+
+  // Verify it exists in leftover files and via filesystem
+  std::vector<std::string> leftover_before = GetLeftoverFusionDebuggerFiles();
+  EXPECT_FALSE(leftover_before.empty());
+  bool found = false;
+  for (const std::string& path : leftover_before) {
+    if (path == file_path) {
+      found = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(found);
+  EXPECT_TRUE(env->FileExists(file_path).ok());
+
+  // Clean up
+  CleanUpAllFusionDebuggerFiles();
+
+  // Verify it no longer exists
+  EXPECT_TRUE(GetLeftoverFusionDebuggerFiles().empty());
+  EXPECT_FALSE(env->FileExists(file_path).ok());
+
+  // Restore environment variable
+  if (!original_val.empty()) {
+    tsl::setenv("TEST_UNDECLARED_OUTPUTS_DIR", original_val.c_str(),
+                /*overwrite=*/1);
+  } else {
+    tsl::unsetenv("TEST_UNDECLARED_OUTPUTS_DIR");
+  }
+}
+
+TEST(FusionDebuggerTest, DestructorCleansUpAllFiles) {
+  // Clear any existing leftover files first
+  CleanUpAllFusionDebuggerFiles();
+  EXPECT_TRUE(GetLeftoverFusionDebuggerFiles().empty());
+
+  std::string file_path = GetFusionDebuggerFilePath("cleanup_destructor_test");
+  tsl::Env* env = tsl::Env::Default();
+
+  {
+    FusionDebuggerCleanup cleanup;
+    ASSERT_TRUE(tsl::WriteStringToFile(env, file_path, "test data").ok());
+    EXPECT_TRUE(env->FileExists(file_path).ok());
+  }
+
+  // Destruction of cleanup should delete the file
+  EXPECT_FALSE(env->FileExists(file_path).ok());
+  EXPECT_TRUE(GetLeftoverFusionDebuggerFiles().empty());
+}
+
 }  // namespace
 }  // namespace hlo_isolation
 }  // namespace xla
