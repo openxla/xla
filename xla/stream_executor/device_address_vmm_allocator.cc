@@ -914,19 +914,84 @@ absl::Status DeviceAddressVmmAllocator::Map(int device_ordinal,
         "mapping_size=%uB, allocation_size=%uB",
         size, raw_allocation->address().size()));
   }
-  if (state->active_reservation_records.contains(
-          reservation_address.opaque()) ||
-      state->stale_reservation_records.contains(reservation_address.opaque())) {
-    return absl::FailedPreconditionError(
-        "Reservation address is already tracked by this allocator");
+  if (auto overlap = FindOverlappingRecord(
+          *state, reservation_address, /*include_allocator=*/false,
+          /*include_reservation=*/true, /*include_active=*/true,
+          /*include_stale=*/true, /*exact_only=*/false,
+          /*partial_only=*/true)) {
+    return absl::FailedPreconditionError(absl::StrFormat(
+        "reservation range at %p (%uB) partially overlaps %s reservation "
+        "range at %p (%uB); reservation mappings must be managed with the "
+        "same full range",
+        reservation_address.opaque(), reservation_address.size(),
+        overlap->is_active ? "active" : "stale",
+        overlap->tracked_address.opaque(), overlap->tracked_address.size()));
   }
   if (source_record->reservation_active()) {
     return absl::FailedPreconditionError(
         "Allocator address already has an active reservation alias");
   }
+  if (source_record->reservation_stale() &&
+      !source_record->reservation_matches(reservation_address)) {
+    return absl::FailedPreconditionError(absl::StrFormat(
+        "Allocator address already has a pending reservation alias at virtual "
+        "address %p (%uB)",
+        source_record->reservation_address().opaque(),
+        source_record->reservation_address().size()));
+  }
+
+  // If this exact reservation mapping is still stale for the same raw
+  // allocation, reactivate it directly and cancel the pending unmap. This keeps
+  // captured command-buffer VAs stable without waiting for the GPU timeline.
+  if (auto stale_reservation_overlap = FindOverlappingRecord(
+          *state, reservation_address, /*include_allocator=*/false,
+          /*include_reservation=*/true, /*include_active=*/false,
+          /*include_stale=*/true, /*exact_only=*/true,
+          /*partial_only=*/false)) {
+    AllocationRecord& stale_record = *stale_reservation_overlap->record;
+    if (stale_record.raw_allocation() == raw_allocation &&
+        &stale_record == source_record &&
+        stale_record.reservation_mapping_matches(reservation_address)) {
+      CHECK(source_record->reservation_stale());
+      MoveReservationRecordToActive(*state, stale_record);
+      ErasePendingDeallocation(*state, PendingDeallocationKind::kMap,
+                               reservation_address);
+      return absl::OkStatus();
+    }
+
+    // The reservation range is exact but belongs to a different raw allocation
+    // or record. Wait for the old mapping to drain before installing the new
+    // alias.
+    RETURN_IF_ERROR(WaitAndCompleteStaleReservationMapping(
+        *state, PendingDeallocationKey{PendingDeallocationKind::kMap,
+                                       stale_record.reservation_stale_seqno(),
+                                       stale_record.reservation_address()}));
+  }
   if (source_record->reservation_stale()) {
-    return absl::FailedPreconditionError(
-        "Allocator address already has a pending reservation alias");
+    CHECK(source_record->has_reservation_address());
+    auto stale_allocator_overlap = FindOverlappingRecord(
+        *state, source_record->reservation_address(),
+        /*include_allocator=*/false, /*include_reservation=*/true,
+        /*include_active=*/false, /*include_stale=*/true,
+        /*exact_only=*/true, /*partial_only=*/false);
+    CHECK(stale_allocator_overlap.has_value());
+    RETURN_IF_ERROR(WaitAndCompleteStaleReservationMapping(
+        *state,
+        PendingDeallocationKey{PendingDeallocationKind::kMap,
+                               source_record->reservation_stale_seqno(),
+                               source_record->reservation_address()}));
+  }
+  if (FindOverlappingRecord(*state, reservation_address,
+                            /*include_allocator=*/false,
+                            /*include_reservation=*/true,
+                            /*include_active=*/true,
+                            /*include_stale=*/false,
+                            /*exact_only=*/false,
+                            /*partial_only=*/false)
+          .has_value()) {
+    return absl::AlreadyExistsError(absl::StrFormat(
+        "reservation range is already tracked at virtual address %p",
+        reservation_address.opaque()));
   }
 
   // Install the reservation address mapping to the raw physical allocation. The
