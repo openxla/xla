@@ -69,7 +69,7 @@ bool CommandBufferThunk::ExecutorCommandBuffer::HasDynamicAllocations(
   }
 
   absl::call_once(
-      has_dynamic_allocations_once, [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+      has_dynamic_allocations_once, [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex) {
         DCHECK(absl::c_is_sorted(commands.allocs_indices()));
         DCHECK(absl::c_is_sorted(address_info->persistent_alloc_indices));
         has_dynamic_allocations = !absl::c_includes(
@@ -126,7 +126,7 @@ CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
   if (params.allocation_address_info != nullptr &&
       params.allocation_address_info->address_info_ready) {
     absl::call_once(
-        policy_allocs_to_check_once, [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+        policy_allocs_to_check_once, [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex) {
           DCHECK(absl::c_is_sorted(commands.allocs_indices()));
           DCHECK(absl::c_is_sorted(
               params.allocation_address_info->persistent_alloc_indices));
