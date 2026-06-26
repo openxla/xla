@@ -392,7 +392,16 @@ def _setup_rocm_distro_dir(repository_ctx):
     """Sets up the rocm hermetic installation directory to be used in hermetic build"""
     bash_bin = get_bash_bin(repository_ctx)
 
-    # Check for custom URL-based distro (highest priority)
+    # Check if ROCM_PATH is set (highest priority) - symlink instead of download
+    rocm_path = repository_ctx.os.environ.get("ROCM_PATH")
+    if rocm_path:
+        repository_ctx.report_progress("Using ROCm from ROCM_PATH: {}".format(rocm_path))
+        repository_ctx.file("rocm/.index")
+        # Symlink the ROCM_PATH to rocm_dist
+        repository_ctx.symlink(rocm_path, _DISTRIBUTION_PATH)
+        return _get_rocm_config(repository_ctx, bash_bin, _DISTRIBUTION_PATH, rocm_path)
+
+    # Check for custom URL-based distro (second priority)
     rocm_distro_url = repository_ctx.os.environ.get(_ROCM_DISTRO_URL)
     if rocm_distro_url:
         rocm_distro_hash = repository_ctx.os.environ.get(_ROCM_DISTRO_HASH)
@@ -402,7 +411,7 @@ def _setup_rocm_distro_dir(repository_ctx):
         rocm_distro = create_rocm_distro(rocm_distro_url, rocm_distro_hash, rocm_distro_links)
         return _setup_rocm_distro_dir_impl(repository_ctx, rocm_distro)
 
-    # Check for hermetic redistributable or use default
+    # Check for hermetic redistributable or use default (lowest priority)
     rocm_distro_version = repository_ctx.os.environ.get(_ROCM_DISTRO_VERSION, _DEFAULT_ROCM_DISTRO_VERSION)
 
     if rocm_distro_version not in rocm_redist:
@@ -601,6 +610,7 @@ def _rocm_autoconf_impl(repository_ctx):
 _ENVIRONS = [
     "TF_NEED_ROCM",
     "TF_NEED_CUDA",  # Needed by the `if_gpu_is_configured` macro
+    "ROCM_PATH",
     _TF_ROCM_AMDGPU_TARGETS,
     _TF_ROCM_RBE_DOCKER_IMAGE,
     _TF_ROCM_RBE_POOL,
