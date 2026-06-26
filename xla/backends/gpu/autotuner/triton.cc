@@ -38,6 +38,8 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/backends/gpu/transforms/fusion_wrapper.h"
 #include "xla/backends/gpu/transforms/priority_fusion.h"
+#include "xla/codegen/tiling/experimental/tiled_hlo.h"
+#include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
 #include "xla/codegen/tiling/tiling_specification.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -59,8 +61,6 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -173,10 +173,10 @@ TritonBackend::GetSupportedConfigsForDot(const HloInstruction* instr) {
     }
   }
   configs.reserve(gemm_configs.size());
-  for (const auto& config : gemm_configs) {
-    auto any = std::make_unique<google::protobuf::Any>();
-    any->PackFrom(config.ToProto());
-    configs.push_back(std::move(any));
+  for (const auto& gemm_config : gemm_configs) {
+    auto config = std::make_unique<BackendConfig>();
+    *config->mutable_triton() = gemm_config.ToProto();
+    configs.push_back(std::move(config));
   }
   return configs;
 }
@@ -214,15 +214,15 @@ TritonBackend::GetSupportedConfigsForScaledDot(const HloInstruction* instr) {
           continue;
         }
 
-        auto any = std::make_unique<google::protobuf::Any>();
-        any->PackFrom(TritonGemmConfig(block_m, block_n,
-                                       /*block_k=*/block_k,
-                                       /*num_stages=*/1,
-                                       /*num_warps=*/4,
-                                       /*num_ctas=*/1,
-                                       /*is_tma_allowed=*/false)
-                          .ToProto());
-        configs.push_back(std::move(any));
+        auto config = std::make_unique<BackendConfig>();
+        *config->mutable_triton() = TritonGemmConfig(block_m, block_n,
+                                                     /*block_k=*/block_k,
+                                                     /*num_stages=*/1,
+                                                     /*num_warps=*/4,
+                                                     /*num_ctas=*/1,
+                                                     /*is_tma_allowed=*/false)
+                                        .ToProto();
+        configs.push_back(std::move(config));
       }
     }
   }
@@ -246,18 +246,18 @@ TritonBackend::GetOverriddenConfigs(const HloInstruction* instr) {
     }
     configs.reserve(gemm_configs.config_size());
     for (const auto& gemm_config : gemm_configs.config()) {
-      auto any = std::make_unique<google::protobuf::Any>();
-      any->PackFrom(gemm_config);
-      configs.push_back(std::move(any));
+      auto config = std::make_unique<BackendConfig>();
+      *config->mutable_triton() = gemm_config;
+      configs.push_back(std::move(config));
     }
   }
   if (!debug_options().xla_gpu_override_gemm_autotuner().empty()) {
     AutotuneResult::TritonGemmKey gemm_config;
     CHECK(tsl::protobuf::TextFormat::ParseFromString(
         debug_options().xla_gpu_override_gemm_autotuner(), &gemm_config));
-    auto any = std::make_unique<google::protobuf::Any>();
-    any->PackFrom(gemm_config);
-    configs.push_back(std::move(any));
+    auto config = std::make_unique<BackendConfig>();
+    *config->mutable_triton() = gemm_config;
+    configs.push_back(std::move(config));
   }
   return configs;
 }
@@ -269,7 +269,8 @@ absl::StatusOr<std::unique_ptr<BackendConfig>> TritonBackend::GetDefaultConfig(
 
   if (configs.empty()) {
     return absl::InvalidArgumentError(
-        "TritonBackend does not support this instruction.");
+        absl::StrCat("TritonBackend has no supported configs for '",
+                     instr.name(), "' instruction"));
   }
   return std::move(configs[0]);
 }
@@ -280,11 +281,11 @@ absl::Status TritonBackend::ApplyConfig(HloInstruction& instr,
     return absl::InvalidArgumentError(
         "TritonBackend does not support this instruction.");
   }
-  AutotuneResult::TritonGemmKey triton_config_proto;
-  if (!config.UnpackTo(&triton_config_proto)) {
+  if (!config.has_triton()) {
     return absl::InvalidArgumentError(
-        "Failed to unpack TritonBackendConfig from Any.");
+        "Expected TritonGemmKey config for TritonBackend.");
   }
+  const AutotuneResult::TritonGemmKey& triton_config_proto = config.triton();
 
   ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
                    instr.backend_config<GpuBackendConfig>());
@@ -349,7 +350,30 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
   // Bail out here if that's the case.
   if (backend_config.kind() == kTritonGemmFusionKind) {
     auto fusion = Cast<HloFusionInstruction>(&instr);
-    auto fusion_adaptor = HloFusionAdaptor::ForInstruction(fusion);
+    std::unique_ptr<HloFusionAdaptor> fusion_adaptor =
+        HloFusionAdaptor::ForInstruction(fusion);
+    if (instr.GetModule()
+            ->config()
+            .debug_options()
+            .xla_gpu_experimental_enable_tiling_propagation()) {
+      auto ts =
+          experimental::TilingSpace::Create(*fusion_adaptor, mlir_context_);
+      if (!ts.ok()) {
+        VLOG(1) << "Failed to create tiling space: " << ts.status().message();
+        return false;
+      }
+      auto tiled_computation_or = experimental::TiledHloComputation::Tile(
+          *fusion_adaptor, std::move(ts.value()));
+      if (!tiled_computation_or.ok()) {
+        VLOG(1) << "Fusion is not tileable with experimental tiling: "
+                << tiled_computation_or.status().message();
+        return false;
+      }
+      // We don't have concrete tile sizes here and don't validate Triton
+      // constraints here.
+      return true;
+    }
+
     auto device_info = target_config().device_description;
     SymbolicTileAnalysisOrError analysis_or_error =
         SymbolicTileAnalysis::AnalyzeFusion(

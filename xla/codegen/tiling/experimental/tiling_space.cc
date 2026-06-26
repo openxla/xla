@@ -27,8 +27,11 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -36,6 +39,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/codegen/tiling/experimental/tile.h"
+#include "xla/codegen/tiling/experimental/tiling_space_utils.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -43,6 +47,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/shape.h"
@@ -169,8 +174,8 @@ std::string TilingSpace::ToString() const {
     ss << index << " root tile: " << tile.ToString(/*print_variables=*/false)
        << "\n";
   }
-  if (!constraints_.IsAlwaysSatisfied()) {
-    ss << "Constraints:\n" << constraints_.ToString() << "\n";
+  if (!constraint_.IsAlwaysSatisfied()) {
+    ss << "Constraints:\n" << constraint_.ToString() << "\n";
   }
   if (!divisibility_constraints_.empty()) {
     ss << "Divisibility constraints:\n";
@@ -202,6 +207,10 @@ std::optional<const TilingSpace::RTVarInfo*> TilingSpace::GetRTVarInfo(
 
 absl::Status TilingSpace::AssignTileSizes(
     absl::Span<const int64_t> tile_sizes) {
+  if (!is_symbolic_) {
+    return absl::InternalError(
+        "Tile sizes have already been assigned to this tiling space.");
+  }
   CHECK_EQ(tile_sizes.size(), dimensions_.size());
   is_symbolic_ = false;
 
@@ -219,6 +228,13 @@ absl::Status TilingSpace::AssignTileSizes(
           CreateSymbolicConstant(0, mlir_context_);
     }
   }
+
+  if (!constraint_.IsSatisfiedBy(tile_sizes)) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Tile sizes %s do not satisfy constraint %s",
+        absl::StrJoin(tile_sizes, ","), constraint_.ToString()));
+  }
+
   for (const auto& c : divisibility_constraints_) {
     SymbolicExpr replaced_size = c.tile_size.Replace(replacement_map);
     if (replaced_size.GetType() != SymbolicExprType::kConstant) {
@@ -246,11 +262,26 @@ absl::Status TilingSpace::AssignTileSizes(
   return absl::OkStatus();
 }
 
-std::unique_ptr<TilingSpace> TilingSpace::Create(const HloFusionAdaptor& fusion,
-                                                 mlir::MLIRContext* ctx) {
+absl::StatusOr<std::unique_ptr<TilingSpace>> TilingSpace::Create(
+    const HloFusionAdaptor& fusion, mlir::MLIRContext* ctx) {
+  RegisterSymbolicExprStorage(ctx);
   auto tiling_space = std::make_unique<TilingSpace>();
   tiling_space->mlir_context_ = ctx;
   auto roots = fusion.GetRoots();
+  CHECK(!roots.empty()) << "Fusion has no roots";
+
+  // TODO: b/502910372 - Support multi-output fusions. The option name is
+  // misleading as it is not GPU specific.
+  if (roots.size() > 1 &&
+      !roots.back()
+           .instruction()
+           .GetModule()
+           ->config()
+           .debug_options()
+           .xla_gpu_unsupported_enable_triton_multi_output_fusion()) {
+    return absl::InvalidArgumentError(
+        "TilingSpace does not support fusions with multiple roots");
+  }
 
   // First pass: Append all dimensions. This is necessary because symbols
   // are created using the total number of dimensions, which needs to be known
@@ -258,8 +289,9 @@ std::unique_ptr<TilingSpace> TilingSpace::Create(const HloFusionAdaptor& fusion,
   for (const HloInstructionAdaptor& root : roots) {
     const Shape& root_shape = root.shape();
     if (!root.shape().IsArray() && root.opcode() != HloOpcode::kReduce) {
-      LOG(FATAL) << "Unsupported root shape " << root_shape.ToString()
-                 << " for root " << root.instruction().ToString();
+      return absl::InvalidArgumentError(
+          absl::StrCat("Unsupported root shape ", root_shape.ToString(),
+                       " for root ", root.instruction().ToString()));
     }
     // TODO(goncharov): why do we only care about the first shape of a tuple?
     absl::Span<const int64_t> dims =
@@ -287,8 +319,11 @@ std::unique_ptr<TilingSpace> TilingSpace::Create(const HloFusionAdaptor& fusion,
     llvm::SmallVector<DimTile> dim_tiles;
     dim_tiles.reserve(dims.size());
     for (auto [index, dim] : llvm::enumerate(dims)) {
+      int64_t global_dim_id =
+          tiling_space->GetDimensionInfo(root.instruction(), index).id.value();
       dim_tiles.push_back(GetDefaultDimTile(
-          index, CreateSymbolExpr(index, tiling_space->num_dimensions(), ctx),
+          index,
+          CreateSymbolExpr(global_dim_id, tiling_space->num_dimensions(), ctx),
           dim));
     }
     Tile tile{*tiling_space, std::move(dim_tiles)};
@@ -344,6 +379,43 @@ SymbolicExpr TilingSpace::SimplifyExpression(const SymbolicExpr& expr) const {
                            rt_vars_indexing_);
   indexing_map.Simplify(IndexingMap::SimplifyPointDimensions::kPreserve);
   return indexing_map.GetSymbolicMap().GetResults()[0];
+}
+
+absl::StatusOr<std::vector<llvm::SmallVector<int64_t, 4>>>
+TilingSpace::GetValidTilings() {
+  // TODO: b/511080616 - returned tilings should be valid. Right now we return
+  // all possible tilings and rely on the downstream to check the validity.
+  llvm::SmallVector<int64_t, 4> input_space;
+
+  // Sequential reduce dimensions are not tiled yet. To work around the
+  // limitation of `GetFlatTilingsForInputSpace`, we set the tile size to 1 here
+  // and later replace with the actual dimension size.
+  for (const auto& dim : dimensions_) {
+    if (dim.type == DimensionSemantics::kSequential &&
+        dim.hlo->opcode() == HloOpcode::kReduce) {
+      input_space.push_back(1);
+    } else {
+      input_space.push_back(dim.dimension_size);
+    }
+  }
+
+  ASSIGN_OR_RETURN(auto flat_tilings, GetFlatTilingsForInputSpace(input_space));
+
+  for (auto& flat_tiling : flat_tilings) {
+    for (const auto& [idx, dim] : llvm::enumerate(dimensions_)) {
+      if (dim.type == DimensionSemantics::kSequential &&
+          dim.hlo->opcode() == HloOpcode::kReduce) {
+        flat_tiling[idx] = dim.dimension_size;
+      }
+    }
+  }
+
+  std::vector<llvm::SmallVector<int64_t, 4>> valid_tilings;
+  valid_tilings.reserve(flat_tilings.size());
+  for (const auto& flat_tiling : flat_tilings) {
+    valid_tilings.push_back({flat_tiling.begin(), flat_tiling.end()});
+  }
+  return valid_tilings;
 }
 
 }  // namespace xla::gpu::experimental

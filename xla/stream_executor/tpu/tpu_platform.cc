@@ -28,13 +28,13 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/tpu/c_api_decl.h"
-#include "xla/stream_executor/tpu/status_helper.h"
-#include "xla/stream_executor/tpu/tpu_api.h"
 #include "xla/stream_executor/tpu/tpu_executor.h"
-#include "xla/stream_executor/tpu/tpu_executor_api.h"
 #include "xla/stream_executor/tpu/tpu_platform_id.h"
-#include "xla/stream_executor/tpu/tpu_topology.h"
+#include "xla/tpu/c_api_decl.h"
+#include "xla/tpu/status_helper.h"
+#include "xla/tpu/tpu_api.h"
+#include "xla/tpu/tpu_executor_api.h"
+#include "xla/tpu/tpu_topology.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace tensorflow {
@@ -165,8 +165,7 @@ bool RegisterTpuPlatform() {
   // Silently bail if the underlying TPU C API isn't initialized. This is useful
   // for code that unconditionally calls RegisterTpuPlatform() but doesn't link
   // in the underlying TPU library when not running on TPU.
-  if (!stream_executor::tpu::IsStreamExecutorEnabled(
-          stream_executor::tpu::ExecutorApiFn())) {
+  if (!stream_executor::tpu::IsStreamExecutorEnabled()) {
     return true;
   }
   static bool tpu_platform_registered = false;

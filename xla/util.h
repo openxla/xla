@@ -38,6 +38,7 @@ limitations under the License.
 #include "absl/base/macros.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
 #include "absl/memory/memory.h"
 #include "absl/numeric/bits.h"
 #include "absl/numeric/int128.h"
@@ -117,10 +118,13 @@ using DimLevelTypeVector = absl::InlinedVector<DimLevelType, InlineRank()>;
   XLA_SCOPED_LOGGING_TIMER_HELPER2(label, level, counter, (condition))
 
 // Helper for macros above.  Don't use directly.
-#define XLA_SCOPED_LOGGING_TIMER_HELPER2(label, level, counter, condition)     \
-  static ::xla::TimerStats XLA_TimerStats##counter;                            \
-  ::xla::ScopedLoggingTimer XLA_ScopedLoggingTimerInstance##counter(           \
-      label, /*enabled=*/VLOG_IS_ON(level) && (condition), __FILE__, __LINE__, \
+#define XLA_SCOPED_LOGGING_TIMER_HELPER2(label, level, counter, condition) \
+  static ::xla::TimerStats XLA_TimerStats##counter;                        \
+  const bool XLA_TimerEnabled##counter = VLOG_IS_ON(level) && (condition); \
+  ::xla::ScopedLoggingTimer XLA_ScopedLoggingTimerInstance##counter(       \
+      XLA_TimerEnabled##counter ? ::absl::string_view(label)               \
+                                : ::absl::string_view(""),                 \
+      XLA_TimerEnabled##counter, __FILE__, __LINE__,                       \
       &XLA_TimerStats##counter);
 
 struct TimerStats {
@@ -460,6 +464,12 @@ std::string RoundTripFpToString(tsl::float8_e3m4 value);
 
 // Returns a string which can losslessly round trip to a float8 E8M0FNU.
 std::string RoundTripFpToString(tsl::float8_e8m0fnu value);
+
+// Returns a string which can losslessly round trip to a float6 E3M2FN.
+std::string RoundTripFpToString(tsl::float6_e3m2fn value);
+
+// Returns a string which can losslessly round trip to a float6 E2M3FN.
+std::string RoundTripFpToString(tsl::float6_e2m3fn value);
 
 // Returns a string which can losslessly round trip to a bfloat.
 std::string RoundTripFpToString(tsl::bfloat16 value);
@@ -868,7 +878,12 @@ template <size_t kBitsPerElement>
 void PackIntN(absl::Span<const char> input, absl::Span<char> output) {
   static_assert(1 <= kBitsPerElement);
   static_assert(kBitsPerElement <= 7);
-  constexpr auto kElementsPerByte = 8 / kBitsPerElement;
+  constexpr size_t kElementsPerByte = 8 / kBitsPerElement;
+  const size_t required_output_size =
+      CeilOfRatio(input.size(), kElementsPerByte);
+  ABSL_CHECK_GE(output.size(), required_output_size)
+      << "Output span too small for packed elements: " << output.size() << " < "
+      << required_output_size;
   const size_t aligned_inputs = input.size() / kElementsPerByte;
   for (size_t i = 0; i < aligned_inputs; ++i) {
     char byte = 0;
@@ -916,6 +931,11 @@ void UnpackIntN(absl::Span<const char> input, absl::Span<char> output) {
   static_assert(1 <= kBitsPerElement);
   static_assert(kBitsPerElement <= 7);
   constexpr auto kElementsPerByte = 8 / kBitsPerElement;
+  const size_t required_input_size =
+      CeilOfRatio(output.size(), kElementsPerByte);
+  ABSL_CHECK_GE(input.size(), required_input_size)
+      << "Input span too small for unpacked elements: " << input.size() << " < "
+      << required_input_size;
   const size_t aligned_outputs = output.size() / kElementsPerByte;
   for (size_t i = 0; i < aligned_outputs; ++i) {
     const char byte = input[i];

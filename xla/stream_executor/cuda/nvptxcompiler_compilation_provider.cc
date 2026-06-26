@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/nvptxcompiler_compilation_provider.h"
 
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -29,7 +28,6 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/ptx_compiler.h"
 #include "xla/stream_executor/gpu/gpu_asm_opts.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor::cuda {
 absl::StatusOr<Assembly> CompileHelper(const CudaComputeCapability& cc,
@@ -48,8 +46,11 @@ absl::StatusOr<Assembly> CompileHelper(const CudaComputeCapability& cc,
   if (options.generate_debug_info) {
     asm_opts.extra_flags.push_back("--device-debug");
   }
+  asm_opts.extra_flags.insert(asm_opts.extra_flags.end(),
+                              options.additional_ptxas_flags.begin(),
+                              options.additional_ptxas_flags.end());
 
-  return CompileGpuAsmUsingLibNvPtxCompiler(cc, std::string(ptx), asm_opts,
+  return CompileGpuAsmUsingLibNvPtxCompiler(cc, ptx, asm_opts,
                                             options.cancel_if_reg_spill,
                                             options.dump_compilation_log);
 }

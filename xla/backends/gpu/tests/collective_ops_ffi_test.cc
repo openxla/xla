@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -26,7 +27,6 @@ limitations under the License.
 #include "absl/strings/substitute.h"
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/synchronization/mutex.h"
-#include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
@@ -297,12 +297,16 @@ static absl::Status PreparePeerAllReduce(
 // handler, builtin all-reduce is a much better option. This version
 // demonstrates requesting a communication stream and synchronizing it with the
 // main stream.
-static absl::Status AllReduce(se::Stream* stream, se::Stream* comm_stream,
+static absl::Status AllReduce(se::Stream* stream,
+                              std::array<se::Stream*, 2> comm_streams,
                               ffi::BufferR0<U32> src,
                               ffi::Result<ffi::BufferR0<U32>> dst,
                               const CollectiveParams* collective_params,
                               const CollectiveCliques* collective_cliques) {
   TF_RET_CHECK(collective_params && collective_cliques);
+
+  auto [comm_stream, unused_comm_stream] = comm_streams;
+  (void)unused_comm_stream;  // we only test that we can bind two streams
 
   ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
@@ -432,6 +436,10 @@ static absl::Status MulticastAllReduce(
   auto src_addr =
       se::DeviceAddress<uint32_t>::MakeFromByteSize(src_mmem, src.size_bytes());
 
+  // Block the host CPU thread until the asynchronous GPU copies / memory maps
+  // are complete.
+  RETURN_IF_ERROR(stream->BlockHostUntilDone());
+
   // Because we launch a trivial kernel we use a device-side rendezvous to make
   // sure that both devices will execute the kernel together after inputs become
   // ready on both devices. Any real kernel must use device-side barriers.
@@ -505,6 +513,10 @@ static absl::Status SymMulticastAllReduce(
   if (!src_multimem) {
     return absl::InternalError("Multimem address can't be resolved");
   }
+
+  // Block the host CPU thread until the asynchronous GPU copies / memory maps
+  // are complete.
+  RETURN_IF_ERROR(stream->BlockHostUntilDone());
 
   // Because we launch a trivial kernel we use a device-side rendezvous to make
   // sure that both devices will execute the kernel together after inputs become
@@ -583,6 +595,10 @@ static absl::Status SymPeerAllReduce(
     return absl::InternalError("Peer address can't be resolved");
   }
 
+  // Block the host CPU thread until the asynchronous GPU copies / memory maps
+  // are complete.
+  RETURN_IF_ERROR(stream->BlockHostUntilDone());
+
   // Because we launch a trivial kernel we use a device-side rendezvous to make
   // sure that both devices will execute the kernel together after inputs become
   // ready on both devices. Any real kernel must use device-side barriers.
@@ -656,6 +672,10 @@ static absl::Status PeerAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
                                     .LoadKernel<Peer2AllReduce>(
                                         collective_params->executor));
 
+  // Block the host CPU thread until the asynchronous GPU copies / memory maps
+  // are complete.
+  RETURN_IF_ERROR(stream->BlockHostUntilDone());
+
   // Because we launch a trivial kernel we use a device-side rendezvous to make
   // sure that both devices will execute the kernel together after inputs become
   // ready on both devices. Any real kernel must use device-side barriers.
@@ -702,10 +722,14 @@ XLA_FFI_DEFINE_HANDLER(kPrepareAllReduce, PrepareAllReduce,
                            .Ctx<ffi::CollectiveParams>()
                            .Ctx<ffi::CollectiveCliqueRequests>());
 
+// Preprocessor fails to parse comma inside macro call, introduce an alias to
+// request multiple comm streams for test.
+using CommunicationStreams = ffi::CommunicationStream<0, 1>;
+
 XLA_FFI_DEFINE_HANDLER(kAllReduce, AllReduce,
                        ffi::Ffi::Bind()
                            .Ctx<ffi::Stream>()
-                           .Ctx<ffi::CommunicationStream<0>>()
+                           .Ctx<CommunicationStreams>()
                            .Arg<ffi::BufferR0<U32>>()  // src
                            .Ret<ffi::BufferR0<U32>>()  // dst
                            .Ctx<ffi::CollectiveParams>()

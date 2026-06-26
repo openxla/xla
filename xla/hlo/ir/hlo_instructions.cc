@@ -20,7 +20,6 @@ limitations under the License.
 #include <functional>
 #include <iterator>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <string>
 #include <utility>
@@ -31,6 +30,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
+#include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
@@ -62,7 +62,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/util.h"
 #include "xla/window_util.h"
@@ -286,9 +285,19 @@ HloAsyncInstruction::HloAsyncInstruction(
     HloOpcode opcode, const Shape& shape,
     absl::Span<HloInstruction* const> operands, HloOpcode async_wrapped_opcode)
     : HloInstruction(opcode, shape) {
-  CHECK(opcode == HloOpcode::kAsyncStart || operands.size() == 1);
+  CHECK(opcode == HloOpcode::kAsyncStart || opcode == HloOpcode::kAsyncUpdate ||
+        opcode == HloOpcode::kAsyncDone);
+  // AsyncDone has only one operand.
+  CHECK(opcode != HloOpcode::kAsyncDone || operands.size() == 1);
+  CHECK(opcode == HloOpcode::kAsyncStart || !operands.empty());
+
   for (auto operand : operands) {
     AppendOperand(operand);
+  }
+
+  if (opcode == HloOpcode::kAsyncUpdate || opcode == HloOpcode::kAsyncDone) {
+    HloAsyncInstruction* prev = Cast<HloAsyncInstruction>(operands[0]);
+    prev->async_chain_next_ = this;
   }
 
   // Drop 'async' from async-{start/update/done} to get the suffix.
@@ -364,7 +373,7 @@ void HloAsyncInstruction::UpdateAsyncChain() {
     }
   };
   auto update_operand_chain = [this]() {
-    CHECK_EQ(this->operand_count(), 1);
+    CHECK_GE(this->operand_count(), 1);
     CHECK(this->operand(0)->opcode() == HloOpcode::kAsyncStart ||
           this->operand(0)->opcode() == HloOpcode::kAsyncUpdate);
     Cast<HloAsyncInstruction>(this->mutable_operand(0))->async_chain_next_ =
@@ -426,8 +435,8 @@ bool HloAsyncInstruction::IdenticalSlowPath(
 std::unique_ptr<HloInstruction> HloAsyncInstruction::CloneWithNewOperandsImpl(
     const Shape& shape, absl::Span<HloInstruction* const> new_operands,
     HloCloneContext* context) const {
-  return std::make_unique<HloAsyncInstruction>(opcode(), shape,
-                                               new_operands[0]);
+  return absl::WrapUnique(new HloAsyncInstruction(opcode(), shape, new_operands,
+                                                  async_wrapped_opcode()));
 }
 
 HloAsyncStartInstruction::HloAsyncStartInstruction(
@@ -444,8 +453,8 @@ HloAsyncStartInstruction::HloAsyncStartInstruction(
 
 HloInstruction* HloAsyncStartInstruction::AddCallOperand(
     HloInstruction* new_operand) {
-  CHECK_EQ(operand_count(),
-           async_wrapped_computation()->parameter_instructions().size());
+  CHECK_EQ(async_wrapped_computation()->parameter_instructions().size(),
+           operand_count());
   const int64_t param_no = operand_count();
   std::string param_name = StrCat("param_", param_no);
   HloInstruction* called_computation_parameter =
@@ -454,7 +463,6 @@ HloInstruction* HloAsyncStartInstruction::AddCallOperand(
   AppendOperand(new_operand);
   mutable_shape()->mutable_tuple_shapes(0)->mutable_tuple_shapes()->push_back(
       new_operand->shape());
-  UpdateChainShapes();
   return called_computation_parameter;
 }
 
@@ -539,8 +547,10 @@ HloAsyncStartInstruction::CloneWithNewOperandsImpl(
           context->FindComputation(async_wrapped_computation());
     }
     if (new_wrapped_computation == nullptr) {
+      const std::string& suffix =
+          context != nullptr ? context->suffix() : "clone";
       new_wrapped_computation = module->AddEmbeddedComputation(
-          async_wrapped_computation()->Clone("clone", context));
+          async_wrapped_computation()->Clone(suffix, context));
       // Give the trampoline a trivial schedule if it already had one.
       if (module->has_schedule() && module->schedule().is_computation_scheduled(
                                         async_wrapped_computation())) {
@@ -1831,7 +1841,7 @@ HloMapInstruction::HloMapInstruction(const Shape& shape,
   // TODO(b/65689298) Remove code below once Map is generalized to accept
   // arbitrary map dimensions.
   dimensions_.resize(shape.dimensions().size());
-  std::iota(dimensions_.begin(), dimensions_.end(), 0);
+  absl::c_iota(dimensions_, 0);
 }
 
 void HloMapInstruction::ToProto(HloInstructionProto* proto) const {
@@ -2377,6 +2387,7 @@ HloCallableInstruction::GetOrCloneCalledComputations(
     HloCloneContext* context) const {
   HloModule* module = context != nullptr ? context->module() : GetModule();
   absl::InlinedVector<HloComputation*, 1> new_called_computations;
+  const std::string& suffix = context != nullptr ? context->suffix() : "clone";
   for (auto* comp : called_computations()) {
     HloComputation* new_custom_call_computation = nullptr;
     if (context != nullptr) {
@@ -2384,7 +2395,7 @@ HloCallableInstruction::GetOrCloneCalledComputations(
     }
     if (new_custom_call_computation == nullptr) {
       new_custom_call_computation =
-          module->AddEmbeddedComputation(comp->Clone("clone", context));
+          module->AddEmbeddedComputation(comp->Clone(suffix, context));
     }
     new_called_computations.push_back(new_custom_call_computation);
   }

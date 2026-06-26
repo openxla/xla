@@ -112,7 +112,7 @@ struct FakeSeCommand : public se::CommandBuffer::Command {};
 class RecordingCommand : public Command {
  public:
   explicit RecordingCommand(CommandRecordCounts* counts)
-      : Command(CommandType::kUnknownCmd), counts_(counts) {}
+      : Command(Thunk::Kind::kCommand), counts_(counts) {}
 
   absl::Status Prepare(const PrepareParams&) override {
     ++counts_->prepares;
@@ -214,7 +214,7 @@ class IterationLoggerThunk : public Thunk {
 
 // Non-known trip count while thunks are difficult to unit test, so we only have
 // a unit test for the known trip count case.
-class KnownTripCountWhileThunkTest : public HloPjRtTestBase {
+class KnownTripCountWhileThunkTest : public HloTestBase {
  protected:
   absl::Status ExecuteThunk(Thunk& thunk) {
     ASSIGN_OR_RETURN(auto name, PlatformUtil::CanonicalPlatformName("gpu"));
@@ -297,7 +297,22 @@ TEST(WhileThunkTest, PreparePropagatesToCommandBufferExecutors) {
       std::move(cond_executor), std::move(body_executor),
       /*enable_loop_unroll=*/false));
 
-  Thunk::PrepareParams prepare_params;
+  ASSERT_OK_AND_ASSIGN(std::string platform_name,
+                       PlatformUtil::CanonicalPlatformName("gpu"));
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       se::PlatformManager::PlatformWithName(platform_name));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+
+  std::vector<se::DeviceAddressBase> buffers;
+  BufferAllocations allocations(buffers, /*device_ordinal=*/0,
+                                /*memory_allocator=*/nullptr);
+
+  Thunk::PrepareParams prepare_params{/*collective_params=*/nullptr,
+                                      /*collective_clique_requests=*/nullptr,
+                                      /*collective_memory_requests=*/nullptr,
+                                      /*executor=*/executor,
+                                      /*buffer_allocations=*/&allocations};
   ASSERT_OK(thunk.Prepare(prepare_params));
 
   EXPECT_EQ(cond_counts.prepares, 1);

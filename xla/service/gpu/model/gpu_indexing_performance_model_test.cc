@@ -78,10 +78,22 @@ class GpuIndexingPerformanceModelTest
       &mlir_context_, use_experimental_tiling()};
 
   size_t WarpSize() const { return ::xla::gpu::WarpSize(device_info_); }
+
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options =
+        HloHardwareIndependentTestBase::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_experimental_enable_tiling_propagation(
+        use_experimental_tiling());
+    return debug_options;
+  }
 };
 
 INSTANTIATE_TEST_SUITE_P(GpuIndexingPerformanceModelTest,
-                         GpuIndexingPerformanceModelTest, ::testing::Bool());
+                         GpuIndexingPerformanceModelTest, ::testing::Bool(),
+                         [](const ::testing::TestParamInfo<bool>& info) {
+                           return info.param ? "ExperimentalTiling"
+                                             : "SymbolicTiling";
+                         });
 
 TEST_P(GpuIndexingPerformanceModelTest, TritonGemm) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
@@ -173,6 +185,13 @@ ENTRY main {
 
 // Example from b/383162692.
 TEST_P(GpuIndexingPerformanceModelTest, EstimateBestTiling_CombinedFusion) {
+  if (use_experimental_tiling()) {
+    // TODO: b/422689305 - Enable this test once multi-output fusions are
+    // supported.
+    GTEST_SKIP()
+        << "Experimental tiling does not support multi-output fusions yet.";
+  }
+
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -284,6 +303,13 @@ ENTRY entry_computation {
 }
 
 TEST_P(GpuIndexingPerformanceModelTest, EstimateBestTiling_MultioutputFusion) {
+  if (use_experimental_tiling()) {
+    // TODO: b/422689305 - Enable this test once multi-output fusions are
+    // supported.
+    GTEST_SKIP()
+        << "Experimental tiling does not support multi-output fusions yet.";
+  }
+
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -377,8 +403,16 @@ ENTRY main {
 
   EXPECT_EQ(tiled_runtime_data.block_level_parameters.output_tile_sizes.size(),
             1);
-  EXPECT_THAT(tiled_runtime_data.block_level_parameters.output_tile_sizes[0],
-              ElementsAre(4, 911));
+
+  // Experimental tiling uses padded tile sizes, while the symbolic tiling does
+  // not.
+  if (use_experimental_tiling()) {
+    EXPECT_THAT(tiled_runtime_data.block_level_parameters.output_tile_sizes[0],
+                ElementsAre(4, 1024));
+  } else {
+    EXPECT_THAT(tiled_runtime_data.block_level_parameters.output_tile_sizes[0],
+                ElementsAre(4, 911));
+  }
   EXPECT_EQ(tiled_runtime_data.block_level_parameters.num_warps, 4);
 
   EXPECT_EQ(tiled_runtime_data.runtime_data.bytes_read, kExpectedBytesRead);
@@ -765,8 +799,9 @@ ENTRY main {
 
   int64_t num_warps = 0;
   if (use_experimental_tiling()) {
-    std::unique_ptr<experimental::TilingSpace> tiling_space =
-        experimental::TilingSpace::Create(*fusion_adaptor, &mlir_context_);
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<experimental::TilingSpace> tiling_space,
+        experimental::TilingSpace::Create(*fusion_adaptor, &mlir_context_));
 
     ASSERT_OK(tiling_space->AssignTileSizes(
         xla::xtile::GetPaddedTileSizes(output_tile_sizes)));
@@ -835,8 +870,9 @@ ENTRY main {
 
   int64_t num_warps = 0;
   if (use_experimental_tiling()) {
-    std::unique_ptr<experimental::TilingSpace> tiling_space =
-        experimental::TilingSpace::Create(*fusion_adaptor, &mlir_context_);
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<experimental::TilingSpace> tiling_space,
+        experimental::TilingSpace::Create(*fusion_adaptor, &mlir_context_));
 
     absl::InlinedVector<int64_t, 4> tile_sizes = output_tile_sizes;
     tile_sizes.push_back(4096);

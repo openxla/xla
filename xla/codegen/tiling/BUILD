@@ -24,6 +24,7 @@ cc_library(
         "tiled_hlo_instruction.h",
     ],
     deps = [
+        "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
@@ -309,6 +310,7 @@ cc_library(
     hdrs = ["tiling_specification.h"],
     deps = [
         ":constraint_expression",
+        "//xla/codegen/tiling/experimental:tiling_space_utils",
         "//xla/hlo/ir:hlo",
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
@@ -355,6 +357,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
+        "//xla/codegen/tiling/experimental:tiling_space_utils",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/analysis:interval",
         "//xla/hlo/analysis:symbolic_map",

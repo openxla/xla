@@ -37,7 +37,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
-#include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/memset_thunk.h"
@@ -432,63 +431,6 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersEnabledDuringProfiling) {
   ASSERT_EQ(dst, std::vector<int32_t>(4, 84));
 }
 
-TEST(CommandBufferThunkTest, InitializedThunkRunsWarmupWithoutCollectives) {
-  se::StreamExecutor* stream_executor = GpuExecutor();
-
-  ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
-
-  int64_t length = 4;
-  int64_t byte_length = sizeof(int32_t) * length;
-
-  se::DeviceAddress<int32_t> a =
-      stream_executor->AllocateArray<int32_t>(length, 0);
-  ASSERT_OK(stream->MemZero(&a, byte_length));
-
-  BufferAllocation alloc_a(/*index=*/0, byte_length, /*color=*/0);
-  BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
-
-  CommandSequence commands;
-  commands.Append(std::make_unique<Memset32BitValueThunk>(
-      Thunk::ThunkInfo(), /*value=*/84, slice_a));
-  ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
-                       CommandExecutor::Create(std::move(commands), serialize));
-
-  ThunkSequence thunks;
-  thunks.push_back(std::make_unique<Memset32BitValueThunk>(
-      Thunk::ThunkInfo(), /*value=*/21, slice_a));
-  auto seq_thunks =
-      std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
-
-  CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo(),
-                           std::move(seq_thunks));
-
-  ServiceExecutableRunOptions run_options;
-  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
-  BufferAllocations allocations({a}, 0, &allocator);
-
-  Thunk::ExecuteParams params =
-      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
-                                   stream.get(), nullptr, nullptr, nullptr);
-
-  Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  ASSERT_OK(thunk.Initialize(
-      {stream_executor, source, &allocations, stream.get(), stream.get()}));
-
-  ASSERT_OK(thunk.ExecuteOnStream(params));
-  ASSERT_OK(stream->BlockHostUntilDone());
-
-  std::vector<int32_t> dst(4, 0);
-  ASSERT_OK(stream->Memcpy(dst.data(), a, byte_length));
-  ASSERT_EQ(dst, std::vector<int32_t>(4, 21));
-
-  ASSERT_OK(thunk.ExecuteOnStream(params));
-  ASSERT_OK(stream->BlockHostUntilDone());
-
-  std::fill(dst.begin(), dst.end(), 0);
-  ASSERT_OK(stream->Memcpy(dst.data(), a, byte_length));
-  ASSERT_EQ(dst, std::vector<int32_t>(4, 84));
-}
-
 TEST(CommandBufferThunkTest, Memset32CmdOnDifferentStreams) {
   se::StreamExecutor* stream_executor = GpuExecutor();
 
@@ -796,10 +738,17 @@ TEST(CommandBufferThunkTest, GemmCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandSequence commands;
-  commands.Append(
-      std::make_unique<GemmThunk>(Thunk::ThunkInfo{}, config.value(), slice_lhs,
-                                  slice_rhs, slice_out, slice_workspace,
-                                  /*deterministic=*/true));
+  Shape lhs_shape = ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4});
+  Shape rhs_shape = ShapeUtil::MakeShape(PrimitiveType::F32, {4, 3});
+  Shape output_shape = ShapeUtil::MakeShape(PrimitiveType::F32, {2, 3});
+  commands.Append(std::make_unique<CublasLtMatmulThunk>(
+      Thunk::ThunkInfo(), "canonical_hlo", config.value(),
+      se::gpu::BlasLt::Epilogue::kDefault, 0, 0,
+      ShapedSlice{slice_lhs, lhs_shape}, ShapedSlice{slice_rhs, rhs_shape},
+      ShapedSlice{slice_out, output_shape},
+      ShapedSlice{slice_out, output_shape}, std::nullopt, std::nullopt,
+      std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+      std::nullopt, std::nullopt));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));
@@ -923,7 +872,7 @@ TEST(CommandBufferThunkTest, CublasLtCmd) {
       se::gpu::BlasLt::Epilogue::kDefault, /*algorithm_idx=*/0,
       /*autotune_workspace_size=*/0, slice_a, slice_b, slice_c, slice_d,
       std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
-      std::nullopt, std::nullopt, slice_workspace);
+      std::nullopt, std::nullopt, std::nullopt, slice_workspace);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandExecutor executor,
       CommandExecutor::Create(std::move(commands), serialize));

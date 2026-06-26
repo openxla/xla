@@ -55,7 +55,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/ir/hlo_payload_deduplicator.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/ptrvec.h"
 #include "xla/literal.h"
@@ -71,9 +70,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -1082,7 +1079,7 @@ HloComputation::MakeInstructionPostOrderWithReshapeFirst() const {
     }
   }
 
-  std::reverse(sorted.begin(), sorted.end());
+  absl::c_reverse(sorted);
   CHECK_EQ(sorted.size(), instruction_count());
   return sorted;
 }
@@ -1217,6 +1214,11 @@ void HloComputation::Print(
     name_map.Reserve(instruction_count());
     auto print_one = [&](const HloInstruction* instruction) {
       DCHECK_EQ(this, instruction->parent());
+      if (options.compact_gte() &&
+          instruction->opcode() == HloOpcode::kGetTupleElement &&
+          instruction != root_instruction_) {
+        return;
+      }
       // 2 more spaces than just 'tab' due to indent_amount()+1 above
       printer->Append(tab);
       printer->Append("  ");
@@ -1276,14 +1278,14 @@ absl::Cord HloComputation::ToCord(
 }
 
 void HloComputation::ToProto(HloComputationProto* proto,
-                             HloPayloadDeduplicator* deduplicator) const {
+                             HloProtoOptions options) const {
   CHECK(unique_id_ != -1)
       << "This computation does not have a valid id. Please make sure the "
          "computation is inside a module before dumping it.";
   proto->set_id(unique_id_);
   proto->set_name(name_);
   for (const HloInstruction* instruction : MakeInstructionPostOrder()) {
-    instruction->ToProto(proto->add_instructions(), deduplicator);
+    instruction->ToProto(proto->add_instructions(), options);
   }
   proto->set_root_id(root_instruction()->unique_id());
   ComputeProgramShape().ToProto(*proto->mutable_program_shape());

@@ -48,7 +48,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/call_graph.h"
+#include "xla/service/decision.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
@@ -188,7 +190,8 @@ absl::StatusOr<bool> ConvertTritonGemmConfig::RunImpl(
 // propagation framework.
 absl::StatusOr<BlockLevelParameters> FindBlockLevelParametersWithTilingSpace(
     const HloInstruction* dot, const TritonGemmConfig& config,
-    MLIRContext* mlir_context) {
+    MLIRContext* mlir_context,
+    const se::DeviceDescription& device_description) {
   // M and N block sizes are defined at the fusion root output. However, because
   // the output shape may be transposed, elementwise fused, or broadcasted, M
   // and N can correspond to arbitrary dimensions at the root. This function
@@ -225,8 +228,9 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParametersWithTilingSpace(
   absl::c_sort(parallel_tile_sizes);
 
   do {
-    std::unique_ptr<experimental::TilingSpace> ts =
-        experimental::TilingSpace::Create(*fusion_adaptor, mlir_context);
+    ASSIGN_OR_RETURN(
+        std::unique_ptr<experimental::TilingSpace> ts,
+        experimental::TilingSpace::Create(*fusion_adaptor, mlir_context));
     llvm::SmallVector<int64_t> tile_sizes(ts->num_dimensions(), 1);
     for (const DimensionInfo& dim : ts->dimensions()) {
       if (dim.type == DimensionSemantics::kParallel) {
@@ -253,6 +257,14 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParametersWithTilingSpace(
       VLOG(8) << "Failed to tile the computation with output tile sizes "
               << absl::StrJoin(parallel_tile_sizes, ",")
               << " with error: " << tiled_computation.status().message();
+      continue;
+    }
+
+    Decision verification_status = experimental::VerifyTritonConstraints(
+        *tiled_computation, device_description);
+    if (!verification_status) {
+      VLOG(8) << "Candidate tiling violates Triton constraints: "
+              << verification_status.Explain();
       continue;
     }
     // Finds the corresponding tiled instruction for its original HLO
@@ -310,7 +322,8 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
           ->config()
           .debug_options()
           .xla_gpu_experimental_enable_tiling_propagation()) {
-    return FindBlockLevelParametersWithTilingSpace(dot, config, mlir_context);
+    return FindBlockLevelParametersWithTilingSpace(dot, config, mlir_context,
+                                                   device_description);
   }
 
   VLOG(3) << "FindOutputTileSizesForEpilogue of computation: "

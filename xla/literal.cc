@@ -1056,7 +1056,7 @@ Literal LiteralBase::Relayout(const Shape& shape_with_layout) const {
 
 Literal LiteralBase::ToBoundedDynamic(const Shape& bounded_shape) const {
   CHECK(bounded_shape.is_dynamic());
-  Literal result(bounded_shape);
+  Literal result = LiteralBase::CreateFromShape(bounded_shape);
   ShapeUtil::ForEachSubshape(
       shape(), [&](const Shape& subshape, const ShapeIndex& index) {
         if (!subshape.IsArray()) {
@@ -2347,6 +2347,11 @@ LiteralBase::ArrayValueState LiteralBase::Piece::get_array_value_state() const {
 
 void LiteralBase::Piece::WriteToProto(LiteralProto* proto) const {
   *proto->mutable_shape() = subshape().ToProto();
+  if (subshape().is_dynamic()) {
+    for (int64_t i = 0; i < subshape().dimensions().size(); ++i) {
+      proto->add_dynamic_sizes(GetDynamicSize(i));
+    }
+  }
   switch (subshape().element_type()) {
     case PRED:
       CopyToRepeatedField(proto->mutable_preds(), data<bool>());
@@ -2549,6 +2554,22 @@ absl::Status LiteralBase::Piece::CopyFromProto(const LiteralProto& proto) {
   ASSIGN_OR_RETURN(Shape shape, Shape::FromProto(proto.shape()));
   TF_RET_CHECK(LayoutUtil::HasLayout(shape));
   TF_RET_CHECK(ShapeUtil::Equal(shape, subshape()));
+
+  if (shape.is_dynamic()) {
+    TF_RET_CHECK(proto.dynamic_sizes_size() == shape.dimensions().size());
+    for (int64_t i = 0; i < shape.dimensions().size(); ++i) {
+      if (shape.is_dynamic_dimension(i)) {
+        const int32_t dynamic_size = proto.dynamic_sizes(i);
+        if (dynamic_size < 0 || dynamic_size > shape.dimensions(i)) {
+          return InvalidArgument(
+              "LiteralProto dynamic_sizes[%d] = %d is out of range [0, %d] "
+              "for dimension %d with static bound %d",
+              i, dynamic_size, shape.dimensions(i), i, shape.dimensions(i));
+        }
+      }
+      SetDynamicSize(i, proto.dynamic_sizes(i));
+    }
+  }
 
   switch (subshape().element_type()) {
     case PRED:

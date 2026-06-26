@@ -84,6 +84,11 @@ class HloModule;
 class HloInstruction;
 class BackendConfigWrapper;
 class HloPayloadDeduplicator;
+struct HloProtoOptions {
+  bool deduplicate_backend_config = false;
+  bool deduplicate_metadata = true;
+  HloPayloadDeduplicator* payload_deduplicator = nullptr;
+};
 
 // A small holder that is used to keep some immutable info alongside an
 // instruction pointer in an HloComputation's list of instructions
@@ -444,6 +449,9 @@ class HloInstruction {
       absl::string_view async_execution_thread = kMainExecutionThread);
   static std::unique_ptr<HloInstruction> CreateAsyncUpdate(
       const Shape& shape, HloInstruction* operand);
+  // Creates a variadic async-update op.
+  static std::unique_ptr<HloInstruction> CreateAsyncUpdate(
+      const Shape& shape, absl::Span<HloInstruction* const> operands);
   static std::unique_ptr<HloInstruction> CreateAsyncDone(
       const Shape& shape, HloInstruction* operand);
 
@@ -684,7 +692,7 @@ class HloInstruction {
   // in the target replica output perspective.
   //
   // For i-th output offset, the current replica will send
-  // `input[input_offsets[i]:input_offsets[i]+input_sizes[i]]` update to
+  // `input[input_offsets[i]:input_offsets[i]+send_sizes[i]]` update to
   // `i`-th replica that will be written to
   // `output_i[output_offsets[i]:output_offsets[i]+send_sizes[i]]` in `i`-th
   // replica ``output``.
@@ -1682,9 +1690,8 @@ class HloInstruction {
 
   virtual void ToProto(HloInstructionProto* proto) const;
 
-  // Non-virtual overload that handles interning.
-  void ToProto(HloInstructionProto* proto,
-               HloPayloadDeduplicator* deduplicator) const;
+  // Non-virtual overload that handles payload deduplication options.
+  void ToProto(HloInstructionProto* proto, HloProtoOptions options) const;
 
   // Returns a category for the HLO. This could be something like "convolution"
   // or "elementwise".
@@ -2166,6 +2173,22 @@ class HloInstruction {
   const OpMetadata& metadata() const {
     OpMetadata* m = metadata_.get();
     return (m == nullptr) ? *kEmptyMetadata : *m;
+  }
+
+  bool has_metadata_payload() const {
+    if (metadata_ == nullptr || !metadata_->has_metadata_payload()) {
+      return false;
+    }
+    const auto& payload = metadata_->metadata_payload();
+    return payload.has_value() || payload.has_id();
+  }
+
+  std::string metadata_payload_string() const {
+    if (!has_metadata_payload()) {
+      return "";
+    }
+    const auto& payload = metadata_->metadata_payload();
+    return payload.has_value() ? payload.value() : "";
   }
 
   // Reconstructs the full Python call stack from HloMetadata.

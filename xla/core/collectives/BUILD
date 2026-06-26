@@ -23,6 +23,7 @@ cc_library(
         ":communicator",
         ":rank_id",
         "//xla:util",
+        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/status",
@@ -134,6 +135,15 @@ cc_library(
 tf_proto_library(
     name = "reduction_kind_proto",
     srcs = ["reduction_kind.proto"],
+)
+
+cc_library(
+    name = "registered_memory",
+    hdrs = ["registered_memory.h"],
+    deps = [
+        "//xla/stream_executor:device_address",
+        "@com_google_absl//absl/strings:str_format",
+    ],
 )
 
 cc_library(

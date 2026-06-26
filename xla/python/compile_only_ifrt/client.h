@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/basic_device_list.h"
+#include "xla/python/ifrt/bundle.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
@@ -270,9 +271,27 @@ class CompileOnlyIfRtClient final
         "GetReadyFuture not available with compile-only client."));
   }
 
+  tsl::Future<> DeleteValues(absl::Span<ifrt::ValueRef> values) override {
+    return tsl::Future<>(
+        Unimplemented("DeleteValues not available with compile-only client."));
+  }
+
   absl::StatusOr<tsl::RCReference<ifrt::Tuple>> MakeTuple(
       absl::Span<ifrt::ValueRef> values) override {
     return Unimplemented("MakeTuple not available with compile-only client.");
+  }
+
+  absl::StatusOr<ifrt::BundleRef> Bundle(
+      absl::Span<ifrt::ValueRef> values,
+      ifrt::ArrayCopySemantics semantics) override {
+    return Unimplemented("Bundle not available with compile-only client.");
+  }
+
+  absl::StatusOr<ifrt::BundleRef> ConcatBundles(
+      absl::Span<ifrt::BundleRef> bundles,
+      ifrt::ArrayCopySemantics semantics) override {
+    return Unimplemented(
+        "ConcatBundles not available with compile-only client.");
   }
 
   void CancelExecution(
@@ -373,10 +392,7 @@ class CompileOnlyIfRtClient final
   }
 
  private:
-  xla::ifrt::PjRtCompiler default_compiler_{
-      /*client=*/nullptr,
-      /*num_threads=*/0,
-  };
+  xla::ifrt::PjRtCompiler default_compiler_{/*client=*/nullptr};
   std::shared_ptr<ifrt::PjRtTopology> topology_;
   std::vector<std::unique_ptr<const PjRtDeviceDescription>> descriptions_;
   ifrt::AttributeMap attributes_;

@@ -16,16 +16,20 @@ limitations under the License.
 #include "xla/pjrt/interpreter/interpreter_client.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
@@ -281,7 +285,8 @@ InterpreterLoadedExecutable::ExecuteSharded(
     }
   }
 
-  ASSIGN_OR_RETURN(Literal result_literal, Evaluate(computation, literals));
+  ASSIGN_OR_RETURN(Literal result_literal,
+                   Evaluate(computation, literals, options));
   // Shrink the generated dynamic shape into static shape.
   result_literal = result_literal.ToStatic();
   if (fill_future) {
@@ -323,10 +328,34 @@ InterpreterLoadedExecutable::ExecutePortable(
 
 absl::StatusOr<Literal> InterpreterLoadedExecutable::Evaluate(
     const HloComputation& computation,
-    absl::Span<const Literal* const> arg_literals) const {
+    absl::Span<const Literal* const> arg_literals,
+    const ExecuteOptions& options) const {
   absl::MutexLock lock(hlo_evaluator_lock_);
+  if (!options.hlo_output_callbacks.empty()) {
+    absl::flat_hash_map<int64_t, const HloOutputCallback*> cb_map;
+    for (const auto& cb : options.hlo_output_callbacks) {
+      cb_map[cb.callback_id] = &cb;
+    }
+    hlo_evaluator_->set_eval_literal_handler([cb_map = std::move(cb_map)](
+                                                 const HloInstruction* hlo,
+                                                 const LiteralSlice& literal) {
+      const auto& attr_map = hlo->frontend_attributes().map();
+      if (auto it = attr_map.find("_xla_tag"); it != attr_map.end()) {
+        int64_t tag_id;
+        if (absl::SimpleAtoi(it->second, &tag_id)) {
+          if (auto cb_it = cb_map.find(tag_id); cb_it != cb_map.end()) {
+            std::shared_ptr<const Literal> shared_literal =
+                std::make_shared<const Literal>(literal.Clone());
+            cb_it->second->callback(0, 0, absl::MakeSpan(&shared_literal, 1));
+          }
+        }
+      }
+    });
+  }
   hlo_evaluator_->ResetVisitStates();
-  return hlo_evaluator_->Evaluate(computation, arg_literals);
+  auto result = hlo_evaluator_->Evaluate(computation, arg_literals);
+  hlo_evaluator_->set_eval_literal_handler(nullptr);
+  return result;
 }
 
 std::optional<PjRtPluginAttributes> InterpreterClient::plugin_attributes()

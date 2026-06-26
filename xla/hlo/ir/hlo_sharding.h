@@ -57,11 +57,7 @@ class HloSharding {
 
   // Creates a trivial sharding that replicates a maximal tile across all
   // devices.
-  static HloSharding Replicate(absl::Span<const OpMetadata> metadata = {},
-                               bool use_named_sharding = false) {
-    if (use_named_sharding) {
-      return HloSharding(NamedSharding::Replicate(metadata));
-    }
+  static HloSharding Replicate(absl::Span<const OpMetadata> metadata = {}) {
     return HloSharding(/*manual=*/false, /*replicated=*/true, /*unknown=*/false,
                        /*unreduced=*/false, metadata);
   }
@@ -86,8 +82,7 @@ class HloSharding {
   // Creates a sharding that emulates device placement; a tile shape equal to
   // the input shape (one tile) assigned to a single device.
   static HloSharding SingleDevice(int64_t device_id,
-                                  absl::Span<const OpMetadata> metadata = {},
-                                  bool use_named_sharding = false);
+                                  absl::Span<const OpMetadata> metadata = {});
 
   // Creates a new sharding which splits a shape into tiles amongst the devices
   // specified by `tile_assignment`.
@@ -397,7 +392,12 @@ class HloSharding {
   // Returns if the sharding has partial replication and partial sharding. If
   // true, data is sharded according to other dimensions of tile_assignment(),
   // but replicated across devices along the last dimension.
-  bool ReplicateOnLastTileDim() const { return replicate_on_last_tile_dim_; }
+  bool ReplicateOnLastTileDim() const {
+    CHECK(!UseNamedShardingLeaf())
+        << "ReplicateOnLastTileDim should not be called for HloShardingV3. "
+           "Please contact OpenXLA/Shardy team if you encounter this error.";
+    return replicate_on_last_tile_dim_;
+  }
 
   // Returns whether there is any partial replication. This can be using
   // ReplicateOnLastTileDim or subgroups with REPLICATED.
@@ -615,16 +615,12 @@ class HloSharding {
   // REQUIRES: !IsReplicated() && !IsTuple()
   const TileAssignment& tile_assignment() const {
     CHECK(!IsTuple());
-    return tile_assignment_;
-  }
+    CHECK(!UseNamedShardingLeaf())
+        << "TileAssignment is an internal concept of HloShardingV1/V2, should "
+           "not be called for HloShardingV3. Please contact OpenXLA/Shardy "
+           "team if you encounter this error.";
 
-  // Returns the flattened list of devices used in the tile assignment.
-  // REQUIRES: !IsReplicated() && !IsTuple()
-  absl::Span<const int64_t> flattened_device_list() const {
-    const auto& array = UseNamedShardingLeaf()
-                            ? named_sharding_->device_assignment().array()
-                            : tile_assignment_.array();
-    return absl::MakeConstSpan(array.begin(), array.num_elements());
+    return tile_assignment_;
   }
 
   const NamedSharding& named_sharding() const {
@@ -668,6 +664,9 @@ class HloSharding {
   // Gets the subgroup types array.
   // REQUIRES: !IsTuple()
   const std::vector<OpSharding::Type>& subgroup_types() const {
+    CHECK(!UseNamedShardingLeaf())
+        << "subgroup_types() should not be called for HloShardingV3. Please "
+           "contact OpenXLA/Shardy team if you encounter this error.";
     return subgroup_types_;
   }
 
@@ -711,7 +710,8 @@ class HloSharding {
   int64_t SubgroupReplicationDim() const {
     CHECK(!UseNamedShardingLeaf())
         << "SubgroupReplicationDim should not be called for HloShardingV3 as "
-           "all relevant use cases are handled separately.";
+           "all relevant use cases are handled separately. Please contact "
+           "OpenXLA/Shardy team if you encounter this error.";
     auto it = absl::c_find(subgroup_types_, OpSharding::REPLICATED);
     if (it != subgroup_types_.end()) {
       return (it - subgroup_types_.begin()) + TiledDataRank();
@@ -726,7 +726,8 @@ class HloSharding {
   int64_t SubgroupManualDim() const {
     CHECK(!UseNamedShardingLeaf())
         << "SubgroupManualDim should not be called for HloShardingV3 as all "
-           "relevant use cases are handled separately.";
+           "relevant use cases are handled separately. Please contact "
+           "OpenXLA/Shardy team if you encounter this error.";
     auto it = absl::c_find(subgroup_types_, OpSharding::MANUAL);
     if (it != subgroup_types_.end()) {
       return (it - subgroup_types_.begin()) + TiledDataRank();
@@ -738,7 +739,8 @@ class HloSharding {
   int64_t SubgroupUnreducedDim() const {
     CHECK(!UseNamedShardingLeaf())
         << "SubgroupUnreducedDim should not be called for HloShardingV3 as all "
-           "relevant use cases are handled separately.";
+           "relevant use cases are handled separately. Please contact "
+           "OpenXLA/Shardy team if you encounter this error.";
     auto it = absl::c_find(subgroup_types_, OpSharding::UNREDUCED);
     if (it != subgroup_types_.end()) {
       return (it - subgroup_types_.begin()) + TiledDataRank();

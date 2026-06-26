@@ -67,7 +67,8 @@ TEST_F(TilingSpaceTest, SingleOutputParallelDim) {
       }
   )");
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
-  auto tiling_space = TilingSpace::Create(*fusion_adaptor, &mlir_context_);
+  ASSERT_OK_AND_ASSIGN(auto tiling_space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
   EXPECT_THAT(*tiling_space, MatchString(R"(
     Dimensions:
         0 type: parallel size: 1000 dim ID:0
@@ -93,7 +94,8 @@ TEST_F(TilingSpaceTest, SingleOutputContractionDim) {
     }
   )");
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
-  auto tiling_space = TilingSpace::Create(*fusion_adaptor, &mlir_context_);
+  ASSERT_OK_AND_ASSIGN(auto tiling_space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
   EXPECT_THAT(*tiling_space, MatchString(R"(
     Dimensions:
       0 type: parallel size: 16 dim ID:0
@@ -132,7 +134,8 @@ TEST_F(TilingSpaceTest, SingleOutputReductionDim) {
     }
   )");
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
-  auto tiling_space = TilingSpace::Create(*fusion_adaptor, &mlir_context_);
+  ASSERT_OK_AND_ASSIGN(auto tiling_space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
   EXPECT_THAT(*tiling_space, MatchString(R"(
     Dimensions:
       0 type: parallel size: 150 dim ID:0
@@ -179,7 +182,8 @@ TEST_F(TilingSpaceTest, VariadicReduce) {
   )");
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
 
-  auto tiling_space = TilingSpace::Create(*fusion_adaptor, &mlir_context_);
+  ASSERT_OK_AND_ASSIGN(auto tiling_space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
   EXPECT_THAT(*tiling_space, MatchString(R"(
     Dimensions:
       0 type: parallel size: 10 dim ID:0 hlo:
@@ -211,7 +215,8 @@ TEST_F(TilingSpaceTest, DynamicSlice) {
   )");
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
 
-  auto tiling_space = TilingSpace::Create(*fusion_adaptor, &mlir_context_);
+  ASSERT_OK_AND_ASSIGN(auto tiling_space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
   EXPECT_THAT(*tiling_space, MatchString(R"(
     Dimensions:
         0 type: parallel size: 1 dim ID:0
@@ -235,7 +240,7 @@ TEST_F(TilingSpaceTest, DynamicSlice) {
 }
 
 TEST_F(TilingSpaceTest, TwoOutputsParallelDims) {
-  auto root = ParseAndGetRoot(R"(
+  HloInstruction* root = ParseAndGetRoot(R"(
     HloModule m
     f {
       p0 = f32[10,8] parameter(0)
@@ -256,8 +261,13 @@ TEST_F(TilingSpaceTest, TwoOutputsParallelDims) {
         kind=kLoop, calls=f
     }
   )");
+  root->GetModule()
+      ->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_unsupported_enable_triton_multi_output_fusion(true);
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
-  auto tiling_space = TilingSpace::Create(*fusion_adaptor, &mlir_context_);
+  ASSERT_OK_AND_ASSIGN(auto tiling_space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
   EXPECT_THAT(*tiling_space, MatchString(R"(
     Dimensions:
         0 type: parallel size: 10 dim ID:0
@@ -273,7 +283,7 @@ TEST_F(TilingSpaceTest, TwoOutputsParallelDims) {
            offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1]
            strides [1, 1] upper bounds [10, 8]
       1 root tile:
-           offsets [tid_0 * ts_0, tid_1 * ts_1] sizes [ts_0, ts_1]
+           offsets [tid_0 * ts_2, tid_1 * ts_3] sizes [ts_2, ts_3]
            strides [1, 1] upper bounds [11, 9]
   )"));
 }
@@ -291,7 +301,8 @@ class TilingSpaceSimplifyExpressionTest : public TilingSpaceTest {
     )");
 
     auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
-    tiling_space_ = TilingSpace::Create(*fusion_adaptor, &mlir_context_);
+    ASSERT_OK_AND_ASSIGN(tiling_space_,
+                         TilingSpace::Create(*fusion_adaptor, &mlir_context_));
 
     // Assign concrete tile sizes of [16, 2].
     // Dimension 0 (100) / 16 = 7 blocks (tid_0 in [0, 6]).
@@ -321,10 +332,10 @@ TEST_F(TilingSpaceSimplifyExpressionTest,
 }
 
 TEST_F(TilingSpaceSimplifyExpressionTest, NestedFloorDivFactorsDivisor) {
-  auto expr = ParseSymbolicExpr("(d0 * 16 + d1 * 2) floordiv 200",
-                                &mlir_context_, /*num_dims=*/2);
+  auto expr = ParseSymbolicExpr("(d0 * 16 + d1 * 2) / 200", &mlir_context_,
+                                /*num_dims=*/2);
   EXPECT_EQ(tiling_space_->SimplifyExpression(expr),
-            ParseSymbolicExpr("(d0 * 8 + d1) floordiv 100", &mlir_context_,
+            ParseSymbolicExpr("(d0 * 8 + d1) / 100", &mlir_context_,
                               /*num_dims=*/2));
 }
 

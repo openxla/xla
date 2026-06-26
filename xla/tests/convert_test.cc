@@ -45,7 +45,7 @@ namespace xla {
 namespace {
 
 class ConvertTest : public ClientLibraryTestRunnerMixin<
-                        HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>> {
+                        HloPjRtInterpreterReferenceMixin<HloTestBase>> {
  public:
   explicit ConvertTest() {
     mutable_debug_options()->add_xla_disable_hlo_passes("algsimp");
@@ -734,7 +734,7 @@ TYPED_TEST(ConvertTestT, ConvertFPToPred) {
   auto a = ConstantR1<FP>(&builder, {FP{0.0}, FP{0.5}, FP{2.0}, FP{-0.0}});
   ConvertElementType(a, PRED);
 
-  bool zero_pred = !has_zero_v<FP>;
+  bool zero_pred = !has_positive_or_negative_zero_v<FP>;
   std::array<bool, 4> expected = {zero_pred, true, true, zero_pred};
   this->template ComputeAndCompareR1<bool>(&builder, expected, {});
 }

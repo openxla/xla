@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include <gtest/gtest.h>
+#include "absl/base/casts.h"
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
@@ -158,7 +159,7 @@ class CommandBufferTest
     TF_ASSERT_OK_AND_ASSIGN(
         auto exec, CreateExecutable(std::move(module), run_hlo_passes));
 
-    auto* pjrt_runner = absl::down_cast<HloRunnerPjRt*>(&test_runner());
+    auto* pjrt_runner = absl::down_cast<HloRunner*>(&test_runner());
     ASSERT_TRUE(pjrt_runner != nullptr);
 
     // Create two copies of device buffers to make sure command buffer saved

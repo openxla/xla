@@ -5,7 +5,7 @@
 #   to other TF components outside of TSL.
 
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-load("//xla:py_strict.bzl", "py_strict_binary")
+load("@xla//third_party/rules_python/python:py_binary.bzl", "py_binary")
 load(
     "//xla/tsl:tsl.bzl",
     "check_deps",
@@ -41,6 +41,12 @@ filegroup(
     name = "mobile_srcs_no_runtime",
     srcs = [
         "byte_swap_array.cc",
+    ],
+)
+
+filegroup(
+    name = "mobile_hdrs_no_runtime",
+    srcs = [
         "byte_swap_array.h",
     ],
 )
@@ -49,14 +55,20 @@ filegroup(
     name = "mobile_srcs_only_runtime",
     srcs = [
         "command_line_flags.cc",
-        "command_line_flags.h",
         "determinism.cc",
-        "determinism.h",
         "device_name_utils.cc",
-        "device_name_utils.h",
         "env_var.cc",
-        "env_var.h",
         "use_cudnn.cc",
+    ],
+)
+
+filegroup(
+    name = "mobile_hdrs_only_runtime",
+    srcs = [
+        "command_line_flags.h",
+        "determinism.h",
+        "device_name_utils.h",
+        "env_var.h",
         "use_cudnn.h",
     ],
 )
@@ -479,7 +491,7 @@ cc_binary(
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "filewrapper_testdata_generator",
     testonly = True,
     srcs = ["filewrapper_testdata_generator.py"],

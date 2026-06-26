@@ -17,7 +17,9 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status_matchers.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/status_matchers.h"
@@ -28,7 +30,7 @@ namespace {
 
 using ::tsl::testing::IsOk;
 
-class CpuTensordotOomTest : public HloPjRtTestBase {};
+class CpuTensordotOomTest : public HloTestBase {};
 
 // Regression test for OOM caused by tensordots.
 // Reference: https://github.com/openxla/xla/pull/41174

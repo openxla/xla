@@ -66,6 +66,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
+#include "xla/pjrt/pjrt_device_dimensions.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
@@ -1729,8 +1730,11 @@ PJRT_Error* PJRT_Device_DefaultMemory(PJRT_Device_DefaultMemory_Args* args) {
 }
 
 PJRT_Error* PJRT_Device_MemoryStats(PJRT_Device_MemoryStats_Args* args) {
+  // TODO(b/374463795): Update the field in the struct after backward
+  // compatibility window.
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
-      "PJRT_Device_MemoryStats_Args", PJRT_Device_MemoryStats_Args_STRUCT_SIZE,
+      "PJRT_Device_MemoryStats_Args",
+      PJRT_STRUCT_SIZE(PJRT_Device_MemoryStats_Args, peak_pool_bytes_is_set),
       args->struct_size));
   PJRT_ASSIGN_OR_RETURN(tsl::AllocatorStats stats,
                         args->device->device->GetAllocatorStats());
@@ -1771,6 +1775,12 @@ PJRT_Error* PJRT_Device_MemoryStats(PJRT_Device_MemoryStats_Args* args) {
   args->peak_pool_bytes_is_set = stats.peak_pool_bytes.has_value();
   if (stats.peak_pool_bytes) {
     args->peak_pool_bytes = *stats.peak_pool_bytes;
+  }
+
+  if (args->struct_size >= PJRT_STRUCT_SIZE(PJRT_Device_MemoryStats_Args,
+                                            peak_allocated_bytes_is_set)) {
+    args->peak_allocated_bytes_is_set = true;
+    args->peak_allocated_bytes = stats.peak_allocated_bytes;
   }
 
   return nullptr;
@@ -2258,6 +2268,41 @@ static void CRecvCallbackListsToCpp(
   }
 }
 
+static xla::HloOutputCallback CHloOutputCallbackToCpp(
+    const PJRT_HloOutputCallbackInfo& c_callback) {
+  xla::HloOutputCallback cb;
+  cb.callback_id = c_callback.callback_id;
+  cb.num_operands = c_callback.num_operands;
+  cb.callback =
+      [user_arg = c_callback.user_arg, callback = c_callback.callback](
+          int64_t replica_id, int64_t partition_id,
+          absl::Span<std::shared_ptr<const xla::Literal> const> literals) {
+        for (int i = 0; i < literals.size(); ++i) {
+          const auto lit = literals[i];
+          if (lit != nullptr) {
+            absl::Span<const int64_t> dims = lit->shape().dimensions();
+            callback(replica_id, partition_id, lit->untyped_data(), dims.data(),
+                     dims.size(),
+                     pjrt::ConvertToPjRtBufferType(lit->shape().element_type()),
+                     i, user_arg);
+          } else {
+            callback(replica_id, partition_id, nullptr, nullptr, 0,
+                     PJRT_Buffer_Type::PJRT_Buffer_Type_INVALID, i, user_arg);
+          }
+        }
+      };
+  return cb;
+}
+
+static void CHloOutputCallbacksToCpp(
+    PJRT_HloOutputCallbackInfo* c_list, size_t num_callbacks,
+    std::vector<xla::HloOutputCallback>& cpp_list) {
+  cpp_list.reserve(num_callbacks);
+  for (int i = 0; i < num_callbacks; ++i) {
+    cpp_list.push_back(CHloOutputCallbackToCpp(c_list[i]));
+  }
+}
+
 static std::vector<std::vector<xla::PjRtBuffer*>> Convert2DCBuffersToCppBuffers(
     PJRT_Buffer* const* const* c_lists, size_t outer_size, size_t inner_size) {
   std::vector<std::vector<xla::PjRtBuffer*>> cpp_lists;
@@ -2352,11 +2397,23 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     CHECK_EQ(options.recv_callbacks.size(), args->num_devices);
   }
 
+  auto cpp_hlo_output_callbacks =
+      std::make_shared<std::vector<xla::HloOutputCallback>>();
+  if (args->options->struct_size >=
+      PJRT_STRUCT_SIZE(PJRT_ExecuteOptions, num_hlo_output_callbacks)) {
+    if (args->options->num_hlo_output_callbacks > 0) {
+      CHloOutputCallbacksToCpp(args->options->hlo_output_callbacks,
+                               args->options->num_hlo_output_callbacks,
+                               *cpp_hlo_output_callbacks);
+      options.hlo_output_callbacks = *cpp_hlo_output_callbacks;
+    }
+  }
+
   if (args->execute_device == nullptr) {
     std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>> cpp_buffer_lists;
     if (args->device_complete_events != nullptr ||
         !cpp_send_callbacks->empty() || !cpp_recv_callbacks->empty() ||
-        execute_context) {
+        !cpp_hlo_output_callbacks->empty() || execute_context) {
       std::optional<std::vector<xla::Future<>>> returned_futures;
       returned_futures.emplace();
       PJRT_ASSIGN_OR_RETURN(cpp_buffer_lists,
@@ -2368,10 +2425,10 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
       // returned_futures is destroyed first. This is true for the
       // AsyncValue-based implementation of Future.
       if (!cpp_send_callbacks->empty() || !cpp_recv_callbacks->empty() ||
-          options.context) {
+          !cpp_hlo_output_callbacks->empty() || options.context) {
         for (int i = 0; i < returned_futures->size(); ++i) {
           (*returned_futures)[i].OnReady(
-              [cpp_send_callbacks, cpp_recv_callbacks,
+              [cpp_send_callbacks, cpp_recv_callbacks, cpp_hlo_output_callbacks,
                execute_context](absl::Status status) {
                 // Keeps C++ callbacks alive until execution completes on all
                 // devices.
@@ -2534,9 +2591,13 @@ PJRT_Error* PJRT_Executable_GetCompiledMemoryStats(
 
 PJRT_Error* PJRT_Executable_DeserializeAndLoad(
     PJRT_Executable_DeserializeAndLoad_Args* args) {
+  // TODO: b/516902012 - Make this check stricter after 12week compatibility
+  // window.
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_DeserializeAndLoad_Args",
-      PJRT_Executable_DeserializeAndLoad_Args_STRUCT_SIZE, args->struct_size));
+      PJRT_STRUCT_SIZE(PJRT_Executable_DeserializeAndLoad_Args,
+                       overridden_serialized_compile_options_size),
+      args->struct_size));
   absl::string_view serialized(args->serialized_executable,
                                args->serialized_executable_size);
 
@@ -2551,10 +2612,30 @@ PJRT_Error* PJRT_Executable_DeserializeAndLoad(
             args->overridden_serialized_compile_options_size)));
   }
 
-  PJRT_ASSIGN_OR_RETURN(
-      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
-      args->client->client->LoadSerializedExecutable(
-          serialized, overridden_options, xla::LoadOptions()));
+  xla::LoadOptions load_options;
+  if (args->struct_size >=
+      PJRT_STRUCT_SIZE(PJRT_Executable_DeserializeAndLoad_Args, load_options)) {
+    if (args->load_options != nullptr) {
+      PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+          "PJRT_LoadOptions", PJRT_LoadOptions_STRUCT_SIZE,
+          args->load_options->struct_size));
+
+      if (args->load_options->computation_origin != nullptr) {
+        load_options.computation_origin = xla::PjRtDeviceDimensions(
+            absl::MakeSpan(args->load_options->computation_origin,
+                           args->load_options->computation_origin_size));
+      }
+
+      if (args->load_options->multi_slice_config != nullptr) {
+        load_options.multi_slice_config =
+            args->load_options->multi_slice_config->config.get();
+      }
+    }
+  }
+
+  PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+                        args->client->client->LoadSerializedExecutable(
+                            serialized, overridden_options, load_options));
 
   args->loaded_executable =
       new PJRT_LoadedExecutable(std::move(executable), args->client);

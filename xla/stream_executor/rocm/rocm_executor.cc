@@ -677,16 +677,11 @@ absl::StatusOr<std::unique_ptr<Kernel>> RocmExecutor::LoadKernel(
     VLOG(1) << "Resolve ROCM kernel " << kernel_name
             << " from symbol pointer: " << symbol;
 
-#if TF_ROCM_VERSION >= 60200
     hipFunction_t func;
     RETURN_IF_ERROR(
         ToStatus(hipGetFuncBySymbol(&func, spec.in_process_symbol()->symbol),
                  "Failed call to hipGetFuncBySymbol"));
     rocm_kernel->set_gpu_function(func);
-#else
-    rocm_kernel->set_gpu_function(
-        static_cast<hipFunction_t>(spec.in_process_symbol().symbol()));
-#endif  // TF_ROCM_VERSION >= 60200
 
   } else {
     return absl::InternalError("No method of loading ROCM kernel provided");
@@ -768,14 +763,6 @@ DeviceAddressBase RocmExecutor::Allocate(uint64_t size, int64_t memory_space) {
       return DeviceAddressBase(
           DeviceAllocate(&rocm_context_, size, /*is_fine_grained*/ false),
           size);
-    case MemorySpace::kP2P:
-      // On the ROCm platform, differences in cache design (e.g., coherence
-      // protocol) can cause cache coherence issues for some archs (e.g., MI200)
-      // when using normal device memory. To avoid these problems, we use
-      // fine-grained memory in P2P communication for all archs to make sure of
-      // the correctness.
-      return DeviceAddressBase(
-          DeviceAllocate(&rocm_context_, size, /*is_fine_grained*/ true), size);
     case MemorySpace::kHost:
       if (auto result = HostAllocate(&rocm_context_, size); result.ok()) {
         return DeviceAddressBase(*result, size);

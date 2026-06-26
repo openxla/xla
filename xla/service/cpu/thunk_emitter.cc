@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/logical_id_thunk.h"
 #include "xla/backends/cpu/runtime/outfeed_thunk.h"
 #include "xla/backends/cpu/runtime/reduce_scatter_thunk.h"
+#include "xla/backends/cpu/runtime/rng_seed_thunk.h"
 #include "xla/backends/cpu/runtime/rng_state_thunk.h"
 #include "xla/backends/cpu/runtime/sort_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
@@ -72,6 +73,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/while_thunk.h"
 #include "xla/backends/cpu/runtime/ynnpack/ynn_fusion_thunk.h"
 #include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
+#include "xla/backends/cpu/transforms/library_fusion_kinds.h"
 #include "xla/backends/cpu/ynn_emitter.h"
 #include "xla/backends/cpu/ynn_support.h"
 #include "xla/codegen/emitters/computation_fingerprint.h"
@@ -183,9 +185,19 @@ ThunkEmitter::ThunkEmitter(IrEmitter2& ir_emitter,
           options::EnableTiledEmitter(hlo_module_config_)) {}
 
 static Thunk::Info ThunkInfo(const HloInstruction* instruction) {
+  std::string op_name(instruction->name());
   const HloModule* module = instruction->GetModule();
-  return Thunk::Info{std::string(instruction->name()),
-                     std::string(module->name()), module->unique_id()};
+  std::string module_name(module->name());
+
+  // Use the submodule name if available:
+  auto it = instruction->frontend_attributes().map().find("compilation_unit");
+  if (it != instruction->frontend_attributes().map().end()) {
+    module_name = it->second;
+    absl::StrAppend(&op_name, " (", it->second, ")");
+  }
+
+  return Thunk::Info{std::move(op_name), std::move(module_name),
+                     module->unique_id()};
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitEntryComputation(
@@ -892,6 +904,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRngGetAndUpdateStateThunk(
       ThunkInfo(instruction), state_buffer, rng_state->delta());
 }
 
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRngSeedThunk(
+    const HloInstruction* instruction) {
+  ASSIGN_OR_RETURN(auto seed_buffer, GetAllocationSlice(instruction));
+  return ThunkSequence::Of<RngSeedThunk>(ThunkInfo(instruction), seed_buffer);
+}
+
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitStochasticConvertThunk(
     const HloInstruction* instruction) {
   return Unimplemented("StochasticConvert should be decomposed for CPU.");
@@ -1213,6 +1231,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
     return EmitTopKThunk(custom_call);
   } else if (custom_call_target == "SliceToDynamic") {
     return EmitSliceToDynamicThunk(instruction);
+  } else if (custom_call_target == "GetRngSeed") {
+    return EmitRngSeedThunk(instruction);
   } else if (absl::StartsWith(custom_call->custom_call_target(), "__onednn$")) {
 #ifdef XLA_ONEDNN
     return EmitOneDnnOpThunk(instruction);

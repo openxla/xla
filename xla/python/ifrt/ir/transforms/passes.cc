@@ -79,9 +79,12 @@ void createIfrtToOutlinedAtomProgramsPipeline(mlir::OpPassManager& pm) {
   // IfrtMergeCopiesAndReshardsPass after this pass because it introduces
   // non-merged CopyArrays ops.
   pm.addPass(createIfrtReshardToCopyArraysPass());
-  // Run insert CopyArrays pass before merging copies and reshards so that
-  // the inserted CopyArrays ops can be merged.
-  pm.addNestedPass<mlir::func::FuncOp>(createIfrtInsertCopyArraysReusePass());
+  // Insert CopyArrays for arrays that are returned multiple times so that the
+  // donation/reuse semantics are correctly handled. This pass must run before
+  // InsertMergeCopiesAndReshardsPass so that the newly inserted CopyArrays ops
+  // can be merged.
+  pm.addNestedPass<mlir::func::FuncOp>(
+      createIfrtInsertCopyArraysForReturnedManyTimesPass());
   // IfrtMergeCopiesAndReshardsPass doesn't handle control dependencies, so we
   // need to run it before adding the control dependencies.
   pm.addNestedPass<mlir::func::FuncOp>(createIfrtMergeCopiesAndReshardsPass());
@@ -136,10 +139,12 @@ absl::Status createOutlinedAtomProgramsToCompiledPipeline(
 void createIfrtToVersionedPipeline(mlir::OpPassManager& pm,
                                    std::string ifrt_target_version,
                                    std::string vhlo_target_version,
+                                   std::string sdy_target_version,
                                    IfrtIrProgramProto& ifrt_ir_program) {
   pm.addPass(createIfrtRemoveAttrsFromOtherDialectsPass());
   pm.addPass(createIfrtAtomProgramsToVhloPass(
-      ifrt_ir_program.mutable_atom_programs(), std::move(vhlo_target_version)));
+      ifrt_ir_program.mutable_atom_programs(), std::move(vhlo_target_version),
+      std::move(sdy_target_version)));
   pm.addPass(createIfrtLegalizeToVifrtPass());
   pm.addPass(createVifrtToVersionPass({std::move(ifrt_target_version)}));
   // Run symbol DCE to remove atom programs that have been legalized to VHLO.

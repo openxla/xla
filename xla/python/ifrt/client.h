@@ -24,7 +24,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/base/macros.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -39,6 +38,7 @@ limitations under the License.
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/attribute_map.h"
+#include "xla/python/ifrt/bundle.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
@@ -318,9 +318,24 @@ class Client : public llvm::RTTIExtends<Client, llvm::RTTIRoot> {
   // instead to reflect its read-only semantics.
   virtual tsl::Future<> GetReadyFuture(absl::Span<const ValueRef> values) = 0;
 
+  // Deletes the given values. See `Value::Delete()` for the semantics.
+  virtual tsl::Future<> DeleteValues(absl::Span<ValueRef> values) = 0;
+
   // Builds a tuple from a sequence of values.
   virtual absl::StatusOr<tsl::RCReference<Tuple>> MakeTuple(
       absl::Span<ValueRef> values) = 0;
+
+  // Makes a `BundleRef` from `ValueRef`s.
+  //
+  // `semantics` must not be `kAlwaysCopy`.
+  virtual absl::StatusOr<BundleRef> Bundle(absl::Span<ValueRef> values,
+                                           ArrayCopySemantics semantics) = 0;
+
+  // Concatenates `Bundle`s into a single `Bundle`.
+  //
+  // `semantics` must not be `kAlwaysCopy`.
+  virtual absl::StatusOr<BundleRef> ConcatBundles(
+      absl::Span<BundleRef> bundles, ArrayCopySemantics semantics) = 0;
 
   // Attempts to cancel the execution that returned `cancellation_handle` in its
   // `ExecuteResult` when enqueued.
