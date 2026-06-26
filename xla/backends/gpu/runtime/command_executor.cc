@@ -559,35 +559,10 @@ absl::Status CommandExecutor::RecordUpdate(
   CommandExecutorsState::Key key = std::make_pair(this, record_id);
   RecordedCommands& recorded_commands = state->recorded_commands[key];
 
-  const std::vector<bool>* address_policy_skip_commands = nullptr;
-  if (execute_params.allocation_address_info != nullptr &&
-      execute_params.allocation_address_info->address_info_ready) {
-    CommandExecutorsState::AddressPolicyCache& address_policy_cache =
-        state->address_policy_caches[key];
-    if (!address_policy_cache.initialized) {
-      DCHECK(absl::c_is_sorted(
-          execute_params.allocation_address_info->persistent_alloc_indices))
-          << "Persistent allocs must be sorted: "
-          << absl::StrJoin(execute_params.allocation_address_info
-                               ->persistent_alloc_indices,
-                           ", ");
-
-      address_policy_cache.skip_commands.assign(commands_.size(), false);
-      for (CommandId id = 0; id < commands_.size(); ++id) {
-        DCHECK(absl::c_is_sorted(cmd_allocs_indices_[id]))
-            << "Command allocs must be sorted: "
-            << absl::StrJoin(cmd_allocs_indices_[id], ", ");
-
-        if (absl::c_includes(execute_params.allocation_address_info
-                                 ->persistent_alloc_indices,
-                             cmd_allocs_indices_[id])) {
-          address_policy_cache.skip_commands[id] = true;
-        }
-      }
-
-      address_policy_cache.initialized = true;
-    }
-    address_policy_skip_commands = &address_policy_cache.skip_commands;
+  if (execute_params.persistent_alloc_indices.has_value()) {
+    DCHECK(absl::c_is_sorted(*execute_params.persistent_alloc_indices))
+        << "Persistent allocs must be sorted: "
+        << absl::StrJoin(*execute_params.persistent_alloc_indices, ", ");
   }
 
   // Check if command `id` has to be updated based on the buffer allocations
@@ -611,8 +586,14 @@ absl::Status CommandExecutor::RecordUpdate(
     // every allocation referenced by this command is persistent, the command
     // does not need an update, including traced collective commands that also
     // require initialization.
-    if (address_policy_skip_commands != nullptr &&
-        (*address_policy_skip_commands)[id]) {
+    if (execute_params.persistent_alloc_indices.has_value()) {
+      DCHECK(absl::c_is_sorted(cmd_allocs_indices_[id]))
+          << "Command allocs must be sorted: "
+          << absl::StrJoin(cmd_allocs_indices_[id], ", ");
+    }
+    if (execute_params.persistent_alloc_indices.has_value() &&
+        absl::c_includes(*execute_params.persistent_alloc_indices,
+                         cmd_allocs_indices_[id])) {
       return true;
     }
 

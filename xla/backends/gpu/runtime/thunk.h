@@ -200,26 +200,6 @@ class Thunk {
   // for a GPU program run sequentially from a single thread.
   using ExecutionScopedState = absl::flat_hash_map<ThunkId, tsl::UniqueAny>;
 
-  // Allocation address policy derived by GpuExecutable for the current
-  // execution. Thunks can use this optional policy when they need to
-  // distinguish allocations with stable addresses from allocations whose
-  // addresses are dynamically assigned for each execution.
-  struct AllocationAddressInfo {
-    // False until GpuExecutable has finalized the address information for this
-    // execution. Some runtimes choose which allocation addresses to stabilize
-    // after profiling or warmup, so the persistent allocation set can be empty
-    // or incomplete for initial executions.
-    bool address_info_ready = false;
-
-    // Allocation indices whose device addresses are stable for this execution.
-    // This can include global constant allocations, allocations backed by
-    // reusable VMM reservation addresses, and any other allocations whose
-    // addresses are known to be persistent. Allocations not listed here should
-    // be treated as dynamically allocated by consumers that need address-change
-    // checks.
-    absl::Span<const BufferAllocation::Index> persistent_alloc_indices;
-  };
-
   //===--------------------------------------------------------------------===//
   // PrepareParams
   //===--------------------------------------------------------------------===//
@@ -285,8 +265,11 @@ class Thunk {
     // Execution scoped state shared between prepare, initialize and execute.
     ExecutionScopedState* execution_scoped_state = nullptr;
 
-    // Optional allocation address policy for the current execution.
-    const AllocationAddressInfo* allocation_address_info = nullptr;
+    // Optional allocation indices whose device addresses are stable for this
+    // execution. If absent, consumers that need address-change checks should
+    // conservatively treat allocation addresses as dynamic.
+    std::optional<absl::Span<const BufferAllocation::Index>>
+        persistent_alloc_indices;
   };
 
   //===--------------------------------------------------------------------===//
@@ -308,7 +291,8 @@ class Thunk {
         CollectiveMemory* collective_memory,
         std::vector<se::Stream*> additional_compute_streams = {},
         ExecutionScopedState* execution_scoped_state = nullptr,
-        const AllocationAddressInfo* allocation_address_info = nullptr);
+        std::optional<absl::Span<const BufferAllocation::Index>>
+            persistent_alloc_indices = std::nullopt);
 
     // Constructs execute parameters from an existing parameters but with
     // different buffer allocations.
@@ -359,27 +343,31 @@ class Thunk {
 
     uint64_t rng_seed = 0;
 
-    // Optional allocation address policy for the current execution.
-    const AllocationAddressInfo* allocation_address_info = nullptr;
+    // Optional allocation indices whose device addresses are stable for this
+    // execution. If absent, consumers that need address-change checks should
+    // conservatively treat allocation addresses as dynamic.
+    std::optional<absl::Span<const BufferAllocation::Index>>
+        persistent_alloc_indices;
 
    private:
     friend class CommandBufferThunk;
 
-    ExecuteParams(
-        const BufferAllocations* buffer_allocations, se::Stream* stream,
-        se::Stream* command_buffer_trace_stream,
-        CollectiveParams* collective_params,
-        CollectiveCliques* collective_cliques,
-        CollectiveMemory* collective_memory, se::Stream* device_to_host_stream,
-        se::Stream* host_to_device_stream,
-        SendDeviceMemoryFunction* send_device_memory_function,
-        RecvDeviceMemoryFunction* recv_device_memory_function,
-        const ffi::ExecutionContext* ffi_execution_context,
-        std::vector<se::Stream*> additional_compute_streams = {},
-        ExecutionScopedState* execution_scoped_state = nullptr,
-        bool mock_collectives = false, int64_t execution_id = 0,
-        uint64_t rng_seed = 0,
-        const AllocationAddressInfo* allocation_address_info = nullptr);
+    ExecuteParams(const BufferAllocations* buffer_allocations,
+                  se::Stream* stream, se::Stream* command_buffer_trace_stream,
+                  CollectiveParams* collective_params,
+                  CollectiveCliques* collective_cliques,
+                  CollectiveMemory* collective_memory,
+                  se::Stream* device_to_host_stream,
+                  se::Stream* host_to_device_stream,
+                  SendDeviceMemoryFunction* send_device_memory_function,
+                  RecvDeviceMemoryFunction* recv_device_memory_function,
+                  const ffi::ExecutionContext* ffi_execution_context,
+                  std::vector<se::Stream*> additional_compute_streams = {},
+                  ExecutionScopedState* execution_scoped_state = nullptr,
+                  bool mock_collectives = false, int64_t execution_id = 0,
+                  uint64_t rng_seed = 0,
+                  std::optional<absl::Span<const BufferAllocation::Index>>
+                      persistent_alloc_indices = std::nullopt);
   };
 
   //===--------------------------------------------------------------------===//

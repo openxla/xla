@@ -248,9 +248,6 @@ TEST(CommandBufferThunkTest, UpdatePolicyIgnoresVaRemappedAllocations) {
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
   std::vector<BufferAllocation::Index> persistent_alloc_indices = {0};
-  Thunk::AllocationAddressInfo allocation_address_info{
-      /*address_info_ready=*/true,
-      absl::MakeConstSpan(persistent_alloc_indices)};
 
   stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   ServiceExecutableRunOptions run_options;
@@ -258,7 +255,8 @@ TEST(CommandBufferThunkTest, UpdatePolicyIgnoresVaRemappedAllocations) {
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr,
       nullptr, /*additional_compute_streams=*/{},
-      /*execution_scoped_state=*/nullptr, &allocation_address_info);
+      /*execution_scoped_state=*/nullptr,
+      absl::MakeConstSpan(persistent_alloc_indices));
 
   ASSERT_OK(thunk.ExecuteOnStream(params));
   ASSERT_OK(stream->BlockHostUntilDone());
@@ -272,7 +270,8 @@ TEST(CommandBufferThunkTest, UpdatePolicyIgnoresVaRemappedAllocations) {
   params = Thunk::ExecuteParams::Create(
       run_options, source_changed_allocations, stream.get(), stream.get(),
       nullptr, nullptr, nullptr, /*additional_compute_streams=*/{},
-      /*execution_scoped_state=*/nullptr, &allocation_address_info);
+      /*execution_scoped_state=*/nullptr,
+      absl::MakeConstSpan(persistent_alloc_indices));
 
   ASSERT_OK(thunk.ExecuteOnStream(params));
   ASSERT_OK(stream->BlockHostUntilDone());
@@ -285,7 +284,8 @@ TEST(CommandBufferThunkTest, UpdatePolicyIgnoresVaRemappedAllocations) {
   params = Thunk::ExecuteParams::Create(
       run_options, dynamic_changed_allocations, stream.get(), stream.get(),
       nullptr, nullptr, nullptr, /*additional_compute_streams=*/{},
-      /*execution_scoped_state=*/nullptr, &allocation_address_info);
+      /*execution_scoped_state=*/nullptr,
+      absl::MakeConstSpan(persistent_alloc_indices));
 
   ASSERT_OK(thunk.ExecuteOnStream(params));
   ASSERT_OK(stream->BlockHostUntilDone());

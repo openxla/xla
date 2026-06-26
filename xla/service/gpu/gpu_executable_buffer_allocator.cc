@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -209,10 +210,10 @@ bool GpuExecutableBufferAllocator::ExecutionScope::ShouldRemapAllocation(
       !owner_->command_buffer_va_remapped_allocation_indexes_.contains(index)) {
     return false;
   }
-  if (!remapping_->address_info_ready) {
+  if (!remapping_->policy_va_remapped_index_set.has_value()) {
     return true;
   }
-  return remapping_->policy_va_remapped_index_set.contains(index);
+  return remapping_->policy_va_remapped_index_set->contains(index);
 }
 
 absl::StatusOr<se::ScopedDeviceAddress<uint8_t>>
@@ -395,7 +396,7 @@ absl::Status
 GpuExecutableBufferAllocator::ExecutionScope::UpdateAllocationAddressPolicy() {
   if (!command_buffer_active() ||
       owner_->update_mode_ == DebugOptions::ALWAYS_UPDATE ||
-      remapping_->address_info_ready) {
+      remapping_->policy_persistent_alloc_indices.has_value()) {
     return absl::OkStatus();
   }
 
@@ -405,25 +406,24 @@ GpuExecutableBufferAllocator::ExecutionScope::UpdateAllocationAddressPolicy() {
                     owner_->update_mode_);
   }
 
-  remapping_->policy_persistent_alloc_indices.assign(
+  remapping_->policy_persistent_alloc_indices.emplace(
       owner_->command_buffer_persistent_allocation_indexes_.begin(),
       owner_->command_buffer_persistent_allocation_indexes_.end());
-  remapping_->policy_va_remapped_index_set =
-      owner_->command_buffer_va_remapped_allocation_indexes_;
-  remapping_->address_info_ready = true;
+  remapping_->policy_va_remapped_index_set.emplace(
+      owner_->command_buffer_va_remapped_allocation_indexes_);
   return absl::OkStatus();
 }
 
-Thunk::AllocationAddressInfo
-GpuExecutableBufferAllocator::ExecutionScope::GetAllocationAddressInfo() const {
+std::optional<absl::Span<const BufferAllocation::Index>>
+GpuExecutableBufferAllocator::ExecutionScope::GetPersistentAllocIndices()
+    const {
   if (command_buffer_active()) {
-    return Thunk::AllocationAddressInfo{
-        remapping_->address_info_ready,
-        absl::MakeConstSpan(remapping_->policy_persistent_alloc_indices)};
+    if (!remapping_->policy_persistent_alloc_indices.has_value()) {
+      return std::nullopt;
+    }
+    return absl::MakeConstSpan(*remapping_->policy_persistent_alloc_indices);
   }
-  return Thunk::AllocationAddressInfo{
-      /*address_info_ready=*/true,
-      absl::MakeConstSpan(owner_->command_buffer_persistent_alloc_indices_)};
+  return absl::MakeConstSpan(owner_->command_buffer_persistent_alloc_indices_);
 }
 
 absl::StatusOr<BufferAllocations>
@@ -541,21 +541,21 @@ absl::Status GpuExecutableBufferAllocator::ExecutionScope::UnmapAliases(
 absl::Status
 GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithBufferAllocations(
     const BufferAllocations& owning_buffer_allocations, int device_ordinal,
-    absl::FunctionRef<absl::Status(const BufferAllocations&,
-                                   const Thunk::AllocationAddressInfo*)>
+    absl::FunctionRef<
+        absl::Status(const BufferAllocations&,
+                     std::optional<absl::Span<const BufferAllocation::Index>>
+                         persistent_alloc_indices)>
         execute) {
   if (!command_buffer_active()) {
     if (!address_policy_active()) {
-      return execute(owning_buffer_allocations, nullptr);
+      return execute(owning_buffer_allocations, std::nullopt);
     }
-    Thunk::AllocationAddressInfo allocation_address_info =
-        GetAllocationAddressInfo();
-    return execute(owning_buffer_allocations, &allocation_address_info);
+    return execute(owning_buffer_allocations, GetPersistentAllocIndices());
   }
 
   RETURN_IF_ERROR(UpdateAllocationAddressPolicy());
-  Thunk::AllocationAddressInfo allocation_address_info =
-      GetAllocationAddressInfo();
+  std::optional<absl::Span<const BufferAllocation::Index>>
+      persistent_alloc_indices = GetPersistentAllocIndices();
   absl::StatusOr<BufferAllocations> execution_buffer_allocations_or =
       BuildExecutionBufferAllocations(owning_buffer_allocations,
                                       device_ordinal);
@@ -575,7 +575,7 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithBufferAllocations(
       owner_->command_buffer_va_remapped_allocation_indexes_.size());
 
   absl::Status execute_status =
-      execute(execution_buffer_allocations, &allocation_address_info);
+      execute(execution_buffer_allocations, persistent_alloc_indices);
   absl::Status unmap_status = UnmapAliases(device_ordinal);
 
   RETURN_IF_ERROR(execute_status);

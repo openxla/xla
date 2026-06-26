@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -136,8 +137,10 @@ class GpuExecutableBufferAllocator {
 
     absl::Status ExecuteWithBufferAllocations(
         const BufferAllocations& owning_buffer_allocations, int device_ordinal,
-        absl::FunctionRef<absl::Status(const BufferAllocations&,
-                                       const Thunk::AllocationAddressInfo*)>
+        absl::FunctionRef<absl::Status(
+            const BufferAllocations&,
+            std::optional<absl::Span<const BufferAllocation::Index>>
+                persistent_alloc_indices)>
             execute);
 
    private:
@@ -166,7 +169,8 @@ class GpuExecutableBufferAllocator {
         const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
             allocate_granularity);
     absl::Status UpdateAllocationAddressPolicy();
-    Thunk::AllocationAddressInfo GetAllocationAddressInfo() const;
+    std::optional<absl::Span<const BufferAllocation::Index>>
+    GetPersistentAllocIndices() const;
     absl::StatusOr<BufferAllocations> BuildExecutionBufferAllocations(
         const BufferAllocations& owning_buffer_allocations, int device_ordinal);
     absl::Status UnmapAliases(int device_ordinal);
@@ -224,9 +228,9 @@ class GpuExecutableBufferAllocator {
         allocation_to_reservation_offset;
     std::unique_ptr<se::MemoryReservation> va_reservation;
     se::DeviceAddressVmmAllocator* vmm_allocator = nullptr;
-    bool address_info_ready = false;
-    std::vector<BufferAllocation::Index> policy_persistent_alloc_indices;
-    AllocationIndexSet policy_va_remapped_index_set;
+    std::optional<std::vector<BufferAllocation::Index>>
+        policy_persistent_alloc_indices;
+    std::optional<AllocationIndexSet> policy_va_remapped_index_set;
 
     absl::StatusOr<uint64_t> GetReservationOffset(
         BufferAllocation::Index idx) const;

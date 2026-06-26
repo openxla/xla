@@ -18,13 +18,12 @@ limitations under the License.
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/base/call_once.h"
-#include "absl/base/thread_annotations.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
@@ -63,20 +62,16 @@ CommandBufferThunk::ExecutorCommandBuffer::ExecutorCommandBuffer(
 
 bool CommandBufferThunk::ExecutorCommandBuffer::HasDynamicAllocations(
     const CommandExecutor& commands,
-    const Thunk::AllocationAddressInfo* address_info) {
-  if (address_info == nullptr || !address_info->address_info_ready) {
+    std::optional<absl::Span<const BufferAllocation::Index>>
+        persistent_alloc_indices) {
+  if (!persistent_alloc_indices.has_value()) {
     return true;
   }
 
-  absl::call_once(
-      has_dynamic_allocations_once, [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex) {
-        DCHECK(absl::c_is_sorted(commands.allocs_indices()));
-        DCHECK(absl::c_is_sorted(address_info->persistent_alloc_indices));
-        has_dynamic_allocations = !absl::c_includes(
-            address_info->persistent_alloc_indices, commands.allocs_indices());
-      });
-
-  return has_dynamic_allocations;
+  DCHECK(absl::c_is_sorted(commands.allocs_indices()));
+  DCHECK(absl::c_is_sorted(*persistent_alloc_indices));
+  return !absl::c_includes(*persistent_alloc_indices,
+                           commands.allocs_indices());
 }
 
 CommandBufferThunk::CommandBufferThunk(
@@ -122,19 +117,14 @@ CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
   const BufferAllocations* allocs = params.buffer_allocations;
   absl::Span<const BufferAllocation::Index> allocs_to_check =
       commands.allocs_indices();
+  std::vector<BufferAllocation::Index> policy_allocs_to_check;
 
-  if (params.allocation_address_info != nullptr &&
-      params.allocation_address_info->address_info_ready) {
-    absl::call_once(
-        policy_allocs_to_check_once, [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex) {
-          DCHECK(absl::c_is_sorted(commands.allocs_indices()));
-          DCHECK(absl::c_is_sorted(
-              params.allocation_address_info->persistent_alloc_indices));
-          absl::c_set_difference(
-              commands.allocs_indices(),
-              params.allocation_address_info->persistent_alloc_indices,
-              std::back_inserter(policy_allocs_to_check));
-        });
+  if (params.persistent_alloc_indices.has_value()) {
+    DCHECK(absl::c_is_sorted(commands.allocs_indices()));
+    DCHECK(absl::c_is_sorted(*params.persistent_alloc_indices));
+    absl::c_set_difference(commands.allocs_indices(),
+                           *params.persistent_alloc_indices,
+                           std::back_inserter(policy_allocs_to_check));
     allocs_to_check = policy_allocs_to_check;
   }
 
@@ -233,7 +223,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
       /*recv_device_memory_function=*/nullptr, params.ffi_execution_context,
       /*additional_compute_streams=*/{}, params.execution_scoped_state,
       /*mock_collectives=*/false, /*execution_id=*/0,
-      /*rng_seed=*/0, params.allocation_address_info);
+      /*rng_seed=*/0, params.persistent_alloc_indices);
 
   if (!cmd_buffer->warmup_done) {
     return absl::OkStatus();
@@ -250,7 +240,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   // This is required to guarantee that collective commands are recorded on all
   // participating ranks to avoid deadlocks.
   bool has_dynamic_allocations = cmd_buffer->HasDynamicAllocations(
-      commands_, params.allocation_address_info);
+      commands_, params.persistent_alloc_indices);
   if (cmd_buffer->command_buffer->state() ==
           se::CommandBuffer::State::kCreate ||
       (has_dynamic_allocations && commands_.requires_update_on_initialize())) {
@@ -322,7 +312,7 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
   auto updated_allocs = cmd_buffer->UpdateBufferAllocations(commands_, params);
 
   bool has_dynamic_allocations = cmd_buffer->HasDynamicAllocations(
-      commands_, params.allocation_address_info);
+      commands_, params.persistent_alloc_indices);
   bool is_first_record =
       cmd_buffer->command_buffer->state() == se::CommandBuffer::State::kCreate;
   bool needs_update =

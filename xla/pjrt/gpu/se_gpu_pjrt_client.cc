@@ -2195,9 +2195,10 @@ StreamExecutorGpuClient::RunAsync(
   absl::Status execute_status = allocation_scope.ExecuteWithBufferAllocations(
       buffer_allocations, device_ordinal,
       [&](const gpu::BufferAllocations& execution_buffers,
-          const gpu::Thunk::AllocationAddressInfo* allocation_address_info) {
+          std::optional<absl::Span<const BufferAllocation::Index>>
+              persistent_alloc_indices) {
         return gpu_exec->ExecuteThunks(execution_buffers, run_options,
-                                       allocation_address_info);
+                                       persistent_alloc_indices);
       });
   absl::Status teardown_status = buffer_allocations.TearDown(
       buffers_in_result, gpu_exec->GetAllocations());

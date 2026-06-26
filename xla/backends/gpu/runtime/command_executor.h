@@ -224,15 +224,6 @@ class CommandExecutor {
     // to values valid during the execution we use a node hash map container.
     using Key = std::pair<const CommandExecutor*, RecordId>;
     absl::node_hash_map<Key, RecordedCommands> recorded_commands;
-
-    struct AddressPolicyCache {
-      bool initialized = false;
-
-      // Commands that only read/write persistent allocations. These can be
-      // skipped forever after the address policy is ready.
-      std::vector<bool> skip_commands;
-    };
-    absl::node_hash_map<Key, AddressPolicyCache> address_policy_caches;
   };
 
   CommandExecutor(SynchronizationMode synchronization_mode,
