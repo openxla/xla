@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -114,19 +115,21 @@ CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
     const CommandExecutor& commands, const Thunk::ExecuteParams& params) {
   std::vector<BufferAllocation::Index> updated_allocs;
   const BufferAllocations* allocs = params.buffer_allocations;
+  absl::Span<const BufferAllocation::Index> allocs_to_check =
+      commands.allocs_indices();
+  std::vector<BufferAllocation::Index> dynamic_alloc_indices;
 
-  if (params.persistent_alloc_indices.has_value()) {
-    DCHECK(absl::c_is_sorted(*params.persistent_alloc_indices));
+  if (const auto& persistent_alloc_indices = params.persistent_alloc_indices) {
+    DCHECK(absl::c_is_sorted(commands.allocs_indices()));
+    DCHECK(absl::c_is_sorted(*persistent_alloc_indices));
+    absl::c_set_difference(commands.allocs_indices(), *persistent_alloc_indices,
+                           std::back_inserter(dynamic_alloc_indices));
+    allocs_to_check = dynamic_alloc_indices;
   }
 
   // We check only allocations referenced by commands in a cmd sequence, and
   // leave every other entry default initialized (nullptr device memory).
-  for (BufferAllocation::Index index : commands.allocs_indices()) {
-    if (params.persistent_alloc_indices.has_value() &&
-        absl::c_binary_search(*params.persistent_alloc_indices, index)) {
-      continue;
-    }
-
+  for (BufferAllocation::Index index : allocs_to_check) {
     se::DeviceAddressBase alloc = allocs->GetDeviceAddress(index);
 
     if (recorded_allocs.size() <= index) {
