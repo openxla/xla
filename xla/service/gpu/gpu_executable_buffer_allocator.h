@@ -78,8 +78,16 @@ class GpuExecutableBufferAllocator {
 
   using AllocationIndexSet = absl::btree_set<BufferAllocation::Index>;
 
-  // Execution-scoped buffer allocation state. Command-buffer VA remapping is
-  // inactive when `command_buffer_active()` is false.
+  // Per-run buffer allocation context created by `CreateExecutionScope`.
+  // Callers first use it to build `BufferAllocations` from runtime parameters,
+  // constants, temporary buffers, and output buffers, then use it to run the
+  // executable with those allocations.
+  //
+  // When command-buffer VA remapping is available, the scope also holds the
+  // lock for the executable/executor remapping state. Selected command-buffer
+  // allocations are backed by physical VMM allocations while execution sees
+  // stable reserved VA addresses. Command-buffer VA remapping is inactive when
+  // `command_buffer_active()` is false.
   class ExecutionScope {
    public:
     ExecutionScope(const ExecutionScope&) = delete;
