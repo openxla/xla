@@ -269,7 +269,7 @@ class Thunk {
     // execution. If absent, consumers that need address-change checks should
     // conservatively treat allocation addresses as dynamic.
     std::optional<absl::Span<const BufferAllocation::Index>>
-        persistent_alloc_indices;
+        persistent_alloc_indices = std::nullopt;
   };
 
   //===--------------------------------------------------------------------===//
@@ -347,7 +347,7 @@ class Thunk {
     // execution. If absent, consumers that need address-change checks should
     // conservatively treat allocation addresses as dynamic.
     std::optional<absl::Span<const BufferAllocation::Index>>
-        persistent_alloc_indices;
+        persistent_alloc_indices = std::nullopt;
 
    private:
     friend class CommandBufferThunk;
