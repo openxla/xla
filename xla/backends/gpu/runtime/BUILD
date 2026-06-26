@@ -1700,7 +1700,6 @@ xla_test(
     ],
     deps = [
         ":select_k_exec_raft",
-        ":select_k_exec_stub",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
@@ -1727,7 +1726,6 @@ cc_library(
     srcs = ["select_k_thunk.cc"],
     hdrs = ["select_k_thunk.h"],
     deps = [
-        ":select_k_exec_stub",
         ":thunk",
         ":thunk_id",
         ":thunk_proto_cc",
@@ -1749,7 +1747,10 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:statusor",
-    ] + if_cuda_is_configured([":select_k_exec_raft"]),
+    ] + if_cuda_is_configured(
+        [":select_k_exec_raft"],
+        no_cuda = [":select_k_exec_stub"],
+    ),
 )
 
 xla_cc_test(
