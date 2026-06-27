@@ -20,7 +20,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "xla/backends/gpu/collectives/mori_kernels.h"
 #include "mori/shmem/shmem.hpp"
-#include "mori/shmem/reduce_scatter_kernels.hpp"
+#include "mori/collective/reduce_scatter_kernels.hpp"
 
 using namespace mori;
 
@@ -38,6 +38,13 @@ namespace xla_mori {
 static std::mutex g_memObjMapMutex;
 using MemObjMap = std::map< void*, application::SymmMemObjPtr >;
 static std::deque<MemObjMap> g_memObjMap(8);
+
+void InitSignalMemory(void* ptr, size_t bytes) {
+  if (ptr == nullptr || bytes == 0) {
+    return;
+  }
+  (void)hipMemset(ptr, 0, bytes);
+}
 
 void RegisterMemObjPtr(void* ptr, mori::application::SymmMemObjPtr obj) {
   int dev_id = -1;
@@ -193,8 +200,8 @@ absl::Status AllGather(void* send_buffer, void* recv_buffer, size_t bytes,
 }
 
 absl::Status ReduceScatter(void* send_buffer, void* recv_buffer, 
-      void* staging_buffer, xla::PrimitiveType dtype, size_t chunkElems, 
-      int gen_counter, std::intptr_t stream_handle, int device_id) {
+      void* staging_buffer, void* group_counters, xla::PrimitiveType dtype, 
+      size_t chunkElems, std::intptr_t stream_handle, int device_id) {
   int myPe = ShmemMyPe();
   int npes = ShmemNPes();
 
@@ -225,24 +232,43 @@ absl::Status ReduceScatter(void* send_buffer, void* recv_buffer,
   size_t totalVecs = chunkElems / (VecSize * NumVecs);
   int wantBlocks = static_cast<int>(std::max<size_t>(1, (totalVecs + kThreads - 1) / kThreads));
   int blocks = std::min(wantBlocks, std::max(1, 256));
-  // Push: split each shard into S slices, sent as sequential SDMA sub-chunks on a
-  // SINGLE queue (RS_PUSH_SLICES, default 4). Consumers form S groups (group g
-  // reduces slice g). Clamp S so each slice has >= 1 vector, and round the grid to
-  // a multiple of S (>= 1 block per slice).
-  int pushSlices = 4;
+
+  // Push slicing: RS_PUSH_SLICES (default 1) rounded DOWN to a power of two and
+  // clamped to [1,8]; also clamped so each slice has at least one vector. logS =
+  // log2(S) in [0,3]. pushBlocks is rounded to a multiple of S (>= S) so each of
+  // the S groups gets >= 1 block (G = pushBlocks/S).
+  int pushSlices = 1;
   if (const char* s = std::getenv("RS_PUSH_SLICES")) {
-    int v = std::atoi(s);
-    if (v >= 1) pushSlices = v;
+    int req = std::atoi(s);
+    if (req > 1) {
+      int p = 1;
+      while ((p << 1) <= req && p < 8) p <<= 1;
+      pushSlices = p;
+    }
   }
-  const int maxSlices = static_cast<int>(std::max<size_t>(1, chunkElems / VecSize));
-  pushSlices = std::max(1, std::min(pushSlices, maxSlices));
+  {
+    const size_t maxSlicesByData = std::max<size_t>(1, chunkElems / VecSize);
+    while (pushSlices > 1 && static_cast<size_t>(pushSlices) > maxSlicesByData) pushSlices >>= 1;
+  }
+  int logS = 0;
+  while ((1 << logS) < pushSlices) logS++;
   int pushBlocks = std::max(pushSlices, (blocks / pushSlices) * pushSlices);
 
+  // Local-only per-group block counters for the push reset (never peer-written).
+  // Owned/zeroed once by the communicator (a small tail of the staging buffer);
+  // the kernel self-zeroes them after each launch, so no per-call memset here.
+  auto* groupCounters = static_cast<uint64_t*>(group_counters);
+
+  // The new push kernel relies on a cross-PE barrier between launches (its
+  // per-slice flags are self-reset, not generation-stamped). Mirror the
+  // reference's ShmemBarrierAll() before each launch.
+  BarrierKernel<<<1, 1, 0, stream>>>();
+  MORI_HIP_ERROR(hipGetLastError());
+
   ReduceScatterPushKernel<VecBytes, NumVecs, ElemT, SumOp><<<pushBlocks, kThreads, 0, stream>>>(
-          myPe, npes, pushSlices, 
+          myPe, npes, logS,
           static_cast<const ElemT*>(send_buffer), static_cast<ElemT*>(staging_buffer), 
-          static_cast<ElemT*>(recv_buffer), chunkElems,
-          static_cast<uint64_t>(gen_counter) + 1);
+          static_cast<ElemT*>(recv_buffer), groupCounters, chunkElems);
   MORI_HIP_ERROR(hipGetLastError());  
   MORI_HIP_ERROR(hipStreamSynchronize(stream));
   return absl::OkStatus();

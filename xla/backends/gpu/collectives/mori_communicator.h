@@ -198,9 +198,15 @@ private:
 
   static absl::StatusOr<se::Stream*> ToStream(const Executor& executor);
 
+  // Number of per-group block counters reserved for the push reduce-scatter
+  // (the kernel indexes groupCounters[g] for g in [0, S), with S <= 8).
+  static constexpr size_t kReduceScatterGroupCounters = 8;
+
   MoriCollectives* collectives_;  // Parent MoriCollectives instance
   se::DeviceAddressBase staging_buffer_;
-  int generation_counter_ = 0;
+  // Local-only per-group block counters for the push reduce-scatter, carved from
+  // the tail of the staging allocation and zeroed once at creation.
+  void* rs_group_counters_ = nullptr;
   // Should all pending collectives cancel?
   std::shared_ptr<CancellationToken> cancel_;
   bool aborted_ = false;             // Has Abort() been called?

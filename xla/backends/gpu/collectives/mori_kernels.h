@@ -46,7 +46,7 @@ absl::Status AllGather(void* send_buffer, void* recv_buffer, size_t bytes,
                std::intptr_t stream_handle, int device_id);
 
 absl::Status ReduceScatter(void* send_buffer, void* recv_buffer, void* staging_buffer, 
-    xla::PrimitiveType dtype, size_t count, int gen_counter, 
+    void* group_counters, xla::PrimitiveType dtype, size_t count, 
     std::intptr_t stream_handle, int device_id);
 
 void RegisterMemObjPtr(void *ptr, mori::application::SymmMemObjPtr obj);

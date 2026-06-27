@@ -112,7 +112,16 @@ absl::StatusOr<std::unique_ptr<MoriCommunicator>> MoriCommunicator::Create(
 
   const size_t buffer_size = 2UL<<30; // 2GB
   TF_ASSIGN_OR_RETURN(void* addr, coll->Allocate(buffer_size));
-  comm->staging_buffer_ = se::DeviceAddressBase(addr, buffer_size);
+
+  // Carve a small, 8-byte-aligned tail of the staging allocation for the push
+  // reduce-scatter's local-only group counters and zero it once. The kernel
+  // self-zeroes these after each launch, so a single init here is sufficient.
+  const size_t counters_bytes = kReduceScatterGroupCounters * sizeof(uint64_t);
+  const size_t staging_bytes = buffer_size - counters_bytes;
+  comm->staging_buffer_ = se::DeviceAddressBase(addr, staging_bytes);
+  comm->rs_group_counters_ = static_cast<char*>(addr) + staging_bytes;
+  xla_mori::InitSignalMemory(comm->rs_group_counters_, counters_bytes);
+
   VLOG(1) << "Created " << *comm << " with npes: " << shmem::ShmemNPes();
   return comm;
 }
@@ -348,7 +357,7 @@ absl::Status MoriCommunicator::LaunchReduceScatter(se::DeviceAddressBase send_bu
           << " dtype=" << primitive_util::LowercasePrimitiveTypeName(dtype) 
           << " stream=" << AsRocmStream(stream);
   return xla_mori::ReduceScatter(send_buffer.opaque(), recv_buffer.opaque(), 
-                 staging_buffer_.opaque(), dtype, count, generation_counter_++, 
+                 staging_buffer_.opaque(), rs_group_counters_, dtype, count, 
                  AsRocmStream(stream), 
                  stream->parent()->device_ordinal());
 }
