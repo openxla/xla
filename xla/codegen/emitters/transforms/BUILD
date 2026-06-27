@@ -36,6 +36,7 @@ cc_library(
     deps = [
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/strings:str_format",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:LLVMCommonConversion",
         "@llvm-project//mlir:LLVMDialect",
