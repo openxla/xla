@@ -17,7 +17,6 @@ limitations under the License.
 #define XLA_CODEGEN_EMITTERS_TRANSFORMS_LOWERING_UTILS_H_
 
 #include "absl/strings/str_format.h"
-#include "llvm/ADT/SmallVector.h"
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -26,6 +25,7 @@ limitations under the License.
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Support/LLVM.h"
 
 namespace xla {
 namespace emitters {
