@@ -79,7 +79,6 @@ cc_library(
         "//xla/backends/gpu/collectives:gpu_cliques",
         "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/backends/gpu/collectives:gpu_communicator",
-        "//xla/backends/gpu/runtime:thunk",
         "//xla/backends/gpu/target_config",
         "//xla/client:client_library",
         "//xla/client:local_client",

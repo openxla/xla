@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <iterator>
 #include <memory>

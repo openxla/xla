@@ -112,6 +112,7 @@ cc_library(
     deps = [
         ":command_state",
         ":thunk",
+        ":thunk_proto_cc",
         "//xla/runtime:resource_use",
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:command_buffer",
