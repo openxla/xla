@@ -34,5 +34,6 @@ def xla_repo():
         link_files = {
             "//third_party/roc_mori:BUILD.src_shmem": "src/shmem/BUILD.bazel",
             "//third_party/roc_mori:BUILD.src_application": "src/application/BUILD.bazel",
+            "//third_party/roc_mori:BUILD.src_collective": "src/collective/BUILD.bazel",
         },
     )
