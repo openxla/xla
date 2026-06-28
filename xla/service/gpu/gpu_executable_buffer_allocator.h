@@ -176,6 +176,16 @@ class GpuExecutableBufferAllocator {
     // RAII wrapper that keeps the VA->physical mapping active.
     // Reset (auto-unmapping) before each re-use of the VA range.
     std::optional<se::MemoryReservation::ScopedMapping> scoped_mapping;
+
+    // ROCm skip-remap booking. Source (BFC) device address mapped into each
+    // command-buffer slot during the previous step, in ascending
+    // reservation-offset order (same order the mapping descriptors are built).
+    // A slot whose source address is unchanged this step keeps its existing
+    // mapping instead of being unmapped+remapped, and when no slot changes the
+    // whole unmap/map/SetAccess (and the unmap-event sync) is skipped. Empty
+    // until the first mapping is established. ROCm-only; see
+    // VmmRemapSkipEnabled().
+    std::vector<const void*> last_mapped_src_addrs;
   };
 
   std::string module_name_;

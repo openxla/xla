@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable_buffer_allocator.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <utility>
 #include <vector>
@@ -70,6 +71,34 @@ uint64_t RoundUpToGranularity(uint64_t size, uint64_t granularity) {
     return size;
   }
   return ((size + granularity - 1) / granularity) * granularity;
+}
+
+// Whether the per-slot skip-remap booking path is enabled for `platform_name`.
+//
+// On ROCm the VA unmap (hipMemUnmap) is the dominant per-step cost (~150us,
+// size-independent) while the steady-state command-buffer execution remaps the
+// SAME physical buffers into the SAME reservation slots every step. Driving the
+// already-tested se::MemoryReservation::ScopedMapping::Remap() with a per-slot
+// change cache lets unchanged slots keep their mapping (no unmap/map/SetAccess),
+// and skips the unmap-event sync entirely when nothing changed.
+//
+// ROCm-only by design: the CUDA path (where unmap is cheap) keeps its existing
+// full reset()+MapTo() behavior unchanged. Set XLA_VMM_SKIP_REMAP=0 to force the
+// legacy path on ROCm for A/B measurement.
+bool VmmRemapSkipEnabled(absl::string_view platform_name) {
+  if (platform_name != "ROCM") {
+    return false;
+  }
+  static const bool enabled = [] {
+    const char* v = std::getenv("XLA_VMM_SKIP_REMAP");
+    if (v == nullptr) {
+      return true;  // default ON for ROCm
+    }
+    absl::string_view s(v);
+    return !(s == "0" || s == "false" || s == "off" || s == "FALSE" ||
+             s == "OFF");
+  }();
+  return enabled;
 }
 
 absl::Status CheckAlignment(const BufferAllocation& allocation,
@@ -306,6 +335,11 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
 
   uint64_t granularity = vmm_allocator->GetAllocationGranularity(executor);
 
+  // ROCm-only per-slot skip-remap: reuse mappings for slots whose source
+  // buffer did not move since the previous step (see VmmRemapSkipEnabled).
+  const absl::string_view platform_name = executor->GetPlatform()->Name();
+  const bool skip_remap_enabled = VmmRemapSkipEnabled(platform_name);
+
   // Acquire per-executor mutex to protect VA range operations. This ensures
   // only one thread uses the VA ranges at a time for this executor.
   absl::MutexLock va_lock(va_ranges_->mutex);
@@ -337,20 +371,12 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
         "VA: %p total_size: %d granularity: %d",
         owner_->module_name_, va_ranges_->va_reservation->address().opaque(),
         total_va_size, granularity);
-  } else {
-    ScopedAnnotation annotation_va_unmap([&] {
-      return absl::StrFormat("command_buffer_va_range_unmap:#module=%s#",
-                             owner_->module_name_);
-    });
-
-    // VA range is already initialized; wait for the unmap event to be marked
-    // and then do the VA unmapping.
-    RETURN_IF_ERROR(va_ranges_->unmap_event->Synchronize());
-
-    // Unmap physical addresses from the single reserved VA range. Clearing
-    // ScopedMappings calls UnMap via their destructors.
-    va_ranges_->scoped_mapping.reset();
   }
+  // NOTE: when the VA range already holds a mapping from a previous step, the
+  // unmap-event sync and the unmap itself are intentionally deferred to the
+  // mapping-decision block below. This lets the ROCm skip-remap path compare
+  // this step's source buffers against the previous step and avoid unmapping
+  // (and even avoid the unmap-event sync) for slots that did not change.
 
   // Build a map from allocation index to its offset within va_reservation.
   // Iterate through command_buffer_allocation_indexes_ in order (btree_set
@@ -384,6 +410,9 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
     // allocation_va_offsets was built from a sorted btree_set and the loop
     // below iterates allocation indices in ascending order).
     std::vector<se::MemoryReservation::MappingDescriptor> mapping_descriptors;
+    // Source (BFC) device address backing each descriptor, in the same order.
+    // Compared against last_mapped_src_addrs to detect which slots moved.
+    std::vector<const void*> new_src_addrs;
 
     const BufferAllocation::Index num_allocations =
         static_cast<BufferAllocation::Index>(owning_buffer_allocations.size());
@@ -430,21 +459,69 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
 
       mapping_descriptors.push_back(
           {va_offset, /*allocation_offset=*/0, mapping_size, raw_alloc});
+      new_src_addrs.push_back(original_buffer.opaque());
 
       // Use VA address for execution.
       mapped_buffers.push_back(
           se::DeviceAddressBase(sub_range_va.opaque(), original_buffer.size()));
     }
 
-    // Batch-map all command buffer allocations into the reserved VA range in
-    // a single call. This maps the contiguous range formed by the descriptors
-    // and enables device access before returning.
-    if (!mapping_descriptors.empty()) {
-      ASSIGN_OR_RETURN(se::MemoryReservation::ScopedMapping scoped_mapping,
-                       va_ranges_->va_reservation->MapTo(
-                           absl::MakeSpan(mapping_descriptors)));
-      va_ranges_->scoped_mapping = std::move(scoped_mapping);
+    // Decide how to (re)establish the VA->physical mapping for this step.
+    const bool can_skip_remap =
+        skip_remap_enabled && va_ranges_->scoped_mapping.has_value() &&
+        !mapping_descriptors.empty() &&
+        va_ranges_->last_mapped_src_addrs.size() == new_src_addrs.size();
+
+    if (can_skip_remap) {
+      // ROCm skip-remap: only slices whose backing source buffer moved since
+      // the previous step are unmapped+remapped; unchanged slices keep their
+      // mapping (no driver calls). SetAccess is issued once over the full range
+      // only if something changed (handled inside Remap()).
+      std::vector<se::MemoryReservation::RemappingDescriptor> remaps;
+      remaps.reserve(mapping_descriptors.size());
+      int changed = 0;
+      for (size_t k = 0; k < mapping_descriptors.size(); ++k) {
+        const bool remap_required =
+            new_src_addrs[k] != va_ranges_->last_mapped_src_addrs[k];
+        changed += remap_required ? 1 : 0;
+        const se::MemoryReservation::MappingDescriptor& md =
+            mapping_descriptors[k];
+        remaps.push_back({md.reservation_offset, md.allocation_offset, md.size,
+                          md.allocation, remap_required});
+      }
+
+      XLA_VLOG_DEVICE(2, device_ordinal) << absl::StreamFormat(
+          "VA remapping(skip): module %s slots=%d changed=%d",
+          owner_->module_name_, remaps.size(), changed);
+
+      if (changed > 0) {
+        // At least one slot moved: wait for the previous step's GPU work to
+        // finish using the VA range before unmapping the changed slices.
+        RETURN_IF_ERROR(va_ranges_->unmap_event->Synchronize());
+        ASSIGN_OR_RETURN(se::MemoryReservation::ScopedMapping remapped,
+                         std::move(*va_ranges_->scoped_mapping)
+                             .Remap(absl::MakeSpan(remaps)));
+        va_ranges_->scoped_mapping = std::move(remapped);
+      }
+      // changed == 0: steady state. Keep the existing mapping untouched; no
+      // unmap, no map, no SetAccess, and no unmap-event sync.
+    } else {
+      // Legacy / first-step path (also the unchanged CUDA behavior): wait for
+      // any prior GPU use of the VA range, drop the old mapping, then map the
+      // full contiguous range in a single MapTo call.
+      if (va_ranges_->scoped_mapping.has_value()) {
+        RETURN_IF_ERROR(va_ranges_->unmap_event->Synchronize());
+        va_ranges_->scoped_mapping.reset();
+      }
+      if (!mapping_descriptors.empty()) {
+        ASSIGN_OR_RETURN(se::MemoryReservation::ScopedMapping scoped_mapping,
+                         va_ranges_->va_reservation->MapTo(
+                             absl::MakeSpan(mapping_descriptors)));
+        va_ranges_->scoped_mapping = std::move(scoped_mapping);
+      }
     }
+
+    va_ranges_->last_mapped_src_addrs = std::move(new_src_addrs);
   }
 
   if (VLOG_IS_ON(3)) {
