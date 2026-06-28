@@ -101,6 +101,25 @@ bool VmmRemapSkipEnabled(absl::string_view platform_name) {
   return enabled;
 }
 
+// Size threshold (bytes) for the ROCm copy-into-shadow path. Command-buffer
+// slices with size <= this value bypass VA remapping: they get a stable shadow
+// buffer (mapped once) and are refreshed with a stream-ordered D2D copy each
+// step instead of an hipMemUnmap/Map/SetAccess round-trip (which on ROCm costs
+// ~2-4ms even for tiny buffers and dominates the per-step host time for the
+// swarm of small optimizer/RNG jits). 0 (default) disables the path entirely,
+// so the CUDA path and the default ROCm behavior are unchanged. >0 = byte
+// threshold. (A future "auto" mode could calibrate the copy-vs-remap breakeven.)
+uint64_t VmmCopyThresholdBytes(absl::string_view platform_name) {
+  if (platform_name != "ROCM") {
+    return 0;
+  }
+  static const uint64_t threshold = []() -> uint64_t {
+    const char* v = std::getenv("XLA_VMM_TMP_COPY_THRESHOLD");
+    return (v != nullptr) ? std::strtoull(v, nullptr, 10) : 0;
+  }();
+  return threshold;
+}
+
 absl::Status CheckAlignment(const BufferAllocation& allocation,
                             se::DeviceAddressBase buffer, int arg_idx) {
   const int64_t expected_alignment = [&] {
@@ -340,37 +359,54 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
   const absl::string_view platform_name = executor->GetPlatform()->Name();
   const bool skip_remap_enabled = VmmRemapSkipEnabled(platform_name);
 
+  // ROCm copy-into-shadow: small command-buffer slices bypass VA remapping and
+  // are refreshed by a stream-ordered D2D copy. 0 = disabled (default).
+  const uint64_t copy_threshold = VmmCopyThresholdBytes(platform_name);
+  const auto is_small_copy_slice = [copy_threshold](uint64_t size) {
+    return copy_threshold > 0 && size > 0 && size <= copy_threshold;
+  };
+
   // Acquire per-executor mutex to protect VA range operations. This ensures
   // only one thread uses the VA ranges at a time for this executor.
   absl::MutexLock va_lock(va_ranges_->mutex);
 
-  // Initialize VA ranges if this is first use (va_reservation is null).
-  if (va_ranges_->va_reservation == nullptr) {
+  // Initialize VA ranges on first use. The unmap_event is the init sentinel
+  // (always created); the VA reservation may be absent when every command-buffer
+  // slice is handled by the copy-into-shadow path (total_va_size == 0).
+  if (va_ranges_->unmap_event == nullptr) {
     ScopedAnnotation annotation_va_reserve([&] {
       return absl::StrFormat("command_buffer_va_range_reserve:#module=%s#",
                              owner_->module_name_);
     });
 
-    // Calculate total size for all command buffer allocations, rounding each
-    // allocation up to the allocation granularity.
+    // Calculate total size for the command buffer allocations that are
+    // VA-remapped (small copy-shadow slices are excluded from the reservation),
+    // rounding each allocation up to the allocation granularity.
     uint64_t total_va_size = 0;
     for (BufferAllocation::Index i :
          owner_->command_buffer_allocation_indexes_) {
       const uint64_t size =
           owning_buffer_allocations.GetDeviceAddress(i).size();
+      if (is_small_copy_slice(size)) {
+        continue;
+      }
       total_va_size += RoundUpToGranularity(size, granularity);
     }
 
-    // Reserve a single large VA range for all command buffer allocations.
-    ASSIGN_OR_RETURN(va_ranges_->va_reservation,
-                     vmm_allocator->CreateReservation(executor, total_va_size));
     ASSIGN_OR_RETURN(va_ranges_->unmap_event, executor->CreateEvent());
 
-    XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
-        "VA remapping: Reserved single VA range for module %s "
-        "VA: %p total_size: %d granularity: %d",
-        owner_->module_name_, va_ranges_->va_reservation->address().opaque(),
-        total_va_size, granularity);
+    // Reserve a single large VA range for the remapped command buffer
+    // allocations. Skip the reservation entirely if everything is copy-shadow.
+    if (total_va_size > 0) {
+      ASSIGN_OR_RETURN(
+          va_ranges_->va_reservation,
+          vmm_allocator->CreateReservation(executor, total_va_size));
+      XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
+          "VA remapping: Reserved single VA range for module %s "
+          "VA: %p total_size: %d granularity: %d",
+          owner_->module_name_, va_ranges_->va_reservation->address().opaque(),
+          total_va_size, granularity);
+    }
   }
   // NOTE: when the VA range already holds a mapping from a previous step, the
   // unmap-event sync and the unmap itself are intentionally deferred to the
@@ -387,6 +423,11 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
        owner_->command_buffer_allocation_indexes_) {
     const uint64_t size =
         owning_buffer_allocations.GetDeviceAddress(idx).size();
+    // Small copy-shadow slices are not part of the contiguous VA reservation;
+    // keep them out so offsets stay aligned with the mapping descriptors.
+    if (is_small_copy_slice(size)) {
+      continue;
+    }
     allocation_va_offsets[idx] = current_offset;
     current_offset += RoundUpToGranularity(size, granularity);
   }
@@ -398,6 +439,18 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
   // Map physical memory to reserved VA addresses.
   std::vector<se::DeviceAddressBase> mapped_buffers;
   mapped_buffers.reserve(owning_buffer_allocations.size());
+
+  // Copy-into-shadow plan for small slices. `shadow` is the stable buffer baked
+  // into the command buffer; `real` is the current physical buffer. We copy
+  // real->shadow before execute (fresh inputs) and shadow->real after execute
+  // (propagate outputs such as loss / token-count scalars back to the buffers
+  // the host reads). Declared here so the copy-back can run after execute().
+  struct SmallCopy {
+    se::DeviceAddressBase shadow;
+    se::DeviceAddressBase real;
+    uint64_t size;
+  };
+  std::vector<SmallCopy> small_copies;
 
   {
     ScopedAnnotation annotation_va_remap([&] {
@@ -423,6 +476,35 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
       // Only do VA mapping for allocations accessed by CommandBufferThunk.
       auto offset_it = allocation_va_offsets.find(i);
       if (offset_it == allocation_va_offsets.end()) {
+        // Small command-buffer slices bypass VA remapping: bake a stable shadow
+        // address into the command buffer and refresh it with a D2D copy each
+        // step (trades one cheap copy for an expensive unmap/map/SetAccess).
+        if (is_small_copy_slice(original_buffer.size()) &&
+            owner_->command_buffer_allocation_indexes_.contains(i)) {
+          if (original_buffer.is_null()) {
+            return Internal("Command buffer allocation %d has null address", i);
+          }
+          const uint64_t sz = original_buffer.size();
+          auto it = va_ranges_->small_shadow.find(i);
+          if (it == va_ranges_->small_shadow.end() ||
+              it->second.size() < sz) {
+            if (it != va_ranges_->small_shadow.end()) {
+              executor->Deallocate(&it->second);
+            }
+            se::DeviceAddressBase shadow = executor->Allocate(sz);
+            if (shadow.is_null()) {
+              return Internal(
+                  "Failed to allocate %d-byte shadow for small command-buffer "
+                  "slice %d",
+                  sz, i);
+            }
+            it = va_ranges_->small_shadow.insert_or_assign(i, shadow).first;
+          }
+          se::DeviceAddressBase shadow_va(it->second.opaque(), sz);
+          small_copies.push_back({shadow_va, original_buffer, sz});
+          mapped_buffers.push_back(shadow_va);
+          continue;
+        }
         // Not a command buffer allocation (or zero-size), use the original
         // buffer.
         mapped_buffers.push_back(original_buffer);
@@ -547,7 +629,31 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
       mapped_buffers, owning_buffer_allocations.device_ordinal(),
       owning_buffer_allocations.memory_allocator());
 
+  // Copy-IN small-slice inputs (real->shadow), stream-ordered before the
+  // command buffer so each shadow holds this step's data without any VA remap
+  // or unmap-event sync.
+  if (!small_copies.empty()) {
+    se::Stream* exec_stream = run_options_->stream();
+    for (SmallCopy& c : small_copies) {
+      RETURN_IF_ERROR(exec_stream->Memcpy(&c.shadow, c.real, c.size));
+    }
+    XLA_VLOG_DEVICE(2, device_ordinal) << absl::StreamFormat(
+        "VA remapping: copied %d small slices to shadow (threshold=%d B)",
+        static_cast<int>(small_copies.size()), copy_threshold);
+  }
+
   RETURN_IF_ERROR(execute(remapped_buffer_allocations));
+
+  // Copy-BACK small-slice outputs (shadow->real), stream-ordered after the
+  // command buffer wrote results (e.g. loss / token-count scalars) into the
+  // stable shadow, propagating them to the real buffers the host/later thunks
+  // read. Runs before the unmap event is recorded.
+  if (!small_copies.empty()) {
+    se::Stream* exec_stream = run_options_->stream();
+    for (SmallCopy& c : small_copies) {
+      RETURN_IF_ERROR(exec_stream->Memcpy(&c.real, c.shadow, c.size));
+    }
+  }
 
   // Record event so VA range can be reclaimed after GPU finishes.
   RETURN_IF_ERROR(

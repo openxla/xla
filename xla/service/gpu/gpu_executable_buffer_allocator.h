@@ -186,6 +186,17 @@ class GpuExecutableBufferAllocator {
     // until the first mapping is established. ROCm-only; see
     // VmmRemapSkipEnabled().
     std::vector<const void*> last_mapped_src_addrs;
+
+    // ROCm copy-into-shadow (env XLA_VMM_TMP_COPY_THRESHOLD): small
+    // command-buffer slices (tiny scale/scalar/metric buffers that churn their
+    // address every step) are kept OUT of the VA reservation and instead given
+    // a stable shadow device buffer here -- allocated once, fixed address baked
+    // into the command buffer -- and refreshed with a stream-ordered D2D copy
+    // each step (real->shadow before execute, shadow->real after) rather than
+    // an expensive hipMemUnmap/Map/SetAccess. Keyed by allocation index; kept
+    // for the run's lifetime. See VmmCopyThresholdBytes().
+    absl::flat_hash_map<BufferAllocation::Index, se::DeviceAddressBase>
+        small_shadow;
   };
 
   std::string module_name_;
