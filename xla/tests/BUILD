@@ -1062,6 +1062,7 @@ xla_test(
 xla_test(
     name = "dot_operation_test",
     srcs = ["dot_operation_test.cc"],
+    timeout = "long",
     aot_compile_test = False,
     backend_tags = {
         # TODO(b/445172709): Re-enable once fixed.
