@@ -1627,6 +1627,11 @@ message DebugOptions {
   optional bool xla_gpu_experimental_ragged_all_to_all_zero_copy = 480
       [deprecated = true];
 
+  // If true, use the device-initiated (NCCL GIN + LSA) kernel for
+  // ragged-all-to-all. Requires NCCL >= 2.29.
+  optional bool
+      xla_gpu_experimental_ragged_all_to_all_use_device_kernel = 513;
+
   // If true, enable experimental tiling propagation.
   optional bool xla_gpu_experimental_enable_tiling_propagation = 456;
 
@@ -1641,7 +1646,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 504
+  // Next id: 514
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

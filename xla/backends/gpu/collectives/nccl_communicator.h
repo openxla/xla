@@ -58,6 +58,7 @@ using NcclSignalDesc = GpuSignalDesc;
 struct NcclCapabilities {
   bool supports_device_comm;
   bool supports_one_sided_comm;
+  bool supports_gin;
 
   // Reason one-sided comm is not supported, cached at construction. Empty
   // if one-sided comm is supported.
@@ -104,6 +105,7 @@ class NcclCommunicator : public GpuCommunicator {
   }
 
   bool SupportsDeviceComm() const final;
+  bool SupportsGin() const final;
 
   absl::StatusOr<std::unique_ptr<GpuDeviceCommunicator>> CreateDeviceComm(
       const GpuDeviceCommunicator::Requirements& requirements) final;
