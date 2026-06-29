@@ -36,13 +36,13 @@ load(
     "enable_cuda",
 )
 load(
-    ":sycl_configure.bzl",
-    "enable_sycl",
-)
-load(
     ":rocm_redist.bzl",
     "create_rocm_distro",
     "rocm_redist",
+)
+load(
+    ":sycl_configure.bzl",
+    "enable_sycl",
 )
 
 _TF_ROCM_AMDGPU_TARGETS = "TF_ROCM_AMDGPU_TARGETS"
@@ -57,7 +57,7 @@ _ROCM_DISTRO_LINKS = "ROCM_DISTRO_LINKS"
 _TMPDIR = "TMPDIR"
 
 # Default hermetic ROCm redistributable version
-_DEFAULT_ROCM_DISTRO_VERSION = "rocm_7.12.0_gfx908"
+_DEFAULT_ROCM_DISTRO_VERSION = "rocm_7.13.0_gfx94X"
 
 _TF_ROCM_RBE_DOCKER_IMAGE = "TF_ROCM_RBE_DOCKER_IMAGE"
 _TF_ROCM_RBE_POOL = "TF_ROCM_RBE_POOL"
@@ -401,6 +401,7 @@ def _setup_rocm_distro_dir(repository_ctx):
     if rocm_path:
         repository_ctx.report_progress("Using ROCm from ROCM_PATH: {}".format(rocm_path))
         repository_ctx.file("rocm/.index")
+
         # Symlink the ROCM_PATH to rocm_dist
         repository_ctx.symlink(rocm_path, _DISTRIBUTION_PATH)
         return _get_rocm_config(repository_ctx, bash_bin, _DISTRIBUTION_PATH, rocm_path)
@@ -445,7 +446,7 @@ def _setup_rocm_distro_dir(repository_ctx):
     if rocm_distro_version not in rocm_redist:
         fail("Unknown ROCM_DISTRO_VERSION: {}. Available versions: {}".format(
             rocm_distro_version,
-            ", ".join(rocm_redist.keys())
+            ", ".join(rocm_redist.keys()),
         ))
 
     repository_ctx.report_progress("Downloading hermetic ROCm distribution: {}".format(rocm_distro_version))
