@@ -3866,12 +3866,13 @@ absl::Status SpmdPartitioningVisitor::HandleConstant(HloInstruction* hlo) {
 // Keep the guard conditions conservative. The rewrite relies on one-to-one
 // ownership between tiles of the sliced dimension and partitions: no tuple
 // shapes, one sliced dimension of size 1, scalar S32 index, no partial
-// replication, no sharding on non-sliced dimensions, and an evenly divisible
-// shard size.
+// replication, no sharding on non-sliced dimensions, an evenly divisible
+// shard size, and a bounded number of owner branches.
 absl::StatusOr<bool>
 SpmdPartitioningVisitor::TryDynamicSliceWithCollectiveBroadcast(
     HloInstruction* hlo) {
-  if (!hlo->sharding().IsReplicated() || hlo->shape().IsTuple()) {
+  if (!options_.enable_dynamic_slice_collective_broadcast ||
+      !hlo->sharding().IsReplicated() || hlo->shape().IsTuple()) {
     return false;
   }
 
@@ -3881,6 +3882,13 @@ SpmdPartitioningVisitor::TryDynamicSliceWithCollectiveBroadcast(
   }
 
   const int64_t rank = input->shape().dimensions().size();
+  // Dynamic-slice also supports one rank-1 operand containing all indices.
+  // DynamicIndexSplitter runs after SPMD partitioning, so leave that form to
+  // the generic fallback instead of indexing nonexistent scalar operands.
+  if (hlo->operand_count() != rank + 1) {
+    return false;
+  }
+
   std::optional<int64_t> sliced_dim;
   for (int64_t dim = 0; dim < rank; ++dim) {
     if (hlo->dynamic_slice_sizes()[dim] != input->shape().dimensions(dim)) {
@@ -3912,7 +3920,10 @@ SpmdPartitioningVisitor::TryDynamicSliceWithCollectiveBroadcast(
   }
 
   const int64_t num_slice_partitions = input_sharding.dimension(*sliced_dim);
-  if (num_slice_partitions <= 1 || input_dim_size % num_slice_partitions != 0) {
+  if (num_slice_partitions <= 1 ||
+      num_slice_partitions >
+          options_.max_dynamic_slice_collective_broadcast_partitions ||
+      input_dim_size % num_slice_partitions != 0) {
     return false;
   }
   for (int64_t dim = 0; dim < rank; ++dim) {

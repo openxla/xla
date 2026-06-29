@@ -160,6 +160,14 @@ class SpmdPartitioningTest
     }
     return count;
   }
+
+  int64_t NumOfInstructions(const HloModule* module, HloOpcode opcode) {
+    int64_t count = 0;
+    for (const HloComputation* computation : module->computations()) {
+      count += NumOfInstructions(computation, opcode);
+    }
+    return count;
+  }
 };
 
 std::string TestParamToString(
@@ -2637,9 +2645,7 @@ ENTRY entry {
       AllOf(op::DynamicSlice(root_replicated, _), op::Shape("f32[64]")));
 }
 
-TEST_P(SpmdPartitioningTest,
-       DynamicSliceReplicatedResultUsesCollectiveBroadcast) {
-  const char* const hlo_string = R"(
+constexpr absl::string_view kReplicatedDynamicSliceHlo = R"(
 HloModule module
 
 ENTRY entry {
@@ -2651,19 +2657,19 @@ ENTRY entry {
     dynamic_slice_sizes={1,8,16}, sharding={replicated}
 })";
 
+TEST_P(SpmdPartitioningTest,
+       DynamicSliceReplicatedResultUsesCollectiveBroadcast) {
+  SpmdPartitionerOptions options;
+  EXPECT_TRUE(options.enable_dynamic_slice_collective_broadcast);
+  EXPECT_EQ(options.max_dynamic_slice_collective_broadcast_partitions, 32);
+
   ASSERT_OK_AND_ASSIGN(auto module,
-                       PartitionComputation(hlo_string, /*num_devices=*/4));
+                       PartitionComputation(kReplicatedDynamicSliceHlo,
+                                            /*num_devices=*/4, options));
 
-  auto count_opcode = [&](HloOpcode opcode) {
-    int64_t count = 0;
-    for (const HloComputation* computation : module->computations()) {
-      count += NumOfInstructions(computation, opcode);
-    }
-    return count;
-  };
-
-  EXPECT_EQ(count_opcode(HloOpcode::kAllGather), 0);
-  EXPECT_EQ(count_opcode(HloOpcode::kCollectiveBroadcast), 4);
+  EXPECT_EQ(NumOfInstructions(module.get(), HloOpcode::kAllGather), 0);
+  EXPECT_EQ(NumOfInstructions(module.get(), HloOpcode::kCollectiveBroadcast),
+            4);
 
   const HloInstruction* root = module->entry_computation()->root_instruction();
   ASSERT_EQ(root->opcode(), HloOpcode::kConditional);
@@ -2682,6 +2688,69 @@ ENTRY entry {
     EXPECT_THAT(replica_groups[0], UnorderedElementsAre(0, 1, 2, 3));
   }
   EXPECT_THAT(broadcast_roots, UnorderedElementsAre(0, 1, 2, 3));
+}
+
+TEST_P(SpmdPartitioningTest, DynamicSliceCollectiveBroadcastCanBeDisabled) {
+  SpmdPartitionerOptions options;
+  options.enable_dynamic_slice_collective_broadcast = false;
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(kReplicatedDynamicSliceHlo,
+                                            /*num_devices=*/4, options));
+
+  EXPECT_EQ(NumOfInstructions(module.get(), HloOpcode::kAllGather), 1);
+  EXPECT_EQ(NumOfInstructions(module.get(), HloOpcode::kCollectiveBroadcast),
+            0);
+  EXPECT_EQ(NumOfInstructions(module.get(), HloOpcode::kConditional), 0);
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      AllOf(op::DynamicSlice(op::AllGather(op::Parameter(0)), op::Parameter(1),
+                             op::Constant(), op::Constant()),
+            op::Shape("f32[1,8,16]")));
+}
+
+TEST_P(SpmdPartitioningTest,
+       DynamicSliceCollectiveBroadcastRespectsPartitionLimit) {
+  SpmdPartitionerOptions options;
+  options.enable_dynamic_slice_collective_broadcast = true;
+  options.max_dynamic_slice_collective_broadcast_partitions = 2;
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(kReplicatedDynamicSliceHlo,
+                                            /*num_devices=*/4, options));
+
+  EXPECT_EQ(NumOfInstructions(module.get(), HloOpcode::kAllGather), 1);
+  EXPECT_EQ(NumOfInstructions(module.get(), HloOpcode::kCollectiveBroadcast),
+            0);
+  EXPECT_EQ(NumOfInstructions(module.get(), HloOpcode::kConditional), 0);
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      AllOf(op::DynamicSlice(op::AllGather(op::Parameter(0)), op::Parameter(1),
+                             op::Constant(), op::Constant()),
+            op::Shape("f32[1,8,16]")));
+}
+
+TEST_P(SpmdPartitioningTest, DynamicSliceWithPackedIndicesUsesGenericFallback) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param = f32[8,4] parameter(0), sharding={devices=[1,4]<=[4]}
+  %indices = s32[2] parameter(1), sharding={replicated}
+  ROOT %dynamic-slice = f32[8,1] dynamic-slice(%param, %indices),
+    dynamic_slice_sizes={8,1}, sharding={replicated}
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/4));
+
+  EXPECT_EQ(NumOfInstructions(module.get(), HloOpcode::kAllGather), 1);
+  EXPECT_EQ(NumOfInstructions(module.get(), HloOpcode::kCollectiveBroadcast),
+            0);
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      AllOf(op::DynamicSlice(op::AllGather(op::Parameter(0)), op::Parameter(1)),
+            op::Shape("f32[8,1]")));
 }
 
 TEST_P(SpmdPartitioningTest, PadAlongNonPartitionedDimension) {
