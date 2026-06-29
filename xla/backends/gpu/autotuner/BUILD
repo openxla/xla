@@ -766,6 +766,7 @@ cc_library(
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/service:compiler",
         "//xla/service:hlo_cost_analysis",
+        "//xla:status_macros",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tools:hlo_decomposer_lib",
         "//xla/tsl/platform:errors",
