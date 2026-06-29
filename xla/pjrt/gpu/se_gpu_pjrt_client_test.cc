@@ -2812,6 +2812,8 @@ TEST_F(VmmTest, CommandBufferVaRemappingSingleRangeReuse) {
   mock_log.StopCapturingLogs();
 }
 
+#if GOOGLE_CUDA
+
 // Tests that CAPTURE_CMD_NEVER_UPDATE mode produces correct results across
 // multiple runs. The GEMM is routed through cuBLAS (GemmCmd/CublasLtCmd), which
 // are traced commands. In CAPTURE_CMD_NEVER_UPDATE mode only traced commands
@@ -2983,6 +2985,8 @@ TEST_F(VmmTest, CommandBufferVaRemappingTwoExecutables) {
   mock_log.StopCapturingLogs();
   absl::SetVLogLevel("command_buffer_thunk", old_vlog_cbt);
 }
+
+#endif  // GOOGLE_CUDA
 
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
