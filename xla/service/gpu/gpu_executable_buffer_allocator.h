@@ -49,6 +49,26 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+// Internal, pure (uncached) helpers for the ROCm VMM command-buffer
+// optimizations, exposed for unit testing. Production code calls the cached
+// wrappers defined in the .cc; these take the raw env value explicitly so the
+// decision logic can be tested without process-global state.
+namespace vmm_internal {
+
+// Whether per-slot skip-remap is enabled for `platform_name`, given the raw
+// XLA_VMM_SKIP_REMAP value (`env_value == nullptr` means unset). ROCm-only:
+// default ON for ROCm, always OFF elsewhere.
+bool ParseVmmRemapSkipEnabled(absl::string_view platform_name,
+                              const char* env_value);
+
+// Copy-into-shadow byte threshold for `platform_name`, given the raw
+// XLA_VMM_TMP_COPY_THRESHOLD value (`env_value == nullptr` means unset).
+// ROCm-only; returns 0 (disabled) elsewhere and for empty/non-numeric values.
+uint64_t ParseVmmCopyThresholdBytes(absl::string_view platform_name,
+                                    const char* env_value);
+
+}  // namespace vmm_internal
+
 class ThunkExecutor;
 
 // Owns executable-scoped buffer allocation state for one GpuExecutable.
@@ -197,6 +217,26 @@ class GpuExecutableBufferAllocator {
     // for the run's lifetime. See VmmCopyThresholdBytes().
     absl::flat_hash_map<BufferAllocation::Index, se::DeviceAddressBase>
         small_shadow;
+
+    // Executor that owns the `small_shadow` device buffers. Set when this
+    // VaRanges is created; used by the destructor to free the shadow buffers
+    // (DeviceAddressBase is a non-owning pointer+size, so they must be freed
+    // explicitly). nullptr means no shadow buffers were ever allocated.
+    se::StreamExecutor* executor = nullptr;
+
+    VaRanges() = default;
+    ~VaRanges() {
+      if (executor != nullptr) {
+        for (auto& [index, shadow] : small_shadow) {
+          executor->Deallocate(&shadow);
+        }
+      }
+    }
+
+    // Non-movable/non-copyable: stored in a node_hash_map (stable addresses,
+    // never relocated) and holds a mutex + RAII mapping.
+    VaRanges(const VaRanges&) = delete;
+    VaRanges& operator=(const VaRanges&) = delete;
   };
 
   std::string module_name_;

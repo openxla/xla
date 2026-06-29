@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_executable_buffer_allocator.h"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
@@ -64,6 +65,44 @@ namespace gpu {
 
 using ::tsl::profiler::ScopedAnnotation;
 
+namespace vmm_internal {
+
+bool ParseVmmRemapSkipEnabled(absl::string_view platform_name,
+                              const char* env_value) {
+  if (platform_name != "ROCM") {
+    return false;
+  }
+  if (env_value == nullptr) {
+    return true;  // default ON for ROCm
+  }
+  absl::string_view s(env_value);
+  return !(s == "0" || s == "false" || s == "off" || s == "FALSE" ||
+           s == "OFF");
+}
+
+uint64_t ParseVmmCopyThresholdBytes(absl::string_view platform_name,
+                                    const char* env_value) {
+  if (platform_name != "ROCM") {
+    return 0;
+  }
+  if (env_value == nullptr || *env_value == '\0') {
+    return 0;
+  }
+  char* end = nullptr;
+  errno = 0;
+  const uint64_t parsed = std::strtoull(env_value, &end, 10);
+  if (end == env_value || *end != '\0' || errno != 0) {
+    LOG(WARNING) << "XLA_VMM_TMP_COPY_THRESHOLD=\"" << env_value
+                 << "\" is not a valid byte count; disabling copy-into-shadow "
+                    "(treating as 0). A non-numeric \"auto\" mode is not "
+                    "implemented yet.";
+    return 0;
+  }
+  return parsed;
+}
+
+}  // namespace vmm_internal
+
 namespace {
 
 uint64_t RoundUpToGranularity(uint64_t size, uint64_t granularity) {
@@ -89,15 +128,10 @@ bool VmmRemapSkipEnabled(absl::string_view platform_name) {
   if (platform_name != "ROCM") {
     return false;
   }
-  static const bool enabled = [] {
-    const char* v = std::getenv("XLA_VMM_SKIP_REMAP");
-    if (v == nullptr) {
-      return true;  // default ON for ROCm
-    }
-    absl::string_view s(v);
-    return !(s == "0" || s == "false" || s == "off" || s == "FALSE" ||
-             s == "OFF");
-  }();
+  // Cache the (ROCm) decision once; the env var is read a single time per
+  // process. Pure parsing lives in vmm_internal for unit testing.
+  static const bool enabled = vmm_internal::ParseVmmRemapSkipEnabled(
+      "ROCM", std::getenv("XLA_VMM_SKIP_REMAP"));
   return enabled;
 }
 
@@ -113,10 +147,10 @@ uint64_t VmmCopyThresholdBytes(absl::string_view platform_name) {
   if (platform_name != "ROCM") {
     return 0;
   }
-  static const uint64_t threshold = []() -> uint64_t {
-    const char* v = std::getenv("XLA_VMM_TMP_COPY_THRESHOLD");
-    return (v != nullptr) ? std::strtoull(v, nullptr, 10) : 0;
-  }();
+  // Cache the (ROCm) threshold once; the env var is read a single time per
+  // process. Pure parsing lives in vmm_internal for unit testing.
+  static const uint64_t threshold = vmm_internal::ParseVmmCopyThresholdBytes(
+      "ROCM", std::getenv("XLA_VMM_TMP_COPY_THRESHOLD"));
   return threshold;
 }
 
@@ -485,13 +519,31 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
             return Internal("Command buffer allocation %d has null address", i);
           }
           const uint64_t sz = original_buffer.size();
+          // Allocate the shadow in the SAME memory space (color) as the
+          // original buffer. Small slices are usually default-space (color 0)
+          // scale/scalar/metric buffers, but a non-zero color (e.g. collective
+          // memory) must not be silently placed in space 0.
+          const int64_t memory_space =
+              (i < static_cast<BufferAllocation::Index>(
+                       owner_->allocations_.size()))
+                  ? static_cast<int64_t>(owner_->allocations_[i]->color())
+                  : 0;
           auto it = va_ranges_->small_shadow.find(i);
           if (it == va_ranges_->small_shadow.end() ||
               it->second.size() < sz) {
             if (it != va_ranges_->small_shadow.end()) {
+              // The old shadow address may still be baked into a
+              // previously-captured command buffer the GPU is replaying. This
+              // branch is only reachable on a later step (the slice grew), so
+              // unmap_event has been recorded; wait for that GPU work before
+              // freeing the old shadow. Under NEVER_UPDATE with static shapes
+              // this is not expected to be hit.
+              if (va_ranges_->unmap_event != nullptr) {
+                RETURN_IF_ERROR(va_ranges_->unmap_event->Synchronize());
+              }
               executor->Deallocate(&it->second);
             }
-            se::DeviceAddressBase shadow = executor->Allocate(sz);
+            se::DeviceAddressBase shadow = executor->Allocate(sz, memory_space);
             if (shadow.is_null()) {
               return Internal(
                   "Failed to allocate %d-byte shadow for small command-buffer "
@@ -743,6 +795,9 @@ GpuExecutableBufferAllocator::CreateExecutionScope(
   {
     absl::MutexLock lock(va_ranges_mutex_);
     va_ranges = &module_va_ranges_[executor];
+    // Record the owning executor so the VaRanges destructor can free any
+    // copy-into-shadow buffers it allocates (idempotent; same key every time).
+    va_ranges->executor = executor;
   }
   return ExecutionScope(this, va_ranges, run_options);
 }
