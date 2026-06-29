@@ -153,14 +153,19 @@ MakeConstantsMap(HloModule* absl_nullable debug_module) {
 
 // Chooses the correct allocations to be used within the GpuExecutable code.
 std::vector<const BufferAllocation*> GatherAllocationPtrs(
-    const std::optional<std::vector<BufferAllocation>>& mlir_allocations,
-    const BufferAssignment* buffer_assignment,
-    const std::deque<BufferAllocation>& thunk_pass_allocations) {
+    std::optional<std::vector<BufferAllocation>>& mlir_allocations,
+    std::deque<BufferAllocation>& thunk_pass_allocations) {
   const std::vector<BufferAllocation>* allocation_vec = nullptr;
   if (mlir_allocations.has_value()) {
+    for (auto& alloc : *mlir_allocations) {
+      // Clear references to debug data in BufferAssignment to prevent dangling
+      // pointers. This is necessary because BufferAssignment will be removed
+      // from GpuExecutable and and will soon go out of scope before
+      // BufferAllocations.
+      alloc.ClearBufferAssignmentReferences();
+    }
+
     allocation_vec = &mlir_allocations.value();
-  } else if (buffer_assignment != nullptr) {
-    allocation_vec = &buffer_assignment->Allocations();
   }
 
   std::vector<const BufferAllocation*> alloc_ptrs;
@@ -173,7 +178,9 @@ std::vector<const BufferAllocation*> GatherAllocationPtrs(
 
   if (!thunk_pass_allocations.empty()) {
     alloc_ptrs.reserve(alloc_ptrs.size() + thunk_pass_allocations.size());
-    for (const BufferAllocation& alloc : thunk_pass_allocations) {
+    for (BufferAllocation& alloc : thunk_pass_allocations) {
+      // Same as above, clear references to avoid dangling pointers.
+      alloc.ClearBufferAssignmentReferences();
       alloc_ptrs.push_back(&alloc);
     }
   }
@@ -348,34 +355,19 @@ static absl::Status RunThunkPasses(const DebugOptions& debug_options,
 
 absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
     Params params) {
-  if (params.buffer_assignment != nullptr) {
-    if (params.buffer_assignment_proto.has_value()) {
-      return absl::InvalidArgumentError(
-          "Cannot set both buffer_assignment_proto and buffer_assignment.");
-    }
+  if (!params.buffer_assignment_proto.has_value()) {
+    return absl::InvalidArgumentError("Must set buffer_assignment_proto.");
+  }
 
-    params.buffer_allocations_debug_summary =
-        params.buffer_assignment->ToVerboseString(
-            params.alias_info.get(),
-            params.debug_options.xla_debug_buffer_assignment_show_max());
-  } else {
-    if (!params.buffer_assignment_proto.has_value()) {
-      return absl::InvalidArgumentError(
-          "Must set either buffer_assignment_proto or buffer_assignment.");
-    }
-
-    if (params.buffer_allocations_debug_summary.empty()) {
-      return absl::InvalidArgumentError(
-          "Must set buffer_allocations_debug_summary when "
-          "buffer_assignment_proto is set.");
-    }
+  if (params.buffer_allocations_debug_summary.empty()) {
+    return absl::InvalidArgumentError(
+        "Must set buffer_allocations_debug_summary when "
+        "buffer_assignment_proto is set.");
   }
 
   int64_t next_idx = 0;
   if (params.mlir_allocations.has_value()) {
     next_idx = params.mlir_allocations->size();
-  } else if (params.buffer_assignment != nullptr) {
-    next_idx = params.buffer_assignment->Allocations().size();
   }
 
   GpuExecutableThunkPassBufferAllocator allocator(next_idx);
@@ -399,7 +391,7 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
       Thunk::ThunkInfo(), std::move(params.executable->thunks()));
   RETURN_IF_ERROR(RunThunkPasses(
       params.debug_options, params.device_description, seq_thunk.get(),
-      params.debug_module.get(), params.buffer_assignment.get(), allocator));
+      params.debug_module.get(), params.buffer_assignment, allocator));
   // Extract modified thunks back into a ThunkExecutor.
   auto executor =
       std::make_unique<ThunkExecutor>(std::move(seq_thunk->thunks()));
@@ -409,7 +401,7 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
       std::move(params.dnn_compiled_graphs),
       std::move(params.device_description), std::move(executor),
       std::move(params.module_name), std::move(params.program_shape),
-      std::move(params.mlir_allocations), std::move(params.buffer_assignment),
+      std::move(params.mlir_allocations),
       std::move(allocator.MutableAllocations()), std::move(params.alias_info),
       std::move(params.debug_options), std::move(params.constants),
       std::move(params.output_info), params.enable_debug_info_manager,
@@ -428,7 +420,6 @@ GpuExecutable::GpuExecutable(
     std::unique_ptr<ThunkExecutor> executable, std::string module_name,
     ProgramShape program_shape,
     std::optional<std::vector<BufferAllocation>> mlir_allocations,
-    std::unique_ptr<const BufferAssignment> buffer_assignment,
     std::deque<BufferAllocation> thunk_pass_allocations,
     std::unique_ptr<GpuAliasInfo> alias_info, DebugOptions debug_options,
     std::vector<ConstantInfo> constants,
@@ -448,10 +439,9 @@ GpuExecutable::GpuExecutable(
           GetNumAdditionalStreams(*thunk_executor_, debug_options)),
       module_name_(std::move(module_name)),
       program_shape_(std::move(program_shape)),
-      allocation_ptrs_(GatherAllocationPtrs(
-          mlir_allocations, buffer_assignment.get(), thunk_pass_allocations)),
+      allocation_ptrs_(
+          GatherAllocationPtrs(mlir_allocations, thunk_pass_allocations)),
       allocations_(std::move(mlir_allocations)),
-      buffer_assignment_(std::move(buffer_assignment)),
       buffer_assignment_proto_(std::move(buffer_assignment_proto)),
       thunk_pass_allocations_(std::move(thunk_pass_allocations)),
       alias_info_(std::move(alias_info)),
@@ -477,8 +467,6 @@ GpuExecutable::GpuExecutable(
     std::optional<BufferAssignmentProto> proto;
     if (buffer_assignment_proto_.has_value()) {
       proto = buffer_assignment_proto_;
-    } else if (buffer_assignment_ != nullptr) {
-      proto = buffer_assignment_->ToProto();
     }
     XlaDebugInfoManager::Get()->RegisterModule(shared_module(),
                                                std::move(proto));
@@ -732,12 +720,10 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
   CollectiveMemoryRequests collective_memory_requests(buffer_allocations);
 
   {  // Prepare thunks for execution and collect requested GPU cliques.
-    Thunk::PrepareParams prepare_params{&collective_params,
-                                        &collective_clique_requests,
-                                        &collective_memory_requests,
-                                        executor,
-                                        &buffer_allocations,
-                                        &execution_scoped_state};
+    Thunk::PrepareParams prepare_params{
+        &collective_params,          &collective_clique_requests,
+        &collective_memory_requests, executor,
+        &buffer_allocations,         &execution_scoped_state};
 
     tsl::profiler::TraceMe trace_prepare("Thunks::Prepare");
     RETURN_IF_ERROR(thunk_executor.Prepare(prepare_params));
@@ -1235,9 +1221,6 @@ void GpuExecutable::LogChangedAllocationsInBetweenExecutions(
 
 std::optional<BufferAssignmentProto> GpuExecutable::buffer_assignment_proto()
     const {
-  if (buffer_assignment_ != nullptr) {
-    return buffer_assignment_->ToProto();
-  }
   return buffer_assignment_proto_;
 }
 absl::Status GpuExecutable::ExecuteThunks(
@@ -1419,9 +1402,7 @@ absl::StatusOr<GpuExecutableProto> GpuExecutable::ToProto() const {
         allocation->ToProto());
   }
 
-  if (buffer_assignment_ != nullptr) {
-    *proto.mutable_buffer_assignment() = buffer_assignment_->ToProto();
-  } else if (buffer_assignment_proto_.has_value()) {
+  if (buffer_assignment_proto_.has_value()) {
     *proto.mutable_buffer_assignment() = buffer_assignment_proto_.value();
   }
   proto.set_buffer_allocations_debug_summary(buffer_allocations_debug_summary_);
@@ -1466,7 +1447,6 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
       params.debug_options.xla_gpu_executable_embed_debug_info();
   const std::string& binary = proto.binary();
   params.binary.assign(binary.begin(), binary.end());
-  params.buffer_assignment = nullptr;
   if (proto.has_hlo_module_with_config()) {
     ASSIGN_OR_RETURN(params.debug_module, HloModule::CreateFromProtoWithConfig(
                                               proto.hlo_module_with_config()));
