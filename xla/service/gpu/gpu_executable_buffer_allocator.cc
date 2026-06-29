@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -76,8 +77,8 @@ bool ParseVmmRemapSkipEnabled(absl::string_view platform_name,
     return true;  // default ON for ROCm
   }
   absl::string_view s(env_value);
-  return !(s == "0" || s == "false" || s == "off" || s == "FALSE" ||
-           s == "OFF");
+  return !(s == "0" || absl::EqualsIgnoreCase(s, "false") ||
+           absl::EqualsIgnoreCase(s, "off") || absl::EqualsIgnoreCase(s, "no"));
 }
 
 uint64_t ParseVmmCopyThresholdBytes(absl::string_view platform_name,
@@ -479,6 +480,12 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
   // real->shadow before execute (fresh inputs) and shadow->real after execute
   // (propagate outputs such as loss / token-count scalars back to the buffers
   // the host reads). Declared here so the copy-back can run after execute().
+  //
+  // The copy is intentionally bidirectional for every slice regardless of its
+  // read/write direction: it is direction-agnostic and always correct, and the
+  // slices are tiny (<= XLA_VMM_TMP_COPY_THRESHOLD bytes), so the extra copy is
+  // negligible. A future optimization could consult BufferUse read/write to
+  // elide the unused direction (skip copy-back for inputs, copy-in for outputs).
   struct SmallCopy {
     se::DeviceAddressBase shadow;
     se::DeviceAddressBase real;
@@ -519,30 +526,22 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
             return Internal("Command buffer allocation %d has null address", i);
           }
           const uint64_t sz = original_buffer.size();
-          // Allocate the shadow in the SAME memory space (color) as the
-          // original buffer. Small slices are usually default-space (color 0)
-          // scale/scalar/metric buffers, but a non-zero color (e.g. collective
-          // memory) must not be silently placed in space 0.
-          const int64_t memory_space =
-              (i < static_cast<BufferAllocation::Index>(
-                       owner_->allocations_.size()))
-                  ? static_cast<int64_t>(owner_->allocations_[i]->color())
-                  : 0;
           auto it = va_ranges_->small_shadow.find(i);
-          if (it == va_ranges_->small_shadow.end() ||
-              it->second.size() < sz) {
-            if (it != va_ranges_->small_shadow.end()) {
-              // The old shadow address may still be baked into a
-              // previously-captured command buffer the GPU is replaying. This
-              // branch is only reachable on a later step (the slice grew), so
-              // unmap_event has been recorded; wait for that GPU work before
-              // freeing the old shadow. Under NEVER_UPDATE with static shapes
-              // this is not expected to be hit.
-              if (va_ranges_->unmap_event != nullptr) {
-                RETURN_IF_ERROR(va_ranges_->unmap_event->Synchronize());
-              }
-              executor->Deallocate(&it->second);
+          if (it == va_ranges_->small_shadow.end()) {
+            // First use of this slice: allocate a stable shadow buffer in the
+            // SAME memory space (color) as the original. Most small slices are
+            // default-space (color 0) scale/scalar/metric buffers, but a
+            // non-zero color (e.g. collective memory) must not be silently
+            // placed in space 0. An out-of-range index would indicate an
+            // allocation-tracking bug, so fail loudly rather than guess.
+            if (i >= static_cast<BufferAllocation::Index>(
+                         owner_->allocations_.size())) {
+              return Internal(
+                  "Command-buffer slice index %d out of range (%d allocations)",
+                  i, static_cast<int64_t>(owner_->allocations_.size()));
             }
+            const int64_t memory_space =
+                static_cast<int64_t>(owner_->allocations_[i]->color());
             se::DeviceAddressBase shadow = executor->Allocate(sz, memory_space);
             if (shadow.is_null()) {
               return Internal(
@@ -551,6 +550,19 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
                   sz, i);
             }
             it = va_ranges_->small_shadow.insert_or_assign(i, shadow).first;
+          } else if (it->second.size() < sz) {
+            // The shadow address was baked into the command buffer when it was
+            // captured on the first step; under trace-once replay (NEVER_UPDATE)
+            // the command buffer is never re-captured, so the shadow cannot be
+            // moved. A grown slice means the shape changed, which this path does
+            // not support -- fail clearly instead of reallocating to a new
+            // address that the replayed command buffer would not see (silent
+            // corruption). Static shapes never hit this.
+            return Internal(
+                "Small command-buffer slice %d grew from %d to %d bytes; "
+                "copy-into-shadow requires static shapes under trace-once "
+                "replay",
+                i, static_cast<int64_t>(it->second.size()), sz);
           }
           se::DeviceAddressBase shadow_va(it->second.opaque(), sz);
           small_copies.push_back({shadow_va, original_buffer, sz});

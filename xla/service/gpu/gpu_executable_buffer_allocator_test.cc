@@ -37,7 +37,9 @@ TEST(VmmRemapSkipEnabledTest, RocmDefaultsOnWhenUnset) {
 }
 
 TEST(VmmRemapSkipEnabledTest, RocmFalseyValuesDisable) {
-  for (const char* v : {"0", "false", "off", "FALSE", "OFF"}) {
+  // Case-insensitive for false/off/no; "0" is exact.
+  for (const char* v : {"0", "false", "off", "FALSE", "OFF", "False", "Off",
+                        "no", "No", "NO"}) {
     EXPECT_FALSE(ParseVmmRemapSkipEnabled("ROCM", v)) << "value=" << v;
   }
 }
