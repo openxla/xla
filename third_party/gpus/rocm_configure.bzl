@@ -8,6 +8,8 @@
   * `CLANG_COMPILER_PATH`: The clang compiler path that will be used for
     host code compilation if TF_ROCM_CLANG is 1.
   * `TF_ROCM_AMDGPU_TARGETS`: The AMDGPU targets.
+  * `TF_ROCM_MULTIPLE_PATHS`: Colon-separated list of ROCm installation paths to merge.
+  * `LLVM_PATH`: Path to LLVM installation (used with TF_ROCM_MULTIPLE_PATHS).
   * `TF_ROCM_RBE_DOCKER_IMAGE`: Docker image to be used in rbe worker to execute the action
   * `TF_ROCM_RBE_SINGLE_GPU_POOL`: The name of the rbe pool used to execute single gpu tests
   * `TF_ROCM_RBE_MULTI_GPU_POOL`: The name of the rbe pool used to execute multi gpu tests
@@ -45,6 +47,8 @@ load(
 
 _TF_ROCM_AMDGPU_TARGETS = "TF_ROCM_AMDGPU_TARGETS"
 _TF_ROCM_CONFIG_REPO = "TF_ROCM_CONFIG_REPO"
+_TF_ROCM_MULTIPLE_PATHS = "TF_ROCM_MULTIPLE_PATHS"
+_LLVM_PATH = "LLVM_PATH"
 _DISTRIBUTION_PATH = "rocm/rocm_dist"
 _ROCM_DISTRO_VERSION = "ROCM_DISTRO_VERSION"
 _ROCM_DISTRO_URL = "ROCM_DISTRO_URL"
@@ -401,7 +405,31 @@ def _setup_rocm_distro_dir(repository_ctx):
         repository_ctx.symlink(rocm_path, _DISTRIBUTION_PATH)
         return _get_rocm_config(repository_ctx, bash_bin, _DISTRIBUTION_PATH, rocm_path)
 
-    # Check for custom URL-based distro (second priority)
+    # Check for multiple paths support (second priority)
+    multiple_paths = repository_ctx.os.environ.get(_TF_ROCM_MULTIPLE_PATHS)
+    if multiple_paths:
+        repository_ctx.file("rocm/.index")
+        paths_list = multiple_paths.split(":")
+        for rocm_custom_path in paths_list:
+            cmd = "find " + rocm_custom_path + "/* \\( -type f -o -type l \\)"
+            result = execute(repository_ctx, [bash_bin, "-c", cmd])
+            result_files = result.stdout.strip().split("\n") if result.stdout.strip() else []
+            for file_path in result_files:
+                relative_path = file_path[len(rocm_custom_path):]
+                symlink_path = _DISTRIBUTION_PATH + relative_path
+                if files_exist(repository_ctx, [symlink_path], bash_bin)[0]:
+                    fail("File already present: " + relative_path)
+                else:
+                    repository_ctx.symlink(file_path, symlink_path)
+        llvm_path = repository_ctx.os.environ.get(_LLVM_PATH)
+        if llvm_path:
+            repository_ctx.symlink(llvm_path, _DISTRIBUTION_PATH + "/llvm")
+            repository_ctx.symlink(llvm_path, _DISTRIBUTION_PATH + "/lib/llvm")
+            repository_ctx.symlink(llvm_path + "/amdgcn", _DISTRIBUTION_PATH + "/amdgcn")
+        repository_ctx.report_progress("Using ROCm from multiple paths: {}".format(multiple_paths))
+        return _get_rocm_config(repository_ctx, bash_bin, _DISTRIBUTION_PATH, _DISTRIBUTION_PATH)
+
+    # Check for custom URL-based distro (third priority)
     rocm_distro_url = repository_ctx.os.environ.get(_ROCM_DISTRO_URL)
     if rocm_distro_url:
         rocm_distro_hash = repository_ctx.os.environ.get(_ROCM_DISTRO_HASH)
@@ -612,6 +640,8 @@ _ENVIRONS = [
     "TF_NEED_CUDA",  # Needed by the `if_gpu_is_configured` macro
     "ROCM_PATH",
     _TF_ROCM_AMDGPU_TARGETS,
+    _TF_ROCM_MULTIPLE_PATHS,
+    _LLVM_PATH,
     _TF_ROCM_RBE_DOCKER_IMAGE,
     _TF_ROCM_RBE_POOL,
     _TF_ROCM_RBE_SINGLE_GPU_POOL,
