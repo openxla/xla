@@ -127,6 +127,7 @@ limitations under the License.
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
@@ -226,6 +227,12 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
 
     VLOG(6) << "fusion instruction: " << fusion.ToString() << "\n";
     VLOG(6) << "tiling space: " << tiling_space->ToString();
+    if (VLOG_IS_ON(7)) {
+      XLA_VLOG_LINES(
+          7, absl::StrCat("HLO module to reproduce:\n",
+                          ExtractInstructionIntoNewModule(fusion)->ToString(
+                              HloPrintOptions::ShortParsable())));
+    }
     ASSIGN_OR_RETURN(
         llvm::SmallVector<int64_t> tile_sizes,
         GetTilingSpaceConcreteSizes(*tiling_space, block_level_parameters));
@@ -238,7 +245,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
     if (Decision constraints = experimental::VerifyTritonConstraints(
             tiled_computation, device_info);
         !constraints) {
-      return absl::InternalError(
+      return absl::InvalidArgumentError(
           absl::StrCat("Triton constraints violated during codegen: ",
                        constraints.Explain()));
     }
@@ -343,13 +350,15 @@ absl::StatusOr<TritonKernelSource> CreateTritonModule(
     auto suffix = absl::StrCat(fusion.name(), ".before_validation.ttir.txt");
     DumpToFileInDirOrStdout(*hlo_computation->parent(), "", suffix,
                             GetModuleIrString(triton_module.get()));
-    VLOG(6) << "xtile_module: " << GetModuleIrString(triton_module.get());
+
     std::string fusion_suffix = absl::StrCat(fusion.name(), ".hlo");
     DumpToFileInDirOrStdout(
         *hlo_computation->parent(), "", fusion_suffix,
         ExtractInstructionIntoNewModule(fusion)->ToString());
   }
 
+  XLA_VLOG_LINES(6, absl::StrCat("xtile_module:\n",
+                                 GetModuleIrString(triton_module.get())));
   RETURN_IF_ERROR(ir_emitter_triton_internal::LowerXTileToTriton(
       triton_module.get(), mlir_context, fusion, device_info,
       block_level_parameters));
