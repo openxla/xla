@@ -623,11 +623,29 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
       absl::StrAppend(str, mapping.first.value(), "->", mapping.second.value());
     };
 
-    // Collect parent communicators we'll be splitting from and keys for
-    // creating new communicators.
+    // SplitCommunicators treats parent_comms, keys, and ranks as parallel
+    // arrays. Keep all three in child-rank order so that each parent
+    // communicator stays paired with the device and rank of the same physical
+    // participant. Ordering parent_comms by parent rank while independently
+    // ordering ranks by child rank can bind a split communicator to the wrong
+    // StreamExecutor when the child clique permutes ranks.
+    std::vector<const RankPair*> sorted_rank_pairs(rank_pairs.begin(),
+                                                   rank_pairs.end());
+    absl::c_sort(sorted_rank_pairs, [](const RankPair* a, const RankPair* b) {
+      return a->second.rank < b->second.rank;
+    });
+
+    // Collect parent communicators we'll be splitting from, keys for creating
+    // new communicators, and device ranks in their common child-rank order.
     std::vector<Communicator*> parent_comms;
     std::vector<RankId> keys;
-    for (auto& [parent_rank, split_rank] : rank_mapping) {
+    std::vector<DeviceRank> ranks;
+    parent_comms.reserve(sorted_rank_pairs.size());
+    keys.reserve(sorted_rank_pairs.size());
+    ranks.reserve(sorted_rank_pairs.size());
+    for (const RankPair* rank_pair : sorted_rank_pairs) {
+      RankId parent_rank = rank_pair->first;
+      const DeviceRank& device_rank = rank_pair->second;
       auto parent_comm = (*parent_clique)->comm(parent_rank);
       if (!parent_comm.has_value()) {
         return InvalidArgument(
@@ -636,17 +654,9 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
       }
 
       parent_comms.push_back(*parent_comm);
-      keys.push_back(split_rank);
+      keys.push_back(device_rank.rank);
+      ranks.push_back(device_rank);
     }
-
-    std::vector<DeviceRank> ranks;
-    ranks.reserve(rank_pairs.size());
-    for (auto& rank_pair : rank_pairs) {
-      ranks.emplace_back(rank_pair->second);
-    }
-
-    // Sort device ranks, mainly to get more readable logs below.
-    absl::c_sort(ranks, [](auto& a, auto& b) { return a.rank < b.rank; });
 
     // Get a globally consistent color value for newly created clique.
     int32_t color = GetCommSplitColor(clique_key);

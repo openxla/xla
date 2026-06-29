@@ -245,6 +245,7 @@ xla_cc_test(
         ":gpu_clique_key",
         ":gpu_cliques",
         ":gpu_collectives",
+        ":gpu_communicator",
         ":loopback_collectives",
         ":nccl_or_rccl_collectives",  # fixdeps: keep
         "//xla:executable_run_options",
