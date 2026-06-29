@@ -46,6 +46,13 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForDotOpWithBlockParameters(
 
 namespace detail {
 
+// This tax models the static, fixed overhead incurred during each iteration of
+// the memory loop. The value 1800ns was measured using a small skinny GEMM
+// example with no pipelining. There is a deeper explanation in
+// b/503201785#comment20. TODO(b/529341369): Account for A100, TMA, and other
+// memory instruction pathways.
+inline constexpr absl::Duration kLoopLatencyTax = absl::Nanoseconds(1800);
+
 struct DotProblemInfo {
   int64_t b = 0;
   int64_t m = 0;
