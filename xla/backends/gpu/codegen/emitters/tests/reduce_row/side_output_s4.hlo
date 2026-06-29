@@ -16,3 +16,5 @@ fusion {
   ROOT tuple = (s32[64]{0}, s32[64,64]{1,0}) tuple(reduce, convert)
 }
 // CHECK: shuffle_reduce
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

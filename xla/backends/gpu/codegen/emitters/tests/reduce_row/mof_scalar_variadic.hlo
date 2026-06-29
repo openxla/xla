@@ -27,3 +27,4 @@
   %reduce2 = (f32[], f32[]) reduce(%p0, %p0, %c0, %c0), dimensions={0,1}, to_apply=%reducer2
   ROOT %tuple = (f32[], (f32[], f32[]), f32[8,8]) tuple(%reduce1, %reduce2, %neg)
 }
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

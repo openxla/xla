@@ -20,3 +20,5 @@ fusion {
 // CHECK: scf.index_switch %[[BLOCK_ID_Z]]
 // CHECK: case 1 {
 // CHECK: default {
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

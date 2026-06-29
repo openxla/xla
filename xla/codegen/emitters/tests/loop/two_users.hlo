@@ -31,3 +31,4 @@ fusion {
 // CHECK-NEXT: divf
 // CHECK-NEXT: atan2
 // CHECK-NEXT: return
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

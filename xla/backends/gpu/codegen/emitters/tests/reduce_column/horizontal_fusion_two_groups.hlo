@@ -17,3 +17,5 @@ fused_computation {
 
 // The two outputs are completely unrelated, so they're put in separate groups.
 // CHECK: scf.index_switch
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

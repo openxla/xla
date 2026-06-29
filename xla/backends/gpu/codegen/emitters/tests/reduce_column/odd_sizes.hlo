@@ -22,3 +22,5 @@ fusion {
 // CHECK: predicated_extract
 // CHECK: shuffle_reduce
 // CHECK: predicated_insert
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

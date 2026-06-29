@@ -17,3 +17,5 @@ bcast {
 // CHECK-CPU-SAME: %[[ARG0]])
 // CHECK:     %[[CST:.*]] = arith.constant -2
 // CHECK:     %[[INSERTED:.*]] = tensor.insert %[[CST]] into %[[ITER]][%[[RA]]]
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

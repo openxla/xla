@@ -34,3 +34,4 @@ fusion {
 // CHECK:         %[[INS2:.*]] = tensor.insert %{{.*}} into %[[ITER2]][%{{.*}}, %{{.*}}] : tensor<50x5xi32>
 // CHECK:         xla.yield %[[INS1]], %[[INS2]] : tensor<50x5xf32>, tensor<50x5xi32>
 // CHECK:       return %{{.*}}, %{{.*}} : tensor<50x5xf32>, tensor<50x5xi32>
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

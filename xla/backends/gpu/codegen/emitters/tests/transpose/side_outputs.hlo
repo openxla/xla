@@ -12,3 +12,4 @@ fusion {
     tuple(%neg, %tr, %log)
 }
 // CHECK: xla_gpu.allocate_shared
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

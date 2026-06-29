@@ -41,3 +41,5 @@ fusion {
 // CHECK-DAG: xla.predicated_insert %[[LOG]]
 // CHECK-DAG: xla.predicated_insert %[[ABS]]
 // CHECK-DAG: xla.predicated_insert %[[NEG]]
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

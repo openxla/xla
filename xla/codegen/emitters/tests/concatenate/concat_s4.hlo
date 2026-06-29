@@ -14,3 +14,5 @@ fusion {
 // CHECK: xla.pure_call @fusion_param0
 // CHECK: xla.pure_call @fusion_param1
 // CHECK: xla.pure_call @fusion_param2
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

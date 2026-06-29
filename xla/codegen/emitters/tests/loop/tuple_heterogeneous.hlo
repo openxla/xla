@@ -23,3 +23,5 @@ fusion {
 // CHECK-DAG:   %[[MINOR_IDX:.*]] = xla.apply_indexing #[[MINOR]]
 // CHECK-DAG:   tensor.insert {{.*}}[%[[MAJOR_IDX]], %[[MINOR_IDX]]]
 // CHECK-DAG:   tensor.insert {{.*}}[%[[RA]]]
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

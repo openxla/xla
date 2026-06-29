@@ -16,3 +16,4 @@ fusion {
   %broadcast = f32[8,8] broadcast(%reduce), dimensions={}
   ROOT %tuple = (f32[8,8], f32[]) tuple(%broadcast, %reduce)
 }
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

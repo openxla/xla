@@ -37,3 +37,5 @@ fusion {
 // CHECK: func private @fusion_d_1
 // CHECK:   %[[RET:.*]]:2 = func.call @add_t
 // CHECK:   yield %[[RET]]#0, %[[RET]]#1
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

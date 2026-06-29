@@ -18,3 +18,5 @@ fusion {
 // currently support a larger vector size than row width.
 
 // CHECK: vector.transfer_read {{.*}} vector<2xi8>
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.
