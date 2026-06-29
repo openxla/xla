@@ -210,31 +210,38 @@ static mlir::TypedValue<mlir::MemRefType> GetPaddedTileBuffer(
 
 bool ExtractTileOp::bufferizesToMemoryRead(
     mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
-  return true;
+  return operand.getOperandNumber() == 0;
 }
 
 bool ExtractTileOp::bufferizesToMemoryWrite(
     mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
-  return true;
+  return false;
 }
 
 bool ExtractTileOp::bufferizesToAllocation(mlir::Value value) {
-  // As we don't know if we will emit an allocation at compile time we must be
-  // conservative.
-  return true;
+  return getShouldAllocate();
 }
 
 mlir::bufferization::AliasingValueList ExtractTileOp::getAliasingValues(
     mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
-  return {};
+  if (getShouldAllocate()) {
+    return {};
+  }
+  mlir::bufferization::AliasingValue result(
+      getResult(), mlir::bufferization::BufferRelation::Equivalent,
+      /*isDefinite=*/true);
+  return {result};
 }
 
 mlir::bufferization::AliasingOpOperandList ExtractTileOp::getAliasingOpOperands(
     mlir::Value value, const mlir::bufferization::AnalysisState& state) {
   DCHECK_EQ(value, getResult());
+  if (getShouldAllocate()) {
+    return {};
+  }
   mlir::bufferization::AliasingOpOperand result(
       &getSourceMutable(), mlir::bufferization::BufferRelation::Equivalent,
-      false);
+      /*isDefinite=*/true);
   return {result};
 }
 
@@ -249,6 +256,31 @@ llvm::LogicalResult ExtractTileOp::bufferize(
     mlir::bufferization::BufferizationState& state) {
   mlir::ImplicitLocOpBuilder builder(getLoc(), rewriter);
 
+  if (!getShouldAllocate() ||
+      IsAlwaysFullSize(getTile().getType(), getBuffer().getType(), getOffsets(),
+                       getStrides())) {
+    auto buffer = GetFullTileSubView(builder, *this);
+    if (!getShouldAllocate()) {
+      auto to_tensor_op =
+          mlir::bufferization::ToTensorOp::create(builder, getType(), buffer);
+      rewriter.replaceOp(getOperation(), {to_tensor_op.getResult()});
+      return mlir::success();
+    }
+    // Alignment/layout fixup required: alloc+copy
+    mlir::MemRefType default_buffer_type =
+        mlir::MemRefType::Builder(buffer.getType()).setLayout(nullptr);
+    auto default_buffer =
+        mlir::memref::AllocOp::create(builder, default_buffer_type);
+    mlir::memref::CopyOp::create(builder, buffer, default_buffer);
+    auto to_tensor_op = mlir::bufferization::ToTensorOp::create(
+        builder, getType(), default_buffer);
+    to_tensor_op.setWritable(true);
+    to_tensor_op.setRestrict(true);
+    rewriter.replaceOp(getOperation(), {to_tensor_op.getResult()});
+    return mlir::success();
+  }
+
+  // Not statically full-size: scf.if guard.
   mlir::Value is_full_size = TileIsFullSize(builder, *this);
   auto if_op = mlir::scf::IfOp::create(
       builder, is_full_size,
@@ -260,11 +292,6 @@ llvm::LogicalResult ExtractTileOp::bufferize(
               then_builder, getType(), buffer);
           mlir::scf::YieldOp::create(then_builder, {to_tensor_op});
         } else {
-          // If the buffer doesn't have an identity layout, we can get a
-          // miscompile during bufferization as some ops don't support
-          // non-identity layouts. So we allocate a new buffer with the same
-          // shape but default layout.
-          // TODO(willfroom): Look into how we can remove this constraint.
           mlir::MemRefType default_buffer_type =
               mlir::MemRefType::Builder(buffer.getType()).setLayout(nullptr);
           auto default_buffer =
@@ -288,27 +315,20 @@ llvm::LogicalResult ExtractTileOp::bufferize(
       });
 
   rewriter.replaceOp(getOperation(), if_op.getResults());
-
   return mlir::success();
 }
 
 bool InsertTileOp::bufferizesToMemoryRead(
     mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
-  return true;
+  return operand.getOperandNumber() == 0;
 }
 
 bool InsertTileOp::bufferizesToMemoryWrite(
     mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
-  DCHECK_EQ(operand.getOperandNumber(), 0)
-      << "This should only be called on the tensor operand.";
-  return false;
+  return operand.getOperandNumber() == 1;
 }
 
-bool InsertTileOp::bufferizesToAllocation(mlir::Value value) {
-  // As we don't know if we will emit an allocation at compile time we must be
-  // conservative.
-  return true;
-}
+bool InsertTileOp::bufferizesToAllocation(mlir::Value value) { return false; }
 
 mlir::bufferization::AliasingValueList InsertTileOp::getAliasingValues(
     mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
@@ -334,6 +354,18 @@ llvm::LogicalResult InsertTileOp::bufferize(
     const mlir::bufferization::BufferizationOptions& options,
     mlir::bufferization::BufferizationState& state) {
   mlir::ImplicitLocOpBuilder builder(getLoc(), rewriter);
+
+  if (!getShouldAllocate() ||
+      IsAlwaysFullSize(getSource().getType(), getDestination().getType(),
+                       getOffsets(), getStrides())) {
+    auto target_buffer_subview = GetFullTileSubView(builder, *this);
+    auto materialize_op =
+        mlir::bufferization::MaterializeInDestinationOp::create(
+            builder, getSource(), target_buffer_subview);
+    materialize_op.setWritable(true);
+    rewriter.eraseOp(getOperation());
+    return mlir::success();
+  }
 
   mlir::Value is_full_size = TileIsFullSize(builder, *this);
   mlir::scf::IfOp::create(
