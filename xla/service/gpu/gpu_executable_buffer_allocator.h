@@ -186,16 +186,17 @@ class GpuExecutableBufferAllocator {
 
     // Single large virtual address reservation covering all command buffer
     // allocations. nullptr until first use.
-    std::unique_ptr<se::MemoryReservation> va_reservation;
+    std::unique_ptr<se::MemoryReservation> va_reservation ABSL_GUARDED_BY(mutex);
 
     // Event used to synchronize VA range reuse. When the device has completed
     // the task that uses the VA range, it marks the event, letting the host
     // know the VA range can be remapped to other physical addresses.
-    std::unique_ptr<se::Event> unmap_event;
+    std::unique_ptr<se::Event> unmap_event ABSL_GUARDED_BY(mutex);
 
     // RAII wrapper that keeps the VA->physical mapping active.
     // Reset (auto-unmapping) before each re-use of the VA range.
-    std::optional<se::MemoryReservation::ScopedMapping> scoped_mapping;
+    std::optional<se::MemoryReservation::ScopedMapping> scoped_mapping
+        ABSL_GUARDED_BY(mutex);
 
     // ROCm skip-remap booking. Source (BFC) device address mapped into each
     // command-buffer slot during the previous step, in ascending
@@ -205,7 +206,15 @@ class GpuExecutableBufferAllocator {
     // whole unmap/map/SetAccess (and the unmap-event sync) is skipped. Empty
     // until the first mapping is established. ROCm-only; see
     // VmmRemapSkipEnabled().
-    std::vector<const void*> last_mapped_src_addrs;
+    std::vector<const void*> last_mapped_src_addrs ABSL_GUARDED_BY(mutex);
+
+    // Debug-only companion to last_mapped_src_addrs: the per-slot reservation
+    // offsets from the previous step, used to DCHECK that the slot->allocation
+    // mapping is stable across steps (the per-slot address comparison is only
+    // valid if each slot maps the same allocation). Populated only in non-NDEBUG
+    // builds; declared unconditionally to keep the struct layout identical
+    // across translation units. ROCm-only.
+    std::vector<uint64_t> last_mapped_offsets ABSL_GUARDED_BY(mutex);
 
     // ROCm copy-into-shadow (env XLA_VMM_TMP_COPY_THRESHOLD): small
     // command-buffer slices (tiny scale/scalar/metric buffers that churn their
@@ -216,7 +225,7 @@ class GpuExecutableBufferAllocator {
     // an expensive hipMemUnmap/Map/SetAccess. Keyed by allocation index; kept
     // for the run's lifetime. See VmmCopyThresholdBytes().
     absl::flat_hash_map<BufferAllocation::Index, se::DeviceAddressBase>
-        small_shadow;
+        small_shadow ABSL_GUARDED_BY(mutex);
 
     // Executor that owns the `small_shadow` device buffers. Set when this
     // VaRanges is created; used by the destructor to free the shadow buffers
@@ -225,8 +234,18 @@ class GpuExecutableBufferAllocator {
     se::StreamExecutor* executor = nullptr;
 
     VaRanges() = default;
-    ~VaRanges() {
+    // Runs at executor/allocator teardown when no other thread can touch this
+    // VaRanges, so it accesses the mutex-guarded members without locking
+    // (ABSL_NO_THREAD_SAFETY_ANALYSIS).
+    ~VaRanges() ABSL_NO_THREAD_SAFETY_ANALYSIS {
       if (executor != nullptr) {
+        // The last step's command buffer may still be reading/writing these
+        // shadow buffers on the device (unmap_event is recorded after
+        // execute()); freeing memory still in use by a kernel is UB on ROCm, so
+        // wait for that GPU work before deallocating.
+        if (unmap_event != nullptr) {
+          unmap_event->Synchronize().IgnoreError();
+        }
         for (auto& [index, shadow] : small_shadow) {
           executor->Deallocate(&shadow);
         }

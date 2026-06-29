@@ -73,7 +73,9 @@ bool ParseVmmRemapSkipEnabled(absl::string_view platform_name,
   if (platform_name != "ROCM") {
     return false;
   }
-  if (env_value == nullptr) {
+  // Treat unset and empty (`export XLA_VMM_SKIP_REMAP=`) the same as the
+  // default, matching ParseVmmCopyThresholdBytes' empty-string handling.
+  if (env_value == nullptr || *env_value == '\0') {
     return true;  // default ON for ROCm
   }
   absl::string_view s(env_value);
@@ -627,11 +629,22 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
       remaps.reserve(mapping_descriptors.size());
       int changed = 0;
       for (size_t k = 0; k < mapping_descriptors.size(); ++k) {
+        const se::MemoryReservation::MappingDescriptor& md =
+            mapping_descriptors[k];
+        // The per-slot address comparison below is only valid if slot k maps
+        // the SAME allocation as last step. Under NEVER_UPDATE / static shapes
+        // the index->reservation-offset assignment is fixed, so verify that
+        // invariant (debug-only): a count-preserving reshuffle would otherwise
+        // compare addresses of two different allocations.
+        DCHECK(va_ranges_->last_mapped_offsets.empty() ||
+               va_ranges_->last_mapped_offsets[k] == md.reservation_offset)
+            << "skip-remap slot " << k
+            << " allocation identity changed across steps (reservation offset "
+            << va_ranges_->last_mapped_offsets[k] << " -> "
+            << md.reservation_offset << ")";
         const bool remap_required =
             new_src_addrs[k] != va_ranges_->last_mapped_src_addrs[k];
         changed += remap_required ? 1 : 0;
-        const se::MemoryReservation::MappingDescriptor& md =
-            mapping_descriptors[k];
         remaps.push_back({md.reservation_offset, md.allocation_offset, md.size,
                           md.allocation, remap_required});
       }
@@ -644,10 +657,19 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
         // At least one slot moved: wait for the previous step's GPU work to
         // finish using the VA range before unmapping the changed slices.
         RETURN_IF_ERROR(va_ranges_->unmap_event->Synchronize());
-        ASSIGN_OR_RETURN(se::MemoryReservation::ScopedMapping remapped,
-                         std::move(*va_ranges_->scoped_mapping)
-                             .Remap(absl::MakeSpan(remaps)));
-        va_ranges_->scoped_mapping = std::move(remapped);
+        // Remap() consumes the current mapping via std::move. On failure we
+        // must clear scoped_mapping: otherwise it still has_value() but holds a
+        // moved-from (empty) ScopedMapping, and the next step's skip-remap path
+        // would call Remap() on it again (UB). Resetting forces the legacy
+        // reset()+MapTo() recovery path next step instead.
+        absl::StatusOr<se::MemoryReservation::ScopedMapping> remapped =
+            std::move(*va_ranges_->scoped_mapping)
+                .Remap(absl::MakeSpan(remaps));
+        if (!remapped.ok()) {
+          va_ranges_->scoped_mapping.reset();
+          return remapped.status();
+        }
+        va_ranges_->scoped_mapping = std::move(*remapped);
       }
       // changed == 0: steady state. Keep the existing mapping untouched; no
       // unmap, no map, no SetAccess, and no unmap-event sync.
@@ -668,6 +690,16 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
     }
 
     va_ranges_->last_mapped_src_addrs = std::move(new_src_addrs);
+#ifndef NDEBUG
+    // Track per-slot reservation offsets so the next step can DCHECK the
+    // slot->allocation mapping stayed stable (see the skip-remap loop above).
+    // Debug-only: skipped in release builds to keep the hot path allocation-free.
+    va_ranges_->last_mapped_offsets.clear();
+    va_ranges_->last_mapped_offsets.reserve(mapping_descriptors.size());
+    for (const auto& md : mapping_descriptors) {
+      va_ranges_->last_mapped_offsets.push_back(md.reservation_offset);
+    }
+#endif
   }
 
   if (VLOG_IS_ON(3)) {

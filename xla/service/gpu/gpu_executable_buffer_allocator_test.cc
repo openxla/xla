@@ -36,6 +36,12 @@ TEST(VmmRemapSkipEnabledTest, RocmDefaultsOnWhenUnset) {
   EXPECT_TRUE(ParseVmmRemapSkipEnabled("ROCM", nullptr));
 }
 
+TEST(VmmRemapSkipEnabledTest, RocmEmptyStringDefaultsOn) {
+  // `export XLA_VMM_SKIP_REMAP=` (empty) is treated the same as unset,
+  // matching ParseVmmCopyThresholdBytes' empty-string handling.
+  EXPECT_TRUE(ParseVmmRemapSkipEnabled("ROCM", ""));
+}
+
 TEST(VmmRemapSkipEnabledTest, RocmFalseyValuesDisable) {
   // Case-insensitive for false/off/no; "0" is exact.
   for (const char* v : {"0", "false", "off", "FALSE", "OFF", "False", "Off",
