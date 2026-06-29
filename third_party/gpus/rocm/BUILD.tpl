@@ -110,13 +110,6 @@ cc_library(
     ],
 )
 
-# Provides -Wl,-rpath flags for ROCm libraries.
-# These must live in a cc_library (not a toolchain feature) because
-# cc_library linkopts propagate transitively through CcInfo to the
-# final linking target, whereas toolchain features do not.
-# Get lib_paths from hipcc_config for multiple ROCm paths support
-_ROCM_LIB_PATHS = hipcc_config().lib_paths
-
 cc_library(
     name = "rocm_rpath",
     linkopts = select({
