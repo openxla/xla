@@ -66,7 +66,7 @@ bool IsTritonCollectiveKernel(
 bool IsSupportedCollectiveOp(const HloInstruction& instr) {
   return HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllReduce,
                           HloOpcode::kReduceScatter, HloOpcode::kAllGatherStart,
-                          HloOpcode::kReduceToRoot, HloOpcode::kAllToAll,
+                          HloOpcode::kCollectiveReduce, HloOpcode::kAllToAll,
                           HloOpcode::kCollectivePermuteStart,
                           HloOpcode::kCollectivePermute, HloOpcode::kAllGather>(
       &instr);
@@ -167,7 +167,7 @@ absl::StatusOr<absl::Duration> DCNCollectiveDuration(
       result += runtime;
       break;
     }
-    case HloOpcode::kReduceToRoot: {
+    case HloOpcode::kCollectiveReduce: {
       result += gpu_performance_model.Get()
                     .EstimateRunTimeForInstruction(&instr, &analysis)
                     .compute_time;
@@ -192,7 +192,7 @@ absl::StatusOr<absl::Duration> DCNCollectiveDuration(
                              num_communicators));
         result += runtime;
       }
-      if (instr.async_wrapped_opcode() == HloOpcode::kReduceToRoot) {
+      if (instr.async_wrapped_opcode() == HloOpcode::kCollectiveReduce) {
         result += gpu_performance_model.Get()
                       .EstimateRunTimeForInstruction(
                           instr.async_wrapped_instruction(), &analysis)

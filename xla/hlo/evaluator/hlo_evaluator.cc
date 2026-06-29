@@ -878,7 +878,7 @@ std::optional<ParsedWhileLoop> PatternMatchParseWhileLoop(
     case HloOpcode::kRecv:
     case HloOpcode::kRecvDone:
     case HloOpcode::kReduceScatter:
-    case HloOpcode::kReduceToRoot:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kReplicaId:
     case HloOpcode::kRngBitGenerator:
     case HloOpcode::kRngGetAndUpdateState:

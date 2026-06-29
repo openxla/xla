@@ -93,7 +93,7 @@ void VerifyNoShardingOnCollectives(HloModule* module) {
           std::vector<HloOpcode>{
               HloOpcode::kAllToAll, HloOpcode::kAllReduce,
               HloOpcode::kAllGather, HloOpcode::kCollectivePermute,
-              HloOpcode::kReduceScatter, HloOpcode::kReduceToRoot},
+              HloOpcode::kReduceScatter, HloOpcode::kCollectiveReduce},
           inst->opcode());
       if (is_collective) {
         EXPECT_FALSE(inst->has_sharding());
@@ -109,14 +109,13 @@ class SpmdPartitioningTest
   absl::StatusOr<std::unique_ptr<HloModule>> PartitionComputation(
       absl::string_view hlo_module, int64_t num_devices,
       SpmdPartitionerOptions options = SpmdPartitionerOptions(),
-      bool enable_enzyme_opt = false) {
+      bool enable_enzyme_opt = false, int64_t num_replicas = 1) {
     options.allow_module_signature_change = true;
     auto collective_ops_creator =
-        GetDefaultCollectiveOpsCreator(num_devices, /*num_replicas=*/1);
+        GetDefaultCollectiveOpsCreator(num_devices, num_replicas);
 
-    HloModuleConfig config = GetModuleConfigForTest();
+    HloModuleConfig config = GetModuleConfigForTest(num_replicas, num_devices);
     config.set_use_spmd_partitioning(true);
-    config.set_num_partitions(num_devices);
     config.set_use_shardy_partitioner(true);
     config.mutable_debug_options().set_xla_enable_hlo_sharding_v3(
         GetParam() == ShardingFormatPicker::ShardingType::kNamed);
@@ -140,7 +139,7 @@ class SpmdPartitioningTest
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
     pass.AddPass<SpmdPrepare>();
-    pass.AddPass<SpmdPartitioner>(num_devices, /*num_replicas=*/1, options,
+    pass.AddPass<SpmdPartitioner>(num_devices, num_replicas, options,
                                   collective_ops_creator);
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
@@ -2638,7 +2637,7 @@ ENTRY entry {
 }
 
 TEST_P(SpmdPartitioningTest,
-       DynamicUpdateSliceUsesReduceToRootForReplicatedUpdate) {
+       DynamicUpdateSliceUsesCollectiveReduceForReplicatedUpdate) {
   const char* const hlo_string = R"(
 HloModule module
 
@@ -2654,10 +2653,12 @@ ENTRY entry {
 })";
 
   SpmdPartitionerOptions options;
-  options.enable_dynamic_update_slice_reduce_to_root = true;
+  options.enable_dynamic_update_slice_collective_reduce = true;
   ASSERT_OK_AND_ASSIGN(auto module,
                        PartitionComputation(hlo_string,
-                                            /*num_devices=*/4, options));
+                                            /*num_devices=*/4, options,
+                                            /*enable_enzyme_opt=*/false,
+                                            /*num_replicas=*/2));
 
   auto count_opcode = [&](HloOpcode opcode) {
     int64_t count = 0;
@@ -2668,7 +2669,7 @@ ENTRY entry {
   };
 
   EXPECT_EQ(count_opcode(HloOpcode::kAllReduce), 0);
-  EXPECT_EQ(count_opcode(HloOpcode::kReduceToRoot), 4);
+  EXPECT_EQ(count_opcode(HloOpcode::kCollectiveReduce), 4);
 
   const HloInstruction* root = module->entry_computation()->root_instruction();
   ASSERT_EQ(root->opcode(), HloOpcode::kSelect);
@@ -2677,19 +2678,23 @@ ENTRY entry {
   ASSERT_EQ(reduced_update->opcode(), HloOpcode::kConditional);
   ASSERT_EQ(reduced_update->branch_count(), 4);
 
-  std::vector<int64_t> reduce_roots;
   for (int64_t branch = 0; branch < reduced_update->branch_count(); ++branch) {
-    const HloInstruction* reduce_to_root =
+    const HloInstruction* collective_reduce =
         reduced_update->branch_computation(branch)->root_instruction();
-    ASSERT_EQ(reduce_to_root->opcode(), HloOpcode::kReduceToRoot);
+    ASSERT_EQ(collective_reduce->opcode(), HloOpcode::kCollectiveReduce);
+    EXPECT_TRUE(collective_reduce->channel_id().has_value());
+    EXPECT_TRUE(Cast<HloCollectiveReduceInstruction>(collective_reduce)
+                    ->use_global_device_ids());
     const std::vector<std::vector<int64_t>> replica_groups =
-        ReplicaGroupsToVecOfVec(reduce_to_root->replica_groups());
-    ASSERT_EQ(replica_groups.size(), 1);
+        ReplicaGroupsToVecOfVec(collective_reduce->replica_groups());
+    ASSERT_EQ(replica_groups.size(), 2);
     ASSERT_EQ(replica_groups[0].size(), 4);
-    reduce_roots.push_back(replica_groups[0][0]);
+    ASSERT_EQ(replica_groups[1].size(), 4);
+    EXPECT_EQ(replica_groups[0][0], branch);
+    EXPECT_EQ(replica_groups[1][0], branch + 4);
     EXPECT_THAT(replica_groups[0], UnorderedElementsAre(0, 1, 2, 3));
+    EXPECT_THAT(replica_groups[1], UnorderedElementsAre(4, 5, 6, 7));
   }
-  EXPECT_THAT(reduce_roots, UnorderedElementsAre(0, 1, 2, 3));
 }
 
 TEST_P(SpmdPartitioningTest, PadAlongNonPartitionedDimension) {

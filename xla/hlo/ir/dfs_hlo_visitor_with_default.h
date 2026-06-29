@@ -119,7 +119,7 @@ class DfsHloVisitorWithDefaultBase
   absl::Status HandleReduceScatter(HloInstructionPtr hlo) override {
     return DefaultAction(hlo);
   }
-  absl::Status HandleReduceToRoot(HloInstructionPtr hlo) override {
+  absl::Status HandleCollectiveReduce(HloInstructionPtr hlo) override {
     return DefaultAction(hlo);
   }
   absl::Status HandleAllReduceStart(HloInstructionPtr hlo) override {

@@ -92,7 +92,7 @@ CallContext GetInstructionCallContext(HloOpcode opcode) {
       return CallContext::kControlFlow;
     case HloOpcode::kAllReduce:
     case HloOpcode::kReduceScatter:
-    case HloOpcode::kReduceToRoot:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kMap:
     case HloOpcode::kReduce:

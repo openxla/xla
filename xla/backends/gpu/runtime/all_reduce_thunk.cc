@@ -356,34 +356,35 @@ absl::Status ReduceScatterThunk::RunCollective(const ExecuteParams& params,
                           config_.config.use_symmetric_buffer);
 }
 
-ReduceToRootThunk::ReduceToRootThunk(ThunkInfo thunk_info,
-                                     const HloReduceToRootInstruction* inst,
-                                     std::vector<Buffer> buffers)
-    : AllReduceReduceScatterThunkBase(Thunk::kReduceToRoot, thunk_info,
+CollectiveReduceThunk::CollectiveReduceThunk(
+    ThunkInfo thunk_info, const HloCollectiveReduceInstruction* inst,
+    std::vector<Buffer> buffers)
+    : AllReduceReduceScatterThunkBase(Thunk::kCollectiveReduce, thunk_info,
                                       GetAllReduceConfigInst(inst),
                                       std::move(buffers)) {}
 
-/*static*/ absl::Status ReduceToRootThunk::CheckImplementable(
-    const HloReduceToRootInstruction* inst, int64_t replica_count,
+/*static*/ absl::Status CollectiveReduceThunk::CheckImplementable(
+    const HloCollectiveReduceInstruction* inst, int64_t replica_count,
     int64_t partition_count) {
-  return AddOpDescription<ReduceToRootThunk>(
-      CheckImplementableInst(inst, Thunk::kReduceToRoot), inst, replica_count,
-      partition_count);
+  return AddOpDescription<CollectiveReduceThunk>(
+      CheckImplementableInst(inst, Thunk::kCollectiveReduce), inst,
+      replica_count, partition_count);
 }
 
-/*static*/ CollectiveOpGroupMode ReduceToRootThunk::GetGroupMode(
-    const HloReduceToRootInstruction* inst) {
+/*static*/ CollectiveOpGroupMode CollectiveReduceThunk::GetGroupMode(
+    const HloCollectiveReduceInstruction* inst) {
   return GetGroupModeInst(inst);
 }
 
-ReduceToRootThunk::ReduceToRootThunk(ThunkInfo thunk_info,
-                                     AllReduceConfig config,
-                                     std::vector<Buffer> buffers)
-    : AllReduceReduceScatterThunkBase(Thunk::kReduceToRoot, thunk_info,
+CollectiveReduceThunk::CollectiveReduceThunk(ThunkInfo thunk_info,
+                                             AllReduceConfig config,
+                                             std::vector<Buffer> buffers)
+    : AllReduceReduceScatterThunkBase(Thunk::kCollectiveReduce, thunk_info,
                                       std::move(config), std::move(buffers)) {}
 
-absl::StatusOr<std::unique_ptr<ReduceToRootThunk>> ReduceToRootThunk::FromProto(
-    ThunkInfo thunk_info, const ReduceToRootThunkProto& thunk_proto,
+absl::StatusOr<std::unique_ptr<CollectiveReduceThunk>>
+CollectiveReduceThunk::FromProto(
+    ThunkInfo thunk_info, const CollectiveReduceThunkProto& thunk_proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   std::vector<CollectiveThunk::Buffer> buffers;
   buffers.reserve(thunk_proto.buffers_size());
@@ -400,16 +401,17 @@ absl::StatusOr<std::unique_ptr<ReduceToRootThunk>> ReduceToRootThunk::FromProto(
   ASSIGN_OR_RETURN(ReductionKind reduction_kind,
                    FromReductionKindProto(thunk_proto.reduction_kind()));
 
-  return std::make_unique<ReduceToRootThunk>(
+  return std::make_unique<CollectiveReduceThunk>(
       std::move(thunk_info), AllReduceConfig{config, reduction_kind},
       std::move(buffers));
 }
 
-absl::StatusOr<ThunkProto> ReduceToRootThunk::ToProto() const {
+absl::StatusOr<ThunkProto> CollectiveReduceThunk::ToProto() const {
   ThunkProto proto;
   *proto.mutable_thunk_info() = thunk_info().ToProto();
 
-  ReduceToRootThunkProto* thunk_proto = proto.mutable_reduce_to_root_thunk();
+  CollectiveReduceThunkProto* thunk_proto =
+      proto.mutable_collective_reduce_thunk();
 
   for (const Buffer& buffer : buffers()) {
     ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());
@@ -421,14 +423,14 @@ absl::StatusOr<ThunkProto> ReduceToRootThunk::ToProto() const {
   return proto;
 }
 
-absl::Status ReduceToRootThunk::RunCollective(const ExecuteParams& params,
-                                              const GpuCliqueKey& clique_key,
-                                              se::Stream& stream,
-                                              Communicator& comm) {
+absl::Status CollectiveReduceThunk::RunCollective(
+    const ExecuteParams& params, const GpuCliqueKey& clique_key,
+    se::Stream& stream, Communicator& comm) {
   ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
                    ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                                           config_.config.operand_element_type));
-  return RunReduceToRoot(config_.reduction_kind, device_buffers, stream, comm);
+  return RunCollectiveReduce(config_.reduction_kind, device_buffers, stream,
+                             comm);
 }
 
 absl::Status RunReduceScatter(ReductionKind reduction_kind,
@@ -461,16 +463,16 @@ absl::Status RunReduceScatter(ReductionKind reduction_kind,
   return absl::OkStatus();
 }
 
-absl::Status RunReduceToRoot(ReductionKind reduction_kind,
-                             std::vector<DeviceBufferPair>& buffers,
-                             se::Stream& stream, Communicator& comm) {
+absl::Status RunCollectiveReduce(ReductionKind reduction_kind,
+                                 std::vector<DeviceBufferPair>& buffers,
+                                 se::Stream& stream, Communicator& comm) {
   int device_ordinal = stream.parent()->device_ordinal();
-  XLA_VLOG_DEVICE(3, device_ordinal) << "Performing reduce-to-root";
+  XLA_VLOG_DEVICE(3, device_ordinal) << "Performing collective-reduce";
   auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
   Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
     for (DeviceBufferPair& buffer : buffers) {
-      // The clique preserves HLO replica-group order, and reduce-to-root uses
-      // the first participant as the root.
+      // The clique preserves HLO replica-group order, and collective-reduce
+      // uses the first participant as the root.
       RETURN_IF_ERROR(gpu_comm->LaunchReduce(
           buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
           buffer.element_count, reduction_kind, RankId(0),
@@ -479,7 +481,7 @@ absl::Status RunReduceToRoot(ReductionKind reduction_kind,
     return absl::OkStatus();
   });
   RETURN_IF_ERROR(future.Await());
-  XLA_VLOG_DEVICE(3, device_ordinal) << "Done performing reduce-to-root";
+  XLA_VLOG_DEVICE(3, device_ordinal) << "Done performing collective-reduce";
   return absl::OkStatus();
 }
 

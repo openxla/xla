@@ -2363,10 +2363,10 @@ ENTRY AllToAll {
 
 )"
 },
-// reduce-to-root
+// collective-reduce
 {
-"ReduceToRoot",
-R"(HloModule ReduceToRoot, entry_computation_layout={(f32[128,32]{0,1})->f32[128,32]{0,1}}, replica_count=4
+"CollectiveReduce",
+R"(HloModule CollectiveReduce, entry_computation_layout={(f32[128,32]{0,1})->f32[128,32]{0,1}}, replica_count=4
 
 add {
   lhs = f32[] parameter(0)
@@ -2374,9 +2374,9 @@ add {
   ROOT add = f32[] add(lhs, rhs)
 }
 
-ENTRY ReduceToRoot {
+ENTRY CollectiveReduce {
   input = f32[128,32]{0,1} parameter(0)
-  ROOT rtr = f32[128,32]{0,1} reduce-to-root(input), replica_groups={{1,0},{2,3}}, to_apply=add
+  ROOT cr = f32[128,32]{0,1} collective-reduce(input), replica_groups={{1,0},{2,3}}, to_apply=add
 }
 
 )",

@@ -4034,9 +4034,9 @@ absl::Status SpmdPartitioningVisitor::HandleDUSSinglePartitionUpdate(
 };
 
 absl::StatusOr<bool>
-SpmdPartitioningVisitor::TryDynamicUpdateSliceWithReduceToRoot(
+SpmdPartitioningVisitor::TryDynamicUpdateSliceWithCollectiveReduce(
     HloInstruction* hlo, std::vector<HloInstruction*>& /*new_indices*/) {
-  if (!options_.enable_dynamic_update_slice_reduce_to_root ||
+  if (!options_.enable_dynamic_update_slice_collective_reduce ||
       hlo->shape().IsTuple()) {
     return false;
   }
@@ -4165,7 +4165,7 @@ SpmdPartitioningVisitor::TryDynamicUpdateSliceWithReduceToRoot(
   HloInstruction* replicated_update = update_partitioned.Replicate().hlo();
 
   HloComputation::Builder reduction_builder(
-      "dynamic_update_slice_reduce_to_root_add");
+      "dynamic_update_slice_collective_reduce_add");
   Shape scalar_shape = ShapeUtil::MakeShape(update_type, {});
   HloInstruction* lhs =
       reduction_builder.AddInstruction(HloInstruction::CreateParameter(
@@ -4184,32 +4184,33 @@ SpmdPartitioningVisitor::TryDynamicUpdateSliceWithReduceToRoot(
                                            replicated_update);
   for (int64_t branch_owner = 0; branch_owner < num_slice_partitions;
        ++branch_owner) {
-    std::vector<ReplicaGroup> replica_groups(1);
-    replica_groups[0].add_replica_ids(owner_partition[branch_owner]);
+    std::vector<std::vector<int64_t>> partition_groups(1);
+    partition_groups[0].push_back(owner_partition[branch_owner]);
     for (int64_t i = 0; i < num_slice_partitions; ++i) {
       if (i != branch_owner) {
-        replica_groups[0].add_replica_ids(owner_partition[i]);
+        partition_groups[0].push_back(owner_partition[i]);
       }
     }
+    std::shared_ptr<CollectiveDeviceListBase> device_list =
+        CreateReplicaGroups(partition_groups);
 
     SpmdBuilder branch_builder(
-        absl::StrCat("dynamic_update_slice_reduce_to_root_owner_",
+        absl::StrCat("dynamic_update_slice_collective_reduce_owner_",
                      branch_owner),
         hlo);
     HloInstruction* branch_param =
         branch_builder.AddInstruction(HloInstruction::CreateParameter(
             /*parameter_number=*/0, replicated_update->shape(), "update"));
-    HloInstruction* reduce_to_root =
-        branch_builder.AddInstruction(HloInstruction::CreateReduceToRoot(
+    HloInstruction* collective_reduce =
+        branch_builder.AddInstruction(HloInstruction::CreateCollectiveReduce(
             replicated_update->shape(), {branch_param}, reduction,
-            std::make_shared<CollectiveDeviceList>(replica_groups),
-            /*constrain_layout=*/false, NewChannel(),
-            /*use_global_device_ids=*/false));
-    reduce_to_root->set_metadata(hlo->metadata());
-    reduce_to_root->set_frontend_attributes(hlo->frontend_attributes());
-    reduce_to_root->set_frontend_attribute(kSpmdGeneratedAttr, "true");
-    branch_computations.push_back(
-        module_->AddEmbeddedComputation(branch_builder.Build(reduce_to_root)));
+            std::move(device_list), /*constrain_layout=*/false, NewChannel(),
+            /*use_global_device_ids=*/true));
+    collective_reduce->set_metadata(hlo->metadata());
+    collective_reduce->set_frontend_attributes(hlo->frontend_attributes());
+    collective_reduce->set_frontend_attribute(kSpmdGeneratedAttr, "true");
+    branch_computations.push_back(module_->AddEmbeddedComputation(
+        branch_builder.Build(collective_reduce)));
   }
 
   HloInstruction* reduced_update =
@@ -4932,7 +4933,7 @@ absl::Status SpmdPartitioningVisitor::HandleDynamicUpdateSlice(
   }
 
   ASSIGN_OR_RETURN(bool handled,
-                   TryDynamicUpdateSliceWithReduceToRoot(hlo, new_indices));
+                   TryDynamicUpdateSliceWithCollectiveReduce(hlo, new_indices));
   if (handled) {
     return absl::OkStatus();
   }
@@ -6472,7 +6473,7 @@ int64_t SpmdPartitioner::CommunicationCostInBytes(HloInstruction* hlo) {
   CHECK(IsCollective(hlo));
   switch (hlo->opcode()) {
     case HloOpcode::kAllReduce:
-    case HloOpcode::kReduceToRoot:
+    case HloOpcode::kCollectiveReduce:
       return ShapeSizeInBytes(hlo->shape()) * 2;
     case HloOpcode::kCollectivePermute:
       return ShapeSizeInBytes(hlo->shape());

@@ -158,6 +158,8 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_COLLECTIVE_METADATA;
     case kCollectivePermute:
       return THUNK_KIND_COLLECTIVE_PERMUTE;
+    case kCollectiveReduce:
+      return THUNK_KIND_COLLECTIVE_REDUCE;
     case kCommand:
       return THUNK_KIND_UNSPECIFIED;
     case kCommandBuffer:
@@ -220,8 +222,6 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_RECV;
     case kReduceScatter:
       return THUNK_KIND_REDUCE_SCATTER;
-    case kReduceToRoot:
-      return THUNK_KIND_REDUCE_TO_ROOT;
     case kReplicaId:
       return THUNK_KIND_REPLICA_ID;
     case kRngSeed:
@@ -263,6 +263,8 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kCollectiveMetadata;
     case THUNK_KIND_COLLECTIVE_PERMUTE:
       return kCollectivePermute;
+    case THUNK_KIND_COLLECTIVE_REDUCE:
+      return kCollectiveReduce;
     case THUNK_KIND_COMMAND_BUFFER:
       return kCommandBuffer;
     case THUNK_KIND_CONDITIONAL:
@@ -323,8 +325,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kRecv;
     case THUNK_KIND_REDUCE_SCATTER:
       return kReduceScatter;
-    case THUNK_KIND_REDUCE_TO_ROOT:
-      return kReduceToRoot;
     case THUNK_KIND_REPLICA_ID:
       return kReplicaId;
     case THUNK_KIND_RNG_SEED:
@@ -361,6 +361,7 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kCollectiveKernel);
     CASE(kCollectiveMetadata);
     CASE(kCollectivePermute);
+    CASE(kCollectiveReduce);
     CASE(kCommand);
     CASE(kCommandBuffer);
     CASE(kConditional);
@@ -392,7 +393,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kRaggedAllToAll);
     CASE(kRecv);
     CASE(kReduceScatter);
-    CASE(kReduceToRoot);
     CASE(kReplicaId);
     CASE(kRngSeed);
     CASE(kSelectK);
@@ -410,7 +410,7 @@ std::ostream& operator<<(std::ostream& os, Thunk::Kind kind) {
 
 bool IsReductionCollective(Thunk::Kind kind) {
   return kind == Thunk::kAllReduce || kind == Thunk::kReduceScatter ||
-         kind == Thunk::kReduceToRoot;
+         kind == Thunk::kCollectiveReduce;
 }
 
 absl::StatusOr<Thunk::ThunkInfo> Thunk::ThunkInfo::FromProto(
@@ -441,11 +441,11 @@ bool Thunk::IsCollective() const {
     case kAllToAll:
     case kCollectiveBroadcast:
     case kCollectivePermute:
+    case kCollectiveReduce:
     case kGroup:
     case kRaggedAllToAll:
     case kRecv:
     case kReduceScatter:
-    case kReduceToRoot:
     case kSend:
       // go/keep-sorted end
       return true;

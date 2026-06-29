@@ -76,7 +76,7 @@ bool GpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kReduceScatter:
-    case HloOpcode::kReduceToRoot:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kScaledDot:
       // We accept any scaled dot, because there is a rewrite pass that will
       // lower it to a dot + multiply for unsupported types.

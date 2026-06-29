@@ -240,7 +240,7 @@ bool CanInferShape(HloOpcode code) {
     case HloOpcode::kRecv:
     case HloOpcode::kRecvDone:
     case HloOpcode::kReduceScatter:
-    case HloOpcode::kReduceToRoot:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kSend:
     case HloOpcode::kSendDone:
     case HloOpcode::kSlice:
@@ -1924,7 +1924,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
     case HloOpcode::kAllReduce:
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kReduceScatter:
-    case HloOpcode::kReduceToRoot: {
+    case HloOpcode::kCollectiveReduce: {
       std::unique_ptr<CollectiveDeviceListBase> device_list =
           std::make_unique<CollectiveDeviceList>(std::vector<ReplicaGroup>{});
       optional<HloComputation*> to_apply;
@@ -1985,8 +1985,8 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
             use_global_device_ids ? *use_global_device_ids : false,
             dimensions->at(0)));
       }
-      if (opcode == HloOpcode::kReduceToRoot) {
-        return builder->AddInstruction(HloInstruction::CreateReduceToRoot(
+      if (opcode == HloOpcode::kCollectiveReduce) {
+        return builder->AddInstruction(HloInstruction::CreateCollectiveReduce(
             *shape, operands, *to_apply, std::move(device_list),
             constrain_layout ? *constrain_layout : false, channel_id,
             use_global_device_ids ? *use_global_device_ids : false));

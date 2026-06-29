@@ -618,14 +618,14 @@ absl::Status ShapeVerifier::HandleReduceScatter(HloInstruction* hlo) {
                         operand_shapes, ars->scatter_dimension(), shard_count));
 }
 
-absl::Status ShapeVerifier::HandleReduceToRoot(HloInstruction* hlo) {
-  auto reduce_to_root = Cast<HloReduceToRootInstruction>(hlo);
+absl::Status ShapeVerifier::HandleCollectiveReduce(HloInstruction* hlo) {
+  auto collective_reduce = Cast<HloCollectiveReduceInstruction>(hlo);
   if (opts_.ShouldCheckReplicaGroups()) {
     ASSIGN_OR_RETURN(
         CollectiveOpGroupMode group_mode,
-        GetCollectiveOpGroupMode(reduce_to_root->channel_id().has_value(),
-                                 reduce_to_root->use_global_device_ids()));
-    RETURN_IF_ERROR(CheckReplicaGroups(reduce_to_root, group_mode,
+        GetCollectiveOpGroupMode(collective_reduce->channel_id().has_value(),
+                                 collective_reduce->use_global_device_ids()));
+    RETURN_IF_ERROR(CheckReplicaGroups(collective_reduce, group_mode,
                                        /*uniform_replica_group_size=*/false));
   }
   std::vector<const Shape*> operand_shapes;
@@ -633,7 +633,7 @@ absl::Status ShapeVerifier::HandleReduceToRoot(HloInstruction* hlo) {
     operand_shapes.push_back(&operand->shape());
   }
   return CheckShape(hlo,
-                    ShapeInference::InferReduceToRootShape(operand_shapes));
+                    ShapeInference::InferCollectiveReduceShape(operand_shapes));
 }
 
 absl::Status ShapeVerifier::HandleAllReduceStart(HloInstruction* hlo) {
@@ -3015,7 +3015,7 @@ bool IsOtherCollective(const HloInstruction* instruction) {
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kReduceScatter:
-    case HloOpcode::kReduceToRoot:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kCollectiveBroadcast:
       return true;
     default:
@@ -4020,10 +4020,10 @@ absl::Status InstructionVerifier::HandleAllReduce(HloInstruction* crs) {
   return absl::OkStatus();
 }
 
-absl::Status InstructionVerifier::HandleReduceToRoot(HloInstruction* hlo) {
+absl::Status InstructionVerifier::HandleCollectiveReduce(HloInstruction* hlo) {
   if (hlo->channel_id().has_value()) {
     TF_RET_CHECK(hlo->channel_id().value() > 0)
-        << "ReduceToRoot channel id must be greater than 0 for "
+        << "CollectiveReduce channel id must be greater than 0 for "
         << hlo->ToShortString();
   }
   return absl::OkStatus();

@@ -145,28 +145,28 @@ class ReduceScatterThunk : public AllReduceReduceScatterThunkBase {
 };
 
 // -----------------------------------------------------------------------------
-// ReduceToRoot thunk
+// CollectiveReduce thunk
 // -----------------------------------------------------------------------------
 
-class ReduceToRootThunk : public AllReduceReduceScatterThunkBase {
+class CollectiveReduceThunk : public AllReduceReduceScatterThunkBase {
  public:
-  ReduceToRootThunk(ThunkInfo thunk_info,
-                    const HloReduceToRootInstruction* inst,
-                    std::vector<Buffer> buffers);
-  ReduceToRootThunk(ThunkInfo thunk_info, AllReduceConfig config,
-                    std::vector<Buffer> buffers);
+  CollectiveReduceThunk(ThunkInfo thunk_info,
+                        const HloCollectiveReduceInstruction* inst,
+                        std::vector<Buffer> buffers);
+  CollectiveReduceThunk(ThunkInfo thunk_info, AllReduceConfig config,
+                        std::vector<Buffer> buffers);
 
-  static absl::string_view GetHloOpName() { return "reduce-to-root"; }
+  static absl::string_view GetHloOpName() { return "collective-reduce"; }
 
-  static absl::Status CheckImplementable(const HloReduceToRootInstruction* inst,
-                                         int64_t replica_count,
-                                         int64_t partition_count);
+  static absl::Status CheckImplementable(
+      const HloCollectiveReduceInstruction* inst, int64_t replica_count,
+      int64_t partition_count);
 
   static CollectiveOpGroupMode GetGroupMode(
-      const HloReduceToRootInstruction* inst);
+      const HloCollectiveReduceInstruction* inst);
 
-  static absl::StatusOr<std::unique_ptr<ReduceToRootThunk>> FromProto(
-      ThunkInfo thunk_info, const ReduceToRootThunkProto& thunk_proto,
+  static absl::StatusOr<std::unique_ptr<CollectiveReduceThunk>> FromProto(
+      ThunkInfo thunk_info, const CollectiveReduceThunkProto& thunk_proto,
       absl::Span<const BufferAllocation> buffer_allocations);
 
   absl::StatusOr<ThunkProto> ToProto() const override;
@@ -191,9 +191,9 @@ absl::Status RunReduceScatter(ReductionKind reduction_kind,
                               se::Stream& stream, Communicator& comm,
                               bool use_symmetric_buffer = false);
 
-absl::Status RunReduceToRoot(ReductionKind reduction_kind,
-                             std::vector<DeviceBufferPair>& buffers,
-                             se::Stream& stream, Communicator& comm);
+absl::Status RunCollectiveReduce(ReductionKind reduction_kind,
+                                 std::vector<DeviceBufferPair>& buffers,
+                                 se::Stream& stream, Communicator& comm);
 
 }  // namespace gpu
 }  // namespace xla

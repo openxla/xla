@@ -563,8 +563,8 @@ absl::Status GpuHloCostAnalysis::HandleAsyncStart(const HloInstruction* hlo) {
   if (async_start->async_wrapped_opcode() == HloOpcode::kReduceScatter) {
     return HandleReduceScatter(async_start->async_wrapped_instruction());
   }
-  if (async_start->async_wrapped_opcode() == HloOpcode::kReduceToRoot) {
-    return HandleReduceToRoot(async_start->async_wrapped_instruction());
+  if (async_start->async_wrapped_opcode() == HloOpcode::kCollectiveReduce) {
+    return HandleCollectiveReduce(async_start->async_wrapped_instruction());
   }
   if (async_start->async_wrapped_opcode() == HloOpcode::kAllToAll) {
     return HandleAllToAll(async_start->async_wrapped_instruction());
@@ -594,9 +594,10 @@ absl::Status GpuHloCostAnalysis::HandleReduceScatter(
   return absl::OkStatus();
 }
 
-absl::Status GpuHloCostAnalysis::HandleReduceToRoot(const HloInstruction* hlo) {
+absl::Status GpuHloCostAnalysis::HandleCollectiveReduce(
+    const HloInstruction* hlo) {
   ASSIGN_OR_RETURN(int64_t num_ranks,
-                   NumRanks(*Cast<HloReduceToRootInstruction>(hlo)));
+                   NumRanks(*Cast<HloCollectiveReduceInstruction>(hlo)));
 
   int64_t bytes_transferred = 0;
   for (HloInstruction* operand : hlo->operands()) {

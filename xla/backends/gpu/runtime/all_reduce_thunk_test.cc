@@ -268,12 +268,12 @@ class NoOpReduceScatterThunk : public ReduceScatterThunk {
   }
 };
 
-class NoOpReduceToRootThunk : public ReduceToRootThunk {
+class NoOpCollectiveReduceThunk : public CollectiveReduceThunk {
  public:
-  NoOpReduceToRootThunk(Thunk::ThunkInfo thunk_info, AllReduceConfig config,
-                        std::vector<CollectiveThunk::Buffer> buffers)
-      : ReduceToRootThunk(std::move(thunk_info), std::move(config),
-                          std::move(buffers)) {}
+  NoOpCollectiveReduceThunk(Thunk::ThunkInfo thunk_info, AllReduceConfig config,
+                            std::vector<CollectiveThunk::Buffer> buffers)
+      : CollectiveReduceThunk(std::move(thunk_info), std::move(config),
+                              std::move(buffers)) {}
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override {
     return absl::OkStatus();
@@ -365,11 +365,11 @@ TEST(ReduceScatterThunkTest, ProtoRoundTrip) {
   EXPECT_THAT(round_trip_proto, EqualsProto(proto));
 }
 
-TEST(ReduceToRootThunkTest, ProtoRoundTrip) {
+TEST(CollectiveReduceThunkTest, ProtoRoundTrip) {
   ThunkProto proto = tsl::proto_testing::ParseTextProtoOrDie<ThunkProto>(
       R"pb(
         thunk_info { profile_annotation: "partition_id_profile_annotation" }
-        reduce_to_root_thunk {
+        collective_reduce_thunk {
           collective_config {}
           reduction_kind: 1
         }
@@ -382,9 +382,9 @@ TEST(ReduceToRootThunkTest, ProtoRoundTrip) {
       BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)};
 
   ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<ReduceToRootThunk> thunk,
-      ReduceToRootThunk::FromProto(thunk_info, proto.reduce_to_root_thunk(),
-                                   buffer_allocations));
+      std::unique_ptr<CollectiveReduceThunk> thunk,
+      CollectiveReduceThunk::FromProto(
+          thunk_info, proto.collective_reduce_thunk(), buffer_allocations));
 
   ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, thunk->ToProto());
 
@@ -433,11 +433,12 @@ static NoOpReduceScatterThunk MakeNoOpReduceScatterThunk(
                                 {MakeNoOpBuffer(alloc_src, alloc_dst, length)});
 }
 
-static NoOpReduceToRootThunk MakeNoOpReduceToRootThunk(
+static NoOpCollectiveReduceThunk MakeNoOpCollectiveReduceThunk(
     const BufferAllocation& alloc_src, const BufferAllocation& alloc_dst,
     int64_t length) {
-  return NoOpReduceToRootThunk(Thunk::ThunkInfo(), MakeSumConfig(),
-                               {MakeNoOpBuffer(alloc_src, alloc_dst, length)});
+  return NoOpCollectiveReduceThunk(
+      Thunk::ThunkInfo(), MakeSumConfig(),
+      {MakeNoOpBuffer(alloc_src, alloc_dst, length)});
 }
 
 // Records AllReduceThunk into a primary command buffer (create phase) and
@@ -845,9 +846,9 @@ TEST(ReduceScatterThunkTest, RecordCommandBufferUpdate) {
   ASSERT_OK(stream->BlockHostUntilDone());
 }
 
-// Records ReduceToRootThunk into a primary command buffer (create phase) and
-// verifies that a non-null command node is returned.
-TEST(ReduceToRootThunkTest, RecordCommandBufferCreate) {
+// Records CollectiveReduceThunk into a primary command buffer (create phase)
+// and verifies that a non-null command node is returned.
+TEST(CollectiveReduceThunkTest, RecordCommandBufferCreate) {
   se::StreamExecutor* executor = GpuExecutor();
   if (!IsAtLeastCuda12900(executor)) {
     GTEST_SKIP() << "Child command nodes require CUDA 12.9+";
@@ -864,8 +865,8 @@ TEST(ReduceToRootThunkTest, RecordCommandBufferCreate) {
   BufferAllocation alloc_src(/*index=*/0, byte_length, /*color=*/0);
   BufferAllocation alloc_dst(/*index=*/1, byte_length, /*color=*/0);
 
-  NoOpReduceToRootThunk thunk =
-      MakeNoOpReduceToRootThunk(alloc_src, alloc_dst, length);
+  NoOpCollectiveReduceThunk thunk =
+      MakeNoOpCollectiveReduceThunk(alloc_src, alloc_dst, length);
 
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations allocations({src, dst}, 0, &allocator);
@@ -895,10 +896,10 @@ TEST(ReduceToRootThunkTest, RecordCommandBufferCreate) {
   ASSERT_OK(stream->BlockHostUntilDone());
 }
 
-// Records ReduceToRootThunk twice into the same command buffer: first as a
+// Records CollectiveReduceThunk twice into the same command buffer: first as a
 // create, then as an update with different buffer allocations. Verifies that
 // the same command node pointer is returned on update.
-TEST(ReduceToRootThunkTest, RecordCommandBufferUpdate) {
+TEST(CollectiveReduceThunkTest, RecordCommandBufferUpdate) {
   se::StreamExecutor* executor = GpuExecutor();
   if (!IsAtLeastCuda12900(executor)) {
     GTEST_SKIP() << "Child command nodes require CUDA 12.9+";
@@ -918,8 +919,8 @@ TEST(ReduceToRootThunkTest, RecordCommandBufferUpdate) {
   BufferAllocation alloc_src(/*index=*/0, byte_length, /*color=*/0);
   BufferAllocation alloc_dst(/*index=*/1, byte_length, /*color=*/0);
 
-  NoOpReduceToRootThunk thunk =
-      MakeNoOpReduceToRootThunk(alloc_src, alloc_dst, length);
+  NoOpCollectiveReduceThunk thunk =
+      MakeNoOpCollectiveReduceThunk(alloc_src, alloc_dst, length);
 
   se::StreamExecutorAddressAllocator allocator(executor);
   ServiceExecutableRunOptions run_options;

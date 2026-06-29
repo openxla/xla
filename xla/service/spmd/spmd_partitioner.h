@@ -109,7 +109,7 @@ struct SpmdPartitionerOptions {
 
   // Enables a narrow dynamic-update-slice lowering that reduces a replicated
   // update to the dynamically selected sharded owner.
-  bool enable_dynamic_update_slice_reduce_to_root = false;
+  bool enable_dynamic_update_slice_collective_reduce = false;
 
   // Whether disable rewrite for dots that share the same
   // operand as an already rewritten windowed einsum loop.
@@ -887,7 +887,7 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   HloInstruction* partition_id_;
 
  private:
-  absl::StatusOr<bool> TryDynamicUpdateSliceWithReduceToRoot(
+  absl::StatusOr<bool> TryDynamicUpdateSliceWithCollectiveReduce(
       HloInstruction* hlo, std::vector<HloInstruction*>& new_indices);
 
   PartitionedHlo::ReshardCache reshard_cache_;

@@ -252,7 +252,7 @@ bool WorthHoisting(HloOpcode op, HloOpcode child_op) {
       // this function is invoked.
     case HloOpcode::kAllReduce:
     case HloOpcode::kReduceScatter:
-    case HloOpcode::kReduceToRoot:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kReduce:
     case HloOpcode::kConstant:
     case HloOpcode::kReshape:

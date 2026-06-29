@@ -497,7 +497,7 @@ class HloCostAnalysis : public ConstDfsHloVisitor {
   absl::Status HandleAllGatherDone(const HloInstruction* hlo) override;
   absl::Status HandleAllReduce(const HloInstruction* crs) override;
   absl::Status HandleReduceScatter(const HloInstruction* hlo) override;
-  absl::Status HandleReduceToRoot(const HloInstruction* hlo) override;
+  absl::Status HandleCollectiveReduce(const HloInstruction* hlo) override;
   absl::Status HandleAllReduceStart(const HloInstruction* hlo) override;
   absl::Status HandleAllReduceDone(const HloInstruction* hlo) override;
   absl::Status HandleAllToAll(const HloInstruction* hlo) override;

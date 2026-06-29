@@ -84,6 +84,7 @@ namespace xla {
   V(kCollectivePermute, "collective-permute", kHloOpcodeIsVariadic)            \
   V(kCollectivePermuteDone, "collective-permute-done", 1)                      \
   V(kCollectivePermuteStart, "collective-permute-start", kHloOpcodeIsVariadic) \
+  V(kCollectiveReduce, "collective-reduce", kHloOpcodeIsVariadic)              \
   V(kCompare, "compare", 2)                                                    \
   V(kComplex, "complex", 2)                                                    \
   V(kConcatenate, "concatenate", kHloOpcodeIsVariadic)                         \
@@ -142,7 +143,6 @@ namespace xla {
   V(kReduce, "reduce", kHloOpcodeIsVariadic)                                   \
   V(kReducePrecision, "reduce-precision", 1)                                   \
   V(kReduceScatter, "reduce-scatter", kHloOpcodeIsVariadic)                    \
-  V(kReduceToRoot, "reduce-to-root", kHloOpcodeIsVariadic)                     \
   V(kReduceWindow, "reduce-window", kHloOpcodeIsVariadic)                      \
   V(kRemainder, "remainder", 2)                                                \
   V(kReplicaId, "replica-id", 0)                                               \

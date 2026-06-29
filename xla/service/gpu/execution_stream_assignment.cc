@@ -111,7 +111,7 @@ bool IsWrappedCollective(const HloAsyncInstruction* async) {
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kReduceScatter:
-    case HloOpcode::kReduceToRoot:
+    case HloOpcode::kCollectiveReduce:
       return true;
     default:
       return false;
@@ -131,7 +131,7 @@ std::optional<ExecutionScopeKind> IsExecutionScopeStart(
   // Async-collective operations not yet migrated to async wrappers.
   if (HloPredicateIsOp<HloOpcode::kAllGatherStart, HloOpcode::kAllReduceStart,
                        HloOpcode::kCollectivePermuteStart,
-                       HloOpcode::kReduceToRoot>(hlo)) {
+                       HloOpcode::kCollectiveReduce>(hlo)) {
     return ExecutionScopeKind::kCommunication;
   }
 

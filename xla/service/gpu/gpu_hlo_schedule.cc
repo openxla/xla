@@ -95,7 +95,7 @@ bool ShouldScheduleAsEarlyAsPossible(const HloInstruction& instr) {
     case HloOpcode::kAllGatherStart:
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kCollectivePermuteStart:
-    case HloOpcode::kReduceToRoot:
+    case HloOpcode::kCollectiveReduce:
       return !IsGPUSyncCollective(instr);
     case HloOpcode::kAsyncStart:
       return !IsGPUSyncCollective(instr);

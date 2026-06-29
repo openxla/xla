@@ -132,14 +132,14 @@ class DfsHloVisitorBase {
   virtual absl::Status HandleCollectivePermute(HloInstructionPtr hlo) = 0;
   virtual absl::Status HandleCollectivePermuteDone(HloInstructionPtr hlo) = 0;
   virtual absl::Status HandleCollectivePermuteStart(HloInstructionPtr hlo) = 0;
+  virtual absl::Status HandleCollectiveReduce(HloInstructionPtr hlo) {
+    return HandleAllReduce(hlo);
+  }
   virtual absl::Status HandleConvolution(HloInstructionPtr hlo) = 0;
   virtual absl::Status HandleOptimizationBarrier(HloInstructionPtr hlo) = 0;
   virtual absl::Status HandlePartitionId(HloInstructionPtr hlo) = 0;
   virtual absl::Status HandleRaggedAllToAll(HloInstructionPtr hlo) = 0;
   virtual absl::Status HandleReduceScatter(HloInstructionPtr hlo) = 0;
-  virtual absl::Status HandleReduceToRoot(HloInstructionPtr hlo) {
-    return HandleAllReduce(hlo);
-  }
   virtual absl::Status HandleReplicaId(HloInstructionPtr hlo) = 0;
   /* go/keep-sorted end */
 

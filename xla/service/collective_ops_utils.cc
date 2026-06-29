@@ -723,7 +723,7 @@ bool IsNonFusionCollective(const HloInstruction* instruction) {
     case HloOpcode::kCollectivePermuteDone:
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kReduceScatter:
-    case HloOpcode::kReduceToRoot:
+    case HloOpcode::kCollectiveReduce:
       return true;
     case HloOpcode::kAsyncStart:
     case HloOpcode::kAsyncUpdate:
@@ -765,7 +765,7 @@ absl::StatusOr<bool> IsAsyncCollective(const HloInstruction* instruction) {
       case HloOpcode::kCollectivePermute:
       case HloOpcode::kRaggedAllToAll:
       case HloOpcode::kReduceScatter:
-      case HloOpcode::kReduceToRoot:
+      case HloOpcode::kCollectiveReduce:
         return true;
       default:
         return absl::InvalidArgumentError("Async instruction " +
@@ -791,7 +791,7 @@ absl::StatusOr<bool> IsAsyncCollective(const HloInstruction* instruction) {
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kReduceScatter:
-    case HloOpcode::kReduceToRoot:
+    case HloOpcode::kCollectiveReduce:
       return false;
     default:
       return absl::InvalidArgumentError("Instruction " +

@@ -78,7 +78,7 @@ class GpuHloCostAnalysis : public HloCostAnalysis {
   absl::Status HandleAllGatherStart(const HloInstruction* hlo) override;
   absl::Status HandleAsyncStart(const HloInstruction* hlo) override;
   absl::Status HandleReduceScatter(const HloInstruction* hlo) override;
-  absl::Status HandleReduceToRoot(const HloInstruction* hlo) override;
+  absl::Status HandleCollectiveReduce(const HloInstruction* hlo) override;
   absl::Status HandleAllToAll(const HloInstruction* hlo) override;
   absl::Status HandleCollectivePermute(const HloInstruction* hlo) override;
   absl::Status HandleCollectivePermuteStart(const HloInstruction* hlo) override;
