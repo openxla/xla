@@ -942,6 +942,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/tsl/util:safe_reinterpret_cast",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
     ],
