@@ -597,6 +597,7 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
     }
     return GetExecutable()->num_replicas();
   }
+  absl::StatusOr<std::vector<Shape>> GetParameterShapes() const override;
   absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
   GetParameterLayouts() const override {
     if (extras_) {

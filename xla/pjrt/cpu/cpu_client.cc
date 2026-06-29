@@ -1259,7 +1259,7 @@ PjRtCpuExecutable::PjRtCpuExecutable(
       compile_options_(std::move(compile_options)),
       cpu_executable_(
           absl::down_cast<cpu::CpuExecutable*>(cpu_executable.release())),
-      parameter_device_shapes_(GetParameterShapes(
+      parameter_device_shapes_(::xla::GetParameterShapes(
           cpu_executable_->module().entry_computation_layout())),
       result_buffer_indices_(std::move(result_buffer_indices)),
       unoptimized_hlo_module_(std::move(unoptimized_hlo_module)),

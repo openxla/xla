@@ -310,7 +310,7 @@ void GetOpSharding(std::vector<OpSharding>& out, const OpSharding& sharding) {
 std::optional<std::vector<OpSharding>> PjRtExecutable::GetOutputShardings()
     const {
   auto modules = GetHloModules();
-  if (!modules.ok() || (*modules).empty() ||
+  if (!modules.ok() || (*modules).empty() || (*modules)[0] == nullptr ||
       !(*modules)[0]->has_spmd_output_sharding()) {
     return std::nullopt;
   }
@@ -323,7 +323,7 @@ std::optional<std::vector<OpSharding>> PjRtExecutable::GetOutputShardings()
 std::optional<std::vector<OpSharding>> PjRtExecutable::GetParameterShardings()
     const {
   auto modules = GetHloModules();
-  if (!modules.ok() || (*modules).empty() ||
+  if (!modules.ok() || (*modules).empty() || (*modules)[0] == nullptr ||
       !(*modules)[0]->has_spmd_parameters_shardings()) {
     return std::nullopt;
   }
@@ -337,12 +337,42 @@ std::optional<std::vector<OpSharding>> PjRtExecutable::GetParameterShardings()
 
 absl::StatusOr<std::vector<Shape>> PjRtExecutable::GetOutputShapes() const {
   ASSIGN_OR_RETURN(auto modules, GetHloModules());
+  if (modules.empty()) {
+    return absl::InternalError("HloModules list is empty.");
+  }
+  if (modules.front() == nullptr) {
+    return absl::UnimplementedError(
+        "HloModule graph is stripped/null. Cannot retrieve output shapes "
+        "from base PjRtExecutable interface.");
+  }
   std::vector<Shape> output_shapes;
   output_shapes.reserve(modules.size());
   for (const auto& module : modules) {
+    if (module == nullptr) {
+      return absl::InternalError("Encountered null HloModule in modules list.");
+    }
     output_shapes.push_back(module->result_shape());
   }
   return output_shapes;
+}
+
+absl::StatusOr<std::vector<Shape>> PjRtExecutable::GetParameterShapes() const {
+  ASSIGN_OR_RETURN(auto modules, GetHloModules());
+  if (modules.empty()) {
+    return absl::InternalError("HloModules list is empty.");
+  }
+  if (modules.front() == nullptr) {
+    return absl::UnimplementedError(
+        "HloModule graph is stripped/null. Cannot retrieve parameter shapes "
+        "from base PjRtExecutable interface.");
+  }
+  const auto& entry_layout = modules.front()->entry_computation_layout();
+  std::vector<Shape> parameter_shapes;
+  parameter_shapes.reserve(entry_layout.parameter_count());
+  for (int i = 0; i < entry_layout.parameter_count(); ++i) {
+    parameter_shapes.push_back(entry_layout.parameter_shape(i));
+  }
+  return parameter_shapes;
 }
 
 absl::StatusOr<std::vector<std::vector<PrimitiveType>>>
@@ -417,6 +447,11 @@ PjRtExecutable::GetParameterLayouts() const {
         "PjRtExecutable::GetParameterLayouts: couldn't retrieve HLO module "
         "from executable.");
   }
+  if (hlo_modules.front() == nullptr) {
+    return absl::UnimplementedError(
+        "HloModule graph is stripped/null. Cannot retrieve parameter layouts "
+        "from base PjRtExecutable interface.");
+  }
   ComputationLayout comp_layout = hlo_modules[0]->entry_computation_layout();
   ASSIGN_OR_RETURN(std::vector<Layout> layouts,
                    xla::FlattenedParameterLayouts(comp_layout));
@@ -442,6 +477,11 @@ PjRtExecutable::GetOutputLayouts() const {
         "PjRtExecutable::GetOutputLayouts: couldn't retrieve HLO module "
         "from executable.");
   }
+  if (hlo_modules.front() == nullptr) {
+    return absl::UnimplementedError(
+        "HloModule graph is stripped/null. Cannot retrieve output layouts "
+        "from base PjRtExecutable interface.");
+  }
   ComputationLayout comp_layout = hlo_modules[0]->entry_computation_layout();
   ASSIGN_OR_RETURN(std::vector<Layout> layouts,
                    xla::FlattenedResultLayouts(comp_layout));
@@ -463,6 +503,11 @@ PjRtExecutableUtil::RunHloCostAnalysis(const PjRtExecutable& executable,
         "Executable '%s' did not have an HloModule to generate "
         "cost analysis with.",
         executable.name());
+  } else if (modules.front() == nullptr) {
+    return absl::UnimplementedError(
+        absl::StrFormat("HloModule graph is stripped/null for executable '%s'. "
+                        "Cannot run HloCostAnalysis.",
+                        executable.name()));
   } else if (modules.size() > 1) {
     return Unimplemented(
         "GetCostAnalysis() doesn't support multiple program "
@@ -478,6 +523,9 @@ PjRtExecutableUtil::RunHloCostAnalysis(
     HloCostAnalysis* hlo_cost_analysis) {
   if (hlo_modules.empty()) {
     return NotFound("RunHloCostAnalysis called with empty hlo_modules");
+  } else if (hlo_modules.front() == nullptr) {
+    return absl::UnimplementedError(
+        "RunHloCostAnalysis encountered null/stripped HloModule.");
   } else if (hlo_modules.size() > 1) {
     return Unimplemented(
         "GetCostAnalysis() doesn't support multiple program "

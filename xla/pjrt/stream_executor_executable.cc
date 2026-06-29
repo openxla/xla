@@ -271,9 +271,9 @@ StreamExecutorExecutable::GetParameterMemoryKinds() const {
   // Unimplemented here triggers a safe fallback in IFRT (executable.cc) to
   // avoid a crash when memory kinds are not available (e.g., when annotations
   // are stripped).
-  if (modules.empty()) {
+  if (modules.empty() || modules.front() == nullptr) {
     return absl::UnimplementedError(
-        "GetParameterMemoryKinds is not supported when no modules are "
+        "GetParameterMemoryKinds is not supported when no HLO module is "
         "available.");
   }
 

@@ -368,6 +368,10 @@ class PjRtExecutable {
   // `GetHloModules()`.
   virtual absl::StatusOr<std::vector<Shape>> GetOutputShapes() const;
 
+  // Returns a list of Shapes of the input parameters. Under SPMD, this
+  // represents the parameter shapes of the single program.
+  virtual absl::StatusOr<std::vector<Shape>> GetParameterShapes() const;
+
   // Returns a list of element types for each output, the size of the outer list
   // should be equal to `GetHloModules()`.
   virtual absl::StatusOr<std::vector<std::vector<PrimitiveType>>>

@@ -522,39 +522,88 @@ absl::StatusOr<PerDeviceLiteralVecType> RunInternal(
   if (running_options.multi_slice_config != nullptr) {
     execute_options.multi_slice_config = running_options.multi_slice_config;
   }
-  ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> hlo_modules,
-                   executable->GetHloModules());
-  CHECK_EQ(hlo_modules.size(), 1);
-  const HloModule& module = *(hlo_modules.front());
-  ParameterType parameter_type = GetParameterType(module);
-  bool flatten_arguments = parameter_type == ParameterType::kOneTupleOfArrays;
+  std::vector<std::shared_ptr<HloModule>> hlo_modules;
+  auto hlo_modules_status = executable->GetHloModules();
+  bool get_modules_unimplemented = false;
+  if (!hlo_modules_status.ok()) {
+    if (absl::IsUnimplemented(hlo_modules_status.status())) {
+      get_modules_unimplemented = true;
+    } else {
+      return hlo_modules_status.status();
+    }
+  } else {
+    hlo_modules = std::move(*hlo_modules_status);
+  }
+
+  bool is_stripped = get_modules_unimplemented || hlo_modules.empty() ||
+                     hlo_modules.front() == nullptr;
+
+  bool flatten_arguments = false;
+  ParameterType parameter_type = ParameterType::kOther;
+  const HloModule* module_ptr = nullptr;
+
+  if (is_stripped) {
+    auto parameter_shapes_status = executable->GetParameterShapes();
+    if (!parameter_shapes_status.ok()) {
+      if (absl::IsUnimplemented(parameter_shapes_status.status())) {
+        VLOG(2)
+            << "GetParameterShapes is unimplemented on stripped executable. "
+            << "Proceeding and defaulting flatten_arguments to false.";
+        flatten_arguments = false;
+      } else {
+        return parameter_shapes_status.status();
+      }
+    } else {
+      const std::vector<Shape>& parameter_shapes = *parameter_shapes_status;
+      if (parameter_shapes.size() == 1 && parameter_shapes.front().IsTuple()) {
+        flatten_arguments = true;
+      }
+    }
+    parameter_type = ParameterType::kOther;
+  } else {
+    CHECK_EQ(hlo_modules.size(), 1);
+    module_ptr = hlo_modules.front().get();
+    parameter_type = GetParameterType(*module_ptr);
+    flatten_arguments = parameter_type == ParameterType::kOneTupleOfArrays;
+  }
+
   auto get_output_index_for_one_tuple_of_arrays =
-      [&module](int64_t parameter_index) -> std::optional<int64_t> {
+      [module_ptr](int64_t parameter_index) -> std::optional<int64_t> {
+    if (module_ptr == nullptr) {
+      return std::nullopt;
+    }
     const HloInputOutputAliasConfig& alias_config =
-        module.input_output_alias_config();
+        module_ptr->input_output_alias_config();
     std::optional<ShapeIndex> output_index =
         alias_config.GetAliasedOutput(0, {parameter_index});
     if (!output_index.has_value()) {
       return std::nullopt;
     }
-    // If the HLO module output is a tuple, it should have been untupled by
-    // PjRt. Therefore, we return the tuple index of the buffer.
-    if (module.entry_computation()->root_instruction()->shape().IsTuple()) {
+    if (module_ptr->entry_computation()
+            ->root_instruction()
+            ->shape()
+            .IsTuple()) {
       return std::optional<int64_t>(output_index->front());
     }
     CHECK(output_index->empty());
     return 0;
   };
   auto get_output_index_for_one_list_of_arrays =
-      [&module](int64_t parameter_index) -> std::optional<int64_t> {
+      [module_ptr](int64_t parameter_index) -> std::optional<int64_t> {
+    if (module_ptr == nullptr) {
+      return std::nullopt;
+    }
     const HloInputOutputAliasConfig& alias_config =
-        module.input_output_alias_config();
+        module_ptr->input_output_alias_config();
     std::optional<ShapeIndex> output_index =
         alias_config.GetAliasedOutput(parameter_index, {});
     if (!output_index.has_value()) {
       return std::nullopt;
     }
-    if (module.entry_computation()->root_instruction()->shape().IsTuple()) {
+    if (module_ptr->entry_computation()
+            ->root_instruction()
+            ->shape()
+            .IsTuple()) {
       return std::optional<int64_t>(output_index->front());
     }
     CHECK(output_index->empty());
@@ -670,6 +719,9 @@ CopyArgumentsToDevice(PjRtClient& client,
   auto argument_memory_space =
       [&flattened_arguments](const HloModule* module, PjRtDevice* device,
                              int arg_i) -> absl::StatusOr<PjRtMemorySpace*> {
+    if (module == nullptr) {
+      return device->default_memory_space();
+    }
     auto non_tuple_memory_space = [&device](const Shape& shape) {
       if (shape.has_layout() &&
           shape.layout().memory_space() == Layout::kHostMemorySpace) {
@@ -695,16 +747,21 @@ CopyArgumentsToDevice(PjRtClient& client,
     TF_RET_CHECK(!shape.IsTuple()) << "Param tuple without flattened_arguments";
     return non_tuple_memory_space(shape);
   };
-  ASSIGN_OR_RETURN(const std::vector<std::shared_ptr<const PjRtLayout>>&
-                       executable_parameter_pjrt_layouts,
-                   executable->GetParameterLayouts());
   std::vector<Layout> executable_parameter_layouts;
-  executable_parameter_layouts.reserve(
-      executable_parameter_pjrt_layouts.size());
-  for (const std::shared_ptr<const PjRtLayout>& pjrt_layout :
-       executable_parameter_pjrt_layouts) {
-    executable_parameter_layouts.push_back(pjrt_layout->xla_layout());
+  auto parameter_layouts_status = executable->GetParameterLayouts();
+  if (parameter_layouts_status.ok()) {
+    executable_parameter_layouts.reserve(parameter_layouts_status->size());
+    for (const auto& pjrt_layout : *parameter_layouts_status) {
+      if (pjrt_layout != nullptr) {
+        executable_parameter_layouts.push_back(pjrt_layout->xla_layout());
+      }
+    }
+  } else {
+    if (!absl::IsUnimplemented(parameter_layouts_status.status())) {
+      return parameter_layouts_status.status();
+    }
   }
+
   auto buffer_from_host_literal =
       [&client, &argument_memory_space, &executable_parameter_layouts](
           const HloModule* module, PjRtDevice* device, int arg_i,
@@ -713,7 +770,10 @@ CopyArgumentsToDevice(PjRtClient& client,
     // Use the layout as specified in the executable rather than the layout of
     // the host-side literal, as the former is the authoritative layout the
     // executable expects.
-    const Layout* layout = &executable_parameter_layouts[arg_i];
+    const Layout* layout = nullptr;
+    if (arg_i < executable_parameter_layouts.size()) {
+      layout = &executable_parameter_layouts[arg_i];
+    }
     ASSIGN_OR_RETURN(PjRtMemorySpace * memory_space,
                      argument_memory_space(module, device, arg_i));
     auto device_buffers =
@@ -730,8 +790,18 @@ CopyArgumentsToDevice(PjRtClient& client,
   absl::Span<const PjRtLoadedExecutable::LogicalDeviceIds>
       addressable_device_logical_ids =
           executable->addressable_device_logical_ids();
-  ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> hlo_modules,
-                   executable->GetHloModules());
+  std::vector<std::shared_ptr<HloModule>> hlo_modules;
+  auto hlo_modules_status = executable->GetHloModules();
+  bool get_modules_unimplemented = false;
+  if (!hlo_modules_status.ok()) {
+    if (absl::IsUnimplemented(hlo_modules_status.status())) {
+      get_modules_unimplemented = true;
+    } else {
+      return hlo_modules_status.status();
+    }
+  } else {
+    hlo_modules = std::move(*hlo_modules_status);
+  }
 
   for (int i = 0; i < num_addressable_devices; ++i) {
     PjRtDevice* curr_device = addressable_devices[i];
@@ -750,10 +820,16 @@ CopyArgumentsToDevice(PjRtClient& client,
     const std::vector<Literal>& curr_device_arguments =
         arguments.at(source_device_id);
 
-    int executable_idx = hlo_modules.size() == 1
-                             ? 0
-                             : addressable_device_logical_ids[i].partition;
-    HloModule* module = hlo_modules[executable_idx].get();
+    int executable_idx = 0;
+    if (!get_modules_unimplemented) {
+      executable_idx = hlo_modules.size() == 1
+                           ? 0
+                           : addressable_device_logical_ids[i].partition;
+    }
+    HloModule* module = nullptr;
+    if (!get_modules_unimplemented && executable_idx < hlo_modules.size()) {
+      module = hlo_modules[executable_idx].get();
+    }
 
     argument_buffers[i].reserve(curr_device_arguments.size());
     for (int arg_i = 0; arg_i < curr_device_arguments.size(); ++arg_i) {
@@ -787,10 +863,20 @@ CreateUninitializedArgumentsOnDevice(PjRtClient& client,
   absl::Span<const PjRtLoadedExecutable::LogicalDeviceIds>
       addressable_device_logical_ids =
           executable->addressable_device_logical_ids();
-  ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> hlo_modules,
-                   executable->GetHloModules());
+  std::vector<std::shared_ptr<HloModule>> hlo_modules;
+  auto hlo_modules_status = executable->GetHloModules();
+  bool get_modules_unimplemented = false;
+  if (!hlo_modules_status.ok()) {
+    if (absl::IsUnimplemented(hlo_modules_status.status())) {
+      get_modules_unimplemented = true;
+    } else {
+      return hlo_modules_status.status();
+    }
+  } else {
+    hlo_modules = std::move(*hlo_modules_status);
+  }
   VLOG(1) << "FunctionalHloRunner: local_executable count = "
-          << hlo_modules.size();
+          << (get_modules_unimplemented ? 0 : hlo_modules.size());
 
   LOG(INFO) << "Starting argument buffer shape calculation.";
   PerDeviceShapeVecType argument_shapes_per_device;
@@ -800,22 +886,61 @@ CreateUninitializedArgumentsOnDevice(PjRtClient& client,
   for (int i = 0; i < static_cast<int>(addressable_devices.size()); ++i) {
     VLOG(3) << "Calculating fake argument shapes for device " << i;
     PjRtDevice* device = addressable_devices[i];
-    int executable_idx = hlo_modules.size() == 1
-                             ? 0
-                             : addressable_device_logical_ids[i].partition;
-    const HloModule& hlo_module = *hlo_modules[executable_idx];
-
+    int executable_idx = 0;
+    if (!get_modules_unimplemented) {
+      executable_idx = hlo_modules.size() == 1
+                           ? 0
+                           : addressable_device_logical_ids[i].partition;
+    }
     std::vector<Shape> argument_shapes;
-    if (flatten_arguments) {
-      RETURN_IF_ERROR(EnsureSingleTupleForFlattening(hlo_module));
+    HloModule* my_hlo_module = nullptr;
+    if (!get_modules_unimplemented && executable_idx < hlo_modules.size()) {
+      my_hlo_module = hlo_modules[executable_idx].get();
+    }
+    if (my_hlo_module == nullptr ||
+        my_hlo_module->entry_computation() == nullptr) {
+      auto parameter_device_shapes_status = executable->GetParameterShapes();
+      if (!parameter_device_shapes_status.ok()) {
+        if (absl::IsUnimplemented(parameter_device_shapes_status.status())) {
+          return absl::UnimplementedError(
+              "Cannot auto-generate mock inputs for AOT stripped binary using "
+              "modern C-API plugins or custom platform runtimes because "
+              "parameter shape metadata is missing. Please provide explicit "
+              "input arguments mappings.");
+        }
+        return parameter_device_shapes_status.status();
+      }
+      std::vector<Shape> parameter_device_shapes =
+          *std::move(parameter_device_shapes_status);
 
-      std::vector<Shape> original_argument_shapes =
-          GetArgumentShapes(hlo_module);
-      CHECK_EQ(original_argument_shapes.size(), 1);
-      CHECK(original_argument_shapes.front().IsTuple());
-      argument_shapes = original_argument_shapes.front().tuple_shapes();
+      if (flatten_arguments) {
+        if (parameter_device_shapes.size() != 1) {
+          return absl::InvalidArgumentError(absl::StrFormat(
+              "Flattening expects exactly 1 argument, but got %d",
+              parameter_device_shapes.size()));
+        }
+        if (!parameter_device_shapes.front().IsTuple()) {
+          return absl::InvalidArgumentError(
+              "Flattening expects argument to be a Tuple, but got non-Tuple "
+              "shape.");
+        }
+        argument_shapes = parameter_device_shapes.front().tuple_shapes();
+      } else {
+        argument_shapes = std::move(parameter_device_shapes);
+      }
     } else {
-      argument_shapes = GetArgumentShapes(hlo_module);
+      const HloModule& hlo_module = *my_hlo_module;
+      if (flatten_arguments) {
+        RETURN_IF_ERROR(EnsureSingleTupleForFlattening(hlo_module));
+
+        std::vector<Shape> original_argument_shapes =
+            GetArgumentShapes(hlo_module);
+        CHECK_EQ(original_argument_shapes.size(), 1);
+        CHECK(original_argument_shapes.front().IsTuple());
+        argument_shapes = original_argument_shapes.front().tuple_shapes();
+      } else {
+        argument_shapes = GetArgumentShapes(hlo_module);
+      }
     }
 
     argument_shapes_per_device[device->id()] = std::move(argument_shapes);
@@ -890,10 +1015,20 @@ CreateArgumentsOnDevice(PjRtClient& client,
   absl::Span<const PjRtLoadedExecutable::LogicalDeviceIds>
       addressable_device_logical_ids =
           executable->addressable_device_logical_ids();
-  ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> hlo_modules,
-                   executable->GetHloModules());
+  std::vector<std::shared_ptr<HloModule>> hlo_modules;
+  auto hlo_modules_status = executable->GetHloModules();
+  bool get_modules_unimplemented = false;
+  if (!hlo_modules_status.ok()) {
+    if (absl::IsUnimplemented(hlo_modules_status.status())) {
+      get_modules_unimplemented = true;
+    } else {
+      return hlo_modules_status.status();
+    }
+  } else {
+    hlo_modules = std::move(*hlo_modules_status);
+  }
   VLOG(1) << "FunctionalHloRunner: local_executable count = "
-          << hlo_modules.size();
+          << (get_modules_unimplemented ? 0 : hlo_modules.size());
 
   const bool kUseRandomInputs = running_options.module_argument_mode ==
                                     ModuleArgumentMode::kUseRandomInputs ||
@@ -906,64 +1041,142 @@ CreateArgumentsOnDevice(PjRtClient& client,
           ModuleArgumentMode::kUseZerosAsInput;
   absl::BitGen rd;
 
-  std::optional<std::normal_distribution<double>> random_dist;
+  bool is_stripped = get_modules_unimplemented || hlo_modules.empty() ||
+                     hlo_modules[0] == nullptr ||
+                     hlo_modules[0]->entry_computation() == nullptr;
+
+  std::optional<std::uniform_real_distribution<double>> uniform_dist;
+  std::optional<std::normal_distribution<double>> normal_dist;
+
   if (running_options.module_argument_mode ==
-      ModuleArgumentMode::kUseRandomNormalInputs) {
-    // Create a normal distribution
-    // mean = 0.0, standard deviation = 1.0 (gaussian(0,1))
-    random_dist.emplace(0.0, 1.0);
+          ModuleArgumentMode::kUseRandomNormalInputs ||
+      (is_stripped && (running_options.module_argument_mode ==
+                           ModuleArgumentMode::kUseRandomInputs ||
+                       running_options.module_argument_mode ==
+                           ModuleArgumentMode::kUseSharedRandomInputs))) {
+    if (running_options.module_argument_mode ==
+        ModuleArgumentMode::kUseRandomNormalInputs) {
+      // Gaussian distribution
+      normal_dist.emplace(0.0, 1.0);
+    } else {
+      // Uniform distribution matching standard MakeFakeLiteral limits
+      // (-1.0 to 1.0)
+      uniform_dist.emplace(-1.0, 1.0);
+    }
   }
+
   std::function<double(std::minstd_rand0*)> float_generator =
-      [&](std::minstd_rand0* engine) { return (*random_dist)(*engine); };
+      [&](std::minstd_rand0* engine) {
+        if (normal_dist.has_value()) {
+          return (*normal_dist)(*engine);
+        } else if (uniform_dist.has_value()) {
+          return (*uniform_dist)(*engine);
+        }
+        return 0.0;
+      };
 
   for (int i = 0; i < num_addressable_devices; ++i) {
     VLOG(3) << "Creating fake arguments for device " << i;
     LiteralVec& argument_literals =
         per_device_argument_literals[addressable_devices[i]->id()];
-    int executable_idx = hlo_modules.size() == 1
-                             ? 0
-                             : addressable_device_logical_ids[i].partition;
-    HloModule* my_hlo_module = hlo_modules[executable_idx].get();
-    if (flatten_arguments) {
-      RETURN_IF_ERROR(EnsureSingleTupleForFlattening(*my_hlo_module));
+    int executable_idx = 0;
+    if (!get_modules_unimplemented) {
+      executable_idx = hlo_modules.size() == 1
+                           ? 0
+                           : addressable_device_logical_ids[i].partition;
     }
-    if (running_options.module_argument_mode ==
-            ModuleArgumentMode::kUseRandomNormalInputs ||
-        running_options.module_argument_mode ==
-            ModuleArgumentMode::kUseDeviceIdAsInput) {
-      const auto params =
-          my_hlo_module->entry_computation()->parameter_instructions();
-      if (flatten_arguments) {
-        CHECK_EQ(params.size(), 1);
-        CHECK(params.front()->shape().IsTuple());
-        argument_literals.reserve(
-            params.front()->shape().tuple_shapes().size());
-      } else {
-        argument_literals.reserve(params.size());
+    HloModule* my_hlo_module = nullptr;
+    if (!get_modules_unimplemented && executable_idx < hlo_modules.size()) {
+      my_hlo_module = hlo_modules[executable_idx].get();
+    }
+    std::vector<Shape> parameter_device_shapes;
+    bool is_stripped = my_hlo_module == nullptr ||
+                       my_hlo_module->entry_computation() == nullptr;
+    if (is_stripped) {
+      auto parameter_device_shapes_status = executable->GetParameterShapes();
+      if (!parameter_device_shapes_status.ok()) {
+        if (absl::IsUnimplemented(parameter_device_shapes_status.status())) {
+          return absl::UnimplementedError(
+              "Cannot auto-generate mock inputs for AOT stripped binary using "
+              "modern C-API plugins or custom platform runtimes because "
+              "parameter shape metadata is missing. Please provide explicit "
+              "input arguments mappings.");
+        }
+        return parameter_device_shapes_status.status();
       }
-      for (int j = 0; j < params.size(); ++j) {
+      parameter_device_shapes = *std::move(parameter_device_shapes_status);
+
+      if (flatten_arguments) {
+        if (parameter_device_shapes.size() != 1) {
+          return absl::InvalidArgumentError(absl::StrFormat(
+              "Flattening expects exactly 1 argument, but got %d",
+              parameter_device_shapes.size()));
+        }
+        if (!parameter_device_shapes.front().IsTuple()) {
+          return absl::InvalidArgumentError(
+              "Flattening expects argument to be a Tuple, but got non-Tuple "
+              "shape.");
+        }
+      }
+    } else {
+      if (flatten_arguments) {
+        RETURN_IF_ERROR(EnsureSingleTupleForFlattening(*my_hlo_module));
+      }
+    }
+
+    ModuleArgumentMode target_argument_mode =
+        running_options.module_argument_mode;
+    if (is_stripped) {
+      if (target_argument_mode == ModuleArgumentMode::kUseRandomInputs ||
+          target_argument_mode == ModuleArgumentMode::kUseSharedRandomInputs) {
+        target_argument_mode = ModuleArgumentMode::kUseRandomNormalInputs;
+      }
+    }
+
+    if (target_argument_mode == ModuleArgumentMode::kUseRandomNormalInputs ||
+        target_argument_mode == ModuleArgumentMode::kUseDeviceIdAsInput) {
+      std::vector<Shape> target_shapes;
+      if (is_stripped) {
+        if (flatten_arguments) {
+          target_shapes = parameter_device_shapes.front().tuple_shapes();
+        } else {
+          target_shapes = parameter_device_shapes;
+        }
+      } else {
+        const auto params =
+            my_hlo_module->entry_computation()->parameter_instructions();
+        if (flatten_arguments) {
+          CHECK_EQ(params.size(), 1);
+          CHECK(params.front()->shape().IsTuple());
+          target_shapes = params.front()->shape().tuple_shapes();
+        } else {
+          target_shapes.reserve(params.size());
+          for (auto* param : params) {
+            target_shapes.push_back(param->shape());
+          }
+        }
+      }
+
+      argument_literals.reserve(target_shapes.size());
+      for (int j = 0; j < target_shapes.size(); ++j) {
         Literal argument_literal_j;
-        if (running_options.module_argument_mode ==
+        if (target_argument_mode ==
             ModuleArgumentMode::kUseRandomNormalInputs) {
-          // Create a random number engine
-          // std::random_device provides a non-deterministic seed (from
-          // hardware/OS)
           std::minstd_rand0 minstd(rd());
 
           ASSIGN_OR_RETURN(
               argument_literal_j,
               xla::MakeFakeLiteral(
-                  params[j]->shape(), &minstd, std::nullopt,
+                  target_shapes[j], &minstd, std::nullopt,
                   /*is_sorted=*/false,
                   /*no_duplicates=*/false, /*use_large_range=*/false,
                   /*max_bits_of_precision=*/std::nullopt,
                   /*index_alignment=*/std::nullopt,
                   /*index_known_zeroes=*/std::nullopt, float_generator));
         } else {
-          ASSIGN_OR_RETURN(
-              argument_literal_j,
-              MakeFakeLiteralWithSameValue(params[j]->shape(),
-                                           addressable_devices[i]->id()));
+          ASSIGN_OR_RETURN(argument_literal_j,
+                           MakeFakeLiteralWithSameValue(
+                               target_shapes[j], addressable_devices[i]->id()));
         }
         ShapeUtil::ForEachSubshape(
             argument_literal_j.shape(),
