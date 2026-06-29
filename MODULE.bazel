@@ -295,6 +295,7 @@ local_clang_configure = use_extension("@rules_ml_toolchain//extensions:local_cla
 use_repo(local_clang_configure, "local_config_clang")
 
 hipcc_configure = use_extension("@rules_ml_toolchain//extensions:hipcc_configure.bzl", "hipcc_configure_ext")
+hipcc_configure.configure(rocm_dist = "@local_config_rocm//rocm:toolchain_data")
 use_repo(hipcc_configure, "config_rocm_hipcc")
 
 rocm_configure = use_extension("//third_party/extensions:rocm_configure.bzl", "rocm_configure_ext")

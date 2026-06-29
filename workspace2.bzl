@@ -146,7 +146,7 @@ def _tf_toolchains():
     rocm_configure(name = "local_config_rocm")
     hipcc_configure(
         name = "config_rocm_hipcc",
-        rocm_dist = "@local_config_rocm//rocm:rocm_dist",
+        rocm_dist = "@local_config_rocm//rocm:toolchain_data",
     )
 
     local_clang_configure(name = "local_config_clang")
