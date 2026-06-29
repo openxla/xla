@@ -139,8 +139,6 @@ def _setup_rocm_distro_dir_impl(repository_ctx, rocm_distro):
     for pkg in rocm_distro.packages:
         _download_package(repository_ctx, pkg)
 
-    _remove_unused_files(repository_ctx)
-
     for entry in rocm_distro.required_softlinks:
         repository_ctx.symlink(
             "{}/{}".format(_DISTRIBUTION_PATH, entry.target),
