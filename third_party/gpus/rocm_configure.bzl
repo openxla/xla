@@ -109,6 +109,22 @@ def _download_package(repository_ctx, pkg):
 
     repository_ctx.delete(file_name)
 
+def _remove_unused_files(repository_ctx):
+    """Removes unused directories from ROCm distribution to reduce RBE file count.
+
+    Args:
+        repository_ctx: The repository context.
+    """
+    unused_paths = [
+        "{}/tests".format(_DISTRIBUTION_PATH),
+        "{}/libexec".format(_DISTRIBUTION_PATH),
+        "{}/lib/llvm/include".format(_DISTRIBUTION_PATH),
+        "{}/lib/rocm_sysdeps/share/terminfo".format(_DISTRIBUTION_PATH),
+    ]
+    repository_ctx.report_progress("Removing unused directories to reduce RBE file count")
+    for unused_path in unused_paths:
+        repository_ctx.delete(unused_path)
+
 def _setup_rocm_distro_dir_impl(repository_ctx, rocm_distro):
     """Downloads and sets up a ROCm distribution.
 
@@ -122,6 +138,8 @@ def _setup_rocm_distro_dir_impl(repository_ctx, rocm_distro):
     repository_ctx.file("rocm/.index")
     for pkg in rocm_distro.packages:
         _download_package(repository_ctx, pkg)
+
+    _remove_unused_files(repository_ctx)
 
     for entry in rocm_distro.required_softlinks:
         repository_ctx.symlink(
