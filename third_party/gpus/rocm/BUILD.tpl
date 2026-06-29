@@ -7,11 +7,6 @@ licenses(["restricted"])  # MPL2, portions GPL v3, LGPL v3, BSD-like
 
 package(default_visibility = ["//visibility:private"])
 
-exports_files(
-    ["rocm_dist"],
-    visibility = ["//visibility:public"],
-)
-
 string_flag(
     name = "rocm_path_type",
     build_setting_default = "system",
@@ -465,10 +460,15 @@ rocm_lib_import(
 
 filegroup(
     name = "system_libs_data",
-    srcs = glob([
-        "%{rocm_root}/lib/rocm_sysdeps/lib/*.so*",
-        "%{rocm_root}/lib/rocm_sysdeps/share/**",
-    ]),
+    srcs = glob(
+        [
+            "%{rocm_root}/lib/rocm_sysdeps/lib/*.so*",
+            "%{rocm_root}/lib/rocm_sysdeps/share/**",
+        ],
+        exclude = [
+            "%{rocm_root}/lib/rocm_sysdeps/share/terminfo/**",
+        ],
+    ),
 )
 
 cc_library(
@@ -481,11 +481,15 @@ filegroup(
     srcs = glob(
         include = [
             "%{rocm_root}/bin/hipcc",
-            "%{rocm_root}/lib/llvm/**",
+            "%{rocm_root}/lib/llvm/bin/*",
+            "%{rocm_root}/lib/llvm/lib/clang/*/include/**",
+            "%{rocm_root}/lib/llvm/lib/clang/*/lib/**/*.bc",
+            "%{rocm_root}/lib/llvm/lib/clang/*/lib/**/*.a",
+            "%{rocm_root}/lib/llvm/lib/*.so*",
             "%{rocm_root}/share/hip/version",
             "%{rocm_root}/amdgcn/**",
         ],
-        exclude = ["%{rocm_root}/lib/llvm/lib/*.a"],
+        allow_empty = True,
     ) + [":system_libs_data"],
     visibility = ["//visibility:public"],
 )

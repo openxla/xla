@@ -674,11 +674,6 @@ rocm_configure = repository_rule(
     implementation = _rocm_autoconf_impl,
     environ = _ENVIRONS + [_TF_ROCM_CONFIG_REPO],
     attrs = {
-        "rocm_dist": attr.label(
-            default = Label("@config_rocm_hipcc//rocm:rocm_dist"),
-            doc = "Label to the rocm_dist directory from hipcc_configure " +
-                  "(e.g. @config_rocm_hipcc//rocm:rocm_dist).",
-        ),
         "_find_rocm_config": attr.label(
             default = Label("//third_party/gpus:find_rocm_config.py"),
         ),
