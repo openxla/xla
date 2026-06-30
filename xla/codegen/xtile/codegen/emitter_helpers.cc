@@ -234,11 +234,10 @@ absl::StatusOr<int64_t> PackedElementsPerByte(PrimitiveType type) {
   return storage_bit_width / element_bit_width;
 }
 
-Value DivideIndexByPackedElementsPerByte(mlir::ImplicitLocOpBuilder& b,
-                                         Value value,
-                                         int64_t packed_elements_per_byte) {
+Value DivideBy(mlir::ImplicitLocOpBuilder& b, Value value,
+               int64_t elements_per_byte) {
   return ma::DivSIOp::create(
-      b, value, CreateConst(b, value.getType(), packed_elements_per_byte));
+      b, value, CreateConst(b, value.getType(), elements_per_byte));
 }
 
 }  // namespace
@@ -278,15 +277,15 @@ absl::StatusOr<SmallVector<int64_t>> GetStorageShape(
         absl::StrCat("Packed storage dimension is out of bounds for shape ",
                      logical_shape.ToString()));
   }
-  ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
+  ASSIGN_OR_RETURN(int64_t elements_per_byte,
                    PackedElementsPerByte(logical_shape.element_type()));
-  if (storage_shape[packed_dim] % packed_elements_per_byte != 0) {
-    return absl::InvalidArgumentError(absl::StrCat(
-        "Packed storage dimension must be divisible by ",
-        packed_elements_per_byte, ", got ", storage_shape[packed_dim],
-        " for shape ", logical_shape.ToString()));
+  if (storage_shape[packed_dim] % elements_per_byte != 0) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Packed storage dimension must be divisible by ",
+                     elements_per_byte, ", got ", storage_shape[packed_dim],
+                     " for shape ", logical_shape.ToString()));
   }
-  storage_shape[packed_dim] /= packed_elements_per_byte;
+  storage_shape[packed_dim] /= elements_per_byte;
   return storage_shape;
 }
 
@@ -306,20 +305,19 @@ absl::StatusOr<SmallVector<Value>> GetStorageOffsets(
         absl::StrCat("Packed storage dimension is out of bounds for shape ",
                      logical_shape.ToString()));
   }
-  ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
+  ASSIGN_OR_RETURN(int64_t elements_per_byte,
                    PackedElementsPerByte(logical_shape.element_type()));
   // Packed storage is byte-addressed along the layout-minor dimension, so the
   // logical offset must be aligned before converting it to a byte offset.
-  if (!logical_tile_offsets[packed_dim].IsMultipleOf(
-          packed_elements_per_byte)) {
+  if (!logical_tile_offsets[packed_dim].IsMultipleOf(elements_per_byte)) {
     return absl::InvalidArgumentError(
         absl::StrCat("Packed storage requires offset in dimension ", packed_dim,
-                     " to be divisible by ", packed_elements_per_byte,
-                     " for shape ", logical_shape.ToString(), ", got ",
+                     " to be divisible by ", elements_per_byte, " for shape ",
+                     logical_shape.ToString(), ", got ",
                      logical_tile_offsets[packed_dim].ToString()));
   }
-  storage_offsets[packed_dim] = DivideIndexByPackedElementsPerByte(
-      b, storage_offsets[packed_dim], packed_elements_per_byte);
+  storage_offsets[packed_dim] =
+      DivideBy(b, storage_offsets[packed_dim], elements_per_byte);
   return storage_offsets;
 }
 
