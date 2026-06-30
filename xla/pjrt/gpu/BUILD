@@ -438,6 +438,7 @@ xla_test(
         "//xla/pjrt:raw_buffer",
         "//xla/pjrt/distributed",
         "//xla/pjrt/distributed:client",
+        "//xla/pjrt/distributed/coordination:coordination_service_agent",
         "//xla/pjrt/distributed:in_memory_key_value_store",
         "//xla/pjrt/distributed:service",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",

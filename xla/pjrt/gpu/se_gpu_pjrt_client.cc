@@ -1880,7 +1880,13 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
                                 "coordination service: "
                              << s;
               }
+            } else {
+              LOG(WARNING) << "Failed to get coordination service agent: "
+                           << agent.status();
             }
+          } else {
+            LOG(INFO) << "Skipping coordination service error report: "
+                         "distributed client is not available.";
           }
         });
   }
