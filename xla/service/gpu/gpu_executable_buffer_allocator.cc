@@ -145,7 +145,7 @@ absl::Status GpuExecutableBufferAllocator::ExecutionScope::PrepareReservation(
     const ServiceExecutableRunOptions* run_options, int device_ordinal,
     const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
         allocate_granularity) {
-  if (!command_buffer_active()) {
+  if (!va_remap_enabled()) {
     return absl::OkStatus();
   }
 
@@ -195,7 +195,7 @@ absl::Status GpuExecutableBufferAllocator::ExecutionScope::PrepareReservation(
 
 bool GpuExecutableBufferAllocator::ExecutionScope::ShouldRemapAllocation(
     BufferAllocation::Index index) const {
-  return command_buffer_active() &&
+  return va_remap_enabled() &&
          owner_->command_buffer_va_remapped_allocation_indexes_.contains(index);
 }
 
@@ -373,7 +373,7 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithBufferAllocations(
                      std::optional<absl::Span<const BufferAllocation::Index>>
                          persistent_alloc_indices)>
         execute) {
-  if (!command_buffer_active()) {
+  if (!va_remap_enabled()) {
     if (!address_policy_active()) {
       return execute(owning_buffer_allocations, std::nullopt);
     }
