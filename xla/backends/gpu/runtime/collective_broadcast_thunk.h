@@ -27,6 +27,8 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -40,9 +42,8 @@ limitations under the License.
 namespace xla::gpu {
 
 struct CollectiveBroadcastMetadata {
-  bool has_dynamic_root;
   int64_t num_roots;
-  std::unique_ptr<se::MemoryAllocation> bcast_roots;
+  std::unique_ptr<se::MemoryAllocation> bcast_roots = nullptr;
 };
 // Thunk that performs a collective broadcast.
 class CollectiveBroadcastThunk : public CollectiveThunk {
@@ -66,7 +67,8 @@ class CollectiveBroadcastThunk : public CollectiveThunk {
                            bool p2p_memcpy_enabled = false,
                            bool has_dynamic_root = false);
   CollectiveBroadcastThunk(ThunkInfo thunk_info, CollectiveConfig config,
-                           std::vector<Buffer> buffers);
+                           std::vector<Buffer> buffers,
+                           bool has_dynamic_root = false);
   absl::Status Initialize(const InitializeParams& params) override;
 
   static absl::StatusOr<std::unique_ptr<CollectiveBroadcastThunk>> FromProto(
@@ -84,13 +86,17 @@ class CollectiveBroadcastThunk : public CollectiveThunk {
 
  private:
   const CollectiveConfig config_;
-  CollectiveBroadcastMetadata cb_metadata_;
-  bool initialized_ = false;
+  mutable absl::Mutex mutex_;
+  absl::flat_hash_map<se::StreamExecutor*,
+                      std::unique_ptr<CollectiveBroadcastMetadata>>
+      per_executor_cb_metadata_ ABSL_GUARDED_BY(mutex_);
+  bool has_dynamic_root_;
 };
 
 absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,
                                     se::Stream& stream, Communicator& comm,
-                                    CollectiveBroadcastMetadata& cb_metadata);
+                                    CollectiveBroadcastMetadata* cb_metadata,
+                                    bool has_dynamic_root = false);
 
 }  // namespace xla::gpu
 
