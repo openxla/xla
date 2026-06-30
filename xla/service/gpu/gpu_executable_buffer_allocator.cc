@@ -15,9 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_executable_buffer_allocator.h"
 
-#include <cerrno>
 #include <cstdint>
-#include <cstdlib>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,7 +27,6 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -68,40 +65,37 @@ using ::tsl::profiler::ScopedAnnotation;
 
 namespace vmm_internal {
 
-bool ParseVmmRemapSkipEnabled(absl::string_view platform_name,
-                              const char* env_value) {
+// The steady-state command-buffer execution remaps the SAME physical buffers
+// into the SAME reservation slots every step, so the per-step VA unmap/remap is
+// redundant work. Driving the already-tested
+// se::MemoryReservation::ScopedMapping::Remap() with a per-slot change cache
+// lets unchanged slots keep their mapping (no unmap/map/SetAccess), and skips
+// the unmap-event sync entirely when nothing changed.
+//
+// ROCm-only by design: other platforms keep their existing full
+// reset()+MapTo() behavior unchanged. The flag
+// (xla_gpu_command_buffer_vmm_skip_remap) lets ROCm fall back to the legacy
+// path for A/B measurement; it has no effect on other platforms.
+bool VmmRemapSkipEnabled(absl::string_view platform_name, bool flag_enabled) {
   if (platform_name != "ROCM") {
     return false;
   }
-  // Treat unset and empty (`export XLA_VMM_SKIP_REMAP=`) the same as the
-  // default, matching ParseVmmCopyThresholdBytes' empty-string handling.
-  if (env_value == nullptr || *env_value == '\0') {
-    return true;  // default ON for ROCm
-  }
-  absl::string_view s(env_value);
-  return !(s == "0" || absl::EqualsIgnoreCase(s, "false") ||
-           absl::EqualsIgnoreCase(s, "off") || absl::EqualsIgnoreCase(s, "no"));
+  return flag_enabled;
 }
 
-uint64_t ParseVmmCopyThresholdBytes(absl::string_view platform_name,
-                                    const char* env_value) {
-  if (platform_name != "ROCM") {
+// Size threshold (bytes) for the ROCm copy-into-shadow path. Command-buffer
+// slices with size <= this value bypass VA remapping: they get a stable shadow
+// buffer (mapped once) and are refreshed with a stream-ordered D2D copy each
+// step instead of an hipMemUnmap/Map/SetAccess round-trip. This targets the
+// small slices (scale/scalar/metric buffers) that change address every step.
+// 0 (default) disables the path entirely, so other platforms and the default
+// ROCm behavior are unchanged. A negative flag value is clamped to 0.
+uint64_t VmmCopyThresholdBytes(absl::string_view platform_name,
+                               int64_t flag_threshold_bytes) {
+  if (platform_name != "ROCM" || flag_threshold_bytes <= 0) {
     return 0;
   }
-  if (env_value == nullptr || *env_value == '\0') {
-    return 0;
-  }
-  char* end = nullptr;
-  errno = 0;
-  const uint64_t parsed = std::strtoull(env_value, &end, 10);
-  if (end == env_value || *end != '\0' || errno != 0) {
-    LOG(WARNING) << "XLA_VMM_TMP_COPY_THRESHOLD=\"" << env_value
-                 << "\" is not a valid byte count; disabling copy-into-shadow "
-                    "(treating as 0). A non-numeric \"auto\" mode is not "
-                    "implemented yet.";
-    return 0;
-  }
-  return parsed;
+  return static_cast<uint64_t>(flag_threshold_bytes);
 }
 
 }  // namespace vmm_internal
@@ -113,48 +107,6 @@ uint64_t RoundUpToGranularity(uint64_t size, uint64_t granularity) {
     return size;
   }
   return ((size + granularity - 1) / granularity) * granularity;
-}
-
-// Whether the per-slot skip-remap booking path is enabled for `platform_name`.
-//
-// The steady-state command-buffer execution remaps the SAME physical buffers
-// into the SAME reservation slots every step, so the per-step VA unmap/remap is
-// redundant work. Driving the already-tested
-// se::MemoryReservation::ScopedMapping::Remap() with a per-slot change cache
-// lets unchanged slots keep their mapping (no unmap/map/SetAccess), and skips
-// the unmap-event sync entirely when nothing changed.
-//
-// ROCm-only by design: other platforms keep their existing full
-// reset()+MapTo() behavior unchanged. Set XLA_VMM_SKIP_REMAP=0 to force the
-// legacy path on ROCm for A/B measurement.
-bool VmmRemapSkipEnabled(absl::string_view platform_name) {
-  if (platform_name != "ROCM") {
-    return false;
-  }
-  // Cache the (ROCm) decision once; the env var is read a single time per
-  // process. Pure parsing lives in vmm_internal for unit testing.
-  static const bool enabled = vmm_internal::ParseVmmRemapSkipEnabled(
-      "ROCM", std::getenv("XLA_VMM_SKIP_REMAP"));
-  return enabled;
-}
-
-// Size threshold (bytes) for the ROCm copy-into-shadow path. Command-buffer
-// slices with size <= this value bypass VA remapping: they get a stable shadow
-// buffer (mapped once) and are refreshed with a stream-ordered D2D copy each
-// step instead of an hipMemUnmap/Map/SetAccess round-trip. This targets the
-// small slices (scale/scalar/metric buffers) that change address every step.
-// 0 (default) disables the path entirely, so other platforms and the default
-// ROCm behavior are unchanged. >0 = byte threshold. (A future "auto" mode could
-// calibrate the copy-vs-remap threshold.)
-uint64_t VmmCopyThresholdBytes(absl::string_view platform_name) {
-  if (platform_name != "ROCM") {
-    return 0;
-  }
-  // Cache the (ROCm) threshold once; the env var is read a single time per
-  // process. Pure parsing lives in vmm_internal for unit testing.
-  static const uint64_t threshold = vmm_internal::ParseVmmCopyThresholdBytes(
-      "ROCM", std::getenv("XLA_VMM_TMP_COPY_THRESHOLD"));
-  return threshold;
 }
 
 absl::Status CheckAlignment(const BufferAllocation& allocation,
@@ -392,13 +344,27 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
   uint64_t granularity = vmm_allocator->GetAllocationGranularity(executor);
 
   // ROCm-only per-slot skip-remap: reuse mappings for slots whose source
-  // buffer did not move since the previous step (see VmmRemapSkipEnabled).
+  // buffer did not move since the previous step. Gated by the
+  // xla_gpu_command_buffer_vmm_* DebugOptions flags (defaults: skip-remap on,
+  // copy-into-shadow disabled); falls back to those defaults if no DebugOptions
+  // were provided.
   const absl::string_view platform_name = executor->GetPlatform()->Name();
-  const bool skip_remap_enabled = VmmRemapSkipEnabled(platform_name);
+  const DebugOptions* debug_options = owner_->debug_options_;
+  const bool skip_remap_flag =
+      debug_options == nullptr
+          ? true
+          : debug_options->xla_gpu_command_buffer_vmm_skip_remap();
+  const bool skip_remap_enabled =
+      vmm_internal::VmmRemapSkipEnabled(platform_name, skip_remap_flag);
 
   // ROCm copy-into-shadow: small command-buffer slices bypass VA remapping and
   // are refreshed by a stream-ordered D2D copy. 0 = disabled (default).
-  const uint64_t copy_threshold = VmmCopyThresholdBytes(platform_name);
+  const int64_t copy_threshold_flag =
+      debug_options == nullptr
+          ? 0
+          : debug_options->xla_gpu_command_buffer_vmm_copy_threshold_bytes();
+  const uint64_t copy_threshold =
+      vmm_internal::VmmCopyThresholdBytes(platform_name, copy_threshold_flag);
   const auto is_small_copy_slice = [copy_threshold](uint64_t size) {
     return copy_threshold > 0 && size > 0 && size <= copy_threshold;
   };
@@ -485,7 +451,7 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
   //
   // The copy is intentionally bidirectional for every slice regardless of its
   // read/write direction: it is direction-agnostic and always correct, and the
-  // slices are tiny (<= XLA_VMM_TMP_COPY_THRESHOLD bytes), so the extra copy is
+  // slices are tiny (<= the copy-threshold flag bytes), so the extra copy is
   // negligible. A future optimization could consult BufferUse read/write to
   // elide the unused direction (skip copy-back for inputs, copy-in for outputs).
   struct SmallCopy {

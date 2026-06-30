@@ -24,64 +24,40 @@ namespace gpu {
 namespace vmm_internal {
 namespace {
 
-// ---- ParseVmmRemapSkipEnabled -------------------------------------------
+// ---- VmmRemapSkipEnabled ------------------------------------------------
+// The flag value comes from DebugOptions::xla_gpu_command_buffer_vmm_skip_remap
+// (default true); these helpers only apply the ROCm-only platform gating.
 
 TEST(VmmRemapSkipEnabledTest, NonRocmAlwaysDisabled) {
-  EXPECT_FALSE(ParseVmmRemapSkipEnabled("CUDA", nullptr));
-  EXPECT_FALSE(ParseVmmRemapSkipEnabled("CUDA", "1"));
-  EXPECT_FALSE(ParseVmmRemapSkipEnabled("Host", "true"));
+  EXPECT_FALSE(VmmRemapSkipEnabled("CUDA", /*flag_enabled=*/true));
+  EXPECT_FALSE(VmmRemapSkipEnabled("CUDA", /*flag_enabled=*/false));
+  EXPECT_FALSE(VmmRemapSkipEnabled("Host", /*flag_enabled=*/true));
 }
 
-TEST(VmmRemapSkipEnabledTest, RocmDefaultsOnWhenUnset) {
-  EXPECT_TRUE(ParseVmmRemapSkipEnabled("ROCM", nullptr));
+TEST(VmmRemapSkipEnabledTest, RocmFollowsFlag) {
+  EXPECT_TRUE(VmmRemapSkipEnabled("ROCM", /*flag_enabled=*/true));
+  EXPECT_FALSE(VmmRemapSkipEnabled("ROCM", /*flag_enabled=*/false));
 }
 
-TEST(VmmRemapSkipEnabledTest, RocmEmptyStringDefaultsOn) {
-  // `export XLA_VMM_SKIP_REMAP=` (empty) is treated the same as unset,
-  // matching ParseVmmCopyThresholdBytes' empty-string handling.
-  EXPECT_TRUE(ParseVmmRemapSkipEnabled("ROCM", ""));
-}
-
-TEST(VmmRemapSkipEnabledTest, RocmFalseyValuesDisable) {
-  // Case-insensitive for false/off/no; "0" is exact.
-  for (const char* v : {"0", "false", "off", "FALSE", "OFF", "False", "Off",
-                        "no", "No", "NO"}) {
-    EXPECT_FALSE(ParseVmmRemapSkipEnabled("ROCM", v)) << "value=" << v;
-  }
-}
-
-TEST(VmmRemapSkipEnabledTest, RocmOtherValuesEnable) {
-  for (const char* v : {"1", "true", "on", "yes", "anything"}) {
-    EXPECT_TRUE(ParseVmmRemapSkipEnabled("ROCM", v)) << "value=" << v;
-  }
-}
-
-// ---- ParseVmmCopyThresholdBytes -----------------------------------------
+// ---- VmmCopyThresholdBytes ----------------------------------------------
+// The flag value comes from
+// DebugOptions::xla_gpu_command_buffer_vmm_copy_threshold_bytes (default 0);
+// these helpers apply the ROCm-only gating and clamp negatives to 0.
 
 TEST(VmmCopyThresholdBytesTest, NonRocmAlwaysZero) {
-  EXPECT_EQ(ParseVmmCopyThresholdBytes("CUDA", "65536"), 0u);
-  EXPECT_EQ(ParseVmmCopyThresholdBytes("CUDA", nullptr), 0u);
+  EXPECT_EQ(VmmCopyThresholdBytes("CUDA", 65536), 0u);
+  EXPECT_EQ(VmmCopyThresholdBytes("CUDA", 0), 0u);
 }
 
-TEST(VmmCopyThresholdBytesTest, RocmUnsetOrEmptyIsZero) {
-  EXPECT_EQ(ParseVmmCopyThresholdBytes("ROCM", nullptr), 0u);
-  EXPECT_EQ(ParseVmmCopyThresholdBytes("ROCM", ""), 0u);
+TEST(VmmCopyThresholdBytesTest, RocmZeroOrNegativeIsZero) {
+  EXPECT_EQ(VmmCopyThresholdBytes("ROCM", 0), 0u);
+  EXPECT_EQ(VmmCopyThresholdBytes("ROCM", -1), 0u);
+  EXPECT_EQ(VmmCopyThresholdBytes("ROCM", -65536), 0u);
 }
 
-TEST(VmmCopyThresholdBytesTest, RocmParsesValidByteCount) {
-  EXPECT_EQ(ParseVmmCopyThresholdBytes("ROCM", "0"), 0u);
-  EXPECT_EQ(ParseVmmCopyThresholdBytes("ROCM", "4096"), 4096u);
-  EXPECT_EQ(ParseVmmCopyThresholdBytes("ROCM", "65536"), 65536u);
-}
-
-TEST(VmmCopyThresholdBytesTest, RocmNonNumericIsZero) {
-  // "auto" (future mode) and other junk silently disable the feature.
-  EXPECT_EQ(ParseVmmCopyThresholdBytes("ROCM", "auto"), 0u);
-  EXPECT_EQ(ParseVmmCopyThresholdBytes("ROCM", "abc"), 0u);
-}
-
-TEST(VmmCopyThresholdBytesTest, RocmTrailingGarbageIsZero) {
-  EXPECT_EQ(ParseVmmCopyThresholdBytes("ROCM", "4096abc"), 0u);
+TEST(VmmCopyThresholdBytesTest, RocmPositiveFlagPassesThrough) {
+  EXPECT_EQ(VmmCopyThresholdBytes("ROCM", 4096), 4096u);
+  EXPECT_EQ(VmmCopyThresholdBytes("ROCM", 65536), 65536u);
 }
 
 }  // namespace

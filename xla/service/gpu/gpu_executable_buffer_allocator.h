@@ -49,23 +49,24 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// Internal, pure (uncached) helpers for the ROCm VMM command-buffer
-// optimizations, exposed for unit testing. Production code calls the cached
-// wrappers defined in the .cc; these take the raw env value explicitly so the
-// decision logic can be tested without process-global state.
+// Internal, pure helpers that apply the ROCm platform gating to the VMM
+// command-buffer DebugOptions flags, exposed for unit testing. The flag values
+// come from `DebugOptions` (xla_gpu_command_buffer_vmm_*); these helpers only
+// encode the ROCm-only policy so it can be tested without a DebugOptions or
+// hardware.
 namespace vmm_internal {
 
-// Whether per-slot skip-remap is enabled for `platform_name`, given the raw
-// XLA_VMM_SKIP_REMAP value (`env_value == nullptr` means unset). ROCm-only:
-// default ON for ROCm, always OFF elsewhere.
-bool ParseVmmRemapSkipEnabled(absl::string_view platform_name,
-                              const char* env_value);
+// Whether per-slot skip-remap is enabled for `platform_name`, given the
+// xla_gpu_command_buffer_vmm_skip_remap flag value. ROCm-only: returns
+// `flag_enabled` on ROCm, always false elsewhere.
+bool VmmRemapSkipEnabled(absl::string_view platform_name, bool flag_enabled);
 
-// Copy-into-shadow byte threshold for `platform_name`, given the raw
-// XLA_VMM_TMP_COPY_THRESHOLD value (`env_value == nullptr` means unset).
-// ROCm-only; returns 0 (disabled) elsewhere and for empty/non-numeric values.
-uint64_t ParseVmmCopyThresholdBytes(absl::string_view platform_name,
-                                    const char* env_value);
+// Copy-into-shadow byte threshold for `platform_name`, given the
+// xla_gpu_command_buffer_vmm_copy_threshold_bytes flag value. ROCm-only:
+// returns the (non-negative) flag value on ROCm, 0 (disabled) elsewhere. A
+// negative flag value is clamped to 0.
+uint64_t VmmCopyThresholdBytes(absl::string_view platform_name,
+                               int64_t flag_threshold_bytes);
 
 }  // namespace vmm_internal
 
@@ -216,7 +217,8 @@ class GpuExecutableBufferAllocator {
     // across translation units. ROCm-only.
     std::vector<uint64_t> last_mapped_offsets ABSL_GUARDED_BY(mutex);
 
-    // ROCm copy-into-shadow (env XLA_VMM_TMP_COPY_THRESHOLD): small
+    // ROCm copy-into-shadow (flag
+    // xla_gpu_command_buffer_vmm_copy_threshold_bytes): small
     // command-buffer slices (tiny scale/scalar/metric buffers that churn their
     // address every step) are kept OUT of the VA reservation and instead given
     // a stable shadow device buffer here -- allocated once, fixed address baked
