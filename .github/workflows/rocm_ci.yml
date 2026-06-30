@@ -26,6 +26,11 @@ on:
         required: false
         default: 'rocm-dev-infra'
         type: string
+      runner_label:
+        description: 'Runner label for GPU jobs'
+        required: false
+        default: 'amd-do-linux-xla-gpu-gfx950-1'
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -47,7 +52,7 @@ jobs:
     needs: rocm-config
     if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' }}
     name: JAX Linux x86 AMD Instinct GPU
-    runs-on: amd-do-linux-xla-gpu-gfx950-1
+    runs-on: ${{ inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-1' }}
     timeout-minutes: 80
     env:
       DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
@@ -111,7 +116,7 @@ jobs:
   xla:
     needs: rocm-config
     name: XLA Linux x86 AMD Instinct GPU
-    runs-on: amd-do-linux-xla-gpu-gfx950-1
+    runs-on: ${{ inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-1' }}
     timeout-minutes: 220
     env:
       DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
