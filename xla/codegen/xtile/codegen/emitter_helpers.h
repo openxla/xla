@@ -142,16 +142,18 @@ class TileInfo {
       EmitterContext& ctx,
       const gpu::experimental::TiledHloInstruction& tiled_hlo);
 
-  // Tile offsets. Its size is equal to the rank of the output shape.
+  // Tile offsets in storage coordinates. Its size is equal to the rank of the
+  // output shape.
   mlir::ValueRange offsets() const { return offsets_; }
 
-  // Tile strides. Its size is equal to the rank of the output shape.
+  // Tile strides in storage coordinates. Its size is equal to the rank of the
+  // output shape.
   mlir::ArrayRef<int64_t> tile_strides() const { return tile_strides_; }
 
-  // The original shape of the tensor.
-  mlir::ArrayRef<int64_t> original_shape() const { return original_shape_; }
+  // The full tensor shape in storage coordinates.
+  mlir::ArrayRef<int64_t> storage_shape() const { return storage_shape_; }
 
-  // Tile sizes after padding to a power of 2 (Triton requirement).
+  // Tile sizes in storage coordinates after padding to a power of 2.
   mlir::ArrayRef<int64_t> padded_tile_sizes() const {
     return padded_tile_sizes_;
   }
@@ -178,7 +180,7 @@ class TileInfo {
  private:
   llvm::SmallVector<mlir::Value> offsets_;
   llvm::SmallVector<int64_t> tile_strides_;
-  llvm::SmallVector<int64_t> original_shape_;
+  llvm::SmallVector<int64_t> storage_shape_;
   llvm::SmallVector<int64_t> padded_tile_sizes_;
   llvm::SmallVector<int64_t> minor_to_major_layout_;
   mlir::Type storage_type_;
@@ -187,7 +189,7 @@ class TileInfo {
 
   TileInfo(llvm::SmallVector<mlir::Value> offsets,             //
            llvm::SmallVector<int64_t> tile_strides,            //
-           llvm::SmallVector<int64_t> original_shape,          //
+           llvm::SmallVector<int64_t> storage_shape,           //
            llvm::SmallVector<int64_t> padded_tile_sizes,       //
            llvm::SmallVector<int64_t> minor_to_major_layout,   //
            mlir::Type storage_type,                            //
@@ -196,7 +198,7 @@ class TileInfo {
            )
       : offsets_(std::move(offsets)),
         tile_strides_(std::move(tile_strides)),
-        original_shape_(std::move(original_shape)),
+        storage_shape_(std::move(storage_shape)),
         padded_tile_sizes_(std::move(padded_tile_sizes)),
         minor_to_major_layout_(std::move(minor_to_major_layout)),
         storage_type_(std::move(storage_type)),
@@ -234,7 +236,7 @@ bool IsTritonDotScaledOperandType(PrimitiveType type);
 bool IsPackedTritonDotScaledOperandType(PrimitiveType type);
 
 absl::StatusOr<llvm::SmallVector<int64_t>> GetStorageShape(
-    llvm::ArrayRef<int64_t> logical_shape, const Shape& shape);
+    llvm::ArrayRef<int64_t> logical_shape_dims, const Shape& logical_shape);
 
 // Get the value of the scalar constant's literal in a C++ ty˝pe.
 template <typename T>
