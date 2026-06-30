@@ -676,10 +676,6 @@ remote_rocm_configure = repository_rule(
     remotable = True,
     attrs = {
         "environ": attr.string_dict(),
-        "rocm_dist": attr.label(
-            doc = "Label to the rocm_dist directory from hipcc_configure " +
-                  "(e.g. @config_rocm_hipcc//rocm:rocm_dist).",
-        ),
         "_find_rocm_config": attr.label(
             default = Label("//third_party/gpus:find_rocm_config.py"),
         ),
