@@ -23,6 +23,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
@@ -46,7 +47,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 
@@ -265,7 +265,7 @@ TEST(GpuCliquesTest, SplitCliquesKeepsReorderedRanksOnCorrectExecutors) {
                        CreateExecutors(platform, 2));
   ASSERT_OK_AND_ASSIGN(Collectives * loopback_base,
                        CollectivesRegistry::Get("GPU", "loopback"));
-  auto* loopback = tsl::down_cast<GpuCollectives*>(loopback_base);
+  auto* loopback = absl::down_cast<GpuCollectives*>(loopback_base);
 
   GpuCliqueKey parent_key({kD0, kD1}, 2);
   DeviceGroups parent_group = {{kD0, kD1}};
@@ -300,7 +300,7 @@ TEST(GpuCliquesTest, SplitCliquesKeepsReorderedRanksOnCorrectExecutors) {
   for (size_t rank = 0; rank < 2; ++rank) {
     auto comm = (*child_cliques[rank])->comm(RankId(rank));
     ASSERT_TRUE(comm.has_value());
-    auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(*comm);
+    auto* gpu_comm = absl::down_cast<GpuCommunicator*>(*comm);
     EXPECT_EQ(gpu_comm->stream_executor(), child_executors[rank]);
     ASSERT_OK_AND_ASSIGN(size_t current_rank, gpu_comm->CurrentRank());
     EXPECT_EQ(current_rank, rank);
@@ -569,7 +569,7 @@ TEST(GpuCliquesTest, DifferentCollectivesProduceDifferentCliques) {
   // Acquire clique with loopback collectives for the same key.
   ASSERT_OK_AND_ASSIGN(Collectives * loopback_base,
                        CollectivesRegistry::Get("GPU", "loopback"));
-  auto* loopback = tsl::down_cast<GpuCollectives*>(loopback_base);
+  auto* loopback = absl::down_cast<GpuCollectives*>(loopback_base);
 
   std::vector<std::shared_ptr<LockableGpuClique::Lock>> loopback_cliques;
   {

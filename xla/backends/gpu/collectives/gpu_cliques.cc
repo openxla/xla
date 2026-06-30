@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/hash.h"
@@ -624,28 +625,21 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
     };
 
     // SplitCommunicators treats parent_comms, keys, and ranks as parallel
-    // arrays. Keep all three in child-rank order so that each parent
+    // arrays. Collect all three in child-rank order so that each parent
     // communicator stays paired with the device and rank of the same physical
-    // participant. Ordering parent_comms by parent rank while independently
-    // ordering ranks by child rank can bind a split communicator to the wrong
-    // StreamExecutor when the child clique permutes ranks.
-    std::vector<const RankPair*> sorted_rank_pairs(rank_pairs.begin(),
-                                                   rank_pairs.end());
-    absl::c_sort(sorted_rank_pairs, [](const RankPair* a, const RankPair* b) {
-      return a->second.rank < b->second.rank;
-    });
-
-    // Collect parent communicators we'll be splitting from, keys for creating
-    // new communicators, and device ranks in their common child-rank order.
+    // participant. Ordering parent_comms by parent rank while ordering ranks by
+    // child rank can bind a split communicator to the wrong StreamExecutor.
     std::vector<Communicator*> parent_comms;
     std::vector<RankId> keys;
     std::vector<DeviceRank> ranks;
-    parent_comms.reserve(sorted_rank_pairs.size());
-    keys.reserve(sorted_rank_pairs.size());
-    ranks.reserve(sorted_rank_pairs.size());
-    for (const RankPair* rank_pair : sorted_rank_pairs) {
-      RankId parent_rank = rank_pair->first;
-      const DeviceRank& device_rank = rank_pair->second;
+    parent_comms.reserve(rank_pairs.size());
+    keys.reserve(rank_pairs.size());
+    ranks.reserve(rank_pairs.size());
+    for (const RankPair* rank_pair :
+         tsl::SortedRange(rank_pairs, [](const RankPair* a, const RankPair* b) {
+           return a->second.rank < b->second.rank;
+         })) {
+      const auto& [parent_rank, device_rank] = *rank_pair;
       auto parent_comm = (*parent_clique)->comm(parent_rank);
       if (!parent_comm.has_value()) {
         return InvalidArgument(
