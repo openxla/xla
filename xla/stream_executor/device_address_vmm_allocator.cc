@@ -543,6 +543,9 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
   const bool multi_device = CurrentMultiDevice();
 
   absl::MutexLock lock(state->mu);
+  // Clang cannot propagate TryWithPendingReclaim's state.mu lock requirement
+  // into the try_reuse and try_fresh callbacks below, even though the helper
+  // invokes both only while holding the mutex.
   auto try_reuse = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS
       -> absl::StatusOr<std::optional<DeviceAddressBase>> {
     uint64_t rounded_size = RoundUpToGranularity(*state, size);
@@ -664,6 +667,9 @@ DeviceAddressVmmAllocator::Allocate(
   absl::MutexLock lock(state->mu);
   // First try to satisfy the request from a compatible pending deallocation
   // for the same reservation-derived returned allocator address.
+  // Clang cannot propagate TryWithPendingReclaim's state.mu lock requirement
+  // into the try_reuse and try_fresh callbacks below, even though the helper
+  // invokes both only while holding the mutex.
   auto try_reuse = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS
       -> absl::StatusOr<std::optional<DeviceAddressBase>> {
     if (!return_reservation_address) {
@@ -1117,8 +1123,8 @@ absl::Status DeviceAddressVmmAllocator::Map(int device_ordinal,
 
   absl::MutexLock lock(state->mu);
   auto resolve_source_record =
-      [&]()
-          ABSL_NO_THREAD_SAFETY_ANALYSIS -> absl::StatusOr<AllocationRecord*> {
+      [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(
+          state->mu) -> absl::StatusOr<AllocationRecord*> {
     auto allocation_it =
         state->records_by_allocator_address.find(addr.opaque());
     if (allocation_it == state->records_by_allocator_address.end() ||
@@ -1147,7 +1153,7 @@ absl::Status DeviceAddressVmmAllocator::Map(int device_ordinal,
         size, raw_allocation->address().size()));
   }
   auto reject_partial_overlap =
-      [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS -> absl::Status {
+      [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state->mu) -> absl::Status {
     if (auto overlap = FindOverlappingRecord(
             *state, reservation_address, /*include_allocator=*/true,
             /*include_reservation=*/true, /*include_active=*/true,
