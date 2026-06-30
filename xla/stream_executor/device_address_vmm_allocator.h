@@ -565,6 +565,47 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       MemoryReservation::ScopedMapping mapping, uint64_t allocated_size,
       bool multi_device) ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
+  struct MappedAllocateRequest {
+    MemoryReservation* reservation;
+    DeviceAddressBase reservation_address;
+    uint64_t allocation_size;
+    uint64_t reservation_offset;
+    uint64_t mapping_size;
+    bool multi_device;
+  };
+
+  // Reactivates a stale mapped allocation whose returned allocator address is
+  // the requested caller-owned reservation address.
+  absl::StatusOr<std::optional<DeviceAddressBase>>
+  TryReuseMappedAllocationAtReservationAddress(
+      PerDeviceState& state, const MappedAllocateRequest& request)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Reactivates a stale mapped allocation with both a separate allocator-owned
+  // returned address and an alias at the requested reservation address.
+  absl::StatusOr<std::optional<DeviceAddressBase>>
+  TryReuseMappedAllocationWithSeparateAddress(
+      PerDeviceState& state, const MappedAllocateRequest& request)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Waits for exact stale overlaps with the requested reservation range and
+  // rejects partial or active overlaps before a fresh mapping is installed.
+  absl::Status EnsureReservationAvailableForFreshMapping(
+      PerDeviceState& state, const MappedAllocateRequest& request)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Creates a mapped allocation that uses the caller-owned reservation address
+  // as its returned allocator address.
+  absl::StatusOr<DeviceAddressBase> CreateMappedAllocationAtReservationAddress(
+      PerDeviceState& state, const MappedAllocateRequest& request)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Creates a mapped allocation with a separate allocator-owned returned
+  // address and a non-owning alias in the caller-owned reservation.
+  absl::StatusOr<DeviceAddressBase> CreateMappedAllocationWithSeparateAddress(
+      PerDeviceState& state, const MappedAllocateRequest& request)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
   // Shared allocation retry policy. First calls `try_reuse` to reactivate
   // compatible pending state without blocking, then calls `try_fresh`. On
   // ResourceExhausted, it completes ready pending entries and, if needed, waits
