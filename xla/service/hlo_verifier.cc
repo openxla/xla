@@ -1939,6 +1939,73 @@ absl::Status CheckCallableInstructionThreadName(
 }
 }  // namespace
 
+absl::Status ShapeVerifier::CheckAsyncOpAliasConfig(
+    const HloInstruction* async_op) {
+  if (async_op->opcode() == HloOpcode::kAsyncUpdate ||
+      async_op->opcode() == HloOpcode::kAsyncDone) {
+    return absl::OkStatus();
+  }
+
+  CHECK(async_op->opcode() == HloOpcode::kAsyncStart);
+
+  const HloAsyncStartInstruction* async_start =
+      Cast<HloAsyncStartInstruction>(async_op);
+  HloComputation* async_computation = async_start->async_wrapped_computation();
+  ProgramShape computation_shape = async_computation->ComputeProgramShape();
+  std::vector<Shape> async_shapes;
+  async_shapes.reserve(async_start->shape().tuple_shapes().size());
+  async_shapes.push_back(
+      ShapeUtil::MakeTupleShape(computation_shape.parameters()));
+  async_shapes.push_back(computation_shape.result());
+  for (int i = 2; i < async_start->shape().tuple_shapes().size(); ++i) {
+    async_shapes.push_back(async_start->shape().tuple_shapes(i));
+  }
+  // async_shape is a tuple: { {params...}, result, original_context_states... }
+  Shape async_shape = ShapeUtil::MakeTupleShape(async_shapes);
+
+  for (const auto& pair : async_start->output_to_operand_aliasing()) {
+    int64_t operand_number = pair.second.first;
+    const ShapeIndex& operand_index = pair.second.second;
+    const ShapeIndex& output_index = pair.first;
+
+    TF_RET_CHECK(operand_number >= 0)
+        << "Negative operand number in aliasing config.";
+    TF_RET_CHECK(operand_number < async_computation->num_parameters())
+        << "Operand number " << operand_number
+        << " in aliasing config is out of bounds.";
+    TF_RET_CHECK(ShapeUtil::IndexIsValid(
+        async_computation->parameter_instruction(operand_number)->shape(),
+        operand_index))
+        << "Invalid aliasing operand shape index.";
+    TF_RET_CHECK(!output_index.empty()) << "Output index should not be empty.";
+    TF_RET_CHECK(ShapeUtil::IndexIsValid(async_shape, output_index))
+        << "Invalid aliasing output shape index.";
+
+    // TODO(phui): Is the following change OK?
+    const Shape& output_subshape =
+        ShapeUtil::GetSubshape(async_shape, output_index);
+    const Shape& operand_subshape = ShapeUtil::GetSubshape(
+        async_computation->parameter_instruction(operand_number)->shape(),
+        operand_index);
+    if (opts_.layout_sensitive) {
+      TF_RET_CHECK(
+          Shape::Equal().IgnoreBuffer()(operand_subshape, output_subshape))
+          << absl::Substitute("Different aliasing shapes: $0 vs $1",
+                              operand_subshape.ToString(/*print_layout=*/true),
+                              output_subshape.ToString(/*print_layout=*/true));
+    } else {
+      TF_RET_CHECK(
+          Shape::Equal().IgnoreDynamicDimension().IgnoreLayout().IgnoreBuffer()(
+              output_subshape, operand_subshape))
+          << absl::Substitute("Different aliasing shapes: $0 vs $1",
+                              operand_subshape.ToString(/*print_layout=*/true),
+                              output_subshape.ToString(/*print_layout=*/true));
+    }
+  }
+
+  return absl::OkStatus();
+}
+
 absl::Status ShapeVerifier::CheckAsyncOpOutputShape(
     const HloInstruction* async_op) {
   if (async_op->opcode() == HloOpcode::kAsyncStart ||
@@ -1999,35 +2066,7 @@ absl::Status ShapeVerifier::HandleAsyncStart(HloInstruction* async_start) {
     }
   }
 
-  for (const auto& pair : Cast<HloAsyncStartInstruction>(async_start)
-                              ->output_to_operand_aliasing()) {
-    TF_RET_CHECK(pair.second.first < async_start->operand_count())
-        << "Invalid aliasing operand index.";
-    TF_RET_CHECK(ShapeUtil::IndexIsValid(
-        async_start->operand(pair.second.first)->shape(), pair.second.second))
-        << "Invalid aliasing operand shape index.";
-    TF_RET_CHECK(ShapeUtil::IndexIsValid(async_start->shape(), pair.first))
-        << "Invalid aliasing output shape index.";
-    const Shape& output_subshape =
-        ShapeUtil::GetSubshape(async_start->shape(), pair.first);
-    const Shape& operand_subshape = ShapeUtil::GetSubshape(
-        async_start->operand(pair.second.first)->shape(), pair.second.second);
-    if (opts_.layout_sensitive) {
-      TF_RET_CHECK(
-          Shape::Equal().IgnoreBuffer()(operand_subshape, output_subshape))
-          << absl::Substitute("Different aliasing shapes: $0 vs $1",
-                              operand_subshape.ToString(/*print_layout=*/true),
-                              output_subshape.ToString(/*print_layout=*/true));
-    } else {
-      TF_RET_CHECK(
-          Shape::Equal().IgnoreDynamicDimension().IgnoreLayout().IgnoreBuffer()(
-              output_subshape, operand_subshape))
-          << absl::Substitute("Different aliasing shapes: $0 vs $1",
-                              operand_subshape.ToString(/*print_layout=*/true),
-                              output_subshape.ToString(/*print_layout=*/true));
-    }
-  }
-  return absl::OkStatus();
+  return CheckAsyncOpAliasConfig(async_start);
 }
 
 absl::Status ShapeVerifier::HandleAsyncUpdate(HloInstruction* async_update) {

@@ -301,7 +301,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_enable_enzyme_comms_opt(false);
   opts.set_xla_recognize_reduction_optimization_level(0);
 
-  opts.set_xla_gpu_enable_dynamic_slice_fusion(false);
+  opts.set_xla_gpu_enable_dynamic_slice_fusion(true);
   opts.set_xla_gpu_enable_dus_accumulator_zero_init_elimination(false);
   opts.set_xla_gpu_experimental_dynamic_slice_fusion_verify_offsets(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
@@ -521,7 +521,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_print_compilation_stats(false);
 
   opts.set_xla_gpu_enable_pdl(true);
-  opts.set_xla_gpu_enable_pdl_launch(false);
+  opts.set_xla_gpu_enable_pdl_launch(true);
   opts.set_xla_gpu_command_buffer_update_mode(DebugOptions::ALWAYS_UPDATE);
 
   opts.set_xla_gpu_experimental_aot_compiled_thunks(true);

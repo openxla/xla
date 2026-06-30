@@ -1,4 +1,4 @@
-/* Copyright 2021 The OpenXLA Authors.
+/* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,17 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_STREAM_EXECUTOR_TPU_TPU_PLATFORM_ID_H_
-#define XLA_STREAM_EXECUTOR_TPU_TPU_PLATFORM_ID_H_
+#ifndef XLA_UTIL_BUFFER_SLICE_MERGE_H_
+#define XLA_UTIL_BUFFER_SLICE_MERGE_H_
 
-#include "xla/stream_executor/platform_id.h"
+#include <vector>
 
-namespace tensorflow {
-namespace tpu {
+#include "absl/types/span.h"
+#include "xla/service/buffer_assignment.h"
 
-::stream_executor::PlatformId GetTpuPlatformId();
+namespace xla {
 
-}  // namespace tpu
-}  // namespace tensorflow
+// Merges overlapping buffer slices belonging to the same BufferAllocation.
+// The returned vector contains non-overlapping slices sorted by offset.
+std::vector<BufferAllocation::Slice> MergeOverlappingSlices(
+    absl::Span<const BufferAllocation::Slice> slices);
 
-#endif  // XLA_STREAM_EXECUTOR_TPU_TPU_PLATFORM_ID_H_
+}  // namespace xla
+
+#endif  // XLA_UTIL_BUFFER_SLICE_MERGE_H_
