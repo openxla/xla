@@ -99,7 +99,7 @@ class GpuExecutableBufferAllocator {
   // lock for the executable/executor remapping state. Selected command-buffer
   // allocations are backed by physical VMM allocations while execution sees
   // stable reserved VA addresses. Command-buffer VA remapping is inactive when
-  // `command_buffer_active()` is false.
+  // `va_remap_enabled()` is false.
   class ExecutionScope {
    public:
     ExecutionScope(const ExecutionScope&) = delete;
@@ -107,7 +107,7 @@ class GpuExecutableBufferAllocator {
     ExecutionScope(ExecutionScope&&) = default;
     ExecutionScope& operator=(ExecutionScope&&) = default;
 
-    bool command_buffer_active() const { return remapping_ != nullptr; }
+    bool va_remap_enabled() const { return remapping_ != nullptr; }
     bool address_policy_active() const { return address_policy_active_; }
 
     // Builds the BufferAllocations for an execution. Entry-computation
