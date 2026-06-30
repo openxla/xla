@@ -698,8 +698,8 @@ ENTRY e {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
   EXPECT_THAT(
       CreateXTileIrAndFileCheck(std::move(module), "triton_dot", ""),
       absl_testing::StatusIs(
@@ -737,8 +737,8 @@ ENTRY e {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
   EXPECT_THAT(CreateXTileIrAndFileCheck(std::move(module), "triton_dot", R"(
 CHECK: #[[$LHS_OFFSET_MAP:.*]] = #xla.indexing_map<"(pid_0) -> (pid_0 * 128 + 2), domain: pid_0 in [0, 1]">
 CHECK: xtile.entry_func @xtile_dialect_fn(%[[LHS_ARG:[A-Za-z0-9_]*]]: memref<128x130xi8>

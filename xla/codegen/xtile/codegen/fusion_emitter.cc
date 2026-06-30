@@ -272,12 +272,11 @@ absl::StatusOr<TensorValue> EmitTiledBitcast(
     TensorValue input) {
   Shape input_shape = tiled_bitcast.hlo()->operand(0)->shape();
   const Shape& output_shape = tiled_bitcast.hlo()->shape();
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       SmallVector<int64_t> input_tile_sizes,
       GetStorageShape(tiled_bitcast.operand(0)->tile_sizes(), input_shape));
-  TF_ASSIGN_OR_RETURN(
-      SmallVector<int64_t> output_tile_sizes,
-      GetStorageShape(tiled_bitcast.tile_sizes(), output_shape));
+  ASSIGN_OR_RETURN(SmallVector<int64_t> output_tile_sizes,
+                   GetStorageShape(tiled_bitcast.tile_sizes(), output_shape));
   // If the bitcast changes the element type to an element type of the same
   // bitwidth, we need to emit a ttir::BitcastOp.
   if (input_shape.element_type() != output_shape.element_type()) {
@@ -1063,8 +1062,8 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
   }
 
   if (hlo->opcode() == HloOpcode::kReshape) {
-    TF_ASSIGN_OR_RETURN(SmallVector<int64_t> storage_tile_sizes,
-                        GetStorageShape(tiled_hlo.tile_sizes(), hlo->shape()));
+    ASSIGN_OR_RETURN(SmallVector<int64_t> storage_tile_sizes,
+                     GetStorageShape(tiled_hlo.tile_sizes(), hlo->shape()));
     return EmitTiledReshape(b, storage_tile_sizes,
                             values[tiled_hlo.operand(0)]);
   }
@@ -1076,8 +1075,8 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
   if (hlo->opcode() == HloOpcode::kTranspose) {
     auto transpose =
         ::xla::Cast<const HloTransposeInstruction>(tiled_hlo.hlo());
-    TF_ASSIGN_OR_RETURN(SmallVector<int64_t> storage_tile_sizes,
-                        GetStorageShape(tiled_hlo.tile_sizes(), hlo->shape()));
+    ASSIGN_OR_RETURN(SmallVector<int64_t> storage_tile_sizes,
+                     GetStorageShape(tiled_hlo.tile_sizes(), hlo->shape()));
     return EmitTiledTranspose(b, storage_tile_sizes,
                               llvm::to_vector(transpose->dimensions()),
                               values[tiled_hlo.operand(0)]);

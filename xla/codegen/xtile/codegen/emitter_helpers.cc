@@ -278,8 +278,8 @@ absl::StatusOr<SmallVector<int64_t>> GetStorageShape(
         absl::StrCat("Packed storage dimension is out of bounds for shape ",
                      shape.ToString()));
   }
-  TF_ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
-                      PackedElementsPerByte(shape.element_type()));
+  ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
+                   PackedElementsPerByte(shape.element_type()));
   if (storage_shape[packed_dim] % packed_elements_per_byte != 0) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Packed storage dimension must be divisible by ",
@@ -310,8 +310,8 @@ absl::Status CheckPackedStorageTile(const Shape& shape,
         absl::StrCat("Packed storage requires unit stride in dimension ",
                      packed_dim, " for shape ", shape.ToString()));
   }
-  TF_ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
-                      PackedElementsPerByte(shape.element_type()));
+  ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
+                   PackedElementsPerByte(shape.element_type()));
   if (!tile_offsets[packed_dim].IsMultipleOf(packed_elements_per_byte)) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Packed storage requires offset in dimension ", packed_dim,
@@ -760,10 +760,10 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
     const TiledHloInstruction& tiled_hlo) {
   const Shape& shape = tiled_hlo.hlo()->shape();
   auto tile_strides = tiled_hlo.tile_strides();
-  TF_ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
-                      tiled_hlo.tile_offsets_indexing());
+  ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
+                   tiled_hlo.tile_offsets_indexing());
   auto tile_offsets = tile_offsets_indexing.GetSymbolicMap().GetResults();
-  TF_RETURN_IF_ERROR(CheckPackedStorageTile(shape, tile_strides, tile_offsets));
+  RETURN_IF_ERROR(CheckPackedStorageTile(shape, tile_strides, tile_offsets));
   ASSIGN_OR_RETURN(SmallVector<Value> offsets,
                    ComputeOffsetsForTile(b, pid, runtime_values, tiled_hlo));
 
@@ -771,9 +771,9 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
   auto padded_tile_sizes = GetPaddedTileSizes(tiled_hlo.tile_sizes());
   SmallVector<int64_t> original_shape;
   original_shape.assign(shape.dimensions().begin(), shape.dimensions().end());
-  TF_ASSIGN_OR_RETURN(original_shape, GetStorageShape(original_shape, shape));
-  TF_ASSIGN_OR_RETURN(padded_tile_sizes,
-                      GetStorageShape(padded_tile_sizes, shape));
+  ASSIGN_OR_RETURN(original_shape, GetStorageShape(original_shape, shape));
+  ASSIGN_OR_RETURN(padded_tile_sizes,
+                   GetStorageShape(padded_tile_sizes, shape));
 
   ASSIGN_OR_RETURN(Type expected_element_type,
                    PrimitiveTypeToMlirType(b, shape.element_type()));
@@ -783,8 +783,8 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
   if (IsPackedTritonDotScaledOperandType(shape.element_type()) &&
       !minor_to_major_layout.empty()) {
     int64_t packed_dim = minor_to_major_layout.front();
-    TF_ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
-                        PackedElementsPerByte(shape.element_type()));
+    ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
+                     PackedElementsPerByte(shape.element_type()));
     offsets[packed_dim] = DivideIndexByPackedElementsPerByte(
         b, offsets[packed_dim], packed_elements_per_byte);
   }
@@ -800,7 +800,7 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
   const Shape& shape = tiled_hlo.hlo()->shape();
   ASSIGN_OR_RETURN(SmallVector<int64_t> tile_strides,
                    tiled_hlo.tile().GetStaticTileStrides());
-  TF_RETURN_IF_ERROR(
+  RETURN_IF_ERROR(
       CheckPackedStorageTile(shape, tile_strides, tiled_hlo.tile().offsets()));
   ASSIGN_OR_RETURN(
       SmallVector<Value> offsets,
@@ -813,8 +813,8 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
 
   SmallVector<int64_t> original_shape;
   original_shape.assign(shape.dimensions().begin(), shape.dimensions().end());
-  TF_ASSIGN_OR_RETURN(original_shape, GetStorageShape(original_shape, shape));
-  TF_ASSIGN_OR_RETURN(tile_sizes, GetStorageShape(tile_sizes, shape));
+  ASSIGN_OR_RETURN(original_shape, GetStorageShape(original_shape, shape));
+  ASSIGN_OR_RETURN(tile_sizes, GetStorageShape(tile_sizes, shape));
 
   ASSIGN_OR_RETURN(
       Type expected_element_type,
@@ -843,8 +843,8 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
   if (IsPackedTritonDotScaledOperandType(shape.element_type()) &&
       !minor_to_major_layout.empty()) {
     int64_t packed_dim = minor_to_major_layout.front();
-    TF_ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
-                        PackedElementsPerByte(shape.element_type()));
+    ASSIGN_OR_RETURN(int64_t packed_elements_per_byte,
+                     PackedElementsPerByte(shape.element_type()));
     offsets[packed_dim] = DivideIndexByPackedElementsPerByte(
         emitter_ctx.b(), offsets[packed_dim], packed_elements_per_byte);
   }
@@ -1052,8 +1052,8 @@ absl::StatusOr<mlir::MemRefType> GetMemRefType(const Shape& shape,
   mlir::Type storage_type = StorageType(element_type);
   SmallVector<int64_t> logical_shape(shape.dimensions().begin(),
                                      shape.dimensions().end());
-  TF_ASSIGN_OR_RETURN(SmallVector<int64_t> storage_shape,
-                      GetStorageShape(logical_shape, shape));
+  ASSIGN_OR_RETURN(SmallVector<int64_t> storage_shape,
+                   GetStorageShape(logical_shape, shape));
 
   // Don't add any attribute for default layouts as it adds a lot of noise to
   // the printed IR.
