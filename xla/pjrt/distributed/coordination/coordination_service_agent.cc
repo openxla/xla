@@ -1004,7 +1004,7 @@ absl::Status CoordinationServiceAgent::ReportError(const absl::Status& error) {
     }
   }
   SetError(MakeCoordinationError(error, task_id_, /*is_reported_error=*/true));
-  LOG(INFO) << "Reporting error to coordination service: " << error;
+  VLOG(5) << "Reporting error to coordination service: " << error;
 
   ReportErrorToServiceRequest request;
   request.set_error_code(error.raw_code());
