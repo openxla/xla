@@ -633,6 +633,37 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     bool is_active = false;
   };
 
+  // Immutable inputs shared by the Map() preparation and installation
+  // helpers.
+  struct MapRequest {
+    DeviceAddressBase source_address;
+    MemoryReservation* reservation = nullptr;
+    uint64_t reservation_offset = 0;
+    uint64_t size = 0;
+    DeviceAddressBase reservation_address;
+  };
+
+  // Result of inspecting the requested Map() target while holding state.mu.
+  // A stale record is consumed immediately for kReactivateStale; a pending key
+  // is copied out before kWait releases state.mu.
+  struct MapTargetEvaluation {
+    enum class Action { kInstallFresh, kReactivateStale, kWait };
+
+    Action action;
+    AllocationRecord* stale_record = nullptr;
+    std::optional<PendingDeallocationKey> pending_completion_key;
+  };
+
+  // Result of preparing a Map() target. kInstallFresh carries the current
+  // source record; kReusedStaleMapping means preparation already reactivated
+  // the requested mapping.
+  struct PreparedMapTarget {
+    enum class Action { kInstallFresh, kReusedStaleMapping };
+
+    Action action;
+    AllocationRecord* source_record = nullptr;
+  };
+
   // Finds a tracked allocator or reservation range that overlaps `address`.
   // `exact_only` returns only identical ranges; `partial_only` returns only
   // non-identical overlapping ranges; both false returns any overlap.
@@ -640,6 +671,45 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       PerDeviceState& state, DeviceAddressBase address, bool include_allocator,
       bool include_reservation, bool include_active, bool include_stale,
       bool exact_only, bool partial_only) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Resolves an active allocator address to its allocation record.
+  absl::StatusOr<AllocationRecord*> ResolveMapSourceRecord(
+      PerDeviceState& state, DeviceAddressBase source_address) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Validates that `size` fits in the source record's physical allocation.
+  absl::Status ValidateMapSourceSize(PerDeviceState& state,
+                                     const AllocationRecord& source_record,
+                                     uint64_t size) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Resolves and validates the Map() source before target preparation starts.
+  absl::StatusOr<AllocationRecord*> ResolveAndValidateMapSource(
+      PerDeviceState& state, DeviceAddressBase source_address,
+      uint64_t size) const ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Rejects non-identical overlaps with any active or stale tracked range.
+  absl::Status CheckNoPartialReservationOverlap(
+      PerDeviceState& state, DeviceAddressBase reservation_address) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Determines whether Map() can install a fresh mapping, reactivate a stale
+  // mapping, or must wait for a conflicting pending operation.
+  absl::StatusOr<MapTargetEvaluation> EvaluateMapTarget(
+      PerDeviceState& state, const MapRequest& request,
+      AllocationRecord& source_record) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Resolves conflicts for a Map() request. Every wait is followed by a fresh
+  // source lookup and validation because waiting temporarily releases state.mu.
+  absl::StatusOr<PreparedMapTarget> PrepareMapTarget(PerDeviceState& state,
+                                                     const MapRequest& request)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Installs and records a fresh reservation-address alias.
+  absl::Status InstallMapAlias(PerDeviceState& state, const MapRequest& request,
+                               AllocationRecord& source_record)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // UnMap/deferred teardown helpers.
