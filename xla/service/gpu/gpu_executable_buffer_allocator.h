@@ -222,7 +222,7 @@ class GpuExecutableBufferAllocator {
     // a stable shadow device buffer here -- allocated once, fixed address baked
     // into the command buffer -- and refreshed with a stream-ordered D2D copy
     // each step (real->shadow before execute, shadow->real after) rather than
-    // an expensive hipMemUnmap/Map/SetAccess. Keyed by allocation index; kept
+    // an hipMemUnmap/Map/SetAccess round-trip. Keyed by allocation index; kept
     // for the run's lifetime. See VmmCopyThresholdBytes().
     absl::flat_hash_map<BufferAllocation::Index, se::DeviceAddressBase>
         small_shadow ABSL_GUARDED_BY(mutex);

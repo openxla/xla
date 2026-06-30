@@ -117,15 +117,15 @@ uint64_t RoundUpToGranularity(uint64_t size, uint64_t granularity) {
 
 // Whether the per-slot skip-remap booking path is enabled for `platform_name`.
 //
-// On ROCm the VA unmap (hipMemUnmap) is the dominant per-step cost (~150us,
-// size-independent) while the steady-state command-buffer execution remaps the
-// SAME physical buffers into the SAME reservation slots every step. Driving the
-// already-tested se::MemoryReservation::ScopedMapping::Remap() with a per-slot
-// change cache lets unchanged slots keep their mapping (no unmap/map/SetAccess),
-// and skips the unmap-event sync entirely when nothing changed.
+// The steady-state command-buffer execution remaps the SAME physical buffers
+// into the SAME reservation slots every step, so the per-step VA unmap/remap is
+// redundant work. Driving the already-tested
+// se::MemoryReservation::ScopedMapping::Remap() with a per-slot change cache
+// lets unchanged slots keep their mapping (no unmap/map/SetAccess), and skips
+// the unmap-event sync entirely when nothing changed.
 //
-// ROCm-only by design: the CUDA path (where unmap is cheap) keeps its existing
-// full reset()+MapTo() behavior unchanged. Set XLA_VMM_SKIP_REMAP=0 to force the
+// ROCm-only by design: other platforms keep their existing full
+// reset()+MapTo() behavior unchanged. Set XLA_VMM_SKIP_REMAP=0 to force the
 // legacy path on ROCm for A/B measurement.
 bool VmmRemapSkipEnabled(absl::string_view platform_name) {
   if (platform_name != "ROCM") {
@@ -141,11 +141,11 @@ bool VmmRemapSkipEnabled(absl::string_view platform_name) {
 // Size threshold (bytes) for the ROCm copy-into-shadow path. Command-buffer
 // slices with size <= this value bypass VA remapping: they get a stable shadow
 // buffer (mapped once) and are refreshed with a stream-ordered D2D copy each
-// step instead of an hipMemUnmap/Map/SetAccess round-trip (which on ROCm costs
-// ~2-4ms even for tiny buffers and dominates the per-step host time for the
-// swarm of small optimizer/RNG jits). 0 (default) disables the path entirely,
-// so the CUDA path and the default ROCm behavior are unchanged. >0 = byte
-// threshold. (A future "auto" mode could calibrate the copy-vs-remap breakeven.)
+// step instead of an hipMemUnmap/Map/SetAccess round-trip. This targets the
+// small slices (scale/scalar/metric buffers) that change address every step.
+// 0 (default) disables the path entirely, so other platforms and the default
+// ROCm behavior are unchanged. >0 = byte threshold. (A future "auto" mode could
+// calibrate the copy-vs-remap threshold.)
 uint64_t VmmCopyThresholdBytes(absl::string_view platform_name) {
   if (platform_name != "ROCM") {
     return 0;
@@ -521,7 +521,7 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
       if (offset_it == allocation_va_offsets.end()) {
         // Small command-buffer slices bypass VA remapping: bake a stable shadow
         // address into the command buffer and refresh it with a D2D copy each
-        // step (trades one cheap copy for an expensive unmap/map/SetAccess).
+        // step instead of an unmap/map/SetAccess round-trip.
         if (is_small_copy_slice(original_buffer.size()) &&
             owner_->command_buffer_allocation_indexes_.contains(i)) {
           if (original_buffer.is_null()) {
@@ -674,9 +674,9 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithVaRemapping(
       // changed == 0: steady state. Keep the existing mapping untouched; no
       // unmap, no map, no SetAccess, and no unmap-event sync.
     } else {
-      // Legacy / first-step path (also the unchanged CUDA behavior): wait for
-      // any prior GPU use of the VA range, drop the old mapping, then map the
-      // full contiguous range in a single MapTo call.
+      // Legacy / first-step path (also the unchanged non-ROCm behavior): wait
+      // for any prior GPU use of the VA range, drop the old mapping, then map
+      // the full contiguous range in a single MapTo call.
       if (va_ranges_->scoped_mapping.has_value()) {
         RETURN_IF_ERROR(va_ranges_->unmap_event->Synchronize());
         va_ranges_->scoped_mapping.reset();
