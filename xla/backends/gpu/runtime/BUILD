@@ -306,7 +306,6 @@ cc_library(
         ":while_thunk",
         "//xla:status_macros",
         "//xla:util",
-        "//xla:xla_proto_cc",
         "//xla/runtime:buffer_use",
         "//xla/runtime:resource_use",
         "//xla/tsl/platform:status_macros",

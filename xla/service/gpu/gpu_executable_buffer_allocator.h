@@ -57,7 +57,6 @@ class ThunkExecutor;
 // Owns executable-scoped buffer allocation state for one GpuExecutable.
 class GpuExecutableBufferAllocator {
  private:
-  struct MemoryReservationAlias;
   struct Remapping;
 
  public:
@@ -158,7 +157,7 @@ class GpuExecutableBufferAllocator {
     bool ShouldRemapAllocation(BufferAllocation::Index index) const;
     absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> AllocateBuffer(
         int device_ordinal, const BufferAllocation& allocation,
-        int64_t buffer_size, bool return_reservation_address);
+        int64_t buffer_size);
     absl::StatusOr<se::DeviceAddressBase> BufferForAllocation(
         ParameterBufferResolver get_parameter_buffer,
         const BufferAllocToDeviceMemoryMap* globals,
@@ -167,28 +166,19 @@ class GpuExecutableBufferAllocator {
         int64_t arg_idx,
         const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
             allocate_granularity);
-    absl::Status UpdateAllocationAddressPolicy();
     std::optional<absl::Span<const BufferAllocation::Index>>
     GetPersistentAllocIndices() const;
-    absl::StatusOr<BufferAllocations> BuildExecutionBufferAllocations(
-        const BufferAllocations& owning_buffer_allocations, int device_ordinal);
-    absl::Status UnmapAliases(int device_ordinal);
-    absl::StatusOr<MemoryReservationAlias> GetReservationAlias(
-        BufferAllocation::Index idx) const;
 
     GpuExecutableBufferAllocator* owner_ = nullptr;
     Remapping* remapping_ = nullptr;
     se::DeviceAddressVmmAllocator* vmm_allocator_ = nullptr;
     std::unique_ptr<absl::MutexLock> remap_lock_;
     bool address_policy_active_ = false;
-    absl::flat_hash_map<BufferAllocation::Index, MemoryReservationAlias>
-        allocation_to_reservation_aliases_;
-    std::vector<MemoryReservationAlias> aliases_to_unmap_;
   };
 
   static absl::StatusOr<CommandBufferAllocationIndexes>
   CollectCommandBufferAllocationIndexes(
-      ThunkExecutor* thunk_executor,
+      const ThunkExecutor* thunk_executor,
       absl::Span<const BufferAllocation* const> allocations,
       DebugOptions::CommandBufferUpdateMode update_mode);
 
@@ -196,8 +186,7 @@ class GpuExecutableBufferAllocator {
       absl::string_view module_name,
       absl::Span<const BufferAllocation* const> allocations,
       const Shape& result_shape, const DebugOptions* debug_options,
-      ThunkExecutor* thunk_executor,
-      AllocationIndexSet returned_output_allocation_indexes);
+      ThunkExecutor* thunk_executor);
   ~GpuExecutableBufferAllocator();
 
   size_t command_buffer_allocation_count() const {
@@ -213,12 +202,6 @@ class GpuExecutableBufferAllocator {
       se::DeviceAddressAllocator* memory_allocator, int device_ordinal);
 
  private:
-  struct MemoryReservationAlias {
-    uint64_t reservation_offset = 0;
-    uint64_t size = 0;
-    se::DeviceAddressBase reservation_address;
-  };
-
   struct Remapping {
     absl::Mutex mutex;
     uint64_t granularity = 0;
@@ -227,9 +210,6 @@ class GpuExecutableBufferAllocator {
         allocation_to_reservation_offset;
     std::unique_ptr<se::MemoryReservation> va_reservation;
     se::DeviceAddressVmmAllocator* vmm_allocator = nullptr;
-    std::optional<std::vector<BufferAllocation::Index>>
-        policy_persistent_alloc_indices;
-    std::optional<AllocationIndexSet> policy_va_remapped_index_set;
 
     absl::StatusOr<uint64_t> GetReservationOffset(
         BufferAllocation::Index idx) const;
@@ -240,7 +220,6 @@ class GpuExecutableBufferAllocator {
   Shape result_shape_;
   const DebugOptions* debug_options_ = nullptr;
   DebugOptions::CommandBufferUpdateMode update_mode_;
-  AllocationIndexSet returned_output_allocation_indexes_;
   AllocationIndexSet command_buffer_persistent_allocation_indexes_;
   std::vector<BufferAllocation::Index> command_buffer_persistent_alloc_indices_;
   AllocationIndexSet command_buffer_va_remapped_allocation_indexes_;
