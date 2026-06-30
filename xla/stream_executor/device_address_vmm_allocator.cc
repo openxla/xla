@@ -801,10 +801,10 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
 
   absl::MutexLock lock(state->mu);
   // Clang cannot propagate TryWithPendingReclaim's state.mu lock requirement
-  // into the try_reuse and try_fresh callbacks below, even though the helper
-  // invokes both only while holding the mutex.
-  auto try_reuse = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS
-      -> absl::StatusOr<std::optional<DeviceAddressBase>> {
+  // into its callbacks. AssertHeld makes that invariant explicit within each
+  // independently analyzed lambda.
+  auto try_reuse = [&]() -> absl::StatusOr<std::optional<DeviceAddressBase>> {
+    state->mu.AssertHeld();
     uint64_t rounded_size = RoundUpToGranularity(*state, size);
     for (auto it = state->pending_deallocations.begin();
          it != state->pending_deallocations.end(); ++it) {
@@ -834,9 +834,8 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
 
     return std::optional<DeviceAddressBase>();
   };
-  auto try_fresh =
-      [&]()
-          ABSL_NO_THREAD_SAFETY_ANALYSIS -> absl::StatusOr<DeviceAddressBase> {
+  auto try_fresh = [&]() -> absl::StatusOr<DeviceAddressBase> {
+    state->mu.AssertHeld();
     uint64_t rounded_size = RoundUpToGranularity(*state, size);
     if (state->pa_allocated + rounded_size > state->pa_budget) {
       return absl::StatusOr<DeviceAddressBase>(
@@ -927,18 +926,17 @@ DeviceAddressVmmAllocator::Allocate(
 
   absl::MutexLock lock(state->mu);
   // Clang cannot propagate TryWithPendingReclaim's state.mu lock requirement
-  // into these adapters, even though the helper invokes them only while
-  // holding the mutex. The stateful work stays in lock-annotated helpers.
-  auto try_reuse = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS
-      -> absl::StatusOr<std::optional<DeviceAddressBase>> {
+  // into its callbacks. AssertHeld makes that invariant explicit within each
+  // independently analyzed lambda; stateful work stays in annotated helpers.
+  auto try_reuse = [&]() -> absl::StatusOr<std::optional<DeviceAddressBase>> {
+    state->mu.AssertHeld();
     if (return_reservation_address) {
       return TryReuseMappedAllocationAtReservationAddress(*state, request);
     }
     return TryReuseMappedAllocationWithSeparateAddress(*state, request);
   };
-  auto try_fresh =
-      [&]()
-          ABSL_NO_THREAD_SAFETY_ANALYSIS -> absl::StatusOr<DeviceAddressBase> {
+  auto try_fresh = [&]() -> absl::StatusOr<DeviceAddressBase> {
+    state->mu.AssertHeld();
     RETURN_IF_ERROR(EnsureReservationAvailableForFreshMapping(*state, request));
     if (return_reservation_address) {
       return CreateMappedAllocationAtReservationAddress(*state, request);
