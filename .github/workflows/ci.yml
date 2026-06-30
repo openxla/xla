@@ -135,12 +135,10 @@ jobs:
           path: ${{ matrix.job_info.repo }}
           persist-credentials: false
       - name: Checking out rules_ml_toolchain # TODO:  remove once jax is migrated to the latest rules_ml_toolchain changes
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          repository: google-ml-infra/rules_ml_toolchain
-          ref: b11745590f513ec55b32e2d126073576fde18c71
-          path: openxla/rules_ml_toolchain
-          persist-credentials: false
+        run: |
+          git clone https://github.com/google-ml-infra/rules_ml_toolchain.git openxla/rules_ml_toolchain
+          cd openxla/rules_ml_toolchain
+          git checkout b11745590f513ec55b32e2d126073576fde18c71
       - name: "Wait For Connection"
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
