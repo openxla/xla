@@ -600,14 +600,14 @@ message DebugOptions {
   // slots that actually changed are remapped). Has no effect on non-ROCm
   // platforms. Default true (ROCm); set false to force the legacy full-remap
   // path.
-  optional bool xla_gpu_command_buffer_vmm_skip_remap = 504;
+  optional bool xla_gpu_command_buffer_vmm_skip_remap = 505;
 
   // ROCm-only. Threshold in bytes for the VMM command-buffer "copy-into-shadow"
   // path: command-buffer slices at or below this size are kept out of the
   // contiguous VA reservation and given a stable shadow buffer refreshed with a
   // stream-ordered device-to-device copy instead of a per-step remap. 0 disables
   // the path (default). Has no effect on non-ROCm platforms.
-  optional int64 xla_gpu_command_buffer_vmm_copy_threshold_bytes = 505;
+  optional int64 xla_gpu_command_buffer_vmm_copy_threshold_bytes = 506;
 
   optional bool xla_gpu_copy_insertion_use_region_analysis = 236;
 
@@ -736,12 +736,6 @@ message DebugOptions {
   // If enabled, uses the libnvptxcompiler library to compile PTX to cuBIN.
   optional bool xla_gpu_enable_libnvptxcompiler = 269;
 
-  // Indicates whether to do LLVM module compilation in a parallelised way. When
-  // set, the number of threads depends on
-  // `xla_gpu_force_compilation_parallelism`.
-  optional bool xla_gpu_enable_llvm_module_compilation_parallelism = 268
-      [deprecated = true];
-
   // DEPRECATED: This flag is a no-op.
   optional bool xla_gpu_enable_nccl_clique_optimization = 244
       [deprecated = true];
@@ -754,6 +748,10 @@ message DebugOptions {
 
   // Enable PDL - Programmatic Dependent Launch.
   optional bool xla_gpu_enable_pdl = 460;
+
+  // Enable selective insertion of PDL launch instructions
+  // (on top of basic use of PDL without them enabled by xla_gpu_enable_pdl).
+  optional bool xla_gpu_enable_pdl_launch = 504;
 
   optional bool xla_gpu_enable_pipelined_all_gather = 227;
 
@@ -1661,7 +1659,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 506
+  // Next id: 507
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
@@ -1690,6 +1688,7 @@ message DebugOptions {
   reserved "xla_gpu_asm_extra_flags";
   reserved "xla_gpu_bef_executable";
   reserved "xla_gpu_bef_thunk";
+  reserved "xla_gpu_enable_llvm_module_compilation_parallelism";
   reserved "xla_gpu_collectives_use_persistent_cliques";
   reserved "xla_gpu_deterministic_reductions";
   reserved "xla_gpu_disable_multi_streaming";
