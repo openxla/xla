@@ -536,22 +536,8 @@ DeviceAddressVmmAllocator::EnsureReservationAvailableForFreshMapping(
     // Partial overlaps are never reusable: the allocator tracks whole mapped
     // ranges, so a caller must request the exact same reservation slice before
     // stale state can be waited on or reactivated.
-    if (auto overlap = FindOverlappingRecord(
-            state, request.reservation_address, /*include_allocator=*/true,
-            /*include_reservation=*/true, /*include_active=*/true,
-            /*include_stale=*/true, /*exact_only=*/false,
-            /*partial_only=*/true)) {
-      return absl::FailedPreconditionError(absl::StrFormat(
-          "reservation range at %p (%uB) partially overlaps %s %s range at "
-          "%p "
-          "(%uB); reservation mappings must be managed with the same full "
-          "range",
-          request.reservation_address.opaque(),
-          request.reservation_address.size(),
-          overlap->is_active ? "active" : "stale",
-          overlap->is_allocator ? "allocator" : "reservation",
-          overlap->tracked_address.opaque(), overlap->tracked_address.size()));
-    }
+    RETURN_IF_ERROR(
+        CheckNoPartialReservationOverlap(state, request.reservation_address));
     // An exact stale overlap means the previous mapping for this reservation
     // VA is still protected by stream order. Complete only that conflicting
     // stale record, then rescan because another thread may have changed the
