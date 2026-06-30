@@ -811,6 +811,8 @@ Build(
     ),
     override_module={
         "xla": f"{_GITHUB_WORKSPACE}/openxla/xla",
+        #TODO: remove as soon as jax is migrated to the latest rules_ml_toolchain changes
+        "rules_ml_toolchain": f"{_GITHUB_WORKSPACE}/openxla/rules_ml_toolchain",
     },
     options=_DEFAULT_BAZEL_OPTIONS,
     repo_env={"HERMETIC_PYTHON_VERSION": "3.12"},
