@@ -25,7 +25,6 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -142,16 +141,6 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecutionScope(
       remap_lock_(std::move(remap_lock)),
       address_policy_active_(address_policy_active) {}
 
-absl::StatusOr<GpuExecutableBufferAllocator::MemoryReservationAlias>
-GpuExecutableBufferAllocator::ExecutionScope::GetReservationAlias(
-    BufferAllocation::Index idx) const {
-  auto it = allocation_to_reservation_aliases_.find(idx);
-  if (it == allocation_to_reservation_aliases_.end()) {
-    return Internal("No VA reservation alias for allocation %d", idx);
-  }
-  return it->second;
-}
-
 absl::Status GpuExecutableBufferAllocator::ExecutionScope::PrepareReservation(
     const ServiceExecutableRunOptions* run_options, int device_ordinal,
     const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
@@ -206,20 +195,18 @@ absl::Status GpuExecutableBufferAllocator::ExecutionScope::PrepareReservation(
 
 bool GpuExecutableBufferAllocator::ExecutionScope::ShouldRemapAllocation(
     BufferAllocation::Index index) const {
-  if (!command_buffer_active() ||
-      !owner_->command_buffer_va_remapped_allocation_indexes_.contains(index)) {
-    return false;
-  }
-  if (!remapping_->policy_va_remapped_index_set.has_value()) {
-    return true;
-  }
-  return remapping_->policy_va_remapped_index_set->contains(index);
+  return command_buffer_active() &&
+         owner_->command_buffer_va_remapped_allocation_indexes_.contains(index);
 }
 
 absl::StatusOr<se::ScopedDeviceAddress<uint8_t>>
 GpuExecutableBufferAllocator::ExecutionScope::AllocateBuffer(
-    int device_ordinal, const BufferAllocation& allocation, int64_t buffer_size,
-    bool return_reservation_address) {
+    int device_ordinal, const BufferAllocation& allocation,
+    int64_t buffer_size) {
+  if (!allocation.IsPreallocatedTempBuffer()) {
+    return Internal("Allocation %d is not a preallocated temp buffer",
+                    allocation.index());
+  }
   if (!ShouldRemapAllocation(allocation.index())) {
     return Internal("Allocation %d is not command-buffer VA remapped",
                     allocation.index());
@@ -228,19 +215,10 @@ GpuExecutableBufferAllocator::ExecutionScope::AllocateBuffer(
                    remapping_->GetReservationOffset(allocation.index()));
   uint64_t mapping_size = RoundUpToGranularity(
       static_cast<uint64_t>(buffer_size), remapping_->granularity);
-  absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> buffer =
-      vmm_allocator_->Allocate(
-          device_ordinal, mapping_size, /*retry_on_failure=*/true,
-          /*memory_space=*/allocation.color(), remapping_->va_reservation.get(),
-          va_offset, mapping_size, return_reservation_address);
-  if (buffer.ok() && !return_reservation_address) {
-    se::DeviceAddressBase reservation_address =
-        remapping_->va_reservation->address().GetByteSlice(va_offset,
-                                                           mapping_size);
-    allocation_to_reservation_aliases_[allocation.index()] =
-        MemoryReservationAlias{va_offset, mapping_size, reservation_address};
-  }
-  return buffer;
+  return vmm_allocator_->Allocate(
+      device_ordinal, mapping_size, /*retry_on_failure=*/true,
+      /*memory_space=*/allocation.color(), remapping_->va_reservation.get(),
+      va_offset, mapping_size, /*return_reservation_address=*/true);
 }
 
 absl::StatusOr<se::DeviceAddressBase>
@@ -291,12 +269,7 @@ GpuExecutableBufferAllocator::ExecutionScope::BufferForAllocation(
     }
     absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> buffer;
     if (ShouldRemapAllocation(allocation.index())) {
-      bool return_reservation_address =
-          !(allocation.maybe_live_out() &&
-            owner_->returned_output_allocation_indexes_.contains(
-                allocation.index()));
-      buffer = AllocateBuffer(device_ordinal, allocation, buffer_size,
-                              return_reservation_address);
+      buffer = AllocateBuffer(device_ordinal, allocation, buffer_size);
     } else {
       buffer = memory_allocator->Allocate(device_ordinal, buffer_size,
                                           /*retry_on_failure=*/true,
@@ -370,15 +343,9 @@ GpuExecutableBufferAllocator::ExecutionScope::AllocateCopyProtectedOutputBuffer(
   int64_t allocation_size = ShapeUtil::ByteSizeOf(
       ShapeUtil::GetSubshape(owner_->result_shape_, index));
   absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> allocated_buffer;
-  if (ShouldRemapAllocation(allocation.index())) {
-    allocated_buffer =
-        AllocateBuffer(device_ordinal, allocation, allocation_size,
-                       /*return_reservation_address=*/false);
-  } else {
-    allocated_buffer = memory_allocator->Allocate(
-        device_ordinal, allocation_size, /*retry_on_failure=*/true,
-        /*memory_space=*/allocation.color());
-  }
+  allocated_buffer = memory_allocator->Allocate(
+      device_ordinal, allocation_size, /*retry_on_failure=*/true,
+      /*memory_space=*/allocation.color());
   if (!allocated_buffer.ok()) {
     return allocation_error(allocated_buffer.status());
   }
@@ -392,150 +359,10 @@ GpuExecutableBufferAllocator::ExecutionScope::AllocateCopyProtectedOutputBuffer(
   return result_buffer;
 }
 
-absl::Status
-GpuExecutableBufferAllocator::ExecutionScope::UpdateAllocationAddressPolicy() {
-  if (!command_buffer_active() ||
-      owner_->update_mode_ == DebugOptions::ALWAYS_UPDATE ||
-      remapping_->policy_persistent_alloc_indices.has_value()) {
-    return absl::OkStatus();
-  }
-
-  if (owner_->update_mode_ != DebugOptions::NEVER_UPDATE &&
-      owner_->update_mode_ != DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
-    return Internal("Unsupported command buffer update mode: %d",
-                    owner_->update_mode_);
-  }
-
-  remapping_->policy_persistent_alloc_indices.emplace(
-      owner_->command_buffer_persistent_allocation_indexes_.begin(),
-      owner_->command_buffer_persistent_allocation_indexes_.end());
-  remapping_->policy_va_remapped_index_set.emplace(
-      owner_->command_buffer_va_remapped_allocation_indexes_);
-  return absl::OkStatus();
-}
-
 std::optional<absl::Span<const BufferAllocation::Index>>
 GpuExecutableBufferAllocator::ExecutionScope::GetPersistentAllocIndices()
     const {
-  if (command_buffer_active()) {
-    if (!remapping_->policy_persistent_alloc_indices.has_value()) {
-      return std::nullopt;
-    }
-    return absl::MakeConstSpan(*remapping_->policy_persistent_alloc_indices);
-  }
   return absl::MakeConstSpan(owner_->command_buffer_persistent_alloc_indices_);
-}
-
-absl::StatusOr<BufferAllocations>
-GpuExecutableBufferAllocator::ExecutionScope::BuildExecutionBufferAllocations(
-    const BufferAllocations& owning_buffer_allocations, int device_ordinal) {
-  std::vector<se::DeviceAddressBase> execution_buffers;
-  execution_buffers.reserve(owning_buffer_allocations.size());
-
-  struct SourceMapping {
-    se::DeviceAddressBase source_address;
-    MemoryReservationAlias alias;
-  };
-  std::vector<SourceMapping> source_mappings;
-
-  for (BufferAllocation::Index i = 0; i < owning_buffer_allocations.size();
-       ++i) {
-    se::DeviceAddressBase owning_address =
-        owning_buffer_allocations.GetDeviceAddress(i);
-    if (!ShouldRemapAllocation(i)) {
-      execution_buffers.push_back(owning_address);
-      continue;
-    }
-    if (owning_address.is_null()) {
-      return Internal("Command buffer allocation %d has null address", i);
-    }
-
-    ASSIGN_OR_RETURN(uint64_t va_offset, remapping_->GetReservationOffset(i));
-
-    if (allocation_to_reservation_aliases_.contains(i)) {
-      ASSIGN_OR_RETURN(MemoryReservationAlias alias, GetReservationAlias(i));
-      execution_buffers.push_back(alias.reservation_address);
-      aliases_to_unmap_.push_back(alias);
-      continue;
-    }
-
-    const BufferAllocation& allocation = *owner_->allocations_[i];
-    if (!allocation.is_entry_computation_parameter()) {
-      se::DeviceAddressBase expected_reservation_address =
-          remapping_->va_reservation->address().GetByteSlice(
-              va_offset, owning_address.size());
-      if (!owning_address.IsSameAs(expected_reservation_address)) {
-        return Internal(
-            "Command buffer allocation %d expected reservation-backed "
-            "allocator address %p but got %p",
-            i, expected_reservation_address.opaque(), owning_address.opaque());
-      }
-      execution_buffers.push_back(owning_address);
-      continue;
-    }
-
-    bool reused_source_mapping = false;
-    for (const SourceMapping& source_mapping : source_mappings) {
-      if (source_mapping.source_address.IsSameAs(owning_address)) {
-        execution_buffers.push_back(source_mapping.alias.reservation_address);
-        reused_source_mapping = true;
-        break;
-      }
-    }
-    if (reused_source_mapping) {
-      continue;
-    }
-
-    uint64_t mapping_size =
-        RoundUpToGranularity(owning_address.size(), remapping_->granularity);
-    MemoryReservationAlias alias{
-        va_offset, mapping_size,
-        remapping_->va_reservation->address().GetByteSlice(va_offset,
-                                                           mapping_size)};
-    RETURN_IF_ERROR(vmm_allocator_->Map(device_ordinal, owning_address,
-                                        remapping_->va_reservation.get(),
-                                        alias.reservation_offset, alias.size));
-    XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
-        "VA remapping: Mapped allocation %d for module %s from %p to %p "
-        "size=%u",
-        i, owner_->module_name_, owning_address.opaque(),
-        alias.reservation_address.opaque(), alias.size);
-    aliases_to_unmap_.push_back(alias);
-    source_mappings.push_back(SourceMapping{owning_address, alias});
-    execution_buffers.push_back(alias.reservation_address);
-  }
-
-  return BufferAllocations(execution_buffers,
-                           owning_buffer_allocations.device_ordinal(),
-                           owning_buffer_allocations.memory_allocator());
-}
-
-absl::Status GpuExecutableBufferAllocator::ExecutionScope::UnmapAliases(
-    int device_ordinal) {
-  absl::Status status;
-  absl::flat_hash_set<void*> unmapped_aliases;
-  auto unmap_alias = [&](const MemoryReservationAlias& alias) {
-    if (alias.reservation_address.is_null()) {
-      return;
-    }
-    if (!unmapped_aliases.insert(alias.reservation_address.opaque()).second) {
-      return;
-    }
-    absl::Status unmap_status =
-        vmm_allocator_->UnMap(device_ordinal, remapping_->va_reservation.get(),
-                              alias.reservation_offset, alias.size);
-    if (!unmap_status.ok() && status.ok()) {
-      status = unmap_status;
-    }
-  };
-
-  for (const MemoryReservationAlias& alias : aliases_to_unmap_) {
-    unmap_alias(alias);
-  }
-  for (const auto& [_, alias] : allocation_to_reservation_aliases_) {
-    unmap_alias(alias);
-  }
-  return status;
 }
 
 absl::Status
@@ -553,47 +380,26 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithBufferAllocations(
     return execute(owning_buffer_allocations, GetPersistentAllocIndices());
   }
 
-  RETURN_IF_ERROR(UpdateAllocationAddressPolicy());
-  std::optional<absl::Span<const BufferAllocation::Index>>
-      persistent_alloc_indices = GetPersistentAllocIndices();
-  absl::StatusOr<BufferAllocations> execution_buffer_allocations_or =
-      BuildExecutionBufferAllocations(owning_buffer_allocations,
-                                      device_ordinal);
-  if (!execution_buffer_allocations_or.ok()) {
-    absl::Status build_status = execution_buffer_allocations_or.status();
-    absl::Status cleanup_status = UnmapAliases(device_ordinal);
-    RETURN_IF_ERROR(build_status);
-    RETURN_IF_ERROR(cleanup_status);
-    return absl::OkStatus();
-  }
-
-  BufferAllocations execution_buffer_allocations =
-      std::move(execution_buffer_allocations_or).value();
   XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
       "VA remapping: module %s executing with %d command buffer allocation(s)",
       owner_->module_name_,
       owner_->command_buffer_va_remapped_allocation_indexes_.size());
-
-  absl::Status execute_status =
-      execute(execution_buffer_allocations, persistent_alloc_indices);
-  absl::Status unmap_status = UnmapAliases(device_ordinal);
-
-  RETURN_IF_ERROR(execute_status);
-  RETURN_IF_ERROR(unmap_status);
-  return absl::OkStatus();
+  return execute(owning_buffer_allocations, GetPersistentAllocIndices());
 }
 
 absl::StatusOr<GpuExecutableBufferAllocator::CommandBufferAllocationIndexes>
 GpuExecutableBufferAllocator::CollectCommandBufferAllocationIndexes(
-    ThunkExecutor* thunk_executor,
+    const ThunkExecutor* thunk_executor,
     absl::Span<const BufferAllocation* const> allocations,
     DebugOptions::CommandBufferUpdateMode update_mode) {
   CommandBufferAllocationIndexes allocation_indexes;
-  if (thunk_executor == nullptr) {
+  if (update_mode == DebugOptions::DYNAMIC_ALLOCATE) {
     return allocation_indexes;
   }
-  if (update_mode != DebugOptions::NEVER_UPDATE &&
-      update_mode != DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
+  if (update_mode != DebugOptions::VMM_PERSISTENT_TEMP) {
+    return Internal("Unsupported command buffer update mode: %d", update_mode);
+  }
+  if (thunk_executor == nullptr) {
     return allocation_indexes;
   }
 
@@ -603,22 +409,18 @@ GpuExecutableBufferAllocator::CollectCommandBufferAllocationIndexes(
     if (command_buffer_thunk == nullptr) return absl::OkStatus();
     return command_buffer_thunk->WalkCommands(
         [&](const Command* command) -> absl::Status {
-          bool remap_command_allocs =
-              update_mode != DebugOptions::CAPTURE_CMD_NEVER_UPDATE ||
-              command->IsTracedCommand();
           for (const BufferUse& use : command->buffer_uses()) {
             BufferAllocation::Index index = use.slice().index();
-            if (index >= 0 && static_cast<size_t>(index) < allocations.size()) {
-              const BufferAllocation& allocation = *allocations[index];
-              if (allocation.size() == 0) {
-                continue;
-              }
-              if (allocation.is_constant()) {
-                allocation_indexes.persistent.insert(index);
-                continue;
-              }
+            if (index < 0 || static_cast<size_t>(index) >= allocations.size()) {
+              continue;
             }
-            if (remap_command_allocs) {
+            const BufferAllocation& allocation = *allocations[index];
+            if (allocation.size() == 0) {
+              continue;
+            }
+            if (allocation.is_constant()) {
+              allocation_indexes.persistent.insert(index);
+            } else if (allocation.IsPreallocatedTempBuffer()) {
               allocation_indexes.persistent.insert(index);
               allocation_indexes.va_remapped.insert(index);
             }
@@ -633,17 +435,14 @@ GpuExecutableBufferAllocator::GpuExecutableBufferAllocator(
     absl::string_view module_name,
     absl::Span<const BufferAllocation* const> allocations,
     const Shape& result_shape, const DebugOptions* debug_options,
-    ThunkExecutor* thunk_executor,
-    AllocationIndexSet returned_output_allocation_indexes)
+    ThunkExecutor* thunk_executor)
     : module_name_(module_name),
       allocations_(allocations.begin(), allocations.end()),
       result_shape_(result_shape),
       debug_options_(debug_options),
       update_mode_(debug_options_ != nullptr
                        ? debug_options_->xla_gpu_command_buffer_update_mode()
-                       : DebugOptions::ALWAYS_UPDATE),
-      returned_output_allocation_indexes_(
-          std::move(returned_output_allocation_indexes)) {
+                       : DebugOptions::DYNAMIC_ALLOCATE) {
   auto command_buffer_allocation_indexes =
       CollectCommandBufferAllocationIndexes(thunk_executor, allocations_,
                                             update_mode_);
@@ -690,25 +489,24 @@ GpuExecutableBufferAllocator::CreateExecutionScope(
                           /*address_policy_active=*/false);
   };
 
-  if (update_mode_ == DebugOptions::ALWAYS_UPDATE) {
+  if (update_mode_ == DebugOptions::DYNAMIC_ALLOCATE) {
     return inactive_scope();
   }
-  if (update_mode_ != DebugOptions::NEVER_UPDATE &&
-      update_mode_ != DebugOptions::CAPTURE_CMD_NEVER_UPDATE) {
+  if (update_mode_ != DebugOptions::VMM_PERSISTENT_TEMP) {
     return Internal("Unsupported command buffer update mode: %d", update_mode_);
   }
   if (command_buffer_persistent_allocation_indexes_.empty()) {
     return inactive_scope();
-  }
-  if (command_buffer_va_remapped_allocation_indexes_.empty()) {
-    return ExecutionScope(this, nullptr, nullptr, nullptr,
-                          /*address_policy_active=*/true);
   }
 
   auto* vmm_allocator =
       dynamic_cast<se::DeviceAddressVmmAllocator*>(memory_allocator);
   if (vmm_allocator == nullptr) {
     return inactive_scope();
+  }
+  if (command_buffer_va_remapped_allocation_indexes_.empty()) {
+    return ExecutionScope(this, nullptr, nullptr, nullptr,
+                          /*address_policy_active=*/true);
   }
 
   ASSIGN_OR_RETURN(se::Stream * allocator_stream,
@@ -740,8 +538,8 @@ GpuExecutableBufferAllocator::CreateExecutionScope(
 
   if (remapping->va_reservation != nullptr) {
     // With a single VA reservation range, the next execution must wait until
-    // deferred unmaps from the previous execution have retired before it can
-    // map the same reservation aliases again.
+    // deferred deallocations from the previous execution have retired before
+    // it can allocate into the same reservation range again.
     RETURN_IF_ERROR(
         vmm_allocator->SynchronizePendingOperations(device_ordinal));
   }

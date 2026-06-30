@@ -407,16 +407,16 @@ message DebugOptions {
   }
 
   // Controls the VA remapping strategy for command buffer thunks.
-  //   ALWAYS_UPDATE: VA remapping disabled; all commands update on every
-  //     execution.
-  //   NEVER_UPDATE: All allocations VA-remapped to fixed addresses; no
-  //     command buffer update needed after initial recording.
-  //   CAPTURE_CMD_NEVER_UPDATE: Only traced/collective commands are
-  //     VA-remapped; other commands still update on each execution.
+  //   DYNAMIC_ALLOCATE: Buffers use regular dynamically allocated addresses;
+  //     commands update when their buffer addresses change.
+  //   VMM_PERSISTENT_TEMP: Command-buffer-referenced preallocated temp buffers
+  //     use fixed VMM reservation addresses; other dynamic allocations still
+  //     trigger command updates when their addresses change.
   enum CommandBufferUpdateMode {
-    ALWAYS_UPDATE = 0;
-    NEVER_UPDATE = 1;
-    CAPTURE_CMD_NEVER_UPDATE = 2;
+    reserved 1, 2;
+    reserved "ALWAYS_UPDATE", "NEVER_UPDATE", "CAPTURE_CMD_NEVER_UPDATE";
+    DYNAMIC_ALLOCATE = 0;
+    VMM_PERSISTENT_TEMP = 3;
   }
 
   // Controls when cuDNN fusions are compiled in "deviceless" mode, i.e. driven

@@ -487,15 +487,9 @@ GpuExecutable::GpuExecutable(
 
   const DebugOptions* allocation_debug_options =
       has_module() ? &module_config().debug_options() : nullptr;
-  GpuExecutableBufferAllocator::AllocationIndexSet
-      returned_output_allocation_indexes;
-  for (const auto& [_, output_info] : output_info_) {
-    returned_output_allocation_indexes.insert(output_info.allocation_index);
-  }
   buffer_allocator_ = std::make_unique<GpuExecutableBufferAllocator>(
       module_name_, allocation_ptrs_, program_shape_.result(),
-      allocation_debug_options, thunk_executor_.get(),
-      std::move(returned_output_allocation_indexes));
+      allocation_debug_options, thunk_executor_.get());
 }
 
 GpuExecutable::~GpuExecutable() {
