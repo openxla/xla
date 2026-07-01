@@ -283,12 +283,13 @@ class GpuExecutableBufferAllocator {
     // VmmRemapSkipEnabled().
     std::vector<const void*> last_mapped_src_addrs ABSL_GUARDED_BY(mutex);
 
-    // Debug-only companion to last_mapped_src_addrs: the per-slot reservation
-    // offsets from the previous step, used to DCHECK that the slot->allocation
-    // mapping is stable across steps (the per-slot address comparison is only
-    // valid if each slot maps the same allocation). Populated only in non-NDEBUG
-    // builds; declared unconditionally to keep the struct layout identical
-    // across translation units. ROCm-only.
+    // Companion to last_mapped_src_addrs: the per-slot reservation offsets from
+    // the previous step, used to DCHECK that the slot->allocation mapping is
+    // stable across steps (the per-slot address comparison is only valid if each
+    // slot maps the same allocation). Maintained unconditionally: it is only
+    // read by the DCHECK (a no-op in release), but keeping it up to date costs
+    // ~10-150 ns per step and N*8 bytes -- negligible next to the per-step VA
+    // remap -- so it is not #ifndef NDEBUG-guarded. ROCm-only.
     std::vector<uint64_t> last_mapped_offsets ABSL_GUARDED_BY(mutex);
 
     // ROCm copy-into-shadow (flag
