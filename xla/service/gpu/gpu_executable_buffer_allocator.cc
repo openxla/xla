@@ -452,6 +452,18 @@ GpuExecutableBufferAllocator::CreateExecutionScope(
   auto* vmm_allocator =
       dynamic_cast<se::DeviceAddressVmmAllocator*>(memory_allocator);
   if (vmm_allocator == nullptr) {
+#ifndef NDEBUG
+    // Some policy-only tests do not provide an execution stream.
+    if (run_options->stream() != nullptr) {
+      se::StreamExecutor* executor = run_options->stream()->parent();
+      absl::MutexLock lock(remappings_mutex_);
+      auto [it, inserted] =
+          executor_uses_vmm_allocator_.try_emplace(executor, false);
+      DCHECK(inserted || !it->second)
+          << "Device address allocator mode changed for module " << module_name_
+          << " and executor " << executor;
+    }
+#endif
     return scope_without_remapping();
   }
 
@@ -467,6 +479,13 @@ GpuExecutableBufferAllocator::CreateExecutionScope(
   se::StreamExecutor* executor = run_options->stream()->parent();
   {
     absl::MutexLock lock(remappings_mutex_);
+#ifndef NDEBUG
+    auto [it, inserted] =
+        executor_uses_vmm_allocator_.try_emplace(executor, true);
+    DCHECK(inserted || it->second)
+        << "Device address allocator mode changed for module " << module_name_
+        << " and executor " << executor;
+#endif
     // This is the lifetime remapping object for this executable/executor. It
     // owns the VA reservation reused by later ExecuteAsyncOnStream calls.
     remapping = &remappings_[executor];

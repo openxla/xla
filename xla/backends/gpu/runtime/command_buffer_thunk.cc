@@ -331,16 +331,19 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   bool is_first_record =
       cmd_buffer->command_buffer->state() == se::CommandBuffer::State::kCreate;
-  DCHECK(is_first_record ||
-         cmd_buffer->recorded_with_persistent_alloc_indices ==
-             params.persistent_alloc_indices.has_value())
-      << "persistent_alloc_indices changes must be handled by Initialize";
+  // Executions initialized on opposite sides of the one-way policy transition
+  // can interleave, so the shared command buffer can be recorded with a policy
+  // presence state different from the current execution.
+  bool persistent_alloc_indices_presence_changed =
+      !is_first_record && cmd_buffer->recorded_with_persistent_alloc_indices !=
+                              params.persistent_alloc_indices.has_value();
 
   auto updated_allocs = cmd_buffer->UpdateBufferAllocations(commands_, params);
 
   bool has_dynamic_allocations = cmd_buffer->HasDynamicAllocations(
       commands_, params.persistent_alloc_indices);
-  bool needs_update = commands_.requires_update_on_execute() ||
+  bool needs_update = persistent_alloc_indices_presence_changed ||
+                      commands_.requires_update_on_execute() ||
                       (has_dynamic_allocations && !updated_allocs.empty());
 
   if (is_first_record || needs_update) {
@@ -351,6 +354,8 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
         << "; num_commands=" << commands_.size()
         << "; updated_allocs=" << updated_allocs.size()
         << "; is_first_record=" << is_first_record
+        << "; persistent_alloc_indices_presence_changed="
+        << persistent_alloc_indices_presence_changed
         << "; needs_update=" << needs_update;
 
     TraceMe trace([&] {
@@ -363,8 +368,17 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     uint64_t start_micros = tsl::Env::Default()->NowMicros();
 
+    std::optional<std::vector<BufferAllocation::Index>> allocs_to_update =
+        std::move(updated_allocs);
+    // Force all commands to update when the recorded policy presence does not
+    // match this execution. A filtered update could skip a command whose
+    // allocations are all persistent in one of the interleaved executions.
+    if (persistent_alloc_indices_presence_changed) {
+      allocs_to_update.reset();
+    }
+
     Command::RecordParams record_params = {
-        cmd_buffer->state, std::move(updated_allocs),
+        cmd_buffer->state, std::move(allocs_to_update),
         /*is_initialization=*/is_first_record && !has_dynamic_allocations};
     RETURN_IF_ERROR(commands_.Record(params, record_params,
                                      cmd_buffer->command_buffer.get()));
