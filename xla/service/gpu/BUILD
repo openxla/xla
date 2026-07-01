@@ -743,6 +743,16 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "gpu_executable_buffer_allocator_test",
+    srcs = ["gpu_executable_buffer_allocator_test.cc"],
+    deps = [
+        ":gpu_executable_buffer_allocator",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
 cc_library(
     name = "gpu_executable",
     srcs = [
