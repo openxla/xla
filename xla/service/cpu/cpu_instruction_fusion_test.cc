@@ -1140,5 +1140,81 @@ TEST_F(InstructionFusionTest, SkipReduceComputationsIfFusionEmitters) {
   EXPECT_FALSE(changed);
 }
 
+namespace {
+
+bool HasSplitSoftmaxSubtractExponentialFusion(const HloModule& module) {
+  for (const HloComputation* computation : module.computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      if (!instruction->IsFusion()) {
+        continue;
+      }
+      bool has_exp = false;
+      for (const HloInstruction* fused : instruction->fused_instructions()) {
+        if (fused->opcode() == HloOpcode::kExp) {
+          has_exp = true;
+          break;
+        }
+      }
+      if (!has_exp || instruction->operand_count() != 2) {
+        continue;
+      }
+      if (instruction->operand(0)->opcode() == HloOpcode::kFusion &&
+          instruction->operand(1)->opcode() == HloOpcode::kDot) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+static constexpr absl::string_view kSoftmaxFusionModuleString = R"(
+  HloModule module
+
+  %region_0.1 (param0: f32[], param1: f32[]) -> f32[] {
+    %param0 = f32[] parameter(0)
+    %param1 = f32[] parameter(1)
+    ROOT %maximum = f32[] maximum(%param0, %param1)
+  }
+
+  %region_1.2 (param0: f32[], param1: f32[]) -> f32[] {
+    %param0 = f32[] parameter(0)
+    %param1 = f32[] parameter(1)
+    ROOT %add = f32[] add(%param0, %param1)
+  }
+
+  ENTRY %main (Q: f32[5,5], K: f32[5,5]) -> f32[5,5] {
+    %Q = f32[5,5] parameter(0)
+    %K = f32[5,5] parameter(1)
+    %transpose = f32[5,5] transpose(%K), dimensions={1,0}
+    %dot = f32[5,5] dot(%Q, %transpose),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    %scale = f32[] constant(0.44721359)
+    %broadcast_scale = f32[5,5] broadcast(%scale), dimensions={}
+    %mul = f32[5,5] multiply(%dot, %broadcast_scale)
+    %neg_inf = f32[] constant(-inf)
+    %reduce_max = f32[5] reduce(%mul, %neg_inf),
+        dimensions={1}, to_apply=%region_0.1
+    %broadcast_max = f32[5,5] broadcast(%reduce_max), dimensions={0}
+    %sub = f32[5,5] subtract(%mul, %broadcast_max)
+    %exp = f32[5,5] exponential(%sub)
+    %zero = f32[] constant(0)
+    %reduce_sum = f32[5] reduce(%exp, %zero),
+        dimensions={1}, to_apply=%region_1.2
+    %broadcast_sum = f32[5,5] broadcast(%reduce_sum), dimensions={0}
+    ROOT %div = f32[5,5] divide(%exp, %broadcast_sum)
+  }
+)";
+
+TEST_F(InstructionFusionTest, AvoidSplitSoftmaxScaledLogitsFusions) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kSoftmaxFusionModuleString));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_FALSE(HasSplitSoftmaxSubtractExponentialFusion(*module));
+}
+
 }  // namespace
 }  // namespace xla::cpu
