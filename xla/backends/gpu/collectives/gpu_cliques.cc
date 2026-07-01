@@ -559,6 +559,13 @@ static int32_t GetCommSplitColor(const GpuCliqueKey& clique_key) {
                   sizeof(int64_t) * global_device_ids.size(), 0)));
 }
 
+using RankPair = std::pair<RankId, DeviceRank>;
+
+static bool CompareRankPairsByDeviceRank(const RankPair* lhs,
+                                         const RankPair* rhs) {
+  return lhs->second.rank < rhs->second.rank;
+}
+
 // Joins a GpuClique initialization rendezvous for a `clique_key` and returns
 // a lock that gives an access to clique created by splitting already acquired
 // `parent_clique` clique (access is shared between all participating ranks that
@@ -580,7 +587,6 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
       device->device_ordinal(), rank, clique_key, parent_rank,
       parent_clique_key, num_local_participants);
 
-  using RankPair = std::pair<RankId, DeviceRank>;
   Device gpu_device(device);
   DeviceRank device_rank = {&gpu_device, rank};
   RankPair rank_pair = {parent_rank, device_rank};
@@ -635,10 +641,9 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
     parent_comms.reserve(rank_pairs.size());
     keys.reserve(rank_pairs.size());
     ranks.reserve(rank_pairs.size());
-    for (const RankPair* rank_pair :
-         tsl::SortedRange(rank_pairs, [](const RankPair* a, const RankPair* b) {
-           return a->second.rank < b->second.rank;
-         })) {
+    auto sorted_rank_pairs =
+        tsl::SortedRange(rank_pairs, CompareRankPairsByDeviceRank);
+    for (const RankPair* rank_pair : sorted_rank_pairs) {
       const auto& [parent_rank, device_rank] = *rank_pair;
       auto parent_comm = (*parent_clique)->comm(parent_rank);
       if (!parent_comm.has_value()) {
