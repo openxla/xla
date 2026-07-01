@@ -1672,8 +1672,10 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
             std::make_pair(operand, operand_index),
             absl::flat_hash_set<HloUse>());
     if (operand_inserted) {
-      auto uses = GetUniqueValueAt(operand, operand_index).GetUses();
-      operand_it->second.insert(uses.begin(), uses.end());
+      for (const HloValue* val : GetValueSet(operand, operand_index).values()) {
+        auto uses = val->GetUses();
+        operand_it->second.insert(uses.begin(), uses.end());
+      }
     }
     auto [user_it, user_inserted] = cache_share_buffer_with_user_.try_emplace(
         user, absl::flat_hash_map<ShapeIndex, std::vector<HloOperandIndex>>());
