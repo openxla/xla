@@ -756,7 +756,14 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
                                                 const GpuCliqueKey& clique_key,
                                                 se::Stream& stream,
                                                 Communicator& comm) {
+  if (config_.num_total_updates == 0) {
+    XLA_VLOG_DEVICE(3, stream.parent()->device_ordinal())
+        << "Skipping ragged-all-to-all because num_total_updates is 0";
+    return absl::OkStatus();
+  }
+
   ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
+
                    ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                                           config_.config.operand_element_type));
 
