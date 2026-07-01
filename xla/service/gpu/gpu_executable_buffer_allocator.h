@@ -200,13 +200,6 @@ class GpuExecutableBufferAllocator {
   absl::Mutex remappings_mutex_;
   absl::node_hash_map<se::StreamExecutor*, Remapping> remappings_
       ABSL_GUARDED_BY(remappings_mutex_);
-#ifndef NDEBUG
-  // The persistent-allocation policy depends on whether this allocator uses
-  // VMM. Changing allocator modes for an executor would change an engaged
-  // policy's contents, which is outside the execution parameter contract.
-  absl::node_hash_map<se::StreamExecutor*, bool> executor_uses_vmm_allocator_
-      ABSL_GUARDED_BY(remappings_mutex_);
-#endif
 };
 
 }  // namespace gpu
