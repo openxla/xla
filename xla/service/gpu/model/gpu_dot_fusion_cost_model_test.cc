@@ -43,7 +43,7 @@ class GpuDotFusionCostModelTest : public HloHardwareIndependentTestBase {
   se::DeviceDescription ddh100_{TestGpuDeviceInfo::H100SXMDeviceInfo()};
 };
 
-TEST_F(GpuDotFusionCostModelTest, GpuDotComputeBoundBf16) {
+TEST_F(GpuDotFusionCostModelTest, GpuDotComputeBoundBf16NumStages1) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 ENTRY e {
@@ -78,8 +78,57 @@ backend_config={"sizes":["32"]}
                   block_params.output_tile_sizes[0][0],
                   block_params.output_tile_sizes[0][1]},
               ddh100_));
-  ASSERT_EQ(runtime_h100.exec_time,
-            expected_compute_and_flops_h100.compute_time);
+
+  // For num_stages=1, exec_time is sequentially added: compute + mem + write.
+  // We expect it to be significantly larger than just compute_time.
+  ASSERT_GT(runtime_h100.exec_time,
+            expected_compute_and_flops_h100.compute_time * 1.2);
+}
+
+TEST_F(GpuDotFusionCostModelTest, GpuDotComputeBoundBf16) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+ENTRY e {
+p0 = bf16[8192,8192] parameter(0)
+p1 = bf16[8192,8192] parameter(1)
+ROOT r = bf16[8192,8192] dot(p0, p1),
+lhs_contracting_dims={1}, rhs_contracting_dims={0}, algorithm=dot_bf16_bf16_bf16,
+backend_config={"sizes":["32"]}
+})"));
+
+  BlockLevelParameters block_params;
+  // TODO: b/510666436 - Tile sizes are intentionally kept large to reduce
+  // L2 cache replication overhead modeled by threadblock_count, keeping
+  // the operation compute bound.
+  block_params.output_tile_sizes = {{256, 512}};
+  block_params.num_warps = 4;
+  block_params.num_ctas = 1;
+  block_params.num_stages = 3;
+  auto* dot =
+      Cast<HloDotInstruction>(module->entry_computation()->root_instruction());
+  ASSERT_IS_OK(gpu_dot_fusion_cost_model::IsSupported(dot));
+  ASSERT_OK_AND_ASSIGN(
+      EstimateRunTimeData runtime_h100,
+      gpu_dot_fusion_cost_model::EstimateRunTimeForDotOpWithBlockParameters(
+          dot, block_params, ddh100_));
+  ASSERT_OK_AND_ASSIGN(
+      auto expected_compute_and_flops_h100,
+      gpu_dot_fusion_cost_model::detail::
+          CalculateComputeTimeWithTileAndWaveQuantization(
+              gpu_dot_fusion_cost_model::detail::DotProblemInfo(*dot),
+              gpu_dot_fusion_cost_model::detail::DotTileSize{
+                  block_params.output_tile_sizes[0][0],
+                  block_params.output_tile_sizes[0][1]},
+              ddh100_));
+  absl::Duration expected_time = expected_compute_and_flops_h100.compute_time +
+                                 gpu_dot_fusion_cost_model::detail::kLatencyTax;
+  // For pipelined loops, execution time is bounded by the dominant cost
+  // (compute in this case), but imperfect overlap or pipeline setup/teardown
+  // costs may slightly increase it. We allow up to 10% overhead.
+  absl::Duration lower_bound = expected_time * 1.0;
+  absl::Duration upper_bound = expected_time * 1.1;
+  ASSERT_GE(runtime_h100.exec_time, lower_bound);
+  ASSERT_LE(runtime_h100.exec_time, upper_bound);
 }
 
 TEST_F(GpuDotFusionCostModelTest, GpuDotMemoryBoundBf16) {
@@ -101,7 +150,7 @@ backend_config={"sizes":["512"]}
   block_params.output_tile_sizes = {{4, 128}};
   block_params.num_warps = 4;
   block_params.num_ctas = 1;
-  block_params.num_stages = 1;
+  block_params.num_stages = 3;
   auto* dot =
       Cast<HloDotInstruction>(module->entry_computation()->root_instruction());
   ASSERT_IS_OK(gpu_dot_fusion_cost_model::IsSupported(dot));
@@ -114,8 +163,15 @@ backend_config={"sizes":["512"]}
       gpu_dot_fusion_cost_model::detail::GetEffectiveHbmBandwidth(
           approx_total_bytes, ddh100_);
   absl::Duration approx_hbm_time =
-      absl::Seconds(1.0f * approx_total_bytes / approx_hbm_bandwidth);
-  ASSERT_EQ(runtime_h100.exec_time, approx_hbm_time);
+      absl::Seconds(1.0f * approx_total_bytes / approx_hbm_bandwidth) +
+      gpu_dot_fusion_cost_model::detail::kLatencyTax;
+  // For pipelined loops, execution time is bounded by the dominant cost (memory
+  // in this case), but imperfect overlap or pipeline setup/teardown costs may
+  // slightly increase it. We allow up to 10% overhead.
+  absl::Duration lower_bound = approx_hbm_time * 1.0;
+  absl::Duration upper_bound = approx_hbm_time * 1.1;
+  ASSERT_GE(runtime_h100.exec_time, lower_bound);
+  ASSERT_LE(runtime_h100.exec_time, upper_bound);
 }
 
 TEST_F(GpuDotFusionCostModelTest, DifferentContractingDimsHaveSameRuntime) {

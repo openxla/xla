@@ -457,9 +457,68 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForDotOpWithBlockParameters(
                                            estimates.l2_bytes_read,
                                            block_params.is_tma_allowed));
 
-  // Assuming perfect overlap between compute and memory.
-  estimates.exec_time = std::max(
-      {compute_and_flops.compute_time, hbm_timing.total_time(), l2_time});
+  // Calculate the number of iterations in the main loop and the time per
+  // iteration. TODO(b/529319006): Investigate if shared memory clamping
+  // guardrails are needed.
+  TF_RET_CHECK(block_k_val > 0)
+      << "block_k_val must be strictly positive, got " << block_k_val;
+  TF_RET_CHECK(dot_info.k > 0)
+      << "dot_info.k must be strictly positive, got " << dot_info.k;
+  const int64_t k_loop_iterations =
+      CeilOfRatio<int64_t>(dot_info.k, block_k_val);
+  const absl::Duration iter_compute_time =
+      compute_and_flops.compute_time / k_loop_iterations;
+  const absl::Duration iter_raw_mem_time =
+      hbm_timing.read_time / k_loop_iterations;
+  const absl::Duration iter_mem_time = iter_raw_mem_time + detail::kLatencyTax;
+
+  absl::Duration total_main_loop_time;
+  const int64_t num_stages = block_params.num_stages;
+  if (num_stages <= 1 || k_loop_iterations <= 1) {
+    // Serial execution: Add compute, memory, and the latency tax sequentially
+    total_main_loop_time =
+        k_loop_iterations * (iter_mem_time + iter_compute_time) +
+        hbm_timing.write_time;
+  } else {
+    // Pipelined execution: Calculate the compute and memory per loop iteration.
+
+    // In a perfect pipeline with infinite stages, the latency tax should
+    // disappear completely.
+    const absl::Duration theoretical_iter_time =
+        std::max(iter_raw_mem_time, iter_compute_time);
+    const absl::Duration iter_time_including_latency =
+        std::max(iter_mem_time, iter_compute_time);
+    // TODO(b/529318599): Perfect overlap between compute and memory is not
+    // always possible in practice. Here we should consider a deeper formula
+    // that takes into account num_warps, num_stages and possibly other
+    // parameters. I will investigate this further in a follow-up, but this
+    // formula works well in practice and is a good starting point.
+    const absl::Duration iter_time = std::max(
+        theoretical_iter_time, iter_time_including_latency / (num_stages - 1));
+
+    // During the first num_stages-1 iterations, only memory operations are
+    // executed.
+    const int64_t prologue_loops = std::min(num_stages - 1, k_loop_iterations);
+    const absl::Duration prologue_time =
+        detail::kLatencyTax + prologue_loops * iter_raw_mem_time;
+
+    // During the overlap iterations, both compute and memory operations are
+    // executed.
+    const int64_t overlap_loops = k_loop_iterations - prologue_loops;
+    const absl::Duration overlap_time = overlap_loops * iter_time;
+
+    // During the last num_stages-1 iterations, only compute operations are
+    // executed.
+    const absl::Duration epilogue_time = prologue_loops * iter_compute_time;
+
+    total_main_loop_time =
+        prologue_time + overlap_time + epilogue_time + hbm_timing.write_time;
+  }
+
+  // Assuming perfect overlap between compute and memory for the rest,
+  // but main loop is now modeled precisely.
+  estimates.exec_time =
+      std::max({total_main_loop_time, hbm_timing.total_time(), l2_time});
 
   return estimates;
 }

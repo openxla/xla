@@ -46,6 +46,10 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForDotOpWithBlockParameters(
 
 namespace detail {
 
+// TODO(b/529341369): Account for A100, TMA, and other memory instruction
+// pathways.
+inline constexpr absl::Duration kLatencyTax = absl::Nanoseconds(1800);
+
 struct DotProblemInfo {
   int64_t b = 0;
   int64_t m = 0;
