@@ -134,7 +134,7 @@ jobs:
           repository: ${{ matrix.job_info.repo }}
           path: ${{ matrix.job_info.repo }}
           persist-credentials: false
-      - name: Checking out rules_ml_toolchain # TODO:  remove once jax is migrated to the latest rules_ml_toolchain changes
+      - name: Checking out rules_ml_toolchain # TODO(alekstheod):  remove once jax is migrated to the latest rules_ml_toolchain changes
         run: |
           git clone https://github.com/google-ml-infra/rules_ml_toolchain.git openxla/rules_ml_toolchain
           cd openxla/rules_ml_toolchain
