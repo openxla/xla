@@ -239,8 +239,8 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
   std::vector<BufferAllocation> allocations;
   allocations.reserve(5);
   allocations.emplace_back(0, 4, 0);
-  allocations.back().set_constant(true);
   allocations.emplace_back(1, 4, 0);
+  allocations.back().set_constant(true);
   allocations.emplace_back(2, 4, 0);
   allocations.back().set_entry_computation_parameter(
       /*parameter_number=*/0, /*param_shape_index=*/{},
@@ -250,8 +250,8 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
   allocations.emplace_back(4, 0, 0);
 
   Shape shape = ShapeUtil::MakeShape(S32, {});
-  BufferAllocation::Slice constant_slice(&allocations[0], 0, 4);
-  BufferAllocation::Slice temp_slice(&allocations[1], 0, 4);
+  BufferAllocation::Slice temp_slice(&allocations[0], 0, 4);
+  BufferAllocation::Slice constant_slice(&allocations[1], 0, 4);
   BufferAllocation::Slice parameter_slice(&allocations[2], 0, 4);
   BufferAllocation::Slice live_out_slice(&allocations[3], 0, 4);
   BufferAllocation::Slice zero_sized_temp_slice(&allocations[4], 0, 0);
@@ -329,12 +329,12 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
       auto always_update_policy,
       get_allocation_policy_without_vmm(DebugOptions::ALWAYS_UPDATE));
   EXPECT_EQ(always_update_policy.first, 1);
-  EXPECT_THAT(always_update_policy.second, Optional(ElementsAre(0)));
+  EXPECT_THAT(always_update_policy.second, Optional(ElementsAre(1)));
 
   ASSERT_OK_AND_ASSIGN(auto skip_temp_policy, get_allocation_policy_without_vmm(
                                                   DebugOptions::SKIP_TEMP));
   EXPECT_EQ(skip_temp_policy.first, 2);
-  EXPECT_THAT(skip_temp_policy.second, Optional(IsEmpty()));
+  EXPECT_THAT(skip_temp_policy.second, Optional(ElementsAre(1)));
 }
 
 TEST_F(GpuExecutableTest, ComputeComputationLayout) {
