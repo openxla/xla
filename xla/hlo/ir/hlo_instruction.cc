@@ -3360,6 +3360,7 @@ bool HloInstruction::IdenticalSlowPath(
     case HloOpcode::kMultiply:
     case HloOpcode::kMulhi:
     case HloOpcode::kNegate:
+    case HloOpcode::kDataflow:
     case HloOpcode::kOptimizationBarrier:
     case HloOpcode::kPartitionId:
     case HloOpcode::kPopulationCount:

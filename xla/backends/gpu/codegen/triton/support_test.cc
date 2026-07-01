@@ -3581,6 +3581,7 @@ INSTANTIATE_TEST_SUITE_P(
 constexpr std::array kUnsupportedOps = {
     // clang-format off
     // go/keep-sorted start
+    HloOpcode::kDataflow,
     HloOpcode::kDynamicReshape,
     HloOpcode::kDynamicSlice,
     HloOpcode::kDynamicUpdateSlice,
