@@ -102,10 +102,22 @@ class CommandBufferThunk : public Thunk {
         ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
 
     // Returns true if `commands` references any allocation whose address is not
-    // persistent under the finalized allocation address policy. If the policy
-    // is absent, conservatively returns true.
+    // persistent under the current allocation address policy. If the policy is
+    // absent, conservatively returns true.
     bool HasDynamicAllocations(
         const CommandExecutor& commands,
+        std::optional<absl::Span<const BufferAllocation::Index>>
+            persistent_alloc_indices) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
+
+    // Returns true if `persistent_alloc_indices` differs from the policy used
+    // for the last successful command buffer recording.
+    bool PersistentAllocIndicesChanged(
+        std::optional<absl::Span<const BufferAllocation::Index>>
+            persistent_alloc_indices) const
+        ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
+
+    // Saves an owned copy of the policy used to record the command buffer.
+    void SetRecordedPersistentAllocIndices(
         std::optional<absl::Span<const BufferAllocation::Index>>
             persistent_alloc_indices) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
 
@@ -130,6 +142,12 @@ class CommandBufferThunk : public Thunk {
     // and block sizes) captured by commands at construction time and do not
     // change.
     std::vector<se::DeviceAddressBase> recorded_allocs ABSL_GUARDED_BY(mutex);
+
+    // Allocation address policy used for the last successful command buffer
+    // recording. The span passed in execution parameters is non-owning, so we
+    // keep an owned copy for comparisons across execution steps.
+    std::optional<std::vector<BufferAllocation::Index>>
+        recorded_persistent_alloc_indices ABSL_GUARDED_BY(mutex);
 
     // Number of command buffer executions since last update.
     int64_t num_executions ABSL_GUARDED_BY(mutex) = 0;

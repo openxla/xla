@@ -165,6 +165,30 @@ class RequiresUpdateOnExecuteMemsetThunk : public Memset32BitValueThunk {
   int* record_count_;
 };
 
+class CountingDeviceToDeviceCopyThunk : public DeviceToDeviceCopyThunk {
+ public:
+  CountingDeviceToDeviceCopyThunk(Thunk::ThunkInfo thunk_info,
+                                  const ShapedSlice& source_buffer,
+                                  const ShapedSlice& destination_buffer,
+                                  int64_t mem_size, int* record_count)
+      : DeviceToDeviceCopyThunk(std::move(thunk_info), source_buffer,
+                                destination_buffer, mem_size),
+        record_count_(record_count) {}
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override {
+    ++*record_count_;
+    return DeviceToDeviceCopyThunk::Record(execute_params, record_params,
+                                           std::move(record_action),
+                                           command_buffer);
+  }
+
+ private:
+  int* record_count_;
+};
+
 }  // namespace
 
 TEST(CommandBufferThunkTest, DeviceToDeviceCopy) {
@@ -319,6 +343,107 @@ TEST(CommandBufferThunkTest, UpdatePolicyIgnoresVaRemappedAllocations) {
   std::fill(dst.begin(), dst.end(), 0);
   ASSERT_OK(stream->Memcpy(dst.data(), d, byte_length));
   ASSERT_EQ(dst, std::vector<int32_t>(4, 7));
+}
+
+TEST(CommandBufferThunkTest,
+     PersistentAllocationPolicyChangeTriggersInitializeUpdate) {
+  se::StreamExecutor* stream_executor = GpuExecutor();
+  ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
+
+  constexpr int64_t kLength = 4;
+  constexpr int64_t kByteLength = sizeof(int32_t) * kLength;
+  Shape shape = ShapeUtil::MakeShape(S32, {kLength});
+
+  se::DeviceAddress<int32_t> a =
+      stream_executor->AllocateArray<int32_t>(kLength, 0);
+  se::DeviceAddress<int32_t> b =
+      stream_executor->AllocateArray<int32_t>(kLength, 0);
+  se::DeviceAddress<int32_t> c =
+      stream_executor->AllocateArray<int32_t>(kLength, 0);
+  se::DeviceAddress<int32_t> d =
+      stream_executor->AllocateArray<int32_t>(kLength, 0);
+  ASSERT_OK(stream->Memset32(&a, 42, kByteLength));
+  ASSERT_OK(stream->MemZero(&b, kByteLength));
+  ASSERT_OK(stream->Memset32(&c, 7, kByteLength));
+  ASSERT_OK(stream->MemZero(&d, kByteLength));
+
+  BufferAllocation source(/*index=*/0, kByteLength, /*color=*/0);
+  BufferAllocation destination(/*index=*/1, kByteLength, /*color=*/0);
+  BufferAllocation::Slice source_slice(&source, 0, kByteLength);
+  BufferAllocation::Slice destination_slice(&destination, 0, kByteLength);
+
+  int record_count = 0;
+  CommandSequence commands;
+  commands.Emplace<CountingDeviceToDeviceCopyThunk>(
+      Thunk::ThunkInfo(), ShapedSlice{source_slice, shape},
+      ShapedSlice{destination_slice, shape}, kByteLength, &record_count);
+  ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
+                       CommandExecutor::Create(std::move(commands), serialize));
+  CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
+
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
+  ServiceExecutableRunOptions run_options;
+  BufferAllocations first_allocations({a, b}, /*device_ordinal=*/0, &allocator);
+  std::vector<BufferAllocation::Index> first_persistent_alloc_indices = {0};
+
+  Thunk::InitializeParams initialize_params;
+  initialize_params.executor = stream_executor;
+  initialize_params.buffer_allocations = &first_allocations;
+  initialize_params.stream = stream.get();
+  initialize_params.persistent_alloc_indices =
+      absl::MakeConstSpan(first_persistent_alloc_indices);
+  ASSERT_OK(thunk.Initialize(initialize_params));
+  EXPECT_EQ(record_count, 1);
+
+  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
+      run_options, first_allocations, stream.get(), stream.get(), nullptr,
+      nullptr, nullptr, /*additional_compute_streams=*/{},
+      /*execution_scoped_state=*/nullptr,
+      absl::MakeConstSpan(first_persistent_alloc_indices));
+  ASSERT_OK(thunk.ExecuteOnStream(execute_params));
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::vector<int32_t> result(kLength, 0);
+  ASSERT_OK(stream->Memcpy(result.data(), b, kByteLength));
+  EXPECT_EQ(result, std::vector<int32_t>(kLength, 42));
+  EXPECT_EQ(record_count, 1);
+
+  // The policy is compared by value, not by the backing span's identity.
+  std::vector<BufferAllocation::Index> same_persistent_alloc_indices = {0};
+  initialize_params.persistent_alloc_indices =
+      absl::MakeConstSpan(same_persistent_alloc_indices);
+  ASSERT_OK(thunk.Initialize(initialize_params));
+  EXPECT_EQ(record_count, 1);
+
+  BufferAllocations second_allocations({c, d}, /*device_ordinal=*/0,
+                                       &allocator);
+  std::vector<BufferAllocation::Index> all_persistent_alloc_indices = {0, 1};
+  initialize_params.buffer_allocations = &second_allocations;
+  initialize_params.persistent_alloc_indices =
+      absl::MakeConstSpan(all_persistent_alloc_indices);
+  ASSERT_OK(thunk.Initialize(initialize_params));
+  EXPECT_EQ(record_count, 2);
+
+  // An unchanged policy must not trigger another initialization update.
+  std::vector<BufferAllocation::Index> same_all_persistent_alloc_indices = {0,
+                                                                            1};
+  initialize_params.persistent_alloc_indices =
+      absl::MakeConstSpan(same_all_persistent_alloc_indices);
+  ASSERT_OK(thunk.Initialize(initialize_params));
+  EXPECT_EQ(record_count, 2);
+
+  execute_params = Thunk::ExecuteParams::Create(
+      run_options, second_allocations, stream.get(), stream.get(), nullptr,
+      nullptr, nullptr, /*additional_compute_streams=*/{},
+      /*execution_scoped_state=*/nullptr,
+      absl::MakeConstSpan(same_all_persistent_alloc_indices));
+  ASSERT_OK(thunk.ExecuteOnStream(execute_params));
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::fill(result.begin(), result.end(), 0);
+  ASSERT_OK(stream->Memcpy(result.data(), d, kByteLength));
+  EXPECT_EQ(result, std::vector<int32_t>(kLength, 7));
+  EXPECT_EQ(record_count, 2);
 }
 
 TEST(CommandBufferThunkTest,
