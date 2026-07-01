@@ -25,7 +25,7 @@ namespace vmm_internal {
 namespace {
 
 // ---- VmmRemapSkipEnabled ------------------------------------------------
-// The flag value comes from DebugOptions::xla_gpu_command_buffer_vmm_skip_remap
+// The flag value comes from DebugOptions::xla_gpu_experimental_command_buffer_vmm_skip_remap
 // (default true); these helpers only apply the ROCm-only platform gating.
 
 TEST(VmmRemapSkipEnabledTest, NonRocmAlwaysDisabled) {
@@ -41,7 +41,7 @@ TEST(VmmRemapSkipEnabledTest, RocmFollowsFlag) {
 
 // ---- VmmCopyThresholdBytes ----------------------------------------------
 // The flag value comes from
-// DebugOptions::xla_gpu_command_buffer_vmm_copy_threshold_bytes (default 0);
+// DebugOptions::xla_gpu_experimental_command_buffer_vmm_copy_threshold_bytes (default 0);
 // these helpers apply the ROCm-only gating and clamp negatives to 0.
 
 TEST(VmmCopyThresholdBytesTest, NonRocmAlwaysZero) {

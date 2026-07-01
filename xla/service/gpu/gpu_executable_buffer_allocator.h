@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
+#include "xla/stream_executor/device_address_vmm_allocator.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/memory_reservation.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -51,18 +52,18 @@ namespace gpu {
 
 // Internal, pure helpers that apply the ROCm platform gating to the VMM
 // command-buffer DebugOptions flags, exposed for unit testing. The flag values
-// come from `DebugOptions` (xla_gpu_command_buffer_vmm_*); these helpers only
+// come from `DebugOptions` (xla_gpu_experimental_command_buffer_vmm_*); these helpers only
 // encode the ROCm-only policy so it can be tested without a DebugOptions or
 // hardware.
 namespace vmm_internal {
 
 // Whether per-slot skip-remap is enabled for `platform_name`, given the
-// xla_gpu_command_buffer_vmm_skip_remap flag value. ROCm-only: returns
+// xla_gpu_experimental_command_buffer_vmm_skip_remap flag value. ROCm-only: returns
 // `flag_enabled` on ROCm, always false elsewhere.
 bool VmmRemapSkipEnabled(absl::string_view platform_name, bool flag_enabled);
 
 // Copy-into-shadow byte threshold for `platform_name`, given the
-// xla_gpu_command_buffer_vmm_copy_threshold_bytes flag value. ROCm-only:
+// xla_gpu_experimental_command_buffer_vmm_copy_threshold_bytes flag value. ROCm-only:
 // returns the (non-negative) flag value on ROCm, 0 (disabled) elsewhere. A
 // negative flag value is clamped to 0.
 uint64_t VmmCopyThresholdBytes(absl::string_view platform_name,
@@ -152,6 +153,79 @@ class GpuExecutableBufferAllocator {
         const BufferAllocations& owning_buffer_allocations, int device_ordinal,
         absl::FunctionRef<absl::Status(const BufferAllocations&)> execute);
 
+    // A small command-buffer slice kept out of the VA reservation: `shadow` is
+    // the stable device buffer baked into the command buffer, refreshed from
+    // `real` (the current physical buffer) with a device-to-device copy each
+    // step instead of a per-step VA remap.
+    struct SmallSliceCopy {
+      se::DeviceAddressBase shadow;
+      se::DeviceAddressBase real;
+      uint64_t size;
+    };
+
+    // The per-step VA-mapping plan produced by BuildStepMappingPlan and consumed
+    // by EstablishMapping and execution.
+    struct StepMappingPlan {
+      // Descriptors for the batch MapTo/Remap, in ascending reservation-offset
+      // order.
+      std::vector<se::MemoryReservation::MappingDescriptor> mapping_descriptors;
+      // Source (BFC) address backing each descriptor (same order); compared
+      // against last_mapped_src_addrs to detect which slots moved.
+      std::vector<const void*> new_src_addrs;
+      // Device addresses handed to the executed BufferAllocations: the VA
+      // sub-range for remapped slots, the shadow for small slices, or the
+      // original buffer otherwise.
+      std::vector<se::DeviceAddressBase> mapped_buffers;
+      // Small slices refreshed by a device-to-device copy instead of a remap.
+      std::vector<SmallSliceCopy> small_copies;
+    };
+
+    // Lazily create the unmap event and (unless every command-buffer slice is a
+    // small copy-shadow slice) reserve the single contiguous VA range. ROCm VMM.
+    absl::Status EnsureVaReservation(
+        const BufferAllocations& owning_buffer_allocations,
+        se::StreamExecutor* executor,
+        se::DeviceAddressVmmAllocator* vmm_allocator, uint64_t granularity,
+        uint64_t copy_threshold, int device_ordinal)
+        ABSL_EXCLUSIVE_LOCKS_REQUIRED(va_ranges_->mutex);
+
+    // Map each VA-remapped command-buffer allocation index to its byte offset
+    // within the reservation (small copy-shadow slices are excluded so the
+    // offsets stay aligned with the mapping descriptors).
+    absl::flat_hash_map<BufferAllocation::Index, uint64_t>
+    ComputeReservationOffsets(
+        const BufferAllocations& owning_buffer_allocations, uint64_t granularity,
+        uint64_t copy_threshold) const;
+
+    // Return the stable shadow VA for small command-buffer slice `i` of `size`
+    // bytes, allocating it on first use in the allocation's memory space. Fails
+    // if the slice grew after first capture (unsupported under trace-once
+    // replay).
+    absl::StatusOr<se::DeviceAddressBase> GetOrCreateSmallShadow(
+        BufferAllocation::Index i, uint64_t size, se::StreamExecutor* executor)
+        ABSL_EXCLUSIVE_LOCKS_REQUIRED(va_ranges_->mutex);
+
+    // Build the per-step mapping plan: VA descriptors + source addresses for
+    // remapped slots, shadow copies for small slices, and the mapped_buffers
+    // handed to execution.
+    absl::Status BuildStepMappingPlan(
+        const BufferAllocations& owning_buffer_allocations,
+        se::StreamExecutor* executor,
+        se::DeviceAddressVmmAllocator* vmm_allocator, uint64_t granularity,
+        uint64_t copy_threshold,
+        const absl::flat_hash_map<BufferAllocation::Index, uint64_t>&
+            allocation_va_offsets,
+        int device_ordinal, StepMappingPlan& plan)
+        ABSL_EXCLUSIVE_LOCKS_REQUIRED(va_ranges_->mutex);
+
+    // (Re)establish the VA->physical mapping for this step: on ROCm skip-remap
+    // remap only the slots that moved (or nothing in steady state), otherwise
+    // drop and re-map the whole range. Updates the per-slot source-address
+    // cache.
+    absl::Status EstablishMapping(StepMappingPlan& plan, bool skip_remap_enabled,
+                                  int device_ordinal)
+        ABSL_EXCLUSIVE_LOCKS_REQUIRED(va_ranges_->mutex);
+
     GpuExecutableBufferAllocator* owner_ = nullptr;
     VaRanges* va_ranges_ = nullptr;
     const ServiceExecutableRunOptions* run_options_ = nullptr;
@@ -218,7 +292,7 @@ class GpuExecutableBufferAllocator {
     std::vector<uint64_t> last_mapped_offsets ABSL_GUARDED_BY(mutex);
 
     // ROCm copy-into-shadow (flag
-    // xla_gpu_command_buffer_vmm_copy_threshold_bytes): small
+    // xla_gpu_experimental_command_buffer_vmm_copy_threshold_bytes): small
     // command-buffer slices (tiny scale/scalar/metric buffers that churn their
     // address every step) are kept OUT of the VA reservation and instead given
     // a stable shadow device buffer here -- allocated once, fixed address baked

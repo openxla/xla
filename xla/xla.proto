@@ -599,15 +599,17 @@ message DebugOptions {
   // slots whose backing buffer did not move since the previous step (only the
   // slots that actually changed are remapped). Has no effect on non-ROCm
   // platforms. Default true (ROCm); set false to force the legacy full-remap
-  // path.
-  optional bool xla_gpu_command_buffer_vmm_skip_remap = 505;
+  // path. Experimental: expected to become the default behavior and be removed.
+  optional bool xla_gpu_experimental_command_buffer_vmm_skip_remap = 505;
 
   // ROCm-only. Threshold in bytes for the VMM command-buffer "copy-into-shadow"
   // path: command-buffer slices at or below this size are kept out of the
   // contiguous VA reservation and given a stable shadow buffer refreshed with a
   // stream-ordered device-to-device copy instead of a per-step remap. 0 disables
-  // the path (default). Has no effect on non-ROCm platforms.
-  optional int64 xla_gpu_command_buffer_vmm_copy_threshold_bytes = 506;
+  // the path (default). Has no effect on non-ROCm platforms. Experimental:
+  // the heuristic may be replaced by an automatic policy and the flag removed.
+  optional int64 xla_gpu_experimental_command_buffer_vmm_copy_threshold_bytes =
+      506;
 
   optional bool xla_gpu_copy_insertion_use_region_analysis = 236;
 
