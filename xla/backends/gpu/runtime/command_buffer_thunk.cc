@@ -75,6 +75,30 @@ bool CommandBufferThunk::ExecutorCommandBuffer::HasDynamicAllocations(
                            commands.allocs_indices());
 }
 
+bool CommandBufferThunk::ExecutorCommandBuffer::PersistentAllocIndicesChanged(
+    std::optional<absl::Span<const BufferAllocation::Index>>
+        persistent_alloc_indices) const {
+  if (persistent_alloc_indices.has_value() !=
+      recorded_persistent_alloc_indices.has_value()) {
+    return true;
+  }
+  return persistent_alloc_indices.has_value() &&
+         !absl::c_equal(*persistent_alloc_indices,
+                        *recorded_persistent_alloc_indices);
+}
+
+void CommandBufferThunk::ExecutorCommandBuffer::
+    SetRecordedPersistentAllocIndices(
+        std::optional<absl::Span<const BufferAllocation::Index>>
+            persistent_alloc_indices) {
+  if (persistent_alloc_indices.has_value()) {
+    recorded_persistent_alloc_indices.emplace(persistent_alloc_indices->begin(),
+                                              persistent_alloc_indices->end());
+  } else {
+    recorded_persistent_alloc_indices.reset();
+  }
+}
+
 CommandBufferThunk::CommandBufferThunk(
     CommandExecutor commands, ThunkInfo thunk_info,
     std::unique_ptr<SequentialThunk> thunks,
@@ -238,16 +262,24 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   // If commands require an update during initialization (and VA remapping is
   // not enabled), we also record them into the command buffer before execution.
   // This is required to guarantee that collective commands are recorded on all
-  // participating ranks to avoid deadlocks.
+  // participating ranks to avoid deadlocks. We also update an existing command
+  // buffer when its persistent allocation policy changes, because that policy
+  // determines which commands can safely retain their recorded addresses.
   bool has_dynamic_allocations = cmd_buffer->HasDynamicAllocations(
       commands_, params.persistent_alloc_indices);
-  if (cmd_buffer->command_buffer->state() ==
-          se::CommandBuffer::State::kCreate ||
+  bool is_first_record =
+      cmd_buffer->command_buffer->state() == se::CommandBuffer::State::kCreate;
+  bool persistent_alloc_indices_changed =
+      !is_first_record && cmd_buffer->PersistentAllocIndicesChanged(
+                              params.persistent_alloc_indices);
+  if (is_first_record || persistent_alloc_indices_changed ||
       (has_dynamic_allocations && commands_.requires_update_on_initialize())) {
     VLOG(3) << "Initialize command buffer on device #"
             << params.executor->device_ordinal()
-            << " by recoding command buffer cmd sequence"
-            << "; num_commands=" << commands_.size();
+            << " by recording command buffer cmd sequence"
+            << "; num_commands=" << commands_.size()
+            << "; persistent_alloc_indices_changed="
+            << persistent_alloc_indices_changed;
 
     TraceMe trace([&] {
       return TraceMeEncode("command_buffer::initialize",
@@ -258,14 +290,23 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
     uint64_t start_micros = tsl::Env::Default()->NowMicros();
 
     // Update recorded buffer allocations.
-    auto updated_allocs =
+    std::optional<std::vector<BufferAllocation::Index>> updated_allocs =
         cmd_buffer->UpdateBufferAllocations(commands_, execute_params);
+
+    // A policy change can make allocations persistent before their new
+    // addresses are observed by UpdateBufferAllocations. Force all commands to
+    // update so none retain addresses recorded under the previous policy.
+    if (persistent_alloc_indices_changed) {
+      updated_allocs.reset();
+    }
 
     Command::RecordParams record_params = {cmd_buffer->state,
                                            std::move(updated_allocs),
                                            /*is_initialization=*/true};
     RETURN_IF_ERROR(commands_.Record(execute_params, record_params,
                                      cmd_buffer->command_buffer.get()));
+    cmd_buffer->SetRecordedPersistentAllocIndices(
+        params.persistent_alloc_indices);
 
     uint64_t end_micros = tsl::Env::Default()->NowMicros();
     VLOG(3) << "Initialized command buffer on device #"
@@ -343,6 +384,8 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
         /*is_initialization=*/is_first_record && !has_dynamic_allocations};
     RETURN_IF_ERROR(commands_.Record(params, record_params,
                                      cmd_buffer->command_buffer.get()));
+    cmd_buffer->SetRecordedPersistentAllocIndices(
+        params.persistent_alloc_indices);
 
     uint64_t end_micros = tsl::Env::Default()->NowMicros();
     XLA_VLOG_DEVICE(3, executor->device_ordinal())
