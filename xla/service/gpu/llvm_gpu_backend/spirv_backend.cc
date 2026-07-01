@@ -49,6 +49,17 @@ namespace {
 // Default inline threshold value to use in llvm.
 const int kDefaultInlineThreshold = 1100;
 
+// XLA follows the Khronos SPIR-V LLVM representation address-space mapping.
+// https://github.com/KhronosGroup/SPIRV-LLVM-Translator/blob/main/docs/SPIRVRepresentationInLLVM.rst#address-spaces
+// https://github.com/intel/intel-xpu-backend-for-triton/blob/main/third_party/intel/include/Dialect/TritonGEN/IR/TritonGENMemorySpace.h
+enum SpirvAddressSpace : unsigned {
+  kSpirvDefaultAddressSpace = 0,
+  kSpirvCrossWorkgroupAddressSpace = 1,
+  kSpirvUniformConstantAddressSpace = 2,
+  kSpirvWorkgroupAddressSpace = 3,
+  kSpirvGenericAddressSpace = 4,
+};
+
 void SPIRVBackendInit() {
   LLVMInitializeSPIRVTargetInfo();
   LLVMInitializeSPIRVTarget();
@@ -75,7 +86,7 @@ std::string EmitModuleToSPIRV(llvm::Module* module,
   // Unlike other GPU backends like NVTPTX and AMDGPU, SPIRV does not have
   // address inference pass in the TargetPassConfig. So we do it here
   // explicitly.
-  pm.add(llvm::createInferAddressSpacesPass(0));
+  pm.add(llvm::createInferAddressSpacesPass(kSpirvDefaultAddressSpace));
   pm.add(new llvm::TargetLibraryInfoWrapperPass(
       llvm::Triple(module->getTargetTriple())));
   std::unique_ptr<llvm::MachineModuleInfoWrapperPass> mmiwp(
@@ -182,15 +193,23 @@ absl::StatusOr<std::string> CompileToSPIRV(
   for (auto old_func : kernel_funcs) {
     if (old_func->getCallingConv() == llvm::CallingConv::SPIR_KERNEL) {
       std::vector<llvm::Type*> new_arg_types;
+      bool needs_rewrite = false;
       for (auto& old_arg : old_func->args()) {
         llvm::Type* old_arg_type = old_arg.getType();
         auto ptr_type = llvm::dyn_cast<llvm::PointerType>(old_arg_type);
-        if (ptr_type->getAddressSpace() == 0) {
-          auto new_arg_type = llvm::PointerType::get(context, 1);
+        if (ptr_type != nullptr &&
+            ptr_type->getAddressSpace() == kSpirvDefaultAddressSpace) {
+          auto new_arg_type =
+              llvm::PointerType::get(context,
+                                     kSpirvCrossWorkgroupAddressSpace);
           new_arg_types.push_back(new_arg_type);
+          needs_rewrite = true;
         } else {
           new_arg_types.push_back(old_arg_type);
         }
+      }
+      if (!needs_rewrite) {
+        continue;
       }
       auto new_func_type = llvm::FunctionType::get(
           old_func->getReturnType(), new_arg_types, old_func->isVarArg());
@@ -213,11 +232,14 @@ absl::StatusOr<std::string> CompileToSPIRV(
       auto new_arg_it = new_func->arg_begin();
       auto old_arg_it = old_func->arg_begin();
       for (; old_arg_it != old_func->arg_end(); ++old_arg_it, ++new_arg_it) {
+        llvm::Value* replacement = &*new_arg_it;
         if (auto old_ptr_type =
-                llvm::dyn_cast<llvm::PointerType>(old_arg_it->getType())) {
-          auto cast = builder.CreateAddrSpaceCast(new_arg_it, old_ptr_type);
-          old_arg_it->replaceAllUsesWith(cast);
+                llvm::dyn_cast<llvm::PointerType>(old_arg_it->getType());
+            old_ptr_type != nullptr &&
+            old_ptr_type->getAddressSpace() == kSpirvDefaultAddressSpace) {
+          replacement = builder.CreateAddrSpaceCast(new_arg_it, old_ptr_type);
         }
+        old_arg_it->replaceAllUsesWith(replacement);
       }
       // TODO: Update kernel function's uses. Currently, we are assuming that
       // kernel function is not called by any other functions in the current
@@ -262,7 +284,8 @@ absl::StatusOr<std::string> CompileToSPIRV(
         arr_type, /*isConstant=*/false, llvm::GlobalValue::AppendingLinkage,
         /*Initializer=*/arr_init, "global_ptr_list",
         /*ThreadLocalMode=*/llvm::GlobalValue::NotThreadLocal,
-        /*AddressSpace=*/1, /*isExternallyInitialized=*/false);
+        /*AddressSpace=*/kSpirvCrossWorkgroupAddressSpace,
+        /*isExternallyInitialized=*/false);
     global_ptr_arr->setAlignment(llvm::Align(kConstantBufferAlignBytes));
     module->insertGlobalVariable(global_ptr_arr);
 
