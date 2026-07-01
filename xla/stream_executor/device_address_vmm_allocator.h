@@ -587,6 +587,15 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       MemoryReservation* reservation, uint64_t reservation_offset,
       uint64_t size) const;
 
+  // Performs one Map() attempt without waiting or releasing state.mu. Returns
+  // an empty optional after mapping or reactivating the requested alias, or the
+  // key of one stale reservation mapping to wait for before retrying.
+  absl::StatusOr<std::optional<PendingDeallocationKey>> TryMapWithoutWaiting(
+      PerDeviceState& state, DeviceAddressBase addr,
+      MemoryReservation& reservation, uint64_t reservation_offset,
+      uint64_t size, DeviceAddressBase reservation_address)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
   struct OverlappingRecord {
     AllocationRecord* record = nullptr;
     DeviceAddressBase tracked_address;
