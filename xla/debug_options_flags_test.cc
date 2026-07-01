@@ -80,17 +80,17 @@ TEST(DebugOptions, GetDebugOptionsFromProtoAndFlags_PtxCompilerExtraFlags) {
               ElementsAre("--maxntid=8,8,8", "--register-usage-level=10"));
 }
 
-TEST(DebugOptions, CommandBufferUpdateModeDefaultsToDynamicAllocate) {
+TEST(DebugOptions, CommandBufferUpdateModeDefaultsToAlwaysUpdate) {
   EXPECT_EQ(
       DefaultDebugOptionsIgnoringFlags().xla_gpu_command_buffer_update_mode(),
-      DebugOptions::DYNAMIC_ALLOCATE);
+      DebugOptions::ALWAYS_UPDATE);
 }
 
 TEST(DebugOptions, CommandBufferUpdateModesParseFromFlags) {
   for (const auto& [name, expected] : std::vector<
            std::pair<const char*, DebugOptions::CommandBufferUpdateMode>>{
-           {"DYNAMIC_ALLOCATE", DebugOptions::DYNAMIC_ALLOCATE},
-           {"VMM_PERSISTENT_TEMP", DebugOptions::VMM_PERSISTENT_TEMP}}) {
+           {"ALWAYS_UPDATE", DebugOptions::ALWAYS_UPDATE},
+           {"SKIP_TEMP", DebugOptions::SKIP_TEMP}}) {
     int* pargc;
     std::vector<char*>* pargv;
     ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
@@ -108,9 +108,9 @@ TEST(DebugOptions, CommandBufferUpdateModesParseFromFlags) {
   }
 }
 
-TEST(DebugOptions, LegacyCommandBufferUpdateModesRejectedByTextProto) {
-  for (const char* name :
-       {"ALWAYS_UPDATE", "NEVER_UPDATE", "CAPTURE_CMD_NEVER_UPDATE"}) {
+TEST(DebugOptions, RemovedCommandBufferUpdateModesRejectedByTextProto) {
+  for (const char* name : {"DYNAMIC_ALLOCATE", "VMM_PERSISTENT_TEMP",
+                           "NEVER_UPDATE", "CAPTURE_CMD_NEVER_UPDATE"}) {
     DebugOptions options;
     std::string text = "xla_gpu_command_buffer_update_mode: ";
     text += name;
@@ -118,9 +118,9 @@ TEST(DebugOptions, LegacyCommandBufferUpdateModesRejectedByTextProto) {
   }
 }
 
-TEST(DebugOptionsDeathTest, LegacyCommandBufferUpdateModesRejectedByFlags) {
-  for (const char* name :
-       {"ALWAYS_UPDATE", "NEVER_UPDATE", "CAPTURE_CMD_NEVER_UPDATE"}) {
+TEST(DebugOptionsDeathTest, RemovedCommandBufferUpdateModesRejectedByFlags) {
+  for (const char* name : {"DYNAMIC_ALLOCATE", "VMM_PERSISTENT_TEMP",
+                           "NEVER_UPDATE", "CAPTURE_CMD_NEVER_UPDATE"}) {
     int* pargc;
     std::vector<char*>* pargv;
     ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);

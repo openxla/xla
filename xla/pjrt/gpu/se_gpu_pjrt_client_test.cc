@@ -2426,12 +2426,12 @@ GpuClientOptions VmmClientOptions() {
   return options;
 }
 
-CompileOptions PersistentTempCommandBufferOptions() {
+CompileOptions SkipTempCommandBufferOptions() {
   CompileOptions options;
   auto* debug_options =
       options.executable_build_options.mutable_debug_options();
   debug_options->set_xla_gpu_command_buffer_update_mode(
-      DebugOptions::VMM_PERSISTENT_TEMP);
+      DebugOptions::SKIP_TEMP);
   debug_options->set_xla_gpu_graph_min_graph_size(1);
   debug_options->add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   debug_options->add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
@@ -2450,7 +2450,7 @@ Literal DiagonalMatrix(float diagonal) {
 
 void RunTwoGemmCommandBuffer(PjRtClient& client) {
   static constexpr char kHlo[] = R"(
-    HloModule persistent_temp_command_buffer_test
+    HloModule skip_temp_command_buffer_test
     ENTRY main {
       lhs = f32[4,4] parameter(0)
       rhs0 = f32[4,4] parameter(1)
@@ -2463,7 +2463,7 @@ void RunTwoGemmCommandBuffer(PjRtClient& client) {
 
   ASSERT_OK_AND_ASSIGN(
       auto executable,
-      CompileExecutable(kHlo, client, PersistentTempCommandBufferOptions()));
+      CompileExecutable(kHlo, client, SkipTempCommandBufferOptions()));
   ASSERT_OK_AND_ASSIGN(auto* memory_space,
                        client.addressable_devices()[0]->default_memory_space());
 
@@ -2506,7 +2506,7 @@ class ScopedBufferAllocatorVLog {
   int old_vlog_level_;
 };
 
-TEST_F(VmmTest, CommandBufferPersistentTempTwoGemmChain) {
+TEST_F(VmmTest, CommandBufferSkipTempTwoGemmChain) {
   ASSERT_OK_AND_ASSIGN(auto client,
                        GetStreamExecutorGpuClient(VmmClientOptions()));
 
@@ -2516,14 +2516,14 @@ TEST_F(VmmTest, CommandBufferPersistentTempTwoGemmChain) {
       mock_log,
       Log(absl::LogSeverity::kInfo, ::testing::_,
           ::testing::HasSubstr(
-              "reserved range for module persistent_temp_command_buffer_test")))
+              "reserved range for module skip_temp_command_buffer_test")))
       .Times(1);
   mock_log.StartCapturingLogs();
   RunTwoGemmCommandBuffer(*client);
   mock_log.StopCapturingLogs();
 }
 
-TEST_F(VmmTest, CommandBufferPersistentTempFallsBackWithoutVmmAllocator) {
+TEST_F(VmmTest, CommandBufferSkipTempFallsBackWithoutVmmAllocator) {
   GpuClientOptions options;
   options.allowed_devices = {0};
   options.allocator_config.kind = GpuAllocatorConfig::Kind::kAddress;
@@ -2535,7 +2535,7 @@ TEST_F(VmmTest, CommandBufferPersistentTempFallsBackWithoutVmmAllocator) {
       mock_log,
       Log(absl::LogSeverity::kInfo, ::testing::_,
           ::testing::HasSubstr(
-              "reserved range for module persistent_temp_command_buffer_test")))
+              "reserved range for module skip_temp_command_buffer_test")))
       .Times(0);
   mock_log.StartCapturingLogs();
   RunTwoGemmCommandBuffer(*client);

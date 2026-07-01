@@ -9,16 +9,16 @@ allocation modes available for controlling that behavior.
 
 The `xla_gpu_command_buffer_update_mode` debug option has two values:
 
-- `DYNAMIC_ALLOCATE` is the default. Every temporary and output allocation uses
+- `ALWAYS_UPDATE` is the default. Every temporary and output allocation uses
   the client's normal allocator. Command-buffer nodes are updated whenever a
-  referenced address changes.
-- `VMM_PERSISTENT_TEMP` gives command-buffer-referenced preallocated temporary
+  referenced address changes. Referenced constants are still treated as
+  persistent because their global addresses are stable.
+- `SKIP_TEMP` gives command-buffer-referenced preallocated temporary
   buffers stable virtual addresses backed by the VMM allocator. Parameters and
   live-out buffers continue to use their ordinary dynamic addresses.
 
-The former names `ALWAYS_UPDATE`, `NEVER_UPDATE`, and
-`CAPTURE_CMD_NEVER_UPDATE` have been removed and are rejected by flag and text
-proto parsing.
+The removed names `DYNAMIC_ALLOCATE`, `VMM_PERSISTENT_TEMP`, `NEVER_UPDATE`,
+and `CAPTURE_CMD_NEVER_UPDATE` are rejected by flag and text proto parsing.
 
 ## Why only temporary buffers?
 
@@ -35,7 +35,7 @@ not require VMM remapping.
 Only nonzero temporary allocations referenced by a command buffer participate.
 Unreferenced temporaries continue through the normal allocation path.
 
-## How `VMM_PERSISTENT_TEMP` works
+## How `SKIP_TEMP` works
 
 For each executable and device, XLA collects the referenced preallocated
 temporaries and creates one virtual-address reservation. Each temporary receives
@@ -54,7 +54,9 @@ command buffer observes the same address on every execution. The physical
 allocation and mapping still follow the execution buffer's lifetime; the
 persistent property is the reserved virtual address.
 
-The command-buffer address policy is then:
+In both update modes, referenced constants are treated as persistent. The
+`SKIP_TEMP` mode additionally makes referenced preallocated temporary
+buffers persistent. Its command-buffer address policy is:
 
 | Allocation kind                  | VMM reserved address | Treated as persistent |
 |----------------------------------|----------------------|-----------------------|
@@ -71,17 +73,17 @@ an address update.
 ## Allocator selection and fallback
 
 Using this mode requires a `DeviceAddressVmmAllocator`. Selecting
-`VMM_PERSISTENT_TEMP` globally causes the GPU client to select the VMM
+`SKIP_TEMP` globally causes the GPU client to select the VMM
 allocator. A per-executable compile option can also request the mode.
 
-If an executable requests `VMM_PERSISTENT_TEMP` while its client uses a
+If an executable requests `SKIP_TEMP` while its client uses a
 non-VMM allocator, XLA safely falls back to dynamic allocation and ordinary
 command-buffer updates. This keeps the executable functional, but it does not
-provide stable temporary addresses.
+treat any allocation as persistent or provide stable temporary addresses.
 
 ## Choosing a mode
 
-Use `DYNAMIC_ALLOCATE` unless command-buffer update cost is significant and the
-platform supports the VMM allocator. Use `VMM_PERSISTENT_TEMP` to stabilize
+Use `ALWAYS_UPDATE` unless command-buffer update cost is significant and the
+platform supports the VMM allocator. Use `SKIP_TEMP` to stabilize
 internal temporary addresses while preserving normal parameter and result
 allocation semantics.

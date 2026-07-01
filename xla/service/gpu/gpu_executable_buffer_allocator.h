@@ -78,15 +78,6 @@ class GpuExecutableBufferAllocator {
 
   using AllocationIndexSet = absl::btree_set<BufferAllocation::Index>;
 
-  struct CommandBufferAllocationIndexes {
-    // Allocation indices with stable command-buffer-visible addresses.
-    AllocationIndexSet persistent;
-
-    // Allocation indices that need VMM-backed stable addresses for
-    // command-buffer execution.
-    AllocationIndexSet va_remapped;
-  };
-
   // Per-run buffer allocation context created by `CreateExecutionScope`.
   // Callers first use it to build `BufferAllocations` from runtime parameters,
   // constants, temporary buffers, and output buffers, then use it to run the
@@ -108,7 +99,6 @@ class GpuExecutableBufferAllocator {
     ExecutionScope& operator=(ExecutionScope&&) = default;
 
     bool va_remap_enabled() const { return remapping_ != nullptr; }
-    bool address_policy_active() const { return address_policy_active_; }
 
     // Builds the BufferAllocations for an execution. Entry-computation
     // parameter buffers are obtained from `get_parameter_buffer`; all other
@@ -144,11 +134,9 @@ class GpuExecutableBufferAllocator {
    private:
     friend class GpuExecutableBufferAllocator;
 
-    ExecutionScope() = default;
     ExecutionScope(GpuExecutableBufferAllocator* owner, Remapping* remapping,
                    se::DeviceAddressVmmAllocator* vmm_allocator,
-                   std::unique_ptr<absl::MutexLock> remap_lock,
-                   bool address_policy_active);
+                   std::unique_ptr<absl::MutexLock> remap_lock);
 
     absl::Status PrepareReservation(
         const ServiceExecutableRunOptions* run_options, int device_ordinal,
@@ -166,21 +154,13 @@ class GpuExecutableBufferAllocator {
         int64_t arg_idx,
         const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
             allocate_granularity);
-    std::optional<absl::Span<const BufferAllocation::Index>>
-    GetPersistentAllocIndices() const;
+    absl::Span<const BufferAllocation::Index> GetPersistentAllocIndices() const;
 
     GpuExecutableBufferAllocator* owner_ = nullptr;
     Remapping* remapping_ = nullptr;
     se::DeviceAddressVmmAllocator* vmm_allocator_ = nullptr;
     std::unique_ptr<absl::MutexLock> remap_lock_;
-    bool address_policy_active_ = false;
   };
-
-  static absl::StatusOr<CommandBufferAllocationIndexes>
-  CollectCommandBufferAllocationIndexes(
-      const ThunkExecutor* thunk_executor,
-      absl::Span<const BufferAllocation* const> allocations,
-      DebugOptions::CommandBufferUpdateMode update_mode);
 
   GpuExecutableBufferAllocator(
       absl::string_view module_name,
@@ -190,11 +170,7 @@ class GpuExecutableBufferAllocator {
   ~GpuExecutableBufferAllocator();
 
   size_t command_buffer_allocation_count() const {
-    return command_buffer_persistent_allocation_indexes_.size();
-  }
-
-  const AllocationIndexSet& command_buffer_allocation_indexes() const {
-    return command_buffer_persistent_allocation_indexes_;
+    return command_buffer_persistent_alloc_indices_.size();
   }
 
   absl::StatusOr<ExecutionScope> CreateExecutionScope(
@@ -219,8 +195,6 @@ class GpuExecutableBufferAllocator {
   std::vector<const BufferAllocation*> allocations_;
   Shape result_shape_;
   const DebugOptions* debug_options_ = nullptr;
-  DebugOptions::CommandBufferUpdateMode update_mode_;
-  AllocationIndexSet command_buffer_persistent_allocation_indexes_;
   std::vector<BufferAllocation::Index> command_buffer_persistent_alloc_indices_;
   AllocationIndexSet command_buffer_va_remapped_allocation_indexes_;
 
