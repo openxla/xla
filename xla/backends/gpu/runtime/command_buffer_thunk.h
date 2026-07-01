@@ -109,18 +109,6 @@ class CommandBufferThunk : public Thunk {
         std::optional<absl::Span<const BufferAllocation::Index>>
             persistent_alloc_indices) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
 
-    // Returns true if `persistent_alloc_indices` differs from the policy used
-    // for the last successful command buffer recording.
-    bool PersistentAllocIndicesChanged(
-        std::optional<absl::Span<const BufferAllocation::Index>>
-            persistent_alloc_indices) const
-        ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
-
-    // Saves an owned copy of the policy used to record the command buffer.
-    void SetRecordedPersistentAllocIndices(
-        std::optional<absl::Span<const BufferAllocation::Index>>
-            persistent_alloc_indices) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
-
     // se::CommandBuffer is not thread safe, and we guard it with a mutex to
     // guarantee that we do not mutate it concurrently.
     absl::Mutex mutex;
@@ -143,11 +131,10 @@ class CommandBufferThunk : public Thunk {
     // change.
     std::vector<se::DeviceAddressBase> recorded_allocs ABSL_GUARDED_BY(mutex);
 
-    // Allocation address policy used for the last successful command buffer
-    // recording. The span passed in execution parameters is non-owning, so we
-    // keep an owned copy for comparisons across execution steps.
-    std::optional<std::vector<BufferAllocation::Index>>
-        recorded_persistent_alloc_indices ABSL_GUARDED_BY(mutex);
+    // True if the command buffer was recorded with persistent allocation
+    // indices. We track only their presence because the execution parameter
+    // contract guarantees that the indices remain unchanged once present.
+    bool recorded_with_persistent_alloc_indices ABSL_GUARDED_BY(mutex) = false;
 
     // Number of command buffer executions since last update.
     int64_t num_executions ABSL_GUARDED_BY(mutex) = 0;

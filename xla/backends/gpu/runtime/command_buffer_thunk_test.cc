@@ -345,7 +345,7 @@ TEST(CommandBufferThunkTest, UpdatePolicyIgnoresVaRemappedAllocations) {
 }
 
 TEST(CommandBufferThunkTest,
-     PersistentAllocationPolicyChangeTriggersInitializeUpdate) {
+     PersistentAllocIndicesBecomingAvailableTriggersInitializeUpdate) {
   se::StreamExecutor* stream_executor = GpuExecutor();
   ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
 
@@ -383,22 +383,17 @@ TEST(CommandBufferThunkTest,
   stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   ServiceExecutableRunOptions run_options;
   BufferAllocations first_allocations({a, b}, /*device_ordinal=*/0, &allocator);
-  std::vector<BufferAllocation::Index> first_persistent_alloc_indices = {0};
 
   Thunk::InitializeParams initialize_params;
   initialize_params.executor = stream_executor;
   initialize_params.buffer_allocations = &first_allocations;
   initialize_params.stream = stream.get();
-  initialize_params.persistent_alloc_indices =
-      absl::MakeConstSpan(first_persistent_alloc_indices);
   ASSERT_OK(thunk.Initialize(initialize_params));
   EXPECT_EQ(record_count, 1);
 
-  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
-      run_options, first_allocations, stream.get(), stream.get(), nullptr,
-      nullptr, nullptr, /*additional_compute_streams=*/{},
-      /*execution_scoped_state=*/nullptr,
-      absl::MakeConstSpan(first_persistent_alloc_indices));
+  Thunk::ExecuteParams execute_params =
+      Thunk::ExecuteParams::Create(run_options, first_allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
   ASSERT_OK(thunk.ExecuteOnStream(execute_params));
   ASSERT_OK(stream->BlockHostUntilDone());
 
@@ -407,10 +402,7 @@ TEST(CommandBufferThunkTest,
   EXPECT_EQ(result, std::vector<int32_t>(kLength, 42));
   EXPECT_EQ(record_count, 1);
 
-  // The policy is compared by value, not by the backing span's identity.
-  std::vector<BufferAllocation::Index> same_persistent_alloc_indices = {0};
-  initialize_params.persistent_alloc_indices =
-      absl::MakeConstSpan(same_persistent_alloc_indices);
+  // An absent policy must not trigger another initialization update.
   ASSERT_OK(thunk.Initialize(initialize_params));
   EXPECT_EQ(record_count, 1);
 
@@ -423,11 +415,8 @@ TEST(CommandBufferThunkTest,
   ASSERT_OK(thunk.Initialize(initialize_params));
   EXPECT_EQ(record_count, 2);
 
-  // An unchanged policy must not trigger another initialization update.
-  std::vector<BufferAllocation::Index> same_all_persistent_alloc_indices = {0,
-                                                                            1};
-  initialize_params.persistent_alloc_indices =
-      absl::MakeConstSpan(same_all_persistent_alloc_indices);
+  // Once present, the policy remains unchanged and does not trigger another
+  // initialization update.
   ASSERT_OK(thunk.Initialize(initialize_params));
   EXPECT_EQ(record_count, 2);
 
@@ -435,7 +424,7 @@ TEST(CommandBufferThunkTest,
       run_options, second_allocations, stream.get(), stream.get(), nullptr,
       nullptr, nullptr, /*additional_compute_streams=*/{},
       /*execution_scoped_state=*/nullptr,
-      absl::MakeConstSpan(same_all_persistent_alloc_indices));
+      absl::MakeConstSpan(all_persistent_alloc_indices));
   ASSERT_OK(thunk.ExecuteOnStream(execute_params));
   ASSERT_OK(stream->BlockHostUntilDone());
 
