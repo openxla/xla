@@ -703,8 +703,9 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       AllocationRecord& source_record) const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
-  // Resolves conflicts for a Map() request. Every wait is followed by a fresh
-  // source lookup and validation because waiting temporarily releases state.mu.
+  // Resolves up to two stale conflicts for a Map() request. Every wait is
+  // followed by a fresh source lookup and validation because waiting
+  // temporarily releases state.mu.
   absl::StatusOr<PreparedMapTarget> PrepareMapTarget(PerDeviceState& state,
                                                      const MapRequest& request)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
