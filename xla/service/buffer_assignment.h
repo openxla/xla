@@ -194,6 +194,11 @@ class BufferAllocation {
   // buffer assignment.
   void set_page_id(int64_t page) { page_id_ = page; }
 
+  // Clears references to debug data referencing the Buffer Assignments.
+  // Buffer Assignments aren't preserved after creating a GpuExecutable, so this
+  // is used to avoid referencing out of scope data.
+  void ClearBufferAssignmentReferences();
+
   // Access to the logical buffers assigned to this allocation, and their
   // associated logical offsets and sizes.
   const absl::flat_hash_map<const HloValue*, OffsetSize>& assigned_buffers()

@@ -121,7 +121,6 @@ class GpuExecutable : public Executable {
     std::string module_name;
     ProgramShape program_shape;
     std::optional<std::vector<BufferAllocation>> mlir_allocations;
-    std::unique_ptr<const BufferAssignment> buffer_assignment;
     std::unique_ptr<GpuAliasInfo> alias_info;
     DebugOptions debug_options;
     se::DeviceDescription device_description;
@@ -132,6 +131,7 @@ class GpuExecutable : public Executable {
     std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options;
     std::optional<BufferAssignmentProto> buffer_assignment_proto;
     std::string buffer_allocations_debug_summary;
+    const BufferAssignment* buffer_assignment = nullptr;
   };
 
   static absl::StatusOr<std::unique_ptr<GpuExecutable>> Create(Params params);
@@ -185,11 +185,6 @@ class GpuExecutable : public Executable {
   const std::vector<ConstantInfo>& constants() const { return constants_; }
 
   // Only returns a non-null pointer if this executable was constructed with a
-  // valid BufferAssignment. Deserialized executables do not have a valid
-  // BufferAssignment and will return nullptr.
-  const BufferAssignment* buffer_assignment() const {
-    return buffer_assignment_.get();
-  }
 
   // Human readable summary of the buffer allocations. Tailored to debugging
   // OOMs, includes the Hlo op metadata for every buffer associated with each
@@ -198,9 +193,8 @@ class GpuExecutable : public Executable {
     return buffer_allocations_debug_summary_;
   }
 
-  // Returns the proto representation of `buffer_assignment()` if available,
-  // otherwise returns the stored buffer assignment proto if available. Returns
-  // nullopt if neither is available.
+  // Returns the stored buffer assignment proto if available. Returns
+  // nullopt if it is not available.
   std::optional<BufferAssignmentProto> buffer_assignment_proto() const;
 
   const GpuAliasInfo* alias_info() const { return alias_info_.get(); }
@@ -273,7 +267,6 @@ class GpuExecutable : public Executable {
       std::unique_ptr<ThunkExecutor> executable, std::string module_name,
       ProgramShape program_shape,
       std::optional<std::vector<BufferAllocation>> mlir_allocations,
-      std::unique_ptr<const BufferAssignment> buffer_assignment,
       std::deque<BufferAllocation> thunk_pass_allocations,
       std::unique_ptr<GpuAliasInfo> alias_info, DebugOptions debug_options,
       std::vector<ConstantInfo> constants,
@@ -352,25 +345,17 @@ class GpuExecutable : public Executable {
   // The allocations_ object contains allocations that **may** be used to
   // provide information for allocating memory for every output/temp buffer.
   // See the comment on allocation_ptrs_.
-  std::optional<const std::vector<BufferAllocation>> allocations_;
+  std::optional<std::vector<BufferAllocation>> allocations_;
 
-  // The buffer_assignment_ object contains allocations that **may** be used to
-  // provide information for allocating memory for every output/temp buffer.
-  // See the comment on allocation_ptrs_.
-  //
-  // This object is also used for dumping debug info.
-  std::shared_ptr<const xla::BufferAssignment> buffer_assignment_;
-
-  // A buffer assignment proto may exists when `buffer_assignment_` is nullptr.
-  // This happens when the executable is reconstructed from a proto (e.g. AOT).
-  // The full BufferAssignment object can't be reconstructed because it requires
-  // access to the compiler. But for debugging purposes, the proto is enough.
+  // A buffer assignment proto may exists when reconstructed from a proto (e.g.
+  // AOT). For debugging purposes, the proto is enough.
+  // TODO(b/517426568): Remove the optional since this should always be present.
   std::optional<BufferAssignmentProto> buffer_assignment_proto_;
 
   // Extra allocations added by thunk passes outside of the normal buffer
   // assignment process.
   // std::deque is used to ensure pointer stability.
-  const std::deque<BufferAllocation> thunk_pass_allocations_;
+  std::deque<BufferAllocation> thunk_pass_allocations_;
 
   // Backend specific aliasing information whether operands can/should share the
   // buffer with the user.

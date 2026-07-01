@@ -2910,6 +2910,12 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
                    stream_executor::ExecutableAbiVersion::FromDeviceDescription(
                        gpu_device_info));
 
+  std::string buffer_allocations_debug_summary =
+      res.compile_module_results.buffer_assignment->ToVerboseString(
+          alias_info.get(), debug_opts.xla_debug_buffer_assignment_show_max());
+  std::optional<BufferAssignmentProto> buffer_assignment_proto =
+      res.compile_module_results.buffer_assignment->ToProto();
+
   ASSIGN_OR_RETURN(
       std::unique_ptr<GpuExecutable> gpu_executable,
       GpuExecutable::Create(GpuExecutable::Params{
@@ -2926,10 +2932,9 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
           module->compute_computation_layout().ComputeProgramShape(),
           /*mlir_allocations=*/
           (res.compile_module_results.use_original_allocations
-               ? std::optional<std::vector<BufferAllocation>>()
+               ? std::move(*res.compile_module_results.buffer_assignment)
+                     .TakeAllocations()
                : std::move(res.compile_module_results.allocations)),
-          /*buffer_assignment=*/
-          std::move(res.compile_module_results.buffer_assignment),
           /*alias_info=*/std::move(alias_info),
           /*debug_options=*/debug_opts,
           /*device_description=*/gpu_device_info,
@@ -2942,15 +2947,21 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
           /*cpu_target_machine_options=*/
           options.cpu_target_config.has_value()
               ? options.cpu_target_config->cpu_target_machine_options
-              : std::nullopt}));
+              : std::nullopt,
+          /*buffer_assignment_proto=*/std::move(buffer_assignment_proto),
+          /*buffer_allocations_debug_summary=*/
+          std::move(buffer_allocations_debug_summary),
+          /*buffer_assignment=*/
+          res.compile_module_results.buffer_assignment.get()}));
   IncrementCompiledProgramsCount();
 
   if (embed_debug_info && gpu_executable->has_module()) {
     // Dump computation proto state and buffer assignment for
     // CompiledMemoryAnalysis.
     auto hlo_proto = std::make_unique<HloProto>();
-    *hlo_proto->mutable_buffer_assignment() =
-        gpu_executable->buffer_assignment()->ToProto();
+    if (auto proto = gpu_executable->buffer_assignment_proto()) {
+      *hlo_proto->mutable_buffer_assignment() = *std::move(proto);
+    }
     gpu_executable->set_hlo_proto(std::move(hlo_proto));
   }
 
@@ -3086,14 +3097,11 @@ absl::StatusOr<std::unique_ptr<CompiledModule>> GpuCompiler::Export(
     return GpuAotCompilationResult::FromProto(std::move(proto));
   }
   std::string buffer_assignment_debug_summary =
-      gpu_executable->buffer_assignment()->ToVerboseString(
-          gpu_executable->alias_info(),
-          gpu_executable->module()
-              .config()
-              .debug_options()
-              .xla_debug_buffer_assignment_show_max());
+      gpu_executable->buffer_allocations_debug_summary();
   return LegacyGpuAotCompilationResult::FromModule(
-      &gpu_executable->module(), gpu_executable->buffer_assignment()->ToProto(),
+      &gpu_executable->module(),
+      gpu_executable->buffer_assignment_proto().value_or(
+          BufferAssignmentProto()),
       std::move(buffer_assignment_debug_summary), "", gpu_executable->binary(),
       gpu_executable->dnn_compiled_graphs(), pointer_size_, this);
 }
@@ -3484,7 +3492,6 @@ GpuCompiler::LoadExecutableFromLegacyAotResult(
         /*module_name=*/std::move(hlo_module_name),
         /*program_shape=*/std::move(program_shape),
         /*mlir_allocations=*/std::move(*buffer_assignment).TakeAllocations(),
-        /*buffer_assignment=*/nullptr,
         /*alias_info=*/std::move(alias_info),
         /*debug_options=*/std::move(debug_options),
         /*device_description=*/device_description,
@@ -3494,7 +3501,9 @@ GpuCompiler::LoadExecutableFromLegacyAotResult(
         /*executable_abi_version=*/executable_abi_version,
         /*cpu_target_machine_options=*/std::move(cpu_target_machine_options),
         /*buffer_assignment_proto=*/std::move(buffer_assignment_proto),
-        proto.buffer_allocations_debug_summary()});
+        /*buffer_allocations_debug_summary=*/
+        proto.buffer_allocations_debug_summary(),
+        /*buffer_assignment=*/buffer_assignment.get()});
   }
 }
 
