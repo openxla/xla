@@ -25,6 +25,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -58,11 +59,13 @@ limitations under the License.
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
+#include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/service/gpu/gpu_executable_buffer_allocator.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/logical_buffer.h"
+#include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/service/xla_debug_info_manager.h"
 #include "xla/shape.h"
@@ -71,6 +74,7 @@ limitations under the License.
 #include "xla/stream_executor/abi/executable_abi_version.h"
 #include "xla/stream_executor/abi/executable_abi_version.pb.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -231,7 +235,7 @@ TEST_F(GpuExecutableTest, RunThunkPasses) {
   EXPECT_EQ(dump_files.size(), 1);
 }
 
-TEST_F(GpuExecutableTest, CommandBufferAllocationIndexes) {
+TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
   std::vector<BufferAllocation> allocations;
   allocations.reserve(5);
   allocations.emplace_back(0, 4, 0);
@@ -289,19 +293,48 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationIndexes) {
     allocation_ptrs.push_back(&allocation);
   }
 
-  ASSERT_OK_AND_ASSIGN(
-      auto dynamic_indexes,
-      GpuExecutableBufferAllocator::CollectCommandBufferAllocationIndexes(
-          &thunk_executor, allocation_ptrs, DebugOptions::DYNAMIC_ALLOCATE));
-  EXPECT_THAT(dynamic_indexes.persistent, IsEmpty());
-  EXPECT_THAT(dynamic_indexes.va_remapped, IsEmpty());
+  using AllocationPolicy =
+      std::pair<size_t, std::optional<std::vector<BufferAllocation::Index>>>;
+  auto get_allocation_policy_without_vmm =
+      [&](DebugOptions::CommandBufferUpdateMode update_mode)
+      -> absl::StatusOr<AllocationPolicy> {
+    DebugOptions debug_options;
+    debug_options.set_xla_gpu_command_buffer_update_mode(update_mode);
+    GpuExecutableBufferAllocator buffer_allocator(
+        "test", allocation_ptrs, shape, &debug_options, &thunk_executor);
+    ServiceExecutableRunOptions run_options;
+    ASSIGN_OR_RETURN(
+        GpuExecutableBufferAllocator::ExecutionScope allocation_scope,
+        buffer_allocator.CreateExecutionScope(
+            &run_options, /*memory_allocator=*/nullptr, /*device_ordinal=*/0));
+
+    std::vector<se::DeviceAddressBase> buffers;
+    BufferAllocations buffer_allocations(buffers, /*device_ordinal=*/0,
+                                         /*memory_allocator=*/nullptr);
+    std::optional<std::vector<BufferAllocation::Index>> persistent_indices;
+    RETURN_IF_ERROR(allocation_scope.ExecuteWithBufferAllocations(
+        buffer_allocations, /*device_ordinal=*/0,
+        [&](const BufferAllocations&,
+            std::optional<absl::Span<const BufferAllocation::Index>> indices) {
+          if (indices.has_value()) {
+            persistent_indices.emplace(indices->begin(), indices->end());
+          }
+          return absl::OkStatus();
+        }));
+    return AllocationPolicy{buffer_allocator.command_buffer_allocation_count(),
+                            std::move(persistent_indices)};
+  };
 
   ASSERT_OK_AND_ASSIGN(
-      auto persistent_temp_indexes,
-      GpuExecutableBufferAllocator::CollectCommandBufferAllocationIndexes(
-          &thunk_executor, allocation_ptrs, DebugOptions::VMM_PERSISTENT_TEMP));
-  EXPECT_THAT(persistent_temp_indexes.persistent, ElementsAre(0, 1));
-  EXPECT_THAT(persistent_temp_indexes.va_remapped, ElementsAre(1));
+      auto always_update_policy,
+      get_allocation_policy_without_vmm(DebugOptions::ALWAYS_UPDATE));
+  EXPECT_EQ(always_update_policy.first, 1);
+  EXPECT_THAT(always_update_policy.second, Optional(ElementsAre(0)));
+
+  ASSERT_OK_AND_ASSIGN(auto skip_temp_policy, get_allocation_policy_without_vmm(
+                                                  DebugOptions::SKIP_TEMP));
+  EXPECT_EQ(skip_temp_policy.first, 2);
+  EXPECT_THAT(skip_temp_policy.second, Optional(IsEmpty()));
 }
 
 TEST_F(GpuExecutableTest, ComputeComputationLayout) {

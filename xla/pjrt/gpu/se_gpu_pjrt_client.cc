@@ -1334,7 +1334,7 @@ GetStreamExecutorGpuDeviceAllocator(
   const DebugOptions& debug_options = xla::GetDebugOptionsFromFlags();
   GpuAllocatorConfig::Kind effective_kind = allocator_config.kind;
   if (debug_options.xla_gpu_command_buffer_update_mode() !=
-          DebugOptions::DYNAMIC_ALLOCATE &&
+          DebugOptions::ALWAYS_UPDATE &&
       effective_kind != GpuAllocatorConfig::Kind::kVmm) {
     LOG(WARNING) << "xla_gpu_command_buffer_update_mode requires the "
                     "VMM allocator. Overriding allocator kind to kVmm.";
