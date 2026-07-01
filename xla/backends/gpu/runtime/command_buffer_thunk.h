@@ -131,10 +131,11 @@ class CommandBufferThunk : public Thunk {
     // change.
     std::vector<se::DeviceAddressBase> recorded_allocs ABSL_GUARDED_BY(mutex);
 
-    // True if the command buffer was recorded with persistent allocation
-    // indices. We track only their presence because the execution parameter
-    // contract guarantees that the indices remain unchanged once present.
-    bool recorded_with_persistent_alloc_indices ABSL_GUARDED_BY(mutex) = false;
+    // True if persistent allocation information was valid when the command
+    // buffer was recorded. We track only validity because the execution
+    // parameter contract guarantees that the indices remain unchanged once
+    // present.
+    bool persistent_allocs_info_was_valid ABSL_GUARDED_BY(mutex) = false;
 
     // Number of command buffer executions since last update.
     int64_t num_executions ABSL_GUARDED_BY(mutex) = 0;
