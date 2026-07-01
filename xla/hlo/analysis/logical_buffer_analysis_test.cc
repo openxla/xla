@@ -259,23 +259,27 @@ TEST_F(LogicalBufferAnalysisTest, CustomCallFusionAsync) {
     fusion = f32[2,3] fusion(p0), kind=kLoop, calls=fused_computation
     async-start = ((f32[2,3]), f32[2,3], u32[]) custom-call-start(p0),
                                                 custom_call_target="bar"
-    ROOT async-done = f32[2,3] custom-call-done(async-start)
+    async-update = ((f32[2,3]), f32[2,3], u32[]) async-update(async-start)
+    ROOT async-done = f32[2,3] custom-call-done(async-update)
   }
   )";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_str));
   ASSERT_OK_AND_ASSIGN(analysis_, LogicalBufferAnalysis::Run(module.get()));
 
+  HloInstruction* p0_fused = FindInstruction(module.get(), "p0.fused");
+  HloInstruction* copy_fused = FindInstruction(module.get(), "copy.fused");
   HloInstruction* p0 = FindInstruction(module.get(), "p0");
   HloInstruction* ccall = FindInstruction(module.get(), "ccall");
   HloInstruction* fusion = FindInstruction(module.get(), "fusion");
   HloInstruction* async_start = FindInstruction(module.get(), "async-start");
+  HloInstruction* async_update = FindInstruction(module.get(), "async-update");
   HloInstruction* async_done = FindInstruction(module.get(), "async-done");
+  HloComputation* async_computation = async_start->async_wrapped_computation();
+  HloInstruction* async_wrapper_root = async_computation->root_instruction();
+  ASSERT_EQ(async_wrapper_root->operand_count(), 1);
+  HloInstruction* async_wrapper_param = async_wrapper_root->mutable_operand(0);
 
-  HloInstruction* p0_fused =
-      fusion->fused_instructions_computation()->parameter_instruction(0);
-  HloInstruction* copy_fused = fusion->fused_expression_root();
-
-  EXPECT_EQ(analysis_->num_logical_buffers(), 12);
+  EXPECT_EQ(analysis_->num_logical_buffers(), 13);
 
   VerifyBufferDefinedAt(p0, {});
   VerifyBufferDefinedAt(ccall, {});
@@ -287,7 +291,20 @@ TEST_F(LogicalBufferAnalysisTest, CustomCallFusionAsync) {
   VerifyBufferDefinedAt(async_start, {0});
   VerifyBufferDefinedAt(async_start, {1});
   VerifyBufferDefinedAt(async_start, {2});
+  // {0, 0} is implicitly aliased to input parameter p0.
   VerifyNoBufferDefinedAt(async_start, {0, 0});
+
+  VerifyBufferDefinedAt(async_update, {});
+  VerifyNoBufferDefinedAt(async_update, {0});
+  VerifyNoBufferDefinedAt(async_update, {1});
+  VerifyNoBufferDefinedAt(async_update, {2});
+
+  // There are two more buffers defined in the async computation,
+  // which is created by the custom-call-start and custom-call-done
+  // in async wrapped computation.
+  VerifyBufferDefinedAt(async_wrapper_param, {});
+  VerifyBufferDefinedAt(async_wrapper_root, {});
+
   VerifyBufferDefinedAt(async_done, {});
 }
 
@@ -441,5 +458,52 @@ TEST_F(LogicalBufferAnalysisTest, InvalidGetBufferIdBehavior) {
               StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
+TEST_F(LogicalBufferAnalysisTest, SimpleAsyncChain) {
+  absl::string_view hlo_str = R"(
+  HloModule module
+
+  async_computation {
+    p0 = f32[4] parameter(0)
+    ROOT ccall = f32[4] custom-call(p0), custom_call_target="bar"
+  }
+
+  ENTRY entry {
+    p0 = f32[4] parameter(0)
+    start = ((f32[4]), f32[4], s32[]) async-start(p0), calls=async_computation,
+                                       async_execution_thread="sparsecore"
+    update = ((f32[4]), f32[4], s32[]) async-update(start)
+    ROOT done = f32[4] async-done(update)
+  }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_str));
+  ASSERT_OK_AND_ASSIGN(analysis_, LogicalBufferAnalysis::Run(module.get()));
+
+  HloInstruction* p0 = FindInstruction(module.get(), "p0");
+  HloInstruction* start = FindInstruction(module.get(), "start");
+  HloInstruction* update = FindInstruction(module.get(), "update");
+
+  VerifyBufferDefinedAt(p0, {});
+
+  // Verify start buffers:
+  // - {} (top-level tuple) -> defined
+  // - {0} (sub-tuple) -> defined
+  // - {0, 0} -> implicitly aliased (to input parameter p0) -> not defined
+  // - {1} (output) -> defined
+  // - {2} (state) -> defined
+  VerifyBufferDefinedAt(start, {});
+  VerifyBufferDefinedAt(start, {0});
+  VerifyBufferDefinedAt(start, {1});
+  VerifyBufferDefinedAt(start, {2});
+  VerifyNoBufferDefinedAt(start, {0, 0});
+
+  // Verify update buffers:
+  // - {} (top-level tuple) -> defined (always defined for new async-update)
+  // - all other subshapes are compatible with start -> not defined
+  VerifyBufferDefinedAt(update, {});
+  VerifyNoBufferDefinedAt(update, {0});
+  VerifyNoBufferDefinedAt(update, {0, 0});
+  VerifyNoBufferDefinedAt(update, {1});
+  VerifyNoBufferDefinedAt(update, {2});
+}
 }  // namespace
 }  // namespace xla
