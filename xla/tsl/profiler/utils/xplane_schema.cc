@@ -34,9 +34,7 @@ const absl::string_view kVirtualDevicePlanePrefix = "/virtualdevice:";
 const absl::string_view kTpuNonCorePlaneNamePrefix = "#Chip";
 const char kTpuPlaneRegex[] = {"/device:TPU:([0-9]*)$"};
 const char kSparseCorePlaneRegex[] = {
-    "/device:TPU:[0-9]+ SparseCore ([0-9]+)$"};
-const char kSparseCoreAltPlaneRegex[] = {
-    "/device:TPU:[0-9]+ SparseCore Alt ([0-9]+)$"};
+    "/device:TPU:[0-9]+ SparseCore(?: [a-zA-Z]+)? ([0-9]+)$"};
 // TODO(b/195582092): change it to /device:custom once all literals are
 // migrated.
 const absl::string_view kCustomPlanePrefix = "/device:CUSTOM:";
@@ -576,7 +574,9 @@ absl::string_view GetLineIdTypeStr(LineIdType line_id_type) {
 
 bool IsInternalEvent(std::optional<int64_t> event_type) {
   // TODO(b/162102421): Introduce a prefix for internal event names.
-  if (!event_type.has_value()) return false;
+  if (!event_type.has_value()) {
+    return false;
+  }
   switch (*event_type) {
     case HostEventType::kMemoryAllocation:
     case HostEventType::kMemoryDeallocation:
@@ -598,7 +598,9 @@ bool IsInternalEvent(std::optional<int64_t> event_type) {
 }
 
 bool IsInternalStat(std::optional<int64_t> stat_type) {
-  if (!stat_type.has_value()) return false;
+  if (!stat_type.has_value()) {
+    return false;
+  }
   switch (*stat_type) {
     // case StatType::kKernelDetails:  # removed for rocm gpu kernel details
     case StatType::kProducerType:
