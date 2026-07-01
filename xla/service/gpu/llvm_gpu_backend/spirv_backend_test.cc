@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstring>
 #include <memory>
 #include <set>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -40,30 +41,6 @@ constexpr uint32_t kStorageClassUniformConstant = 0;
 constexpr uint32_t kStorageClassWorkgroup = 4;
 constexpr uint32_t kStorageClassCrossWorkgroup = 5;
 
-std::vector<uint32_t> DecodeSpirvWords(std::string_view binary) {
-  std::vector<uint32_t> words(binary.size() / sizeof(uint32_t));
-  std::memcpy(words.data(), binary.data(), binary.size());
-  return words;
-}
-
-bool ContainsOpTypePointerWithStorageClass(const std::vector<uint32_t>& words,
-                                           uint32_t storage_class) {
-  constexpr int kHeaderWordCount = 5;
-  for (size_t i = kHeaderWordCount; i < words.size();) {
-    uint16_t instruction_opcode = words[i] & 0xffff;
-    uint16_t instruction_word_count = words[i] >> 16;
-    if (instruction_opcode == kOpTypePointer && instruction_word_count >= 3 &&
-        words[i + 2] == storage_class) {
-      return true;
-    }
-    if (instruction_word_count == 0) {
-      return false;
-    }
-    i += instruction_word_count;
-  }
-  return false;
-}
-
 stream_executor::GpuComputeCapability TestComputeCapability() {
   return stream_executor::GpuComputeCapability(
       stream_executor::OneAPIComputeCapability::BMG());
@@ -81,7 +58,7 @@ std::unique_ptr<llvm::Module> ParseLlvmIr(std::string_view ir,
   return module;
 }
 
-std::vector<uint32_t> CompileAndDecode(std::string_view ir) {
+std::vector<uint32_t> CompileToSpirvWords(std::string_view ir) {
   llvm::LLVMContext context;
   std::unique_ptr<llvm::Module> module = ParseLlvmIr(ir, context);
   if (module == nullptr) {
@@ -94,8 +71,29 @@ std::vector<uint32_t> CompileAndDecode(std::string_view ir) {
   if (!spirv.ok()) {
     return {};
   }
+
   EXPECT_EQ(spirv->size() % sizeof(uint32_t), 0);
-  return DecodeSpirvWords(*spirv);
+  std::vector<uint32_t> words(spirv->size() / sizeof(uint32_t));
+  std::memcpy(words.data(), spirv->data(), spirv->size());
+  return words;
+}
+
+bool HasPointerTypeWithStorageClass(const std::vector<uint32_t>& words,
+                                    uint32_t storage_class) {
+  constexpr int kHeaderWordCount = 5;
+  for (size_t i = kHeaderWordCount; i < words.size();) {
+    uint16_t opcode = words[i] & 0xffff;
+    uint16_t word_count = words[i] >> 16;
+    if (opcode == kOpTypePointer && word_count >= 3 &&
+        words[i + 2] == storage_class) {
+      return true;
+    }
+    if (word_count == 0) {
+      return false;
+    }
+    i += word_count;
+  }
+  return false;
 }
 
 TEST(SpirvBackendTest, TestSPIRVExtensions) {
@@ -115,61 +113,31 @@ TEST(SpirvBackendTest, TestSPIRVExtensions) {
             extensions_set.end());
 }
 
-TEST(SpirvBackendTest, AddressSpaceKernelScalarArgumentsArePreserved) {
-  std::vector<uint32_t> words = CompileAndDecode(R"(
-define spir_kernel void @scalar_kernel_arg(i32 %value, ptr addrspace(1) %out) {
+TEST(SpirvBackendTest, AddressSpaceContractPreservesScalarKernelArguments) {
+  std::vector<uint32_t> words = CompileToSpirvWords(R"(
+define spir_kernel void @address_space_contract(i32 %value,
+                                                ptr %in,
+                                                ptr addrspace(1) %out,
+                                                ptr addrspace(2) %constant,
+                                                ptr addrspace(3) %workgroup) {
 entry:
-  store i32 %value, ptr addrspace(1) %out, align 4
-  ret void
-}
-)");
-  ASSERT_GE(words.size(), 5);
-  EXPECT_EQ(words[0], kSpirvMagic);
-  EXPECT_TRUE(
-      ContainsOpTypePointerWithStorageClass(words, kStorageClassCrossWorkgroup));
-}
-
-TEST(SpirvBackendTest, AddressSpaceScalarArgumentsSurvivePointerRewrite) {
-  std::vector<uint32_t> words = CompileAndDecode(R"(
-define spir_kernel void @default_pointer_kernel(
-    i32 %value, ptr %in, ptr addrspace(1) %out) {
-entry:
-  %loaded = load i32, ptr %in, align 4
-  %sum = add i32 %loaded, %value
-  store i32 %sum, ptr addrspace(1) %out, align 4
-  ret void
-}
-)");
-  ASSERT_GE(words.size(), 5);
-  EXPECT_EQ(words[0], kSpirvMagic);
-  EXPECT_TRUE(
-      ContainsOpTypePointerWithStorageClass(words, kStorageClassCrossWorkgroup));
-}
-
-TEST(SpirvBackendTest, AddressSpaceMappingsMatchSpirvContract) {
-  std::vector<uint32_t> words = CompileAndDecode(R"(
-define spir_kernel void @address_space_map(ptr addrspace(1) %out,
-                                           ptr addrspace(1) %global,
-                                           ptr addrspace(2) %constant,
-                                           ptr addrspace(3) %workgroup) {
-entry:
-  %global_value = load i32, ptr addrspace(1) %global, align 4
+  %in_value = load i32, ptr %in, align 4
   %constant_value = load i32, ptr addrspace(2) %constant, align 4
   %workgroup_value = load i32, ptr addrspace(3) %workgroup, align 4
-  %sum0 = add i32 %global_value, %constant_value
+  %sum0 = add i32 %in_value, %constant_value
   %sum1 = add i32 %sum0, %workgroup_value
-  store i32 %sum1, ptr addrspace(1) %out, align 4
+  %sum2 = add i32 %sum1, %value
+  store i32 %sum2, ptr addrspace(1) %out, align 4
   ret void
 }
 )");
   ASSERT_GE(words.size(), 5);
   EXPECT_EQ(words[0], kSpirvMagic);
   EXPECT_TRUE(
-      ContainsOpTypePointerWithStorageClass(words, kStorageClassCrossWorkgroup));
+      HasPointerTypeWithStorageClass(words, kStorageClassCrossWorkgroup));
   EXPECT_TRUE(
-      ContainsOpTypePointerWithStorageClass(words, kStorageClassUniformConstant));
-  EXPECT_TRUE(
-      ContainsOpTypePointerWithStorageClass(words, kStorageClassWorkgroup));
+      HasPointerTypeWithStorageClass(words, kStorageClassUniformConstant));
+  EXPECT_TRUE(HasPointerTypeWithStorageClass(words, kStorageClassWorkgroup));
 }
 
 }  // namespace
