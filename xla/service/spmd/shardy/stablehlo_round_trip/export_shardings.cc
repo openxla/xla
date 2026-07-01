@@ -93,6 +93,7 @@ using ::mlir::sdy::kShardingAttr;
 using ::mlir::sdy::ManualAxesAttr;
 using ::mlir::sdy::MeshAttr;
 using ::mlir::sdy::MeshOp;
+
 using ::mlir::sdy::SdyDialect;
 using ::mlir::sdy::TensorShardingAttr;
 
@@ -431,8 +432,10 @@ NamedSharding convertToNamedSharding(
     manualAxesSharding.push_back(AxisRef(axisNameToIndex[axisName]));
   }
 
+  NamedSharding::ReductionOp reductionOp =
+      static_cast<NamedSharding::ReductionOp>(sdySharding.getReductionOp());
   return NamedSharding(mesh, dimShardings, replicatedAxes, unreducedAxes,
-                       manualAxesSharding);
+                       manualAxesSharding, {}, reductionOp);
 }
 
 }  // namespace

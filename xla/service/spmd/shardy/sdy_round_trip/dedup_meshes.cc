@@ -69,6 +69,7 @@ using ::mlir::sdy::MeshAttr;
 using ::mlir::sdy::MeshAxisAttr;
 using ::mlir::sdy::MeshOp;
 using ::mlir::sdy::SubAxisInfoAttr;
+
 using ::mlir::sdy::TensorShardingAttr;
 
 namespace sdy = ::mlir::sdy;
@@ -347,7 +348,8 @@ TensorShardingAttr replaceAxesInSharding(
   AxisRefVector newUnreducedAxes =
       buildNewAxisRefList(oldSharding.getUnreducedAxes());
   return TensorShardingAttr::get(context, mainMeshName, newDimShardings,
-                                 newReplicatedAxes, newUnreducedAxes);
+                                 newReplicatedAxes, newUnreducedAxes,
+                                 oldSharding.getReductionOp());
 }
 
 // Replaces the manual axes in `manualComputation`, if it refers to some mesh
