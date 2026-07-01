@@ -36,7 +36,6 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
@@ -510,7 +509,7 @@ ENTRY e {
   e = bf16[32,12] exponential(p0)
   c = bf16[] constant(7)
   b = bf16[32,12] broadcast(c), dimensions={}
-  m = bf16[32,12] multiply(p0, b)
+  m = bf16[32,12] add(p0, b)
   a = bf16[32,12] add(e, m)
   bc = bf16[12,32] bitcast(a)
   p1 = bf16[32,3] parameter(1)

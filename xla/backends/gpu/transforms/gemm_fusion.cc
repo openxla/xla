@@ -698,8 +698,13 @@ bool AllowedInGemmFusion(const HloInstruction& instr) {
   if (!instr.IsFusible()) {
     return false;
   }
-  return HloPredicateIsNotOp<HloOpcode::kFusion, HloOpcode::kDot,
-                             HloOpcode::kParameter, HloOpcode::kReduce>(&instr);
+  if (instr.has_called_computations()) {
+    // Blocks instructions with sub-computations - fusing these is not
+    // implemented (currently crashes) and we don't want to fuse them anyway at
+    // the moment. Includes kFusion, kReduce, kAllReduce, etc.
+    return false;
+  }
+  return HloPredicateIsNotOp<HloOpcode::kDot, HloOpcode::kParameter>(&instr);
 }
 
 // Returns true if we should consider fusing the instruction into the GEMM
@@ -1133,6 +1138,39 @@ FusionDecision CanFuse(mlir::MLIRContext& mlir_context,
                  *HloFusionAdaptor::ForProducerConsumer(producer, consumer));
 }
 
+bool IsBinaryElementwiseOfBroadcastParamOrConst(const HloInstruction& hlo) {
+  if (!hlo.IsElementwise() || hlo.operand_count() != 2) {
+    return false;
+  }
+  for (const HloInstruction* operand : hlo.operands()) {
+    if (operand->opcode() == HloOpcode::kBroadcast &&
+        (operand->operand(0)->opcode() == HloOpcode::kParameter ||
+         operand->operand(0)->opcode() == HloOpcode::kConstant)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+FusionDecision ShouldFuseUser(mlir::MLIRContext& mlir_context,
+                              HloInstruction* fusion, HloInstruction* user,
+                              HloInstruction* original_user) {
+  if (triton_fusion::IsOutputWorthFusing(*original_user)) {
+    return CanFuse(mlir_context, fusion, user);
+  }
+  return FusionDecision::Forbid("Not obviously profitable to fuse as output.");
+}
+
+FusionDecision ShouldFuseOperand(mlir::MLIRContext& mlir_context,
+                                 HloInstruction* operand,
+                                 HloInstruction* fusion) {
+  if (IsBinaryElementwiseOfBroadcastParamOrConst(*operand) ||
+      triton_fusion::IsInputWorthFusing(*operand)) {
+    return CanFuse(mlir_context, operand, fusion);
+  }
+  return FusionDecision::Forbid("Not obviously profitable to fuse as input.");
+}
+
 // Attempts to fuse all candidates and their operands into the fusion.
 void FuseOperandsBFS(mlir::MLIRContext& mlir_context,
                      const HloInstruction::InstructionVector& candidates,
@@ -1155,9 +1193,11 @@ void FuseOperandsBFS(mlir::MLIRContext& mlir_context,
       continue;
     }
 
-    if (FusionDecision decision = CanFuse(mlir_context, candidate, fusion);
+    if (FusionDecision decision =
+            ShouldFuseOperand(mlir_context, candidate, fusion);
         !decision.IsAllowed()) {
-      VLOG(5) << "Cannot fuse operand: " << decision.Explain();
+      VLOG(5) << "Not fusing operand: " << candidate->ToString()
+              << " due to decision: " << decision.Explain();
       continue;
     }
     VLOG(5) << "Fusing operand: " << candidate->ToString();
@@ -1251,9 +1291,11 @@ absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateTileableFusion(
     // Search space was created so that the result only ever has a single user.
     CHECK_EQ(fusion->users().size(), 1);
     auto user = fusion->users()[0];
-    if (FusionDecision decision = CanFuse(mlir_context, fusion, user);
+    if (FusionDecision decision =
+            ShouldFuseUser(mlir_context, fusion, user,
+                           fusion_search_space.fused_to_original().at(user));
         !decision.IsAllowed()) {
-      VLOG(5) << "Cannot fuse user: " << decision.Explain();
+      VLOG(5) << "Not fusing user: " << decision.Explain();
       break;
     }
     VLOG(5) << "Fusing user into epilogue: " << user->ToString();
