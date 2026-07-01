@@ -78,8 +78,8 @@ allocator. A per-executable compile option can also request the mode.
 
 If an executable requests `SKIP_TEMP` while its client uses a
 non-VMM allocator, XLA safely falls back to dynamic allocation and ordinary
-command-buffer updates. This keeps the executable functional, but it does not
-treat any allocation as persistent or provide stable temporary addresses.
+command-buffer updates for temporary buffers. Referenced constants remain
+persistent because their global addresses are stable.
 
 ## Choosing a mode
 

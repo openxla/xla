@@ -154,8 +154,6 @@ class GpuExecutableBufferAllocator {
         int64_t arg_idx,
         const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
             allocate_granularity);
-    absl::Span<const BufferAllocation::Index> GetPersistentAllocIndices() const;
-
     GpuExecutableBufferAllocator* owner_ = nullptr;
     Remapping* remapping_ = nullptr;
     se::DeviceAddressVmmAllocator* vmm_allocator_ = nullptr;
@@ -170,7 +168,7 @@ class GpuExecutableBufferAllocator {
   ~GpuExecutableBufferAllocator();
 
   size_t command_buffer_allocation_count() const {
-    return command_buffer_persistent_alloc_indices_.size();
+    return persistent_alloc_indices_.size();
   }
 
   absl::StatusOr<ExecutionScope> CreateExecutionScope(
@@ -195,8 +193,9 @@ class GpuExecutableBufferAllocator {
   std::vector<const BufferAllocation*> allocations_;
   Shape result_shape_;
   const DebugOptions* debug_options_ = nullptr;
-  std::vector<BufferAllocation::Index> command_buffer_persistent_alloc_indices_;
-  AllocationIndexSet command_buffer_va_remapped_allocation_indexes_;
+  std::vector<BufferAllocation::Index> constant_alloc_indices_;
+  std::vector<BufferAllocation::Index> persistent_alloc_indices_;
+  AllocationIndexSet va_remapped_allocation_indexes_;
 
   absl::Mutex remappings_mutex_;
   absl::node_hash_map<se::StreamExecutor*, Remapping> remappings_

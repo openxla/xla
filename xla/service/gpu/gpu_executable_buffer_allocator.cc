@@ -166,8 +166,7 @@ absl::Status GpuExecutableBufferAllocator::ExecutionScope::PrepareReservation(
   remapping_->granularity = granularity;
   remapping_->total_size = 0;
   remapping_->allocation_to_reservation_offset.clear();
-  for (BufferAllocation::Index idx :
-       owner_->command_buffer_va_remapped_allocation_indexes_) {
+  for (BufferAllocation::Index idx : owner_->va_remapped_allocation_indexes_) {
     const BufferAllocation& allocation = *owner_->allocations_[idx];
     uint64_t buffer_size = allocation.size();
     if (auto it = allocate_granularity.find(allocation.color());
@@ -195,7 +194,7 @@ absl::Status GpuExecutableBufferAllocator::ExecutionScope::PrepareReservation(
 bool GpuExecutableBufferAllocator::ExecutionScope::ShouldRemapAllocation(
     BufferAllocation::Index index) const {
   return va_remap_enabled() &&
-         owner_->command_buffer_va_remapped_allocation_indexes_.contains(index);
+         owner_->va_remapped_allocation_indexes_.contains(index);
 }
 
 absl::StatusOr<se::ScopedDeviceAddress<uint8_t>>
@@ -349,16 +348,6 @@ GpuExecutableBufferAllocator::ExecutionScope::AllocateCopyProtectedOutputBuffer(
   return result_buffer;
 }
 
-absl::Span<const BufferAllocation::Index>
-GpuExecutableBufferAllocator::ExecutionScope::GetPersistentAllocIndices()
-    const {
-  if (!va_remap_enabled() &&
-      !owner_->command_buffer_va_remapped_allocation_indexes_.empty()) {
-    return {};
-  }
-  return absl::MakeConstSpan(owner_->command_buffer_persistent_alloc_indices_);
-}
-
 absl::Status
 GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithBufferAllocations(
     const BufferAllocations& owning_buffer_allocations, int device_ordinal,
@@ -371,10 +360,16 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithBufferAllocations(
     XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
         "VA remapping: module %s executing with %d command buffer "
         "allocation(s)",
-        owner_->module_name_,
-        owner_->command_buffer_va_remapped_allocation_indexes_.size());
+        owner_->module_name_, owner_->va_remapped_allocation_indexes_.size());
   }
-  return execute(owning_buffer_allocations, GetPersistentAllocIndices());
+
+  if (!va_remap_enabled()) {
+    return execute(owning_buffer_allocations,
+                   absl::MakeConstSpan(owner_->constant_alloc_indices_));
+  }
+
+  return execute(owning_buffer_allocations,
+                 absl::MakeConstSpan(owner_->persistent_alloc_indices_));
 }
 
 GpuExecutableBufferAllocator::GpuExecutableBufferAllocator(
@@ -394,6 +389,7 @@ GpuExecutableBufferAllocator::GpuExecutableBufferAllocator(
         update_mode == DebugOptions::SKIP_TEMP)
       << "Unsupported command buffer update mode: " << update_mode;
 
+  AllocationIndexSet constant_alloc_indices;
   AllocationIndexSet persistent_alloc_indices;
   if (thunk_executor != nullptr) {
     const bool persist_temp_allocations =
@@ -418,25 +414,27 @@ GpuExecutableBufferAllocator::GpuExecutableBufferAllocator(
                     continue;
                   }
                   if (allocation.is_constant()) {
+                    constant_alloc_indices.insert(index);
                     persistent_alloc_indices.insert(index);
                   } else if (persist_temp_allocations &&
                              allocation.IsPreallocatedTempBuffer()) {
                     persistent_alloc_indices.insert(index);
-                    command_buffer_va_remapped_allocation_indexes_.insert(
-                        index);
+                    va_remapped_allocation_indexes_.insert(index);
                   }
                 }
                 return absl::OkStatus();
               });
         }));
   }
-  command_buffer_persistent_alloc_indices_.assign(
-      persistent_alloc_indices.begin(), persistent_alloc_indices.end());
+  constant_alloc_indices_.assign(constant_alloc_indices.begin(),
+                                 constant_alloc_indices.end());
+  persistent_alloc_indices_.assign(persistent_alloc_indices.begin(),
+                                   persistent_alloc_indices.end());
 
   VLOG(3) << "Command buffer allocation policy: collected "
-          << command_buffer_persistent_alloc_indices_.size()
+          << persistent_alloc_indices_.size()
           << " persistent allocation indexes and "
-          << command_buffer_va_remapped_allocation_indexes_.size()
+          << va_remapped_allocation_indexes_.size()
           << " VA-remapped allocation indexes for module " << module_name_;
 }
 
@@ -465,7 +463,7 @@ GpuExecutableBufferAllocator::CreateExecutionScope(
     return ExecutionScope(this, nullptr, nullptr, nullptr);
   };
 
-  if (command_buffer_va_remapped_allocation_indexes_.empty()) {
+  if (va_remapped_allocation_indexes_.empty()) {
     return scope_without_remapping();
   }
 

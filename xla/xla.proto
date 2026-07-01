@@ -407,8 +407,8 @@ message DebugOptions {
   }
 
   // Controls the VA remapping strategy for command buffer thunks.
-  // Referenced constants have stable global addresses and are treated as
-  // persistent unless the requested mode falls back to ordinary updates.
+  // Referenced constants have stable global addresses and are always treated as
+  // persistent, including when VMM remapping is unavailable.
   //   ALWAYS_UPDATE: Buffers use regular dynamically allocated addresses;
   //     commands update when their buffer addresses change.
   //   SKIP_TEMP: Command-buffer-referenced preallocated temp buffers
