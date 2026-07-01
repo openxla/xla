@@ -74,12 +74,12 @@ TEST_F(DirectoryCacheTest, BasicInsertAndLookup) {
   const HloInstruction* instr1 =
       module->entry_computation()->root_instruction();
 
-  AutotuneScope scope;
-  scope.device = "device_1";
-  scope.explicit_version = "v1";
-  scope.codegen_version = "cg_v1";
+  AutotuneCacheContext cache_ctx;
+  cache_ctx.device = "device_1";
+  cache_ctx.explicit_version = "v1";
+  cache_ctx.codegen_version = "cg_v1";
 
-  DirectoryCache cache(scope, cache_dir_, CacheMode::kReadWrite,
+  DirectoryCache cache(cache_ctx, cache_dir_, CacheMode::kReadWrite,
                        KeyMatchingMode::kStrict);
   AutotunerCacheInterface::Config config = CreateTestConfig();
 
@@ -93,7 +93,7 @@ TEST_F(DirectoryCacheTest, BasicInsertAndLookup) {
   EXPECT_EQ(cache.GetCacheStats().misses, 0);
 
   // Persistence check: Create a new cache instance pointing to same directory.
-  DirectoryCache cache2(scope, cache_dir_, CacheMode::kReadOnly,
+  DirectoryCache cache2(cache_ctx, cache_dir_, CacheMode::kReadOnly,
                         KeyMatchingMode::kStrict);
   std::optional<AutotunerCacheInterface::Config> result2 =
       cache2.Lookup(instr1);
@@ -121,12 +121,12 @@ TEST_F(DirectoryCacheTest, EmptyExplicitVersionOmitTier) {
   const HloInstruction* instr1 =
       module->entry_computation()->root_instruction();
 
-  AutotuneScope scope;
-  scope.device = "device_1";
-  scope.explicit_version = "";  // Empty version
-  scope.codegen_version = "cg_v1";
+  AutotuneCacheContext cache_ctx;
+  cache_ctx.device = "device_1";
+  cache_ctx.explicit_version = "";  // Empty version
+  cache_ctx.codegen_version = "cg_v1";
 
-  DirectoryCache cache(scope, cache_dir_, CacheMode::kReadWrite,
+  DirectoryCache cache(cache_ctx, cache_dir_, CacheMode::kReadWrite,
                        KeyMatchingMode::kStrict);
   AutotunerCacheInterface::Config config = CreateTestConfig();
 
@@ -149,20 +149,20 @@ TEST_F(DirectoryCacheTest, StrictModeRejection) {
   const HloInstruction* instr1 =
       module->entry_computation()->root_instruction();
 
-  AutotuneScope scope1;
-  scope1.device = "device1";
-  scope1.explicit_version = "v1.0";
-  scope1.codegen_version = "cg_v1";
+  AutotuneCacheContext cache_ctx1;
+  cache_ctx1.device = "device1";
+  cache_ctx1.explicit_version = "v1.0";
+  cache_ctx1.codegen_version = "cg_v1";
 
-  DirectoryCache cache1(scope1, cache_dir_, CacheMode::kReadWrite,
+  DirectoryCache cache1(cache_ctx1, cache_dir_, CacheMode::kReadWrite,
                         KeyMatchingMode::kStrict);
   AutotunerCacheInterface::Config config = CreateTestConfig();
   EXPECT_OK(cache1.Insert(instr1, config));
 
   // Lookup with different codegen_version.
-  AutotuneScope scope2 = scope1;
-  scope2.codegen_version = "cg_v2";
-  DirectoryCache cache2(scope2, cache_dir_, CacheMode::kReadOnly,
+  AutotuneCacheContext cache_ctx2 = cache_ctx1;
+  cache_ctx2.codegen_version = "cg_v2";
+  DirectoryCache cache2(cache_ctx2, cache_dir_, CacheMode::kReadOnly,
                         KeyMatchingMode::kStrict);
 
   std::optional<AutotunerCacheInterface::Config> result = cache2.Lookup(instr1);
@@ -176,22 +176,22 @@ TEST_F(DirectoryCacheTest, LooseModeChecks) {
   const HloInstruction* instr1 =
       module->entry_computation()->root_instruction();
 
-  AutotuneScope scope1;
-  scope1.device = "device1";
-  scope1.explicit_version = "v1.0";
-  scope1.codegen_version = "cg_v1";
-  scope1.per_backend_versions[autotuner::Backend::TRITON] = "triton_v1";
+  AutotuneCacheContext cache_ctx1;
+  cache_ctx1.device = "device1";
+  cache_ctx1.explicit_version = "v1.0";
+  cache_ctx1.codegen_version = "cg_v1";
+  cache_ctx1.per_backend_versions[autotuner::Backend::TRITON] = "triton_v1";
 
-  DirectoryCache cache1(scope1, cache_dir_, CacheMode::kReadWrite,
+  DirectoryCache cache1(cache_ctx1, cache_dir_, CacheMode::kReadWrite,
                         KeyMatchingMode::kLoose);
   AutotunerCacheInterface::Config config =
       CreateTestConfig(autotuner::Backend::TRITON);
   EXPECT_OK(cache1.Insert(instr1, config));
 
   // Lookup with same backend version but different codegen version.
-  AutotuneScope scope2 = scope1;
-  scope2.codegen_version = "cg_v2";
-  DirectoryCache cache2(scope2, cache_dir_, CacheMode::kReadOnly,
+  AutotuneCacheContext cache_ctx2 = cache_ctx1;
+  cache_ctx2.codegen_version = "cg_v2";
+  DirectoryCache cache2(cache_ctx2, cache_dir_, CacheMode::kReadOnly,
                         KeyMatchingMode::kLoose);
 
   std::optional<AutotunerCacheInterface::Config> result = cache2.Lookup(instr1);
@@ -199,10 +199,10 @@ TEST_F(DirectoryCacheTest, LooseModeChecks) {
   EXPECT_EQ(result->codegen_backend, autotuner::Backend::TRITON);
 
   // Lookup with different backend version.
-  AutotuneScope scope3 = scope1;
-  scope3.codegen_version = "cg_v2";
-  scope3.per_backend_versions[autotuner::Backend::TRITON] = "triton_v2";
-  DirectoryCache cache3(scope3, cache_dir_, CacheMode::kReadOnly,
+  AutotuneCacheContext cache_ctx3 = cache_ctx1;
+  cache_ctx3.codegen_version = "cg_v2";
+  cache_ctx3.per_backend_versions[autotuner::Backend::TRITON] = "triton_v2";
+  DirectoryCache cache3(cache_ctx3, cache_dir_, CacheMode::kReadOnly,
                         KeyMatchingMode::kLoose);
 
   std::optional<AutotunerCacheInterface::Config> result3 =
@@ -216,25 +216,25 @@ TEST_F(DirectoryCacheTest, CacheModeConstraints) {
   const HloInstruction* instr1 =
       module->entry_computation()->root_instruction();
 
-  AutotuneScope scope;
-  scope.device = "device1";
-  scope.explicit_version = "v1.0";
-  scope.codegen_version = "cg_v1";
+  AutotuneCacheContext cache_ctx;
+  cache_ctx.device = "device1";
+  cache_ctx.explicit_version = "v1.0";
+  cache_ctx.codegen_version = "cg_v1";
 
   // ReadOnly mode Insert should fail.
-  DirectoryCache cache_ro(scope, cache_dir_, CacheMode::kReadOnly,
+  DirectoryCache cache_ro(cache_ctx, cache_dir_, CacheMode::kReadOnly,
                           KeyMatchingMode::kStrict);
   AutotunerCacheInterface::Config config = CreateTestConfig();
   EXPECT_EQ(cache_ro.Insert(instr1, config).code(),
             absl::StatusCode::kPermissionDenied);
 
   // ReadWrite mode Insert.
-  DirectoryCache cache_rw(scope, cache_dir_, CacheMode::kReadWrite,
+  DirectoryCache cache_rw(cache_ctx, cache_dir_, CacheMode::kReadWrite,
                           KeyMatchingMode::kStrict);
   EXPECT_OK(cache_rw.Insert(instr1, config));
 
   // ReadAppend mode Insert of existing entry should fail.
-  DirectoryCache cache_ra(scope, cache_dir_, CacheMode::kReadAppend,
+  DirectoryCache cache_ra(cache_ctx, cache_dir_, CacheMode::kReadAppend,
                           KeyMatchingMode::kStrict);
   EXPECT_EQ(cache_ra.Insert(instr1, config).code(),
             absl::StatusCode::kAlreadyExists);

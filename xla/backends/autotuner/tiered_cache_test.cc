@@ -78,23 +78,23 @@ TEST_F(TieredCacheTest, PropagationOnLookupMiss) {
   const HloInstruction* instr1 =
       module->entry_computation()->root_instruction();
 
-  AutotuneScope scope;
-  scope.device = "device";
-  scope.explicit_version = "v1.0";
-  scope.codegen_version = "cg_v1";
+  AutotuneCacheContext cache_ctx;
+  cache_ctx.device = "device";
+  cache_ctx.explicit_version = "v1.0";
+  cache_ctx.codegen_version = "cg_v1";
 
   AutotunerCacheInterface::Config config = CreateTestConfig();
 
   // 1. Populate the persistent DirectoryCache directly.
   {
-    DirectoryCache temp_dir_cache(scope, cache_dir_, CacheMode::kReadWrite,
+    DirectoryCache temp_dir_cache(cache_ctx, cache_dir_, CacheMode::kReadWrite,
                                   KeyMatchingMode::kStrict);
     EXPECT_OK(temp_dir_cache.Insert(instr1, config));
   }
 
   // 2. Create the TieredCache delegates.
   auto persistent_cache = std::make_unique<DirectoryCache>(
-      scope, cache_dir_, CacheMode::kReadWrite, KeyMatchingMode::kStrict);
+      cache_ctx, cache_dir_, CacheMode::kReadWrite, KeyMatchingMode::kStrict);
   auto local_cache = std::make_unique<LocalCache>(
       persistent_cache->GetKeyMatchingMode(), &local_storage_);
   TieredCache cache(std::move(local_cache), std::move(persistent_cache));
@@ -130,13 +130,13 @@ TEST_F(TieredCacheTest, TotalMissStat) {
   const HloInstruction* instr1 =
       module->entry_computation()->root_instruction();
 
-  AutotuneScope scope;
-  scope.device = "device";
-  scope.explicit_version = "v1.0";
-  scope.codegen_version = "cg_v1";
+  AutotuneCacheContext cache_ctx;
+  cache_ctx.device = "device";
+  cache_ctx.explicit_version = "v1.0";
+  cache_ctx.codegen_version = "cg_v1";
 
   auto persistent_cache = std::make_unique<DirectoryCache>(
-      scope, cache_dir_, CacheMode::kReadWrite, KeyMatchingMode::kStrict);
+      cache_ctx, cache_dir_, CacheMode::kReadWrite, KeyMatchingMode::kStrict);
   auto local_cache = std::make_unique<LocalCache>(
       persistent_cache->GetKeyMatchingMode(), &local_storage_);
   TieredCache cache(std::move(local_cache), std::move(persistent_cache));
@@ -160,13 +160,13 @@ TEST_F(TieredCacheTest, DualInsertion) {
   const HloInstruction* instr1 =
       module->entry_computation()->root_instruction();
 
-  AutotuneScope scope;
-  scope.device = "device";
-  scope.explicit_version = "v1.0";
-  scope.codegen_version = "cg_v1";
+  AutotuneCacheContext cache_ctx;
+  cache_ctx.device = "device";
+  cache_ctx.explicit_version = "v1.0";
+  cache_ctx.codegen_version = "cg_v1";
 
   auto persistent_cache = std::make_unique<DirectoryCache>(
-      scope, cache_dir_, CacheMode::kReadWrite, KeyMatchingMode::kStrict);
+      cache_ctx, cache_dir_, CacheMode::kReadWrite, KeyMatchingMode::kStrict);
   auto local_cache = std::make_unique<LocalCache>(
       persistent_cache->GetKeyMatchingMode(), &local_storage_);
   TieredCache cache(std::move(local_cache), std::move(persistent_cache));
@@ -181,7 +181,7 @@ TEST_F(TieredCacheTest, DualInsertion) {
   EXPECT_EQ(result->codegen_backend, autotuner::Backend::TRITON);
 
   // Verify that another cache instance pointing to same file path also hits.
-  DirectoryCache persistent_check(scope, cache_dir_, CacheMode::kReadOnly,
+  DirectoryCache persistent_check(cache_ctx, cache_dir_, CacheMode::kReadOnly,
                                   KeyMatchingMode::kStrict);
   std::optional<AutotunerCacheInterface::Config> result2 =
       persistent_check.Lookup(instr1);

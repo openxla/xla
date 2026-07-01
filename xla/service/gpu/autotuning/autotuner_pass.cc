@@ -36,7 +36,10 @@ limitations under the License.
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/codegen_orchestrator.h"
 #include "xla/backends/autotuner/config_assigner.h"
+#include "xla/backends/autotuner/directory_cache.h"
+#include "xla/backends/autotuner/local_cache.h"
 #include "xla/backends/autotuner/profiler.h"
+#include "xla/backends/autotuner/tiered_cache.h"
 #include "xla/backends/gpu/autotuner/factory.h"
 #include "xla/backends/gpu/autotuner/gpu_profiler.h"
 #include "xla/backends/gpu/autotuner/legacy_cache.h"
@@ -58,7 +61,6 @@ limitations under the License.
 #include "xla/stream_executor/platform_id.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
@@ -213,6 +215,17 @@ AutotuneDecision ShouldAutotuneInstruction(bool do_not_autotune_cublas,
   }
   return AutotuneDecision::Forbid(
       "Instruction is neither custom call nor fusion");
+}
+
+CacheMode GetCacheMode(DebugOptions::AutotuneCacheMode mode) {
+  switch (mode) {
+    case DebugOptions::AUTOTUNE_CACHE_MODE_READ:
+      return CacheMode::kReadOnly;
+    case DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE:
+    case DebugOptions::AUTOTUNE_CACHE_MODE_UNSPECIFIED:
+    default:
+      return CacheMode::kReadWrite;
+  }
 }
 
 }  // namespace
@@ -404,10 +417,25 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
   if (cache_dir.empty()) {
     cache_dir = debug_options.xla_gpu_experimental_autotuner_cache_dir();
   }
-  std::unique_ptr<AutotunerCacheInterface> cache =
-      std::make_unique<LegacyCache>(
-          cache_dir, debug_options.xla_gpu_experimental_autotune_cache_mode(),
-          target_config->device_description);
+  std::unique_ptr<AutotunerCacheInterface> cache;
+  if (!debug_options.xla_gpu_experimental_autotuner_cache_dir().empty()) {
+    AutotuneCacheContext cache_ctx = AutotuneCacheContext::Create(
+        target_config->device_description, backends);
+
+    auto dir_cache = std::make_unique<DirectoryCache>(
+        cache_ctx, cache_dir,
+        GetCacheMode(debug_options.xla_gpu_experimental_autotune_cache_mode()),
+        KeyMatchingMode::kLoose);
+    auto local_cache = std::make_unique<LocalCache>(
+        dir_cache->GetKeyMatchingMode(),
+        &LocalCacheStorage::GetInstance(cache_ctx));
+    cache = std::make_unique<TieredCache>(std::move(local_cache),
+                                          std::move(dir_cache));
+  } else {
+    cache = std::make_unique<LegacyCache>(
+        cache_dir, debug_options.xla_gpu_experimental_autotune_cache_mode(),
+        target_config->device_description);
+  }
 
   ASSIGN_OR_RETURN(auto orchestrator,
                    CodegenOrchestrator::Create(
