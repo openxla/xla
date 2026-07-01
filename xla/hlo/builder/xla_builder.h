@@ -1035,6 +1035,17 @@ class XlaBuilder {
       XlaOp operand, const CollectiveDeviceListBase& replica_groups,
       const std::optional<ChannelHandle>& channel_id = std::nullopt);
 
+  XlaOp CollectiveBroadcast(
+      absl::Span<const XlaOp> operands,
+      absl::Span<const ReplicaGroup> replica_groups,
+      const std::optional<ChannelHandle>& channel_id = std::nullopt,
+      bool has_dynamic_root = false);
+  XlaOp CollectiveBroadcastWithDeviceList(
+      absl::Span<const XlaOp> operands,
+      const CollectiveDeviceListBase& replica_groups,
+      const std::optional<ChannelHandle>& channel_id = std::nullopt,
+      bool has_dynamic_root = false);
+
   XlaOp CollectivePermute(
       XlaOp operand,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
@@ -1859,6 +1870,14 @@ class XlaBuilder {
   friend XlaOp CollectiveBroadcastWithDeviceList(
       XlaOp operand, const CollectiveDeviceListBase& replica_groups,
       const std::optional<ChannelHandle>& channel_id);
+  friend XlaOp CollectiveBroadcast(
+      absl::Span<const XlaOp> operands,
+      absl::Span<const ReplicaGroup> replica_groups,
+      const std::optional<ChannelHandle>& channel_id, bool has_dynamic_root);
+  friend XlaOp CollectiveBroadcastWithDeviceList(
+      absl::Span<const XlaOp> operands,
+      const CollectiveDeviceListBase& replica_groups,
+      const std::optional<ChannelHandle>& channel_id, bool has_dynamic_root);
   friend XlaOp CollectivePermute(
       XlaOp operand,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
@@ -2061,6 +2080,15 @@ class XlaBuilder {
   XlaOp CollectiveBroadcastImpl(XlaOp operand,
                                 const CollectiveDeviceListBase& replica_groups,
                                 const std::optional<ChannelHandle>& channel_id);
+
+  XlaOp CollectiveBroadcastImpl(absl::Span<const XlaOp> operands,
+                                absl::Span<const ReplicaGroup> replica_groups,
+                                const std::optional<ChannelHandle>& channel_id,
+                                bool has_dynamic_root);
+  XlaOp CollectiveBroadcastImpl(absl::Span<const XlaOp> operands,
+                                const CollectiveDeviceListBase& replica_groups,
+                                const std::optional<ChannelHandle>& channel_id,
+                                bool has_dynamic_root);
 
   XlaOp CollectivePermuteImpl(
       XlaOp operand,
@@ -3166,6 +3194,17 @@ XlaOp CollectiveBroadcast(
 XlaOp CollectiveBroadcastWithDeviceList(
     XlaOp operand, const CollectiveDeviceListBase& replica_groups,
     const std::optional<ChannelHandle>& channel_id = std::nullopt);
+
+XlaOp CollectiveBroadcast(
+    absl::Span<const XlaOp> operands,
+    absl::Span<const ReplicaGroup> replica_groups,
+    const std::optional<ChannelHandle>& channel_id = std::nullopt,
+    bool has_dynamic_root = false);
+XlaOp CollectiveBroadcastWithDeviceList(
+    absl::Span<const XlaOp> operands,
+    const CollectiveDeviceListBase& replica_groups,
+    const std::optional<ChannelHandle>& channel_id = std::nullopt,
+    bool has_dynamic_root = false);
 
 // Enqueues an collective operation that sends and receives data cross replicas.
 //
