@@ -974,7 +974,7 @@ TEST(XlaBuilderTest, CollectiveBroadcastWithDynamicRoot) {
   replica_group.add_replica_ids(1);
   CollectiveBroadcast({x, root}, {replica_group}, std::nullopt,
                       /*has_dynamic_root=*/true);
-  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
   EXPECT_EQ(GetRoot(*module)->opcode(), HloOpcode::kCollectiveBroadcast);
 }
 
