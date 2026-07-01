@@ -301,7 +301,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_enable_enzyme_comms_opt(false);
   opts.set_xla_recognize_reduction_optimization_level(0);
 
-  opts.set_xla_gpu_enable_dynamic_slice_fusion(false);
+  opts.set_xla_gpu_enable_dynamic_slice_fusion(true);
   opts.set_xla_gpu_enable_dus_accumulator_zero_init_elimination(false);
   opts.set_xla_gpu_experimental_dynamic_slice_fusion_verify_offsets(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
@@ -521,6 +521,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_print_compilation_stats(false);
 
   opts.set_xla_gpu_enable_pdl(true);
+  opts.set_xla_gpu_enable_pdl_launch(true);
   opts.set_xla_gpu_command_buffer_update_mode(DebugOptions::ALWAYS_UPDATE);
 
   opts.set_xla_gpu_experimental_aot_compiled_thunks(true);
@@ -3359,6 +3360,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 bool_setter_for(&DebugOptions::set_xla_gpu_enable_pdl),
                 debug_options->xla_gpu_enable_pdl(),
                 "Enable PDL (Programmatic Dependent Launch)."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_enable_pdl_launch",
+                bool_setter_for(&DebugOptions::set_xla_gpu_enable_pdl_launch),
+                debug_options->xla_gpu_enable_pdl_launch(),
+                "Enable use of PDL launch instructions."));
   flag_list->push_back(tsl::Flag(
       "xla_dump_buffer_assignment_analysis",
       bool_setter_for(&DebugOptions::set_xla_dump_buffer_assignment_analysis),

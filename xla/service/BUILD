@@ -2223,6 +2223,7 @@ cc_library(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
+        "//xla/tsl/util:sorted_range",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -3654,7 +3655,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
-    ] + if_libtpu([":tpu_computation_placer"]),
+    ],
     alwayslink = True,  # Contains per-platform computation placer registration
 )
 
@@ -3682,25 +3683,6 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
     ],
-)
-
-cc_library(
-    name = "tpu_computation_placer",
-    srcs = ["tpu_computation_placer.cc"],
-    hdrs = ["tpu_computation_placer.h"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":computation_placer_hdr",
-        "//xla:array2d",
-        "//xla/stream_executor/tpu:tpu_platform_id",
-        "//xla/tpu:c_api_decl",
-        "//xla/tpu:status_helper",
-        "//xla/tpu:tpu_executor_api",
-        "//xla/tpu:tpu_topology_external",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/status:statusor",
-    ],
-    alwayslink = True,  # Contains TPU computation placer registration
 )
 
 cc_library(
@@ -4834,9 +4816,20 @@ cc_library(
     ],
 )
 
+genrule(
+    name = "viewer_html_h",
+    srcs = ["fusion_explorer/viewer.html"],
+    outs = ["viewer_html.h"],
+    cmd = "echo 'inline const char* kViewerHtmlCode = R\"html(' > $@ && cat $< >> $@ && echo ')html\";' >> $@",
+    compatible_with = get_compatible_with_portable(),
+)
+
 cc_library(
     name = "hlo_graph_dumper",
-    srcs = ["hlo_graph_dumper.cc"],
+    srcs = [
+        "hlo_graph_dumper.cc",
+        ":viewer_html_h",
+    ],
     hdrs = ["hlo_graph_dumper.h"],
     deps = [
         ":pattern_matcher",
