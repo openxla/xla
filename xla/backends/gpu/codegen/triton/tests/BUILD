@@ -159,7 +159,6 @@ xla_test(
         "//xla/backends/gpu/codegen/triton:xtile_compiler",
         "//xla/backends/gpu/codegen/triton:xtile_test_base",
         "//xla/backends/gpu/tests:gpu_pjrt_codegen_test",
-        "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
