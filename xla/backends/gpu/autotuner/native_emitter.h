@@ -23,12 +23,12 @@ limitations under the License.
 #include "absl/base/nullability.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "llvm/Config/llvm-config.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/compiler.h"
-#include "xla/stream_executor/stream_executor.h"
 #include "xla/xla.pb.h"
 
 namespace xla {
@@ -58,10 +58,10 @@ class NativeEmitterBackend : public GpuCodegenBackend {
   absl::Status ApplyConfig(HloInstruction& instr,
                            const BackendConfig& config) override;
 
+  std::string version() const override { return LLVM_VERSION_STRING; }
+
  private:
   bool IsSupported(const HloInstruction& instr) override;
-  // TODO(b/514330710): use valid version
-  std::string version() const override { return "unknown"; }
 };
 
 }  // namespace gpu
