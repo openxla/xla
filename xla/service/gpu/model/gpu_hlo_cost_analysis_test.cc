@@ -27,7 +27,6 @@ limitations under the License.
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/service/gpu/model/hlo_op_profiles.h"
 #include "xla/service/hlo_cost_analysis.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -35,7 +34,11 @@ namespace gpu {
 
 class GpuHloCostAnalysisTest : public HloHardwareIndependentTestBase {
  public:
-  HloCostAnalysis::Options options_{.count_multiple_input_accesses = true};
+  HloCostAnalysis::Options options_ = []() {
+    HloCostAnalysis::Options opt;
+    opt.count_multiple_input_accesses = true;
+    return opt;
+  }();
   GpuHloCostAnalysis analysis_{options_};
 };
 
@@ -908,6 +911,52 @@ ENTRY entry_computation {
             kF32MultiplyFlopsPerElement * kNumElements);
   EXPECT_EQ(analysis.flop_count(*tanh), kF32TanhFlopsPerElement * kNumElements);
 };
+
+TEST_F(GpuHloCostAnalysisTest, TritonCustomCallCostEstimate) {
+  absl::string_view hlo_string = R"(
+  HloModule module, entry_computation_layout={(f32[100,100]{1,0})->f32[100,100]{1,0}}
+
+  ENTRY %main (arg0: f32[100,100]) -> f32[100,100] {
+    %arg0 = f32[100,100]{1,0} parameter(0)
+    ROOT %custom-call = f32[100,100]{1,0} custom-call(%arg0),
+    custom_call_target="triton_kernel_call_ffi",
+    backend_config={
+      "custom_call_cost_estimate":{
+        "flops": "123456",
+        "bytes_accessed": "654321"
+      }
+    }
+  })";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_IS_OK(module->entry_computation()->Accept(&analysis_));
+  HloComputation* comp = module->entry_computation();
+  const HloInstruction* instr = comp->GetInstructionWithName("custom-call");
+  EXPECT_EQ(analysis_.flop_count(*instr), 123456);
+  EXPECT_EQ(analysis_.bytes_accessed(*instr), 654321);
+}
+
+TEST_F(GpuHloCostAnalysisTest, TritonCustomCallCostEstimateMissingProperty) {
+  absl::string_view hlo_string = R"(
+  HloModule module, entry_computation_layout={(f32[100,100]{1,0})->f32[100,100]{1,0}}
+
+  ENTRY %main (arg0: f32[100,100]) -> f32[100,100] {
+    %arg0 = f32[100,100]{1,0} parameter(0)
+    ROOT %custom-call = f32[100,100]{1,0} custom-call(%arg0),
+    custom_call_target="triton_kernel_call_ffi",
+    backend_config={
+      "custom_call_cost_estimate":{
+        "flops": 123456
+      }
+    }
+  })";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_IS_OK(module->entry_computation()->Accept(&analysis_));
+  HloComputation* comp = module->entry_computation();
+  const HloInstruction* instr = comp->GetInstructionWithName("custom-call");
+  EXPECT_EQ(analysis_.flop_count(*instr), 123456);
+  // Default bytes accessed for custom-call is -1 (unknown)
+  EXPECT_EQ(analysis_.bytes_accessed(*instr), -1);
+}
 
 }  // namespace gpu
 }  // namespace xla

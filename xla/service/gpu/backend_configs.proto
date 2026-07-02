@@ -439,7 +439,7 @@ enum DeviceType {
 }
 
 // Generic backend config for XLA:GPU
-// Next-Id: 19
+// Next-Id: 20
 message GpuBackendConfig {
   // Specifies which operation queue the current instruction will run on.
   // A backend may have multiple operation queues to run instructions
@@ -496,5 +496,12 @@ message GpuBackendConfig {
   // Specifies the device type for the instruction.
   DeviceType device_type = 14;
 
+  GpuCustomCallCostEstimate custom_call_cost_estimate = 19;
+
   reserved 2;  // was wait_on_operation_queues
+}
+
+message GpuCustomCallCostEstimate {
+  optional int64 flops = 1;
+  optional int64 bytes_accessed = 2;
 }
