@@ -105,6 +105,40 @@ absl::Status ProfilerSession::CollectData(XSpace* space) {
   return absl::OkStatus();
 }
 
+absl::StatusOr<profiler::ConsumeResult> ProfilerSession::Consume() {
+#if !defined(IS_MOBILE_PLATFORM)
+  absl::MutexLock l(mutex_);
+  TF_RETURN_IF_ERROR(status_);
+  LOG(INFO) << "Profiler session consuming data.";
+  if (profilers_ == nullptr) {
+    return absl::FailedPreconditionError("Profiler session is not active.");
+  }
+  return profilers_->Consume();
+#else
+  return absl::UnimplementedError("Consume not implemented on mobile.");
+#endif
+}
+
+absl::Status ProfilerSession::Serialize(std::any data,
+                                        tensorflow::profiler::XSpace* space) {
+#if !defined(IS_MOBILE_PLATFORM)
+  absl::MutexLock l(mutex_);
+  TF_RETURN_IF_ERROR(status_);
+  if (profilers_ == nullptr) {
+    return absl::FailedPreconditionError("Profiler session is not active.");
+  }
+  absl::Status status = profilers_->Serialize(std::move(data), space);
+  if (!status.ok()) return status;
+
+  space->add_hostnames(port::Hostname());
+  profiler::SetXSpacePidIfNotSet(*space, tsl::Env::Default()->GetProcessId());
+  profiler::PostProcessSingleHostXSpace(space, start_time_ns_,
+                                        profiler::GetCurrentTimeNanos());
+#endif
+  SetProfileOptionsIntoSpace(options_, space);
+  return absl::OkStatus();
+}
+
 ProfilerSession::ProfilerSession(const ProfileOptions& options)
 #if defined(IS_MOBILE_PLATFORM)
     : status_(errors::Unimplemented(
