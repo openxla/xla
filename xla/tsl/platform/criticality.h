@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_TSL_PLATFORM_CRITICALITY_H_
 #define XLA_TSL_PLATFORM_CRITICALITY_H_
 
+#include <array>
+
 #include "tsl/platform/platform.h"
 
 namespace tsl {
@@ -35,6 +37,13 @@ enum class Criticality {
   // can be in this band. During an outage, this band will be prioritized above
   // all others.
   kCriticalPlus = 3,
+};
+
+constexpr std::array<Criticality, 4> kAllCriticalitiesDescending{
+    Criticality::kCriticalPlus,
+    Criticality::kCritical,
+    Criticality::kSheddablePlus,
+    Criticality::kSheddable,
 };
 
 }  // namespace criticality
