@@ -1614,19 +1614,22 @@ absl::StatusOr<HloInstruction*> PartitionScatterIndexPassthroughDimensions(
   const int64_t num_groups =
       indices.sharding().NumTiles(index_passthrough_dims.indices_dims);
   const int64_t num_tiles = indices.sharding().TotalNumTiles();
-  const GroupedSharding operand_grouped = AlignGroupsWith(
+  std::optional<GroupedSharding> operand_grouped = AlignGroupsWithIfCompatible(
       hlo_sharding_util::GroupShardingOnReplicatedDim(
           operands[0].sharding(), num_groups, num_tiles,
           operands[0].num_dimensions(),
           ScatterOperandDimsByPriority(operands[0], scatter, slice_sizes)),
       update_grouped);
+  if (!operand_grouped) {
+    return nullptr;
+  }
   const GroupedSharding indices_grouped = AlignGroupsWith(
       hlo_sharding_util::GroupShardingOnDims(
           indices.sharding(), index_passthrough_dims.indices_dims),
       update_grouped);
-  const GroupedSharding& output_grouped = operand_grouped;
+  const GroupedSharding& output_grouped = *operand_grouped;
   PartitionedHlo per_group_operand =
-      PerGroupPartitionedHlo(operands[0], operand_grouped, b, clean_ups);
+      PerGroupPartitionedHlo(operands[0], *operand_grouped, b, clean_ups);
 
   HloInstruction* select_operand =
       SelectOperandForScatterIndexPassthroughDimensions(scatter, indices,

@@ -9611,6 +9611,43 @@ ENTRY entry {
   }
 }
 
+TEST_P(SpmdPartitioningTest, IndexPassthroughScatterConflictFallback) {
+  // Verifies we fall back to replicated scatter when updates
+  // and operand shardings conflict by sharing the same mesh axis.
+  // This prevents incorrect collective ordering (slice before reduce).
+  absl::string_view hlo_string = R"(
+HloModule module
+
+add (lhs: f32[], rhs: f32[]) -> f32[] {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT sum = f32[] add(lhs, rhs)
+}
+
+ENTRY entry {
+  %input = f32[256,128] parameter(0), sharding={devices=[2,1]<=[2]}
+  %indices = s32[32,1] parameter(1), sharding={devices=[2,1]<=[2]}
+  %updates = f32[32,128] parameter(2), sharding={devices=[2,1]<=[2]}
+  ROOT %scatter = f32[256,128] scatter(%input, %indices, %updates),
+      to_apply=add,
+      update_window_dims={1},
+      inserted_window_dims={0},
+      scatter_dims_to_operand_dims={0},
+      index_vector_dim=1, sharding={devices=[2,1]<=[2]}
+})";
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  // Expect that indices and updates are replicated via AllGather,
+  // and scatter is performed locally on the sharded input.
+  EXPECT_THAT(
+      root, AllOf(op::Shape("f32[128,128]"),
+                  op::Scatter(op::Parameter(0),
+                              op::Subtract(op::AllGather(op::Parameter(1)), _),
+                              op::AllGather(op::Parameter(2)))));
+}
+
 TEST_P(SpmdPartitioningTest, ScatterExplicitBatchDims) {
   absl::string_view hlo_string = R"(
 HloModule module
