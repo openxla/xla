@@ -2220,6 +2220,7 @@ absl::Status CheckMixedPrecisionOperands(const HloInstruction* instruction) {
     case HloOpcode::kCopyStart:
     case HloOpcode::kCustomCall:
     case HloOpcode::kDomain:
+    case HloOpcode::kDataflow:
     case HloOpcode::kFusion:
     case HloOpcode::kGetTupleElement:
     case HloOpcode::kOptimizationBarrier:

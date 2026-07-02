@@ -1219,6 +1219,7 @@ ColorScheme HloDotDumper::GetInstructionColor(const HloInstruction* instr) {
     case HloOpcode::kAfterAll:
     case HloOpcode::kGetTupleElement:
     case HloOpcode::kOptimizationBarrier:
+    case HloOpcode::kDataflow:
     case HloOpcode::kPad:
     case HloOpcode::kTuple:
       return kWhite;
