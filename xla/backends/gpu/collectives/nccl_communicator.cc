@@ -372,6 +372,18 @@ Future<> NcclCommunicator::AllReduce(se::DeviceAddressBase send_buffer,
   });
 }
 
+Future<> NcclCommunicator::Reduce(se::DeviceAddressBase send_buffer,
+                                  se::DeviceAddressBase recv_buffer,
+                                  PrimitiveType dtype, size_t count,
+                                  ReductionKind reduction_kind, RankId root,
+                                  const Executor& executor) {
+  return Execute([send_buffer, recv_buffer, dtype, count, reduction_kind, root,
+                  &executor, this]() -> absl::Status {
+    return LaunchReduce(send_buffer, recv_buffer, dtype, count, reduction_kind,
+                        root, executor);
+  });
+}
+
 Future<> NcclCommunicator::Broadcast(se::DeviceAddressBase send_buffer,
                                      se::DeviceAddressBase recv_buffer,
                                      PrimitiveType dtype, size_t count,
@@ -496,6 +508,44 @@ absl::Status NcclCommunicator::LaunchAllReduce(
     RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclAllReduce(
         send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
         nccl_dtype, ToNcclReduction(reduction_kind), comm_->comm,
+        AsCudaStream(stream))));
+  }
+  if (!IsInsideNcclGroupLaunch()) {
+    RETURN_IF_ERROR(PollUntilDone());
+  }
+  return absl::OkStatus();
+}
+
+absl::Status NcclCommunicator::LaunchReduce(se::DeviceAddressBase send_buffer,
+                                            se::DeviceAddressBase recv_buffer,
+                                            PrimitiveType dtype, size_t count,
+                                            ReductionKind reduction_kind,
+                                            RankId root,
+                                            const Executor& executor) {
+  if (cancel_->IsCancelled()) {
+    return FailedPrecondition("NcclCommunicator aborted");
+  }
+  se::Stream* stream = ToStream(executor);
+
+  {
+    absl::MutexLock lock(comm_->mutex);
+    VLOG(3) << absl::StreamFormat(
+        "[%d] Launch NCCL Reduce operation; send_buffer=%p; "
+        "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%v; "
+        "root=%d; comm=%p; stream=%p",
+        stream->parent()->device_ordinal(), send_buffer.opaque(),
+        recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
+        count, reduction_kind, root.value(), comm_->comm, stream);
+
+    ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype,
+                     ToNcclDataType(dtype, /*is_reduction_op=*/true,
+                                    stream->parent()
+                                        ->GetDeviceDescription()
+                                        .cuda_compute_capability()));
+
+    RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclReduce(
+        send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
+        nccl_dtype, ToNcclReduction(reduction_kind), root.value(), comm_->comm,
         AsCudaStream(stream))));
   }
   if (!IsInsideNcclGroupLaunch()) {

@@ -393,12 +393,14 @@ GpuPerformanceWithCollectiveModel::ComputeCollectiveTime(
     case HloOpcode::kAllGather:
     case HloOpcode::kAllGatherStart:
     case HloOpcode::kReduceScatter:
+    case HloOpcode::kCollectiveReduce:
       return ComputeCollectiveTimeForRing(instr, cost_analysis,
                                           gpu_device_info);
     case HloOpcode::kAsyncStart: {
       auto* async_start = Cast<HloAsyncStartInstruction>(&instr);
       switch (async_start->async_wrapped_opcode()) {
         case HloOpcode::kReduceScatter:
+        case HloOpcode::kCollectiveReduce:
           return ComputeCollectiveTimeForRing(instr, cost_analysis,
                                               gpu_device_info);
         default:

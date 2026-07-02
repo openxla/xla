@@ -39,6 +39,7 @@ bool OneDnnFloatSupport::IsSupported(const HloInstruction& hlo) const {
     case HloOpcode::kAllToAll:
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kReduceScatter:
+    case HloOpcode::kCollectiveReduce:
     // Data movement only ops.
     case HloOpcode::kBroadcast:
     case HloOpcode::kConcatenate:

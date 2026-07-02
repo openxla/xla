@@ -80,6 +80,11 @@ class RcclCommunicator : public GpuCommunicator {
                      size_t count, ReductionKind reduction_kind,
                      const Executor& executor) final;
 
+  Future<> Reduce(se::DeviceAddressBase send_buffer,
+                  se::DeviceAddressBase recv_buffer, PrimitiveType dtype,
+                  size_t count, ReductionKind reduction_kind, RankId root,
+                  const Executor& executor) final;
+
   Future<> Broadcast(se::DeviceAddressBase send_buffer,
                      se::DeviceAddressBase recv_buffer, PrimitiveType dtype,
                      size_t count, RankId root, const Executor& executor) final;
@@ -142,6 +147,12 @@ class RcclCommunicator : public GpuCommunicator {
                                PrimitiveType dtype, size_t count,
                                ReductionKind reduction_kind,
                                const Executor& executor) final;
+
+  absl::Status LaunchReduce(se::DeviceAddressBase send_buffer,
+                            se::DeviceAddressBase recv_buffer,
+                            PrimitiveType dtype, size_t count,
+                            ReductionKind reduction_kind, RankId root,
+                            const Executor& executor) final;
 
   absl::Status LaunchBroadcast(se::DeviceAddressBase send_buffer,
                                se::DeviceAddressBase recv_buffer,

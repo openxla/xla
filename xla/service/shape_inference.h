@@ -160,6 +160,11 @@ class ShapeInference {
       absl::Span<const Shape* const> operand_shapes, int64_t scatter_dimension,
       int64_t shard_count);
 
+  // Infers the shape produced by a collective-reduce with the given operand
+  // shapes.
+  static absl::StatusOr<Shape> InferCollectiveReduceShape(
+      absl::Span<const Shape* const> operand_shapes);
+
   // Infers the shape produced by a cross replica sum start.
   static absl::StatusOr<Shape> InferAllReduceStartShape(
       absl::Span<const Shape* const> operand_shapes);

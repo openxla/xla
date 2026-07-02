@@ -155,11 +155,12 @@ bool IsSupportedAsyncOp(HloInstruction* instr, bool supports_async_start,
     return false;
   }
   if (check_sync_versions) {
-    if (HloPredicateIsOp<HloOpcode::kAllGather, HloOpcode::kAllReduce,
-                         HloOpcode::kReduceScatter, HloOpcode::kRaggedAllToAll,
-                         HloOpcode::kCollectivePermute, HloOpcode::kSendDone,
-                         HloOpcode::kSend, HloOpcode::kRecvDone,
-                         HloOpcode::kRecv>(instr)) {
+    if (HloPredicateIsOp<
+            HloOpcode::kAllGather, HloOpcode::kAllReduce,
+            HloOpcode::kReduceScatter, HloOpcode::kCollectiveReduce,
+            HloOpcode::kRaggedAllToAll, HloOpcode::kCollectivePermute,
+            HloOpcode::kSendDone, HloOpcode::kSend, HloOpcode::kRecvDone,
+            HloOpcode::kRecv>(instr)) {
       return true;
     }
   }

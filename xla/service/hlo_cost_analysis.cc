@@ -1102,6 +1102,11 @@ absl::Status HloCostAnalysis::HandleReduceScatter(const HloInstruction* hlo) {
   return absl::OkStatus();
 }
 
+absl::Status HloCostAnalysis::HandleCollectiveReduce(
+    const HloInstruction* hlo) {
+  return HandleAllReduce(hlo);
+}
+
 absl::Status HloCostAnalysis::HandleAllReduceStart(const HloInstruction* hlo) {
   return HandleAllReduce(hlo);
 }

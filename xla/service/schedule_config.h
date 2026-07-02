@@ -20,7 +20,6 @@ limitations under the License.
 #include <vector>
 
 #include "xla/xla.pb.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla {
 

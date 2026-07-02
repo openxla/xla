@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/core/collectives/communicator.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/future.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -355,6 +356,83 @@ absl::Status ReduceScatterThunk::RunCollective(const ExecuteParams& params,
                           config_.config.use_symmetric_buffer);
 }
 
+CollectiveReduceThunk::CollectiveReduceThunk(
+    ThunkInfo thunk_info, const HloCollectiveReduceInstruction* inst,
+    std::vector<Buffer> buffers)
+    : AllReduceReduceScatterThunkBase(Thunk::kCollectiveReduce, thunk_info,
+                                      GetAllReduceConfigInst(inst),
+                                      std::move(buffers)) {}
+
+/*static*/ absl::Status CollectiveReduceThunk::CheckImplementable(
+    const HloCollectiveReduceInstruction* inst, int64_t replica_count,
+    int64_t partition_count) {
+  return AddOpDescription<CollectiveReduceThunk>(
+      CheckImplementableInst(inst, Thunk::kCollectiveReduce), inst,
+      replica_count, partition_count);
+}
+
+/*static*/ CollectiveOpGroupMode CollectiveReduceThunk::GetGroupMode(
+    const HloCollectiveReduceInstruction* inst) {
+  return GetGroupModeInst(inst);
+}
+
+CollectiveReduceThunk::CollectiveReduceThunk(ThunkInfo thunk_info,
+                                             AllReduceConfig config,
+                                             std::vector<Buffer> buffers)
+    : AllReduceReduceScatterThunkBase(Thunk::kCollectiveReduce, thunk_info,
+                                      std::move(config), std::move(buffers)) {}
+
+absl::StatusOr<std::unique_ptr<CollectiveReduceThunk>>
+CollectiveReduceThunk::FromProto(
+    ThunkInfo thunk_info, const CollectiveReduceThunkProto& thunk_proto,
+    absl::Span<const BufferAllocation> buffer_allocations) {
+  std::vector<CollectiveThunk::Buffer> buffers;
+  buffers.reserve(thunk_proto.buffers_size());
+  for (const CollectiveBufferProto& proto : thunk_proto.buffers()) {
+    ASSIGN_OR_RETURN(
+        CollectiveThunk::Buffer buffer,
+        CollectiveThunk::Buffer::FromProto(proto, buffer_allocations));
+    buffers.push_back(buffer);
+  }
+
+  CollectiveConfig config =
+      CollectiveConfig::FromProto(thunk_proto.collective_config());
+
+  ASSIGN_OR_RETURN(ReductionKind reduction_kind,
+                   FromReductionKindProto(thunk_proto.reduction_kind()));
+
+  return std::make_unique<CollectiveReduceThunk>(
+      std::move(thunk_info), AllReduceConfig{config, reduction_kind},
+      std::move(buffers));
+}
+
+absl::StatusOr<ThunkProto> CollectiveReduceThunk::ToProto() const {
+  ThunkProto proto;
+  *proto.mutable_thunk_info() = thunk_info().ToProto();
+
+  CollectiveReduceThunkProto* thunk_proto =
+      proto.mutable_collective_reduce_thunk();
+
+  for (const Buffer& buffer : buffers()) {
+    ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());
+  }
+
+  *thunk_proto->mutable_collective_config() = config_.config.ToProto();
+  thunk_proto->set_reduction_kind(ToReductionKindProto(config_.reduction_kind));
+
+  return proto;
+}
+
+absl::Status CollectiveReduceThunk::RunCollective(
+    const ExecuteParams& params, const GpuCliqueKey& clique_key,
+    se::Stream& stream, Communicator& comm) {
+  ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
+                   ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
+                                          config_.config.operand_element_type));
+  return RunCollectiveReduce(config_.reduction_kind, device_buffers, stream,
+                             comm);
+}
+
 absl::Status RunReduceScatter(ReductionKind reduction_kind,
                               std::vector<DeviceBufferPair>& buffers,
                               se::Stream& stream, Communicator& comm,
@@ -382,6 +460,28 @@ absl::Status RunReduceScatter(ReductionKind reduction_kind,
   });
   RETURN_IF_ERROR(future.Await());
   XLA_VLOG_DEVICE(3, device_ordinal) << "Done performing reduce-scatter";
+  return absl::OkStatus();
+}
+
+absl::Status RunCollectiveReduce(ReductionKind reduction_kind,
+                                 std::vector<DeviceBufferPair>& buffers,
+                                 se::Stream& stream, Communicator& comm) {
+  int device_ordinal = stream.parent()->device_ordinal();
+  XLA_VLOG_DEVICE(3, device_ordinal) << "Performing collective-reduce";
+  auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
+  Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
+    for (DeviceBufferPair& buffer : buffers) {
+      // The clique preserves HLO replica-group order, and collective-reduce
+      // uses the first participant as the root.
+      RETURN_IF_ERROR(gpu_comm->LaunchReduce(
+          buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
+          buffer.element_count, reduction_kind, RankId(0),
+          GpuCollectives::On(stream)));
+    }
+    return absl::OkStatus();
+  });
+  RETURN_IF_ERROR(future.Await());
+  XLA_VLOG_DEVICE(3, device_ordinal) << "Done performing collective-reduce";
   return absl::OkStatus();
 }
 

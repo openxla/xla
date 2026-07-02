@@ -13,12 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
 #include "absl/status/statusor.h"
 #include "xla/debug_options_flags.h"
+#include "xla/service/computation_placer.h"
 #include "xla/service/cpu/cpu_compiler.h"
 #include "xla/service/cpu/test_target_triple_helper.h"
 #include "xla/service/hlo_module_config.h"
@@ -54,6 +56,44 @@ ENTRY entry {
       CreateExecutable(std::move(hlo_module.value()),
                        /*run_hlo_passes=*/true);
   TF_EXPECT_OK(executable.status());
+}
+
+TEST_F(CpuSpmdCompileTest,
+       DynamicUpdateSliceCollectiveReduceUsesSupportedFallback) {
+  const char* const hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %input = f32[4,4,4] parameter(0), sharding={devices=[4,1,1]<=[4]}
+  %lhs = f32[8,4] parameter(1), sharding={devices=[4,1]<=[4]}
+  %rhs = f32[8,4] parameter(2), sharding={devices=[4,1]<=[4]}
+  %index = s32[] parameter(3), sharding={replicated}
+  %zero = s32[] constant(0)
+  %dot = f32[4,4] dot(%lhs, %rhs), lhs_contracting_dims={0},
+    rhs_contracting_dims={0}, sharding={replicated}
+  %update = f32[1,4,4] reshape(%dot), sharding={replicated}
+  ROOT %dynamic-update-slice = f32[4,4,4] dynamic-update-slice(
+    %input, %update, %index, %zero, %zero),
+    sharding={devices=[4,1,1]<=[4]}
+})";
+
+  HloModuleConfig config;
+  config.set_use_spmd_partitioning(true);
+  config.set_num_partitions(4);
+
+  DeviceAssignment device_assignment(/*replica_count=*/1,
+                                     /*computation_count=*/4);
+  for (int64_t partition = 0; partition < 4; ++partition) {
+    device_assignment(0, partition) = 0;
+  }
+  config.set_static_device_assignment(device_assignment);
+
+  ASSERT_OK_AND_ASSIGN(auto hlo_module,
+                       ParseAndReturnVerifiedModule(hlo_string, config));
+  ASSERT_OK_AND_ASSIGN(
+      auto executable,
+      CreateExecutable(std::move(hlo_module), /*run_hlo_passes=*/true));
+  EXPECT_NE(executable, nullptr);
 }
 
 }  // namespace

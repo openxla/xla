@@ -327,6 +327,7 @@ HLO_MATCHER(CollectiveBroadcast);
 HLO_MATCHER(CollectivePermute);
 HLO_MATCHER(CollectivePermuteStart);
 HLO_MATCHER(CollectivePermuteDone);
+HLO_MATCHER(CollectiveReduce);
 HLO_MATCHER(Compare);
 HLO_MATCHER(Concatenate);
 HLO_MATCHER(Conditional);

@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/service/schedule_config.h"
 
 #include "xla/xla.pb.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla {
 

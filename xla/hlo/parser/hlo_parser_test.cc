@@ -2374,6 +2374,25 @@ ENTRY AllToAll {
 
 )"
 },
+// collective-reduce
+{
+"CollectiveReduce",
+R"(HloModule CollectiveReduce, entry_computation_layout={(f32[128,32]{0,1})->f32[128,32]{0,1}}, replica_count=4
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY CollectiveReduce {
+  input = f32[128,32]{0,1} parameter(0)
+  ROOT cr = f32[128,32]{0,1} collective-reduce(input), replica_groups={{1,0},{2,3}}, to_apply=add
+}
+
+)",
+/*replica_count=*/4,
+},
 // collective-broadcast
 {
 "CollectiveBroadcast",

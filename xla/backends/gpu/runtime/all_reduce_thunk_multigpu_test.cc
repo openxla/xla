@@ -13,10 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// Multi-GPU integration tests for AllReduceThunk and ReduceScatterThunk
-// command-buffer Record().
-// Requires exactly kNumDevices GPUs (>= 2) and CUDA 12.9+ driver/toolkit for
-// CreateChildCommand / UpdateChildCommand support.
+// Multi-GPU integration tests for AllReduceThunk, CollectiveReduceThunk, and
+// ReduceScatterThunk. Command-buffer tests require CUDA 12.9+ driver/toolkit
+// for CreateChildCommand / UpdateChildCommand support.
 
 #include <cstdint>
 #include <utility>
@@ -45,6 +44,7 @@ namespace xla::gpu {
 namespace {
 
 static constexpr int kNumDevices = 2;
+static constexpr int kCollectiveReduceRootDevice = 1;
 static constexpr int64_t kLength = 4;
 static constexpr int64_t kByteLength = sizeof(float) * kLength;
 static_assert(kLength % kNumDevices == 0);
@@ -92,6 +92,19 @@ static AllReduceConfig MakeSumConfig() {
   return config;
 }
 
+static AllReduceConfig MakeCollectiveReduceSumConfig() {
+  ReplicaGroup replica_group;
+  replica_group.add_replica_ids(kCollectiveReduceRootDevice);
+  replica_group.add_replica_ids(0);
+
+  AllReduceConfig config;
+  config.config.operand_element_type = {F32};
+  config.config.replica_groups = {replica_group};
+  config.config.group_mode = COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID;
+  config.reduction_kind = ReductionKind::SUM;
+  return config;
+}
+
 static CollectiveThunk::Buffer MakeBuffer(const BufferAllocation& alloc_src,
                                           const BufferAllocation& alloc_dst,
                                           int64_t source_length,
@@ -123,6 +136,13 @@ static ReduceScatterThunk MakeReduceScatterThunk(
   return ReduceScatterThunk(
       Thunk::ThunkInfo(), MakeSumConfig(),
       {MakeBuffer(alloc_src, alloc_dst, kLength, kReduceScatterLength)});
+}
+
+static CollectiveReduceThunk MakeCollectiveReduceThunk(
+    const BufferAllocation& alloc_src, const BufferAllocation& alloc_dst) {
+  return CollectiveReduceThunk(
+      Thunk::ThunkInfo(), MakeCollectiveReduceSumConfig(),
+      {MakeBuffer(alloc_src, alloc_dst, kLength, kLength)});
 }
 
 using DeviceTestSlot = CollectiveThunkMultiGpuTestState;
@@ -231,6 +251,14 @@ static absl::Status SetupDeviceSlot(int device_ordinal, DeviceTestSlot& slot,
                                     thunk, device_assignment, slot);
 }
 
+static absl::Status SetupCollectiveReduceDeviceSlot(
+    int device_ordinal, DeviceTestSlot& slot, CollectiveReduceThunk& thunk,
+    const DeviceAssignment& device_assignment) {
+  std::vector<int64_t> buffer_sizes = {kByteLength, kByteLength};
+  return SetupCollectiveThunkDevice(device_ordinal, kNumDevices, buffer_sizes,
+                                    thunk, device_assignment, slot);
+}
+
 // Records the thunk into a new primary command buffer (create phase), submits
 // it, waits, and verifies the collective output against expected_dst_values.
 static absl::Status RunCreatePhase(DeviceTestSlot& slot,
@@ -308,6 +336,51 @@ static absl::Status RunUpdate(int d, DeviceTestSlot* slots,
 //===----------------------------------------------------------------------===//
 // Tests
 //===----------------------------------------------------------------------===//
+
+// Executes CollectiveReduceThunk eagerly on two GPUs and verifies that the
+// reduction is materialized on flattened-id 1, the nonzero root and first
+// member of the replica group. The non-root output is intentionally unchecked.
+TEST(CollectiveReduceThunkMultiGpuTest, ExecuteOnStreamNonzeroRoot) {
+  if (!HasEnoughGpus(kNumDevices)) {
+    GTEST_SKIP() << "Test requires at least " << kNumDevices << " GPUs";
+  }
+
+  DeviceAssignment device_assignment(/*replica_count=*/1,
+                                     /*computation_count=*/kNumDevices);
+  for (int d = 0; d < kNumDevices; ++d) {
+    device_assignment(0, d) = d;
+  }
+
+  BufferAllocation alloc_src(/*index=*/0, kByteLength, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, kByteLength, /*color=*/0);
+  CollectiveReduceThunk thunk = MakeCollectiveReduceThunk(alloc_src, alloc_dst);
+  std::vector<DeviceTestSlot> slots(kNumDevices);
+
+  ASSERT_OK(RunOnDevices(
+      kNumDevices, "collective_reduce_nonzero_root",
+      [&](int d) -> absl::Status {
+        RETURN_IF_ERROR(SetupCollectiveReduceDeviceSlot(d, slots[d], thunk,
+                                                        device_assignment));
+        RETURN_IF_ERROR(
+            FillDeviceBuffer(*slots[d].stream, slots[d].create_buffers[0],
+                             AllReduceInput(d, /*phase_scale=*/1.0f)));
+        RETURN_IF_ERROR(FillDeviceBuffer(*slots[d].stream,
+                                         slots[d].create_buffers[1],
+                                         SentinelValues(kLength)));
+
+        BufferAllocations allocations =
+            MakeBufferAllocations(slots[d], slots[d].create_buffers);
+        Thunk::ExecuteParams execute_params =
+            MakeExecuteParams(slots[d], allocations);
+        RETURN_IF_ERROR(ExecuteOnStreamAndBlock(thunk, execute_params));
+
+        if (d != kCollectiveReduceRootDevice) {
+          return absl::OkStatus();
+        }
+        return VerifyDeviceBuffer(*slots[d].stream, slots[d].create_buffers[1],
+                                  AllReduceExpected(/*phase_scale=*/1.0f));
+      }));
+}
 
 // Records AllReduceThunk into a command buffer on two GPUs, submits it, and
 // verifies that each device's output buffer contains the SUM of all inputs.

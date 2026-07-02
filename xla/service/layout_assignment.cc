@@ -1768,7 +1768,8 @@ absl::Status LayoutAssignment::PropagateOperandConstraint(
     return absl::OkStatus();
   }
 
-  if (user->opcode() == HloOpcode::kAllReduce) {
+  if (user->opcode() == HloOpcode::kAllReduce ||
+      user->opcode() == HloOpcode::kCollectiveReduce) {
     const auto shape_index =
         user->operand_count() == 1
             ? ShapeIndex()
@@ -1917,7 +1918,8 @@ absl::Status LayoutAssignment::PropagateBufferConstraintToOperands(
   VLOG(5) << "PropagateBufferConstraintToOperands: "
           << buffer_constraint.ToString();
 
-  if (instruction->opcode() == HloOpcode::kAllReduce) {
+  if (instruction->opcode() == HloOpcode::kAllReduce ||
+      instruction->opcode() == HloOpcode::kCollectiveReduce) {
     RETURN_IF_ERROR(SetArrayOperandLayout(
         buffer_constraint.layout(), instruction,
         instruction->operand_count() == 1 ? 0 : buffer.index()[0],
@@ -2964,6 +2966,7 @@ bool LayoutAssignment::InstructionCanChangeLayout(
     // to the corresponding input argument and Tuple index.
     case HloOpcode::kAllReduce:
     case HloOpcode::kReduceScatter:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kRaggedAllToAll:

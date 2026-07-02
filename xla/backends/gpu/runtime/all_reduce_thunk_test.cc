@@ -103,6 +103,11 @@ class FailingCommunicator : public Communicator {
     return Failed();
   }
 
+  Future<> Reduce(se::DeviceAddressBase, se::DeviceAddressBase, PrimitiveType,
+                  size_t, ReductionKind, RankId, const Executor&) override {
+    return Failed();
+  }
+
   Future<> Broadcast(se::DeviceAddressBase, se::DeviceAddressBase,
                      PrimitiveType, size_t, RankId, const Executor&) override {
     return Failed();
@@ -263,6 +268,25 @@ class NoOpReduceScatterThunk : public ReduceScatterThunk {
   }
 };
 
+class NoOpCollectiveReduceThunk : public CollectiveReduceThunk {
+ public:
+  NoOpCollectiveReduceThunk(Thunk::ThunkInfo thunk_info, AllReduceConfig config,
+                            std::vector<CollectiveThunk::Buffer> buffers)
+      : CollectiveReduceThunk(std::move(thunk_info), std::move(config),
+                              std::move(buffers)) {}
+
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    return absl::OkStatus();
+  }
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const ExecuteParams& execute_params, const RecordParams& record_params,
+      RecordAction record_action, se::CommandBuffer* command_buffer) override {
+    return RecordNoOpCollective(*this, execute_params, record_params,
+                                std::move(record_action), command_buffer);
+  }
+};
+
 //===----------------------------------------------------------------------===//
 // Proto round-trip tests
 //===----------------------------------------------------------------------===//
@@ -341,6 +365,32 @@ TEST(ReduceScatterThunkTest, ProtoRoundTrip) {
   EXPECT_THAT(round_trip_proto, EqualsProto(proto));
 }
 
+TEST(CollectiveReduceThunkTest, ProtoRoundTrip) {
+  ThunkProto proto = tsl::proto_testing::ParseTextProtoOrDie<ThunkProto>(
+      R"pb(
+        thunk_info { profile_annotation: "partition_id_profile_annotation" }
+        collective_reduce_thunk {
+          collective_config {}
+          reduction_kind: 1
+        }
+      )pb");
+
+  Thunk::ThunkInfo thunk_info;
+  thunk_info.profile_annotation = proto.thunk_info().profile_annotation();
+
+  std::vector<BufferAllocation> buffer_allocations = {
+      BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)};
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<CollectiveReduceThunk> thunk,
+      CollectiveReduceThunk::FromProto(
+          thunk_info, proto.collective_reduce_thunk(), buffer_allocations));
+
+  ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, thunk->ToProto());
+
+  EXPECT_THAT(round_trip_proto, EqualsProto(proto));
+}
+
 //===----------------------------------------------------------------------===//
 // Command buffer tests (Record)
 //===----------------------------------------------------------------------===//
@@ -381,6 +431,14 @@ static NoOpReduceScatterThunk MakeNoOpReduceScatterThunk(
     int64_t length) {
   return NoOpReduceScatterThunk(Thunk::ThunkInfo(), MakeSumConfig(),
                                 {MakeNoOpBuffer(alloc_src, alloc_dst, length)});
+}
+
+static NoOpCollectiveReduceThunk MakeNoOpCollectiveReduceThunk(
+    const BufferAllocation& alloc_src, const BufferAllocation& alloc_dst,
+    int64_t length) {
+  return NoOpCollectiveReduceThunk(
+      Thunk::ThunkInfo(), MakeSumConfig(),
+      {MakeNoOpBuffer(alloc_src, alloc_dst, length)});
 }
 
 // Records AllReduceThunk into a primary command buffer (create phase) and
@@ -737,6 +795,132 @@ TEST(ReduceScatterThunkTest, RecordCommandBufferUpdate) {
 
   NoOpReduceScatterThunk thunk =
       MakeNoOpReduceScatterThunk(alloc_src, alloc_dst, length);
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+  ServiceExecutableRunOptions run_options;
+
+  BufferAllocations allocations1({src1, dst1}, 0, &allocator);
+  Thunk::ExecuteParams params1 =
+      Thunk::ExecuteParams::Create(run_options, allocations1, stream.get(),
+                                   /*command_buffer_trace_stream=*/stream.get(),
+                                   /*collective_params=*/nullptr,
+                                   /*collective_cliques=*/nullptr,
+                                   /*collective_memory=*/nullptr);
+
+  CommandStateManager state;
+  Command::RecordParams record_params = {state};
+
+  ASSERT_OK_AND_ASSIGN(
+      auto command_buffer,
+      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
+  ASSERT_OK_AND_ASSIGN(const se::CommandBuffer::Command* cmd,
+                       thunk.Record(params1, record_params,
+                                    Command::RecordCreate{/*dependencies=*/{}},
+                                    command_buffer.get()));
+  ASSERT_NE(cmd, nullptr);
+
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  BufferAllocations allocations2({src2, dst2}, 0, &allocator);
+  Thunk::ExecuteParams params2 =
+      Thunk::ExecuteParams::Create(run_options, allocations2, stream.get(),
+                                   /*command_buffer_trace_stream=*/stream.get(),
+                                   /*collective_params=*/nullptr,
+                                   /*collective_cliques=*/nullptr,
+                                   /*collective_memory=*/nullptr);
+
+  std::vector<BufferAllocation::Index> updated_allocs = {0, 1};
+  Command::RecordParams record_params2 = {state, std::move(updated_allocs)};
+
+  ASSERT_OK(command_buffer->Update());
+  ASSERT_OK_AND_ASSIGN(
+      const se::CommandBuffer::Command* updated_cmd,
+      thunk.Record(params2, record_params2, Command::RecordUpdate{cmd},
+                   command_buffer.get()));
+  EXPECT_EQ(updated_cmd, cmd);
+
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
+  ASSERT_OK(stream->BlockHostUntilDone());
+}
+
+// Records CollectiveReduceThunk into a primary command buffer (create phase)
+// and verifies that a non-null command node is returned.
+TEST(CollectiveReduceThunkTest, RecordCommandBufferCreate) {
+  se::StreamExecutor* executor = GpuExecutor();
+  if (!IsAtLeastCuda12900(executor)) {
+    GTEST_SKIP() << "Child command nodes require CUDA 12.9+";
+  }
+
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  int64_t length = 4;
+  int64_t byte_length = sizeof(float) * length;
+
+  se::DeviceAddress<float> src = executor->AllocateArray<float>(length, 0);
+  se::DeviceAddress<float> dst = executor->AllocateArray<float>(length, 0);
+
+  BufferAllocation alloc_src(/*index=*/0, byte_length, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, byte_length, /*color=*/0);
+
+  NoOpCollectiveReduceThunk thunk =
+      MakeNoOpCollectiveReduceThunk(alloc_src, alloc_dst, length);
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations allocations({src, dst}, 0, &allocator);
+
+  ServiceExecutableRunOptions run_options;
+  Thunk::ExecuteParams execute_params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   /*command_buffer_trace_stream=*/stream.get(),
+                                   /*collective_params=*/nullptr,
+                                   /*collective_cliques=*/nullptr,
+                                   /*collective_memory=*/nullptr);
+
+  CommandStateManager state;
+  Command::RecordParams record_params = {state};
+
+  ASSERT_OK_AND_ASSIGN(
+      auto command_buffer,
+      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
+  ASSERT_OK_AND_ASSIGN(const se::CommandBuffer::Command* cmd,
+                       thunk.Record(execute_params, record_params,
+                                    Command::RecordCreate{/*dependencies=*/{}},
+                                    command_buffer.get()));
+  EXPECT_NE(cmd, nullptr);
+
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
+  ASSERT_OK(stream->BlockHostUntilDone());
+}
+
+// Records CollectiveReduceThunk twice into the same command buffer: first as a
+// create, then as an update with different buffer allocations. Verifies that
+// the same command node pointer is returned on update.
+TEST(CollectiveReduceThunkTest, RecordCommandBufferUpdate) {
+  se::StreamExecutor* executor = GpuExecutor();
+  if (!IsAtLeastCuda12900(executor)) {
+    GTEST_SKIP() << "Child command nodes require CUDA 12.9+";
+  }
+
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  int64_t length = 4;
+  int64_t byte_length = sizeof(float) * length;
+
+  se::DeviceAddress<float> src1 = executor->AllocateArray<float>(length, 0);
+  se::DeviceAddress<float> dst1 = executor->AllocateArray<float>(length, 0);
+
+  se::DeviceAddress<float> src2 = executor->AllocateArray<float>(length, 0);
+  se::DeviceAddress<float> dst2 = executor->AllocateArray<float>(length, 0);
+
+  BufferAllocation alloc_src(/*index=*/0, byte_length, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, byte_length, /*color=*/0);
+
+  NoOpCollectiveReduceThunk thunk =
+      MakeNoOpCollectiveReduceThunk(alloc_src, alloc_dst, length);
 
   se::StreamExecutorAddressAllocator allocator(executor);
   ServiceExecutableRunOptions run_options;

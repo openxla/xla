@@ -2696,6 +2696,11 @@ ShapeInference::InferScalarBroadcastShape(absl::Span<const Shape> shapes) {
   return ShapeUtil::MakeTupleShape(output_shapes);
 }
 
+/* static */ absl::StatusOr<Shape> ShapeInference::InferCollectiveReduceShape(
+    absl::Span<const Shape* const> operand_shapes) {
+  return InferAllReduceShape(operand_shapes);
+}
+
 /* static */ absl::StatusOr<Shape> ShapeInference::InferAllReduceStartShape(
     absl::Span<const Shape* const> operand_shapes) {
   return InferAllReduceShape(operand_shapes);

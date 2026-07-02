@@ -64,6 +64,7 @@ const absl::NoDestructor<absl::flat_hash_set<HloOpcode>>
         HloOpcode::kAllGatherStart,
         HloOpcode::kAllGatherDone,
         HloOpcode::kReduceScatter,
+        HloOpcode::kCollectiveReduce,
         HloOpcode::kCollectivePermute,
         HloOpcode::kCollectivePermuteStart,
         HloOpcode::kCollectivePermuteDone,

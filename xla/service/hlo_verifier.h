@@ -270,6 +270,7 @@ class ShapeVerifier : public DfsHloVisitor {
   absl::Status HandleTuple(HloInstruction* tuple) override;
   absl::Status HandleMap(HloInstruction* map) override;
   absl::Status HandleReduceScatter(HloInstruction* hlo) override;
+  absl::Status HandleCollectiveReduce(HloInstruction* hlo) override;
   absl::Status HandleReduceWindow(HloInstruction* reduce_window) override;
   absl::Status HandleSelectAndScatter(HloInstruction* instruction) override;
   absl::Status HandleWhile(HloInstruction* xla_while) override;
@@ -396,6 +397,7 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   absl::Status HandleGetTupleElement(HloInstruction* gte) override;
   absl::Status HandleTranspose(HloInstruction* transpose) override;
   absl::Status HandleAllReduce(HloInstruction* crs) override;
+  absl::Status HandleCollectiveReduce(HloInstruction* hlo) override;
   absl::Status HandleReshape(HloInstruction* hlo) override;
   absl::Status HandleCustomCall(HloInstruction* hlo) override;
   absl::Status HandleScatter(HloInstruction* scatter) override;

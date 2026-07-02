@@ -158,6 +158,8 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_COLLECTIVE_METADATA;
     case kCollectivePermute:
       return THUNK_KIND_COLLECTIVE_PERMUTE;
+    case kCollectiveReduce:
+      return THUNK_KIND_COLLECTIVE_REDUCE;
     case kCommand:
       return THUNK_KIND_UNSPECIFIED;
     case kCommandBuffer:
@@ -261,6 +263,8 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kCollectiveMetadata;
     case THUNK_KIND_COLLECTIVE_PERMUTE:
       return kCollectivePermute;
+    case THUNK_KIND_COLLECTIVE_REDUCE:
+      return kCollectiveReduce;
     case THUNK_KIND_COMMAND_BUFFER:
       return kCommandBuffer;
     case THUNK_KIND_CONDITIONAL:
@@ -357,6 +361,7 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kCollectiveKernel);
     CASE(kCollectiveMetadata);
     CASE(kCollectivePermute);
+    CASE(kCollectiveReduce);
     CASE(kCommand);
     CASE(kCommandBuffer);
     CASE(kConditional);
@@ -404,7 +409,8 @@ std::ostream& operator<<(std::ostream& os, Thunk::Kind kind) {
 }
 
 bool IsReductionCollective(Thunk::Kind kind) {
-  return kind == Thunk::kAllReduce || kind == Thunk::kReduceScatter;
+  return kind == Thunk::kAllReduce || kind == Thunk::kReduceScatter ||
+         kind == Thunk::kCollectiveReduce;
 }
 
 absl::StatusOr<Thunk::ThunkInfo> Thunk::ThunkInfo::FromProto(
@@ -435,6 +441,7 @@ bool Thunk::IsCollective() const {
     case kAllToAll:
     case kCollectiveBroadcast:
     case kCollectivePermute:
+    case kCollectiveReduce:
     case kGroup:
     case kRaggedAllToAll:
     case kRecv:

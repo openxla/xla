@@ -563,6 +563,9 @@ absl::Status GpuHloCostAnalysis::HandleAsyncStart(const HloInstruction* hlo) {
   if (async_start->async_wrapped_opcode() == HloOpcode::kReduceScatter) {
     return HandleReduceScatter(async_start->async_wrapped_instruction());
   }
+  if (async_start->async_wrapped_opcode() == HloOpcode::kCollectiveReduce) {
+    return HandleCollectiveReduce(async_start->async_wrapped_instruction());
+  }
   if (async_start->async_wrapped_opcode() == HloOpcode::kAllToAll) {
     return HandleAllToAll(async_start->async_wrapped_instruction());
   }
@@ -584,6 +587,27 @@ absl::Status GpuHloCostAnalysis::HandleReduceScatter(
 
   current_properties_[kBytesAccessedKey] = write_bytes + read_bytes;
   current_properties_[kCollBytesTransferred] = bytes_transferred;
+  current_properties_[kFlopsKey] = GetFlopsForElementwiseOp(
+      hlo->to_apply()->root_instruction()->opcode(), hlo->shape());
+  SetRingCollectiveProperties(num_ranks, /*num_intra_steps=*/num_ranks - 1);
+
+  return absl::OkStatus();
+}
+
+absl::Status GpuHloCostAnalysis::HandleCollectiveReduce(
+    const HloInstruction* hlo) {
+  ASSIGN_OR_RETURN(int64_t num_ranks,
+                   NumRanks(*Cast<HloCollectiveReduceInstruction>(hlo)));
+
+  int64_t bytes_transferred = 0;
+  for (HloInstruction* operand : hlo->operands()) {
+    bytes_transferred += ShapeSize(operand->shape(), options_.shape_size);
+  }
+  int64_t output_bytes = ShapeSize(hlo->shape(), options_.shape_size);
+
+  current_properties_.set_output_bytes_accessed(output_bytes);
+  current_properties_[kBytesAccessedKey] = bytes_transferred + output_bytes;
+  current_properties_[kCollBytesTransferred] = output_bytes;
   current_properties_[kFlopsKey] = GetFlopsForElementwiseOp(
       hlo->to_apply()->root_instruction()->opcode(), hlo->shape());
   SetRingCollectiveProperties(num_ranks, /*num_intra_steps=*/num_ranks - 1);

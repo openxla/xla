@@ -295,6 +295,10 @@ absl::StatusOr<std::unique_ptr<Thunk>> DeserializeThunkProtoImpl(
       return ReduceScatterThunk::FromProto(std::move(thunk_info),
                                            thunk_proto.reduce_scatter_thunk(),
                                            buffer_allocations);
+    case ThunkProto::kCollectiveReduceThunk:
+      return CollectiveReduceThunk::FromProto(
+          std::move(thunk_info), thunk_proto.collective_reduce_thunk(),
+          buffer_allocations);
     case ThunkProto::kAllToAllThunk:
       return AllToAllThunk::FromProto(std::move(thunk_info),
                                       thunk_proto.all_to_all_thunk(),

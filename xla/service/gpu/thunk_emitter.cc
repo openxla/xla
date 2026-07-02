@@ -2618,6 +2618,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitAsyncDone(
     case HloOpcode::kAllReduce:
     case HloOpcode::kAllGather:
     case HloOpcode::kReduceScatter:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kAllToAll:
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kCollectiveBroadcast:
@@ -2686,6 +2687,13 @@ AsyncThunkSequence ThunkEmitter::EmitAsyncStart(const HloInstruction* instr) {
                                  HloReduceScatterInstruction>(
           Thunk::kReduceScatter, instr, reduce_scatter,
           reduce_scatter->use_global_device_ids());
+    }
+    case HloOpcode::kCollectiveReduce: {
+      auto* collective_reduce = Cast<HloCollectiveReduceInstruction>(wrapped);
+      return EmitCollectiveThunk<CollectiveReduceThunk,
+                                 HloCollectiveReduceInstruction>(
+          Thunk::kCollectiveReduce, instr, collective_reduce,
+          collective_reduce->use_global_device_ids());
     }
     case HloOpcode::kAllToAll: {
       auto* all_to_all = Cast<HloAllToAllInstruction>(wrapped);
@@ -2933,6 +2941,13 @@ AsyncThunkSequence ThunkEmitter::EmitHloInstruction(const HloInstruction* hlo,
     case HloOpcode::kRecvDone:
       return EmitRecvDoneThunk(Cast<HloRecvDoneInstruction>(hlo));
 
+    case HloOpcode::kCollectiveReduce: {
+      auto* collective_reduce = Cast<HloCollectiveReduceInstruction>(hlo);
+      return EmitCollectiveThunk<CollectiveReduceThunk,
+                                 HloCollectiveReduceInstruction>(
+          Thunk::kCollectiveReduce, collective_reduce, collective_reduce,
+          collective_reduce->use_global_device_ids());
+    }
     case HloOpcode::kReplicaId:
       return EmitReplicaOrPartitionId<ReplicaIdThunk>(hlo);
     case HloOpcode::kRngGetAndUpdateState:

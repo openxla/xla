@@ -1478,6 +1478,26 @@ ENTRY triton_computation {
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
 }
 
+TEST_P(CollectiveTest, UnsupportedCollectiveReduceFailsGracefullyWithTriton) {
+  auto [data_type, cc, tiling] = GetParam();
+  const std::string kHloTestTemplate = R"(
+apply_op {
+  lhs = $0[] parameter(0)
+  rhs = $0[] parameter(1)
+  ROOT apply_op = $0[] add(lhs, rhs)
+}
+
+ENTRY triton_computation {
+  input = $0[8] parameter(0)
+  ROOT result = $0[8] collective-reduce(input), replica_groups={{0,1}},
+      to_apply=apply_op
+})";
+  ASSERT_OK_AND_ASSIGN(TestedInstruction ti, ParseTemplateAndGetInstruction(
+                                                 kHloTestTemplate, data_type,
+                                                 HloOpcode::kCollectiveReduce));
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
+}
+
 TEST_P(CollectiveTest,
        UnsupportedAsyncStartAndUpdateAndDoneFailGracefullyWithTriton) {
   // 'async-start', 'async-update', and 'async-done' need to be tested together,
@@ -1591,6 +1611,7 @@ constexpr std::array kTestedOpsCollectives = {
     HloOpcode::kCollectivePermute,
     HloOpcode::kCollectivePermuteDone,
     HloOpcode::kCollectivePermuteStart,
+    HloOpcode::kCollectiveReduce,
     HloOpcode::kPartitionId,
     HloOpcode::kRaggedAllToAll,
     HloOpcode::kReduceScatter,
