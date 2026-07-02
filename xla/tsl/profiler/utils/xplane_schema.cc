@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/lib/gtl/map_util.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/profiler/utils/tf_op_utils.h"
 
 namespace tsl {
@@ -34,9 +35,7 @@ const absl::string_view kVirtualDevicePlanePrefix = "/virtualdevice:";
 const absl::string_view kTpuNonCorePlaneNamePrefix = "#Chip";
 const char kTpuPlaneRegex[] = {"/device:TPU:([0-9]*)$"};
 const char kSparseCorePlaneRegex[] = {
-    "/device:TPU:[0-9]+ SparseCore ([0-9]+)$"};
-const char kSparseCoreCAEPlaneRegex[] = {
-    "/device:TPU:[0-9]+ SparseCore CAE ([0-9]+)$"};
+    "/device:TPU:[0-9]+ SparseCore(?: [a-zA-Z]+)? ([0-9]+)$"};
 // TODO(b/195582092): change it to /device:custom once all literals are
 // migrated.
 const absl::string_view kCustomPlanePrefix = "/device:CUSTOM:";
@@ -413,7 +412,8 @@ const StatTypeMap& GetStatTypeMap() {
        {"hbm_energy_nj", kHbmEnergy},
        {"hbm_power_events", kHbmPowerEvents},
        {"transaction_with_chip_core_id", kTransactionWithChipCoreId},
-       {"program_counter", kProgramCounter}});
+       {"program_counter", kProgramCounter},
+       {"uses_ici", kUsesIci}});
   DCHECK_EQ(stat_type_map->size(), kNumStatTypes);
   return *stat_type_map;
 }
@@ -576,7 +576,9 @@ absl::string_view GetLineIdTypeStr(LineIdType line_id_type) {
 
 bool IsInternalEvent(std::optional<int64_t> event_type) {
   // TODO(b/162102421): Introduce a prefix for internal event names.
-  if (!event_type.has_value()) return false;
+  if (!event_type.has_value()) {
+    return false;
+  }
   switch (*event_type) {
     case HostEventType::kMemoryAllocation:
     case HostEventType::kMemoryDeallocation:
@@ -598,7 +600,9 @@ bool IsInternalEvent(std::optional<int64_t> event_type) {
 }
 
 bool IsInternalStat(std::optional<int64_t> stat_type) {
-  if (!stat_type.has_value()) return false;
+  if (!stat_type.has_value()) {
+    return false;
+  }
   switch (*stat_type) {
     // case StatType::kKernelDetails:  # removed for rocm gpu kernel details
     case StatType::kProducerType:
