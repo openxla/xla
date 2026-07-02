@@ -406,7 +406,7 @@ message DebugOptions {
     CONCURRENT_REGIONS = 3;
   }
 
-  // Controls the VA remapping strategy for command buffer thunks.
+  // Controls the VA remapping allocation strategy for command buffer thunks.
   // Referenced constants have stable global addresses and are always treated as
   // persistent, including when VMM remapping is unavailable.
   //   ALWAYS_UPDATE: Buffers use regular dynamically allocated addresses;
@@ -609,7 +609,7 @@ message DebugOptions {
   // loop count and the loop body does not have unsupported commands.
   optional bool xla_gpu_command_buffer_unroll_loops = 411;
 
-  // Controls the VA remapping update strategy for command buffer thunks.
+  // Controls the VA remapping allocation strategy for command buffer thunks.
   // See CommandBufferUpdateMode for details.
   optional CommandBufferUpdateMode xla_gpu_command_buffer_update_mode = 469;
 

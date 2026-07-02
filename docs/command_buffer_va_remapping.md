@@ -17,8 +17,11 @@ The `xla_gpu_command_buffer_update_mode` debug option has two values:
   buffers stable virtual addresses backed by the VMM allocator. Parameters and
   live-out buffers continue to use their ordinary dynamic addresses.
 
-The removed names `DYNAMIC_ALLOCATE`, `VMM_PERSISTENT_TEMP`, `NEVER_UPDATE`,
-and `CAPTURE_CMD_NEVER_UPDATE` are rejected by flag and text proto parsing.
+The removed symbolic names `DYNAMIC_ALLOCATE`, `VMM_PERSISTENT_TEMP`,
+`NEVER_UPDATE`, and `CAPTURE_CMD_NEVER_UPDATE` are rejected by flag and text
+proto parsing. Binary protos encode enum values numerically, so old wire values
+are not rejected by name: reused numeric values are interpreted using the
+current enum definition, while undefined numbers remain unknown enum values.
 
 ## Why only temporary buffers?
 
