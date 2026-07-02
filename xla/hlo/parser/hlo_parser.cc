@@ -48,9 +48,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
 #include "xla/tsl/platform/status_macros.h"
 #include "google/protobuf/descriptor.h"
+#include "Eigen/Core"
 #include "xla/array.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
@@ -2036,6 +2036,9 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
           *shape, operands, std::move(device_list), channel_id));
     }
     case HloOpcode::kCollectiveBroadcast: {
+      bool has_dynamic_root;
+      attrs["has_dynamic_root"] = {/*required=*/false, AttrTy::kBool,
+                                   &has_dynamic_root};
       std::unique_ptr<CollectiveDeviceListBase> device_list =
           std::make_unique<CollectiveDeviceList>(std::vector<ReplicaGroup>{});
       attrs["replica_groups"] = {
@@ -2047,7 +2050,8 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         return nullptr;
       }
       return builder->AddInstruction(HloInstruction::CreateCollectiveBroadcast(
-          *shape, operands, std::move(device_list), false, channel_id));
+          *shape, operands, std::move(device_list), false, channel_id,
+          has_dynamic_root));
     }
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kCollectivePermuteStart: {
