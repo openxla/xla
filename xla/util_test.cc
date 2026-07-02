@@ -36,6 +36,7 @@ limitations under the License.
 #include "ml_dtypes/include/float8.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/test_benchmark.h"
 #include "xla/tsl/util/maybe_owning.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
@@ -384,22 +385,26 @@ void PackInt4(absl::Span<const char> input, absl::Span<char> output) {
 }
 
 TEST(UtilTest, PackInt4) {
-  std::vector<char> input(7);
-  absl::c_iota(input, 0);
+  for (int size : {7, 15, 63, 64, 127, 128, 1024}) {
+    std::vector<char> input(size);
 
-  std::vector<char> output_ref(CeilOfRatio<int64_t>(input.size(), 2));
-  PackInt4(input, absl::MakeSpan(output_ref));
+    absl::c_iota(input, 0);
 
-  std::vector<char> output_dut(CeilOfRatio<int64_t>(input.size(), 2));
-  PackIntN(4, input, absl::MakeSpan(output_dut));
-  for (size_t i = 0; i < output_dut.size(); ++i) {
-    EXPECT_EQ(output_ref[i], output_dut[i]) << i;
-  }
+    std::vector<char> output_ref(CeilOfRatio<int64_t>(input.size(), 2));
+    PackInt4(input, absl::MakeSpan(output_ref));
 
-  std::vector<char> unpacked(input.size());
-  UnpackIntN(4, output_ref, absl::MakeSpan(unpacked));
-  for (size_t i = 0; i < input.size(); ++i) {
-    EXPECT_EQ(unpacked[i], input[i]) << i;
+    std::vector<char> output_dut(CeilOfRatio<int64_t>(input.size(), 2));
+    PackIntN(4, input, absl::MakeSpan(output_dut));
+    for (size_t i = 0; i < output_dut.size(); ++i) {
+      EXPECT_EQ(output_ref[i], output_dut[i])
+          << "Size: " << size << " i: " << i;
+    }
+
+    std::vector<char> unpacked(input.size());
+    UnpackIntN(4, output_ref, absl::MakeSpan(unpacked));
+    for (size_t i = 0; i < input.size(); ++i) {
+      EXPECT_EQ(unpacked[i], input[i] & 0xf) << "Size: " << size << " i: " << i;
+    }
   }
 }
 
@@ -407,17 +412,21 @@ class PackUnpackIntNTest : public testing::TestWithParam<int> {};
 
 TEST_P(PackUnpackIntNTest, RoundTrip) {
   const int bitwidth = GetParam();
-  std::vector<char> input(15);
-  for (int i = 0; i < input.size(); ++i) {
-    input[i] = i & LsbMask<uint8_t>(bitwidth);
-  }
+  for (int size : {7, 15, 63, 64, 127, 128, 1024}) {
+    std::vector<char> input(size);
 
-  std::vector<char> packed(CeilOfRatio<int64_t>(input.size(), 8 / bitwidth));
-  PackIntN(bitwidth, input, absl::MakeSpan(packed));
-  std::vector<char> unpacked(input.size());
-  UnpackIntN(bitwidth, packed, absl::MakeSpan(unpacked));
-  for (size_t i = 0; i < input.size(); ++i) {
-    EXPECT_EQ(unpacked[i], input[i]) << i;
+    for (int i = 0; i < input.size(); ++i) {
+      input[i] = i & LsbMask<uint8_t>(bitwidth);
+    }
+
+    std::vector<char> packed(CeilOfRatio<int64_t>(input.size(), 8 / bitwidth));
+    PackIntN(bitwidth, input, absl::MakeSpan(packed));
+    std::vector<char> unpacked(input.size());
+    UnpackIntN(bitwidth, packed, absl::MakeSpan(unpacked));
+    for (size_t i = 0; i < input.size(); ++i) {
+      EXPECT_EQ(unpacked[i], input[i])
+          << "Bitwidth: " << bitwidth << " Size: " << size << " i: " << i;
+    }
   }
 }
 
@@ -489,6 +498,74 @@ TEST(UtilTest, ScopedLoggingTimerLazyEvaluation) {
   }
   EXPECT_EQ(counter, 0);
 }
+
+void BM_PackIntN(::testing::benchmark::State& state) {
+  const int bitwidth = state.range(0);
+  const size_t num_elements = state.range(1);
+
+  std::vector<char> input(num_elements);
+  for (size_t i = 0; i < input.size(); ++i) {
+    input[i] = i & LsbMask<uint8_t>(bitwidth);
+  }
+
+  std::vector<char> packed(CeilOfRatio<int64_t>(num_elements, 8 / bitwidth));
+
+  for (auto s : state) {
+    PackIntN(bitwidth, input, absl::MakeSpan(packed));
+    ::benchmark::DoNotOptimize(packed);
+  }
+
+  state.SetItemsProcessed(state.iterations() * num_elements);
+}
+
+BENCHMARK(BM_PackIntN)
+    ->ArgPair(1, 10000)
+    ->ArgPair(1, 10000000)
+    ->ArgPair(1, 100000000)
+    ->ArgPair(1, 500000000)
+    ->ArgPair(1, 1000000000)
+    ->ArgPair(2, 10000)
+    ->ArgPair(2, 10000000)
+    ->ArgPair(2, 100000000)
+    ->ArgPair(2, 500000000)
+    ->ArgPair(2, 1000000000)
+    ->ArgPair(4, 10000)
+    ->ArgPair(4, 10000000)
+    ->ArgPair(4, 100000000)
+    ->ArgPair(4, 500000000)
+    ->ArgPair(4, 1000000000);
+
+void BM_UnpackIntN(::testing::benchmark::State& state) {
+  const int bitwidth = state.range(0);
+  const size_t num_elements = state.range(1);
+
+  std::vector<char> packed(CeilOfRatio<int64_t>(num_elements, 8 / bitwidth));
+  std::vector<char> unpacked(num_elements);
+
+  for (auto s : state) {
+    UnpackIntN(bitwidth, packed, absl::MakeSpan(unpacked));
+    ::benchmark::DoNotOptimize(unpacked);
+  }
+
+  state.SetItemsProcessed(state.iterations() * num_elements);
+}
+
+BENCHMARK(BM_UnpackIntN)
+    ->ArgPair(1, 10000)
+    ->ArgPair(1, 10000000)
+    ->ArgPair(1, 100000000)
+    ->ArgPair(1, 500000000)
+    ->ArgPair(1, 1000000000)
+    ->ArgPair(2, 10000)
+    ->ArgPair(2, 10000000)
+    ->ArgPair(2, 100000000)
+    ->ArgPair(2, 500000000)
+    ->ArgPair(2, 1000000000)
+    ->ArgPair(4, 10000)
+    ->ArgPair(4, 10000000)
+    ->ArgPair(4, 100000000)
+    ->ArgPair(4, 500000000)
+    ->ArgPair(4, 1000000000);
 
 }  // namespace
 }  // namespace xla
