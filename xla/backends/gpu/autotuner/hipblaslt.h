@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/compiler.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/xla.pb.h"
 
@@ -61,8 +62,10 @@ class HipblasLtBackend : public GpuCodegenBackend {
 
  private:
   bool IsSupported(const HloInstruction& instr) override;
-  // TODO(b/514330710): use valid version
-  std::string version() const override { return "unknown"; }
+
+  std::string version() const override {
+    return target_config().device_description.runtime_version().ToString();
+  }
 };
 
 }  // namespace gpu

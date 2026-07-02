@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/service/gpu/model/gpu_indexing_performance_model.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/xla.pb.h"
+#include "triton/Version.h"
 
 namespace xla {
 namespace gpu {
@@ -84,8 +85,7 @@ class BlockLevelEmitterBackend : public GpuCodegenBackend {
   // We don't want to use the Triton emitter as a reference because it can
   // produce wrong results.
   bool CanProduceWrongResults() const override { return true; }
-  // TODO(b/514330710): use valid version
-  std::string version() const override { return "unknown"; }
+  std::string version() const override { return TRITON_VERSION; }
 
  private:
   absl::StatusOr<BlockLevelFusionConfig> GetCostModelConfig(

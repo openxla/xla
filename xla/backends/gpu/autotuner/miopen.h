@@ -57,8 +57,9 @@ class MIOpenBackend : public GpuCodegenBackend {
 
  private:
   bool IsSupported(const HloInstruction& instr) override;
-  // TODO(b/514330710): use valid version
-  std::string version() const override { return "unknown"; }
+  std::string version() const override {
+    return target_config().dnn_version_info.ToString();
+  }
   bool do_not_autotune_;
   stream_executor::DeviceAddressAllocator* allocator_;
 };

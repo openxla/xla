@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/compiler.h"
 #include "xla/xla.pb.h"
+#include "triton/Version.h"
 
 namespace xla {
 
@@ -56,8 +57,7 @@ class TritonBackend : public GpuCodegenBackend {
                            const BackendConfig& config) override;
 
   bool CanProduceWrongResults() const override { return true; }
-  // TODO(b/514330710): use valid version
-  std::string version() const override { return "unknown"; }
+  std::string version() const override { return TRITON_VERSION; }
 
  private:
   bool IsSupported(const HloInstruction& instr) override;
