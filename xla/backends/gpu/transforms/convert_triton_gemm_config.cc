@@ -113,11 +113,18 @@ class ConvertTritonGemmConfigVisitor : public DfsHloRewriteVisitor {
       return absl::OkStatus();
     }
     RETURN_IF_ERROR(config.status());
-    return RewriteFusion(fusion, *config);
+    absl::Status status = RewriteFusion(fusion, *config);
+    if (!status.ok()) {
+      VLOG(2) << "Failed to rewrite fusion " << fusion->ToString()
+              << " with error: " << status.message();
+    }
+    return status;
   }
 
   absl::Status RewriteFusion(HloFusionInstruction* fusion,
                              const TritonGemmConfig& config) {
+    VLOG(2) << "Rewriting fusion" << fusion->ToString() << " with config "
+            << config.ToString();
     HloComputation* computation = fusion->called_computation();
 
     std::vector<HloOpcode> dot_opcodes = {HloOpcode::kDot};
@@ -314,20 +321,28 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
     MLIRContext* mlir_context,
     const se::DeviceDescription& device_description) {
   RETURN_IF_ERROR(IsDot(*dot));
+
   // This logic only works for a very narrow subset of fusions: dot is the only
   // instruction that have a contracting dimension and all tile sizes except
   // m, n, and k are 1.
   const HloComputation* computation = dot->parent();
+  VLOG(3) << "FindBlockLevelParameters of computation: "
+          << computation->ToString() << " with triton gemm config "
+          << config.ToString();
+
   if (dot->GetModule()
           ->config()
           .debug_options()
           .xla_gpu_experimental_enable_tiling_propagation()) {
-    return FindBlockLevelParametersWithTilingSpace(dot, config, mlir_context,
-                                                   device_description);
+    auto result = FindBlockLevelParametersWithTilingSpace(
+        dot, config, mlir_context, device_description);
+    if (!result.ok()) {
+      VLOG(2) << "FindBlockLevelParametersWithTilingSpace failed: "
+              << result.status().message();
+    }
+    return result;
   }
 
-  VLOG(3) << "FindOutputTileSizesForEpilogue of computation: "
-          << computation->ToString();
   SymbolicTileAnalysisOrError analysis_or =
       SymbolicTileAnalysis::AnalyzeComputation(
           *computation, mlir_context,

@@ -159,7 +159,6 @@ xla_test(
         "//xla/backends/gpu/codegen/triton:xtile_compiler",
         "//xla/backends/gpu/codegen/triton:xtile_test_base",
         "//xla/backends/gpu/tests:gpu_pjrt_codegen_test",
-        "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
@@ -299,7 +298,7 @@ xla_test(
         "//xla/hlo/testlib:filecheck",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/stream_executor:device_description",
-        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_interpreter_reference_mixin",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
