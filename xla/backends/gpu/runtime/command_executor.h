@@ -155,11 +155,7 @@ class CommandExecutor {
   size_t size() const { return commands_.size(); }
 
   bool requires_update_on_initialize() const {
-    bool requires_update_on_initialize = false;
-    commands_.Walk([&](const Command* command) {
-      requires_update_on_initialize |= command->requires_update_on_initialize();
-    });
-    return requires_update_on_initialize;
+    return requires_update_on_initialize_;
   }
 
   bool requires_warmup() const {
@@ -256,6 +252,10 @@ class CommandExecutor {
   // Unique buffer allocations indices referenced by all commands in this
   // sequence (sorted by the buffer allocation index).
   std::vector<BufferAllocation::Index> allocs_indices_;
+
+  // Whether any command in this sequence requires an update during
+  // initialization.
+  bool requires_update_on_initialize_ = false;
 
   // Whether any command in this sequence requires an update on every
   // execution.
