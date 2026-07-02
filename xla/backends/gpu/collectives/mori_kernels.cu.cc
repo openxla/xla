@@ -120,8 +120,7 @@ __global__ void SDMAPutKernel(int myPe, int destPe, int numQ,
 }
 
 __global__ void AllGatherKernel(int myPe, int npes, int numQ, 
-        application::SymmMemObjPtr inBuf, size_t inOfs,
-        application::SymmMemObjPtr outBuf, size_t outOfs, size_t chunkSz) {
+        const void* inBuf, void* outBuf, size_t chunkSz) {
   const int tid = threadIdx.x;
 
   // so we split data sending across numQ queues
@@ -135,12 +134,18 @@ __global__ void AllGatherKernel(int myPe, int npes, int numQ,
     }
 
     size_t dstOfs = static_cast<size_t>(myPe) * chunkSz + qpOfs;
-    // printf(" rank=%d at %d\n", myPe, __LINE__);
     {
       // printf("rank=%d sending to %d qpId=%d ofs=%zu chunkSz=%zu\n", myPe,
       //   destPe, qpId, dstOfs, qpChunkSz);
-      shmem::ShmemPutMemNbiThread(outBuf, outOfs + dstOfs, inBuf, inOfs + qpOfs, 
-          qpChunkSz, destPe, qpId);
+      // shmem::ShmemPutMemNbiThread(outBuf, outOfs + dstOfs, inBuf, inOfs + qpOfs, 
+      //     qpChunkSz, destPe, qpId);
+
+      // inline __device__ void ShmemPutMemNbiThreadKernel<application::TransportType::SDMA>(
+      //   const void* dest, const void* source, size_t bytes, int pe, int qpId) {
+
+      shmem::ShmemPutMemNbiThreadKernel<application::TransportType::SDMA>(
+        static_cast<uint8_t*>(outBuf) + dstOfs, 
+        static_cast<const uint8_t*>(inBuf) + qpOfs, qpChunkSz, destPe, qpId);
     }
     // return;
     // //printf("rank=%d at %d\n", myPe, __LINE__);
@@ -149,7 +154,9 @@ __global__ void AllGatherKernel(int myPe, int npes, int numQ,
     // printf("transport type: %d numQ: %d\n", ttype, buf->sdmaNumQueue);
     // NOTE: no need to check transport type here, as the transport type is already checked in the ShmemPutMemNbiThread
     // if (ttype == application::SDMA) {
-    shmem::ShmemQuietThread(destPe, outBuf);
+    // shmem::ShmemQuietThread(destPe, outBuf);
+    // NOTE NOTE Quiet needs to be adapted!! 
+    // Anyway, we will move all-gather to collectives folder
     // }
   }
   if (tid == 0) {
@@ -187,14 +194,14 @@ absl::Status AllGather(void* send_buffer, void* recv_buffer, size_t bytes,
       std::intptr_t stream_handle, int device_id) {
   auto stream = reinterpret_cast<hipStream_t>(stream_handle);
   int myPe = shmem::ShmemMyPe();
-  auto [inBuf, inOfs] = QueryMemObjPtr(send_buffer, bytes, device_id);
-  auto [outBuf, outOfs] = QueryMemObjPtr(recv_buffer, bytes, device_id);
-  if (MORI_UNLIKELY(inBuf.cpu == nullptr || outBuf.cpu == nullptr)) {
-    return absl::InternalError(absl::StrCat("AllGather: Memory object not found"));
-  }
-  const uint32_t numQ = std::min(outBuf->sdmaNumQueue, 8u); // could be adapted to the data size
+  // auto [inBuf, inOfs] = QueryMemObjPtr(send_buffer, bytes, device_id);
+  // auto [outBuf, outOfs] = QueryMemObjPtr(recv_buffer, bytes, device_id);
+  // if (MORI_UNLIKELY(inBuf.cpu == nullptr || outBuf.cpu == nullptr)) {
+  //   return absl::InternalError(absl::StrCat("AllGather: Memory object not found"));
+  // }
+  const uint32_t numQ = 1;// std::min(outBuf->sdmaNumQueue, 8u); // could be adapted to the data size
   AllGatherKernel<<<1, 256, 0, stream>>>(myPe, shmem::ShmemNPes(), 
-                    numQ, inBuf, inOfs, outBuf, outOfs, bytes);
+                    numQ, send_buffer, recv_buffer, bytes);
   MORI_HIP_ERROR(hipGetLastError());
   return absl::OkStatus();
 }

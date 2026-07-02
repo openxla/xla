@@ -76,18 +76,20 @@ GpuCollectives* ResolveCollectives(
 
 GpuCollectives* ResolveCollectives(
     const GpuExecutableRunOptions* gpu_options, absl::string_view platform_name,
-    std::optional<std::string> implementation_name) {
+    std::optional<std::string> impl) {
   if (gpu_options && gpu_options->collectives()) {
     return gpu_options->collectives();
   }
-  if (implementation_name.has_value()) {
-    absl::StatusOr<Collectives*> collectives =
-        CollectivesRegistry::Get(platform_name, *implementation_name);
-    CHECK_OK(collectives) << "Failed to get GPU collectives implementation: "
-                          << *implementation_name;
-    return absl::down_cast<GpuCollectives*>(*collectives);
+  auto collectives_or = impl.has_value() ?
+     CollectivesRegistry::Get(platform_name, *impl) :
+     CollectivesRegistry::Default(platform_name);
+
+  CHECK_OK(collectives_or) << "Failed to get GPU collectives implementation: "
+                           << impl.value_or("default");
+  if (auto *gpu_coll = absl::down_cast<GpuCollectives*>(*collectives_or)) {
+    return gpu_coll;
   }
-  return GpuCollectives::Default(platform_name);
+  LOG(FATAL) << "Unsupported collectives implementation for GPU";
 }
 
 absl::StatusOr<CollectiveParams> CollectiveParams::Create(

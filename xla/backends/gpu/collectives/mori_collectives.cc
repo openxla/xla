@@ -55,9 +55,13 @@ limitations under the License.
 #include "xla/runtime/process_id.h"
 //#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
 
 using namespace mori;
+
+namespace se = ::stream_executor;
 
 namespace xla::gpu {
 
@@ -160,14 +164,21 @@ void MoriCollectives::Finalize() {
   shmem::ShmemFinalize();   
 }
 
-// absl::Status MoriCollectives::InitializeOnce() {
-//   // All peers shall call this function before any other MORI functions.
-//   // TODO for multi-process we need to use MoriIdStore!
-//   // but we cannot use it since we do not know the number of peers!
-  
-//   // we can count them of course..
-//   return absl::OkStatus();
-// }
+absl::Status MoriCollectives::InitPe(int32_t rank, int32_t nranks,
+                                     const CliqueId& clique_id,
+                                     se::StreamExecutor* executor) {
+  // ShmemInitAttr keys the per-device MORI state off the calling thread's active
+  // HIP device, so we must activate `executor`'s context here.
+  auto activate_context = executor->Activate();
+  TF_ASSIGN_OR_RETURN(auto uid, AsMoriUniqueId(clique_id));
+  shmem::mori_shmem_init_attr_t init_attr;
+  XLA_MORI_RETURN_IF_ERROR(
+      shmem::ShmemSetAttrUniqueIdArgs(rank, nranks, &uid, &init_attr));
+  XLA_MORI_RETURN_IF_ERROR(
+      shmem::ShmemInitAttr(shmem::MORI_SHMEM_INIT_WITH_UNIQUEID, &init_attr));
+  VLOG(1) << "Initialized MORI PE rank " << rank << " of " << nranks;
+  return absl::OkStatus();
+}
 
 absl::StatusOr<void*> MoriCollectives::Allocate(uint64_t bytes) {
   void* buffer = shmem::ShmemMalloc(bytes); // ShmemMallocAlign
@@ -227,15 +238,17 @@ MoriCollectives::CreateCommunicatorsWithCancel(
             << "; size(id)=" << clique_ids->data().size();
     auto* device = tsl::down_cast<GpuCollectives::Device*>(ranks[i].device);
     //TF_RET_CHECK(device != nullptr);
+
+    // When MORI was already initialized eagerly (see InitializeTopology), we
+    // only build the communicator wrapper. Otherwise (e.g. unit tests that
+    // bypass InitializeTopology) we lazily initialize this PE here. ShmemInitAttr
+    // is idempotent, but the initialized_ gate avoids redundant uid setup.
     auto activate_context = device->stream_executor()->Activate();
-
-    TF_ASSIGN_OR_RETURN(auto uid, AsMoriUniqueId(clique_ids->at(0)));
-
-    shmem::mori_shmem_init_attr_t init_attr;
-    XLA_MORI_RETURN_IF_ERROR(shmem::ShmemSetAttrUniqueIdArgs(
-        ranks[i].rank.value(), clique_key.num_devices(), &uid, &init_attr));
-    XLA_MORI_RETURN_IF_ERROR(shmem::ShmemInitAttr(
-          shmem::MORI_SHMEM_INIT_WITH_UNIQUEID, &init_attr));
+    if (!initialized_) {
+      TF_RETURN_IF_ERROR(InitPe(ranks[i].rank.value(), clique_key.num_devices(),
+                                clique_ids->at(0),
+                                device->stream_executor()));
+    }
     return MoriCommunicator::Create(this, cancel);
   };
 
@@ -264,7 +277,14 @@ MoriCollectives::CreateCommunicatorsWithCancel(
 
 absl::StatusOr<GpuCollectives::CliqueIdCallback>
 MoriCollectives::InitializeTopology(const Topology& topology) {
+  VLOG(1) << "InitializeTopology: num_processes=" << topology.num_processes
+          << " device_count_per_process=" << topology.device_count_per_process
+          << " kv_store=" << (topology.kv_store != nullptr);
+
   if (topology.num_processes > 1) {
+    // Multi-process eager init is not implemented yet; fall back to the lazy
+    // per-clique initialization performed in CreateCommunicatorsWithCancel
+    // (which keeps the previous hipMalloc + ShmemSymmetricRegister behavior).
     auto mori_id_store = std::make_shared<MoriIdStore>(
         topology.process_id, topology.device_to_process,
         std::move(topology.kv_store));
@@ -272,6 +292,43 @@ MoriCollectives::InitializeTopology(const Topology& topology) {
       return mori_id_store->GetCliqueIds(key, *this);
     };
   }
+
+  // Single process: eagerly initialize MORI for every local device as a single
+  // global clique so that collective-memory allocations can use MORI's static
+  // heap (ShmemMalloc) before any executable runs.
+  const int32_t nranks = static_cast<int32_t>(topology.device_count_per_process);
+  if (nranks <= 0) {
+    return nullptr;
+  }
+
+  TF_ASSIGN_OR_RETURN(se::Platform * platform,
+                      se::PlatformManager::PlatformWithName("ROCM"));
+
+  // All local PEs share one unique id and must initialize concurrently, so
+  // ShmemInitAttr's bootstrap collective can complete.
+  TF_ASSIGN_OR_RETURN(CliqueId clique_id, CreateUniqueCliqueId());
+
+  absl::Status status;
+  absl::once_flag once;
+  {
+    tsl::thread::ThreadPool pool(tsl::Env::Default(), "MoriEagerInit", nranks);
+    for (int32_t rank = 0; rank < nranks; ++rank) {
+      pool.Schedule([&, rank]() {
+        auto executor_or = platform->ExecutorForDevice(rank);
+        if (!executor_or.ok()) {
+          absl::call_once(once, [&] { status = executor_or.status(); });
+          return;
+        }
+        if (auto s = InitPe(rank, nranks, clique_id, *executor_or); !s.ok()) {
+          absl::call_once(once, [&] { status = s; });
+        }
+      });
+    }
+  }  // pool's destructor blocks until all scheduled work is done.
+  TF_RETURN_IF_ERROR(status);
+
+  initialized_ = true;
+  VLOG(1) << "Eagerly initialized MORI for " << nranks << " local devices";
   return nullptr;
 }
 

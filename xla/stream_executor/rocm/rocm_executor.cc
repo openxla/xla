@@ -49,8 +49,10 @@ limitations under the License.
 #include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/hip/hip_version.h"
 #include "rocm/rocm_config.h"
+#include "xla/debug_options_flags.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/core/collectives/collectives.h"
+#include "xla/core/collectives/collectives_registry.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -97,6 +99,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
+#include "tsl/platform/casts.h"
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/numa.h"
 #include "tsl/platform/numbers.h"
@@ -488,33 +491,32 @@ absl::StatusOr<std::unique_ptr<MemoryAllocation>> AllocateHostMemory(
       });
 }
 
+// This function follows the logic of ResolveCollectives in collective_params.cc
+static xla::gpu::GpuCollectives* GpuCollectivesImpl() {
+  auto debug_options = xla::GetDebugOptionsFromFlags();
+  auto impl = debug_options.xla_gpu_collectives_implementation();
+  absl::StatusOr<xla::Collectives*> collectives_or = !impl.empty() ?
+                       xla::CollectivesRegistry::Get("ROCM", impl) :
+                       xla::CollectivesRegistry::Default("ROCM");
+  CHECK_OK(collectives_or) << "Failed to get GPU collectives implementation: "
+                           << impl;
+  if (auto *gpu_coll = absl::down_cast<xla::gpu::GpuCollectives*>(*collectives_or)) {
+    return gpu_coll;
+  }
+  LOG(FATAL) << "Unsupported collectives implementation for GPU";
+}
+
 absl::StatusOr<void*> CollectiveMemoryAllocate(StreamExecutor* executor,
                                                uint64_t bytes) {
-  if (bytes == 0) {
-    return nullptr;
-  }
-
-  std::unique_ptr<ActivateContext> activation = executor->Activate();
-  void* device_mem = nullptr;
-  if(auto result = hipMalloc(&device_mem, bytes); result != hipSuccess) {
-    return absl::InternalError(
-      absl::StrFormat("Failed to hipMem: %s", ToString(result)));
-  }
-  return device_mem;
-  // if (auto *collectives = xla::gpu::GpuCollectives::Default("ROCM")) {
-  //   return collectives->Allocate(bytes);
-  // }
-  // return absl::InternalError("Failed to get GPU collectives");
+  if (bytes == 0) return nullptr;
+  auto activation = executor->Activate();
+  return GpuCollectivesImpl()->Allocate(bytes);
 }
 
 absl::Status CollectiveMemoryDeallocate(StreamExecutor* executor,
                                         void* location) {
-  std::unique_ptr<ActivateContext> activation = executor->Activate();
-  return ToStatus(hipFree(location));
-  // if (auto *collectives = xla::gpu::GpuCollectives::Default("ROCM")) {
-  //   return collectives->Deallocate(location);
-  // }
-  // return absl::InternalError("Failed to get GPU collectives");
+  auto activation = executor->Activate();
+  return GpuCollectivesImpl()->Deallocate(location);
 }
 
 }  // namespace

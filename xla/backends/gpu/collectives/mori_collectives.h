@@ -33,6 +33,10 @@ limitations under the License.
 #include "xla/core/collectives/rank_id.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 
+namespace stream_executor {
+class StreamExecutor;
+}  // namespace stream_executor
+
 namespace xla::gpu {
 
 // AMD MORI library
@@ -91,6 +95,15 @@ class MoriCollectives : public GpuCollectives {
 
  private:
   void Finalize();
+
+  // Initializes the MORI shmem state for a single PE (one GPU). Must be called
+  // on a thread that has `executor`'s device active. ShmemInitAttr is a
+  // collective/idempotent operation, so all participating PEs must call this
+  // concurrently with consistent (rank, nranks, uid). Shared by the eager
+  // InitializeTopology path and the lazy CreateCommunicatorsWithCancel path.
+  absl::Status InitPe(int32_t rank, int32_t nranks, const CliqueId& clique_id,
+                      stream_executor::StreamExecutor* executor);
+
   bool initialized_ = false;
 };
 

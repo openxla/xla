@@ -47,26 +47,14 @@ namespace xla::gpu {
 class MoriSymmetricMemory final : public SymmetricMemory {
  public:
   ~MoriSymmetricMemory() final {
-    // NOTE NOTE: this might be called from a wrong thread!!
-    // hence we cannpot deregister it here
-
-
-    // Remove the object from our global map
-    // xla_mori::DeregisterMemObjPtr(addr_.opaque());
-    // shmem::ShmemSymmetricDeregister(addr_.opaque(), addr_.size());
   }
 
   static absl::StatusOr<std::unique_ptr<MoriSymmetricMemory>> Create(
     se::DeviceAddressBase addr) {
-      auto obj = shmem::ShmemSymmetricRegister(addr.opaque(), addr.size());
-      if (obj.cpu == nullptr || obj.gpu == nullptr) {
-        return absl::InternalError("Failed to register symmetric memory");
-      }
-      // Add the object to our global map
-      xla_mori::RegisterMemObjPtr(addr.opaque(), obj);
-      VLOG(1) << "Registered symmetric memory: "
-              << obj.cpu->localPtr << " size: " << obj.cpu->size;
-      return absl::WrapUnique(new MoriSymmetricMemory(addr));
+
+    VLOG(1) << "MoriSymmetricMemory::Create: " << addr.opaque()
+                << " size: " << addr.size();
+    return absl::WrapUnique(new MoriSymmetricMemory(addr));
   }
 
   se::DeviceAddressBase addr() const final { 
