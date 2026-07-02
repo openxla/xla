@@ -330,6 +330,19 @@ rocm_lib_import(
     deps = [],
 )
 
+cc_import(
+    name = "hsakmt",
+    static_library = "%{rocm_root}/lib/libhsakmt.a",
+    visibility = ["//visibility:public"],
+)
+
+rocm_lib_import(
+    name = "hsa_runtime",
+    data = [":hsa_rocr_libs_data"],
+    interface_library = "%{rocm_root}/lib/libhsa-runtime64.so",
+    deps = [],
+)
+
 bzl_library(
     name = "build_defs_bzl",
     srcs = ["build_defs.bzl"],

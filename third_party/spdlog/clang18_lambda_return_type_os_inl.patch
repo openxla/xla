@@ -1,0 +1,31 @@
+Make implicit-return-type lambdas in `is_color_terminal()` explicit.
+
+ROCm 7.2.1's clang 18 is stricter than older clang releases when deducing
+a lambda's implicit return type across multiple `return` statements and
+rejects the lambdas in is_color_terminal() with:
+
+  error: return type 'bool' must match previous return type 'int' when
+         lambda expression has unspecified explicit return type
+
+Spelling the return type explicitly (`-> bool`) fixes the diagnostic.
+
+--- a/include/spdlog/details/os-inl.h
++++ b/include/spdlog/details/os-inl.h
+@@ -404,7 +404,7 @@
+     return true;
+ #else
+ 
+-    static const bool result = []() {
++    static const bool result = []() -> bool {
+         const char *env_colorterm_p = std::getenv("COLORTERM");
+         if (env_colorterm_p != nullptr) {
+             return true;
+@@ -419,7 +419,7 @@
+             return false;
+         }
+ 
+-        return std::any_of(terms.begin(), terms.end(), [&](const char *term) {
++        return std::any_of(terms.begin(), terms.end(), [&](const char *term) -> bool {
+             return std::strstr(env_term_p, term) != nullptr;
+         });
+     }();
