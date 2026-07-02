@@ -35,7 +35,31 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'main' }}
 
 jobs:
+  check-paths:
+    runs-on: ubuntu-latest
+    outputs:
+      should-run: ${{ steps.filter.outputs.any_changed == 'true' || github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          files: |
+            xla/**
+            third_party/**
+            BUILD
+            *.bzl
+            WORKSPACE*
+            MODULE.bazel
+          # .github/workflows/benchmark_presubmit.yml
+
   Tests:
+    needs: check-paths
     strategy:
       # Don't fail fast - want to see results for all builds even if one fails.
       fail-fast: false
@@ -57,8 +81,8 @@ jobs:
           },
         ]
     name: ${{ matrix.job_info.pretty_name }}
-    runs-on: ${{ matrix.job_info.pool }}
-    container: ${{ matrix.job_info.container }} # zizmor: ignore[unpinned-images]
+    runs-on: ${{ needs.check-paths.outputs.should-run != 'false' && matrix.job_info.pool || 'ubuntu-latest' }}
+    container: ${{ needs.check-paths.outputs.should-run != 'false' && matrix.job_info.container || null }} # zizmor: ignore[unpinned-images]
     defaults:
       run:
         shell: bash
@@ -67,6 +91,7 @@ jobs:
       OUTPUT_DIR: ${{ github.workspace }}/output
     steps:
       - name: Print GitHub Context
+        if: ${{ needs.check-paths.outputs.should-run != 'false' }}
         run: |
           echo "GitHub SHA: ${{ github.sha }}"
           echo "GitHub Ref: ${GITHUB_REF}"
@@ -88,17 +113,20 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           GITHUB_EVENT_PULL_REQUEST_BASE_REF: ${{ github.event.pull_request.base.ref }}
       - name: Checkout OpenXLA
+        if: ${{ needs.check-paths.outputs.should-run != 'false' }}
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: Configure GPU backend
-        if: ${{ matrix.job_info.platform == 'GPU' }}
+        if: ${{ needs.check-paths.outputs.should-run != 'false' && matrix.job_info.platform == 'GPU' }}
         run: |
           ./configure.py --backend=CUDA --cuda_compiler=nvcc
       - name: "Run build.py"
+        if: ${{ needs.check-paths.outputs.should-run != 'false' }}
         run: |
           ./build_tools/ci/build.py --build="${{ matrix.job_info.pretty_name }}_github_actions"
       - name: Download Gemma Hlo Files
+        if: ${{ needs.check-paths.outputs.should-run != 'false' }}
         run: |
           mkdir -p "$OUTPUT_DIR/tmp_hlo"
           cd "$OUTPUT_DIR/tmp_hlo"
@@ -107,7 +135,7 @@ jobs:
           cd ..
       # Run the corresponding HLO tests based on platform
       - name: Run HLO tests
-
+        if: ${{ needs.check-paths.outputs.should-run != 'false' }}
         run: |
           BAZEL_ARCH_DIR="${{ matrix.job_info.bazel_arch_dir }}"
           BINARY_DIR="./bazel-out/${BAZEL_ARCH_DIR}/bin/xla/tools"
@@ -137,18 +165,3 @@ jobs:
           $HLO_RUNNER_BINARY --device_type=$DEVICE_TYPE --use_spmd_partitioning --num_repeats=5 --profile_execution=True --xla_gpu_dump_xspace_to="$XSPACE_FILE_PATH" "$TEST_HLO_FILE" > "$OUTPUT_FILE_PATH"
           $COMPUTE_XSPACE_STATS_BINARY --input="$XSPACE_FILE_PATH" --device_type="${{ matrix.job_info.platform }}" >> "$OUTPUT_FILE_PATH"
           cat "$OUTPUT_FILE_PATH"
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
