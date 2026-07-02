@@ -52,6 +52,9 @@ namespace {
 
 thread_local const xla::DeviceAssignment* current_device_assignment = nullptr;
 
+constexpr int64_t kMaxOpenDeallocationBatchEntries = 64;
+constexpr uint64_t kMaxOpenDeallocationBatchBytes = 64ull << 20;
+
 }  // namespace
 
 DeviceAddressVmmAllocator::DeviceAssignmentScope::DeviceAssignmentScope(
@@ -267,11 +270,26 @@ absl::Status DeviceAddressVmmAllocator::PopulateDevices(
 }
 
 DeviceAddressVmmAllocator::~DeviceAddressVmmAllocator() {
-  absl::Status status = SynchronizeAllPendingOperations();
-  CHECK(status.ok()) << status;
-
   for (auto& device : per_device_) {
     auto& state = device.second;
+    uint64_t last_seqno = 0;
+    {
+      absl::MutexLock lock(state->mu);
+      CHECK_EQ(state->open_deallocation_batch_seqno, 0)
+          << "DeviceAddressVmmAllocator subclasses must flush open "
+             "deallocation batches before the base destructor runs.";
+      if (!state->pending_deallocations.empty()) {
+        last_seqno = state->pending_deallocations.back().seqno;
+      }
+    }
+
+    if (last_seqno > 0) {
+      absl::MutexLock lock(state->mu);
+      absl::Status drain_status =
+          WaitAndDrainPendingDeallocationsUntilSeqno(*state, last_seqno);
+      CHECK(drain_status.ok()) << drain_status;
+    }
+
     // Free platform-specific per-device resources (e.g. pinned timeline).
     if (state->destroy_fn) {
       state->destroy_fn();
@@ -281,7 +299,14 @@ DeviceAddressVmmAllocator::~DeviceAddressVmmAllocator() {
 
 absl::Status DeviceAddressVmmAllocator::SynchronizeAllPendingOperations() {
   for (auto& device : per_device_) {
-    RETURN_IF_ERROR(SynchronizePendingOperations(device.first));
+    auto& state = device.second;
+    absl::MutexLock lock(state->mu);
+    RETURN_IF_ERROR(FlushOpenDeallocationBatch(
+        *state, DeallocationBatchFlushReason::kDestructor));
+    if (!state->pending_deallocations.empty()) {
+      RETURN_IF_ERROR(WaitAndDrainPendingDeallocationsUntilSeqno(
+          *state, state->pending_deallocations.back().seqno));
+    }
   }
   return absl::OkStatus();
 }
@@ -320,6 +345,8 @@ absl::Status DeviceAddressVmmAllocator::SynchronizePendingOperations(
     int device_ordinal) {
   ASSIGN_OR_RETURN(auto state, GetPerDeviceState(device_ordinal));
   absl::MutexLock lock(state->mu);
+  RETURN_IF_ERROR(
+      FlushOpenDeallocationBatch(*state, DeallocationBatchFlushReason::kSync));
   if (state->pending_deallocations.empty()) {
     return absl::OkStatus();
   }
@@ -730,6 +757,8 @@ DeviceAddressVmmAllocator::TryWithPendingReclaim(PerDeviceState& state,
     // already be past their stream timeline point. Complete ready allocator
     // deallocations first, without blocking for later pending work and without
     // destroying unrelated stale reservation mappings that may be reused.
+    RETURN_IF_ERROR(
+        FlushOpenDeallocationBatch(state, DeallocationBatchFlushReason::kWait));
     CompleteReadyAllocatorDeallocationsForReclaim(
         state, LoadTimeline(state.pinned_timeline));
     result = try_fresh();
@@ -997,12 +1026,12 @@ absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
 
   const uint64_t reclaimable_bytes =
       RoundUpToGranularity(*state, record.raw_allocation()->address().size());
+  RETURN_IF_ERROR(
+      FlushOpenDeallocationBatchIfNeededForEntry(*state, reclaimable_bytes));
 
-  // Assign the next sequence number and enqueue a GPU write to the pinned
-  // timeline when the stream reaches this point. The CPU polls the timeline
-  // value to know when it is safe to free the memory.
-  uint64_t seqno = state->next_seqno++;
-  RETURN_IF_ERROR(EnqueueDeferredDeallocation(*state, seqno));
+  // Assign this deferred Deallocate to the current per-device trailing batch.
+  // One stream marker will be enqueued for the whole batch when it is flushed.
+  uint64_t seqno = GetOrCreateOpenDeallocationBatchSeqno(*state);
   // Move the returned allocator address out of active ownership and keep its
   // mapping alive as stale state until the stream reaches `seqno`.
   CHECK(record.allocator_active());
@@ -1017,6 +1046,7 @@ absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
   state->pending_deallocations.push_back(
       PendingDeallocation{record.pending_deallocation_kind(), seqno,
                           record.allocator_address(), reclaimable_bytes});
+  AddOpenDeallocationBatchEntry(*state, reclaimable_bytes);
   return absl::OkStatus();
 }
 
@@ -1367,10 +1397,92 @@ absl::Status DeviceAddressVmmAllocator::Map(int device_ordinal,
 
 // UnMap/deferred teardown helpers.
 
+absl::Status
+DeviceAddressVmmAllocator::FlushOpenDeallocationBatchIfNeededForEntry(
+    PerDeviceState& state, uint64_t reclaimable_bytes) {
+  if (state.open_deallocation_batch_seqno == 0) {
+    CHECK_EQ(state.open_deallocation_batch_entries, 0);
+    CHECK_EQ(state.open_deallocation_batch_bytes, 0);
+    return absl::OkStatus();
+  }
+
+  CHECK_GT(state.open_deallocation_batch_entries, 0);
+  bool entry_limit =
+      state.open_deallocation_batch_entries >= kMaxOpenDeallocationBatchEntries;
+  bool byte_limit =
+      reclaimable_bytes > 0 && state.open_deallocation_batch_bytes > 0 &&
+      (state.open_deallocation_batch_bytes >= kMaxOpenDeallocationBatchBytes ||
+       reclaimable_bytes > kMaxOpenDeallocationBatchBytes -
+                               state.open_deallocation_batch_bytes);
+  if (!entry_limit && !byte_limit) {
+    return absl::OkStatus();
+  }
+
+  return FlushOpenDeallocationBatch(
+      state, entry_limit ? DeallocationBatchFlushReason::kEntryLimit
+                         : DeallocationBatchFlushReason::kByteLimit);
+}
+
+uint64_t DeviceAddressVmmAllocator::GetOrCreateOpenDeallocationBatchSeqno(
+    PerDeviceState& state) {
+  if (state.open_deallocation_batch_seqno == 0) {
+    CHECK_EQ(state.open_deallocation_batch_entries, 0);
+    CHECK_EQ(state.open_deallocation_batch_bytes, 0);
+    state.open_deallocation_batch_seqno = state.next_seqno++;
+  }
+  return state.open_deallocation_batch_seqno;
+}
+
+void DeviceAddressVmmAllocator::AddOpenDeallocationBatchEntry(
+    PerDeviceState& state, uint64_t reclaimable_bytes) {
+  CHECK_NE(state.open_deallocation_batch_seqno, 0);
+  ++state.open_deallocation_batch_entries;
+  if (std::numeric_limits<uint64_t>::max() -
+          state.open_deallocation_batch_bytes <
+      reclaimable_bytes) {
+    state.open_deallocation_batch_bytes = std::numeric_limits<uint64_t>::max();
+  } else {
+    state.open_deallocation_batch_bytes += reclaimable_bytes;
+  }
+}
+
 void DeviceAddressVmmAllocator::ErasePendingDeallocationAt(
     PerDeviceState& state, std::deque<PendingDeallocation>::iterator it) {
   CHECK(it != state.pending_deallocations.end());
+  if (it->seqno == state.open_deallocation_batch_seqno) {
+    CHECK_GT(state.open_deallocation_batch_entries, 0);
+    --state.open_deallocation_batch_entries;
+    CHECK_GE(state.open_deallocation_batch_bytes, it->reclaimable_bytes);
+    state.open_deallocation_batch_bytes -= it->reclaimable_bytes;
+    if (state.open_deallocation_batch_entries == 0) {
+      state.open_deallocation_batch_seqno = 0;
+      state.open_deallocation_batch_bytes = 0;
+    }
+  }
   state.pending_deallocations.erase(it);
+}
+
+absl::Status DeviceAddressVmmAllocator::FlushOpenDeallocationBatch(
+    PerDeviceState& state, DeallocationBatchFlushReason /*reason*/) {
+  if (state.open_deallocation_batch_seqno == 0) {
+    CHECK_EQ(state.open_deallocation_batch_entries, 0);
+    CHECK_EQ(state.open_deallocation_batch_bytes, 0);
+    return absl::OkStatus();
+  }
+
+  if (state.open_deallocation_batch_entries == 0) {
+    state.open_deallocation_batch_seqno = 0;
+    state.open_deallocation_batch_bytes = 0;
+    return absl::OkStatus();
+  }
+
+  const uint64_t seqno = state.open_deallocation_batch_seqno;
+  RETURN_IF_ERROR(EnqueueDeferredDeallocation(state, seqno));
+
+  state.open_deallocation_batch_seqno = 0;
+  state.open_deallocation_batch_entries = 0;
+  state.open_deallocation_batch_bytes = 0;
+  return absl::OkStatus();
 }
 
 void DeviceAddressVmmAllocator::ErasePendingDeallocation(
@@ -1441,6 +1553,9 @@ void DeviceAddressVmmAllocator::CompleteStaleReservationMapping(
 
 absl::Status DeviceAddressVmmAllocator::WaitUntilSeqno(PerDeviceState& state,
                                                        uint64_t target_seqno) {
+  RETURN_IF_ERROR(
+      FlushOpenDeallocationBatch(state, DeallocationBatchFlushReason::kWait));
+
   // Release the lock before spin-waiting to avoid stalling other threads for
   // potentially milliseconds while the GPU drains its work queue.
   state.mu.unlock();
@@ -1642,12 +1757,17 @@ absl::Status DeviceAddressVmmAllocator::UnMap(int device_ordinal,
   }
   CHECK(record->reservation_mapping_matches(reservation_address));
 
-  uint64_t seqno = state->next_seqno++;
-  RETURN_IF_ERROR(EnqueueDeferredDeallocation(*state, seqno));
+  RETURN_IF_ERROR(FlushOpenDeallocationBatchIfNeededForEntry(
+      *state, /*reclaimable_bytes=*/0));
+
+  // Assign this deferred UnMap to the current per-device trailing batch. One
+  // stream marker will be enqueued for the whole batch when it is flushed.
+  uint64_t seqno = GetOrCreateOpenDeallocationBatchSeqno(*state);
   MoveReservationRecordToStale(*state, *record, seqno);
   state->pending_deallocations.push_back(
       PendingDeallocation{PendingDeallocationKind::kMap, seqno,
                           reservation_address, /*reclaimable_bytes=*/0});
+  AddOpenDeallocationBatchEntry(*state, /*reclaimable_bytes=*/0);
   return absl::OkStatus();
 }
 
