@@ -37,13 +37,11 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
-#include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
-#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_constants.h"
@@ -401,29 +399,26 @@ GpuExecutableBufferAllocator::GpuExecutableBufferAllocator(
           if (command_buffer_thunk == nullptr) {
             return absl::OkStatus();
           }
-          return command_buffer_thunk->WalkCommands(
-              [&](const Command* command) -> absl::Status {
-                for (const BufferUse& use : command->buffer_uses()) {
-                  BufferAllocation::Index index = use.slice().index();
-                  if (index < 0 ||
-                      static_cast<size_t>(index) >= allocations_.size()) {
-                    continue;
-                  }
-                  const BufferAllocation& allocation = *allocations_[index];
-                  if (allocation.size() == 0) {
-                    continue;
-                  }
-                  if (allocation.is_constant()) {
-                    constant_alloc_indices.insert(index);
-                    persistent_alloc_indices.insert(index);
-                  } else if (persist_temp_allocations &&
-                             allocation.IsPreallocatedTempBuffer()) {
-                    persistent_alloc_indices.insert(index);
-                    va_remapped_allocation_indexes_.insert(index);
-                  }
-                }
-                return absl::OkStatus();
-              });
+          for (BufferAllocation::Index index :
+               command_buffer_thunk->allocs_indices()) {
+            if (index < 0 ||
+                static_cast<size_t>(index) >= allocations_.size()) {
+              continue;
+            }
+            const BufferAllocation& allocation = *allocations_[index];
+            if (allocation.size() == 0) {
+              continue;
+            }
+            if (allocation.is_constant()) {
+              constant_alloc_indices.insert(index);
+              persistent_alloc_indices.insert(index);
+            } else if (persist_temp_allocations &&
+                       allocation.IsPreallocatedTempBuffer()) {
+              persistent_alloc_indices.insert(index);
+              va_remapped_allocation_indexes_.insert(index);
+            }
+          }
+          return absl::OkStatus();
         }));
   }
   constant_alloc_indices_.assign(constant_alloc_indices.begin(),
