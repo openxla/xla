@@ -590,6 +590,20 @@ cc_library(
 )
 
 cc_library(
+    name = "pjrt_compiler_variant",
+    srcs = ["pjrt_compiler_variant.cc"],
+    hdrs = ["pjrt_compiler_variant.h"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform",
+    ],
+)
+
+cc_library(
     name = "pjrt_compiler",
     srcs = ["pjrt_compiler.cc"],
     hdrs = ["pjrt_compiler.h"],
@@ -598,6 +612,7 @@ cc_library(
         ":maybe_owning_mlir_module",
         ":pjrt_abi_version",
         ":pjrt_common",
+        ":pjrt_compiler_variant",
         ":pjrt_device_description",
         ":pjrt_device_dimensions",
         ":pjrt_executable",

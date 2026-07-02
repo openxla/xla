@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
+#include "xla/pjrt/pjrt_compiler_variant.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/proto/pjrt_partial_program.pb.h"
 
@@ -202,7 +203,14 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCompile(
   }
 
   auto platform_name = topology.platform_name();
-  auto compiler_variant = options.compiler_variant.value_or("");
+
+  auto v_or = PickCompilerVariant();
+  if (!v_or.ok()) {
+    return v_or.status();
+  }
+  std::string compiler_variant = CompilerVariantToString(*v_or);
+  LOG(INFO) << "DO NOT SUBMIT: Compiler variant: " << compiler_variant;
+
   std::pair<std::string, std::string> key{std::string(platform_name),
                                           std::string(compiler_variant)};
   ASSIGN_OR_RETURN(PjRtCompiler * compiler,
@@ -218,7 +226,14 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCompile(
         ->Compile(std::move(options), std::move(module), topology, client);
   }
   auto platform_name = topology.platform_name();
-  auto compiler_variant = options.compiler_variant.value_or("");
+
+  auto v_or = PickCompilerVariant();
+  if (!v_or.ok()) {
+    return v_or.status();
+  }
+  std::string compiler_variant = CompilerVariantToString(*v_or);
+  LOG(INFO) << "DO NOT SUBMIT: Compiler variant: " << compiler_variant;
+
   ASSIGN_OR_RETURN(PjRtCompiler * compiler,
                    GetPjRtCompiler(platform_name, compiler_variant));
   return compiler->Compile(std::move(options), std::move(module), topology,
