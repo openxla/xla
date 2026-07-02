@@ -480,7 +480,7 @@ static std::vector<std::string> DumpHloModuleImpl(
         continue;
       }
       file_paths.push_back(DumpToFileInDirImpl(
-          FilenameFor(module, computation->name(), "_fusion.html"),
+          FilenameFor(module, computation->name(), "_fusion.pyz"),
           *rendered_graph, opts));
     }
   }

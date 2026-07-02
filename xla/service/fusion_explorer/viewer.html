@@ -2,6 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <title>Fusion Explorer</title>
   <style>
     html, body {height: 100%; text-align: center;}
     #rendered {height: 70%; width: 80%; border:1px solid black; margin: auto; }
@@ -10,7 +11,7 @@
     #frames_list {
       list-style: none; text-align: left; height: 20%; overflow: scroll;
     }
-    #frames_list   li { padding: 0.2em; margin: 0.2em; }
+    #frames_list li { padding: 0.2em; margin: 0.2em; }
     .selected { background-color: #e0e0e0; }
     .selected a { color: black; text-decoration: none; }
     #rendered svg { height: 100% !important; width: 100% !important; }
@@ -23,15 +24,14 @@
   <script src="https://www.gstatic.com/external_hosted/svg_pan_zoom/svg-pan-zoom.js">
   </script>
 
-  <title>Fusion Explorer: $TITLE</title>
   <div id='rendered'><center>Loading...</center></div>
   <ul id='frames_list'></ul>
   <p>Use j/k for keyboard navigation.</p>
-  <p id='performance_note'>Loading data...</p>
+  <p id='performance_note'>Initializing...</p>
+
   <script>
   <!--
   const renderCache = {};
-
   const cssregex = new RegExp('stylesheet=<([^]*)\n>\n', 'gm');
   const hpccWasm = window["@hpcc-js/wasm"];
 
@@ -43,49 +43,67 @@
     return parseInt(window.location.hash.substring('#frame'.length, window.location.hash.length));
   }
 
+  window.frames = [];
+  window.graphs = {};
+  const pendingGraphRequests = new Map();
+  const getGraph = (graph_id) => {
+    if (window.graphs[graph_id]) {
+      return Promise.resolve(window.graphs[graph_id]);
+    }
+    if (pendingGraphRequests.has(graph_id)) {
+      return pendingGraphRequests.get(graph_id);
+    }
+
+    const promise = fetch(`/api/graph?id=${graph_id}`)
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
+        return r.text();
+      })
+      .then(graph => {
+        window.graphs[graph_id] = graph;
+        pendingGraphRequests.delete(graph_id);
+        return graph;
+      })
+      .catch(err => {
+        pendingGraphRequests.delete(graph_id);
+        throw err;
+      });
+
+    pendingGraphRequests.set(graph_id, promise);
+    return promise;
+  };
+
   const renderCurrentFrame = () => {
-    if (!window.loaded) { return; }
+    if (window.frames.length === 0) return;
+
     const frames_list = document.getElementById('frames_list');
     const currId = getIdFromHash();
 
     for (let selected of frames_list.getElementsByClassName('selected')) {
         selected.classList.remove('selected');
     }
-
-    const selected = frames_list.children[currId];
-    selected.classList.add('selected');
-    selected.scrollIntoView();
-
-    const frame = frames[currId];
-    const dot_ptr = frame[0];
-    let dot_txt = window.dots[dot_ptr];
-    const label = frame[1];
-    document.getElementById('performance_note').innerText = "Rendering...";
-    const results = cssregex.exec(dot_txt)
-    let css_data = ''
-    if (results !== null) {
-        css_data = results[1].replace(/\s*data:.*\s*,/,''); // Strip content-type field.
-        // CSS inside DOT is URL-escaped, so we must unescape it
-        // before we can insert it into SVG.
-        css_data = unescape(css_data);
-        dot_txt = dot_txt.replace(cssregex, ''); // Remove the stylesheet
+    if (frames_list.children.length > currId) {
+      const items = frames_list.getElementsByTagName('li');
+      for (let item of items) {
+        const link = item.getElementsByTagName('a')[0];
+        if (link && link.getAttribute('href') === `#frame${currId}`) {
+          item.classList.add('selected');
+          item.scrollIntoView({ block: 'nearest' });
+          break;
+        }
+      }
     }
 
-    let render_start = performance.now();
-    const render_callback = svg => {
-      renderCache[dot_ptr] = svg;
-      var area = document.getElementById('rendered');
-      area.innerHTML = `${svg}<style>${css_data}</style>`;
-      var panzoom = svgPanZoom(area.children[0], {
-          zoomEnabled: true, controlIconsEnabled: true, maxZoom: 200, });
-      var to_highlight = frame[2].length ?
-        document.querySelector(`${frame[2]}`) : null;
+    const frame = window.frames[currId];
+    if (!frame) return;
+    const graph_id = frame.graph_id;
+
+    const setupInteractiveFeatures = (css_data) => {
+      var to_highlight = frame.to_highlight.length ?
+        document.querySelector(`${frame.to_highlight}`) : null;
       if (to_highlight) {
         to_highlight.style.setProperty('fill', 'red');
       }
-      document.getElementById('performance_note').innerText =
-        `Rendering took ${(performance.now() - render_start).toFixed(2)}ms`;
-
       // Change cursor.
       let text_nodes = document.getElementsByTagName("text");
       for (var el of text_nodes) {
@@ -94,11 +112,56 @@
         }
       }
     };
-    if (renderCache[dot_ptr]) {
-      render_callback(renderCache[dot_ptr]);
-    } else {
-      hpccWasm.graphviz.layout(dot_txt, "svg", "dot").then(render_callback);
+
+    if (renderCache[graph_id]) {
+      const cached = renderCache[graph_id];
+      var area = document.getElementById('rendered');
+      area.innerHTML = `${cached.svg}<style>${cached.css_data}</style>`;
+      svgPanZoom(area.children[0], {
+          zoomEnabled: true, controlIconsEnabled: true, maxZoom: 200, });
+      setupInteractiveFeatures(cached.css_data);
+      document.getElementById('performance_note').innerText = "Rendered from cache";
+      return;
     }
+
+    document.getElementById('performance_note').innerText = "Retrieving data...";
+
+    getGraph(graph_id).then(graph_txt => {
+      const latestCurrId = getIdFromHash();
+      if (!window.frames[latestCurrId] || window.frames[latestCurrId].graph_id !== graph_id) {
+        console.log("Main: resolved graph is no longer current, ignoring rendering.");
+        return;
+      }
+
+      let render_start = performance.now();
+      document.getElementById('performance_note').innerText = "Rendering...";
+
+      const results = cssregex.exec(graph_txt)
+      let css_data = ''
+      if (results !== null) {
+          css_data = results[1].replace(/\s*data:.*\s*,/,'');
+          css_data = unescape(css_data);
+          graph_txt = graph_txt.replace(cssregex, '');
+      }
+
+      hpccWasm.graphviz.layout(graph_txt, "svg", "dot").then(svg => {
+        renderCache[graph_id] = { svg, css_data };
+        var area = document.getElementById('rendered');
+        area.innerHTML = `${svg}<style>${css_data}</style>`;
+        svgPanZoom(area.children[0], {
+            zoomEnabled: true, controlIconsEnabled: true, maxZoom: 200, });
+        setupInteractiveFeatures(css_data);
+        document.getElementById('performance_note').innerText =
+          `Rendering took ${(performance.now() - render_start).toFixed(2)}ms`;
+      });
+    }).catch(err => {
+      const latestCurrId = getIdFromHash();
+      if (window.frames[latestCurrId] && window.frames[latestCurrId].graph_id === graph_id) {
+        document.getElementById('performance_note').innerText = `Error: ${err.message}`;
+      } else {
+        console.log("Main: ignored error for non-current frame:", graph_id, "error:", err.message);
+      }
+    });
   };
 
   const update = (delta) => {
@@ -110,13 +173,11 @@
   const renderFrameList = () => {
     const currId = getIdFromHash();
     const frames_list = document.getElementById('frames_list');
-    for (let i=0; i<frames.length; i++) {
-      const f = frames[i];
-      let frame_descr = f[1];
+    frames_list.innerHTML = ''; // Clear if re-rendering
+    for (let i = 0; i < window.frames.length; i++) {
+      const f = window.frames[i];
+      let frame_descr = f.label || "Unnamed state";
       const rendered = document.createElement("li");
-      if (frame_descr == "") {
-        frame_descr = "Unnamed state";
-      }
       rendered.innerHTML = `<a href="#frame${i}">${frame_descr}</a>`;
       if (i == currId) {
         rendered.classList.add('selected');
@@ -124,19 +185,6 @@
       frames_list.appendChild(rendered);
     }
   };
-
-  const decompress = async function(compressed) {
-    const ds = new DecompressionStream('gzip');
-    const in_fetch = await fetch(`data:application/octet-stream;base64,${compressed}`);
-    const in_blob = await in_fetch.blob();
-    const out_stream = in_blob.stream().pipeThrough(ds);
-    const out_blob = await new Response(out_stream).blob();
-    return await out_blob.text();
-  }
-
-  const dots_compressed = "$DOTS";
-  const frames = [$FRAMES];
-  let loaded = false;
 
   window.addEventListener('hashchange', () => {
     renderCurrentFrame();
@@ -156,18 +204,36 @@
     event.preventDefault();
   }, true);
 
-  document.addEventListener("DOMContentLoaded", () => {
-    decompress(dots_compressed).then(text => {
-      window.dots = JSON.parse(text);
-      window.loaded = true;
-      renderFrameList();
-      renderCurrentFrame();
-    });
+  const init = () => {
+    document.getElementById('performance_note').innerText = "Loading metadata...";
+    fetch('/api/metadata')
+      .then(r => {
+        if (!r.ok) throw new Error(`Failed to load metadata: ${r.status}`);
+        return r.json();
+      })
+      .then(data => {
+        document.title = data.title;
 
-    window.title_to_id = new Map();
-    for (let i=0; i < frames.length; i++) {
-       title_to_id.set(frames[i][1], i);
-     }
+        window.frames = data.frames;
+        window.graphs = {};
+
+        window.title_to_id = new Map();
+        for (let i=0; i < window.frames.length; i++) {
+           title_to_id.set(window.frames[i].label, i);
+         }
+
+        renderFrameList();
+        renderCurrentFrame();
+
+        document.getElementById('performance_note').innerText = "Metadata loaded";
+      })
+      .catch(err => {
+        document.getElementById('performance_note').innerText = `Error: ${err.message}`;
+      });
+  };
+
+  document.addEventListener("DOMContentLoaded", () => {
+    init();
 
     // Navigate to next elements on click.
     document.addEventListener("click", (event) => {
