@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,10 +40,13 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
-#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/memory_reservation.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/xla.pb.h"
+
+namespace stream_executor {
+class DeviceAddressVmmAllocator;
+}  // namespace stream_executor
 
 namespace xla {
 namespace gpu {
@@ -54,7 +56,8 @@ class ThunkExecutor;
 // Owns executable-scoped buffer allocation state for one GpuExecutable.
 class GpuExecutableBufferAllocator {
  private:
-  struct VaRanges;
+  struct MemoryReservationAlias;
+  struct Remapping;
 
  public:
   struct ParameterBuffer {
@@ -75,8 +78,16 @@ class GpuExecutableBufferAllocator {
 
   using AllocationIndexSet = absl::btree_set<BufferAllocation::Index>;
 
-  // Execution-scoped buffer allocation state. Command-buffer VA remapping is
-  // inactive when `command_buffer_active()` is false.
+  // Per-run buffer allocation context created by `CreateExecutionScope`.
+  // Callers first use it to build `BufferAllocations` from runtime parameters,
+  // constants, temporary buffers, and output buffers, then use it to run the
+  // executable with those allocations.
+  //
+  // When command-buffer VA remapping is available, the scope also holds the
+  // lock for the executable/executor remapping state. Selected command-buffer
+  // allocations are backed by physical VMM allocations while execution sees
+  // stable reserved VA addresses. Command-buffer VA remapping is inactive when
+  // `command_buffer_active()` is false.
   class ExecutionScope {
    public:
     ExecutionScope(const ExecutionScope&) = delete;
@@ -84,12 +95,13 @@ class GpuExecutableBufferAllocator {
     ExecutionScope(ExecutionScope&&) = default;
     ExecutionScope& operator=(ExecutionScope&&) = default;
 
-    bool command_buffer_active() const { return va_ranges_ != nullptr; }
+    bool command_buffer_active() const { return remapping_ != nullptr; }
 
     // Builds the BufferAllocations for an execution. Entry-computation
     // parameter buffers are obtained from `get_parameter_buffer`; all other
     // allocations are resolved internally, including collective-memory
-    // granularity rounding and alignment checking.
+    // granularity rounding, alignment checking, and command-buffer VA remapping
+    // when enabled for this execution.
     absl::StatusOr<BufferAllocations> GenerateBufferAllocations(
         const ServiceExecutableRunOptions* run_options,
         ParameterBufferResolver get_parameter_buffer,
@@ -115,10 +127,19 @@ class GpuExecutableBufferAllocator {
    private:
     friend class GpuExecutableBufferAllocator;
 
-    explicit ExecutionScope(GpuExecutableBufferAllocator* owner);
-    ExecutionScope(GpuExecutableBufferAllocator* owner, VaRanges* va_ranges,
-                   const ServiceExecutableRunOptions* run_options);
+    ExecutionScope() = default;
+    ExecutionScope(GpuExecutableBufferAllocator* owner, Remapping* remapping,
+                   se::DeviceAddressVmmAllocator* vmm_allocator,
+                   std::unique_ptr<absl::MutexLock> remap_lock);
 
+    absl::Status PrepareReservation(
+        const ServiceExecutableRunOptions* run_options, int device_ordinal,
+        const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
+            allocate_granularity);
+    bool ShouldRemapAllocation(BufferAllocation::Index index) const;
+    absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> AllocateBuffer(
+        int device_ordinal, const BufferAllocation& allocation,
+        int64_t buffer_size, bool return_reservation_address);
     absl::StatusOr<se::DeviceAddressBase> BufferForAllocation(
         ParameterBufferResolver get_parameter_buffer,
         const BufferAllocToDeviceMemoryMap* globals,
@@ -127,13 +148,19 @@ class GpuExecutableBufferAllocator {
         int64_t arg_idx,
         const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
             allocate_granularity);
-    absl::Status ExecuteWithVaRemapping(
-        const BufferAllocations& owning_buffer_allocations, int device_ordinal,
-        absl::FunctionRef<absl::Status(const BufferAllocations&)> execute);
+    absl::StatusOr<BufferAllocations> BuildExecutionBufferAllocations(
+        const BufferAllocations& owning_buffer_allocations, int device_ordinal);
+    absl::Status UnmapAliases(int device_ordinal);
+    absl::StatusOr<MemoryReservationAlias> GetReservationAlias(
+        BufferAllocation::Index idx) const;
 
     GpuExecutableBufferAllocator* owner_ = nullptr;
-    VaRanges* va_ranges_ = nullptr;
-    const ServiceExecutableRunOptions* run_options_ = nullptr;
+    Remapping* remapping_ = nullptr;
+    se::DeviceAddressVmmAllocator* vmm_allocator_ = nullptr;
+    std::unique_ptr<absl::MutexLock> remap_lock_;
+    absl::flat_hash_map<BufferAllocation::Index, MemoryReservationAlias>
+        allocation_to_reservation_aliases_;
+    std::vector<MemoryReservationAlias> aliases_to_unmap_;
   };
 
   static absl::StatusOr<AllocationIndexSet>
@@ -146,8 +173,9 @@ class GpuExecutableBufferAllocator {
       absl::string_view module_name,
       absl::Span<const BufferAllocation* const> allocations,
       const Shape& result_shape, const DebugOptions* debug_options,
-      DebugOptions::CommandBufferUpdateMode update_mode,
-      AllocationIndexSet allocation_indexes);
+      ThunkExecutor* thunk_executor,
+      AllocationIndexSet returned_output_allocation_indexes);
+  ~GpuExecutableBufferAllocator();
 
   size_t command_buffer_allocation_count() const {
     return command_buffer_allocation_indexes_.size();
@@ -158,24 +186,23 @@ class GpuExecutableBufferAllocator {
       se::DeviceAddressAllocator* memory_allocator, int device_ordinal);
 
  private:
-  // State for VA remapping of command buffer allocations on a single executor.
-  struct VaRanges {
-    // Mutex to protect VA range operations (map/execute/unmap) for this
-    // executor. This ensures only one thread can use the VA ranges at a time.
+  struct MemoryReservationAlias {
+    uint64_t reservation_offset = 0;
+    uint64_t size = 0;
+    se::DeviceAddressBase reservation_address;
+  };
+
+  struct Remapping {
     absl::Mutex mutex;
-
-    // Single large virtual address reservation covering all command buffer
-    // allocations. nullptr until first use.
+    uint64_t granularity = 0;
+    uint64_t total_size = 0;
+    absl::flat_hash_map<BufferAllocation::Index, uint64_t>
+        allocation_to_reservation_offset;
     std::unique_ptr<se::MemoryReservation> va_reservation;
+    se::DeviceAddressVmmAllocator* vmm_allocator = nullptr;
 
-    // Event used to synchronize VA range reuse. When the device has completed
-    // the task that uses the VA range, it marks the event, letting the host
-    // know the VA range can be remapped to other physical addresses.
-    std::unique_ptr<se::Event> unmap_event;
-
-    // RAII wrapper that keeps the VA->physical mapping active.
-    // Reset (auto-unmapping) before each re-use of the VA range.
-    std::optional<se::MemoryReservation::ScopedMapping> scoped_mapping;
+    absl::StatusOr<uint64_t> GetReservationOffset(
+        BufferAllocation::Index idx) const;
   };
 
   std::string module_name_;
@@ -183,14 +210,12 @@ class GpuExecutableBufferAllocator {
   Shape result_shape_;
   const DebugOptions* debug_options_ = nullptr;
   DebugOptions::CommandBufferUpdateMode update_mode_;
+  AllocationIndexSet returned_output_allocation_indexes_;
   AllocationIndexSet command_buffer_allocation_indexes_;
 
-  // Separate mutex for VA ranges to avoid contention with executable module
-  // handle state during VA remapping operations, which may synchronize with GPU
-  // work.
-  absl::Mutex va_ranges_mutex_;
-  absl::node_hash_map<se::StreamExecutor*, VaRanges> module_va_ranges_
-      ABSL_GUARDED_BY(va_ranges_mutex_);
+  absl::Mutex remappings_mutex_;
+  absl::node_hash_map<se::StreamExecutor*, Remapping> remappings_
+      ABSL_GUARDED_BY(remappings_mutex_);
 };
 
 }  // namespace gpu

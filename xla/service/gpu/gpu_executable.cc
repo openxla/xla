@@ -485,22 +485,21 @@ GpuExecutable::GpuExecutable(
   }
   set_module_stats(std::move(module_stats));
 
-  DebugOptions::CommandBufferUpdateMode update_mode =
-      has_module()
-          ? module_config().debug_options().xla_gpu_command_buffer_update_mode()
-          : DebugOptions::ALWAYS_UPDATE;
-  absl::StatusOr<GpuExecutableBufferAllocator::AllocationIndexSet>
-      command_buffer_allocation_indexes =
-          GpuExecutableBufferAllocator::CollectCommandBufferAllocationIndexes(
-              thunk_executor_.get(), allocation_ptrs_, update_mode);
-  CHECK_OK(command_buffer_allocation_indexes.status());
+  const DebugOptions* allocation_debug_options =
+      has_module() ? &module_config().debug_options() : nullptr;
+  GpuExecutableBufferAllocator::AllocationIndexSet
+      returned_output_allocation_indexes;
+  for (const auto& [_, output_info] : output_info_) {
+    returned_output_allocation_indexes.insert(output_info.allocation_index);
+  }
   buffer_allocator_ = std::make_unique<GpuExecutableBufferAllocator>(
       module_name_, allocation_ptrs_, program_shape_.result(),
-      has_module() ? &module_config().debug_options() : nullptr, update_mode,
-      std::move(*command_buffer_allocation_indexes));
+      allocation_debug_options, thunk_executor_.get(),
+      std::move(returned_output_allocation_indexes));
 }
 
 GpuExecutable::~GpuExecutable() {
+  buffer_allocator_.reset();
   if (has_module() && enable_debug_info_manager_) {
     XlaDebugInfoManager::Get()->UnregisterModule(module().unique_id());
   }
@@ -1064,10 +1063,12 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
             .AsDeviceAddress(),
         param_no};
   };
+
   ASSIGN_OR_RETURN(
       GpuExecutableBufferAllocator::ExecutionScope allocation_scope,
       buffer_allocator_->CreateExecutionScope(run_options, memory_allocator,
                                               device_ordinal));
+
   ASSIGN_OR_RETURN(BufferAllocations buffer_allocations,
                    allocation_scope.GenerateBufferAllocations(
                        run_options, get_parameter_buffer, globals,
@@ -1178,7 +1179,6 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
       [&](const BufferAllocations& execution_buffers) {
         return ExecuteThunks(execution_buffers, run_options);
       });
-
   absl::Status teardown_status =
       buffer_allocations.TearDown(buffers_in_result, GetAllocations());
 
