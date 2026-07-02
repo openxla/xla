@@ -57,6 +57,21 @@ class FakeCmd : public Command {
   BufferUses uses_;
 };
 
+class UpdateRequirementCmd : public FakeCmd {
+ public:
+  UpdateRequirementCmd(bool requires_update, int* num_queries)
+      : requires_update_(requires_update), num_queries_(num_queries) {}
+
+  bool requires_update_on_execute() const override {
+    ++*num_queries_;
+    return requires_update_;
+  }
+
+ private:
+  bool requires_update_;
+  int* num_queries_;
+};
+
 // Convenience aliases for synchronization modes.
 constexpr auto kSerialize = CommandExecutor::SynchronizationMode::kSerialize;
 constexpr auto kConcurrent = CommandExecutor::SynchronizationMode::kConcurrent;
@@ -76,6 +91,21 @@ TEST(CommandExecutorTest, DuplicateAllocsCollapsedToOne) {
   // Both commands reference the same allocation index — should appear once.
   EXPECT_EQ(executor.allocs_indices().size(), 1);
   EXPECT_EQ(executor.allocs_indices()[0], 0);
+}
+
+TEST(CommandExecutorTest, RequiresUpdateOnExecuteIsCached) {
+  int num_queries = 0;
+  CommandSequence cmds;
+  cmds.Emplace<UpdateRequirementCmd>(false, &num_queries);
+  cmds.Emplace<UpdateRequirementCmd>(true, &num_queries);
+
+  ASSERT_OK_AND_ASSIGN(auto executor,
+                       CommandExecutor::Create(std::move(cmds), kSerialize));
+  EXPECT_EQ(num_queries, 2);
+
+  EXPECT_TRUE(executor.requires_update_on_execute());
+  EXPECT_TRUE(executor.requires_update_on_execute());
+  EXPECT_EQ(num_queries, 2);
 }
 
 //===----------------------------------------------------------------------===//

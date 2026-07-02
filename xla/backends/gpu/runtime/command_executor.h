@@ -171,11 +171,7 @@ class CommandExecutor {
   }
 
   bool requires_update_on_execute() const {
-    bool requires_update_on_execute = false;
-    commands_.Walk([&](const Command* command) {
-      requires_update_on_execute |= command->requires_update_on_execute();
-    });
-    return requires_update_on_execute;
+    return requires_update_on_execute_;
   }
 
   bool support_loop_unroll() const {
@@ -260,6 +256,10 @@ class CommandExecutor {
   // Unique buffer allocations indices referenced by all commands in this
   // sequence (sorted by the buffer allocation index).
   std::vector<BufferAllocation::Index> allocs_indices_;
+
+  // Whether any command in this sequence requires an update on every
+  // execution.
+  bool requires_update_on_execute_ = false;
 
   // A mapping from command id to unique buffer allocations indices referenced
   // by the command (sorted by the buffer allocation index).
