@@ -115,3 +115,110 @@ have explicit first-class opcodes defined with the `-start` and/or `-done`
 suffixes (e.g., `copy-start`/`copy-done`,
 `collective-permute-start`/`collective-permute-done`). These will continue to
 use their respective first-class opcodes.
+
+## Late Binding
+
+In some cases, the operands (inputs) or outputs of an asynchronous
+operation are not all available or allocated when the operation starts.
+XLA supports *late binding*, which allows operands to be incrementally
+bound during `async-update` steps, and outputs to be bound during either
+`async-update` or `async-done` steps.
+
+### Representation in HLO
+
+For a called computation that expects $N$ parameters, we can start the
+asynchronous execution with fewer than $N$ operands. The remaining
+operands are passed in subsequent `async-update` instructions.
+
+*   `async-start` binds the first $K$ operands ($K < N$).
+*   `async-update` instructions bind the remaining $N - K$ operands.
+
+The `async-start` and `async-update` shapes reflect the incrementally
+bound parameters. Specifically, the first element of the tuple shape
+(the operand shapes) grows as more operands are bound.
+
+### Example with `kCall`
+
+Consider a called computation `%foo` that takes two parameters:
+
+```
+%foo {
+  %p0 = f32[] parameter(0)
+  %p1 = f32[] parameter(1)
+  ROOT %add = f32[] add(%p0, %p1)
+}
+```
+
+We can call this computation asynchronously, binding `%p0` at start and
+`%p1` at update:
+
+```
+%call-start = ((f32[]), (), s32[]) call-start(%operand0), to_apply=%foo
+%call-update = ((f32[], f32[]), f32[], s32[]) call-update(%call-start, %operand1)
+%result = f32[] call-done(%call-update)
+```
+
+The parser desugars this into the following HLO:
+
+```
+%async-start = ((f32[]), (), s32[]) async-start(%operand0), calls=%foo
+%async-update = ((f32[], f32[]), f32[], s32[]) async-update(%async-start, %operand1)
+%result = f32[] async-done(%async-update)
+```
+
+### Late-Bound Outputs
+
+In addition to operands (inputs), the **outputs** of an asynchronous
+operation can also be bound late. This is useful when the output
+buffers are not known or allocated at the start of the operation.
+
+To represent late-bound outputs:
+1.  The `async-start` (or `call-start`) instruction is defined with an
+    empty tuple `()` at index 1 of its output shape (the result slot).
+2.  A subsequent `async-update` (or `call-update`) instruction
+    specifies the actual output shape at index 1, replacing the empty
+    tuple.
+3.  Alternatively, the output can be bound at the end of the chain by
+    the `async-done` (or `call-done`) instruction, which returns the
+    final output shape even if it was not bound in the preceding
+    `async-start` or `async-update` instructions.
+
+#### Example with `async-update`
+
+```
+// Output is not bound at start (index 1 is ())
+%call-start = ((f32[1024]), (), s32[]) call-start(%input_buffer), to_apply=%foo
+
+// Output is bound at update (index 1 becomes (f32[1024]))
+%call-update = ((f32[1024]), (f32[1024]), s32[]) call-update(%call-start, %output_buffer)
+
+%result = (f32[1024]) call-done(%call-update)
+```
+
+The parser desugars this into:
+
+```
+%async-start = ((f32[1024]), (), s32[]) async-start(%input_buffer), calls=%foo
+%async-update = ((f32[1024]), (f32[1024]), s32[]) async-update(%async-start, %output_buffer)
+%result = (f32[1024]) async-done(%async-update)
+```
+
+#### Example with `async-done` (without `async-update`)
+
+If there are no intermediate update steps, the output can be bound
+directly at `async-done`:
+
+```
+// Output is not bound at start (index 1 is ())
+%call-start = ((f32[1024]), (), s32[]) call-start(%input_buffer), to_apply=%foo
+
+// Output is bound at done
+%result = (f32[1024]) call-done(%call-start)
+```
+
+The parser desugars this into:
+
+```
+%async-start = ((f32[1024]), (), s32[]) async-start(%input_buffer), calls=%foo
+%result = (f32[1024]) async-done(%async-start)
+```
