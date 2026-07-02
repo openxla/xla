@@ -193,9 +193,17 @@ class GpuExecutableBufferAllocator {
   std::vector<const BufferAllocation*> allocations_;
   Shape result_shape_;
   const DebugOptions* debug_options_ = nullptr;
+
+  // Sorted indices of command-buffer-referenced constant allocations. Their
+  // global addresses are stable without VMM remapping.
   std::vector<BufferAllocation::Index> constant_alloc_indices_;
+
+  // Indices of command-buffer-referenced temporary allocations assigned stable
+  // addresses through VMM remapping.
+  AllocationIndexSet va_remapped_alloc_indices_;
+
+  // Sorted union of constant_alloc_indices_ and va_remapped_alloc_indices_.
   std::vector<BufferAllocation::Index> persistent_alloc_indices_;
-  AllocationIndexSet va_remapped_allocation_indexes_;
 
   absl::Mutex remappings_mutex_;
   absl::node_hash_map<se::StreamExecutor*, Remapping> remappings_

@@ -96,7 +96,6 @@ namespace {
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Field;
-using ::testing::IsEmpty;
 using ::testing::Optional;
 using ::testing::Pair;
 using ::testing::Pointee;
@@ -293,8 +292,11 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
     allocation_ptrs.push_back(&allocation);
   }
 
-  using AllocationPolicy =
-      std::pair<size_t, std::optional<std::vector<BufferAllocation::Index>>>;
+  struct AllocationPolicy {
+    size_t command_buffer_allocation_count;
+    std::optional<std::vector<BufferAllocation::Index>>
+        persistent_alloc_indices;
+  };
   auto get_allocation_policy_without_vmm =
       [&](DebugOptions::CommandBufferUpdateMode update_mode)
       -> absl::StatusOr<AllocationPolicy> {
@@ -328,13 +330,15 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
   ASSERT_OK_AND_ASSIGN(
       auto always_update_policy,
       get_allocation_policy_without_vmm(DebugOptions::ALWAYS_UPDATE));
-  EXPECT_EQ(always_update_policy.first, 1);
-  EXPECT_THAT(always_update_policy.second, Optional(ElementsAre(1)));
+  EXPECT_EQ(always_update_policy.command_buffer_allocation_count, 1);
+  EXPECT_THAT(always_update_policy.persistent_alloc_indices,
+              Optional(ElementsAre(1)));
 
   ASSERT_OK_AND_ASSIGN(auto skip_temp_policy, get_allocation_policy_without_vmm(
                                                   DebugOptions::SKIP_TEMP));
-  EXPECT_EQ(skip_temp_policy.first, 2);
-  EXPECT_THAT(skip_temp_policy.second, Optional(ElementsAre(1)));
+  EXPECT_EQ(skip_temp_policy.command_buffer_allocation_count, 2);
+  EXPECT_THAT(skip_temp_policy.persistent_alloc_indices,
+              Optional(ElementsAre(1)));
 }
 
 TEST_F(GpuExecutableTest, ComputeComputationLayout) {

@@ -25,7 +25,6 @@ limitations under the License.
 #include "google/protobuf/descriptor.h"
 #include "xla/parse_flags_from_env.h"
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/protobuf.h"
@@ -98,13 +97,10 @@ TEST(DebugOptions, CommandBufferUpdateModesParseFromFlags) {
     flag += name;
     tsl::setenv("XLA_FLAGS", flag.c_str(), 1);
 
-    DebugOptions options;
-    std::vector<tsl::Flag> flag_list;
-    MakeDebugOptionsFlags(&flag_list, &options);
-    ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_list);
+    DebugOptions proto_options;
+    DebugOptions options = GetDebugOptionsFromProtoAndFlags(&proto_options);
 
     EXPECT_EQ(options.xla_gpu_command_buffer_update_mode(), expected);
-    tsl::unsetenv("XLA_FLAGS");
   }
 }
 
@@ -128,11 +124,8 @@ TEST(DebugOptionsDeathTest, RemovedCommandBufferUpdateModesRejectedByFlags) {
     flag += name;
     tsl::setenv("XLA_FLAGS", flag.c_str(), 1);
 
-    DebugOptions options;
-    std::vector<tsl::Flag> flag_list;
-    MakeDebugOptionsFlags(&flag_list, &options);
-
-    EXPECT_DEATH(ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_list),
+    DebugOptions proto_options;
+    EXPECT_DEATH((void)GetDebugOptionsFromProtoAndFlags(&proto_options),
                  "Flag parsing failed")
         << name;
     tsl::unsetenv("XLA_FLAGS");
