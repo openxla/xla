@@ -43,8 +43,6 @@ toc:
   - heading: GPU backend
   - title: GPU architecture
     path: /xla/gpu_architecture
-  - title: Command-buffer virtual addresses
-    path: /xla/command_buffer_va_remapping
   - title: GPU Emitters
     path: /xla/emitters
   - title: Persisted autotuning
