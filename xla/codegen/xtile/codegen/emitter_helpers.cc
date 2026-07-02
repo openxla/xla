@@ -186,9 +186,27 @@ mlir::Value OnesLike(mlir::ImplicitLocOpBuilder& b, mlir::Type type) {
   mlir::Type element_type = mlir::getElementTypeOrSelf(type);
   CHECK(element_type.isInteger()) << "OnesLike only supports integer types.";
 
+  mlir::Type const_type = type;
+  if (element_type.isUnsignedInteger()) {
+    mlir::Type signless_elem_type = mlir::IntegerType::get(
+        b.getContext(), element_type.getIntOrFloatBitWidth(),
+        mlir::IntegerType::SignednessSemantics::Signless);
+    if (auto shaped_ty = mlir::dyn_cast<mlir::ShapedType>(type)) {
+      const_type = shaped_ty.clone(signless_elem_type);
+    } else {
+      const_type = signless_elem_type;
+    }
+  }
+
   int64_t width = element_type.getIntOrFloatBitWidth();
   mlir::APInt all_ones = mlir::APInt::getAllOnes(width);
-  return mlir::createScalarOrSplatConstant(b, b.getLoc(), type, all_ones);
+  mlir::Value cst =
+      mlir::createScalarOrSplatConstant(b, b.getLoc(), const_type, all_ones);
+  if (element_type.isUnsignedInteger()) {
+    cst = mlir::UnrealizedConversionCastOp::create(b, b.getLoc(), type, cst)
+              .getResult(0);
+  }
+  return cst;
 }
 
 }  // namespace
@@ -891,9 +909,6 @@ mlir::MemRefType GetMemRefType(const Shape& shape, mlir::Type element_type) {
 absl::StatusOr<Type> GetMlirType(
     mlir::ImplicitLocOpBuilder& b, PrimitiveType type,
     const std::optional<GpuComputeCapability>& gpu_cc) {
-  if (type == U16) {
-    return b.getI16Type();
-  }
   if (type == S4) {
     return b.getI4Type();
   }

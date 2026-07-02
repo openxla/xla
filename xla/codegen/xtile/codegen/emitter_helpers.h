@@ -235,7 +235,16 @@ T ScalarConstantValue(const HloInstruction& instr, PrimitiveType dst_type) {
 template <typename T>
 mlir::Value CreateConst(mlir::ImplicitLocOpBuilder& b, mlir::Type type,
                         T value) {
-  if (mlir::isa<mlir::IntegerType>(type)) {
+  if (auto int_type = mlir::dyn_cast<mlir::IntegerType>(type)) {
+    if (int_type.isUnsignedInteger()) {
+      mlir::Type signless_type = mlir::IntegerType::get(
+          b.getContext(), int_type.getWidth(),
+          mlir::IntegerType::SignednessSemantics::Signless);
+      mlir::Value cst = b.create<mlir::arith::ConstantOp>(
+          b.getIntegerAttr(signless_type, value));
+      return mlir::UnrealizedConversionCastOp::create(b, b.getLoc(), type, cst)
+          .getResult(0);
+    }
     return b.create<mlir::arith::ConstantOp>(b.getIntegerAttr(type, value));
   }
 
@@ -255,8 +264,25 @@ template <typename T>
 mlir::TypedValue<mlir::RankedTensorType> CreateConst(
     mlir::ImplicitLocOpBuilder& b, mlir::Type type, T value,
     llvm::ArrayRef<int64_t> shape) {
-  auto tensor_type = mlir::RankedTensorType::get(shape, type);
   if (auto int_type = mlir::dyn_cast<mlir::IntegerType>(type)) {
+    if (int_type.isUnsignedInteger()) {
+      mlir::Type signless_type = mlir::IntegerType::get(
+          b.getContext(), int_type.getWidth(),
+          mlir::IntegerType::SignednessSemantics::Signless);
+      auto signless_tensor_type =
+          mlir::RankedTensorType::get(shape, signless_type);
+      mlir::Value cst =
+          b.create<mlir::arith::ConstantOp>(mlir::DenseElementsAttr::get(
+              signless_tensor_type,
+              mlir::APInt(int_type.getIntOrFloatBitWidth(), value,
+                          /*isSigned=*/false, /*implicitTrunc=*/true)));
+      mlir::Value cast_res =
+          mlir::UnrealizedConversionCastOp::create(
+              b, b.getLoc(), mlir::RankedTensorType::get(shape, type), cst)
+              .getResult(0);
+      return mlir::cast<mlir::TypedValue<mlir::RankedTensorType>>(cast_res);
+    }
+    auto tensor_type = mlir::RankedTensorType::get(shape, type);
     mlir::Value result =
         b.create<mlir::arith::ConstantOp>(mlir::DenseElementsAttr::get(
             tensor_type,
@@ -264,6 +290,7 @@ mlir::TypedValue<mlir::RankedTensorType> CreateConst(
                         /*isSigned=*/false, /*implicitTrunc=*/true)));
     return mlir::cast<mlir::TypedValue<mlir::RankedTensorType>>(result);
   }
+  auto tensor_type = mlir::RankedTensorType::get(shape, type);
   if (auto float_type = mlir::dyn_cast<mlir::FloatType>(type)) {
     mlir::Value result =
         b.create<mlir::arith::ConstantOp>(mlir::DenseElementsAttr::get(
