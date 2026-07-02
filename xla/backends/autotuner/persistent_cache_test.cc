@@ -35,23 +35,23 @@ limitations under the License.
 namespace xla {
 namespace {
 
-AutotuneScope CreateScope() {
-  AutotuneScope scope;
-  scope.device = "test_device";
-  scope.explicit_version = "v1.0";
-  scope.codegen_version = "cg_v1";
-  scope.per_backend_versions[autotuner::Backend::TRITON] = "triton_v1";
-  return scope;
+AutotuneCacheContext CreateCacheContext() {
+  AutotuneCacheContext cache_ctx;
+  cache_ctx.device = "test_device";
+  cache_ctx.explicit_version = "v1.0";
+  cache_ctx.codegen_version = "cg_v1";
+  cache_ctx.per_backend_versions[autotuner::Backend::TRITON] = "triton_v1";
+  return cache_ctx;
 }
 
 using ::tsl::protobuf::util::MessageDifferencer;
 
 class MockPersistentCache : public PersistentCache {
  public:
-  MockPersistentCache(AutotuneScope scope, CacheMode mode,
+  MockPersistentCache(AutotuneCacheContext cache_ctx, CacheMode mode,
                       KeyMatchingMode matching_mode,
                       std::vector<autotuner::AutotuneEntry>* entries)
-      : PersistentCache(std::move(scope), mode, matching_mode),
+      : PersistentCache(std::move(cache_ctx), mode, matching_mode),
         entries_(entries) {}
 
  protected:
@@ -107,7 +107,7 @@ TEST_F(PersistentCacheTest, BasicInsertAndLookup) {
                        ParseAndReturnVerifiedModule(kHlo1));
   const HloInstruction* dot = module->entry_computation()->root_instruction();
 
-  MockPersistentCache cache(CreateScope(), CacheMode::kReadWrite,
+  MockPersistentCache cache(CreateCacheContext(), CacheMode::kReadWrite,
                             KeyMatchingMode::kStrict, &shared_entries_);
   AutotunerCacheInterface::Config config = CreateTestConfig();
 
@@ -126,14 +126,14 @@ TEST_F(PersistentCacheTest, StrictModeRejection) {
                        ParseAndReturnVerifiedModule(kHlo1));
   const HloInstruction* dot = module->entry_computation()->root_instruction();
 
-  AutotuneScope scope = CreateScope();
-  MockPersistentCache cache(scope, CacheMode::kReadWrite,
+  AutotuneCacheContext cache_ctx = CreateCacheContext();
+  MockPersistentCache cache(cache_ctx, CacheMode::kReadWrite,
                             KeyMatchingMode::kStrict, &shared_entries_);
   AutotunerCacheInterface::Config config = CreateTestConfig();
   EXPECT_OK(cache.Insert(dot, config));
 
-  scope.codegen_version = "cg_v2";
-  MockPersistentCache cache2(scope, CacheMode::kReadOnly,
+  cache_ctx.codegen_version = "cg_v2";
+  MockPersistentCache cache2(cache_ctx, CacheMode::kReadOnly,
                              KeyMatchingMode::kStrict, &shared_entries_);
 
   std::optional<AutotunerCacheInterface::Config> result = cache2.Lookup(dot);
@@ -145,16 +145,16 @@ TEST_F(PersistentCacheTest, LooseModeMatching) {
                        ParseAndReturnVerifiedModule(kHlo1));
   const HloInstruction* dot = module->entry_computation()->root_instruction();
 
-  AutotuneScope scope = CreateScope();
-  MockPersistentCache cache(scope, CacheMode::kReadWrite,
+  AutotuneCacheContext cache_ctx = CreateCacheContext();
+  MockPersistentCache cache(cache_ctx, CacheMode::kReadWrite,
                             KeyMatchingMode::kLoose, &shared_entries_);
   AutotunerCacheInterface::Config config =
       CreateTestConfig(autotuner::Backend::TRITON);
   EXPECT_OK(cache.Insert(dot, config));
 
   // Change codegen version, but keep backend version same.
-  scope.codegen_version = "cg_v2";
-  MockPersistentCache cache2(scope, CacheMode::kReadOnly,
+  cache_ctx.codegen_version = "cg_v2";
+  MockPersistentCache cache2(cache_ctx, CacheMode::kReadOnly,
                              KeyMatchingMode::kLoose, &shared_entries_);
 
   std::optional<AutotunerCacheInterface::Config> result = cache2.Lookup(dot);
@@ -167,7 +167,7 @@ TEST_F(PersistentCacheTest, CacheReadOnlyConstraints) {
                        ParseAndReturnVerifiedModule(kHlo1));
   const HloInstruction* dot = module->entry_computation()->root_instruction();
 
-  MockPersistentCache cache_ro(CreateScope(), CacheMode::kReadOnly,
+  MockPersistentCache cache_ro(CreateCacheContext(), CacheMode::kReadOnly,
                                KeyMatchingMode::kStrict, &shared_entries_);
   AutotunerCacheInterface::Config config = CreateTestConfig();
   EXPECT_EQ(cache_ro.Insert(dot, config).code(),

@@ -56,7 +56,7 @@ std::string GetCodegenOptionsFingerprint(const HloInstruction& instr) {
 }
 }  // namespace
 
-PersistentCache::PersistentCache(AutotuneScope context, CacheMode mode,
+PersistentCache::PersistentCache(AutotuneCacheContext context, CacheMode mode,
                                  KeyMatchingMode matching_mode)
     : context_(std::move(context)),
       mode_(mode),

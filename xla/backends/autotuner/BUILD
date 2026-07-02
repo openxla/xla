@@ -254,19 +254,26 @@ cc_library(
     ],
 )
 
+# TODO(b/444398084): Rename to autotuner_cache.h as it is no longer just an interface.
 cc_library(
     name = "autotuner_cache_interface",
+    srcs = ["autotuner_cache_interface.cc"],
     hdrs = ["autotuner_cache_interface.h"],
     deps = [
         ":backend_config_proto_cc",
         ":backends_proto_cc",
+        ":codegen_backend",
         "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_description",
+        "//xla/tsl/util:sorted_range",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:fingerprint",
     ],
 )
 
@@ -489,5 +496,26 @@ tf_proto_library(
         ":backend_config_proto",
         ":backends_proto",
         "@com_google_protobuf//:duration_proto",
+    ],
+)
+
+xla_cc_test(
+    name = "autotune_cache_test",
+    srcs = ["autotune_cache_test.cc"],
+    deps = [
+        ":autotuner_cache_interface",
+        ":backends_proto_cc",
+        ":codegen_backend",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:executable",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:device_description_proto_cc",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
     ],
 )
