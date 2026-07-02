@@ -34,6 +34,7 @@ limitations under the License.
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Location.h"
@@ -45,16 +46,41 @@ limitations under the License.
 
 namespace xla::cpu {
 
+static mlir::Operation* GetCombiningOp(mlir::Operation* op) {
+  while (op && mlir::isa<mlir::UnrealizedConversionCastOp>(op)) {
+    if (op->getNumOperands() != 1) {
+      return nullptr;
+    }
+    op = op->getOperand(0).getDefiningOp();
+  }
+  return op;
+}
+
+static bool IsTrivialReductionOperand(mlir::Value value, mlir::Block& body) {
+  while (auto cast_op =
+             value.getDefiningOp<mlir::UnrealizedConversionCastOp>()) {
+    if (cast_op->getNumOperands() != 1) {
+      return false;
+    }
+    value = cast_op->getOperand(0);
+  }
+  if (auto block_arg = mlir::dyn_cast<mlir::BlockArgument>(value)) {
+    return block_arg.getOwner() == &body;
+  }
+  return false;
+}
+
 static absl::StatusOr<mlir::vector::CombiningKind> GetCombiningKind(
     mlir::Block& reduction_body) {
   mlir::Operation* op =
       reduction_body.getTerminator()->getOperand(0).getDefiningOp();
+  op = GetCombiningOp(op);
   if (!op) {
     return absl::InternalError("No reduction combiner");
   }
 
   for (mlir::Value operand : op->getOperands()) {
-    if (operand.getDefiningOp()) {
+    if (!IsTrivialReductionOperand(operand, reduction_body)) {
       return absl::InternalError("Non trivial reduction combiner");
     }
   }

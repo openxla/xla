@@ -378,6 +378,9 @@ static void AddTiledOptimizationPasses(mlir::OpPassManager& pm) {
   pm.addPass(mlir::createConvertElementwiseToLinalgPass());
   pm.addPass(cpu::createFuseElementwisePass());
 
+  pm.addPass(xtile::createLegalizeUnsignedIntegersAsSignlessPass());
+  pm.addPass(mlir::createCanonicalizerPass());
+
   AddBufferizationPasses(pm);
 
   pm.addPass(cpu::createLinalgElementwiseToVectorPass());

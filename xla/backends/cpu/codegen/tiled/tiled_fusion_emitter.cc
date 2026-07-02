@@ -295,6 +295,7 @@ bool IsSupportedInstruction(const HloInstruction& inst) {
     case HloOpcode::kShiftRightArithmetic:
     case HloOpcode::kShiftRightLogical:
     case HloOpcode::kClz:
+    case HloOpcode::kMulhi:
       return false;
       break;
     default:
@@ -524,10 +525,6 @@ bool IsSupportedTilingType(PrimitiveType type) {
   }
 
   if (primitive_util::BitWidth(type) < 8) {
-    return false;
-  }
-
-  if (primitive_util::IsUnsignedIntegralType(type)) {
     return false;
   }
 
