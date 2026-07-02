@@ -107,9 +107,15 @@ struct SpmdPartitionerOptions {
   // Enables windowed einsum for result reduce-scatter.
   bool enable_windowed_einsum_for_reduce_scatter = true;
 
-  // Enables a narrow dynamic-update-slice lowering that reduces a replicated
-  // update to the dynamically selected sharded owner.
-  bool enable_dynamic_update_slice_collective_reduce = false;
+  // Enables a narrow dynamic-update-slice lowering that replaces an
+  // SPMD-generated all-reduce feeding the update with a collective-reduce to
+  // the dynamically selected sharded owner.
+  bool enable_dynamic_update_slice_collective_reduce = true;
+
+  // Maximum number of partitions for the dynamic-update-slice
+  // collective-reduce lowering. The lowering creates one branch with a full
+  // replica group per partition, so this bounds quadratic HLO growth.
+  int64_t max_dynamic_update_slice_collective_reduce_partitions = 32;
 
   // Whether disable rewrite for dots that share the same
   // operand as an already rewritten windowed einsum loop.

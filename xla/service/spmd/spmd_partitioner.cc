@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/array.h"
 #include "xla/comparison_util.h"
+#include "xla/core/collectives/reduction_kind.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -4082,8 +4083,98 @@ SpmdPartitioningVisitor::TryDynamicUpdateSliceWithCollectiveReduce(
   }
 
   PartitionedHlo update_partitioned = GetPartitionedHlo(update_tensor);
-  if (!update_partitioned.sharding().IsReplicatedOrSingleDevice()) {
+  if (!update_partitioned.sharding().IsReplicated()) {
     return false;
+  }
+
+  // The update must contain a generated all-reduce. Reducing an arbitrary
+  // replicated update would sum identical values and change the program. Peel
+  // the narrow set of post-reduction operations used by the motivating
+  // workload so they can be replayed after the owner-selecting conditional.
+  std::vector<const HloInstruction*> post_all_reduce_ops;
+  const HloInstruction* original_update = update_tensor;
+  const HloInstruction* original_user = hlo;
+  HloInstruction* partitioned_user = nullptr;
+  HloInstruction* all_reduce_candidate = update_partitioned.hlo();
+  auto has_no_control_edges = [](const HloInstruction* instruction) {
+    return instruction->control_predecessors().empty() &&
+           instruction->control_successors().empty();
+  };
+  auto has_only_user = [](const HloInstruction* instruction,
+                          const HloInstruction* user) {
+    return instruction->user_count() == 1 && instruction->users()[0] == user;
+  };
+  while (all_reduce_candidate->opcode() != HloOpcode::kAllReduce) {
+    if (all_reduce_candidate->operand_count() != 1 ||
+        !absl::c_linear_search(
+            std::array{HloOpcode::kBitcast, HloOpcode::kConvert,
+                       HloOpcode::kCopy, HloOpcode::kReshape},
+            all_reduce_candidate->opcode()) ||
+        original_update->opcode() != all_reduce_candidate->opcode() ||
+        original_update->operand_count() != 1 ||
+        GetPartitionedHlo(original_update).hlo() != all_reduce_candidate ||
+        !has_only_user(original_update, original_user) ||
+        (partitioned_user == nullptr
+             ? all_reduce_candidate->user_count() != 0
+             : !has_only_user(all_reduce_candidate, partitioned_user)) ||
+        !has_no_control_edges(original_update) ||
+        !has_no_control_edges(all_reduce_candidate)) {
+      return false;
+    }
+    post_all_reduce_ops.push_back(all_reduce_candidate);
+    original_user = original_update;
+    original_update = original_update->operand(0);
+    partitioned_user = all_reduce_candidate;
+    all_reduce_candidate = all_reduce_candidate->mutable_operand(0);
+  }
+
+  auto* all_reduce = Cast<HloAllReduceInstruction>(all_reduce_candidate);
+  std::optional<std::string> spmd_generated =
+      all_reduce->get_frontend_attribute(kSpmdGeneratedAttr);
+  if (GetPartitionedHlo(original_update).hlo() != all_reduce ||
+      !has_only_user(original_update, original_user) ||
+      (partitioned_user == nullptr
+           ? all_reduce->user_count() != 0
+           : !has_only_user(all_reduce, partitioned_user)) ||
+      !has_no_control_edges(original_update) ||
+      !has_no_control_edges(all_reduce) || all_reduce->operand_count() != 1 ||
+      all_reduce->shape().IsTuple() || all_reduce->constrain_layout() ||
+      !all_reduce->channel_id().has_value() ||
+      !all_reduce->use_global_device_ids() || !spmd_generated.has_value() ||
+      *spmd_generated != "true" ||
+      MatchReductionComputation(all_reduce->to_apply()) != ReductionKind::SUM) {
+    return false;
+  }
+
+  // This rewrite selects an owner partition independently in each replica, so
+  // require the all-reduce to contain one full partition group per replica.
+  const std::vector<ReplicaGroup>& all_reduce_groups =
+      all_reduce->replica_groups();
+  if (all_reduce_groups.size() != num_replicas_) {
+    return false;
+  }
+  absl::flat_hash_set<int64_t> group_replicas;
+  for (const ReplicaGroup& group : all_reduce_groups) {
+    if (group.replica_ids_size() != num_partitions_) {
+      return false;
+    }
+    std::optional<int64_t> group_replica;
+    absl::flat_hash_set<int64_t> group_partitions;
+    for (int64_t device : group.replica_ids()) {
+      if (device < 0 || device >= num_replicas_ * num_partitions_) {
+        return false;
+      }
+      const int64_t replica = device / num_partitions_;
+      if (group_replica.has_value() && *group_replica != replica) {
+        return false;
+      }
+      group_replica = replica;
+      group_partitions.insert(device % num_partitions_);
+    }
+    if (group_partitions.size() != num_partitions_ ||
+        !group_replicas.insert(*group_replica).second) {
+      return false;
+    }
   }
 
   const int64_t input_dim_size = hlo->shape().dimensions(*sliced_dim);
@@ -4092,7 +4183,10 @@ SpmdPartitioningVisitor::TryDynamicUpdateSliceWithCollectiveReduce(
   }
 
   const int64_t num_slice_partitions = output_sharding.dimension(*sliced_dim);
-  if (num_slice_partitions <= 1 || input_dim_size % num_slice_partitions != 0) {
+  if (num_slice_partitions <= 1 ||
+      num_slice_partitions >
+          options_.max_dynamic_update_slice_collective_reduce_partitions ||
+      input_dim_size % num_slice_partitions != 0) {
     return false;
   }
   for (int64_t dim = 0; dim < rank; ++dim) {
@@ -4148,9 +4242,6 @@ SpmdPartitioningVisitor::TryDynamicUpdateSliceWithCollectiveReduce(
           index_shape, HloOpcode::kClamp, zero, index, max_index));
 
   const int64_t shard_size = input_dim_size / num_slice_partitions;
-  if (shard_size > std::numeric_limits<int32_t>::max()) {
-    return false;
-  }
   HloInstruction* shard_size_hlo =
       constant_s32(static_cast<int32_t>(shard_size));
   HloInstruction* owner = b_.AddInstruction(HloInstruction::CreateBinary(
@@ -4162,37 +4253,35 @@ SpmdPartitioningVisitor::TryDynamicUpdateSliceWithCollectiveReduce(
 
   HloInstruction* partitioned_input =
       GetPartitionedHlo(input_tensor).Reshard(output_sharding).hlo();
-  HloInstruction* replicated_update = update_partitioned.Replicate().hlo();
-
-  HloComputation::Builder reduction_builder(
-      "dynamic_update_slice_collective_reduce_add");
-  Shape scalar_shape = ShapeUtil::MakeShape(update_type, {});
-  HloInstruction* lhs =
-      reduction_builder.AddInstruction(HloInstruction::CreateParameter(
-          /*parameter_number=*/0, scalar_shape, "lhs"));
-  HloInstruction* rhs =
-      reduction_builder.AddInstruction(HloInstruction::CreateParameter(
-          /*parameter_number=*/1, scalar_shape, "rhs"));
-  HloInstruction* add = reduction_builder.AddInstruction(
-      HloInstruction::CreateBinary(scalar_shape, HloOpcode::kAdd, lhs, rhs));
-  HloComputation* reduction =
-      module_->AddEmbeddedComputation(reduction_builder.Build(add));
+  HloInstruction* partial_update = all_reduce->mutable_operand(0);
 
   std::vector<HloComputation*> branch_computations;
   branch_computations.reserve(num_slice_partitions);
   std::vector<HloInstruction*> branch_args(num_slice_partitions,
-                                           replicated_update);
+                                           partial_update);
   for (int64_t branch_owner = 0; branch_owner < num_slice_partitions;
        ++branch_owner) {
-    std::vector<std::vector<int64_t>> partition_groups(1);
-    partition_groups[0].push_back(owner_partition[branch_owner]);
-    for (int64_t i = 0; i < num_slice_partitions; ++i) {
-      if (i != branch_owner) {
-        partition_groups[0].push_back(owner_partition[i]);
+    std::vector<ReplicaGroup> replica_groups;
+    replica_groups.reserve(all_reduce_groups.size());
+    for (const ReplicaGroup& all_reduce_group : all_reduce_groups) {
+      ReplicaGroup replica_group;
+      int64_t root_index = -1;
+      for (int64_t i = 0; i < all_reduce_group.replica_ids_size(); ++i) {
+        if (all_reduce_group.replica_ids(i) % num_partitions_ ==
+            owner_partition[branch_owner]) {
+          root_index = i;
+          break;
+        }
       }
+      CHECK_GE(root_index, 0);
+      replica_group.add_replica_ids(all_reduce_group.replica_ids(root_index));
+      for (int64_t i = 0; i < all_reduce_group.replica_ids_size(); ++i) {
+        if (i != root_index) {
+          replica_group.add_replica_ids(all_reduce_group.replica_ids(i));
+        }
+      }
+      replica_groups.push_back(std::move(replica_group));
     }
-    std::shared_ptr<CollectiveDeviceListBase> device_list =
-        CreateReplicaGroups(partition_groups);
 
     SpmdBuilder branch_builder(
         absl::StrCat("dynamic_update_slice_collective_reduce_owner_",
@@ -4200,24 +4289,32 @@ SpmdPartitioningVisitor::TryDynamicUpdateSliceWithCollectiveReduce(
         hlo);
     HloInstruction* branch_param =
         branch_builder.AddInstruction(HloInstruction::CreateParameter(
-            /*parameter_number=*/0, replicated_update->shape(), "update"));
+            /*parameter_number=*/0, partial_update->shape(), "partial_update"));
     HloInstruction* collective_reduce =
         branch_builder.AddInstruction(HloInstruction::CreateCollectiveReduce(
-            replicated_update->shape(), {branch_param}, reduction,
-            std::move(device_list), /*constrain_layout=*/false, NewChannel(),
-            /*use_global_device_ids=*/true));
-    collective_reduce->set_metadata(hlo->metadata());
-    collective_reduce->set_frontend_attributes(hlo->frontend_attributes());
+            all_reduce->shape(), {branch_param}, all_reduce->to_apply(),
+            std::make_shared<CollectiveDeviceList>(std::move(replica_groups)),
+            all_reduce->constrain_layout(), NewChannel(),
+            all_reduce->use_global_device_ids()));
+    collective_reduce->set_metadata(all_reduce->metadata());
+    collective_reduce->set_frontend_attributes(
+        all_reduce->frontend_attributes());
     collective_reduce->set_frontend_attribute(kSpmdGeneratedAttr, "true");
+
     branch_computations.push_back(module_->AddEmbeddedComputation(
         branch_builder.Build(collective_reduce)));
   }
 
   HloInstruction* reduced_update =
       b_.AddInstruction(HloInstruction::CreateConditional(
-          replicated_update->shape(), owner, branch_computations, branch_args));
-  reduced_update->set_metadata(hlo->metadata());
-  reduced_update->set_frontend_attributes(hlo->frontend_attributes());
+          all_reduce->shape(), owner, branch_computations, branch_args));
+  reduced_update->set_metadata(all_reduce->metadata());
+  reduced_update->set_frontend_attributes(all_reduce->frontend_attributes());
+  for (auto it = post_all_reduce_ops.rbegin(); it != post_all_reduce_ops.rend();
+       ++it) {
+    reduced_update = b_.AddInstruction(
+        (*it)->CloneWithNewOperands((*it)->shape(), {reduced_update}));
+  }
 
   std::vector<HloInstruction*> local_indices(rank, zero);
   local_indices[*sliced_dim] = local_index;

@@ -108,6 +108,7 @@ void VerifyNoCollectives(const HloModule* module) {
       bool is_collective = absl::c_linear_search(
           std::vector<HloOpcode>{HloOpcode::kAllToAll, HloOpcode::kAllReduce,
                                  HloOpcode::kAllGather,
+                                 HloOpcode::kCollectiveReduce,
                                  HloOpcode::kCollectivePermute,
                                  HloOpcode::kReduceScatter},
           inst->opcode());
@@ -2703,26 +2704,43 @@ ENTRY entry {
       AllOf(op::DynamicSlice(root_replicated, _), op::Shape("f32[64]")));
 }
 
-TEST_P(SpmdPartitioningTest,
-       DynamicUpdateSliceUsesCollectiveReduceForReplicatedUpdate) {
-  const char* const hlo_string = R"(
+constexpr absl::string_view kDynamicUpdateSliceOfPartialDotHlo = R"(
 HloModule module
 
+add_f32 {
+  %lhs = f32[] parameter(0)
+  %rhs = f32[] parameter(1)
+  ROOT %add = f32[] add(%lhs, %rhs)
+}
+
 ENTRY entry {
-  %param = f32[4,8,16] parameter(0), sharding={devices=[4,1,1]<=[4]}
-  %update = f32[1,8,16] parameter(1), sharding={replicated}
-  %index = s32[] parameter(2), sharding={replicated}
-  %zero.0 = s32[] constant(0)
-  %zero.1 = s32[] constant(0)
-  ROOT %dynamic-update-slice = f32[4,8,16] dynamic-update-slice(
-    %param, %update, %index, %zero.0, %zero.1),
+  %input = f32[4,4,4] parameter(0), sharding={devices=[4,1,1]<=[4]}
+  %lhs = bf16[8,4] parameter(1), sharding={devices=[4,1]<=[4]}
+  %rhs = bf16[8,4] parameter(2), sharding={devices=[4,1]<=[4]}
+  %index = s32[] parameter(3), sharding={replicated}
+  %loss-input = f32[8] parameter(4), sharding={devices=[4]<=[4]}
+  %zero = s32[] constant(0)
+  %zero-f32 = f32[] constant(0)
+  %dot = bf16[4,4] dot(%lhs, %rhs), lhs_contracting_dims={0},
+    rhs_contracting_dims={0}, sharding={replicated}
+  %convert = f32[4,4] convert(%dot), sharding={replicated}
+  %update = f32[1,4,4] reshape(%convert), sharding={replicated}
+  %dynamic-update-slice = f32[4,4,4] dynamic-update-slice(
+    %input, %update, %index, %zero, %zero),
     sharding={devices=[4,1,1]<=[4]}
+  %loss = f32[] reduce(%loss-input, %zero-f32), dimensions={0},
+    to_apply=add_f32, sharding={replicated}
+  ROOT %tuple = (f32[4,4,4], f32[]) tuple(%dynamic-update-slice, %loss),
+    sharding={{devices=[4,1,1]<=[4]}, {replicated}}
 })";
 
+TEST_P(SpmdPartitioningTest,
+       DynamicUpdateSliceReplacesGeneratedAllReduceWithCollectiveReduce) {
   SpmdPartitionerOptions options;
-  options.enable_dynamic_update_slice_collective_reduce = true;
+  EXPECT_TRUE(options.enable_dynamic_update_slice_collective_reduce);
+
   ASSERT_OK_AND_ASSIGN(auto module,
-                       PartitionComputation(hlo_string,
+                       PartitionComputation(kDynamicUpdateSliceOfPartialDotHlo,
                                             /*num_devices=*/4, options,
                                             /*enable_enzyme_opt=*/false,
                                             /*num_replicas=*/2));
@@ -2735,20 +2753,37 @@ ENTRY entry {
     return count;
   };
 
-  EXPECT_EQ(count_opcode(HloOpcode::kAllReduce), 0);
+  EXPECT_EQ(count_opcode(HloOpcode::kAllReduce), 1);
   EXPECT_EQ(count_opcode(HloOpcode::kCollectiveReduce), 4);
 
   const HloInstruction* root = module->entry_computation()->root_instruction();
-  ASSERT_EQ(root->opcode(), HloOpcode::kSelect);
-  ASSERT_EQ(root->operand(1)->opcode(), HloOpcode::kDynamicUpdateSlice);
-  const HloInstruction* reduced_update = root->operand(1)->operand(1);
+  ASSERT_EQ(root->opcode(), HloOpcode::kTuple);
+  ASSERT_EQ(root->operand(0)->opcode(), HloOpcode::kSelect);
+  ASSERT_EQ(root->operand(1)->opcode(), HloOpcode::kAllReduce);
+  EXPECT_EQ(root->operand(1)->shape().ToString(), "f32[]");
+  const HloInstruction* dynamic_update_slice = root->operand(0)->operand(1);
+  ASSERT_EQ(dynamic_update_slice->opcode(), HloOpcode::kDynamicUpdateSlice);
+  const HloInstruction* update = dynamic_update_slice->operand(1);
+  ASSERT_EQ(update->opcode(), HloOpcode::kReshape);
+  ASSERT_EQ(update->shape().ToString(), "f32[1,4,4]");
+  const HloInstruction* convert = update->operand(0);
+  ASSERT_EQ(convert->opcode(), HloOpcode::kConvert);
+  ASSERT_EQ(convert->shape().ToString(), "f32[4,4]");
+  const HloInstruction* reduced_update = convert->operand(0);
   ASSERT_EQ(reduced_update->opcode(), HloOpcode::kConditional);
+  ASSERT_EQ(reduced_update->shape().ToString(), "bf16[4,4]");
   ASSERT_EQ(reduced_update->branch_count(), 4);
 
   for (int64_t branch = 0; branch < reduced_update->branch_count(); ++branch) {
+    const HloInstruction* branch_arg = reduced_update->operand(branch + 1);
+    EXPECT_EQ(branch_arg->opcode(), HloOpcode::kDot);
+    EXPECT_EQ(branch_arg->shape().ToString(), "bf16[4,4]");
     const HloInstruction* collective_reduce =
         reduced_update->branch_computation(branch)->root_instruction();
     ASSERT_EQ(collective_reduce->opcode(), HloOpcode::kCollectiveReduce);
+    EXPECT_EQ(collective_reduce->shape().ToString(), "bf16[4,4]");
+    EXPECT_EQ(collective_reduce->to_apply()->root_instruction()->opcode(),
+              HloOpcode::kAdd);
     EXPECT_TRUE(collective_reduce->channel_id().has_value());
     EXPECT_TRUE(Cast<HloCollectiveReduceInstruction>(collective_reduce)
                     ->use_global_device_ids());
@@ -2762,6 +2797,140 @@ ENTRY entry {
     EXPECT_THAT(replica_groups[0], UnorderedElementsAre(0, 1, 2, 3));
     EXPECT_THAT(replica_groups[1], UnorderedElementsAre(4, 5, 6, 7));
   }
+}
+
+TEST_P(SpmdPartitioningTest, DynamicUpdateSliceDoesNotReduceReplicatedUpdate) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %input = f32[4,8,16] parameter(0), sharding={devices=[4,1,1]<=[4]}
+  %update = f32[1,8,16] parameter(1), sharding={replicated}
+  %index = s32[] parameter(2), sharding={replicated}
+  %zero.0 = s32[] constant(0)
+  %zero.1 = s32[] constant(0)
+  ROOT %dynamic-update-slice = f32[4,8,16] dynamic-update-slice(
+    %input, %update, %index, %zero.0, %zero.1),
+    sharding={devices=[4,1,1]<=[4]}
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/4));
+
+  int64_t collective_reduce_count = 0;
+  int64_t all_reduce_count = 0;
+  for (const HloComputation* computation : module->computations()) {
+    collective_reduce_count +=
+        NumOfInstructions(computation, HloOpcode::kCollectiveReduce);
+    all_reduce_count += NumOfInstructions(computation, HloOpcode::kAllReduce);
+  }
+  EXPECT_EQ(collective_reduce_count, 0);
+  EXPECT_EQ(all_reduce_count, 0);
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kSelect);
+  ASSERT_EQ(root->operand(1)->opcode(), HloOpcode::kDynamicUpdateSlice);
+  const HloInstruction* update = root->operand(1)->operand(1);
+  ASSERT_EQ(update->opcode(), HloOpcode::kParameter);
+  EXPECT_EQ(update->parameter_number(), 1);
+}
+
+TEST_P(SpmdPartitioningTest, DynamicUpdateSliceDoesNotReplaceUserAllReduce) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module
+
+add {
+  %lhs = f32[] parameter(0)
+  %rhs = f32[] parameter(1)
+  ROOT %add = f32[] add(%lhs, %rhs)
+}
+
+ENTRY entry {
+  %input = f32[4,8,16] parameter(0), sharding={devices=[4,1,1]<=[4]}
+  %update = f32[1,8,16] parameter(1), sharding={replicated}
+  %index = s32[] parameter(2), sharding={replicated}
+  %zero.0 = s32[] constant(0)
+  %zero.1 = s32[] constant(0)
+  %all-reduce = f32[1,8,16] all-reduce(%update),
+    replica_groups={{0,1,2,3}}, channel_id=1, use_global_device_ids=true,
+    to_apply=add, sharding={replicated}
+  ROOT %dynamic-update-slice = f32[4,8,16] dynamic-update-slice(
+    %input, %all-reduce, %index, %zero.0, %zero.1),
+    sharding={devices=[4,1,1]<=[4]}
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/4));
+
+  int64_t collective_reduce_count = 0;
+  int64_t all_reduce_count = 0;
+  for (const HloComputation* computation : module->computations()) {
+    collective_reduce_count +=
+        NumOfInstructions(computation, HloOpcode::kCollectiveReduce);
+    all_reduce_count += NumOfInstructions(computation, HloOpcode::kAllReduce);
+  }
+  EXPECT_EQ(collective_reduce_count, 0);
+  EXPECT_EQ(all_reduce_count, 1);
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kSelect);
+  ASSERT_EQ(root->operand(1)->opcode(), HloOpcode::kDynamicUpdateSlice);
+  EXPECT_EQ(root->operand(1)->operand(1)->opcode(), HloOpcode::kAllReduce);
+}
+
+TEST_P(SpmdPartitioningTest, DynamicUpdateSliceCollectiveReduceCanBeDisabled) {
+  SpmdPartitionerOptions options;
+  options.enable_dynamic_update_slice_collective_reduce = false;
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(kDynamicUpdateSliceOfPartialDotHlo,
+                                            /*num_devices=*/4, options));
+
+  int64_t collective_reduce_count = 0;
+  int64_t all_reduce_count = 0;
+  for (const HloComputation* computation : module->computations()) {
+    collective_reduce_count +=
+        NumOfInstructions(computation, HloOpcode::kCollectiveReduce);
+    all_reduce_count += NumOfInstructions(computation, HloOpcode::kAllReduce);
+  }
+  EXPECT_EQ(collective_reduce_count, 0);
+  EXPECT_EQ(all_reduce_count, 2);
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kTuple);
+  ASSERT_EQ(root->operand(0)->opcode(), HloOpcode::kSelect);
+  const HloInstruction* update = root->operand(0)->operand(1)->operand(1);
+  ASSERT_EQ(update->opcode(), HloOpcode::kReshape);
+  ASSERT_EQ(update->operand(0)->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(update->operand(0)->operand(0)->opcode(), HloOpcode::kAllReduce);
+}
+
+TEST_P(SpmdPartitioningTest,
+       DynamicUpdateSliceCollectiveReduceRespectsPartitionLimit) {
+  SpmdPartitionerOptions options;
+  options.max_dynamic_update_slice_collective_reduce_partitions = 2;
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(kDynamicUpdateSliceOfPartialDotHlo,
+                                            /*num_devices=*/4, options));
+
+  int64_t collective_reduce_count = 0;
+  int64_t all_reduce_count = 0;
+  for (const HloComputation* computation : module->computations()) {
+    collective_reduce_count +=
+        NumOfInstructions(computation, HloOpcode::kCollectiveReduce);
+    all_reduce_count += NumOfInstructions(computation, HloOpcode::kAllReduce);
+  }
+  EXPECT_EQ(collective_reduce_count, 0);
+  EXPECT_EQ(all_reduce_count, 2);
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kTuple);
+  ASSERT_EQ(root->operand(0)->opcode(), HloOpcode::kSelect);
+  const HloInstruction* update = root->operand(0)->operand(1)->operand(1);
+  ASSERT_EQ(update->opcode(), HloOpcode::kReshape);
+  ASSERT_EQ(update->operand(0)->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(update->operand(0)->operand(0)->opcode(), HloOpcode::kAllReduce);
 }
 
 TEST_P(SpmdPartitioningTest, PadAlongNonPartitionedDimension) {
