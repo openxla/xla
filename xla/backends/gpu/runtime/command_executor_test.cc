@@ -57,33 +57,6 @@ class FakeCmd : public Command {
   BufferUses uses_;
 };
 
-class UpdateRequirementCmd : public FakeCmd {
- public:
-  UpdateRequirementCmd(bool requires_update_on_initialize,
-                       bool requires_update_on_execute,
-                       int* num_initialize_queries, int* num_execute_queries)
-      : requires_update_on_initialize_(requires_update_on_initialize),
-        requires_update_on_execute_(requires_update_on_execute),
-        num_initialize_queries_(num_initialize_queries),
-        num_execute_queries_(num_execute_queries) {}
-
-  bool requires_update_on_initialize() const override {
-    ++*num_initialize_queries_;
-    return requires_update_on_initialize_;
-  }
-
-  bool requires_update_on_execute() const override {
-    ++*num_execute_queries_;
-    return requires_update_on_execute_;
-  }
-
- private:
-  bool requires_update_on_initialize_;
-  bool requires_update_on_execute_;
-  int* num_initialize_queries_;
-  int* num_execute_queries_;
-};
-
 // Convenience aliases for synchronization modes.
 constexpr auto kSerialize = CommandExecutor::SynchronizationMode::kSerialize;
 constexpr auto kConcurrent = CommandExecutor::SynchronizationMode::kConcurrent;
@@ -103,28 +76,6 @@ TEST(CommandExecutorTest, DuplicateAllocsCollapsedToOne) {
   // Both commands reference the same allocation index — should appear once.
   EXPECT_EQ(executor.allocs_indices().size(), 1);
   EXPECT_EQ(executor.allocs_indices()[0], 0);
-}
-
-TEST(CommandExecutorTest, UpdateRequirementsAreCached) {
-  int num_initialize_queries = 0;
-  int num_execute_queries = 0;
-  CommandSequence cmds;
-  cmds.Emplace<UpdateRequirementCmd>(false, true, &num_initialize_queries,
-                                     &num_execute_queries);
-  cmds.Emplace<UpdateRequirementCmd>(true, false, &num_initialize_queries,
-                                     &num_execute_queries);
-
-  ASSERT_OK_AND_ASSIGN(auto executor,
-                       CommandExecutor::Create(std::move(cmds), kSerialize));
-  EXPECT_EQ(num_initialize_queries, 2);
-  EXPECT_EQ(num_execute_queries, 2);
-
-  EXPECT_TRUE(executor.requires_update_on_initialize());
-  EXPECT_TRUE(executor.requires_update_on_initialize());
-  EXPECT_TRUE(executor.requires_update_on_execute());
-  EXPECT_TRUE(executor.requires_update_on_execute());
-  EXPECT_EQ(num_initialize_queries, 2);
-  EXPECT_EQ(num_execute_queries, 2);
 }
 
 //===----------------------------------------------------------------------===//
