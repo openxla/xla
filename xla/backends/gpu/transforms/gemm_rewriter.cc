@@ -16,8 +16,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/gemm_rewriter.h"
 
-#include <math.h>
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -41,6 +39,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
+#include <math.h>
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -1337,6 +1336,26 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
               << PrimitiveType_Name(a_type) << " and "
               << PrimitiveType_Name(b_type);
           return false;
+        }
+
+        // hipBLASLt does not support F8 output for f8e5m2 x f8e4m3fn
+        // combinations Only F16/BF16/FP32 outputs are supported for this input
+        // combination
+        PrimitiveType output_type = instr->shape().element_type();
+        if (primitive_util::IsF8Type(output_type)) {
+          if ((a_type == F8E5M2 && b_type == F8E4M3FN) ||
+              (a_type == F8E4M3FN && b_type == F8E5M2)) {
+            VLOG(1)
+                << "Failed to rewrite " << instr->ToShortString()
+                << " into FP8 Custom Call. For "
+                << rocm_compute_capability.gfx_version()
+                << " arch, F8 output is not supported for f8e5m2 x f8e4m3fn. "
+                << "Falling back to F16 dot. Input types: "
+                << PrimitiveType_Name(a_type) << " and "
+                << PrimitiveType_Name(b_type)
+                << ", output type: " << PrimitiveType_Name(output_type);
+            return false;
+          }
         }
       }
       if (rocm_compute_capability.has_nanoo_fp8_support()) {
