@@ -13,7 +13,7 @@ The easiest way to obtain the HLO for a program being compiled with XLA is
 usually to use the `XLA_FLAGS` environment variable:
 
 ```
-$ XLA_FLAGS=--xla_dump_to=/tmp/myfolder ./myprogram-entry-point
+XLA_FLAGS=--xla_dump_to=/tmp/myfolder ./myprogram-entry-point
 ```
 
 which stores all before-optimization HLO files in the folder specified, along
