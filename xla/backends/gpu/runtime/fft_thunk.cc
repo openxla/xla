@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_assignment.pb.h"
@@ -167,7 +168,7 @@ absl::Status RunFft(se::DeviceAddressBase input, const Shape& input_shape,
   // protect each plan with a mutex.
   absl::MutexLock lock(fft_plan_ptr->mu);
   std::unique_ptr<se::fft::Plan>& fft_plan = fft_plan_ptr->plan;
-  TF_ASSIGN_OR_RETURN(auto fft, GetFft(stream));
+  ASSIGN_OR_RETURN(auto fft, GetFft(stream));
   if (fft_plan == nullptr) {
     const int64_t fft_rank = fft_len.size();
     CHECK_LE(fft_rank, 3);
@@ -336,16 +337,15 @@ absl::Status RunFft(se::DeviceAddressBase input, const Shape& input_shape,
 absl::StatusOr<std::unique_ptr<FftThunk>> FftThunk::FromProto(
     ThunkInfo thunk_info, const FftThunkProto& proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice input_buffer,
-                      BufferAllocation::Slice::FromProto(proto.input_buffer(),
-                                                         buffer_allocations));
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice output_buffer,
-                      BufferAllocation::Slice::FromProto(proto.output_buffer(),
-                                                         buffer_allocations));
+  ASSIGN_OR_RETURN(BufferAllocation::Slice input_buffer,
+                   BufferAllocation::Slice::FromProto(proto.input_buffer(),
+                                                      buffer_allocations));
+  ASSIGN_OR_RETURN(BufferAllocation::Slice output_buffer,
+                   BufferAllocation::Slice::FromProto(proto.output_buffer(),
+                                                      buffer_allocations));
 
-  TF_ASSIGN_OR_RETURN(Shape input_shape, Shape::FromProto(proto.input_shape()));
-  TF_ASSIGN_OR_RETURN(Shape output_shape,
-                      Shape::FromProto(proto.output_shape()));
+  ASSIGN_OR_RETURN(Shape input_shape, Shape::FromProto(proto.input_shape()));
+  ASSIGN_OR_RETURN(Shape output_shape, Shape::FromProto(proto.output_shape()));
 
   std::vector<int64_t> fft_length{proto.fft_length().begin(),
                                   proto.fft_length().end()};
@@ -360,14 +360,13 @@ absl::StatusOr<ThunkProto> FftThunk::ToProto() const {
   *thunk_proto.mutable_thunk_info() = thunk_info().ToProto();
 
   FftThunkProto* proto = thunk_proto.mutable_fft_thunk();
-  TF_ASSIGN_OR_RETURN(FftType fft_type, SeTypeToFftType(fft_type_));
+  ASSIGN_OR_RETURN(FftType fft_type, SeTypeToFftType(fft_type_));
   proto->set_fft_type(fft_type);
 
   *proto->mutable_fft_length() = {fft_length_.begin(), fft_length_.end()};
 
-  TF_ASSIGN_OR_RETURN(*proto->mutable_input_buffer(), input_buffer_.ToProto());
-  TF_ASSIGN_OR_RETURN(*proto->mutable_output_buffer(),
-                      output_buffer_.ToProto());
+  ASSIGN_OR_RETURN(*proto->mutable_input_buffer(), input_buffer_.ToProto());
+  ASSIGN_OR_RETURN(*proto->mutable_output_buffer(), output_buffer_.ToProto());
 
   *proto->mutable_input_shape() = input_shape_.ToProto();
   *proto->mutable_output_shape() = output_shape_.ToProto();

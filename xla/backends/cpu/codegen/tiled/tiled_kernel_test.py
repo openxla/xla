@@ -147,7 +147,7 @@ class XtileLoweringTest(absltest.TestCase):
             %output: memref<4096x4096xf32>,
             %tile_id: index) attributes {xtile.tiling_info = #xtile.tiling_info<tile_count:262144, tiles_per_workgroup:32768>} {
           %offset_0 = xla.apply_indexing #xla.indexing_map<"(tid) -> ((tid mod 512) * 8), domain: tid in [0, 262144]">(%tile_id)
-          %offset_1 = xla.apply_indexing #xla.indexing_map<"(tid) -> ((tid floordiv 512) * 8), domain: tid in [0, 262144]">(%tile_id)
+          %offset_1 = xla.apply_indexing #xla.indexing_map<"(tid) -> ((tid / 512) * 8), domain: tid in [0, 262144]">(%tile_id)
           %input_tile = xtile.extract %input[%offset_0, %offset_1][8, 8][1, 1] : memref<4096x4096xf32> -> tensor<8x8xf32>
           %transposed_tile = stablehlo.transpose %input_tile, dims = [1, 0] : (tensor<8x8xf32>) -> tensor<8x8xf32>
           xtile.insert %transposed_tile into %output[%offset_1, %offset_0][8, 8][1, 1] : tensor<8x8xf32> -> memref<4096x4096xf32>
@@ -174,7 +174,7 @@ class XtileLoweringTest(absltest.TestCase):
             %output: memref<4096x4096xf32>,
             %tile_id: index) attributes {xtile.tiling_info = #xtile.tiling_info<tile_count:262144, tiles_per_workgroup:32768>} {
           %offset_0 = xla.apply_indexing #xla.indexing_map<"(tid) -> ((tid mod 512) * 8), domain: tid in [0, 262144]">(%tile_id)
-          %offset_1 = xla.apply_indexing #xla.indexing_map<"(tid) -> ((tid floordiv 512) * 8), domain: tid in [0, 262144]">(%tile_id)
+          %offset_1 = xla.apply_indexing #xla.indexing_map<"(tid) -> ((tid / 512) * 8), domain: tid in [0, 262144]">(%tile_id)
           %input_tile_0 = xtile.extract %input[%offset_0, %offset_1][8, 8][1, 1] : memref<4096x4096xf32> -> tensor<8x8xf32>
           %input_tile_1 = xtile.extract %input[%offset_1, %offset_0][8, 8][1, 1] : memref<4096x4096xf32> -> tensor<8x8xf32>
           %transposed_tile = stablehlo.transpose %input_tile_0, dims = [1, 0] : (tensor<8x8xf32>) -> tensor<8x8xf32>
@@ -304,12 +304,8 @@ class XtileLoweringTest(absltest.TestCase):
           %index = arith.muli %tile_id, %c_8 : index
           %input_tile = xtile.extract %input[%index, %c_0][8, 32][1, 1] : memref<1024x32xf32> -> tensor<8x32xf32>
           %result = stablehlo.reduce(%input_tile init: %init_tile)
-                    across dimensions = [1]
+                    applies stablehlo.add across dimensions = [1]
                     : (tensor<8x32xf32>, tensor<f32>) -> tensor<8xf32>
-            reducer(%arg0: tensor<f32>, %arg1: tensor<f32>) {
-              %add = arith.addf %arg0, %arg1 : tensor<f32>
-              stablehlo.return %add : tensor<f32>
-            }
           xtile.insert %result into %output[%index][8][1] : tensor<8xf32> -> memref<1024xf32>
           xtile.return
         }

@@ -45,3 +45,18 @@ def StablehloLowerToXtilePass
     "mlir::stablehlo::StablehloDialect",
   ];
 }
+
+def LegalizeUnsignedIntegersAsSignlessPass
+    : Pass<"legalize-unsigned-integers-as-signless"> {
+  let summary = "Legalizes unsigned integers as signless.";
+}
+
+def StablehloLowerToArithPass : Pass<"stablehlo-lower-to-arith"> {
+  let summary = "Lowers certain stablehlo ops to arith ops.";
+  let description = [{
+    This pass lowers stablehlo ops to arith ops.
+  }];
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+  ];
+}

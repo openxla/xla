@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/hlo/ir/hlo_sharding.h"
@@ -70,7 +71,11 @@ class HloShardingSerDes : public llvm::RTTIExtends<HloSharding, SerDes> {
       const std::string& serialized,
       std::unique_ptr<DeserializeOptions> options) override {
     const auto* deserialize_sharding_options =
-        llvm::cast<DeserializeShardingOptions>(options.get());
+        llvm::dyn_cast_or_null<DeserializeShardingOptions>(options.get());
+    if (deserialize_sharding_options == nullptr) {
+      return absl::InvalidArgumentError(
+          "DeserializeShardingOptions must be provided");
+    }
 
     HloShardingProto proto;
     if (!proto.ParseFromString(serialized)) {
@@ -82,15 +87,15 @@ class HloShardingSerDes : public llvm::RTTIExtends<HloSharding, SerDes> {
       return absl::FailedPreconditionError(absl::StrCat(
           "Unsupported ", version_number, " for HloSharding deserialization"));
     }
-    TF_ASSIGN_OR_RETURN(auto devices, DeviceList::FromProto(
-                                          deserialize_sharding_options->client,
-                                          proto.devices()));
+    ASSIGN_OR_RETURN(auto devices,
+                     DeviceList::FromProto(deserialize_sharding_options->client,
+                                           proto.devices()));
     MemoryKind memory_kind;
     if (proto.has_memory_kind()) {
       memory_kind = MemoryKind(proto.memory_kind());
     }
-    TF_ASSIGN_OR_RETURN(auto xla_hlo_sharding,
-                        xla::HloSharding::FromProto(proto.xla_op_sharding()));
+    ASSIGN_OR_RETURN(auto xla_hlo_sharding,
+                     xla::HloSharding::FromProto(proto.xla_op_sharding()));
     return HloSharding::Create(std::move(devices), memory_kind,
                                std::move(xla_hlo_sharding));
   }
