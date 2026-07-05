@@ -293,12 +293,11 @@ absl::StatusOr<GpuExecutable::BorrowedStreams> GpuExecutable::BorrowStreams(
   return BorrowedStreams{std::move(streams), std::move(owners)};
 }
 
-static absl::Status RunThunkPasses(const DebugOptions& debug_options,
-                                   const se::DeviceDescription& device_info,
-                                   SequentialThunk* root_thunk,
-                                   HloModule* hlo_module,
-                                   const BufferAssignment* buffer_assignment,
-                                   ThunkPassBufferAllocator& allocator) {
+static absl::Status RunThunkPasses(
+    const DebugOptions& debug_options, const se::DeviceDescription& device_info,
+    SequentialThunk* root_thunk, HloModule* hlo_module,
+    const BufferAssignment* absl_nonnull buffer_assignment,
+    ThunkPassBufferAllocator& allocator) {
   ThunkPassPipeline pipeline("thunk-passes");
   if (debug_options.xla_gpu_experimental_enable_checksum_tracing_on_thunks() ||
       debug_options.xla_gpu_experimental_thunk_buffer_debug_module_outputs()) {
@@ -397,9 +396,11 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
   // thunk passes (which operate on SequentialThunk).
   auto seq_thunk = std::make_unique<SequentialThunk>(
       Thunk::ThunkInfo(), std::move(params.executable->thunks()));
-  RETURN_IF_ERROR(RunThunkPasses(
-      params.debug_options, params.device_description, seq_thunk.get(),
-      params.debug_module.get(), params.buffer_assignment.get(), allocator));
+  if (params.buffer_assignment != nullptr) {
+    RETURN_IF_ERROR(RunThunkPasses(
+        params.debug_options, params.device_description, seq_thunk.get(),
+        params.debug_module.get(), params.buffer_assignment.get(), allocator));
+  }
   // Extract modified thunks back into a ThunkExecutor.
   auto executor =
       std::make_unique<ThunkExecutor>(std::move(seq_thunk->thunks()));
