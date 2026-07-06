@@ -664,27 +664,6 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     DeviceAddressBase reservation_address;
   };
 
-  // Result of inspecting the requested Map() target while holding state.mu.
-  // A stale record is consumed immediately for kReactivateStale; a pending key
-  // is copied out before kWait releases state.mu.
-  struct MapTargetEvaluation {
-    enum class Action { kInstallFresh, kReactivateStale, kWait };
-
-    Action action;
-    AllocationRecord* stale_record = nullptr;
-    std::optional<PendingDeallocationKey> pending_completion_key;
-  };
-
-  // Result of preparing a Map() target. kInstallFresh carries the current
-  // source record; kReusedStaleMapping means preparation already reactivated
-  // the requested mapping.
-  struct PreparedMapTarget {
-    enum class Action { kInstallFresh, kReusedStaleMapping };
-
-    Action action;
-    AllocationRecord* source_record = nullptr;
-  };
-
   // Finds a tracked allocator or reservation range that overlaps `address`.
   std::optional<OverlappingRecord> FindOverlappingRecord(
       PerDeviceState& state, DeviceAddressBase address, AddressRole role,
@@ -702,18 +681,11 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       PerDeviceState& state, DeviceAddressBase reservation_address) const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
-  // Determines whether Map() can install a fresh mapping, reactivate a stale
-  // mapping, or must wait for a conflicting pending operation.
-  absl::StatusOr<MapTargetEvaluation> EvaluateMapTarget(
-      PerDeviceState& state, const MapRequest& request,
-      AllocationRecord& source_record) const
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  // Resolves up to two stale conflicts for a Map() request. Every wait is
-  // followed by a fresh source lookup and validation because waiting
-  // temporarily releases state.mu.
-  absl::StatusOr<PreparedMapTarget> PrepareMapTarget(PerDeviceState& state,
-                                                     const MapRequest& request)
+  // Resolves stale conflicts and installs or reactivates a reservation alias.
+  // Every wait is followed by a fresh source lookup and validation because
+  // waiting temporarily releases state.mu.
+  absl::Status ResolveAndMapAlias(PerDeviceState& state,
+                                  const MapRequest& request)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Installs and records a fresh reservation-address alias.
