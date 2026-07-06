@@ -318,10 +318,16 @@ uint64_t DeviceAddressVmmAllocator::RoundUpToGranularity(
          state.allocation_granularity;
 }
 
-bool DeviceAddressVmmAllocator::WouldExceedPaBudget(const PerDeviceState& state,
-                                                    uint64_t size) const {
-  return state.pa_allocated > state.pa_budget ||
-         size > state.pa_budget - state.pa_allocated;
+absl::Status DeviceAddressVmmAllocator::CheckPaBudget(
+    const PerDeviceState& state, uint64_t size) const {
+  if (state.pa_allocated <= state.pa_budget &&
+      size <= state.pa_budget - state.pa_allocated) {
+    return absl::OkStatus();
+  }
+  return absl::ResourceExhaustedError(absl::StrFormat(
+      "Not enough PA budget: pa_allocated=%uB, allocation_size=%uB, "
+      "pa_budget=%uB",
+      state.pa_allocated, size, state.pa_budget));
 }
 
 absl::StatusOr<Stream*> DeviceAddressVmmAllocator::GetStream(
@@ -563,12 +569,7 @@ DeviceAddressVmmAllocator::CreateMappedAllocationAtReservationAddress(
   // The returned allocator address is the caller-owned reservation VA. The
   // record is keyed by that VA and owns only the raw allocation plus the scoped
   // mapping into the external reservation.
-  if (WouldExceedPaBudget(state, rounded_size)) {
-    return absl::ResourceExhaustedError(
-        absl::StrFormat("Not enough PA budget for mapping: pa_allocated=%uB, "
-                        "rounded_size=%uB, pa_budget=%uB",
-                        state.pa_allocated, rounded_size, state.pa_budget));
-  }
+  RETURN_IF_ERROR(CheckPaBudget(state, rounded_size));
 
   ASSIGN_OR_RETURN(auto raw_alloc,
                    CreateAllocation(state.executor, request.size));
@@ -579,12 +580,7 @@ DeviceAddressVmmAllocator::CreateMappedAllocationAtReservationAddress(
         "allocation_size=%uB, mapping_size=%uB",
         physical_size, request.size));
   }
-  if (WouldExceedPaBudget(state, physical_size)) {
-    return absl::ResourceExhaustedError(
-        absl::StrFormat("Not enough PA budget for mapping: pa_allocated=%uB, "
-                        "physical_size=%uB, pa_budget=%uB",
-                        state.pa_allocated, physical_size, state.pa_budget));
-  }
+  RETURN_IF_ERROR(CheckPaBudget(state, physical_size));
 
   ASSIGN_OR_RETURN(auto scoped_mapping,
                    request.reservation->MapTo(request.reservation_offset,
@@ -606,12 +602,7 @@ DeviceAddressVmmAllocator::CreateMappedAllocationWithSeparateAddress(
   // This mode creates two VAs for the same raw allocation: an allocator-owned
   // VA returned to the caller, and a non-owning alias in the caller reservation
   // used by captured command buffers.
-  if (WouldExceedPaBudget(state, rounded_size)) {
-    return absl::ResourceExhaustedError(absl::StrFormat(
-        "Not enough PA budget for allocation: pa_allocated=%uB, "
-        "rounded_size=%uB, pa_budget=%uB",
-        state.pa_allocated, rounded_size, state.pa_budget));
-  }
+  RETURN_IF_ERROR(CheckPaBudget(state, rounded_size));
 
   ASSIGN_OR_RETURN(auto raw_alloc,
                    CreateAllocation(state.executor, request.size));
@@ -622,12 +613,7 @@ DeviceAddressVmmAllocator::CreateMappedAllocationWithSeparateAddress(
         "mapping_size=%uB, allocation_size=%uB",
         request.size, physical_size));
   }
-  if (WouldExceedPaBudget(state, physical_size)) {
-    return absl::ResourceExhaustedError(absl::StrFormat(
-        "Not enough PA budget for allocation: pa_allocated=%uB, "
-        "physical_size=%uB, pa_budget=%uB",
-        state.pa_allocated, physical_size, state.pa_budget));
-  }
+  RETURN_IF_ERROR(CheckPaBudget(state, physical_size));
 
   ASSIGN_OR_RETURN(auto allocator_address_reservation,
                    CreateReservation(state.executor, request.size));
@@ -793,13 +779,7 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
   auto try_fresh = [&]() -> absl::StatusOr<DeviceAddressBase> {
     state->mu.AssertHeld();
     uint64_t rounded_size = RoundUpToGranularity(*state, size);
-    if (WouldExceedPaBudget(*state, rounded_size)) {
-      return absl::StatusOr<DeviceAddressBase>(
-          absl::ResourceExhaustedError(absl::StrFormat(
-              "Not enough PA budget for allocation: pa_allocated=%uB, "
-              "rounded_size=%uB, pa_budget=%uB",
-              state->pa_allocated, rounded_size, state->pa_budget)));
-    }
+    RETURN_IF_ERROR(CheckPaBudget(*state, rounded_size));
 
     ASSIGN_OR_RETURN(auto raw_alloc, CreateAllocation(state->executor, size));
     const uint64_t physical_size = raw_alloc->address().size();
@@ -809,12 +789,7 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
           "requested_size=%uB, physical_size=%uB",
           size, physical_size));
     }
-    if (WouldExceedPaBudget(*state, physical_size)) {
-      return absl::ResourceExhaustedError(absl::StrFormat(
-          "Not enough PA budget for allocation: pa_allocated=%uB, "
-          "physical_size=%uB, pa_budget=%uB",
-          state->pa_allocated, physical_size, state->pa_budget));
-    }
+    RETURN_IF_ERROR(CheckPaBudget(*state, physical_size));
 
     ASSIGN_OR_RETURN(auto reservation,
                      CreateReservation(state->executor, size));
