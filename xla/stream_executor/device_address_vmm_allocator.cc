@@ -538,13 +538,32 @@ DeviceAddressVmmAllocator::EnsureReservationAvailableForFreshMapping(
     // VA is still protected by stream order. Complete only that conflicting
     // stale record, then rescan because another thread may have changed the
     // allocator state while the lock was released.
-    auto stale_overlap = FindOverlappingRecord(
-        state, request.reservation_address, AddressRole::kBoth,
-        RecordState::kStale, OverlapKind::kExact);
-    if (!stale_overlap.has_value()) {
+    std::optional<PendingDeallocationKey> pending_completion_key;
+    {
+      auto stale_overlap = FindOverlappingRecord(
+          state, request.reservation_address, AddressRole::kBoth,
+          RecordState::kStale, OverlapKind::kExact);
+      if (stale_overlap.has_value()) {
+        CHECK(!stale_overlap->is_active);
+        AllocationRecord& record = *stale_overlap->record;
+        if (stale_overlap->is_allocator) {
+          pending_completion_key = PendingDeallocationKey{
+              record.pending_deallocation_kind(),
+              record.allocator_stale_seqno(), record.allocator_address()};
+        } else {
+          CHECK(record.reservation_stale());
+          CHECK(record.has_reservation_address());
+          pending_completion_key = PendingDeallocationKey{
+              PendingDeallocationKind::kMap, record.reservation_stale_seqno(),
+              record.reservation_address()};
+        }
+      }
+    }
+    if (!pending_completion_key.has_value()) {
       break;
     }
-    RETURN_IF_ERROR(WaitAndCompleteStaleOverlap(state, *stale_overlap));
+    RETURN_IF_ERROR(
+        WaitAndCompletePendingDeallocation(state, *pending_completion_key));
   }
 
   // At this point stale exact overlaps have been drained. Any remaining
@@ -1190,13 +1209,8 @@ absl::Status DeviceAddressVmmAllocator::ResolveAndMapAlias(
     }
 
     CHECK(pending_completion_key.has_value());
-    if (pending_completion_key->kind == PendingDeallocationKind::kMap) {
-      RETURN_IF_ERROR(WaitAndCompleteStaleReservationMapping(
-          state, *pending_completion_key));
-    } else {
-      RETURN_IF_ERROR(WaitAndCompleteStaleAllocatorDeallocation(
-          state, *pending_completion_key));
-    }
+    RETURN_IF_ERROR(
+        WaitAndCompletePendingDeallocation(state, *pending_completion_key));
   }
 }
 
@@ -1369,39 +1383,11 @@ void DeviceAddressVmmAllocator::CompletePendingDeallocationByKey(
   }
 }
 
-absl::Status
-DeviceAddressVmmAllocator::WaitAndCompleteStaleAllocatorDeallocation(
+absl::Status DeviceAddressVmmAllocator::WaitAndCompletePendingDeallocation(
     PerDeviceState& state, const PendingDeallocationKey& key) {
-  CHECK_NE(key.kind, PendingDeallocationKind::kMap);
   RETURN_IF_ERROR(WaitUntilSeqno(state, key.seqno));
   CompletePendingDeallocationByKey(state, key);
   return absl::OkStatus();
-}
-
-absl::Status DeviceAddressVmmAllocator::WaitAndCompleteStaleReservationMapping(
-    PerDeviceState& state, const PendingDeallocationKey& key) {
-  CHECK_EQ(key.kind, PendingDeallocationKind::kMap);
-  RETURN_IF_ERROR(WaitUntilSeqno(state, key.seqno));
-  CompletePendingDeallocationByKey(state, key);
-  return absl::OkStatus();
-}
-
-absl::Status DeviceAddressVmmAllocator::WaitAndCompleteStaleOverlap(
-    PerDeviceState& state, const OverlappingRecord& overlap) {
-  CHECK(!overlap.is_active);
-  if (overlap.is_allocator) {
-    AllocationRecord& record = *overlap.record;
-    return WaitAndCompleteStaleAllocatorDeallocation(
-        state, PendingDeallocationKey{record.pending_deallocation_kind(),
-                                      record.allocator_stale_seqno(),
-                                      record.allocator_address()});
-  }
-  CHECK(overlap.record->reservation_stale());
-  CHECK(overlap.record->has_reservation_address());
-  return WaitAndCompleteStaleReservationMapping(
-      state, PendingDeallocationKey{PendingDeallocationKind::kMap,
-                                    overlap.record->reservation_stale_seqno(),
-                                    overlap.record->reservation_address()});
 }
 
 void DeviceAddressVmmAllocator::CompletePendingDeallocation(

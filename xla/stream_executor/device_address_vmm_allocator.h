@@ -756,22 +756,10 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
                                         const PendingDeallocationKey& key)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
-  // Waits for and completes the selected allocator-address deallocation, if it
-  // is still pending after the wait.
-  absl::Status WaitAndCompleteStaleAllocatorDeallocation(
+  // Waits for and completes the selected pending operation, if it is still
+  // pending after the wait.
+  absl::Status WaitAndCompletePendingDeallocation(
       PerDeviceState& state, const PendingDeallocationKey& key)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  // Waits for and completes a stale reservation-address mapping queued by
-  // UnMap().
-  absl::Status WaitAndCompleteStaleReservationMapping(
-      PerDeviceState& state, const PendingDeallocationKey& key)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  // Completes only the stale allocator or reservation mapping that conflicts
-  // with the current request, leaving unrelated stale mappings reusable.
-  absl::Status WaitAndCompleteStaleOverlap(PerDeviceState& state,
-                                           const OverlappingRecord& overlap)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Device ordinal -> per-device allocator state. Populated at construction by
