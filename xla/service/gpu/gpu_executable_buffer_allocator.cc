@@ -513,8 +513,7 @@ GpuExecutableBufferAllocator::CreateExecutionScope(
   // allocation across executions and avoids waiting for the previous execution
   // to retire. Incompatible stale mappings are completed lazily and per-record
   // by the fresh-mapping paths.
-  return ExecutionScope(this, remapping, vmm_allocator, std::move(remap_lock),
-                        /*address_policy_active=*/true);
+  return ExecutionScope(this, remapping, vmm_allocator, std::move(remap_lock));
 }
 
 }  // namespace gpu
