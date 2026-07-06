@@ -348,10 +348,10 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
     AllocationRecord(
         Kind kind, DeviceAddressBase allocator_address,
-        std::shared_ptr<MemoryAllocation> raw_allocation,
+        std::unique_ptr<MemoryAllocation> raw_allocation,
         std::unique_ptr<MemoryReservation> allocator_address_reservation,
         MemoryReservation::ScopedMapping allocator_address_mapping,
-        bool multi_device);
+        uint64_t allocated_size, bool multi_device);
     AllocationRecord(const AllocationRecord&) = delete;
     AllocationRecord& operator=(const AllocationRecord&) = delete;
     AllocationRecord(AllocationRecord&&) = default;
@@ -371,6 +371,7 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       return allocator_address_.IsSameAs(address);
     }
     uint64_t allocator_stale_seqno() const { return allocator_stale_seqno_; }
+    uint64_t allocated_size() const { return allocated_size_; }
     bool multi_device() const { return multi_device_; }
     MemoryAllocation* raw_allocation() const { return raw_allocation_.get(); }
     MemoryReservation* allocator_address_reservation() const {
@@ -417,7 +418,8 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
    private:
     Kind kind_;
     DeviceAddressBase allocator_address_;
-    std::shared_ptr<MemoryAllocation> raw_allocation_;
+    std::unique_ptr<MemoryAllocation> raw_allocation_;
+    uint64_t allocated_size_;
     bool multi_device_;
 
     // Present for Allocate() and
@@ -448,9 +450,9 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     // Allocator address for allocation deallocations; reservation address for
     // kMap.
     DeviceAddressBase addr;
-    // Rounded physical-allocation bytes that become reclaimable when this
-    // pending operation completes. kMap entries do not own physical memory and
-    // therefore use zero.
+    // Physical-allocation bytes charged to the PA budget that become
+    // reclaimable when this pending operation completes. kMap entries do not
+    // own physical memory and therefore use zero.
     uint64_t reclaimable_bytes = 0;
   };
 
@@ -550,6 +552,11 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   uint64_t RoundUpToGranularity(const PerDeviceState& state,
                                 uint64_t size) const;
 
+  // Returns true if charging `size` more physical bytes would exceed the
+  // configured PA budget. Uses subtraction to avoid unsigned overflow.
+  bool WouldExceedPaBudget(const PerDeviceState& state, uint64_t size) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
   // True iff the calling thread is inside a multi-device DeviceAssignmentScope.
   static bool CurrentMultiDevice();
 
@@ -558,22 +565,27 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // Records a raw allocation mapped at an owning allocator address. Takes
   // ownership of `reservation` when the allocator address was allocator-owned;
   // reservation-backed returned addresses pass nullptr here. Charges
-  // `allocated_size` to the PA budget and returns the allocator VA pointer.
-  void* TrackAllocatorAddressMappedAllocation(
+  // `allocated_size` to the PA budget.
+  void TrackAllocatorAddressMappedAllocation(
       PerDeviceState& state, AllocationRecord::Kind kind,
       DeviceAddressBase allocator_address,
-      std::shared_ptr<MemoryAllocation> raw_allocation,
+      std::unique_ptr<MemoryAllocation> raw_allocation,
       std::unique_ptr<MemoryReservation> reservation,
       MemoryReservation::ScopedMapping mapping, uint64_t allocated_size,
       bool multi_device) ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
+  enum class MappedAddressMode {
+    kReservationAddress,
+    kSeparateAllocatorAddress,
+  };
+
   struct MappedAllocateRequest {
     MemoryReservation* reservation;
     DeviceAddressBase reservation_address;
-    uint64_t allocation_size;
+    uint64_t size;
     uint64_t reservation_offset;
-    uint64_t mapping_size;
     bool multi_device;
+    MappedAddressMode mode;
   };
 
   // Reactivates a stale mapped allocation whose returned allocator address is
@@ -609,12 +621,14 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Shared allocation retry policy. First calls `try_reuse` to reactivate
-  // compatible pending state without blocking, then calls `try_fresh`. On
-  // ResourceExhausted, it completes ready pending entries and, if needed, waits
-  // for enough pending frees to reclaim approximately `reclaim_size` bytes.
+  // compatible pending state without blocking, then calls `try_fresh`. If
+  // retries are enabled, a ResourceExhausted result completes ready pending
+  // entries and, if needed, waits for enough pending frees to reclaim
+  // approximately `reclaim_size` bytes.
   template <typename TryReuseFn, typename TryFreshFn>
   absl::StatusOr<DeviceAddressBase> TryWithPendingReclaim(PerDeviceState& state,
                                                           uint64_t reclaim_size,
+                                                          bool retry_on_failure,
                                                           TryReuseFn try_reuse,
                                                           TryFreshFn try_fresh)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
@@ -634,6 +648,10 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     bool is_allocator = false;
     bool is_active = false;
   };
+
+  enum class AddressRole { kAllocator, kReservation, kBoth };
+  enum class RecordState { kActive, kStale, kBoth };
+  enum class OverlapKind { kExact, kPartial, kAny };
 
   // Immutable inputs shared by the Map() preparation and installation
   // helpers.
@@ -667,12 +685,9 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   };
 
   // Finds a tracked allocator or reservation range that overlaps `address`.
-  // `exact_only` returns only identical ranges; `partial_only` returns only
-  // non-identical overlapping ranges; both false returns any overlap.
   std::optional<OverlappingRecord> FindOverlappingRecord(
-      PerDeviceState& state, DeviceAddressBase address, bool include_allocator,
-      bool include_reservation, bool include_active, bool include_stale,
-      bool exact_only, bool partial_only) const
+      PerDeviceState& state, DeviceAddressBase address, AddressRole role,
+      RecordState record_state, OverlapKind overlap_kind) const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Resolves an active allocator address to its allocation record.
@@ -772,9 +787,9 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Finds, erases, and completes the selected pending entry if it is still
-  // present. Returns false if another thread already reused or completed it
-  // while state.mu was released.
-  bool CompletePendingDeallocationByKey(PerDeviceState& state,
+  // present. Another thread may already have reused or completed it while
+  // state.mu was released.
+  void CompletePendingDeallocationByKey(PerDeviceState& state,
                                         const PendingDeallocationKey& key)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
