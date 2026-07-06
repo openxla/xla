@@ -1843,6 +1843,9 @@ absl::Status GpuCompiler::OptimizeHloModule(
   }
 
   RETURN_IF_ERROR(RunAsyncDotPasses(hlo_module, compilation_stats));
+
+  DumpHloModuleIfEnabled(*hlo_module, "before_config_assignment");
+
   {
     HloPassPipeline pipeline("autotuner", compilation_stats);
     pipeline.AddPass<FusionWrapper>(
@@ -2845,17 +2848,14 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
       absl::StrCat("Compiling module ", module->name(), " for GPU");
   auto slow_compile_alarm = SlowCompilationAlarm(slow_compilation_msg);
 
-  BinaryMap dnn_compiled_graphs;
-  if (stream_exec) {
-    se::dnn::DnnSupport* dnn_support = stream_exec->AsDnn();
-    TF_RET_CHECK(dnn_support != nullptr);
-    RETURN_IF_ERROR(RunCudnnCompilerPasses(module.get(), *dnn_support,
-                                           &dnn_compiled_graphs));
-  }
-
   ASSIGN_OR_RETURN(GpuTopology gpu_topology,
                    InferGpuTopology(module->config(), stream_exec, options,
                                     debug_opts, platform_id_));
+
+  BinaryMap dnn_compiled_graphs;
+  RETURN_IF_ERROR(RunCudnnCompilerPasses(module.get(), stream_exec,
+                                         gpu_topology.gpu_target_config(),
+                                         &dnn_compiled_graphs));
 
   if (DumpingEnabledForHloModule(*module)) {
     std::string textproto;
@@ -2924,10 +2924,7 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
           /*module_name=*/std::move(res.compile_module_results.module_name),
           /*program_shape=*/
           module->compute_computation_layout().ComputeProgramShape(),
-          /*mlir_allocations=*/
-          (res.compile_module_results.use_original_allocations
-               ? std::optional<std::vector<BufferAllocation>>()
-               : std::move(res.compile_module_results.allocations)),
+          /*mlir_allocations=*/std::optional<std::vector<BufferAllocation>>(),
           /*buffer_assignment=*/
           std::move(res.compile_module_results.buffer_assignment),
           /*alias_info=*/std::move(alias_info),

@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
+#include "xla/service/shaped_slice.h"
 #include "xla/service/stream_pool.h"
 #include "xla/service/xla_debug_info_manager.h"
 #include "xla/shape.h"
@@ -88,6 +89,8 @@ class GpuExecutable : public Executable {
 
   struct OutputInfo {
     // Corresponding allocation index.
+    // Note that each output lives on its own allocation, i.e., it is allocated
+    // in a slice with offset 0, and size equal to the size of the allocation.
     int allocation_index;
 
     // Output is passed-through from a parameter.
@@ -214,8 +217,11 @@ class GpuExecutable : public Executable {
     return *buffer_allocator_;
   }
 
-  absl::Status ExecuteThunks(const BufferAllocations& buffer_allocations,
-                             const ServiceExecutableRunOptions* run_options);
+  absl::Status ExecuteThunks(
+      const BufferAllocations& buffer_allocations,
+      const ServiceExecutableRunOptions* run_options,
+      std::optional<absl::Span<const BufferAllocation::Index>>
+          persistent_alloc_indices = std::nullopt);
 
   using BufferAllocToDeviceMemoryMap =
       GpuModuleGlobals::BufferAllocToDeviceMemoryMap;
@@ -300,6 +306,8 @@ class GpuExecutable : public Executable {
       Thunk::ExecutableSource executable_source,
       const ServiceExecutableRunOptions* run_options,
       const BufferAllocations& buffer_allocations, bool block_host_until_done,
+      std::optional<absl::Span<const BufferAllocation::Index>>
+          persistent_alloc_indices,
       NumAdditionalStreams num_additional_streams,
       CollectiveMemoryCache& collective_memory_cache,
       bool collective_use_minimal_resource);
@@ -395,7 +403,9 @@ class GpuExecutable : public Executable {
   std::unique_ptr<GpuModuleGlobals> module_globals_;
   const absl::flat_hash_map<ShapeIndex, OutputInfo> output_info_;
   bool enable_debug_info_manager_;
+
   std::unique_ptr<GpuExecutableBufferAllocator> buffer_allocator_;
+
   GpuExecutable(const GpuExecutable&) = delete;
   GpuExecutable& operator=(const GpuExecutable&) = delete;
 
