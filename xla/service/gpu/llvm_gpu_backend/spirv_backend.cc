@@ -49,16 +49,10 @@ namespace {
 // Default inline threshold value to use in llvm.
 const int kDefaultInlineThreshold = 1100;
 
-// XLA follows the Khronos SPIR-V LLVM representation address-space mapping.
+// SPIR-V LLVM representation address spaces used by this backend.
 // https://github.com/KhronosGroup/SPIRV-LLVM-Translator/blob/main/docs/SPIRVRepresentationInLLVM.rst#address-spaces
-// https://github.com/intel/intel-xpu-backend-for-triton/blob/main/third_party/intel/include/Dialect/TritonGEN/IR/TritonGENMemorySpace.h
-enum SpirvLlvmAddressSpace : unsigned {
-  kSpirvLlvmDefaultAddressSpace = 0,
-  kSpirvLlvmCrossWorkgroupAddressSpace = 1,
-  kSpirvLlvmUniformConstantAddressSpace = 2,
-  kSpirvLlvmWorkgroupAddressSpace = 3,
-  kSpirvLlvmGenericAddressSpace = 4,
-};
+constexpr unsigned kSpirvLlvmDefaultAddressSpace = 0;
+constexpr unsigned kSpirvLlvmCrossWorkgroupAddressSpace = 1;
 
 void SPIRVBackendInit() {
   LLVMInitializeSPIRVTargetInfo();
@@ -179,10 +173,10 @@ absl::StatusOr<std::string> CompileToSPIRV(
   auto llvm_opts = GetSPIRVBackendOptions(debug_options);
   llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_opts);
 
-  // SPIRV Kernel functions expect their arguments' address spaces to be global,
-  // i.e., addrspace(1). Here we only change kernel argument's address space if
-  // it is addrspace(0). Then an address space cast to original is applied so
-  // that users still have old address space.
+  // Preserve the existing rewrite of SPIR-V kernel pointer arguments in the
+  // default LLVM address space to CrossWorkgroup. Kernel signatures can also
+  // contain scalar arguments, so only pointer arguments participate in the
+  // rewrite.
   llvm::LLVMContext& context = module->getContext();
   llvm::SmallVector<llvm::Function*> kernel_funcs;
   for (auto& func : *module) {

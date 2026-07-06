@@ -113,13 +113,13 @@ TEST(SpirvBackendTest, TestSPIRVExtensions) {
             extensions_set.end());
 }
 
-TEST(SpirvBackendTest, AddressSpaceContractPreservesScalarKernelArguments) {
+TEST(SpirvBackendTest, KernelArgumentRewritePreservesScalarArguments) {
   std::vector<uint32_t> words = CompileToSpirvWords(R"(
-define spir_kernel void @address_space_contract(i32 %value,
-                                                ptr %in,
-                                                ptr addrspace(1) %out,
-                                                ptr addrspace(2) %constant,
-                                                ptr addrspace(3) %workgroup) {
+define spir_kernel void @kernel_argument_rewrite(i32 %value,
+                                                 ptr %in,
+                                                 ptr addrspace(1) %out,
+                                                 ptr addrspace(2) %constant,
+                                                 ptr addrspace(3) %workgroup) {
 entry:
   %in_value = load i32, ptr %in, align 4
   %constant_value = load i32, ptr addrspace(2) %constant, align 4
