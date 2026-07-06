@@ -231,7 +231,12 @@ rocm_lib_import(
             "%{rocm_root}/lib/rocblas/library/" + arch + "/**/*",
             "%{rocm_root}/.kpack/blas_lib_" + arch + ".kpack",
         ]
-    ]),
+    ]) + glob(
+        ["%{rocm_root}/lib/rocblas/library/*"],
+        exclude = [
+            "%{rocm_root}/lib/rocblas/library/*gfx*",
+        ],
+    ),
     interface_library = "%{rocm_root}/lib/librocblas.so",
     deps = [
         ":hip_runtime_libs",
