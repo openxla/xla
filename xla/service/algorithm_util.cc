@@ -247,7 +247,8 @@ bool IsSupportedDotAlgorithmOnGpu(
       }
       if (output_storage_type != BF16 && output_storage_type != F16 &&
           output_storage_type != F32 && output_storage_type != F8E4M3FN &&
-          output_storage_type != F8E5M2) {
+          output_storage_type != F8E5M2 && output_storage_type != F8E4M3FNUZ &&
+          output_storage_type != F8E5M2FNUZ) {
         return false;
       }
       // Other F8 types are actually not supported by NVIDIA GPUs.
@@ -258,6 +259,16 @@ bool IsSupportedDotAlgorithmOnGpu(
       if (lhs_storage_type == F8E4M3FN &&
           (rhs_storage_type == F8E5M2 || rhs_storage_type == F8E4M3FN)) {
         return true;
+      }
+      // FNUZ types support (ROCm only)
+      if (is_rocm_mi100_and_above) {
+        if (lhs_storage_type == F8E5M2FNUZ && rhs_storage_type == F8E4M3FNUZ) {
+          return true;
+        }
+        if (lhs_storage_type == F8E4M3FNUZ &&
+            (rhs_storage_type == F8E5M2FNUZ || rhs_storage_type == F8E4M3FNUZ)) {
+          return true;
+        }
       }
       return false;
     case PrecisionConfig::ALG_DOT_F16_F16_F32:
