@@ -30,6 +30,22 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
+FIX=false
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --fix)
+      FIX=true
+      shift
+      ;;
+    *)
+      set +x
+      echo "Unknown option: $1" >&2
+      echo "Usage: $0 [--fix]" >&2
+      exit 1
+      ;;
+  esac
+done
+
 get_merge_base() {
   local REFERENCE
   local REMOTE="${REMOTE:-$(git remote -v | awk '/openxla\/xla/ { print $1; exit }')}"
@@ -60,11 +76,17 @@ get_merge_base() {
 
 get_merge_base
 
+EXTRA_ARGS=(-p1 -style=file)
+if [ "$FIX" = true ]; then
+  EXTRA_ARGS+=(-i)
+fi
+
 # Run diff against the merge base.
 # -U0: Context of 0 lines (ignore surrounding code)
 # clang-format-diff: Checks only lines present in the diff
 DIFF=$(git diff -U0 --no-color "$MERGE_BASE" -- '*.cc' '*.h' |
-  uvx --from "$CLANG_FORMAT_PKG" clang-format-diff.py -p1 -style=file)
+  uvx --from "$CLANG_FORMAT_PKG" clang-format-diff.py "${EXTRA_ARGS[@]}")
+
 if [ -n "$DIFF" ]; then
   echoerr "Clang-format failed on the following changes:"
   echo "$DIFF"
