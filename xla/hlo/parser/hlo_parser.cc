@@ -2027,7 +2027,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
           *shape, operands, std::move(device_list), channel_id));
     }
     case HloOpcode::kCollectiveBroadcast: {
-      bool has_dynamic_root;
+      optional<bool> has_dynamic_root;
       attrs["has_dynamic_root"] = {/*required=*/false, AttrTy::kBool,
                                    &has_dynamic_root};
       std::unique_ptr<CollectiveDeviceListBase> device_list =
@@ -2042,7 +2042,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       }
       return builder->AddInstruction(HloInstruction::CreateCollectiveBroadcast(
           *shape, operands, std::move(device_list), false, channel_id,
-          has_dynamic_root));
+          has_dynamic_root ? *has_dynamic_root : false));
     }
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kCollectivePermuteStart: {

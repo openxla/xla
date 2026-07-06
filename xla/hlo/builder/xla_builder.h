@@ -486,7 +486,8 @@ class XlaBuilder {
   absl::StatusOr<Shape> GetShape(XlaOp op) const;
 
   // Returns the shape of the given op.
-  virtual absl::StatusOr<const Shape* absl_nonnull> GetShapePtr(XlaOp op) const;
+  virtual absl::StatusOr<const Shape * absl_nonnull> GetShapePtr(
+      XlaOp op) const;
 
   // Returns the OpSharding of the given op. If "op" has no sharding, return
   // std::nullopt.
@@ -2073,13 +2074,6 @@ class XlaBuilder {
                       const std::optional<ChannelHandle>& channel_id,
                       const std::optional<Shape>& layout,
                       std::optional<bool> use_global_device_ids, bool async);
-
-  XlaOp CollectiveBroadcastImpl(XlaOp operand,
-                                absl::Span<const ReplicaGroup> replica_groups,
-                                const std::optional<ChannelHandle>& channel_id);
-  XlaOp CollectiveBroadcastImpl(XlaOp operand,
-                                const CollectiveDeviceListBase& replica_groups,
-                                const std::optional<ChannelHandle>& channel_id);
 
   XlaOp CollectiveBroadcastImpl(absl::Span<const XlaOp> operands,
                                 absl::Span<const ReplicaGroup> replica_groups,
