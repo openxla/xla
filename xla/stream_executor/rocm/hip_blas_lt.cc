@@ -484,6 +484,11 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
                  HIP_R_8F_E5M2)
     TYPED_MATMUL(float, HIP_R_8F_E4M3, HIP_R_8F_E5M2, HIP_R_8F_E4M3,
                  HIP_R_8F_E4M3)
+    TYPED_MATMUL(float, HIP_R_8F_E5M2_FNUZ, HIP_R_8F_E4M3_FNUZ,
+                 HIP_R_8F_E4M3_FNUZ, HIP_R_8F_E4M3_FNUZ)
+
+    TYPED_MATMUL(float, HIP_R_8F_E4M3_FNUZ, HIP_R_8F_E5M2_FNUZ,
+                 HIP_R_8F_E4M3_FNUZ, HIP_R_8F_E4M3_FNUZ)
 
     TYPED_MATMUL(float, HIP_R_8F_E5M2, HIP_R_8F_E4M3, HIP_R_16BF, HIP_R_16BF)
     TYPED_MATMUL(float, HIP_R_8F_E5M2, HIP_R_8F_E4M3, HIP_R_16BF, HIP_R_8F_E4M3)
