@@ -247,6 +247,39 @@ INSTANTIATE_TEST_SUITE_P(
             Values(Sizes{32, 32}, Sizes{16, 2})),
     TestParamsToString);
 
+INSTANTIATE_TEST_SUITE_P(
+    F8E4M3FNUZTests, DotAlgorithmSupportTest,
+    Combine(Values(PC::ALG_DOT_ANY_F8_ANY_F8_F32,
+                   PC::ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM),
+            Values(F8E4M3FNUZ), Values(F8E4M3FNUZ),
+            Values(F8E4M3FNUZ, F16, BF16, F32), Values(CC(8, 9)),
+            Values(SemanticVersion{6, 3, 0}),
+            Values(BackendRestriction::kNoRestriction),
+            Values(Sizes{32, 32}, Sizes{16, 2})),
+    TestParamsToString);
+
+INSTANTIATE_TEST_SUITE_P(
+    F8E5M2FNUZTests, DotAlgorithmSupportTest,
+    Combine(Values(PC::ALG_DOT_ANY_F8_ANY_F8_F32,
+                   PC::ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM),
+            Values(F8E5M2FNUZ), Values(F8E4M3FNUZ),
+            Values(F8E5M2FNUZ, F16, BF16, F32), Values(CC(8, 9)),
+            Values(SemanticVersion{6, 3, 0}),
+            Values(BackendRestriction::kNoRestriction),
+            Values(Sizes{32, 32}, Sizes{16, 2})),
+    TestParamsToString);
+
+INSTANTIATE_TEST_SUITE_P(
+    F8E4M3FNUZ_E5M2FNUZTests, DotAlgorithmSupportTest,
+    Combine(Values(PC::ALG_DOT_ANY_F8_ANY_F8_F32,
+                   PC::ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM),
+            Values(F8E4M3FNUZ), Values(F8E5M2FNUZ),
+            Values(F8E5M2FNUZ, F16, BF16, F32), Values(CC(8, 9)),
+            Values(SemanticVersion{6, 3, 0}),
+            Values(BackendRestriction::kNoRestriction),
+            Values(Sizes{32, 32}, Sizes{16, 2})),
+    TestParamsToString);
+
 INSTANTIATE_TEST_SUITE_P(DotF16F16F32Tests, DotAlgorithmSupportTest,
                          Combine(Values(PC::ALG_DOT_F16_F16_F32), Values(F16),
                                  Values(F16), Values(F16, F32),
