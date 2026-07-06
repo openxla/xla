@@ -261,12 +261,13 @@ bool IsSupportedDotAlgorithmOnGpu(
         return true;
       }
       // FNUZ types support (ROCm only)
-      if (is_rocm_mi100_and_above) {
+      if (gpu_compute_capability.rocm_compute_capability()->gfx9_mi300()) {
         if (lhs_storage_type == F8E5M2FNUZ && rhs_storage_type == F8E4M3FNUZ) {
           return true;
         }
         if (lhs_storage_type == F8E4M3FNUZ &&
-            (rhs_storage_type == F8E5M2FNUZ || rhs_storage_type == F8E4M3FNUZ)) {
+            (rhs_storage_type == F8E5M2FNUZ ||
+             rhs_storage_type == F8E4M3FNUZ)) {
           return true;
         }
       }
