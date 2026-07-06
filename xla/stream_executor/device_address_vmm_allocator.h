@@ -691,19 +691,9 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       RecordState record_state, OverlapKind overlap_kind) const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
-  // Resolves an active allocator address to its allocation record.
+  // Resolves an active allocator address and validates that `size` fits in its
+  // physical allocation.
   absl::StatusOr<AllocationRecord*> ResolveMapSourceRecord(
-      PerDeviceState& state, DeviceAddressBase source_address) const
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  // Validates that `size` fits in the source record's physical allocation.
-  absl::Status ValidateMapSourceSize(PerDeviceState& state,
-                                     const AllocationRecord& source_record,
-                                     uint64_t size) const
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  // Resolves and validates the Map() source before target preparation starts.
-  absl::StatusOr<AllocationRecord*> ResolveAndValidateMapSource(
       PerDeviceState& state, DeviceAddressBase source_address,
       uint64_t size) const ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
