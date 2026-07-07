@@ -475,12 +475,11 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     absl::flat_hash_map<void*, std::unique_ptr<AllocationRecord>>
         records_by_allocator_address ABSL_GUARDED_BY(mu);
 
-    // Active/stale reservation-address indexes. Keys are reservation alias
-    // pointers (`AllocationRecord::reservation_address().opaque()`) created by
-    // Map() or by Allocate(..., return_reservation_address=false).
-    absl::flat_hash_map<void*, AllocationRecord*> active_reservation_records
-        ABSL_GUARDED_BY(mu);
-    absl::flat_hash_map<void*, AllocationRecord*> stale_reservation_records
+    // Reservation-address index. Keys are reservation alias pointers
+    // (`AllocationRecord::reservation_address().opaque()`) created by Map() or
+    // by Allocate(..., return_reservation_address=false). Active/stale state is
+    // stored in the record.
+    absl::flat_hash_map<void*, AllocationRecord*> reservation_records
         ABSL_GUARDED_BY(mu);
   };
 
@@ -670,14 +669,6 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
   void MoveAllocatorRecordToActive(PerDeviceState& state,
                                    AllocationRecord& record, uint64_t new_size)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  void MoveReservationRecordToStale(PerDeviceState& state,
-                                    AllocationRecord& record, uint64_t seqno)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  void MoveReservationRecordToActive(PerDeviceState& state,
-                                     AllocationRecord& record)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   void CompleteStaleReservationMapping(PerDeviceState& state,
