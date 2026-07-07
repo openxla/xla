@@ -1118,43 +1118,26 @@ DeviceAddressVmmAllocator::FindOverlappingRecord(
 
 absl::StatusOr<DeviceAddressVmmAllocator::AllocationRecord*>
 DeviceAddressVmmAllocator::ResolveMapSourceRecord(
-    PerDeviceState& state, DeviceAddressBase source_address) const {
+    PerDeviceState& state, DeviceAddressBase source_address,
+    uint64_t size) const {
   auto allocation_it =
       state.records_by_allocator_address.find(source_address.opaque());
   if (allocation_it == state.records_by_allocator_address.end() ||
       !allocation_it->second->allocator_active() ||
       !allocation_it->second->allocator_matches(source_address)) {
     return absl::NotFoundError(absl::StrFormat(
-        "addr %p is not an active allocator address, when trying to "
-        "do map of VA reservation to existing physical allocation, we "
-        "requires the buffer being mapped to is being allocated through "
-        "DeviceAddressVmmAllocator, check the allocator type for the "
-        "buffer.",
+        "addr %p is not an active allocator address; Map() sources must be "
+        "allocated by this DeviceAddressVmmAllocator",
         source_address.opaque()));
   }
-  return allocation_it->second.get();
-}
-
-absl::Status DeviceAddressVmmAllocator::ValidateMapSourceSize(
-    PerDeviceState&, const AllocationRecord& source_record,
-    uint64_t size) const {
-  MemoryAllocation* raw_allocation = source_record.raw_allocation();
+  AllocationRecord* source_record = allocation_it->second.get();
+  MemoryAllocation* raw_allocation = source_record->raw_allocation();
   if (size > raw_allocation->address().size()) {
     return absl::InvalidArgumentError(absl::StrFormat(
         "mapping size must not exceed physical allocation size: "
         "mapping_size=%uB, allocation_size=%uB",
         size, raw_allocation->address().size()));
   }
-  return absl::OkStatus();
-}
-
-absl::StatusOr<DeviceAddressVmmAllocator::AllocationRecord*>
-DeviceAddressVmmAllocator::ResolveAndValidateMapSource(
-    PerDeviceState& state, DeviceAddressBase source_address,
-    uint64_t size) const {
-  ASSIGN_OR_RETURN(AllocationRecord * source_record,
-                   ResolveMapSourceRecord(state, source_address));
-  RETURN_IF_ERROR(ValidateMapSourceSize(state, *source_record, size));
   return source_record;
 }
 
@@ -1252,29 +1235,17 @@ DeviceAddressVmmAllocator::PrepareMapTarget(PerDeviceState& state,
   // occupant. Without concurrent changes, at most two waits are needed before
   // a third attempt can install or reuse the requested mapping.
   constexpr int kMaxStaleMappingWaits = 2;
-  bool first_attempt = true;
   for (int wait_count = 0;; ++wait_count) {
     std::optional<PendingDeallocationKey> pending_completion_key;
     {
       // Keep record pointers inside this scope so none survives a wait that
       // releases state.mu.
       AllocationRecord* source_record;
-      if (first_attempt) {
-        ASSIGN_OR_RETURN(source_record,
-                         ResolveAndValidateMapSource(
-                             state, request.source_address, request.size));
-        RETURN_IF_ERROR(CheckNoPartialReservationOverlap(
-            state, request.reservation_address));
-      } else {
-        // Preserve Map()'s post-wait validation order: re-resolve the source,
-        // recheck target overlaps, then revalidate its current allocation size.
-        ASSIGN_OR_RETURN(source_record,
-                         ResolveMapSourceRecord(state, request.source_address));
-        RETURN_IF_ERROR(CheckNoPartialReservationOverlap(
-            state, request.reservation_address));
-        RETURN_IF_ERROR(
-            ValidateMapSourceSize(state, *source_record, request.size));
-      }
+      ASSIGN_OR_RETURN(
+          source_record,
+          ResolveMapSourceRecord(state, request.source_address, request.size));
+      RETURN_IF_ERROR(
+          CheckNoPartialReservationOverlap(state, request.reservation_address));
 
       ASSIGN_OR_RETURN(MapTargetEvaluation evaluation,
                        EvaluateMapTarget(state, request, *source_record));
@@ -1309,7 +1280,6 @@ DeviceAddressVmmAllocator::PrepareMapTarget(PerDeviceState& state,
       RETURN_IF_ERROR(WaitAndCompleteStaleAllocatorDeallocation(
           state, *pending_completion_key));
     }
-    first_attempt = false;
   }
 }
 
