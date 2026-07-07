@@ -195,24 +195,11 @@ absl::Status DeviceAddressVmmAllocator::PopulateDevices(
     absl::Span<const DeviceConfig> devices) {
   absl::flat_hash_set<int> seen_ordinals;
   for (const DeviceConfig& cfg : devices) {
-    if (cfg.executor == nullptr) {
-      return absl::InvalidArgumentError(
-          "DeviceAddressVmmAllocator requires a non-null executor");
-    }
-    if (cfg.stream == nullptr) {
-      return absl::InvalidArgumentError(
-          "DeviceAddressVmmAllocator requires a non-null stream");
-    }
-    if (cfg.stream->parent() != cfg.executor) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "Stream for device ordinal %d belongs to a different executor",
-          cfg.executor->device_ordinal()));
-    }
+    DCHECK_NE(cfg.executor, nullptr);
+    DCHECK_NE(cfg.stream, nullptr);
+    DCHECK_EQ(cfg.stream->parent(), cfg.executor);
     int ordinal = cfg.executor->device_ordinal();
-    if (!seen_ordinals.insert(ordinal).second) {
-      return absl::AlreadyExistsError(
-          absl::StrFormat("Duplicate device ordinal: %d", ordinal));
-    }
+    DCHECK(seen_ordinals.insert(ordinal).second);
   }
 
   for (const DeviceConfig& cfg : devices) {

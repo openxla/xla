@@ -31,7 +31,8 @@ limitations under the License.
 #include "xla/stream_executor/mock_platform.h"
 #include "xla/stream_executor/mock_stream.h"
 #include "xla/stream_executor/mock_stream_executor.h"
-#include "xla/tsl/platform/statusor.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/stream_executor.h"
 
 namespace stream_executor {
 namespace {
@@ -105,10 +106,9 @@ class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
  public:
   static absl::StatusOr<std::unique_ptr<TestDeviceAddressVmmAllocator>> Create(
       const Platform* platform, absl::Span<const DeviceConfig> devices,
-      int* initialize_count = nullptr, uint64_t physical_size_padding = 0) {
+      uint64_t physical_size_padding = 0) {
     auto allocator = std::unique_ptr<TestDeviceAddressVmmAllocator>(
-        new TestDeviceAddressVmmAllocator(platform, initialize_count,
-                                          physical_size_padding));
+        new TestDeviceAddressVmmAllocator(platform, physical_size_padding));
     absl::Status status = PopulateDevices(allocator.get(), devices);
     if (!status.ok()) {
       return status;
@@ -120,9 +120,6 @@ class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
 
  protected:
   absl::Status InitializeDeviceState(PerDeviceState& state) override {
-    if (initialize_count_ != nullptr) {
-      ++*initialize_count_;
-    }
     state.allocation_granularity = kGranularity;
     auto* timeline = new uint64_t(0);
     state.pinned_timeline = timeline;
@@ -150,13 +147,11 @@ class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
   }
 
  private:
-  TestDeviceAddressVmmAllocator(const Platform* platform, int* initialize_count,
+  TestDeviceAddressVmmAllocator(const Platform* platform,
                                 uint64_t physical_size_padding)
       : DeviceAddressVmmAllocator(platform),
-        initialize_count_(initialize_count),
         physical_size_padding_(physical_size_padding) {}
 
-  int* initialize_count_;
   uint64_t physical_size_padding_;
   int allocation_count_ = 0;
 };
@@ -270,7 +265,7 @@ TEST_F(DeviceAddressVmmAllocatorTest,
       Config(2 * kGranularity);
   ASSERT_OK_AND_ASSIGN(auto allocator,
                        TestDeviceAddressVmmAllocator::Create(
-                           &platform_, {config}, /*initialize_count=*/nullptr,
+                           &platform_, {config},
                            /*physical_size_padding=*/kGranularity));
 
   ASSERT_OK_AND_ASSIGN(
@@ -301,44 +296,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
       allocator->Allocate(/*device_ordinal=*/0, kGranularity,
                           /*retry_on_failure=*/false, /*memory_space=*/0));
   EXPECT_EQ(allocator->allocation_count(), 2);
-}
-
-TEST_F(DeviceAddressVmmAllocatorTest,
-       PopulateDevicesRejectsInvalidConfigsBeforeInitialization) {
-  int initialize_count = 0;
-
-  DeviceAddressVmmAllocator::DeviceConfig null_executor{nullptr, &stream_,
-                                                        kGranularity};
-  EXPECT_THAT(TestDeviceAddressVmmAllocator::Create(&platform_, {null_executor},
-                                                    &initialize_count),
-              StatusIs(absl::StatusCode::kInvalidArgument));
-
-  DeviceAddressVmmAllocator::DeviceConfig null_stream{&executor_, nullptr,
-                                                      kGranularity};
-  EXPECT_THAT(TestDeviceAddressVmmAllocator::Create(&platform_, {null_stream},
-                                                    &initialize_count),
-              StatusIs(absl::StatusCode::kInvalidArgument));
-
-  MockStreamExecutor other_executor;
-  ON_CALL(stream_, parent()).WillByDefault(Return(&other_executor));
-  DeviceAddressVmmAllocator::DeviceConfig mismatched_stream{
-      &executor_, &stream_, kGranularity};
-  EXPECT_THAT(TestDeviceAddressVmmAllocator::Create(
-                  &platform_, {mismatched_stream}, &initialize_count),
-              StatusIs(absl::StatusCode::kInvalidArgument));
-
-  EXPECT_EQ(initialize_count, 0);
-}
-
-TEST_F(DeviceAddressVmmAllocatorTest,
-       PopulateDevicesRejectsDuplicateOrdinalsBeforeInitialization) {
-  int initialize_count = 0;
-  const DeviceAddressVmmAllocator::DeviceConfig config = Config(kGranularity);
-
-  EXPECT_THAT(TestDeviceAddressVmmAllocator::Create(
-                  &platform_, {config, config}, &initialize_count),
-              StatusIs(absl::StatusCode::kAlreadyExists));
-  EXPECT_EQ(initialize_count, 0);
 }
 
 }  // namespace
