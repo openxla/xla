@@ -227,7 +227,7 @@ absl::Status LaunchDeviceKernel(
     int64_t input_buffer_offset_bytes, int64_t output_buffer_offset_bytes) {
   using KernelTrait = se::gpu::RaggedAllToAllDeviceKernel<kVectorSize>;
 
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       auto kernel,
       se::gpu::GpuKernelRegistry::GetGlobalRegistry().LoadKernel<KernelTrait>(
           executor));
