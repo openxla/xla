@@ -6,19 +6,25 @@ label list for hermetic overlays).
 
 To update to a new commit:
   1. Change _MORI_COMMIT to the new full SHA.
-  2. Clear _MORI_SHA256 (set to "").
-  3. Run any bazel build that touches @roc_mori — Bazel will print the
-     actual sha256 in the error output; paste it back here.
+  2. Run any bazel build that touches @roc_mori — Bazel will print the
+     actual sha256 in the error output; paste it back here. (A stale or
+     empty _MORI_SHA256 both cause Bazel to report the correct hash.)
 """
 
 load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 
-# Branch: pemeliya/multi_threading_support
-_MORI_COMMIT = "db99d38d73f46f3123f2691887d3338c72d607af"
-_MORI_SHA256 = ""
+# Vendored from mori:main on 7-July-2026
+_MORI_COMMIT = "a0c52deed69e76b58c11def63c4299305a6303b4"
+_MORI_SHA256 = "436b644927957b9de0f34e606b6da426d13b349a6f7665954dbc72ed6e3deea0"
 
 def xla_repo():
     """Registers @roc_mori, fetched from GitHub and overlaid with our BUILD files."""
+    if not _MORI_SHA256:
+        fail(
+            "_MORI_SHA256 is empty in third_party/roc_mori/workspace.bzl. " +
+            "Run a build to have Bazel print the actual sha256 for commit " +
+            "{}, then paste it into _MORI_SHA256.".format(_MORI_COMMIT),
+        )
     tf_http_archive(
         name = "roc_mori",
         sha256 = _MORI_SHA256,
