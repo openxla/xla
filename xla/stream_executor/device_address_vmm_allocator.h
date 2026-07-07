@@ -645,6 +645,10 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     bool is_active = false;
   };
 
+  enum class AddressRole { kAllocator, kReservation, kBoth };
+  enum class RecordState { kActive, kStale, kBoth };
+  enum class OverlapKind { kExact, kPartial };
+
   // Immutable inputs shared by the Map() preparation and installation
   // helpers.
   struct MapRequest {
@@ -677,12 +681,9 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   };
 
   // Finds a tracked allocator or reservation range that overlaps `address`.
-  // `exact_only` returns only identical ranges; `partial_only` returns only
-  // non-identical overlapping ranges; both false returns any overlap.
   std::optional<OverlappingRecord> FindOverlappingRecord(
-      PerDeviceState& state, DeviceAddressBase address, bool include_allocator,
-      bool include_reservation, bool include_active, bool include_stale,
-      bool exact_only, bool partial_only) const
+      PerDeviceState& state, DeviceAddressBase address, AddressRole role,
+      RecordState record_state, OverlapKind overlap_kind) const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Resolves an active allocator address to its allocation record.

@@ -575,10 +575,8 @@ DeviceAddressVmmAllocator::EnsureReservationAvailableForFreshMapping(
     // stale record, then rescan because another thread may have changed the
     // allocator state while the lock was released.
     auto stale_overlap = FindOverlappingRecord(
-        state, request.reservation_address, /*include_allocator=*/true,
-        /*include_reservation=*/true, /*include_active=*/false,
-        /*include_stale=*/true, /*exact_only=*/true,
-        /*partial_only=*/false);
+        state, request.reservation_address, AddressRole::kBoth,
+        RecordState::kStale, OverlapKind::kExact);
     if (!stale_overlap.has_value()) {
       break;
     }
@@ -590,10 +588,8 @@ DeviceAddressVmmAllocator::EnsureReservationAvailableForFreshMapping(
   // reported as a duplicate mapping attempt instead of remapped underneath
   // existing users.
   if (FindOverlappingRecord(state, request.reservation_address,
-                            /*include_allocator=*/true,
-                            /*include_reservation=*/true,
-                            /*include_active=*/true, /*include_stale=*/false,
-                            /*exact_only=*/false, /*partial_only=*/false)
+                            AddressRole::kBoth, RecordState::kActive,
+                            OverlapKind::kExact)
           .has_value()) {
     return absl::AlreadyExistsError(absl::StrFormat(
         "reservation range is already tracked at virtual address %p",
@@ -1050,22 +1046,23 @@ DeviceAddressVmmAllocator::ValidateReservationRange(
 
 std::optional<DeviceAddressVmmAllocator::OverlappingRecord>
 DeviceAddressVmmAllocator::FindOverlappingRecord(
-    PerDeviceState& state, DeviceAddressBase address, bool include_allocator,
-    bool include_reservation, bool include_active, bool include_stale,
-    bool exact_only, bool partial_only) const {
-  CHECK(!(exact_only && partial_only));
+    PerDeviceState& state, DeviceAddressBase address, AddressRole role,
+    RecordState record_state, OverlapKind overlap_kind) const {
+  const bool include_allocator = role != AddressRole::kReservation;
+  const bool include_reservation = role != AddressRole::kAllocator;
+  const bool include_active = record_state != RecordState::kStale;
+  const bool include_stale = record_state != RecordState::kActive;
 
   auto matches = [&](DeviceAddressBase tracked_address) {
-    if (exact_only) {
-      return tracked_address.IsSameAs(address);
+    switch (overlap_kind) {
+      case OverlapKind::kExact:
+        return tracked_address.IsSameAs(address);
+      case OverlapKind::kPartial:
+        // Partial overlap means the ranges intersect but are not the same full
+        // ownership range.
+        return AddressRangesOverlap(tracked_address, address) &&
+               !tracked_address.IsSameAs(address);
     }
-    if (partial_only) {
-      // Partial overlap means the ranges intersect but are not the same full
-      // ownership range.
-      return AddressRangesOverlap(tracked_address, address) &&
-             !tracked_address.IsSameAs(address);
-    }
-    return AddressRangesOverlap(tracked_address, address);
   };
 
   auto check_record = [&](AllocationRecord* record,
@@ -1163,11 +1160,9 @@ DeviceAddressVmmAllocator::ResolveAndValidateMapSource(
 
 absl::Status DeviceAddressVmmAllocator::CheckNoPartialReservationOverlap(
     PerDeviceState& state, DeviceAddressBase reservation_address) const {
-  if (auto overlap = FindOverlappingRecord(
-          state, reservation_address, /*include_allocator=*/true,
-          /*include_reservation=*/true, /*include_active=*/true,
-          /*include_stale=*/true, /*exact_only=*/false,
-          /*partial_only=*/true)) {
+  if (auto overlap =
+          FindOverlappingRecord(state, reservation_address, AddressRole::kBoth,
+                                RecordState::kBoth, OverlapKind::kPartial)) {
     return absl::FailedPreconditionError(absl::StrFormat(
         "reservation range at %p (%uB) partially overlaps %s %s range at %p "
         "(%uB); reservation mappings must be managed with the same full "
@@ -1195,12 +1190,8 @@ DeviceAddressVmmAllocator::EvaluateMapTarget(
   // Reject an active destination before waiting for a stale source alias. A
   // failed Map() must not drain unrelated pending state.
   if (FindOverlappingRecord(state, request.reservation_address,
-                            /*include_allocator=*/true,
-                            /*include_reservation=*/true,
-                            /*include_active=*/true,
-                            /*include_stale=*/false,
-                            /*exact_only=*/false,
-                            /*partial_only=*/false)
+                            AddressRole::kBoth, RecordState::kActive,
+                            OverlapKind::kExact)
           .has_value()) {
     return absl::AlreadyExistsError(absl::StrFormat(
         "reservation range is already tracked at virtual address %p",
@@ -1219,10 +1210,8 @@ DeviceAddressVmmAllocator::EvaluateMapTarget(
   }
 
   auto stale_reservation_overlap = FindOverlappingRecord(
-      state, request.reservation_address, /*include_allocator=*/false,
-      /*include_reservation=*/true, /*include_active=*/false,
-      /*include_stale=*/true, /*exact_only=*/true,
-      /*partial_only=*/false);
+      state, request.reservation_address, AddressRole::kReservation,
+      RecordState::kStale, OverlapKind::kExact);
   if (stale_reservation_overlap.has_value()) {
     AllocationRecord& stale_record = *stale_reservation_overlap->record;
 
@@ -1242,10 +1231,8 @@ DeviceAddressVmmAllocator::EvaluateMapTarget(
   }
 
   auto stale_allocator_overlap = FindOverlappingRecord(
-      state, request.reservation_address, /*include_allocator=*/true,
-      /*include_reservation=*/false, /*include_active=*/false,
-      /*include_stale=*/true, /*exact_only=*/true,
-      /*partial_only=*/false);
+      state, request.reservation_address, AddressRole::kAllocator,
+      RecordState::kStale, OverlapKind::kExact);
   if (stale_allocator_overlap.has_value()) {
     AllocationRecord& stale_record = *stale_allocator_overlap->record;
     return MapTargetEvaluation{
@@ -1255,19 +1242,6 @@ DeviceAddressVmmAllocator::EvaluateMapTarget(
                                stale_record.allocator_address()}};
   }
 
-  // A fresh Map() must have exclusive ownership of the reservation address.
-  if (FindOverlappingRecord(state, request.reservation_address,
-                            /*include_allocator=*/true,
-                            /*include_reservation=*/true,
-                            /*include_active=*/true,
-                            /*include_stale=*/true,
-                            /*exact_only=*/false,
-                            /*partial_only=*/false)
-          .has_value()) {
-    return absl::AlreadyExistsError(absl::StrFormat(
-        "reservation range is already tracked at virtual address %p",
-        request.reservation_address.opaque()));
-  }
   return MapTargetEvaluation{MapTargetEvaluation::Action::kInstallFresh};
 }
 
