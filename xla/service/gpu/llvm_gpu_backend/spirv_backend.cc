@@ -191,8 +191,7 @@ absl::StatusOr<std::string> CompileToSPIRV(
       for (auto& old_arg : old_func->args()) {
         llvm::Type* old_arg_type = old_arg.getType();
         auto ptr_type = llvm::dyn_cast<llvm::PointerType>(old_arg_type);
-        if (ptr_type != nullptr &&
-            ptr_type->getAddressSpace() == kSpirvLlvmDefaultAddressSpace) {
+        if (ptr_type && ptr_type->getAddressSpace() == kSpirvLlvmDefaultAddressSpace) {
           auto new_arg_type =
               llvm::PointerType::get(context,
                                      kSpirvLlvmCrossWorkgroupAddressSpace);
@@ -229,7 +228,7 @@ absl::StatusOr<std::string> CompileToSPIRV(
         llvm::Value* replacement = &*new_arg_it;
         if (auto old_ptr_type =
                 llvm::dyn_cast<llvm::PointerType>(old_arg_it->getType());
-            old_ptr_type != nullptr &&
+            old_ptr_type &&
             old_ptr_type->getAddressSpace() == kSpirvLlvmDefaultAddressSpace) {
           replacement = builder.CreateAddrSpaceCast(new_arg_it, old_ptr_type);
         }
