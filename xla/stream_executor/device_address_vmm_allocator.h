@@ -691,11 +691,6 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
                                   const MapRequest& request)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
-  // Installs and records a fresh reservation-address alias.
-  absl::Status InstallMapAlias(PerDeviceState& state, const MapRequest& request,
-                               AllocationRecord& source_record)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
   // UnMap/deferred teardown helpers.
 
   // Removes a pending entry when a stale record is reused.

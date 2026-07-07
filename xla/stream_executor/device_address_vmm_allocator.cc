@@ -1189,7 +1189,24 @@ absl::Status DeviceAddressVmmAllocator::ResolveAndMapAlias(
       }
 
       if (!pending_completion_key.has_value()) {
-        return InstallMapAlias(state, request, *source_record);
+        // Map() aliases the beginning of the source allocation into the
+        // caller's VA slice. No physical allocation or PA accounting is added.
+        ASSIGN_OR_RETURN(
+            auto mapping,
+            request.reservation->MapTo(request.reservation_offset,
+                                       /*allocation_offset=*/0, request.size,
+                                       *source_record->raw_allocation()));
+        DeviceAddressBase mapped = mapping.mapped_address();
+        DCHECK(mapped.IsSameAs(request.reservation_address))
+            << "Map() mapped unexpected virtual address: expected="
+            << request.reservation_address.opaque()
+            << ", actual=" << mapped.opaque();
+
+        source_record->AddActiveReservationAlias(mapped, std::move(mapping));
+        auto mapping_insert_result = state.active_reservation_records.emplace(
+            mapped.opaque(), source_record);
+        CHECK(mapping_insert_result.second);
+        return absl::OkStatus();
       }
       if (wait_count == kMaxStaleMappingWaits) {
         return absl::AbortedError(
@@ -1202,27 +1219,6 @@ absl::Status DeviceAddressVmmAllocator::ResolveAndMapAlias(
     RETURN_IF_ERROR(
         WaitAndCompletePendingDeallocation(state, *pending_completion_key));
   }
-}
-
-absl::Status DeviceAddressVmmAllocator::InstallMapAlias(
-    PerDeviceState& state, const MapRequest& request,
-    AllocationRecord& source_record) {
-  // Map() aliases the beginning of the source allocation into the caller's VA
-  // slice. No physical allocation or PA accounting is added.
-  ASSIGN_OR_RETURN(auto mapping, request.reservation->MapTo(
-                                     request.reservation_offset,
-                                     /*allocation_offset=*/0, request.size,
-                                     *source_record.raw_allocation()));
-  DeviceAddressBase mapped = mapping.mapped_address();
-  DCHECK(mapped.IsSameAs(request.reservation_address))
-      << "Map() mapped unexpected virtual address: expected="
-      << request.reservation_address.opaque() << ", actual=" << mapped.opaque();
-
-  source_record.AddActiveReservationAlias(mapped, std::move(mapping));
-  auto mapping_insert_result =
-      state.active_reservation_records.emplace(mapped.opaque(), &source_record);
-  CHECK(mapping_insert_result.second);
-  return absl::OkStatus();
 }
 
 absl::Status DeviceAddressVmmAllocator::Map(int device_ordinal,
