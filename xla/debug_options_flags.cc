@@ -108,7 +108,8 @@ absl::StatusOr<std::vector<RepeatedFlagModifier>> ParseRepeatedEnumModifiers(
 namespace {
 
 template <typename T>
-static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list, T value) {
+static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list,
+                                   T value) {
   for (auto it = list->begin(); it != list->end(); ++it) {
     if (*it == value) {
       return it;
@@ -3064,6 +3065,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_unsupported_use_all_reduce_one_shot_kernel(),
       "Internal: Enable the one-shot kernel for single-host all-reduce "
       "operations."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_unsupported_use_all_gather_triton_backend",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_unsupported_use_all_gather_triton_backend),
+      debug_options->xla_gpu_unsupported_use_all_gather_triton_backend(),
+      "Internal: Enable Triton collective kernel backend for single-host "
+      "all-gather operations."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel",
       bool_setter_for(
