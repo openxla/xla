@@ -199,7 +199,6 @@ class FissionTest : public HloHardwareIndependentTestBase,
   std::unique_ptr<Compiler> compiler_;
   Compiler::GpuTargetConfig target_config_;
   se::DeviceDescription device_description_;
-  std::unique_ptr<HloPassPipeline> rewriter_pipeline_;
   std::unique_ptr<GpuCodegenBackend> base_codegen_backend_;
   GpuAliasInfo alias_info_;
   std::unique_ptr<FissionBackend> fission_backend_;
@@ -211,14 +210,17 @@ class FissionTest : public HloHardwareIndependentTestBase,
         compiler_(Compiler::GetForPlatform(platform_->id()).value()),
         target_config_(stream_executor_),
         device_description_(stream_executor_->GetDeviceDescription()),
-        rewriter_pipeline_(GetParam().pipeline_factory(device_description_)),
         base_codegen_backend_(
             GetParam().backend_factory(stream_executor_, &debug_options_,
                                        compiler_.get(), &target_config_)),
         alias_info_(device_description_),
         fission_backend_(std::make_unique<FissionBackend>(
             &debug_options_, compiler_.get(), &target_config_,
-            std::move(base_codegen_backend_), std::move(rewriter_pipeline_),
+            std::move(base_codegen_backend_),
+            [pipeline_factory = GetParam().pipeline_factory,
+             device_description = device_description_] {
+              return pipeline_factory(device_description);
+            },
             &alias_info_, &mlir_context_, stream_executor_)) {}
 };
 
@@ -383,8 +385,10 @@ class CublasFissionBackendTest : public HloHardwareIndependentTestBase {
             &debug_options_, compiler_.get(), &target_config_,
             CreateCublasLtBackend(stream_executor_, &debug_options_,
                                   compiler_.get(), &target_config_),
-            GetCublasRewriterPipeline(device_description_), &alias_info_,
-            &mlir_context_, stream_executor_)) {}
+            [device_description = device_description_] {
+              return GetCublasRewriterPipeline(device_description);
+            },
+            &alias_info_, &mlir_context_, stream_executor_)) {}
 };
 
 TEST_F(CublasFissionBackendTest, ApplyConfigReplacesFusionWithControlDeps) {
