@@ -6,13 +6,6 @@
 # JIT-compiled from ccl_kernels.hip at runtime, so this target carries no
 # device code (CMake links only hip::host, no -x hip / --hip-link).
 #
-# Scope: only the host-only core library is built here. CMake also defines a
-# separate mori_collective_internode OBJECT lib (core/topology_detector.cpp,
-# core/allreduce_manager.cpp, inter_node/executors/*.cpp) gated on WITH_MPI=ON.
-# The bazel build fixes WITH_MPI=OFF (see BUILD.src_application's mpi_bootstrap
-# exclusion), so that lib — and core/collective.cpp, which CMake does not
-# compile — is intentionally omitted. Add it here if MPI is ever bazelified.
-#
 # Sources are listed explicitly (not globbed) because core/ also holds files
 # that belong to the internode lib or are unused, and must NOT be picked up.
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
@@ -30,18 +23,15 @@ cc_library(
     copts = [
         # @local_config_rocm's rocm_headers_includes target propagates
         # -D__HIP_DISABLE_CPP_FUNCTIONS__=1 to every consumer, which hides the
-        # templated hipMalloc(T**, size_t) overload these TUs rely on (same
-        # reason as BUILD.src_application / BUILD.src_shmem). Re-enable it.
+        # templated hipMalloc(T**, size_t) overload these TUs rely on.
         "-U__HIP_DISABLE_CPP_FUNCTIONS__",
         # These host TUs #include "mori/shmem/shmem.hpp", whose __device__
-        # globalGpuStates static-init block (guarded at shmem.hpp:62) must be
-        # suppressed in host-only compilation. CMake sets this define too.
+        # globalGpuStates static-init block must be suppressed in host-only 
+        # compilation.
         "-DMORI_SHMEM_NO_STATIC_INIT",
     ],
     linkopts = [
-        # Mirror CMake's dl link (pulled in transitively via mori_application,
-        # but harmless to state explicitly).
-        "-ldl",
+s        "-ldl",
     ],
     alwayslink = True,
     deps = [
@@ -57,7 +47,6 @@ cc_library(
         "@local_config_rocm//rocm:rocm_headers",
         # infiniband/verbs.h transitively via shmem headers.
         "@roc_mori//:ibverbs",
-        # mori_logging interface lib in CMake is spdlog::spdlog_header_only.
         "@spdlog//:spdlog",
     ],
 )

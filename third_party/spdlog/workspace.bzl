@@ -17,6 +17,5 @@ def repo():
         patch_file = [
             "//third_party/spdlog:smoke_test.cc.patch",
             "//third_party/spdlog:clang18_lambda_return_type_os_inl.patch",
-            "//third_party/spdlog:clang18_lambda_return_type_bundled_fmt.patch",
         ],
     )

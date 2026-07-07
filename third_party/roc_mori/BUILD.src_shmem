@@ -23,19 +23,11 @@ cc_library(
     copts = [
         # @local_config_rocm's rocm_headers_includes target propagates
         # -D__HIP_DISABLE_CPP_FUNCTIONS__=1 to every consumer, which suppresses
-        # the templated hipMalloc(T**, size_t) wrapper. MORI's host code relies
-        # on that wrapper for implicit T** -> void** conversion (e.g.
-        # init.cpp's hipMalloc(&gpuStates->rdmaEndpoints, ...)). Re-enable the
-        # C++ overloads just for this target.
+        # the templated hipMalloc(T**, size_t) wrapper. 
         "-U__HIP_DISABLE_CPP_FUNCTIONS__",
     ],
     alwayslink = True,
     deps = [
-        # mori_shmem's .cpp files call application::* symbols (BootstrapNetwork,
-        # SymmMemManager, Context, ...). Without this lib dep, downstream link
-        # would fail with undefined references. The mori_application_headers
-        # dep below stays so include-only references (templates, inline funcs)
-        # also resolve at parse time.
         "@roc_mori//src/application:mori_application",
         "@roc_mori//:mori_shmem_headers",
         "@roc_mori//:mori_application_headers",
