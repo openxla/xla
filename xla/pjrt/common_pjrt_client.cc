@@ -1500,6 +1500,11 @@ CommonPjRtLoadedExecutable::LookupDeviceAndAssignment(
   return result;
 }
 
+absl::StatusOr<std::vector<Shape>>
+CommonPjRtLoadedExecutable::GetParameterShapes() const {
+  return parameter_device_shapes_;
+}
+
 absl::Status CommonPjRtLoadedExecutable::ExecutePrepare(
     ExecuteLaunchArgs& launch_args,
     absl::Span<PjRtBuffer* const> argument_handles, xla::RunId run_id,

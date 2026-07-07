@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -58,6 +59,7 @@ limitations under the License.
 #include "xla/runtime/large_hlo_snapshot_serialization/serialization.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/hlo.pb.h"
+#include "xla/service/hlo_module_util.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
@@ -1337,6 +1339,178 @@ TEST_F(FunctionalHloRunnerTest, SingleDeviceHloWithRandomData) {
   TF_EXPECT_OK(FunctionalHloRunner::LoadAndRunAndDump(
       *client, preproc_options, raw_compile_options, running_options,
       {GetHloPath("single_device.hlo")}, InputFormat::kText));
+}
+
+TEST_F(FunctionalHloRunnerTest, SingleDeviceHloAOTWithRandomData) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                          GetPjRtClient());
+
+  // 1. Load the raw HLO module from text file.
+  std::string hlo_path = GetHloPath("single_device.hlo");
+  std::string hlo_string;
+  TF_ASSERT_OK(
+      tsl::ReadFileToString(tsl::Env::Default(), hlo_path, &hlo_string));
+  xla::DebugOptions debug_options;
+  debug_options.set_xla_gpu_experimental_aot_compiled_thunks(true);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          CreateModuleFromString(hlo_string, debug_options));
+
+  // 2. Compile it.
+  FunctionalHloRunner::PreprocessingOptions preproc_options;
+  CompileOptions compile_options;
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> executable,
+      FunctionalHloRunner::Compile(*client, hlo_module.get(), debug_options,
+                                   preproc_options, compile_options));
+
+  // 3. Serialize the compiled executable.
+  TF_ASSERT_OK_AND_ASSIGN(std::string serialized,
+                          executable->SerializeExecutable());
+
+  // 4. Save the serialized binary locally under outputs dir.
+  std::string temp_aot_path = tsl::io::JoinPath(
+      std::getenv("TEST_UNDECLARED_OUTPUTS_DIR"), "single_device.aot");
+  TF_ASSERT_OK(
+      tsl::WriteStringToFile(tsl::Env::Default(), temp_aot_path, serialized));
+
+  // 5. Load and Run the pre-compiled AOT binary using fast random input
+  // generator.
+  FunctionalHloRunner::RunningOptions running_options;
+  running_options.module_argument_mode =
+      FunctionalHloRunner::ModuleArgumentMode::kUseRandomInputs;
+
+  TF_EXPECT_OK(FunctionalHloRunner::LoadAndRun(
+      *client, debug_options, preproc_options, compile_options, running_options,
+      temp_aot_path, InputFormat::kSerializedPjRtExecutable, /*arguments=*/{}));
+}
+
+class MockStrippedExecutable : public PjRtExecutable {
+ public:
+  int num_replicas() const override { return 1; }
+  int num_partitions() const override { return 1; }
+  int64_t SizeOfGeneratedCodeInBytes() const override { return 0; }
+  absl::string_view name() const override { return "mock_stripped_executable"; }
+  absl::StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules()
+      const override {
+    return absl::UnimplementedError(
+        "GetHloModules is unimplemented under stripped C-API.");
+  }
+  absl::StatusOr<std::vector<Shape>> GetParameterShapes() const override {
+    return absl::UnimplementedError(
+        "GetParameterShapes is unimplemented under stripped C-API.");
+  }
+  absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+  GetParameterMemoryKinds() const override {
+    return std::vector<std::vector<absl::string_view>>{{}};
+  }
+  absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+  GetOutputMemoryKinds() const override {
+    return std::vector<std::vector<absl::string_view>>{{}};
+  }
+};
+
+class MockStrippedLoadedExecutable : public PjRtLoadedExecutable {
+ public:
+  explicit MockStrippedLoadedExecutable(
+      std::unique_ptr<PjRtExecutable> exec,
+      absl::Span<PjRtDevice* const> addressable_devices)
+      : exec_(std::move(exec)), addressable_devices_(addressable_devices) {}
+  PjRtExecutable* GetExecutable() const override { return exec_.get(); }
+  absl::StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules()
+      const override {
+    return exec_->GetHloModules();
+  }
+  absl::StatusOr<std::vector<Shape>> GetParameterShapes() const override {
+    return exec_->GetParameterShapes();
+  }
+  PjRtClient* client() const override { return nullptr; }
+  const DeviceAssignment& device_assignment() const override {
+    static DeviceAssignment* dummy = new DeviceAssignment(1, 1);
+    return *dummy;
+  }
+  absl::Span<const LogicalDeviceIds> addressable_device_logical_ids()
+      const override {
+    static std::vector<LogicalDeviceIds>* dummy =
+        new std::vector<LogicalDeviceIds>{{0, 0}};
+    return *dummy;
+  }
+  absl::Span<PjRtDevice* const> addressable_devices() const override {
+    return addressable_devices_;
+  }
+  absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
+      absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
+      const ExecuteOptions& options,
+      std::optional<std::vector<Future<>>>& returned_futures) const override {
+    return absl::UnimplementedError("Execute unimplemented.");
+  }
+  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteSharded(
+      absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
+      const ExecuteOptions& options, std::optional<Future<>>& returned_future,
+      bool fill_future) const override {
+    return absl::UnimplementedError("ExecuteSharded unimplemented.");
+  }
+  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecutePortable(
+      absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
+      const ExecuteOptions& options, std::optional<Future<>>& returned_future,
+      bool fill_future) const override {
+    return absl::UnimplementedError("ExecutePortable unimplemented.");
+  }
+  void Delete() override {}
+  bool IsDeleted() const override { return false; }
+
+ private:
+  std::unique_ptr<PjRtExecutable> exec_;
+  absl::Span<PjRtDevice* const> addressable_devices_;
+};
+
+TEST_F(FunctionalHloRunnerTest, StrippedAOTBinaryThrowsDescriptiveError) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                          GetPjRtClient());
+
+  auto stripped_exec = std::make_unique<MockStrippedLoadedExecutable>(
+      std::make_unique<MockStrippedExecutable>(),
+      client->addressable_devices());
+
+  FunctionalHloRunner::RunningOptions running_options;
+  running_options.module_argument_mode =
+      FunctionalHloRunner::ModuleArgumentMode::kUseRandomInputs;
+
+  auto run_status = FunctionalHloRunner::Run(*client, stripped_exec.get(),
+                                             /*arguments=*/{}, running_options);
+
+  ASSERT_FALSE(run_status.ok());
+  EXPECT_TRUE(absl::IsUnimplemented(run_status.status()));
+  EXPECT_THAT(run_status.status().message(),
+              testing::HasSubstr(
+                  "Cannot auto-generate mock inputs for AOT stripped binary"));
+}
+
+TEST_F(FunctionalHloRunnerTest,
+       StrippedAOTBinaryRunsWithUserProvidedArguments) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                          GetPjRtClient());
+
+  auto stripped_exec = std::make_unique<MockStrippedLoadedExecutable>(
+      std::make_unique<MockStrippedExecutable>(),
+      client->addressable_devices());
+
+  FunctionalHloRunner::RunningOptions running_options;
+  running_options.module_argument_mode =
+      FunctionalHloRunner::ModuleArgumentMode::kUseRandomInputs;
+
+  int device_id = client->addressable_devices().front()->id();
+  FunctionalHloRunner::PerDeviceLiteralVecType custom_args;
+  std::vector<Literal> device_args;
+  device_args.push_back(LiteralUtil::CreateR1<int32_t>({1, 2, 3, 4}));
+  custom_args[device_id] = std::move(device_args);
+
+  auto run_status = FunctionalHloRunner::Run(*client, stripped_exec.get(),
+                                             custom_args, running_options);
+
+  ASSERT_FALSE(run_status.ok());
+  EXPECT_TRUE(absl::IsUnimplemented(run_status.status()));
+  EXPECT_THAT(run_status.status().message(),
+              testing::HasSubstr("Execute unimplemented"));
 }
 
 }  // namespace
