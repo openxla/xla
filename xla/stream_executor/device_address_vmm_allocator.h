@@ -525,26 +525,22 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       MemoryReservation::ScopedMapping mapping, bool multi_device)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
+  enum class MappedAddressMode {
+    kReservationAddress,
+    kSeparateAllocatorAddress,
+  };
+
   struct MappedAllocateRequest {
     MemoryReservation* reservation;
     DeviceAddressBase reservation_address;
-    uint64_t allocation_size;
+    uint64_t size;
     uint64_t reservation_offset;
-    uint64_t mapping_size;
     bool multi_device;
+    MappedAddressMode mode;
   };
 
-  // Reactivates a stale mapped allocation whose returned allocator address is
-  // the requested caller-owned reservation address.
-  absl::StatusOr<std::optional<DeviceAddressBase>>
-  TryReuseMappedAllocationAtReservationAddress(
-      PerDeviceState& state, const MappedAllocateRequest& request)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  // Reactivates a stale mapped allocation with both a separate allocator-owned
-  // returned address and an alias at the requested reservation address.
-  absl::StatusOr<std::optional<DeviceAddressBase>>
-  TryReuseMappedAllocationWithSeparateAddress(
+  // Reactivates a compatible stale mapped allocation.
+  std::optional<DeviceAddressBase> TryReuseMappedAllocation(
       PerDeviceState& state, const MappedAllocateRequest& request)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
