@@ -348,7 +348,7 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
     AllocationRecord(
         Kind kind, DeviceAddressBase allocator_address,
-        std::shared_ptr<MemoryAllocation> raw_allocation,
+        std::unique_ptr<MemoryAllocation> raw_allocation,
         std::unique_ptr<MemoryReservation> allocator_address_reservation,
         MemoryReservation::ScopedMapping allocator_address_mapping,
         bool multi_device);
@@ -417,7 +417,7 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
    private:
     Kind kind_;
     DeviceAddressBase allocator_address_;
-    std::shared_ptr<MemoryAllocation> raw_allocation_;
+    std::unique_ptr<MemoryAllocation> raw_allocation_;
     bool multi_device_;
 
     // Present for Allocate() and
@@ -562,7 +562,7 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   void* TrackAllocatorAddressMappedAllocation(
       PerDeviceState& state, AllocationRecord::Kind kind,
       DeviceAddressBase allocator_address,
-      std::shared_ptr<MemoryAllocation> raw_allocation,
+      std::unique_ptr<MemoryAllocation> raw_allocation,
       std::unique_ptr<MemoryReservation> reservation,
       MemoryReservation::ScopedMapping mapping, uint64_t allocated_size,
       bool multi_device) ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);

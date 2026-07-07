@@ -74,7 +74,7 @@ bool DeviceAddressVmmAllocator::CurrentMultiDevice() {
 
 DeviceAddressVmmAllocator::AllocationRecord::AllocationRecord(
     Kind kind, DeviceAddressBase allocator_address,
-    std::shared_ptr<MemoryAllocation> raw_allocation,
+    std::unique_ptr<MemoryAllocation> raw_allocation,
     std::unique_ptr<MemoryReservation> allocator_address_reservation,
     MemoryReservation::ScopedMapping allocator_address_mapping,
     bool multi_device)
@@ -396,7 +396,7 @@ uint64_t DeviceAddressVmmAllocator::GetAllocationGranularity(
 void* DeviceAddressVmmAllocator::TrackAllocatorAddressMappedAllocation(
     PerDeviceState& state, AllocationRecord::Kind kind,
     DeviceAddressBase allocator_address,
-    std::shared_ptr<MemoryAllocation> raw_allocation,
+    std::unique_ptr<MemoryAllocation> raw_allocation,
     std::unique_ptr<MemoryReservation> reservation,
     MemoryReservation::ScopedMapping mapping, uint64_t allocated_size,
     bool multi_device) {
@@ -598,11 +598,9 @@ DeviceAddressVmmAllocator::CreateMappedAllocationAtReservationAddress(
                                             request.reservation_offset,
                                             /*allocation_offset=*/0,
                                             request.mapping_size, *raw_alloc));
-  auto shared_raw = std::shared_ptr<MemoryAllocation>(std::move(raw_alloc));
-
   TrackAllocatorAddressMappedAllocation(
       state, AllocationRecord::Kind::kAllocateAndMapReturnMapAddr,
-      request.reservation_address, std::move(shared_raw), nullptr,
+      request.reservation_address, std::move(raw_alloc), nullptr,
       std::move(scoped_mapping), rounded_size, request.multi_device);
 
   return request.reservation_address;
@@ -645,14 +643,13 @@ DeviceAddressVmmAllocator::CreateMappedAllocationWithSeparateAddress(
                                  /*allocation_offset=*/0, request.mapping_size,
                                  *raw_alloc));
 
-  auto shared_raw = std::shared_ptr<MemoryAllocation>(std::move(raw_alloc));
   // Record the paired allocation: the allocator-owned returned VA owns the raw
   // allocation, and the caller reservation VA is a non-owning alias.
   void* allocator_va = allocator_address_reservation->address().opaque();
   DeviceAddressBase allocator_address(allocator_va, request.allocation_size);
   auto record = std::make_unique<AllocationRecord>(
       AllocationRecord::Kind::kAllocateAndMapReturnNewAddr, allocator_address,
-      std::move(shared_raw), std::move(allocator_address_reservation),
+      std::move(raw_alloc), std::move(allocator_address_reservation),
       std::move(allocator_address_mapping), request.multi_device);
   record->AddActiveReservationAlias(request.reservation_address,
                                     std::move(reservation_address_mapping));
@@ -856,11 +853,10 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
         reservation->MapTo(/*reservation_offset=*/0, /*allocation_offset=*/0,
                            padded_size, *raw_alloc));
 
-    auto shared_raw = std::shared_ptr<MemoryAllocation>(std::move(raw_alloc));
     DeviceAddressBase allocator_address(reservation->address().opaque(), size);
     void* va_ptr = TrackAllocatorAddressMappedAllocation(
         *state, AllocationRecord::Kind::kAllocate, allocator_address,
-        std::move(shared_raw), std::move(reservation),
+        std::move(raw_alloc), std::move(reservation),
         std::move(scoped_mapping), rounded_size, multi_device);
     // Return the original requested size, not the padded size.
     return absl::StatusOr<DeviceAddressBase>(DeviceAddressBase(va_ptr, size));
