@@ -31,9 +31,8 @@ cc_library(
         "-DMORI_SHMEM_NO_STATIC_INIT",
     ],
     linkopts = [
-s        "-ldl",
+        "-ldl",
     ],
-    alwayslink = True,
     deps = [
         # CMake target_link_libraries: mori_shmem, mori_application,
         # mori_logging (spdlog). The .cpp files call shmem::* and application::*

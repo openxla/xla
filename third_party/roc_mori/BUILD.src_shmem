@@ -26,6 +26,16 @@ cc_library(
         # the templated hipMalloc(T**, size_t) wrapper. 
         "-U__HIP_DISABLE_CPP_FUNCTIONS__",
     ],
+    # Required for static linking. Some MORI shmem archive members participate
+    # through runtime side effects, not only direct symbol references: HIP TUs
+    # that include shmem.hpp register device-side GpuStates providers, and
+    # ShmemInit later uses runtime.cpp's registry in CopyGpuStatesToDevice() to
+    # populate the `globalGpuStates` symbol used by device kernels. If Bazel
+    # links this archive normally, the program can still link while omitting the
+    # relevant shmem runtime objects; the registry then stays empty/stale and the
+    # first kernel that dereferences globalGpuStates fails with GPU illegal
+    # memory access. This mirrors MORI's shared-library CMake build, where all
+    # shmem objects are present in the final DSO.
     alwayslink = True,
     deps = [
         "@roc_mori//src/application:mori_application",

@@ -27,7 +27,6 @@ cc_library(
     linkopts = [
         "-ldl",
     ],
-    alwayslink = True,
     deps = [
         "@roc_mori//:mori_application_headers",
         # symmetric_memory.cpp includes mori/shmem/internal.hpp.
