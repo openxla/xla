@@ -1140,80 +1140,143 @@ TEST_F(InstructionFusionTest, SkipReduceComputationsIfFusionEmitters) {
   EXPECT_FALSE(changed);
 }
 
-namespace {
+bool FusionComputesShiftValueForReduce(const HloInstruction* fusion) {
+  if (fusion->opcode() != HloOpcode::kFusion) {
+    return false;
+  }
+  const HloInstruction* multiply = nullptr;
+  const HloInstruction* reduce = nullptr;
+  for (const HloInstruction* instr : fusion->fused_instructions()) {
+    if (instr->opcode() == HloOpcode::kMultiply) {
+      multiply = instr;
+    }
+    if (instr->opcode() == HloOpcode::kReduce) {
+      reduce = instr;
+    }
+  }
+  return multiply != nullptr && reduce != nullptr &&
+         reduce->operand(0) == multiply;
+}
 
-bool HasSplitSoftmaxSubtractExponentialFusion(const HloModule& module) {
-  for (const HloComputation* computation : module.computations()) {
-    for (const HloInstruction* instruction : computation->instructions()) {
-      if (!instruction->IsFusion()) {
-        continue;
-      }
-      bool has_exp = false;
-      for (const HloInstruction* fused : instruction->fused_instructions()) {
-        if (fused->opcode() == HloOpcode::kExp) {
-          has_exp = true;
-          break;
-        }
-      }
-      if (!has_exp || instruction->operand_count() != 2) {
-        continue;
-      }
-      if (instruction->operand(0)->opcode() == HloOpcode::kFusion &&
-          instruction->operand(1)->opcode() == HloOpcode::kDot) {
-        return true;
+bool FusionRecomputesShiftValueForExpShift(
+    const HloInstruction* fusion, const HloInstruction* dot) {
+  if (fusion->opcode() != HloOpcode::kFusion) {
+    return false;
+  }
+  const HloInstruction* multiply = nullptr;
+  const HloInstruction* subtract = nullptr;
+  for (const HloInstruction* instr : fusion->fused_instructions()) {
+    if (instr->opcode() == HloOpcode::kMultiply) {
+      multiply = instr;
+    }
+    if (instr->opcode() == HloOpcode::kSubtract) {
+      subtract = instr;
+    }
+  }
+  if (multiply == nullptr || subtract == nullptr) {
+    return false;
+  }
+  const HloComputation* fused_computation = fusion->fused_instructions_computation();
+  const HloInstruction* fusion_instr = fused_computation->FusionInstruction();
+  bool uses_dot = false;
+  for (int64_t i = 0; i < fusion_instr->operand_count(); ++i) {
+    if (fusion_instr->operand(i) == dot) {
+      const HloInstruction* param = fusion->fused_parameter(i);
+      if (multiply->operand(0) == param || multiply->operand(1) == param) {
+        uses_dot = true;
+        break;
       }
     }
   }
-  return false;
+  return uses_dot && subtract->operand(0) == multiply;
 }
 
-}  // namespace
-
-static constexpr absl::string_view kSoftmaxFusionModuleString = R"(
-  HloModule module
-
-  %region_0.1 (param0: f32[], param1: f32[]) -> f32[] {
-    %param0 = f32[] parameter(0)
-    %param1 = f32[] parameter(1)
-    ROOT %maximum = f32[] maximum(%param0, %param1)
+bool HasSplitCoupledReductionShiftExpFusion(const HloModule& module) {
+  const HloComputation* entry = module.entry_computation();
+  const HloInstruction* dot = nullptr;
+  for (const HloInstruction* instr : entry->instructions()) {
+    if (instr->opcode() == HloOpcode::kDot) {
+      dot = instr;
+      break;
+    }
+  }
+  if (dot == nullptr) {
+    return false;
   }
 
-  %region_1.2 (param0: f32[], param1: f32[]) -> f32[] {
-    %param0 = f32[] parameter(0)
-    %param1 = f32[] parameter(1)
-    ROOT %add = f32[] add(%param0, %param1)
+  const HloInstruction* reduce_fusion = nullptr;
+  const HloInstruction* shift_fusion = nullptr;
+  for (const HloInstruction* instr : entry->instructions()) {
+    if (!instr->IsLoopFusion()) {
+      continue;
+    }
+    if (FusionComputesShiftValueForReduce(instr)) {
+      reduce_fusion = instr;
+    }
+    if (FusionRecomputesShiftValueForExpShift(instr, dot)) {
+      shift_fusion = instr;
+    }
   }
+  return reduce_fusion != nullptr && shift_fusion != nullptr;
+}
 
-  ENTRY %main (Q: f32[5,5], K: f32[5,5]) -> f32[5,5] {
-    %Q = f32[5,5] parameter(0)
-    %K = f32[5,5] parameter(1)
-    %transpose = f32[5,5] transpose(%K), dimensions={1,0}
-    %dot = f32[5,5] dot(%Q, %transpose),
-        lhs_contracting_dims={1}, rhs_contracting_dims={0}
-    %scale = f32[] constant(0.44721359)
-    %broadcast_scale = f32[5,5] broadcast(%scale), dimensions={}
-    %mul = f32[5,5] multiply(%dot, %broadcast_scale)
-    %neg_inf = f32[] constant(-inf)
-    %reduce_max = f32[5] reduce(%mul, %neg_inf),
-        dimensions={1}, to_apply=%region_0.1
-    %broadcast_max = f32[5,5] broadcast(%reduce_max), dimensions={0}
-    %sub = f32[5,5] subtract(%mul, %broadcast_max)
-    %exp = f32[5,5] exponential(%sub)
-    %zero = f32[] constant(0)
-    %reduce_sum = f32[5] reduce(%exp, %zero),
-        dimensions={1}, to_apply=%region_1.2
-    %broadcast_sum = f32[5,5] broadcast(%reduce_sum), dimensions={0}
-    ROOT %div = f32[5,5] divide(%exp, %broadcast_sum)
-  }
+TEST_F(InstructionFusionTest, AvoidSplitCoupledReductionShiftExpFusions) {
+  absl::string_view module_string = R"(
+HloModule module
+
+%max (p0: f32[], p1: f32[]) -> f32[] {
+  %p0 = f32[] parameter(0)
+  %p1 = f32[] parameter(1)
+  ROOT %m = f32[] maximum(%p0, %p1)
+}
+
+ENTRY main {
+  %lhs = f32[5,5] parameter(0)
+  %rhs = f32[5,5] parameter(1)
+  %dot = f32[5,5] dot(%lhs, %rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %scale = f32[] constant(0.44721359)
+  %broadcast_scale = f32[5,5] broadcast(%scale), dimensions={}
+  %multiply = f32[5,5] multiply(%dot, %broadcast_scale)
+  %neg_inf = f32[] constant(-inf)
+  %reduce_max = f32[5] reduce(%multiply, %neg_inf), dimensions={1}, to_apply=%max
+  %broadcast_max = f32[5,5] broadcast(%reduce_max), dimensions={0}
+  %subtract = f32[5,5] subtract(%multiply, %broadcast_max)
+  ROOT %exp = f32[5,5] exponential(%subtract)
+}
 )";
 
-TEST_F(InstructionFusionTest, AvoidSplitSoftmaxScaledLogitsFusions) {
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(kSoftmaxFusionModuleString));
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(module_string));
   TF_ASSERT_OK_AND_ASSIGN(bool changed,
                           CpuInstructionFusion(&alias_info_).Run(module.get()));
   EXPECT_TRUE(changed);
-  EXPECT_FALSE(HasSplitSoftmaxSubtractExponentialFusion(*module));
+  EXPECT_FALSE(HasSplitCoupledReductionShiftExpFusion(*module));
+}
+
+TEST_F(InstructionFusionTest, StillFusesUncoupledReduceAndSubtract) {
+  absl::string_view module_string = R"(
+HloModule module
+
+%add (p0: f32[], p1: f32[]) -> f32[] {
+  %p0 = f32[] parameter(0)
+  %p1 = f32[] parameter(1)
+  ROOT %a = f32[] add(%p0, %p1)
+}
+
+ENTRY main {
+  %arg = f32[8,16] parameter(0)
+  %init = f32[] constant(0)
+  %reduce = f32[8] reduce(%arg, %init), dimensions={1}, to_apply=%add
+  %broadcast = f32[8,16] broadcast(%reduce), dimensions={0}
+  ROOT %subtract = f32[8,16] subtract(%arg, %broadcast)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(module_string));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_TRUE(changed);
 }
 
 }  // namespace

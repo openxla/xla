@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/cpu/cpu_instruction_fusion.h"
 
 #include <cstdint>
+#include <functional>
 
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
@@ -82,6 +83,141 @@ bool CanBeOutputFusedIntoSomeOperand(const HloInstruction* consumer) {
           CanBeOutputFused(consumer->operand(1), consumer));
 }
 
+bool IsMaxReduction(const HloInstruction* reduce) {
+  if (reduce->opcode() != HloOpcode::kReduce) {
+    return false;
+  }
+  const HloInstruction* root = reduce->to_apply()->root_instruction();
+  return root->opcode() == HloOpcode::kMaximum;
+}
+
+bool IsDotLikeOpcode(HloOpcode opcode) {
+  return opcode == HloOpcode::kDot;
+}
+
+// Matches subtract(shift_value, broadcast(reduce)) used by exponential, i.e.
+// the numerically sensitive stable-softmax shift pattern.
+bool IsExpShiftCoupledSubtract(const HloInstruction& subtract,
+                               const HloInstruction& shift_value,
+                               const HloInstruction& reduce) {
+  if (subtract.opcode() != HloOpcode::kSubtract) {
+    return false;
+  }
+  const HloInstruction* op0 = subtract.operand(0);
+  const HloInstruction* op1 = subtract.operand(1);
+  const bool uses_shift_value =
+      op0 == &shift_value || op1 == &shift_value ||
+      (op0->opcode() == HloOpcode::kBroadcast &&
+       op0->operand(0) == &shift_value) ||
+      (op1->opcode() == HloOpcode::kBroadcast &&
+       op1->operand(0) == &shift_value);
+  const bool uses_reduce_broadcast =
+      (op0->opcode() == HloOpcode::kBroadcast &&
+       op0->operand(0) == &reduce) ||
+      (op1->opcode() == HloOpcode::kBroadcast &&
+       op1->operand(0) == &reduce);
+  if (!uses_shift_value || !uses_reduce_broadcast) {
+    return false;
+  }
+  return absl::c_any_of(subtract.users(), [](const HloInstruction* user) {
+    return user->opcode() == HloOpcode::kExp;
+  });
+}
+
+const HloInstruction* FindMaxReduceForShiftValue(
+    const HloInstruction& shift_value) {
+  for (const HloInstruction* user : shift_value.users()) {
+    if (user->opcode() == HloOpcode::kReduce && user->operand(0) == &shift_value &&
+        IsMaxReduction(user)) {
+      return user;
+    }
+  }
+  return nullptr;
+}
+
+// A multiply that feeds both row-max reduction and exp-shift subtraction.
+bool IsCoupledReductionShiftExpProducer(const HloInstruction* instr) {
+  if (instr->opcode() != HloOpcode::kMultiply) {
+    return false;
+  }
+  const HloInstruction* reduce = FindMaxReduceForShiftValue(*instr);
+  if (reduce == nullptr) {
+    return false;
+  }
+  return absl::c_any_of(instr->users(), [&](const HloInstruction* user) {
+    return IsExpShiftCoupledSubtract(*user, *instr, *reduce);
+  });
+}
+
+bool InstructionOrFusionContains(
+    const HloInstruction* instr,
+    const std::function<bool(const HloInstruction*)>& pred) {
+  if (instr->opcode() != HloOpcode::kFusion) {
+    return pred(instr);
+  }
+  return absl::c_any_of(instr->fused_instructions(), pred);
+}
+
+bool IsReduceSideConsumer(const HloInstruction* consumer,
+                            const HloInstruction* shift_value) {
+  return InstructionOrFusionContains(consumer, [&](const HloInstruction* instr) {
+    return instr->opcode() == HloOpcode::kReduce &&
+           instr->operand(0) == shift_value && IsMaxReduction(instr);
+  });
+}
+
+bool IsShiftExpSideConsumer(const HloInstruction* consumer,
+                            const HloInstruction* shift_value,
+                            const HloInstruction* reduce) {
+  return InstructionOrFusionContains(consumer, [&](const HloInstruction* instr) {
+    return IsExpShiftCoupledSubtract(*instr, *shift_value, *reduce);
+  });
+}
+
+bool FusionLooksLikeShiftExpPath(const HloInstruction* consumer) {
+  if (consumer->opcode() != HloOpcode::kFusion) {
+    return false;
+  }
+  return absl::c_any_of(consumer->fused_instructions(),
+                        [](const HloInstruction* instr) {
+                          return instr->opcode() == HloOpcode::kExp ||
+                                 instr->opcode() == HloOpcode::kSubtract;
+                        });
+}
+
+// Returns true if fusing producer into consumer targets one side of a coupled
+// reduce-max / exp-shift producer that must stay numerically consistent.
+bool HasCoupledReductionShiftExpSplitRisk(const HloInstruction* producer,
+                                          const HloInstruction* consumer) {
+  const HloInstruction* shift_value = nullptr;
+  if (IsCoupledReductionShiftExpProducer(producer)) {
+    shift_value = producer;
+  } else if (IsDotLikeOpcode(producer->opcode())) {
+    for (const HloInstruction* user : producer->users()) {
+      if (IsCoupledReductionShiftExpProducer(user)) {
+        shift_value = user;
+        break;
+      }
+    }
+  }
+  if (shift_value == nullptr) {
+    return false;
+  }
+
+  const HloInstruction* reduce = FindMaxReduceForShiftValue(*shift_value);
+  if (reduce == nullptr) {
+    return false;
+  }
+
+  if (producer != shift_value) {
+    return IsShiftExpSideConsumer(consumer, shift_value, reduce) ||
+           FusionLooksLikeShiftExpPath(consumer);
+  }
+
+  return IsReduceSideConsumer(consumer, shift_value) ||
+         IsShiftExpSideConsumer(consumer, shift_value, reduce);
+}
+
 // Should we block the fusion of the subcomputation of the passed instruction?
 bool BlockSubcomputationFusion(const HloInstruction* instruction,
                                const HloModuleConfig& config) {
@@ -104,79 +240,6 @@ bool BlockSubcomputationFusion(const HloInstruction* instruction,
     return true;
   }
 
-  return false;
-}
-
-bool FusionInstructionContainsOpcode(const HloInstruction& fusion,
-                                     HloOpcode opcode) {
-  if (!fusion.IsFusion()) {
-    return fusion.opcode() == opcode;
-  }
-  return absl::c_any_of(
-      fusion.fused_instructions(),
-      [opcode](const HloInstruction* instr) { return instr->opcode() == opcode; });
-}
-
-bool MultiplyFeedsReduceAndSubtract(const HloInstruction& multiply) {
-  bool feeds_reduce = false;
-  bool feeds_subtract = false;
-  auto note_user = [&](const HloInstruction& user) {
-    if (user.opcode() == HloOpcode::kReduce) {
-      feeds_reduce = true;
-    }
-    if (user.opcode() == HloOpcode::kSubtract) {
-      feeds_subtract = true;
-    }
-    if (user.IsFusion()) {
-      if (FusionInstructionContainsOpcode(user, HloOpcode::kReduce)) {
-        feeds_reduce = true;
-      }
-      if (FusionInstructionContainsOpcode(user, HloOpcode::kSubtract)) {
-        feeds_subtract = true;
-      }
-    }
-  };
-  for (const HloInstruction* user : multiply.users()) {
-    note_user(*user);
-  }
-  return feeds_reduce && feeds_subtract;
-}
-
-bool WouldSplitSoftmaxScaledMultiply(const HloInstruction* producer,
-                                     const HloInstruction* consumer) {
-  if (producer->opcode() != HloOpcode::kMultiply) {
-    return false;
-  }
-  if (!MultiplyFeedsReduceAndSubtract(*producer)) {
-    return false;
-  }
-  if (consumer->opcode() == HloOpcode::kReduce ||
-      consumer->opcode() == HloOpcode::kSubtract) {
-    return true;
-  }
-  if (consumer->IsFusion() &&
-      (FusionInstructionContainsOpcode(*consumer, HloOpcode::kReduce) ||
-       FusionInstructionContainsOpcode(*consumer, HloOpcode::kSubtract))) {
-    return true;
-  }
-  return false;
-}
-
-bool WouldFuseDotIntoSplitSoftmaxFusion(const HloInstruction* producer,
-                                        const HloInstruction* consumer) {
-  if (producer->opcode() != HloOpcode::kDot || !consumer->IsFusion()) {
-    return false;
-  }
-  if (!FusionInstructionContainsOpcode(*consumer, HloOpcode::kSubtract) ||
-      !FusionInstructionContainsOpcode(*consumer, HloOpcode::kExp)) {
-    return false;
-  }
-  for (const HloInstruction* user : producer->users()) {
-    if (user->opcode() == HloOpcode::kMultiply &&
-        MultiplyFeedsReduceAndSubtract(*user)) {
-      return true;
-    }
-  }
   return false;
 }
 
@@ -356,6 +419,20 @@ bool CpuInstructionFusion::IsExpensive(const HloInstruction& instruction) {
   return false;
 }
 
+InstructionFusion::HloInstructionSet
+CpuInstructionFusion::ComputeGloballyUnfusible(
+    absl::Span<HloInstruction* const> post_order,
+    const HloReachabilityMap& reachability) {
+  HloInstructionSet do_not_duplicate =
+      InstructionFusion::ComputeGloballyUnfusible(post_order, reachability);
+  for (HloInstruction* producer : post_order) {
+    if (IsCoupledReductionShiftExpProducer(producer)) {
+      do_not_duplicate.insert(producer);
+    }
+  }
+  return do_not_duplicate;
+}
+
 void CpuInstructionFusion::ComputeInstructionsToSkip(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -461,21 +538,16 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
     return FusionDecision::Forbid("Fusion is not profitable.");
   }
 
-  // Stable softmax lowers as: dot -> multiply(scale) -> reduce(max) and
-  // subtract(multiply, broadcast(max)) -> exponential. Fusing multiply only into
-  // reduce, then fusing dot into subtract+exponential separately, recomputes
-  // scaled logits in a second kernel and can miscompile for large values.
-  if (WouldSplitSoftmaxScaledMultiply(producer, consumer)) {
-    return FusionDecision::Forbid(
-        "Don't split softmax scaled logits across separate fusions.");
-  }
-  if (WouldFuseDotIntoSplitSoftmaxFusion(producer, consumer)) {
-    return FusionDecision::Forbid(
-        "Don't fuse dot into softmax subtract-exponential fusion separately "
-        "from its scaled-logits reduce.");
-  }
-
   RETURN_IF_NOT_FUSIBLE(InstructionFusion::ShouldFuse(consumer, operand_index));
+
+  // Fusing one side of a reduce-max / exp-shift coupled producer into a
+  // separate kernel can recompute the shift value with different numerics.
+  if (HasCoupledReductionShiftExpSplitRisk(producer, consumer) &&
+      FusionWouldDuplicate(*producer, *consumer)) {
+    return FusionDecision::Forbid(
+        "Fusion would split a numerically coupled reduce-max / exp-shift "
+        "producer across kernels.");
+  }
 
   // Fusing too many reductions together can lead to a giant LLVM modules after
   // loop unrolling. We prefer to split such fusions into multiple kernels to
