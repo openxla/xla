@@ -448,9 +448,9 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     // Allocator address for allocation deallocations; reservation address for
     // kMap.
     DeviceAddressBase addr;
-    // Rounded physical-allocation bytes that become reclaimable when this
-    // pending operation completes. kMap entries do not own physical memory and
-    // therefore use zero.
+    // Physical-allocation bytes charged to the PA budget that become
+    // reclaimable when this pending operation completes. kMap entries do not
+    // own physical memory and therefore use zero.
     uint64_t reclaimable_bytes = 0;
   };
 
@@ -555,17 +555,27 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
   // Allocate helpers.
 
+  // Checks the PA budget for `size`, creates a physical allocation, and
+  // re-checks the budget against the actual (granularity-padded) size the
+  // driver returned, which is the size charged to pa_allocated. Returns the
+  // allocation and reports that size via `physical_size`.
+  absl::StatusOr<std::unique_ptr<MemoryAllocation>>
+  AllocatePhysicalWithinBudget(PerDeviceState& state, uint64_t size,
+                               uint64_t& physical_size)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
   // Records a raw allocation mapped at an owning allocator address. Takes
   // ownership of `reservation` when the allocator address was allocator-owned;
-  // reservation-backed returned addresses pass nullptr here. Charges
-  // `allocated_size` to the PA budget and returns the allocator VA pointer.
+  // reservation-backed returned addresses pass nullptr here. Charges the raw
+  // allocation's committed size to the PA budget and returns the allocator VA
+  // pointer.
   void* TrackAllocatorAddressMappedAllocation(
       PerDeviceState& state, AllocationRecord::Kind kind,
       DeviceAddressBase allocator_address,
       std::unique_ptr<MemoryAllocation> raw_allocation,
       std::unique_ptr<MemoryReservation> reservation,
-      MemoryReservation::ScopedMapping mapping, uint64_t allocated_size,
-      bool multi_device) ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+      MemoryReservation::ScopedMapping mapping, bool multi_device)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   struct MappedAllocateRequest {
     MemoryReservation* reservation;

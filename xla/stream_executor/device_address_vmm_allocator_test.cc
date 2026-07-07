@@ -37,6 +37,7 @@ limitations under the License.
 namespace stream_executor {
 namespace {
 
+using ::absl_testing::StatusIs;
 using ::testing::NiceMock;
 using ::testing::Return;
 
@@ -104,9 +105,10 @@ class TestMemoryReservation final : public MemoryReservation {
 class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
  public:
   static absl::StatusOr<std::unique_ptr<TestDeviceAddressVmmAllocator>> Create(
-      const Platform* platform, absl::Span<const DeviceConfig> devices) {
+      const Platform* platform, absl::Span<const DeviceConfig> devices,
+      uint64_t physical_size_padding = 0) {
     auto allocator = std::unique_ptr<TestDeviceAddressVmmAllocator>(
-        new TestDeviceAddressVmmAllocator(platform));
+        new TestDeviceAddressVmmAllocator(platform, physical_size_padding));
     absl::Status status = PopulateDevices(allocator.get(), devices);
     if (!status.ok()) {
       return status;
@@ -128,12 +130,14 @@ class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
   absl::StatusOr<std::unique_ptr<MemoryAllocation>> CreateAllocation(
       StreamExecutor* /*executor*/, uint64_t size) override {
     ++allocation_count_;
-    return std::make_unique<TestMemoryAllocation>(RoundUpTestSize(size));
+    return std::make_unique<TestMemoryAllocation>(RoundUpTestSize(size) +
+                                                  physical_size_padding_);
   }
 
   absl::StatusOr<std::unique_ptr<MemoryReservation>> CreateReservation(
       StreamExecutor* /*executor*/, uint64_t size) override {
-    return std::make_unique<TestMemoryReservation>(RoundUpTestSize(size));
+    return std::make_unique<TestMemoryReservation>(RoundUpTestSize(size) +
+                                                   physical_size_padding_);
   }
 
   absl::Status EnqueueDeferredDeallocation(PerDeviceState& state,
@@ -143,9 +147,12 @@ class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
   }
 
  private:
-  explicit TestDeviceAddressVmmAllocator(const Platform* platform)
-      : DeviceAddressVmmAllocator(platform) {}
+  TestDeviceAddressVmmAllocator(const Platform* platform,
+                                uint64_t physical_size_padding)
+      : DeviceAddressVmmAllocator(platform),
+        physical_size_padding_(physical_size_padding) {}
 
+  uint64_t physical_size_padding_;
   int allocation_count_ = 0;
 };
 
@@ -230,6 +237,44 @@ TEST_F(DeviceAddressVmmAllocatorTest,
           /*reservation_offset=*/0, /*mapping_size=*/2 * kGranularity,
           /*return_reservation_address=*/true));
   EXPECT_EQ(reservation->active_mapping_count(), 1);
+  EXPECT_EQ(allocator->allocation_count(), 2);
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       PhysicalAllocationSizeControlsBudgetAccounting) {
+  const DeviceAddressVmmAllocator::DeviceConfig config =
+      Config(2 * kGranularity);
+  ASSERT_OK_AND_ASSIGN(auto allocator,
+                       TestDeviceAddressVmmAllocator::Create(
+                           &platform_, {config},
+                           /*physical_size_padding=*/kGranularity));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto first,
+      allocator->Allocate(/*device_ordinal=*/0, kGranularity,
+                          /*retry_on_failure=*/true, /*memory_space=*/0));
+  ASSERT_NE(allocator->GetRawAllocation(/*device_ordinal=*/0, first.cref()),
+            nullptr);
+  EXPECT_EQ(allocator->GetRawAllocation(/*device_ordinal=*/0, first.cref())
+                ->address()
+                .size(),
+            2 * kGranularity);
+  // The first allocation consumes the full budget based on the physical size,
+  // even though its requested size was one granularity unit.
+  EXPECT_THAT(allocator->Allocate(/*device_ordinal=*/0, 2 * kGranularity,
+                                  /*retry_on_failure=*/false,
+                                  /*memory_space=*/0),
+              StatusIs(absl::StatusCode::kResourceExhausted));
+  EXPECT_EQ(allocator->allocation_count(), 1);
+
+  ASSERT_THAT(allocator->Deallocate(/*device_ordinal=*/0, first.Release()),
+              absl_testing::IsOk());
+  ASSERT_THAT(allocator->SynchronizePendingOperations(/*device_ordinal=*/0),
+              absl_testing::IsOk());
+  ASSERT_OK_AND_ASSIGN(
+      auto second,
+      allocator->Allocate(/*device_ordinal=*/0, kGranularity,
+                          /*retry_on_failure=*/false, /*memory_space=*/0));
   EXPECT_EQ(allocator->allocation_count(), 2);
 }
 
