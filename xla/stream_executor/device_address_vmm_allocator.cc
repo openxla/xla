@@ -391,7 +391,8 @@ DeviceAddressVmmAllocator::AllocatePhysicalWithinBudget(
   return raw_alloc;
 }
 
-void* DeviceAddressVmmAllocator::TrackAllocatorAddressMappedAllocation(
+DeviceAddressVmmAllocator::AllocationRecord&
+DeviceAddressVmmAllocator::TrackAllocatorAddressMappedAllocation(
     PerDeviceState& state, AllocationRecord::Kind kind,
     DeviceAddressBase allocator_address,
     std::unique_ptr<MemoryAllocation> raw_allocation,
@@ -403,11 +404,12 @@ void* DeviceAddressVmmAllocator::TrackAllocatorAddressMappedAllocation(
   auto record = std::make_unique<AllocationRecord>(
       kind, allocator_address, std::move(raw_allocation),
       std::move(reservation), std::move(mapping), multi_device);
+  AllocationRecord* record_ptr = record.get();
   auto insert_result =
       state.records_by_allocator_address.emplace(va_ptr, std::move(record));
   CHECK(insert_result.second);
   state.pa_allocated += physical_size;
-  return va_ptr;
+  return *record_ptr;
 }
 
 std::optional<DeviceAddressBase>
@@ -521,82 +523,53 @@ DeviceAddressVmmAllocator::EnsureReservationAvailableForFreshMapping(
 }
 
 absl::StatusOr<DeviceAddressBase>
-DeviceAddressVmmAllocator::CreateMappedAllocationAtReservationAddress(
+DeviceAddressVmmAllocator::CreateMappedAllocation(
     PerDeviceState& state, const MappedAllocateRequest& request) {
-  // The returned allocator address is the caller-owned reservation VA. The
-  // record is keyed by that VA and owns only the raw allocation plus the scoped
-  // mapping into the external reservation.
   uint64_t physical_size = 0;
-  ASSIGN_OR_RETURN(auto raw_alloc,
-                   AllocatePhysicalWithinBudget(
-                       state, request.size, physical_size));
-  if (request.size > physical_size) {
-    return absl::InvalidArgumentError(absl::StrFormat(
-        "physical allocation is smaller than requested mapping: "
-        "allocation_size=%uB, mapping_size=%uB",
-        physical_size, request.size));
+  ASSIGN_OR_RETURN(auto raw_alloc, AllocatePhysicalWithinBudget(
+                                       state, request.size, physical_size));
+
+  const bool separate_address =
+      request.mode == MappedAddressMode::kSeparateAllocatorAddress;
+  AllocationRecord::Kind kind =
+      AllocationRecord::Kind::kAllocateAndMapReturnMapAddr;
+  DeviceAddressBase allocator_address = request.reservation_address;
+  std::unique_ptr<MemoryReservation> allocator_address_reservation;
+  MemoryReservation::ScopedMapping allocator_address_mapping;
+
+  if (separate_address) {
+    kind = AllocationRecord::Kind::kAllocateAndMapReturnNewAddr;
+    ASSIGN_OR_RETURN(allocator_address_reservation,
+                     CreateReservation(state.executor, request.size));
+    allocator_address = DeviceAddressBase(
+        allocator_address_reservation->address().opaque(), request.size);
+    ASSIGN_OR_RETURN(allocator_address_mapping,
+                     allocator_address_reservation->MapTo(
+                         /*reservation_offset=*/0, /*allocation_offset=*/0,
+                         physical_size, *raw_alloc));
   }
 
-  ASSIGN_OR_RETURN(auto scoped_mapping, request.reservation->MapTo(
-                                            request.reservation_offset,
-                                            /*allocation_offset=*/0,
-                                            request.size, *raw_alloc));
-  TrackAllocatorAddressMappedAllocation(
-      state, AllocationRecord::Kind::kAllocateAndMapReturnMapAddr,
-      request.reservation_address, std::move(raw_alloc), nullptr,
-      std::move(scoped_mapping), request.multi_device);
+  ASSIGN_OR_RETURN(auto reservation_address_mapping,
+                   request.reservation->MapTo(request.reservation_offset,
+                                              /*allocation_offset=*/0,
+                                              request.size, *raw_alloc));
 
-  return request.reservation_address;
-}
-
-absl::StatusOr<DeviceAddressBase>
-DeviceAddressVmmAllocator::CreateMappedAllocationWithSeparateAddress(
-    PerDeviceState& state, const MappedAllocateRequest& request) {
-  // This mode creates two VAs for the same raw allocation: an allocator-owned
-  // VA returned to the caller, and a non-owning alias in the caller reservation
-  // used by captured command buffers.
-  uint64_t physical_size = 0;
-  ASSIGN_OR_RETURN(auto raw_alloc,
-                   AllocatePhysicalWithinBudget(
-                       state, request.size, physical_size));
-  if (request.size > physical_size) {
-    return absl::InvalidArgumentError(absl::StrFormat(
-        "mapping size must not exceed physical allocation size: "
-        "mapping_size=%uB, allocation_size=%uB",
-        request.size, physical_size));
+  if (!separate_address) {
+    allocator_address_mapping = std::move(reservation_address_mapping);
+    reservation_address_mapping = MemoryReservation::ScopedMapping();
   }
-
-  ASSIGN_OR_RETURN(auto allocator_address_reservation,
-                   CreateReservation(state.executor, request.size));
-  ASSIGN_OR_RETURN(auto allocator_address_mapping,
-                   allocator_address_reservation->MapTo(
-                       /*reservation_offset=*/0, /*allocation_offset=*/0,
-                       physical_size, *raw_alloc));
-  ASSIGN_OR_RETURN(
-      auto reservation_address_mapping,
-      request.reservation->MapTo(request.reservation_offset,
-                                 /*allocation_offset=*/0, request.size,
-                                 *raw_alloc));
-
-  // Record the paired allocation: the allocator-owned returned VA owns the raw
-  // allocation, and the caller reservation VA is a non-owning alias.
-  void* allocator_va = allocator_address_reservation->address().opaque();
-  DeviceAddressBase allocator_address(allocator_va, request.size);
-  auto record = std::make_unique<AllocationRecord>(
-      AllocationRecord::Kind::kAllocateAndMapReturnNewAddr, allocator_address,
-      std::move(raw_alloc), std::move(allocator_address_reservation),
+  AllocationRecord& record = TrackAllocatorAddressMappedAllocation(
+      state, kind, allocator_address, std::move(raw_alloc),
+      std::move(allocator_address_reservation),
       std::move(allocator_address_mapping), request.multi_device);
-  record->AddActiveReservationAlias(std::move(reservation_address_mapping));
-  AllocationRecord* record_ptr = record.get();
-  auto record_insert = state.records_by_allocator_address.emplace(
-      allocator_va, std::move(record));
-  CHECK(record_insert.second);
-  auto reservation_insert = state.reservation_records.emplace(
-      request.reservation_address.opaque(), record_ptr);
-  CHECK(reservation_insert.second);
-  state.pa_allocated += physical_size;
+  if (separate_address) {
+    record.AddActiveReservationAlias(std::move(reservation_address_mapping));
+    auto reservation_insert = state.reservation_records.emplace(
+        request.reservation_address.opaque(), &record);
+    CHECK(reservation_insert.second);
+  }
 
-  return DeviceAddressBase(allocator_va, request.size);
+  return allocator_address;
 }
 
 // Shared pending-reclaim retry flow:
@@ -785,26 +758,22 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
                            physical_size, *raw_alloc));
 
     DeviceAddressBase allocator_address(reservation->address().opaque(), size);
-    void* va_ptr = TrackAllocatorAddressMappedAllocation(
+    TrackAllocatorAddressMappedAllocation(
         *state, AllocationRecord::Kind::kAllocate, allocator_address,
         std::move(raw_alloc), std::move(reservation),
         std::move(scoped_mapping), multi_device);
     // Return the original requested size, not the padded size.
-    return absl::StatusOr<DeviceAddressBase>(DeviceAddressBase(va_ptr, size));
+    return absl::StatusOr<DeviceAddressBase>(allocator_address);
   };
 
-  absl::StatusOr<DeviceAddressBase> result =
-      TryWithPendingReclaim(*state, size, try_reuse, try_fresh);
-
-  if (!result.ok()) {
-    return result.status();
-  }
+  ASSIGN_OR_RETURN(DeviceAddressBase result,
+                   TryWithPendingReclaim(*state, size, try_reuse, try_fresh));
 
   VLOG(3) << absl::StreamFormat(
       "Allocated virtual address %p (%uB) on device ordinal %d",
-      result->opaque(), size, device_ordinal);
+      result.opaque(), size, device_ordinal);
 
-  return ScopedDeviceAddress<uint8_t>(*result, device_ordinal, this);
+  return ScopedDeviceAddress<uint8_t>(result, device_ordinal, this);
 }
 
 // Mapped Allocate() reuses matching pending mapped deallocations, otherwise
@@ -815,26 +784,15 @@ DeviceAddressVmmAllocator::Allocate(
     int64_t /*memory_space*/, MemoryReservation* reservation,
     uint64_t reservation_offset, uint64_t mapping_size,
     bool return_reservation_address) {
-  // Keep zero-sized mapped allocation consistent with regular Allocate(): no
-  // physical allocation or mapping is created, so the requested mapping size
-  // must also be zero.
-  if (allocation_size == 0) {
-    if (mapping_size != 0) {
-      return absl::InvalidArgumentError(
-          "mapping_size must be zero when allocation_size is zero");
-    }
-    return ScopedDeviceAddress<uint8_t>(DeviceAddressBase(), device_ordinal,
-                                        this);
-  }
-  // A mapped allocation with a nonzero physical allocation must establish a
-  // nonempty mapping into the caller-owned reservation.
-  if (mapping_size == 0) {
-    return absl::InvalidArgumentError(
-        "mapping_size must be nonzero for mapped Allocate");
-  }
   if (allocation_size != mapping_size) {
     return absl::InvalidArgumentError(
         "allocation_size must equal mapping_size for mapped Allocate");
+  }
+  // Keep zero-sized mapped allocation consistent with regular Allocate(): no
+  // physical allocation or mapping is created.
+  if (allocation_size == 0) {
+    return ScopedDeviceAddress<uint8_t>(DeviceAddressBase(), device_ordinal,
+                                        this);
   }
 
   ASSIGN_OR_RETURN(auto state, GetPerDeviceState(device_ordinal));
@@ -865,26 +823,20 @@ DeviceAddressVmmAllocator::Allocate(
   auto try_fresh = [&]() -> absl::StatusOr<DeviceAddressBase> {
     state->mu.AssertHeld();
     RETURN_IF_ERROR(EnsureReservationAvailableForFreshMapping(*state, request));
-    if (request.mode == MappedAddressMode::kReservationAddress) {
-      return CreateMappedAllocationAtReservationAddress(*state, request);
-    }
-    return CreateMappedAllocationWithSeparateAddress(*state, request);
+    return CreateMappedAllocation(*state, request);
   };
 
   // The shared retry helper handles PA-budget pressure: try reuse, try fresh,
   // complete already-finished pending work on ResourceExhausted, and finally
   // wait for enough pending deallocations only if necessary.
-  absl::StatusOr<DeviceAddressBase> result =
-      TryWithPendingReclaim(*state, allocation_size, try_reuse, try_fresh);
-
-  if (!result.ok()) {
-    return result.status();
-  }
+  ASSIGN_OR_RETURN(
+      DeviceAddressBase result,
+      TryWithPendingReclaim(*state, allocation_size, try_reuse, try_fresh));
 
   // For return_reservation_address=true this is `reservation_address`; for
   // return_reservation_address=false it is the allocator-owned address paired
   // with the reservation mapping.
-  return ScopedDeviceAddress<uint8_t>(*result, device_ordinal, this);
+  return ScopedDeviceAddress<uint8_t>(result, device_ordinal, this);
 }
 
 absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,

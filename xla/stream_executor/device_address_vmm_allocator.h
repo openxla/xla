@@ -515,9 +515,8 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // Records a raw allocation mapped at an owning allocator address. Takes
   // ownership of `reservation` when the allocator address was allocator-owned;
   // reservation-backed returned addresses pass nullptr here. Charges the raw
-  // allocation's committed size to the PA budget and returns the allocator VA
-  // pointer.
-  void* TrackAllocatorAddressMappedAllocation(
+  // allocation's committed size to the PA budget.
+  AllocationRecord& TrackAllocatorAddressMappedAllocation(
       PerDeviceState& state, AllocationRecord::Kind kind,
       DeviceAddressBase allocator_address,
       std::unique_ptr<MemoryAllocation> raw_allocation,
@@ -550,15 +549,9 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       PerDeviceState& state, const MappedAllocateRequest& request)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
-  // Creates a mapped allocation that uses the caller-owned reservation address
-  // as its returned allocator address.
-  absl::StatusOr<DeviceAddressBase> CreateMappedAllocationAtReservationAddress(
-      PerDeviceState& state, const MappedAllocateRequest& request)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  // Creates a mapped allocation with a separate allocator-owned returned
-  // address and a non-owning alias in the caller-owned reservation.
-  absl::StatusOr<DeviceAddressBase> CreateMappedAllocationWithSeparateAddress(
+  // Creates a mapped allocation with either the caller-owned reservation
+  // address or a separate allocator-owned address as its returned address.
+  absl::StatusOr<DeviceAddressBase> CreateMappedAllocation(
       PerDeviceState& state, const MappedAllocateRequest& request)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
