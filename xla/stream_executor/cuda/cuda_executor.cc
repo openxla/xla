@@ -118,6 +118,40 @@ namespace stream_executor {
 namespace gpu {
 
 namespace {
+std::string FabricInforStateToString(nvmlGpuFabricState_t state) {
+  switch (state) {
+    case NVML_GPU_FABRIC_STATE_NOT_SUPPORTED:
+      return "NOT_SUPPORTED";
+    case NVML_GPU_FABRIC_STATE_NOT_STARTED:
+      return "NOT_STARTED";
+    case NVML_GPU_FABRIC_STATE_IN_PROGRESS:
+      return "IN_PROGRESS";
+    case NVML_GPU_FABRIC_STATE_COMPLETED:
+      return "COMPLETED";
+    default:
+      return absl::StrCat("UNKNOWN (", state, ")");
+  }
+}
+
+std::string P2PStatusToString(nvmlGpuP2PStatus_t status) {
+  switch (status) {
+    case NVML_P2P_STATUS_OK:
+      return "OK";
+    case NVML_P2P_STATUS_CHIPSET_NOT_SUPPORTED:
+      return "CHIPSET_NOT_SUPPORTED";
+    case NVML_P2P_STATUS_GPU_NOT_SUPPORTED:
+      return "GPU_NOT_SUPPORTED";
+    case NVML_P2P_STATUS_IOH_TOPOLOGY_NOT_SUPPORTED:
+      return "IOH_TOPOLOGY_NOT_SUPPORTED";
+    case NVML_P2P_STATUS_DISABLED_BY_REGKEY:
+      return "DISABLED_BY_REGKEY";
+    case NVML_P2P_STATUS_NOT_SUPPORTED:
+      return "NOT_SUPPORTED";
+    default:
+      return absl::StrCat("UNKNOWN (", status, ")");
+  }
+}
+
 bool ShouldLaunchDelayKernel() {
   // Only launch the delay kernel if CUDA_LAUNCH_BLOCKING is not set to 1.
   static bool value = [] {
@@ -350,6 +384,16 @@ absl::StatusOr<int64_t> GetMaxSharedMemoryPerBlock(CUdevice device) {
 absl::StatusOr<int64_t> GetMaxSharedMemoryPerBlockOptin(CUdevice device) {
   return GetSimpleAttribute<int64_t>(
       device, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN);
+}
+
+absl::StatusOr<int64_t> GetReservedSharedMemoryPerBlock(CUdevice device) {
+  return GetSimpleAttribute<int64_t>(
+      device, CU_DEVICE_ATTRIBUTE_RESERVED_SHARED_MEMORY_PER_BLOCK);
+}
+
+absl::StatusOr<int64_t> GetMaxBlocksPerMultiprocessor(CUdevice device) {
+  return GetSimpleAttribute<int64_t>(
+      device, CU_DEVICE_ATTRIBUTE_MAX_BLOCKS_PER_MULTIPROCESSOR);
 }
 
 absl::StatusOr<int64_t> GetMaxThreadsPerMultiprocessor(CUdevice device) {
@@ -1550,6 +1594,7 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
     // lane.
     desc.set_memory_bandwidth(2 * int64_t{mem_clock_khz.value()} * 1000 *
                               int64_t{mem_bus_width_bits.value()} / 8);
+    desc.set_mem_clock_ghz(static_cast<float>(mem_clock_khz.value()) / 1e6);
   }
 
   if (absl::StatusOr<nvmlDevice_t> device = GetNvmlDevice(pci_bus_id);
@@ -1611,6 +1656,10 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   desc.set_shared_memory_per_block(GetMaxSharedMemoryPerBlock(device).value());
   desc.set_shared_memory_per_block_optin(
       GetMaxSharedMemoryPerBlockOptin(device).value());
+  desc.set_reserved_shared_memory_per_block(
+      GetReservedSharedMemoryPerBlock(device).value());
+  desc.set_max_blocks_per_multiprocessor(
+      GetMaxBlocksPerMultiprocessor(device).value());
   int core_count = GetMultiprocessorCount(device).value();
   desc.set_core_count(core_count);
   desc.set_fpus_per_core(GetFpusPerCore(cc));
@@ -1646,6 +1695,92 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
       value_or(mem_clock_khz, 0), l2_cache_bytes));
 
   return std::make_unique<DeviceDescription>(std::move(desc));
+}
+
+absl::StatusOr<std::string> CudaExecutor::GetInterconnectStatus() const {
+  ASSIGN_OR_RETURN(CUdevice device, GetDevice(device_ordinal()));
+  std::string pci_bus_id = GetPCIBusID(device);
+  ASSIGN_OR_RETURN(nvmlDevice_t nvml_device, GetNvmlDevice(pci_bus_id));
+
+  std::string status_msg;
+
+  // 1. Fabric Manager Status
+  nvmlGpuFabricInfoV_t fabric_info{nvmlGpuFabricInfo_v2};
+  fabric_info.state = NVML_GPU_FABRIC_STATE_NOT_SUPPORTED;
+
+  nvmlReturn_t fabric_result =
+      nvmlDeviceGetGpuFabricInfoV(nvml_device, &fabric_info);
+  if (fabric_result == NVML_SUCCESS) {
+    absl::StrAppendFormat(
+        &status_msg, "Fabric: state=%s, status=%s, healthMask=0x%x; ",
+        FabricInforStateToString(fabric_info.state),
+        nvmlErrorString(fabric_info.status), fabric_info.healthMask);
+  } else {
+    absl::StrAppendFormat(&status_msg, "Fabric: failed to get info: %s; ",
+                          nvmlErrorString(fabric_result));
+  }
+
+  // 2. NVLink Status (as a proxy for IMEX/NVLink health)
+  absl::StrAppend(&status_msg, "NVLinks: ");
+  bool first = true;
+  constexpr int kMaxNvLinks = 32;
+  for (unsigned int i = 0; i < kMaxNvLinks; ++i) {
+    nvmlEnableState_t isActive;
+    nvmlReturn_t r = nvmlDeviceGetNvLinkState(nvml_device, i, &isActive);
+    if (r == NVML_ERROR_INVALID_ARGUMENT) {
+      VLOG(3) << "NVLink " << i << " is not supported";
+      break;
+    }
+    if (r != NVML_SUCCESS) {
+      VLOG(3) << "Failed to get NVLink " << i
+              << " state: " << nvmlErrorString(r);
+      continue;
+    }
+    if (!first) {
+      absl::StrAppend(&status_msg, ", ");
+    }
+    first = false;
+    absl::StrAppend(&status_msg, i, ":",
+                    (isActive == NVML_FEATURE_ENABLED ? "Y" : "N"));
+  }
+  absl::StrAppend(&status_msg, "; ");
+
+  // 3. P2P Status
+  absl::StrAppend(&status_msg, "P2P NVLink: ");
+  unsigned int device_count = 0;
+  nvmlReturn_t count_result = nvmlDeviceGetCount(&device_count);
+  if (count_result == NVML_SUCCESS) {
+    bool first_p2p = true;
+    for (unsigned int i = 0; i < device_count; ++i) {
+      if (i == static_cast<unsigned int>(device_ordinal())) {
+        continue;
+      }
+      nvmlDevice_t other_device;
+      nvmlReturn_t dev_result = nvmlDeviceGetHandleByIndex(i, &other_device);
+      if (dev_result != NVML_SUCCESS) {
+        continue;
+      }
+      nvmlGpuP2PStatus_t p2p_status;
+      nvmlReturn_t p2p_result = nvmlDeviceGetP2PStatus(
+          nvml_device, other_device, NVML_P2P_CAPS_INDEX_NVLINK, &p2p_status);
+      if (p2p_result == NVML_SUCCESS) {
+        if (!first_p2p) {
+          absl::StrAppend(&status_msg, ", ");
+        }
+        first_p2p = false;
+        absl::StrAppendFormat(&status_msg, "to GPU %d:%s", i,
+                              P2PStatusToString(p2p_status));
+      }
+    }
+    if (first_p2p) {
+      absl::StrAppend(&status_msg, "none");
+    }
+  } else {
+    absl::StrAppendFormat(&status_msg, "failed to get device count: %s",
+                          nvmlErrorString(count_result));
+  }
+
+  return status_msg;
 }
 
 bool CudaExecutor::IsVmmMemory(const DeviceAddressBase& address) {

@@ -28,6 +28,7 @@ cc_library(
     deps = [
         ":tiling_space_utils",
         "//xla:shape_util",
+        "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla/codegen/tiling:constraint_expression",
         "//xla/hlo/analysis:indexing_analysis",
@@ -74,6 +75,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
     ],
 )

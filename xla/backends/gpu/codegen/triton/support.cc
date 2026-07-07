@@ -643,6 +643,21 @@ CodegenDecision IsTritonSupportedConcatenate(const HloInstruction& hlo) {
   if (hlo.shape().element_type() == S4) {
     return CodegenDecision::Forbid("S4 is not supported.");
   }
+  // Triton emitter requires concatenate operands to be aligned to the tile size
+  // to avoid tiles straddling operand boundaries. Since we don't know the
+  // concrete tile size yet, we enforce divisibility by a minimum reasonable
+  // tile size (64).
+  // The last operand does not need to satisfy this constraint.
+  int concatenate_dimension = hlo.concatenate_dimension();
+  constexpr int kMinConcatFragmentSize = 64;
+  for (int i = 0; i < hlo.operand_count() - 1; ++i) {
+    if (hlo.operand(i)->shape().dimensions(concatenate_dimension) %
+            kMinConcatFragmentSize !=
+        0) {
+      return CodegenDecision::Forbid(
+          "Concatenate operand is not aligned for tiling.");
+    }
+  }
   return CodegenDecision::Allow();
 }
 
@@ -776,15 +791,10 @@ CodegenDecision IsTritonSupportedInstructionImpl(
                                         gpu_version);
     case HloOpcode::kFusion:
       return CodegenDecision::Forbid("Nested fusions are not supported.");
-    case HloOpcode::kAllReduceStart:
+    case HloOpcode::kAllReduce:
       return IsTritonSupportedAllReduce(*Cast<HloAllReduceInstruction>(&instr),
                                         gpu_version);
-    case HloOpcode::kAllReduceDone:
-      return IsTritonSupportedAllReduce(
-          *Cast<HloAllReduceInstruction>(instr.operand(0)), gpu_version);
     case HloOpcode::kAllGather:
-    case HloOpcode::kAllGatherStart:
-    case HloOpcode::kAllGatherDone:
       if (instr.shape().element_type() == S4) {
         return CodegenDecision::Forbid("S4 is not supported.");
       }

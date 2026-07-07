@@ -264,6 +264,12 @@ class Thunk {
 
     // Execution scoped state shared between prepare, initialize and execute.
     ExecutionScopedState* execution_scoped_state = nullptr;
+
+    // Optional allocation indices whose device addresses are stable for this
+    // execution. If absent, consumers that need address-change checks should
+    // conservatively treat allocation addresses as dynamic.
+    std::optional<absl::Span<const BufferAllocation::Index>>
+        persistent_alloc_indices = std::nullopt;
   };
 
   //===--------------------------------------------------------------------===//
@@ -284,7 +290,9 @@ class Thunk {
         CollectiveCliques* collective_cliques,
         CollectiveMemory* collective_memory,
         std::vector<se::Stream*> additional_compute_streams = {},
-        ExecutionScopedState* execution_scoped_state = nullptr);
+        ExecutionScopedState* execution_scoped_state = nullptr,
+        std::optional<absl::Span<const BufferAllocation::Index>>
+            persistent_alloc_indices = std::nullopt);
 
     // Constructs execute parameters from an existing parameters but with
     // different buffer allocations.
@@ -335,6 +343,12 @@ class Thunk {
 
     uint64_t rng_seed = 0;
 
+    // Optional allocation indices whose device addresses are stable for this
+    // execution. If absent, consumers that need address-change checks should
+    // conservatively treat allocation addresses as dynamic.
+    std::optional<absl::Span<const BufferAllocation::Index>>
+        persistent_alloc_indices = std::nullopt;
+
    private:
     friend class CommandBufferThunk;
 
@@ -350,8 +364,10 @@ class Thunk {
                   const ffi::ExecutionContext* ffi_execution_context,
                   std::vector<se::Stream*> additional_compute_streams = {},
                   ExecutionScopedState* execution_scoped_state = nullptr,
-                  bool mock_collectives = false, RunId execution_id = RunId(0),
-                  uint64_t rng_seed = 0);
+                  bool mock_collectives = false, int64_t execution_id = 0,
+                  uint64_t rng_seed = 0,
+                  std::optional<absl::Span<const BufferAllocation::Index>>
+                      persistent_alloc_indices = std::nullopt);
   };
 
   //===--------------------------------------------------------------------===//
@@ -402,7 +418,7 @@ class Thunk {
   // Buffer uses do not include buffers that might be used by nested thunks,
   // they must be collected separately by walking the nested thunks using `Walk`
   // API.
-  virtual BufferUses buffer_uses() const { return {}; }
+  virtual BufferUses buffer_uses() const = 0;
 
   // Returns resources used by this thunk.
   //
@@ -484,7 +500,11 @@ class Thunk {
 
   // Walks all nested thunks and calls `callback` for them.
   using Walker = absl::FunctionRef<absl::Status(Thunk*)>;
+  using ConstWalker = absl::FunctionRef<absl::Status(const Thunk*)>;
   virtual absl::Status WalkNested(Walker callback) { return absl::OkStatus(); }
+  virtual absl::Status WalkNested(ConstWalker callback) const {
+    return absl::OkStatus();
+  }
 
  private:
   Kind kind_;
@@ -515,6 +535,7 @@ class ThunkSequence : public std::vector<std::unique_ptr<Thunk>> {
 
   // Walks/Transforms all thunks nested in *this sequence.
   absl::Status WalkNested(Thunk::Walker callback);
+  absl::Status WalkNested(Thunk::ConstWalker callback) const;
   absl::Status TransformNested(Thunk::Transformer callback);
 
   // Creates a human-readable representation of a thunk sequence. For each thunk
@@ -547,14 +568,20 @@ std::invoke_result_t<F, Thunk*> Thunk::Walk(F&& callback) {
     }).IgnoreError();  // Error can never happen here.
   } else {
     RETURN_IF_ERROR(callback(this));
-    return WalkNested(callback);
+    return WalkNested(Walker([&](Thunk* thunk) { return callback(thunk); }));
   }
 }
 
 template <typename F, Thunk::WalkCallback<F, const Thunk*>*>
 std::invoke_result_t<F, const Thunk*> Thunk::Walk(F&& callback) const {
-  return const_cast<Thunk*>(this)->Walk(  // NOLINT
-      std::forward<F>(callback));
+  Thunk* non_const_this = const_cast<Thunk*>(this);
+  if constexpr (std::is_void_v<std::invoke_result_t<F, const Thunk*>>) {
+    non_const_this->Walk(
+        [f = std::forward<F>(callback)](Thunk* thunk) { f(thunk); });
+  } else {
+    return non_const_this->Walk(
+        [f = std::forward<F>(callback)](Thunk* thunk) { return f(thunk); });
+  }
 }
 
 }  // namespace xla::gpu

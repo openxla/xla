@@ -307,6 +307,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_dynamic_slice_fusion_verify_offsets(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
+  opts.set_xla_gpu_enable_nccl_user_buffers_in_default_space(false);
   opts.set_xla_gpu_enable_allocator_spatial_partitioning(true);
   opts.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(false);
   opts.set_xla_gpu_enable_nccl_comm_splitting(true);
@@ -363,7 +364,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_while_loop_reduce_scatter_code_motion(false);
 
   opts.set_xla_gpu_collective_inflation_factor(1);
-  opts.set_xla_llvm_force_inline_before_split(true);
 
   opts.set_xla_gpu_exhaustive_tiling_search(false);
 
@@ -390,7 +390,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_experimental_enable_fusion_block_level_rewriter(false);
 
-  opts.set_xla_gpu_enable_llvm_module_compilation_parallelism(false);
   opts.set_xla_gpu_default_to_alg_dot_bf16_bf16_f32(false);
   opts.set_xla_gpu_enable_libnvptxcompiler(
       stream_executor::IsLibNvPtxCompilerSupported());
@@ -525,11 +524,23 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_print_compilation_stats(false);
 
   opts.set_xla_gpu_enable_pdl(true);
+  opts.set_xla_gpu_enable_pdl_launch(true);
   opts.set_xla_gpu_command_buffer_update_mode(DebugOptions::ALWAYS_UPDATE);
 
   opts.set_xla_gpu_experimental_aot_compiled_thunks(true);
   opts.set_xla_gpu_deviceless_cub_mode(
       DebugOptions::DEVICELESS_CUB_WITH_FALLBACK);
+  opts.set_xla_gpu_cudnn_deviceless_compilation_mode(
+      DebugOptions::CUDNN_DEVICELESS_COMPILATION_DISABLED);
+  // Pre-populate all default autotune backends so that modifier flags (e.g.
+  // +cudnn, -triton) can apply to the full default set.
+  for (int i = 0; i < autotuner::Backend_descriptor()->value_count(); ++i) {
+    const auto backend = static_cast<autotuner::Backend>(
+        autotuner::Backend_descriptor()->value(i)->number());
+    if (backend != autotuner::Backend::UNSPECIFIED_BACKEND) {
+      opts.add_xla_gpu_experimental_autotune_backends(backend);
+    }
+  }
   return opts;
 }
 
@@ -668,6 +679,17 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           return false;
         }
         debug_options->set_xla_gpu_deviceless_cub_mode(mode);
+        return true;
+      };
+
+  // Custom "sub-parser" lambda for xla_gpu_cudnn_deviceless_compilation_mode.
+  auto setter_for_xla_gpu_cudnn_deviceless_compilation_mode =
+      [debug_options](const std::string& value) {
+        DebugOptions::CudnnDevicelessCompilationMode mode;
+        if (!DebugOptions::CudnnDevicelessCompilationMode_Parse(value, &mode)) {
+          return false;
+        }
+        debug_options->set_xla_gpu_cudnn_deviceless_compilation_mode(mode);
         return true;
       };
 
@@ -1836,17 +1858,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_force_compilation_parallelism(),
       "Overrides normal multi-threaded compilation setting to use this many "
       "threads. Setting to 0 (the default value) means no enforcement."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_enable_llvm_module_compilation_parallelism",
-      bool_setter_for(
-          &DebugOptions::
-              set_xla_gpu_enable_llvm_module_compilation_parallelism),
-      debug_options->xla_gpu_enable_llvm_module_compilation_parallelism(),
-      "Decides whether we can do LLVM module compilation in a parallelised "
-      "way. If set to false, then it will be single threaded, otherwise the "
-      "number of threads depends on the "
-      "--xla_gpu_force_compilation_parallelism flag and the thread pool "
-      "supplied to GpuCompiler."));
 
   flag_list->push_back(tsl::Flag(
       "xla_gpu_default_to_alg_dot_bf16_bf16_f32",
@@ -2121,6 +2132,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Enables NCCL User Buffer Registration. collective_memory_size in the "
       "allocator config must also be set to a non-zero value that is large "
       "enough to meet peak collective memory usage."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_nccl_user_buffers_in_default_space",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_enable_nccl_user_buffers_in_default_space),
+      debug_options->xla_gpu_enable_nccl_user_buffers_in_default_space(),
+      "Register NCCL user buffers in default space with allocator memory "
+      "registration."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_allocator_spatial_partitioning",
       bool_setter_for(
@@ -2800,6 +2818,17 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Limit for the number of kernel configurations (plans) to use during "
       "autotuning of cuDNN GEMM fusions."));
 
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_cudnn_deviceless_compilation_mode",
+                setter_for_xla_gpu_cudnn_deviceless_compilation_mode,
+                DebugOptions::CudnnDevicelessCompilationMode_Name(
+                    debug_options->xla_gpu_cudnn_deviceless_compilation_mode()),
+                "When to compile cuDNN fusions in deviceless mode (no live "
+                "cuDNN handle). "
+                "Available options: CUDNN_DEVICELESS_COMPILATION_DISABLED, "
+                "CUDNN_DEVICELESS_COMPILATION_AUTO, "
+                "CUDNN_DEVICELESS_COMPILATION_ALWAYS."));
+
   flag_list->push_back(tsl::Flag("xla_gpu_enable_triton_gemm_int4",
                                  noop_flag_setter<bool>, true,
                                  "[Deprecated, do not use]"));
@@ -3382,6 +3411,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 bool_setter_for(&DebugOptions::set_xla_gpu_enable_pdl),
                 debug_options->xla_gpu_enable_pdl(),
                 "Enable PDL (Programmatic Dependent Launch)."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_enable_pdl_launch",
+                bool_setter_for(&DebugOptions::set_xla_gpu_enable_pdl_launch),
+                debug_options->xla_gpu_enable_pdl_launch(),
+                "Enable use of PDL launch instructions."));
   flag_list->push_back(tsl::Flag(
       "xla_dump_buffer_assignment_analysis",
       bool_setter_for(&DebugOptions::set_xla_dump_buffer_assignment_analysis),

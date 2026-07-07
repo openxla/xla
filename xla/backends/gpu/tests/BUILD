@@ -269,7 +269,6 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
         "//xla/service:computation_placer",
-        "//xla/service:executable",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_runner_interface",
         "//xla/tests:hlo_pjrt_test_base",
@@ -557,8 +556,11 @@ xla_test(
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_module_config",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
@@ -1322,7 +1324,6 @@ xla_test(
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
-        "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:pattern_matcher_gmock",
@@ -1338,8 +1339,10 @@ xla_test(
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -1525,6 +1528,17 @@ xla_test(
     ],
 )
 
+cc_library(
+    name = "ragged_all_to_all_test_utils",
+    testonly = True,
+    srcs = ["ragged_all_to_all_test_utils.cc"],
+    hdrs = ["ragged_all_to_all_test_utils.h"],
+    deps = [
+        "//xla:array",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
 xla_test(
     name = "ragged_all_to_all_e2e_test",
     srcs = ["ragged_all_to_all_e2e_test.cc"],
@@ -1536,6 +1550,7 @@ xla_test(
     ],
     deps = [
         ":collective_ops_e2e_test_base",
+        ":ragged_all_to_all_test_utils",
         "//xla:array",
         "//xla:literal",
         "//xla:literal_util",
