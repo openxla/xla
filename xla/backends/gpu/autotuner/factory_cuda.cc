@@ -92,7 +92,9 @@ std::vector<std::unique_ptr<CodegenBackend>> GetCodegenBackendsForCuda(
       debug_options, compiler, target_config,
       std::make_unique<CublasLtBackend>(stream_executor, debug_options,
                                         compiler, target_config),
-      GetCublasLtRewriterPipeline(target_config->device_description),
+      [device_description = target_config->device_description] {
+        return GetCublasLtRewriterPipeline(device_description);
+      },
       alias_info, mlir_context));
   backends.push_back(std::make_unique<NativeEmitterBackend>(
       debug_options, compiler, target_config));

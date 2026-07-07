@@ -198,7 +198,9 @@ FissionBackend::GetFissionedAndRewrittenModule(
   // pipeline (e.g. GemmRewriter reads xla_gpu_gemm_rewrite_size_threshold) and
   // any subsequent PriorityFusion run observe the correct flag values.
   hlo_module->mutable_config().set_debug_options(debug_options());
-  RETURN_IF_ERROR(rewriter_pipeline_->Run(hlo_module.get()).status());
+  std::unique_ptr<HloPassPipeline> rewriter_pipeline =
+      rewriter_pipeline_factory_();
+  RETURN_IF_ERROR(rewriter_pipeline->Run(hlo_module.get()).status());
   return hlo_module;
 }
 

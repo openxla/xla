@@ -95,8 +95,10 @@ std::vector<std::unique_ptr<CodegenBackend>> GetCodegenBackendsForROCm(
       debug_options, compiler, target_config,
       std::make_unique<HipblasLtBackend>(stream_executor, debug_options,
                                          compiler, target_config),
-      GetGemmRewriterPipeline(target_config->device_description,
-                              absl::Span<const DType>(kAllDTypes)),
+      [device_description = target_config->device_description] {
+        return GetGemmRewriterPipeline(device_description,
+                                       absl::Span<const DType>(kAllDTypes));
+      },
       alias_info, mlir_context));
   backends.push_back(std::make_unique<NativeEmitterBackend>(
       debug_options, compiler, target_config));
