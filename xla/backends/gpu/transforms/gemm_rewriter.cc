@@ -16,8 +16,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/gemm_rewriter.h"
 
-#include <math.h>
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -41,6 +39,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
+#include <math.h>
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -118,7 +117,6 @@ bool SupportsEpilogueFusion(PrimitiveType type) {
     case F16:
     case BF16:
     case F32:
-    case F64:
       return true;
     default:
       return false;
