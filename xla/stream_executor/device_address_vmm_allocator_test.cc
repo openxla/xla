@@ -172,8 +172,7 @@ class DeviceAddressVmmAllocatorTest : public ::testing::Test {
   NiceMock<MockStream> stream_;
 };
 
-TEST_F(DeviceAddressVmmAllocatorTest,
-       RetryDisabledReturnsFirstResourceExhausted) {
+TEST_F(DeviceAddressVmmAllocatorTest, RetryFlagDoesNotDisablePendingReclaim) {
   const DeviceAddressVmmAllocator::DeviceConfig config =
       Config(2 * kGranularity);
   ASSERT_OK_AND_ASSIGN(auto allocator, TestDeviceAddressVmmAllocator::Create(
@@ -183,22 +182,13 @@ TEST_F(DeviceAddressVmmAllocatorTest,
       auto first,
       allocator->Allocate(/*device_ordinal=*/0, kGranularity,
                           /*retry_on_failure=*/true, /*memory_space=*/0));
-  DeviceAddressBase stale_address = first.cref();
   ASSERT_THAT(allocator->Deallocate(/*device_ordinal=*/0, first.Release()),
               absl_testing::IsOk());
-
-  EXPECT_THAT(allocator->Allocate(/*device_ordinal=*/0, 2 * kGranularity,
-                                  /*retry_on_failure=*/false,
-                                  /*memory_space=*/0),
-              StatusIs(absl::StatusCode::kResourceExhausted));
-  EXPECT_NE(allocator->GetRawAllocation(/*device_ordinal=*/0, stale_address),
-            nullptr);
-  EXPECT_EQ(allocator->allocation_count(), 1);
 
   ASSERT_OK_AND_ASSIGN(
       auto retried,
       allocator->Allocate(/*device_ordinal=*/0, 2 * kGranularity,
-                          /*retry_on_failure=*/true, /*memory_space=*/0));
+                          /*retry_on_failure=*/false, /*memory_space=*/0));
   EXPECT_EQ(allocator->allocation_count(), 2);
 }
 
@@ -224,7 +214,8 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   EXPECT_EQ(allocator->allocation_count(), 1);
 }
 
-TEST_F(DeviceAddressVmmAllocatorTest, MappedAllocateHonorsRetryOnFailure) {
+TEST_F(DeviceAddressVmmAllocatorTest,
+       RetryFlagDoesNotDisableMappedPendingReclaim) {
   auto reservation = std::make_unique<TestMemoryReservation>(2 * kGranularity);
   const DeviceAddressVmmAllocator::DeviceConfig config =
       Config(2 * kGranularity);
@@ -238,21 +229,11 @@ TEST_F(DeviceAddressVmmAllocatorTest, MappedAllocateHonorsRetryOnFailure) {
   ASSERT_THAT(allocator->Deallocate(/*device_ordinal=*/0, first.Release()),
               absl_testing::IsOk());
 
-  EXPECT_THAT(
-      allocator->Allocate(
-          /*device_ordinal=*/0, /*allocation_size=*/2 * kGranularity,
-          /*retry_on_failure=*/false, /*memory_space=*/0, reservation.get(),
-          /*reservation_offset=*/0, /*mapping_size=*/2 * kGranularity,
-          /*return_reservation_address=*/true),
-      StatusIs(absl::StatusCode::kResourceExhausted));
-  EXPECT_EQ(reservation->active_mapping_count(), 0);
-  EXPECT_EQ(allocator->allocation_count(), 1);
-
   ASSERT_OK_AND_ASSIGN(
       auto retried,
       allocator->Allocate(
           /*device_ordinal=*/0, /*allocation_size=*/2 * kGranularity,
-          /*retry_on_failure=*/true, /*memory_space=*/0, reservation.get(),
+          /*retry_on_failure=*/false, /*memory_space=*/0, reservation.get(),
           /*reservation_offset=*/0, /*mapping_size=*/2 * kGranularity,
           /*return_reservation_address=*/true));
   EXPECT_EQ(reservation->active_mapping_count(), 1);
@@ -278,9 +259,6 @@ TEST_F(DeviceAddressVmmAllocatorTest,
                 ->address()
                 .size(),
             2 * kGranularity);
-  ASSERT_THAT(allocator->Deallocate(/*device_ordinal=*/0, first.Release()),
-              absl_testing::IsOk());
-
   // The first allocation consumes the full budget based on the physical size,
   // even though its requested size was one granularity unit.
   EXPECT_THAT(allocator->Allocate(/*device_ordinal=*/0, 2 * kGranularity,
@@ -289,6 +267,8 @@ TEST_F(DeviceAddressVmmAllocatorTest,
               StatusIs(absl::StatusCode::kResourceExhausted));
   EXPECT_EQ(allocator->allocation_count(), 1);
 
+  ASSERT_THAT(allocator->Deallocate(/*device_ordinal=*/0, first.Release()),
+              absl_testing::IsOk());
   ASSERT_THAT(allocator->SynchronizePendingOperations(/*device_ordinal=*/0),
               absl_testing::IsOk());
   ASSERT_OK_AND_ASSIGN(

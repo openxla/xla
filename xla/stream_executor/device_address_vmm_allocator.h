@@ -555,14 +555,13 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Shared allocation retry policy. First calls `try_reuse` to reactivate
-  // compatible pending state without blocking, then calls `try_fresh`. If
-  // retries are enabled, a ResourceExhausted result completes ready pending
-  // entries and, if needed, waits for enough pending frees to reclaim
-  // approximately `reclaim_size` bytes.
+  // compatible pending state without blocking, then calls `try_fresh`. A
+  // ResourceExhausted result completes ready pending entries and, if needed,
+  // waits for enough pending frees to reclaim approximately `reclaim_size`
+  // bytes.
   template <typename TryReuseFn, typename TryFreshFn>
   absl::StatusOr<DeviceAddressBase> TryWithPendingReclaim(PerDeviceState& state,
                                                           uint64_t reclaim_size,
-                                                          bool retry_on_failure,
                                                           TryReuseFn try_reuse,
                                                           TryFreshFn try_fresh)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);

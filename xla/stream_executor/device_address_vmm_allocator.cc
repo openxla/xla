@@ -574,13 +574,12 @@ DeviceAddressVmmAllocator::CreateMappedAllocation(
 }
 
 // Reuses compatible pending state before trying a fresh allocation. On a
-// retryable ResourceExhausted failure, first reclaim completed work, then wait
-// for enough queued allocator deallocations and try once more.
+// ResourceExhausted failure, first reclaim completed work, then wait for enough
+// queued allocator deallocations and try once more.
 template <typename TryReuseFn, typename TryFreshFn>
 absl::StatusOr<DeviceAddressBase>
 DeviceAddressVmmAllocator::TryWithPendingReclaim(PerDeviceState& state,
                                                  uint64_t reclaim_size,
-                                                 bool retry_on_failure,
                                                  TryReuseFn try_reuse,
                                                  TryFreshFn try_fresh) {
   // First try to reactivate a compatible pending deallocation without waiting.
@@ -595,10 +594,6 @@ DeviceAddressVmmAllocator::TryWithPendingReclaim(PerDeviceState& state,
   // calls should finish here; the reclaim paths below are only for PA budget
   // pressure or allocator-level allocation failures.
   absl::StatusOr<DeviceAddressBase> result = try_fresh();
-  if (!retry_on_failure) {
-    return result;
-  }
-
   if (absl::IsResourceExhausted(result.status())) {
     // A ResourceExhausted error may be stale: some pending deallocations can
     // already be past their stream timeline point. Complete ready allocator
@@ -660,7 +655,7 @@ DeviceAddressVmmAllocator::TryWithPendingReclaim(PerDeviceState& state,
 // tries a fresh allocator-address mapping.
 absl::StatusOr<ScopedDeviceAddress<uint8_t>>
 DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
-                                    bool retry_on_failure,
+                                    bool /*retry_on_failure*/,
                                     int64_t /*memory_space*/) {
   if (size == 0) {
     return ScopedDeviceAddress<uint8_t>(DeviceAddressBase(), device_ordinal,
@@ -732,8 +727,7 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
   };
 
   ASSIGN_OR_RETURN(DeviceAddressBase result,
-                   TryWithPendingReclaim(*state, size, retry_on_failure,
-                                         try_reuse, try_fresh));
+                   TryWithPendingReclaim(*state, size, try_reuse, try_fresh));
 
   VLOG(3) << absl::StreamFormat(
       "Allocated virtual address %p (%uB) on device ordinal %d",
@@ -746,7 +740,7 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
 // tries fresh physical allocation and maps it into the caller reservation.
 absl::StatusOr<ScopedDeviceAddress<uint8_t>>
 DeviceAddressVmmAllocator::Allocate(
-    int device_ordinal, uint64_t allocation_size, bool retry_on_failure,
+    int device_ordinal, uint64_t allocation_size, bool /*retry_on_failure*/,
     int64_t /*memory_space*/, MemoryReservation* reservation,
     uint64_t reservation_offset, uint64_t mapping_size,
     bool return_reservation_address) {
@@ -797,8 +791,7 @@ DeviceAddressVmmAllocator::Allocate(
   // wait for enough pending deallocations only if necessary.
   ASSIGN_OR_RETURN(
       DeviceAddressBase result,
-      TryWithPendingReclaim(*state, allocation_size, retry_on_failure,
-                            try_reuse, try_fresh));
+      TryWithPendingReclaim(*state, allocation_size, try_reuse, try_fresh));
 
   // For return_reservation_address=true this is `reservation_address`; for
   // return_reservation_address=false it is the allocator-owned address paired
