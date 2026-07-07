@@ -811,7 +811,8 @@ Build(
     ),
     override_module={
         "xla": f"{_GITHUB_WORKSPACE}/openxla/xla",
-        # TODO(alekstheod): remove as soon as jax is migrated to the latest rules_ml_toolchain changes
+        # TODO(alekstheod): remove when jax is migrated to 
+        # latest the rules_ml_toolchain
         "rules_ml_toolchain": f"{_GITHUB_WORKSPACE}/openxla/rules_ml_toolchain",
     },
     options=_DEFAULT_BAZEL_OPTIONS,
