@@ -414,6 +414,23 @@ uint64_t DeviceAddressVmmAllocator::GetAllocationGranularity(
 
 // Allocate helpers.
 
+absl::StatusOr<std::unique_ptr<MemoryAllocation>>
+DeviceAddressVmmAllocator::AllocatePhysicalWithinBudget(
+    PerDeviceState& state, uint64_t size, uint64_t& physical_size) {
+  // Fail fast on an obvious budget miss before asking the driver to reserve
+  // physical memory. rounded_size only estimates what the driver will return;
+  // the authoritative check below uses the real committed size.
+  RETURN_IF_ERROR(CheckPaBudget(state, RoundUpToGranularity(state, size)));
+  ASSIGN_OR_RETURN(auto raw_alloc, CreateAllocation(state.executor, size));
+  physical_size = raw_alloc->address().size();
+  // CreateAllocation rounds the request up to the allocation granularity, so
+  // the physical allocation is never smaller than requested.
+  DCHECK_GE(physical_size, size);
+  // Re-check against the actual size that will be charged to pa_allocated.
+  RETURN_IF_ERROR(CheckPaBudget(state, physical_size));
+  return raw_alloc;
+}
+
 void DeviceAddressVmmAllocator::TrackAllocatorAddressMappedAllocation(
     PerDeviceState& state, AllocationRecord::Kind kind,
     DeviceAddressBase allocator_address,
@@ -584,22 +601,12 @@ DeviceAddressVmmAllocator::EnsureReservationAvailableForFreshMapping(
 absl::StatusOr<DeviceAddressBase>
 DeviceAddressVmmAllocator::CreateMappedAllocationAtReservationAddress(
     PerDeviceState& state, const MappedAllocateRequest& request) {
-  const uint64_t rounded_size = RoundUpToGranularity(state, request.size);
   // The returned allocator address is the caller-owned reservation VA. The
   // record is keyed by that VA and owns only the raw allocation plus the scoped
   // mapping into the external reservation.
-  RETURN_IF_ERROR(CheckPaBudget(state, rounded_size));
-
-  ASSIGN_OR_RETURN(auto raw_alloc,
-                   CreateAllocation(state.executor, request.size));
-  const uint64_t physical_size = raw_alloc->address().size();
-  if (request.size > physical_size) {
-    return absl::InvalidArgumentError(absl::StrFormat(
-        "physical allocation is smaller than requested mapping: "
-        "allocation_size=%uB, mapping_size=%uB",
-        physical_size, request.size));
-  }
-  RETURN_IF_ERROR(CheckPaBudget(state, physical_size));
+  uint64_t physical_size = 0;
+  ASSIGN_OR_RETURN(auto raw_alloc, AllocatePhysicalWithinBudget(
+                                       state, request.size, physical_size));
 
   ASSIGN_OR_RETURN(auto scoped_mapping,
                    request.reservation->MapTo(request.reservation_offset,
@@ -617,22 +624,12 @@ DeviceAddressVmmAllocator::CreateMappedAllocationAtReservationAddress(
 absl::StatusOr<DeviceAddressBase>
 DeviceAddressVmmAllocator::CreateMappedAllocationWithSeparateAddress(
     PerDeviceState& state, const MappedAllocateRequest& request) {
-  const uint64_t rounded_size = RoundUpToGranularity(state, request.size);
   // This mode creates two VAs for the same raw allocation: an allocator-owned
   // VA returned to the caller, and a non-owning alias in the caller reservation
   // used by captured command buffers.
-  RETURN_IF_ERROR(CheckPaBudget(state, rounded_size));
-
-  ASSIGN_OR_RETURN(auto raw_alloc,
-                   CreateAllocation(state.executor, request.size));
-  const uint64_t physical_size = raw_alloc->address().size();
-  if (request.size > physical_size) {
-    return absl::InvalidArgumentError(absl::StrFormat(
-        "mapping size must not exceed physical allocation size: "
-        "mapping_size=%uB, allocation_size=%uB",
-        request.size, physical_size));
-  }
-  RETURN_IF_ERROR(CheckPaBudget(state, physical_size));
+  uint64_t physical_size = 0;
+  ASSIGN_OR_RETURN(auto raw_alloc, AllocatePhysicalWithinBudget(
+                                       state, request.size, physical_size));
 
   ASSIGN_OR_RETURN(auto allocator_address_reservation,
                    CreateReservation(state.executor, request.size));
@@ -797,18 +794,9 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
   };
   auto try_fresh = [&]() -> absl::StatusOr<DeviceAddressBase> {
     state->mu.AssertHeld();
-    uint64_t rounded_size = RoundUpToGranularity(*state, size);
-    RETURN_IF_ERROR(CheckPaBudget(*state, rounded_size));
-
-    ASSIGN_OR_RETURN(auto raw_alloc, CreateAllocation(state->executor, size));
-    const uint64_t physical_size = raw_alloc->address().size();
-    if (size > physical_size) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "physical allocation is smaller than requested allocation: "
-          "requested_size=%uB, physical_size=%uB",
-          size, physical_size));
-    }
-    RETURN_IF_ERROR(CheckPaBudget(*state, physical_size));
+    uint64_t physical_size = 0;
+    ASSIGN_OR_RETURN(auto raw_alloc,
+                     AllocatePhysicalWithinBudget(*state, size, physical_size));
 
     ASSIGN_OR_RETURN(auto reservation,
                      CreateReservation(state->executor, size));

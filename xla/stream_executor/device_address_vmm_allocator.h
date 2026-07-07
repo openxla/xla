@@ -563,6 +563,15 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
   // Allocate helpers.
 
+  // Checks the PA budget for `size`, creates a physical allocation, and
+  // re-checks the budget against the actual (granularity-padded) size the
+  // driver returned, which is the size charged to pa_allocated. Returns the
+  // allocation and reports that size via `physical_size`.
+  absl::StatusOr<std::unique_ptr<MemoryAllocation>>
+  AllocatePhysicalWithinBudget(PerDeviceState& state, uint64_t size,
+                               uint64_t& physical_size)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
   // Records a raw allocation mapped at an owning allocator address. Takes
   // ownership of `reservation` when the allocator address was allocator-owned;
   // reservation-backed returned addresses pass nullptr here. Charges
