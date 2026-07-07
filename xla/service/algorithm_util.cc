@@ -239,9 +239,9 @@ bool IsSupportedDotAlgorithmOnGpu(
                             gpu_compute_capability.rocm_compute_capability()
                                 ->has_bf16_dtype_support();
 
-  const bool is_rocm_mi300 =
+  const bool has_nanoo_fp8_support =
       gpu_compute_capability.IsRocm() &&
-      gpu_compute_capability.rocm_compute_capability()->gfx9_mi300();
+      gpu_compute_capability.rocm_compute_capability()->has_nanoo_fp8_support();
 
   switch (algorithm) {
     case PrecisionConfig::ALG_DOT_ANY_F8_ANY_F8_F32:
@@ -264,8 +264,8 @@ bool IsSupportedDotAlgorithmOnGpu(
           (rhs_storage_type == F8E5M2 || rhs_storage_type == F8E4M3FN)) {
         return true;
       }
-      // FNUZ types support (ROCm mi300 only)
-      if (is_rocm_mi300) {
+      // FNUZ types support (ROCm)
+      if (has_nanoo_fp8_support) {
         if (lhs_storage_type == F8E5M2FNUZ && rhs_storage_type == F8E4M3FNUZ) {
           return true;
         }

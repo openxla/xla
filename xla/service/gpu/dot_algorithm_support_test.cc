@@ -200,12 +200,13 @@ TEST_P(DotAlgorithmSupportTest, AlgorithmIsSupportedFromCudaCapability) {
                    << " not supported on MI200.";
     }
     // FNUZ types are only supported on MI300 series
-    if (!rcc->gfx9_mi300() && (params.lhs_storage_type == F8E4M3FNUZ ||
-                               params.lhs_storage_type == F8E5M2FNUZ ||
-                               params.rhs_storage_type == F8E4M3FNUZ ||
-                               params.rhs_storage_type == F8E5M2FNUZ ||
-                               params.output_storage_type == F8E4M3FNUZ ||
-                               params.output_storage_type == F8E5M2FNUZ)) {
+    if (!rcc->has_nanoo_fp8_support() &&
+        (params.lhs_storage_type == F8E4M3FNUZ ||
+         params.lhs_storage_type == F8E5M2FNUZ ||
+         params.rhs_storage_type == F8E4M3FNUZ ||
+         params.rhs_storage_type == F8E5M2FNUZ ||
+         params.output_storage_type == F8E4M3FNUZ ||
+         params.output_storage_type == F8E5M2FNUZ)) {
       GTEST_SKIP() << "FNUZ types only supported on MI300 series.";
     }
   }
