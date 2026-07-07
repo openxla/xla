@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_DUMP_H_
 #define XLA_SERVICE_DUMP_H_
 
+#include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -140,6 +142,7 @@ void DumpPerExecutionProtobufToFile(
 // Returns the full file paths of all dumps of the module, or an empty vector if
 // nothing was dumped. If not null, `dump_options` are used to determine the
 // dump directory, file formats, and so on.
+
 std::vector<std::string> DumpHloModuleIfEnabled(
     const HloModule& module, absl::string_view name,
     const DebugOptions* dump_options = nullptr);
@@ -235,6 +238,8 @@ std::optional<std::string> DumpNonDefaultDebugOptions(
 // are received from DefaultDebugOptionsIgnoringFlags().
 // TODO: move this to xla/debug_options_flags.cc
 std::string GetNonDefaultDebugOptions(const DebugOptions& debug_options);
+
+void WaitForAllAsyncDumps();
 
 }  // namespace xla
 
