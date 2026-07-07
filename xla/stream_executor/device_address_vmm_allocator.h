@@ -302,20 +302,11 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
  protected:
   enum class PendingDeallocationKind {
-    // Deferred Deallocate() of an Allocate() result backed by an
-    // allocator-owned reservation.
-    kAllocate,
-    // Deferred Deallocate() of an
-    // Allocate(..., return_reservation_address=true) result. The allocator
-    // address is a caller-owned reservation range.
-    kAllocateAndMapReturnMapAddr,
-    // Deferred Deallocate() of an
-    // Allocate(..., return_reservation_address=false) result. The record has
-    // an allocator-owned returned address and may also have a non-owning caller
-    // reservation mapping to unmap.
-    kAllocateAndMapReturnNewAddr,
-    // Deferred completion of a Map()-owned reservation address. The reservation
-    // address is a non-owning alias of an existing raw allocation.
+    // Deferred Deallocate() of any Allocate() result. AllocationRecord::kind()
+    // identifies the API mode that created the allocation.
+    kAllocation,
+    // Deferred completion of a reservation alias created by Map() or mapped
+    // Allocate(). The reservation address does not own the raw allocation.
     kMap,
   };
 
@@ -347,7 +338,6 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     AllocationRecord& operator=(AllocationRecord&&) = default;
 
     Kind kind() const { return kind_; }
-    PendingDeallocationKind pending_deallocation_kind() const;
     DeviceAddressBase allocator_address() const { return allocator_address_; }
     void* allocator_key() const { return allocator_address_.opaque(); }
     bool allocator_active() const { return allocator_stale_seqno_ == 0; }
@@ -413,25 +403,12 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // live in AllocationRecord; this entry only says which stale address becomes
   // safe to complete when the GPU timeline reaches `seqno`.
   struct PendingDeallocation {
-    PendingDeallocationKind kind = PendingDeallocationKind::kAllocate;
+    PendingDeallocationKind kind = PendingDeallocationKind::kAllocation;
     // GPU stream sequence number recorded at deallocation time. When the
     // pinned_timeline value reaches this seqno, the memory is safe to free.
     uint64_t seqno = 0;
     // Allocator address for allocation deallocations; reservation address for
     // kMap.
-    DeviceAddressBase addr;
-    // Physical-allocation bytes charged to the PA budget that become
-    // reclaimable when this pending operation completes. kMap entries do not
-    // own physical memory and therefore use zero.
-    uint64_t reclaimable_bytes = 0;
-  };
-
-  // Stable identity for a pending operation. Iterators into
-  // pending_deallocations must not be kept across waits because
-  // WaitUntilSeqno() releases state.mu.
-  struct PendingDeallocationKey {
-    PendingDeallocationKind kind = PendingDeallocationKind::kAllocate;
-    uint64_t seqno = 0;
     DeviceAddressBase addr;
   };
 
@@ -671,21 +648,10 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
                                    AllocationRecord& record, uint64_t new_size)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
-  void CompleteStaleReservationMapping(PerDeviceState& state,
-                                       AllocationRecord& record)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
   // Waits for the device timeline to reach `target_seqno`. Temporarily releases
   // and reacquires state.mu around the blocking wait. This does not complete
   // pending entries by itself.
-  absl::Status WaitUntilSeqno(PerDeviceState& state, uint64_t target_seqno)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  // Waits for pending operations through `target_seqno`, then completes all
-  // still-pending operations up to that sequence. Used only when preserving
-  // stale mappings for future reuse is no longer useful.
-  absl::Status WaitAndDrainPendingDeallocationsUntilSeqno(PerDeviceState& state,
-                                                          uint64_t target_seqno)
+  void WaitUntilSeqno(PerDeviceState& state, uint64_t target_seqno)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Completes ready allocator-address deallocations for PA reclaim while
@@ -703,28 +669,10 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Finds, erases, and completes the selected pending entry if it is still
-  // present. Returns false if another thread already reused or completed it
-  // while state.mu was released.
-  bool CompletePendingDeallocationByKey(PerDeviceState& state,
-                                        const PendingDeallocationKey& key)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  // Waits for and completes the selected allocator-address deallocation, if it
-  // is still pending after the wait.
-  absl::Status WaitAndCompleteStaleAllocatorDeallocation(
-      PerDeviceState& state, const PendingDeallocationKey& key)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  // Waits for and completes a stale reservation-address mapping queued by
-  // UnMap().
-  absl::Status WaitAndCompleteStaleReservationMapping(
-      PerDeviceState& state, const PendingDeallocationKey& key)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  // Completes only the stale allocator or reservation mapping that conflicts
-  // with the current request, leaving unrelated stale mappings reusable.
-  absl::Status WaitAndCompleteStaleOverlap(PerDeviceState& state,
-                                           const OverlappingRecord& overlap)
+  // present. Sequence numbers uniquely identify operations on a device; another
+  // thread may already have reused or completed the entry while state.mu was
+  // released.
+  void CompletePendingDeallocationBySeqno(PerDeviceState& state, uint64_t seqno)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Device ordinal -> per-device allocator state. Populated at construction by
