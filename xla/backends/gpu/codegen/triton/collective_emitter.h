@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/shape.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/types.h"  // IWYU pragma: keep
 
 namespace xla {
@@ -101,6 +102,22 @@ absl::StatusOr<std::vector<Shape>> GetCollectiveUnmanagedKernelArguments(
 
 // Rewrites stablehlo all-reduce op to a triton implementation.
 mlir::LogicalResult RewriteAllReduce(mlir::stablehlo::AllReduceOp op,
+                                     mlir::PatternRewriter& rewriter);
+
+// Returns the block level fusion config for an all-gather instruction if
+// the Triton backend is enabled for it.
+absl::StatusOr<std::optional<BlockLevelFusionConfig>>
+GetBlockLevelFusionConfigForAllGather(
+    const GpuTopology& gpu_topology, const HloAllGatherInstruction* all_gather,
+    const DeviceAssignment* device_assignment);
+
+// Returns the unmanaged kernel argument shapes for an all-gather fusion.
+absl::StatusOr<std::vector<Shape>> GetAllGatherUnmanagedKernelArguments(
+    const HloComputation* computation,
+    const HloAllGatherInstruction* all_gather);
+
+// MLIR pattern rewrite for stablehlo::AllGatherOp → Triton IR.
+mlir::LogicalResult RewriteAllGather(mlir::stablehlo::AllGatherOp op,
                                      mlir::PatternRewriter& rewriter);
 
 // Creates a CollectiveKernelSpec for a given collective or fusion instruction.

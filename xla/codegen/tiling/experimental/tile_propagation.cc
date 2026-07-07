@@ -1251,11 +1251,9 @@ Tiles PropagateTileToInputForAllGatherOp(const TilingSpace& tiling_space,
       << "Multi-operand AllGather is not yet supported.";
   const Shape& input_shape = hlo.operand(0)->shape();
   int64_t local_size = input_shape.dimensions(gather_dim);
-  int64_t num_replicas = hlo.shape().dimensions(gather_dim) / local_size;
 
   const DimTile& output_dim_tile = output_tile.dim_tiles()[gather_dim];
 
-  SymbolicExpr replica_id = output_dim_tile.offset / local_size;
   SymbolicExpr input_offset = output_dim_tile.offset % local_size;
 
   llvm::SmallVector<DimTile> input_dim_tiles;
@@ -1271,16 +1269,15 @@ Tiles PropagateTileToInputForAllGatherOp(const TilingSpace& tiling_space,
     }
   }
 
-  mlir::MLIRContext* ctx = output_tile.mlir_context();
+  // The input tile does NOT add a new replica_id dimension beyond what the
+  // output tile already carries. The AllGather emitter derives source_rank
+  // from the XTile tile_id function argument:
+  //   tiles_per_rank = local_size_in_gather_dim / tile_size_in_gather_dim
+  //   source_rank    = tile_id / tiles_per_rank
+  // This is computed directly in AllGatherEmitter::EmitAllGather() without
+  // needing a symbolic replica_id expression in the input tile.
   llvm::SmallVector<DimTile> replica_id_dim_tiles =
       llvm::to_vector(output_tile.replica_ids());
-  replica_id_dim_tiles.push_back(DimTile{
-      /*offset=*/replica_id,
-      /*size=*/CreateSymbolicConstant(1, ctx),
-      /*stride=*/CreateSymbolicConstant(1, ctx),
-      /*upper_bound=*/
-      CreateSymbolicConstant(num_replicas, ctx),
-  });
 
   Tile input_tile(output_tile.tiling_space(), std::move(input_dim_tiles),
                   std::move(replica_id_dim_tiles));
