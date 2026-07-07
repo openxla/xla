@@ -552,12 +552,6 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   uint64_t RoundUpToGranularity(const PerDeviceState& state,
                                 uint64_t size) const;
 
-  // Returns ResourceExhausted if charging `size` more physical bytes would
-  // exceed the configured PA budget. Uses subtraction to avoid unsigned
-  // overflow.
-  absl::Status CheckPaBudget(const PerDeviceState& state, uint64_t size) const
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
   // True iff the calling thread is inside a multi-device DeviceAssignmentScope.
   static bool CurrentMultiDevice();
 

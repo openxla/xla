@@ -318,18 +318,6 @@ uint64_t DeviceAddressVmmAllocator::RoundUpToGranularity(
          state.allocation_granularity;
 }
 
-absl::Status DeviceAddressVmmAllocator::CheckPaBudget(
-    const PerDeviceState& state, uint64_t size) const {
-  if (state.pa_allocated <= state.pa_budget &&
-      size <= state.pa_budget - state.pa_allocated) {
-    return absl::OkStatus();
-  }
-  return absl::ResourceExhaustedError(absl::StrFormat(
-      "Not enough PA budget: pa_allocated=%uB, allocation_size=%uB, "
-      "pa_budget=%uB",
-      state.pa_allocated, size, state.pa_budget));
-}
-
 absl::StatusOr<Stream*> DeviceAddressVmmAllocator::GetStream(
     int device_ordinal) {
   ASSIGN_OR_RETURN(auto state, GetPerDeviceState(device_ordinal));
@@ -417,17 +405,31 @@ uint64_t DeviceAddressVmmAllocator::GetAllocationGranularity(
 absl::StatusOr<std::unique_ptr<MemoryAllocation>>
 DeviceAddressVmmAllocator::AllocatePhysicalWithinBudget(
     PerDeviceState& state, uint64_t size, uint64_t& physical_size) {
+  // Returns ResourceExhausted if charging `bytes` more physical bytes would
+  // exceed the configured PA budget. Subtraction avoids unsigned overflow.
+  auto check_pa_budget = [&state](uint64_t bytes) -> absl::Status {
+    state.mu.AssertHeld();
+    if (state.pa_allocated <= state.pa_budget &&
+        bytes <= state.pa_budget - state.pa_allocated) {
+      return absl::OkStatus();
+    }
+    return absl::ResourceExhaustedError(absl::StrFormat(
+        "Not enough PA budget: pa_allocated=%uB, allocation_size=%uB, "
+        "pa_budget=%uB",
+        state.pa_allocated, bytes, state.pa_budget));
+  };
+
   // Fail fast on an obvious budget miss before asking the driver to reserve
   // physical memory. rounded_size only estimates what the driver will return;
   // the authoritative check below uses the real committed size.
-  RETURN_IF_ERROR(CheckPaBudget(state, RoundUpToGranularity(state, size)));
+  RETURN_IF_ERROR(check_pa_budget(RoundUpToGranularity(state, size)));
   ASSIGN_OR_RETURN(auto raw_alloc, CreateAllocation(state.executor, size));
   physical_size = raw_alloc->address().size();
   // CreateAllocation rounds the request up to the allocation granularity, so
   // the physical allocation is never smaller than requested.
   DCHECK_GE(physical_size, size);
   // Re-check against the actual size that will be charged to pa_allocated.
-  RETURN_IF_ERROR(CheckPaBudget(state, physical_size));
+  RETURN_IF_ERROR(check_pa_budget(physical_size));
   return raw_alloc;
 }
 
