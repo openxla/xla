@@ -14,7 +14,5 @@ def repo():
         strip_prefix = "spdlog-{version}".format(version = SPDLOG_VERSION),
         urls = tf_mirror_urls("https://github.com/gabime/spdlog/archive/refs/tags/v{version}.tar.gz".format(version = SPDLOG_VERSION)),
         build_file = "//third_party/spdlog:spdlog.BUILD",
-        patch_file = [
-            "//third_party/spdlog:smoke_test.cc.patch",
-        ],
+        patch_file = ["//third_party/spdlog:smoke_test.cc.patch"],
     )
