@@ -33,7 +33,7 @@ namespace xla {
 // to a backing store (e.g., filesystem, database).
 class PersistentCache : public AutotunerCacheInterface {
  public:
-  PersistentCache(AutotuneScope context, CacheMode mode,
+  PersistentCache(AutotuneCacheContext context, CacheMode mode,
                   KeyMatchingMode matching_mode);
 
   std::optional<Config> Lookup(const HloInstruction* instr) override;
@@ -47,6 +47,8 @@ class PersistentCache : public AutotunerCacheInterface {
 
  protected:
   // TargetKey-based read, used for loose key matching.
+  // Returns a vector of entries that match the target key, or an empty vector
+  // if no match is found.
   virtual absl::StatusOr<std::vector<autotuner::AutotuneEntry>> Read(
       const autotuner::AutotuneTargetKey& target_key) = 0;
   // Full-key based read, for strict key matching.
@@ -56,7 +58,7 @@ class PersistentCache : public AutotunerCacheInterface {
   virtual absl::Status Write(const autotuner::AutotuneEntry& entry) = 0;
 
  private:
-  AutotuneScope context_;
+  AutotuneCacheContext context_;
   CacheMode mode_;
   KeyMatchingMode matching_mode_;
 
