@@ -293,10 +293,10 @@ absl::Status IsAllReduceKernelSupported(
   // sizes. Fall back to the library collective for non-uniform replica groups.
   for (const ReplicaGroup& group : replica_groups) {
     if (group.replica_ids_size() != num_devices) {
-      return absl::UnimplementedError(absl::StrCat(
+      return absl::UnimplementedError(absl::StrFormat(
           "Collective kernel requires all replica groups to have the same "
-          "size. Got a group of size ",
-          group.replica_ids_size(), " but expected ", num_devices, "."));
+          "size. Got a group of size %d but expected %d.",
+          group.replica_ids_size(), num_devices));
     }
   }
   if (!reduction_kind.has_value()) {
