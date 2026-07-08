@@ -19,11 +19,13 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/bit.h"
+#include "llvm/Support/Alignment.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -43,33 +45,31 @@ limitations under the License.
 
 namespace xla::gpu {
 
-absl::Status IsAllGatherKernelSupported(int64_t num_ranks, int64_t num_elements,
+absl::Status IsAllGatherKernelSupported(int64_t num_elements,
                                         PrimitiveType element_type) {
-  // Triton does not have unsigned integer types — tt.store/tt.load only accept
-  // signless integers and floating-point types.
-  if (element_type == U8 || element_type == U16 || element_type == U32 ||
-      element_type == U64) {
-    return absl::UnimplementedError(absl::StrCat(
-        "Unsigned integer element type (",
-        primitive_util::LowercasePrimitiveTypeName(element_type),
-        ") is not supported for all-gather kernel (Triton has no unsigned "
-        "integer types). Use the signed equivalent or a floating-point type; "
-        "NCCL/RCCL handles unsigned types correctly."));
+  // Only types in kSupportedAllGatherTypes are allowed. Triton tt.load/tt.store
+  // support signless integers and floating-point types; unsigned integers,
+  // complex types, tokens, tuples, and exotic types (e.g. 4-bit, 8-bit floats)
+  // are not supported.
+  if (!absl::c_linear_search(kSupportedAllGatherTypes, element_type)) {
+    return absl::UnimplementedError(absl::StrFormat(
+        "Element type %s is not supported for the all-gather kernel. "
+        "Supported types are signed integers and standard floating-point "
+        "types; use NCCL/RCCL for other types.",
+        primitive_util::LowercasePrimitiveTypeName(element_type)));
   }
 
-  // The alignment requirement is on the total transfer size in bytes: the
-  // buffer must be a multiple of kNumElementsPerThread × 4 bytes (128 bits)
-  // so each thread processes a whole number of 32-bit words.
-  const int64_t element_bits = primitive_util::BitWidth(element_type);
-  const int64_t required_bits = se::gpu::kNumElementsPerThread * 32;  // 128 b
-  if ((num_elements * element_bits) % required_bits != 0) {
-    return absl::UnimplementedError(absl::StrCat(
-        "Number of elements (", num_elements, ") of type ",
-        primitive_util::LowercasePrimitiveTypeName(element_type), " (",
-        element_bits,
-        " bits each) is not aligned to the alignment requirement"
-        " (",
-        se::gpu::kNumElementsPerThread, " x 32-bit words per thread)."));
+  // The total transfer size in bits must be aligned to
+  // kBitsPerMemoryTransaction (128 bits = 16 bytes) so each thread can
+  // load/store a complete transaction.
+  const uint64_t element_bits = primitive_util::BitWidth(element_type);
+  if (!llvm::isAligned(llvm::Align(kBitsPerMemoryTransaction),
+                       static_cast<uint64_t>(num_elements) * element_bits)) {
+    return absl::UnimplementedError(absl::StrFormat(
+        "Number of elements (%d) of type %s (%d bits each) is not aligned to "
+        "the memory transaction alignment requirement (%d bits).",
+        num_elements, primitive_util::LowercasePrimitiveTypeName(element_type),
+        element_bits, kBitsPerMemoryTransaction));
   }
   return absl::OkStatus();
 }
@@ -87,18 +87,17 @@ absl::Status IsAllGatherKernelSupported(
   // ROCm: All versions with Triton support are enabled
   if (!device_info.cuda_compute_capability().IsAtLeastHopper() &&
       !device_info.gpu_compute_capability().IsRocm()) {
-    return absl::UnimplementedError(absl::StrCat(
+    return absl::UnimplementedError(absl::StrFormat(
         "Triton collective codegen requires CUDA compute capability >= 9.0 "
-        "(Hopper or newer) or a ROCm device with Triton support. "
-        "Got: ",
-        device_info.gpu_compute_capability().ToString(), "."));
+        "(Hopper or newer) or a ROCm device with Triton support. Got: %s.",
+        device_info.gpu_compute_capability().ToString()));
   }
   // TODO(b/383125489): Support variadic arguments.
   if (num_operands != 1) {
-    return absl::UnimplementedError(
-        absl::StrCat("Collective kernel is not supported for number of "
-                     "operands not equal to 1. Got ",
-                     num_operands, "."));
+    return absl::UnimplementedError(absl::StrFormat(
+        "Collective kernel is not supported for number of operands not equal "
+        "to 1. Got %d.",
+        num_operands));
   }
   if (replica_groups.empty()) {
     return absl::UnimplementedError(
@@ -109,12 +108,12 @@ absl::Status IsAllGatherKernelSupported(
         "Cross-host symmetric memory collectives are not supported.");
   }
   if (!llvm::has_single_bit(static_cast<uint64_t>(num_devices))) {
-    return absl::UnimplementedError(
-        absl::StrCat("Collective kernels are only supported for power of 2 "
-                     "number of devices. Got ",
-                     num_devices, "."));
+    return absl::UnimplementedError(absl::StrFormat(
+        "Collective kernels are only supported for power of 2 number of "
+        "devices. Got %d.",
+        num_devices));
   }
-  return IsAllGatherKernelSupported(num_devices, num_elements, element_type);
+  return IsAllGatherKernelSupported(num_elements, element_type);
 }
 
 absl::StatusOr<AllGatherInfo> BuildAllGatherInfo(

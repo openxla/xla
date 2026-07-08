@@ -174,7 +174,7 @@ TEST_F(BuildAllGatherInfoTest, FailsForUnsupportedUnsignedType) {
       BuildInfo(CollectiveKernelEnabled(true), U32, /*num_elements=*/512,
                 /*replica_groups=*/{0, 1}),
       StatusIs(absl::StatusCode::kUnimplemented,
-               HasSubstr("is not supported for all-gather kernel")));
+               HasSubstr("is not supported for the all-gather kernel")));
 }
 
 TEST_F(BuildAllGatherInfoTest, FailsForUnalignedElements) {
@@ -182,7 +182,8 @@ TEST_F(BuildAllGatherInfoTest, FailsForUnalignedElements) {
   EXPECT_THAT(BuildInfo(CollectiveKernelEnabled(true), F32, /*num_elements=*/7,
                         /*replica_groups=*/{0, 1}),
               StatusIs(absl::StatusCode::kUnimplemented,
-                       HasSubstr("not aligned to the alignment requirement")));
+                       HasSubstr("not aligned to the memory transaction "
+                                 "alignment requirement")));
 }
 
 TEST_F(BuildAllGatherInfoTest, FailsIfReplicaGroupsEmpty) {

@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_ALL_GATHER_H_
 #define XLA_BACKENDS_GPU_RUNTIME_ALL_GATHER_H_
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -31,6 +32,18 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
+
+// Memory transaction width for the Triton all-gather kernel in bits (128 bits =
+// 16 bytes). The total buffer size in bits must be aligned to this value so
+// that each thread can load/store a complete 128-bit transaction.
+inline constexpr uint64_t kBitsPerMemoryTransaction = 128;
+
+// Element types supported by the Triton all-gather kernel.
+// Triton tt.load/tt.store support signless integers and floating-point types.
+// Unsigned integer types, complex types, tokens, tuples, and exotic types
+// (e.g. 4-bit integers, 8-bit floats) are not supported.
+inline constexpr auto kSupportedAllGatherTypes =
+    std::array{F16, BF16, F32, F64, S8, S16, S32, S64};
 
 // Maximum number of GPU thread-blocks launched per all-gather kernel.
 // This constant is shared between the kernel launcher (all_gather.cc) and the
@@ -49,7 +62,7 @@ struct AllGatherInfo {
 // Returns absl::OkStatus() if the all-gather kernel is supported for the given
 // element type and number of elements, or an error status detailing why it is
 // not supported.
-absl::Status IsAllGatherKernelSupported(int64_t num_ranks, int64_t num_elements,
+absl::Status IsAllGatherKernelSupported(int64_t num_elements,
                                         PrimitiveType element_type);
 
 // A broader check for all-gather kernel support that verifies device, operand
