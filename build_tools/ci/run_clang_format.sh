@@ -36,7 +36,7 @@ get_merge_base() {
     exit 1
   fi
 
-  if [ -n "${TARGET_REF:-}" ]; then
+  if [ -n "${TARGET_REF}" ]; then
     REFERENCE="$TARGET_REF"
   else
     REMOTE=${REMOTE:-$(git remote -v | awk '/openxla\/xla/ { print $1; exit }')}
