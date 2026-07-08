@@ -51,12 +51,25 @@ absl::StatusOr<bool> AllGatherCSE::RunImpl(
         if (raw_parameter != nullptr &&
             raw_parameter->opcode() == HloOpcode::kParameter) {
           auto it = all_gather_map.find(raw_parameter_tuple);
-          if (it != all_gather_map.end()) {
+          // Only CSE all-gathers that are genuinely equivalent. The map key is
+          // just (raw_parameter, tuple_index, dtype), which does not capture the
+          // all-gather's own attributes, so require the candidates to be
+          // Identical (ignoring operands, which the raw-parameter tracing above
+          // already accounts for). Two all-gathers of the same parameter with
+          // different all_gather_dimension / replica_groups / channel_id /
+          // use_global_device_ids / constrain_layout compute different results
+          // and must not be merged.
+          if (it != all_gather_map.end() &&
+              instruction->Identical(
+                  *it->second,
+                  [](const HloInstruction*, const HloInstruction*) {
+                    return true;
+                  })) {
             VLOG(2) << "Replacing all-gather with previous result: "
                     << it->second->ToString();
             RETURN_IF_ERROR(instruction->ReplaceAllUsesWith(it->second));
             changed = true;
-          } else {
+          } else if (it == all_gather_map.end()) {
             VLOG(2) << "Storing all-gather result for future use";
             all_gather_map[raw_parameter_tuple] = instruction;
           }

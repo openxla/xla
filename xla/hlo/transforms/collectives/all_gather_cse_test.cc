@@ -62,6 +62,30 @@ TEST_F(AllGatherCSETest, ReplacesRedundantAllGather) {
                         op::AllGather(op::Parameter(0))));
 }
 
+TEST_F(AllGatherCSETest, DoesNotMergeDifferentReplicaGroups) {
+  // Two all-gathers of the same parameter with the same shape but different
+  // replica groups compute different data and must NOT be CSE'd.
+  absl::string_view hlo_string = R"(
+    HloModule module
+
+    ENTRY main {
+      param0 = s32[4] parameter(0)
+      all-gather.1 = s32[8] all-gather(param0), dimensions={0}, replica_groups={{0,1},{2,3}}
+      all-gather.2 = s32[8] all-gather(param0), dimensions={0}, replica_groups={{0,2},{1,3}}
+      ROOT tuple = (s32[8], s32[8]) tuple(all-gather.1, all-gather.2)
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, pass_.Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Tuple(op::AllGather(op::Parameter(0)),
+                        op::AllGather(op::Parameter(0))));
+}
+
 TEST_F(AllGatherCSETest, HandlesRawParameterGetTupleElement) {
   absl::string_view hlo_string = R"(
     HloModule module
