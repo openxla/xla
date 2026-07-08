@@ -1,11 +1,7 @@
 #!/bin/bash
 set -e
 
-echoerr() {
-  RED='\033[1;31m'
-  NOCOLOR='\033[0m'
-  printf "${RED}ERROR:${NOCOLOR} %s\n" "$*" >&2
-}
+source "$(dirname "${BASH_SOURCE[0]}")/shell_common.sh"
 
 REAL_BIN="$PWD/external/%LLVM_REPO_NAME%/bin/clang-tidy"
 if [ ! -f "$REAL_BIN" ]; then

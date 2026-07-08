@@ -103,6 +103,7 @@ sh_binary(
     name = "clang_tidy_bin",
     srcs = [":generate_wrapper_script"],
     data = [
+        "shell_common.sh",
         # This not for g3. Only for running clang-tidy on CI/locally for OSS workflows.
         "@{}//:all".format(_LLVM_REPO_NAME),  # buildifier: disable=platform-specific-binaries
     ],
@@ -126,6 +127,7 @@ sh_binary(
     name = "clang_apply_replacements_bin",
     srcs = [":generate_apply_replacements_wrapper_script"],
     data = [
+        "shell_common.sh",
         # This not for g3. Only for running clang-tidy on CI/locally for OSS workflows.
         "@{}//:all".format(_LLVM_REPO_NAME),  # buildifier: disable=platform-specific-binaries
     ],
