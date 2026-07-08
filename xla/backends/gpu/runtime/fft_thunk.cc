@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/stream_executor/fft.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"
 #include "xla/util.h"
@@ -241,7 +242,7 @@ absl::Status RunFft(se::DeviceAddressBase input, const Shape& input_shape,
       se::DeviceAddress<complex64> output_data(output);
       launch_ok = fft->DoFft(stream, fft_plan.get(), input_data, &output_data);
       if (launch_ok) {
-        TF_ASSIGN_OR_RETURN(auto blas, GetBlas(stream));
+        ASSIGN_OR_RETURN(auto blas, GetBlas(stream));
         const complex64 alpha(1.0f / static_cast<float>(scale_factor));
         for (int64_t offset = 0; launch_ok && offset < total_elements;
              offset += kMaxBlasCount) {
@@ -260,7 +261,7 @@ absl::Status RunFft(se::DeviceAddressBase input, const Shape& input_shape,
       se::DeviceAddress<complex128> output_data(output);
       launch_ok = fft->DoFft(stream, fft_plan.get(), input_data, &output_data);
       if (launch_ok) {
-        TF_ASSIGN_OR_RETURN(auto blas, GetBlas(stream));
+        ASSIGN_OR_RETURN(auto blas, GetBlas(stream));
         const complex128 alpha(1.0 / static_cast<double>(scale_factor));
         for (int64_t offset = 0; launch_ok && offset < total_elements;
              offset += kMaxBlasCount) {
@@ -291,7 +292,7 @@ absl::Status RunFft(se::DeviceAddressBase input, const Shape& input_shape,
       se::DeviceAddress<float> output_data(output);
       launch_ok = fft->DoFft(stream, fft_plan.get(), input_data, &output_data);
       if (launch_ok) {
-        TF_ASSIGN_OR_RETURN(auto blas, GetBlas(stream));
+        ASSIGN_OR_RETURN(auto blas, GetBlas(stream));
         const float alpha = 1.0f / static_cast<float>(scale_factor);
         for (int64_t offset = 0; launch_ok && offset < total_elements;
              offset += kMaxBlasCount) {
@@ -310,7 +311,7 @@ absl::Status RunFft(se::DeviceAddressBase input, const Shape& input_shape,
       se::DeviceAddress<double> output_data(output);
       launch_ok = fft->DoFft(stream, fft_plan.get(), input_data, &output_data);
       if (launch_ok) {
-        TF_ASSIGN_OR_RETURN(auto blas, GetBlas(stream));
+        ASSIGN_OR_RETURN(auto blas, GetBlas(stream));
         const double alpha = 1.0 / static_cast<double>(scale_factor);
         for (int64_t offset = 0; launch_ok && offset < total_elements;
              offset += kMaxBlasCount) {
