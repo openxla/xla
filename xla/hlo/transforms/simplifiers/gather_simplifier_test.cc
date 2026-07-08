@@ -59,6 +59,28 @@ TEST_F(GatherSimplifierTest, TransformsStartIndices) {
   )");
 }
 
+TEST_F(GatherSimplifierTest, DoesNotCrashOnScalarOperandGather) {
+  // A gather from a scalar (rank-0) operand has empty offset_dims;
+  // IsSimplifiedGather previously dereferenced the empty offset_dims out of
+  // bounds. It is now treated as already simplified, so the pass makes no
+  // change.
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule gather_simplifier
+
+    ENTRY kernel_entry {
+      operand = f32[] parameter(0)
+      indices = s32[7,0] parameter(1)
+      ROOT gather = f32[7] gather(operand, indices),
+          offset_dims={},
+          collapsed_slice_dims={},
+          start_index_map={},
+          index_vector_dim=1,
+          slice_sizes={}
+    })";
+
+  RunAndFilecheckHloRewrite(kModuleStr, GatherSimplifier(), std::nullopt);
+}
+
 TEST_F(GatherSimplifierTest, RemovesCollapsedSliceDims) {
   // Verifies that GatherSimplifier sets the collapsed_slice_dims parameter to
   // the empty list.

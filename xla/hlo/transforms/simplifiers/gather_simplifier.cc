@@ -116,10 +116,15 @@ absl::StatusOr<HloInstruction*> GatherSimplifier::ExpandInstruction(
 bool GatherSimplifier::IsSimplifiedGather(const HloGatherInstruction* gather) {
   auto* start_indices = gather->operands()[1];
   const auto& dims = gather->gather_dimension_numbers();
+  // A gather from a scalar (rank-0) operand has no offset dims; treat it as
+  // already simplified instead of dereferencing an empty offset_dims (which
+  // would read out of bounds). This mirrors ScatterSimplifier, which returns
+  // early for a rank-0 operand.
   return start_indices->shape().dimensions().size() == 2 &&
          dims.index_vector_dim() == 1 && dims.collapsed_slice_dims().empty() &&
-         *dims.offset_dims().begin() == 1 &&
-         *dims.offset_dims().rbegin() == dims.offset_dims().size();
+         (dims.offset_dims().empty() ||
+          (*dims.offset_dims().begin() == 1 &&
+           *dims.offset_dims().rbegin() == dims.offset_dims().size()));
 }
 
 bool GatherSimplifier::InstructionMatchesPattern(HloInstruction* inst) {
