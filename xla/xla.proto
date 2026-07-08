@@ -618,7 +618,7 @@ message DebugOptions {
   // slots that actually changed are remapped). Has no effect on non-ROCm
   // platforms. Default true (ROCm); set false to force the legacy full-remap
   // path. Experimental: expected to become the default behavior and be removed.
-  optional bool xla_gpu_experimental_command_buffer_vmm_skip_remap = 505;
+  optional bool xla_gpu_experimental_command_buffer_vmm_skip_remap = 507;
 
   // ROCm-only. Threshold in bytes for the VMM command-buffer "copy-into-shadow"
   // path: command-buffer slices at or below this size are kept out of the
@@ -627,7 +627,7 @@ message DebugOptions {
   // the path (default). Has no effect on non-ROCm platforms. Experimental:
   // the heuristic may be replaced by an automatic policy and the flag removed.
   optional int64 xla_gpu_experimental_command_buffer_vmm_copy_threshold_bytes =
-      506;
+      508;
 
   optional bool xla_gpu_copy_insertion_use_region_analysis = 236;
 
@@ -1685,7 +1685,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 507
+  // Next id: 513
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
