@@ -17,14 +17,14 @@ limitations under the License.
 #define XLA_PJRT_C_PJRT_C_API_GPU_EXTENSION_H_
 
 #include <stddef.h>
-
+#include <stdint.h>
 #include "xla/pjrt/c/pjrt_c_api.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define PJRT_API_GPU_EXTENSION_VERSION 2
+#define PJRT_API_GPU_EXTENSION_VERSION 3
 
 struct PJRT_Gpu_Register_Custom_Call_Args {
   size_t struct_size;
@@ -35,8 +35,10 @@ struct PJRT_Gpu_Register_Custom_Call_Args {
   void* handler_prepare;
   void* handler_initialize;
   void* handler_execute;
+  // XLA_FFI_Handler_TraitsBits. Read only by custom_call_with_traits.
+  uint32_t traits;
 };
-PJRT_DEFINE_STRUCT_TRAITS(PJRT_Gpu_Register_Custom_Call_Args, handler_execute);
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Gpu_Register_Custom_Call_Args, traits);
 
 // Registers a custom call.
 typedef PJRT_Error* PJRT_Gpu_Register_Custom_Call(
@@ -45,8 +47,11 @@ typedef PJRT_Error* PJRT_Gpu_Register_Custom_Call(
 typedef struct PJRT_Gpu_Custom_Call {
   PJRT_Extension_Base base;
   PJRT_NO_DISCARD PJRT_Gpu_Register_Custom_Call* custom_call;
+  // Like custom_call, but honors args->traits. Added in version 3; callers
+  // detect support by checking base.struct_size covers this member.
+  PJRT_NO_DISCARD PJRT_Gpu_Register_Custom_Call* custom_call_with_traits;
 } PJRT_Gpu_Custom_Call;
-PJRT_DEFINE_STRUCT_TRAITS(PJRT_Gpu_Custom_Call, custom_call);
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Gpu_Custom_Call, custom_call_with_traits);
 
 #ifdef __cplusplus
 }
