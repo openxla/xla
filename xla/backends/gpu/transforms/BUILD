@@ -1513,6 +1513,7 @@ cc_library(
     hdrs = ["dynamic_slice_fusion_rewriter_v2.h"],
     tags = ["gpu"],
     deps = [
+        "//xla/hlo/analysis:hlo_reachability",
         ":dynamic_slice_fusion",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
