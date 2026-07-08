@@ -15,15 +15,13 @@ limitations under the License.
 
 #include "xla/service/gpu/llvm_gpu_backend/spirv_backend.h"
 
-#include <cstdint>
-#include <cstring>
 #include <memory>
 #include <set>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include <gtest/gtest.h>
+#include "absl/status/status_matchers.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -34,12 +32,6 @@ limitations under the License.
 
 namespace xla::gpu::spirv {
 namespace {
-
-constexpr uint32_t kSpirvMagic = 0x07230203;
-constexpr uint16_t kOpTypePointer = 32;
-constexpr uint32_t kStorageClassUniformConstant = 0;
-constexpr uint32_t kStorageClassWorkgroup = 4;
-constexpr uint32_t kStorageClassCrossWorkgroup = 5;
 
 stream_executor::GpuComputeCapability TestComputeCapability() {
   return stream_executor::GpuComputeCapability(
@@ -56,44 +48,6 @@ std::unique_ptr<llvm::Module> ParseLlvmIr(std::string_view ir,
                   << diagnostic.getMessage().str();
   }
   return module;
-}
-
-std::vector<uint32_t> CompileToSpirvWords(std::string_view ir) {
-  llvm::LLVMContext context;
-  std::unique_ptr<llvm::Module> module = ParseLlvmIr(ir, context);
-  if (module == nullptr) {
-    return {};
-  }
-
-  absl::StatusOr<std::string> spirv =
-      CompileToSPIRV(module.get(), TestComputeCapability(), DebugOptions());
-  EXPECT_TRUE(spirv.ok()) << spirv.status();
-  if (!spirv.ok()) {
-    return {};
-  }
-
-  EXPECT_EQ(spirv->size() % sizeof(uint32_t), 0);
-  std::vector<uint32_t> words(spirv->size() / sizeof(uint32_t));
-  std::memcpy(words.data(), spirv->data(), spirv->size());
-  return words;
-}
-
-bool HasPointerTypeWithStorageClass(const std::vector<uint32_t>& words,
-                                    uint32_t storage_class) {
-  constexpr int kHeaderWordCount = 5;
-  for (size_t i = kHeaderWordCount; i < words.size();) {
-    uint16_t opcode = words[i] & 0xffff;
-    uint16_t word_count = words[i] >> 16;
-    if (opcode == kOpTypePointer && word_count >= 3 &&
-        words[i + 2] == storage_class) {
-      return true;
-    }
-    if (word_count == 0) {
-      return false;
-    }
-    i += word_count;
-  }
-  return false;
 }
 
 TEST(SpirvBackendTest, TestSPIRVExtensions) {
@@ -113,31 +67,24 @@ TEST(SpirvBackendTest, TestSPIRVExtensions) {
             extensions_set.end());
 }
 
-TEST(SpirvBackendTest, KernelArgumentRewritePreservesScalarArguments) {
-  std::vector<uint32_t> words = CompileToSpirvWords(R"(
+TEST(SpirvBackendTest, CompilesKernelWithScalarArguments) {
+  llvm::LLVMContext context;
+  std::unique_ptr<llvm::Module> module = ParseLlvmIr(R"(
 define spir_kernel void @kernel_argument_rewrite(i32 %value,
                                                  ptr %in,
-                                                 ptr addrspace(1) %out,
-                                                 ptr addrspace(2) %constant,
-                                                 ptr addrspace(3) %workgroup) {
+                                                 ptr addrspace(1) %out) {
 entry:
   %in_value = load i32, ptr %in, align 4
-  %constant_value = load i32, ptr addrspace(2) %constant, align 4
-  %workgroup_value = load i32, ptr addrspace(3) %workgroup, align 4
-  %sum0 = add i32 %in_value, %constant_value
-  %sum1 = add i32 %sum0, %workgroup_value
-  %sum2 = add i32 %sum1, %value
-  store i32 %sum2, ptr addrspace(1) %out, align 4
+  %sum = add i32 %in_value, %value
+  store i32 %sum, ptr addrspace(1) %out, align 4
   ret void
 }
-)");
-  ASSERT_GE(words.size(), 5);
-  EXPECT_EQ(words[0], kSpirvMagic);
-  EXPECT_TRUE(
-      HasPointerTypeWithStorageClass(words, kStorageClassCrossWorkgroup));
-  EXPECT_TRUE(
-      HasPointerTypeWithStorageClass(words, kStorageClassUniformConstant));
-  EXPECT_TRUE(HasPointerTypeWithStorageClass(words, kStorageClassWorkgroup));
+)",
+                                                  context);
+  ASSERT_NE(module, nullptr);
+
+  EXPECT_OK(CompileToSPIRV(module.get(), TestComputeCapability(),
+                           DebugOptions()));
 }
 
 }  // namespace

@@ -439,10 +439,10 @@ xla_cc_test(
     ]),
     deps = [
         ":spirv_backend",
-        "//xla:xla_proto_cc",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/sycl:oneapi_compute_capability",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest",
         "@llvm-project//llvm:AsmParser",
         "@llvm-project//llvm:Core",
