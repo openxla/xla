@@ -1144,51 +1144,54 @@ bool FusionComputesShiftValueForReduce(const HloInstruction* fusion) {
   if (fusion->opcode() != HloOpcode::kFusion) {
     return false;
   }
-  const HloInstruction* multiply = nullptr;
-  const HloInstruction* reduce = nullptr;
   for (const HloInstruction* instr : fusion->fused_instructions()) {
-    if (instr->opcode() == HloOpcode::kMultiply) {
-      multiply = instr;
+    if (instr->opcode() != HloOpcode::kReduce) {
+      continue;
     }
-    if (instr->opcode() == HloOpcode::kReduce) {
-      reduce = instr;
+    // A split fusion recomputes the elementwise shift value inside the
+    // reduce kernel, so the reduce's operand is the elementwise producer
+    // (multiply, add, ...) rather than a fused parameter.
+    if (instr->operand(0)->IsElementwise()) {
+      return true;
     }
   }
-  return multiply != nullptr && reduce != nullptr &&
-         reduce->operand(0) == multiply;
+  return false;
 }
 
-bool FusionRecomputesShiftValueForExpShift(
-    const HloInstruction* fusion, const HloInstruction* dot) {
+bool FusionRecomputesShiftValueForExpShift(const HloInstruction* fusion,
+                                           const HloInstruction* dot) {
   if (fusion->opcode() != HloOpcode::kFusion) {
     return false;
   }
-  const HloInstruction* multiply = nullptr;
   const HloInstruction* subtract = nullptr;
   for (const HloInstruction* instr : fusion->fused_instructions()) {
-    if (instr->opcode() == HloOpcode::kMultiply) {
-      multiply = instr;
-    }
     if (instr->opcode() == HloOpcode::kSubtract) {
       subtract = instr;
+      break;
     }
   }
-  if (multiply == nullptr || subtract == nullptr) {
+  if (subtract == nullptr) {
     return false;
   }
-  const HloComputation* fused_computation = fusion->fused_instructions_computation();
+  // The shift value is the elementwise producer (multiply, add, ...) feeding
+  // the exp-shift subtract.
+  const HloInstruction* shift_value = subtract->operand(0);
+  if (!shift_value->IsElementwise()) {
+    return false;
+  }
+  const HloComputation* fused_computation =
+      fusion->fused_instructions_computation();
   const HloInstruction* fusion_instr = fused_computation->FusionInstruction();
-  bool uses_dot = false;
   for (int64_t i = 0; i < fusion_instr->operand_count(); ++i) {
-    if (fusion_instr->operand(i) == dot) {
-      const HloInstruction* param = fusion->fused_parameter(i);
-      if (multiply->operand(0) == param || multiply->operand(1) == param) {
-        uses_dot = true;
-        break;
-      }
+    if (fusion_instr->operand(i) != dot) {
+      continue;
+    }
+    const HloInstruction* param = fusion->fused_parameter(i);
+    if (absl::c_linear_search(shift_value->operands(), param)) {
+      return true;
     }
   }
-  return uses_dot && subtract->operand(0) == multiply;
+  return false;
 }
 
 bool HasSplitCoupledReductionShiftExpFusion(const HloModule& module) {
@@ -1218,6 +1221,15 @@ bool HasSplitCoupledReductionShiftExpFusion(const HloModule& module) {
     }
   }
   return reduce_fusion != nullptr && shift_fusion != nullptr;
+}
+
+// Returns true if a bare instruction with the given opcode is still present in
+// the entry computation (i.e. it was not fused/duplicated into consumers).
+bool EntryHasStandaloneOp(const HloModule& module, HloOpcode opcode) {
+  return absl::c_any_of(module.entry_computation()->instructions(),
+                        [opcode](const HloInstruction* instr) {
+                          return instr->opcode() == opcode;
+                        });
 }
 
 TEST_F(InstructionFusionTest, AvoidSplitCoupledReductionShiftExpFusions) {
@@ -1253,7 +1265,47 @@ ENTRY main {
   EXPECT_FALSE(HasSplitCoupledReductionShiftExpFusion(*module));
 }
 
-TEST_F(InstructionFusionTest, StillFusesUncoupledReduceAndSubtract) {
+// The coupling is not specific to multiply: add(dot, bias) feeding the same
+// max-reduce / exp-shift pair has the identical recompute-divergence risk, so
+// the elementwise shift value must not be split across kernels either.
+TEST_F(InstructionFusionTest,
+       AvoidSplitCoupledReductionShiftExpFusionsAddBias) {
+  absl::string_view module_string = R"(
+HloModule module
+
+%max (p0: f32[], p1: f32[]) -> f32[] {
+  %p0 = f32[] parameter(0)
+  %p1 = f32[] parameter(1)
+  ROOT %m = f32[] maximum(%p0, %p1)
+}
+
+ENTRY main {
+  %lhs = f32[5,5] parameter(0)
+  %rhs = f32[5,5] parameter(1)
+  %bias = f32[5,5] parameter(2)
+  %dot = f32[5,5] dot(%lhs, %rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %add = f32[5,5] add(%dot, %bias)
+  %neg_inf = f32[] constant(-inf)
+  %reduce_max = f32[5] reduce(%add, %neg_inf), dimensions={1}, to_apply=%max
+  %broadcast_max = f32[5,5] broadcast(%reduce_max), dimensions={0}
+  %subtract = f32[5,5] subtract(%add, %broadcast_max)
+  ROOT %exp = f32[5,5] exponential(%subtract)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(module_string));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_FALSE(HasSplitCoupledReductionShiftExpFusion(*module));
+}
+
+// Discrimination check: the shift value multiply feeds a *sum* reduce (not a
+// max reduce), so it is not the numerically coupled stable-softmax pattern and
+// the multiply should still be fused/duplicated normally, leaving no
+// standalone multiply in the entry computation.
+TEST_F(InstructionFusionTest, StillFusesMultiplyWithSumReduce) {
   absl::string_view module_string = R"(
 HloModule module
 
@@ -1264,11 +1316,17 @@ HloModule module
 }
 
 ENTRY main {
-  %arg = f32[8,16] parameter(0)
-  %init = f32[] constant(0)
-  %reduce = f32[8] reduce(%arg, %init), dimensions={1}, to_apply=%add
-  %broadcast = f32[8,16] broadcast(%reduce), dimensions={0}
-  ROOT %subtract = f32[8,16] subtract(%arg, %broadcast)
+  %lhs = f32[5,5] parameter(0)
+  %rhs = f32[5,5] parameter(1)
+  %dot = f32[5,5] dot(%lhs, %rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %scale = f32[] constant(0.44721359)
+  %broadcast_scale = f32[5,5] broadcast(%scale), dimensions={}
+  %multiply = f32[5,5] multiply(%dot, %broadcast_scale)
+  %zero = f32[] constant(0)
+  %reduce_sum = f32[5] reduce(%multiply, %zero), dimensions={1}, to_apply=%add
+  %broadcast_sum = f32[5,5] broadcast(%reduce_sum), dimensions={0}
+  %subtract = f32[5,5] subtract(%multiply, %broadcast_sum)
+  ROOT %exp = f32[5,5] exponential(%subtract)
 }
 )";
 
@@ -1277,6 +1335,44 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(bool changed,
                           CpuInstructionFusion(&alias_info_).Run(module.get()));
   EXPECT_TRUE(changed);
+  EXPECT_FALSE(EntryHasStandaloneOp(*module, HloOpcode::kMultiply));
+}
+
+// Discrimination check: the multiply feeds a max reduce, but the subtract does
+// not feed an exponential, so it is not the coupled stable-softmax pattern and
+// the multiply should still be fused/duplicated normally, leaving no
+// standalone multiply in the entry computation.
+TEST_F(InstructionFusionTest, StillFusesMultiplyWhenSubtractDoesNotFeedExp) {
+  absl::string_view module_string = R"(
+HloModule module
+
+%max (p0: f32[], p1: f32[]) -> f32[] {
+  %p0 = f32[] parameter(0)
+  %p1 = f32[] parameter(1)
+  ROOT %m = f32[] maximum(%p0, %p1)
+}
+
+ENTRY main {
+  %lhs = f32[5,5] parameter(0)
+  %rhs = f32[5,5] parameter(1)
+  %dot = f32[5,5] dot(%lhs, %rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %scale = f32[] constant(0.44721359)
+  %broadcast_scale = f32[5,5] broadcast(%scale), dimensions={}
+  %multiply = f32[5,5] multiply(%dot, %broadcast_scale)
+  %neg_inf = f32[] constant(-inf)
+  %reduce_max = f32[5] reduce(%multiply, %neg_inf), dimensions={1}, to_apply=%max
+  %broadcast_max = f32[5,5] broadcast(%reduce_max), dimensions={0}
+  %subtract = f32[5,5] subtract(%multiply, %broadcast_max)
+  ROOT %negate = f32[5,5] negate(%subtract)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(module_string));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_FALSE(EntryHasStandaloneOp(*module, HloOpcode::kMultiply));
 }
 
 }  // namespace
