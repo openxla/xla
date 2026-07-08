@@ -16,6 +16,11 @@
 """
 
 load(
+    "//third_party/gpus/rocm:rocm_redist.bzl",
+    "create_rocm_distro",
+    "rocm_redist",
+)
+load(
     "//third_party/remote_config:common.bzl",
     "config_repo_label",
     "err_out",
@@ -25,7 +30,6 @@ load(
     "get_cpu_value",
     "get_host_environ",
     "get_python_bin",
-    "realpath",
 )
 load(
     ":compiler_common_tools.bzl",
@@ -34,11 +38,6 @@ load(
 load(
     ":cuda_configure.bzl",
     "enable_cuda",
-)
-load(
-    "//third_party/gpus/rocm:rocm_redist.bzl",
-    "create_rocm_distro",
-    "rocm_redist",
 )
 load(
     ":sycl_configure.bzl",
