@@ -36,7 +36,7 @@ load(
     "enable_cuda",
 )
 load(
-    ":rocm_redist.bzl",
+    "//third_party/gpus/rocm:rocm_redist.bzl",
     "create_rocm_distro",
     "rocm_redist",
 )
@@ -91,7 +91,6 @@ def _download_package(repository_ctx, pkg):
         pkg: Package dict with 'url', 'sha256', and optional 'sub_package'.
     """
     file_name = _get_file_name(pkg["url"])
-    print("Downloading {}".format(pkg["url"]))
     repository_ctx.report_progress("Downloading and extracting {}, expected hash is {}".format(pkg["url"], pkg["sha256"]))
     repository_ctx.download_and_extract(
         url = pkg["url"],
@@ -108,22 +107,6 @@ def _download_package(repository_ctx, pkg):
         )
 
     repository_ctx.delete(file_name)
-
-def _remove_unused_files(repository_ctx):
-    """Removes unused directories from ROCm distribution to reduce RBE file count.
-
-    Args:
-        repository_ctx: The repository context.
-    """
-    unused_paths = [
-        "{}/tests".format(_DISTRIBUTION_PATH),
-        "{}/libexec".format(_DISTRIBUTION_PATH),
-        "{}/lib/llvm/include".format(_DISTRIBUTION_PATH),
-        "{}/lib/rocm_sysdeps/share/terminfo".format(_DISTRIBUTION_PATH),
-    ]
-    repository_ctx.report_progress("Removing unused directories to reduce RBE file count")
-    for unused_path in unused_paths:
-        repository_ctx.delete(unused_path)
 
 def _setup_rocm_distro_dir_impl(repository_ctx, rocm_distro):
     """Downloads and sets up a ROCm distribution.

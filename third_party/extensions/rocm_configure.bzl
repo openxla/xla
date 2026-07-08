@@ -3,7 +3,7 @@
 load("//third_party/gpus:rocm_configure.bzl", "rocm_configure")
 load("@rules_ml_toolchain//gpu/rocm:hipcc_configure.bzl", "hipcc_configure")
 
-def _rocm_configure_ext_impl(mctx):
+def _rocm_configure_ext_impl(_mctx):
     rocm_configure(
         name = "local_config_rocm",
     )
