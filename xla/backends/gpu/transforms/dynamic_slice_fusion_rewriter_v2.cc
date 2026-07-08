@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion_rewriter_v2.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -34,6 +35,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
+#include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -665,6 +667,87 @@ absl::Status SetDynamicSliceFusionBackendConfig(HloInstruction* fusion) {
   return fusion->set_backend_config(std::move(gpu_config));
 }
 
+// Reroutes hero users outside the DUS chains, leaving the original hero dead.
+absl::Status RerouteExternalUsers(
+    HloInstruction* hero, HloInstruction* fusion,
+    absl::Span<const SlicedResult> sliced_results) {
+  HloComputation* parent = fusion->parent();
+  bool tuple_hero = hero->shape().IsTuple();
+
+  if (tuple_hero) {
+    // Non-GTE consumers need the raw tuple, which the fusion lacks; skip.
+    if (absl::c_any_of(hero->users(), [](const HloInstruction* user) {
+          return user->opcode() != HloOpcode::kGetTupleElement;
+        })) {
+      VLOG(2) << "Not rerouting " << hero->name() << ": non-GTE tuple user";
+      return absl::OkStatus();
+    }
+    // Fold duplicate GTEs into the resolved one so each result has one head.
+    absl::flat_hash_map<int64_t, HloInstruction*> canonical;
+    for (const SlicedResult& sliced_result : sliced_results) {
+      if (!sliced_result.noops.empty())
+        canonical[sliced_result.result_number] = sliced_result.noops.front();
+    }
+    std::vector<HloInstruction*> users(hero->users().begin(),
+                                       hero->users().end());
+    for (HloInstruction* user : users) {
+      auto* gte = Cast<HloGetTupleElementInstruction>(user);
+      auto [it, inserted] = canonical.try_emplace(gte->tuple_index(), gte);
+      if (inserted || it->second == gte) continue;
+      RETURN_IF_ERROR(gte->ReplaceAllUsesWith(it->second));
+      RETURN_IF_ERROR(parent->RemoveInstruction(gte));
+    }
+  }
+
+  // Rerouting a user that (transitively) feeds the fusion would create a
+  // cycle; such users keep reading the original hero.
+  std::unique_ptr<HloReachabilityMap> reachability =
+      HloReachabilityMap::Build(parent);
+
+  for (const SlicedResult& sliced_result : sliced_results) {
+    if (sliced_result.update_slice == nullptr) {
+      continue;  // RewriteHero's GTE replacement covers these.
+    }
+    // Noops are single-user, so exactly one user of head continues the chain.
+    HloInstruction* head = hero;
+    absl::Span<HloInstruction* const> tail = sliced_result.noops;
+    if (tuple_hero) {
+      head = tail.front();
+      tail.remove_prefix(1);
+    }
+    HloInstruction* chain_user =
+        tail.empty() ? sliced_result.update_slice : tail.front();
+    std::vector<HloInstruction*> external_users;
+    for (HloInstruction* user : head->users()) {
+      if (user != chain_user && !reachability->IsReachable(user, fusion)) {
+        external_users.push_back(user);
+      }
+    }
+    if (external_users.empty()) continue;
+
+    HloInstruction* slot =
+        fusion->shape().IsTuple()
+            ? parent->AddInstruction(HloInstruction::CreateGetTupleElement(
+                  fusion, sliced_result.result_number))
+            : fusion;
+    const Shape& update_shape = sliced_result.update_slice->operand(1)->shape();
+    HloInstruction* value =
+        parent->AddInstruction(HloInstruction::CreateDynamicSlice(
+            update_shape, slot,
+            Cast<HloDynamicUpdateSliceInstruction>(sliced_result.update_slice)
+                ->index_operands(),
+            update_shape.dimensions()));
+    if (!ShapeUtil::Equal(head->shape(), update_shape)) {
+      value = parent->AddInstruction(
+          HloInstruction::CreateBitcast(head->shape(), value));
+    }
+    VLOG(2) << "Rerouted " << external_users.size() << " external user(s) of "
+            << head->name() << " to " << value->name();
+    RETURN_IF_ERROR(head->ReplaceUsesWith(external_users, value));
+  }
+  return absl::OkStatus();
+}
+
 //===----------------------------------------------------------------------===//
 // Rewrite sync hero
 //===----------------------------------------------------------------------===//
@@ -688,6 +771,9 @@ absl::StatusOr<bool> RewriteHero(
                                    plan->external_operands, fusion_body));
   module->SetAndUniquifyInstrName(fusion, "dynamic_slice_fusion");
   RETURN_IF_ERROR(SetDynamicSliceFusionBackendConfig(fusion));
+
+  // Must run before the DUS chains are replaced below (it reads DUS operands).
+  RETURN_IF_ERROR(RerouteExternalUsers(hero, fusion, sliced_results));
 
   if (sliced_results.size() > 1) {
     bool any_result_replaced = false;
