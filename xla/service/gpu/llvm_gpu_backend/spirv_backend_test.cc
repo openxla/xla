@@ -21,7 +21,10 @@ limitations under the License.
 #include <string_view>
 
 #include <gtest/gtest.h>
+#include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -38,14 +41,14 @@ stream_executor::GpuComputeCapability TestComputeCapability() {
       stream_executor::OneAPIComputeCapability::BMG());
 }
 
-std::unique_ptr<llvm::Module> ParseLlvmIr(std::string_view ir,
-                                          llvm::LLVMContext& context) {
+absl::StatusOr<std::unique_ptr<llvm::Module>> ParseLlvmIr(
+    std::string_view ir, llvm::LLVMContext& context) {
   llvm::SMDiagnostic diagnostic;
   std::unique_ptr<llvm::Module> module =
       llvm::parseAssemblyString(ir, diagnostic, context);
   if (module == nullptr) {
-    ADD_FAILURE() << "Failed to parse LLVM IR: "
-                  << diagnostic.getMessage().str();
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Failed to parse LLVM IR: ", diagnostic.getMessage().str()));
   }
   return module;
 }
@@ -69,7 +72,7 @@ TEST(SpirvBackendTest, TestSPIRVExtensions) {
 
 TEST(SpirvBackendTest, CompilesKernelWithScalarArguments) {
   llvm::LLVMContext context;
-  std::unique_ptr<llvm::Module> module = ParseLlvmIr(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<llvm::Module> module, ParseLlvmIr(R"(
 define spir_kernel void @kernel_argument_rewrite(i32 %value,
                                                  ptr %in,
                                                  ptr addrspace(1) %out) {
@@ -80,8 +83,7 @@ entry:
   ret void
 }
 )",
-                                                  context);
-  ASSERT_NE(module, nullptr);
+                                                                         context));
 
   EXPECT_OK(CompileToSPIRV(module.get(), TestComputeCapability(),
                            DebugOptions()));
