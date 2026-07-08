@@ -19,18 +19,27 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_state.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/execution_graph.h"
 #include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/service_executable_run_options.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/command_buffer.h"
+#include "xla/stream_executor/mock_command_buffer.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
@@ -57,6 +66,62 @@ class FakeCmd : public Command {
   BufferUses uses_;
 };
 
+class UpdateFlagCmd : public Command {
+ public:
+  UpdateFlagCmd(bool requires_update_on_initialize,
+                bool requires_update_on_execute)
+      : requires_update_on_initialize_(requires_update_on_initialize),
+        requires_update_on_execute_(requires_update_on_execute) {}
+
+  bool requires_update_on_initialize() const override {
+    return requires_update_on_initialize_;
+  }
+  bool requires_update_on_execute() const override {
+    return requires_update_on_execute_;
+  }
+  BufferUses buffer_uses() const override { return {}; }
+
+ private:
+  bool requires_update_on_initialize_;
+  bool requires_update_on_execute_;
+};
+
+struct RecordCounts {
+  int creates = 0;
+  int updates = 0;
+};
+
+struct FakeSeCommand : public se::CommandBuffer::Command {};
+
+class RecordingCompositeCmd : public Command {
+ public:
+  RecordingCompositeCmd(std::unique_ptr<Command> nested, RecordCounts* counts)
+      : nested_(std::move(nested)), counts_(counts) {}
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams&, const RecordParams&, RecordAction action,
+      se::CommandBuffer*) override {
+    if (std::holds_alternative<RecordCreate>(action)) {
+      ++counts_->creates;
+    } else {
+      ++counts_->updates;
+    }
+    return &recorded_command_;
+  }
+
+  BufferUses buffer_uses() const override { return {}; }
+
+ protected:
+  absl::Status WalkNestedCommands(CommandWalker callback) override {
+    return callback(nested_.get());
+  }
+
+ private:
+  std::unique_ptr<Command> nested_;
+  RecordCounts* counts_;
+  FakeSeCommand recorded_command_;
+};
+
 // Convenience aliases for synchronization modes.
 constexpr auto kSerialize = CommandExecutor::SynchronizationMode::kSerialize;
 constexpr auto kConcurrent = CommandExecutor::SynchronizationMode::kConcurrent;
@@ -76,6 +141,67 @@ TEST(CommandExecutorTest, DuplicateAllocsCollapsedToOne) {
   // Both commands reference the same allocation index — should appear once.
   EXPECT_EQ(executor.allocs_indices().size(), 1);
   EXPECT_EQ(executor.allocs_indices()[0], 0);
+}
+
+TEST(CommandExecutorTest, NestedUpdateRequirementsApplyToTopLevelCommand) {
+  RecordCounts execute_counts;
+  RecordCounts initialize_counts;
+
+  CommandSequence cmds;
+  cmds.Emplace<RecordingCompositeCmd>(
+      std::make_unique<UpdateFlagCmd>(
+          /*requires_update_on_initialize=*/false,
+          /*requires_update_on_execute=*/true),
+      &execute_counts);
+  cmds.Emplace<RecordingCompositeCmd>(
+      std::make_unique<UpdateFlagCmd>(
+          /*requires_update_on_initialize=*/true,
+          /*requires_update_on_execute=*/false),
+      &initialize_counts);
+  ASSERT_OK_AND_ASSIGN(auto executor,
+                       CommandExecutor::Create(std::move(cmds), kSerialize));
+
+  BufferAllocations allocations({}, /*device_ordinal=*/0,
+                                /*memory_allocator=*/nullptr);
+  ServiceExecutableRunOptions run_options;
+  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
+      run_options, allocations, /*stream=*/nullptr,
+      /*command_buffer_trace_stream=*/nullptr,
+      /*collective_params=*/nullptr, /*collective_cliques=*/nullptr,
+      /*collective_memory=*/nullptr);
+  CommandStateManager command_state;
+  Command::RecordParams record_params = {
+      command_state,
+      /*updated_allocs=*/std::vector<BufferAllocation::Index>{},
+      /*is_initialization=*/false};
+
+  testing::NiceMock<se::MockCommandBuffer> command_buffer;
+  se::CommandBuffer::State command_buffer_state =
+      se::CommandBuffer::State::kCreate;
+  ON_CALL(command_buffer, state()).WillByDefault([&] {
+    return command_buffer_state;
+  });
+  ON_CALL(command_buffer, mode())
+      .WillByDefault(testing::Return(se::CommandBuffer::Mode::kNested));
+
+  ASSERT_OK(executor
+                .RecordCreate(execute_params, record_params, &command_buffer,
+                              /*dependencies=*/{})
+                .status());
+  EXPECT_EQ(execute_counts.creates, 1);
+  EXPECT_EQ(initialize_counts.creates, 1);
+
+  command_buffer_state = se::CommandBuffer::State::kUpdate;
+  ASSERT_OK(
+      executor.RecordUpdate(execute_params, record_params, &command_buffer));
+  EXPECT_EQ(execute_counts.updates, 1);
+  EXPECT_EQ(initialize_counts.updates, 0);
+
+  record_params.is_initialization = true;
+  ASSERT_OK(
+      executor.RecordUpdate(execute_params, record_params, &command_buffer));
+  EXPECT_EQ(execute_counts.updates, 2);
+  EXPECT_EQ(initialize_counts.updates, 1);
 }
 
 //===----------------------------------------------------------------------===//

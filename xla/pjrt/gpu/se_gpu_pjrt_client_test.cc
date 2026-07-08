@@ -2429,12 +2429,12 @@ GpuClientOptions VmmClientOptions() {
   return options;
 }
 
-CompileOptions SkipTempCommandBufferOptions() {
+CompileOptions CommandBufferOptions(
+    DebugOptions::CommandBufferUpdateMode update_mode) {
   CompileOptions options;
   auto* debug_options =
       options.executable_build_options.mutable_debug_options();
-  debug_options->set_xla_gpu_command_buffer_update_mode(
-      DebugOptions::SKIP_TEMP);
+  debug_options->set_xla_gpu_command_buffer_update_mode(update_mode);
   debug_options->set_xla_gpu_graph_min_graph_size(1);
   debug_options->add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   debug_options->add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
@@ -2451,9 +2451,11 @@ Literal DiagonalMatrix(float diagonal) {
                                        {0, 0, 0, diagonal}});
 }
 
-void RunTwoGemmCommandBuffer(PjRtClient& client) {
+void RunTwoGemmCommandBuffer(PjRtClient& client,
+                             DebugOptions::CommandBufferUpdateMode update_mode,
+                             int num_runs) {
   static constexpr char kHlo[] = R"(
-    HloModule skip_temp_command_buffer_test
+    HloModule command_buffer_update_test
     ENTRY main {
       lhs = f32[4,4] parameter(0)
       rhs0 = f32[4,4] parameter(1)
@@ -2466,27 +2468,27 @@ void RunTwoGemmCommandBuffer(PjRtClient& client) {
 
   ASSERT_OK_AND_ASSIGN(
       auto executable,
-      CompileExecutable(kHlo, client, SkipTempCommandBufferOptions()));
+      CompileExecutable(kHlo, client, CommandBufferOptions(update_mode)));
   ASSERT_OK_AND_ASSIGN(auto* memory_space,
                        client.addressable_devices()[0]->default_memory_space());
 
+  const Literal lhs = DiagonalMatrix(1.0f);
   const Literal rhs0 = DiagonalMatrix(2.0f);
   const Literal rhs1 = DiagonalMatrix(3.0f);
-  for (int run = 0; run < 3; ++run) {
-    float scale = static_cast<float>(run + 1);
-    Literal lhs = DiagonalMatrix(scale);
-    ASSERT_OK_AND_ASSIGN(auto lhs_buffer,
-                         client.BufferFromHostLiteral(lhs, memory_space));
-    ASSERT_OK_AND_ASSIGN(auto rhs0_buffer,
-                         client.BufferFromHostLiteral(rhs0, memory_space));
-    ASSERT_OK_AND_ASSIGN(auto rhs1_buffer,
-                         client.BufferFromHostLiteral(rhs1, memory_space));
-
+  // Keep parameter buffers alive across executions so SKIP_PROFILED observes
+  // stable input addresses and exercises its Map()/UnMap() path.
+  ASSERT_OK_AND_ASSIGN(auto lhs_buffer,
+                       client.BufferFromHostLiteral(lhs, memory_space));
+  ASSERT_OK_AND_ASSIGN(auto rhs0_buffer,
+                       client.BufferFromHostLiteral(rhs0, memory_space));
+  ASSERT_OK_AND_ASSIGN(auto rhs1_buffer,
+                       client.BufferFromHostLiteral(rhs1, memory_space));
+  for (int run = 0; run < num_runs; ++run) {
     auto result = executable->Execute(
         {{lhs_buffer.get(), rhs0_buffer.get(), rhs1_buffer.get()}}, {});
     ASSERT_OK_AND_ASSIGN(auto result_literal, ExtractSingleResult(result));
-    EXPECT_TRUE(LiteralTestUtil::Near(DiagonalMatrix(6.0f * scale),
-                                      *result_literal, ErrorSpec{1e-5}))
+    EXPECT_TRUE(LiteralTestUtil::Near(DiagonalMatrix(6.0f), *result_literal,
+                                      ErrorSpec{1e-5}))
         << "Mismatch on run " << run;
   }
 }
@@ -2515,14 +2517,31 @@ TEST_F(VmmTest, CommandBufferSkipTempTwoGemmChain) {
 
   ScopedBufferAllocatorVLog vlog;
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
-  EXPECT_CALL(
-      mock_log,
-      Log(absl::LogSeverity::kInfo, ::testing::_,
-          ::testing::HasSubstr(
-              "reserved range for module skip_temp_command_buffer_test")))
+  EXPECT_CALL(mock_log,
+              Log(absl::LogSeverity::kInfo, ::testing::_,
+                  ::testing::HasSubstr(
+                      "reserved range for module command_buffer_update_test")))
       .Times(1);
   mock_log.StartCapturingLogs();
-  RunTwoGemmCommandBuffer(*client);
+  RunTwoGemmCommandBuffer(*client, DebugOptions::SKIP_TEMP, /*num_runs=*/3);
+  mock_log.StopCapturingLogs();
+}
+
+TEST_F(VmmTest, CommandBufferSkipProfiledTwoGemmChain) {
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(VmmClientOptions()));
+
+  ScopedBufferAllocatorVLog vlog;
+  absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(mock_log,
+              Log(absl::LogSeverity::kInfo, ::testing::_,
+                  ::testing::HasSubstr(
+                      "Command buffer allocation profiling activated")))
+      .Times(1);
+  mock_log.StartCapturingLogs();
+  // Cover both observation executions, activation, and steady-state reuse.
+  RunTwoGemmCommandBuffer(*client, DebugOptions::SKIP_PROFILED,
+                          /*num_runs=*/4);
   mock_log.StopCapturingLogs();
 }
 
@@ -2534,14 +2553,13 @@ TEST_F(VmmTest, CommandBufferSkipTempFallsBackWithoutVmmAllocator) {
 
   ScopedBufferAllocatorVLog vlog;
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
-  EXPECT_CALL(
-      mock_log,
-      Log(absl::LogSeverity::kInfo, ::testing::_,
-          ::testing::HasSubstr(
-              "reserved range for module skip_temp_command_buffer_test")))
+  EXPECT_CALL(mock_log,
+              Log(absl::LogSeverity::kInfo, ::testing::_,
+                  ::testing::HasSubstr(
+                      "reserved range for module command_buffer_update_test")))
       .Times(0);
   mock_log.StartCapturingLogs();
-  RunTwoGemmCommandBuffer(*client);
+  RunTwoGemmCommandBuffer(*client, DebugOptions::SKIP_TEMP, /*num_runs=*/3);
   mock_log.StopCapturingLogs();
 }
 

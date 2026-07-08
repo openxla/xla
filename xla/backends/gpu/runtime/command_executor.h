@@ -265,6 +265,11 @@ class CommandExecutor {
   // by the command (sorted by the buffer allocation index).
   std::vector<std::vector<BufferAllocation::Index>> cmd_allocs_indices_;
 
+  // Whether a top-level command or any command nested inside it requires an
+  // update during initialization or on every execution.
+  std::vector<bool> cmd_requires_update_on_initialize_;
+  std::vector<bool> cmd_requires_update_on_execute_;
+
   // Per-command extra resource uses passed at construction time (e.g.
   // control-dependency tokens from the emitter). Stored so that
   // RenderExecutionGraph() can reproduce the same dependency graph.

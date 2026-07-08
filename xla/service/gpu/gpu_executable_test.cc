@@ -290,6 +290,8 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
   for (const BufferAllocation& allocation : allocations) {
     allocation_ptrs.push_back(&allocation);
   }
+  const std::vector<BufferAllocation::Index> returned_output_alloc_indices = {
+      3};
 
   struct AllocationPolicy {
     size_t command_buffer_allocation_count;
@@ -302,7 +304,8 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
     DebugOptions debug_options;
     debug_options.set_xla_gpu_command_buffer_update_mode(update_mode);
     GpuExecutableBufferAllocator buffer_allocator(
-        "test", allocation_ptrs, shape, &debug_options, &thunk_executor);
+        "test", allocation_ptrs, shape, &debug_options, &thunk_executor,
+        returned_output_alloc_indices);
     ServiceExecutableRunOptions run_options;
     ASSIGN_OR_RETURN(
         GpuExecutableBufferAllocator::ExecutionScope allocation_scope,
@@ -337,6 +340,13 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
                                                   DebugOptions::SKIP_TEMP));
   EXPECT_EQ(skip_temp_policy.command_buffer_allocation_count, 2);
   EXPECT_THAT(skip_temp_policy.persistent_alloc_indices,
+              Optional(ElementsAre(1)));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto skip_profiled_policy,
+      get_allocation_policy_without_vmm(DebugOptions::SKIP_PROFILED));
+  EXPECT_EQ(skip_profiled_policy.command_buffer_allocation_count, 1);
+  EXPECT_THAT(skip_profiled_policy.persistent_alloc_indices,
               Optional(ElementsAre(1)));
 }
 

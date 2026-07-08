@@ -292,8 +292,6 @@ CommandExecutor::CommandExecutor(
   commands_.Walk([&](const Command* command) {
     Command::BufferUses buffer_uses = command->buffer_uses();
     buffer_uses_.insert(buffer_uses.begin(), buffer_uses.end());
-    requires_update_on_initialize_ |= command->requires_update_on_initialize();
-    requires_update_on_execute_ |= command->requires_update_on_execute();
   });
 
   // Buffer allocations referenced by all buffer uses.
@@ -307,15 +305,23 @@ CommandExecutor::CommandExecutor(
   // mapping from command index to allocation indices.
   for (Command* cmd : commands_) {
     absl::btree_set<BufferAllocation::Index> cmd_allocs_indices;
+    bool requires_update_on_initialize = false;
+    bool requires_update_on_execute = false;
     cmd->Walk([&](const Command* command) {
       for (const BufferUse& buffer_use : command->buffer_uses()) {
         cmd_allocs_indices.insert(buffer_use.slice().index());
       }
+      requires_update_on_initialize |= command->requires_update_on_initialize();
+      requires_update_on_execute |= command->requires_update_on_execute();
     });
 
     // Record buffer allocations indices referenced by the `cmd`.
     cmd_allocs_indices_.emplace_back(cmd_allocs_indices.begin(),
                                      cmd_allocs_indices.end());
+    cmd_requires_update_on_initialize_.push_back(requires_update_on_initialize);
+    cmd_requires_update_on_execute_.push_back(requires_update_on_execute);
+    requires_update_on_initialize_ |= requires_update_on_initialize;
+    requires_update_on_execute_ |= requires_update_on_execute;
   }
 }
 
@@ -578,9 +584,7 @@ absl::Status CommandExecutor::RecordUpdate(
       return false;
     }
 
-    Command* command = commands_[id];
-
-    if (command->requires_update_on_execute()) {
+    if (cmd_requires_update_on_execute_[id]) {
       return false;
     }
 
@@ -601,7 +605,7 @@ absl::Status CommandExecutor::RecordUpdate(
 
     // We always update commands that require updates on initialization, even if
     // buffer allocations didn't change.
-    if (command->requires_update_on_initialize() &&
+    if (cmd_requires_update_on_initialize_[id] &&
         record_params.is_initialization) {
       return false;
     }

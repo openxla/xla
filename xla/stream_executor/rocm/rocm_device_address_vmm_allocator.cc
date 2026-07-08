@@ -48,6 +48,14 @@ RocmDeviceAddressVmmAllocator::RocmDeviceAddressVmmAllocator(
     const Platform* platform)
     : DeviceAddressVmmAllocator(platform) {}
 
+RocmDeviceAddressVmmAllocator::~RocmDeviceAddressVmmAllocator() {
+  absl::Status status = SynchronizeAllPendingOperations();
+  if (!status.ok()) {
+    LOG(FATAL) << "Failed to synchronize pending ROCm VMM deallocations: "
+               << status;
+  }
+}
+
 absl::StatusOr<std::unique_ptr<RocmDeviceAddressVmmAllocator>>
 RocmDeviceAddressVmmAllocator::Create(const Platform* platform,
                                       absl::Span<const DeviceConfig> devices) {

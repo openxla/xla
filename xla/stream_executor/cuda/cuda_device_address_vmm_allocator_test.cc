@@ -25,6 +25,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "xla/service/computation_placer.h"
 #include "xla/stream_executor/cuda/cuda_memory_reservation.h"
 #include "xla/stream_executor/device_address.h"
@@ -76,6 +77,42 @@ class DeviceAddressVmmAllocatorTest : public ::testing::Test {
   Platform* platform_ = nullptr;
   StreamExecutor* executor_ = nullptr;
   std::unique_ptr<Stream> stream_;
+};
+
+class CountingCudaDeviceAddressVmmAllocator
+    : public gpu::CudaDeviceAddressVmmAllocator {
+ public:
+  using Base = gpu::CudaDeviceAddressVmmAllocator;
+
+  static absl::StatusOr<std::unique_ptr<CountingCudaDeviceAddressVmmAllocator>>
+  Create(StreamExecutor* executor, Stream* stream) {
+    auto allocator = std::unique_ptr<CountingCudaDeviceAddressVmmAllocator>(
+        new CountingCudaDeviceAddressVmmAllocator(executor->GetPlatform()));
+    std::array<DeviceConfig, 1> devices = {
+        DeviceConfig{executor, stream, UINT64_MAX}};
+    absl::Status status = PopulateDevices(allocator.get(), devices);
+    if (!status.ok()) {
+      return status;
+    }
+    return allocator;
+  }
+
+  int64_t deallocation_marker_count() const {
+    return deallocation_marker_count_;
+  }
+
+ protected:
+  absl::Status EnqueueDeferredDeallocation(PerDeviceState& state,
+                                           uint64_t seqno) override {
+    ++deallocation_marker_count_;
+    return Base::EnqueueDeferredDeallocation(state, seqno);
+  }
+
+ private:
+  explicit CountingCudaDeviceAddressVmmAllocator(const Platform* platform)
+      : Base(platform) {}
+
+  int64_t deallocation_marker_count_ = 0;
 };
 
 TEST_F(DeviceAddressVmmAllocatorTest, AllocateAndDeallocate) {
@@ -281,6 +318,80 @@ TEST_F(DeviceAddressVmmAllocatorTest, MapAndUnMapReservationAlias) {
   ASSERT_THAT(allocator->UnMap(ordinal, reservation.get(),
                                /*reservation_offset=*/0, granularity),
               IsOk());
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       CanMapAsNewReservationAliasRequiresUnaliasedActiveAllocatorAddress) {
+  ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  const uint64_t granularity = allocator->GetAllocationGranularity(executor_);
+  ASSERT_GT(granularity, 0);
+  const uint64_t allocation_size = 2 * granularity;
+
+  ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                             executor_, allocation_size));
+  ASSERT_OK_AND_ASSIGN(
+      auto source,
+      allocator->Allocate(ordinal, allocation_size,
+                          /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kCollective)));
+  const DeviceAddressBase source_address = source.cref();
+  const DeviceAddressBase partial_address(source_address.opaque(), granularity);
+
+  ASSERT_OK_AND_ASSIGN(bool can_map, allocator->CanMapAsNewReservationAlias(
+                                         ordinal, source_address, granularity));
+  EXPECT_TRUE(can_map);
+
+  ASSERT_OK_AND_ASSIGN(bool can_map_partial,
+                       allocator->CanMapAsNewReservationAlias(
+                           ordinal, partial_address, granularity));
+  EXPECT_FALSE(can_map_partial);
+
+  ASSERT_OK_AND_ASSIGN(
+      bool can_map_oversized,
+      allocator->CanMapAsNewReservationAlias(ordinal, source_address,
+                                             allocation_size + granularity));
+  EXPECT_FALSE(can_map_oversized);
+
+  ASSERT_THAT(allocator->Map(ordinal, source_address, reservation.get(),
+                             /*reservation_offset=*/0, allocation_size),
+              IsOk());
+  ASSERT_OK_AND_ASSIGN(bool can_map_reservation_alias,
+                       allocator->CanMapAsNewReservationAlias(
+                           ordinal, reservation->address(), allocation_size));
+  EXPECT_FALSE(can_map_reservation_alias);
+  ASSERT_OK_AND_ASSIGN(bool can_map_active_alias,
+                       allocator->CanMapAsNewReservationAlias(
+                           ordinal, source_address, allocation_size));
+  EXPECT_FALSE(can_map_active_alias);
+
+  ASSERT_THAT(allocator->UnMap(ordinal, reservation.get(),
+                               /*reservation_offset=*/0, allocation_size),
+              IsOk());
+  ASSERT_OK_AND_ASSIGN(bool can_map_stale_alias,
+                       allocator->CanMapAsNewReservationAlias(
+                           ordinal, source_address, allocation_size));
+  EXPECT_FALSE(can_map_stale_alias);
+
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+  ASSERT_OK_AND_ASSIGN(bool can_map_after_unmap,
+                       allocator->CanMapAsNewReservationAlias(
+                           ordinal, source_address, allocation_size));
+  EXPECT_TRUE(can_map_after_unmap);
+
+  EXPECT_THAT(allocator->CanMapAsNewReservationAlias(
+                  ordinal + 1000, source_address, allocation_size),
+              absl_testing::StatusIs(absl::StatusCode::kNotFound));
+
+  ASSERT_THAT(allocator->Deallocate(ordinal, source.Release()), IsOk());
+  ASSERT_OK_AND_ASSIGN(bool can_map_stale_allocator,
+                       allocator->CanMapAsNewReservationAlias(
+                           ordinal, source_address, allocation_size));
+  EXPECT_FALSE(can_map_stale_allocator);
   ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
 }
 
@@ -1054,40 +1165,40 @@ TEST_F(DeviceAddressVmmAllocatorTest, DeallocateNull) {
 // all prior GPU work finishes before any new work submitted after Allocate.
 TEST_F(DeviceAddressVmmAllocatorTest,
        PendingDeallocationReusesSameVirtualAddress) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto allocator,
-      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+      CountingCudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   const int ordinal = executor_->device_ordinal();
   constexpr uint64_t kSize = 1024;
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto addr1,
       allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
                           static_cast<int64_t>(MemorySpace::kCollective)));
   void* const va = addr1->opaque();
 
-  // Deallocate: timeline write is enqueued but VA is not freed yet.
+  // Deallocate queues the VA in the open trailing batch but does not free it.
   DeviceAddressBase raw = addr1.cref();
   addr1.Release();
   ASSERT_THAT(allocator->Deallocate(ordinal, raw), IsOk());
+  EXPECT_EQ(allocator->deallocation_marker_count(), 0);
 
   // Allocate the same size — TryReusePendingDeallocation should match the
   // pending entry and return the identical virtual address.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto addr2,
       allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
                           static_cast<int64_t>(MemorySpace::kCollective)));
   EXPECT_EQ(addr2->opaque(), va);
 
-  // Sync to drain all pending GPU timeline writes before the allocator
-  // is destroyed.
-  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+  EXPECT_EQ(allocator->deallocation_marker_count(), 0);
 }
 
 // Verifies that deallocating memory while the GPU is still writing to it is
-// safe. The timeline write for the deallocation is enqueued on the stream
-// AFTER the memcpy, so the physical memory is not freed until the GPU finishes.
+// safe. Flushing the open batch enqueues its trailing timeline write after the
+// memcpy, so the physical memory is not freed until the GPU finishes.
 TEST_F(DeviceAddressVmmAllocatorTest,
        DeferredDeallocationSafeWhileGpuWritesData) {
   TF_ASSERT_OK_AND_ASSIGN(
@@ -1106,54 +1217,108 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   DeviceAddressBase dev_addr = addr.cref();
   ASSERT_THAT(stream_->Memcpy(&dev_addr, &kPattern, sizeof(kPattern)), IsOk());
 
-  // Deallocate while the memcpy is still queued. The seqno timeline write is
-  // appended to the stream AFTER the memcpy, so the VA cannot be reused until
-  // the GPU advances past it.
+  // Deallocate while the memcpy is still queued. Flushing below appends the
+  // trailing timeline write after the memcpy, so teardown cannot complete
+  // until the GPU advances past it.
   ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
 
-  // Sync: both the memcpy and the timeline write execute in order.
+  // Flush and synchronize: the memcpy and trailing timeline write execute in
+  // order.
   // No crash here means the physical memory was not freed prematurely.
-  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
 }
 
-// Allocates and deallocates N buffers, recording a distinct seqno for each.
-// After a single stream sync all seqnos have been written by the GPU, so
-// re-allocating the same size should succeed by reusing the pending entries.
+// Allocates and deallocates enough buffers to cross the 64-entry open-batch
+// limit, then flushes and drains the remaining batch with one synchronization.
 TEST_F(DeviceAddressVmmAllocatorTest,
-       MultipleSeqnosAllCompleteAfterStreamSync) {
-  TF_ASSERT_OK_AND_ASSIGN(
+       MultipleDeferredDeallocationsDrainAfterSynchronization) {
+  ASSERT_OK_AND_ASSIGN(
       auto allocator,
-      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+      CountingCudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   const int ordinal = executor_->device_ordinal();
-  constexpr int kCount = 8;
+  constexpr int kCount = 65;
   constexpr uint64_t kSize = 1024;
 
-  // Allocate kCount buffers and immediately queue their deallocation.
-  // Each Deallocate increments next_seqno and enqueues a timeline write.
+  std::vector<DeviceAddressBase> addresses;
+  addresses.reserve(kCount);
   for (int i = 0; i < kCount; ++i) {
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(
         auto addr,
         allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
                             static_cast<int64_t>(MemorySpace::kCollective)));
-    ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
+    addresses.push_back(addr.Release());
   }
 
-  // Sync the stream: all kCount timeline writes (seqnos 1..kCount) complete.
-  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
-
-  // Each new Allocate call finds a matching pending entry via
-  // TryReusePendingDeallocation (or via ProcessCompletedPendingDeallocations
-  // once the pending queue is exhausted).
   for (int i = 0; i < kCount; ++i) {
-    TF_ASSERT_OK_AND_ASSIGN(
+    DeviceAddressBase address = addresses[i];
+    ASSERT_THAT(allocator->Deallocate(ordinal, address), IsOk());
+    EXPECT_EQ(allocator->deallocation_marker_count(), i < 64 ? 0 : 1);
+  }
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+  EXPECT_EQ(allocator->deallocation_marker_count(), 2);
+
+  // All drained physical and virtual resources are available for fresh
+  // allocations.
+  for (int i = 0; i < kCount; ++i) {
+    ASSERT_OK_AND_ASSIGN(
         auto addr,
         allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
                             static_cast<int64_t>(MemorySpace::kCollective)));
     EXPECT_FALSE(addr.is_null());
   }
 
-  ASSERT_THAT(stream_->BlockHostUntilDone(), IsOk());
+  // Destruction of the fresh allocations creates one full batch and one
+  // trailing batch in addition to the two markers observed above.
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+  EXPECT_EQ(allocator->deallocation_marker_count(), 4);
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       DeferredDeallocationBatchFlushesAtByteLimit) {
+  ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      CountingCudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  constexpr uint64_t kAllocationSize = 33ull << 20;
+  std::array<DeviceAddressBase, 2> addresses;
+  for (DeviceAddressBase& address : addresses) {
+    ASSERT_OK_AND_ASSIGN(
+        auto allocation,
+        allocator->Allocate(ordinal, kAllocationSize,
+                            /*retry_on_failure=*/true,
+                            static_cast<int64_t>(MemorySpace::kCollective)));
+    address = allocation.Release();
+  }
+
+  ASSERT_THAT(allocator->Deallocate(ordinal, addresses[0]), IsOk());
+  EXPECT_EQ(allocator->deallocation_marker_count(), 0);
+  ASSERT_THAT(allocator->Deallocate(ordinal, addresses[1]), IsOk());
+  EXPECT_EQ(allocator->deallocation_marker_count(), 1);
+
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+  EXPECT_EQ(allocator->deallocation_marker_count(), 2);
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       OversizedDeferredDeallocationUsesStandaloneMarker) {
+  ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      CountingCudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+
+  const int ordinal = executor_->device_ordinal();
+  constexpr uint64_t kAllocationSize = 65ull << 20;
+  ASSERT_OK_AND_ASSIGN(
+      auto allocation,
+      allocator->Allocate(ordinal, kAllocationSize,
+                          /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kCollective)));
+
+  ASSERT_THAT(allocator->Deallocate(ordinal, allocation.Release()), IsOk());
+  EXPECT_EQ(allocator->deallocation_marker_count(), 1);
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+  EXPECT_EQ(allocator->deallocation_marker_count(), 1);
 }
 
 // Verifies that the destructor correctly spin-waits on the pinned timeline
@@ -1177,8 +1342,8 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   }
 
   // Destroy without an explicit stream sync. The destructor must spin on the
-  // pinned_timeline until the GPU writes all pending seqnos, then free
-  // each virtual address safely.
+  // flush its open batch, wait for the trailing marker, then free each virtual
+  // address safely.
   allocator.reset();  // Must not crash or leak.
 }
 
