@@ -4141,6 +4141,7 @@ xla_cc_test(
     name = "copy_insertion_test",
     srcs = ["copy_insertion_test.cc"],
     deps = [
+        ":buffer_value",
         ":copy_insertion",
         ":hlo_graph_dumper",
         ":hlo_module_config",
@@ -4155,6 +4156,7 @@ xla_cc_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test",
         "//xla/hlo/testlib:test_helpers",
+        "//xla/hlo/transforms/simplifiers:hlo_memory_scheduler",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/hlo/utils:hlo_query",
         "//xla/tests:xla_internal_test_main",
@@ -5804,6 +5806,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+        "@com_googlesource_code_re2//:re2",
     ],
 )
 

@@ -89,79 +89,6 @@ absl::Status CheckAlignment(const BufferAllocation& allocation,
   return absl::OkStatus();
 }
 
-// Resolve GpuCollectives instance that we should use for the run.
-// TODO(ezhulenev): We have almost identical method in `collective_params.cc`,
-// this one has to be removed.
-GpuCollectives* ResolveGpuCollectives(
-    const ServiceExecutableRunOptions* run_options,
-    const DebugOptions* debug_options) {
-  auto* gpu_options = run_options->run_options().gpu_executable_run_options();
-  if (gpu_options && gpu_options->collectives()) {
-    return gpu_options->collectives();
-  }
-
-  absl::string_view platform_name =
-      run_options->run_options().stream()->parent()->GetPlatform()->Name();
-
-  if (debug_options &&
-      !debug_options->xla_gpu_collectives_implementation().empty()) {
-    absl::StatusOr<Collectives*> collectives = CollectivesRegistry::Get(
-        platform_name, debug_options->xla_gpu_collectives_implementation());
-    CHECK_OK(collectives)  // Crash OK
-        << "Failed to get GPU collectives implementation: "
-        << debug_options->xla_gpu_collectives_implementation();
-    return absl::down_cast<GpuCollectives*>(*collectives);
-  }
-
-  return GpuCollectives::Default(platform_name);
-}
-
-struct CollectedAllocationIndices {
-  GpuExecutableBufferAllocator::AllocationIndexSet constant;
-  GpuExecutableBufferAllocator::AllocationIndexSet persistent;
-  GpuExecutableBufferAllocator::AllocationIndexSet va_remapped;
-};
-
-CollectedAllocationIndices CollectAllocationIndices(
-    absl::Span<const BufferAllocation* const> allocations,
-    const ThunkExecutor* thunk_executor, bool persist_temp_allocations) {
-  CollectedAllocationIndices indices;
-  if (thunk_executor == nullptr) {
-    return indices;
-  }
-
-  CHECK_OK(thunk_executor->thunks().WalkNested(
-      [&](const Thunk* thunk) -> absl::Status {
-        auto* command_buffer_thunk =
-            dynamic_cast<const CommandBufferThunk*>(thunk);
-        if (command_buffer_thunk == nullptr) {
-          return absl::OkStatus();
-        }
-        for (BufferAllocation::Index index :
-             command_buffer_thunk->allocs_indices()) {
-          if (index < 0 || static_cast<size_t>(index) >= allocations.size()) {
-            continue;
-          }
-          const BufferAllocation& allocation = *allocations[index];
-          if (allocation.size() == 0) {
-            continue;
-          }
-          if (allocation.is_constant()) {
-            indices.constant.insert(index);
-          } else if (persist_temp_allocations &&
-                     allocation.IsPreallocatedTempBuffer()) {
-            indices.va_remapped.insert(index);
-          }
-        }
-        return absl::OkStatus();
-      }));
-
-  indices.persistent = indices.constant;
-  indices.persistent.insert(indices.va_remapped.begin(),
-                            indices.va_remapped.end());
-  return indices;
-}
-
 }  // namespace
 
 absl::StatusOr<uint64_t>
@@ -325,16 +252,19 @@ GpuExecutableBufferAllocator::ExecutionScope::GenerateBufferAllocations(
       tsl::profiler::TraceMeLevel::kInfo);
 
   absl::flat_hash_map<LogicalBuffer::Color, int64_t> allocate_granularity;
-  if (auto* collectives =
-          ResolveGpuCollectives(run_options, owner_->debug_options_)) {
-    // BFC allocator ignores memory alignment and always allocates 256 byte
-    // aligned buffers, however for collective memory underlying libraries
-    // require larger alignment. We conservatively round up all allocation
-    // sizes to the alignment requirement. Proper fix must be done in BFC
-    // allocator and all the other allocator adaptors that we have in XLA.
-    static constexpr int64_t kCollectiveMemoryColor = 1;
-    allocate_granularity[kCollectiveMemoryColor] =
-        collectives->SymmetricMemoryAlignment();
+  if (run_options && run_options->stream()) {
+    absl::StatusOr<uint64_t> collective_memory_granularity =
+        run_options->stream()->parent()->GetCollectiveMemoryGranularity();
+    if (collective_memory_granularity.ok()) {
+      // BFC allocator ignores memory alignment and always allocates 256 byte
+      // aligned buffers, however for collective memory underlying libraries
+      // require larger alignment. We conservatively round up all allocation
+      // sizes to the alignment requirement. Proper fix must be done in BFC
+      // allocator and all the other allocator adaptors that we have in XLA.
+      static constexpr int64_t kCollectiveMemoryColor = 1;
+      allocate_granularity[kCollectiveMemoryColor] =
+          *collective_memory_granularity;
+    }
   }
 
   // Tag allocations made in this invocation as multi-device for VMM reuse.
