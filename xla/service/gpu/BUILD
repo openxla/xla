@@ -718,8 +718,6 @@ cc_library(
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:device_address_vmm_allocator",
-        "//xla/stream_executor:event",
-        "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:memory_reservation",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
@@ -728,6 +726,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
@@ -739,18 +738,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/profiler/lib:scoped_annotation",
         "@tsl//tsl/profiler/lib:traceme",
-    ],
-)
-
-xla_cc_test(
-    name = "gpu_executable_buffer_allocator_test",
-    srcs = ["gpu_executable_buffer_allocator_test.cc"],
-    deps = [
-        ":gpu_executable_buffer_allocator",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:test",
     ],
 )
 
