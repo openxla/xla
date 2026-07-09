@@ -908,7 +908,7 @@ absl::Status RewriteLoopWithConcatGroups(
           // Concat on existing dim. Reshape to merge the broadcast dim.
           data_shape.set_dimensions(
               operand_concat_dim,
-              data_shape.dimensions(operand_inserted_concat_dim) *
+              data_shape.dimensions(operand_concat_dim) *
                   group.elements.size());
           broadcast = body->AddInstruction(
               HloInstruction::CreateReshape(data_shape, broadcast));
