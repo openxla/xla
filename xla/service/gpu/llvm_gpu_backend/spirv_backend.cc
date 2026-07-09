@@ -226,18 +226,13 @@ absl::StatusOr<std::string> CompileToSPIRV(
       auto new_arg_it = new_func->arg_begin();
       auto old_arg_it = old_func->arg_begin();
       for (; old_arg_it != old_func->arg_end(); ++old_arg_it, ++new_arg_it) {
-        // The cloned body still references old_func arguments because cloning
-        // uses an identity map. Replace every old argument with the
-        // corresponding new one; only default-address-space pointers need a
-        // cast because their type changed.
-        llvm::Value* replacement = &*new_arg_it;
         if (auto old_ptr_type =
-                llvm::dyn_cast<llvm::PointerType>(old_arg_it->getType());
-            old_ptr_type &&
-            old_ptr_type->getAddressSpace() == kSpirvLlvmDefaultAddressSpace) {
-          replacement = builder.CreateAddrSpaceCast(new_arg_it, old_ptr_type);
+                llvm::dyn_cast<llvm::PointerType>(old_arg_it->getType())) {
+          auto cast = builder.CreateAddrSpaceCast(new_arg_it, old_ptr_type);
+          old_arg_it->replaceAllUsesWith(cast);
+        } else {
+          old_arg_it->replaceAllUsesWith(&*new_arg_it);
         }
-        old_arg_it->replaceAllUsesWith(replacement);
       }
       // TODO: Update kernel function's uses. Currently, we are assuming that
       // kernel function is not called by any other functions in the current
