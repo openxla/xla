@@ -29,6 +29,23 @@ gentbl_cc_library(
 )
 
 cc_library(
+    name = "tdm_lowering_util",
+    srcs = ["tdm_lowering_util.cc"],
+    hdrs = ["tdm_lowering_util.h"],
+    deps = [
+        "//xla/backends/gpu/codegen/triton:lowering_util",
+        "//xla/service:decision",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@triton//:TritonDialects",
+    ],
+)
+
+cc_library(
     name = "passes",
     srcs = [
         "arith_fp8_conversion_to_triton.cc",
@@ -60,6 +77,7 @@ cc_library(
     ],
     deps = [
         ":passes_inc_gen",
+        ":tdm_lowering_util",
         "//xla:permutation_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
