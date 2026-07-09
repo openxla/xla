@@ -254,7 +254,7 @@ hlo-opt --passes=pass1,pass2,pass3 input.hlo
    `--list-passes` option and then use `--passes` option to run the pass.
 
     ```
-    $ hlo-opt --passes=foo-pass input.hlo
+    hlo-opt --passes=foo-pass input.hlo
     ```
 
 1. Writing unit tests for the pass? refer https://openxla.org/xla/test_hlo_passes for more details.
