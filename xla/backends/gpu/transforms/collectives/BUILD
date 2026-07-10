@@ -743,6 +743,7 @@ cc_library(
     hdrs = ["collective_kernel_strategy_annotator.h"],
     deps = [
         "//xla:status_macros",
+        "//xla/backends/gpu/runtime:all_gather",
         "//xla/backends/gpu/runtime:all_reduce",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",

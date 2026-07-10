@@ -1443,10 +1443,18 @@ void AddCollectiveCombinerPasses(
   // of the NCCL ring model.  Only added when the Triton collective kernel flag
   // is enabled; when the flag is off all collectives keep
   // KERNEL_STRATEGY_DEFAULT.
+  // Run the annotator if any collective kernel type is enabled.
+  // It annotates AllReduce and AllGather instructions with the
+  // kernel strategy determined at compile time (before scheduling),
+  // so that SolLatencyEstimator and the thunk emitter can consume it.
   if (absl::c_linear_search(
           opts.xla_gpu_experimental_use_collective_kernels(),
           static_cast<int>(
-              DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE))) {
+              DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE)) ||
+      absl::c_linear_search(
+          opts.xla_gpu_experimental_use_collective_kernels(),
+          static_cast<int>(
+              DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER))) {
     pipeline.AddPass<CollectiveKernelStrategyAnnotator>(
         gpu_topology, /*is_multimem_enabled=*/false);
   }

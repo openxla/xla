@@ -255,13 +255,20 @@ AsyncThunkSequence ThunkEmitter::EmitCollectiveKernelThunk(
       NewModuleWithFusion(instr, HloInstruction::FusionKind::kLoop);
   HloFusionInstruction* fusion_instr = Cast<HloFusionInstruction>(
       fused_module->entry_computation()->root_instruction());
-  // Determine whether the collective kernel is enabled and whether flattening
-  // is needed, based on the opcode of the wrapped collective.
+  // For both AllReduce and AllGather the kernel strategy is determined by the
+  // annotation written by CollectiveKernelStrategyAnnotator before scheduling.
+  // Reading the annotation uniformly avoids direct flag checks in the emitter.
   const HloOpcode opcode = instr->opcode();
-  const auto& debug_options = instr->GetModule()->config().debug_options();
   bool should_flatten = false;
   bool is_collective_kernel_enabled = false;
-  if (opcode == HloOpcode::kAllReduce) {
+  if (auto gpu_config = instr->backend_config<GpuBackendConfig>();
+      gpu_config.ok()) {
+    is_collective_kernel_enabled = IsTritonCollectiveKernel(
+        gpu_config->collective_backend_config().kernel_strategy());
+  }
+  // For AllReduce two-shot, the fused module must be flattened to 1-D so
+  // Triton can assign contiguous subtiles to each rank.
+  if (opcode == HloOpcode::kAllReduce && is_collective_kernel_enabled) {
     static constexpr bool kMultimemDisabled = false;
     const int64_t size_bytes =
         ShapeUtil::ElementsIn(instr->shape()) *
@@ -271,14 +278,6 @@ AsyncThunkSequence ThunkEmitter::EmitCollectiveKernelThunk(
     should_flatten = has_rank_higher_than_1 &&
                      GetAllReduceStrategy(size_bytes, kMultimemDisabled) ==
                          se::gpu::AllReduceStrategy::kTwoShot;
-    is_collective_kernel_enabled = absl::c_linear_search(
-        debug_options.xla_gpu_experimental_use_collective_kernels(),
-        static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE));
-  } else if (opcode == HloOpcode::kAllGather) {
-    // AllGather is always one-shot; no flattening needed.
-    is_collective_kernel_enabled = absl::c_linear_search(
-        debug_options.xla_gpu_experimental_use_collective_kernels(),
-        static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER));
   }
   if (is_collective_kernel_enabled && should_flatten) {
     RETURN_IF_ERROR(FlattenCollectiveFusion(fusion_instr));
@@ -2077,41 +2076,10 @@ AsyncThunkSequence ThunkEmitter::EmitCollectiveThunk(
     use_triton = IsTritonCollectiveKernel(
         gpu_config_status->collective_backend_config().kernel_strategy());
   }
-  // For AllGather there is only one protocol (one-shot), so no strategy
-  // selection is needed. The Triton path is gated by the feature flag AND
-  // shape eligibility — not all shapes satisfy Triton's alignment/type
-  // requirements. When the flag is set but the shape is ineligible, we log
-  // and fall back to NCCL/RCCL.
-  if (!use_triton && kind == Thunk::Kind::kAllGather) {
-    if (absl::c_linear_search(
-            inst->GetModule()
-                ->config()
-                .debug_options()
-                .xla_gpu_experimental_use_collective_kernels(),
-            static_cast<int>(
-                DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER))) {
-      const DeviceAssignment* device_assignment = nullptr;
-      if (ir_emitter_context_->hlo_module()
-              .config()
-              .has_static_device_assignment()) {
-        device_assignment = &ir_emitter_context_->hlo_module()
-                                 .config()
-                                 .static_device_assignment();
-      }
-      absl::StatusOr<AllGatherInfo> info = BuildAllGatherInfo(
-          /*is_collective_kernel_enabled=*/true,
-          ir_emitter_context_->gpu_topology(),
-          Cast<HloAllGatherInstruction>(inst), device_assignment);
-      if (info.ok()) {
-        use_triton = true;
-      } else {
-        LOG(WARNING)
-            << "AllGather Triton backend requested but shape is ineligible "
-               "— falling back to NCCL/RCCL: "
-            << info.status().message();
-      }
-    }
-  }
+  // For AllGather the strategy is now determined by the annotation written
+  // by CollectiveKernelStrategyAnnotator.
+  // `use_triton` was already set above by reading the backend_config
+  // annotation.
   if (use_triton) {
     CollectiveConfig collective_config =
         GetCollectiveConfig(inst, use_global_device_ids);
