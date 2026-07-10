@@ -1488,6 +1488,7 @@ xla_test(
     backends = [
         "gpu",
     ],
+    env = {"NCCL_IGNORE_DISABLED_P2P": "1"},
     deps = [
         ":collective_ops_e2e_test_base",
         "//xla:error_spec",
@@ -1534,6 +1535,7 @@ xla_test(
     backends = [
         "gpu",
     ],
+    env = {"NCCL_IGNORE_DISABLED_P2P": "1"},
     deps = [
         ":collective_ops_e2e_test_base",
         ":ragged_all_to_all_test_utils",
@@ -1752,6 +1754,7 @@ xla_test(
     backends = [
         "gpu",
     ],
+    env = {"NCCL_IGNORE_DISABLED_P2P": "1"},
     deps = [
         ":collective_ops_e2e_test_base",
         "//xla:literal",
