@@ -1299,7 +1299,6 @@ BuildLocalDeviceStates(LocalClient* xla_client, bool schedule_async,
   return std::move(addressable_devices);
 }
 
-
 // Constructs a GPU device memory allocator to use, according to the allocator
 // configuration the client requested.
 absl::StatusOr<std::unique_ptr<se::DeviceAddressAllocator>>
@@ -2175,9 +2174,14 @@ StreamExecutorGpuClient::RunAsync(
 
     if (result_buffer.is_null()) {
       // The source instruction should have a non-parameter buffer
-      // assigned.
-      result_buffer =
-          buffer_allocations.GetDeviceAddress(output_info.allocation_index);
+      // assigned. When the allocation is VA-remapped for this execution, the
+      // BufferAllocations entry holds the per-execution reservation address;
+      // the caller must instead receive the external address, which stays
+      // valid and deallocatable after the reservation slice is remapped by a
+      // later execution.
+      result_buffer = allocation_scope.ResolveOutputBuffer(
+          output_info.allocation_index,
+          buffer_allocations.GetDeviceAddress(output_info.allocation_index));
     }
     buffers_in_result.insert(result_buffer);
 

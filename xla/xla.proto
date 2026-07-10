@@ -414,9 +414,21 @@ message DebugOptions {
   //   SKIP_TEMP: Command-buffer-referenced preallocated temp buffers
   //     use fixed VMM reservation addresses; other dynamic allocations still
   //     trigger command updates when their addresses change.
+  //   SKIP_PROFILED: For the first xla_gpu_command_buffer_profile_steps
+  //     executions, buffers use regular dynamically allocated addresses and
+  //     the runtime records which command-buffer-referenced allocations keep a
+  //     stable address. Afterwards, the stable allocations (parameters, temp
+  //     buffers, and outputs) are given fixed VMM reservation addresses:
+  //     parameter buffers are aliased into the reservation each execution,
+  //     while temp and output buffers are allocated through it. Remapping
+  //     enforces address stability, so a mispredicted profile costs an extra
+  //     VMM remap instead of correctness. Requires the VMM allocator and
+  //     assumes symmetric behavior across ranks and stable buffer donation
+  //     behavior across executions.
   enum CommandBufferUpdateMode {
     ALWAYS_UPDATE = 0;
     SKIP_TEMP = 1;
+    SKIP_PROFILED = 2;
   }
 
   // Controls when cuDNN fusions are compiled in "deviceless" mode, i.e. driven
@@ -601,6 +613,11 @@ message DebugOptions {
   // implementation is used. When set, the named implementation is looked up
   // in the CollectivesRegistry.
   optional string xla_gpu_collectives_implementation = 468;
+
+  // Number of executions used to profile allocation address stability before
+  // enabling VA remapping in the SKIP_PROFILED command buffer update mode.
+  // Values below 1 are treated as 1.
+  optional int32 xla_gpu_command_buffer_profile_steps = 515;
 
   optional CommandBufferSchedulingMode xla_gpu_command_buffer_scheduling_mode =
       404;
@@ -1675,7 +1692,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 515
+  // Next id: 516
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
