@@ -367,6 +367,17 @@ TEST(CollectiveConfigTest, RejectsMalformedStepList) {
                        HasSubstr("nonnegative function ordinal")));
 
   attributes = TestAttributes();
+  attributes.steps = {
+      static_cast<int64_t>(CollectiveStepKindV3::kLaunch),
+      0,
+      static_cast<int64_t>(CollectiveStepKindV3::kBarrier),
+      0,
+  };
+  EXPECT_THAT(Parse(attributes),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("requires all barriers before")));
+
+  attributes = TestAttributes();
   attributes.steps = {9, 0};
   EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
                                           HasSubstr("Unsupported step kind")));

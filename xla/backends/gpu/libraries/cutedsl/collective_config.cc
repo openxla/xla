@@ -345,6 +345,13 @@ absl::StatusOr<std::vector<CollectiveStepV3>> ParseSteps(
           return absl::InvalidArgumentError(absl::StrFormat(
               "Barrier step %d must have operand zero", step_index));
         }
+        if (has_launch) {
+          return absl::InvalidArgumentError(absl::StrFormat(
+              "Barrier step %d follows a launch; v3 requires all barriers "
+              "before the first launch until cross-rank launch-error "
+              "agreement is implemented",
+              step_index));
+        }
         steps.push_back(CollectiveStepV3{CollectiveStepKindV3::kBarrier, 0});
         break;
       case static_cast<int64_t>(CollectiveStepKindV3::kLaunch):
