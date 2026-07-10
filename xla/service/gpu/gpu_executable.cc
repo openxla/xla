@@ -29,6 +29,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/nullability.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -510,9 +511,15 @@ GpuExecutable::GpuExecutable(
 
   const DebugOptions* allocation_debug_options =
       has_module() ? &module_config().debug_options() : nullptr;
+  std::vector<BufferAllocation::Index> returned_output_alloc_indices;
+  returned_output_alloc_indices.reserve(output_info_.size());
+  for (const auto& output : output_info_) {
+    returned_output_alloc_indices.push_back(output.second.allocation_index);
+  }
   buffer_allocator_ = std::make_unique<GpuExecutableBufferAllocator>(
       module_name_, allocation_ptrs_, program_shape_.result(),
-      allocation_debug_options, thunk_executor_.get());
+      allocation_debug_options, thunk_executor_.get(),
+      returned_output_alloc_indices);
 }
 
 GpuExecutable::~GpuExecutable() {
@@ -757,6 +764,17 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
 
     tsl::profiler::TraceMe trace_prepare("Thunks::Prepare");
     RETURN_IF_ERROR(thunk_executor.Prepare(prepare_params));
+  }
+
+  if (debug_options &&
+      debug_options->xla_gpu_command_buffer_update_mode() ==
+          DebugOptions::SKIP_PROFILED &&
+      (collective_memory_requests.symmetric_size() != 0 ||
+       collective_memory_requests.multicast_size() != 0 ||
+       collective_memory_requests.peer_size() != 0)) {
+    return Unimplemented(
+        "SKIP_PROFILED command buffer update mode does not support "
+        "symmetric, multicast, or peer collective memory");
   }
 
   XLA_VLOG_DEVICE(3, run_options->device_ordinal()) << absl::StreamFormat(
@@ -1094,7 +1112,34 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   XLA_VLOG_DEVICE(3, device_ordinal) << buffer_allocations.ToString();
   absl::Span<const BufferAllocation* const> allocations = GetAllocations();
 
+  std::set<se::DeviceAddressBase> non_owning_addresses;
+  for (const BufferAllocation* allocation : allocations) {
+    if (allocation->is_entry_computation_parameter() ||
+        allocation->is_constant()) {
+      non_owning_addresses.insert(
+          buffer_allocations.GetDeviceAddress(allocation->index()));
+    }
+  }
   std::set<se::DeviceAddressBase> buffers_in_result;
+  absl::Cleanup cleanup_buffer_allocations = [&] {
+    absl::Status release_aliases_status =
+        allocation_scope.ReleaseReservationAliases();
+    if (!release_aliases_status.ok()) {
+      LOG(ERROR) << "Failed to release command buffer VA aliases while "
+                    "cleaning up module "
+                 << module_name_ << ": " << release_aliases_status;
+    }
+    std::set<se::DeviceAddressBase> live_addresses = buffers_in_result;
+    live_addresses.insert(non_owning_addresses.begin(),
+                          non_owning_addresses.end());
+    absl::Status teardown_status =
+        buffer_allocations.TearDown(live_addresses, allocations);
+    if (!teardown_status.ok()) {
+      LOG(ERROR) << "Failed to tear down buffer allocations while cleaning up "
+                    "module "
+                 << module_name_ << ": " << teardown_status;
+    }
+  };
 
   const bool is_entire_tuple_contents_aliased = [&] {
     for (auto& p : result.MutableResult()->buffers().leaves()) {
@@ -1201,10 +1246,13 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
                              persistent_alloc_indices);
       });
   absl::Status teardown_status =
-      buffer_allocations.TearDown(buffers_in_result, GetAllocations());
+      buffer_allocations.TearDown(buffers_in_result, allocations);
+  std::move(cleanup_buffer_allocations).Cancel();
 
   RETURN_IF_ERROR(execute_status);
   RETURN_IF_ERROR(teardown_status);
+  RETURN_IF_ERROR(
+      allocation_scope.CommitSuccessfulExecution(buffer_allocations));
 
   // Free allocations for arguments.
   if (auto args = std::get_if<absl::Span<ExecutionInput>>(&arguments)) {
@@ -1290,9 +1338,11 @@ absl::Status GpuExecutable::ExecuteThunks(
 
   se::StreamExecutor* executor = run_options->stream()->parent();
 
-  XLA_VLOG_DEVICE(3, executor->device_ordinal()) << absl::StreamFormat(
-      "ExecuteThunks: persistent_alloc_indices.size()=%d",
-      buffer_allocator_->command_buffer_allocation_count());
+  XLA_VLOG_DEVICE(3, executor->device_ordinal())
+      << absl::StreamFormat("ExecuteThunks: persistent_alloc_indices=%s",
+                            persistent_alloc_indices.has_value()
+                                ? absl::StrCat(persistent_alloc_indices->size())
+                                : "unknown");
 
   return ExecuteThunksImpl(
       has_module() ? &module_config().debug_options() : nullptr, module_name_,

@@ -285,6 +285,85 @@ TEST_F(DeviceAddressVmmAllocatorTest, MapAndUnMapReservationAlias) {
 }
 
 TEST_F(DeviceAddressVmmAllocatorTest,
+       CanMapAsNewReservationAliasRequiresUnaliasedActiveAllocatorAddress) {
+  ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
+  const int ordinal = executor_->device_ordinal();
+  const uint64_t granularity = allocator->GetAllocationGranularity(executor_);
+  ASSERT_GT(granularity, 0);
+  const uint64_t allocation_size = 2 * granularity;
+
+  ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                             executor_, allocation_size));
+  ASSERT_OK_AND_ASSIGN(
+      auto source,
+      allocator->Allocate(ordinal, allocation_size,
+                          /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kCollective)));
+  const DeviceAddressBase source_address = source.cref();
+  const DeviceAddressBase partial_address(source_address.opaque(), granularity);
+
+  ASSERT_OK_AND_ASSIGN(bool can_map, allocator->CanMapAsNewReservationAlias(
+                                         ordinal, source_address, granularity));
+  EXPECT_TRUE(can_map);
+  ASSERT_OK_AND_ASSIGN(bool can_map_partial,
+                       allocator->CanMapAsNewReservationAlias(
+                           ordinal, partial_address, granularity));
+  EXPECT_FALSE(can_map_partial);
+  ASSERT_OK_AND_ASSIGN(
+      bool can_map_oversized,
+      allocator->CanMapAsNewReservationAlias(ordinal, source_address,
+                                             allocation_size + granularity));
+  EXPECT_FALSE(can_map_oversized);
+
+  ASSERT_THAT(allocator->Map(ordinal, source_address, reservation.get(),
+                             /*reservation_offset=*/0, allocation_size),
+              IsOk());
+  ASSERT_OK_AND_ASSIGN(bool can_map_reservation_alias,
+                       allocator->CanMapAsNewReservationAlias(
+                           ordinal, reservation->address(), allocation_size));
+  EXPECT_FALSE(can_map_reservation_alias);
+  ASSERT_OK_AND_ASSIGN(bool can_map_active_alias,
+                       allocator->CanMapAsNewReservationAlias(
+                           ordinal, source_address, allocation_size));
+  EXPECT_FALSE(can_map_active_alias);
+
+  ASSERT_THAT(allocator->UnMap(ordinal, reservation.get(),
+                               /*reservation_offset=*/0, allocation_size),
+              IsOk());
+  ASSERT_OK_AND_ASSIGN(bool can_map_stale_alias,
+                       allocator->CanMapAsNewReservationAlias(
+                           ordinal, source_address, allocation_size));
+  EXPECT_FALSE(can_map_stale_alias);
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+  ASSERT_OK_AND_ASSIGN(bool can_map_after_unmap,
+                       allocator->CanMapAsNewReservationAlias(
+                           ordinal, source_address, allocation_size));
+  EXPECT_TRUE(can_map_after_unmap);
+
+  EXPECT_THAT(allocator->CanMapAsNewReservationAlias(
+                  ordinal + 1000, source_address, allocation_size),
+              absl_testing::StatusIs(absl::StatusCode::kNotFound));
+  ASSERT_THAT(allocator->Deallocate(ordinal, source.Release()), IsOk());
+  ASSERT_OK_AND_ASSIGN(bool can_map_stale_allocator,
+                       allocator->CanMapAsNewReservationAlias(
+                           ordinal, source_address, allocation_size));
+  EXPECT_FALSE(can_map_stale_allocator);
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+
+  ASSERT_OK_AND_ASSIGN(
+      auto subgranular_source,
+      allocator->Allocate(ordinal, granularity / 2,
+                          /*retry_on_failure=*/true,
+                          static_cast<int64_t>(MemorySpace::kCollective)));
+  ASSERT_OK_AND_ASSIGN(bool can_map_rounded_physical_allocation,
+                       allocator->CanMapAsNewReservationAlias(
+                           ordinal, subgranular_source.cref(), granularity));
+  EXPECT_TRUE(can_map_rounded_physical_allocation);
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
        MapRejectsPartialOverlapWithActiveReservationMapping) {
   ASSERT_OK_AND_ASSIGN(
       auto allocator,

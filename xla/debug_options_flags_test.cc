@@ -89,7 +89,8 @@ TEST(DebugOptions, CommandBufferUpdateModesParseFromFlags) {
   for (const auto& [name, expected] : std::vector<
            std::pair<const char*, DebugOptions::CommandBufferUpdateMode>>{
            {"ALWAYS_UPDATE", DebugOptions::ALWAYS_UPDATE},
-           {"SKIP_TEMP", DebugOptions::SKIP_TEMP}}) {
+           {"SKIP_TEMP", DebugOptions::SKIP_TEMP},
+           {"SKIP_PROFILED", DebugOptions::SKIP_PROFILED}}) {
     int* pargc;
     std::vector<char*>* pargv;
     ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
@@ -102,6 +103,14 @@ TEST(DebugOptions, CommandBufferUpdateModesParseFromFlags) {
 
     EXPECT_EQ(options.xla_gpu_command_buffer_update_mode(), expected);
   }
+}
+
+TEST(DebugOptions, SkipProfiledCommandBufferUpdateModeParsesFromTextProto) {
+  DebugOptions options;
+  ASSERT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
+      "xla_gpu_command_buffer_update_mode: SKIP_PROFILED", &options));
+  EXPECT_EQ(options.xla_gpu_command_buffer_update_mode(),
+            DebugOptions::SKIP_PROFILED);
 }
 
 TEST(DebugOptions, RemovedCommandBufferUpdateModesRejectedByTextProto) {

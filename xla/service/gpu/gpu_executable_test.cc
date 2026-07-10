@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "riegeli/bytes/cfile_reader.h"
@@ -91,6 +92,23 @@ limitations under the License.
 #include "tsl/platform/path.h"
 
 namespace xla::gpu {
+
+class GpuExecutableBufferAllocatorTestPeer {
+ public:
+  static GpuExecutableBufferAllocator::ExecutionScope CreateExecutionScope(
+      GpuExecutableBufferAllocator& owner) {
+    GpuExecutableBufferAllocator::Remapping* remapping;
+    {
+      absl::MutexLock lock(owner.remappings_mutex_);
+      remapping = &owner.remappings_[nullptr];
+    }
+    auto remap_lock = std::make_unique<absl::MutexLock>(&remapping->mutex);
+    return GpuExecutableBufferAllocator::ExecutionScope(
+        &owner, remapping, /*vmm_allocator=*/nullptr, std::move(remap_lock),
+        /*va_remap_enabled=*/false);
+  }
+};
+
 namespace {
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
@@ -290,6 +308,8 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
   for (const BufferAllocation& allocation : allocations) {
     allocation_ptrs.push_back(&allocation);
   }
+  const std::vector<BufferAllocation::Index> returned_output_alloc_indices = {
+      3};
 
   struct AllocationPolicy {
     size_t command_buffer_allocation_count;
@@ -302,7 +322,8 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
     DebugOptions debug_options;
     debug_options.set_xla_gpu_command_buffer_update_mode(update_mode);
     GpuExecutableBufferAllocator buffer_allocator(
-        "test", allocation_ptrs, shape, &debug_options, &thunk_executor);
+        "test", allocation_ptrs, shape, &debug_options, &thunk_executor,
+        returned_output_alloc_indices);
     ServiceExecutableRunOptions run_options;
     ASSIGN_OR_RETURN(
         GpuExecutableBufferAllocator::ExecutionScope allocation_scope,
@@ -338,6 +359,188 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
   EXPECT_EQ(skip_temp_policy.command_buffer_allocation_count, 2);
   EXPECT_THAT(skip_temp_policy.persistent_alloc_indices,
               Optional(ElementsAre(1)));
+
+  EXPECT_THAT(
+      get_allocation_policy_without_vmm(DebugOptions::SKIP_PROFILED),
+      absl_testing::StatusIs(
+          absl::StatusCode::kFailedPrecondition,
+          ::testing::HasSubstr("requires a DeviceAddressVmmAllocator")));
+}
+
+TEST_F(GpuExecutableTest,
+       ProfiledAllocationPolicyAdvancesAfterTwoSuccessfulExecutions) {
+  std::vector<BufferAllocation> allocations;
+  allocations.emplace_back(/*index=*/0, /*size=*/4, /*color=*/0);
+  allocations.back().set_constant(true);
+  allocations.emplace_back(/*index=*/1, /*size=*/4, /*color=*/0);
+  allocations.back().set_entry_computation_parameter(
+      /*parameter_number=*/0, /*param_shape_index=*/{},
+      /*parameter_aliased_with_output=*/false);
+
+  Shape shape = ShapeUtil::MakeShape(S32, {});
+  BufferAllocation::Slice constant_slice(&allocations[0], 0, 4);
+  BufferAllocation::Slice parameter_slice(&allocations[1], 0, 4);
+  CommandSequence commands;
+  commands.Emplace<DeviceToDeviceCopyThunk>(
+      Thunk::ThunkInfo(), ShapedSlice{constant_slice, shape},
+      ShapedSlice{parameter_slice, shape}, /*byte_count=*/4);
+  ASSERT_OK_AND_ASSIGN(CommandExecutor command_executor,
+                       CommandExecutor::Create(
+                           std::move(commands),
+                           CommandExecutor::SynchronizationMode::kSerialize));
+  ThunkSequence thunk_sequence;
+  thunk_sequence.push_back(std::make_unique<CommandBufferThunk>(
+      std::move(command_executor), Thunk::ThunkInfo()));
+  ThunkExecutor thunk_executor(std::move(thunk_sequence));
+
+  std::vector<const BufferAllocation*> allocation_ptrs = {&allocations[0],
+                                                          &allocations[1]};
+  DebugOptions debug_options;
+  debug_options.set_xla_gpu_command_buffer_update_mode(
+      DebugOptions::SKIP_PROFILED);
+  GpuExecutableBufferAllocator buffer_allocator(
+      "profiled-policy-test", allocation_ptrs, shape, &debug_options,
+      &thunk_executor);
+
+  uint32_t constant_storage = 0;
+  uint32_t first_parameter_storage = 0;
+  uint32_t second_parameter_storage = 0;
+  se::DeviceAddressBase constant_address(&constant_storage,
+                                         sizeof(constant_storage));
+  se::DeviceAddressBase first_parameter_address(
+      &first_parameter_storage, sizeof(first_parameter_storage));
+  se::DeviceAddressBase second_parameter_address(
+      &second_parameter_storage, sizeof(second_parameter_storage));
+
+  using PersistentIndices = std::optional<std::vector<BufferAllocation::Index>>;
+  auto run_step =
+      [&](se::DeviceAddressBase parameter_address,
+          bool fail_execution) -> std::pair<absl::Status, PersistentIndices> {
+    BufferAllocations buffer_allocations({constant_address, parameter_address},
+                                         /*device_ordinal=*/0,
+                                         /*memory_allocator=*/nullptr);
+    GpuExecutableBufferAllocator::ExecutionScope allocation_scope =
+        GpuExecutableBufferAllocatorTestPeer::CreateExecutionScope(
+            buffer_allocator);
+    PersistentIndices observed_indices;
+    absl::Status status = allocation_scope.ExecuteWithBufferAllocations(
+        buffer_allocations, /*device_ordinal=*/0,
+        [&](const BufferAllocations&,
+            std::optional<absl::Span<const BufferAllocation::Index>> indices) {
+          if (indices.has_value()) {
+            observed_indices.emplace(indices->begin(), indices->end());
+          }
+          return fail_execution ? absl::InternalError("injected failure")
+                                : absl::OkStatus();
+        });
+    if (status.ok()) {
+      status = allocation_scope.CommitSuccessfulExecution(buffer_allocations);
+    }
+    return {std::move(status), std::move(observed_indices)};
+  };
+
+  auto failed = run_step(first_parameter_address, /*fail_execution=*/true);
+  EXPECT_THAT(failed.first,
+              absl_testing::StatusIs(absl::StatusCode::kInternal));
+  EXPECT_EQ(failed.second, std::nullopt);
+
+  auto first = run_step(first_parameter_address, /*fail_execution=*/false);
+  EXPECT_THAT(first.first, absl_testing::IsOk());
+  EXPECT_EQ(first.second, std::nullopt);
+
+  auto failed_second_observation =
+      run_step(second_parameter_address, /*fail_execution=*/true);
+  EXPECT_THAT(failed_second_observation.first,
+              absl_testing::StatusIs(absl::StatusCode::kInternal));
+  EXPECT_EQ(failed_second_observation.second, std::nullopt);
+
+  auto second = run_step(second_parameter_address, /*fail_execution=*/false);
+  EXPECT_THAT(second.first, absl_testing::IsOk());
+  EXPECT_EQ(second.second, std::nullopt);
+
+  auto failed_activation =
+      run_step(second_parameter_address, /*fail_execution=*/true);
+  EXPECT_THAT(failed_activation.first,
+              absl_testing::StatusIs(absl::StatusCode::kInternal));
+  EXPECT_THAT(failed_activation.second, Optional(ElementsAre(0)));
+
+  auto active = run_step(first_parameter_address, /*fail_execution=*/false);
+  EXPECT_THAT(active.first, absl_testing::IsOk());
+  EXPECT_THAT(active.second, Optional(ElementsAre(0)));
+}
+
+TEST_F(GpuExecutableTest, ProfiledAllocationPolicyRejectsDuplicateInputs) {
+  std::vector<BufferAllocation> allocations;
+  for (int64_t index = 0; index < 2; ++index) {
+    allocations.emplace_back(index, /*size=*/4, /*color=*/0);
+    allocations.back().set_entry_computation_parameter(
+        /*parameter_number=*/index, /*param_shape_index=*/{},
+        /*parameter_aliased_with_output=*/false);
+  }
+
+  Shape shape = ShapeUtil::MakeShape(S32, {});
+  BufferAllocation::Slice source_slice(&allocations[0], 0, 4);
+  BufferAllocation::Slice destination_slice(&allocations[1], 0, 4);
+  CommandSequence commands;
+  commands.Emplace<DeviceToDeviceCopyThunk>(
+      Thunk::ThunkInfo(), ShapedSlice{source_slice, shape},
+      ShapedSlice{destination_slice, shape}, /*byte_count=*/4);
+  ASSERT_OK_AND_ASSIGN(CommandExecutor command_executor,
+                       CommandExecutor::Create(
+                           std::move(commands),
+                           CommandExecutor::SynchronizationMode::kSerialize));
+  ThunkSequence thunk_sequence;
+  thunk_sequence.push_back(std::make_unique<CommandBufferThunk>(
+      std::move(command_executor), Thunk::ThunkInfo()));
+  ThunkExecutor thunk_executor(std::move(thunk_sequence));
+
+  std::vector<const BufferAllocation*> allocation_ptrs = {&allocations[0],
+                                                          &allocations[1]};
+  DebugOptions debug_options;
+  debug_options.set_xla_gpu_command_buffer_update_mode(
+      DebugOptions::SKIP_PROFILED);
+  GpuExecutableBufferAllocator buffer_allocator(
+      "duplicate-input-test", allocation_ptrs, shape, &debug_options,
+      &thunk_executor);
+
+  uint32_t shared_storage = 0;
+  se::DeviceAddressBase shared_address(&shared_storage, sizeof(shared_storage));
+  BufferAllocations buffer_allocations({shared_address, shared_address},
+                                       /*device_ordinal=*/0,
+                                       /*memory_allocator=*/nullptr);
+  auto observe = [&]() -> absl::Status {
+    GpuExecutableBufferAllocator::ExecutionScope allocation_scope =
+        GpuExecutableBufferAllocatorTestPeer::CreateExecutionScope(
+            buffer_allocator);
+    RETURN_IF_ERROR(allocation_scope.ExecuteWithBufferAllocations(
+        buffer_allocations, /*device_ordinal=*/0,
+        [](const BufferAllocations&,
+           std::optional<absl::Span<const BufferAllocation::Index>> indices) {
+          return indices.has_value()
+                     ? absl::InternalError("profile activated too early")
+                     : absl::OkStatus();
+        }));
+    return allocation_scope.CommitSuccessfulExecution(buffer_allocations);
+  };
+  ASSERT_OK(observe());
+  ASSERT_OK(observe());
+
+  GpuExecutableBufferAllocator::ExecutionScope allocation_scope =
+      GpuExecutableBufferAllocatorTestPeer::CreateExecutionScope(
+          buffer_allocator);
+  bool execute_called = false;
+  EXPECT_THAT(
+      allocation_scope.ExecuteWithBufferAllocations(
+          buffer_allocations, /*device_ordinal=*/0,
+          [&](const BufferAllocations&,
+              std::optional<absl::Span<const BufferAllocation::Index>>) {
+            execute_called = true;
+            return absl::OkStatus();
+          }),
+      absl_testing::StatusIs(
+          absl::StatusCode::kUnimplemented,
+          ::testing::HasSubstr("using the same input buffer")));
+  EXPECT_FALSE(execute_called);
 }
 
 TEST_F(GpuExecutableTest, ComputeComputationLayout) {

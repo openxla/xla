@@ -215,6 +215,78 @@ TEST_F(DeviceAddressVmmAllocatorTest,
 }
 
 TEST_F(DeviceAddressVmmAllocatorTest,
+       CanMapAsNewReservationAliasRequiresExactActiveAllocatorAddress) {
+  const DeviceAddressVmmAllocator::DeviceConfig config =
+      Config(2 * kGranularity);
+  ASSERT_OK_AND_ASSIGN(auto allocator, TestDeviceAddressVmmAllocator::Create(
+                                           &platform_, {config}));
+  ASSERT_OK_AND_ASSIGN(
+      auto source,
+      allocator->Allocate(/*device_ordinal=*/0, 2 * kGranularity,
+                          /*retry_on_failure=*/true, /*memory_space=*/0));
+  DeviceAddressBase source_address = source.cref();
+  DeviceAddressBase partial_address(source_address.opaque(), kGranularity);
+
+  ASSERT_OK_AND_ASSIGN(bool can_map, allocator->CanMapAsNewReservationAlias(
+                                         /*device_ordinal=*/0, source_address,
+                                         2 * kGranularity));
+  EXPECT_TRUE(can_map);
+  ASSERT_OK_AND_ASSIGN(
+      bool can_map_partial,
+      allocator->CanMapAsNewReservationAlias(
+          /*device_ordinal=*/0, partial_address, kGranularity));
+  EXPECT_FALSE(can_map_partial);
+
+  auto reservation = std::make_unique<TestMemoryReservation>(2 * kGranularity);
+  ASSERT_THAT(allocator->Map(/*device_ordinal=*/0, source_address,
+                             reservation.get(), /*reservation_offset=*/0,
+                             /*size=*/2 * kGranularity),
+              absl_testing::IsOk());
+  ASSERT_OK_AND_ASSIGN(
+      bool can_map_active_alias,
+      allocator->CanMapAsNewReservationAlias(
+          /*device_ordinal=*/0, source_address, 2 * kGranularity));
+  EXPECT_FALSE(can_map_active_alias);
+
+  ASSERT_THAT(allocator->UnMap(/*device_ordinal=*/0, reservation.get(),
+                               /*reservation_offset=*/0,
+                               /*size=*/2 * kGranularity),
+              absl_testing::IsOk());
+  ASSERT_OK_AND_ASSIGN(
+      bool can_map_stale_alias,
+      allocator->CanMapAsNewReservationAlias(
+          /*device_ordinal=*/0, source_address, 2 * kGranularity));
+  EXPECT_FALSE(can_map_stale_alias);
+  ASSERT_THAT(allocator->SynchronizePendingOperations(/*device_ordinal=*/0),
+              absl_testing::IsOk());
+  ASSERT_OK_AND_ASSIGN(
+      bool can_map_after_unmap,
+      allocator->CanMapAsNewReservationAlias(
+          /*device_ordinal=*/0, source_address, 2 * kGranularity));
+  EXPECT_TRUE(can_map_after_unmap);
+
+  ASSERT_THAT(allocator->Deallocate(/*device_ordinal=*/0, source.Release()),
+              absl_testing::IsOk());
+  ASSERT_OK_AND_ASSIGN(
+      bool can_map_stale_allocator,
+      allocator->CanMapAsNewReservationAlias(
+          /*device_ordinal=*/0, source_address, 2 * kGranularity));
+  EXPECT_FALSE(can_map_stale_allocator);
+  ASSERT_THAT(allocator->SynchronizePendingOperations(/*device_ordinal=*/0),
+              absl_testing::IsOk());
+
+  ASSERT_OK_AND_ASSIGN(
+      auto subgranular_source,
+      allocator->Allocate(/*device_ordinal=*/0, kGranularity / 2,
+                          /*retry_on_failure=*/true, /*memory_space=*/0));
+  ASSERT_OK_AND_ASSIGN(
+      bool can_map_rounded_physical_allocation,
+      allocator->CanMapAsNewReservationAlias(
+          /*device_ordinal=*/0, subgranular_source.cref(), kGranularity));
+  EXPECT_TRUE(can_map_rounded_physical_allocation);
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
        RetryFlagDoesNotDisableMappedPendingReclaim) {
   auto reservation = std::make_unique<TestMemoryReservation>(2 * kGranularity);
   const DeviceAddressVmmAllocator::DeviceConfig config =

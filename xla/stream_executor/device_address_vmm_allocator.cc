@@ -333,6 +333,26 @@ absl::StatusOr<StreamExecutor*> DeviceAddressVmmAllocator::GetStreamExecutor(
   return state->executor;
 }
 
+absl::StatusOr<bool> DeviceAddressVmmAllocator::CanMapAsNewReservationAlias(
+    int device_ordinal, DeviceAddressBase addr, uint64_t size) const {
+  ASSIGN_OR_RETURN(auto state, GetPerDeviceState(device_ordinal));
+  absl::MutexLock lock(state->mu);
+
+  auto record_it = state->records_by_allocator_address.find(addr.opaque());
+  if (record_it == state->records_by_allocator_address.end()) {
+    return false;
+  }
+
+  const AllocationRecord& record = *record_it->second;
+  if (!record.allocator_active() || !record.allocator_matches(addr) ||
+      record.raw_allocation() == nullptr ||
+      record.raw_allocation()->address().size() < size ||
+      record.has_reservation_alias()) {
+    return false;
+  }
+  return true;
+}
+
 MemoryAllocation* DeviceAddressVmmAllocator::GetRawAllocation(
     int device_ordinal, DeviceAddressBase addr) const {
   absl::StatusOr<PerDeviceState*> state_or = GetPerDeviceState(device_ordinal);

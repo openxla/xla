@@ -414,9 +414,18 @@ message DebugOptions {
   //   SKIP_TEMP: Command-buffer-referenced preallocated temp buffers
   //     use fixed VMM reservation addresses; other dynamic allocations still
   //     trigger command updates when their addresses change.
+  //   SKIP_PROFILED: The first two successful executions observe dynamic
+  //     allocation addresses without VA remapping. Starting with the third
+  //     execution, stable command-buffer-referenced allocations use fixed VMM
+  //     reservation addresses and are treated as persistent. This experimental
+  //     mode requires execution and buffer-donation behavior to remain stable
+  //     across executions and identical across ranks. It does not support
+  //     passing the same physical buffer as multiple input parameters, or
+  //     symmetric, multicast, or peer collective memory.
   enum CommandBufferUpdateMode {
     ALWAYS_UPDATE = 0;
     SKIP_TEMP = 1;
+    SKIP_PROFILED = 2;
   }
 
   // Controls when cuDNN fusions are compiled in "deviceless" mode, i.e. driven

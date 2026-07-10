@@ -30,6 +30,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
@@ -2121,7 +2122,34 @@ StreamExecutorGpuClient::RunAsync(
   XLA_VLOG_DEVICE(3, device_ordinal)
       << "Buffer allocations: " << buffer_allocations.ToString();
 
+  std::set<se::DeviceAddressBase> non_owning_addresses;
+  for (const BufferAllocation* allocation : allocations) {
+    if (allocation->is_entry_computation_parameter() ||
+        allocation->is_constant()) {
+      non_owning_addresses.insert(
+          buffer_allocations.GetDeviceAddress(allocation->index()));
+    }
+  }
   std::set<se::DeviceAddressBase> buffers_in_result;
+  absl::Cleanup cleanup_buffer_allocations = [&] {
+    absl::Status release_aliases_status =
+        allocation_scope.ReleaseReservationAliases();
+    if (!release_aliases_status.ok()) {
+      LOG(ERROR) << "Failed to release command buffer VA aliases while "
+                    "cleaning up executable "
+                 << gpu_exec->name() << ": " << release_aliases_status;
+    }
+    std::set<se::DeviceAddressBase> live_addresses = buffers_in_result;
+    live_addresses.insert(non_owning_addresses.begin(),
+                          non_owning_addresses.end());
+    absl::Status teardown_status =
+        buffer_allocations.TearDown(live_addresses, allocations);
+    if (!teardown_status.ok()) {
+      LOG(ERROR) << "Failed to tear down buffer allocations while cleaning up "
+                    "executable "
+                 << gpu_exec->name() << ": " << teardown_status;
+    }
+  };
 
   auto set_result = [&](const ShapeIndex& index, int i) -> absl::Status {
     const gpu::GpuExecutable::OutputInfo& output_info =
@@ -2206,11 +2234,14 @@ StreamExecutorGpuClient::RunAsync(
         return gpu_exec->ExecuteThunks(execution_buffers, run_options,
                                        persistent_alloc_indices);
       });
-  absl::Status teardown_status = buffer_allocations.TearDown(
-      buffers_in_result, gpu_exec->GetAllocations());
+  absl::Status teardown_status =
+      buffer_allocations.TearDown(buffers_in_result, allocations);
+  std::move(cleanup_buffer_allocations).Cancel();
 
   RETURN_IF_ERROR(execute_status);
   RETURN_IF_ERROR(teardown_status);
+  RETURN_IF_ERROR(
+      allocation_scope.CommitSuccessfulExecution(buffer_allocations));
 
   std::vector<tsl::AsyncValueRef<RawSEDeviceMemory>> to_be_released;
 

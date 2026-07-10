@@ -278,6 +278,15 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // Returns the StreamExecutor for the given device ordinal.
   absl::StatusOr<StreamExecutor*> GetStreamExecutor(int device_ordinal) const;
 
+  // Returns whether `addr` can be used as the source for a new Map() alias of
+  // `size` bytes. Returns true only when `addr` is an exact active allocator
+  // address backed by enough physical memory and has no active or stale
+  // reservation alias. Unsupported addresses return false; an unregistered
+  // device ordinal returns an error.
+  absl::StatusOr<bool> CanMapAsNewReservationAlias(int device_ordinal,
+                                                   DeviceAddressBase addr,
+                                                   uint64_t size) const;
+
   // Returns the MemoryAllocation (physical memory) backing the given virtual
   // address on the specified device, or nullptr if the address was not
   // allocated by this allocator. The returned pointer is valid until the

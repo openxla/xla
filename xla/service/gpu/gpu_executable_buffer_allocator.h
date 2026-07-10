@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/node_hash_map.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
@@ -53,6 +54,7 @@ namespace xla {
 namespace gpu {
 
 class ThunkExecutor;
+class GpuExecutableBufferAllocatorTestPeer;
 
 // Owns executable-scoped buffer allocation state for one GpuExecutable.
 class GpuExecutableBufferAllocator {
@@ -95,10 +97,11 @@ class GpuExecutableBufferAllocator {
    public:
     ExecutionScope(const ExecutionScope&) = delete;
     ExecutionScope& operator=(const ExecutionScope&) = delete;
-    ExecutionScope(ExecutionScope&&) = default;
-    ExecutionScope& operator=(ExecutionScope&&) = default;
+    ExecutionScope(ExecutionScope&& other) noexcept;
+    ExecutionScope& operator=(ExecutionScope&& other) = delete;
+    ~ExecutionScope();
 
-    bool va_remap_enabled() const { return remapping_ != nullptr; }
+    bool va_remap_enabled() const { return va_remap_enabled_; }
 
     // Builds the BufferAllocations for an execution. Entry-computation
     // parameter buffers are obtained from `get_parameter_buffer`; all other
@@ -131,12 +134,30 @@ class GpuExecutableBufferAllocator {
                 persistent_alloc_indices)>
             execute);
 
+    // Commits a pending SKIP_PROFILED observation after the complete execution
+    // step, including owning-buffer teardown, has succeeded. Other modes and
+    // non-observation executions are no-ops.
+    absl::Status CommitSuccessfulExecution(
+        const BufferAllocations& owning_buffer_allocations);
+
+    // Releases all non-owning aliases into this execution scope's reserved VA
+    // range. This is idempotent and must run before owning buffers are
+    // deallocated on an early return before ExecuteWithBufferAllocations.
+    absl::Status ReleaseReservationAliases();
+
    private:
     friend class GpuExecutableBufferAllocator;
+    friend class GpuExecutableBufferAllocatorTestPeer;
 
     ExecutionScope(GpuExecutableBufferAllocator* owner, Remapping* remapping,
                    se::DeviceAddressVmmAllocator* vmm_allocator,
-                   std::unique_ptr<absl::MutexLock> remap_lock);
+                   std::unique_ptr<absl::MutexLock> remap_lock,
+                   bool va_remap_enabled);
+
+    struct ReservationAlias {
+      uint64_t offset;
+      uint64_t size;
+    };
 
     absl::Status PrepareReservation(
         const ServiceExecutableRunOptions* run_options, int device_ordinal,
@@ -145,7 +166,14 @@ class GpuExecutableBufferAllocator {
     bool ShouldRemapAllocation(BufferAllocation::Index index) const;
     absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> AllocateBuffer(
         int device_ordinal, const BufferAllocation& allocation,
-        int64_t buffer_size);
+        int64_t buffer_size, bool return_reservation_address);
+    absl::StatusOr<se::DeviceAddressBase> ReservationAddress(
+        BufferAllocation::Index index) const;
+    absl::StatusOr<BufferAllocations> BuildExecutionBufferAllocations(
+        const BufferAllocations& owning_buffer_allocations, int device_ordinal);
+    absl::Status CommitProfileObservation(
+        const BufferAllocations& owning_buffer_allocations);
+    absl::Status UnmapAliases();
     absl::StatusOr<se::DeviceAddressBase> BufferForAllocation(
         ParameterBufferResolver get_parameter_buffer,
         const BufferAllocToDeviceMemoryMap* globals,
@@ -158,13 +186,24 @@ class GpuExecutableBufferAllocator {
     Remapping* remapping_ = nullptr;
     se::DeviceAddressVmmAllocator* vmm_allocator_ = nullptr;
     std::unique_ptr<absl::MutexLock> remap_lock_;
+    bool va_remap_enabled_ = false;
+    bool profile_observation_pending_ = false;
+    int device_ordinal_ = -1;
+    AllocationIndexSet copy_protected_alloc_indices_;
+    absl::flat_hash_map<BufferAllocation::Index, se::DeviceAddressBase>
+        execution_aliases_;
+    std::vector<ReservationAlias> reservation_aliases_;
+    se::DeviceAddressAllocator* cleanup_allocator_ = nullptr;
+    std::vector<se::DeviceAddressBase> cleanup_owning_buffers_;
   };
 
   GpuExecutableBufferAllocator(
       absl::string_view module_name,
       absl::Span<const BufferAllocation* const> allocations,
       const Shape& result_shape, const DebugOptions* debug_options,
-      ThunkExecutor* thunk_executor);
+      ThunkExecutor* thunk_executor,
+      absl::Span<const BufferAllocation::Index> returned_output_alloc_indices =
+          {});
   ~GpuExecutableBufferAllocator();
 
   size_t command_buffer_allocation_count() const {
@@ -176,12 +215,29 @@ class GpuExecutableBufferAllocator {
       se::DeviceAddressAllocator* memory_allocator, int device_ordinal);
 
  private:
+  friend class GpuExecutableBufferAllocatorTestPeer;
+
   struct Remapping {
+    enum class ProfilePhase {
+      kObserveFirst,
+      kObserveSecond,
+      kActivating,
+      kActive,
+    };
+
     absl::Mutex mutex;
+    ProfilePhase profile_phase = ProfilePhase::kObserveFirst;
+    std::vector<se::DeviceAddressBase> first_observed_addresses;
+    AllocationIndexSet copy_protected_alloc_indices;
+    AllocationIndexSet reservation_alloc_indices;
+    AllocationIndexSet va_remapped_alloc_indices;
+    std::vector<BufferAllocation::Index> persistent_alloc_indices;
     uint64_t granularity = 0;
     uint64_t total_size = 0;
     absl::flat_hash_map<BufferAllocation::Index, uint64_t>
         allocation_to_reservation_offset;
+    absl::flat_hash_map<BufferAllocation::Index, uint64_t>
+        allocation_to_mapping_size;
     std::unique_ptr<se::MemoryReservation> va_reservation;
     se::DeviceAddressVmmAllocator* vmm_allocator = nullptr;
 
@@ -193,10 +249,18 @@ class GpuExecutableBufferAllocator {
   std::vector<const BufferAllocation*> allocations_;
   Shape result_shape_;
   const DebugOptions* debug_options_ = nullptr;
+  DebugOptions::CommandBufferUpdateMode update_mode_ =
+      DebugOptions::ALWAYS_UPDATE;
 
   // Sorted indices of command-buffer-referenced constant allocations. Their
   // global addresses are stable without VMM remapping.
   std::vector<BufferAllocation::Index> constant_alloc_indices_;
+
+  // Non-zero command-buffer-referenced allocations eligible for the profiled
+  // policy. Candidates are selected only when their addresses are stable across
+  // the two successful observation executions.
+  AllocationIndexSet profiled_candidate_alloc_indices_;
+  absl::flat_hash_set<BufferAllocation::Index> returned_output_alloc_indices_;
 
   // Indices of command-buffer-referenced temporary allocations assigned stable
   // addresses through VMM remapping.
