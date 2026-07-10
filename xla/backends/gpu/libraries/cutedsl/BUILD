@@ -61,6 +61,24 @@ cc_library(
 )
 
 cc_library(
+    name = "module",
+    srcs = ["module.cc"],
+    hdrs = ["module.h"],
+    deps = [
+        ":runtime_api",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_library(
     name = "collective_config",
     srcs = ["collective_config.cc"],
     hdrs = ["collective_config.h"],
@@ -84,20 +102,18 @@ cc_library(
         "//xla/ffi/api:all_headers",
     ],
     deps = [
+        ":module",
         ":runtime_api",
         "//xla/backends/gpu:ffi",
         "//xla/ffi",
         "//xla/ffi/api:c_api",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
-        "@llvm-project//llvm:Support",
     ],
     alwayslink = 1,
 )
@@ -109,6 +125,20 @@ xla_cc_test(
         ":runtime_api",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "module_test",
+    srcs = ["module_test.cc"],
+    deps = [
+        ":module",
+        ":runtime_api",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
     ],
 )
 
