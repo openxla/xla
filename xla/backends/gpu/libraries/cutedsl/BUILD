@@ -61,6 +61,23 @@ cc_library(
 )
 
 cc_library(
+    name = "collective_config",
+    srcs = ["collective_config.cc"],
+    hdrs = ["collective_config.h"],
+    deps = [
+        "//xla:xla_data_proto_cc",
+        "//xla/ffi",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_library(
     name = "ffi",
     srcs = [
         "ffi.cc",
@@ -92,6 +109,25 @@ xla_cc_test(
         ":runtime_api",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "collective_config_test",
+    srcs = ["collective_config_test.cc"],
+    deps = [
+        ":collective_config",
+        "//xla/ffi",
+        "//xla/ffi:attribute_map",
+        "//xla/ffi:call_frame",
+        "//xla/ffi:ffi_api",
+        "//xla/ffi:invoke",
+        "//xla/tsl/platform:status_matchers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
     ],
 )
 
