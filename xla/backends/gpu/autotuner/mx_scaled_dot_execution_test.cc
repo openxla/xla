@@ -43,22 +43,6 @@ class MxScaledDotExecutionTest : public HloPjRtGpuTestBase {
   // expected custom call target.
   void RunMxCorrectnessTest(absl::string_view hlo_string,
                             const ErrorSpec& error_spec) {
-    TF_ASSERT_OK_AND_ASSIGN(auto reference_module,
-                            ParseAndReturnUnverifiedModule(hlo_string));
-    auto& ref_opts = reference_module->mutable_config().mutable_debug_options();
-    ref_opts.set_xla_gpu_experimental_scaled_dot_with_triton(false);
-    ref_opts.set_xla_gpu_enable_triton_gemm(false);
-
-    TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                            ParseAndReturnUnverifiedModule(hlo_string));
-    auto& test_opts = test_module->mutable_config().mutable_debug_options();
-    test_opts.set_xla_gpu_experimental_scaled_dot_with_triton(true);
-    test_opts.set_xla_gpu_enable_triton_gemm(true);
-
-    EXPECT_TRUE(RunAndCompareTwoModules(std::move(test_module),
-                                        std::move(reference_module), error_spec,
-                                        /*run_hlo_passes=*/true));
-
     HloModuleConfig ref_config = GetModuleConfigForTest();
     ref_config.mutable_debug_options()
         .set_xla_gpu_experimental_scaled_dot_with_triton(false);
