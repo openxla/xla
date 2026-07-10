@@ -22,10 +22,10 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -46,6 +46,9 @@ constexpr absl::string_view kCutlassCallNoCudaGraphTarget =
     "__xla_gpu_cutedsl_call_no_cuda_graph_v3";
 constexpr absl::string_view kFunctionPrefix = "cutlass_call";
 constexpr size_t kCacheKeySize = 32;
+// Avoid heap allocation for the common case while retaining support for calls
+// with an arbitrary number of buffers.
+constexpr size_t kInlineBufferCount = 8;
 
 // A POD descriptor matching cutlass.jax.types.JaxArray. Generated CuTeDSL
 // wrappers receive a pointer to one of these descriptors for every XLA buffer.
@@ -254,7 +257,7 @@ absl::Status ExecuteFunction(const RuntimeFunctions& functions, void* stream,
                              CuteDSLRT_Function_t* function,
                              ffi::RemainingArgs inputs,
                              ffi::RemainingRets outputs) {
-  std::vector<CuteXlaFfiBuffer> buffers;
+  absl::InlinedVector<CuteXlaFfiBuffer, kInlineBufferCount> buffers;
   buffers.reserve(inputs.size() + outputs.size());
 
   for (size_t i = 0; i < inputs.size(); ++i) {
@@ -276,12 +279,12 @@ absl::Status ExecuteFunction(const RuntimeFunctions& functions, void* stream,
 
   // CuTeDSL compiled wrappers use MLIR's packed C interface: every entry is a
   // pointer to storage containing the corresponding argument value.
-  std::vector<void*> arguments;
+  absl::InlinedVector<void*, kInlineBufferCount + 1> arguments;
   arguments.reserve(buffers.size() + 1);
   arguments.push_back(stream);
   for (CuteXlaFfiBuffer& buffer : buffers) arguments.push_back(&buffer);
 
-  std::vector<void*> packed_arguments;
+  absl::InlinedVector<void*, kInlineBufferCount + 2> packed_arguments;
   packed_arguments.reserve(arguments.size() + 1);
   for (void*& argument : arguments) packed_arguments.push_back(&argument);
 
