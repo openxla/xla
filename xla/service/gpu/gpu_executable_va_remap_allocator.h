@@ -71,8 +71,8 @@ class GpuExecutableVaRemapAllocator : public GpuExecutableBufferAllocator {
   GpuExecutableVaRemapAllocator(
       absl::string_view module_name,
       absl::Span<const BufferAllocation* const> allocations,
-      const Shape& result_shape, const DebugOptions* debug_options,
-      ThunkExecutor* thunk_executor);
+      const Shape& result_shape, OutputBufferSpecMap output_buffer_specs,
+      const DebugOptions* debug_options, ThunkExecutor* thunk_executor);
   ~GpuExecutableVaRemapAllocator() override;
 
   // Creates the per-run execution scope. When VA remapping applies to this

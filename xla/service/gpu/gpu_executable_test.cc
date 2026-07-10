@@ -300,6 +300,7 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
     debug_options.set_xla_gpu_command_buffer_update_mode(update_mode);
     std::unique_ptr<GpuExecutableBufferAllocator> buffer_allocator =
         GpuExecutableBufferAllocator::Create("test", allocation_ptrs, shape,
+                                             /*output_buffer_specs=*/{},
                                              &debug_options, &thunk_executor);
     ServiceExecutableRunOptions run_options;
     ASSIGN_OR_RETURN(

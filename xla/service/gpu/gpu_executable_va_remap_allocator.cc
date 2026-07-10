@@ -448,9 +448,10 @@ absl::Status GpuExecutableVaRemapAllocator::VaRemapExecutionScope::
 GpuExecutableVaRemapAllocator::GpuExecutableVaRemapAllocator(
     absl::string_view module_name,
     absl::Span<const BufferAllocation* const> allocations,
-    const Shape& result_shape, const DebugOptions* debug_options,
-    ThunkExecutor* thunk_executor)
+    const Shape& result_shape, OutputBufferSpecMap output_buffer_specs,
+    const DebugOptions* debug_options, ThunkExecutor* thunk_executor)
     : GpuExecutableBufferAllocator(module_name, allocations, result_shape,
+                                   std::move(output_buffer_specs),
                                    debug_options, thunk_executor) {
   update_mode_ = debug_options != nullptr
                      ? debug_options->xla_gpu_command_buffer_update_mode()

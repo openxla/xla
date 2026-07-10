@@ -135,7 +135,6 @@ limitations under the License.
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) || \
     defined(TENSORFLOW_USE_SYCL)
 #include "xla/debug_options_flags.h"
-#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/pjrt/gpu/gpu_metrics.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/se/stream_executor_executable.pb.h"
@@ -2202,23 +2201,10 @@ StreamExecutorGpuClient::RunAsync(
       << "Buffer allocations: " << buffer_allocations.ToString();
 
   auto set_result = [&](const ShapeIndex& index, int i) -> absl::Status {
-    const gpu::GpuExecutable::OutputInfo& output_info =
-        gpu_exec->output_info().at(index);
-
     auto buf = results[i]
                    .get()
                    ->down_cast<PjRtStreamExecutorRawBuffer>()
                    ->device_buffer();
-    gpu::GpuExecutableBufferAllocator::OutputAliasKind alias_kind =
-        gpu::GpuExecutableBufferAllocator::OutputAliasKind::kNone;
-    if (output_info.alias_config.has_value()) {
-      alias_kind =
-          output_info.alias_config->must_alias()
-              ? gpu::GpuExecutableBufferAllocator::OutputAliasKind::kMustAlias
-              : gpu::GpuExecutableBufferAllocator::OutputAliasKind::kMayAlias;
-    }
-    gpu::GpuExecutableBufferAllocator::OutputBufferSpec output{
-        output_info.allocation_index, output_info.passthrough, alias_kind};
 
     bool is_donated = false;
     auto resolve_donation = [&](const BufferAllocation& allocation) {
@@ -2236,7 +2222,7 @@ StreamExecutorGpuClient::RunAsync(
     ASSIGN_OR_RETURN(
         gpu::GpuExecutableBufferAllocator::ResolvedOutputBuffer resolved,
         allocation_scope->ResolveOutputBuffer(
-            run_options, buffer_allocations, index, output, resolve_donation,
+            run_options, buffer_allocations, index, resolve_donation,
             gpu_exec->buffer_allocations_debug_summary()));
     if (resolved.source ==
         gpu::GpuExecutableBufferAllocator::OutputBufferSource::kDonated) {

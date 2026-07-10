@@ -83,6 +83,8 @@ class GpuExecutableBufferAllocator {
     OutputAliasKind alias_kind = OutputAliasKind::kNone;
   };
 
+  using OutputBufferSpecMap = absl::flat_hash_map<ShapeIndex, OutputBufferSpec>;
+
   // Whether a caller can donate the input aliased with an output. Donation is
   // unavailable for APIs such as ShapedBuffer that do not represent ownership.
   enum class DonationState { kUnavailable, kNotDonated, kDonated };
@@ -133,7 +135,7 @@ class GpuExecutableBufferAllocator {
     absl::StatusOr<ResolvedOutputBuffer> ResolveOutputBuffer(
         const ServiceExecutableRunOptions* run_options,
         BufferAllocations& buffer_allocations, const ShapeIndex& index,
-        const OutputBufferSpec& output, DonationResolver resolve_donation,
+        DonationResolver resolve_donation,
         absl::string_view buffer_allocations_debug_summary);
 
     // Runs `execute` with the allocation-address policy for this execution.
@@ -202,19 +204,25 @@ class GpuExecutableBufferAllocator {
   static std::unique_ptr<GpuExecutableBufferAllocator> Create(
       absl::string_view module_name,
       absl::Span<const BufferAllocation* const> allocations,
-      const Shape& result_shape, const DebugOptions* debug_options,
-      ThunkExecutor* thunk_executor);
+      const Shape& result_shape, OutputBufferSpecMap output_buffer_specs,
+      const DebugOptions* debug_options, ThunkExecutor* thunk_executor);
 
   GpuExecutableBufferAllocator(
       absl::string_view module_name,
       absl::Span<const BufferAllocation* const> allocations,
-      const Shape& result_shape, const DebugOptions* debug_options,
-      ThunkExecutor* thunk_executor);
+      const Shape& result_shape, OutputBufferSpecMap output_buffer_specs,
+      const DebugOptions* debug_options, ThunkExecutor* thunk_executor);
   virtual ~GpuExecutableBufferAllocator() = default;
 
   size_t command_buffer_allocation_count() const {
     return persistent_alloc_indices_.size();
   }
+
+  bool HasOutputBuffer(const ShapeIndex& index) const {
+    return output_buffer_specs_.contains(index);
+  }
+
+  bool all_output_leaves_aliased() const { return all_output_leaves_aliased_; }
 
   virtual absl::StatusOr<std::unique_ptr<ExecutionScope>> CreateExecutionScope(
       const ServiceExecutableRunOptions* run_options,
@@ -249,6 +257,8 @@ class GpuExecutableBufferAllocator {
   std::string module_name_;
   std::vector<const BufferAllocation*> allocations_;
   Shape result_shape_;
+  const OutputBufferSpecMap output_buffer_specs_;
+  bool all_output_leaves_aliased_ = true;
   const DebugOptions* debug_options_ = nullptr;
 
   // Sorted indices of command-buffer-referenced constant allocations. Their

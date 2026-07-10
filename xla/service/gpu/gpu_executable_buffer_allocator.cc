@@ -20,6 +20,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -79,8 +80,8 @@ std::unique_ptr<GpuExecutableBufferAllocator>
 GpuExecutableBufferAllocator::Create(
     absl::string_view module_name,
     absl::Span<const BufferAllocation* const> allocations,
-    const Shape& result_shape, const DebugOptions* debug_options,
-    ThunkExecutor* thunk_executor) {
+    const Shape& result_shape, OutputBufferSpecMap output_buffer_specs,
+    const DebugOptions* debug_options, ThunkExecutor* thunk_executor) {
   const DebugOptions::CommandBufferUpdateMode update_mode =
       debug_options != nullptr
           ? debug_options->xla_gpu_command_buffer_update_mode()
@@ -88,13 +89,13 @@ GpuExecutableBufferAllocator::Create(
   switch (update_mode) {
     case DebugOptions::ALWAYS_UPDATE:
       return std::make_unique<GpuExecutableBufferAllocator>(
-          module_name, allocations, result_shape, debug_options,
-          thunk_executor);
+          module_name, allocations, result_shape,
+          std::move(output_buffer_specs), debug_options, thunk_executor);
     case DebugOptions::SKIP_TEMP:
     case DebugOptions::SKIP_PROFILED:
       return std::make_unique<GpuExecutableVaRemapAllocator>(
-          module_name, allocations, result_shape, debug_options,
-          thunk_executor);
+          module_name, allocations, result_shape,
+          std::move(output_buffer_specs), debug_options, thunk_executor);
     default:
       LOG(FATAL) << "Unsupported command buffer update mode: " << update_mode;
   }
@@ -133,12 +134,22 @@ void GpuExecutableBufferAllocator::ForEachCommandBufferAllocation(
 GpuExecutableBufferAllocator::GpuExecutableBufferAllocator(
     absl::string_view module_name,
     absl::Span<const BufferAllocation* const> allocations,
-    const Shape& result_shape, const DebugOptions* debug_options,
-    ThunkExecutor* thunk_executor)
+    const Shape& result_shape, OutputBufferSpecMap output_buffer_specs,
+    const DebugOptions* debug_options, ThunkExecutor* thunk_executor)
     : module_name_(module_name),
       allocations_(allocations.begin(), allocations.end()),
       result_shape_(result_shape),
+      output_buffer_specs_(std::move(output_buffer_specs)),
       debug_options_(debug_options) {
+  ShapeUtil::ForEachLeafShape(
+      result_shape_, [&](const Shape&, const ShapeIndex& index) {
+        auto output_it = output_buffer_specs_.find(index);
+        if (output_it != output_buffer_specs_.end() &&
+            output_it->second.alias_kind == OutputAliasKind::kNone) {
+          all_output_leaves_aliased_ = false;
+        }
+      });
+
   AllocationIndexSet constants;
   ForEachCommandBufferAllocation(
       allocations_, thunk_executor,
@@ -281,8 +292,14 @@ absl::StatusOr<GpuExecutableBufferAllocator::ResolvedOutputBuffer>
 GpuExecutableBufferAllocator::ExecutionScope::ResolveOutputBuffer(
     const ServiceExecutableRunOptions* run_options,
     BufferAllocations& buffer_allocations, const ShapeIndex& index,
-    const OutputBufferSpec& output, DonationResolver resolve_donation,
+    DonationResolver resolve_donation,
     absl::string_view buffer_allocations_debug_summary) {
+  auto output_it = owner_->output_buffer_specs_.find(index);
+  if (output_it == owner_->output_buffer_specs_.end()) {
+    return Internal("No output buffer specification for result index %s",
+                    index.ToString());
+  }
+  const OutputBufferSpec& output = output_it->second;
   CHECK_GE(output.allocation_index, 0);
   CHECK_LT(output.allocation_index, owner_->allocations_.size());
   const BufferAllocation& allocation =

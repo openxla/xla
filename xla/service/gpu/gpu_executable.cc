@@ -171,6 +171,27 @@ std::vector<const BufferAllocation*> GatherAllocationPtrs(
   return alloc_ptrs;
 }
 
+GpuExecutableBufferAllocator::OutputBufferSpecMap MakeOutputBufferSpecs(
+    const absl::flat_hash_map<ShapeIndex, GpuExecutable::OutputInfo>&
+        output_info) {
+  GpuExecutableBufferAllocator::OutputBufferSpecMap output_buffer_specs;
+  output_buffer_specs.reserve(output_info.size());
+  for (const auto& [index, info] : output_info) {
+    GpuExecutableBufferAllocator::OutputAliasKind alias_kind =
+        GpuExecutableBufferAllocator::OutputAliasKind::kNone;
+    if (info.alias_config.has_value()) {
+      alias_kind =
+          info.alias_config->must_alias()
+              ? GpuExecutableBufferAllocator::OutputAliasKind::kMustAlias
+              : GpuExecutableBufferAllocator::OutputAliasKind::kMayAlias;
+    }
+    output_buffer_specs.emplace(
+        index, GpuExecutableBufferAllocator::OutputBufferSpec{
+                   info.allocation_index, info.passthrough, alias_kind});
+  }
+  return output_buffer_specs;
+}
+
 class GpuExecutableThunkPassBufferAllocator : public ThunkPassBufferAllocator {
  public:
   ~GpuExecutableThunkPassBufferAllocator() override = default;
@@ -511,7 +532,8 @@ GpuExecutable::GpuExecutable(
       has_module() ? &module_config().debug_options() : nullptr;
   buffer_allocator_ = GpuExecutableBufferAllocator::Create(
       module_name_, allocation_ptrs_, program_shape_.result(),
-      allocation_debug_options, thunk_executor_.get());
+      MakeOutputBufferSpecs(output_info_), allocation_debug_options,
+      thunk_executor_.get());
 }
 
 GpuExecutable::~GpuExecutable() {
@@ -1092,37 +1114,12 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
                        memory_allocator, device_ordinal));
   XLA_VLOG_DEVICE(3, device_ordinal) << buffer_allocations.ToString();
 
-  const bool is_entire_tuple_contents_aliased = [&] {
-    for (auto& p : result.MutableResult()->buffers().leaves()) {
-      if (!output_info_.contains(p.first)) {
-        continue;
-      }
-      const OutputInfo& output_info = output_info_.at(p.first);
-      if (!output_info.alias_config.has_value()) {
-        return false;
-      }
-    }
-    return true;
-  }();
-
   for (auto& p : result.MutableResult()->buffers()) {
     const ShapeIndex& index = p.first;
-    if (!output_info_.contains(index)) {
+    if (!buffer_allocator_->HasOutputBuffer(index)) {
       continue;
     }
-    const OutputInfo& output_info = output_info_.at(index);
     se::DeviceAddressBase& result_buffer = p.second;
-
-    GpuExecutableBufferAllocator::OutputAliasKind alias_kind =
-        GpuExecutableBufferAllocator::OutputAliasKind::kNone;
-    if (output_info.alias_config.has_value()) {
-      alias_kind =
-          output_info.alias_config->must_alias()
-              ? GpuExecutableBufferAllocator::OutputAliasKind::kMustAlias
-              : GpuExecutableBufferAllocator::OutputAliasKind::kMayAlias;
-    }
-    GpuExecutableBufferAllocator::OutputBufferSpec output{
-        output_info.allocation_index, output_info.passthrough, alias_kind};
 
     MaybeOwningDeviceAddress* aliased_input = nullptr;
     auto resolve_donation = [&](const BufferAllocation& allocation) {
@@ -1141,7 +1138,7 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
     ASSIGN_OR_RETURN(
         GpuExecutableBufferAllocator::ResolvedOutputBuffer resolved,
         allocation_scope->ResolveOutputBuffer(
-            run_options, buffer_allocations, index, output, resolve_donation,
+            run_options, buffer_allocations, index, resolve_donation,
             buffer_allocations_debug_summary()));
     result_buffer = resolved.buffer;
 
@@ -1162,7 +1159,7 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
     if (resolved.fell_back_to_assigned_buffer) {
       // If the entire tuple contents is aliased, the copy insertion will *not*
       // materialize a new tuple, so we mark it as aliased as well.
-      if (is_entire_tuple_contents_aliased) {
+      if (buffer_allocator_->all_output_leaves_aliased()) {
         result.AddAliasedIndex(index);
       }
     }

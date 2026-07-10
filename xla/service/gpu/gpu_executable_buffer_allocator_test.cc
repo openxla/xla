@@ -138,14 +138,16 @@ class GpuExecutableBufferAllocatorTest : public ::testing::Test {
   using OutputAliasKind = GpuExecutableBufferAllocator::OutputAliasKind;
   using OutputBufferSource = GpuExecutableBufferAllocator::OutputBufferSource;
   using OutputBufferSpec = GpuExecutableBufferAllocator::OutputBufferSpec;
+  using OutputBufferSpecMap = GpuExecutableBufferAllocator::OutputBufferSpecMap;
 
   GpuExecutableBufferAllocatorTest() : memory_allocator_(&platform_, &stream_) {
     run_options_.mutable_run_options()->set_stream(&stream_);
     run_options_.mutable_run_options()->set_allocator(&memory_allocator_);
   }
 
-  void Initialize(Shape result_shape,
-                  std::vector<BufferAllocation> allocations) {
+  void Initialize(Shape result_shape, std::vector<BufferAllocation> allocations,
+                  OutputBufferSpecMap output_buffer_specs) {
+    buffer_allocator_.reset();
     result_shape_ = std::move(result_shape);
     allocations_ = std::move(allocations);
     allocation_ptrs_.clear();
@@ -154,8 +156,18 @@ class GpuExecutableBufferAllocatorTest : public ::testing::Test {
       allocation_ptrs_.push_back(&allocation);
     }
     buffer_allocator_ = std::make_unique<GpuExecutableBufferAllocator>(
-        "test", allocation_ptrs_, result_shape_, /*debug_options=*/nullptr,
-        /*thunk_executor=*/nullptr);
+        "test", allocation_ptrs_, result_shape_, std::move(output_buffer_specs),
+        /*debug_options=*/nullptr, /*thunk_executor=*/nullptr);
+  }
+
+  static OutputBufferSpecMap ScalarOutputSpec(
+      bool passthrough, OutputAliasKind alias_kind,
+      BufferAllocation::Index allocation_index = 0) {
+    OutputBufferSpecMap output_buffer_specs;
+    output_buffer_specs.emplace(
+        ShapeIndex{},
+        OutputBufferSpec{allocation_index, passthrough, alias_kind});
+    return output_buffer_specs;
   }
 
   absl::StatusOr<std::unique_ptr<GpuExecutableBufferAllocator::ExecutionScope>>
@@ -174,9 +186,10 @@ class GpuExecutableBufferAllocatorTest : public ::testing::Test {
   std::unique_ptr<GpuExecutableBufferAllocator> buffer_allocator_;
 };
 
-TEST_F(GpuExecutableBufferAllocatorTest, RejectsKnownMissingMustAliasDonation) {
+TEST_F(GpuExecutableBufferAllocatorTest, RejectsMissingOutputBufferSpec) {
   Initialize(ShapeUtil::MakeShape(S32, {}),
-             {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)});
+             {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)},
+             /*output_buffer_specs=*/{});
   ASSERT_OK_AND_ASSIGN(auto scope, CreateScope());
 
   int32_t value = 42;
@@ -184,12 +197,72 @@ TEST_F(GpuExecutableBufferAllocatorTest, RejectsKnownMissingMustAliasDonation) {
       se::DeviceAddressBase(&value, sizeof(value))};
   BufferAllocations buffer_allocations(addresses, /*device_ordinal=*/0,
                                        &memory_allocator_);
-  OutputBufferSpec output{/*allocation_index=*/0, /*passthrough=*/false,
-                          OutputAliasKind::kMustAlias};
 
+  EXPECT_FALSE(buffer_allocator_->HasOutputBuffer(/*index=*/{}));
+  EXPECT_THAT(scope->ResolveOutputBuffer(
+                  &run_options_, buffer_allocations, /*index=*/{},
+                  [](const BufferAllocation&) {
+                    ADD_FAILURE()
+                        << "Donation resolver called for missing output";
+                    return DonationState::kUnavailable;
+                  },
+                  /*buffer_allocations_debug_summary=*/"debug summary"),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("No output buffer specification")));
+  EXPECT_TRUE(memory_allocator_.allocation_requests().empty());
+}
+
+TEST_F(GpuExecutableBufferAllocatorTest, DetectsAllOutputLeavesAliased) {
+  Shape tuple_shape = ShapeUtil::MakeTupleShape(
+      {ShapeUtil::MakeShape(S32, {}), ShapeUtil::MakeShape(S32, {})});
+  OutputBufferSpecMap output_buffer_specs;
+  output_buffer_specs.emplace(
+      ShapeIndex{0},
+      OutputBufferSpec{/*allocation_index=*/0, /*passthrough=*/false,
+                       OutputAliasKind::kMayAlias});
+  output_buffer_specs.emplace(
+      ShapeIndex{1},
+      OutputBufferSpec{/*allocation_index=*/1, /*passthrough=*/false,
+                       OutputAliasKind::kMustAlias});
+  Initialize(tuple_shape,
+             {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),
+              BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0)},
+             std::move(output_buffer_specs));
+
+  EXPECT_TRUE(buffer_allocator_->all_output_leaves_aliased());
+
+  output_buffer_specs.clear();
+  output_buffer_specs.emplace(
+      ShapeIndex{0},
+      OutputBufferSpec{/*allocation_index=*/0, /*passthrough=*/false,
+                       OutputAliasKind::kMayAlias});
+  output_buffer_specs.emplace(
+      ShapeIndex{1},
+      OutputBufferSpec{/*allocation_index=*/1, /*passthrough=*/false,
+                       OutputAliasKind::kNone});
+  Initialize(std::move(tuple_shape),
+             {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),
+              BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0)},
+             std::move(output_buffer_specs));
+
+  EXPECT_FALSE(buffer_allocator_->all_output_leaves_aliased());
+}
+
+TEST_F(GpuExecutableBufferAllocatorTest, RejectsKnownMissingMustAliasDonation) {
+  Initialize(
+      ShapeUtil::MakeShape(S32, {}),
+      {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)},
+      ScalarOutputSpec(/*passthrough=*/false, OutputAliasKind::kMustAlias));
+  ASSERT_OK_AND_ASSIGN(auto scope, CreateScope());
+
+  int32_t value = 42;
+  std::vector<se::DeviceAddressBase> addresses = {
+      se::DeviceAddressBase(&value, sizeof(value))};
+  BufferAllocations buffer_allocations(addresses, /*device_ordinal=*/0,
+                                       &memory_allocator_);
   EXPECT_THAT(
       scope->ResolveOutputBuffer(
-          &run_options_, buffer_allocations, /*index=*/{}, output,
+          &run_options_, buffer_allocations, /*index=*/{},
           [](const BufferAllocation&) { return DonationState::kNotDonated; },
           /*buffer_allocations_debug_summary=*/"debug summary"),
       StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("must-alias")));
@@ -199,9 +272,11 @@ TEST_F(GpuExecutableBufferAllocatorTest, RejectsKnownMissingMustAliasDonation) {
 TEST_F(GpuExecutableBufferAllocatorTest,
        CopyProtectsMustAliasWhenDonationIsUnavailable) {
   constexpr int64_t kMemorySpace = 7;
-  Initialize(ShapeUtil::MakeShape(S32, {}),
-             {BufferAllocation(/*index=*/0, /*size=*/4,
-                               /*color=*/kMemorySpace)});
+  Initialize(
+      ShapeUtil::MakeShape(S32, {}),
+      {BufferAllocation(/*index=*/0, /*size=*/4,
+                        /*color=*/kMemorySpace)},
+      ScalarOutputSpec(/*passthrough=*/false, OutputAliasKind::kMustAlias));
   ASSERT_OK_AND_ASSIGN(auto scope, CreateScope());
 
   int32_t value = 42;
@@ -209,9 +284,6 @@ TEST_F(GpuExecutableBufferAllocatorTest,
   std::vector<se::DeviceAddressBase> addresses = {original};
   BufferAllocations buffer_allocations(addresses, /*device_ordinal=*/0,
                                        &memory_allocator_);
-  OutputBufferSpec output{/*allocation_index=*/0, /*passthrough=*/false,
-                          OutputAliasKind::kMustAlias};
-
   EXPECT_CALL(stream_, Memcpy(A<se::DeviceAddressBase*>(),
                               A<const se::DeviceAddressBase&>(), sizeof(value)))
       .WillOnce(Invoke([](se::DeviceAddressBase* destination,
@@ -222,7 +294,7 @@ TEST_F(GpuExecutableBufferAllocatorTest,
   ASSERT_OK_AND_ASSIGN(
       GpuExecutableBufferAllocator::ResolvedOutputBuffer resolved,
       scope->ResolveOutputBuffer(
-          &run_options_, buffer_allocations, /*index=*/{}, output,
+          &run_options_, buffer_allocations, /*index=*/{},
           [](const BufferAllocation&) { return DonationState::kUnavailable; },
           /*buffer_allocations_debug_summary=*/"debug summary"));
 
@@ -242,8 +314,10 @@ TEST_F(GpuExecutableBufferAllocatorTest,
 }
 
 TEST_F(GpuExecutableBufferAllocatorTest, ReusesDonatedOutputBuffer) {
-  Initialize(ShapeUtil::MakeShape(S32, {}),
-             {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)});
+  Initialize(
+      ShapeUtil::MakeShape(S32, {}),
+      {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)},
+      ScalarOutputSpec(/*passthrough=*/false, OutputAliasKind::kMayAlias));
   ASSERT_OK_AND_ASSIGN(auto scope, CreateScope());
 
   int32_t value = 42;
@@ -251,13 +325,10 @@ TEST_F(GpuExecutableBufferAllocatorTest, ReusesDonatedOutputBuffer) {
   std::vector<se::DeviceAddressBase> addresses = {original};
   BufferAllocations buffer_allocations(addresses, /*device_ordinal=*/0,
                                        &memory_allocator_);
-  OutputBufferSpec output{/*allocation_index=*/0, /*passthrough=*/false,
-                          OutputAliasKind::kMayAlias};
-
   ASSERT_OK_AND_ASSIGN(
       GpuExecutableBufferAllocator::ResolvedOutputBuffer resolved,
       scope->ResolveOutputBuffer(
-          &run_options_, buffer_allocations, /*index=*/{}, output,
+          &run_options_, buffer_allocations, /*index=*/{},
           [](const BufferAllocation&) { return DonationState::kDonated; },
           /*buffer_allocations_debug_summary=*/"debug summary"));
 
@@ -269,8 +340,10 @@ TEST_F(GpuExecutableBufferAllocatorTest, ReusesDonatedOutputBuffer) {
 
 TEST_F(GpuExecutableBufferAllocatorTest,
        NonDonatedPassthroughUsesAssignedBuffer) {
-  Initialize(ShapeUtil::MakeShape(S32, {}),
-             {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)});
+  Initialize(
+      ShapeUtil::MakeShape(S32, {}),
+      {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)},
+      ScalarOutputSpec(/*passthrough=*/true, OutputAliasKind::kMayAlias));
   ASSERT_OK_AND_ASSIGN(auto scope, CreateScope());
 
   int32_t value = 42;
@@ -278,13 +351,10 @@ TEST_F(GpuExecutableBufferAllocatorTest,
   std::vector<se::DeviceAddressBase> addresses = {original};
   BufferAllocations buffer_allocations(addresses, /*device_ordinal=*/0,
                                        &memory_allocator_);
-  OutputBufferSpec output{/*allocation_index=*/0, /*passthrough=*/true,
-                          OutputAliasKind::kMayAlias};
-
   ASSERT_OK_AND_ASSIGN(
       GpuExecutableBufferAllocator::ResolvedOutputBuffer resolved,
       scope->ResolveOutputBuffer(
-          &run_options_, buffer_allocations, /*index=*/{}, output,
+          &run_options_, buffer_allocations, /*index=*/{},
           [](const BufferAllocation&) { return DonationState::kNotDonated; },
           /*buffer_allocations_debug_summary=*/"debug summary"));
 
@@ -301,7 +371,8 @@ TEST_F(GpuExecutableBufferAllocatorTest,
       BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0)};
   allocations[0].set_maybe_live_out(true);
   allocations[1].set_maybe_live_out(true);
-  Initialize(ShapeUtil::MakeShape(S32, {}), std::move(allocations));
+  Initialize(ShapeUtil::MakeShape(S32, {}), std::move(allocations),
+             ScalarOutputSpec(/*passthrough=*/false, OutputAliasKind::kNone));
   ASSERT_OK_AND_ASSIGN(auto scope, CreateScope());
 
   ASSERT_OK_AND_ASSIGN(
@@ -319,12 +390,10 @@ TEST_F(GpuExecutableBufferAllocatorTest,
   std::vector<se::DeviceAddressBase> addresses = {result_address, dead_address};
   BufferAllocations buffer_allocations(addresses, /*device_ordinal=*/0,
                                        &memory_allocator_);
-  OutputBufferSpec output{/*allocation_index=*/0, /*passthrough=*/false,
-                          OutputAliasKind::kNone};
   ASSERT_OK_AND_ASSIGN(
       GpuExecutableBufferAllocator::ResolvedOutputBuffer resolved,
       scope->ResolveOutputBuffer(
-          &run_options_, buffer_allocations, /*index=*/{}, output,
+          &run_options_, buffer_allocations, /*index=*/{},
           [](const BufferAllocation&) {
             ADD_FAILURE() << "Donation resolver called for unaliased output";
             return DonationState::kUnavailable;
@@ -356,7 +425,8 @@ TEST_F(GpuExecutableBufferAllocatorTest,
       BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0)};
   allocations[0].set_maybe_live_out(true);
   allocations[1].set_maybe_live_out(true);
-  Initialize(ShapeUtil::MakeShape(S32, {}), std::move(allocations));
+  Initialize(ShapeUtil::MakeShape(S32, {}), std::move(allocations),
+             ScalarOutputSpec(/*passthrough=*/false, OutputAliasKind::kNone));
   ASSERT_OK_AND_ASSIGN(auto scope, CreateScope());
 
   ASSERT_OK_AND_ASSIGN(
@@ -374,12 +444,10 @@ TEST_F(GpuExecutableBufferAllocatorTest,
   std::vector<se::DeviceAddressBase> addresses = {result_address, dead_address};
   BufferAllocations buffer_allocations(addresses, /*device_ordinal=*/0,
                                        &memory_allocator_);
-  OutputBufferSpec output{/*allocation_index=*/0, /*passthrough=*/false,
-                          OutputAliasKind::kNone};
   ASSERT_OK_AND_ASSIGN(
       GpuExecutableBufferAllocator::ResolvedOutputBuffer resolved,
       scope->ResolveOutputBuffer(
-          &run_options_, buffer_allocations, /*index=*/{}, output,
+          &run_options_, buffer_allocations, /*index=*/{},
           [](const BufferAllocation&) {
             ADD_FAILURE() << "Donation resolver called for unaliased output";
             return DonationState::kUnavailable;
