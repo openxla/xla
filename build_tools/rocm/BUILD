@@ -22,26 +22,6 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
-string_flag(
-    name = "sanitizer",
-    build_setting_default = "none",
-    values = [
-        "none",
-        "asan",
-        "tsan",
-    ],
-)
-
-config_setting(
-    name = "asan",
-    flag_values = {"//build_tools/rocm:sanitizer": "asan"},
-)
-
-config_setting(
-    name = "tsan",
-    flag_values = {"//build_tools/rocm:sanitizer": "tsan"},
-)
-
 # Export ignore lists for use by sanitizer wrappers
 exports_files([
     "asan_ignore_list.txt",
