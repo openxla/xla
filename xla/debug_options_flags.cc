@@ -3022,7 +3022,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         }
         for (absl::string_view raw : values) {
           raw = absl::StripAsciiWhitespace(raw);
-          if (raw.empty()) continue;
+          if (raw.empty()) {
+            continue;
+          }
           bool add = true;
           if (absl::StartsWith(raw, "+")) {
             raw = raw.substr(1);

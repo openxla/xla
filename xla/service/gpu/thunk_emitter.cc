@@ -65,7 +65,6 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/fusion.h"
 #include "xla/backends/gpu/codegen/triton/triton_kernel_source.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
-#include "xla/backends/gpu/runtime/all_gather.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"

@@ -22,10 +22,10 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
-#include "absl/strings/str_cat.h"
 #include "google/protobuf/descriptor.h"
 #include "xla/parse_flags_from_env.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/protobuf.h"
@@ -203,7 +203,7 @@ DebugOptions ParseCollectiveKernelsFlag(const std::string& value) {
   std::vector<tsl::Flag> flags;
   MakeDebugOptionsFlags(&flags, &opts);
   std::string flag_str =
-      absl::StrCat("--xla_gpu_experimental_use_collective_kernels=", value);
+      "--xla_gpu_experimental_use_collective_kernels=" + value;
   std::vector<char*> argv = {const_cast<char*>("test"),
                              const_cast<char*>(flag_str.c_str())};
   int argc = static_cast<int>(argv.size());
