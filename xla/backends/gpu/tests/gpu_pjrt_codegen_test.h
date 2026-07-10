@@ -95,7 +95,8 @@ class GpuPjRtCodegenTest : public HloPjRtGpuTestBase {
   std::string GpuKernelType() const {
     if (IsBuiltWithRocm()) {
       return "amdgpu_kernel";
-    } else if (IsBuiltWithOneAPI()) {
+    }
+    if (IsBuiltWithOneAPI()) {
       return "spir_kernel";
     }
     return "ptx_kernel";
