@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/executable_run_options.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_executable_buffer_allocator.h"
@@ -254,10 +255,9 @@ class GpuExecutableVaRemapAllocatorTest : public ::testing::Test {
   ScalarMayAliasOutputSpec() {
     GpuExecutableBufferAllocator::OutputBufferSpecMap output_buffer_specs;
     output_buffer_specs.emplace(
-        ShapeIndex{},
-        GpuExecutableBufferAllocator::OutputBufferSpec{
-            /*allocation_index=*/0, /*passthrough=*/false,
-            GpuExecutableBufferAllocator::OutputAliasKind::kMayAlias});
+        ShapeIndex{}, GpuExecutableBufferAllocator::OutputBufferSpec{
+                          /*allocation_index=*/0, /*passthrough=*/false,
+                          HloInputOutputAliasConfig::AliasKind::kMayAlias});
     return output_buffer_specs;
   }
 

@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_constants.h"
@@ -145,7 +146,7 @@ GpuExecutableBufferAllocator::GpuExecutableBufferAllocator(
       result_shape_, [&](const Shape&, const ShapeIndex& index) {
         auto output_it = output_buffer_specs_.find(index);
         if (output_it != output_buffer_specs_.end() &&
-            output_it->second.alias_kind == OutputAliasKind::kNone) {
+            !output_it->second.alias_kind.has_value()) {
           all_output_leaves_aliased_ = false;
         }
       });
@@ -311,9 +312,10 @@ GpuExecutableBufferAllocator::ExecutionScope::ResolveOutputBuffer(
       << " @ index: " << index.ToString();
 
   ResolvedOutputBuffer resolved;
-  if (output.alias_kind != OutputAliasKind::kNone) {
+  if (output.alias_kind.has_value()) {
     DonationState donation = resolve_donation(allocation);
-    if (output.alias_kind == OutputAliasKind::kMustAlias &&
+    if (*output.alias_kind ==
+            HloInputOutputAliasConfig::AliasKind::kMustAlias &&
         donation == DonationState::kNotDonated) {
       return InvalidArgument(
           "An input was configured to be must-alias at "

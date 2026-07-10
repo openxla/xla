@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/service_executable_run_options.h"
@@ -135,7 +136,7 @@ class TestDeviceAddressAllocator : public se::DeviceAddressAllocator {
 class GpuExecutableBufferAllocatorTest : public ::testing::Test {
  protected:
   using DonationState = GpuExecutableBufferAllocator::DonationState;
-  using OutputAliasKind = GpuExecutableBufferAllocator::OutputAliasKind;
+  using AliasKind = HloInputOutputAliasConfig::AliasKind;
   using OutputBufferSource = GpuExecutableBufferAllocator::OutputBufferSource;
   using OutputBufferSpec = GpuExecutableBufferAllocator::OutputBufferSpec;
   using OutputBufferSpecMap = GpuExecutableBufferAllocator::OutputBufferSpecMap;
@@ -161,7 +162,7 @@ class GpuExecutableBufferAllocatorTest : public ::testing::Test {
   }
 
   static OutputBufferSpecMap ScalarOutputSpec(
-      bool passthrough, OutputAliasKind alias_kind,
+      bool passthrough, std::optional<AliasKind> alias_kind,
       BufferAllocation::Index allocation_index = 0) {
     OutputBufferSpecMap output_buffer_specs;
     output_buffer_specs.emplace(
@@ -219,11 +220,11 @@ TEST_F(GpuExecutableBufferAllocatorTest, DetectsAllOutputLeavesAliased) {
   output_buffer_specs.emplace(
       ShapeIndex{0},
       OutputBufferSpec{/*allocation_index=*/0, /*passthrough=*/false,
-                       OutputAliasKind::kMayAlias});
+                       AliasKind::kMayAlias});
   output_buffer_specs.emplace(
       ShapeIndex{1},
       OutputBufferSpec{/*allocation_index=*/1, /*passthrough=*/false,
-                       OutputAliasKind::kMustAlias});
+                       AliasKind::kMustAlias});
   Initialize(tuple_shape,
              {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),
               BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0)},
@@ -235,11 +236,10 @@ TEST_F(GpuExecutableBufferAllocatorTest, DetectsAllOutputLeavesAliased) {
   output_buffer_specs.emplace(
       ShapeIndex{0},
       OutputBufferSpec{/*allocation_index=*/0, /*passthrough=*/false,
-                       OutputAliasKind::kMayAlias});
+                       AliasKind::kMayAlias});
   output_buffer_specs.emplace(
-      ShapeIndex{1},
-      OutputBufferSpec{/*allocation_index=*/1, /*passthrough=*/false,
-                       OutputAliasKind::kNone});
+      ShapeIndex{1}, OutputBufferSpec{/*allocation_index=*/1,
+                                      /*passthrough=*/false, std::nullopt});
   Initialize(std::move(tuple_shape),
              {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),
               BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0)},
@@ -249,10 +249,9 @@ TEST_F(GpuExecutableBufferAllocatorTest, DetectsAllOutputLeavesAliased) {
 }
 
 TEST_F(GpuExecutableBufferAllocatorTest, RejectsKnownMissingMustAliasDonation) {
-  Initialize(
-      ShapeUtil::MakeShape(S32, {}),
-      {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)},
-      ScalarOutputSpec(/*passthrough=*/false, OutputAliasKind::kMustAlias));
+  Initialize(ShapeUtil::MakeShape(S32, {}),
+             {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)},
+             ScalarOutputSpec(/*passthrough=*/false, AliasKind::kMustAlias));
   ASSERT_OK_AND_ASSIGN(auto scope, CreateScope());
 
   int32_t value = 42;
@@ -272,11 +271,10 @@ TEST_F(GpuExecutableBufferAllocatorTest, RejectsKnownMissingMustAliasDonation) {
 TEST_F(GpuExecutableBufferAllocatorTest,
        CopyProtectsMustAliasWhenDonationIsUnavailable) {
   constexpr int64_t kMemorySpace = 7;
-  Initialize(
-      ShapeUtil::MakeShape(S32, {}),
-      {BufferAllocation(/*index=*/0, /*size=*/4,
-                        /*color=*/kMemorySpace)},
-      ScalarOutputSpec(/*passthrough=*/false, OutputAliasKind::kMustAlias));
+  Initialize(ShapeUtil::MakeShape(S32, {}),
+             {BufferAllocation(/*index=*/0, /*size=*/4,
+                               /*color=*/kMemorySpace)},
+             ScalarOutputSpec(/*passthrough=*/false, AliasKind::kMustAlias));
   ASSERT_OK_AND_ASSIGN(auto scope, CreateScope());
 
   int32_t value = 42;
@@ -314,10 +312,9 @@ TEST_F(GpuExecutableBufferAllocatorTest,
 }
 
 TEST_F(GpuExecutableBufferAllocatorTest, ReusesDonatedOutputBuffer) {
-  Initialize(
-      ShapeUtil::MakeShape(S32, {}),
-      {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)},
-      ScalarOutputSpec(/*passthrough=*/false, OutputAliasKind::kMayAlias));
+  Initialize(ShapeUtil::MakeShape(S32, {}),
+             {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)},
+             ScalarOutputSpec(/*passthrough=*/false, AliasKind::kMayAlias));
   ASSERT_OK_AND_ASSIGN(auto scope, CreateScope());
 
   int32_t value = 42;
@@ -340,10 +337,9 @@ TEST_F(GpuExecutableBufferAllocatorTest, ReusesDonatedOutputBuffer) {
 
 TEST_F(GpuExecutableBufferAllocatorTest,
        NonDonatedPassthroughUsesAssignedBuffer) {
-  Initialize(
-      ShapeUtil::MakeShape(S32, {}),
-      {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)},
-      ScalarOutputSpec(/*passthrough=*/true, OutputAliasKind::kMayAlias));
+  Initialize(ShapeUtil::MakeShape(S32, {}),
+             {BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)},
+             ScalarOutputSpec(/*passthrough=*/true, AliasKind::kMayAlias));
   ASSERT_OK_AND_ASSIGN(auto scope, CreateScope());
 
   int32_t value = 42;
@@ -372,7 +368,7 @@ TEST_F(GpuExecutableBufferAllocatorTest,
   allocations[0].set_maybe_live_out(true);
   allocations[1].set_maybe_live_out(true);
   Initialize(ShapeUtil::MakeShape(S32, {}), std::move(allocations),
-             ScalarOutputSpec(/*passthrough=*/false, OutputAliasKind::kNone));
+             ScalarOutputSpec(/*passthrough=*/false, std::nullopt));
   ASSERT_OK_AND_ASSIGN(auto scope, CreateScope());
 
   ASSERT_OK_AND_ASSIGN(
@@ -426,7 +422,7 @@ TEST_F(GpuExecutableBufferAllocatorTest,
   allocations[0].set_maybe_live_out(true);
   allocations[1].set_maybe_live_out(true);
   Initialize(ShapeUtil::MakeShape(S32, {}), std::move(allocations),
-             ScalarOutputSpec(/*passthrough=*/false, OutputAliasKind::kNone));
+             ScalarOutputSpec(/*passthrough=*/false, std::nullopt));
   ASSERT_OK_AND_ASSIGN(auto scope, CreateScope());
 
   ASSERT_OK_AND_ASSIGN(

@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/service_executable_run_options.h"
@@ -74,13 +75,12 @@ class GpuExecutableBufferAllocator {
 
   using AllocationIndexSet = absl::btree_set<BufferAllocation::Index>;
 
-  // Runtime-independent description of an executable output buffer.
-  enum class OutputAliasKind { kNone, kMayAlias, kMustAlias };
-
+  // Executable-scoped output buffer allocation policy.
   struct OutputBufferSpec {
     BufferAllocation::Index allocation_index = 0;
     bool passthrough = false;
-    OutputAliasKind alias_kind = OutputAliasKind::kNone;
+    // No value means the output does not alias an input parameter.
+    std::optional<HloInputOutputAliasConfig::AliasKind> alias_kind;
   };
 
   using OutputBufferSpecMap = absl::flat_hash_map<ShapeIndex, OutputBufferSpec>;

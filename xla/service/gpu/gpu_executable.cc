@@ -177,13 +177,9 @@ GpuExecutableBufferAllocator::OutputBufferSpecMap MakeOutputBufferSpecs(
   GpuExecutableBufferAllocator::OutputBufferSpecMap output_buffer_specs;
   output_buffer_specs.reserve(output_info.size());
   for (const auto& [index, info] : output_info) {
-    GpuExecutableBufferAllocator::OutputAliasKind alias_kind =
-        GpuExecutableBufferAllocator::OutputAliasKind::kNone;
+    std::optional<HloInputOutputAliasConfig::AliasKind> alias_kind;
     if (info.alias_config.has_value()) {
-      alias_kind =
-          info.alias_config->must_alias()
-              ? GpuExecutableBufferAllocator::OutputAliasKind::kMustAlias
-              : GpuExecutableBufferAllocator::OutputAliasKind::kMayAlias;
+      alias_kind = info.alias_config->kind;
     }
     output_buffer_specs.emplace(
         index, GpuExecutableBufferAllocator::OutputBufferSpec{
