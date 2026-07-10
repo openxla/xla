@@ -104,6 +104,10 @@ class TestMemoryReservation final : public MemoryReservation {
 
 class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
  public:
+  ~TestDeviceAddressVmmAllocator() override {
+    EXPECT_TRUE(SynchronizeAllPendingOperations().ok());
+  }
+
   static absl::StatusOr<std::unique_ptr<TestDeviceAddressVmmAllocator>> Create(
       const Platform* platform, absl::Span<const DeviceConfig> devices,
       uint64_t physical_size_padding = 0) {

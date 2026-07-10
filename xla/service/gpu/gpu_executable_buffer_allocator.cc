@@ -96,7 +96,6 @@ struct CollectedAllocationIndices {
   GpuExecutableBufferAllocator::AllocationIndexSet persistent;
   GpuExecutableBufferAllocator::AllocationIndexSet va_remapped;
   GpuExecutableBufferAllocator::AllocationIndexSet profiled_candidate;
-  GpuExecutableBufferAllocator::AllocationIndexSet profiled_temp;
 };
 
 CollectedAllocationIndices CollectAllocationIndices(
@@ -134,7 +133,6 @@ CollectedAllocationIndices CollectAllocationIndices(
             indices.profiled_candidate.insert(index);
           } else if (allocation.IsPreallocatedTempBuffer()) {
             indices.profiled_candidate.insert(index);
-            indices.profiled_temp.insert(index);
             if (persist_temp_allocations) {
               indices.va_remapped.insert(index);
             }
@@ -597,10 +595,6 @@ GpuExecutableBufferAllocator::ExecutionScope::CommitProfileObservation(
         if (remapping_->copy_protected_alloc_indices.contains(index)) {
           continue;
         }
-        if (owner_->profiled_temp_alloc_indices_.contains(index)) {
-          remapping_->reservation_alloc_indices.insert(index);
-          continue;
-        }
         const se::DeviceAddressBase& first =
             remapping_->first_observed_addresses[index];
         se::DeviceAddressBase current =
@@ -936,7 +930,6 @@ GpuExecutableBufferAllocator::GpuExecutableBufferAllocator(
                                    indices.persistent.end());
   va_remapped_alloc_indices_ = std::move(indices.va_remapped);
   profiled_candidate_alloc_indices_ = std::move(indices.profiled_candidate);
-  profiled_temp_alloc_indices_ = std::move(indices.profiled_temp);
 
   VLOG(3) << "Command buffer allocation policy: collected "
           << persistent_alloc_indices_.size()

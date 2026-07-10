@@ -258,11 +258,9 @@ class GpuExecutableBufferAllocator {
   std::vector<BufferAllocation::Index> constant_alloc_indices_;
 
   // Non-zero command-buffer-referenced allocations eligible for the profiled
-  // policy. Preallocated temps are always selected after observation;
-  // parameters and returned live-outs are selected only when their addresses
-  // are stable across the two successful observation executions.
+  // policy. Candidates are selected only when their addresses are stable across
+  // the two successful observation executions.
   AllocationIndexSet profiled_candidate_alloc_indices_;
-  AllocationIndexSet profiled_temp_alloc_indices_;
   absl::flat_hash_set<BufferAllocation::Index> returned_output_alloc_indices_;
 
   // Indices of command-buffer-referenced temporary allocations assigned stable

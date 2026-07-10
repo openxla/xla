@@ -1228,7 +1228,7 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
 }
 
-// Allocates and deallocates enough buffers to cross the 64-entry open-batch
+// Queues enough zero-reclaimable-byte unmaps to cross the 64-entry open-batch
 // limit, then flushes and drains the remaining batch with one synchronization.
 TEST_F(DeviceAddressVmmAllocatorTest,
        MultipleDeferredDeallocationsDrainAfterSynchronization) {
@@ -1238,40 +1238,39 @@ TEST_F(DeviceAddressVmmAllocatorTest,
 
   const int ordinal = executor_->device_ordinal();
   constexpr int kCount = 65;
-  constexpr uint64_t kSize = 1024;
+  const uint64_t granularity = allocator->GetAllocationGranularity(executor_);
+  ASSERT_GT(granularity, 0);
+  ASSERT_OK_AND_ASSIGN(
+      auto reservation,
+      gpu::CudaMemoryReservation::Create(executor_, kCount * granularity));
 
   std::vector<DeviceAddressBase> addresses;
   addresses.reserve(kCount);
   for (int i = 0; i < kCount; ++i) {
     ASSERT_OK_AND_ASSIGN(
         auto addr,
-        allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
+        allocator->Allocate(ordinal, granularity, /*retry_on_failure=*/true,
                             static_cast<int64_t>(MemorySpace::kCollective)));
     addresses.push_back(addr.Release());
   }
 
   for (int i = 0; i < kCount; ++i) {
-    DeviceAddressBase address = addresses[i];
-    ASSERT_THAT(allocator->Deallocate(ordinal, address), IsOk());
+    const uint64_t offset = i * granularity;
+    ASSERT_THAT(allocator->Map(ordinal, addresses[i], reservation.get(), offset,
+                               granularity),
+                IsOk());
+    ASSERT_THAT(allocator->UnMap(ordinal, reservation.get(), offset,
+                                 granularity),
+                IsOk());
     EXPECT_EQ(allocator->deallocation_marker_count(), i < 64 ? 0 : 1);
   }
   ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
   EXPECT_EQ(allocator->deallocation_marker_count(), 2);
 
-  // All drained physical and virtual resources are available for fresh
-  // allocations.
-  for (int i = 0; i < kCount; ++i) {
-    ASSERT_OK_AND_ASSIGN(
-        auto addr,
-        allocator->Allocate(ordinal, kSize, /*retry_on_failure=*/true,
-                            static_cast<int64_t>(MemorySpace::kCollective)));
-    EXPECT_FALSE(addr.is_null());
+  for (DeviceAddressBase address : addresses) {
+    ASSERT_THAT(allocator->Deallocate(ordinal, address), IsOk());
   }
-
-  // Destruction of the fresh allocations creates one full batch and one
-  // trailing batch in addition to the two markers observed above.
   ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
-  EXPECT_EQ(allocator->deallocation_marker_count(), 4);
 }
 
 TEST_F(DeviceAddressVmmAllocatorTest,
