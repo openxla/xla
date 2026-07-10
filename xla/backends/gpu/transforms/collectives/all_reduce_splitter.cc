@@ -95,9 +95,8 @@ struct ReplicaGroups {
   friend H AbslHashValue(H h, const ReplicaGroups& rg) {
     for (const ReplicaGroup& group : rg.replica_groups) {
       h = H::combine(std::move(h), group.replica_ids_size());
-      for (int64_t id : group.replica_ids()) {
-        h = H::combine(std::move(h), id);
-      }
+      h = H::combine_contiguous(std::move(h), group.replica_ids().data(),
+                                group.replica_ids_size());
     }
     return h;
   }
