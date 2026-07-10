@@ -34,8 +34,9 @@ namespace gpu {
 // This pass must run BEFORE the latency-hiding scheduler so that
 // SolLatencyEstimator can apply the correct cost model for each collective.
 //
-// Only called when xla_gpu_unsupported_use_all_reduce_one_shot_kernel is true;
-// when the flag is off all AllReduces will keep the default NCCL annotation.
+// Only called when COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE is present in
+// xla_gpu_experimental_use_collective_kernels; when absent all AllReduces
+// keep the default NCCL annotation.
 class CollectiveKernelStrategyAnnotator : public HloModulePass {
  public:
   // `gpu_topology`        : GpuTopology instance for which the compilation is

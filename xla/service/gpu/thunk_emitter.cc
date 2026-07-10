@@ -271,12 +271,14 @@ AsyncThunkSequence ThunkEmitter::EmitCollectiveKernelThunk(
     should_flatten = has_rank_higher_than_1 &&
                      GetAllReduceStrategy(size_bytes, kMultimemDisabled) ==
                          se::gpu::AllReduceStrategy::kTwoShot;
-    is_collective_kernel_enabled =
-        debug_options.xla_gpu_unsupported_use_all_reduce_one_shot_kernel();
+    is_collective_kernel_enabled = absl::c_linear_search(
+        debug_options.xla_gpu_experimental_use_collective_kernels(),
+        static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE));
   } else if (opcode == HloOpcode::kAllGather) {
     // AllGather is always one-shot; no flattening needed.
-    is_collective_kernel_enabled =
-        debug_options.xla_gpu_unsupported_use_all_gather_triton_backend();
+    is_collective_kernel_enabled = absl::c_linear_search(
+        debug_options.xla_gpu_experimental_use_collective_kernels(),
+        static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER));
   }
   if (is_collective_kernel_enabled && should_flatten) {
     RETURN_IF_ERROR(FlattenCollectiveFusion(fusion_instr));
@@ -2081,10 +2083,13 @@ AsyncThunkSequence ThunkEmitter::EmitCollectiveThunk(
   // requirements. When the flag is set but the shape is ineligible, we log
   // and fall back to NCCL/RCCL.
   if (!use_triton && kind == Thunk::Kind::kAllGather) {
-    if (inst->GetModule()
-            ->config()
-            .debug_options()
-            .xla_gpu_unsupported_use_all_gather_triton_backend()) {
+    if (absl::c_linear_search(
+            inst->GetModule()
+                ->config()
+                .debug_options()
+                .xla_gpu_experimental_use_collective_kernels(),
+            static_cast<int>(
+                DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER))) {
       const DeviceAssignment* device_assignment = nullptr;
       if (ir_emitter_context_->hlo_module()
               .config()

@@ -1443,7 +1443,10 @@ void AddCollectiveCombinerPasses(
   // of the NCCL ring model.  Only added when the Triton collective kernel flag
   // is enabled; when the flag is off all collectives keep
   // KERNEL_STRATEGY_DEFAULT.
-  if (opts.xla_gpu_unsupported_use_all_reduce_one_shot_kernel()) {
+  if (absl::c_linear_search(
+          opts.xla_gpu_experimental_use_collective_kernels(),
+          static_cast<int>(
+              DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE))) {
     pipeline.AddPass<CollectiveKernelStrategyAnnotator>(
         gpu_topology, /*is_multimem_enabled=*/false);
   }
