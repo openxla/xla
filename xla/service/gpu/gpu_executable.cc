@@ -21,7 +21,6 @@ limitations under the License.
 #include <deque>
 #include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <utility>
 #include <variant>
@@ -1092,9 +1091,6 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
                        run_options, get_parameter_buffer, globals,
                        memory_allocator, device_ordinal));
   XLA_VLOG_DEVICE(3, device_ordinal) << buffer_allocations.ToString();
-  absl::Span<const BufferAllocation* const> allocations = GetAllocations();
-
-  std::set<se::DeviceAddressBase> buffers_in_result;
 
   const bool is_entire_tuple_contents_aliased = [&] {
     for (auto& p : result.MutableResult()->buffers().leaves()) {
@@ -1115,96 +1111,71 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
       continue;
     }
     const OutputInfo& output_info = output_info_.at(index);
-    const BufferAllocation* allocation =
-        allocations[output_info.allocation_index];
     se::DeviceAddressBase& result_buffer = p.second;
 
-    XLA_VLOG_DEVICE(4, device_ordinal)
-        << "Looking at: allocation " << output_info.allocation_index
-        << " @ index: " << index.ToString();
+    GpuExecutableBufferAllocator::OutputAliasKind alias_kind =
+        GpuExecutableBufferAllocator::OutputAliasKind::kNone;
+    if (output_info.alias_config.has_value()) {
+      alias_kind =
+          output_info.alias_config->must_alias()
+              ? GpuExecutableBufferAllocator::OutputAliasKind::kMustAlias
+              : GpuExecutableBufferAllocator::OutputAliasKind::kMayAlias;
+    }
+    GpuExecutableBufferAllocator::OutputBufferSpec output{
+        output_info.allocation_index, output_info.passthrough, alias_kind};
 
-    if (output_info.alias_config) {
-      MaybeOwningDeviceAddress* maybe_owning_memory =
-          [&]() -> xla::MaybeOwningDeviceAddress* {
-        // ShapedBuffer is never an owned buffer.
-        if (std::holds_alternative<absl::Span<const ShapedBuffer* const>>(
-                arguments)) {
-          return nullptr;
-        }
-        auto unowned_execution_input =
-            std::get<absl::Span<ExecutionInput>>(arguments);
-        ExecutionInput& input =
-            unowned_execution_input[allocation->parameter_number()];
-        return input.MutableBuffer(allocation->param_shape_index());
-      }();
-      if (output_info.alias_config->must_alias() && maybe_owning_memory &&
-          !maybe_owning_memory->HasOwnership()) {
-        return InvalidArgument(
-            "An input was configured to be must-alias at "
-            "compile time but not donated at runtime: allocation %d",
-            output_info.allocation_index);
+    MaybeOwningDeviceAddress* aliased_input = nullptr;
+    auto resolve_donation = [&](const BufferAllocation& allocation) {
+      // ShapedBuffer is never an owned buffer, so donation is unavailable.
+      if (std::holds_alternative<absl::Span<const ShapedBuffer* const>>(
+              arguments)) {
+        return GpuExecutableBufferAllocator::DonationState::kUnavailable;
       }
-      if (maybe_owning_memory && maybe_owning_memory->HasOwnership()) {
-        std::optional<tensorflow::se::ScopedDeviceAddress<uint8_t>> owning =
-            maybe_owning_memory->Release();
-        // If the caller passes the ownership of the device memory, reuse it
-        // as the output buffer. It is up to the caller whether or not to
-        // donate a buffer; the aliasing information describes which buffers
-        // may alias, not buffers that must alias.
-        se::DeviceAddressBase argument_buffer = owning->Release();
-        *maybe_owning_memory = argument_buffer;
-        result_buffer = argument_buffer;
-        // The caller is giving us the
-        // input buffer, but in case of error from the execute call, we should
-        // not be releasing it as it contains valid data (for example, it is a
-        // parameter which the user wants us to alias, in a gradient update
-        // computation). So we store the index into the result in the aliased
-        // vector, which will be fed to the ExecutionOutput, which will use
-        // the indices to drop the addresses from its own ScopedShapedBuffer
-        // result, if the ExecutionOutput is not committed.
-        result.AddAliasedIndex(index);
-      } else if (!output_info.passthrough &&
-                 !ShapeUtil::GetSubshape(program_shape_.result(), index)
-                      .IsTuple()) {
-        ASSIGN_OR_RETURN(
-            result_buffer,
-            allocation_scope->AllocateCopyProtectedOutputBuffer(
-                run_options, buffer_allocations, index, *allocation,
-                device_ordinal, memory_allocator, [&](absl::Status status) {
-                  return ResourceExhausted("%s\n%s\n", status.message(),
-                                           buffer_allocations_debug_summary());
-                }));
-      }
+      auto execution_inputs = std::get<absl::Span<ExecutionInput>>(arguments);
+      ExecutionInput& input = execution_inputs[allocation.parameter_number()];
+      aliased_input = input.MutableBuffer(allocation.param_shape_index());
+      return aliased_input->HasOwnership()
+                 ? GpuExecutableBufferAllocator::DonationState::kDonated
+                 : GpuExecutableBufferAllocator::DonationState::kNotDonated;
+    };
+    ASSIGN_OR_RETURN(
+        GpuExecutableBufferAllocator::ResolvedOutputBuffer resolved,
+        allocation_scope->ResolveOutputBuffer(
+            run_options, buffer_allocations, index, output, resolve_donation,
+            buffer_allocations_debug_summary()));
+    result_buffer = resolved.buffer;
+
+    if (resolved.source ==
+        GpuExecutableBufferAllocator::OutputBufferSource::kDonated) {
+      CHECK_NE(aliased_input, nullptr);
+      std::optional<se::ScopedDeviceAddress<uint8_t>> owning =
+          aliased_input->Release();
+      CHECK(owning.has_value());
+      se::DeviceAddressBase argument_buffer = owning->Release();
+      CHECK_EQ(argument_buffer, result_buffer);
+      *aliased_input = argument_buffer;
+      // If execution later fails, keep the donated input alive rather than
+      // releasing it from the uncommitted ExecutionOutput.
+      result.AddAliasedIndex(index);
     }
 
-    if (result_buffer.is_null()) {
-      // The source instruction should have a non-parameter buffer
-      // assigned.
-      result_buffer =
-          buffer_allocations.GetDeviceAddress(output_info.allocation_index);
-
+    if (resolved.fell_back_to_assigned_buffer) {
       // If the entire tuple contents is aliased, the copy insertion will *not*
       // materialize a new tuple, so we mark it as aliased as well.
       if (is_entire_tuple_contents_aliased) {
         result.AddAliasedIndex(index);
       }
     }
-    buffers_in_result.insert(result_buffer);
   }
 
-  absl::Status execute_status = allocation_scope->ExecuteWithBufferAllocations(
+  RETURN_IF_ERROR(allocation_scope->ExecuteAndTearDown(
       buffer_allocations, device_ordinal,
       [&](const BufferAllocations& execution_buffers,
           std::optional<absl::Span<const BufferAllocation::Index>>
               persistent_alloc_indices) {
         return ExecuteThunks(execution_buffers, run_options,
                              persistent_alloc_indices);
-      });
-  absl::Status teardown_status =
-      buffer_allocations.TearDown(buffers_in_result, GetAllocations());
-
-  RETURN_IF_ERROR(execute_status);
-  RETURN_IF_ERROR(teardown_status);
+      }));
 
   // Free allocations for arguments.
   if (auto args = std::get_if<absl::Span<ExecutionInput>>(&arguments)) {

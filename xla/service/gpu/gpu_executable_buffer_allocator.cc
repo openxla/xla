@@ -247,9 +247,11 @@ absl::StatusOr<se::DeviceAddressBase>
 GpuExecutableBufferAllocator::ExecutionScope::AllocateCopyProtectedOutputBuffer(
     const ServiceExecutableRunOptions* run_options,
     BufferAllocations& buffer_allocations, const ShapeIndex& index,
-    const BufferAllocation& allocation, int device_ordinal,
-    se::DeviceAddressAllocator* const memory_allocator,
-    absl::FunctionRef<absl::Status(absl::Status)> allocation_error) {
+    const BufferAllocation& allocation,
+    absl::string_view buffer_allocations_debug_summary) {
+  const int device_ordinal = buffer_allocations.device_ordinal();
+  se::DeviceAddressAllocator* const memory_allocator =
+      buffer_allocations.memory_allocator();
   // The caller guards this against aliasing pass-through params, as we do not
   // need to write into the output buffer in that case.
   XLA_VLOG_DEVICE(3, device_ordinal)
@@ -262,7 +264,8 @@ GpuExecutableBufferAllocator::ExecutionScope::AllocateCopyProtectedOutputBuffer(
                                  /*retry_on_failure=*/true,
                                  /*memory_space=*/allocation.color());
   if (!allocated_buffer.ok()) {
-    return allocation_error(allocated_buffer.status());
+    return ResourceExhausted("%s\n%s\n", allocated_buffer.status().message(),
+                             buffer_allocations_debug_summary);
   }
   se::DeviceAddressBase result_buffer = allocated_buffer->Release();
   se::DeviceAddressBase& aliased_buffer =
@@ -272,6 +275,58 @@ GpuExecutableBufferAllocator::ExecutionScope::AllocateCopyProtectedOutputBuffer(
       &result_buffer, aliased_buffer, aliased_buffer.size()));
   aliased_buffer = result_buffer;
   return result_buffer;
+}
+
+absl::StatusOr<GpuExecutableBufferAllocator::ResolvedOutputBuffer>
+GpuExecutableBufferAllocator::ExecutionScope::ResolveOutputBuffer(
+    const ServiceExecutableRunOptions* run_options,
+    BufferAllocations& buffer_allocations, const ShapeIndex& index,
+    const OutputBufferSpec& output, DonationResolver resolve_donation,
+    absl::string_view buffer_allocations_debug_summary) {
+  CHECK_GE(output.allocation_index, 0);
+  CHECK_LT(output.allocation_index, owner_->allocations_.size());
+  const BufferAllocation& allocation =
+      *owner_->allocations_[output.allocation_index];
+  const int device_ordinal = buffer_allocations.device_ordinal();
+
+  XLA_VLOG_DEVICE(4, device_ordinal)
+      << "Looking at: allocation " << output.allocation_index
+      << " @ index: " << index.ToString();
+
+  ResolvedOutputBuffer resolved;
+  if (output.alias_kind != OutputAliasKind::kNone) {
+    DonationState donation = resolve_donation(allocation);
+    if (output.alias_kind == OutputAliasKind::kMustAlias &&
+        donation == DonationState::kNotDonated) {
+      return InvalidArgument(
+          "An input was configured to be must-alias at "
+          "compile time but not donated at runtime: allocation %d",
+          output.allocation_index);
+    }
+
+    if (donation == DonationState::kDonated) {
+      resolved.buffer =
+          buffer_allocations.GetDeviceAddress(output.allocation_index);
+      resolved.source = OutputBufferSource::kDonated;
+    } else if (!output.passthrough &&
+               !ShapeUtil::GetSubshape(owner_->result_shape_, index)
+                    .IsTuple()) {
+      ASSIGN_OR_RETURN(resolved.buffer,
+                       AllocateCopyProtectedOutputBuffer(
+                           run_options, buffer_allocations, index, allocation,
+                           buffer_allocations_debug_summary));
+      resolved.source = OutputBufferSource::kCopyProtected;
+    }
+  }
+
+  if (resolved.buffer.is_null()) {
+    // The source instruction should have a non-parameter buffer assigned.
+    resolved.buffer =
+        buffer_allocations.GetDeviceAddress(output.allocation_index);
+    resolved.fell_back_to_assigned_buffer = true;
+  }
+  live_output_buffers_.insert(resolved.buffer);
+  return resolved;
 }
 
 absl::Status
@@ -284,6 +339,22 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithBufferAllocations(
         execute) {
   return execute(owning_buffer_allocations,
                  absl::MakeConstSpan(owner_->constant_alloc_indices_));
+}
+
+absl::Status GpuExecutableBufferAllocator::ExecutionScope::ExecuteAndTearDown(
+    BufferAllocations& owning_buffer_allocations, int device_ordinal,
+    absl::FunctionRef<
+        absl::Status(const BufferAllocations&,
+                     std::optional<absl::Span<const BufferAllocation::Index>>
+                         persistent_alloc_indices)>
+        execute) {
+  absl::Status execute_status = ExecuteWithBufferAllocations(
+      owning_buffer_allocations, device_ordinal, execute);
+  absl::Status teardown_status = owning_buffer_allocations.TearDown(
+      live_output_buffers_, owner_->allocations_);
+  RETURN_IF_ERROR(execute_status);
+  RETURN_IF_ERROR(teardown_status);
+  return absl::OkStatus();
 }
 
 absl::StatusOr<std::unique_ptr<GpuExecutableBufferAllocator::ExecutionScope>>

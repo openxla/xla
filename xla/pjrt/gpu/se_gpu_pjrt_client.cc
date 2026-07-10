@@ -22,7 +22,6 @@ limitations under the License.
 #include <map>
 #include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <utility>
 #include <variant>
@@ -141,7 +140,6 @@ limitations under the License.
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/se/stream_executor_executable.pb.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_executable_buffer_allocator.h"
 #include "xla/service/gpu/stream_executor_util.h"
@@ -2167,9 +2165,6 @@ StreamExecutorGpuClient::RunAsync(
                      gpu_exec->ResolveConstantGlobals(run_options->stream()));
   }
 
-  absl::Span<const BufferAllocation* const> allocations =
-      gpu_exec->GetAllocations();
-
   auto get_parameter_buffer = [&](const BufferAllocation& allocation)
       -> absl::StatusOr<gpu::GpuExecutableBufferAllocator::ParameterBuffer> {
     int64_t param_no;
@@ -2206,68 +2201,51 @@ StreamExecutorGpuClient::RunAsync(
   XLA_VLOG_DEVICE(3, device_ordinal)
       << "Buffer allocations: " << buffer_allocations.ToString();
 
-  std::set<se::DeviceAddressBase> buffers_in_result;
-
   auto set_result = [&](const ShapeIndex& index, int i) -> absl::Status {
     const gpu::GpuExecutable::OutputInfo& output_info =
         gpu_exec->output_info().at(index);
-    const BufferAllocation* allocation =
-        allocations[output_info.allocation_index];
-    se::DeviceAddressBase result_buffer;
-
-    XLA_VLOG_DEVICE(4, device_ordinal)
-        << "Looking at: allocation " << output_info.allocation_index
-        << " @ index: " << index.ToString();
 
     auto buf = results[i]
                    .get()
                    ->down_cast<PjRtStreamExecutorRawBuffer>()
                    ->device_buffer();
-    if (output_info.alias_config) {
+    gpu::GpuExecutableBufferAllocator::OutputAliasKind alias_kind =
+        gpu::GpuExecutableBufferAllocator::OutputAliasKind::kNone;
+    if (output_info.alias_config.has_value()) {
+      alias_kind =
+          output_info.alias_config->must_alias()
+              ? gpu::GpuExecutableBufferAllocator::OutputAliasKind::kMustAlias
+              : gpu::GpuExecutableBufferAllocator::OutputAliasKind::kMayAlias;
+    }
+    gpu::GpuExecutableBufferAllocator::OutputBufferSpec output{
+        output_info.allocation_index, output_info.passthrough, alias_kind};
+
+    bool is_donated = false;
+    auto resolve_donation = [&](const BufferAllocation& allocation) {
       auto input = flat_arguments[parameter_is_tupled_arguments
-                                      ? allocation->param_shape_index()[0]
-                                      : allocation->parameter_number()]
+                                      ? allocation.param_shape_index()[0]
+                                      : allocation.parameter_number()]
                        ->down_cast<PjRtStreamExecutorRawBuffer>()
                        ->device_buffer();
-      bool is_donated = input == buf;
-      if (output_info.alias_config->must_alias() && !is_donated) {
-        return InvalidArgument(
-            "An input was configured to be must-alias at "
-            "compile time but not donated at runtime: allocation %d",
-            output_info.allocation_index);
-      }
-      if (is_donated) {
-        // If the caller passes the ownership of the device memory, reuse it
-        // as the output buffer. It is up to the caller whether or not to
-        // donate a buffer; the aliasing information describes which buffers
-        // may alias, not buffers that must alias.
-        buffers_in_result.insert(input->mem());
-        return absl::OkStatus();
-      } else if (!output_info.passthrough &&
-                 !ShapeUtil::GetSubshape(gpu_exec->result_shape(), index)
-                      .IsTuple()) {
-        ASSIGN_OR_RETURN(
-            result_buffer,
-            allocation_scope->AllocateCopyProtectedOutputBuffer(
-                run_options, buffer_allocations, index, *allocation,
-                device_ordinal, memory_allocator, [&](absl::Status status) {
-                  return ResourceExhausted(
-                      "%s\n%s\n", status.message(),
-                      gpu_exec->buffer_allocations_debug_summary());
-                }));
-      }
+      is_donated = input == buf;
+      return is_donated
+                 ? gpu::GpuExecutableBufferAllocator::DonationState::kDonated
+                 : gpu::GpuExecutableBufferAllocator::DonationState::
+                       kNotDonated;
+    };
+    ASSIGN_OR_RETURN(
+        gpu::GpuExecutableBufferAllocator::ResolvedOutputBuffer resolved,
+        allocation_scope->ResolveOutputBuffer(
+            run_options, buffer_allocations, index, output, resolve_donation,
+            gpu_exec->buffer_allocations_debug_summary()));
+    if (resolved.source ==
+        gpu::GpuExecutableBufferAllocator::OutputBufferSource::kDonated) {
+      CHECK(is_donated);
+      return absl::OkStatus();
     }
-
-    if (result_buffer.is_null()) {
-      // The source instruction should have a non-parameter buffer
-      // assigned.
-      result_buffer =
-          buffer_allocations.GetDeviceAddress(output_info.allocation_index);
-    }
-    buffers_in_result.insert(result_buffer);
 
     RawSEDeviceMemory::ConstructDelayed(
-        buf, result_buffer,
+        buf, resolved.buffer,
         tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
             ->local_device_state(),
         memory_allocator);
@@ -2283,19 +2261,14 @@ StreamExecutorGpuClient::RunAsync(
     RETURN_IF_ERROR(set_result({}, 0));
   }
 
-  absl::Status execute_status = allocation_scope->ExecuteWithBufferAllocations(
+  RETURN_IF_ERROR(allocation_scope->ExecuteAndTearDown(
       buffer_allocations, device_ordinal,
       [&](const gpu::BufferAllocations& execution_buffers,
           std::optional<absl::Span<const BufferAllocation::Index>>
               persistent_alloc_indices) {
         return gpu_exec->ExecuteThunks(execution_buffers, run_options,
                                        persistent_alloc_indices);
-      });
-  absl::Status teardown_status = buffer_allocations.TearDown(
-      buffers_in_result, gpu_exec->GetAllocations());
-
-  RETURN_IF_ERROR(execute_status);
-  RETURN_IF_ERROR(teardown_status);
+      }));
 
   std::vector<tsl::AsyncValueRef<RawSEDeviceMemory>> to_be_released;
 

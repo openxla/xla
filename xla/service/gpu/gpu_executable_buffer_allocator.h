@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -73,6 +74,30 @@ class GpuExecutableBufferAllocator {
 
   using AllocationIndexSet = absl::btree_set<BufferAllocation::Index>;
 
+  // Runtime-independent description of an executable output buffer.
+  enum class OutputAliasKind { kNone, kMayAlias, kMustAlias };
+
+  struct OutputBufferSpec {
+    BufferAllocation::Index allocation_index = 0;
+    bool passthrough = false;
+    OutputAliasKind alias_kind = OutputAliasKind::kNone;
+  };
+
+  // Whether a caller can donate the input aliased with an output. Donation is
+  // unavailable for APIs such as ShapedBuffer that do not represent ownership.
+  enum class DonationState { kUnavailable, kNotDonated, kDonated };
+
+  enum class OutputBufferSource { kAssigned, kCopyProtected, kDonated };
+
+  struct ResolvedOutputBuffer {
+    se::DeviceAddressBase buffer;
+    OutputBufferSource source = OutputBufferSource::kAssigned;
+    bool fell_back_to_assigned_buffer = false;
+  };
+
+  using DonationResolver =
+      absl::FunctionRef<DonationState(const BufferAllocation&)>;
+
   // Per-run buffer allocation context created by `CreateExecutionScope`.
   // Callers first use it to build `BufferAllocations` from runtime parameters,
   // constants, temporary buffers, and output buffers, then use it to run the
@@ -101,23 +126,31 @@ class GpuExecutableBufferAllocator {
         const BufferAllocToDeviceMemoryMap* globals,
         se::DeviceAddressAllocator* memory_allocator, int device_ordinal);
 
-    // Copy-protection for an aliased output that was not donated at runtime:
-    // allocates a fresh result buffer for the output at `index`, copies the
-    // contents of the aliased buffer (allocation `allocation`) into it, and
-    // redirects the aliased entry in `buffer_allocations` to the fresh buffer.
-    // Returns the newly allocated result buffer.
-    absl::StatusOr<se::DeviceAddressBase> AllocateCopyProtectedOutputBuffer(
+    // Resolves the device address for an executable output. This validates
+    // must-alias donation, reuses donated buffers, adds copy protection for
+    // non-donated aliased outputs when needed, and records the resolved address
+    // as live for BufferAllocations teardown.
+    absl::StatusOr<ResolvedOutputBuffer> ResolveOutputBuffer(
         const ServiceExecutableRunOptions* run_options,
         BufferAllocations& buffer_allocations, const ShapeIndex& index,
-        const BufferAllocation& allocation, int device_ordinal,
-        se::DeviceAddressAllocator* memory_allocator,
-        absl::FunctionRef<absl::Status(absl::Status)> allocation_error);
+        const OutputBufferSpec& output, DonationResolver resolve_donation,
+        absl::string_view buffer_allocations_debug_summary);
 
     // Runs `execute` with the allocation-address policy for this execution.
     // The base implementation passes the command-buffer-referenced constant
     // allocations as the persistent allocation indices.
     virtual absl::Status ExecuteWithBufferAllocations(
         const BufferAllocations& owning_buffer_allocations, int device_ordinal,
+        absl::FunctionRef<absl::Status(
+            const BufferAllocations&,
+            std::optional<absl::Span<const BufferAllocation::Index>>
+                persistent_alloc_indices)>
+            execute);
+
+    // Executes with the allocation-address policy for this scope, then tears
+    // down all allocations except output addresses resolved by this scope.
+    absl::Status ExecuteAndTearDown(
+        BufferAllocations& owning_buffer_allocations, int device_ordinal,
         absl::FunctionRef<absl::Status(
             const BufferAllocations&,
             std::optional<absl::Span<const BufferAllocation::Index>>
@@ -145,6 +178,12 @@ class GpuExecutableBufferAllocator {
    private:
     friend class GpuExecutableBufferAllocator;
 
+    absl::StatusOr<se::DeviceAddressBase> AllocateCopyProtectedOutputBuffer(
+        const ServiceExecutableRunOptions* run_options,
+        BufferAllocations& buffer_allocations, const ShapeIndex& index,
+        const BufferAllocation& allocation,
+        absl::string_view buffer_allocations_debug_summary);
+
     absl::StatusOr<se::DeviceAddressBase> BufferForAllocation(
         ParameterBufferResolver get_parameter_buffer,
         const BufferAllocToDeviceMemoryMap* globals,
@@ -153,6 +192,7 @@ class GpuExecutableBufferAllocator {
         int64_t arg_idx);
 
     const GpuExecutableBufferAllocator* owner_ = nullptr;
+    std::set<se::DeviceAddressBase> live_output_buffers_;
   };
 
   // Creates the buffer allocator implementing

@@ -743,6 +743,29 @@ cc_library(
 )
 
 xla_cc_test(
+    name = "gpu_executable_buffer_allocator_test",
+    srcs = ["gpu_executable_buffer_allocator_test.cc"],
+    deps = [
+        ":buffer_allocations",
+        ":gpu_executable_buffer_allocator",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/service:buffer_assignment",
+        "//xla/service:service_executable_run_options",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:mock_platform",
+        "//xla/stream_executor:mock_stream",
+        "//xla/stream_executor:platform",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
     name = "gpu_executable_va_remap_allocator_test",
     srcs = ["gpu_executable_va_remap_allocator_test.cc"],
     deps = [

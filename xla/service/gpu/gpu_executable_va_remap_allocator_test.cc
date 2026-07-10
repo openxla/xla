@@ -1188,6 +1188,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
         param_buffer.cref(), allocation.parameter_number()};
   };
   GpuExecutableBufferAllocator::BufferAllocToDeviceMemoryMap globals;
+  const GpuExecutableBufferAllocator::OutputBufferSpec output{
+      /*allocation_index=*/0, /*passthrough=*/false,
+      GpuExecutableBufferAllocator::OutputAliasKind::kMayAlias};
 
   const void* profiled_address = nullptr;
   for (int run = 0; run < 3; ++run) {
@@ -1202,11 +1205,14 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
                              &globals, vmm_allocator.get(),
                              /*device_ordinal=*/0));
     ASSERT_OK_AND_ASSIGN(
-        se::DeviceAddressBase copy_protected,
-        scope->AllocateCopyProtectedOutputBuffer(
-            &service_run_options_, buffer_allocations, /*index=*/{},
-            param_alloc, /*device_ordinal=*/0, vmm_allocator.get(),
-            [](absl::Status status) { return status; }));
+        GpuExecutableBufferAllocator::ResolvedOutputBuffer resolved,
+        scope->ResolveOutputBuffer(
+            &service_run_options_, buffer_allocations, /*index=*/{}, output,
+            [](const BufferAllocation&) {
+              return GpuExecutableBufferAllocator::DonationState::kUnavailable;
+            },
+            /*buffer_allocations_debug_summary=*/"debug summary"));
+    se::DeviceAddressBase copy_protected = resolved.buffer;
     EXPECT_EQ(buffer_allocations.GetDeviceAddress(0).opaque(),
               copy_protected.opaque());
     if (profiled_address == nullptr) {
@@ -1241,11 +1247,14 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
                            &globals, vmm_allocator.get(),
                            /*device_ordinal=*/0));
   ASSERT_OK_AND_ASSIGN(
-      se::DeviceAddressBase copy_protected,
-      scope->AllocateCopyProtectedOutputBuffer(
-          &service_run_options_, buffer_allocations, /*index=*/{}, param_alloc,
-          /*device_ordinal=*/0, vmm_allocator.get(),
-          [](absl::Status status) { return status; }));
+      GpuExecutableBufferAllocator::ResolvedOutputBuffer resolved,
+      scope->ResolveOutputBuffer(
+          &service_run_options_, buffer_allocations, /*index=*/{}, output,
+          [](const BufferAllocation&) {
+            return GpuExecutableBufferAllocator::DonationState::kUnavailable;
+          },
+          /*buffer_allocations_debug_summary=*/"debug summary"));
+  se::DeviceAddressBase copy_protected = resolved.buffer;
   se::MemoryAllocation* raw_allocation =
       vmm_allocator->GetRawAllocation(/*device_ordinal=*/0, copy_protected);
   ASSERT_NE(raw_allocation, nullptr);
@@ -1307,6 +1316,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
         param_buffer.cref(), allocation.parameter_number()};
   };
   GpuExecutableBufferAllocator::BufferAllocToDeviceMemoryMap globals;
+  const GpuExecutableBufferAllocator::OutputBufferSpec output{
+      /*allocation_index=*/0, /*passthrough=*/false,
+      GpuExecutableBufferAllocator::OutputAliasKind::kMayAlias};
 
   // Profile the stable parameter address.
   for (int run = 0; run < 3; ++run) {
@@ -1327,11 +1339,14 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
                            &globals, vmm_allocator.get(),
                            /*device_ordinal=*/0));
   ASSERT_OK_AND_ASSIGN(
-      se::DeviceAddressBase copy_protected,
-      scope->AllocateCopyProtectedOutputBuffer(
-          &service_run_options_, buffer_allocations, /*index=*/{}, param_alloc,
-          /*device_ordinal=*/0, vmm_allocator.get(),
-          [](absl::Status status) { return status; }));
+      GpuExecutableBufferAllocator::ResolvedOutputBuffer resolved,
+      scope->ResolveOutputBuffer(
+          &service_run_options_, buffer_allocations, /*index=*/{}, output,
+          [](const BufferAllocation&) {
+            return GpuExecutableBufferAllocator::DonationState::kUnavailable;
+          },
+          /*buffer_allocations_debug_summary=*/"debug summary"));
+  se::DeviceAddressBase copy_protected = resolved.buffer;
   EXPECT_NE(copy_protected.opaque(), param_buffer.cref().opaque());
   EXPECT_EQ(buffer_allocations.GetDeviceAddress(0).opaque(),
             copy_protected.opaque());
