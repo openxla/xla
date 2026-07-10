@@ -194,7 +194,7 @@ const HloInstruction* GetScaledDotFromFusion(const HloInstruction& instr) {
 
 }  // namespace
 
-bool HipblasLtBackend::IsSupported(const HloInstruction& instr) {
+bool HipblasLtBackend::IsSupported(const HloInstruction& instr) const {
   if (IsCublasLtMatmul(instr) || IsCublasLtMatmulF8(instr) ||
       IsCublasLtGroupedMatmul(instr)) {
     return true;
@@ -375,7 +375,7 @@ HipblasLtBackend::GetDefaultConfig(const HloInstruction& instr) {
 }
 
 absl::Status HipblasLtBackend::ApplyConfig(HloInstruction& instr,
-                                           const BackendConfig& config) {
+                                           const BackendConfig& config) const {
   if (!config.has_gemm()) {
     return absl::InvalidArgumentError(
         "Expected GemmKey config for HipblasLtBackend.");

@@ -54,7 +54,7 @@ class CpuCodegenBackend : public CodegenBackend {
 
   absl::StatusOr<std::unique_ptr<Executable>> Compile(
       const HloInstruction& hlo_instruction,
-      const xla::BackendConfig& config) override {
+      const xla::BackendConfig& config) const override {
     std::unique_ptr<HloModule> hlo_module =
         ExtractInstructionIntoNewModule(hlo_instruction);
 

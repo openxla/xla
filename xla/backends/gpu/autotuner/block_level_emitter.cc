@@ -186,7 +186,7 @@ BlockLevelEmitterBackend::GetDefaultConfig(const HloInstruction& instr) {
 }
 
 absl::Status BlockLevelEmitterBackend::ApplyConfig(
-    HloInstruction& instr, const BackendConfig& config) {
+    HloInstruction& instr, const BackendConfig& config) const {
   // Object nesting structure:
   // HloInstruction
   // └── GpuBackendConfig
@@ -213,7 +213,7 @@ absl::Status BlockLevelEmitterBackend::ApplyConfig(
   return absl::OkStatus();
 }
 
-bool BlockLevelEmitterBackend::IsSupported(const HloInstruction& instr) {
+bool BlockLevelEmitterBackend::IsSupported(const HloInstruction& instr) const {
   if (instr.opcode() != HloOpcode::kFusion) {
     return false;
   }

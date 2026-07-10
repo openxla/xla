@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/runtime/object_pool.h"
 #include "xla/service/compiler.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/stream_executor/device_address_allocator.h"
@@ -69,14 +70,14 @@ class AutotunerPass : public HloModulePass {
       absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>()>;
 
   static absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
-  GetGpuAutotunerBackends(se::StreamExecutor* stream_exec,
-                          se::DeviceAddressAllocator* device_allocator,
-                          const Compiler::GpuTargetConfig* target_config,
-                          const AliasInfo* alias_info,
-                          const DebugOptions& debug_options,
-                          mlir::MLIRContext* mlir_context,
-                          HloCostAnalysis::ShapeSizeFunction shape_size_fn,
-                          Compiler* compiler, se::PlatformId platform_id);
+  GetGpuAutotunerBackends(
+      se::StreamExecutor* stream_exec,
+      se::DeviceAddressAllocator* device_allocator,
+      const Compiler::GpuTargetConfig* target_config,
+      const AliasInfo* alias_info, const DebugOptions& debug_options,
+      ObjectPool<std::unique_ptr<mlir::MLIRContext>>* mlir_context_pool,
+      HloCostAnalysis::ShapeSizeFunction shape_size_fn, Compiler* compiler,
+      se::PlatformId platform_id);
 
   // Note: the target_config must outlive the pass.
   static absl::StatusOr<std::unique_ptr<AutotunerPass>> Create(
@@ -84,7 +85,7 @@ class AutotunerPass : public HloModulePass {
       const se::GpuComputeCapability& gpu_version,
       se::StreamExecutor* stream_executor, tsl::thread::ThreadPool* thread_pool,
       const Compiler::GpuTargetConfig* target_config,
-      const AliasInfo* alias_info, mlir::MLIRContext* mlir_context,
+      const AliasInfo* alias_info,
       HloCostAnalysis::ShapeSizeFunction shape_size_fn,
       se::DeviceAddressAllocator* allocator = nullptr,
       MultiProcessKeyValueStore key_value_store = MultiProcessKeyValueStore());

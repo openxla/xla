@@ -270,7 +270,7 @@ absl::Status ApplyConfigToFusedMIOpenCustomCall(
 
 }  // namespace
 
-bool MIOpenBackend::IsSupported(const HloInstruction& instr) {
+bool MIOpenBackend::IsSupported(const HloInstruction& instr) const {
   return IsCustomCallToDnnConvolution(instr);
 }
 
@@ -459,7 +459,7 @@ MIOpenBackend::GetSupportedConfigs(const HloInstruction& instr) {
 }
 
 absl::Status MIOpenBackend::ApplyConfig(HloInstruction& instr,
-                                        const BackendConfig& config) {
+                                        const BackendConfig& config) const {
   if (!config.has_algorithm()) {
     return absl::InvalidArgumentError(
         "Expected AlgorithmProto config for MIOpenBackend.");

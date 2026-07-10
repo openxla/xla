@@ -78,7 +78,7 @@ absl::StatusOr<BlasLt::Epilogue> AsBlasLtEpilogue(
 
 }  // namespace
 
-bool CublasLtBackend::IsSupported(const HloInstruction& instr) {
+bool CublasLtBackend::IsSupported(const HloInstruction& instr) const {
   return IsCublasLtMatmul(instr) || IsCublasLtMatmulF8(instr);
 }
 
@@ -148,7 +148,7 @@ CublasLtBackend::GetDefaultConfig(const HloInstruction& instr) {
 }
 
 absl::Status CublasLtBackend::ApplyConfig(HloInstruction& instr,
-                                          const BackendConfig& config) {
+                                          const BackendConfig& config) const {
   if (!config.has_gemm()) {
     return absl::InvalidArgumentError(
         "Expected GemmKey config for CublasLtBackend.");

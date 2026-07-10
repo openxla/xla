@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_AUTOTUNER_FISSION_BACKEND_H_
 #define XLA_BACKENDS_GPU_AUTOTUNER_FISSION_BACKEND_H_
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -33,6 +34,7 @@ limitations under the License.
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/runtime/object_pool.h"
 #include "xla/service/compiler.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/xla.pb.h"
@@ -58,18 +60,23 @@ inline autotuner::Backend GetFissionBackend(autotuner::Backend backend) {
 // identical.
 class FissionBackend : public GpuCodegenBackend {
  public:
-  FissionBackend(const DebugOptions* debug_options, Compiler* compiler,
-                 const Compiler::GpuTargetConfig* target_config,
-                 std::unique_ptr<GpuCodegenBackend> backend,
-                 std::unique_ptr<HloPassPipeline> rewriter_pipeline,
-                 const AliasInfo* alias_info, mlir::MLIRContext* mlir_context,
-                 stream_executor::StreamExecutor* stream_executor = nullptr)
+  using RewriterPipelineFactory =
+      std::function<std::unique_ptr<HloPassPipeline>()>;
+
+  FissionBackend(
+      const DebugOptions* debug_options, Compiler* compiler,
+      const Compiler::GpuTargetConfig* target_config,
+      std::unique_ptr<GpuCodegenBackend> backend,
+      RewriterPipelineFactory rewriter_pipeline_factory,
+      const AliasInfo* alias_info,
+      ObjectPool<std::unique_ptr<mlir::MLIRContext>>* mlir_context_pool,
+      stream_executor::StreamExecutor* stream_executor = nullptr)
       : GpuCodegenBackend(GetFissionBackend(backend->backend()), debug_options,
                           compiler, target_config, stream_executor),
-        rewriter_pipeline_(std::move(rewriter_pipeline)),
+        rewriter_pipeline_factory_(std::move(rewriter_pipeline_factory)),
         codegen_backend_(std::move(backend)),
         alias_info_(alias_info),
-        mlir_context_(mlir_context) {}
+        mlir_context_pool_(mlir_context_pool) {}
   ~FissionBackend() override = default;
 
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
@@ -80,27 +87,27 @@ class FissionBackend : public GpuCodegenBackend {
 
   absl::StatusOr<std::unique_ptr<HloModule>> RunHloPasses(
       std::unique_ptr<HloModule> hlo_module,
-      const Compiler::CompileOptions& options) override;
+      const Compiler::CompileOptions& options) const override;
 
   absl::Status ApplyConfig(HloInstruction& instr,
-                           const BackendConfig& config) override;
+                           const BackendConfig& config) const override;
 
-  bool IsSupported(const HloInstruction& instr) override;
+  bool IsSupported(const HloInstruction& instr) const override;
   std::string version() const override { return codegen_backend_->version(); }
 
  private:
   absl::StatusOr<std::unique_ptr<HloModule>> GetFissionedAndRewrittenModule(
-      const HloInstruction& fusion_instr);
+      const HloInstruction& fusion_instr) const;
   absl::StatusOr<std::vector<HloInstruction*>> FindSupportedInstructions(
-      const HloModule* module);
+      const HloModule* module) const;
   // Runs priority fusion to fuse prologues and epilogue after the fissioned
   // module has been generated.
-  absl::Status RunPriorityFusion(HloModule* module);
+  absl::Status RunPriorityFusion(HloModule* module) const;
 
-  std::unique_ptr<HloPassPipeline> rewriter_pipeline_;
-  std::unique_ptr<GpuCodegenBackend> codegen_backend_;
-  const AliasInfo* alias_info_;
-  mlir::MLIRContext* mlir_context_;
+  const RewriterPipelineFactory rewriter_pipeline_factory_;
+  const std::unique_ptr<GpuCodegenBackend> codegen_backend_;
+  const AliasInfo* const alias_info_;
+  ObjectPool<std::unique_ptr<mlir::MLIRContext>>* const mlir_context_pool_;
 };
 
 }  // namespace xla::gpu

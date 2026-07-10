@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/transforms/priority_fusion.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
@@ -124,18 +125,20 @@ absl::StatusOr<std::unique_ptr<BackendConfig>> FissionBackend::GetDefaultConfig(
   return codegen_backend_->GetDefaultConfig(*supported_instrs[0]);
 }
 
-absl::Status FissionBackend::RunPriorityFusion(HloModule* module) {
+absl::Status FissionBackend::RunPriorityFusion(HloModule* module) const {
   HloCostAnalysis::Options priority_fusion_options;
   priority_fusion_options.count_multiple_input_accesses = true;
+  ASSIGN_OR_RETURN(BorrowedMlirContext mlir_context,
+                   mlir_context_pool_->GetOrCreate());
   PriorityFusion priority_fusion(
       /*thread_pool=*/nullptr, target_config().device_description, alias_info_,
-      priority_fusion_options, mlir_context_);
+      priority_fusion_options, mlir_context->get());
   return priority_fusion.Run(module).status();
 }
 
 absl::StatusOr<std::unique_ptr<HloModule>> FissionBackend::RunHloPasses(
     std::unique_ptr<HloModule> hlo_module,
-    const Compiler::CompileOptions& options) {
+    const Compiler::CompileOptions& options) const {
   ASSIGN_OR_RETURN(
       std::unique_ptr<HloModule> module,
       codegen_backend_->RunHloPasses(std::move(hlo_module), options));
@@ -145,7 +148,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> FissionBackend::RunHloPasses(
 }
 
 absl::Status FissionBackend::ApplyConfig(HloInstruction& instr,
-                                         const BackendConfig& config) {
+                                         const BackendConfig& config) const {
   HloModule* module = instr.GetModule();
   ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
                    GetFissionedAndRewrittenModule(instr));
@@ -181,13 +184,13 @@ absl::Status FissionBackend::ApplyConfig(HloInstruction& instr,
   return module->RemoveUnusedComputations();
 }
 
-bool FissionBackend::IsSupported(const HloInstruction& instr) {
+bool FissionBackend::IsSupported(const HloInstruction& instr) const {
   return instr.opcode() == HloOpcode::kFusion;
 }
 
 absl::StatusOr<std::unique_ptr<HloModule>>
 FissionBackend::GetFissionedAndRewrittenModule(
-    const HloInstruction& fusion_instr) {
+    const HloInstruction& fusion_instr) const {
   const auto* fusion = Cast<HloFusionInstruction>(&fusion_instr);
   std::unique_ptr<HloModule> hlo_module =
       ExtractComputationIntoNewModule(*fusion->called_computation());
@@ -200,12 +203,14 @@ FissionBackend::GetFissionedAndRewrittenModule(
   DebugOptions options = debug_options();
   AdjustDebugOptionsForAutotuning(options);
   hlo_module->mutable_config().set_debug_options(options);
-  RETURN_IF_ERROR(rewriter_pipeline_->Run(hlo_module.get()).status());
+  std::unique_ptr<HloPassPipeline> rewriter_pipeline =
+      rewriter_pipeline_factory_();
+  RETURN_IF_ERROR(rewriter_pipeline->Run(hlo_module.get()).status());
   return hlo_module;
 }
 
 absl::StatusOr<std::vector<HloInstruction*>>
-FissionBackend::FindSupportedInstructions(const HloModule* module) {
+FissionBackend::FindSupportedInstructions(const HloModule* module) const {
   std::vector<HloInstruction*> supported_instructions;
   for (HloComputation* computation : module->computations()) {
     for (HloInstruction* instruction : computation->instructions()) {

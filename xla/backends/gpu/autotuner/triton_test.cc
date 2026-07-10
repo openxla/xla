@@ -33,11 +33,12 @@ limitations under the License.
 #include "google/protobuf/text_format.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/backends/gpu/target_config/target_config.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/runtime/object_pool.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
@@ -131,9 +132,9 @@ class TritonBackendTest : public HloHardwareIndependentTestBase,
         target_config_(stream_executor_),
         alias_info_(stream_executor_->GetDeviceDescription()),
         compiler_(Compiler::GetForPlatform(platform_->id()).value()),
+        mlir_context_pool_(CreateMlirContext),
         backend_(&debug_options_, compiler_.get(), &target_config_,
-                 &alias_info_, &mlir_context_) {
-    RegisterSymbolicExprStorage(&mlir_context_);
+                 &alias_info_, &mlir_context_pool_) {
     debug_options_.set_xla_gpu_experimental_enable_tiling_propagation(
         GetParam());
   }
@@ -152,8 +153,8 @@ class TritonBackendTest : public HloHardwareIndependentTestBase,
   Compiler::GpuTargetConfig target_config_;
   GpuAliasInfo alias_info_;
   std::unique_ptr<Compiler> compiler_;
+  ObjectPool<std::unique_ptr<mlir::MLIRContext>> mlir_context_pool_;
   TritonBackend backend_;
-  mlir::MLIRContext mlir_context_;
 };
 
 TEST_P(TritonBackendTest, GetSupportedConfigs) {

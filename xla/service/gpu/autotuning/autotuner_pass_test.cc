@@ -37,11 +37,12 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/cublaslt.h"
 #include "xla/backends/gpu/autotuner/cudnn.h"
 #include "xla/backends/gpu/autotuner/triton.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
+#include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/runtime/object_pool.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/autotuning/autotuner_cache.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -133,7 +134,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotuned) {
           std::move(get_backends_fn), module->config().debug_options(),
           target_config.device_description.gpu_compute_capability(),
           stream_executor_, &thread_pool, &target_config,
-          /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
+          /*alias_info=*/nullptr,
           /*shape_size_fn=*/[](const Shape& shape) { return 0; },
           allocator_.get()));
   EXPECT_THAT(pass->Run(module.get(), /*execution_threads=*/{}),
@@ -180,7 +181,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotunedAndCached) {
             std::move(get_backends_fn), module->config().debug_options(),
             target_config.device_description.gpu_compute_capability(),
             stream_executor_, &thread_pool, &target_config,
-            /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
+            /*alias_info=*/nullptr,
             /*shape_size_fn=*/[](const Shape& shape) { return 0; },
             allocator_.get()));
     EXPECT_THAT(pass->Run(module.get(), /*execution_threads=*/{}),
@@ -228,7 +229,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotunedAndCached) {
             std::move(get_backends_fn2), module_2->config().debug_options(),
             target_config.device_description.gpu_compute_capability(),
             stream_executor_, &thread_pool, &target_config,
-            /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
+            /*alias_info=*/nullptr,
             /*shape_size_fn=*/[](const Shape& shape) { return 0; },
             allocator_.get()));
     EXPECT_THAT(pass2->Run(module_2.get(), /*execution_threads=*/{}),
@@ -281,7 +282,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotunedWithCacheOnly) {
             std::move(get_backends_fn), module->config().debug_options(),
             target_config.device_description.gpu_compute_capability(),
             stream_executor_, &thread_pool, &target_config,
-            /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
+            /*alias_info=*/nullptr,
             /*shape_size_fn=*/[](const Shape& shape) { return 0; },
             allocator_.get()));
     EXPECT_THAT(pass->Run(module.get(), /*execution_threads=*/{}),
@@ -314,7 +315,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotunedWithCacheOnly) {
             std::move(get_backends_fn2), module_2->config().debug_options(),
             target_config.device_description.gpu_compute_capability(),
             /*stream_executor=*/nullptr, &thread_pool, &target_config,
-            /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
+            /*alias_info=*/nullptr,
             /*shape_size_fn=*/[](const Shape& shape) { return 0; },
             /*allocator=*/nullptr));
     EXPECT_THAT(pass2->Run(module_2.get(), /*execution_threads=*/{}),
@@ -359,7 +360,7 @@ TEST_F(AutotunerPassTest, DevicelessUsesDefaultConfigIfNoCache) {
           std::move(get_backends_fn), module->config().debug_options(),
           target_config.device_description.gpu_compute_capability(),
           /*stream_executor=*/nullptr, &thread_pool, &target_config,
-          /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
+          /*alias_info=*/nullptr,
           /*shape_size_fn=*/[](const Shape& shape) { return 0; },
           /*allocator=*/nullptr));
   EXPECT_THAT(pass->Run(module.get(), /*execution_threads=*/{}),
@@ -421,7 +422,7 @@ ENTRY %main (arg0: f32[100,100], arg1: f32[100,100]) -> f32[100,100] {
           std::move(get_backends_fn), module->config().debug_options(),
           target_config.device_description.gpu_compute_capability(),
           stream_executor_, &thread_pool, &target_config,
-          /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
+          /*alias_info=*/nullptr,
           /*shape_size_fn=*/[](const Shape& shape) { return 0; },
           allocator_.get()));
   EXPECT_THAT(pass->Run(module.get(), /*execution_threads=*/{}),
@@ -529,13 +530,13 @@ TEST_F(AutotunerFlagsTest, GetGpuAutotunerBackendsRespectsDeterminism) {
 
   GpuCompiler::GpuTargetConfig target_config(stream_executor_);
   GpuAliasInfo alias_info(stream_executor_->GetDeviceDescription());
-  mlir::MLIRContext mlir_context;
-  RegisterSymbolicExprStorage(&mlir_context);
+  ObjectPool<std::unique_ptr<mlir::MLIRContext>> mlir_context_pool(
+      CreateMlirContext);
 
   ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<CodegenBackend>> backends,
                        AutotunerPass::GetGpuAutotunerBackends(
                            stream_executor_, allocator_.get(), &target_config,
-                           &alias_info, debug_options, &mlir_context,
+                           &alias_info, debug_options, &mlir_context_pool,
                            /*shape_size_fn=*/[](const Shape&) { return 0; },
                            &compiler_, stream_executor_->GetPlatform()->id()));
 
@@ -584,7 +585,7 @@ TEST_F(AutotunerPassTest, CublasLtSelectFirstConfig) {
           std::move(get_backends_fn), module->config().debug_options(),
           target_config.device_description.gpu_compute_capability(),
           stream_executor_, &thread_pool, &target_config,
-          /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
+          /*alias_info=*/nullptr,
           /*shape_size_fn=*/[](const Shape& shape) { return 0; },
           allocator_.get()));
 
@@ -645,12 +646,12 @@ TEST_F(AutotunerPassTest, TritonSelectFirstConfig) {
       se::GpuComputeCapability{se::CudaComputeCapability::Ampere()});
 
   GpuAliasInfo alias_info(stream_executor_->GetDeviceDescription());
-  mlir::MLIRContext mlir_context;
-  RegisterSymbolicExprStorage(&mlir_context);
+  ObjectPool<std::unique_ptr<mlir::MLIRContext>> mlir_context_pool(
+      CreateMlirContext);
 
   auto triton_backend = std::make_unique<TritonBackend>(
       &module->config().debug_options(), &compiler_, &target_config,
-      &alias_info, &mlir_context);
+      &alias_info, &mlir_context_pool);
 
   auto fusion = module->entry_computation()->GetInstructionWithName("fusion");
   TF_ASSERT_OK_AND_ASSIGN(auto supported_configs,
@@ -671,7 +672,6 @@ TEST_F(AutotunerPassTest, TritonSelectFirstConfig) {
           std::move(get_backends_fn), module->config().debug_options(),
           target_config.device_description.gpu_compute_capability(),
           stream_executor_, &thread_pool, &target_config, &alias_info,
-          &mlir_context,
           /*shape_size_fn=*/[](const Shape& shape) { return 0; },
           allocator_.get()));
 
@@ -746,7 +746,7 @@ TEST_F(AutotunerPassTest, CudnnSelectFirstConfig) {
           std::move(get_backends_fn), module->config().debug_options(),
           target_config.device_description.gpu_compute_capability(),
           stream_executor_, &thread_pool, &target_config,
-          /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
+          /*alias_info=*/nullptr,
           /*shape_size_fn=*/[](const Shape& shape) { return 0; },
           allocator_.get()));
 

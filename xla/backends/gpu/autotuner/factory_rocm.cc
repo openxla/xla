@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/scaled_dot_rewriter.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/runtime/object_pool.h"
 #include "xla/service/compiler.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/stream_executor/device_description.h"
@@ -81,11 +82,13 @@ std::vector<std::unique_ptr<CodegenBackend>> GetCodegenBackendsForROCm(
     stream_executor::DeviceAddressAllocator* device_allocator,
     const DebugOptions* debug_options, Compiler* compiler,
     const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
-    MLIRContext* mlir_context, HloCostAnalysis::ShapeSizeFunction shape_size_fn,
+    ObjectPool<std::unique_ptr<MLIRContext>>* mlir_context_pool,
+    HloCostAnalysis::ShapeSizeFunction shape_size_fn,
     absl::Span<const autotuner::Backend> backend_allowlist) {
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::make_unique<TritonBackend>(
-      debug_options, compiler, target_config, alias_info, mlir_context));
+      debug_options, compiler, target_config, alias_info,
+      mlir_context_pool));
   backends.push_back(
       std::make_unique<MIOpenBackend>(stream_executor, debug_options, compiler,
                                       target_config, device_allocator));
@@ -95,9 +98,11 @@ std::vector<std::unique_ptr<CodegenBackend>> GetCodegenBackendsForROCm(
       debug_options, compiler, target_config,
       std::make_unique<HipblasLtBackend>(stream_executor, debug_options,
                                          compiler, target_config),
-      GetGemmRewriterPipeline(target_config->device_description,
-                              absl::Span<const DType>(kAllDTypes)),
-      alias_info, mlir_context));
+      [device_description = target_config->device_description] {
+        return GetGemmRewriterPipeline(device_description,
+                                       absl::Span<const DType>(kAllDTypes));
+      },
+      alias_info, mlir_context_pool));
   backends.push_back(std::make_unique<NativeEmitterBackend>(
       debug_options, compiler, target_config));
   backends.push_back(std::make_unique<BlockLevelEmitterBackend>(

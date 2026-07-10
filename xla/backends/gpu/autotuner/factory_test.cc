@@ -23,9 +23,10 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/hlo/analysis/alias_info.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/runtime/object_pool.h"
 #include "xla/service/compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape.h"
@@ -82,13 +83,13 @@ TEST_P(FactoryTest, GetCodegenBackends) {
     TF_ASSERT_OK_AND_ASSIGN(
         const GetCodegenBackends::Type& get_codegen_backends,
         registry.FindObject<GetCodegenBackends>(platform_->id()));
-    mlir::MLIRContext mlir_context;
+    ObjectPool<std::unique_ptr<mlir::MLIRContext>> mlir_context_pool(
+        CreateMlirContext);
     AliasInfo alias_info;
-    xla::RegisterSymbolicExprStorage(&mlir_context);
     std::vector<std::unique_ptr<CodegenBackend>> backends =
         get_codegen_backends(
             stream_executor_, &allocator_, &debug_options_, compiler_.get(),
-            &target_config_, &alias_info, &mlir_context,
+            &target_config_, &alias_info, &mlir_context_pool,
             /*shape_size_fn=*/[](const Shape&) { return 0; }, GetParam().names);
     EXPECT_EQ(backends.size(), GetParam().expected_num_backends);
   } else {

@@ -1855,7 +1855,8 @@ absl::Status GpuCompiler::OptimizeHloModule(
     RETURN_IF_ERROR(AddAutotunerPass(
         &pipeline, hlo_module, gpu_version, options, thread_pool.get_mutable(),
         stream_exec, &gpu_topology.gpu_target_config(), alias_info,
-        mlir_context, ShapeSizeBytesFunction(), options.key_value_store));
+        mlir_context, &mlir_context_pool_, ShapeSizeBytesFunction(),
+        options.key_value_store));
 
     RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
     mlir_context_pool_.Clear();
@@ -3507,6 +3508,7 @@ absl::Status GpuCompiler::AddAutotunerPass(
     tsl::thread::ThreadPool* thread_pool, se::StreamExecutor* stream_exec,
     const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
     mlir::MLIRContext* mlir_context,
+    ObjectPool<std::unique_ptr<mlir::MLIRContext>>* mlir_context_pool,
     HloCostAnalysis::ShapeSizeFunction shape_size_fn,
     const MultiProcessKeyValueStore& key_value_store) {
   const DebugOptions& debug_options = hlo_module->config().debug_options();
@@ -3514,15 +3516,15 @@ absl::Status GpuCompiler::AddAutotunerPass(
       [&]() -> absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>> {
     return AutotunerPass::GetGpuAutotunerBackends(
         stream_exec, options.device_allocator, target_config, alias_info,
-        debug_options, mlir_context, shape_size_fn, this, PlatformId());
+        debug_options, mlir_context_pool, shape_size_fn, this, PlatformId());
   };
 
   ASSIGN_OR_RETURN(
       std::unique_ptr<AutotunerPass> autotuner_pass,
       AutotunerPass::Create(get_backends_fn, debug_options, gpu_version,
                             stream_exec, thread_pool, target_config, alias_info,
-                            mlir_context, shape_size_fn,
-                            options.device_allocator, key_value_store));
+                            shape_size_fn, options.device_allocator,
+                            key_value_store));
   pipeline->AddPass(std::move(autotuner_pass));
   // Post autotuning transformations needed after autotuning happens.
   pipeline->AddPass<ConvertTritonGemmConfig>(target_config->device_description,

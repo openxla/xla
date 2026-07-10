@@ -58,14 +58,14 @@ class HipblasLtBackend : public GpuCodegenBackend {
       const HloInstruction& instr) override;
 
   absl::Status ApplyConfig(HloInstruction& instr,
-                           const BackendConfig& config) override;
+                           const BackendConfig& config) const override;
 
   std::string version() const override {
     return target_config().device_description.runtime_version().ToString();
   }
 
  private:
-  bool IsSupported(const HloInstruction& instr) override;
+  bool IsSupported(const HloInstruction& instr) const override;
 };
 
 }  // namespace gpu
