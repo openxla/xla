@@ -776,6 +776,24 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "execution_watchdog",
+    srcs = ["execution_watchdog.cc"],
+    hdrs = ["execution_watchdog.h"],
+    deps = [
+        ":gpu_executable_run_options",
+        "//xla:status_macros",
+        "//xla:xla_proto_cc",
+        "//xla/runtime:hang_watchdog",
+        "//xla/stream_executor:stream",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/time",
+    ],
+)
+
+cc_library(
     name = "gpu_executable",
     srcs = [
         "gpu_executable.cc",
@@ -790,6 +808,7 @@ cc_library(
         ":backend_configs_cc",
         ":buffer_allocations",
         ":dense_data_intermediate",
+        ":execution_watchdog",
         ":gpu_executable_buffer_allocator",
         ":gpu_executable_proto_cc",
         ":gpu_executable_run_options",
@@ -828,7 +847,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/runtime:device_id",
-        "//xla/runtime:hang_watchdog",
         "//xla/service:buffer_assignment",
         "//xla/service:collective_ops_utils",
         "//xla/service:computation_layout",
@@ -902,6 +920,20 @@ tf_proto_library(
         "//xla/service/cpu:executable_proto",
         "//xla/stream_executor:device_description_proto",
         "//xla/stream_executor/abi:executable_abi_version_proto",
+    ],
+)
+
+xla_cc_test(
+    name = "execution_watchdog_test",
+    srcs = ["execution_watchdog_test.cc"],
+    deps = [
+        ":execution_watchdog",
+        ":gpu_executable_run_options",
+        "//xla:xla_proto_cc",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
