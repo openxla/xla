@@ -371,16 +371,35 @@ absl::StatusOr<std::vector<uint64_t>> ResolvePeerAddressesV3(
     RETURN_IF_ERROR(ValidateByteRange(
         buffer_offset, buffer.size(), local_symmetric_address.size(),
         absl::StrFormat("Peer region %d containing XLA buffer", region_index)));
+    ASSIGN_OR_RETURN(
+        uint64_t local_symmetric_buffer_address,
+        AddAddressOffset(local_symmetric_address.opaque(), buffer_offset,
+                         absl::StrFormat("peer region %d XLA symmetric buffer",
+                                         region_index)));
+    if (local_symmetric_buffer_address !=
+        reinterpret_cast<uintptr_t>(buffer.opaque())) {
+      return absl::FailedPreconditionError(absl::StrFormat(
+          "Peer region %d symmetric-memory backing address 0x%x does not "
+          "match the FFI buffer 0x%x",
+          region_index, local_symmetric_buffer_address,
+          reinterpret_cast<uintptr_t>(buffer.opaque())));
+    }
     if (region_offset > std::numeric_limits<uint64_t>::max() - buffer_offset) {
       return absl::InvalidArgumentError(absl::StrFormat(
           "Offset overflow while resolving peer region %d", region_index));
     }
     uint64_t offset_in_symmetric_memory = buffer_offset + region_offset;
 
-    size_t row_begin = peer_addresses.size();
     for (size_t peer = 0; peer < clique_key.num_devices(); ++peer) {
-      ASSIGN_OR_RETURN(se::DeviceAddressBase peer_base,
-                       symmetric_memory->peer_addr(RankId(peer)));
+      se::DeviceAddressBase peer_base;
+      if (peer == static_cast<size_t>(rank.value())) {
+        // NCCL can return a distinct virtual alias for the local rank from
+        // ncclGetPeerDevicePointer. Preserve the actual FFI buffer address in
+        // the local slot; it is the address XLA uses for ordinary dataflow.
+        peer_base = local_symmetric_address;
+      } else {
+        ASSIGN_OR_RETURN(peer_base, symmetric_memory->peer_addr(RankId(peer)));
+      }
       RETURN_IF_ERROR(ValidateByteRange(
           offset_in_symmetric_memory, region_size, peer_base.size(),
           absl::StrFormat("Peer region %d rank %d", region_index, peer)));
@@ -396,19 +415,6 @@ absl::StatusOr<std::vector<uint64_t>> ResolvePeerAddressesV3(
             region_index, peer, peer_address, alignment));
       }
       peer_addresses.push_back(peer_address);
-    }
-
-    ASSIGN_OR_RETURN(
-        uint64_t local_buffer_address,
-        AddAddressOffset(
-            buffer.opaque(), region_offset,
-            absl::StrFormat("peer region %d local buffer", region_index)));
-    uint64_t resolved_local = peer_addresses[row_begin + rank.value()];
-    if (resolved_local != local_buffer_address) {
-      return absl::FailedPreconditionError(absl::StrFormat(
-          "Peer region %d local address mismatch: symmetric memory resolved "
-          "0x%x but the FFI buffer is 0x%x",
-          region_index, resolved_local, local_buffer_address));
     }
   }
 
@@ -609,10 +615,23 @@ absl::StatusOr<std::shared_ptr<BarrierResourcesV3>> InitializeBarrier(
   // clique, while the locked shared pointer keeps it alive through deferred
   // stream completion cleanup. NCCL's implementation also retains its shared
   // communicator state. Both handles are released before backing allocations.
+  se::DeviceAddressBase barrier_backing = resources->symmetric_memory->addr();
+  if (barrier_backing.opaque() != signal_buffer.opaque() ||
+      barrier_backing.size() < signal_buffer.size()) {
+    return absl::FailedPreconditionError(
+        "CuTeDSL collective barrier symmetric-memory backing address does not "
+        "match its XLA allocation");
+  }
+
   resources->peer_addresses.reserve(prepared.clique_size);
   for (int32_t peer = 0; peer < prepared.clique_size; ++peer) {
-    ASSIGN_OR_RETURN(se::DeviceAddressBase peer_address,
-                     resources->symmetric_memory->peer_addr(RankId(peer)));
+    se::DeviceAddressBase peer_address;
+    if (peer == prepared.rank.value()) {
+      peer_address = signal_buffer;
+    } else {
+      ASSIGN_OR_RETURN(peer_address,
+                       resources->symmetric_memory->peer_addr(RankId(peer)));
+    }
     if (peer_address.is_null() || peer_address.size() < signal_buffer.size()) {
       return absl::FailedPreconditionError(absl::StrFormat(
           "CuTeDSL collective barrier peer address for rank %d is unavailable "
@@ -621,12 +640,6 @@ absl::StatusOr<std::shared_ptr<BarrierResourcesV3>> InitializeBarrier(
     }
     resources->peer_addresses.push_back(
         peer_address.GetByteSlice(0, signal_buffer.size()));
-  }
-  if (resources->peer_addresses[prepared.rank.value()].opaque() !=
-      signal_buffer.opaque()) {
-    return absl::FailedPreconditionError(
-        "CuTeDSL collective barrier local symmetric address does not match "
-        "its backing allocation");
   }
   return resources;
 }

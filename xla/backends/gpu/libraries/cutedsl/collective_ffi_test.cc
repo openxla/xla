@@ -1037,6 +1037,37 @@ TEST(CollectiveFfiPeerAddressesTest,
                                       AddressValue(peer1.bytes.data(), 96)));
 }
 
+TEST(CollectiveFfiPeerAddressesTest, UsesFfiAddressForLocalPeerAlias) {
+  Storage local;
+  Storage local_peer_alias;
+  std::array<se::DeviceAddressBase, 1> allocations = {local.address()};
+  BufferAllocations buffer_allocations(allocations, /*device_ordinal=*/0,
+                                       /*memory_allocator=*/nullptr);
+
+  GpuCliqueKey clique_key({kDevice0}, /*num_local_participants=*/1);
+  auto symmetric = std::make_shared<FakeSymmetricMemory>(
+      local.address(),
+      std::vector<se::DeviceAddressBase>{local_peer_alias.address()});
+  absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
+      symmetric_memories;
+  symmetric_memories.emplace(std::make_pair(clique_key, 0), symmetric);
+  CollectiveMemory collective_memory(
+      buffer_allocations, std::move(symmetric_memories),
+      /*mcast_memories=*/{}, /*peer_memories=*/{});
+
+  std::array<PeerRegionV3, 1> regions = {
+      Region(/*offset=*/16, /*size=*/32, /*alignment=*/16)};
+  std::array<se::DeviceAddressBase, 1> buffers = {
+      local.address().GetByteSlice(/*offset_bytes=*/32, /*size_bytes=*/96)};
+
+  absl::StatusOr<std::vector<uint64_t>> addresses =
+      internal::ResolvePeerAddressesV3(clique_key, RankId(0), regions, buffers,
+                                       collective_memory);
+
+  ASSERT_THAT(addresses, IsOk());
+  EXPECT_THAT(*addresses, ElementsAre(AddressValue(local.bytes.data(), 48)));
+}
+
 TEST(CollectiveFfiPeerAddressesTest, RejectsMismatchedRegionAndBufferCounts) {
   Storage local;
   std::array<se::DeviceAddressBase, 1> allocations = {local.address()};
@@ -1197,7 +1228,7 @@ TEST(CollectiveFfiPeerAddressesTest, RejectsMisalignedPeerAddress) {
                        HasSubstr("does not meet required alignment")));
 }
 
-TEST(CollectiveFfiPeerAddressesTest, RejectsLocalAddressMismatch) {
+TEST(CollectiveFfiPeerAddressesTest, RejectsSymmetricBackingAddressMismatch) {
   Storage local;
   Storage different_local;
   std::array<se::DeviceAddressBase, 1> allocations = {local.address()};
@@ -1205,7 +1236,7 @@ TEST(CollectiveFfiPeerAddressesTest, RejectsLocalAddressMismatch) {
                                        /*memory_allocator=*/nullptr);
   GpuCliqueKey clique_key({kDevice0}, /*num_local_participants=*/1);
   auto symmetric = std::make_shared<FakeSymmetricMemory>(
-      local.address(),
+      different_local.address(),
       std::vector<se::DeviceAddressBase>{different_local.address()});
   absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
       symmetric_memories;
@@ -1219,7 +1250,7 @@ TEST(CollectiveFfiPeerAddressesTest, RejectsLocalAddressMismatch) {
   EXPECT_THAT(internal::ResolvePeerAddressesV3(clique_key, RankId(0), regions,
                                                buffers, collective_memory),
               StatusIs(absl::StatusCode::kFailedPrecondition,
-                       HasSubstr("local address mismatch")));
+                       HasSubstr("backing address")));
 }
 
 TEST(CollectiveFfiPeerAddressesTest, RejectsAddressOverflow) {
@@ -1227,13 +1258,15 @@ TEST(CollectiveFfiPeerAddressesTest, RejectsAddressOverflow) {
   std::array<se::DeviceAddressBase, 1> allocations = {local.address()};
   BufferAllocations buffer_allocations(allocations, /*device_ordinal=*/0,
                                        /*memory_allocator=*/nullptr);
-  GpuCliqueKey clique_key({kDevice0}, /*num_local_participants=*/1);
+  GpuCliqueKey clique_key({kDevice0, kDevice1},
+                          /*num_local_participants=*/2);
   constexpr uintptr_t kNearAddressLimit =
       std::numeric_limits<uintptr_t>::max() - 7;
   se::DeviceAddressBase overflowing_peer(
       reinterpret_cast<void *>(kNearAddressLimit), /*size=*/64);
   auto symmetric = std::make_shared<FakeSymmetricMemory>(
-      local.address(), std::vector<se::DeviceAddressBase>{overflowing_peer});
+      local.address(),
+      std::vector<se::DeviceAddressBase>{local.address(), overflowing_peer});
   absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
       symmetric_memories;
   symmetric_memories.emplace(std::make_pair(clique_key, 0), symmetric);
