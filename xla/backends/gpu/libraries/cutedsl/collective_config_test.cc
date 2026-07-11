@@ -53,14 +53,7 @@ std::string Sha256(absl::string_view bytes) {
 }
 
 struct TestAttributes {
-  TestAttributes() {
-    constexpr absl::string_view kModule0 = "module_zero";
-    constexpr absl::string_view kModule1 = "module_one";
-    module_blob = std::string(kModule0) + std::string(kModule1);
-    module_offsets = {0, static_cast<int64_t>(kModule0.size()),
-                      static_cast<int64_t>(module_blob.size())};
-    module_keys = Sha256(kModule0) + Sha256(kModule1);
-  }
+  TestAttributes() : key(Sha256(module)) {}
 
   ffi::AttributesMap Build() const {
     ffi::CallFrameBuilder::AttributesBuilder attributes;
@@ -73,10 +66,8 @@ struct TestAttributes {
     attributes.Insert("communication_id", communication_id);
     attributes.Insert("replica_group_offsets", replica_group_offsets);
     attributes.Insert("replica_group_members", replica_group_members);
-    attributes.Insert("module_blob", module_blob);
-    attributes.Insert("module_offsets", module_offsets);
-    attributes.Insert("module_keys", module_keys);
-    attributes.Insert("module_index_by_rank", module_index_by_rank);
+    attributes.Insert("module", module);
+    attributes.Insert("key", key);
     attributes.Insert("peer_regions", peer_regions);
     if (!omit_steps) attributes.Insert("steps", steps);
     if (add_semantic_attribute) {
@@ -91,10 +82,8 @@ struct TestAttributes {
   int64_t communication_id = 17;
   std::vector<int64_t> replica_group_offsets = {0, 2, 4};
   std::vector<int64_t> replica_group_members = {0, 1, 2, 3};
-  std::string module_blob;
-  std::vector<int64_t> module_offsets;
-  std::string module_keys;
-  std::vector<int64_t> module_index_by_rank = {0, 1};
+  std::string module = "collective module";
+  std::string key;
   std::vector<int64_t> peer_regions = {
       static_cast<int64_t>(PeerRegionEndpointV3::kArgument),
       2,
@@ -153,14 +142,11 @@ TEST(CollectiveConfigTest, ParsesCompleteGenericConfiguration) {
   EXPECT_THAT(parsed->replica_groups[0].replica_ids(), ElementsAre(0, 1));
   EXPECT_THAT(parsed->replica_groups[1].replica_ids(), ElementsAre(2, 3));
 
-  ASSERT_EQ(parsed->modules.size(), 2);
-  EXPECT_EQ(parsed->modules[0].bytes, "module_zero");
-  EXPECT_EQ(parsed->modules[1].bytes, "module_one");
-  EXPECT_EQ(std::string(
-                reinterpret_cast<const char*>(parsed->modules[0].sha256.data()),
-                parsed->modules[0].sha256.size()),
-            Sha256("module_zero"));
-  EXPECT_THAT(parsed->module_index_by_rank, ElementsAre(0, 1));
+  EXPECT_EQ(parsed->module.bytes, "collective module");
+  EXPECT_EQ(
+      std::string(reinterpret_cast<const char*>(parsed->module.sha256.data()),
+                  parsed->module.sha256.size()),
+      Sha256("collective module"));
 
   ASSERT_EQ(parsed->peer_regions.size(), 2);
   EXPECT_EQ(parsed->peer_regions[0].endpoint, PeerRegionEndpointV3::kArgument);
@@ -237,43 +223,25 @@ TEST(CollectiveConfigTest, RejectsMalformedCollectiveGroup) {
                                           HasSubstr("must be nonnegative")));
 }
 
-TEST(CollectiveConfigTest, RejectsMalformedModuleBundleOrRankMap) {
+TEST(CollectiveConfigTest, RejectsMalformedModule) {
   TestAttributes attributes;
-  attributes.module_offsets = {0, 0, 21};
+  attributes.module.clear();
+  attributes.key = Sha256(attributes.module);
   EXPECT_THAT(Parse(attributes),
               StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("Invalid or empty module range")));
+                       HasSubstr("module` must not be empty")));
 
   attributes = TestAttributes();
-  attributes.module_keys.pop_back();
+  attributes.key.pop_back();
   EXPECT_THAT(Parse(attributes),
               StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("one 32-byte SHA-256 digest per module")));
+                       HasSubstr("one 32-byte SHA-256 digest")));
 
   attributes = TestAttributes();
-  attributes.module_keys[0] ^= 1;
+  attributes.key[0] ^= 1;
   EXPECT_THAT(Parse(attributes),
               StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("does not match module image 0")));
-
-  attributes = TestAttributes();
-  attributes.module_index_by_rank.clear();
-  EXPECT_THAT(Parse(attributes),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("module_index_by_rank` must not be empty")));
-
-  attributes = TestAttributes();
-  attributes.module_index_by_rank = {0, 2};
-  EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
-                                          HasSubstr("out of range")));
-}
-
-TEST(CollectiveConfigTest, DefersRankMapLengthValidationToPrepare) {
-  TestAttributes attributes;
-  attributes.group_mode = CollectiveOpGroupMode::
-      COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA_AND_PARTITION;
-  attributes.module_index_by_rank = {0, 1, 0, 1};
-  EXPECT_THAT(Parse(attributes), IsOk());
+                       HasSubstr("does not match the module image")));
 }
 
 TEST(CollectiveConfigTest, RejectsMalformedPeerRegions) {

@@ -75,8 +75,7 @@ struct CollectiveCallConfigV3 {
   CollectiveOpGroupMode group_mode;
   int64_t communication_id;
   std::vector<ReplicaGroup> replica_groups;
-  std::vector<CollectiveModuleImageV3> modules;
-  std::vector<int64_t> module_index_by_rank;
+  CollectiveModuleImageV3 module;
   std::vector<PeerRegionV3> peer_regions;
   std::vector<CollectiveStepV3> steps;
 };

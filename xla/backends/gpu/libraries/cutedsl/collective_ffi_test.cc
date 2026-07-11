@@ -15,9 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/libraries/cutedsl/collective_ffi.h"
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <future>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -25,20 +28,17 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/Support/SHA256.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives_stub.h"
 #include "xla/backends/gpu/libraries/cutedsl/collective_config.h"
 #include "xla/backends/gpu/libraries/cutedsl/runtime_api.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
+#include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
@@ -57,11 +57,16 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/mock_platform.h"
 #include "xla/stream_executor/mock_stream.h"
 #include "xla/stream_executor/mock_stream_executor.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/types.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/SHA256.h"
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
 namespace xla::gpu::cutedsl {
 namespace {
@@ -79,9 +84,33 @@ constexpr GlobalDeviceId kDevice0(0);
 constexpr GlobalDeviceId kDevice1(1);
 constexpr char kCollectiveTarget[] = "__xla_gpu_cutedsl_collective_v3";
 
+struct TestBufferDescriptor {
+  void *buffer;
+  const int64_t *shape;
+};
+
+struct CapturedBuffer {
+  void *buffer;
+  std::vector<int64_t> shape;
+};
+
+struct FakeFunctionHandle {
+  std::string prefix;
+};
+
 struct FakeRuntime {
   std::string module_bytes;
   std::vector<std::string> function_prefixes;
+  std::vector<std::unique_ptr<FakeFunctionHandle>> function_handles;
+  std::vector<std::string> invoked_function_prefixes;
+  std::vector<size_t> expected_buffer_ranks;
+  size_t expected_peer_address_count = 0;
+  void *stream = nullptr;
+  std::vector<CapturedBuffer> buffers;
+  std::vector<uint64_t> peer_addresses;
+  int32_t rank = -1;
+  int32_t clique_size = -1;
+  int32_t cuda_error = 0;
   int create_count = 0;
   int get_function_count = 0;
   int run_count = 0;
@@ -89,43 +118,119 @@ struct FakeRuntime {
   int fail_get_function_at = -1;
 };
 
-FakeRuntime* fake_runtime = nullptr;
+FakeRuntime *fake_runtime = nullptr;
 
-CuteDSLRT_Error_t ModuleCreate(CuteDSLRT_Module_t** module,
-                               const unsigned char* bytes, size_t size,
-                               const char**, size_t) {
+CuteDSLRT_Error_t ModuleCreate(CuteDSLRT_Module_t **module,
+                               const unsigned char *bytes, size_t size,
+                               const char **, size_t) {
   ++fake_runtime->create_count;
-  fake_runtime->module_bytes.assign(reinterpret_cast<const char*>(bytes), size);
-  *module = reinterpret_cast<CuteDSLRT_Module_t*>(fake_runtime);
+  fake_runtime->module_bytes.assign(reinterpret_cast<const char *>(bytes),
+                                    size);
+  *module = reinterpret_cast<CuteDSLRT_Module_t *>(fake_runtime);
   return kCuteDslRtSuccess;
 }
 
-CuteDSLRT_Error_t ModuleGetFunction(CuteDSLRT_Function_t** function,
-                                    CuteDSLRT_Module_t* module,
-                                    const char* prefix) {
-  EXPECT_EQ(module, reinterpret_cast<CuteDSLRT_Module_t*>(fake_runtime));
+CuteDSLRT_Error_t ModuleGetFunction(CuteDSLRT_Function_t **function,
+                                    CuteDSLRT_Module_t *module,
+                                    const char *prefix) {
+  EXPECT_EQ(module, reinterpret_cast<CuteDSLRT_Module_t *>(fake_runtime));
   ++fake_runtime->get_function_count;
   fake_runtime->function_prefixes.emplace_back(prefix);
   if (fake_runtime->get_function_count == fake_runtime->fail_get_function_at) {
     return 1;
   }
-  *function = reinterpret_cast<CuteDSLRT_Function_t*>(fake_runtime);
+  fake_runtime->function_handles.push_back(
+      std::make_unique<FakeFunctionHandle>(FakeFunctionHandle{prefix}));
+  *function = reinterpret_cast<CuteDSLRT_Function_t *>(
+      fake_runtime->function_handles.back().get());
   return kCuteDslRtSuccess;
 }
 
-CuteDSLRT_Error_t FunctionRun(void*, void**, size_t) {
+CuteDSLRT_Error_t FunctionRun(void *function, void **arguments,
+                              size_t num_arguments) {
+  auto *handle = reinterpret_cast<FakeFunctionHandle *>(function);
+  auto loaded =
+      std::find_if(fake_runtime->function_handles.begin(),
+                   fake_runtime->function_handles.end(),
+                   [&](const std::unique_ptr<FakeFunctionHandle> &candidate) {
+                     return candidate.get() == handle;
+                   });
+  if (loaded == fake_runtime->function_handles.end()) {
+    ADD_FAILURE() << "FunctionRun received an unknown function handle";
+    return 1;
+  }
   ++fake_runtime->run_count;
+  fake_runtime->invoked_function_prefixes.push_back(handle->prefix);
+
+  size_t expected_arguments = 1 + fake_runtime->expected_buffer_ranks.size() +
+                              fake_runtime->expected_peer_address_count + 3;
+  if (num_arguments != expected_arguments) {
+    ADD_FAILURE() << "Expected " << expected_arguments
+                  << " packed arguments, got " << num_arguments;
+    return 1;
+  }
+
+  size_t index = 0;
+  fake_runtime->stream = *reinterpret_cast<void **>(arguments[index++]);
+  fake_runtime->buffers.clear();
+  for (size_t buffer_rank : fake_runtime->expected_buffer_ranks) {
+    auto *descriptor =
+        *reinterpret_cast<TestBufferDescriptor **>(arguments[index++]);
+    if (descriptor == nullptr ||
+        (buffer_rank != 0 && descriptor->shape == nullptr)) {
+      ADD_FAILURE() << "Invalid JaxArray descriptor";
+      return 1;
+    }
+
+    CapturedBuffer buffer{descriptor->buffer, {}};
+    if (buffer_rank == 0) {
+      EXPECT_EQ(descriptor->shape, nullptr);
+    } else {
+      buffer.shape.assign(descriptor->shape, descriptor->shape + buffer_rank);
+    }
+    fake_runtime->buffers.push_back(std::move(buffer));
+  }
+
+  fake_runtime->peer_addresses.clear();
+  for (size_t i = 0; i < fake_runtime->expected_peer_address_count; ++i) {
+    fake_runtime->peer_addresses.push_back(
+        *static_cast<uint64_t *>(arguments[index++]));
+  }
+
+  fake_runtime->rank = *static_cast<int32_t *>(arguments[index++]);
+  fake_runtime->clique_size = *static_cast<int32_t *>(arguments[index++]);
+  *static_cast<int32_t *>(arguments[index++]) = fake_runtime->cuda_error;
+  EXPECT_EQ(index, num_arguments);
   return kCuteDslRtSuccess;
 }
 
-CuteDSLRT_Error_t ModuleDestroy(CuteDSLRT_Module_t* module) {
-  EXPECT_EQ(module, reinterpret_cast<CuteDSLRT_Module_t*>(fake_runtime));
+CuteDSLRT_Error_t ModuleDestroy(CuteDSLRT_Module_t *module) {
+  EXPECT_EQ(module, reinterpret_cast<CuteDSLRT_Module_t *>(fake_runtime));
   ++fake_runtime->destroy_count;
   return kCuteDslRtSuccess;
 }
 
-const char* GetErrorName(CuteDSLRT_Error_t) { return "FakeRuntimeError"; }
-const char* GetErrorString(CuteDSLRT_Error_t) { return "fake failure"; }
+const char *GetErrorName(CuteDSLRT_Error_t) { return "FakeRuntimeError"; }
+const char *GetErrorString(CuteDSLRT_Error_t) { return "fake failure"; }
+
+class NotifyingEvent final : public se::Event {
+public:
+  NotifyingEvent(std::shared_ptr<std::promise<void>> synchronized,
+                 std::shared_ptr<std::promise<void>> destroyed)
+      : synchronized_(std::move(synchronized)),
+        destroyed_(std::move(destroyed)) {}
+
+  ~NotifyingEvent() override { destroyed_->set_value(); }
+
+  absl::Status Synchronize() override {
+    synchronized_->set_value();
+    return absl::OkStatus();
+  }
+
+private:
+  std::shared_ptr<std::promise<void>> synchronized_;
+  std::shared_ptr<std::promise<void>> destroyed_;
+};
 
 const RuntimeFunctions kFakeFunctions = {
     /*module_create_from_bytes=*/ModuleCreate,
@@ -137,8 +242,8 @@ const RuntimeFunctions kFakeFunctions = {
 };
 
 class ScopedFakeRuntime {
- public:
-  explicit ScopedFakeRuntime(FakeRuntime* runtime) {
+public:
+  explicit ScopedFakeRuntime(FakeRuntime *runtime) {
     EXPECT_EQ(fake_runtime, nullptr);
     fake_runtime = runtime;
     status_ = SetRuntimeFunctionsForTesting(&kFakeFunctions);
@@ -149,9 +254,9 @@ class ScopedFakeRuntime {
     fake_runtime = nullptr;
   }
 
-  const absl::Status& status() const { return status_; }
+  const absl::Status &status() const { return status_; }
 
- private:
+private:
   absl::Status status_;
 };
 
@@ -159,31 +264,20 @@ std::string Sha256(absl::string_view bytes) {
   llvm::SHA256 hasher;
   hasher.update(llvm::StringRef(bytes.data(), bytes.size()));
   std::array<uint8_t, kCollectiveModuleDigestSizeV3> digest = hasher.final();
-  return std::string(reinterpret_cast<const char*>(digest.data()),
+  return std::string(reinterpret_cast<const char *>(digest.data()),
                      digest.size());
 }
 
 struct TestAttributes {
   ffi::AttributesMap Build() const {
-    std::string module_blob;
-    std::string module_keys;
-    std::vector<int64_t> module_offsets = {0};
-    for (const std::string& module : modules) {
-      module_blob.append(module);
-      module_keys.append(Sha256(module));
-      module_offsets.push_back(static_cast<int64_t>(module_blob.size()));
-    }
-
     ffi::CallFrameBuilder::AttributesBuilder attributes;
     attributes.Insert("schema_version", kCollectiveCallSchemaVersionV3);
     attributes.Insert("group_mode", group_mode);
     attributes.Insert("communication_id", communication_id);
     attributes.Insert("replica_group_offsets", replica_group_offsets);
     attributes.Insert("replica_group_members", replica_group_members);
-    attributes.Insert("module_blob", std::move(module_blob));
-    attributes.Insert("module_offsets", std::move(module_offsets));
-    attributes.Insert("module_keys", std::move(module_keys));
-    attributes.Insert("module_index_by_rank", module_index_by_rank);
+    attributes.Insert("module", module);
+    attributes.Insert("key", Sha256(module));
     attributes.Insert("peer_regions", peer_regions);
     attributes.Insert("steps", steps);
     return attributes.Build();
@@ -194,15 +288,14 @@ struct TestAttributes {
   int64_t communication_id = 17;
   std::vector<int64_t> replica_group_offsets = {0, 2};
   std::vector<int64_t> replica_group_members = {0, 1};
-  std::vector<std::string> modules = {"collective ffi test module"};
-  std::vector<int64_t> module_index_by_rank = {0, 0};
+  std::string module = "collective ffi test module";
   std::vector<int64_t> peer_regions;
   std::vector<int64_t> steps = {
       static_cast<int64_t>(CollectiveStepKindV3::kLaunch), 0};
 };
 
 class FakeSymmetricMemory final : public SymmetricMemory {
- public:
+public:
   FakeSymmetricMemory(se::DeviceAddressBase local_address,
                       std::vector<se::DeviceAddressBase> peer_addresses)
       : local_address_(local_address),
@@ -229,7 +322,7 @@ class FakeSymmetricMemory final : public SymmetricMemory {
 
   void set_failing_rank(RankId rank) { failing_rank_ = rank; }
 
- private:
+private:
   se::DeviceAddressBase local_address_;
   std::vector<se::DeviceAddressBase> peer_addresses_;
   std::optional<RankId> failing_rank_;
@@ -254,22 +347,24 @@ PeerRegionV3 Region(int64_t offset, int64_t size, int64_t alignment = 16) {
   };
 }
 
-uint64_t AddressValue(void* address, uint64_t offset = 0) {
+uint64_t AddressValue(void *address, uint64_t offset = 0) {
   return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(address)) + offset;
 }
 
 class CollectiveFfiInvocation {
- public:
+public:
   CollectiveFfiInvocation(TestAttributes attributes, int64_t replica_count,
                           int64_t partition_count, int64_t current_device,
                           std::vector<se::DeviceAddressBase> allocations = {},
                           std::vector<se::DeviceAddressBase> arguments = {},
                           std::vector<se::DeviceAddressBase> results = {})
-      : attributes_(std::move(attributes)),
-        arguments_(std::move(arguments)),
+      : attributes_(std::move(attributes)), arguments_(std::move(arguments)),
         results_(std::move(results)),
         registration_(ffi::FindHandler(kCollectiveTarget, "CUDA")) {
     ON_CALL(stream_, parent()).WillByDefault(Return(&executor_));
+    ON_CALL(stream_, platform_specific_handle())
+        .WillByDefault(
+            Return(se::Stream::PlatformSpecificHandle{&fake_stream_handle_}));
     ON_CALL(executor_, GetPlatform()).WillByDefault(Return(&platform_));
     ON_CALL(platform_, Name()).WillByDefault(ReturnRef(platform_name_));
 
@@ -304,20 +399,29 @@ class CollectiveFfiInvocation {
         /*memory_allocator=*/nullptr);
     memory_requests_ =
         std::make_unique<CollectiveMemoryRequests>(*buffer_allocations_);
+    collective_memory_ = std::make_unique<CollectiveMemory>(
+        *buffer_allocations_,
+        /*sym_memories=*/
+        absl::flat_hash_map<CollectiveMemory::Key,
+                            std::shared_ptr<SymmetricMemory>>{},
+        /*mcast_memories=*/
+        absl::flat_hash_map<CollectiveMemory::Key,
+                            CollectiveMemory::MulticastMemory>{},
+        /*peer_memories=*/
+        absl::flat_hash_map<CollectiveMemory::Key,
+                            CollectiveMemory::PeerMemory>{});
 
     context_.state_context = {&states_[0], &states_[1], &states_[2]};
-    ffi::InvokeContext::GpuContext gpu_context;
-    gpu_context.collective_params = &*collective_params_;
-    gpu_context.collective_clique_requests = &clique_requests_;
-    gpu_context.collective_memory_requests = memory_requests_.get();
-    context_.backend_context = gpu_context;
+    UpdateGpuContext();
   }
 
-  const absl::Status& status() const { return status_; }
+  const absl::Status &status() const { return status_; }
 
   absl::Status Instantiate() {
-    if (!status_.ok()) return status_;
-    if (!registration_.ok()) return registration_.status();
+    if (!status_.ok())
+      return status_;
+    if (!registration_.ok())
+      return registration_.status();
     ffi::CallFrame call_frame = BuildCallFrame();
     return ffi::Invoke(ffi::GetXlaFfiApi(), registration_->bundle.instantiate,
                        call_frame, context_,
@@ -325,30 +429,82 @@ class CollectiveFfiInvocation {
   }
 
   absl::Status Prepare() {
-    if (!status_.ok()) return status_;
-    if (!registration_.ok()) return registration_.status();
+    if (!status_.ok())
+      return status_;
+    if (!registration_.ok())
+      return registration_.status();
     ffi::CallFrame call_frame = BuildCallFrame();
     return ffi::Invoke(ffi::GetXlaFfiApi(), registration_->bundle.prepare,
                        call_frame, context_, XLA_FFI_ExecutionStage_PREPARE);
   }
 
-  const CollectiveCliqueRequests& clique_requests() const {
+  absl::Status Initialize() {
+    if (!status_.ok())
+      return status_;
+    if (!registration_.ok())
+      return registration_.status();
+    ffi::CallFrame call_frame = BuildCallFrame();
+    return ffi::Invoke(ffi::GetXlaFfiApi(), registration_->bundle.initialize,
+                       call_frame, context_, XLA_FFI_ExecutionStage_INITIALIZE);
+  }
+
+  absl::Status Execute() {
+    if (!status_.ok())
+      return status_;
+    if (!registration_.ok())
+      return registration_.status();
+    ffi::CallFrame call_frame = BuildCallFrame();
+    return ffi::Invoke(ffi::GetXlaFfiApi(), registration_->bundle.execute,
+                       call_frame, context_, XLA_FFI_ExecutionStage_EXECUTE);
+  }
+
+  void
+  SetSymmetricMemories(absl::flat_hash_map<CollectiveMemory::Key,
+                                           std::shared_ptr<SymmetricMemory>>
+                           memories) {
+    collective_memory_ = std::make_unique<CollectiveMemory>(
+        *buffer_allocations_, std::move(memories),
+        /*mcast_memories=*/
+        absl::flat_hash_map<CollectiveMemory::Key,
+                            CollectiveMemory::MulticastMemory>{},
+        /*peer_memories=*/
+        absl::flat_hash_map<CollectiveMemory::Key,
+                            CollectiveMemory::PeerMemory>{});
+    UpdateGpuContext();
+  }
+
+  const CollectiveCliqueRequests &clique_requests() const {
     return clique_requests_;
   }
 
-  const CollectiveMemoryRequests& memory_requests() const {
+  const CollectiveMemoryRequests &memory_requests() const {
     return *memory_requests_;
   }
 
- private:
+  se::MockStream &stream() { return stream_; }
+  se::MockStreamExecutor &executor() { return executor_; }
+  void *platform_stream() { return &fake_stream_handle_; }
+
+private:
+  void UpdateGpuContext() {
+    ffi::InvokeContext::GpuContext gpu_context;
+    gpu_context.stream = &stream_;
+    gpu_context.collective_params = &*collective_params_;
+    gpu_context.collective_clique_requests = &clique_requests_;
+    gpu_context.collective_memory_requests = memory_requests_.get();
+    gpu_context.collective_cliques = &collective_cliques_;
+    gpu_context.collective_memory = collective_memory_.get();
+    context_.backend_context = gpu_context;
+  }
+
   ffi::CallFrame BuildCallFrame() const {
     ffi::CallFrameBuilder builder(arguments_.size(), results_.size());
-    for (const se::DeviceAddressBase& argument : arguments_) {
+    for (const se::DeviceAddressBase &argument : arguments_) {
       std::array<int64_t, 1> dimensions = {
           static_cast<int64_t>(argument.size())};
       builder.AddBufferArg(argument, U8, dimensions);
     }
-    for (const se::DeviceAddressBase& result : results_) {
+    for (const se::DeviceAddressBase &result : results_) {
       std::array<int64_t, 1> dimensions = {static_cast<int64_t>(result.size())};
       builder.AddBufferRet(result, U8, dimensions);
     }
@@ -359,6 +515,7 @@ class CollectiveFfiInvocation {
   TestAttributes attributes_;
   std::vector<se::DeviceAddressBase> arguments_;
   std::vector<se::DeviceAddressBase> results_;
+  int fake_stream_handle_ = 0;
   std::string platform_name_ = "CUDA";
   NiceMock<se::MockPlatform> platform_;
   NiceMock<se::MockStreamExecutor> executor_;
@@ -371,6 +528,8 @@ class CollectiveFfiInvocation {
   std::unique_ptr<BufferAllocations> buffer_allocations_;
   CollectiveCliqueRequests clique_requests_;
   std::unique_ptr<CollectiveMemoryRequests> memory_requests_;
+  CollectiveCliques collective_cliques_;
+  std::unique_ptr<CollectiveMemory> collective_memory_;
   std::array<ffi::ExecutionState, 3> states_;
   ffi::InvokeContext context_;
   absl::StatusOr<ffi::HandlerRegistration> registration_;
@@ -400,11 +559,10 @@ TEST(CollectiveFfiPrepareTest, ResolvesEverySupportedCollectiveGroupMode) {
   ASSERT_THAT(scoped_runtime.status(), IsOk());
 
   struct TestCase {
-    const char* name;
+    const char *name;
     CollectiveOpGroupMode mode;
     std::vector<int64_t> group_offsets;
     std::vector<int64_t> group_members;
-    std::vector<int64_t> module_index_by_rank;
     std::vector<GlobalDeviceId> expected_clique;
   };
   std::array<TestCase, 4> test_cases = {{
@@ -412,38 +570,32 @@ TEST(CollectiveFfiPrepareTest, ResolvesEverySupportedCollectiveGroupMode) {
        CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA,
        {0, 2},
        {0, 1},
-       {0, 0},
        {kDevice0, GlobalDeviceId(2)}},
       {"cross partition",
        CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_PARTITION,
        {0, 2},
        {0, 1},
-       {0, 0},
        {kDevice0, kDevice1}},
       {"cross replica and partition",
        CollectiveOpGroupMode::
            COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA_AND_PARTITION,
        {0, 2},
        {0, 1},
-       {0, 0, 0, 0},
        {kDevice0, kDevice1, GlobalDeviceId(2), GlobalDeviceId(3)}},
       {"flattened id",
        CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
        {0, 2, 4},
        {0, 3, 1, 2},
-       {0, 0},
        {kDevice0, GlobalDeviceId(3)}},
   }};
 
-  for (const TestCase& test_case : test_cases) {
+  for (const TestCase &test_case : test_cases) {
     SCOPED_TRACE(test_case.name);
     TestAttributes attributes;
-    attributes.modules = {std::string("module for ") + test_case.name};
+    attributes.module = std::string("module for ") + test_case.name;
     attributes.group_mode = test_case.mode;
     attributes.replica_group_offsets = test_case.group_offsets;
     attributes.replica_group_members = test_case.group_members;
-    attributes.module_index_by_rank = test_case.module_index_by_rank;
-
     CollectiveFfiInvocation invocation(std::move(attributes),
                                        /*replica_count=*/2,
                                        /*partition_count=*/2,
@@ -483,30 +635,6 @@ TEST(CollectiveFfiPrepareTest, RejectsReplicaGroupOutsideRuntimeDomain) {
   EXPECT_EQ(runtime.create_count, 0);
   EXPECT_EQ(invocation.clique_requests().size(), 0);
   EXPECT_EQ(invocation.memory_requests().symmetric_size(), 0);
-}
-
-TEST(CollectiveFfiPrepareTest, ValidatesRankMapAgainstExpandedRuntimeClique) {
-  FakeRuntime runtime;
-  ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_THAT(scoped_runtime.status(), IsOk());
-
-  TestAttributes attributes;
-  attributes.group_mode = CollectiveOpGroupMode::
-      COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA_AND_PARTITION;
-  // The raw replica group has two members, but the two partitions expand the
-  // runtime clique to four ranks.
-  attributes.module_index_by_rank = {0, 0};
-  CollectiveFfiInvocation invocation(std::move(attributes),
-                                     /*replica_count=*/2,
-                                     /*partition_count=*/2,
-                                     /*current_device=*/0);
-
-  ASSERT_THAT(invocation.status(), IsOk());
-  ASSERT_THAT(invocation.Instantiate(), IsOk());
-  EXPECT_THAT(invocation.Prepare(), StatusIs(absl::StatusCode::kInvalidArgument,
-                                             HasSubstr("expected 4, got 2")));
-  EXPECT_EQ(runtime.create_count, 0);
-  EXPECT_EQ(invocation.clique_requests().size(), 0);
 }
 
 TEST(CollectiveFfiPrepareTest, RejectsLogicalBufferRangeBeforeLoadingModule) {
@@ -600,20 +728,22 @@ TEST(CollectiveFfiPrepareTest,
 }
 
 TEST(CollectiveFfiPrepareTest,
-     PreloadsUniqueFunctionsAndUsesDefaultCliqueRequirements) {
+     AcceptsConfiguredPrefixBarrierAndPreloadsUniqueFunctions) {
   FakeRuntime runtime;
   ScopedFakeRuntime scoped_runtime(&runtime);
   ASSERT_THAT(scoped_runtime.status(), IsOk());
 
   TestAttributes attributes;
+  // Host-only coverage verifies that a configured barrier remains a prefix
+  // through Instantiate and Prepare. Actual barrier enqueue ordering requires
+  // the registered GPU barrier kernel and is covered by the Phase 4 GPU test.
   attributes.steps = {
       static_cast<int64_t>(CollectiveStepKindV3::kBarrier), 0,
       static_cast<int64_t>(CollectiveStepKindV3::kLaunch),  2,
       static_cast<int64_t>(CollectiveStepKindV3::kLaunch),  0,
       static_cast<int64_t>(CollectiveStepKindV3::kLaunch),  2,
   };
-  attributes.modules = {"module zero", "module one"};
-  attributes.module_index_by_rank = {0, 1};
+  attributes.module = "single module with multiple functions";
   CollectiveFfiInvocation invocation(std::move(attributes),
                                      /*replica_count=*/2,
                                      /*partition_count=*/1,
@@ -623,12 +753,14 @@ TEST(CollectiveFfiPrepareTest,
   ASSERT_THAT(invocation.Instantiate(), IsOk());
   ASSERT_THAT(invocation.Prepare(), IsOk());
 
-  EXPECT_EQ(runtime.create_count, 2);
-  EXPECT_EQ(runtime.get_function_count, 4);
+  EXPECT_EQ(runtime.create_count, 1);
+  EXPECT_EQ(runtime.get_function_count, 2);
   EXPECT_EQ(runtime.run_count, 0);
   EXPECT_THAT(runtime.function_prefixes,
-              ElementsAre("cutlass_call", "cutlass_call_2", "cutlass_call",
-                          "cutlass_call_2"));
+              ElementsAre("cutlass_call", "cutlass_call_2"));
+  ASSERT_EQ(runtime.function_handles.size(), 2);
+  EXPECT_NE(runtime.function_handles[0].get(),
+            runtime.function_handles[1].get());
 
   std::vector<CollectiveCliqueRequests::CliqueRequest> requests =
       invocation.clique_requests().OrderedRequestedCliques();
@@ -637,15 +769,14 @@ TEST(CollectiveFfiPrepareTest,
   EXPECT_FALSE(requests[0].barrier_after_module_execution_requested);
 }
 
-TEST(CollectiveFfiPrepareTest, ValidatesEveryModuleBeforeRequestingClique) {
+TEST(CollectiveFfiPrepareTest, RejectsMissingFunctionBeforeRequestingClique) {
   FakeRuntime runtime;
-  runtime.fail_get_function_at = 2;
+  runtime.fail_get_function_at = 1;
   ScopedFakeRuntime scoped_runtime(&runtime);
   ASSERT_THAT(scoped_runtime.status(), IsOk());
 
   TestAttributes attributes;
-  attributes.modules = {"valid module", "module missing function"};
-  attributes.module_index_by_rank = {0, 1};
+  attributes.module = "module missing function";
   CollectiveFfiInvocation invocation(std::move(attributes),
                                      /*replica_count=*/2,
                                      /*partition_count=*/1,
@@ -653,12 +784,209 @@ TEST(CollectiveFfiPrepareTest, ValidatesEveryModuleBeforeRequestingClique) {
 
   ASSERT_THAT(invocation.status(), IsOk());
   ASSERT_THAT(invocation.Instantiate(), IsOk());
-  EXPECT_THAT(invocation.Prepare(),
-              StatusIs(absl::StatusCode::kInternal,
-                       HasSubstr("Module 1 function ordinal 0")));
-  EXPECT_EQ(runtime.create_count, 2);
-  EXPECT_EQ(runtime.get_function_count, 2);
+  EXPECT_THAT(invocation.Prepare(), StatusIs(absl::StatusCode::kInternal,
+                                             HasSubstr("Function ordinal 0")));
+  EXPECT_EQ(runtime.create_count, 1);
+  EXPECT_EQ(runtime.get_function_count, 1);
   EXPECT_TRUE(invocation.clique_requests().OrderedRequestedCliques().empty());
+}
+
+TEST(CollectiveFfiExecuteTest, ExecutesSingleModuleFunctionsInConfiguredOrder) {
+  FakeRuntime runtime;
+  ScopedFakeRuntime scoped_runtime(&runtime);
+  ASSERT_THAT(scoped_runtime.status(), IsOk());
+
+  TestAttributes attributes;
+  attributes.module = "collective multi-launch test module";
+  attributes.steps = {
+      static_cast<int64_t>(CollectiveStepKindV3::kLaunch), 2,
+      static_cast<int64_t>(CollectiveStepKindV3::kLaunch), 0,
+      static_cast<int64_t>(CollectiveStepKindV3::kLaunch), 2,
+  };
+  CollectiveFfiInvocation invocation(std::move(attributes),
+                                     /*replica_count=*/2,
+                                     /*partition_count=*/1,
+                                     /*current_device=*/0);
+
+  ASSERT_THAT(invocation.status(), IsOk());
+  ASSERT_THAT(invocation.Instantiate(), IsOk());
+  ASSERT_THAT(invocation.Prepare(), IsOk());
+  ASSERT_THAT(invocation.Initialize(), IsOk());
+
+  EXPECT_CALL(invocation.executor(), CreateEvent())
+      .WillOnce([]() -> absl::StatusOr<std::unique_ptr<se::Event>> {
+        return absl::UnavailableError("injected completion-event failure");
+      });
+  EXPECT_CALL(invocation.stream(), BlockHostUntilDone())
+      .WillOnce(Return(absl::OkStatus()));
+  ASSERT_THAT(invocation.Execute(), IsOk());
+
+  EXPECT_EQ(runtime.create_count, 1);
+  EXPECT_THAT(runtime.function_prefixes,
+              ElementsAre("cutlass_call", "cutlass_call_2"));
+  ASSERT_EQ(runtime.function_handles.size(), 2);
+  EXPECT_NE(runtime.function_handles[0].get(),
+            runtime.function_handles[1].get());
+  EXPECT_THAT(runtime.invoked_function_prefixes,
+              ElementsAre("cutlass_call_2", "cutlass_call", "cutlass_call_2"));
+}
+
+TEST(CollectiveFfiExecuteTest, RetainsResourcesUntilCompletionEvent) {
+  FakeRuntime runtime;
+  ScopedFakeRuntime scoped_runtime(&runtime);
+  ASSERT_THAT(scoped_runtime.status(), IsOk());
+
+  TestAttributes attributes;
+  attributes.module = "collective completion-event test module";
+  CollectiveFfiInvocation invocation(std::move(attributes),
+                                     /*replica_count=*/2,
+                                     /*partition_count=*/1,
+                                     /*current_device=*/0);
+
+  ASSERT_THAT(invocation.status(), IsOk());
+  ASSERT_THAT(invocation.Instantiate(), IsOk());
+  ASSERT_THAT(invocation.Prepare(), IsOk());
+  ASSERT_THAT(invocation.Initialize(), IsOk());
+
+  auto synchronized = std::make_shared<std::promise<void>>();
+  std::future<void> synchronized_future = synchronized->get_future();
+  auto destroyed = std::make_shared<std::promise<void>>();
+  std::future<void> destroyed_future = destroyed->get_future();
+  se::Event *created_event = nullptr;
+  EXPECT_CALL(invocation.executor(), CreateEvent())
+      .WillOnce([&]() -> absl::StatusOr<std::unique_ptr<se::Event>> {
+        auto event = std::make_unique<NotifyingEvent>(synchronized, destroyed);
+        created_event = event.get();
+        return std::unique_ptr<se::Event>(std::move(event));
+      });
+  EXPECT_CALL(invocation.stream(), RecordEvent(testing::_))
+      .WillOnce([&](se::Event *recorded_event) {
+        EXPECT_EQ(recorded_event, created_event);
+        return absl::OkStatus();
+      });
+  EXPECT_CALL(invocation.stream(), BlockHostUntilDone()).Times(0);
+  ASSERT_THAT(invocation.Execute(), IsOk());
+
+  EXPECT_EQ(synchronized_future.wait_for(std::chrono::seconds(5)),
+            std::future_status::ready);
+  EXPECT_EQ(destroyed_future.wait_for(std::chrono::seconds(5)),
+            std::future_status::ready);
+  EXPECT_THAT(runtime.invoked_function_prefixes, ElementsAre("cutlass_call"));
+}
+
+TEST(CollectiveFfiExecuteTest,
+     InitializesPeerAddressesAndPacksCanonicalLaunchFrame) {
+  FakeRuntime runtime;
+  runtime.expected_buffer_ranks = {1, 1};
+  runtime.expected_peer_address_count = 4;
+  ScopedFakeRuntime scoped_runtime(&runtime);
+  ASSERT_THAT(scoped_runtime.status(), IsOk());
+
+  Storage local0;
+  Storage remote0;
+  Storage local1;
+  Storage remote1;
+  se::DeviceAddressBase argument =
+      local0.address().GetByteSlice(/*offset_bytes=*/32, /*size_bytes=*/96);
+  se::DeviceAddressBase result =
+      local1.address().GetByteSlice(/*offset_bytes=*/64, /*size_bytes=*/128);
+
+  TestAttributes attributes;
+  attributes.module = "collective canonical-frame test module";
+  attributes.peer_regions = {
+      static_cast<int64_t>(PeerRegionEndpointV3::kArgument),
+      0,
+      16,
+      32,
+      16,
+      static_cast<int64_t>(PeerMemoryKindV3::kSymmetric),
+      static_cast<int64_t>(PeerRegionEndpointV3::kResult),
+      0,
+      32,
+      16,
+      32,
+      static_cast<int64_t>(PeerMemoryKindV3::kSymmetric),
+  };
+  CollectiveFfiInvocation invocation(
+      std::move(attributes), /*replica_count=*/2, /*partition_count=*/1,
+      /*current_device=*/1,
+      /*allocations=*/{local0.address(), local1.address()},
+      /*arguments=*/{argument}, /*results=*/{result});
+
+  ASSERT_THAT(invocation.status(), IsOk());
+  ASSERT_THAT(invocation.Instantiate(), IsOk());
+  ASSERT_THAT(invocation.Prepare(), IsOk());
+
+  std::vector<CollectiveCliqueRequests::CliqueRequest> requests =
+      invocation.clique_requests().OrderedRequestedCliques();
+  ASSERT_EQ(requests.size(), 1);
+  const GpuCliqueKey &clique_key = requests[0].key;
+
+  auto symmetric0 = std::make_shared<FakeSymmetricMemory>(
+      local0.address(),
+      std::vector<se::DeviceAddressBase>{remote0.address(), local0.address()});
+  auto symmetric1 = std::make_shared<FakeSymmetricMemory>(
+      local1.address(),
+      std::vector<se::DeviceAddressBase>{remote1.address(), local1.address()});
+  absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
+      symmetric_memories;
+  symmetric_memories.emplace(std::make_pair(clique_key, 0), symmetric0);
+  symmetric_memories.emplace(std::make_pair(clique_key, 1), symmetric1);
+  invocation.SetSymmetricMemories(std::move(symmetric_memories));
+
+  ASSERT_THAT(invocation.Initialize(), IsOk());
+  EXPECT_CALL(invocation.executor(), CreateEvent())
+      .WillOnce([]() -> absl::StatusOr<std::unique_ptr<se::Event>> {
+        return absl::UnavailableError("injected completion-event failure");
+      });
+  EXPECT_CALL(invocation.stream(), BlockHostUntilDone())
+      .WillOnce(Return(absl::OkStatus()));
+  ASSERT_THAT(invocation.Execute(), IsOk());
+
+  EXPECT_EQ(runtime.run_count, 1);
+  EXPECT_EQ(runtime.stream, invocation.platform_stream());
+  ASSERT_EQ(runtime.buffers.size(), 2);
+  EXPECT_EQ(runtime.buffers[0].buffer, argument.opaque());
+  EXPECT_THAT(runtime.buffers[0].shape, ElementsAre(96));
+  EXPECT_EQ(runtime.buffers[1].buffer, result.opaque());
+  EXPECT_THAT(runtime.buffers[1].shape, ElementsAre(128));
+  EXPECT_THAT(runtime.peer_addresses,
+              ElementsAre(AddressValue(remote0.bytes.data(), 48),
+                          AddressValue(local0.bytes.data(), 48),
+                          AddressValue(remote1.bytes.data(), 96),
+                          AddressValue(local1.bytes.data(), 96)));
+  EXPECT_EQ(runtime.rank, 1);
+  EXPECT_EQ(runtime.clique_size, 2);
+}
+
+TEST(CollectiveFfiExecuteTest, PropagatesCudaErrorWrittenByGeneratedFunction) {
+  FakeRuntime runtime;
+  runtime.cuda_error = 719;
+  ScopedFakeRuntime scoped_runtime(&runtime);
+  ASSERT_THAT(scoped_runtime.status(), IsOk());
+
+  TestAttributes attributes;
+  attributes.module = "collective CUDA-error test module";
+  CollectiveFfiInvocation invocation(std::move(attributes),
+                                     /*replica_count=*/2,
+                                     /*partition_count=*/1,
+                                     /*current_device=*/0);
+
+  ASSERT_THAT(invocation.status(), IsOk());
+  ASSERT_THAT(invocation.Instantiate(), IsOk());
+  ASSERT_THAT(invocation.Prepare(), IsOk());
+  ASSERT_THAT(invocation.Initialize(), IsOk());
+
+  EXPECT_CALL(invocation.executor(), CreateEvent())
+      .WillOnce([]() -> absl::StatusOr<std::unique_ptr<se::Event>> {
+        return absl::UnavailableError("injected completion-event failure");
+      });
+  EXPECT_CALL(invocation.stream(), BlockHostUntilDone())
+      .WillOnce(Return(absl::OkStatus()));
+  EXPECT_THAT(invocation.Execute(),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("returned CUDA error 719")));
+  EXPECT_EQ(runtime.run_count, 1);
 }
 
 TEST(CollectiveFfiPeerAddressesTest,
@@ -903,7 +1231,7 @@ TEST(CollectiveFfiPeerAddressesTest, RejectsAddressOverflow) {
   constexpr uintptr_t kNearAddressLimit =
       std::numeric_limits<uintptr_t>::max() - 7;
   se::DeviceAddressBase overflowing_peer(
-      reinterpret_cast<void*>(kNearAddressLimit), /*size=*/64);
+      reinterpret_cast<void *>(kNearAddressLimit), /*size=*/64);
   auto symmetric = std::make_shared<FakeSymmetricMemory>(
       local.address(), std::vector<se::DeviceAddressBase>{overflowing_peer});
   absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
@@ -922,5 +1250,5 @@ TEST(CollectiveFfiPeerAddressesTest, RejectsAddressOverflow) {
                        HasSubstr("Address overflow")));
 }
 
-}  // namespace
-}  // namespace xla::gpu::cutedsl
+} // namespace
+} // namespace xla::gpu::cutedsl

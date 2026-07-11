@@ -481,13 +481,6 @@ absl::StatusOr<std::unique_ptr<CollectiveCallPreparedStateV3>> Prepare(
         "of %d peers",
         clique_key.num_devices(), se::gpu::MultiGpuBarrierKernel::kMaxPeers));
   }
-  if (config.module_index_by_rank.size() != clique_key.num_devices()) {
-    return absl::InvalidArgumentError(absl::StrFormat(
-        "`module_index_by_rank` must have one entry per runtime clique rank; "
-        "expected %d, got %d",
-        clique_key.num_devices(), config.module_index_by_rank.size()));
-  }
-
   std::optional<RankId> rank =
       clique_key.rank(collective_params->global_device_id);
   if (!rank.has_value()) {
@@ -509,55 +502,34 @@ absl::StatusOr<std::unique_ptr<CollectiveCallPreparedStateV3>> Prepare(
                    GetPeerRegionBuffers(config, arguments, results,
                                         /*require_addresses=*/true));
 
-  int64_t selected_module_index = config.module_index_by_rank[rank->value()];
-  if (selected_module_index < 0 ||
-      static_cast<size_t>(selected_module_index) >= config.modules.size()) {
-    return absl::InvalidArgumentError(absl::StrFormat(
-        "Module index %d for runtime clique rank %d is out of range [0, %d)",
-        selected_module_index, rank->value(), config.modules.size()));
-  }
-
   absl::btree_set<int64_t> ordinals;
   for (const CollectiveStepV3& step : config.steps) {
     if (step.kind == CollectiveStepKindV3::kLaunch) {
       ordinals.insert(step.operand);
     }
   }
+  const CollectiveModuleImageV3& image = config.module;
+  absl::string_view digest(reinterpret_cast<const char*>(image.sha256.data()),
+                           image.sha256.size());
+  ASSIGN_OR_RETURN(
+      std::shared_ptr<LoadedModule> module,
+      GetOrLoadModule(image.bytes, digest, collective_params->executor));
+
   absl::flat_hash_map<int64_t, CuteDSLRT_Function_t*> functions;
   functions.reserve(ordinals.size());
-  std::vector<std::shared_ptr<LoadedModule>> modules;
-  modules.reserve(config.modules.size());
-
-  // Every rank validates every configured module and referenced function in
-  // the same order before any clique request. Validating only the rank-selected
-  // image lets one rank fail while its peers enter clique acquisition.
-  for (size_t module_index = 0; module_index < config.modules.size();
-       ++module_index) {
-    const CollectiveModuleImageV3& image = config.modules[module_index];
-    absl::string_view digest(reinterpret_cast<const char*>(image.sha256.data()),
-                             image.sha256.size());
-    ASSIGN_OR_RETURN(
-        std::shared_ptr<LoadedModule> loaded_module,
-        GetOrLoadModule(image.bytes, digest, collective_params->executor));
-
-    for (int64_t ordinal : ordinals) {
-      absl::StatusOr<CuteDSLRT_Function_t*> function =
-          loaded_module->GetFunction(FunctionPrefix(ordinal));
-      if (!function.ok()) {
-        return absl::Status(
-            function.status().code(),
-            absl::StrFormat("Module %d function ordinal %d is unavailable: %s",
-                            module_index, ordinal,
-                            function.status().message()));
-      }
-      if (module_index == static_cast<size_t>(selected_module_index)) {
-        functions.emplace(ordinal, *function);
-      }
+  // Every rank loads the same module and validates the same function ordinals
+  // in a deterministic order before any clique request.
+  for (int64_t ordinal : ordinals) {
+    absl::StatusOr<CuteDSLRT_Function_t*> function =
+        module->GetFunction(FunctionPrefix(ordinal));
+    if (!function.ok()) {
+      return absl::Status(
+          function.status().code(),
+          absl::StrFormat("Function ordinal %d is unavailable: %s", ordinal,
+                          function.status().message()));
     }
-    modules.push_back(std::move(loaded_module));
+    functions.emplace(ordinal, *function);
   }
-  std::shared_ptr<LoadedModule> module =
-      modules[static_cast<size_t>(selected_module_index)];
 
   // Resource requests happen only after all configuration, topology, buffer,
   // module, and function checks that do not themselves require acquisition.

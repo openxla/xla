@@ -43,16 +43,14 @@ namespace {
 constexpr size_t kPeerRegionRecordWidth = 6;
 constexpr size_t kStepRecordWidth = 2;
 
-constexpr std::array<absl::string_view, 11> kAllAttributeNames = {
+constexpr std::array<absl::string_view, 9> kAllAttributeNames = {
     "schema_version",
     "group_mode",
     "communication_id",
     "replica_group_offsets",
     "replica_group_members",
-    "module_blob",
-    "module_offsets",
-    "module_keys",
-    "module_index_by_rank",
+    "module",
+    "key",
     "peer_regions",
     "steps",
 };
@@ -171,82 +169,30 @@ absl::StatusOr<std::vector<ReplicaGroup>> ParseReplicaGroups(
   return groups;
 }
 
-absl::StatusOr<std::vector<CollectiveModuleImageV3>> ParseModules(
-    absl::string_view blob, absl::Span<const int64_t> offsets,
-    absl::string_view keys) {
-  if (blob.size() > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
-    return absl::InvalidArgumentError("`module_blob` is too large");
+absl::StatusOr<CollectiveModuleImageV3> ParseModule(absl::string_view bytes,
+                                                    absl::string_view key) {
+  if (bytes.empty()) {
+    return absl::InvalidArgumentError("`module` must not be empty");
   }
-  if (offsets.size() < 2) {
+  if (key.size() != kCollectiveModuleDigestSizeV3) {
     return absl::InvalidArgumentError(
-        "`module_offsets` must describe at least one module image");
+        absl::StrFormat("`key` must contain one %d-byte SHA-256 digest",
+                        kCollectiveModuleDigestSizeV3));
   }
-  if (offsets.front() != 0) {
-    return absl::InvalidArgumentError("`module_offsets` must start with zero");
-  }
-  if (offsets.back() != static_cast<int64_t>(blob.size())) {
+
+  llvm::SHA256 hasher;
+  hasher.update(llvm::StringRef(bytes.data(), bytes.size()));
+  std::array<uint8_t, kCollectiveModuleDigestSizeV3> digest = hasher.final();
+  if (!std::equal(digest.begin(), digest.end(),
+                  reinterpret_cast<const uint8_t*>(key.data()))) {
     return absl::InvalidArgumentError(
-        "`module_offsets` must end at `module_blob` size");
+        "SHA-256 `key` does not match the module image");
   }
 
-  size_t module_count = offsets.size() - 1;
-  if (keys.size() % kCollectiveModuleDigestSizeV3 != 0 ||
-      keys.size() / kCollectiveModuleDigestSizeV3 != module_count) {
-    return absl::InvalidArgumentError(absl::StrFormat(
-        "`module_keys` must contain one %d-byte SHA-256 digest per module",
-        kCollectiveModuleDigestSizeV3));
-  }
-
-  std::vector<CollectiveModuleImageV3> modules;
-  modules.reserve(module_count);
-  for (size_t module_index = 0; module_index < module_count; ++module_index) {
-    int64_t begin = offsets[module_index];
-    int64_t end = offsets[module_index + 1];
-    if (begin < 0 || end <= begin || end > static_cast<int64_t>(blob.size())) {
-      return absl::InvalidArgumentError(
-          absl::StrFormat("Invalid or empty module range [%d, %d) at module %d",
-                          begin, end, module_index));
-    }
-
-    absl::string_view image = blob.substr(begin, end - begin);
-    absl::string_view key =
-        keys.substr(module_index * kCollectiveModuleDigestSizeV3,
-                    kCollectiveModuleDigestSizeV3);
-
-    llvm::SHA256 hasher;
-    hasher.update(llvm::StringRef(image.data(), image.size()));
-    std::array<uint8_t, kCollectiveModuleDigestSizeV3> digest = hasher.final();
-    if (!std::equal(digest.begin(), digest.end(),
-                    reinterpret_cast<const uint8_t*>(key.data()))) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "SHA-256 digest does not match module image %d", module_index));
-    }
-
-    CollectiveModuleImageV3 module;
-    module.bytes.assign(image.data(), image.size());
-    module.sha256 = digest;
-    modules.push_back(std::move(module));
-  }
-
-  return modules;
-}
-
-absl::Status ValidateModuleSelection(
-    absl::Span<const int64_t> module_index_by_rank, size_t module_count) {
-  if (module_index_by_rank.empty()) {
-    return absl::InvalidArgumentError(
-        "`module_index_by_rank` must not be empty");
-  }
-  for (size_t rank = 0; rank < module_index_by_rank.size(); ++rank) {
-    int64_t module_index = module_index_by_rank[rank];
-    if (module_index < 0 ||
-        static_cast<uint64_t>(module_index) >= module_count) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "Module index %d for clique rank %d is out of range [0, %d)",
-          module_index, rank, module_count));
-    }
-  }
-  return absl::OkStatus();
+  CollectiveModuleImageV3 module;
+  module.bytes.assign(bytes.data(), bytes.size());
+  module.sha256 = digest;
+  return module;
 }
 
 absl::StatusOr<std::vector<PeerRegionV3>> ParsePeerRegions(
@@ -412,23 +358,12 @@ absl::StatusOr<CollectiveCallConfigV3> ParseCollectiveCallConfigV3(
       std::vector<ReplicaGroup> replica_groups,
       ParseReplicaGroups(replica_group_offsets, replica_group_members));
 
-  ASSIGN_OR_RETURN(absl::string_view module_blob,
-                   GetAttribute<absl::string_view>(attributes, "module_blob"));
-  ASSIGN_OR_RETURN(
-      absl::Span<const int64_t> module_offsets,
-      GetAttribute<absl::Span<const int64_t>>(attributes, "module_offsets"));
-  ASSIGN_OR_RETURN(absl::string_view module_keys,
-                   GetAttribute<absl::string_view>(attributes, "module_keys"));
-  ASSIGN_OR_RETURN(std::vector<CollectiveModuleImageV3> modules,
-                   ParseModules(module_blob, module_offsets, module_keys));
-
-  ASSIGN_OR_RETURN(absl::Span<const int64_t> module_index_by_rank,
-                   GetAttribute<absl::Span<const int64_t>>(
-                       attributes, "module_index_by_rank"));
-  // The final clique size depends on group mode and the runtime device
-  // assignment. Prepare validates this map's length against the derived key.
-  RETURN_IF_ERROR(
-      ValidateModuleSelection(module_index_by_rank, modules.size()));
+  ASSIGN_OR_RETURN(absl::string_view module_bytes,
+                   GetAttribute<absl::string_view>(attributes, "module"));
+  ASSIGN_OR_RETURN(absl::string_view module_key,
+                   GetAttribute<absl::string_view>(attributes, "key"));
+  ASSIGN_OR_RETURN(CollectiveModuleImageV3 module,
+                   ParseModule(module_bytes, module_key));
 
   ASSIGN_OR_RETURN(
       absl::Span<const int64_t> peer_region_records,
@@ -443,14 +378,8 @@ absl::StatusOr<CollectiveCallConfigV3> ParseCollectiveCallConfigV3(
                    ParseSteps(step_records));
 
   return CollectiveCallConfigV3{
-      group_mode,
-      communication_id,
-      std::move(replica_groups),
-      std::move(modules),
-      std::vector<int64_t>(module_index_by_rank.begin(),
-                           module_index_by_rank.end()),
-      std::move(peer_regions),
-      std::move(steps),
+      group_mode,        communication_id,        std::move(replica_groups),
+      std::move(module), std::move(peer_regions), std::move(steps),
   };
 }
 
