@@ -272,6 +272,7 @@ struct TestAttributes {
   ffi::AttributesMap Build() const {
     ffi::CallFrameBuilder::AttributesBuilder attributes;
     attributes.Insert("schema_version", kCollectiveCallSchemaVersionV3);
+    attributes.Insert("abi_clique_size", abi_clique_size);
     attributes.Insert("group_mode", group_mode);
     attributes.Insert("communication_id", communication_id);
     attributes.Insert("replica_group_offsets", replica_group_offsets);
@@ -285,6 +286,7 @@ struct TestAttributes {
 
   int64_t group_mode =
       CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA;
+  int64_t abi_clique_size = 2;
   int64_t communication_id = 17;
   std::vector<int64_t> replica_group_offsets = {0, 2};
   std::vector<int64_t> replica_group_members = {0, 1};
@@ -594,6 +596,8 @@ TEST(CollectiveFfiPrepareTest, ResolvesEverySupportedCollectiveGroupMode) {
     TestAttributes attributes;
     attributes.module = std::string("module for ") + test_case.name;
     attributes.group_mode = test_case.mode;
+    attributes.abi_clique_size =
+        static_cast<int64_t>(test_case.expected_clique.size());
     attributes.replica_group_offsets = test_case.group_offsets;
     attributes.replica_group_members = test_case.group_members;
     CollectiveFfiInvocation invocation(std::move(attributes),
@@ -613,6 +617,34 @@ TEST(CollectiveFfiPrepareTest, ResolvesEverySupportedCollectiveGroupMode) {
     EXPECT_TRUE(requests[0].dev_comms.empty());
     EXPECT_FALSE(requests[0].barrier_after_module_execution_requested);
   }
+}
+
+TEST(CollectiveFfiPrepareTest,
+     RejectsAbiCliqueSizeMismatchBeforeLoadingModuleOrRequestingResources) {
+  FakeRuntime runtime;
+  ScopedFakeRuntime scoped_runtime(&runtime);
+  ASSERT_THAT(scoped_runtime.status(), IsOk());
+
+  TestAttributes attributes;
+  attributes.group_mode = CollectiveOpGroupMode::
+      COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA_AND_PARTITION;
+  // The replica-group row has two members, but this mode expands it over both
+  // partitions, so the runtime clique has four devices.
+  attributes.abi_clique_size = 2;
+  CollectiveFfiInvocation invocation(std::move(attributes),
+                                     /*replica_count=*/2,
+                                     /*partition_count=*/2,
+                                     /*current_device=*/0);
+
+  ASSERT_THAT(invocation.status(), IsOk());
+  ASSERT_THAT(invocation.Instantiate(), IsOk());
+  EXPECT_THAT(invocation.Prepare(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("ABI clique size 2 does not match runtime "
+                                 "clique size 4")));
+  EXPECT_EQ(runtime.create_count, 0);
+  EXPECT_EQ(invocation.clique_requests().size(), 0);
+  EXPECT_EQ(invocation.memory_requests().symmetric_size(), 0);
 }
 
 TEST(CollectiveFfiPrepareTest, RejectsReplicaGroupOutsideRuntimeDomain) {

@@ -43,8 +43,9 @@ namespace {
 constexpr size_t kPeerRegionRecordWidth = 6;
 constexpr size_t kStepRecordWidth = 2;
 
-constexpr std::array<absl::string_view, 9> kAllAttributeNames = {
+constexpr std::array<absl::string_view, 10> kAllAttributeNames = {
     "schema_version",
+    "abi_clique_size",
     "group_mode",
     "communication_id",
     "replica_group_offsets",
@@ -337,6 +338,15 @@ absl::StatusOr<CollectiveCallConfigV3> ParseCollectiveCallConfigV3(
         schema_version, kCollectiveCallSchemaVersionV3));
   }
 
+  ASSIGN_OR_RETURN(int64_t abi_clique_size,
+                   GetAttribute<int64_t>(attributes, "abi_clique_size"));
+  if (abi_clique_size <= 0 ||
+      abi_clique_size > std::numeric_limits<int32_t>::max()) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("`abi_clique_size` must be in [1, %d]; got %d",
+                        std::numeric_limits<int32_t>::max(), abi_clique_size));
+  }
+
   ASSIGN_OR_RETURN(int64_t group_mode_value,
                    GetAttribute<int64_t>(attributes, "group_mode"));
   ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
@@ -378,8 +388,13 @@ absl::StatusOr<CollectiveCallConfigV3> ParseCollectiveCallConfigV3(
                    ParseSteps(step_records));
 
   return CollectiveCallConfigV3{
-      group_mode,        communication_id,        std::move(replica_groups),
-      std::move(module), std::move(peer_regions), std::move(steps),
+      static_cast<int32_t>(abi_clique_size),
+      group_mode,
+      communication_id,
+      std::move(replica_groups),
+      std::move(module),
+      std::move(peer_regions),
+      std::move(steps),
   };
 }
 

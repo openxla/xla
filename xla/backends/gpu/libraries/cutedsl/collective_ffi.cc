@@ -471,13 +471,11 @@ absl::StatusOr<std::unique_ptr<CollectiveCallPreparedStateV3>> Prepare(
       GetGpuCliqueKey(
           *collective_params, config.replica_groups, config.group_mode,
           CommunicationId(static_cast<uint64_t>(config.communication_id))));
-  if (clique_key.num_devices() == 0 ||
-      clique_key.num_devices() >
-          static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+  if (clique_key.num_devices() != static_cast<size_t>(config.abi_clique_size)) {
     return absl::InvalidArgumentError(absl::StrFormat(
-        "CuTeDSL collective clique size %d does not fit the v3 int32 call "
-        "frame",
-        clique_key.num_devices()));
+        "CuTeDSL collective v3 ABI clique size %d does not match runtime "
+        "clique size %d",
+        config.abi_clique_size, clique_key.num_devices()));
   }
   if (HasBarrier(config) &&
       clique_key.num_devices() >

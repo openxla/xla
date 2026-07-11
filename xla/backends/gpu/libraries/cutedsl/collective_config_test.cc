@@ -62,6 +62,14 @@ struct TestAttributes {
     } else {
       attributes.Insert("schema_version", schema_version);
     }
+    if (!omit_abi_clique_size) {
+      if (abi_clique_size_as_i32) {
+        attributes.Insert("abi_clique_size",
+                          static_cast<int32_t>(abi_clique_size));
+      } else {
+        attributes.Insert("abi_clique_size", abi_clique_size);
+      }
+    }
     attributes.Insert("group_mode", group_mode);
     attributes.Insert("communication_id", communication_id);
     attributes.Insert("replica_group_offsets", replica_group_offsets);
@@ -77,6 +85,7 @@ struct TestAttributes {
   }
 
   int64_t schema_version = kCollectiveCallSchemaVersionV3;
+  int64_t abi_clique_size = 2;
   int64_t group_mode =
       CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA;
   int64_t communication_id = 17;
@@ -105,8 +114,10 @@ struct TestAttributes {
       2,
   };
   bool omit_steps = false;
+  bool omit_abi_clique_size = false;
   bool add_semantic_attribute = false;
   bool schema_version_as_i32 = false;
+  bool abi_clique_size_as_i32 = false;
 };
 
 absl::StatusOr<CollectiveCallConfigV3> Parse(TestAttributes attributes) {
@@ -137,6 +148,7 @@ TEST(CollectiveConfigTest, ParsesCompleteGenericConfiguration) {
 
   EXPECT_EQ(parsed->group_mode,
             CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA);
+  EXPECT_EQ(parsed->abi_clique_size, 2);
   EXPECT_EQ(parsed->communication_id, 17);
   ASSERT_EQ(parsed->replica_groups.size(), 2);
   EXPECT_THAT(parsed->replica_groups[0].replica_ids(), ElementsAre(0, 1));
@@ -176,6 +188,19 @@ TEST(CollectiveConfigTest, RejectsWrongSchemaAndAttributeShape) {
                        HasSubstr("attribute `schema_version`")));
 
   attributes = TestAttributes();
+  attributes.omit_abi_clique_size = true;
+  EXPECT_THAT(Parse(attributes),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Missing CuTeDSL collective v3 attribute "
+                                 "`abi_clique_size`")));
+
+  attributes = TestAttributes();
+  attributes.abi_clique_size_as_i32 = true;
+  EXPECT_THAT(Parse(attributes),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("attribute `abi_clique_size`")));
+
+  attributes = TestAttributes();
   attributes.omit_steps = true;
   EXPECT_THAT(Parse(attributes),
               StatusIs(absl::StatusCode::kInvalidArgument,
@@ -188,6 +213,30 @@ TEST(CollectiveConfigTest, RejectsWrongSchemaAndAttributeShape) {
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("Unknown CuTeDSL collective v3 attribute "
                                  "`buffer_role`")));
+}
+
+TEST(CollectiveConfigTest, ValidatesAbiCliqueSizeRange) {
+  TestAttributes attributes;
+  attributes.abi_clique_size = std::numeric_limits<int32_t>::max();
+  absl::StatusOr<CollectiveCallConfigV3> parsed = Parse(attributes);
+  ASSERT_THAT(parsed, IsOk());
+  EXPECT_EQ(parsed->abi_clique_size, std::numeric_limits<int32_t>::max());
+
+  attributes.abi_clique_size = 0;
+  EXPECT_THAT(Parse(attributes),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("`abi_clique_size` must be in")));
+
+  attributes.abi_clique_size = -1;
+  EXPECT_THAT(Parse(attributes),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("`abi_clique_size` must be in")));
+
+  attributes.abi_clique_size =
+      static_cast<int64_t>(std::numeric_limits<int32_t>::max()) + 1;
+  EXPECT_THAT(Parse(attributes),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("`abi_clique_size` must be in")));
 }
 
 TEST(CollectiveConfigTest, RejectsMalformedCollectiveGroup) {

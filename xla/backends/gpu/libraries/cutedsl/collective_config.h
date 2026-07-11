@@ -72,6 +72,9 @@ struct CollectiveStepV3 {
 };
 
 struct CollectiveCallConfigV3 {
+  // Number of peer-address entries per region in the compiled call frame.
+  // Prepare verifies this against the runtime clique before loading `module`.
+  int32_t abi_clique_size;
   CollectiveOpGroupMode group_mode;
   int64_t communication_id;
   std::vector<ReplicaGroup> replica_groups;

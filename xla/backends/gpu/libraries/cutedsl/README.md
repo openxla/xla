@@ -4,11 +4,17 @@ OpenXLA registers these CUDA FFI targets:
 
 - `__xla_gpu_cutedsl_call_v3`
 - `__xla_gpu_cutedsl_call_no_cuda_graph_v3`
+- `__xla_gpu_cutedsl_collective_v3`
 
 Version 3 is the only supported contract. It accepts `module` bytes and their
 32-byte SHA-256 `key`, creates the module during prepare, runs an explicit no-op
 initialize stage, and passes XLA buffers to the compiled `cutlass_call` entry
 point using CuTeDSL's `JaxArray` layout.
+
+The collective target additionally requires the int64 `abi_clique_size`
+attribute. It records the clique width used to compile the region-major peer
+address portion of the call frame. Prepare rejects a different runtime clique
+width before loading the module or requesting collective resources.
 
 ## Runtime linkage
 
