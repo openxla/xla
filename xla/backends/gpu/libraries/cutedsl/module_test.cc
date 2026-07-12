@@ -29,7 +29,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/SHA256.h"
-#include "xla/backends/gpu/libraries/cutedsl/runtime_api.h"
+#include "CuteDSLRuntime.h"
 
 namespace xla::gpu::cutedsl {
 namespace {
@@ -41,8 +41,8 @@ struct FakeRuntime {
   int create_count = 0;
   int get_function_count = 0;
   int destroy_count = 0;
-  CuteDSLRT_Error_t create_error = kCuteDslRtSuccess;
-  CuteDSLRT_Error_t get_function_error = kCuteDslRtSuccess;
+  CuteDSLRT_Error_t create_error = CuteDSLRT_Error_Success;
+  CuteDSLRT_Error_t get_function_error = CuteDSLRT_Error_Success;
   bool create_module_on_error = false;
   bool return_null_function = false;
   std::vector<std::string> function_prefixes;
@@ -54,14 +54,14 @@ CuteDSLRT_Error_t ModuleCreate(CuteDSLRT_Module_t** module,
                                const unsigned char*, size_t, const char**,
                                size_t) {
   ++fake_runtime->create_count;
-  if (fake_runtime->create_error != kCuteDslRtSuccess) {
+  if (fake_runtime->create_error != CuteDSLRT_Error_Success) {
     if (fake_runtime->create_module_on_error) {
       *module = reinterpret_cast<CuteDSLRT_Module_t*>(fake_runtime);
     }
     return fake_runtime->create_error;
   }
   *module = reinterpret_cast<CuteDSLRT_Module_t*>(fake_runtime);
-  return kCuteDslRtSuccess;
+  return CuteDSLRT_Error_Success;
 }
 
 CuteDSLRT_Error_t ModuleGetFunction(CuteDSLRT_Function_t** function,
@@ -70,126 +70,204 @@ CuteDSLRT_Error_t ModuleGetFunction(CuteDSLRT_Function_t** function,
   EXPECT_EQ(module, reinterpret_cast<CuteDSLRT_Module_t*>(fake_runtime));
   ++fake_runtime->get_function_count;
   fake_runtime->function_prefixes.emplace_back(prefix);
-  if (fake_runtime->get_function_error != kCuteDslRtSuccess) {
+  if (fake_runtime->get_function_error != CuteDSLRT_Error_Success) {
     return fake_runtime->get_function_error;
   }
   *function = fake_runtime->return_null_function
                   ? nullptr
                   : reinterpret_cast<CuteDSLRT_Function_t*>(fake_runtime);
-  return kCuteDslRtSuccess;
+  return CuteDSLRT_Error_Success;
 }
 
 CuteDSLRT_Error_t FunctionRun(void*, void**, size_t) {
-  return kCuteDslRtSuccess;
+  return CuteDSLRT_Error_Success;
 }
 
 CuteDSLRT_Error_t ModuleDestroy(CuteDSLRT_Module_t* module) {
   EXPECT_EQ(module, reinterpret_cast<CuteDSLRT_Module_t*>(fake_runtime));
   ++fake_runtime->destroy_count;
-  return kCuteDslRtSuccess;
+  return CuteDSLRT_Error_Success;
 }
 
 const char* GetErrorName(CuteDSLRT_Error_t) { return "FakeRuntimeError"; }
 const char* GetErrorString(CuteDSLRT_Error_t) { return "fake failure"; }
 
-const RuntimeFunctions kFakeFunctions = {
-    /*module_create_from_bytes=*/ModuleCreate,
-    /*module_get_function=*/ModuleGetFunction,
-    /*function_run=*/FunctionRun,
-    /*module_destroy=*/ModuleDestroy,
-    /*get_error_name=*/GetErrorName,
-    /*get_error_string=*/GetErrorString,
-};
+}  // namespace
+
+extern "C" CuteDSLRT_Error_t __wrap_CuteDSLRT_Module_Create_From_Bytes(
+    CuteDSLRT_Module_t** module, const unsigned char* bytes, size_t size,
+    const char** shared_libraries, size_t shared_library_count) {
+  return ModuleCreate(module, bytes, size, shared_libraries,
+                      shared_library_count);
+}
+
+extern "C" CuteDSLRT_Error_t __wrap_CuteDSLRT_Module_Get_Function(
+    CuteDSLRT_Function_t** function, CuteDSLRT_Module_t* module,
+    const char* prefix) {
+  return ModuleGetFunction(function, module, prefix);
+}
+
+extern "C" CuteDSLRT_Error_t __wrap_CuteDSLRT_Function_Run(
+    void* function, void** arguments, size_t argument_count) {
+  return FunctionRun(function, arguments, argument_count);
+}
+
+extern "C" CuteDSLRT_Error_t __wrap_CuteDSLRT_Module_Destroy(
+    CuteDSLRT_Module_t* module) {
+  return ModuleDestroy(module);
+}
+
+extern "C" const char* __wrap_CuteDSLRT_GetErrorName(CuteDSLRT_Error_t error) {
+  return GetErrorName(error);
+}
+
+extern "C" const char* __wrap_CuteDSLRT_GetErrorString(
+    CuteDSLRT_Error_t error) {
+  return GetErrorString(error);
+}
+
+namespace {
 
 class ScopedFakeRuntime {
  public:
   explicit ScopedFakeRuntime(FakeRuntime* runtime) {
     EXPECT_EQ(fake_runtime, nullptr);
     fake_runtime = runtime;
-    status_ = SetRuntimeFunctionsForTesting(&kFakeFunctions);
   }
 
-  ~ScopedFakeRuntime() {
-    ResetRuntimeFunctionsForTesting();
-    fake_runtime = nullptr;
-  }
-
-  const absl::Status& status() const { return status_; }
-
- private:
-  absl::Status status_;
+  ~ScopedFakeRuntime() { fake_runtime = nullptr; }
 };
 
 std::string Sha256(absl::string_view value) {
   llvm::SHA256 hasher;
   hasher.update(llvm::StringRef(value.data(), value.size()));
-  std::array<uint8_t, kModuleCacheKeySize> digest = hasher.final();
+  std::array<uint8_t, kModuleDigestSize> digest = hasher.final();
   return std::string(reinterpret_cast<const char*>(digest.data()),
                      digest.size());
 }
 
-TEST(CuteDslModuleTest, CachesModulesByDigestAndScope) {
+absl::StatusOr<std::shared_ptr<LoadedModule>> LoadModuleForTest(
+    ModuleLoader& loader, absl::string_view bytes) {
+  absl::StatusOr<ModuleImage> image = ModuleImage::Create(bytes, Sha256(bytes));
+  if (!image.ok()) return image.status();
+  return loader.GetOrLoad(*image);
+}
+
+TEST(CuteDslModuleTest, ModuleImageOwnsValidatedBytesAndDigest) {
+  std::string bytes("module\0image", 12);
+  const std::string expected_bytes = bytes;
+  std::string sha256 = Sha256(bytes);
+  const std::string expected_sha256 = sha256;
+
+  absl::StatusOr<ModuleImage> image = ModuleImage::Create(bytes, sha256);
+  ASSERT_TRUE(image.ok()) << image.status();
+  bytes[0] = 'x';
+  sha256[0] ^= 1;
+
+  EXPECT_EQ(image->bytes(), expected_bytes);
+  EXPECT_EQ(image->sha256(), expected_sha256);
+
+  absl::StatusOr<ModuleImage> derived = ModuleImage::Create(expected_bytes);
+  ASSERT_TRUE(derived.ok()) << derived.status();
+  EXPECT_EQ(derived->bytes(), expected_bytes);
+  EXPECT_EQ(derived->sha256(), expected_sha256);
+}
+
+TEST(CuteDslModuleTest, RejectsInvalidModuleImages) {
+  EXPECT_EQ(ModuleImage::Create("", Sha256("")).status().code(),
+            absl::StatusCode::kInvalidArgument);
+  EXPECT_EQ(ModuleImage::Create("module", "short").status().code(),
+            absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(ModuleImage::Create("module", std::string(kModuleDigestSize, 'x'))
+                  .status()
+                  .message(),
+              HasSubstr("does not match"));
+}
+
+TEST(CuteDslModuleTest, CachesModulesByDigest) {
   FakeRuntime runtime;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
-  const std::string bytes = "module cache scope test";
-  const std::string key = Sha256(bytes);
-  int scope = 0;
+  const std::string bytes = "module cache test";
+  ModuleLoader loader;
 
   absl::StatusOr<std::shared_ptr<LoadedModule>> first =
-      GetOrLoadModule(bytes, key);
+      LoadModuleForTest(loader, bytes);
   ASSERT_TRUE(first.ok()) << first.status();
   absl::StatusOr<std::shared_ptr<LoadedModule>> same =
-      GetOrLoadModule(bytes, key);
+      LoadModuleForTest(loader, bytes);
   ASSERT_TRUE(same.ok()) << same.status();
-  absl::StatusOr<std::shared_ptr<LoadedModule>> scoped =
-      GetOrLoadModule(bytes, key, &scope);
-  ASSERT_TRUE(scoped.ok()) << scoped.status();
+  absl::StatusOr<std::shared_ptr<LoadedModule>> different =
+      LoadModuleForTest(loader, "different module cache test");
+  ASSERT_TRUE(different.ok()) << different.status();
 
   EXPECT_EQ(first->get(), same->get());
-  EXPECT_NE(first->get(), scoped->get());
+  EXPECT_NE(first->get(), different->get());
   EXPECT_EQ(runtime.create_count, 2);
 }
 
-TEST(CuteDslModuleTest, WeakCacheReloadsAfterLastOwnerReleases) {
+TEST(CuteDslModuleTest, ModuleLoaderRetainsModules) {
   FakeRuntime runtime;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
-  const std::string bytes = "module weak cache test";
-  const std::string key = Sha256(bytes);
+  absl::StatusOr<ModuleImage> image = ModuleImage::Create(
+      "strongly cached module", Sha256("strongly cached module"));
+  ASSERT_TRUE(image.ok()) << image.status();
   {
+    ModuleLoader loader;
+    {
+      absl::StatusOr<std::shared_ptr<LoadedModule>> loaded =
+          loader.GetOrLoad(*image);
+      ASSERT_TRUE(loaded.ok()) << loaded.status();
+    }
+    EXPECT_EQ(runtime.destroy_count, 0);
+
     absl::StatusOr<std::shared_ptr<LoadedModule>> loaded =
-        GetOrLoadModule(bytes, key);
+        loader.GetOrLoad(*image);
     ASSERT_TRUE(loaded.ok()) << loaded.status();
     EXPECT_EQ(runtime.create_count, 1);
   }
   EXPECT_EQ(runtime.destroy_count, 1);
+}
 
-  absl::StatusOr<std::shared_ptr<LoadedModule>> reloaded =
-      GetOrLoadModule(bytes, key);
-  ASSERT_TRUE(reloaded.ok()) << reloaded.status();
+TEST(CuteDslModuleTest, ModuleLoadersIsolateFfiState) {
+  FakeRuntime runtime;
+  ScopedFakeRuntime scoped_runtime(&runtime);
+
+  absl::StatusOr<ModuleImage> image =
+      ModuleImage::Create("state-owned module", Sha256("state-owned module"));
+  ASSERT_TRUE(image.ok()) << image.status();
+  ModuleLoader first_loader;
+  ModuleLoader second_loader;
+
+  absl::StatusOr<std::shared_ptr<LoadedModule>> first =
+      first_loader.GetOrLoad(*image);
+  ASSERT_TRUE(first.ok()) << first.status();
+  absl::StatusOr<std::shared_ptr<LoadedModule>> second =
+      second_loader.GetOrLoad(*image);
+  ASSERT_TRUE(second.ok()) << second.status();
+
+  EXPECT_NE(first->get(), second->get());
   EXPECT_EQ(runtime.create_count, 2);
 }
 
 TEST(CuteDslModuleTest, CachesMultipleFunctionPrefixesPerModule) {
   FakeRuntime runtime;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
   const std::string bytes = "module function cache test";
+  ModuleLoader loader;
   absl::StatusOr<std::shared_ptr<LoadedModule>> loaded =
-      GetOrLoadModule(bytes, Sha256(bytes));
+      LoadModuleForTest(loader, bytes);
   ASSERT_TRUE(loaded.ok()) << loaded.status();
 
-  absl::StatusOr<CuteDSLRT_Function_t*> first =
+  absl::StatusOr<LoadedModule::FunctionHandle> first =
       (*loaded)->GetFunction("cutlass_call");
   ASSERT_TRUE(first.ok()) << first.status();
-  absl::StatusOr<CuteDSLRT_Function_t*> repeated =
+  absl::StatusOr<LoadedModule::FunctionHandle> repeated =
       (*loaded)->GetFunction("cutlass_call");
   ASSERT_TRUE(repeated.ok()) << repeated.status();
-  absl::StatusOr<CuteDSLRT_Function_t*> second =
+  absl::StatusOr<LoadedModule::FunctionHandle> second =
       (*loaded)->GetFunction("cutlass_call_1");
   ASSERT_TRUE(second.ok()) << second.status();
 
@@ -203,23 +281,22 @@ TEST(CuteDslModuleTest, CachesMultipleFunctionPrefixesPerModule) {
 TEST(CuteDslModuleTest, RejectsInvalidDigestBeforeLoadingRuntimeModule) {
   FakeRuntime runtime;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
-  absl::StatusOr<std::shared_ptr<LoadedModule>> loaded = GetOrLoadModule(
-      "module with bad key", std::string(kModuleCacheKeySize, 'x'));
-  EXPECT_EQ(loaded.status().code(), absl::StatusCode::kInvalidArgument);
-  EXPECT_THAT(loaded.status().message(), HasSubstr("does not match"));
+  absl::StatusOr<ModuleImage> image = ModuleImage::Create(
+      "module with bad key", std::string(kModuleDigestSize, 'x'));
+  EXPECT_EQ(image.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(image.status().message(), HasSubstr("does not match"));
   EXPECT_EQ(runtime.create_count, 0);
 }
 
 TEST(CuteDslModuleTest, RejectsInvalidFunctionPrefixesWithoutRuntimeLookup) {
   FakeRuntime runtime;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
   const std::string bytes = "module function prefix validation test";
+  ModuleLoader loader;
   absl::StatusOr<std::shared_ptr<LoadedModule>> loaded =
-      GetOrLoadModule(bytes, Sha256(bytes));
+      LoadModuleForTest(loader, bytes);
   ASSERT_TRUE(loaded.ok()) << loaded.status();
 
   EXPECT_EQ((*loaded)->GetFunction("").status().code(),
@@ -234,14 +311,14 @@ TEST(CuteDslModuleTest, ReportsNullFunctionAndRetainsModuleOwnership) {
   FakeRuntime runtime;
   runtime.return_null_function = true;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
   const std::string bytes = "module null function test";
+  ModuleLoader loader;
   absl::StatusOr<std::shared_ptr<LoadedModule>> loaded =
-      GetOrLoadModule(bytes, Sha256(bytes));
+      LoadModuleForTest(loader, bytes);
   ASSERT_TRUE(loaded.ok()) << loaded.status();
 
-  absl::StatusOr<CuteDSLRT_Function_t*> function =
+  absl::StatusOr<LoadedModule::FunctionHandle> function =
       (*loaded)->GetFunction("cutlass_call_2");
   EXPECT_EQ(function.status().code(), absl::StatusCode::kInternal);
   EXPECT_THAT(function.status().message(), HasSubstr("null cutlass_call_2"));

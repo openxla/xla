@@ -18,25 +18,23 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <limits>
-#include <optional>
 #include <string>
-#include <utility>
-#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/SHA256.h"
-#include "xla/ffi/attribute_map.h"
-#include "xla/ffi/call_frame.h"
-#include "xla/ffi/ffi.h"
-#include "xla/ffi/invoke.h"
+#include "xla/backends/gpu/libraries/cutedsl/collective_config.pb.h"
 #include "xla/tsl/platform/status_matchers.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla::gpu::cutedsl {
+
+using ::xla::CollectiveOpGroupMode;
+namespace wire = ::xla::gpu::cutedsl::proto;
+
 namespace {
 
 using ::testing::ElementsAre;
@@ -47,103 +45,67 @@ using ::tsl::testing::StatusIs;
 std::string Sha256(absl::string_view bytes) {
   llvm::SHA256 hasher;
   hasher.update(llvm::StringRef(bytes.data(), bytes.size()));
-  std::array<uint8_t, kCollectiveModuleDigestSizeV3> digest = hasher.final();
+  std::array<uint8_t, kModuleDigestSize> digest = hasher.final();
   return std::string(reinterpret_cast<const char*>(digest.data()),
                      digest.size());
 }
 
-struct TestAttributes {
-  TestAttributes() : key(Sha256(module)) {}
+wire::CollectiveCallConfigV3 TestProto() {
+  wire::CollectiveCallConfigV3 proto;
+  proto.set_abi_clique_size(2);
+  proto.set_group_mode(
+      CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA);
+  proto.set_communication_id(17);
+  proto.add_replica_groups()->add_replica_ids(0);
+  proto.mutable_replica_groups(0)->add_replica_ids(1);
+  proto.add_replica_groups()->add_replica_ids(2);
+  proto.mutable_replica_groups(1)->add_replica_ids(3);
+  proto.set_module(std::string("collective\0module\xff", 18));
 
-  ffi::AttributesMap Build() const {
-    ffi::CallFrameBuilder::AttributesBuilder attributes;
-    if (schema_version_as_i32) {
-      attributes.Insert("schema_version", static_cast<int32_t>(schema_version));
-    } else {
-      attributes.Insert("schema_version", schema_version);
-    }
-    if (!omit_abi_clique_size) {
-      if (abi_clique_size_as_i32) {
-        attributes.Insert("abi_clique_size",
-                          static_cast<int32_t>(abi_clique_size));
-      } else {
-        attributes.Insert("abi_clique_size", abi_clique_size);
-      }
-    }
-    attributes.Insert("group_mode", group_mode);
-    attributes.Insert("communication_id", communication_id);
-    attributes.Insert("replica_group_offsets", replica_group_offsets);
-    attributes.Insert("replica_group_members", replica_group_members);
-    attributes.Insert("module", module);
-    attributes.Insert("key", key);
-    attributes.Insert("peer_regions", peer_regions);
-    if (!omit_steps) attributes.Insert("steps", steps);
-    if (add_semantic_attribute) {
-      attributes.Insert("buffer_role", int64_t{0});
-    }
-    return attributes.Build();
-  }
+  wire::PeerRegionProto* argument = proto.add_peer_regions();
+  argument->set_endpoint(wire::PEER_REGION_ENDPOINT_PROTO_ARGUMENT);
+  argument->set_buffer_index(2);
+  argument->set_byte_offset(16);
+  argument->set_byte_size(64);
+  argument->set_required_alignment(16);
+  argument->set_memory_kind(wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC);
 
-  int64_t schema_version = kCollectiveCallSchemaVersionV3;
-  int64_t abi_clique_size = 2;
-  int64_t group_mode =
-      CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA;
-  int64_t communication_id = 17;
-  std::vector<int64_t> replica_group_offsets = {0, 2, 4};
-  std::vector<int64_t> replica_group_members = {0, 1, 2, 3};
-  std::string module = "collective module";
-  std::string key;
-  std::vector<int64_t> peer_regions = {
-      static_cast<int64_t>(PeerRegionEndpointV3::kArgument),
-      2,
-      16,
-      64,
-      16,
-      static_cast<int64_t>(PeerMemoryKindV3::kSymmetric),
-      static_cast<int64_t>(PeerRegionEndpointV3::kResult),
-      0,
-      0,
-      128,
-      64,
-      static_cast<int64_t>(PeerMemoryKindV3::kSymmetric),
-  };
-  std::vector<int64_t> steps = {
-      static_cast<int64_t>(CollectiveStepKindV3::kBarrier),
-      0,
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch),
-      2,
-  };
-  bool omit_steps = false;
-  bool omit_abi_clique_size = false;
-  bool add_semantic_attribute = false;
-  bool schema_version_as_i32 = false;
-  bool abi_clique_size_as_i32 = false;
-};
+  wire::PeerRegionProto* result = proto.add_peer_regions();
+  result->set_endpoint(wire::PEER_REGION_ENDPOINT_PROTO_RESULT);
+  result->set_buffer_index(0);
+  result->set_byte_offset(0);
+  result->set_byte_size(128);
+  result->set_required_alignment(64);
+  result->set_memory_kind(wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC);
 
-absl::StatusOr<CollectiveCallConfigV3> Parse(TestAttributes attributes) {
-  ffi::CallFrameBuilder builder(/*num_args=*/0, /*num_rets=*/0);
-  builder.AddAttributes(attributes.Build());
-  ffi::CallFrame call_frame = builder.Build();
-
-  std::optional<CollectiveCallConfigV3> parsed;
-  auto parse = [&](ffi::Dictionary dictionary) -> absl::Status {
-    absl::StatusOr<CollectiveCallConfigV3> result =
-        ParseCollectiveCallConfigV3(dictionary);
-    if (!result.ok()) return result.status();
-    parsed.emplace(std::move(*result));
-    return absl::OkStatus();
-  };
-  auto handler = ffi::Ffi::Bind().Attrs().To(parse);
-  absl::Status status = ffi::Invoke(ffi::GetXlaFfiApi(), *handler, call_frame);
-  if (!status.ok()) return status;
-  if (!parsed.has_value()) {
-    return absl::InternalError("Test parser handler returned no configuration");
-  }
-  return std::move(*parsed);
+  wire::CollectiveStepProto* barrier = proto.add_steps();
+  barrier->set_kind(wire::COLLECTIVE_STEP_KIND_PROTO_BARRIER);
+  barrier->set_operand(0);
+  wire::CollectiveStepProto* launch = proto.add_steps();
+  launch->set_kind(wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH);
+  launch->set_operand(2);
+  return proto;
 }
 
-TEST(CollectiveConfigTest, ParsesCompleteGenericConfiguration) {
-  absl::StatusOr<CollectiveCallConfigV3> parsed = Parse(TestAttributes());
+std::string ToJson(const wire::CollectiveCallConfigV3& proto) {
+  tsl::protobuf::util::JsonPrintOptions options;
+  options.preserve_proto_field_names = true;
+  options.always_print_enums_as_ints = true;
+  std::string json;
+  absl::Status status =
+      tsl::protobuf::util::MessageToJsonString(proto, &json, options);
+  EXPECT_TRUE(status.ok()) << status;
+  return json;
+}
+
+absl::StatusOr<CollectiveCallConfigV3> Parse(
+    const wire::CollectiveCallConfigV3& proto) {
+  return ParseCollectiveCallConfigV3(ToJson(proto));
+}
+
+TEST(CollectiveConfigTest, ParsesCompleteProtoJsonConfiguration) {
+  wire::CollectiveCallConfigV3 proto = TestProto();
+  absl::StatusOr<CollectiveCallConfigV3> parsed = Parse(proto);
   ASSERT_THAT(parsed, IsOk());
 
   EXPECT_EQ(parsed->group_mode,
@@ -154,11 +116,8 @@ TEST(CollectiveConfigTest, ParsesCompleteGenericConfiguration) {
   EXPECT_THAT(parsed->replica_groups[0].replica_ids(), ElementsAre(0, 1));
   EXPECT_THAT(parsed->replica_groups[1].replica_ids(), ElementsAre(2, 3));
 
-  EXPECT_EQ(parsed->module.bytes, "collective module");
-  EXPECT_EQ(
-      std::string(reinterpret_cast<const char*>(parsed->module.sha256.data()),
-                  parsed->module.sha256.size()),
-      Sha256("collective module"));
+  EXPECT_EQ(parsed->module.bytes(), proto.module());
+  EXPECT_EQ(parsed->module.sha256(), Sha256(proto.module()));
 
   ASSERT_EQ(parsed->peer_regions.size(), 2);
   EXPECT_EQ(parsed->peer_regions[0].endpoint, PeerRegionEndpointV3::kArgument);
@@ -175,237 +134,217 @@ TEST(CollectiveConfigTest, ParsesCompleteGenericConfiguration) {
   EXPECT_EQ(parsed->steps[1].operand, 2);
 }
 
-TEST(CollectiveConfigTest, RejectsWrongSchemaAndAttributeShape) {
-  TestAttributes attributes;
-  attributes.schema_version = 2;
-  EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
-                                          HasSubstr("schema version 2")));
+TEST(CollectiveConfigTest, ParsesDkgProtoJsonEncoding) {
+  constexpr absl::string_view kJson = R"json(
+    {
+      "abi_clique_size": "2",
+      "communication_id": "17",
+      "group_mode": 0,
+      "module": "Y29sbGVjdGl2ZS1tb2R1bGU=",
+      "peer_regions": [{
+        "buffer_index": "2",
+        "byte_offset": "16",
+        "byte_size": "64",
+        "endpoint": 0,
+        "memory_kind": 0,
+        "required_alignment": "16"
+      }],
+      "replica_groups": [{"replica_ids": ["0", "1"]}],
+      "steps": [
+        {"kind": 0, "operand": "0"},
+        {"kind": 1, "operand": "2"}
+      ]
+    }
+  )json";
 
-  attributes = TestAttributes();
-  attributes.schema_version_as_i32 = true;
-  EXPECT_THAT(Parse(attributes),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("attribute `schema_version`")));
+  absl::StatusOr<CollectiveCallConfigV3> parsed =
+      ParseCollectiveCallConfigV3(kJson);
+  ASSERT_THAT(parsed, IsOk());
+  EXPECT_EQ(parsed->abi_clique_size, 2);
+  EXPECT_EQ(parsed->module.bytes(), "collective-module");
+  ASSERT_EQ(parsed->peer_regions.size(), 1);
+  EXPECT_EQ(parsed->peer_regions[0].buffer_index, 2);
+  ASSERT_EQ(parsed->steps.size(), 2);
+  EXPECT_EQ(parsed->steps[1].kind, CollectiveStepKindV3::kLaunch);
+  EXPECT_EQ(parsed->steps[1].operand, 2);
+}
 
-  attributes = TestAttributes();
-  attributes.omit_abi_clique_size = true;
-  EXPECT_THAT(Parse(attributes),
+TEST(CollectiveConfigTest, RejectsMalformedJsonAndMissingFields) {
+  EXPECT_THAT(ParseCollectiveCallConfigV3("{"),
               StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("Missing CuTeDSL collective v3 attribute "
-                                 "`abi_clique_size`")));
+                       HasSubstr("Failed to parse")));
 
-  attributes = TestAttributes();
-  attributes.abi_clique_size_as_i32 = true;
-  EXPECT_THAT(Parse(attributes),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("attribute `abi_clique_size`")));
+  wire::CollectiveCallConfigV3 proto = TestProto();
+  proto.clear_abi_clique_size();
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("abi_clique_size")));
 
-  attributes = TestAttributes();
-  attributes.omit_steps = true;
-  EXPECT_THAT(Parse(attributes),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("Missing CuTeDSL collective v3 attribute "
-                                 "`steps`")));
+  proto = TestProto();
+  proto.mutable_peer_regions(0)->clear_required_alignment();
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("required_alignment")));
 
-  attributes = TestAttributes();
-  attributes.add_semantic_attribute = true;
-  EXPECT_THAT(Parse(attributes),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("Unknown CuTeDSL collective v3 attribute "
-                                 "`buffer_role`")));
+  proto = TestProto();
+  proto.mutable_steps(0)->clear_operand();
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("steps[0].operand")));
+}
+
+TEST(CollectiveConfigTest, IgnoresUnknownJsonFields) {
+  std::string json = ToJson(TestProto());
+  ASSERT_EQ(json.back(), '}');
+  json.pop_back();
+  json.append(",\"future_field\":{\"nested\":1}}");
+  EXPECT_THAT(ParseCollectiveCallConfigV3(json), IsOk());
 }
 
 TEST(CollectiveConfigTest, ValidatesAbiCliqueSizeRange) {
-  TestAttributes attributes;
-  attributes.abi_clique_size = std::numeric_limits<int32_t>::max();
-  absl::StatusOr<CollectiveCallConfigV3> parsed = Parse(attributes);
+  wire::CollectiveCallConfigV3 proto = TestProto();
+  proto.set_abi_clique_size(std::numeric_limits<int32_t>::max());
+  absl::StatusOr<CollectiveCallConfigV3> parsed = Parse(proto);
   ASSERT_THAT(parsed, IsOk());
   EXPECT_EQ(parsed->abi_clique_size, std::numeric_limits<int32_t>::max());
 
-  attributes.abi_clique_size = 0;
-  EXPECT_THAT(Parse(attributes),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("`abi_clique_size` must be in")));
-
-  attributes.abi_clique_size = -1;
-  EXPECT_THAT(Parse(attributes),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("`abi_clique_size` must be in")));
-
-  attributes.abi_clique_size =
-      static_cast<int64_t>(std::numeric_limits<int32_t>::max()) + 1;
-  EXPECT_THAT(Parse(attributes),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("`abi_clique_size` must be in")));
+  for (int64_t invalid :
+       {int64_t{0}, int64_t{-1},
+        static_cast<int64_t>(std::numeric_limits<int32_t>::max()) + 1}) {
+    proto.set_abi_clique_size(invalid);
+    EXPECT_THAT(Parse(proto),
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("`abi_clique_size` must be in")));
+  }
 }
 
 TEST(CollectiveConfigTest, RejectsMalformedCollectiveGroup) {
-  TestAttributes attributes;
-  attributes.group_mode = 9;
-  EXPECT_THAT(Parse(attributes),
+  wire::CollectiveCallConfigV3 proto = TestProto();
+  proto.set_group_mode(static_cast<CollectiveOpGroupMode>(9));
+  EXPECT_THAT(Parse(proto),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("Unsupported collective group mode")));
 
-  attributes = TestAttributes();
-  attributes.communication_id = -1;
-  EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
-                                          HasSubstr("communication_id")));
+  proto = TestProto();
+  proto.set_communication_id(-1);
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("communication_id")));
 
-  attributes = TestAttributes();
-  attributes.replica_group_offsets = {1, 4};
-  EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
-                                          HasSubstr("must start with zero")));
+  proto = TestProto();
+  proto.mutable_replica_groups(0)->clear_replica_ids();
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("must not be empty")));
 
-  attributes = TestAttributes();
-  attributes.replica_group_offsets = {0, 1, 4};
-  EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
-                                          HasSubstr("equal cardinality")));
+  proto = TestProto();
+  proto.mutable_replica_groups(0)->mutable_replica_ids()->RemoveLast();
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("equal cardinality")));
 
-  attributes = TestAttributes();
-  attributes.replica_group_members = {0, 1, 1, 3};
-  EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
-                                          HasSubstr("appears more than once")));
+  proto = TestProto();
+  proto.mutable_replica_groups(1)->set_replica_ids(0, 1);
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("appears more than once")));
 
-  attributes = TestAttributes();
-  attributes.replica_group_members = {0, 1, 2, -1};
-  EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
-                                          HasSubstr("must be nonnegative")));
+  proto = TestProto();
+  proto.mutable_replica_groups(1)->set_replica_ids(1, -1);
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("must be nonnegative")));
 }
 
 TEST(CollectiveConfigTest, RejectsMalformedModule) {
-  TestAttributes attributes;
-  attributes.module.clear();
-  attributes.key = Sha256(attributes.module);
-  EXPECT_THAT(Parse(attributes),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("module` must not be empty")));
+  wire::CollectiveCallConfigV3 proto = TestProto();
+  proto.clear_module();
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("Missing")));
 
-  attributes = TestAttributes();
-  attributes.key.pop_back();
-  EXPECT_THAT(Parse(attributes),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("one 32-byte SHA-256 digest")));
-
-  attributes = TestAttributes();
-  attributes.key[0] ^= 1;
-  EXPECT_THAT(Parse(attributes),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("does not match the module image")));
+  proto = TestProto();
+  proto.set_module("");
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("module` must not be empty")));
 }
 
 TEST(CollectiveConfigTest, RejectsMalformedPeerRegions) {
-  TestAttributes attributes;
-  attributes.peer_regions.pop_back();
-  EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
-                                          HasSubstr("multiple of 6")));
+  wire::CollectiveCallConfigV3 proto = TestProto();
+  proto.mutable_peer_regions(0)->set_endpoint(
+      static_cast<wire::PeerRegionEndpointProto>(9));
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("Unsupported endpoint")));
 
-  attributes = TestAttributes();
-  attributes.peer_regions[0] = 9;
-  EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
-                                          HasSubstr("Unsupported endpoint")));
-
-  attributes = TestAttributes();
-  attributes.peer_regions[3] = 0;
-  EXPECT_THAT(Parse(attributes),
+  proto = TestProto();
+  proto.mutable_peer_regions(0)->set_byte_size(0);
+  EXPECT_THAT(Parse(proto),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("Invalid or overflowing byte range")));
 
-  attributes = TestAttributes();
-  attributes.peer_regions[2] = std::numeric_limits<int64_t>::max() - 1;
-  attributes.peer_regions[3] = 4;
-  EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
-                                          HasSubstr("overflowing byte range")));
+  proto = TestProto();
+  proto.mutable_peer_regions(0)->set_byte_offset(
+      std::numeric_limits<int64_t>::max() - 1);
+  proto.mutable_peer_regions(0)->set_byte_size(4);
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("overflowing byte range")));
 
-  attributes = TestAttributes();
-  attributes.peer_regions[4] = 3;
-  EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
-                                          HasSubstr("positive power of two")));
+  proto = TestProto();
+  proto.mutable_peer_regions(0)->set_required_alignment(3);
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("positive power of two")));
 
-  attributes = TestAttributes();
-  attributes.peer_regions[5] = 1;
-  EXPECT_THAT(Parse(attributes),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("Unsupported memory kind")));
+  proto = TestProto();
+  proto.mutable_peer_regions(0)->set_memory_kind(
+      static_cast<wire::PeerMemoryKindProto>(1));
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("Unsupported memory kind")));
 
-  attributes = TestAttributes();
-  std::vector<int64_t> duplicate(attributes.peer_regions.begin(),
-                                 attributes.peer_regions.begin() + 6);
-  attributes.peer_regions.insert(attributes.peer_regions.end(),
-                                 duplicate.begin(), duplicate.end());
-  EXPECT_THAT(Parse(attributes),
+  proto = TestProto();
+  *proto.add_peer_regions() = proto.peer_regions(0);
+  EXPECT_THAT(Parse(proto),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("duplicates an earlier record")));
 }
 
-TEST(CollectiveConfigTest, AllowsNoPeerRegions) {
-  TestAttributes attributes;
-  attributes.peer_regions.clear();
-  absl::StatusOr<CollectiveCallConfigV3> parsed = Parse(attributes);
+TEST(CollectiveConfigTest, AllowsNoPeerRegionsAndLaunchOnlySchedule) {
+  wire::CollectiveCallConfigV3 proto = TestProto();
+  proto.clear_peer_regions();
+  proto.clear_steps();
+  wire::CollectiveStepProto* launch = proto.add_steps();
+  launch->set_kind(wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH);
+  launch->set_operand(0);
+
+  absl::StatusOr<CollectiveCallConfigV3> parsed = Parse(proto);
   ASSERT_THAT(parsed, IsOk());
   EXPECT_TRUE(parsed->peer_regions.empty());
-}
-
-TEST(CollectiveConfigTest, AllowsLaunchOnlySchedule) {
-  TestAttributes attributes;
-  attributes.steps = {
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch),
-      0,
-  };
-  absl::StatusOr<CollectiveCallConfigV3> parsed = Parse(attributes);
-  ASSERT_THAT(parsed, IsOk());
   ASSERT_EQ(parsed->steps.size(), 1);
   EXPECT_EQ(parsed->steps[0].kind, CollectiveStepKindV3::kLaunch);
 }
 
-TEST(CollectiveConfigTest, RejectsMalformedStepList) {
-  TestAttributes attributes;
-  attributes.steps.clear();
-  EXPECT_THAT(Parse(attributes),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("complete [kind, operand] records")));
+TEST(CollectiveConfigTest, RejectsMalformedSteps) {
+  wire::CollectiveCallConfigV3 proto = TestProto();
+  proto.clear_steps();
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("complete [kind, operand]")));
 
-  attributes = TestAttributes();
-  attributes.steps = {
-      static_cast<int64_t>(CollectiveStepKindV3::kBarrier),
-      1,
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch),
-      0,
-  };
-  EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
-                                          HasSubstr("must have operand zero")));
+  proto = TestProto();
+  proto.mutable_steps(0)->set_operand(1);
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("must have operand zero")));
 
-  attributes = TestAttributes();
-  attributes.steps = {
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch),
-      -1,
-  };
-  EXPECT_THAT(Parse(attributes),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("nonnegative function ordinal")));
+  proto = TestProto();
+  proto.mutable_steps(1)->set_operand(-1);
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("nonnegative function")));
 
-  attributes = TestAttributes();
-  attributes.steps = {
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch),
-      0,
-      static_cast<int64_t>(CollectiveStepKindV3::kBarrier),
-      0,
-  };
-  EXPECT_THAT(Parse(attributes),
+  proto = TestProto();
+  proto.mutable_steps()->SwapElements(0, 1);
+  EXPECT_THAT(Parse(proto),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("requires all barriers before")));
 
-  attributes = TestAttributes();
-  attributes.steps = {9, 0};
-  EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
-                                          HasSubstr("Unsupported step kind")));
+  proto = TestProto();
+  proto.mutable_steps(0)->set_kind(
+      static_cast<wire::CollectiveStepKindProto>(9));
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("Unsupported step kind")));
 
-  attributes = TestAttributes();
-  attributes.steps = {
-      static_cast<int64_t>(CollectiveStepKindV3::kBarrier),
-      0,
-  };
-  EXPECT_THAT(Parse(attributes), StatusIs(absl::StatusCode::kInvalidArgument,
-                                          HasSubstr("at least one launch")));
+  proto = TestProto();
+  proto.mutable_steps()->RemoveLast();
+  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("at least one launch")));
 }
 
 }  // namespace

@@ -34,10 +34,10 @@ namespace xla::gpu::cutedsl::internal {
 // configuration order. This seam is exposed only for focused address and
 // overflow tests; it is not part of the generated-function ABI.
 absl::StatusOr<std::vector<uint64_t>> ResolvePeerAddressesV3(
-    const GpuCliqueKey& clique_key, RankId rank,
+    const xla::gpu::GpuCliqueKey& clique_key, xla::RankId rank,
     absl::Span<const PeerRegionV3> peer_regions,
-    absl::Span<const se::DeviceAddressBase> buffers,
-    const CollectiveMemory& collective_memory);
+    absl::Span<const stream_executor::DeviceAddressBase> buffers,
+    const xla::gpu::CollectiveMemory& collective_memory);
 
 }  // namespace xla::gpu::cutedsl::internal
 

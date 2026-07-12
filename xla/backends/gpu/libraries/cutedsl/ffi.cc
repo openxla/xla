@@ -27,12 +27,16 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/tsl/platform/status_macros.h"
+#include "xla/backends/gpu/libraries/cutedsl/ffi_abi.h"
 #include "xla/backends/gpu/libraries/cutedsl/module.h"
-#include "xla/backends/gpu/libraries/cutedsl/runtime_api.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/ffi.h"
 
 namespace xla::gpu::cutedsl {
+
+namespace ffi = ::xla::ffi;
+
 namespace {
 
 constexpr absl::string_view kCutlassCallTarget = "__xla_gpu_cutedsl_call_v3";
@@ -43,23 +47,31 @@ constexpr absl::string_view kFunctionPrefix = "cutlass_call";
 // with an arbitrary number of buffers.
 constexpr size_t kInlineBufferCount = 8;
 
-// A POD descriptor matching cutlass.jax.types.JaxArray. Generated CuTeDSL
-// wrappers receive a pointer to one of these descriptors for every XLA buffer.
-struct CuteXlaFfiBuffer {
-  void* buffer;
-  const int64_t* shape;
-};
-
 class CutlassCallStateV3 {
  public:
   struct ModuleAndFunction {
     std::shared_ptr<LoadedModule> module;
-    CuteDSLRT_Function_t* function = nullptr;
+    LoadedModule::FunctionHandle function = nullptr;
   };
 
-  void SetModule(ModuleAndFunction module) {
+  explicit CutlassCallStateV3(ModuleImage image) : image_(std::move(image)) {}
+
+  absl::Status LoadModule() {
+    {
+      absl::MutexLock lock(&mu_);
+      if (module_.module != nullptr) return absl::OkStatus();
+    }
+
+    ASSIGN_OR_RETURN(std::shared_ptr<LoadedModule> loaded,
+                     loader_.GetOrLoad(image_));
+    ASSIGN_OR_RETURN(LoadedModule::FunctionHandle function,
+                     loaded->GetFunction(kFunctionPrefix));
+
     absl::MutexLock lock(&mu_);
-    module_ = std::move(module);
+    if (module_.module == nullptr) {
+      module_ = {std::move(loaded), function};
+    }
+    return absl::OkStatus();
   }
 
   absl::StatusOr<ModuleAndFunction> GetModule() const {
@@ -72,42 +84,29 @@ class CutlassCallStateV3 {
   }
 
  private:
+  ModuleImage image_;
+  ModuleLoader loader_;
   mutable absl::Mutex mu_;
   ModuleAndFunction module_ ABSL_GUARDED_BY(mu_);
 };
 
 absl::StatusOr<std::unique_ptr<CutlassCallStateV3>> Instantiate(
     absl::string_view module, absl::string_view key) {
-  // Runtime access is deferred to prepare so registration and metadata queries
-  // also work in binaries built with the unavailable provider.
-  if (module.empty()) {
-    return absl::InvalidArgumentError("CuTeDSL module attribute is empty");
-  }
-  if (key.size() != kModuleCacheKeySize) {
-    return absl::InvalidArgumentError(
-        absl::StrFormat("CuTeDSL cache key must be %d bytes; got %d",
-                        kModuleCacheKeySize, key.size()));
-  }
-  return std::make_unique<CutlassCallStateV3>();
+  ASSIGN_OR_RETURN(ModuleImage image, ModuleImage::Create(module, key));
+  // Runtime access remains deferred to Prepare; Instantiate only validates
+  // device-independent attributes.
+  return std::make_unique<CutlassCallStateV3>(std::move(image));
 }
 
 absl::Status Prepare(CutlassCallStateV3* state, ffi::RemainingArgs,
-                     ffi::RemainingRets, absl::string_view module,
-                     absl::string_view key) {
-  absl::StatusOr<std::shared_ptr<LoadedModule>> loaded =
-      GetOrLoadModule(module, key);
-  if (!loaded.ok()) return loaded.status();
-  absl::StatusOr<CuteDSLRT_Function_t*> function =
-      (*loaded)->GetFunction(kFunctionPrefix);
-  if (!function.ok()) return function.status();
-  state->SetModule({std::move(*loaded), *function});
-  return absl::OkStatus();
+                     ffi::RemainingRets, absl::string_view, absl::string_view) {
+  return state->LoadModule();
 }
 
 absl::Status Initialize() { return absl::OkStatus(); }
 
-absl::Status ExecuteFunction(const RuntimeFunctions& functions, void* stream,
-                             CuteDSLRT_Function_t* function,
+absl::Status ExecuteFunction(const LoadedModule& module, void* stream,
+                             LoadedModule::FunctionHandle function,
                              ffi::RemainingArgs inputs,
                              ffi::RemainingRets outputs) {
   absl::InlinedVector<CuteXlaFfiBuffer, kInlineBufferCount> buffers;
@@ -147,12 +146,12 @@ absl::Status ExecuteFunction(const RuntimeFunctions& functions, void* stream,
   int32_t cuda_error = 0;
   packed_arguments.push_back(&cuda_error);
 
-  CuteDSLRT_Error_t error = functions.function_run(
-      function, packed_arguments.data(), packed_arguments.size());
-  if (error != kCuteDslRtSuccess) {
+  absl::Status run_status =
+      module.Run(function, packed_arguments.data(), packed_arguments.size());
+  if (!run_status.ok()) {
     return absl::InternalError(
         absl::StrFormat("Failed to execute CuTeDSL kernel: %s; CUDA error %d",
-                        FormatRuntimeError(functions, error), cuda_error));
+                        run_status.message(), cuda_error));
   }
   if (cuda_error != 0) {
     return absl::InternalError(
@@ -169,8 +168,8 @@ absl::Status Execute(void* stream, CutlassCallStateV3* state,
       state->GetModule();
   if (!module.ok()) return module.status();
 
-  return ExecuteFunction(module->module->functions(), stream, module->function,
-                         inputs, outputs);
+  return ExecuteFunction(*module->module, stream, module->function, inputs,
+                         outputs);
 }
 
 XLA_FFI_DEFINE_HANDLER(kInstantiate, Instantiate,

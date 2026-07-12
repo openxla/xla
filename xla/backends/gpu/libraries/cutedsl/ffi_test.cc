@@ -13,41 +13,87 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstddef>
+#include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
-#include "absl/strings/string_view.h"
-#include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
-#include "xla/error_spec.h"
-#include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/hlo/builder/xla_computation.h"
+#include "xla/hlo/parser/hlo_parser.h"
+#include "xla/literal.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
+#include "xla/shape_util.h"
+#include "xla/stream_executor/cuda/cuda_platform.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
+#include "xla/tsl/platform/resource_loader.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
-namespace xla::gpu {
+namespace xla::gpu::cutedsl {
 namespace {
 
-class CuteDslCustomCallTest : public HloPjRtGpuTestBase {};
-
-TEST_F(CuteDslCustomCallTest, RunVectorAdd) {
-  std::string hlo_path =
-      tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "backends", "gpu",
-                        "libraries", "cutedsl", "vector_add.hlo");
+TEST(CuteDslCustomCallTest, RunVectorAdd) {
   std::string hlo_text;
-  TF_ASSERT_OK(tsl::ReadFileToString(tsl::Env::Default(), hlo_path, &hlo_text));
+  ASSERT_OK(tsl::ReadFileToString(
+      tsl::Env::Default(),
+      tsl::GetDataDependencyFilepath(
+          "xla/backends/gpu/libraries/cutedsl/vector_add.hlo"),
+      &hlo_text));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       xla::ParseAndReturnUnverifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             /*options=*/{}));
 
-  std::string reference_hlo_text = R"(
-    HloModule reference, entry_computation_layout={(f32[1024]{0}, f32[1024]{0})->f32[1024]{0}}
-    ENTRY main {
-      a = f32[1024]{0} parameter(0)
-      b = f32[1024]{0} parameter(1)
-      ROOT add = f32[1024]{0} add(a, b)
-    }
-  )";
+  constexpr size_t kElementCount = 1024;
+  std::vector<float> lhs(kElementCount);
+  std::vector<float> rhs(kElementCount);
+  for (size_t i = 0; i < kElementCount; ++i) {
+    lhs[i] = static_cast<float>(i);
+    rhs[i] = static_cast<float>(2 * i);
+  }
 
-  EXPECT_TRUE(
-      RunAndCompareTwoModules(hlo_text, reference_hlo_text, ErrorSpec{0.0}));
+  xla::Shape shape = xla::ShapeUtil::MakeShape(
+      xla::F32, {static_cast<int64_t>(kElementCount)});
+  ASSERT_FALSE(client->addressable_devices().empty());
+  ASSERT_OK_AND_ASSIGN(
+      xla::PjRtMemorySpace * memory_space,
+      client->addressable_devices().front()->default_memory_space());
+  ASSERT_OK_AND_ASSIGN(
+      auto lhs_buffer,
+      client->BufferFromHostBuffer(
+          lhs.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          xla::PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
+          /*on_done_with_host_buffer=*/nullptr, memory_space,
+          /*device_layout=*/nullptr));
+  ASSERT_OK_AND_ASSIGN(
+      auto rhs_buffer,
+      client->BufferFromHostBuffer(
+          rhs.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          xla::PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
+          /*on_done_with_host_buffer=*/nullptr, memory_space,
+          /*device_layout=*/nullptr));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto results, executable->Execute({{lhs_buffer.get(), rhs_buffer.get()}},
+                                        /*options=*/{}));
+  ASSERT_EQ(results.size(), 1);
+  ASSERT_EQ(results[0].size(), 1);
+  ASSERT_OK_AND_ASSIGN(auto result, results[0][0]->ToLiteral().Await());
+  for (size_t i = 0; i < kElementCount; ++i) {
+    EXPECT_FLOAT_EQ(result->Get<float>({static_cast<int64_t>(i)}),
+                    lhs[i] + rhs[i]);
+  }
 }
 
 }  // namespace
-}  // namespace xla::gpu
+}  // namespace xla::gpu::cutedsl

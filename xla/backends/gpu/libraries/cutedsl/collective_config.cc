@@ -15,14 +15,10 @@ limitations under the License.
 
 #include "xla/backends/gpu/libraries/cutedsl/collective_config.h"
 
-#include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <set>
-#include <string>
-#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -31,65 +27,29 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
-#include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/Support/SHA256.h"
-#include "xla/ffi/ffi.h"
+#include "xla/backends/gpu/libraries/cutedsl/collective_config.pb.h"
+#include "xla/backends/gpu/libraries/cutedsl/module_image.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla::gpu::cutedsl {
+
+using ::xla::CollectiveOpGroupMode;
+using ::xla::ReplicaGroup;
+namespace wire = ::xla::gpu::cutedsl::proto;
+
 namespace {
 
-constexpr size_t kPeerRegionRecordWidth = 6;
-constexpr size_t kStepRecordWidth = 2;
-
-constexpr std::array<absl::string_view, 10> kAllAttributeNames = {
-    "schema_version",
-    "abi_clique_size",
-    "group_mode",
-    "communication_id",
-    "replica_group_offsets",
-    "replica_group_members",
-    "module",
-    "key",
-    "peer_regions",
-    "steps",
-};
-
-bool IsExpectedAttribute(absl::string_view name) {
-  return std::find(kAllAttributeNames.begin(), kAllAttributeNames.end(),
-                   name) != kAllAttributeNames.end();
+absl::Status MissingField(absl::string_view field) {
+  return absl::InvalidArgumentError(absl::StrFormat(
+      "Missing CuTeDSL collective v3 ProtoJSON field `%s`", field));
 }
 
-absl::Status ValidateAttributeNames(const ffi::Dictionary& attributes) {
-  for (std::string_view name : attributes) {
-    absl::string_view attribute_name(name.data(), name.size());
-    if (!IsExpectedAttribute(attribute_name)) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "Unknown CuTeDSL collective v3 attribute `%s`", attribute_name));
-    }
-  }
-
-  for (absl::string_view name : kAllAttributeNames) {
-    if (!attributes.contains(name)) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "Missing CuTeDSL collective v3 attribute `%s`", name));
-    }
-  }
-
-  return absl::OkStatus();
-}
-
-template <typename T>
-absl::StatusOr<T> GetAttribute(const ffi::Dictionary& attributes,
-                               absl::string_view name) {
-  absl::StatusOr<T> value = attributes.get<T>(name);
-  if (!value.ok()) {
-    return absl::InvalidArgumentError(
-        absl::StrFormat("Invalid CuTeDSL collective v3 attribute `%s`: %s",
-                        name, value.status().message()));
-  }
-  return *value;
+absl::Status MissingRepeatedField(absl::string_view repeated_field,
+                                  size_t index, absl::string_view field) {
+  return absl::InvalidArgumentError(absl::StrFormat(
+      "Missing CuTeDSL collective v3 ProtoJSON field `%s[%d].%s`",
+      repeated_field, index, field));
 }
 
 absl::StatusOr<CollectiveOpGroupMode> ParseGroupMode(int64_t value) {
@@ -111,49 +71,32 @@ absl::StatusOr<CollectiveOpGroupMode> ParseGroupMode(int64_t value) {
 }
 
 absl::StatusOr<std::vector<ReplicaGroup>> ParseReplicaGroups(
-    absl::Span<const int64_t> offsets, absl::Span<const int64_t> members) {
-  if (offsets.size() < 2) {
+    const wire::CollectiveCallConfigV3& proto) {
+  if (proto.replica_groups().empty()) {
     return absl::InvalidArgumentError(
-        "`replica_group_offsets` must describe at least one group");
-  }
-  if (offsets.front() != 0) {
-    return absl::InvalidArgumentError(
-        "`replica_group_offsets` must start with zero");
-  }
-  if (members.size() >
-          static_cast<size_t>(std::numeric_limits<int64_t>::max()) ||
-      offsets.back() != static_cast<int64_t>(members.size())) {
-    return absl::InvalidArgumentError(
-        "`replica_group_offsets` must end at `replica_group_members` size");
+        "`replica_groups` must contain at least one group");
   }
 
   std::vector<ReplicaGroup> groups;
-  groups.reserve(offsets.size() - 1);
+  groups.reserve(proto.replica_groups_size());
   std::set<int64_t> unique_members;
   int64_t group_size = -1;
 
-  for (size_t group_index = 0; group_index + 1 < offsets.size();
+  for (int group_index = 0; group_index < proto.replica_groups_size();
        ++group_index) {
-    int64_t begin = offsets[group_index];
-    int64_t end = offsets[group_index + 1];
-    if (begin < 0 || end <= begin ||
-        end > static_cast<int64_t>(members.size())) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "Invalid replica-group row split [%d, %d) at group %d", begin, end,
-          group_index));
+    const ReplicaGroup& group = proto.replica_groups(group_index);
+    if (group.replica_ids().empty()) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Replica group %d must not be empty", group_index));
     }
-
-    int64_t size = end - begin;
     if (group_size == -1) {
-      group_size = size;
-    } else if (size != group_size) {
+      group_size = group.replica_ids_size();
+    } else if (group.replica_ids_size() != group_size) {
       return absl::InvalidArgumentError(
           "All replica groups must have equal cardinality");
     }
 
-    ReplicaGroup group;
-    for (int64_t member_index = begin; member_index < end; ++member_index) {
-      int64_t member = members[member_index];
+    for (int64_t member : group.replica_ids()) {
       if (member < 0) {
         return absl::InvalidArgumentError(absl::StrFormat(
             "Replica-group member IDs must be nonnegative; got %d", member));
@@ -162,110 +105,102 @@ absl::StatusOr<std::vector<ReplicaGroup>> ParseReplicaGroups(
         return absl::InvalidArgumentError(absl::StrFormat(
             "Replica-group member ID %d appears more than once", member));
       }
-      group.add_replica_ids(member);
     }
-    groups.push_back(std::move(group));
+    groups.push_back(group);
   }
 
   return groups;
 }
 
-absl::StatusOr<CollectiveModuleImageV3> ParseModule(absl::string_view bytes,
-                                                    absl::string_view key) {
-  if (bytes.empty()) {
-    return absl::InvalidArgumentError("`module` must not be empty");
+absl::Status ValidatePeerRegionFields(const wire::PeerRegionProto& region,
+                                      size_t region_index) {
+  if (!region.has_endpoint()) {
+    return MissingRepeatedField("peer_regions", region_index, "endpoint");
   }
-  if (key.size() != kCollectiveModuleDigestSizeV3) {
-    return absl::InvalidArgumentError(
-        absl::StrFormat("`key` must contain one %d-byte SHA-256 digest",
-                        kCollectiveModuleDigestSizeV3));
+  if (!region.has_buffer_index()) {
+    return MissingRepeatedField("peer_regions", region_index, "buffer_index");
   }
-
-  llvm::SHA256 hasher;
-  hasher.update(llvm::StringRef(bytes.data(), bytes.size()));
-  std::array<uint8_t, kCollectiveModuleDigestSizeV3> digest = hasher.final();
-  if (!std::equal(digest.begin(), digest.end(),
-                  reinterpret_cast<const uint8_t*>(key.data()))) {
-    return absl::InvalidArgumentError(
-        "SHA-256 `key` does not match the module image");
+  if (!region.has_byte_offset()) {
+    return MissingRepeatedField("peer_regions", region_index, "byte_offset");
   }
-
-  CollectiveModuleImageV3 module;
-  module.bytes.assign(bytes.data(), bytes.size());
-  module.sha256 = digest;
-  return module;
+  if (!region.has_byte_size()) {
+    return MissingRepeatedField("peer_regions", region_index, "byte_size");
+  }
+  if (!region.has_required_alignment()) {
+    return MissingRepeatedField("peer_regions", region_index,
+                                "required_alignment");
+  }
+  if (!region.has_memory_kind()) {
+    return MissingRepeatedField("peer_regions", region_index, "memory_kind");
+  }
+  return absl::OkStatus();
 }
 
 absl::StatusOr<std::vector<PeerRegionV3>> ParsePeerRegions(
-    absl::Span<const int64_t> records) {
-  if (records.size() % kPeerRegionRecordWidth != 0) {
-    return absl::InvalidArgumentError(
-        absl::StrFormat("`peer_regions` size must be a multiple of %d",
-                        kPeerRegionRecordWidth));
-  }
-
+    const wire::CollectiveCallConfigV3& proto) {
   using PeerRegionKey =
       std::tuple<int64_t, int64_t, int64_t, int64_t, int64_t, int64_t>;
   std::set<PeerRegionKey> unique_regions;
   std::vector<PeerRegionV3> regions;
-  regions.reserve(records.size() / kPeerRegionRecordWidth);
+  regions.reserve(proto.peer_regions_size());
 
-  for (size_t offset = 0; offset < records.size();
-       offset += kPeerRegionRecordWidth) {
-    int64_t endpoint_value = records[offset];
-    int64_t buffer_index = records[offset + 1];
-    int64_t byte_offset = records[offset + 2];
-    int64_t byte_size = records[offset + 3];
-    int64_t required_alignment = records[offset + 4];
-    int64_t memory_kind_value = records[offset + 5];
-    size_t region_index = offset / kPeerRegionRecordWidth;
+  for (int region_index = 0; region_index < proto.peer_regions_size();
+       ++region_index) {
+    const wire::PeerRegionProto& region = proto.peer_regions(region_index);
+    RETURN_IF_ERROR(ValidatePeerRegionFields(region, region_index));
 
     PeerRegionEndpointV3 endpoint;
-    switch (endpoint_value) {
-      case static_cast<int64_t>(PeerRegionEndpointV3::kArgument):
+    switch (region.endpoint()) {
+      case wire::PEER_REGION_ENDPOINT_PROTO_ARGUMENT:
         endpoint = PeerRegionEndpointV3::kArgument;
         break;
-      case static_cast<int64_t>(PeerRegionEndpointV3::kResult):
+      case wire::PEER_REGION_ENDPOINT_PROTO_RESULT:
         endpoint = PeerRegionEndpointV3::kResult;
         break;
       default:
         return absl::InvalidArgumentError(
             absl::StrFormat("Unsupported endpoint %d for peer region %d",
-                            endpoint_value, region_index));
+                            region.endpoint(), region_index));
     }
-    if (buffer_index < 0) {
+    if (region.buffer_index() < 0) {
       return absl::InvalidArgumentError(absl::StrFormat(
           "Buffer index for peer region %d must be nonnegative", region_index));
     }
-    if (byte_offset < 0 || byte_size <= 0 ||
-        byte_offset > std::numeric_limits<int64_t>::max() - byte_size) {
+    if (region.byte_offset() < 0 || region.byte_size() <= 0 ||
+        region.byte_offset() >
+            std::numeric_limits<int64_t>::max() - region.byte_size()) {
       return absl::InvalidArgumentError(absl::StrFormat(
           "Invalid or overflowing byte range for peer region %d",
           region_index));
     }
-    if (required_alignment <= 0 ||
-        (required_alignment & (required_alignment - 1)) != 0) {
+    if (region.required_alignment() <= 0 ||
+        (region.required_alignment() & (region.required_alignment() - 1)) !=
+            0) {
       return absl::InvalidArgumentError(absl::StrFormat(
           "Required alignment for peer region %d must be a positive power of "
           "two",
           region_index));
     }
-    if (memory_kind_value !=
-        static_cast<int64_t>(PeerMemoryKindV3::kSymmetric)) {
+    if (region.memory_kind() != wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC) {
       return absl::InvalidArgumentError(
           absl::StrFormat("Unsupported memory kind %d for peer region %d",
-                          memory_kind_value, region_index));
+                          region.memory_kind(), region_index));
     }
 
-    PeerRegionKey key = {endpoint_value, buffer_index,       byte_offset,
-                         byte_size,      required_alignment, memory_kind_value};
+    PeerRegionKey key = {static_cast<int64_t>(region.endpoint()),
+                         region.buffer_index(),
+                         region.byte_offset(),
+                         region.byte_size(),
+                         region.required_alignment(),
+                         static_cast<int64_t>(region.memory_kind())};
     if (!unique_regions.insert(key).second) {
       return absl::InvalidArgumentError(absl::StrFormat(
           "Peer region record %d duplicates an earlier record", region_index));
     }
 
-    regions.push_back(PeerRegionV3{endpoint, buffer_index, byte_offset,
-                                   byte_size, required_alignment,
+    regions.push_back(PeerRegionV3{endpoint, region.buffer_index(),
+                                   region.byte_offset(), region.byte_size(),
+                                   region.required_alignment(),
                                    PeerMemoryKindV3::kSymmetric});
   }
 
@@ -273,22 +208,27 @@ absl::StatusOr<std::vector<PeerRegionV3>> ParsePeerRegions(
 }
 
 absl::StatusOr<std::vector<CollectiveStepV3>> ParseSteps(
-    absl::Span<const int64_t> records) {
-  if (records.empty() || records.size() % kStepRecordWidth != 0) {
+    const wire::CollectiveCallConfigV3& proto) {
+  if (proto.steps().empty()) {
     return absl::InvalidArgumentError(
         "`steps` must contain complete [kind, operand] records");
   }
 
   std::vector<CollectiveStepV3> steps;
-  steps.reserve(records.size() / kStepRecordWidth);
+  steps.reserve(proto.steps_size());
   bool has_launch = false;
-  for (size_t offset = 0; offset < records.size(); offset += kStepRecordWidth) {
-    int64_t kind_value = records[offset];
-    int64_t operand = records[offset + 1];
-    size_t step_index = offset / kStepRecordWidth;
-    switch (kind_value) {
-      case static_cast<int64_t>(CollectiveStepKindV3::kBarrier):
-        if (operand != 0) {
+  for (int step_index = 0; step_index < proto.steps_size(); ++step_index) {
+    const wire::CollectiveStepProto& step = proto.steps(step_index);
+    if (!step.has_kind()) {
+      return MissingRepeatedField("steps", step_index, "kind");
+    }
+    if (!step.has_operand()) {
+      return MissingRepeatedField("steps", step_index, "operand");
+    }
+
+    switch (step.kind()) {
+      case wire::COLLECTIVE_STEP_KIND_PROTO_BARRIER:
+        if (step.operand() != 0) {
           return absl::InvalidArgumentError(absl::StrFormat(
               "Barrier step %d must have operand zero", step_index));
         }
@@ -301,19 +241,19 @@ absl::StatusOr<std::vector<CollectiveStepV3>> ParseSteps(
         }
         steps.push_back(CollectiveStepV3{CollectiveStepKindV3::kBarrier, 0});
         break;
-      case static_cast<int64_t>(CollectiveStepKindV3::kLaunch):
-        if (operand < 0) {
+      case wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH:
+        if (step.operand() < 0) {
           return absl::InvalidArgumentError(absl::StrFormat(
               "Launch step %d must have a nonnegative function ordinal",
               step_index));
         }
         has_launch = true;
         steps.push_back(
-            CollectiveStepV3{CollectiveStepKindV3::kLaunch, operand});
+            CollectiveStepV3{CollectiveStepKindV3::kLaunch, step.operand()});
         break;
       default:
         return absl::InvalidArgumentError(absl::StrFormat(
-            "Unsupported step kind %d at step %d", kind_value, step_index));
+            "Unsupported step kind %d at step %d", step.kind(), step_index));
     }
   }
 
@@ -327,70 +267,47 @@ absl::StatusOr<std::vector<CollectiveStepV3>> ParseSteps(
 }  // namespace
 
 absl::StatusOr<CollectiveCallConfigV3> ParseCollectiveCallConfigV3(
-    const ffi::Dictionary& attributes) {
-  RETURN_IF_ERROR(ValidateAttributeNames(attributes));
-
-  ASSIGN_OR_RETURN(int64_t schema_version,
-                   GetAttribute<int64_t>(attributes, "schema_version"));
-  if (schema_version != kCollectiveCallSchemaVersionV3) {
+    absl::string_view json_config) {
+  wire::CollectiveCallConfigV3 proto;
+  tsl::protobuf::util::JsonParseOptions options;
+  options.ignore_unknown_fields = true;
+  absl::Status parsed =
+      tsl::protobuf::util::JsonStringToMessage(json_config, &proto, options);
+  if (!parsed.ok()) {
     return absl::InvalidArgumentError(absl::StrFormat(
-        "Unsupported CuTeDSL collective schema version %d; expected %d",
-        schema_version, kCollectiveCallSchemaVersionV3));
+        "Failed to parse CuTeDSL collective v3 ProtoJSON configuration: %s",
+        parsed.message()));
   }
 
-  ASSIGN_OR_RETURN(int64_t abi_clique_size,
-                   GetAttribute<int64_t>(attributes, "abi_clique_size"));
-  if (abi_clique_size <= 0 ||
-      abi_clique_size > std::numeric_limits<int32_t>::max()) {
-    return absl::InvalidArgumentError(
-        absl::StrFormat("`abi_clique_size` must be in [1, %d]; got %d",
-                        std::numeric_limits<int32_t>::max(), abi_clique_size));
+  if (!proto.has_abi_clique_size()) return MissingField("abi_clique_size");
+  if (proto.abi_clique_size() <= 0 ||
+      proto.abi_clique_size() > std::numeric_limits<int32_t>::max()) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "`abi_clique_size` must be in [1, %d]; got %d",
+        std::numeric_limits<int32_t>::max(), proto.abi_clique_size()));
   }
 
-  ASSIGN_OR_RETURN(int64_t group_mode_value,
-                   GetAttribute<int64_t>(attributes, "group_mode"));
+  if (!proto.has_group_mode()) return MissingField("group_mode");
   ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
-                   ParseGroupMode(group_mode_value));
+                   ParseGroupMode(static_cast<int64_t>(proto.group_mode())));
 
-  ASSIGN_OR_RETURN(int64_t communication_id,
-                   GetAttribute<int64_t>(attributes, "communication_id"));
-  if (communication_id < 0) {
+  if (!proto.has_communication_id()) return MissingField("communication_id");
+  if (proto.communication_id() < 0) {
     return absl::InvalidArgumentError("`communication_id` must be nonnegative");
   }
 
-  ASSIGN_OR_RETURN(absl::Span<const int64_t> replica_group_offsets,
-                   GetAttribute<absl::Span<const int64_t>>(
-                       attributes, "replica_group_offsets"));
-  ASSIGN_OR_RETURN(absl::Span<const int64_t> replica_group_members,
-                   GetAttribute<absl::Span<const int64_t>>(
-                       attributes, "replica_group_members"));
-  ASSIGN_OR_RETURN(
-      std::vector<ReplicaGroup> replica_groups,
-      ParseReplicaGroups(replica_group_offsets, replica_group_members));
-
-  ASSIGN_OR_RETURN(absl::string_view module_bytes,
-                   GetAttribute<absl::string_view>(attributes, "module"));
-  ASSIGN_OR_RETURN(absl::string_view module_key,
-                   GetAttribute<absl::string_view>(attributes, "key"));
-  ASSIGN_OR_RETURN(CollectiveModuleImageV3 module,
-                   ParseModule(module_bytes, module_key));
-
-  ASSIGN_OR_RETURN(
-      absl::Span<const int64_t> peer_region_records,
-      GetAttribute<absl::Span<const int64_t>>(attributes, "peer_regions"));
+  ASSIGN_OR_RETURN(std::vector<ReplicaGroup> replica_groups,
+                   ParseReplicaGroups(proto));
+  if (!proto.has_module()) return MissingField("module");
+  ASSIGN_OR_RETURN(ModuleImage module, ModuleImage::Create(proto.module()));
   ASSIGN_OR_RETURN(std::vector<PeerRegionV3> peer_regions,
-                   ParsePeerRegions(peer_region_records));
-
-  ASSIGN_OR_RETURN(
-      absl::Span<const int64_t> step_records,
-      GetAttribute<absl::Span<const int64_t>>(attributes, "steps"));
-  ASSIGN_OR_RETURN(std::vector<CollectiveStepV3> steps,
-                   ParseSteps(step_records));
+                   ParsePeerRegions(proto));
+  ASSIGN_OR_RETURN(std::vector<CollectiveStepV3> steps, ParseSteps(proto));
 
   return CollectiveCallConfigV3{
-      static_cast<int32_t>(abi_clique_size),
+      static_cast<int32_t>(proto.abi_clique_size()),
       group_mode,
-      communication_id,
+      proto.communication_id(),
       std::move(replica_groups),
       std::move(module),
       std::move(peer_regions),

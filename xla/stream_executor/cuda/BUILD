@@ -1750,11 +1750,6 @@ cc_library(
         ":redzone_allocator_kernel_cuda",
         ":repeat_buffer_kernel_cuda",
         ":topk_kernel_cuda",
-        # Registers buffer-only and collective v3 targets in all CUDA builds.
-        # The default OSS runtime provider keeps these linkable and reports a
-        # configuration error only if a target is called.
-        "//xla/backends/gpu/libraries/cutedsl:collective_ffi",
-        "//xla/backends/gpu/libraries/cutedsl:ffi",
         "//xla/tsl/cuda:cusparse",
         "//xla/tsl/cuda:tensorrt_rpath",
     ] + if_nccl([

@@ -16,25 +16,16 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_LIBRARIES_CUTEDSL_COLLECTIVE_CONFIG_H_
 #define XLA_BACKENDS_GPU_LIBRARIES_CUTEDSL_COLLECTIVE_CONFIG_H_
 
-#include <array>
-#include <cstddef>
 #include <cstdint>
-#include <string>
 #include <vector>
 
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "xla/backends/gpu/libraries/cutedsl/module_image.h"
 #include "xla/xla_data.pb.h"
-
-namespace xla::ffi {
-class Dictionary;
-}  // namespace xla::ffi
 
 namespace xla::gpu::cutedsl {
 
-inline constexpr int64_t kCollectiveCallSchemaVersionV3 = 3;
-inline constexpr size_t kCollectiveModuleDigestSizeV3 = 32;
-
-// Numeric values are part of the flat v3 configuration encoding.
 enum class PeerRegionEndpointV3 : int64_t {
   kArgument = 0,
   kResult = 1,
@@ -49,11 +40,6 @@ enum class PeerMemoryKindV3 : int64_t {
 enum class CollectiveStepKindV3 : int64_t {
   kBarrier = 0,
   kLaunch = 1,
-};
-
-struct CollectiveModuleImageV3 {
-  std::string bytes;
-  std::array<uint8_t, kCollectiveModuleDigestSizeV3> sha256;
 };
 
 struct PeerRegionV3 {
@@ -72,21 +58,22 @@ struct CollectiveStepV3 {
 };
 
 struct CollectiveCallConfigV3 {
-  // Number of peer-address entries per region in the compiled call frame.
-  // Prepare verifies this against the runtime clique before loading `module`.
+  // Number of peer-address entries per region referenced by the compiled
+  // context descriptor. Prepare verifies this against the runtime clique
+  // before loading `module`.
   int32_t abi_clique_size;
-  CollectiveOpGroupMode group_mode;
+  xla::CollectiveOpGroupMode group_mode;
   int64_t communication_id;
-  std::vector<ReplicaGroup> replica_groups;
-  CollectiveModuleImageV3 module;
+  std::vector<xla::ReplicaGroup> replica_groups;
+  ModuleImage module;
   std::vector<PeerRegionV3> peer_regions;
   std::vector<CollectiveStepV3> steps;
 };
 
-// Parses and validates the complete, flat v3 attribute dictionary. The parser
-// rejects unknown attributes and copies all string-backed data into `config`.
+// Parses and validates a ProtoJSON v3 configuration. Unknown JSON fields are
+// ignored, and all string-backed data is copied into the returned config.
 absl::StatusOr<CollectiveCallConfigV3> ParseCollectiveCallConfigV3(
-    const ffi::Dictionary& attributes);
+    absl::string_view json_config);
 
 }  // namespace xla::gpu::cutedsl
 

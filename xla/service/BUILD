@@ -1701,6 +1701,8 @@ cc_library(
         ":gpu_plugin_without_collectives",
     ] + if_gpu_is_configured([
         "//xla/backends/gpu/runtime:thunk_runtime_dependencies",
+    ]) + if_cuda_is_configured([
+        "//xla/backends/gpu/libraries/cutedsl:handlers",
     ]),
 )
 

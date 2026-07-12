@@ -28,7 +28,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/SHA256.h"
-#include "xla/backends/gpu/libraries/cutedsl/runtime_api.h"
+#include "CuteDSLRuntime.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_state.h"
@@ -40,6 +40,10 @@ limitations under the License.
 #include "xla/types.h"
 
 namespace xla::gpu::cutedsl {
+
+namespace ffi = ::xla::ffi;
+using ::xla::PrimitiveType;
+
 namespace {
 
 using ::testing::HasSubstr;
@@ -64,9 +68,9 @@ struct FakeRuntime {
   int get_function_count = 0;
   int run_count = 0;
   int destroy_count = 0;
-  CuteDSLRT_Error_t create_error = kCuteDslRtSuccess;
-  CuteDSLRT_Error_t get_function_error = kCuteDslRtSuccess;
-  CuteDSLRT_Error_t run_error = kCuteDslRtSuccess;
+  CuteDSLRT_Error_t create_error = CuteDSLRT_Error_Success;
+  CuteDSLRT_Error_t get_function_error = CuteDSLRT_Error_Success;
+  CuteDSLRT_Error_t run_error = CuteDSLRT_Error_Success;
   int32_t cuda_error = 0;
   bool create_null_module = false;
   bool create_module_on_error = false;
@@ -75,7 +79,6 @@ struct FakeRuntime {
 };
 
 FakeRuntime* fake_runtime = nullptr;
-int unexpected_run_count = 0;
 
 CuteDSLRT_Error_t ModuleCreate(CuteDSLRT_Module_t** module,
                                const unsigned char* bytes, size_t size,
@@ -96,7 +99,7 @@ CuteDSLRT_Error_t ModuleCreate(CuteDSLRT_Module_t** module,
       }
     }
   }
-  if (fake_runtime->create_error != kCuteDslRtSuccess) {
+  if (fake_runtime->create_error != CuteDSLRT_Error_Success) {
     if (fake_runtime->create_module_on_error) {
       *module = reinterpret_cast<CuteDSLRT_Module_t*>(fake_runtime);
     }
@@ -114,7 +117,7 @@ CuteDSLRT_Error_t ModuleGetFunction(CuteDSLRT_Function_t** function,
   EXPECT_EQ(module, reinterpret_cast<CuteDSLRT_Module_t*>(fake_runtime));
   ++fake_runtime->get_function_count;
   fake_runtime->function_prefix = prefix;
-  if (fake_runtime->get_function_error != kCuteDslRtSuccess) {
+  if (fake_runtime->get_function_error != CuteDSLRT_Error_Success) {
     return fake_runtime->get_function_error;
   }
   *function = fake_runtime->get_null_function
@@ -140,59 +143,59 @@ CuteDSLRT_Error_t FunctionRun(void* function, void** arguments,
   return fake_runtime->run_error;
 }
 
-CuteDSLRT_Error_t UnexpectedFunctionRun(void*, void**, size_t) {
-  ++unexpected_run_count;
-  return kCuteDslRtSuccess;
-}
-
 CuteDSLRT_Error_t ModuleDestroy(CuteDSLRT_Module_t* module) {
   EXPECT_EQ(module, reinterpret_cast<CuteDSLRT_Module_t*>(fake_runtime));
   ++fake_runtime->destroy_count;
-  return kCuteDslRtSuccess;
+  return CuteDSLRT_Error_Success;
 }
 
 const char* GetErrorName(CuteDSLRT_Error_t) { return "FakeRuntimeError"; }
 const char* GetErrorString(CuteDSLRT_Error_t) { return "fake runtime failure"; }
 
-const RuntimeFunctions kFakeFunctions = {
-    /*module_create_from_bytes=*/ModuleCreate,
-    /*module_get_function=*/ModuleGetFunction,
-    /*function_run=*/FunctionRun,
-    /*module_destroy=*/ModuleDestroy,
-    /*get_error_name=*/GetErrorName,
-    /*get_error_string=*/GetErrorString,
-};
+}  // namespace
 
-const RuntimeFunctions kUnexpectedFunctions = {
-    /*module_create_from_bytes=*/ModuleCreate,
-    /*module_get_function=*/ModuleGetFunction,
-    /*function_run=*/UnexpectedFunctionRun,
-    /*module_destroy=*/ModuleDestroy,
-    /*get_error_name=*/GetErrorName,
-    /*get_error_string=*/GetErrorString,
-};
+extern "C" CuteDSLRT_Error_t __wrap_CuteDSLRT_Module_Create_From_Bytes(
+    CuteDSLRT_Module_t** module, const unsigned char* bytes, size_t size,
+    const char** shared_libraries, size_t shared_library_count) {
+  return ModuleCreate(module, bytes, size, shared_libraries,
+                      shared_library_count);
+}
+
+extern "C" CuteDSLRT_Error_t __wrap_CuteDSLRT_Module_Get_Function(
+    CuteDSLRT_Function_t** function, CuteDSLRT_Module_t* module,
+    const char* prefix) {
+  return ModuleGetFunction(function, module, prefix);
+}
+
+extern "C" CuteDSLRT_Error_t __wrap_CuteDSLRT_Function_Run(
+    void* function, void** arguments, size_t argument_count) {
+  return FunctionRun(function, arguments, argument_count);
+}
+
+extern "C" CuteDSLRT_Error_t __wrap_CuteDSLRT_Module_Destroy(
+    CuteDSLRT_Module_t* module) {
+  return ModuleDestroy(module);
+}
+
+extern "C" const char* __wrap_CuteDSLRT_GetErrorName(CuteDSLRT_Error_t error) {
+  return GetErrorName(error);
+}
+
+extern "C" const char* __wrap_CuteDSLRT_GetErrorString(
+    CuteDSLRT_Error_t error) {
+  return GetErrorString(error);
+}
+
+namespace {
 
 class ScopedFakeRuntime {
  public:
-  explicit ScopedFakeRuntime(
-      FakeRuntime* runtime,
-      const RuntimeFunctions* functions = &kFakeFunctions) {
+  explicit ScopedFakeRuntime(FakeRuntime* runtime) {
     EXPECT_EQ(fake_runtime, nullptr);
     fake_runtime = runtime;
-    unexpected_run_count = 0;
-    status_ = SetRuntimeFunctionsForTesting(functions);
   }
 
-  ~ScopedFakeRuntime() {
-    ResetRuntimeFunctionsForTesting();
-    fake_runtime = nullptr;
-    unexpected_run_count = 0;
-  }
-
-  const absl::Status& status() const { return status_; }
-
- private:
-  absl::Status status_;
+  ~ScopedFakeRuntime() { fake_runtime = nullptr; }
 };
 
 std::string Sha256(absl::string_view value) {
@@ -320,7 +323,6 @@ TEST(CuteDslFfiTest, DoesNotRegisterEarlierTargetVersions) {
 TEST(CuteDslFfiTest, PassesNoSharedLibrariesToModuleCreation) {
   FakeRuntime runtime;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
   {
     FfiTestInvocation invocation("module with a Bazel-linked runtime");
@@ -333,10 +335,9 @@ TEST(CuteDslFfiTest, PassesNoSharedLibrariesToModuleCreation) {
   EXPECT_EQ(runtime.destroy_count, 1);
 }
 
-TEST(CuteDslFfiTest, RunsCompleteLifecycleThroughRuntimeFunctions) {
+TEST(CuteDslFfiTest, RunsCompleteLifecycleThroughRuntime) {
   FakeRuntime runtime;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
   const std::string module = "fake CuTeDSL object for lifecycle test";
   const std::string key = Sha256(module);
@@ -393,10 +394,6 @@ TEST(CuteDslFfiTest, RunsCompleteLifecycleThroughRuntimeFunctions) {
     EXPECT_EQ(runtime.get_function_count, 1);
     EXPECT_EQ(runtime.run_count, 0);
 
-    // Execute must use the functions retained with the loaded function, even
-    // if the process-wide test override changes after prepare.
-    ASSERT_TRUE(SetRuntimeFunctionsForTesting(&kUnexpectedFunctions).ok());
-
     ffi::InvokeContext::GpuContext gpu_context;
     gpu_context.stream = &stream;
     context.backend_context = gpu_context;
@@ -405,7 +402,6 @@ TEST(CuteDslFfiTest, RunsCompleteLifecycleThroughRuntimeFunctions) {
                     .ok());
 
     EXPECT_EQ(runtime.run_count, 1);
-    EXPECT_EQ(unexpected_run_count, 0);
     EXPECT_EQ(runtime.stream, &fake_stream_handle);
     ASSERT_EQ(runtime.buffers.size(), 2);
     EXPECT_EQ(runtime.buffers[0].buffer, input.data());
@@ -424,7 +420,6 @@ TEST(CuteDslFfiTest, RunsCompleteLifecycleThroughRuntimeFunctions) {
 TEST(CuteDslFfiTest, RejectsKeyThatDoesNotMatchModule) {
   FakeRuntime runtime;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
   const std::string module = "fake CuTeDSL object with invalid key";
   const std::string key(32, 'x');
@@ -441,17 +436,9 @@ TEST(CuteDslFfiTest, RejectsKeyThatDoesNotMatchModule) {
                                               /*num_rets=*/0);
     instantiate_builder.AddAttributes(Attributes(module, key));
     ffi::CallFrame instantiate_frame = instantiate_builder.Build();
-    ASSERT_TRUE(ffi::Invoke(ffi::GetXlaFfiApi(),
-                            registration->bundle.instantiate, instantiate_frame,
-                            context, XLA_FFI_ExecutionStage_INSTANTIATE)
-                    .ok());
-
-    ffi::CallFrameBuilder prepare_builder(/*num_args=*/0, /*num_rets=*/0);
-    prepare_builder.AddAttributes(Attributes(module, key));
-    ffi::CallFrame prepare_frame = prepare_builder.Build();
-    absl::Status status =
-        ffi::Invoke(ffi::GetXlaFfiApi(), registration->bundle.prepare,
-                    prepare_frame, context, XLA_FFI_ExecutionStage_PREPARE);
+    absl::Status status = ffi::Invoke(
+        ffi::GetXlaFfiApi(), registration->bundle.instantiate,
+        instantiate_frame, context, XLA_FFI_ExecutionStage_INSTANTIATE);
     EXPECT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
     EXPECT_THAT(status.message(), HasSubstr("does not match"));
     EXPECT_EQ(runtime.create_count, 0);
@@ -460,9 +447,8 @@ TEST(CuteDslFfiTest, RejectsKeyThatDoesNotMatchModule) {
 
 TEST(CuteDslFfiTest, ReportsModuleCreateFailure) {
   FakeRuntime runtime;
-  runtime.create_error = 7;
+  runtime.create_error = CuteDSLRT_Error_InvalidArguments;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
   FfiTestInvocation invocation("module whose creation fails");
   ASSERT_TRUE(invocation.Instantiate().ok());
@@ -478,10 +464,9 @@ TEST(CuteDslFfiTest, ReportsModuleCreateFailure) {
 
 TEST(CuteDslFfiTest, DestroysModuleReturnedWithCreateFailure) {
   FakeRuntime runtime;
-  runtime.create_error = 7;
+  runtime.create_error = CuteDSLRT_Error_InvalidArguments;
   runtime.create_module_on_error = true;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
   FfiTestInvocation invocation("failed creation that returns a module");
   ASSERT_TRUE(invocation.Instantiate().ok());
@@ -498,7 +483,6 @@ TEST(CuteDslFfiTest, RejectsNullModuleFromRuntime) {
   FakeRuntime runtime;
   runtime.create_null_module = true;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
   FfiTestInvocation invocation("module whose creation returns null");
   ASSERT_TRUE(invocation.Instantiate().ok());
@@ -511,46 +495,49 @@ TEST(CuteDslFfiTest, RejectsNullModuleFromRuntime) {
   EXPECT_EQ(runtime.destroy_count, 0);
 }
 
-TEST(CuteDslFfiTest, DestroysModuleAfterFunctionLookupFailure) {
+TEST(CuteDslFfiTest, RetainsModuleAfterFunctionLookupFailure) {
   FakeRuntime runtime;
-  runtime.get_function_error = 6;
+  runtime.get_function_error = CuteDSLRT_Error_KernelNotFound;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
-  FfiTestInvocation invocation("module whose function lookup fails");
-  ASSERT_TRUE(invocation.Instantiate().ok());
-  absl::Status status = invocation.Prepare();
+  {
+    FfiTestInvocation invocation("module whose function lookup fails");
+    ASSERT_TRUE(invocation.Instantiate().ok());
+    absl::Status status = invocation.Prepare();
 
-  EXPECT_EQ(status.code(), absl::StatusCode::kInternal);
-  EXPECT_THAT(status.message(), HasSubstr("Failed to load CuTeDSL"));
-  EXPECT_THAT(status.message(), HasSubstr("FakeRuntimeError (error 6)"));
-  EXPECT_EQ(runtime.create_count, 1);
-  EXPECT_EQ(runtime.get_function_count, 1);
+    EXPECT_EQ(status.code(), absl::StatusCode::kInternal);
+    EXPECT_THAT(status.message(), HasSubstr("Failed to load CuTeDSL"));
+    EXPECT_THAT(status.message(), HasSubstr("FakeRuntimeError (error 6)"));
+    EXPECT_EQ(runtime.create_count, 1);
+    EXPECT_EQ(runtime.get_function_count, 1);
+    EXPECT_EQ(runtime.destroy_count, 0);
+  }
   EXPECT_EQ(runtime.destroy_count, 1);
 }
 
-TEST(CuteDslFfiTest, DestroysModuleAfterNullFunctionLookup) {
+TEST(CuteDslFfiTest, RetainsModuleAfterNullFunctionLookup) {
   FakeRuntime runtime;
   runtime.get_null_function = true;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
-  FfiTestInvocation invocation("module whose function lookup returns null");
-  ASSERT_TRUE(invocation.Instantiate().ok());
-  absl::Status status = invocation.Prepare();
+  {
+    FfiTestInvocation invocation("module whose function lookup returns null");
+    ASSERT_TRUE(invocation.Instantiate().ok());
+    absl::Status status = invocation.Prepare();
 
-  EXPECT_EQ(status.code(), absl::StatusCode::kInternal);
-  EXPECT_THAT(status.message(), HasSubstr("returned a null cutlass_call"));
-  EXPECT_EQ(runtime.create_count, 1);
-  EXPECT_EQ(runtime.get_function_count, 1);
+    EXPECT_EQ(status.code(), absl::StatusCode::kInternal);
+    EXPECT_THAT(status.message(), HasSubstr("returned a null cutlass_call"));
+    EXPECT_EQ(runtime.create_count, 1);
+    EXPECT_EQ(runtime.get_function_count, 1);
+    EXPECT_EQ(runtime.destroy_count, 0);
+  }
   EXPECT_EQ(runtime.destroy_count, 1);
 }
 
 TEST(CuteDslFfiTest, ReportsRuntimeFunctionRunFailure) {
   FakeRuntime runtime;
-  runtime.run_error = 1;
+  runtime.run_error = CuteDSLRT_Error_CudaError;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
   {
     FfiTestInvocation invocation("module whose function run fails");
@@ -571,7 +558,6 @@ TEST(CuteDslFfiTest, ReportsPackedCudaStatus) {
   FakeRuntime runtime;
   runtime.cuda_error = 700;
   ScopedFakeRuntime scoped_runtime(&runtime);
-  ASSERT_TRUE(scoped_runtime.status().ok()) << scoped_runtime.status();
 
   {
     FfiTestInvocation invocation("module whose packed CUDA status fails");
