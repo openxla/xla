@@ -18,11 +18,14 @@ limitations under the License.
 #include <atomic>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
@@ -113,6 +116,50 @@ TEST(ExecutionWatchdogScopeTest,
   EXPECT_TRUE(handler_done.WaitForNotificationWithTimeout(absl::Seconds(5)))
       << "timeout handler should fire while caller still owns the scope";
   EXPECT_TRUE(handler_called.load());
+}
+
+// HangWatchdog (not a manual call site) must invoke execution_timeout_handler
+// after the configured timeout, with the expected action/timeout arguments.
+// This covers the automatic path that P1 wiring tests intentionally skip by
+// calling the handler directly.
+TEST(ExecutionWatchdogScopeTest,
+     HangWatchdogAutoInvokesExecutionTimeoutHandler) {
+  constexpr absl::Duration kTimeout = absl::Milliseconds(100);
+
+  std::atomic<int> handler_calls{0};
+  std::string observed_action;
+  absl::Duration observed_timeout = absl::ZeroDuration();
+  absl::Notification handler_done;
+  absl::Mutex mu;
+
+  GpuExecutableRunOptions gpu_run_options;
+  gpu_run_options.set_execution_timeout_handler(
+      [&](absl::string_view action, absl::Duration timeout) {
+        absl::MutexLock lock(mu);
+        ++handler_calls;
+        observed_action = std::string(action);
+        observed_timeout = timeout;
+        handler_done.Notify();
+      });
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ExecutionWatchdogScope> scope,
+      CreateArmedScope(kTimeout, &gpu_run_options,
+                       /*block_host_until_done=*/false));
+
+  // Handler must not be invoked before the timeout window.
+  absl::SleepFor(absl::Milliseconds(20));
+  EXPECT_EQ(handler_calls.load(), 0);
+
+  // Do not call execution_timeout_handler() manually. HangWatchdog alone must
+  // drive the callback once the deadline expires.
+  EXPECT_TRUE(handler_done.WaitForNotificationWithTimeout(absl::Seconds(5)))
+      << "HangWatchdog should auto-invoke execution_timeout_handler";
+
+  absl::MutexLock lock(mu);
+  EXPECT_EQ(handler_calls.load(), 1);
+  EXPECT_THAT(observed_action, ::testing::HasSubstr("XLA GPU execution"));
+  EXPECT_EQ(observed_timeout, kTimeout);
 }
 
 // Negative: releasing the scope at dispatch return (old stack-local guard
