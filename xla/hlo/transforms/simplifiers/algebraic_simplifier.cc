@@ -5229,9 +5229,19 @@ absl::Status AlgebraicSimplifierVisitor::HandleOr(HloInstruction* logical_or) {
 
 absl::Status AlgebraicSimplifierVisitor::HandleLog(HloInstruction* log) {
   // ln(exp(A)) => A
+  //
+  // This identity holds over the reals, but not for IEEE 754 floating point:
+  // if exp(A) overflows to inf (A >= ~88.7 for f32, ~709.8 for f64), eager
+  // evaluation gives log(inf) = inf, while the folded form silently returns
+  // the finite A instead -- changing both the forward value and the gradient
+  // (chain rule through the unfolded form gives NaN at the overflow point,
+  // vs. 1 for the folded identity). Restrict to fast-math mode, matching how
+  // this file already gates other identities that are unsound at special
+  // values (e.g. "A - A => 0" above, unsound for NaN).
   VLOG(10) << "trying transform [ln(exp(A)) => A]: " << log->ToString();
   HloInstruction *a, *b;
-  if (Match(log, m::Log(m::Exp(m::Op(&a)))) &&
+  if (options_.enable_fast_math() &&
+      Match(log, m::Log(m::Exp(m::Op(&a)))) &&
       ReplaceInstructionIfCompatible(log, a)) {
     return absl::OkStatus();
   }
@@ -9551,7 +9561,14 @@ absl::Status AlgebraicSimplifierVisitor::HandleSort(HloInstruction* sort) {
 absl::Status AlgebraicSimplifierVisitor::HandleSqrt(HloInstruction* sqrt) {
   VLOG(10) << "trying transform [sqrt(A*A) => |A|] " << sqrt->ToString();
   HloInstruction* sqrt_operand = sqrt->mutable_operand(0);
-  if (sqrt_operand->opcode() == HloOpcode::kMultiply &&
+  // sqrt(A*A) => |A| holds over the reals, but not for IEEE 754 floating
+  // point: if A*A overflows to inf (|A| > ~1.84e19 for f32), eager evaluation
+  // gives sqrt(inf) = inf, while the folded form silently returns the finite
+  // |A| instead. Restrict to fast-math mode, matching HandleLog's identical
+  // ln(exp(A)) => A guard immediately above in this file for the same
+  // reason.
+  if (options_.enable_fast_math() &&
+      sqrt_operand->opcode() == HloOpcode::kMultiply &&
       sqrt_operand->operand(0) == sqrt_operand->operand(1)) {
     PrimitiveType element_type = sqrt_operand->shape().element_type();
     // For 'A' of type C{64,128}, |A| has type F{32,64}, and the transformation
