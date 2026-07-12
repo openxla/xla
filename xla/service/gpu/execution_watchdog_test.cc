@@ -16,18 +16,49 @@ limitations under the License.
 #include "xla/service/gpu/execution_watchdog.h"
 
 #include <atomic>
+#include <memory>
 #include <optional>
+#include <utility>
 
 #include <gtest/gtest.h>
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {
+
+// Helpers that mimic the ExecuteThunks / ExecuteThunksImpl ownership split:
+// - ExecuteThunks owns ExecutionWatchdogScope for the whole execution.
+// - ExecuteThunksImpl only Arms the watchdog, then returns (async enqueue).
+// With async allocators, block_host_until_done=false; the scope must outlive
+// that return or the HangWatchdog guard is released too early.
+
+absl::StatusOr<std::unique_ptr<ExecutionWatchdogScope>> CreateArmedScope(
+    absl::Duration timeout, GpuExecutableRunOptions* gpu_run_options,
+    bool block_host_until_done) {
+  DebugOptions debug_options;
+  debug_options.set_xla_gpu_execution_terminate_timeout(
+      absl::FormatDuration(timeout));
+  TF_ASSIGN_OR_RETURN(
+      std::optional<ExecutionWatchdogScope> maybe_scope,
+      ExecutionWatchdogScope::Create(&debug_options, "test_module",
+                                     /*device_ordinal=*/0, gpu_run_options,
+                                     /*stream=*/nullptr, block_host_until_done));
+  if (!maybe_scope.has_value()) {
+    return absl::InternalError("expected ExecutionWatchdogScope");
+  }
+  auto scope =
+      std::make_unique<ExecutionWatchdogScope>(std::move(*maybe_scope));
+  scope->Arm();
+  return scope;
+}
 
 TEST(ExecutionWatchdogScopeTest, CreateReturnsNulloptWhenTimeoutDisabled) {
   DebugOptions debug_options;
@@ -55,9 +86,12 @@ TEST(ExecutionWatchdogScopeTest, CreateReturnsScopeWhenTimeoutEnabled) {
   EXPECT_FALSE(scope->IsArmed());
 }
 
-TEST(ExecutionWatchdogScopeTest, TimeoutHandlerFiresWhileScopeIsAlive) {
-  DebugOptions debug_options;
-  debug_options.set_xla_gpu_execution_terminate_timeout("50ms");
+// Positive: caller (ExecuteThunks) keeps the scope after dispatch returns.
+// This is the ownership model that addresses the async-enqueue lifetime bug:
+// ExecuteThunksImpl returns, but the watchdog guard remains alive.
+TEST(ExecutionWatchdogScopeTest,
+     TimeoutFiresAfterDispatchReturnsIfCallerKeepsScope) {
+  constexpr absl::Duration kTimeout = absl::Milliseconds(80);
 
   std::atomic<bool> handler_called{false};
   absl::Notification handler_done;
@@ -68,20 +102,46 @@ TEST(ExecutionWatchdogScopeTest, TimeoutHandlerFiresWhileScopeIsAlive) {
         handler_done.Notify();
       });
 
+  // Async allocator path: block_host_until_done=false.
   ASSERT_OK_AND_ASSIGN(
-      std::optional<ExecutionWatchdogScope> scope,
-      ExecutionWatchdogScope::Create(&debug_options, "test_module",
-                                     /*device_ordinal=*/0, &gpu_run_options,
-                                     /*stream=*/nullptr,
-                                     /*block_host_until_done=*/true));
-  ASSERT_TRUE(scope.has_value());
-  scope->Arm();
+      std::unique_ptr<ExecutionWatchdogScope> scope,
+      CreateArmedScope(kTimeout, &gpu_run_options,
+                       /*block_host_until_done=*/false));
 
-  EXPECT_TRUE(handler_done.WaitForNotificationWithTimeout(absl::Seconds(5)));
+  // Simulate ExecuteThunksImpl returning after enqueue. The caller still owns
+  // `scope`, so the HangWatchdog guard must remain active.
+  EXPECT_TRUE(handler_done.WaitForNotificationWithTimeout(absl::Seconds(5)))
+      << "timeout handler should fire while caller still owns the scope";
   EXPECT_TRUE(handler_called.load());
+}
 
-  // Scope destruction waits until after the timeout path above; the handler
-  // must have been invoked before the scope is released.
+// Negative: releasing the scope at dispatch return (old stack-local guard
+// behavior) cancels the watchdog before the timeout can fire.
+TEST(ExecutionWatchdogScopeTest,
+     TimeoutDoesNotFireIfScopeReleasedAtDispatchReturn) {
+  constexpr absl::Duration kTimeout = absl::Milliseconds(200);
+
+  std::atomic<int> handler_calls{0};
+  GpuExecutableRunOptions gpu_run_options;
+  gpu_run_options.set_execution_timeout_handler(
+      [&](absl::string_view /*action*/, absl::Duration /*timeout*/) {
+        handler_calls.fetch_add(1);
+      });
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ExecutionWatchdogScope> scope,
+      CreateArmedScope(kTimeout, &gpu_run_options,
+                       /*block_host_until_done=*/false));
+
+  // Simulate the old bug: guard lifetime ends when ExecuteThunksImpl returns.
+  scope.reset();
+
+  // Wait well past the configured timeout. If the guard was correctly dropped,
+  // the handler must not run.
+  absl::SleepFor(kTimeout * 3);
+  EXPECT_EQ(handler_calls.load(), 0)
+      << "releasing the scope at dispatch return must drop the watchdog "
+         "guard before timeout";
 }
 
 TEST(ExecutionWatchdogScopeTest, ArmIsIdempotent) {
