@@ -93,6 +93,7 @@ GpuExecutableBufferAllocator::Create(
           module_name, allocations, result_shape, debug_options,
           thunk_executor);
     case DebugOptions::SKIP_TEMP:
+    case DebugOptions::SKIP_PROFILED:
       return std::make_unique<GpuExecutableVaRemapAllocator>(
           module_name, allocations, result_shape, debug_options,
           thunk_executor);
@@ -194,7 +195,8 @@ GpuExecutableBufferAllocator::ExecutionScope::BufferForAllocation(
           allocation.param_shape_index().ToString(),
           registered_buffer.parameter_number);
     }
-    return registered_buffer.buffer;
+    return ResolveParameterBuffer(device_ordinal, allocation,
+                                  registered_buffer.buffer);
   }
   if (allocation.is_constant()) {
     auto it = globals->find(arg_idx);
@@ -281,6 +283,7 @@ GpuExecutableBufferAllocator::ExecutionScope::AllocateCopyProtectedOutputBuffer(
   XLA_VLOG_DEVICE(3, device_ordinal)
       << "Using copy-protection: aliasing is specified, but the "
          "buffer is not donated; allocating a fresh buffer";
+  RETURN_IF_ERROR(OnCopyProtectedOutput(allocation));
   int64_t allocation_size = ShapeUtil::ByteSizeOf(
       ShapeUtil::GetSubshape(owner_->result_shape_, index));
   absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> allocated_buffer =
@@ -302,7 +305,7 @@ GpuExecutableBufferAllocator::ExecutionScope::AllocateCopyProtectedOutputBuffer(
 
 absl::Status
 GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithBufferAllocations(
-    const BufferAllocations& owning_buffer_allocations, int device_ordinal,
+    BufferAllocations& owning_buffer_allocations, int device_ordinal,
     absl::FunctionRef<
         absl::Status(const BufferAllocations&,
                      std::optional<absl::Span<const BufferAllocation::Index>>

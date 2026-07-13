@@ -50,11 +50,11 @@ class ThunkExecutor;
 //
 // This base class implements the ALWAYS_UPDATE command buffer update mode,
 // which needs no allocation-address policy beyond global constants. The
-// SKIP_TEMP update mode is implemented by GpuExecutableVaRemapAllocator (see
-// gpu_executable_va_remap_allocator.h), which assigns stable addresses to
-// selected command-buffer allocations via VMM VA remapping. The base-class
-// behavior also serves as the runtime fallback for that mode when VA
-// remapping is unavailable for an execution.
+// SKIP_TEMP and SKIP_PROFILED update modes are implemented by
+// GpuExecutableVaRemapAllocator (see gpu_executable_va_remap_allocator.h),
+// which assigns stable addresses to selected command-buffer allocations via
+// VMM VA remapping. The base-class behavior also serves as the runtime
+// fallback for those modes when VA remapping is unavailable for an execution.
 class GpuExecutableBufferAllocator {
  public:
   struct ParameterBuffer {
@@ -120,12 +120,21 @@ class GpuExecutableBufferAllocator {
     // The base implementation passes the command-buffer-referenced constant
     // allocations as the persistent allocation indices.
     virtual absl::Status ExecuteWithBufferAllocations(
-        const BufferAllocations& owning_buffer_allocations, int device_ordinal,
+        BufferAllocations& owning_buffer_allocations, int device_ordinal,
         absl::FunctionRef<absl::Status(
             const BufferAllocations&,
             std::optional<absl::Span<const BufferAllocation::Index>>
                 persistent_alloc_indices)>
             execute);
+
+    // Returns the address that must be exposed outside this execution for
+    // `index`. The base implementation returns `current`; subclasses return
+    // the external (caller- or allocator-owned) address when the allocation
+    // is VA-remapped for this execution.
+    virtual se::DeviceAddressBase ResolveOutputBuffer(
+        BufferAllocation::Index index, se::DeviceAddressBase current) const {
+      return current;
+    }
 
    protected:
     explicit ExecutionScope(const GpuExecutableBufferAllocator* owner)
@@ -140,6 +149,15 @@ class GpuExecutableBufferAllocator {
       return absl::OkStatus();
     }
 
+    // Hook that resolves the address execution sees for the (non-null-checked)
+    // caller-owned parameter buffer of `allocation`. The base implementation
+    // returns `buffer` unchanged.
+    virtual absl::StatusOr<se::DeviceAddressBase> ResolveParameterBuffer(
+        int device_ordinal, const BufferAllocation& allocation,
+        se::DeviceAddressBase buffer) {
+      return buffer;
+    }
+
     // Hook that allocates a non-parameter, non-constant allocation of
     // `buffer_size` bytes (> 0, already rounded to the collective-memory
     // granularity). The base implementation allocates from
@@ -147,6 +165,13 @@ class GpuExecutableBufferAllocator {
     virtual absl::StatusOr<se::DeviceAddressBase> AllocateTransientBuffer(
         int device_ordinal, const BufferAllocation& allocation,
         int64_t buffer_size, se::DeviceAddressAllocator* memory_allocator);
+
+    // Hook called when copy-protection redirects the output `allocation` to a
+    // fresh buffer. The base implementation does nothing.
+    virtual absl::Status OnCopyProtectedOutput(
+        const BufferAllocation& allocation) {
+      return absl::OkStatus();
+    }
 
    private:
     friend class GpuExecutableBufferAllocator;
@@ -165,8 +190,8 @@ class GpuExecutableBufferAllocator {
 
   // Creates the buffer allocator implementing
   // `debug_options->xla_gpu_command_buffer_update_mode()`: this class for
-  // ALWAYS_UPDATE, GpuExecutableVaRemapAllocator for SKIP_TEMP. Check-fails
-  // on any other mode.
+  // ALWAYS_UPDATE, GpuExecutableVaRemapAllocator for SKIP_TEMP and
+  // SKIP_PROFILED. Check-fails on any other mode.
   static std::unique_ptr<GpuExecutableBufferAllocator> Create(
       absl::string_view module_name,
       absl::Span<const BufferAllocation* const> allocations,
@@ -183,6 +208,10 @@ class GpuExecutableBufferAllocator {
   size_t command_buffer_allocation_count() const {
     return persistent_alloc_indices_.size();
   }
+
+  // Number of command-buffer-referenced allocations eligible for the
+  // SKIP_PROFILED address-stability profile. Zero for other update modes.
+  virtual size_t profile_candidate_allocation_count() const { return 0; }
 
   virtual absl::StatusOr<std::unique_ptr<ExecutionScope>> CreateExecutionScope(
       const ServiceExecutableRunOptions* run_options,

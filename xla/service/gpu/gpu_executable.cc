@@ -1179,9 +1179,17 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
 
     if (result_buffer.is_null()) {
       // The source instruction should have a non-parameter buffer
-      // assigned.
-      result_buffer =
-          buffer_allocations.GetDeviceAddress(output_info.allocation_index);
+      // assigned. When the allocation is VA-remapped for this execution, the
+      // BufferAllocations entry holds the per-execution reservation address;
+      // the caller must instead receive the external address, which stays
+      // valid and deallocatable after the reservation slice is remapped by a
+      // later execution.
+      result_buffer = allocation_scope->ResolveOutputBuffer(
+          output_info.allocation_index,
+          buffer_allocations.GetDeviceAddress(output_info.allocation_index));
+      XLA_VLOG_DEVICE(4, device_ordinal) << absl::StreamFormat(
+          "Resolved output allocation %d to %p", output_info.allocation_index,
+          result_buffer.opaque());
 
       // If the entire tuple contents is aliased, the copy insertion will *not*
       // materialize a new tuple, so we mark it as aliased as well.
