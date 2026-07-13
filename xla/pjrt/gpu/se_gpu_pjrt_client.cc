@@ -2109,12 +2109,13 @@ StreamExecutorGpuClient::RunAsync(
   };
 
   ASSIGN_OR_RETURN(
-      gpu::GpuExecutableBufferAllocator::ExecutionScope allocation_scope,
+      std::unique_ptr<gpu::GpuExecutableBufferAllocator::ExecutionScope>
+          allocation_scope,
       gpu_exec->buffer_allocator().CreateExecutionScope(
           run_options, memory_allocator, device_ordinal));
 
   ASSIGN_OR_RETURN(xla::gpu::BufferAllocations buffer_allocations,
-                   allocation_scope.GenerateBufferAllocations(
+                   allocation_scope->GenerateBufferAllocations(
                        run_options, get_parameter_buffer, globals,
                        memory_allocator, device_ordinal));
   XLA_VLOG_DEVICE(3, device_ordinal)
@@ -2162,7 +2163,7 @@ StreamExecutorGpuClient::RunAsync(
                       .IsTuple()) {
         ASSIGN_OR_RETURN(
             result_buffer,
-            allocation_scope.AllocateCopyProtectedOutputBuffer(
+            allocation_scope->AllocateCopyProtectedOutputBuffer(
                 run_options, buffer_allocations, index, *allocation,
                 device_ordinal, memory_allocator, [&](absl::Status status) {
                   return ResourceExhausted(
@@ -2179,7 +2180,7 @@ StreamExecutorGpuClient::RunAsync(
       // the caller must instead receive the external address, which stays
       // valid and deallocatable after the reservation slice is remapped by a
       // later execution.
-      result_buffer = allocation_scope.ResolveOutputBuffer(
+      result_buffer = allocation_scope->ResolveOutputBuffer(
           output_info.allocation_index,
           buffer_allocations.GetDeviceAddress(output_info.allocation_index));
     }
@@ -2202,7 +2203,7 @@ StreamExecutorGpuClient::RunAsync(
     RETURN_IF_ERROR(set_result({}, 0));
   }
 
-  absl::Status execute_status = allocation_scope.ExecuteWithBufferAllocations(
+  absl::Status execute_status = allocation_scope->ExecuteWithBufferAllocations(
       buffer_allocations, device_ordinal,
       [&](const gpu::BufferAllocations& execution_buffers,
           std::optional<absl::Span<const BufferAllocation::Index>>
