@@ -84,8 +84,8 @@ class IfrtIRProgramSerDes
     }
 
     IfrtIrProgramProto program_proto;
-    llvm::raw_string_ostream ifrt_ir_program_stream(
-        *program_proto.mutable_ifrt_program());
+    std::string program_string;
+    llvm::raw_string_ostream ifrt_ir_program_stream(program_string);
     mlir::BaseScopedDiagnosticHandler diagnostic_handler(
         program.mlir_module->getContext());
 
@@ -144,6 +144,9 @@ class IfrtIRProgramSerDes
             diagnostic_handler.ConsumeStatus().message()));
       }
     }
+    // OSS requires explicit string conversion
+    // NOLINTNEXTLINE(*-redundant-string-conversions)
+    program_proto.set_ifrt_program(absl::Cord(std::move(program_string)));
     return program_proto.SerializeAsString();
   }
 
@@ -179,8 +182,10 @@ class IfrtIRProgramSerDes
     if (!program_proto.ParseFromString(serialized)) {
       return absl::InvalidArgumentError("Failed to parse IfrtIrProgramProto");
     }
-    ASSIGN_OR_RETURN(auto module, support::ParseMlirModuleString(
-                                      program_proto.ifrt_program(), *context));
+    ASSIGN_OR_RETURN(
+        auto module,
+        support::ParseMlirModuleString(
+            absl::Cord(program_proto.ifrt_program()).Flatten(), *context));
 
     if (program_proto.ifrt_version().empty()) {
       // The program was not versioned on serialization. The whole IFRT IR

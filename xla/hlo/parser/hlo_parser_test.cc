@@ -1647,6 +1647,34 @@ ENTRY %entry_spmd () -> s32[1,3] {
 )"
 },
 {
+"OriginalValueRecoveryTableWithNestedQuotes",
+R"(HloModule module, entry_computation_layout={()->s32[1,3]{1,0}}, num_partitions=2, origin_recovery_table={
+  {"constant"} : {"constant__ovp0"},
+  "
+    HloModule recovery_module, entry_computation_layout={(s32[2,3]{1,0})->s32[2,3]{1,0}}, frontend_attributes={foo=\"bar\"}
+
+    %add (x: s32[], y: s32[]) -> s32[] {
+      %x = s32[] parameter(0)
+      %y = s32[] parameter(1)
+      ROOT %add = s32[] add(%x, %y)
+    }
+
+    ENTRY %recovery_computation (param: s32[2,3]) -> s32[2,3] {
+      ROOT %param = s32[2,3]{1,0} parameter(0)
+    }
+
+
+  "
+}
+
+
+ENTRY %entry_spmd () -> s32[1,3] {
+  ROOT %constant.1 = s32[1,3]{1,0} constant({ { 1, 1, 1 } }), origin={{"constant__ovp0"}}
+}
+
+)"
+},
+{
   "StackFrameIndex",
 R"(HloModule m, entry_computation_layout={()->pred[]}
 
@@ -2381,7 +2409,21 @@ R"(HloModule CollectiveBroadcast, entry_computation_layout={(f32[128,32]{0,1})->
 
 ENTRY CollectiveBroadcast {
   input = f32[128,32]{0,1} parameter(0)
-  ROOT cb = f32[128,32]{0,1} collective-broadcast(input), replica_groups={{1,0},{2,3}}
+  ROOT cb = f32[128,32]{0,1} collective-broadcast(input), replica_groups={{1,0},{2,3}}, has_dynamic_root=false
+}
+
+)",
+/*replica_count=*/4,
+},
+// collective-broadcast with dynamic root
+{
+"CollectiveBroadcastDynamicRoot",
+R"(HloModule CollectiveBroadcast, entry_computation_layout={(f32[128,32]{0,1}, f32[1]{0})->f32[128,32]{0,1}}, replica_count=4
+
+ENTRY CollectiveBroadcast {
+  input = f32[128,32]{0,1} parameter(0)
+  root = f32[1]{0} parameter(1)
+  ROOT cb = f32[128,32]{0,1} collective-broadcast(input, root), replica_groups={{1,0},{2,3}}, has_dynamic_root=true
 }
 
 )",
@@ -3243,7 +3285,7 @@ ENTRY %test {
   ROOT %root = f32[10]{0} add(f32[10]{0} %p0#0, f32[10]{0} %p0#0)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(original));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(original));
   HloPrintOptions options = HloPrintOptions::ShortParsable();
   options.set_compact_gte(true);
   options.set_print_operand_shape(true);
@@ -3263,7 +3305,7 @@ ENTRY %test {
   ROOT %root = ((f32[20]{0}, f32[30]{0}), f32[20]{0}) tuple((f32[20]{0}, f32[30]{0}) %p0#1, f32[20]{0} %p0#1#0)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(original));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(original));
   HloPrintOptions options = HloPrintOptions::ShortParsable();
   options.set_compact_gte(true);
   options.set_print_operand_shape(true);
@@ -3285,7 +3327,7 @@ ENTRY %test {
   ROOT %root = f32[10]{0} negate(f32[10]{0} %t#0)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(original));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(original));
   HloPrintOptions options = HloPrintOptions::ShortParsable();
   options.set_compact_gte(true);
   options.set_print_operand_shape(true);

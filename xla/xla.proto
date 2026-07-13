@@ -406,17 +406,17 @@ message DebugOptions {
     CONCURRENT_REGIONS = 3;
   }
 
-  // Controls the VA remapping strategy for command buffer thunks.
-  //   ALWAYS_UPDATE: VA remapping disabled; all commands update on every
-  //     execution.
-  //   NEVER_UPDATE: All allocations VA-remapped to fixed addresses; no
-  //     command buffer update needed after initial recording.
-  //   CAPTURE_CMD_NEVER_UPDATE: Only traced/collective commands are
-  //     VA-remapped; other commands still update on each execution.
+  // Controls the VA remapping allocation strategy for command buffer thunks.
+  // Referenced constants have stable global addresses and are always treated as
+  // persistent, including when VMM remapping is unavailable.
+  //   ALWAYS_UPDATE: Buffers use regular dynamically allocated addresses;
+  //     commands update when their buffer addresses change.
+  //   SKIP_TEMP: Command-buffer-referenced preallocated temp buffers
+  //     use fixed VMM reservation addresses; other dynamic allocations still
+  //     trigger command updates when their addresses change.
   enum CommandBufferUpdateMode {
     ALWAYS_UPDATE = 0;
-    NEVER_UPDATE = 1;
-    CAPTURE_CMD_NEVER_UPDATE = 2;
+    SKIP_TEMP = 1;
   }
 
   // Controls when cuDNN fusions are compiled in "deviceless" mode, i.e. driven
@@ -609,7 +609,7 @@ message DebugOptions {
   // loop count and the loop body does not have unsupported commands.
   optional bool xla_gpu_command_buffer_unroll_loops = 411;
 
-  // Controls the VA remapping update strategy for command buffer thunks.
+  // Controls the VA remapping allocation strategy for command buffer thunks.
   // See CommandBufferUpdateMode for details.
   optional CommandBufferUpdateMode xla_gpu_command_buffer_update_mode = 469;
 
@@ -1655,10 +1655,16 @@ message DebugOptions {
   optional bool xla_gpu_experimental_ragged_all_to_all_zero_copy = 480
       [deprecated = true];
 
+  // If true, enable the GXL (GPU Collective Library) backend for collectives.
+  optional bool xla_gpu_enable_gxl_ragged_all_to_all = 513;
+
+  // Scratch buffer size (in bytes) for GXL collectives.
+  optional int64 xla_gpu_gxl_scratch_size_bytes = 514;
+
   // If true, use the device-initiated (NCCL GIN + LSA) kernel for
   // ragged-all-to-all. Requires NCCL >= 2.29.
   optional bool
-      xla_gpu_experimental_ragged_all_to_all_use_device_kernel = 513;
+      xla_gpu_experimental_ragged_all_to_all_use_device_kernel = 515;
 
   // If true, enable experimental tiling propagation.
   optional bool xla_gpu_experimental_enable_tiling_propagation = 456;
@@ -1674,7 +1680,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 514
+  // Next id: 516
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
