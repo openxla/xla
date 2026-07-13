@@ -139,10 +139,10 @@ class GpuExecutableVaRemapAllocator::VaRemapExecutionScope
     se::DeviceAddressBase external_address;
   };
 
-  absl::Status PrepareReservation(
-      const ServiceExecutableRunOptions* run_options, int device_ordinal,
-      const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
-          allocate_granularity) override;
+  absl::Status Prepare(const ServiceExecutableRunOptions* run_options,
+                       int device_ordinal,
+                       const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
+                           allocate_granularity) override;
   absl::StatusOr<se::DeviceAddressBase> ResolveParameterBuffer(
       int device_ordinal, const BufferAllocation& allocation,
       se::DeviceAddressBase buffer) override;
@@ -227,8 +227,7 @@ GpuExecutableVaRemapAllocator::VaRemapExecutionScope::active_remap_set() const {
   return owner_->va_remapped_alloc_indices_;
 }
 
-absl::Status
-GpuExecutableVaRemapAllocator::VaRemapExecutionScope::PrepareReservation(
+absl::Status GpuExecutableVaRemapAllocator::VaRemapExecutionScope::Prepare(
     const ServiceExecutableRunOptions* run_options, int device_ordinal,
     const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
         allocate_granularity) {
