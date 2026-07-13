@@ -22,18 +22,14 @@ limitations under the License.
 #include <limits>
 #include <memory>
 #include <optional>
-#include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/container/btree_set.h"
-#include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -129,7 +125,7 @@ struct CollectiveCallPreparedState {
   int32_t clique_size;
   se::StreamExecutor* executor;
   std::shared_ptr<LoadedModule> module;
-  absl::flat_hash_map<int64_t, LoadedModule::FunctionHandle> functions;
+  LoadedModule::FunctionHandle function;
 };
 
 // Fields are declared so that reverse-order destruction releases the symmetric
@@ -357,18 +353,6 @@ absl::StatusOr<std::vector<se::DeviceAddressBase>> GetPeerRegionBuffers(
   return buffers;
 }
 
-bool HasBarrier(const wire::CollectiveCallConfigV3& config) {
-  return absl::c_any_of(
-      config.steps(), [](const wire::CollectiveStepProto& step) {
-        return step.kind() == wire::COLLECTIVE_STEP_KIND_PROTO_BARRIER;
-      });
-}
-
-std::string FunctionPrefix(int64_t ordinal) {
-  return ordinal == 0 ? std::string(kFunctionPrefix)
-                      : absl::StrCat(kFunctionPrefix, "_", ordinal);
-}
-
 }  // namespace
 
 namespace internal {
@@ -563,7 +547,7 @@ absl::StatusOr<std::unique_ptr<CollectiveCallPreparedState>> Prepare(
         "clique size %d",
         config.abi_clique_size(), clique_key.num_devices()));
   }
-  if (HasBarrier(config) &&
+  if (config.barrier_before_launch() &&
       clique_key.num_devices() >
           static_cast<size_t>(se::gpu::MultiGpuBarrierKernel::kMaxPeers)) {
     return absl::InvalidArgumentError(absl::StrFormat(
@@ -592,29 +576,9 @@ absl::StatusOr<std::unique_ptr<CollectiveCallPreparedState>> Prepare(
                    GetPeerRegionBuffers(config, arguments, results,
                                         /*require_addresses=*/true));
 
-  absl::btree_set<int64_t> ordinals;
-  for (const wire::CollectiveStepProto& step : config.steps()) {
-    if (step.kind() == wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH) {
-      ordinals.insert(step.operand());
-    }
-  }
   ASSIGN_OR_RETURN(std::shared_ptr<LoadedModule> module, state->LoadModule());
-
-  absl::flat_hash_map<int64_t, LoadedModule::FunctionHandle> functions;
-  functions.reserve(ordinals.size());
-  // Every rank loads the same module and validates the same function ordinals
-  // in a deterministic order before any clique request.
-  for (int64_t ordinal : ordinals) {
-    absl::StatusOr<LoadedModule::FunctionHandle> function =
-        module->GetFunction(FunctionPrefix(ordinal));
-    if (!function.ok()) {
-      return absl::Status(
-          function.status().code(),
-          absl::StrFormat("Function ordinal %d is unavailable: %s", ordinal,
-                          function.status().message()));
-    }
-    functions.emplace(ordinal, *function);
-  }
+  ASSIGN_OR_RETURN(LoadedModule::FunctionHandle function,
+                   module->GetFunction(kFunctionPrefix));
 
   // Resource requests happen only after all configuration, topology, buffer,
   // module, and function checks that do not themselves require acquisition.
@@ -628,7 +592,7 @@ absl::StatusOr<std::unique_ptr<CollectiveCallPreparedState>> Prepare(
   return std::make_unique<CollectiveCallPreparedState>(
       CollectiveCallPreparedState{std::move(clique_key), *rank, clique_size,
                                   collective_params->executor,
-                                  std::move(module), std::move(functions)});
+                                  std::move(module), function});
 }
 
 absl::StatusOr<std::shared_ptr<BarrierResources>> InitializeBarrier(
@@ -781,7 +745,7 @@ absl::StatusOr<std::unique_ptr<CollectiveCallInitializedState>> Initialize(
   }
 
   std::shared_ptr<BarrierResources> barrier;
-  if (HasBarrier(config)) {
+  if (config.barrier_before_launch()) {
     ASSIGN_OR_RETURN(barrier,
                      InitializeBarrier(stream, *prepared, *collective_cliques));
   }
@@ -792,13 +756,13 @@ absl::StatusOr<std::unique_ptr<CollectiveCallInitializedState>> Initialize(
                                      std::move(barrier)});
 }
 
-absl::Status ExecuteConfiguredSteps(se::Stream* stream,
-                                    const wire::CollectiveCallConfigV3& config,
-                                    const CollectiveCallPreparedState& prepared,
-                                    CollectiveCallInitializedState& initialized,
-                                    const uint64_t* peer_addresses,
-                                    ffi::RemainingArgs arguments,
-                                    ffi::RemainingRets results) {
+absl::Status ExecuteKernel(se::Stream* stream,
+                           const wire::CollectiveCallConfigV3& config,
+                           const CollectiveCallPreparedState& prepared,
+                           CollectiveCallInitializedState& initialized,
+                           const uint64_t* peer_addresses,
+                           ffi::RemainingArgs arguments,
+                           ffi::RemainingRets results) {
   absl::InlinedVector<CuteXlaFfiBuffer, kInlineBufferCount> buffers;
   buffers.reserve(arguments.size() + results.size());
 
@@ -822,6 +786,7 @@ absl::Status ExecuteConfiguredSteps(se::Stream* stream,
       prepared.clique_size,
   };
 
+  // Must match collective_jit_wrapper: stream, context, flattened buffers.
   // Pointer-valued parameters use the MLIR packed C interface's extra level
   // of indirection. The CUDA error parameter points directly at scalar storage.
   absl::InlinedVector<void*, kInlineBufferCount + 2> pointer_values;
@@ -832,10 +797,10 @@ absl::Status ExecuteConfiguredSteps(se::Stream* stream,
         "CuTeDSL collective v3 requires a CUDA platform stream");
   }
   pointer_values.push_back(platform_stream);
+  pointer_values.push_back(&collective_context);
   for (CuteXlaFfiBuffer& buffer : buffers) {
     pointer_values.push_back(&buffer);
   }
-  pointer_values.push_back(&collective_context);
 
   absl::InlinedVector<void*, kInlineBufferCount + 3> packed_arguments;
   packed_arguments.reserve(pointer_values.size() + 1);
@@ -846,48 +811,29 @@ absl::Status ExecuteConfiguredSteps(se::Stream* stream,
   int32_t cuda_error = 0;
   packed_arguments.push_back(&cuda_error);
 
-  for (int step_index = 0; step_index < config.steps_size(); ++step_index) {
-    const wire::CollectiveStepProto& step = config.steps(step_index);
-    switch (step.kind()) {
-      case wire::COLLECTIVE_STEP_KIND_PROTO_BARRIER: {
-        if (initialized.barrier == nullptr) {
-          return absl::FailedPreconditionError(absl::StrFormat(
-              "CuTeDSL collective step %d requires uninitialized barrier "
-              "state",
-              step_index));
-        }
-        se::DeviceAddressBase signal_value =
-            initialized.barrier->signal_value->address().GetByteSlice(
-                0, GetMultiGpuBarrierSignalValueSize());
-        RETURN_IF_ERROR(LaunchMultiGpuBarrier(
-            stream, prepared.clique_size, prepared.rank,
-            initialized.barrier->peer_addresses, signal_value));
-        break;
-      }
-      case wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH: {
-        auto function = prepared.functions.find(step.operand());
-        if (function == prepared.functions.end()) {
-          return absl::FailedPreconditionError(absl::StrFormat(
-              "CuTeDSL collective function ordinal %d was not prepared",
-              step.operand()));
-        }
-
-        cuda_error = 0;
-        absl::Status run_status = prepared.module->Run(
-            function->second, packed_arguments.data(), packed_arguments.size());
-        if (!run_status.ok()) {
-          return absl::InternalError(absl::StrFormat(
-              "CuTeDSL collective launch step %d failed: %s; CUDA error %d",
-              step_index, run_status.message(), cuda_error));
-        }
-        if (cuda_error != 0) {
-          return absl::InternalError(absl::StrFormat(
-              "CuTeDSL collective launch step %d returned CUDA error %d",
-              step_index, cuda_error));
-        }
-        break;
-      }
+  if (config.barrier_before_launch()) {
+    if (initialized.barrier == nullptr) {
+      return absl::FailedPreconditionError(
+          "CuTeDSL collective barrier state is unavailable");
     }
+    se::DeviceAddressBase signal_value =
+        initialized.barrier->signal_value->address().GetByteSlice(
+            0, GetMultiGpuBarrierSignalValueSize());
+    RETURN_IF_ERROR(LaunchMultiGpuBarrier(
+        stream, prepared.clique_size, prepared.rank,
+        initialized.barrier->peer_addresses, signal_value));
+  }
+
+  absl::Status run_status = prepared.module->Run(
+      prepared.function, packed_arguments.data(), packed_arguments.size());
+  if (!run_status.ok()) {
+    return absl::InternalError(absl::StrFormat(
+        "CuTeDSL collective launch failed: %s; CUDA error %d",
+        run_status.message(), cuda_error));
+  }
+  if (cuda_error != 0) {
+    return absl::InternalError(absl::StrFormat(
+        "CuTeDSL collective launch returned CUDA error %d", cuda_error));
   }
   return absl::OkStatus();
 }
@@ -1018,8 +964,8 @@ absl::Status Execute(se::Stream* stream, CollectiveCallState* state,
       peer_addresses =
           static_cast<const uint64_t*>(peer_addresses_device.opaque());
     }
-    return ExecuteConfiguredSteps(stream, config, *prepared, *initialized,
-                                  peer_addresses, arguments, results);
+    return ExecuteKernel(stream, config, *prepared, *initialized,
+                         peer_addresses, arguments, results);
   }();
   // A failed copy or launch can still leave work in flight, so arrange safe
   // teardown for every Execute attempt that can enqueue work.

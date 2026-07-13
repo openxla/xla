@@ -64,13 +64,7 @@ wire::CollectiveCallConfigV3 TestProto() {
   result->set_byte_size(128);
   result->set_required_alignment(64);
   result->set_memory_kind(wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC);
-
-  wire::CollectiveStepProto* barrier = proto.add_steps();
-  barrier->set_kind(wire::COLLECTIVE_STEP_KIND_PROTO_BARRIER);
-  barrier->set_operand(0);
-  wire::CollectiveStepProto* launch = proto.add_steps();
-  launch->set_kind(wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH);
-  launch->set_operand(2);
+  proto.set_barrier_before_launch(true);
   return proto;
 }
 
@@ -113,11 +107,7 @@ TEST(CollectiveConfigTest, ParsesCompleteProtoJsonConfiguration) {
   EXPECT_EQ(parsed->peer_regions(1).endpoint(),
             wire::PEER_REGION_ENDPOINT_PROTO_RESULT);
 
-  ASSERT_EQ(parsed->steps_size(), 2);
-  EXPECT_EQ(parsed->steps(0).kind(), wire::COLLECTIVE_STEP_KIND_PROTO_BARRIER);
-  EXPECT_EQ(parsed->steps(0).operand(), 0);
-  EXPECT_EQ(parsed->steps(1).kind(), wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH);
-  EXPECT_EQ(parsed->steps(1).operand(), 2);
+  EXPECT_TRUE(parsed->barrier_before_launch());
 }
 
 TEST(CollectiveConfigTest, ParsesDkgProtoJsonEncoding) {
@@ -135,10 +125,7 @@ TEST(CollectiveConfigTest, ParsesDkgProtoJsonEncoding) {
         "required_alignment": "16"
       }],
       "replica_groups": [{"replica_ids": ["0", "1"]}],
-      "steps": [
-        {"kind": 0, "operand": "0"},
-        {"kind": 1, "operand": "2"}
-      ]
+      "barrier_before_launch": true
     }
   )json";
 
@@ -148,9 +135,7 @@ TEST(CollectiveConfigTest, ParsesDkgProtoJsonEncoding) {
   EXPECT_EQ(parsed->abi_clique_size(), 2);
   ASSERT_EQ(parsed->peer_regions_size(), 1);
   EXPECT_EQ(parsed->peer_regions(0).buffer_index(), 2);
-  ASSERT_EQ(parsed->steps_size(), 2);
-  EXPECT_EQ(parsed->steps(1).kind(), wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH);
-  EXPECT_EQ(parsed->steps(1).operand(), 2);
+  EXPECT_TRUE(parsed->barrier_before_launch());
 }
 
 TEST(CollectiveConfigTest, RejectsMalformedJsonAndMissingFields) {
@@ -167,11 +152,6 @@ TEST(CollectiveConfigTest, RejectsMalformedJsonAndMissingFields) {
   proto.mutable_peer_regions(0)->clear_required_alignment();
   EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
                                      HasSubstr("required_alignment")));
-
-  proto = TestProto();
-  proto.mutable_steps(0)->clear_operand();
-  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
-                                     HasSubstr("steps[0].operand")));
 }
 
 TEST(CollectiveConfigTest, IgnoresUnknownJsonFields) {
@@ -270,53 +250,15 @@ TEST(CollectiveConfigTest, RejectsMalformedPeerRegions) {
                        HasSubstr("duplicates an earlier record")));
 }
 
-TEST(CollectiveConfigTest, AllowsNoPeerRegionsAndLaunchOnlySchedule) {
+TEST(CollectiveConfigTest, AllowsNoPeerRegionsAndDefaultsBarrierOff) {
   wire::CollectiveCallConfigV3 proto = TestProto();
   proto.clear_peer_regions();
-  proto.clear_steps();
-  wire::CollectiveStepProto* launch = proto.add_steps();
-  launch->set_kind(wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH);
-  launch->set_operand(0);
+  proto.clear_barrier_before_launch();
 
   absl::StatusOr<wire::CollectiveCallConfigV3> parsed = Parse(proto);
   ASSERT_THAT(parsed, IsOk());
   EXPECT_TRUE(parsed->peer_regions().empty());
-  ASSERT_EQ(parsed->steps_size(), 1);
-  EXPECT_EQ(parsed->steps(0).kind(), wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH);
-}
-
-TEST(CollectiveConfigTest, RejectsMalformedSteps) {
-  wire::CollectiveCallConfigV3 proto = TestProto();
-  proto.clear_steps();
-  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
-                                     HasSubstr("complete [kind, operand]")));
-
-  proto = TestProto();
-  proto.mutable_steps(0)->set_operand(1);
-  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
-                                     HasSubstr("must have operand zero")));
-
-  proto = TestProto();
-  proto.mutable_steps(1)->set_operand(-1);
-  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
-                                     HasSubstr("nonnegative function")));
-
-  proto = TestProto();
-  proto.mutable_steps()->SwapElements(0, 1);
-  EXPECT_THAT(Parse(proto),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("requires all barriers before")));
-
-  proto = TestProto();
-  proto.mutable_steps(0)->set_kind(
-      static_cast<wire::CollectiveStepKindProto>(9));
-  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
-                                     HasSubstr("Unsupported step kind")));
-
-  proto = TestProto();
-  proto.mutable_steps()->RemoveLast();
-  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
-                                     HasSubstr("at least one launch")));
+  EXPECT_FALSE(parsed->barrier_before_launch());
 }
 
 }  // namespace

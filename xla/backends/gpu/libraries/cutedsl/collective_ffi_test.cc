@@ -136,7 +136,7 @@ struct FakeRuntime {
   int get_function_count = 0;
   int run_count = 0;
   int destroy_count = 0;
-  int fail_get_function_at = -1;
+  bool fail_get_function = false;
 };
 
 FakeRuntime *fake_runtime = nullptr;
@@ -157,7 +157,7 @@ CuteDSLRT_Error_t ModuleGetFunction(CuteDSLRT_Function_t **function,
   EXPECT_EQ(module, reinterpret_cast<CuteDSLRT_Module_t *>(fake_runtime));
   ++fake_runtime->get_function_count;
   fake_runtime->function_prefixes.emplace_back(prefix);
-  if (fake_runtime->get_function_count == fake_runtime->fail_get_function_at) {
+  if (fake_runtime->fail_get_function) {
     return CuteDSLRT_Error_CudaError;
   }
   fake_runtime->function_handles.push_back(
@@ -193,6 +193,7 @@ CuteDSLRT_Error_t FunctionRun(void *function, void **arguments,
 
   size_t index = 0;
   fake_runtime->stream = *reinterpret_cast<void **>(arguments[index++]);
+  void *context_address = *static_cast<void **>(arguments[index++]);
   fake_runtime->buffers.clear();
   for (size_t buffer_rank : fake_runtime->expected_buffer_ranks) {
     auto *descriptor =
@@ -212,7 +213,6 @@ CuteDSLRT_Error_t FunctionRun(void *function, void **arguments,
     fake_runtime->buffers.push_back(std::move(buffer));
   }
 
-  void *context_address = *static_cast<void **>(arguments[index++]);
   if (context_address == nullptr) {
     ADD_FAILURE() << "Invalid CollectiveContext descriptor";
     return CuteDSLRT_Error_CudaError;
@@ -351,11 +351,7 @@ struct TestAttributes {
       region->set_memory_kind(
           static_cast<wire::PeerMemoryKindProto>(peer_regions[offset + 5]));
     }
-    for (size_t offset = 0; offset + 1 < steps.size(); offset += 2) {
-      wire::CollectiveStepProto *step = config.add_steps();
-      step->set_kind(static_cast<wire::CollectiveStepKindProto>(steps[offset]));
-      step->set_operand(steps[offset + 1]);
-    }
+    config.set_barrier_before_launch(barrier_before_launch);
 
     ffi::CallFrameBuilder::AttributesBuilder attributes;
     if (!omit_module) {
@@ -403,8 +399,8 @@ struct TestAttributes {
   std::vector<int64_t> replica_group_members = {0, 1};
   std::string module = "collective ffi test module";
   std::vector<int64_t> peer_regions;
-  std::vector<int64_t> steps = {wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH, 0};
   std::optional<std::string> key;
+  bool barrier_before_launch = false;
   bool add_unknown_attribute = false;
   bool omit_module = false;
   bool module_as_i64 = false;
@@ -1053,7 +1049,7 @@ TEST(CollectiveFfiPrepareTest,
 }
 
 TEST(CollectiveFfiPrepareTest,
-     AcceptsConfiguredPrefixBarrierAndPreloadsUniqueFunctions) {
+     AcceptsOptInPrefixBarrierAndPreloadsCutlassCall) {
   FakeRuntime runtime;
   ScopedFakeRuntime scoped_runtime(&runtime);
 
@@ -1061,13 +1057,8 @@ TEST(CollectiveFfiPrepareTest,
   // Host-only coverage verifies that a configured barrier remains a prefix
   // through Instantiate and Prepare. Actual barrier enqueue ordering requires
   // the registered GPU barrier kernel and is covered by the Phase 4 GPU test.
-  attributes.steps = {
-      wire::COLLECTIVE_STEP_KIND_PROTO_BARRIER, 0,
-      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH,  2,
-      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH,  0,
-      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH,  2,
-  };
-  attributes.module = "single module with multiple functions";
+  attributes.barrier_before_launch = true;
+  attributes.module = "collective prefix-barrier module";
   CollectiveFfiInvocation invocation(std::move(attributes),
                                      /*replica_count=*/2,
                                      /*partition_count=*/1,
@@ -1078,13 +1069,10 @@ TEST(CollectiveFfiPrepareTest,
   ASSERT_THAT(invocation.Prepare(), IsOk());
 
   EXPECT_EQ(runtime.create_count, 1);
-  EXPECT_EQ(runtime.get_function_count, 2);
+  EXPECT_EQ(runtime.get_function_count, 1);
   EXPECT_EQ(runtime.run_count, 0);
-  EXPECT_THAT(runtime.function_prefixes,
-              ElementsAre("cutlass_call", "cutlass_call_2"));
-  ASSERT_EQ(runtime.function_handles.size(), 2);
-  EXPECT_NE(runtime.function_handles[0].get(),
-            runtime.function_handles[1].get());
+  EXPECT_THAT(runtime.function_prefixes, ElementsAre("cutlass_call"));
+  EXPECT_EQ(runtime.function_handles.size(), 1);
 
   std::vector<CollectiveCliqueRequests::CliqueRequest> requests =
       invocation.clique_requests().OrderedRequestedCliques();
@@ -1099,11 +1087,6 @@ TEST(CollectiveFfiPrepareTest, RetainsModuleAcrossSequentialExecutions) {
 
   TestAttributes attributes;
   attributes.module = "collective retained module";
-  attributes.steps = {
-      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH, 2,
-      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH, 0,
-      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH, 2,
-  };
   {
     CollectiveFfiInvocation invocation(std::move(attributes),
                                        /*replica_count=*/2,
@@ -1114,13 +1097,13 @@ TEST(CollectiveFfiPrepareTest, RetainsModuleAcrossSequentialExecutions) {
     ASSERT_THAT(invocation.Instantiate(), IsOk());
     ASSERT_THAT(invocation.Prepare(), IsOk());
     EXPECT_EQ(runtime.create_count, 1);
-    EXPECT_EQ(runtime.get_function_count, 2);
+    EXPECT_EQ(runtime.get_function_count, 1);
     EXPECT_EQ(runtime.destroy_count, 0);
 
     invocation.ResetPerExecutionState();
     ASSERT_THAT(invocation.Prepare(), IsOk());
     EXPECT_EQ(runtime.create_count, 1);
-    EXPECT_EQ(runtime.get_function_count, 2);
+    EXPECT_EQ(runtime.get_function_count, 1);
     EXPECT_EQ(runtime.destroy_count, 0);
   }
   EXPECT_EQ(runtime.destroy_count, 1);
@@ -1128,7 +1111,7 @@ TEST(CollectiveFfiPrepareTest, RetainsModuleAcrossSequentialExecutions) {
 
 TEST(CollectiveFfiPrepareTest, RejectsMissingFunctionBeforeRequestingClique) {
   FakeRuntime runtime;
-  runtime.fail_get_function_at = 1;
+  runtime.fail_get_function = true;
   ScopedFakeRuntime scoped_runtime(&runtime);
 
   TestAttributes attributes;
@@ -1141,23 +1124,18 @@ TEST(CollectiveFfiPrepareTest, RejectsMissingFunctionBeforeRequestingClique) {
   ASSERT_THAT(invocation.status(), IsOk());
   ASSERT_THAT(invocation.Instantiate(), IsOk());
   EXPECT_THAT(invocation.Prepare(), StatusIs(absl::StatusCode::kInternal,
-                                             HasSubstr("Function ordinal 0")));
+                                             HasSubstr("cutlass_call")));
   EXPECT_EQ(runtime.create_count, 1);
   EXPECT_EQ(runtime.get_function_count, 1);
   EXPECT_TRUE(invocation.clique_requests().OrderedRequestedCliques().empty());
 }
 
-TEST(CollectiveFfiExecuteTest, ExecutesSingleModuleFunctionsInConfiguredOrder) {
+TEST(CollectiveFfiExecuteTest, ExecutesSingleCutlassCall) {
   FakeRuntime runtime;
   ScopedFakeRuntime scoped_runtime(&runtime);
 
   TestAttributes attributes;
-  attributes.module = "collective multi-launch test module";
-  attributes.steps = {
-      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH, 2,
-      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH, 0,
-      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH, 2,
-  };
+  attributes.module = "collective single-launch test module";
   CollectiveFfiInvocation invocation(std::move(attributes),
                                      /*replica_count=*/2,
                                      /*partition_count=*/1,
@@ -1179,13 +1157,10 @@ TEST(CollectiveFfiExecuteTest, ExecutesSingleModuleFunctionsInConfiguredOrder) {
   EXPECT_EQ(invocation.h2d_copy_count(), 0);
 
   EXPECT_EQ(runtime.create_count, 1);
-  EXPECT_THAT(runtime.function_prefixes,
-              ElementsAre("cutlass_call", "cutlass_call_2"));
-  ASSERT_EQ(runtime.function_handles.size(), 2);
-  EXPECT_NE(runtime.function_handles[0].get(),
-            runtime.function_handles[1].get());
+  EXPECT_THAT(runtime.function_prefixes, ElementsAre("cutlass_call"));
+  EXPECT_EQ(runtime.function_handles.size(), 1);
   EXPECT_THAT(runtime.invoked_function_prefixes,
-              ElementsAre("cutlass_call_2", "cutlass_call", "cutlass_call_2"));
+              ElementsAre("cutlass_call"));
   EXPECT_TRUE(runtime.peer_addresses_pointer_is_null);
   EXPECT_TRUE(runtime.peer_addresses.empty());
   EXPECT_EQ(runtime.rank, 0);

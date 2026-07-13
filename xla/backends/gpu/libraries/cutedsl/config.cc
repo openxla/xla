@@ -187,57 +187,6 @@ absl::Status ValidatePeerRegions(const wire::CollectiveCallConfigV3& proto) {
   return absl::OkStatus();
 }
 
-absl::Status ValidateSteps(const wire::CollectiveCallConfigV3& proto) {
-  if (proto.steps().empty()) {
-    return absl::InvalidArgumentError(
-        "`steps` must contain complete [kind, operand] records");
-  }
-
-  bool has_launch = false;
-  for (int step_index = 0; step_index < proto.steps_size(); ++step_index) {
-    const wire::CollectiveStepProto& step = proto.steps(step_index);
-    if (!step.has_kind()) {
-      return MissingRepeatedField("steps", step_index, "kind");
-    }
-    if (!step.has_operand()) {
-      return MissingRepeatedField("steps", step_index, "operand");
-    }
-
-    switch (step.kind()) {
-      case wire::COLLECTIVE_STEP_KIND_PROTO_BARRIER:
-        if (step.operand() != 0) {
-          return absl::InvalidArgumentError(absl::StrFormat(
-              "Barrier step %d must have operand zero", step_index));
-        }
-        if (has_launch) {
-          return absl::InvalidArgumentError(absl::StrFormat(
-              "Barrier step %d follows a launch; v3 requires all barriers "
-              "before the first launch until cross-rank launch-error "
-              "agreement is implemented",
-              step_index));
-        }
-        break;
-      case wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH:
-        if (step.operand() < 0) {
-          return absl::InvalidArgumentError(absl::StrFormat(
-              "Launch step %d must have a nonnegative function ordinal",
-              step_index));
-        }
-        has_launch = true;
-        break;
-      default:
-        return absl::InvalidArgumentError(absl::StrFormat(
-            "Unsupported step kind %d at step %d", step.kind(), step_index));
-    }
-  }
-
-  if (!has_launch) {
-    return absl::InvalidArgumentError(
-        "`steps` must contain at least one launch");
-  }
-  return absl::OkStatus();
-}
-
 }  // namespace
 
 absl::StatusOr<wire::CollectiveCallConfigV3>
@@ -271,7 +220,6 @@ ParseAndValidateCollectiveCallConfig(absl::string_view json_config) {
 
   RETURN_IF_ERROR(ValidateReplicaGroups(proto));
   RETURN_IF_ERROR(ValidatePeerRegions(proto));
-  RETURN_IF_ERROR(ValidateSteps(proto));
   return proto;
 }
 
