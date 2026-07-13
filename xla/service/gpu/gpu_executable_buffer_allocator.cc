@@ -190,7 +190,8 @@ GpuExecutableBufferAllocator::ExecutionScope::BufferForAllocation(
           allocation.param_shape_index().ToString(),
           registered_buffer.parameter_number);
     }
-    return registered_buffer.buffer;
+    return ResolveParameterBuffer(device_ordinal, allocation,
+                                  registered_buffer.buffer);
   }
   if (allocation.is_constant()) {
     auto it = globals->find(arg_idx);
@@ -227,7 +228,7 @@ GpuExecutableBufferAllocator::ExecutionScope::GenerateBufferAllocations(
           run_options->run_options().device_assignment());
 
   const int64_t num_buffers = owner_->allocations_.size();
-  RETURN_IF_ERROR(PrepareReservation(run_options, device_ordinal));
+  RETURN_IF_ERROR(Prepare(run_options, device_ordinal));
 
   std::vector<se::DeviceAddressBase> buffers;
   buffers.reserve(num_buffers);
@@ -275,7 +276,7 @@ GpuExecutableBufferAllocator::ExecutionScope::AllocateCopyProtectedOutputBuffer(
 
 absl::Status
 GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithBufferAllocations(
-    const BufferAllocations& owning_buffer_allocations, int device_ordinal,
+    BufferAllocations& owning_buffer_allocations, int device_ordinal,
     absl::FunctionRef<
         absl::Status(const BufferAllocations&,
                      std::optional<absl::Span<const BufferAllocation::Index>>
