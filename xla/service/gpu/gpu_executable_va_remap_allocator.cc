@@ -504,6 +504,11 @@ void GpuExecutableVaRemapAllocator::AddVaRemappedAllocationForTesting(
       persistent.begin(), persistent.end()));
 }
 
+void GpuExecutableVaRemapAllocator::AddProfileCandidateAllocationForTesting(
+    BufferAllocation::Index index) {
+  profile_candidate_alloc_indices_.insert(index);
+}
+
 void GpuExecutableVaRemapAllocator::TransitionProfiledRemapping(
     Remapping* remapping, se::DeviceAddressVmmAllocator* vmm_allocator,
     int device_ordinal) {

@@ -88,6 +88,10 @@ class GpuExecutableVaRemapAllocator : public GpuExecutableBufferAllocator {
   // update mode selects yet.
   void AddVaRemappedAllocationForTesting(BufferAllocation::Index index);
 
+  // Test-only: adds `index` to the SKIP_PROFILED profile candidate set, as if
+  // it had been collected from a command buffer thunk at construction time.
+  void AddProfileCandidateAllocationForTesting(BufferAllocation::Index index);
+
  private:
   // Per-executor VA remapping state, owned by the allocator and shared by the
   // execution scopes created for that executor.

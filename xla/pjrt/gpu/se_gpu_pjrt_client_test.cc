@@ -2729,7 +2729,7 @@ TEST_F(VmmTest, CommandBufferSkipProfiledTwoGemmChain) {
 TEST_F(VmmTest, CommandBufferSkipProfiledFallsBackWithoutVmmAllocator) {
   GpuClientOptions options;
   options.allowed_devices = {0};
-  options.allocator_config.kind = GpuAllocatorConfig::Kind::kAddress;
+  options.allocator_config.kind = GpuAllocatorConfig::Kind::kPlatform;
   ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
 
   ScopedBufferAllocatorVLog vlog;

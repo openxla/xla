@@ -765,6 +765,7 @@ xla_cc_test(
         "//xla/stream_executor:mock_stream",
         "//xla/stream_executor:mock_stream_executor",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
