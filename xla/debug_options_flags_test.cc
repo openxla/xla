@@ -214,47 +214,47 @@ DebugOptions ParseCollectiveKernelsFlag(const std::string& value) {
 // ---- xla_gpu_experimental_use_collective_kernels user-friendly name tests ---
 
 TEST(DebugOptions, CollectiveKernelsFlagHyphenatedAllReduce) {
-  DebugOptions opts = ParseCollectiveKernelsFlag("all-reduce");
+  DebugOptions opts = ParseCollectiveKernelsFlag("ALL_REDUCE");
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
-              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE));
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE));
 }
 
 TEST(DebugOptions, CollectiveKernelsFlagUnderscoreAllReduce) {
   DebugOptions opts = ParseCollectiveKernelsFlag("all_reduce");
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
-              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE));
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE));
 }
 
 TEST(DebugOptions, CollectiveKernelsFlagHyphenatedAllGather) {
-  DebugOptions opts = ParseCollectiveKernelsFlag("all-gather");
+  DebugOptions opts = ParseCollectiveKernelsFlag("ALL_GATHER");
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
-              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER));
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER));
 }
 
 TEST(DebugOptions, CollectiveKernelsFlagUnderscoreAllGather) {
   DebugOptions opts = ParseCollectiveKernelsFlag("all_gather");
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
-              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER));
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER));
 }
 
 TEST(DebugOptions, CollectiveKernelsFlagBothHyphenated) {
-  DebugOptions opts = ParseCollectiveKernelsFlag("all-reduce,all-gather");
+  DebugOptions opts = ParseCollectiveKernelsFlag("ALL_REDUCE,ALL_GATHER");
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
-              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE,
-                          DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER));
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE,
+                          DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER));
 }
 
 TEST(DebugOptions, CollectiveKernelsFlagFullEnumName) {
   DebugOptions opts =
-      ParseCollectiveKernelsFlag("COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE");
+      ParseCollectiveKernelsFlag("COLLECTIVE_KERNEL_ALL_REDUCE");
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
-              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE));
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE));
 }
 
 TEST(DebugOptions, CollectiveKernelsFlagShortEnumNameUppercase) {
   DebugOptions opts = ParseCollectiveKernelsFlag("ALL_REDUCE");
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
-              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE));
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE));
 }
 
 TEST(DebugOptions, CollectiveKernelsFlagEmptyDisablesAll) {
@@ -270,26 +270,26 @@ TEST(DebugOptions, CollectiveKernelsFlagIncrementalAdd) {
   // First parse: set to all-reduce only.
   {
     std::string flag_str =
-        "--xla_gpu_experimental_use_collective_kernels=all-reduce";
+        "--xla_gpu_experimental_use_collective_kernels=ALL_REDUCE";
     std::vector<char*> argv = {const_cast<char*>("test"),
                                const_cast<char*>(flag_str.c_str())};
     int argc = static_cast<int>(argv.size());
     EXPECT_TRUE(tsl::Flags::Parse(&argc, argv.data(), flags));
   }
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
-              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE));
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE));
   // Second parse: incrementally add all-gather.
   {
     std::string flag_str =
-        "--xla_gpu_experimental_use_collective_kernels=+all-gather";
+        "--xla_gpu_experimental_use_collective_kernels=+ALL_GATHER";
     std::vector<char*> argv = {const_cast<char*>("test"),
                                const_cast<char*>(flag_str.c_str())};
     int argc = static_cast<int>(argv.size());
     EXPECT_TRUE(tsl::Flags::Parse(&argc, argv.data(), flags));
   }
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
-              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE,
-                          DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER));
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE,
+                          DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER));
 }
 
 TEST(DebugOptions, CollectiveKernelsFlagIncrementalRemove) {
@@ -300,26 +300,26 @@ TEST(DebugOptions, CollectiveKernelsFlagIncrementalRemove) {
   // First parse: set to both.
   {
     std::string flag_str =
-        "--xla_gpu_experimental_use_collective_kernels=all-reduce,all-gather";
+        "--xla_gpu_experimental_use_collective_kernels=ALL_REDUCE,ALL_GATHER";
     std::vector<char*> argv = {const_cast<char*>("test"),
                                const_cast<char*>(flag_str.c_str())};
     int argc = static_cast<int>(argv.size());
     EXPECT_TRUE(tsl::Flags::Parse(&argc, argv.data(), flags));
   }
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
-              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE,
-                          DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER));
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE,
+                          DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER));
   // Second parse: incrementally remove all-reduce.
   {
     std::string flag_str =
-        "--xla_gpu_experimental_use_collective_kernels=-all-reduce";
+        "--xla_gpu_experimental_use_collective_kernels=-ALL_REDUCE";
     std::vector<char*> argv = {const_cast<char*>("test"),
                                const_cast<char*>(flag_str.c_str())};
     int argc = static_cast<int>(argv.size());
     EXPECT_TRUE(tsl::Flags::Parse(&argc, argv.data(), flags));
   }
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
-              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER));
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER));
 }
 
 TEST(DebugOptions, CollectiveKernelsFlagNoDuplicates) {
@@ -329,14 +329,14 @@ TEST(DebugOptions, CollectiveKernelsFlagNoDuplicates) {
   MakeDebugOptionsFlags(&flags, &opts);
   for (int i = 0; i < 2; ++i) {
     std::string flag_str =
-        "--xla_gpu_experimental_use_collective_kernels=+all-reduce";
+        "--xla_gpu_experimental_use_collective_kernels=+ALL_REDUCE";
     std::vector<char*> argv = {const_cast<char*>("test"),
                                const_cast<char*>(flag_str.c_str())};
     int argc = static_cast<int>(argv.size());
     EXPECT_TRUE(tsl::Flags::Parse(&argc, argv.data(), flags));
   }
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
-              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE));
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE));
 }
 
 }  // namespace

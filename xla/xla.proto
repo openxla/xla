@@ -101,10 +101,10 @@ message DebugOptions {
   // Collective operation types for which a custom collective kernel
   // (e.g. Triton one-shot / two-shot) should be used instead of NCCL.
   // Used with xla_gpu_experimental_use_collective_kernels.
-  enum CollectiveKernelOpType {
-    COLLECTIVE_KERNEL_OP_TYPE_INVALID = 0;
-    COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE = 1;
-    COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER = 2;
+  enum CollectiveKernelType {
+    COLLECTIVE_KERNEL_INVALID = 0;
+    COLLECTIVE_KERNEL_ALL_REDUCE = 1;
+    COLLECTIVE_KERNEL_ALL_GATHER = 2;
   }
 
   enum LibNvJitLinkMode {
@@ -362,6 +362,12 @@ message DebugOptions {
   //--------------------------------------------------------------------------//
   // XLA:GPU options.
   //--------------------------------------------------------------------------//
+<<<<<<< HEAD
+=======
+  // clang-format off
+  // go/keep-sorted start newline_separated=yes skip_lines=2 ignore_prefixes=["optional AutotuneCacheMode","optional bool","optional float","optional int32","optional int64","optional LibNvJitLinkMode","map<string, string>","optional PGLEStrictnessLevel","optional PipelineParallelismOptLevel","repeated CollectiveOpType","repeated CollectiveKernelType","repeated CommandBufferCmdType","repeated string","optional ShapeChecks","optional string","optional WhileLoopUnrolling","repeated GenericTritonEmitterFeature","optional CommandBufferSchedulingMode", "repeated AutotuneBackend", "optional CollectivesMode","optional CommandBufferUpdateMode"] // NOLINT
+  // clang-format on
+>>>>>>> 6f4ec509f5 (Update CollectiveKernelType names + update comments + improve code quality)
 
   // Memory mode for XLA:GPU collective operations.
   //
@@ -1008,7 +1014,7 @@ message DebugOptions {
   // For legacy support, the deprecated
   // --xla_gpu_unsupported_use_all_reduce_one_shot_kernel flag also adds
   // all-reduce to this filter.
-  repeated CollectiveKernelOpType xla_gpu_experimental_use_collective_kernels = 515;
+  repeated CollectiveKernelType xla_gpu_experimental_use_collective_kernels = 515;
 
   // If true, use the ragged dot fusion emitter rather than expanding to a
   // regular dot.

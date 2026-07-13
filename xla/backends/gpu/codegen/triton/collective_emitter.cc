@@ -229,7 +229,7 @@ GetBlockLevelFusionConfigForAllReduce(
               ->config()
               .debug_options()
               .xla_gpu_experimental_use_collective_kernels(),
-          static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE)),
+          static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE)),
       /*is_multimem_enabled=*/false, gpu_topology, all_reduce,
       device_assignment);
   if (absl::IsUnimplemented(maybe_all_reduce_info.status())) {

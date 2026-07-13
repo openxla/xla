@@ -437,7 +437,7 @@ class AllReduceTest
     opts.clear_xla_gpu_experimental_use_collective_kernels();
     if (GetParam().use_all_reduce_one_shot_kernel) {
       opts.add_xla_gpu_experimental_use_collective_kernels(
-          DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE);
+          DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE);
     }
     return opts;
   }
@@ -456,7 +456,7 @@ class AllReduceTypesTest
     opts.clear_xla_gpu_experimental_use_collective_kernels();
     if (GetParam().use_all_reduce_one_shot_kernel) {
       opts.add_xla_gpu_experimental_use_collective_kernels(
-          DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE);
+          DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE);
     }
     return opts;
   }
@@ -503,7 +503,7 @@ class AllReduceLayoutAwareTest
     DebugOptions opts = CollectiveOpsWithFlagsBase::GetDebugOptionsForTest();
     opts.clear_xla_gpu_experimental_use_collective_kernels();
     opts.add_xla_gpu_experimental_use_collective_kernels(
-        DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE);
+        DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE);
     return opts;
   }
 };

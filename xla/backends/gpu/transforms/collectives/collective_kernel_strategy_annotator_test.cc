@@ -204,6 +204,10 @@ TEST_F(CollectiveKernelStrategyAnnotatorTest,
 
   ASSERT_OK_AND_ASSIGN(auto module,
                        ParseAndReturnVerifiedModule(hlo, kNumReplicas));
+  module->mutable_config()
+      .mutable_debug_options()
+      .add_xla_gpu_experimental_use_collective_kernels(
+          DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER);
   ASSERT_OK_AND_ASSIGN(auto local_topology, MakeLocalGpuTopology(kNumReplicas));
 
   CollectiveKernelStrategyAnnotator annotator(*local_topology,
@@ -229,6 +233,11 @@ TEST_F(CollectiveKernelStrategyAnnotatorTest,
 
   ASSERT_OK_AND_ASSIGN(auto module,
                        ParseAndReturnVerifiedModule(hlo, kNumReplicas));
+  // Flag is set so that the ineligibility comes from shape (not from the flag).
+  module->mutable_config()
+      .mutable_debug_options()
+      .add_xla_gpu_experimental_use_collective_kernels(
+          DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER);
   ASSERT_OK_AND_ASSIGN(auto local_topology, MakeLocalGpuTopology(kNumReplicas));
 
   CollectiveKernelStrategyAnnotator annotator(*local_topology,
@@ -270,6 +279,14 @@ TEST_F(CollectiveKernelStrategyAnnotatorTest,
 
   ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kCombinedHlo, kNumReplicas));
+  module->mutable_config()
+      .mutable_debug_options()
+      .add_xla_gpu_experimental_use_collective_kernels(
+          DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE);
+  module->mutable_config()
+      .mutable_debug_options()
+      .add_xla_gpu_experimental_use_collective_kernels(
+          DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER);
   ASSERT_OK_AND_ASSIGN(auto local_topology, MakeLocalGpuTopology(kNumReplicas));
 
   CollectiveKernelStrategyAnnotator annotator(*local_topology,

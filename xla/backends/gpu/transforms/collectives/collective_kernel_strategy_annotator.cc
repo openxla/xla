@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <utility>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -36,6 +37,7 @@ limitations under the License.
 #include "xla/service/gpu_topology.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/gpu/all_reduce_kernel.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -124,9 +126,16 @@ absl::StatusOr<bool> TryAnnotateAllGather(HloInstruction* instr,
         &instr->GetModule()->config().static_device_assignment();
   }
 
-  absl::StatusOr<AllGatherInfo> maybe_info = BuildAllGatherInfo(
-      /*is_collective_kernel_enabled=*/true, gpu_topology, all_gather,
-      device_assignment);
+  const bool is_collective_kernel_enabled = absl::c_linear_search(
+      instr->GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_experimental_use_collective_kernels(),
+      static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER));
+
+  absl::StatusOr<AllGatherInfo> maybe_info =
+      BuildAllGatherInfo(is_collective_kernel_enabled, gpu_topology, all_gather,
+                         device_assignment);
   if (!maybe_info.ok()) {
     VLOG(3) << "[CollectiveKernelStrategyAnnotator] Collective kernel not "
                "supported for AllGather "

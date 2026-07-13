@@ -471,7 +471,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
   opts.set_xla_gpu_unsupported_enable_ragged_all_to_all_decomposer(false);
   opts.add_xla_gpu_experimental_use_collective_kernels(
-      DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE);
+      DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE);
   opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
   opts.set_xla_gpu_experimental_enable_fusion_autotuner(true);
   opts.set_xla_gpu_experimental_max_unroll_factor(32);
@@ -2978,91 +2978,22 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_gpu_experimental_stream_annotation(),
                 "Enable the experimental explicit stream annotation support. "
                 "If false, the annotations are ignored."));
-  // Custom parser for xla_gpu_experimental_use_collective_kernels.
-  // Accepts human-friendly names ("all-reduce", "all-gather") and
-  // proto enum names ("COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE", etc.) as well
-  // as the incremental +/- modifier syntax.
-  auto setter_for_xla_gpu_experimental_use_collective_kernels =
-      [debug_options](absl::string_view input) {
-        auto parse_one = [](absl::string_view value,
-                            DebugOptions::CollectiveKernelOpType* out) -> bool {
-          // Human-friendly aliases.
-          if (value == "all-reduce" || value == "all_reduce") {
-            *out = DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE;
-            return true;
-          }
-          if (value == "all-gather" || value == "all_gather") {
-            *out = DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER;
-            return true;
-          }
-          // Fall back to proto enum name (with or without prefix,
-          // case-insensitive).
-          std::string upper = absl::AsciiStrToUpper(value);
-          if (!absl::StartsWith(upper, "COLLECTIVE_KERNEL_OP_TYPE_")) {
-            upper = absl::StrCat("COLLECTIVE_KERNEL_OP_TYPE_", upper);
-          }
-          return DebugOptions::CollectiveKernelOpType_Parse(upper, out);
-        };
-
-        std::vector<absl::string_view> values =
-            absl::StrSplit(input, ',', absl::SkipEmpty());
-        // Check for incremental (+/-) syntax: delegate to SetterForRepeatedEnum
-        // by canonicalising the input so it only has full enum names.
-        bool has_modifier = false;
-        for (absl::string_view v : values) {
-          v = absl::StripAsciiWhitespace(v);
-          if (absl::StartsWith(v, "+") || absl::StartsWith(v, "-")) {
-            has_modifier = true;
-            break;
-          }
-        }
-        if (!has_modifier) {
-          // Full overwrite: clear and re-add.
-          debug_options->clear_xla_gpu_experimental_use_collective_kernels();
-        }
-        for (absl::string_view raw : values) {
-          raw = absl::StripAsciiWhitespace(raw);
-          if (raw.empty()) {
-            continue;
-          }
-          bool add = true;
-          if (absl::StartsWith(raw, "+")) {
-            raw = raw.substr(1);
-          } else if (absl::StartsWith(raw, "-")) {
-            add = false;
-            raw = raw.substr(1);
-          }
-          DebugOptions::CollectiveKernelOpType op_type;
-          if (!parse_one(raw, &op_type)) {
-            return false;
-          }
-          auto* ops =
-              debug_options
-                  ->mutable_xla_gpu_experimental_use_collective_kernels();
-          if (add) {
-            if (absl::c_find(*ops, static_cast<int>(op_type)) == ops->end()) {
-              ops->Add(op_type);
-            }
-          } else {
-            ops->erase(absl::c_find(*ops, static_cast<int>(op_type)));
-          }
-        }
-        return true;
-      };
-
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_use_collective_kernels",
-      setter_for_xla_gpu_experimental_use_collective_kernels,
+      SetterForRepeatedEnum<DebugOptions::CollectiveKernelType>(
+          "xla_gpu_experimental_use_collective_kernels",
+          /*enum_prefix=*/"COLLECTIVE_KERNEL_",
+          &DebugOptions::CollectiveKernelType_Parse,
+          debug_options->mutable_xla_gpu_experimental_use_collective_kernels()),
       collective_op_types_to_string(
           debug_options->xla_gpu_experimental_use_collective_kernels()),
       "Experimental: comma-separated filter of collective ops that should use "
       "custom kernels (e.g. Triton one-shot / two-shot) instead of NCCL. "
-      "Accepted values: all-reduce, all-gather (or all_reduce, all_gather, "
-      "or full enum names COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE / "
-      "COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER). Supports +/- incremental "
-      "modifiers. The deprecated "
+      "Accepted values: ALL_REDUCE, ALL_GATHER (case-insensitive; the "
+      "COLLECTIVE_KERNEL_ prefix may be omitted). Supports +/- "
+      "incremental modifiers (e.g. +ALL_REDUCE,-ALL_GATHER). The deprecated "
       "--xla_gpu_unsupported_use_all_reduce_one_shot_kernel flag also adds "
-      "'all-reduce' to this filter for legacy compatibility."));
+      "ALL_REDUCE to this filter for legacy compatibility."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_parallel_collective_overlap_limit",
       int32_setter_for(
@@ -3152,21 +3083,20 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         const bool already_present =
             absl::c_find(
                 *ops,
-                static_cast<int>(
-                    DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE)) !=
+                static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE)) !=
             ops->end();
         if (value && !already_present) {
-          ops->Add(DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE);
+          ops->Add(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE);
         } else if (!value) {
           ops->erase(absl::c_find(
-              *ops, static_cast<int>(
-                        DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE)));
+              *ops,
+              static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE)));
         }
         return true;
       },
       !debug_options->xla_gpu_experimental_use_collective_kernels().empty(),
       "DEPRECATED: Use "
-      "--xla_gpu_experimental_use_collective_kernels=all-reduce instead. "
+      "--xla_gpu_experimental_use_collective_kernels=ALL_REDUCE instead. "
       "Internal: Enable the one-shot kernel for single-host all-reduce "
       "operations."));
   flag_list->push_back(tsl::Flag(

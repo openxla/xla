@@ -1449,12 +1449,10 @@ void AddCollectiveCombinerPasses(
   // so that SolLatencyEstimator and the thunk emitter can consume it.
   if (absl::c_linear_search(
           opts.xla_gpu_experimental_use_collective_kernels(),
-          static_cast<int>(
-              DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_REDUCE)) ||
+          static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE)) ||
       absl::c_linear_search(
           opts.xla_gpu_experimental_use_collective_kernels(),
-          static_cast<int>(
-              DebugOptions::COLLECTIVE_KERNEL_OP_TYPE_ALL_GATHER))) {
+          static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER))) {
     pipeline.AddPass<CollectiveKernelStrategyAnnotator>(
         gpu_topology, /*is_multimem_enabled=*/false);
   }
