@@ -669,7 +669,7 @@ ENTRY entry {
                          "(compute capability 8.0) and up, but got")));
 }
 
-TEST_F(TritonDevicelessTest, RejectsPackedFp4OddMinorOffset) {
+TEST_P(TritonDevicelessTest, RejectsPackedFp4OddMinorOffset) {
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -708,7 +708,7 @@ ENTRY e {
                                "to be divisible by 2")));
 }
 
-TEST_F(TritonDevicelessTest, EmitsPackedFp4StorageForEvenMinorOffset) {
+TEST_P(TritonDevicelessTest, EmitsPackedFp4StorageForEvenMinorOffset) {
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -740,7 +740,7 @@ ENTRY e {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(kHloText));
   EXPECT_THAT(CreateXTileIrAndFileCheck(std::move(module), "triton_dot", R"(
-CHECK: #[[$LHS_OFFSET_MAP:.*]] = #xla.indexing_map<"(pid_0) -> (pid_0 * 128 + 2), domain: pid_0 in [0, 1]">
+CHECK: #[[$LHS_OFFSET_MAP:.*]] = #xla.indexing_map<{{.*[+] 2.*}}>
 CHECK: xtile.entry_func @xtile_dialect_fn(%[[LHS_ARG:[A-Za-z0-9_]*]]: memref<128x130xi8>
 CHECK-SAME: %[[RHS_ARG:[A-Za-z0-9_]*]]: memref<256x64xi8>
 CHECK: %[[LHS_LOGICAL_OFFSET:.*]] = xla.apply_indexing #[[$LHS_OFFSET_MAP]](%{{.*}})
