@@ -20,7 +20,6 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -36,7 +35,8 @@ limitations under the License.
 #include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/utils/hlo_traversal.h"
-#include "xla/service/instruction_fusion.h"
+#include "xla/iterator_util.h"
+#include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/util.h"
 
 namespace xla::gpu::experimental {
@@ -67,7 +67,7 @@ class TiledHloInstruction {
   llvm::ArrayRef<const TiledHloInstruction*> operands() const {
     return operands_;
   }
-  void AddOperand(TiledHloInstruction* operand) {
+  void AddOperand(const TiledHloInstruction* operand) {
     operands_.push_back(operand);
   }
 
@@ -93,18 +93,27 @@ class TiledHloInstruction {
   // Temporary helpers to match API of the old TiledHloInstruction.
   // TODO: b/509505290 -- Remove these once we migrate to this tiling and the
   // old API is removed.
-  int64_t tile_size(int64_t dim) const {
+  llvm::SmallVector<int64_t> tile_sizes() const {
     auto tile_sizes = tile_.GetStaticTileSizes();
     CHECK_OK(tile_sizes);
-    CHECK_LT(dim, tile_sizes->size());
-    return (*tile_sizes)[dim];
+    return *tile_sizes;
+  }
+  llvm::SmallVector<int64_t> tile_strides() const {
+    auto tile_strides = tile_.GetStaticTileStrides();
+    CHECK_OK(tile_strides);
+    return *tile_strides;
+  }
+
+  int64_t tile_size(int64_t dim) const {
+    auto tile_sizes = this->tile_sizes();
+    CHECK_LT(dim, tile_sizes.size());
+    return tile_sizes[dim];
   }
 
   int64_t tile_stride(int64_t dim) const {
-    auto tile_strides = tile_.GetStaticTileStrides();
-    CHECK_OK(tile_strides);
-    CHECK_LT(dim, tile_strides->size());
-    return (*tile_strides)[dim];
+    auto tile_strides = this->tile_strides();
+    CHECK_LT(dim, tile_strides.size());
+    return tile_strides[dim];
   }
 
  private:
@@ -145,6 +154,8 @@ H AbslHashValue(H h, const TiledHloInstruction& tiled_hlo_instruction) {
 // Constructs and holds symbolic tiles for all the instructions within a fusion.
 class TiledHloComputation {
  public:
+  using InstructionType = TiledHloInstruction;
+
   static absl::StatusOr<TiledHloComputation> Tile(
       const HloFusionAdaptor& fusion,
       std::unique_ptr<TilingSpace> tiling_space);
@@ -152,6 +163,14 @@ class TiledHloComputation {
   // Returns the symbolic tiled HLO instructions in def-before-use order.
   const TiledHloRegion& tiled_hlo_instructions() const {
     return tiled_hlo_instructions_;
+  }
+
+  // Returns an iterator range over the instructions in the computation in
+  // def-before-use order.
+  tsl::gtl::iterator_range<UnwrappingIterator<TiledHloRegion::const_iterator>>
+  instructions() const {
+    return {MakeUnwrappingIterator(tiled_hlo_instructions_.begin()),
+            MakeUnwrappingIterator(tiled_hlo_instructions_.end())};
   }
 
   // Return the underlying MLIRContext.
@@ -182,6 +201,20 @@ class TiledHloComputation {
     sink.Append(tiled_computation.ToString());
   }
 
+  // Temporary helpers to match API of the old TiledHloComputation.
+  // TODO: b/509505290 -- Remove these once we migrate to this tiling and the
+  // old API is removed.
+  int64_t num_output_tiles() const {
+    int64_t res = 1;
+    for (const auto& dimension : tiling_space_->dimensions()) {
+      if (dimension.type != TilingSpace::DimensionSemantics::kParallel) {
+        continue;
+      }
+      res *= CeilOfRatio(dimension.dimension_size, *dimension.tile_size);
+    }
+    return res;
+  }
+
  private:
   TiledHloComputation(
       std::unique_ptr<TilingSpace> tiling_space,
@@ -195,8 +228,13 @@ class TiledHloComputation {
         roots_(std::move(roots)),
         rt_symbol_to_tiled_hlo_(std::move(rt_symbol_to_tiled_hlo)) {}
 
-  static absl::StatusOr<TiledHloRegion> CreateHloRegion(
-      std::unique_ptr<TiledHloInstruction> tiled_root,
+  struct RegionResult {
+    TiledHloRegion region;
+    llvm::SmallVector<const TiledHloInstruction*, 4> canonical_roots;
+  };
+
+  static absl::StatusOr<RegionResult> CreateHloRegion(
+      std::vector<std::unique_ptr<TiledHloInstruction>> roots,
       const HloFusionAdaptor& fusion, TilingSpace& tiling_space,
       absl::flat_hash_map<int64_t,
                           std::pair<const TiledHloInstruction*, Interval>>&

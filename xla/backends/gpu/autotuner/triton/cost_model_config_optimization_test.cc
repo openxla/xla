@@ -24,6 +24,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/log/check.h"
 #include "absl/time/time.h"
 #include "mlir/IR/MLIRContext.h"
 #include "google/protobuf/map.h"
@@ -39,12 +40,58 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::UnorderedElementsAre;
 namespace detail = cost_model_config_optimization_detail;
+
+class CostModelConfigOptimizationHloTest
+    : public HloHardwareIndependentTestBase {
+ protected:
+  struct ParsedModuleAndDot {
+    std::unique_ptr<HloModule> module;
+    const HloDotInstruction* dot = nullptr;
+  };
+
+  CostModelConfigOptimizationHloTest() {
+    RegisterSymbolicExprStorage(&mlir_context_);
+  }
+
+  ParsedModuleAndDot GetHloModuleAndDot_F32_1024_1024_1024() {
+    const char kHlo[] = R"(
+      HloModule module
+
+      computation {
+        p0 = f32[1024,1024]{1,0} parameter(0)
+        p1 = f32[1024,1024]{1,0} parameter(1)
+        ROOT dot = f32[1024,1024]{1,0} dot(p0, p1),
+            lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      }
+
+      ENTRY main {
+        p0 = f32[1024,1024]{1,0} parameter(0)
+        p1 = f32[1024,1024]{1,0} parameter(1)
+        ROOT fusion = f32[1024,1024]{1,0} fusion(p0, p1),
+          kind=kCustom, calls=computation,
+          backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+      })";
+    auto module_or = ParseAndReturnVerifiedModule(kHlo);
+    CHECK_OK(module_or.status());
+    auto module = std::move(module_or).value();
+    const HloInstruction* root =
+        module->entry_computation()->root_instruction();
+    const HloDotInstruction* dot =
+        Cast<HloDotInstruction>(hlo_query::GetFirstInstructionWithOpcode(
+            *root->fused_instructions_computation(), HloOpcode::kDot));
+    return {std::move(module), dot};
+  }
+
+  mlir::MLIRContext mlir_context_;
+};
 
 TEST(CostModelConfigOptimizationTest,
      ParseCostModelGemmTilingOptionsParsesOptions) {
@@ -240,37 +287,12 @@ TEST(CostModelConfigOptimizationTest,
   }
 }
 
-TEST_F(HloHardwareIndependentTestBase,
+TEST_F(CostModelConfigOptimizationHloTest,
        OptimizeConfigsWithCostModelSelectsTopConfigs) {
-  const char kHlo[] = R"(
-    HloModule module
-
-    computation {
-      p0 = f32[1024,1024]{1,0} parameter(0)
-      p1 = f32[1024,1024]{1,0} parameter(1)
-      ROOT dot = f32[1024,1024]{1,0} dot(p0, p1),
-          lhs_contracting_dims={1}, rhs_contracting_dims={0}
-    }
-
-    ENTRY main {
-      p0 = f32[1024,1024]{1,0} parameter(0)
-      p1 = f32[1024,1024]{1,0} parameter(1)
-      ROOT fusion = f32[1024,1024]{1,0} fusion(p0, p1),
-        kind=kCustom, calls=computation,
-        backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
-    })";
-
-  mlir::MLIRContext mlir_context;
-  RegisterSymbolicExprStorage(&mlir_context);
   const se::DeviceDescription h100_device_info =
       TestGpuDeviceInfo::H100SXMDeviceInfo();
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHlo));
-  const HloInstruction* root = module->entry_computation()->root_instruction();
-  const HloDotInstruction* dot =
-      Cast<HloDotInstruction>(hlo_query::GetFirstInstructionWithOpcode(
-          *root->fused_instructions_computation(), HloOpcode::kDot));
+  auto [module, dot] = GetHloModuleAndDot_F32_1024_1024_1024();
 
   std::vector<TritonGemmConfig> all_configs = {
       TritonGemmConfig(32, 32, 32, 1, 4, 1, false),
@@ -278,7 +300,7 @@ TEST_F(HloHardwareIndependentTestBase,
       TritonGemmConfig(128, 128, 128, 1, 4, 1, false),
   };
 
-  DebugOptions debug_options;
+  DebugOptions debug_options = module->config().debug_options();
   (*debug_options
         .mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())["top"] =
       "2";
@@ -286,11 +308,61 @@ TEST_F(HloHardwareIndependentTestBase,
   TF_ASSERT_OK_AND_ASSIGN(std::vector<TritonGemmConfig> optimized,
                           OptimizeConfigsWithCostModel(
                               dot, all_configs, all_configs, h100_device_info,
-                              debug_options, &mlir_context));
+                              debug_options, &mlir_context_));
 
   EXPECT_THAT(optimized,
               ElementsAre(TritonGemmConfig(128, 128, 128, 1, 4, 1, false),
                           TritonGemmConfig(64, 64, 64, 1, 4, 1, false)));
+}
+
+TEST_F(CostModelConfigOptimizationHloTest, MixinKeepsInvalidConfigs) {
+  const se::DeviceDescription h100_device_info =
+      TestGpuDeviceInfo::H100SXMDeviceInfo();
+
+  auto [module, dot] = GetHloModuleAndDot_F32_1024_1024_1024();
+
+  TritonGemmConfig valid_config(64, 64, 64, 1, 4, 1, false);
+  TritonGemmConfig invalid_config(33, 33, 33, 1, 4, 1, false);
+
+  std::vector<TritonGemmConfig> all_configs = {valid_config, invalid_config};
+  std::vector<TritonGemmConfig> optimized_configs = {valid_config,
+                                                     invalid_config};
+
+  DebugOptions debug_options = module->config().debug_options();
+  (*debug_options.mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())
+      ["mixin"] = "1";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<TritonGemmConfig> optimized,
+                          OptimizeConfigsWithCostModel(
+                              dot, all_configs, optimized_configs,
+                              h100_device_info, debug_options, &mlir_context_));
+
+  EXPECT_THAT(optimized, UnorderedElementsAre(valid_config, invalid_config));
+}
+
+TEST_F(CostModelConfigOptimizationHloTest, FilterRemovesInvalidConfigs) {
+  const se::DeviceDescription h100_device_info =
+      TestGpuDeviceInfo::H100SXMDeviceInfo();
+
+  auto [module, dot] = GetHloModuleAndDot_F32_1024_1024_1024();
+
+  TritonGemmConfig valid_config(64, 64, 64, 1, 4, 1, false);
+  TritonGemmConfig invalid_config(33, 33, 33, 1, 4, 1, false);
+
+  std::vector<TritonGemmConfig> all_configs = {valid_config, invalid_config};
+  std::vector<TritonGemmConfig> optimized_configs = {valid_config,
+                                                     invalid_config};
+
+  DebugOptions debug_options = module->config().debug_options();
+  (*debug_options.mutable_xla_gpu_experimental_cost_model_gemm_tiling_options())
+      ["filter"] = "1.0";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<TritonGemmConfig> optimized,
+                          OptimizeConfigsWithCostModel(
+                              dot, all_configs, optimized_configs,
+                              h100_device_info, debug_options, &mlir_context_));
+
+  EXPECT_THAT(optimized, UnorderedElementsAre(valid_config));
 }
 
 }  // namespace
