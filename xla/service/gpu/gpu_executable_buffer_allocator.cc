@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_executable_buffer_allocator.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -63,6 +62,9 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 namespace {
+
+// Number of profiling executions before the SKIP_PROFILED transition.
+constexpr int64_t kProfileStepsLimit = 3;
 
 uint64_t RoundUpToGranularity(uint64_t size, uint64_t granularity) {
   if (granularity == 0) {
@@ -593,8 +595,7 @@ GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithBufferAllocations(
       ++remapping_->profiled_steps;
       XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
           "VA remapping: module %s profiling execution %d of %d",
-          owner_->module_name_, remapping_->profiled_steps,
-          owner_->ProfileStepsLimit());
+          owner_->module_name_, remapping_->profiled_steps, kProfileStepsLimit);
       return execute(owning_buffer_allocations, std::nullopt);
     }
 
@@ -658,14 +659,6 @@ GpuExecutableBufferAllocator::GpuExecutableBufferAllocator(
           << profile_candidate_alloc_indices_.size()
           << " profile candidate allocation indices for module "
           << module_name_;
-}
-
-int64_t GpuExecutableBufferAllocator::ProfileStepsLimit() const {
-  const int64_t steps =
-      debug_options_ != nullptr
-          ? debug_options_->xla_gpu_command_buffer_profile_steps()
-          : 2;
-  return std::max<int64_t>(1, steps);
 }
 
 void GpuExecutableBufferAllocator::TransitionProfiledRemapping(
@@ -822,7 +815,7 @@ GpuExecutableBufferAllocator::CreateExecutionScope(
       remapping->phase = Remapping::ProfilePhase::kProfiling;
     }
     if (remapping->phase == Remapping::ProfilePhase::kProfiling &&
-        remapping->profiled_steps >= ProfileStepsLimit()) {
+        remapping->profiled_steps >= kProfileStepsLimit) {
       TransitionProfiledRemapping(remapping, vmm_allocator, device_ordinal);
     }
     if (remapping->phase == Remapping::ProfilePhase::kDisabled) {
