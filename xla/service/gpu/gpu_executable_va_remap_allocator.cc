@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_executable_va_remap_allocator.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -51,6 +50,9 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 namespace {
+
+// Number of profiling executions before the SKIP_PROFILED transition.
+constexpr int64_t kProfileStepsLimit = 3;
 
 uint64_t RoundUpToGranularity(uint64_t size, uint64_t granularity) {
   if (granularity == 0) {
@@ -487,7 +489,7 @@ absl::Status GpuExecutableVaRemapAllocator::VaRemapExecutionScope::
       XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
           "VA remapping: module %s profiling execution %d of %d",
           owner_->module_name(), remapping_->profiled_steps,
-          owner_->ProfileStepsLimit());
+          kProfileStepsLimit);
       return execute(owning_buffer_allocations, std::nullopt);
     }
 
@@ -580,14 +582,6 @@ GpuExecutableVaRemapAllocator::~GpuExecutableVaRemapAllocator() {
                  << module_name() << ": " << status;
     }
   }
-}
-
-int64_t GpuExecutableVaRemapAllocator::ProfileStepsLimit() const {
-  const int64_t steps =
-      debug_options() != nullptr
-          ? debug_options()->xla_gpu_command_buffer_profile_steps()
-          : 2;
-  return std::max<int64_t>(1, steps);
 }
 
 void GpuExecutableVaRemapAllocator::TransitionProfiledRemapping(
@@ -728,7 +722,7 @@ GpuExecutableVaRemapAllocator::CreateExecutionScope(
       remapping->phase = Remapping::ProfilePhase::kProfiling;
     }
     if (remapping->phase == Remapping::ProfilePhase::kProfiling &&
-        remapping->profiled_steps >= ProfileStepsLimit()) {
+        remapping->profiled_steps >= kProfileStepsLimit) {
       TransitionProfiledRemapping(remapping, vmm_allocator, device_ordinal);
     }
     if (remapping->phase == Remapping::ProfilePhase::kDisabled) {

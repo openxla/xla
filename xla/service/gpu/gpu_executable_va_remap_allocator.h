@@ -138,9 +138,6 @@ class GpuExecutableVaRemapAllocator : public GpuExecutableBufferAllocator {
   // The VA-remapping ExecutionScope, defined in the .cc file.
   class VaRemapExecutionScope;
 
-  // Number of profiling executions before the SKIP_PROFILED transition.
-  int64_t ProfileStepsLimit() const;
-
   // Runs the SKIP_PROFILED transition for one executor: selects profiled
   // candidates whose addresses stayed stable, filters parameter allocations
   // that cannot be Map()ed (not backed by `vmm_allocator` or sharing an
