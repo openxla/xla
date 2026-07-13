@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/backends/gpu/libraries/cutedsl/module_image.h"
+#include "xla/backends/gpu/libraries/cutedsl/runtime.h"
 
 namespace xla::gpu::cutedsl {
 
@@ -47,12 +48,14 @@ class LoadedModule {
  private:
   friend class ModuleLoader;
 
-  explicit LoadedModule(void* module) : module_(module) {}
+  LoadedModule(void* module, const RuntimeApi* runtime)
+      : module_(module), runtime_(runtime) {}
 
   static absl::StatusOr<std::shared_ptr<LoadedModule>> Create(
-      absl::string_view module_bytes);
+      absl::string_view module_bytes, const RuntimeApi* runtime);
 
   void* module_;
+  const RuntimeApi* runtime_;
   absl::Mutex mutex_;
   absl::flat_hash_map<std::string, FunctionHandle> functions_by_prefix_
       ABSL_GUARDED_BY(mutex_);
@@ -67,6 +70,7 @@ class ModuleLoader {
 
  private:
   absl::Mutex mutex_;
+  const RuntimeApi* runtime_ ABSL_GUARDED_BY(mutex_) = nullptr;
   absl::flat_hash_map<std::string, std::shared_ptr<LoadedModule>> modules_
       ABSL_GUARDED_BY(mutex_);
 };

@@ -52,7 +52,6 @@ message CollectiveCallConfigV3 {
   optional .xla.CollectiveOpGroupMode group_mode = 2;
   optional int64 communication_id = 3;
   repeated .xla.ReplicaGroup replica_groups = 4;
-  optional bytes module = 5;
-  repeated PeerRegionProto peer_regions = 6;
-  repeated CollectiveStepProto steps = 7;
+  repeated PeerRegionProto peer_regions = 5;
+  repeated CollectiveStepProto steps = 6;
 }

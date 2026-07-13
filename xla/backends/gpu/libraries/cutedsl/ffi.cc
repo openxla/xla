@@ -47,14 +47,14 @@ constexpr absl::string_view kFunctionPrefix = "cutlass_call";
 // with an arbitrary number of buffers.
 constexpr size_t kInlineBufferCount = 8;
 
-class CutlassCallStateV3 {
+class CutlassCallState {
  public:
   struct ModuleAndFunction {
     std::shared_ptr<LoadedModule> module;
     LoadedModule::FunctionHandle function = nullptr;
   };
 
-  explicit CutlassCallStateV3(ModuleImage image) : image_(std::move(image)) {}
+  explicit CutlassCallState(ModuleImage image) : image_(std::move(image)) {}
 
   absl::Status LoadModule() {
     {
@@ -90,15 +90,15 @@ class CutlassCallStateV3 {
   ModuleAndFunction module_ ABSL_GUARDED_BY(mu_);
 };
 
-absl::StatusOr<std::unique_ptr<CutlassCallStateV3>> Instantiate(
+absl::StatusOr<std::unique_ptr<CutlassCallState>> Instantiate(
     absl::string_view module, absl::string_view key) {
   ASSIGN_OR_RETURN(ModuleImage image, ModuleImage::Create(module, key));
   // Runtime access remains deferred to Prepare; Instantiate only validates
   // device-independent attributes.
-  return std::make_unique<CutlassCallStateV3>(std::move(image));
+  return std::make_unique<CutlassCallState>(std::move(image));
 }
 
-absl::Status Prepare(CutlassCallStateV3* state, ffi::RemainingArgs,
+absl::Status Prepare(CutlassCallState* state, ffi::RemainingArgs,
                      ffi::RemainingRets, absl::string_view, absl::string_view) {
   return state->LoadModule();
 }
@@ -161,10 +161,10 @@ absl::Status ExecuteFunction(const LoadedModule& module, void* stream,
   return absl::OkStatus();
 }
 
-absl::Status Execute(void* stream, CutlassCallStateV3* state,
+absl::Status Execute(void* stream, CutlassCallState* state,
                      ffi::RemainingArgs inputs, ffi::RemainingRets outputs,
                      absl::string_view, absl::string_view) {
-  absl::StatusOr<CutlassCallStateV3::ModuleAndFunction> module =
+  absl::StatusOr<CutlassCallState::ModuleAndFunction> module =
       state->GetModule();
   if (!module.ok()) return module.status();
 
@@ -179,7 +179,7 @@ XLA_FFI_DEFINE_HANDLER(kInstantiate, Instantiate,
 
 XLA_FFI_DEFINE_HANDLER(kPrepare, Prepare,
                        ffi::Ffi::BindPrepare()
-                           .Ctx<ffi::State<CutlassCallStateV3>>()
+                           .Ctx<ffi::State<CutlassCallState>>()
                            .RemainingArgs()
                            .RemainingRets()
                            .Attr<absl::string_view>("module")
@@ -190,7 +190,7 @@ XLA_FFI_DEFINE_HANDLER(kInitialize, Initialize, ffi::Ffi::BindInitialize());
 XLA_FFI_DEFINE_HANDLER(kExecute, Execute,
                        ffi::Ffi::Bind()
                            .Ctx<ffi::PlatformStream<void*>>()
-                           .Ctx<ffi::State<CutlassCallStateV3>>()
+                           .Ctx<ffi::State<CutlassCallState>>()
                            .RemainingArgs()
                            .RemainingRets()
                            .Attr<absl::string_view>("module")
@@ -200,7 +200,7 @@ XLA_FFI_DEFINE_HANDLER(kExecute, Execute,
 XLA_FFI_DEFINE_HANDLER(kExecuteNoCudaGraph, Execute,
                        ffi::Ffi::Bind()
                            .Ctx<ffi::PlatformStream<void*>>()
-                           .Ctx<ffi::State<CutlassCallStateV3>>()
+                           .Ctx<ffi::State<CutlassCallState>>()
                            .RemainingArgs()
                            .RemainingRets()
                            .Attr<absl::string_view>("module")

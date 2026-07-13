@@ -13,23 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/libraries/cutedsl/collective_config.h"
+#include "xla/backends/gpu/libraries/cutedsl/config.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <set>
 #include <tuple>
-#include <utility>
-#include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
-#include "xla/backends/gpu/libraries/cutedsl/collective_config.pb.h"
-#include "xla/backends/gpu/libraries/cutedsl/module_image.h"
+#include "xla/backends/gpu/libraries/cutedsl/config.pb.h"
 #include "tsl/platform/protobuf.h"
 
 namespace xla::gpu::cutedsl {
@@ -52,7 +49,7 @@ absl::Status MissingRepeatedField(absl::string_view repeated_field,
       repeated_field, index, field));
 }
 
-absl::StatusOr<CollectiveOpGroupMode> ParseGroupMode(int64_t value) {
+absl::Status ValidateGroupMode(int64_t value) {
   switch (value) {
     case static_cast<int64_t>(
         CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA):
@@ -63,22 +60,19 @@ absl::StatusOr<CollectiveOpGroupMode> ParseGroupMode(int64_t value) {
             COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA_AND_PARTITION):
     case static_cast<int64_t>(
         CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID):
-      return static_cast<CollectiveOpGroupMode>(value);
+      return absl::OkStatus();
     default:
       return absl::InvalidArgumentError(
           absl::StrFormat("Unsupported collective group mode %d", value));
   }
 }
 
-absl::StatusOr<std::vector<ReplicaGroup>> ParseReplicaGroups(
-    const wire::CollectiveCallConfigV3& proto) {
+absl::Status ValidateReplicaGroups(const wire::CollectiveCallConfigV3& proto) {
   if (proto.replica_groups().empty()) {
     return absl::InvalidArgumentError(
         "`replica_groups` must contain at least one group");
   }
 
-  std::vector<ReplicaGroup> groups;
-  groups.reserve(proto.replica_groups_size());
   std::set<int64_t> unique_members;
   int64_t group_size = -1;
 
@@ -106,10 +100,9 @@ absl::StatusOr<std::vector<ReplicaGroup>> ParseReplicaGroups(
             "Replica-group member ID %d appears more than once", member));
       }
     }
-    groups.push_back(group);
   }
 
-  return groups;
+  return absl::OkStatus();
 }
 
 absl::Status ValidatePeerRegionFields(const wire::PeerRegionProto& region,
@@ -136,26 +129,18 @@ absl::Status ValidatePeerRegionFields(const wire::PeerRegionProto& region,
   return absl::OkStatus();
 }
 
-absl::StatusOr<std::vector<PeerRegionV3>> ParsePeerRegions(
-    const wire::CollectiveCallConfigV3& proto) {
+absl::Status ValidatePeerRegions(const wire::CollectiveCallConfigV3& proto) {
   using PeerRegionKey =
       std::tuple<int64_t, int64_t, int64_t, int64_t, int64_t, int64_t>;
   std::set<PeerRegionKey> unique_regions;
-  std::vector<PeerRegionV3> regions;
-  regions.reserve(proto.peer_regions_size());
-
   for (int region_index = 0; region_index < proto.peer_regions_size();
        ++region_index) {
     const wire::PeerRegionProto& region = proto.peer_regions(region_index);
     RETURN_IF_ERROR(ValidatePeerRegionFields(region, region_index));
 
-    PeerRegionEndpointV3 endpoint;
     switch (region.endpoint()) {
       case wire::PEER_REGION_ENDPOINT_PROTO_ARGUMENT:
-        endpoint = PeerRegionEndpointV3::kArgument;
-        break;
       case wire::PEER_REGION_ENDPOINT_PROTO_RESULT:
-        endpoint = PeerRegionEndpointV3::kResult;
         break;
       default:
         return absl::InvalidArgumentError(
@@ -197,25 +182,17 @@ absl::StatusOr<std::vector<PeerRegionV3>> ParsePeerRegions(
       return absl::InvalidArgumentError(absl::StrFormat(
           "Peer region record %d duplicates an earlier record", region_index));
     }
-
-    regions.push_back(PeerRegionV3{endpoint, region.buffer_index(),
-                                   region.byte_offset(), region.byte_size(),
-                                   region.required_alignment(),
-                                   PeerMemoryKindV3::kSymmetric});
   }
 
-  return regions;
+  return absl::OkStatus();
 }
 
-absl::StatusOr<std::vector<CollectiveStepV3>> ParseSteps(
-    const wire::CollectiveCallConfigV3& proto) {
+absl::Status ValidateSteps(const wire::CollectiveCallConfigV3& proto) {
   if (proto.steps().empty()) {
     return absl::InvalidArgumentError(
         "`steps` must contain complete [kind, operand] records");
   }
 
-  std::vector<CollectiveStepV3> steps;
-  steps.reserve(proto.steps_size());
   bool has_launch = false;
   for (int step_index = 0; step_index < proto.steps_size(); ++step_index) {
     const wire::CollectiveStepProto& step = proto.steps(step_index);
@@ -239,7 +216,6 @@ absl::StatusOr<std::vector<CollectiveStepV3>> ParseSteps(
               "agreement is implemented",
               step_index));
         }
-        steps.push_back(CollectiveStepV3{CollectiveStepKindV3::kBarrier, 0});
         break;
       case wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH:
         if (step.operand() < 0) {
@@ -248,8 +224,6 @@ absl::StatusOr<std::vector<CollectiveStepV3>> ParseSteps(
               step_index));
         }
         has_launch = true;
-        steps.push_back(
-            CollectiveStepV3{CollectiveStepKindV3::kLaunch, step.operand()});
         break;
       default:
         return absl::InvalidArgumentError(absl::StrFormat(
@@ -261,13 +235,13 @@ absl::StatusOr<std::vector<CollectiveStepV3>> ParseSteps(
     return absl::InvalidArgumentError(
         "`steps` must contain at least one launch");
   }
-  return steps;
+  return absl::OkStatus();
 }
 
 }  // namespace
 
-absl::StatusOr<CollectiveCallConfigV3> ParseCollectiveCallConfigV3(
-    absl::string_view json_config) {
+absl::StatusOr<wire::CollectiveCallConfigV3>
+ParseAndValidateCollectiveCallConfig(absl::string_view json_config) {
   wire::CollectiveCallConfigV3 proto;
   tsl::protobuf::util::JsonParseOptions options;
   options.ignore_unknown_fields = true;
@@ -288,31 +262,17 @@ absl::StatusOr<CollectiveCallConfigV3> ParseCollectiveCallConfigV3(
   }
 
   if (!proto.has_group_mode()) return MissingField("group_mode");
-  ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
-                   ParseGroupMode(static_cast<int64_t>(proto.group_mode())));
+  RETURN_IF_ERROR(ValidateGroupMode(static_cast<int64_t>(proto.group_mode())));
 
   if (!proto.has_communication_id()) return MissingField("communication_id");
   if (proto.communication_id() < 0) {
     return absl::InvalidArgumentError("`communication_id` must be nonnegative");
   }
 
-  ASSIGN_OR_RETURN(std::vector<ReplicaGroup> replica_groups,
-                   ParseReplicaGroups(proto));
-  if (!proto.has_module()) return MissingField("module");
-  ASSIGN_OR_RETURN(ModuleImage module, ModuleImage::Create(proto.module()));
-  ASSIGN_OR_RETURN(std::vector<PeerRegionV3> peer_regions,
-                   ParsePeerRegions(proto));
-  ASSIGN_OR_RETURN(std::vector<CollectiveStepV3> steps, ParseSteps(proto));
-
-  return CollectiveCallConfigV3{
-      static_cast<int32_t>(proto.abi_clique_size()),
-      group_mode,
-      proto.communication_id(),
-      std::move(replica_groups),
-      std::move(module),
-      std::move(peer_regions),
-      std::move(steps),
-  };
+  RETURN_IF_ERROR(ValidateReplicaGroups(proto));
+  RETURN_IF_ERROR(ValidatePeerRegions(proto));
+  RETURN_IF_ERROR(ValidateSteps(proto));
+  return proto;
 }
 
 }  // namespace xla::gpu::cutedsl

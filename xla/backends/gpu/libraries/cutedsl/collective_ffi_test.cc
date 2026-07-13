@@ -26,7 +26,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -37,12 +36,13 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "CuteDSLRuntime.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives_stub.h"
-#include "xla/backends/gpu/libraries/cutedsl/collective_config.h"
-#include "xla/backends/gpu/libraries/cutedsl/collective_config.pb.h"
+#include "xla/backends/gpu/libraries/cutedsl/config.pb.h"
+#include "xla/backends/gpu/libraries/cutedsl/ffi_abi.h"
 #include "xla/backends/gpu/libraries/cutedsl/module.h"
+#include "xla/backends/gpu/libraries/cutedsl/module_image.h"
+#include "xla/backends/gpu/libraries/cutedsl/runtime_api.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
@@ -75,7 +75,6 @@ namespace xla::gpu::cutedsl {
 namespace ffi = ::xla::ffi;
 namespace se = ::stream_executor;
 namespace wire = ::xla::gpu::cutedsl::proto;
-using ::xla::BufferAllocations;
 using ::xla::CollectiveOpGroupMode;
 using ::xla::DeviceAssignment;
 using ::xla::GlobalDeviceId;
@@ -108,25 +107,6 @@ using ::tsl::testing::StatusIs;
 constexpr GlobalDeviceId kDevice0(0);
 constexpr GlobalDeviceId kDevice1(1);
 constexpr char kCollectiveTarget[] = "__xla_gpu_cutedsl_collective_v3";
-
-struct TestBufferDescriptor {
-  void *buffer;
-  const int64_t *shape;
-};
-
-struct alignas(8) TestCollectiveContextDescriptor {
-  const uint64_t *peer_addresses;
-  int32_t rank;
-  int32_t clique_size;
-};
-
-static_assert(std::is_standard_layout_v<TestCollectiveContextDescriptor>);
-static_assert(std::is_trivially_copyable_v<TestCollectiveContextDescriptor>);
-static_assert(alignof(TestCollectiveContextDescriptor) == 8);
-static_assert(sizeof(TestCollectiveContextDescriptor) == 16);
-static_assert(offsetof(TestCollectiveContextDescriptor, peer_addresses) == 0);
-static_assert(offsetof(TestCollectiveContextDescriptor, rank) == 8);
-static_assert(offsetof(TestCollectiveContextDescriptor, clique_size) == 12);
 
 struct CapturedBuffer {
   void *buffer;
@@ -216,7 +196,7 @@ CuteDSLRT_Error_t FunctionRun(void *function, void **arguments,
   fake_runtime->buffers.clear();
   for (size_t buffer_rank : fake_runtime->expected_buffer_ranks) {
     auto *descriptor =
-        *reinterpret_cast<TestBufferDescriptor **>(arguments[index++]);
+        *reinterpret_cast<CuteXlaFfiBuffer **>(arguments[index++]);
     if (descriptor == nullptr ||
         (buffer_rank != 0 && descriptor->shape == nullptr)) {
       ADD_FAILURE() << "Invalid JaxArray descriptor";
@@ -237,7 +217,7 @@ CuteDSLRT_Error_t FunctionRun(void *function, void **arguments,
     ADD_FAILURE() << "Invalid CollectiveContext descriptor";
     return CuteDSLRT_Error_CudaError;
   }
-  TestCollectiveContextDescriptor context;
+  CollectiveContextAbi context;
   std::memcpy(&context, context_address, sizeof(context));
   if (fake_runtime->expected_peer_address_count != 0 &&
       context.peer_addresses == nullptr) {
@@ -270,6 +250,11 @@ CuteDSLRT_Error_t ModuleDestroy(CuteDSLRT_Module_t *module) {
 const char *GetErrorName(CuteDSLRT_Error_t) { return "FakeRuntimeError"; }
 const char *GetErrorString(CuteDSLRT_Error_t) { return "fake failure"; }
 
+const RuntimeApi kRuntimeApi = {
+    ModuleCreate,  ModuleGetFunction, FunctionRun,
+    ModuleDestroy, GetErrorName,      GetErrorString,
+};
+
 class NotifyingEvent final : public se::Event {
  public:
   NotifyingEvent(std::shared_ptr<std::promise<void>> synchronized,
@@ -291,6 +276,7 @@ class NotifyingEvent final : public se::Event {
 
 }  // namespace
 
+#if defined(PLATFORM_GOOGLE)
 extern "C" CuteDSLRT_Error_t __wrap_CuteDSLRT_Module_Create_From_Bytes(
     CuteDSLRT_Module_t **module, const unsigned char *bytes, size_t size,
     const char **shared_libraries, size_t shared_library_count) {
@@ -322,12 +308,16 @@ extern "C" const char *__wrap_CuteDSLRT_GetErrorString(
     CuteDSLRT_Error_t error) {
   return GetErrorString(error);
 }
+#endif
 
 namespace {
 
 class ScopedFakeRuntime {
  public:
   explicit ScopedFakeRuntime(FakeRuntime *runtime) {
+#if !defined(PLATFORM_GOOGLE)
+    EXPECT_TRUE(internal::RegisterRuntimeApiForTest(&kRuntimeApi).ok());
+#endif
     EXPECT_EQ(fake_runtime, nullptr);
     fake_runtime = runtime;
   }
@@ -350,7 +340,6 @@ struct TestAttributes {
         group->add_replica_ids(replica_group_members[member_index]);
       }
     }
-    config.set_module(module);
     for (size_t offset = 0; offset + 5 < peer_regions.size(); offset += 6) {
       wire::PeerRegionProto *region = config.add_peer_regions();
       region->set_endpoint(
@@ -369,6 +358,24 @@ struct TestAttributes {
     }
 
     ffi::CallFrameBuilder::AttributesBuilder attributes;
+    if (!omit_module) {
+      if (module_as_i64) {
+        attributes.Insert("module", int64_t{1});
+      } else {
+        attributes.Insert("module", module);
+      }
+    }
+    if (!omit_key) {
+      if (key_as_i64) {
+        attributes.Insert("key", int64_t{1});
+      } else if (key.has_value()) {
+        attributes.Insert("key", *key);
+      } else {
+        absl::StatusOr<ModuleImage> image = ModuleImage::Create(module);
+        EXPECT_TRUE(image.ok()) << image.status();
+        if (image.ok()) attributes.Insert("key", std::string(image->sha256()));
+      }
+    }
     if (!omit_config) {
       if (config_as_i64) {
         attributes.Insert("config", int64_t{1});
@@ -396,9 +403,13 @@ struct TestAttributes {
   std::vector<int64_t> replica_group_members = {0, 1};
   std::string module = "collective ffi test module";
   std::vector<int64_t> peer_regions;
-  std::vector<int64_t> steps = {
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch), 0};
+  std::vector<int64_t> steps = {wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH, 0};
+  std::optional<std::string> key;
   bool add_unknown_attribute = false;
+  bool omit_module = false;
+  bool module_as_i64 = false;
+  bool omit_key = false;
+  bool key_as_i64 = false;
   bool omit_config = false;
   bool config_as_i64 = false;
 };
@@ -445,15 +456,25 @@ struct alignas(64) Storage {
   }
 };
 
-PeerRegionV3 Region(int64_t offset, int64_t size, int64_t alignment = 16) {
-  return PeerRegionV3{
-      /*endpoint=*/PeerRegionEndpointV3::kArgument,
-      /*buffer_index=*/0,
-      /*byte_offset=*/offset,
-      /*byte_size=*/size,
-      /*required_alignment=*/alignment,
-      /*memory_kind=*/PeerMemoryKindV3::kSymmetric,
-  };
+wire::PeerRegionProto Region(int64_t offset, int64_t size,
+                             int64_t alignment = 16) {
+  wire::PeerRegionProto region;
+  region.set_endpoint(wire::PEER_REGION_ENDPOINT_PROTO_ARGUMENT);
+  region.set_buffer_index(0);
+  region.set_byte_offset(offset);
+  region.set_byte_size(size);
+  region.set_required_alignment(alignment);
+  region.set_memory_kind(wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC);
+  return region;
+}
+
+wire::CollectiveCallConfigV3 ConfigWithRegions(
+    absl::Span<const wire::PeerRegionProto> regions) {
+  wire::CollectiveCallConfigV3 config;
+  for (const wire::PeerRegionProto &region : regions) {
+    *config.add_peer_regions() = region;
+  }
+  return config;
 }
 
 uint64_t AddressValue(void *address, uint64_t offset = 0) {
@@ -745,6 +766,63 @@ TEST(CollectiveFfiTest, RequiresProtoJsonConfigAttribute) {
                        HasSubstr("attribute `config`")));
 }
 
+TEST(CollectiveFfiTest, RequiresModuleAttribute) {
+  TestAttributes attributes;
+  attributes.omit_module = true;
+  CollectiveFfiInvocation missing(std::move(attributes), /*replica_count=*/2,
+                                  /*partition_count=*/1,
+                                  /*current_device=*/0);
+  ASSERT_THAT(missing.status(), IsOk());
+  EXPECT_THAT(missing.Instantiate(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("attribute `module`")));
+
+  attributes = TestAttributes();
+  attributes.module_as_i64 = true;
+  CollectiveFfiInvocation wrong_type(std::move(attributes), /*replica_count=*/2,
+                                     /*partition_count=*/1,
+                                     /*current_device=*/0);
+  ASSERT_THAT(wrong_type.status(), IsOk());
+  EXPECT_THAT(wrong_type.Instantiate(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("attribute `module`")));
+}
+
+TEST(CollectiveFfiTest, RequiresKeyAttribute) {
+  TestAttributes attributes;
+  attributes.omit_key = true;
+  CollectiveFfiInvocation missing(std::move(attributes), /*replica_count=*/2,
+                                  /*partition_count=*/1,
+                                  /*current_device=*/0);
+  ASSERT_THAT(missing.status(), IsOk());
+  EXPECT_THAT(missing.Instantiate(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("attribute `key`")));
+
+  attributes = TestAttributes();
+  attributes.key_as_i64 = true;
+  CollectiveFfiInvocation wrong_type(std::move(attributes), /*replica_count=*/2,
+                                     /*partition_count=*/1,
+                                     /*current_device=*/0);
+  ASSERT_THAT(wrong_type.status(), IsOk());
+  EXPECT_THAT(wrong_type.Instantiate(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("attribute `key`")));
+}
+
+TEST(CollectiveFfiTest, RejectsMismatchedModuleKey) {
+  TestAttributes attributes;
+  attributes.key = std::string(kModuleDigestSize, '\0');
+  CollectiveFfiInvocation invocation(std::move(attributes),
+                                     /*replica_count=*/2,
+                                     /*partition_count=*/1,
+                                     /*current_device=*/0);
+  ASSERT_THAT(invocation.status(), IsOk());
+  EXPECT_THAT(invocation.Instantiate(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("does not match")));
+}
+
 TEST(CollectiveFfiTest, IgnoresUnknownOuterAttributes) {
   TestAttributes attributes;
   attributes.add_unknown_attribute = true;
@@ -760,8 +838,8 @@ TEST(CollectiveFfiTest, IgnoresUnknownOuterAttributes) {
 TEST(CollectiveFfiTest, RejectsPeerAddressTableWithWrongShape) {
   TestAttributes attributes;
   attributes.peer_regions = {
-      static_cast<int64_t>(PeerRegionEndpointV3::kArgument), 0, 0, 16, 16,
-      static_cast<int64_t>(PeerMemoryKindV3::kSymmetric),
+      wire::PEER_REGION_ENDPOINT_PROTO_ARGUMENT, 0, 0, 16, 16,
+      wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC,
   };
   CollectiveFfiInvocation invocation(std::move(attributes), /*replica_count=*/2,
                                      /*partition_count=*/1,
@@ -889,8 +967,8 @@ TEST(CollectiveFfiPrepareTest, RejectsLogicalBufferRangeBeforeLoadingModule) {
   Storage allocation;
   TestAttributes attributes;
   attributes.peer_regions = {
-      static_cast<int64_t>(PeerRegionEndpointV3::kArgument), 0, 48, 32, 16,
-      static_cast<int64_t>(PeerMemoryKindV3::kSymmetric),
+      wire::PEER_REGION_ENDPOINT_PROTO_ARGUMENT, 0, 48, 32, 16,
+      wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC,
   };
   CollectiveFfiInvocation invocation(
       std::move(attributes), /*replica_count=*/2, /*partition_count=*/1,
@@ -907,8 +985,8 @@ TEST(CollectiveFfiPrepareTest, RejectsMisalignedRuntimeBufferAddress) {
   Storage allocation;
   TestAttributes attributes;
   attributes.peer_regions = {
-      static_cast<int64_t>(PeerRegionEndpointV3::kArgument), 0, 0, 16, 16,
-      static_cast<int64_t>(PeerMemoryKindV3::kSymmetric),
+      wire::PEER_REGION_ENDPOINT_PROTO_ARGUMENT, 0, 0, 16, 16,
+      wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC,
   };
   CollectiveFfiInvocation invocation(
       std::move(attributes), /*replica_count=*/2, /*partition_count=*/1,
@@ -931,24 +1009,24 @@ TEST(CollectiveFfiPrepareTest,
   Storage allocation1;
   TestAttributes attributes;
   attributes.peer_regions = {
-      static_cast<int64_t>(PeerRegionEndpointV3::kArgument),
+      wire::PEER_REGION_ENDPOINT_PROTO_ARGUMENT,
       0,
       0,
       16,
       16,
-      static_cast<int64_t>(PeerMemoryKindV3::kSymmetric),
-      static_cast<int64_t>(PeerRegionEndpointV3::kArgument),
+      wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC,
+      wire::PEER_REGION_ENDPOINT_PROTO_ARGUMENT,
       1,
       16,
       16,
       16,
-      static_cast<int64_t>(PeerMemoryKindV3::kSymmetric),
-      static_cast<int64_t>(PeerRegionEndpointV3::kResult),
+      wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC,
+      wire::PEER_REGION_ENDPOINT_PROTO_RESULT,
       0,
       0,
       16,
       16,
-      static_cast<int64_t>(PeerMemoryKindV3::kSymmetric),
+      wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC,
   };
   CollectiveFfiInvocation invocation(
       std::move(attributes), /*replica_count=*/2, /*partition_count=*/1,
@@ -984,10 +1062,10 @@ TEST(CollectiveFfiPrepareTest,
   // through Instantiate and Prepare. Actual barrier enqueue ordering requires
   // the registered GPU barrier kernel and is covered by the Phase 4 GPU test.
   attributes.steps = {
-      static_cast<int64_t>(CollectiveStepKindV3::kBarrier), 0,
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch),  2,
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch),  0,
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch),  2,
+      wire::COLLECTIVE_STEP_KIND_PROTO_BARRIER, 0,
+      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH,  2,
+      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH,  0,
+      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH,  2,
   };
   attributes.module = "single module with multiple functions";
   CollectiveFfiInvocation invocation(std::move(attributes),
@@ -1022,9 +1100,9 @@ TEST(CollectiveFfiPrepareTest, RetainsModuleAcrossSequentialExecutions) {
   TestAttributes attributes;
   attributes.module = "collective retained module";
   attributes.steps = {
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch), 2,
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch), 0,
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch), 2,
+      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH, 2,
+      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH, 0,
+      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH, 2,
   };
   {
     CollectiveFfiInvocation invocation(std::move(attributes),
@@ -1076,9 +1154,9 @@ TEST(CollectiveFfiExecuteTest, ExecutesSingleModuleFunctionsInConfiguredOrder) {
   TestAttributes attributes;
   attributes.module = "collective multi-launch test module";
   attributes.steps = {
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch), 2,
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch), 0,
-      static_cast<int64_t>(CollectiveStepKindV3::kLaunch), 2,
+      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH, 2,
+      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH, 0,
+      wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH, 2,
   };
   CollectiveFfiInvocation invocation(std::move(attributes),
                                      /*replica_count=*/2,
@@ -1175,18 +1253,18 @@ TEST(CollectiveFfiExecuteTest,
   TestAttributes attributes;
   attributes.module = "collective canonical-frame test module";
   attributes.peer_regions = {
-      static_cast<int64_t>(PeerRegionEndpointV3::kArgument),
+      wire::PEER_REGION_ENDPOINT_PROTO_ARGUMENT,
       0,
       16,
       32,
       16,
-      static_cast<int64_t>(PeerMemoryKindV3::kSymmetric),
-      static_cast<int64_t>(PeerRegionEndpointV3::kResult),
+      wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC,
+      wire::PEER_REGION_ENDPOINT_PROTO_RESULT,
       0,
       32,
       16,
       32,
-      static_cast<int64_t>(PeerMemoryKindV3::kSymmetric),
+      wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC,
   };
   CollectiveFfiInvocation invocation(
       std::move(attributes), /*replica_count=*/2, /*partition_count=*/1,
@@ -1305,7 +1383,7 @@ TEST(CollectiveFfiPeerAddressesTest,
       buffer_allocations, std::move(symmetric_memories),
       /*mcast_memories=*/{}, /*peer_memories=*/{});
 
-  std::array<PeerRegionV3, 2> regions = {
+  std::array<wire::PeerRegionProto, 2> regions = {
       Region(/*offset=*/16, /*size=*/32, /*alignment=*/16),
       Region(/*offset=*/32, /*size=*/16, /*alignment=*/32),
   };
@@ -1315,8 +1393,9 @@ TEST(CollectiveFfiPeerAddressesTest,
   };
 
   absl::StatusOr<std::vector<uint64_t>> addresses =
-      internal::ResolvePeerAddressesV3(clique_key, RankId(0), regions, buffers,
-                                       collective_memory);
+      internal::ResolvePeerAddresses(clique_key, RankId(0),
+                                     ConfigWithRegions(regions), buffers,
+                                     collective_memory);
 
   ASSERT_THAT(addresses, IsOk());
   EXPECT_THAT(*addresses, ElementsAre(AddressValue(local0.bytes.data(), 48),
@@ -1343,14 +1422,15 @@ TEST(CollectiveFfiPeerAddressesTest, UsesFfiAddressForLocalPeerAlias) {
       buffer_allocations, std::move(symmetric_memories),
       /*mcast_memories=*/{}, /*peer_memories=*/{});
 
-  std::array<PeerRegionV3, 1> regions = {
+  std::array<wire::PeerRegionProto, 1> regions = {
       Region(/*offset=*/16, /*size=*/32, /*alignment=*/16)};
   std::array<se::DeviceAddressBase, 1> buffers = {
       local.address().GetByteSlice(/*offset_bytes=*/32, /*size_bytes=*/96)};
 
   absl::StatusOr<std::vector<uint64_t>> addresses =
-      internal::ResolvePeerAddressesV3(clique_key, RankId(0), regions, buffers,
-                                       collective_memory);
+      internal::ResolvePeerAddresses(clique_key, RankId(0),
+                                     ConfigWithRegions(regions), buffers,
+                                     collective_memory);
 
   ASSERT_THAT(addresses, IsOk());
   EXPECT_THAT(*addresses, ElementsAre(AddressValue(local.bytes.data(), 48)));
@@ -1365,10 +1445,10 @@ TEST(CollectiveFfiPeerAddressesTest, RejectsMismatchedRegionAndBufferCounts) {
                                      /*mcast_memories=*/{},
                                      /*peer_memories=*/{});
   GpuCliqueKey clique_key({kDevice0}, /*num_local_participants=*/1);
-  std::array<PeerRegionV3, 1> regions = {Region(0, 16)};
+  std::array<wire::PeerRegionProto, 1> regions = {Region(0, 16)};
 
-  EXPECT_THAT(internal::ResolvePeerAddressesV3(
-                  clique_key, RankId(0), regions,
+  EXPECT_THAT(internal::ResolvePeerAddresses(
+                  clique_key, RankId(0), ConfigWithRegions(regions),
                   absl::Span<const se::DeviceAddressBase>(), collective_memory),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("does not match buffer count")));
@@ -1383,10 +1463,10 @@ TEST(CollectiveFfiPeerAddressesTest, RejectsRankOutsideClique) {
                                      /*mcast_memories=*/{},
                                      /*peer_memories=*/{});
   GpuCliqueKey clique_key({kDevice0}, /*num_local_participants=*/1);
+  wire::CollectiveCallConfigV3 config;
 
-  EXPECT_THAT(internal::ResolvePeerAddressesV3(
-                  clique_key, RankId(1), /*peer_regions=*/{}, /*buffers=*/{},
-                  collective_memory),
+  EXPECT_THAT(internal::ResolvePeerAddresses(clique_key, RankId(1), config,
+                                             /*buffers=*/{}, collective_memory),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("outside clique size")));
 }
@@ -1405,12 +1485,13 @@ TEST(CollectiveFfiPeerAddressesTest, RejectsRegionOutsideLogicalFfiBuffer) {
   CollectiveMemory collective_memory(
       buffer_allocations, std::move(symmetric_memories),
       /*mcast_memories=*/{}, /*peer_memories=*/{});
-  std::array<PeerRegionV3, 1> regions = {Region(48, 32)};
+  std::array<wire::PeerRegionProto, 1> regions = {Region(48, 32)};
   std::array<se::DeviceAddressBase, 1> buffers = {
       local.address().GetByteSlice(/*offset_bytes=*/16, /*size_bytes=*/64)};
 
-  EXPECT_THAT(internal::ResolvePeerAddressesV3(clique_key, RankId(0), regions,
-                                               buffers, collective_memory),
+  EXPECT_THAT(internal::ResolvePeerAddresses(clique_key, RankId(0),
+                                             ConfigWithRegions(regions),
+                                             buffers, collective_memory),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("exceeds containing buffer size 64")));
 }
@@ -1424,11 +1505,12 @@ TEST(CollectiveFfiPeerAddressesTest, RejectsMissingSymmetricMemory) {
                                      /*mcast_memories=*/{},
                                      /*peer_memories=*/{});
   GpuCliqueKey clique_key({kDevice0}, /*num_local_participants=*/1);
-  std::array<PeerRegionV3, 1> regions = {Region(0, 16)};
+  std::array<wire::PeerRegionProto, 1> regions = {Region(0, 16)};
   std::array<se::DeviceAddressBase, 1> buffers = {local.address()};
 
-  EXPECT_THAT(internal::ResolvePeerAddressesV3(clique_key, RankId(0), regions,
-                                               buffers, collective_memory),
+  EXPECT_THAT(internal::ResolvePeerAddresses(clique_key, RankId(0),
+                                             ConfigWithRegions(regions),
+                                             buffers, collective_memory),
               StatusIs(absl::StatusCode::kFailedPrecondition,
                        HasSubstr("No symmetric memory")));
 }
@@ -1451,11 +1533,12 @@ TEST(CollectiveFfiPeerAddressesTest, PropagatesPeerAddressFailure) {
   CollectiveMemory collective_memory(
       buffer_allocations, std::move(symmetric_memories),
       /*mcast_memories=*/{}, /*peer_memories=*/{});
-  std::array<PeerRegionV3, 1> regions = {Region(0, 16)};
+  std::array<wire::PeerRegionProto, 1> regions = {Region(0, 16)};
   std::array<se::DeviceAddressBase, 1> buffers = {local.address()};
 
-  EXPECT_THAT(internal::ResolvePeerAddressesV3(clique_key, RankId(0), regions,
-                                               buffers, collective_memory),
+  EXPECT_THAT(internal::ResolvePeerAddresses(clique_key, RankId(0),
+                                             ConfigWithRegions(regions),
+                                             buffers, collective_memory),
               StatusIs(absl::StatusCode::kInternal,
                        HasSubstr("injected peer-address failure")));
 }
@@ -1478,12 +1561,13 @@ TEST(CollectiveFfiPeerAddressesTest, RejectsPeerRangeOutsideRegistration) {
   CollectiveMemory collective_memory(
       buffer_allocations, std::move(symmetric_memories),
       /*mcast_memories=*/{}, /*peer_memories=*/{});
-  std::array<PeerRegionV3, 1> regions = {Region(32, 48)};
+  std::array<wire::PeerRegionProto, 1> regions = {Region(32, 48)};
   std::array<se::DeviceAddressBase, 1> buffers = {
       local.address().GetByteSlice(/*offset_bytes=*/16, /*size_bytes=*/96)};
 
-  EXPECT_THAT(internal::ResolvePeerAddressesV3(clique_key, RankId(0), regions,
-                                               buffers, collective_memory),
+  EXPECT_THAT(internal::ResolvePeerAddresses(clique_key, RankId(0),
+                                             ConfigWithRegions(regions),
+                                             buffers, collective_memory),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("Peer region 0 rank 1")));
 }
@@ -1507,11 +1591,13 @@ TEST(CollectiveFfiPeerAddressesTest, RejectsMisalignedPeerAddress) {
   CollectiveMemory collective_memory(
       buffer_allocations, std::move(symmetric_memories),
       /*mcast_memories=*/{}, /*peer_memories=*/{});
-  std::array<PeerRegionV3, 1> regions = {Region(0, 16, /*alignment=*/16)};
+  std::array<wire::PeerRegionProto, 1> regions = {
+      Region(0, 16, /*alignment=*/16)};
   std::array<se::DeviceAddressBase, 1> buffers = {local.address()};
 
-  EXPECT_THAT(internal::ResolvePeerAddressesV3(clique_key, RankId(0), regions,
-                                               buffers, collective_memory),
+  EXPECT_THAT(internal::ResolvePeerAddresses(clique_key, RankId(0),
+                                             ConfigWithRegions(regions),
+                                             buffers, collective_memory),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("does not meet required alignment")));
 }
@@ -1532,11 +1618,12 @@ TEST(CollectiveFfiPeerAddressesTest, RejectsSymmetricBackingAddressMismatch) {
   CollectiveMemory collective_memory(
       buffer_allocations, std::move(symmetric_memories),
       /*mcast_memories=*/{}, /*peer_memories=*/{});
-  std::array<PeerRegionV3, 1> regions = {Region(0, 16)};
+  std::array<wire::PeerRegionProto, 1> regions = {Region(0, 16)};
   std::array<se::DeviceAddressBase, 1> buffers = {local.address()};
 
-  EXPECT_THAT(internal::ResolvePeerAddressesV3(clique_key, RankId(0), regions,
-                                               buffers, collective_memory),
+  EXPECT_THAT(internal::ResolvePeerAddresses(clique_key, RankId(0),
+                                             ConfigWithRegions(regions),
+                                             buffers, collective_memory),
               StatusIs(absl::StatusCode::kFailedPrecondition,
                        HasSubstr("backing address")));
 }
@@ -1561,12 +1648,13 @@ TEST(CollectiveFfiPeerAddressesTest, RejectsAddressOverflow) {
   CollectiveMemory collective_memory(
       buffer_allocations, std::move(symmetric_memories),
       /*mcast_memories=*/{}, /*peer_memories=*/{});
-  std::array<PeerRegionV3, 1> regions = {
+  std::array<wire::PeerRegionProto, 1> regions = {
       Region(/*offset=*/16, /*size=*/16, /*alignment=*/1)};
   std::array<se::DeviceAddressBase, 1> buffers = {local.address()};
 
-  EXPECT_THAT(internal::ResolvePeerAddressesV3(clique_key, RankId(0), regions,
-                                               buffers, collective_memory),
+  EXPECT_THAT(internal::ResolvePeerAddresses(clique_key, RankId(0),
+                                             ConfigWithRegions(regions),
+                                             buffers, collective_memory),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("Address overflow")));
 }

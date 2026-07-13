@@ -1,18 +1,17 @@
-load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("//xla:xla.default.bzl", "xla_cc_test")
+load("//xla:xla.default.bzl", "xla_cc_binary", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 
-_RUNTIME_TEST_LINKOPTS = [
+_RUNTIME_TEST_LINKOPTS = if_google([
     "-Wl,--wrap=CuteDSLRT_Function_Run",
     "-Wl,--wrap=CuteDSLRT_GetErrorName",
     "-Wl,--wrap=CuteDSLRT_GetErrorString",
     "-Wl,--wrap=CuteDSLRT_Module_Create_From_Bytes",
     "-Wl,--wrap=CuteDSLRT_Module_Destroy",
     "-Wl,--wrap=CuteDSLRT_Module_Get_Function",
-]
+], [])
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -29,61 +28,23 @@ package_group(
 
 tf_proto_library(
     name = "collective_config_proto",
-    srcs = ["collective_config.proto"],
+    srcs = ["config.proto"],
     deps = ["//xla:xla_data_proto"],
 )
 
 cc_library(
-    name = "runtime_unavailable",
+    name = "runtime_static_unavailable",
     visibility = ["//visibility:public"],
 )
 
 label_flag(
-    name = "cutedsl_runtime",
+    name = "cutedsl_runtime_static",
     build_setting_default = if_google(
         "//third_party/py/cutlass/runtime",
-        ":runtime_unavailable",
+        ":runtime_static_unavailable",
     ),
     visibility = ["//visibility:public"],
 )
-
-label_flag(
-    name = "cutedsl_runtime_dso",
-    build_setting_default = ":runtime_unavailable",
-    visibility = ["//visibility:public"],
-)
-
-bool_flag(
-    name = "cutedsl_runtime_is_shared",
-    build_setting_default = False,
-    visibility = ["//visibility:public"],
-)
-
-config_setting(
-    name = "runtime_unavailable_selected",
-    flag_values = {
-        ":cutedsl_runtime": "//xla/backends/gpu/libraries/cutedsl:runtime_unavailable",
-    },
-    visibility = ["//visibility:public"],
-)
-
-config_setting(
-    name = "cutedsl_runtime_shared_selected",
-    flag_values = {
-        ":cutedsl_runtime_is_shared": "true",
-    },
-    visibility = ["//visibility:public"],
-)
-
-_RUNTIME_TARGET_COMPATIBILITY = select({
-    ":runtime_unavailable_selected": ["@platforms//:incompatible"],
-    "//conditions:default": [],
-})
-
-_RUNTIME_LINKOPTS = select({
-    "@platforms//os:linux": ["-Wl,-rpath,$$ORIGIN"],
-    "//conditions:default": [],
-})
 
 cc_library(
     name = "module_image",
@@ -99,14 +60,38 @@ cc_library(
 )
 
 cc_library(
+    name = "runtime_api",
+    hdrs = ["runtime_api.h"],
+)
+
+cc_library(
+    name = "runtime",
+    srcs = ["runtime_api.cc"],
+    hdrs = ["runtime.h"],
+    linkopts = if_google([], select({
+        "@platforms//os:linux": ["-ldl"],
+        "//conditions:default": [],
+    })),
+    local_defines = if_google(["XLA_CUTEDSL_RUNTIME_STATIC"]),
+    deps = if_google([
+        ":cutedsl_runtime_static",
+    ], []) + [
+        ":runtime_api",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+    ],
+)
+
+cc_library(
     name = "module",
     srcs = ["module.cc"],
     hdrs = ["module.h"],
-    linkopts = _RUNTIME_LINKOPTS,
-    target_compatible_with = _RUNTIME_TARGET_COMPATIBILITY,
     deps = [
-        ":cutedsl_runtime",
         ":module_image",
+        ":runtime",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
@@ -123,13 +108,36 @@ cc_library(
     hdrs = ["ffi_abi.h"],
 )
 
+xla_cc_binary(
+    name = "libcute_dsl_runtime.so",
+    testonly = True,
+    srcs = ["runtime_test_library.cc"],
+    linkshared = True,
+    target_compatible_with = if_google(["@platforms//:incompatible"], []),
+    deps = [":runtime_api"],
+)
+
+xla_cc_test(
+    name = "runtime_test",
+    srcs = ["runtime_test.cc"],
+    data = [":libcute_dsl_runtime.so"],
+    linkopts = ["-Wl,-rpath,$$ORIGIN"],
+    target_compatible_with = if_google(["@platforms//:incompatible"], []) + select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":runtime",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "collective_config",
-    srcs = ["collective_config.cc"],
-    hdrs = ["collective_config.h"],
+    srcs = ["config.cc"],
+    hdrs = ["config.h"],
     deps = [
         ":collective_config_proto_cc",
-        ":module_image",
         "//xla:xla_data_proto_cc",
         "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/status",
@@ -147,11 +155,12 @@ cc_library(
         "//xla/ffi/api:all_headers",
     ],
     hdrs = ["collective_ffi.h"],
-    target_compatible_with = _RUNTIME_TARGET_COMPATIBILITY,
     deps = [
         ":collective_config",
+        ":collective_config_proto_cc",
         ":ffi_abi",
         ":module",
+        ":module_image",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu:ffi",
         "//xla/backends/gpu/collectives:gpu_clique_key",
@@ -201,7 +210,6 @@ cc_library(
         "ffi.cc",
         "//xla/ffi/api:all_headers",
     ],
-    target_compatible_with = _RUNTIME_TARGET_COMPATIBILITY,
     deps = [
         ":ffi_abi",
         ":module",
@@ -223,22 +231,17 @@ cc_library(
 cc_library(
     name = "handlers",
     visibility = ["//xla/service:__pkg__"],
-    deps = select({
-        ":runtime_unavailable_selected": [],
-        "//conditions:default": [
-            ":collective_ffi",
-            ":ffi",
-        ],
-    }),
+    deps = [
+        ":collective_ffi",
+        ":ffi",
+    ],
 )
 
 xla_cc_test(
     name = "module_test",
     srcs = ["module_test.cc"],
     linkopts = _RUNTIME_TEST_LINKOPTS,
-    target_compatible_with = _RUNTIME_TARGET_COMPATIBILITY,
     deps = [
-        ":cutedsl_runtime",
         ":module",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -250,17 +253,15 @@ xla_cc_test(
 
 xla_cc_test(
     name = "collective_config_test",
-    srcs = ["collective_config_test.cc"],
+    srcs = ["config_test.cc"],
     deps = [
         ":collective_config",
         ":collective_config_proto_cc",
-        ":module_image",
         "//xla/tsl/platform:status_matchers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
-        "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:protobuf",
     ],
 )
@@ -269,13 +270,12 @@ xla_cc_test(
     name = "collective_ffi_test",
     srcs = ["collective_ffi_test.cc"],
     linkopts = _RUNTIME_TEST_LINKOPTS,
-    target_compatible_with = _RUNTIME_TARGET_COMPATIBILITY,
     deps = [
-        ":collective_config",
         ":collective_config_proto_cc",
         ":collective_ffi",
-        ":cutedsl_runtime",
+        ":ffi_abi",
         ":module",
+        ":module_image",
         "//xla:types",
         "//xla/backends/gpu/collectives:gpu_clique_key",
         "//xla/backends/gpu/collectives:gpu_collectives_stub",
@@ -319,9 +319,7 @@ xla_cc_test(
     name = "ffi_unit_test",
     srcs = ["ffi_unit_test.cc"],
     linkopts = _RUNTIME_TEST_LINKOPTS,
-    target_compatible_with = _RUNTIME_TARGET_COMPATIBILITY,
     deps = [
-        ":cutedsl_runtime",
         ":ffi",
         "//xla:types",
         "//xla/ffi",
@@ -346,7 +344,7 @@ xla_test(
     srcs = ["ffi_test.cc"],
     backends = ["b200"],
     data = ["vector_add.hlo"],
-    target_compatible_with = _RUNTIME_TARGET_COMPATIBILITY,
+    target_compatible_with = if_google([], ["@platforms//:incompatible"]),
     deps = [
         ":ffi",
         "//xla:error_spec",

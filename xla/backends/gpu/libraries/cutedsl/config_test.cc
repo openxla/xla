@@ -13,9 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/libraries/cutedsl/collective_config.h"
+#include "xla/backends/gpu/libraries/cutedsl/config.h"
 
-#include <array>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -24,9 +23,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/Support/SHA256.h"
-#include "xla/backends/gpu/libraries/cutedsl/collective_config.pb.h"
+#include "xla/backends/gpu/libraries/cutedsl/config.pb.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "tsl/platform/protobuf.h"
 
@@ -42,14 +39,6 @@ using ::testing::HasSubstr;
 using ::tsl::testing::IsOk;
 using ::tsl::testing::StatusIs;
 
-std::string Sha256(absl::string_view bytes) {
-  llvm::SHA256 hasher;
-  hasher.update(llvm::StringRef(bytes.data(), bytes.size()));
-  std::array<uint8_t, kModuleDigestSize> digest = hasher.final();
-  return std::string(reinterpret_cast<const char*>(digest.data()),
-                     digest.size());
-}
-
 wire::CollectiveCallConfigV3 TestProto() {
   wire::CollectiveCallConfigV3 proto;
   proto.set_abi_clique_size(2);
@@ -60,8 +49,6 @@ wire::CollectiveCallConfigV3 TestProto() {
   proto.mutable_replica_groups(0)->add_replica_ids(1);
   proto.add_replica_groups()->add_replica_ids(2);
   proto.mutable_replica_groups(1)->add_replica_ids(3);
-  proto.set_module(std::string("collective\0module\xff", 18));
-
   wire::PeerRegionProto* argument = proto.add_peer_regions();
   argument->set_endpoint(wire::PEER_REGION_ENDPOINT_PROTO_ARGUMENT);
   argument->set_buffer_index(2);
@@ -98,40 +85,39 @@ std::string ToJson(const wire::CollectiveCallConfigV3& proto) {
   return json;
 }
 
-absl::StatusOr<CollectiveCallConfigV3> Parse(
+absl::StatusOr<wire::CollectiveCallConfigV3> Parse(
     const wire::CollectiveCallConfigV3& proto) {
-  return ParseCollectiveCallConfigV3(ToJson(proto));
+  return ParseAndValidateCollectiveCallConfig(ToJson(proto));
 }
 
 TEST(CollectiveConfigTest, ParsesCompleteProtoJsonConfiguration) {
   wire::CollectiveCallConfigV3 proto = TestProto();
-  absl::StatusOr<CollectiveCallConfigV3> parsed = Parse(proto);
+  absl::StatusOr<wire::CollectiveCallConfigV3> parsed = Parse(proto);
   ASSERT_THAT(parsed, IsOk());
 
-  EXPECT_EQ(parsed->group_mode,
+  EXPECT_EQ(parsed->group_mode(),
             CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA);
-  EXPECT_EQ(parsed->abi_clique_size, 2);
-  EXPECT_EQ(parsed->communication_id, 17);
-  ASSERT_EQ(parsed->replica_groups.size(), 2);
-  EXPECT_THAT(parsed->replica_groups[0].replica_ids(), ElementsAre(0, 1));
-  EXPECT_THAT(parsed->replica_groups[1].replica_ids(), ElementsAre(2, 3));
+  EXPECT_EQ(parsed->abi_clique_size(), 2);
+  EXPECT_EQ(parsed->communication_id(), 17);
+  ASSERT_EQ(parsed->replica_groups_size(), 2);
+  EXPECT_THAT(parsed->replica_groups(0).replica_ids(), ElementsAre(0, 1));
+  EXPECT_THAT(parsed->replica_groups(1).replica_ids(), ElementsAre(2, 3));
 
-  EXPECT_EQ(parsed->module.bytes(), proto.module());
-  EXPECT_EQ(parsed->module.sha256(), Sha256(proto.module()));
+  ASSERT_EQ(parsed->peer_regions_size(), 2);
+  EXPECT_EQ(parsed->peer_regions(0).endpoint(),
+            wire::PEER_REGION_ENDPOINT_PROTO_ARGUMENT);
+  EXPECT_EQ(parsed->peer_regions(0).buffer_index(), 2);
+  EXPECT_EQ(parsed->peer_regions(0).byte_offset(), 16);
+  EXPECT_EQ(parsed->peer_regions(0).byte_size(), 64);
+  EXPECT_EQ(parsed->peer_regions(0).required_alignment(), 16);
+  EXPECT_EQ(parsed->peer_regions(1).endpoint(),
+            wire::PEER_REGION_ENDPOINT_PROTO_RESULT);
 
-  ASSERT_EQ(parsed->peer_regions.size(), 2);
-  EXPECT_EQ(parsed->peer_regions[0].endpoint, PeerRegionEndpointV3::kArgument);
-  EXPECT_EQ(parsed->peer_regions[0].buffer_index, 2);
-  EXPECT_EQ(parsed->peer_regions[0].byte_offset, 16);
-  EXPECT_EQ(parsed->peer_regions[0].byte_size, 64);
-  EXPECT_EQ(parsed->peer_regions[0].required_alignment, 16);
-  EXPECT_EQ(parsed->peer_regions[1].endpoint, PeerRegionEndpointV3::kResult);
-
-  ASSERT_EQ(parsed->steps.size(), 2);
-  EXPECT_EQ(parsed->steps[0].kind, CollectiveStepKindV3::kBarrier);
-  EXPECT_EQ(parsed->steps[0].operand, 0);
-  EXPECT_EQ(parsed->steps[1].kind, CollectiveStepKindV3::kLaunch);
-  EXPECT_EQ(parsed->steps[1].operand, 2);
+  ASSERT_EQ(parsed->steps_size(), 2);
+  EXPECT_EQ(parsed->steps(0).kind(), wire::COLLECTIVE_STEP_KIND_PROTO_BARRIER);
+  EXPECT_EQ(parsed->steps(0).operand(), 0);
+  EXPECT_EQ(parsed->steps(1).kind(), wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH);
+  EXPECT_EQ(parsed->steps(1).operand(), 2);
 }
 
 TEST(CollectiveConfigTest, ParsesDkgProtoJsonEncoding) {
@@ -140,7 +126,6 @@ TEST(CollectiveConfigTest, ParsesDkgProtoJsonEncoding) {
       "abi_clique_size": "2",
       "communication_id": "17",
       "group_mode": 0,
-      "module": "Y29sbGVjdGl2ZS1tb2R1bGU=",
       "peer_regions": [{
         "buffer_index": "2",
         "byte_offset": "16",
@@ -157,20 +142,19 @@ TEST(CollectiveConfigTest, ParsesDkgProtoJsonEncoding) {
     }
   )json";
 
-  absl::StatusOr<CollectiveCallConfigV3> parsed =
-      ParseCollectiveCallConfigV3(kJson);
+  absl::StatusOr<wire::CollectiveCallConfigV3> parsed =
+      ParseAndValidateCollectiveCallConfig(kJson);
   ASSERT_THAT(parsed, IsOk());
-  EXPECT_EQ(parsed->abi_clique_size, 2);
-  EXPECT_EQ(parsed->module.bytes(), "collective-module");
-  ASSERT_EQ(parsed->peer_regions.size(), 1);
-  EXPECT_EQ(parsed->peer_regions[0].buffer_index, 2);
-  ASSERT_EQ(parsed->steps.size(), 2);
-  EXPECT_EQ(parsed->steps[1].kind, CollectiveStepKindV3::kLaunch);
-  EXPECT_EQ(parsed->steps[1].operand, 2);
+  EXPECT_EQ(parsed->abi_clique_size(), 2);
+  ASSERT_EQ(parsed->peer_regions_size(), 1);
+  EXPECT_EQ(parsed->peer_regions(0).buffer_index(), 2);
+  ASSERT_EQ(parsed->steps_size(), 2);
+  EXPECT_EQ(parsed->steps(1).kind(), wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH);
+  EXPECT_EQ(parsed->steps(1).operand(), 2);
 }
 
 TEST(CollectiveConfigTest, RejectsMalformedJsonAndMissingFields) {
-  EXPECT_THAT(ParseCollectiveCallConfigV3("{"),
+  EXPECT_THAT(ParseAndValidateCollectiveCallConfig("{"),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("Failed to parse")));
 
@@ -195,15 +179,15 @@ TEST(CollectiveConfigTest, IgnoresUnknownJsonFields) {
   ASSERT_EQ(json.back(), '}');
   json.pop_back();
   json.append(",\"future_field\":{\"nested\":1}}");
-  EXPECT_THAT(ParseCollectiveCallConfigV3(json), IsOk());
+  EXPECT_THAT(ParseAndValidateCollectiveCallConfig(json), IsOk());
 }
 
 TEST(CollectiveConfigTest, ValidatesAbiCliqueSizeRange) {
   wire::CollectiveCallConfigV3 proto = TestProto();
   proto.set_abi_clique_size(std::numeric_limits<int32_t>::max());
-  absl::StatusOr<CollectiveCallConfigV3> parsed = Parse(proto);
+  absl::StatusOr<wire::CollectiveCallConfigV3> parsed = Parse(proto);
   ASSERT_THAT(parsed, IsOk());
-  EXPECT_EQ(parsed->abi_clique_size, std::numeric_limits<int32_t>::max());
+  EXPECT_EQ(parsed->abi_clique_size(), std::numeric_limits<int32_t>::max());
 
   for (int64_t invalid :
        {int64_t{0}, int64_t{-1},
@@ -246,18 +230,6 @@ TEST(CollectiveConfigTest, RejectsMalformedCollectiveGroup) {
   proto.mutable_replica_groups(1)->set_replica_ids(1, -1);
   EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
                                      HasSubstr("must be nonnegative")));
-}
-
-TEST(CollectiveConfigTest, RejectsMalformedModule) {
-  wire::CollectiveCallConfigV3 proto = TestProto();
-  proto.clear_module();
-  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
-                                     HasSubstr("Missing")));
-
-  proto = TestProto();
-  proto.set_module("");
-  EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
-                                     HasSubstr("module` must not be empty")));
 }
 
 TEST(CollectiveConfigTest, RejectsMalformedPeerRegions) {
@@ -306,11 +278,11 @@ TEST(CollectiveConfigTest, AllowsNoPeerRegionsAndLaunchOnlySchedule) {
   launch->set_kind(wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH);
   launch->set_operand(0);
 
-  absl::StatusOr<CollectiveCallConfigV3> parsed = Parse(proto);
+  absl::StatusOr<wire::CollectiveCallConfigV3> parsed = Parse(proto);
   ASSERT_THAT(parsed, IsOk());
-  EXPECT_TRUE(parsed->peer_regions.empty());
-  ASSERT_EQ(parsed->steps.size(), 1);
-  EXPECT_EQ(parsed->steps[0].kind, CollectiveStepKindV3::kLaunch);
+  EXPECT_TRUE(parsed->peer_regions().empty());
+  ASSERT_EQ(parsed->steps_size(), 1);
+  EXPECT_EQ(parsed->steps(0).kind(), wire::COLLECTIVE_STEP_KIND_PROTO_LAUNCH);
 }
 
 TEST(CollectiveConfigTest, RejectsMalformedSteps) {

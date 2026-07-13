@@ -22,7 +22,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
-#include "xla/backends/gpu/libraries/cutedsl/collective_config.h"
+#include "xla/backends/gpu/libraries/cutedsl/config.pb.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/stream_executor/device_address.h"
@@ -30,12 +30,12 @@ limitations under the License.
 namespace xla::gpu::cutedsl::internal {
 
 // Resolves one absolute peer-address row for every configured region. The
-// buffers span has one whole FFI argument or result buffer per peer region in
-// configuration order. This seam is exposed only for focused address and
-// overflow tests; it is not part of the generated-function ABI.
-absl::StatusOr<std::vector<uint64_t>> ResolvePeerAddressesV3(
+// buffers span has one whole FFI argument or result buffer per configured peer
+// region. This seam is exposed only for focused address and overflow tests; it
+// is not part of the generated-function ABI.
+absl::StatusOr<std::vector<uint64_t>> ResolvePeerAddresses(
     const xla::gpu::GpuCliqueKey& clique_key, xla::RankId rank,
-    absl::Span<const PeerRegionV3> peer_regions,
+    const proto::CollectiveCallConfigV3& config,
     absl::Span<const stream_executor::DeviceAddressBase> buffers,
     const xla::gpu::CollectiveMemory& collective_memory);
 

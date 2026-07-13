@@ -36,6 +36,22 @@ static_assert(sizeof(CuteXlaFfiBuffer) == 2 * sizeof(void*));
 static_assert(offsetof(CuteXlaFfiBuffer, buffer) == 0);
 static_assert(offsetof(CuteXlaFfiBuffer, shape) == sizeof(void*));
 
+// A host-only POD decoded by cutlass.jax.collective's outer JIT wrapper.
+struct alignas(8) CollectiveContextAbi {
+  // Device array containing numeric peer addresses in region-major order.
+  const uint64_t* peer_addresses;
+  int32_t rank;
+  int32_t clique_size;
+};
+
+static_assert(std::is_standard_layout_v<CollectiveContextAbi>);
+static_assert(std::is_trivially_copyable_v<CollectiveContextAbi>);
+static_assert(alignof(CollectiveContextAbi) == 8);
+static_assert(sizeof(CollectiveContextAbi) == 16);
+static_assert(offsetof(CollectiveContextAbi, peer_addresses) == 0);
+static_assert(offsetof(CollectiveContextAbi, rank) == 8);
+static_assert(offsetof(CollectiveContextAbi, clique_size) == 12);
+
 }  // namespace xla::gpu::cutedsl
 
 #endif  // XLA_BACKENDS_GPU_LIBRARIES_CUTEDSL_FFI_ABI_H_

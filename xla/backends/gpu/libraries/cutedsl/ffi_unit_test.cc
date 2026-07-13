@@ -28,7 +28,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/SHA256.h"
-#include "CuteDSLRuntime.h"
+#include "xla/backends/gpu/libraries/cutedsl/runtime.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_state.h"
@@ -152,8 +152,14 @@ CuteDSLRT_Error_t ModuleDestroy(CuteDSLRT_Module_t* module) {
 const char* GetErrorName(CuteDSLRT_Error_t) { return "FakeRuntimeError"; }
 const char* GetErrorString(CuteDSLRT_Error_t) { return "fake runtime failure"; }
 
+const RuntimeApi kRuntimeApi = {
+    ModuleCreate,  ModuleGetFunction, FunctionRun,
+    ModuleDestroy, GetErrorName,      GetErrorString,
+};
+
 }  // namespace
 
+#if defined(PLATFORM_GOOGLE)
 extern "C" CuteDSLRT_Error_t __wrap_CuteDSLRT_Module_Create_From_Bytes(
     CuteDSLRT_Module_t** module, const unsigned char* bytes, size_t size,
     const char** shared_libraries, size_t shared_library_count) {
@@ -185,12 +191,16 @@ extern "C" const char* __wrap_CuteDSLRT_GetErrorString(
     CuteDSLRT_Error_t error) {
   return GetErrorString(error);
 }
+#endif
 
 namespace {
 
 class ScopedFakeRuntime {
  public:
   explicit ScopedFakeRuntime(FakeRuntime* runtime) {
+#if !defined(PLATFORM_GOOGLE)
+    EXPECT_TRUE(internal::RegisterRuntimeApiForTest(&kRuntimeApi).ok());
+#endif
     EXPECT_EQ(fake_runtime, nullptr);
     fake_runtime = runtime;
   }

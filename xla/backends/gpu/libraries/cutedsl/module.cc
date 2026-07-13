@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/libraries/cutedsl/module.h"
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
@@ -25,14 +26,14 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "CuteDSLRuntime.h"
+#include "xla/backends/gpu/libraries/cutedsl/runtime_api.h"
 
 namespace xla::gpu::cutedsl {
 namespace {
-
-std::string FormatRuntimeError(CuteDSLRT_Error_t error) {
-  const char* name = CuteDSLRT_GetErrorName(error);
-  const char* description = CuteDSLRT_GetErrorString(error);
+std::string FormatRuntimeError(const RuntimeApi& runtime,
+                               CuteDSLRT_Error_t error) {
+  const char* name = runtime.get_error_name(error);
+  const char* description = runtime.get_error_string(error);
   return absl::StrFormat(
       "%s (error %d): %s", name == nullptr ? "Unknown" : name,
       static_cast<int>(error),
@@ -44,42 +45,42 @@ std::string FormatRuntimeError(CuteDSLRT_Error_t error) {
 LoadedModule::~LoadedModule() {
   if (module_ == nullptr) return;
   CuteDSLRT_Error_t error =
-      CuteDSLRT_Module_Destroy(static_cast<CuteDSLRT_Module_t*>(module_));
+      runtime_->module_destroy(static_cast<CuteDSLRT_Module_t*>(module_));
   if (error != CuteDSLRT_Error_Success) {
     LOG(ERROR) << "Failed to destroy CuTeDSL runtime module: "
-               << FormatRuntimeError(error);
+               << FormatRuntimeError(*runtime_, error);
   }
 }
 
 absl::StatusOr<std::shared_ptr<LoadedModule>> LoadedModule::Create(
-    absl::string_view module_bytes) {
+    absl::string_view module_bytes, const RuntimeApi* runtime) {
   CuteDSLRT_Module_t* module = nullptr;
   // Standalone static and shared runtimes register their CUDA helper symbols
   // directly with ORC. shared_libs is reserved for actual dependencies of the
   // generated module.
-  CuteDSLRT_Error_t error = CuteDSLRT_Module_Create_From_Bytes(
+  CuteDSLRT_Error_t error = runtime->module_create_from_bytes(
       &module, reinterpret_cast<const unsigned char*>(module_bytes.data()),
       module_bytes.size(), /*shared_libs=*/nullptr,
       /*shared_libs_size=*/0);
   if (error != CuteDSLRT_Error_Success) {
     if (module != nullptr) {
-      CuteDSLRT_Error_t destroy_error = CuteDSLRT_Module_Destroy(module);
+      CuteDSLRT_Error_t destroy_error = runtime->module_destroy(module);
       if (destroy_error != CuteDSLRT_Error_Success) {
         LOG(ERROR) << "Failed to destroy CuTeDSL runtime module after "
                       "creation failed: "
-                   << FormatRuntimeError(destroy_error);
+                   << FormatRuntimeError(*runtime, destroy_error);
       }
     }
     return absl::InternalError(
         absl::StrFormat("Failed to create CuTeDSL runtime module: %s",
-                        FormatRuntimeError(error)));
+                        FormatRuntimeError(*runtime, error)));
   }
   if (module == nullptr) {
     return absl::InternalError(
         "CuTeDSL runtime created a null module without returning an error");
   }
 
-  return std::shared_ptr<LoadedModule>(new LoadedModule(module));
+  return std::shared_ptr<LoadedModule>(new LoadedModule(module, runtime));
 }
 
 absl::StatusOr<LoadedModule::FunctionHandle> LoadedModule::GetFunction(
@@ -99,12 +100,12 @@ absl::StatusOr<LoadedModule::FunctionHandle> LoadedModule::GetFunction(
   if (it != functions_by_prefix_.end()) return it->second;
 
   CuteDSLRT_Function_t* function = nullptr;
-  CuteDSLRT_Error_t error = CuteDSLRT_Module_Get_Function(
+  CuteDSLRT_Error_t error = runtime_->module_get_function(
       &function, static_cast<CuteDSLRT_Module_t*>(module_), prefix.c_str());
   if (error != CuteDSLRT_Error_Success) {
     return absl::InternalError(
         absl::StrFormat("Failed to load CuTeDSL %s function: %s", prefix,
-                        FormatRuntimeError(error)));
+                        FormatRuntimeError(*runtime_, error)));
   }
   if (function == nullptr) {
     return absl::InternalError(absl::StrFormat(
@@ -120,9 +121,9 @@ absl::StatusOr<LoadedModule::FunctionHandle> LoadedModule::GetFunction(
 absl::Status LoadedModule::Run(FunctionHandle function, void** arguments,
                                size_t argument_count) const {
   CuteDSLRT_Error_t error =
-      CuteDSLRT_Function_Run(function, arguments, argument_count);
+      runtime_->function_run(function, arguments, argument_count);
   if (error == CuteDSLRT_Error_Success) return absl::OkStatus();
-  return absl::InternalError(FormatRuntimeError(error));
+  return absl::InternalError(FormatRuntimeError(*runtime_, error));
 }
 
 absl::StatusOr<std::shared_ptr<LoadedModule>> ModuleLoader::GetOrLoad(
@@ -132,8 +133,14 @@ absl::StatusOr<std::shared_ptr<LoadedModule>> ModuleLoader::GetOrLoad(
   auto it = modules_.find(cache_key);
   if (it != modules_.end()) return it->second;
 
+  if (runtime_ == nullptr) {
+    absl::StatusOr<const RuntimeApi*> runtime = internal::GetRuntimeApi();
+    if (!runtime.ok()) return runtime.status();
+    runtime_ = *runtime;
+  }
+
   absl::StatusOr<std::shared_ptr<LoadedModule>> loaded =
-      LoadedModule::Create(image.bytes());
+      LoadedModule::Create(image.bytes(), runtime_);
   if (!loaded.ok()) return loaded.status();
   modules_.emplace(std::move(cache_key), *loaded);
   return *loaded;
