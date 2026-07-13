@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_executable_va_remap_allocator.h"
 
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>

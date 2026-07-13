@@ -16,10 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_GPU_EXECUTABLE_VA_REMAP_ALLOCATOR_H_
 #define XLA_SERVICE_GPU_GPU_EXECUTABLE_VA_REMAP_ALLOCATOR_H_
 
-#include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <vector>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
@@ -32,7 +30,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable_buffer_allocator.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/shape.h"
-#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/memory_reservation.h"
 #include "xla/stream_executor/stream_executor.h"

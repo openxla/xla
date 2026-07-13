@@ -135,6 +135,8 @@ cc_library(
         "//xla/service:transfer_manager",
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:gpu_constants",
+        "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu:gpu_executable_buffer_allocator",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/service/gpu:gpu_memory_space_assignment",
         "//xla/stream_executor:device_address",
@@ -201,8 +203,6 @@ cc_library(
         # keep sorted
         "//xla:debug_options_flags",
         "//xla/service/gpu:gpu_compiler",
-        "//xla/service/gpu:gpu_executable",
-        "//xla/service/gpu:gpu_executable_buffer_allocator",
         "//xla/service/gpu:stream_executor_util",
     ]) + if_cuda([
         # keep sorted
@@ -218,8 +218,6 @@ cc_library(
         # keep sorted
         "//xla:debug_options_flags",
         "//xla/service/gpu:gpu_compiler",
-        "//xla/service/gpu:gpu_executable",
-        "//xla/service/gpu:gpu_executable_buffer_allocator",
         "//xla/service/gpu:stream_executor_util",
         "@local_config_sycl//sycl:sycl_headers",
     ]),
