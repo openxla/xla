@@ -16,9 +16,12 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_LIBRARIES_CUTEDSL_MODULE_H_
 #define XLA_BACKENDS_GPU_LIBRARIES_CUTEDSL_MODULE_H_
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
@@ -26,10 +29,34 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/backends/gpu/libraries/cutedsl/module_image.h"
 #include "xla/backends/gpu/libraries/cutedsl/runtime.h"
 
 namespace xla::gpu::cutedsl {
+
+inline constexpr size_t kModuleDigestSize = 32;
+
+// An immutable module image with a validated SHA-256 digest.
+class ModuleImage {
+ public:
+  static absl::StatusOr<ModuleImage> Create(absl::string_view bytes);
+  static absl::StatusOr<ModuleImage> Create(absl::string_view bytes,
+                                            absl::string_view sha256);
+
+  ModuleImage(ModuleImage&&) = default;
+  ModuleImage& operator=(ModuleImage&&) = default;
+  ModuleImage(const ModuleImage&) = delete;
+  ModuleImage& operator=(const ModuleImage&) = delete;
+
+  absl::string_view bytes() const { return bytes_; }
+  absl::string_view sha256() const;
+
+ private:
+  ModuleImage(std::string bytes, std::array<uint8_t, kModuleDigestSize> sha256)
+      : bytes_(std::move(bytes)), sha256_(sha256) {}
+
+  std::string bytes_;
+  std::array<uint8_t, kModuleDigestSize> sha256_;
+};
 
 // Owns one runtime module and lazily loads its exported functions. Function
 // handles remain valid only while their LoadedModule is alive.

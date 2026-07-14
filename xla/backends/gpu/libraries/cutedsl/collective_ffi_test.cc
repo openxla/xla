@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/backends/gpu/libraries/cutedsl/config.pb.h"
 #include "xla/backends/gpu/libraries/cutedsl/ffi_abi.h"
 #include "xla/backends/gpu/libraries/cutedsl/module.h"
-#include "xla/backends/gpu/libraries/cutedsl/module_image.h"
 #include "xla/backends/gpu/libraries/cutedsl/runtime_api.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"

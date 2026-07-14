@@ -47,19 +47,6 @@ label_flag(
 )
 
 cc_library(
-    name = "module_image",
-    srcs = ["module_image.cc"],
-    hdrs = ["module_image.h"],
-    deps = [
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
-        "@llvm-project//llvm:Support",
-    ],
-)
-
-cc_library(
     name = "runtime_api",
     hdrs = ["runtime_api.h"],
 )
@@ -90,7 +77,6 @@ cc_library(
     srcs = ["module.cc"],
     hdrs = ["module.h"],
     deps = [
-        ":module_image",
         ":runtime",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -100,6 +86,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
+        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -160,7 +147,6 @@ cc_library(
         ":collective_config_proto_cc",
         ":ffi_abi",
         ":module",
-        ":module_image",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu:ffi",
         "//xla/backends/gpu/collectives:gpu_clique_key",
@@ -272,7 +258,6 @@ xla_cc_test(
         ":collective_ffi",
         ":ffi_abi",
         ":module",
-        ":module_image",
         "//xla:types",
         "//xla/backends/gpu/collectives:gpu_clique_key",
         "//xla/backends/gpu/collectives:gpu_collectives_stub",

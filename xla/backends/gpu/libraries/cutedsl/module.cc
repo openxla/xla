@@ -15,7 +15,10 @@ limitations under the License.
 
 #include "xla/backends/gpu/libraries/cutedsl/module.h"
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -26,10 +29,46 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/SHA256.h"
 #include "xla/backends/gpu/libraries/cutedsl/runtime_api.h"
 
 namespace xla::gpu::cutedsl {
+
+absl::StatusOr<ModuleImage> ModuleImage::Create(absl::string_view bytes) {
+  if (bytes.empty()) {
+    return absl::InvalidArgumentError("`module` must not be empty");
+  }
+
+  llvm::SHA256 hasher;
+  hasher.update(llvm::StringRef(bytes.data(), bytes.size()));
+  std::array<uint8_t, kModuleDigestSize> digest = hasher.final();
+  return ModuleImage(std::string(bytes), digest);
+}
+
+absl::StatusOr<ModuleImage> ModuleImage::Create(absl::string_view bytes,
+                                                absl::string_view sha256) {
+  absl::StatusOr<ModuleImage> image = Create(bytes);
+  if (!image.ok()) return image.status();
+  if (sha256.size() != kModuleDigestSize) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "`key` must contain one %d-byte SHA-256 digest", kModuleDigestSize));
+  }
+  if (!std::equal(image->sha256().begin(), image->sha256().end(),
+                  sha256.begin())) {
+    return absl::InvalidArgumentError(
+        "SHA-256 `key` does not match the module image");
+  }
+  return std::move(*image);
+}
+
+absl::string_view ModuleImage::sha256() const {
+  return absl::string_view(reinterpret_cast<const char*>(sha256_.data()),
+                           sha256_.size());
+}
+
 namespace {
+
 std::string FormatRuntimeError(const RuntimeApi& runtime,
                                CuteDSLRT_Error_t error) {
   const char* name = runtime.get_error_name(error);
