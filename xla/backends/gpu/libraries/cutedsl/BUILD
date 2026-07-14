@@ -95,6 +95,26 @@ cc_library(
     hdrs = ["ffi_abi.h"],
 )
 
+cc_library(
+    name = "kernel_call",
+    srcs = ["kernel_call.cc"],
+    hdrs = ["kernel_call.h"],
+    deps = [
+        ":ffi_abi",
+        ":module",
+        "//xla/ffi",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
 xla_cc_binary(
     name = "libcute_dsl_runtime.so",
     testonly = True,
@@ -136,16 +156,17 @@ cc_library(
 )
 
 cc_library(
-    name = "collective_ffi",
+    name = "ffi",
     srcs = [
-        "collective_ffi.cc",
+        "ffi.cc",
         "//xla/ffi/api:all_headers",
     ],
-    hdrs = ["collective_ffi.h"],
+    hdrs = ["ffi.h"],
     deps = [
         ":collective_config",
         ":collective_config_proto_cc",
         ":ffi_abi",
+        ":kernel_call",
         ":module",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu:ffi",
@@ -176,7 +197,6 @@ cc_library(
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/util:tied_ref",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -188,36 +208,9 @@ cc_library(
 )
 
 cc_library(
-    name = "ffi",
-    srcs = [
-        "ffi.cc",
-        "//xla/ffi/api:all_headers",
-    ],
-    deps = [
-        ":ffi_abi",
-        ":module",
-        "//xla/backends/gpu:ffi",
-        "//xla/ffi",
-        "//xla/ffi/api:c_api",
-        "//xla/tsl/platform:status_macros",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/synchronization",
-    ],
-    alwayslink = True,
-)
-
-cc_library(
     name = "handlers",
     visibility = ["//xla/service:__pkg__"],
-    deps = [
-        ":collective_ffi",
-        ":ffi",
-    ],
+    deps = [":ffi"],
 )
 
 xla_cc_test(
@@ -255,7 +248,7 @@ xla_cc_test(
     linkopts = _RUNTIME_TEST_LINKOPTS,
     deps = [
         ":collective_config_proto_cc",
-        ":collective_ffi",
+        ":ffi",
         ":ffi_abi",
         ":module",
         "//xla:types",

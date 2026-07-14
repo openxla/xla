@@ -28,9 +28,9 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"  // IWYU pragma: keep
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/resource_loader.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu::cutedsl {

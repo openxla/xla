@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_BACKENDS_GPU_LIBRARIES_CUTEDSL_COLLECTIVE_FFI_H_
-#define XLA_BACKENDS_GPU_LIBRARIES_CUTEDSL_COLLECTIVE_FFI_H_
+#ifndef XLA_BACKENDS_GPU_LIBRARIES_CUTEDSL_FFI_H_
+#define XLA_BACKENDS_GPU_LIBRARIES_CUTEDSL_FFI_H_
 
 #include <cstdint>
 #include <vector>
@@ -43,4 +43,4 @@ absl::StatusOr<std::vector<uint64_t>> ResolvePeerAddresses(
 
 }  // namespace xla::gpu::cutedsl::internal
 
-#endif  // XLA_BACKENDS_GPU_LIBRARIES_CUTEDSL_COLLECTIVE_FFI_H_
+#endif  // XLA_BACKENDS_GPU_LIBRARIES_CUTEDSL_FFI_H_

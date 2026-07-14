@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/libraries/cutedsl/collective_ffi.h"
+#include "xla/backends/gpu/libraries/cutedsl/ffi.h"
 
 #include <algorithm>
 #include <array>
