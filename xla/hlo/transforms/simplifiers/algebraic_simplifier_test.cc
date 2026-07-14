@@ -2957,9 +2957,7 @@ TEST_F(AlgebraicSimplifierTest, LnExp) {
   EXPECT_THAT(computation->root_instruction(),
               GmockMatch(m::Log(m::Exp(m::Parameter(0)))));
 
-  // ln(exp(A)) => A is unsound under IEEE 754 when exp(A) overflows (eager
-  // gives log(inf) = inf, the fold gives the finite A), so it's gated behind
-  // fast-math.
+  // ln(exp(A)) => A optimization is gated behind fast math flag.
   AlgebraicSimplifierOptions options = default_options_;
   options.set_enable_fast_math(true);
   AlgebraicSimplifier simplifier(options);
@@ -2968,10 +2966,6 @@ TEST_F(AlgebraicSimplifierTest, LnExp) {
   EXPECT_EQ(computation->root_instruction(), param0);
 }
 
-// Regression test: ln(exp(A)) => A must NOT fire under default (non-fast-math)
-// options, since it silently hides f32 overflow in exp(A) for A >= ~88.7
-// (log(exp(89.0)) is inf under IEEE 754, but the fold would return the
-// finite 89.0).
 TEST_F(AlgebraicSimplifierTest, LnExpNotFoldedByDefault) {
   auto m = CreateNewVerifiedModule();
   Shape r0f32 = ShapeUtil::MakeShape(F32, {});
@@ -2986,9 +2980,6 @@ TEST_F(AlgebraicSimplifierTest, LnExpNotFoldedByDefault) {
   auto computation = m->AddEntryComputationWithLayouts(builder.Build());
 
   AlgebraicSimplifier simplifier(default_options_);
-  // The simplifier may return true/false depending on whether *other*
-  // instructions were simplified elsewhere in the graph; what matters is
-  // that this specific pattern is left untouched.
   ASSERT_TRUE(simplifier.Run(m.get()).ok());
 
   EXPECT_THAT(computation->root_instruction(),
@@ -3019,8 +3010,7 @@ TEST_F(AlgebraicSimplifierTest, LnExpDiv) {
               GmockMatch(m::Log(m::Divide(m::Exp(m::Parameter(0)),
                                           m::Exp(m::Parameter(1))))));
 
-  // Reaching the fully-reduced A-B form relies on ln(exp(A)) => A firing on
-  // each side of the division, which is gated behind fast-math (see LnExp).
+  // ln(exp(A)) => A optimization is gated behind fast math flag.
   AlgebraicSimplifierOptions options = default_options_;
   options.set_enable_fast_math(true);
   AlgebraicSimplifier simplifier(options);
@@ -12750,9 +12740,7 @@ TEST_F(AlgebraicSimplifierTest, SquaredComplexSqrtIsFloat) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   SCOPED_TRACE("Before rewrite\n" + m->ToString());
-  // sqrt(A*A) => |A| is unsound under IEEE 754 when A*A overflows (eager
-  // gives sqrt(inf) = inf, the fold gives the finite |A|), so it's gated
-  // behind fast-math (see HandleSqrt).
+  // sqrt(A*A) => |A| optimization is gated behind fast math flag.
   AlgebraicSimplifierOptions options = default_options_;
   options.set_enable_fast_math(true);
   AlgebraicSimplifier simplifier(options);
@@ -12763,7 +12751,6 @@ TEST_F(AlgebraicSimplifierTest, SquaredComplexSqrtIsFloat) {
   EXPECT_THAT(root, GmockMatch(m::Convert(m::Abs(m::Parameter(0)))));
 }
 
-// sqrt(A*A) => |A| for a real-valued operand, under fast-math.
 TEST_F(AlgebraicSimplifierTest, SquaredSqrtIsAbsUnderFastMath) {
   const absl::string_view kModuleStr = R"(
   HloModule module
@@ -12785,10 +12772,6 @@ TEST_F(AlgebraicSimplifierTest, SquaredSqrtIsAbsUnderFastMath) {
   EXPECT_THAT(root, GmockMatch(m::Abs(m::Parameter(0))));
 }
 
-// Regression test: sqrt(A*A) => |A| must NOT fire under default
-// (non-fast-math) options, since it silently hides f32 overflow in A*A for
-// |A| > ~1.84e19 (sqrt(1e20*1e20) is inf under IEEE 754, but the fold would
-// return the finite 1e20).
 TEST_F(AlgebraicSimplifierTest, SquaredSqrtNotFoldedByDefault) {
   const absl::string_view kModuleStr = R"(
   HloModule module
@@ -12804,8 +12787,8 @@ TEST_F(AlgebraicSimplifierTest, SquaredSqrtNotFoldedByDefault) {
   AlgebraicSimplifier simplifier(default_options_);
   ASSERT_TRUE(simplifier.Run(m.get()).ok());
   auto* root = m->entry_computation()->root_instruction();
-  EXPECT_THAT(root, GmockMatch(m::Sqrt(m::Multiply(m::Parameter(0),
-                                                    m::Parameter(0)))));
+  EXPECT_THAT(
+      root, GmockMatch(m::Sqrt(m::Multiply(m::Parameter(0), m::Parameter(0)))));
 }
 
 // Don't replace root instruction with the copy-to-operand optimization if
