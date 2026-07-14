@@ -413,11 +413,21 @@ struct TestAttributes {
 class FakeSymmetricMemory final : public SymmetricMemory {
  public:
   FakeSymmetricMemory(se::DeviceAddressBase local_address,
-                      std::vector<se::DeviceAddressBase> peer_addresses)
+                      std::vector<se::DeviceAddressBase> peer_addresses,
+                      std::optional<se::DeviceAddressBase> multimem_address =
+                          std::nullopt)
       : local_address_(local_address),
-        peer_addresses_(std::move(peer_addresses)) {}
+        peer_addresses_(std::move(peer_addresses)),
+        multimem_address_(multimem_address) {}
 
   se::DeviceAddressBase addr() const override { return local_address_; }
+
+  absl::StatusOr<se::DeviceAddressBase> multimem_addr() const override {
+    if (!multimem_address_.has_value()) {
+      return absl::UnimplementedError("injected multimem unavailability");
+    }
+    return *multimem_address_;
+  }
 
   absl::StatusOr<se::DeviceAddressBase> peer_addr(RankId rank) const override {
     if (failing_rank_.has_value() && rank == *failing_rank_) {
@@ -441,6 +451,7 @@ class FakeSymmetricMemory final : public SymmetricMemory {
  private:
   se::DeviceAddressBase local_address_;
   std::vector<se::DeviceAddressBase> peer_addresses_;
+  std::optional<se::DeviceAddressBase> multimem_address_;
   std::optional<RankId> failing_rank_;
 };
 
@@ -453,14 +464,16 @@ struct alignas(64) Storage {
 };
 
 wire::PeerRegionProto Region(int64_t offset, int64_t size,
-                             int64_t alignment = 16) {
+                             int64_t alignment = 16,
+                             wire::PeerMemoryKindProto memory_kind =
+                                 wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC) {
   wire::PeerRegionProto region;
   region.set_endpoint(wire::PEER_REGION_ENDPOINT_PROTO_ARGUMENT);
   region.set_buffer_index(0);
   region.set_byte_offset(offset);
   region.set_byte_size(size);
   region.set_required_alignment(alignment);
-  region.set_memory_kind(wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC);
+  region.set_memory_kind(memory_kind);
   return region;
 }
 
@@ -1022,7 +1035,7 @@ TEST(CollectiveFfiPrepareTest,
       0,
       16,
       16,
-      wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC,
+      wire::PEER_MEMORY_KIND_PROTO_MULTIMEM,
   };
   CollectiveFfiInvocation invocation(
       std::move(attributes), /*replica_count=*/2, /*partition_count=*/1,
@@ -1210,7 +1223,7 @@ TEST(CollectiveFfiExecuteTest, RetainsResourcesUntilCompletionEvent) {
 }
 
 TEST(CollectiveFfiExecuteTest,
-     CopiesPeerAddressesToDeviceAndPacksCanonicalLaunchFrame) {
+     CopiesRegionAddressesToDeviceAndPacksCanonicalLaunchFrame) {
   FakeRuntime runtime;
   runtime.expected_buffer_ranks = {1, 1};
   runtime.expected_peer_address_count = 4;
@@ -1220,6 +1233,7 @@ TEST(CollectiveFfiExecuteTest,
   Storage remote0;
   Storage local1;
   Storage remote1;
+  Storage multimem1;
   se::DeviceAddressBase argument =
       local0.address().GetByteSlice(/*offset_bytes=*/32, /*size_bytes=*/96);
   se::DeviceAddressBase result =
@@ -1239,7 +1253,7 @@ TEST(CollectiveFfiExecuteTest,
       32,
       16,
       32,
-      wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC,
+      wire::PEER_MEMORY_KIND_PROTO_MULTIMEM,
   };
   CollectiveFfiInvocation invocation(
       std::move(attributes), /*replica_count=*/2, /*partition_count=*/1,
@@ -1261,7 +1275,8 @@ TEST(CollectiveFfiExecuteTest,
       std::vector<se::DeviceAddressBase>{remote0.address(), local0.address()});
   auto symmetric1 = std::make_shared<FakeSymmetricMemory>(
       local1.address(),
-      std::vector<se::DeviceAddressBase>{remote1.address(), local1.address()});
+      std::vector<se::DeviceAddressBase>{remote1.address(), local1.address()},
+      multimem1.address());
   absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
       symmetric_memories;
   symmetric_memories.emplace(std::make_pair(clique_key, 0), symmetric0);
@@ -1292,8 +1307,8 @@ TEST(CollectiveFfiExecuteTest,
   EXPECT_THAT(runtime.peer_addresses,
               ElementsAre(AddressValue(remote0.bytes.data(), 48),
                           AddressValue(local0.bytes.data(), 48),
-                          AddressValue(remote1.bytes.data(), 96),
-                          AddressValue(local1.bytes.data(), 96)));
+                          AddressValue(multimem1.bytes.data(), 96),
+                          AddressValue(multimem1.bytes.data(), 96)));
   EXPECT_FALSE(runtime.peer_addresses_pointer_is_null);
   EXPECT_EQ(runtime.peer_addresses_pointer,
             invocation.peer_address_table_data());
@@ -1377,6 +1392,73 @@ TEST(CollectiveFfiPeerAddressesTest,
                                       AddressValue(peer0.bytes.data(), 48),
                                       AddressValue(local1.bytes.data(), 96),
                                       AddressValue(peer1.bytes.data(), 96)));
+}
+
+TEST(CollectiveFfiPeerAddressesTest,
+     ResolvesMultimemAliasWithBufferAndRegionOffsets) {
+  Storage local;
+  Storage peer;
+  Storage multimem;
+  std::array<se::DeviceAddressBase, 1> allocations = {local.address()};
+  BufferAllocations buffer_allocations(allocations, /*device_ordinal=*/0,
+                                       /*memory_allocator=*/nullptr);
+
+  GpuCliqueKey clique_key({kDevice0, kDevice1},
+                          /*num_local_participants=*/2, CommunicationId(7));
+  auto symmetric = std::make_shared<FakeSymmetricMemory>(
+      local.address(),
+      std::vector<se::DeviceAddressBase>{local.address(), peer.address()},
+      multimem.address());
+  symmetric->set_failing_rank(RankId(1));
+  absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
+      symmetric_memories;
+  symmetric_memories.emplace(std::make_pair(clique_key, 0), symmetric);
+  CollectiveMemory collective_memory(
+      buffer_allocations, std::move(symmetric_memories),
+      /*mcast_memories=*/{}, /*peer_memories=*/{});
+
+  std::array<wire::PeerRegionProto, 1> regions = {Region(
+      /*offset=*/16, /*size=*/32, /*alignment=*/16,
+      wire::PEER_MEMORY_KIND_PROTO_MULTIMEM)};
+  std::array<se::DeviceAddressBase, 1> buffers = {
+      local.address().GetByteSlice(/*offset_bytes=*/32, /*size_bytes=*/96)};
+
+  absl::StatusOr<std::vector<uint64_t>> addresses =
+      internal::ResolvePeerAddresses(clique_key, RankId(0),
+                                     ConfigWithRegions(regions), buffers,
+                                     collective_memory);
+
+  ASSERT_THAT(addresses, IsOk());
+  EXPECT_THAT(*addresses,
+              ElementsAre(AddressValue(multimem.bytes.data(), 48),
+                          AddressValue(multimem.bytes.data(), 48)));
+}
+
+TEST(CollectiveFfiPeerAddressesTest, RejectsUnavailableMultimemAlias) {
+  Storage local;
+  std::array<se::DeviceAddressBase, 1> allocations = {local.address()};
+  BufferAllocations buffer_allocations(allocations, /*device_ordinal=*/0,
+                                       /*memory_allocator=*/nullptr);
+  GpuCliqueKey clique_key({kDevice0}, /*num_local_participants=*/1);
+  auto symmetric = std::make_shared<FakeSymmetricMemory>(
+      local.address(),
+      std::vector<se::DeviceAddressBase>{local.address()});
+  absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
+      symmetric_memories;
+  symmetric_memories.emplace(std::make_pair(clique_key, 0), symmetric);
+  CollectiveMemory collective_memory(
+      buffer_allocations, std::move(symmetric_memories),
+      /*mcast_memories=*/{}, /*peer_memories=*/{});
+  std::array<wire::PeerRegionProto, 1> regions = {Region(
+      /*offset=*/0, /*size=*/16, /*alignment=*/16,
+      wire::PEER_MEMORY_KIND_PROTO_MULTIMEM)};
+  std::array<se::DeviceAddressBase, 1> buffers = {local.address()};
+
+  EXPECT_THAT(internal::ResolvePeerAddresses(
+                  clique_key, RankId(0), ConfigWithRegions(regions), buffers,
+                  collective_memory),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("injected multimem unavailability")));
 }
 
 TEST(CollectiveFfiPeerAddressesTest, UsesFfiAddressForLocalPeerAlias) {

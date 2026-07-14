@@ -18,20 +18,23 @@ configuration using Python's standard `json` module without a Python protobuf
 dependency. Unknown JSON fields are ignored; known fields, the complete
 collective configuration, and the module digest are validated during
 Instantiate. The config records the clique width used to compile the
-region-major peer-address table. The first FFI result is an internal
+region-major address table. The first FFI result is an internal
 `U64[peer_region_count, abi_clique_size]` scratch buffer allocated by XLA in
 device memory; remaining results are the generated function's ordinary
 results. Prepare rejects a different runtime clique width before loading the
 module or requesting collective resources. Initialize resolves the absolute
-peer addresses, and Execute copies them into the scratch result immediately
-before launching the generated function on the same stream.
+addresses, and Execute copies them into the scratch result immediately before
+launching the generated function on the same stream. Symmetric rows contain
+one peer address per rank. Multimem rows contain the rank-local LSA multimem
+alias from the NCCL symmetric window, repeated across the row to preserve the
+v3 table shape.
 
 The generated-function frame carries one pointer to a fixed 16-byte host
 `CollectiveContextAbi` descriptor instead of one argument per peer address.
 The descriptor contains the device-table pointer, rank, and clique size.
 Generated host code loads only that descriptor and constructs a row-major CuTe
 global-memory tensor over the table. Device kernels index the tensor to load an
-absolute peer address; independent peer regions do not need to share an
+absolute peer or multimem address; independent regions do not need to share an
 allocation layout.
 
 ## Runtime linkage

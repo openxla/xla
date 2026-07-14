@@ -166,10 +166,14 @@ absl::Status ValidatePeerRegions(const wire::CollectiveCallConfigV3& proto) {
           "two",
           region_index));
     }
-    if (region.memory_kind() != wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC) {
-      return absl::InvalidArgumentError(
-          absl::StrFormat("Unsupported memory kind %d for peer region %d",
-                          region.memory_kind(), region_index));
+    switch (region.memory_kind()) {
+      case wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC:
+      case wire::PEER_MEMORY_KIND_PROTO_MULTIMEM:
+        break;
+      default:
+        return absl::InvalidArgumentError(
+            absl::StrFormat("Unsupported memory kind %d for peer region %d",
+                            region.memory_kind(), region_index));
     }
 
     PeerRegionKey key = {static_cast<int64_t>(region.endpoint()),

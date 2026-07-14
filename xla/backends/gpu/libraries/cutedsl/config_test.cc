@@ -104,6 +104,8 @@ TEST(CollectiveConfigTest, ParsesCompleteProtoJsonConfiguration) {
   EXPECT_EQ(parsed->peer_regions(0).byte_offset(), 16);
   EXPECT_EQ(parsed->peer_regions(0).byte_size(), 64);
   EXPECT_EQ(parsed->peer_regions(0).required_alignment(), 16);
+  EXPECT_EQ(parsed->peer_regions(0).memory_kind(),
+            wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC);
   EXPECT_EQ(parsed->peer_regions(1).endpoint(),
             wire::PEER_REGION_ENDPOINT_PROTO_RESULT);
 
@@ -239,7 +241,7 @@ TEST(CollectiveConfigTest, RejectsMalformedPeerRegions) {
 
   proto = TestProto();
   proto.mutable_peer_regions(0)->set_memory_kind(
-      static_cast<wire::PeerMemoryKindProto>(1));
+      static_cast<wire::PeerMemoryKindProto>(2));
   EXPECT_THAT(Parse(proto), StatusIs(absl::StatusCode::kInvalidArgument,
                                      HasSubstr("Unsupported memory kind")));
 
@@ -248,6 +250,18 @@ TEST(CollectiveConfigTest, RejectsMalformedPeerRegions) {
   EXPECT_THAT(Parse(proto),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("duplicates an earlier record")));
+}
+
+TEST(CollectiveConfigTest, AcceptsMultimemRegion) {
+  wire::CollectiveCallConfigV3 proto = TestProto();
+  proto.mutable_peer_regions(0)->set_memory_kind(
+      wire::PEER_MEMORY_KIND_PROTO_MULTIMEM);
+
+  absl::StatusOr<wire::CollectiveCallConfigV3> parsed = Parse(proto);
+
+  ASSERT_THAT(parsed, IsOk());
+  EXPECT_EQ(parsed->peer_regions(0).memory_kind(),
+            wire::PEER_MEMORY_KIND_PROTO_MULTIMEM);
 }
 
 TEST(CollectiveConfigTest, AllowsNoPeerRegionsAndDefaultsBarrierOff) {

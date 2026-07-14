@@ -29,10 +29,12 @@ limitations under the License.
 
 namespace xla::gpu::cutedsl::internal {
 
-// Resolves one absolute peer-address row for every configured region. The
-// buffers span has one whole FFI argument or result buffer per configured peer
-// region. This seam is exposed only for focused address and overflow tests; it
-// is not part of the generated-function ABI.
+// Resolves one address row for every configured region. Symmetric rows contain
+// one absolute peer address per rank; multimem rows repeat the rank-local
+// multimem alias in every column. The buffers span has one whole FFI argument
+// or result buffer per configured region. This seam is exposed only for
+// focused address and overflow tests; it is not part of the generated-function
+// ABI.
 absl::StatusOr<std::vector<uint64_t>> ResolvePeerAddresses(
     const xla::gpu::GpuCliqueKey& clique_key, xla::RankId rank,
     const proto::CollectiveCallConfigV3& config,

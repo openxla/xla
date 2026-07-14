@@ -26,6 +26,7 @@ enum PeerRegionEndpointProto {
 
 enum PeerMemoryKindProto {
   PEER_MEMORY_KIND_PROTO_SYMMETRIC = 0;
+  PEER_MEMORY_KIND_PROTO_MULTIMEM = 1;
 }
 
 message PeerRegionProto {

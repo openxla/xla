@@ -309,10 +309,11 @@ absl::StatusOr<se::DeviceAddressBase> GetPeerRegionBuffer(
                        results.get<ffi::AnyBuffer>(buffer_index));
       return result->device_memory();
     }
+    default:
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Peer region %d has unsupported endpoint %d", region_index,
+          region.endpoint()));
   }
-
-  return absl::InvalidArgumentError(absl::StrFormat(
-      "Peer region %d has an unsupported endpoint", region_index));
 }
 
 absl::StatusOr<std::vector<se::DeviceAddressBase>> GetPeerRegionBuffers(
@@ -429,6 +430,38 @@ absl::StatusOr<std::vector<uint64_t>> ResolvePeerAddresses(
           "Offset overflow while resolving peer region %d", region_index));
     }
     uint64_t offset_in_symmetric_memory = buffer_offset + region_offset;
+
+    if (region.memory_kind() == wire::PEER_MEMORY_KIND_PROTO_MULTIMEM) {
+      ASSIGN_OR_RETURN(se::DeviceAddressBase multimem_base,
+                       symmetric_memory->multimem_addr());
+      if (multimem_base.is_null()) {
+        return absl::FailedPreconditionError(absl::StrFormat(
+            "Multimem address is unavailable for peer region %d",
+            region_index));
+      }
+      RETURN_IF_ERROR(ValidateByteRange(
+          offset_in_symmetric_memory, region_size, multimem_base.size(),
+          absl::StrFormat("Multimem region %d", region_index)));
+      ASSIGN_OR_RETURN(
+          uint64_t multimem_address,
+          AddAddressOffset(
+              multimem_base.opaque(), offset_in_symmetric_memory,
+              absl::StrFormat("multimem region %d", region_index)));
+      if (multimem_address % alignment != 0) {
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "Multimem region %d address 0x%x does not meet required alignment "
+            "%d",
+            region_index, multimem_address, alignment));
+      }
+      peer_addresses.insert(peer_addresses.end(), clique_key.num_devices(),
+                            multimem_address);
+      continue;
+    }
+    if (region.memory_kind() != wire::PEER_MEMORY_KIND_PROTO_SYMMETRIC) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Unsupported memory kind %d for peer region %d",
+          region.memory_kind(), region_index));
+    }
 
     for (size_t peer = 0; peer < clique_key.num_devices(); ++peer) {
       se::DeviceAddressBase peer_base;

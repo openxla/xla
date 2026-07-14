@@ -38,7 +38,8 @@ static_assert(offsetof(CuteXlaFfiBuffer, shape) == sizeof(void*));
 
 // A host-only POD decoded by cutlass.jax.collective's outer JIT wrapper.
 struct alignas(8) CollectiveContextAbi {
-  // Device array containing numeric peer addresses in region-major order.
+  // Device array containing numeric peer or multimem addresses in
+  // region-major order. Multimem rows repeat the rank-local alias.
   const uint64_t* peer_addresses;
   int32_t rank;
   int32_t clique_size;
