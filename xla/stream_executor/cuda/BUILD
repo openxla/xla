@@ -1547,7 +1547,6 @@ cc_library(
 cc_library(
     name = "cuda_executor_lib",
     srcs = ["cuda_executor.cc"],
-    hdrs = ["cuda_executor.h"],
     tags = [
         "cuda-only",
         "gpu",
