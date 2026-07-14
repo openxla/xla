@@ -83,8 +83,8 @@ class OneDnnThreadPool final
   void parallel_for(int n, const std::function<void(int, int)>& fn) final {
     // Cap num_workers at n to avoid Worker::Parallelize's partition-clamping
     // logic that reduces parallelism when num_workers > num_work_items.
-    const size_t num_workers = std::min<size_t>(
-        static_cast<size_t>(n), thread_pool_->NumThreads());
+    const size_t num_workers =
+        std::min<size_t>(static_cast<size_t>(n), thread_pool_->NumThreads());
 
     if (is_async_) {
       // If we are using oneDNN with async support, we need to schedule the
