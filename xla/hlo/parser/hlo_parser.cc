@@ -4191,8 +4191,7 @@ bool HloParserImpl::ParseMesh(std::optional<Mesh>& mesh) {
       return false;
     }
     // Validate the device_ids count against the mesh size before allocating the
-    // device-id array, returning a parse error instead of CHECK-failing (or
-    // attempting an unbounded allocation for a huge, mismatched mesh).
+    // device-id array (using an overflow-checked product of the axis sizes).
     int64_t num_elements = 1;
     for (int64_t axis_size : axis_sizes) {
       if (axis_size < 0 ||
