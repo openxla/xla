@@ -19,7 +19,6 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_CUDA_CUDA_DNN_H_
 #define XLA_STREAM_EXECUTOR_CUDA_CUDA_DNN_H_
 
-#include <Eigen/Core>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -32,6 +31,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"
+#include <Eigen/Core>
 #include "xla/stream_executor/cuda/cudnn_sdpa_score_mod.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/dnn.h"
@@ -94,6 +94,19 @@ class CudnnGraph : public dnn::DnnGraph {
       absl::Span<DeviceAddressBase> operands, DeviceAddressBase& workspace,
       std::optional<int64_t> local_device_ordinal = std::nullopt) const;
 };
+
+// Returns whether the loaded cuDNN runtime supports deviceless
+// DeviceProperties (added in cuDNN 9.8). Informational (e.g. for test skips);
+// CudnnGraph::Prepare does not guard on this, the frontend rejects older
+// runtimes itself.
+bool SupportsDevicelessDeviceProperties();
+
+// Returns whether the loaded cuDNN runtime can prepare convolution graphs
+// devicelessly for the given target. Runtimes older than 9.19 crash (SIGSEGV
+// observed with 9.8.0) inside the deviceless heuristics query for
+// Blackwell-generation (sm_100+) targets instead of returning an error, so
+// callers must refuse such probes rather than attempt them.
+bool SupportsDevicelessConvGraphs(const DeviceDescription& gpu_device_info);
 
 // cudnn-library based DNN support. For details on overridden interface
 // functions, see dnn.h.
