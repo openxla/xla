@@ -750,7 +750,7 @@ CHECK: %[[LHS:.*]] = xtile.extract %[[LHS_ARG]][%{{.*}}, %[[LHS_STORAGE_OFFSET]]
 CHECK: %[[RHS:.*]] = xtile.extract %[[RHS_ARG]][%{{.*}}, %{{.*}}] [128, 64] [1, 1] : memref<256x64xi8> -> tensor<128x64xi8>
 CHECK: xtile.dot_scaled %[[LHS]]
 CHECK-SAME: %[[RHS]]
-CHECK-SAME: lhs_elem_type = i8, rhs_elem_type = i8
+CHECK-SAME: lhs_elem_type = f4E2M1FN, rhs_elem_type = f4E2M1FN
 )"),
               absl_testing::IsOk());
 }
