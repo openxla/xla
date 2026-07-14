@@ -140,14 +140,14 @@ bool IsAtLeastCuda12300(const se::StreamExecutor* stream_executor) {
 static constexpr auto serialize =
     CommandExecutor::SynchronizationMode::kSerialize;
 
-class RequiresUpdateOnExecuteMemsetThunk : public Memset32BitValueThunk {
+class CountingMemsetThunk : public Memset32BitValueThunk {
  public:
-  RequiresUpdateOnExecuteMemsetThunk(Thunk::ThunkInfo thunk_info,
-                                     uint32_t value,
-                                     const BufferAllocation::Slice& destination,
-                                     int* record_count)
+  CountingMemsetThunk(Thunk::ThunkInfo thunk_info, uint32_t value,
+                      const BufferAllocation::Slice& destination,
+                      int* record_count, bool requires_update_on_execute)
       : Memset32BitValueThunk(std::move(thunk_info), value, destination),
-        record_count_(record_count) {}
+        record_count_(record_count),
+        requires_update_on_execute_(requires_update_on_execute) {}
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams& execute_params,
@@ -159,34 +159,13 @@ class RequiresUpdateOnExecuteMemsetThunk : public Memset32BitValueThunk {
                                          command_buffer);
   }
 
-  bool requires_update_on_execute() const override { return true; }
-
- private:
-  int* record_count_;
-};
-
-class CountingDeviceToDeviceCopyThunk : public DeviceToDeviceCopyThunk {
- public:
-  CountingDeviceToDeviceCopyThunk(Thunk::ThunkInfo thunk_info,
-                                  const ShapedSlice& source_buffer,
-                                  const ShapedSlice& destination_buffer,
-                                  int64_t mem_size, int* record_count)
-      : DeviceToDeviceCopyThunk(std::move(thunk_info), source_buffer,
-                                destination_buffer, mem_size),
-        record_count_(record_count) {}
-
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams& execute_params,
-      const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) override {
-    ++*record_count_;
-    return DeviceToDeviceCopyThunk::Record(execute_params, record_params,
-                                           std::move(record_action),
-                                           command_buffer);
+  bool requires_update_on_execute() const override {
+    return requires_update_on_execute_;
   }
 
  private:
   int* record_count_;
+  const bool requires_update_on_execute_;
 };
 
 }  // namespace
@@ -351,33 +330,24 @@ TEST(CommandBufferThunkTest,
   ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
 
   constexpr int64_t kLength = 4;
-  constexpr int64_t kByteLength = sizeof(int32_t) * kLength;
-  Shape shape = ShapeUtil::MakeShape(S32, {kLength});
+  constexpr int64_t kByteLength = sizeof(uint32_t) * kLength;
 
-  se::DeviceAddress<int32_t> a =
-      stream_executor->AllocateArray<int32_t>(kLength, 0);
-  se::DeviceAddress<int32_t> b =
-      stream_executor->AllocateArray<int32_t>(kLength, 0);
-  se::DeviceAddress<int32_t> c =
-      stream_executor->AllocateArray<int32_t>(kLength, 0);
-  se::DeviceAddress<int32_t> d =
-      stream_executor->AllocateArray<int32_t>(kLength, 0);
-  ASSERT_OK(stream->Memset32(&a, 42, kByteLength));
-  ASSERT_OK(stream->MemZero(&b, kByteLength));
-  ASSERT_OK(stream->Memset32(&c, 7, kByteLength));
-  ASSERT_OK(stream->MemZero(&d, kByteLength));
+  se::DeviceAddress<uint32_t> first_destination =
+      stream_executor->AllocateArray<uint32_t>(kLength, 0);
+  se::DeviceAddress<uint32_t> second_destination =
+      stream_executor->AllocateArray<uint32_t>(kLength, 0);
+  ASSERT_OK(stream->MemZero(&first_destination, kByteLength));
+  ASSERT_OK(stream->MemZero(&second_destination, kByteLength));
 
-  BufferAllocation source(/*index=*/0, kByteLength, /*color=*/0);
-  BufferAllocation destination(/*index=*/1, kByteLength, /*color=*/0);
-  BufferAllocation::Slice source_slice(&source, 0, kByteLength);
+  BufferAllocation destination(/*index=*/0, kByteLength, /*color=*/0);
   BufferAllocation::Slice destination_slice(&destination, 0, kByteLength);
 
   auto create_thunk = [&](int* record_count)
       -> absl::StatusOr<std::unique_ptr<CommandBufferThunk>> {
     CommandSequence commands;
-    commands.Emplace<CountingDeviceToDeviceCopyThunk>(
-        Thunk::ThunkInfo(), ShapedSlice{source_slice, shape},
-        ShapedSlice{destination_slice, shape}, kByteLength, record_count);
+    commands.Emplace<CountingMemsetThunk>(Thunk::ThunkInfo(), /*value=*/42,
+                                          destination_slice, record_count,
+                                          /*requires_update_on_execute=*/false);
     ASSIGN_OR_RETURN(CommandExecutor executor,
                      CommandExecutor::Create(std::move(commands), serialize));
     return std::make_unique<CommandBufferThunk>(std::move(executor),
@@ -390,7 +360,8 @@ TEST(CommandBufferThunkTest,
 
   stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   ServiceExecutableRunOptions run_options;
-  BufferAllocations first_allocations({a, b}, /*device_ordinal=*/0, &allocator);
+  BufferAllocations first_allocations({first_destination},
+                                      /*device_ordinal=*/0, &allocator);
 
   Thunk::InitializeParams initialize_params;
   initialize_params.executor = stream_executor;
@@ -405,21 +376,21 @@ TEST(CommandBufferThunkTest,
   ASSERT_OK(initialize_thunk->ExecuteOnStream(absent_execute_params));
   ASSERT_OK(stream->BlockHostUntilDone());
 
-  std::vector<int32_t> result(kLength, 0);
-  ASSERT_OK(stream->Memcpy(result.data(), b, kByteLength));
-  EXPECT_EQ(result, std::vector<int32_t>(kLength, 42));
+  std::vector<uint32_t> result(kLength, 0);
+  ASSERT_OK(stream->Memcpy(result.data(), first_destination, kByteLength));
+  EXPECT_EQ(result, std::vector<uint32_t>(kLength, 42));
   EXPECT_EQ(initialize_record_count, 1);
 
   // An absent policy must not trigger another initialization update.
   ASSERT_OK(initialize_thunk->Initialize(initialize_params));
   EXPECT_EQ(initialize_record_count, 1);
 
-  BufferAllocations second_allocations({c, d}, /*device_ordinal=*/0,
-                                       &allocator);
-  std::vector<BufferAllocation::Index> all_persistent_alloc_indices = {0, 1};
+  BufferAllocations second_allocations({second_destination},
+                                       /*device_ordinal=*/0, &allocator);
+  std::vector<BufferAllocation::Index> persistent_alloc_indices = {0};
   initialize_params.buffer_allocations = &second_allocations;
   initialize_params.persistent_alloc_indices =
-      absl::MakeConstSpan(all_persistent_alloc_indices);
+      absl::MakeConstSpan(persistent_alloc_indices);
   ASSERT_OK(initialize_thunk->Initialize(initialize_params));
   EXPECT_EQ(initialize_record_count, 2);
 
@@ -432,13 +403,13 @@ TEST(CommandBufferThunkTest,
       run_options, second_allocations, stream.get(), stream.get(), nullptr,
       nullptr, nullptr, /*additional_compute_streams=*/{},
       /*execution_scoped_state=*/nullptr,
-      absl::MakeConstSpan(all_persistent_alloc_indices));
+      absl::MakeConstSpan(persistent_alloc_indices));
   ASSERT_OK(initialize_thunk->ExecuteOnStream(present_execute_params));
   ASSERT_OK(stream->BlockHostUntilDone());
 
   std::fill(result.begin(), result.end(), 0);
-  ASSERT_OK(stream->Memcpy(result.data(), d, kByteLength));
-  EXPECT_EQ(result, std::vector<int32_t>(kLength, 7));
+  ASSERT_OK(stream->Memcpy(result.data(), second_destination, kByteLength));
+  EXPECT_EQ(result, std::vector<uint32_t>(kLength, 42));
   EXPECT_EQ(initialize_record_count, 2);
 
   // The command-buffer update in Initialize can be skipped while command
@@ -451,35 +422,35 @@ TEST(CommandBufferThunkTest,
   ASSERT_OK(execute_thunk->Initialize(initialize_params));
   EXPECT_EQ(execute_record_count, 1);
 
-  ASSERT_OK(stream->MemZero(&d, kByteLength));
+  ASSERT_OK(stream->MemZero(&second_destination, kByteLength));
   ASSERT_OK(execute_thunk->ExecuteOnStream(present_execute_params));
   ASSERT_OK(stream->BlockHostUntilDone());
 
   std::fill(result.begin(), result.end(), 0);
-  ASSERT_OK(stream->Memcpy(result.data(), d, kByteLength));
-  EXPECT_EQ(result, std::vector<int32_t>(kLength, 7));
+  ASSERT_OK(stream->Memcpy(result.data(), second_destination, kByteLength));
+  EXPECT_EQ(result, std::vector<uint32_t>(kLength, 42));
   EXPECT_EQ(execute_record_count, 2);
 
   // An older execution initialized before policy activation can run after the
   // present-policy command buffer was recorded. It must restore its addresses
   // without changing the one-way policy contract across steps.
-  ASSERT_OK(stream->MemZero(&b, kByteLength));
+  ASSERT_OK(stream->MemZero(&first_destination, kByteLength));
   ASSERT_OK(execute_thunk->ExecuteOnStream(absent_execute_params));
   ASSERT_OK(stream->BlockHostUntilDone());
 
   std::fill(result.begin(), result.end(), 0);
-  ASSERT_OK(stream->Memcpy(result.data(), b, kByteLength));
-  EXPECT_EQ(result, std::vector<int32_t>(kLength, 42));
+  ASSERT_OK(stream->Memcpy(result.data(), first_destination, kByteLength));
+  EXPECT_EQ(result, std::vector<uint32_t>(kLength, 42));
   EXPECT_EQ(execute_record_count, 3);
 
   // The next present-policy execution must likewise restore its addresses.
-  ASSERT_OK(stream->MemZero(&d, kByteLength));
+  ASSERT_OK(stream->MemZero(&second_destination, kByteLength));
   ASSERT_OK(execute_thunk->ExecuteOnStream(present_execute_params));
   ASSERT_OK(stream->BlockHostUntilDone());
 
   std::fill(result.begin(), result.end(), 0);
-  ASSERT_OK(stream->Memcpy(result.data(), d, kByteLength));
-  EXPECT_EQ(result, std::vector<int32_t>(kLength, 7));
+  ASSERT_OK(stream->Memcpy(result.data(), second_destination, kByteLength));
+  EXPECT_EQ(result, std::vector<uint32_t>(kLength, 42));
   EXPECT_EQ(execute_record_count, 4);
 }
 
@@ -496,8 +467,9 @@ TEST(CommandBufferThunkTest,
 
   int record_count = 0;
   CommandSequence commands;
-  commands.Emplace<RequiresUpdateOnExecuteMemsetThunk>(
-      Thunk::ThunkInfo(), /*value=*/42, slice, &record_count);
+  commands.Emplace<CountingMemsetThunk>(Thunk::ThunkInfo(), /*value=*/42, slice,
+                                        &record_count,
+                                        /*requires_update_on_execute=*/true);
   ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
                        CommandExecutor::Create(std::move(commands), serialize));
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
