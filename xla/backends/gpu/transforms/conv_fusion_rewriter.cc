@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/transforms/cudnn_fusion_utils.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -44,7 +45,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -74,9 +74,8 @@ bool IsConvFusionOutputsValid(const std::vector<HloInstruction*>& outputs) {
   if (outputs.size() > 2) {
     return false;
   }
-  if (outputs.size() == 2 &&
-      (outputs[0]->opcode() == HloOpcode::kReduce) ==
-          (outputs[1]->opcode() == HloOpcode::kReduce)) {
+  if (outputs.size() == 2 && (outputs[0]->opcode() == HloOpcode::kReduce) ==
+                                 (outputs[1]->opcode() == HloOpcode::kReduce)) {
     return false;
   }
   return true;

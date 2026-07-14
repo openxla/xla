@@ -66,11 +66,12 @@ void FuseTowardUsers(
 // is_nchw disables all epilogue fusing (for NCHW convolutions).
 //
 // Returns false if hlo or any descendant forms an invalid subgraph.
-bool GrowFusionDFS(
-    HloInstruction* hlo, HloReachabilityMap* reachability, FusionState& state,
-    absl::flat_hash_map<HloInstruction*, bool>& fusible_cache, bool is_nchw,
-    absl::FunctionRef<bool(const std::vector<HloInstruction*>&)>
-        is_outputs_valid);
+bool GrowFusionDFS(HloInstruction* hlo, HloReachabilityMap* reachability,
+                   FusionState& state,
+                   absl::flat_hash_map<HloInstruction*, bool>& fusible_cache,
+                   bool is_nchw,
+                   absl::FunctionRef<bool(const std::vector<HloInstruction*>&)>
+                       is_outputs_valid);
 
 }  // namespace gpu
 }  // namespace xla

@@ -160,11 +160,12 @@ void FuseTowardUsers(
   }
 }
 
-bool GrowFusionDFS(
-    HloInstruction* hlo, HloReachabilityMap* reachability, FusionState& state,
-    absl::flat_hash_map<HloInstruction*, bool>& fusible_cache, bool is_nchw,
-    absl::FunctionRef<bool(const std::vector<HloInstruction*>&)>
-        is_outputs_valid) {
+bool GrowFusionDFS(HloInstruction* hlo, HloReachabilityMap* reachability,
+                   FusionState& state,
+                   absl::flat_hash_map<HloInstruction*, bool>& fusible_cache,
+                   bool is_nchw,
+                   absl::FunctionRef<bool(const std::vector<HloInstruction*>&)>
+                       is_outputs_valid) {
   if (fusible_cache.contains(hlo)) {
     return fusible_cache[hlo];
   }
@@ -202,12 +203,11 @@ bool GrowFusionDFS(
                      });
   }
   if (is_valid) {
-    is_valid = std::none_of(
-        state.fusion_outputs.begin(),
-        state.fusion_outputs.end() - (is_endpoint ? 1 : 0),
-        [&reachability, hlo](HloInstruction* output) {
-          return reachability->IsReachable(output, hlo);
-        });
+    is_valid = std::none_of(state.fusion_outputs.begin(),
+                            state.fusion_outputs.end() - (is_endpoint ? 1 : 0),
+                            [&reachability, hlo](HloInstruction* output) {
+                              return reachability->IsReachable(output, hlo);
+                            });
   }
 
   if (is_valid) {
