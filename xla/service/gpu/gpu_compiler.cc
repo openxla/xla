@@ -764,7 +764,13 @@ absl::Status RunOptimizationPasses(
   }
   pipeline.AddPass<RaggedDotRewriter>(gpu_version,
                                       gpu_target_config.dnn_version_info);
-  if (!debug_options.xla_gpu_experimental_scaled_dot_with_triton()) {
+  // Enabling ScaledDotRewriter pass for oneAPI until support for ScaledDot is added.
+  // TODO(intel-tf): Remove this once support is added in oneAPI.
+  const auto* oneapi_cc =
+      gpu_target_config.device_description.gpu_compute_capability()
+          .oneapi_compute_capability();
+  if (!debug_options.xla_gpu_experimental_scaled_dot_with_triton() ||
+      oneapi_cc != nullptr) {
     pipeline.AddPass<ScaledDotRewriter>();
   }
   pipeline.AddPass<BatchedGatherScatterNormalizer>();
