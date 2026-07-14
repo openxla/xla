@@ -156,6 +156,10 @@ __global__ void __launch_bounds__(512) RaggedAllToAllDeviceKernelImpl(
     const int64_t* __restrict__ output_offsets_ptr,
     int64_t num_updates_per_replica, int64_t num_row_elements,
     int64_t input_buffer_offset_bytes, int64_t output_buffer_offset_bytes) {
+  // NCCL device barrier/GIN APIs emit scope-qualified atomics that require
+  // sm_60+. Lower architectures compile to an empty stub; the kernel is only
+  // launched when the device supports NCCL device comms.
+#if __CUDA_ARCH__ >= 600
   ncclTeam world = ncclTeamWorld(dev_comm);
   ncclTeam lsa = ncclTeamLsa(dev_comm);
   const int start_lsa = world.rank - lsa.rank;
@@ -205,6 +209,7 @@ __global__ void __launch_bounds__(512) RaggedAllToAllDeviceKernelImpl(
 
     bar.sync(ncclCoopCta(), ::cuda::memory_order_release);
   }
+#endif  // __CUDA_ARCH__ >= 600
 }
 
 #else  // NCCL_VERSION_CODE < 22900
