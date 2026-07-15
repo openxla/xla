@@ -181,6 +181,11 @@ struct SchedulerConfig {
   // If true, estimate the fragmentation size of the module by running the heap
   // simulator.
   bool estimate_fragmentation_size = false;
+  // If true, FindAndExtractBestNodeAvailable skips ready nodes whose projected
+  // memory-pressure increase would bring memory usage above memory_limit,
+  // unless no node can be scheduled otherwise (soft cap). Has no effect when
+  // memory_limit is UINT64_MAX.
+  bool enforce_memory_limit = false;
   // If true, track the resource usage of sync ops in latency hiding scheduler.
   bool track_sync_op_resource_usage = false;
   // If true, use top down scheduling.
@@ -1985,6 +1990,11 @@ class ReadySetLt {
                               DefaultSchedulerCore::ScheduleCandidate& b,
                               const char** reason) const;
 
+  std::pair<int64_t, int64_t> GetMemoryPressureChanges(
+      const DefaultSchedulerCore::SchedulingState& state,
+      DefaultSchedulerCore::ScheduleCandidate& cand,
+      const HloGraphNode* cand_node) const;
+
  protected:
   template <typename T>
   static int ThreeWay(T avalue, T bvalue) {
@@ -2063,11 +2073,6 @@ class ReadySetLt {
 
   HloGraphNode::TimeCost PastDueCyclesForNonextendableResource(
       const DefaultSchedulerCore::SchedulingState& state,
-      const HloGraphNode* cand_node) const;
-
-  std::pair<int64_t, int64_t> GetMemoryPressureChanges(
-      const DefaultSchedulerCore::SchedulingState& state,
-      DefaultSchedulerCore::ScheduleCandidate& cand,
       const HloGraphNode* cand_node) const;
 
   int64_t GetNumConflictingSerialResources(

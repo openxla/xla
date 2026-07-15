@@ -3469,6 +3469,181 @@ TEST_F(LatencyHidingSchedulerTest, RerunWithSmallerMemoryLimit) {
             PositionInVector(new_instruction_sequence, cps));
 }
 
+TEST_F(LatencyHidingSchedulerTest, EnforceMemoryLimitAvoidsOverlapAboveLimit) {
+  // Same module as RerunWithSmallerMemoryLimit: overlapping the slice with the
+  // collective-permute requires keeping the 86-byte broadcast alive across the
+  // collective, with a peak memory usage of 136 bytes. With
+  // enforce_memory_limit and a limit of 110 bytes, the scheduler must reach
+  // the memory-friendly order (slice scheduled outside of the
+  // collective-permute overlap window) in a single scheduling pass, without
+  // any rerun.
+  absl::string_view hlo_string = R"(
+    HloModule enforce_memory_limit_test, is_scheduled=true
+    ENTRY main {
+     p0 = bf16[8]{0} parameter(0)
+     c = bf16[] constant(0)
+     b = bf16[43]{0} broadcast(c), dimensions={}
+     s = bf16[1]{0} slice(b), slice={[0:1]}
+     cp = bf16[8]{0} collective-permute(p0), source_target_pairs={{0,1},{1,2},{2,3}}
+    ROOT tuple = (bf16[8]{0}, bf16[1]{0}) tuple(cp, s)
+  }
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  HloSchedule& module_schedule = hlo_module->schedule();
+  EXPECT_TRUE(hlo_module->has_entry_computation());
+  HloComputation* entry_computation = hlo_module->entry_computation();
+  auto sched_config = GetDefaultSchedConfig();
+  sched_config.memory_limit = 110;
+  sched_config.enforce_memory_limit = true;
+  TF_EXPECT_OK(RunScheduler(hlo_module.get(), sched_config));
+  std::vector<HloInstruction*> new_instruction_sequence =
+      module_schedule.sequence(entry_computation).instructions();
+  if (VLOG_IS_ON(1)) {
+    for (auto* new_i : new_instruction_sequence) {
+      VLOG(1) << new_i->ToString();
+    }
+  }
+  const HloInstruction* s = FindInstruction(hlo_module.get(), "s");
+  const HloInstruction* cps =
+      FindInstruction(hlo_module.get(), "collective-permute-start");
+  EXPECT_LT(PositionInVector(new_instruction_sequence, s),
+            PositionInVector(new_instruction_sequence, cps));
+}
+
+TEST_F(LatencyHidingSchedulerTest, EnforceMemoryLimitNoEffectWithHeadroom) {
+  // Same module as above, but with a memory limit well above the peak (136
+  // bytes): the filter must never fire and the scheduler must keep overlapping
+  // the slice with the collective-permute, exactly as with the feature off.
+  absl::string_view hlo_string = R"(
+    HloModule enforce_memory_limit_headroom_test, is_scheduled=true
+    ENTRY main {
+     p0 = bf16[8]{0} parameter(0)
+     c = bf16[] constant(0)
+     b = bf16[43]{0} broadcast(c), dimensions={}
+     s = bf16[1]{0} slice(b), slice={[0:1]}
+     cp = bf16[8]{0} collective-permute(p0), source_target_pairs={{0,1},{1,2},{2,3}}
+    ROOT tuple = (bf16[8]{0}, bf16[1]{0}) tuple(cp, s)
+  }
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  HloSchedule& module_schedule = hlo_module->schedule();
+  EXPECT_TRUE(hlo_module->has_entry_computation());
+  HloComputation* entry_computation = hlo_module->entry_computation();
+  auto sched_config = GetDefaultSchedConfig();
+  sched_config.memory_limit = 1000;
+  sched_config.enforce_memory_limit = true;
+  TF_EXPECT_OK(RunScheduler(hlo_module.get(), sched_config));
+  std::vector<HloInstruction*> new_instruction_sequence =
+      module_schedule.sequence(entry_computation).instructions();
+  const HloInstruction* s = FindInstruction(hlo_module.get(), "s");
+  const HloInstruction* cps =
+      FindInstruction(hlo_module.get(), "collective-permute-start");
+  const HloInstruction* cpd =
+      FindInstruction(hlo_module.get(), "collective-permute-done");
+  EXPECT_GT(PositionInVector(new_instruction_sequence, s),
+            PositionInVector(new_instruction_sequence, cps));
+  EXPECT_LT(PositionInVector(new_instruction_sequence, s),
+            PositionInVector(new_instruction_sequence, cpd));
+}
+
+TEST_F(LatencyHidingSchedulerTest, EnforceMemoryLimitTinyLimitStillSchedules) {
+  // With a limit that nothing fits under, every candidate is skipped by the
+  // memory filter; the soft-cap fallback must disable the filter and still
+  // produce a complete schedule instead of failing.
+  absl::string_view hlo_string = R"(
+    HloModule enforce_memory_limit_tiny_test, is_scheduled=true
+    ENTRY main {
+     p0 = bf16[8]{0} parameter(0)
+     c = bf16[] constant(0)
+     b = bf16[43]{0} broadcast(c), dimensions={}
+     s = bf16[1]{0} slice(b), slice={[0:1]}
+     cp = bf16[8]{0} collective-permute(p0), source_target_pairs={{0,1},{1,2},{2,3}}
+    ROOT tuple = (bf16[8]{0}, bf16[1]{0}) tuple(cp, s)
+  }
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  HloSchedule& module_schedule = hlo_module->schedule();
+  EXPECT_TRUE(hlo_module->has_entry_computation());
+  HloComputation* entry_computation = hlo_module->entry_computation();
+  auto sched_config = GetDefaultSchedConfig();
+  sched_config.memory_limit = 1;
+  sched_config.enforce_memory_limit = true;
+  TF_EXPECT_OK(RunScheduler(hlo_module.get(), sched_config));
+  std::vector<HloInstruction*> new_instruction_sequence =
+      module_schedule.sequence(entry_computation).instructions();
+  EXPECT_EQ(new_instruction_sequence.size(),
+            entry_computation->instruction_count());
+}
+
+TEST_F(LatencyHidingSchedulerTest, EnforceMemoryLimitDelaysWgradLikeSinks) {
+  // Miniature of an unrolled transformer backward pass with two layers.
+  // Per layer i (backward order: layer 2 then layer 1):
+  //   - the "dgrad" chain runs through a collective-permute and produces the
+  //     gradient for the next layer,
+  //   - the "wgrad" (sl_i + wg_i) consumes a large saved "activation" act_i
+  //     and the incoming gradient, and produces a small output feeding only
+  //     the root.
+  // The activation's live range ends at sl_i. With enforce_memory_limit and a
+  // limit that fits only one activation at a time, the live ranges must not
+  // overlap regardless of how the comparator heuristics evolve: each
+  // activation is consumed before the other one is materialized. (The
+  // behavior contrast between filter on/off is covered by
+  // EnforceMemoryLimitAvoidsOverlapAboveLimit; at this miniature scale the
+  // default heuristics happen to produce a tight pairing even without
+  // enforcement.)
+  absl::string_view hlo_string = R"(
+    HloModule enforce_memory_limit_wgrad_test, is_scheduled=true
+    ENTRY main {
+     p0 = bf16[8]{0} parameter(0)
+     c = bf16[] constant(0)
+     act1 = bf16[64]{0} broadcast(c), dimensions={}
+     act2 = bf16[64]{0} broadcast(c), dimensions={}
+     sl2 = bf16[8]{0} slice(act2), slice={[0:8]}
+     wg2 = bf16[8]{0} add(sl2, p0)
+     cp2 = bf16[8]{0} collective-permute(p0), source_target_pairs={{0,1},{1,2},{2,3}}
+     dg2 = bf16[8]{0} add(cp2, p0)
+     sl1 = bf16[8]{0} slice(act1), slice={[0:8]}
+     wg1 = bf16[8]{0} add(sl1, dg2)
+     cp1 = bf16[8]{0} collective-permute(dg2), source_target_pairs={{0,1},{1,2},{2,3}}
+     dg1 = bf16[8]{0} add(cp1, dg2)
+    ROOT t = (bf16[8]{0}, bf16[8]{0}, bf16[8]{0}) tuple(dg1, wg1, wg2)
+  }
+)";
+
+  auto acts_overlap = [](absl::Span<HloInstruction* const> seq) {
+    // act_i is live from its position to the position of its consumer sl_i.
+    int act1 = GetIndex(seq, "act1");
+    int act2 = GetIndex(seq, "act2");
+    int sl1 = GetIndex(seq, "sl1");
+    int sl2 = GetIndex(seq, "sl2");
+    return act2 < sl1 && act1 < sl2;
+  };
+
+  // GPU-like aggressive scheduling plus a memory limit that fits only one
+  // activation at a time.
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  auto sched_config = GetDefaultSchedConfig();
+  sched_config.aggressive_scheduling_policies = true;
+  sched_config.memory_limit = 250;
+  sched_config.enforce_memory_limit = true;
+  TF_EXPECT_OK(RunScheduler(hlo_module.get(), sched_config));
+  std::vector<HloInstruction*> new_instruction_sequence =
+      hlo_module->schedule()
+          .sequence(hlo_module->entry_computation())
+          .instructions();
+  if (VLOG_IS_ON(1)) {
+    for (auto* new_i : new_instruction_sequence) {
+      VLOG(1) << new_i->ToString();
+    }
+  }
+  EXPECT_EQ(new_instruction_sequence.size(),
+            hlo_module->entry_computation()->instruction_count());
+  EXPECT_FALSE(acts_overlap(new_instruction_sequence));
+}
+
 TEST_F(LatencyHidingSchedulerTest, MultipleAsyncDoneOperationsDoNotCreateLoop) {
   absl::string_view hlo_string = R"(
 HloModule multiple_async_done_scheduler_test, is_scheduled=true

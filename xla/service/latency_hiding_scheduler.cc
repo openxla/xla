@@ -1924,6 +1924,7 @@ enum SkipNodeReason {
   kShouldSkipNodeFunction,
   kExceedsOverlapLimit,
   kAnnotationGroupNotReady,
+  kExceedsMemoryLimit,
 };
 
 absl::string_view SkipNodeReasonString(SkipNodeReason reason) {
@@ -1934,6 +1935,8 @@ absl::string_view SkipNodeReasonString(SkipNodeReason reason) {
       return "Skipped due to kExceedsOverlapLimit.";
     case SkipNodeReason::kAnnotationGroupNotReady:
       return "Skipped due to kAnnotationNotReady.";
+    case SkipNodeReason::kExceedsMemoryLimit:
+      return "Skipped due to kExceedsMemoryLimit.";
   }
 }
 
@@ -1951,6 +1954,13 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
     DefaultSchedulerCore::SchedulingState& sched_state,
     DefaultSchedulerCore::ShouldSkipNodeFunction should_skip_node) {
   auto ready_lt = CreateReadySetComparator(sched_state);
+  const uint64_t config_memory_limit = sched_state.config.memory_limit;
+  // Memory usage is constant within this call since nothing gets scheduled
+  // while selecting a node.
+  const int64_t memory_usage =
+      sched_state.memory_pressure_tracker->memory_usage();
+  bool memory_filter_enabled = sched_state.config.enforce_memory_limit &&
+                               config_memory_limit != UINT64_MAX;
   while (true) {
     // Schedule a nop instruction if available.
     if (!sched_state.nop_set.empty()) {
@@ -2029,6 +2039,31 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
       }
       ScheduleCandidate ready_candidate =
           InitializeCandidate(ready_node, sched_state);
+      // If scheduling this node would push memory usage above the configured
+      // limit, do not schedule it while any other node is available. If every
+      // node exceeds the limit, the filter is disabled below and the ready set
+      // is re-scanned (soft cap). Note that nodes scheduled through the
+      // annotation-group path do not go through this filter.
+      if (memory_filter_enabled) {
+        std::pair<int64_t, int64_t> pressure_change =
+            ready_lt->GetMemoryPressureChanges(sched_state, ready_candidate,
+                                               ready_node);
+        if (pressure_change.first > 0 &&
+            static_cast<uint64_t>(memory_usage + pressure_change.first) >
+                config_memory_limit) {
+          if (!ready_chosen_valid) {
+            skipped_nodes_and_reasons.push_back(
+                {ready_node, SkipNodeReason::kExceedsMemoryLimit});
+            if (ABSL_PREDICT_FALSE(vlog_2)) {
+              VLOG(2) << SkipNodeReasonString(
+                             skipped_nodes_and_reasons.back().second)
+                      << " node: " << ready_node->GetInstr().name()
+                      << " memory increase: " << pressure_change.first;
+            }
+          }
+          continue;
+        }
+      }
       if (!ready_chosen_valid) {
         ready_chosen = ready_candidate;
         chosen_it = ready_node_it;
@@ -2071,6 +2106,21 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
       std::swap(*chosen_it, sched_state.ready_set.back());
       sched_state.ready_set.pop_back();
       return ready_chosen.node;
+    }
+
+    // Progress guarantee for the memory-limit filter (soft cap): if no node
+    // was selectable only because scheduling it would exceed the memory limit,
+    // retry with the filter disabled. The over-limit comparator rules
+    // (kDecreaseMemoryOverLimit/kMemoryPeakOverLimit) then pick the node with
+    // the smallest memory increase.
+    if (memory_filter_enabled &&
+        absl::c_any_of(skipped_nodes_and_reasons, [](const auto& pair) {
+          return pair.second == SkipNodeReason::kExceedsMemoryLimit;
+        })) {
+      VLOG(2) << "No node schedulable under the memory limit filter; retrying "
+                 "with the filter disabled.";
+      memory_filter_enabled = false;
+      continue;
     }
 
     if (sched_state.config.deannotate_group_if_blocked) {
