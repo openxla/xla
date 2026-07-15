@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/c_api_internal.h"  // IWYU pragma: keep
+#include "xla/ffi/api/c_api_nccl_collective_resources.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/execution_state.h"
 #include "xla/ffi/ffi_internal_api.h"
@@ -40,6 +41,7 @@ limitations under the License.
 #include "xla/ffi/ffi_registry.h"
 #include "xla/ffi/ffi_structs.h"
 #include "xla/ffi/invoke.h"
+#include "xla/ffi/nccl_collective_resources_api.h"
 #include "xla/ffi/type_registry.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
@@ -134,6 +136,47 @@ static absl::StatusCode ToStatusCode(XLA_FFI_Error_Code errc) {
   }
 }
 
+static XLA_FFI_Error_Code ToErrorCode(absl::StatusCode code) {
+  switch (code) {
+    case absl::StatusCode::kOk:
+      return XLA_FFI_Error_Code_OK;
+    case absl::StatusCode::kCancelled:
+      return XLA_FFI_Error_Code_CANCELLED;
+    case absl::StatusCode::kUnknown:
+      return XLA_FFI_Error_Code_UNKNOWN;
+    case absl::StatusCode::kInvalidArgument:
+      return XLA_FFI_Error_Code_INVALID_ARGUMENT;
+    case absl::StatusCode::kDeadlineExceeded:
+      return XLA_FFI_Error_Code_DEADLINE_EXCEEDED;
+    case absl::StatusCode::kNotFound:
+      return XLA_FFI_Error_Code_NOT_FOUND;
+    case absl::StatusCode::kAlreadyExists:
+      return XLA_FFI_Error_Code_ALREADY_EXISTS;
+    case absl::StatusCode::kPermissionDenied:
+      return XLA_FFI_Error_Code_PERMISSION_DENIED;
+    case absl::StatusCode::kResourceExhausted:
+      return XLA_FFI_Error_Code_RESOURCE_EXHAUSTED;
+    case absl::StatusCode::kFailedPrecondition:
+      return XLA_FFI_Error_Code_FAILED_PRECONDITION;
+    case absl::StatusCode::kAborted:
+      return XLA_FFI_Error_Code_ABORTED;
+    case absl::StatusCode::kOutOfRange:
+      return XLA_FFI_Error_Code_OUT_OF_RANGE;
+    case absl::StatusCode::kUnimplemented:
+      return XLA_FFI_Error_Code_UNIMPLEMENTED;
+    case absl::StatusCode::kInternal:
+      return XLA_FFI_Error_Code_INTERNAL;
+    case absl::StatusCode::kUnavailable:
+      return XLA_FFI_Error_Code_UNAVAILABLE;
+    case absl::StatusCode::kDataLoss:
+      return XLA_FFI_Error_Code_DATA_LOSS;
+    case absl::StatusCode::kUnauthenticated:
+      return XLA_FFI_Error_Code_UNAUTHENTICATED;
+    default:
+      return XLA_FFI_Error_Code_UNKNOWN;
+  }
+}
+
 #define XLA_FFI_RETURN_IF_ERROR(expr)                                   \
   do {                                                                  \
     absl::Status _status = (expr);                                      \
@@ -162,6 +205,17 @@ static void XLA_FFI_Error_GetMessage(XLA_FFI_Error_GetMessage_Args* args) {
   // absl::Status owns error message in a std::string which guarantees that
   // we'll get a null terminated string.
   args->message = args->error->status.message().data();
+}
+
+static void XLA_FFI_Error_GetCode(XLA_FFI_Error_GetCode_Args* args) {
+  absl::Status struct_size_check = ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_Error_GetCode", XLA_FFI_Error_GetCode_Args_STRUCT_SIZE,
+      args->struct_size);
+  if (!struct_size_check.ok()) {
+    LOG(ERROR) << struct_size_check.message();
+    return;
+  }
+  args->errc = ToErrorCode(args->error->status.code());
 }
 
 static void XLA_FFI_Error_Destroy(XLA_FFI_Error_Destroy_Args* args) {
@@ -552,13 +606,262 @@ static XLA_FFI_Error* XLA_FFI_ThreadPool_NumThreads(
 }
 
 //===----------------------------------------------------------------------===//
+// XLA FFI NCCL collective-resources extension implementation
+//===----------------------------------------------------------------------===//
+
+static XLA_FFI_Error* ToFfiError(absl::Status status) {
+  return status.ok() ? nullptr : new XLA_FFI_Error{std::move(status)};
+}
+
+static absl::Status ValidateNcclCollectiveResourcesStage(
+    XLA_FFI_ExecutionContext* ctx, XLA_FFI_ExecutionStage expected,
+    absl::string_view operation) {
+  if (ctx == nullptr) {
+    return InvalidArgument("%s execution context is null", operation);
+  }
+  if (ctx->stage != expected) {
+    return FailedPrecondition("%s is not valid in execution stage %d",
+                              operation, static_cast<int>(ctx->stage));
+  }
+  return absl::OkStatus();
+}
+
+static absl::StatusOr<NcclCollectiveResourcesApi*>
+GetNcclCollectiveResourcesApi(XLA_FFI_ExecutionContext* ctx) {
+  if (ctx == nullptr) {
+    return InvalidArgument(
+        "NCCL collective-resources execution context is null");
+  }
+
+  auto* gpu =
+      std::get_if<XLA_FFI_ExecutionContext::GpuContext>(&ctx->backend_context);
+  if (gpu == nullptr) {
+    return Unimplemented(
+        "NCCL collective resources are not implemented for this backend");
+  }
+  if (gpu->nccl_collective_resources == nullptr) {
+    return FailedPrecondition(
+        "NCCL collective-resources adapter is not available");
+  }
+  return gpu->nccl_collective_resources;
+}
+
+static XLA_FFI_Error* NcclCollectiveResourcesRequest(
+    XLA_FFI_NcclCollectiveResources_Request_Args* args) {
+  if (args == nullptr) {
+    return ToFfiError(InvalidArgument(
+        "XLA_FFI_NcclCollectiveResources_Request_Args is null"));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_NcclCollectiveResources_Request_Args",
+      XLA_FFI_NcclCollectiveResources_Request_Args_STRUCT_SIZE,
+      args->struct_size));
+  args->resource = nullptr;
+  args->rank = -1;
+  args->clique_size = -1;
+  if (args->group == nullptr) {
+    return ToFfiError(InvalidArgument("NCCL collective group is null"));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_NcclCollectiveGroup", XLA_FFI_NcclCollectiveGroup_STRUCT_SIZE,
+      args->group->struct_size));
+  if (args->region_count != 0 && args->regions == nullptr) {
+    return ToFfiError(InvalidArgument(
+        "NCCL collective regions are null for non-zero region count"));
+  }
+  for (size_t i = 0; i < args->region_count; ++i) {
+    XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+        "XLA_FFI_NcclCollectiveRegion",
+        XLA_FFI_NcclCollectiveRegion_STRUCT_SIZE,
+        args->regions[i].struct_size));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ValidateNcclCollectiveResourcesStage(
+      args->ctx, XLA_FFI_ExecutionStage_PREPARE,
+      "NCCL collective-resources Request"));
+
+  absl::StatusOr<NcclCollectiveResourcesApi*> api =
+      GetNcclCollectiveResourcesApi(args->ctx);
+  if (!api.ok()) {
+    return ToFfiError(api.status());
+  }
+  return ToFfiError((*api)->Request(args));
+}
+
+static XLA_FFI_Error* NcclCollectiveResourcesInitialize(
+    XLA_FFI_NcclCollectiveResources_Initialize_Args* args) {
+  if (args == nullptr) {
+    return ToFfiError(InvalidArgument(
+        "XLA_FFI_NcclCollectiveResources_Initialize_Args is null"));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_NcclCollectiveResources_Initialize_Args",
+      XLA_FFI_NcclCollectiveResources_Initialize_Args_STRUCT_SIZE,
+      args->struct_size));
+  if (args->resource == nullptr) {
+    return ToFfiError(InvalidArgument("NCCL collective resource is null"));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ValidateNcclCollectiveResourcesStage(
+      args->ctx, XLA_FFI_ExecutionStage_INITIALIZE,
+      "NCCL collective-resources Initialize"));
+
+  absl::StatusOr<NcclCollectiveResourcesApi*> api =
+      GetNcclCollectiveResourcesApi(args->ctx);
+  if (!api.ok()) {
+    return ToFfiError(api.status());
+  }
+  return ToFfiError((*api)->Initialize(args));
+}
+
+static XLA_FFI_Error* NcclCollectiveResourcesCommit(
+    XLA_FFI_NcclCollectiveResources_Commit_Args* args) {
+  if (args == nullptr) {
+    return ToFfiError(
+        InvalidArgument("XLA_FFI_NcclCollectiveResources_Commit_Args is null"));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_NcclCollectiveResources_Commit_Args",
+      XLA_FFI_NcclCollectiveResources_Commit_Args_STRUCT_SIZE,
+      args->struct_size));
+  if (args->resource == nullptr) {
+    return ToFfiError(InvalidArgument("NCCL collective resource is null"));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ValidateNcclCollectiveResourcesStage(
+      args->ctx, XLA_FFI_ExecutionStage_PREPARE,
+      "NCCL collective-resources Commit"));
+
+  absl::StatusOr<NcclCollectiveResourcesApi*> api =
+      GetNcclCollectiveResourcesApi(args->ctx);
+  if (!api.ok()) {
+    return ToFfiError(api.status());
+  }
+  return ToFfiError((*api)->Commit(args));
+}
+
+static XLA_FFI_Error* NcclCollectiveResourcesResolve(
+    XLA_FFI_NcclCollectiveResources_Resolve_Args* args) {
+  if (args == nullptr) {
+    return ToFfiError(InvalidArgument(
+        "XLA_FFI_NcclCollectiveResources_Resolve_Args is null"));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_NcclCollectiveResources_Resolve_Args",
+      XLA_FFI_NcclCollectiveResources_Resolve_Args_STRUCT_SIZE,
+      args->struct_size));
+  if (args->resource == nullptr) {
+    return ToFfiError(InvalidArgument("NCCL collective resource is null"));
+  }
+  if (args->address_count != 0 && args->addresses == nullptr) {
+    return ToFfiError(InvalidArgument(
+        "NCCL collective address table is null for non-zero address count"));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ValidateNcclCollectiveResourcesStage(
+      args->ctx, XLA_FFI_ExecutionStage_INITIALIZE,
+      "NCCL collective-resources Resolve"));
+
+  absl::StatusOr<NcclCollectiveResourcesApi*> api =
+      GetNcclCollectiveResourcesApi(args->ctx);
+  if (!api.ok()) {
+    return ToFfiError(api.status());
+  }
+  return ToFfiError((*api)->Resolve(args));
+}
+
+static XLA_FFI_Error* NcclCollectiveResourcesQueryTopology(
+    XLA_FFI_NcclCollectiveResources_QueryTopology_Args* args) {
+  if (args == nullptr) {
+    return ToFfiError(InvalidArgument(
+        "XLA_FFI_NcclCollectiveResources_QueryTopology_Args is null"));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_NcclCollectiveResources_QueryTopology_Args",
+      XLA_FFI_NcclCollectiveResources_QueryTopology_Args_STRUCT_SIZE,
+      args->struct_size));
+  if (args->resource == nullptr || args->topology == nullptr) {
+    return ToFfiError(InvalidArgument(
+        "NCCL collective topology requires resource and output"));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_NcclCollectiveTopology",
+      XLA_FFI_NcclCollectiveTopology_STRUCT_SIZE, args->topology->struct_size));
+  XLA_FFI_RETURN_IF_ERROR(ValidateNcclCollectiveResourcesStage(
+      args->ctx, XLA_FFI_ExecutionStage_INITIALIZE,
+      "NCCL collective-resources QueryTopology"));
+
+  absl::StatusOr<NcclCollectiveResourcesApi*> api =
+      GetNcclCollectiveResourcesApi(args->ctx);
+  if (!api.ok()) {
+    return ToFfiError(api.status());
+  }
+  return ToFfiError((*api)->QueryTopology(args));
+}
+
+static XLA_FFI_Error* NcclCollectiveResourcesEnqueuePrefixBarrier(
+    XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args* args) {
+  if (args == nullptr) {
+    return ToFfiError(InvalidArgument(
+        "XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args is null"));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args",
+      XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args_STRUCT_SIZE,
+      args->struct_size));
+  if (args->resource == nullptr) {
+    return ToFfiError(InvalidArgument("NCCL collective resource is null"));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ValidateNcclCollectiveResourcesStage(
+      args->ctx, XLA_FFI_ExecutionStage_EXECUTE,
+      "NCCL collective-resources EnqueuePrefixBarrier"));
+
+  absl::StatusOr<NcclCollectiveResourcesApi*> api =
+      GetNcclCollectiveResourcesApi(args->ctx);
+  if (!api.ok()) {
+    return ToFfiError(api.status());
+  }
+  return ToFfiError((*api)->Enqueue(args));
+}
+
+static void NcclCollectiveResourcesDestroy(
+    XLA_FFI_NcclCollectiveResources_Destroy_Args* args) {
+  if (args == nullptr) {
+    LOG(ERROR) << "XLA_FFI_NcclCollectiveResources_Destroy_Args is null";
+    return;
+  }
+  absl::Status struct_size_check = ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_NcclCollectiveResources_Destroy_Args",
+      XLA_FFI_NcclCollectiveResources_Destroy_Args_STRUCT_SIZE,
+      args->struct_size);
+  if (!struct_size_check.ok()) {
+    LOG(ERROR) << struct_size_check.message();
+    return;
+  }
+  delete reinterpret_cast<NcclCollectiveResourceHandle*>(args->resource);
+}
+
+//===----------------------------------------------------------------------===//
 // XLA FFI Api access
 //===----------------------------------------------------------------------===//
 
 const XLA_FFI_Api* GetXlaFfiApi() {
+  static XLA_FFI_NcclCollectiveResources_Extension nccl_collective_resources = {
+      XLA_FFI_Extension_Base{
+          XLA_FFI_NcclCollectiveResources_Extension_STRUCT_SIZE,
+          XLA_FFI_Extension_NcclCollectiveResources,
+          /*next=*/nullptr,
+      },
+      XLA_FFI_NCCL_COLLECTIVE_RESOURCES_API_MAJOR,
+      XLA_FFI_NCCL_COLLECTIVE_RESOURCES_API_MINOR,
+      NcclCollectiveResourcesRequest,
+      NcclCollectiveResourcesCommit,
+      NcclCollectiveResourcesInitialize,
+      NcclCollectiveResourcesResolve,
+      NcclCollectiveResourcesEnqueuePrefixBarrier,
+      NcclCollectiveResourcesDestroy,
+      NcclCollectiveResourcesQueryTopology,
+  };
+
   static XLA_FFI_Api api = {
       XLA_FFI_Api_STRUCT_SIZE,
-      /*extension_start=*/nullptr,
+      /*extension_start=*/&nccl_collective_resources.extension_base,
 
       XLA_FFI_Api_Version{
           XLA_FFI_Api_Version_STRUCT_SIZE,
@@ -587,6 +890,7 @@ const XLA_FFI_Api* GetXlaFfiApi() {
       XLA_FFI_Future_SetError,
       XLA_FFI_RunId_Get,
       XLA_FFI_DeviceOrdinal_Get,
+      XLA_FFI_Error_GetCode,
   };
 
   return &api;

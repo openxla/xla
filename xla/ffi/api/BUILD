@@ -28,14 +28,16 @@ package(
 # other libraries, because it allows external FFI users to simply copy the headers to their project
 # and do not worry about build configuration or dependencies.
 
-# A user of the FFI interface will only need the three headers included in the `all_headers`
-# filegroup: `api.h`, `c_api.h`, and `ffi.h`.
+# A user of the FFI interface can copy the headers in `all_headers`, including
+# optional extension APIs.
 filegroup(
     name = "all_headers",
     srcs = [
         "api.h",
         "c_api.h",
+        "c_api_nccl_collective_resources.h",
         "ffi.h",
+        "nccl_collective_resources.h",
     ],
 )
 
@@ -68,11 +70,38 @@ cc_library(
 )
 
 cc_library(
+    name = "c_api_nccl_collective_resources",
+    hdrs = ["c_api_nccl_collective_resources.h"],
+    deps = [":c_api"],
+)
+
+cc_library(
     name = "ffi",
     hdrs = ["ffi.h"],
     deps = [
         ":api",
         ":c_api",
+    ],
+)
+
+cc_library(
+    name = "nccl_collective_resources",
+    hdrs = ["nccl_collective_resources.h"],
+    deps = [
+        ":c_api",
+        ":c_api_nccl_collective_resources",
+        ":ffi",
+    ],
+)
+
+xla_cc_test(
+    name = "nccl_collective_resources_test",
+    srcs = ["nccl_collective_resources_test.cc"],
+    deps = [
+        ":c_api",
+        ":c_api_nccl_collective_resources",
+        ":nccl_collective_resources",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

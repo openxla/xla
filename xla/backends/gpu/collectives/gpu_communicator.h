@@ -64,6 +64,13 @@ struct PlatformCommunicatorHandle {
   void* handle = nullptr;  // will be nullptr if not supported
 };
 
+// Direct load/store topology for a GPU communicator.
+struct GpuCommunicatorTopology {
+  int64_t lsa_size;
+  int64_t lsa_team_count;
+  bool multimem_supported;
+};
+
 // A device communicator that corresponds to the host side GPU communicator
 // object (it has same rank in the collective clique and shares underlying
 // resources). A host-side GPU communicator object can instantiate multiple
@@ -142,6 +149,11 @@ class GpuCommunicator : public Communicator {
   // or nullptr if not backed by a StreamExecutor.
   virtual stream_executor::StreamExecutor* stream_executor() const {
     return nullptr;
+  }
+
+  // Returns direct load/store topology discovered by the backend.
+  virtual absl::StatusOr<GpuCommunicatorTopology> GetTopology() const {
+    return Unimplemented("Communicator topology is not implemented");
   }
 
   // Returns GXL communicator if supported.
