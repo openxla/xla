@@ -515,6 +515,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_thunk_buffer_debug_module_outputs(false);
   opts.set_xla_gpu_enable_gxl_ragged_all_to_all(false);
   opts.set_xla_gpu_gxl_scratch_size_bytes(64 * 1024 * 1024);
+  opts.set_xla_gpu_experimental_lhs_enforce_memory_limit(false);
 
   // Disable float checks.
   opts.set_xla_gpu_detect_nan(DebugOptions::DETECTION_MODE_NONE);
@@ -3266,6 +3267,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       int64_setter_for(&DebugOptions::set_xla_gpu_gxl_scratch_size_bytes),
       debug_options->xla_gpu_gxl_scratch_size_bytes(),
       "Size in bytes of the scratch buffer for GXL collectives."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_lhs_enforce_memory_limit",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_lhs_enforce_memory_limit),
+      debug_options->xla_gpu_experimental_lhs_enforce_memory_limit(),
+      "If true, the latency-hiding scheduler avoids scheduling nodes that "
+      "would push memory usage above the scheduler memory limit when any "
+      "alternative node is available."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_use_ragged_dot_grouped_gemm",
       bool_setter_for(
