@@ -44,7 +44,7 @@ absl::Status LaunchMultiGpuBarrier(
 
 // Launches a barrier across one NCCL load/store-accessible team. The kernel
 // resolves peer signal addresses from the NCCL symmetric-memory window.
-absl::Status LaunchNcclLsaBarrier(
+absl::Status LaunchMultiGpuBarrierWithNccl(
     stream_executor::Stream* stream, int64_t num_devices, RankId rank,
     xla::SymmetricMemory* symmetric_memory,
     stream_executor::DeviceAddressBase local_barrier_signal_value);

@@ -123,8 +123,8 @@ XLA_FFI_Error* QueryTopology(
   return nullptr;
 }
 
-XLA_FFI_Error* BeginCollective(
-    XLA_FFI_NcclCollectiveResources_BeginCollective_Args* args) {
+XLA_FFI_Error* EnqueueBarrierBeforeLaunch(
+    XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args* args) {
   TestState* state = GetState(args->resource);
   ++state->enqueue_count;
   EXPECT_EQ(args->ctx, state->context);
@@ -145,7 +145,7 @@ XLA_FFI_NcclCollectiveResources_Extension TestExtension() {
       Commit,
       Initialize,
       Resolve,
-      BeginCollective,
+      EnqueueBarrierBeforeLaunch,
       Destroy,
       QueryTopology,
   };
@@ -209,7 +209,7 @@ TEST(NcclCollectiveResourcesTest, DispatchesResourceLifecycle) {
                                                               addresses.size()))
                   .success());
   EXPECT_EQ(addresses, (std::vector<uint64_t>{100, 200}));
-  EXPECT_TRUE(resources.BeginCollective(*resource).success());
+  EXPECT_TRUE(resources.EnqueueBarrierBeforeLaunch(*resource).success());
   resource.reset();
 
   EXPECT_EQ(state.request_count, 1);

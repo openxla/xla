@@ -164,7 +164,7 @@ class NcclCollectiveResource {
 //
 //   Prepare:    Request, then Commit.
 //   Initialize: Initialize, then ResolveAddresses.
-//   Execute:    BeginCollective, if entry synchronization was requested.
+//   Execute:    EnqueueBarrierBeforeLaunch, if requested.
 //
 // The resource token must remain alive until all enqueued device work using its
 // addresses or barrier has completed.
@@ -359,20 +359,21 @@ class NcclCollectiveResources {
   // Begins collective execution by enqueueing the entry synchronization
   // requested during Prepare. This may be called at most once and does not
   // synchronize multiple LSA teams.
-  Error BeginCollective(const NcclCollectiveResource& resource) const {
+  Error EnqueueBarrierBeforeLaunch(
+      const NcclCollectiveResource& resource) const {
     Error association = CheckResource(resource);
     if (association.failure()) return association;
-    if (extension_->begin_collective == nullptr) {
+    if (extension_->enqueue_barrier_before_launch == nullptr) {
       return Unimplemented(
-          "NCCL collective BeginCollective operation is unavailable");
+          "NCCL collective pre-launch barrier operation is unavailable");
     }
 
-    XLA_FFI_NcclCollectiveResources_BeginCollective_Args args = {};
+    XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args args = {};
     args.struct_size =
-        XLA_FFI_NcclCollectiveResources_BeginCollective_Args_STRUCT_SIZE;
+        XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args_STRUCT_SIZE;
     args.ctx = ctx_;
     args.resource = resource.resource_;
-    XLA_FFI_Error* error = extension_->begin_collective(&args);
+    XLA_FFI_Error* error = extension_->enqueue_barrier_before_launch(&args);
     return error == nullptr ? Error::Success() : TakeError(error);
   }
 

@@ -117,7 +117,7 @@ absl::Status LaunchMultiGpuBarrier(
 }
 
 // See MultiGpuBarrierWithNcclKernel for more details.
-absl::Status LaunchNcclLsaBarrier(
+absl::Status LaunchMultiGpuBarrierWithNccl(
     stream_executor::Stream* stream, int64_t num_devices, RankId rank,
     xla::SymmetricMemory* symmetric_memory,
     stream_executor::DeviceAddressBase local_barrier_signal_value) {

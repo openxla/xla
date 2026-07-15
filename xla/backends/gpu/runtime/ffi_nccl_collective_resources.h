@@ -66,8 +66,9 @@ class FfiNcclCollectiveResources final
       XLA_FFI_NcclCollectiveResources_Resolve_Args* args) override;
   absl::Status QueryTopology(
       XLA_FFI_NcclCollectiveResources_QueryTopology_Args* args) override;
-  absl::Status BeginCollective(
-      XLA_FFI_NcclCollectiveResources_BeginCollective_Args* args) override;
+  absl::Status EnqueueBarrierBeforeLaunch(
+      XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args* args)
+      override;
 
  private:
   class Resource;

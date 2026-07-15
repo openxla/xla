@@ -795,29 +795,30 @@ static XLA_FFI_Error* NcclCollectiveResourcesQueryTopology(
   return ToFfiError((*api)->QueryTopology(args));
 }
 
-static XLA_FFI_Error* NcclCollectiveResourcesBeginCollective(
-    XLA_FFI_NcclCollectiveResources_BeginCollective_Args* args) {
+static XLA_FFI_Error* NcclCollectiveResourcesEnqueueBarrierBeforeLaunch(
+    XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args* args) {
   if (args == nullptr) {
     return ToFfiError(InvalidArgument(
-        "XLA_FFI_NcclCollectiveResources_BeginCollective_Args is null"));
+        "XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args is "
+        "null"));
   }
   XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
-      "XLA_FFI_NcclCollectiveResources_BeginCollective_Args",
-      XLA_FFI_NcclCollectiveResources_BeginCollective_Args_STRUCT_SIZE,
+      "XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args",
+      XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args_STRUCT_SIZE,
       args->struct_size));
   if (args->resource == nullptr) {
     return ToFfiError(InvalidArgument("NCCL collective resource is null"));
   }
   XLA_FFI_RETURN_IF_ERROR(ValidateNcclCollectiveResourcesStage(
       args->ctx, XLA_FFI_ExecutionStage_EXECUTE,
-      "NCCL collective-resources BeginCollective"));
+      "NCCL collective-resources EnqueueBarrierBeforeLaunch"));
 
   absl::StatusOr<NcclCollectiveResourcesApi*> api =
       GetNcclCollectiveResourcesApi(args->ctx);
   if (!api.ok()) {
     return ToFfiError(api.status());
   }
-  return ToFfiError((*api)->BeginCollective(args));
+  return ToFfiError((*api)->EnqueueBarrierBeforeLaunch(args));
 }
 
 static void NcclCollectiveResourcesDestroy(
@@ -854,7 +855,7 @@ const XLA_FFI_Api* GetXlaFfiApi() {
       NcclCollectiveResourcesCommit,
       NcclCollectiveResourcesInitialize,
       NcclCollectiveResourcesResolve,
-      NcclCollectiveResourcesBeginCollective,
+      NcclCollectiveResourcesEnqueueBarrierBeforeLaunch,
       NcclCollectiveResourcesDestroy,
       NcclCollectiveResourcesQueryTopology,
   };

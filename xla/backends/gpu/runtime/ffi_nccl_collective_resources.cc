@@ -1007,23 +1007,23 @@ absl::Status FfiNcclCollectiveResources::QueryTopology(
   return absl::OkStatus();
 }
 
-absl::Status FfiNcclCollectiveResources::BeginCollective(
-    XLA_FFI_NcclCollectiveResources_BeginCollective_Args* args) {
+absl::Status FfiNcclCollectiveResources::EnqueueBarrierBeforeLaunch(
+    XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args* args) {
   if (args == nullptr) {
     return absl::InvalidArgumentError(
-        "NCCL collective BeginCollective args must not be null");
+        "NCCL collective pre-launch barrier args must not be null");
   }
   RETURN_IF_ERROR(CheckStructSize(
-      "XLA_FFI_NcclCollectiveResources_BeginCollective_Args",
-      XLA_FFI_NcclCollectiveResources_BeginCollective_Args_STRUCT_SIZE,
+      "XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args",
+      XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args_STRUCT_SIZE,
       args->struct_size));
   if (args->ctx == nullptr || args->resource == nullptr) {
     return absl::InvalidArgumentError(
-        "NCCL collective BeginCollective requires context and resource");
+        "NCCL collective pre-launch barrier requires context and resource");
   }
   if (state_->stage != XLA_FFI_ExecutionStage_EXECUTE) {
     return absl::FailedPreconditionError(
-        "NCCL collective BeginCollective is valid only during FFI Execute");
+        "NCCL collective pre-launch barrier is valid only during FFI Execute");
   }
 
   auto* handle =
@@ -1062,7 +1062,7 @@ absl::Status FfiNcclCollectiveResources::BeginCollective(
       resource->barrier_->signal_value->address().GetByteSlice(
           0, GetMultiGpuBarrierSignalValueSize());
   resource->barrier_enqueued_ = true;
-  return LaunchNcclLsaBarrier(
+  return LaunchMultiGpuBarrierWithNccl(
       state_->stream, resource->clique_size_, resource->rank_,
       resource->barrier_->symmetric_memory.get(), signal_value);
 }

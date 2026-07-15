@@ -278,11 +278,11 @@ class CollectiveResourcesInvocation {
     return resources_.Resolve(&args);
   }
 
-  absl::Status BeginCollective() {
-    XLA_FFI_NcclCollectiveResources_BeginCollective_Args args = {
-        XLA_FFI_NcclCollectiveResources_BeginCollective_Args_STRUCT_SIZE,
+  absl::Status EnqueueBarrierBeforeLaunch() {
+    XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args args = {
+        XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args_STRUCT_SIZE,
         /*extension_start=*/nullptr, context(), resource()};
-    return resources_.BeginCollective(&args);
+    return resources_.EnqueueBarrierBeforeLaunch(&args);
   }
 
   void SetSymmetricMemories(
@@ -592,7 +592,7 @@ TEST(FfiNcclCollectiveResourcesTest, PreservesEntrySynchronizationOptIn) {
   ASSERT_THAT(no_barrier.Begin(XLA_FFI_ExecutionStage_INITIALIZE), IsOk());
   ASSERT_THAT(no_barrier.Initialize(), IsOk());
   ASSERT_THAT(no_barrier.Begin(XLA_FFI_ExecutionStage_EXECUTE), IsOk());
-  EXPECT_THAT(no_barrier.BeginCollective(),
+  EXPECT_THAT(no_barrier.EnqueueBarrierBeforeLaunch(),
               StatusIs(absl::StatusCode::kFailedPrecondition,
                        HasSubstr("did not request entry synchronization")));
 }

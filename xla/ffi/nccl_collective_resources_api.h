@@ -40,8 +40,9 @@ class NcclCollectiveResourcesApi {
       XLA_FFI_NcclCollectiveResources_Resolve_Args* args) = 0;
   virtual absl::Status QueryTopology(
       XLA_FFI_NcclCollectiveResources_QueryTopology_Args* args) = 0;
-  virtual absl::Status BeginCollective(
-      XLA_FFI_NcclCollectiveResources_BeginCollective_Args* args) = 0;
+  virtual absl::Status EnqueueBarrierBeforeLaunch(
+      XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args*
+          args) = 0;
 };
 
 }  // namespace xla::ffi

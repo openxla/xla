@@ -40,7 +40,7 @@ extern "C" {
 //
 //   Prepare:    Request, then Commit.
 //   Initialize: Initialize, then Resolve.
-//   Execute:    BeginCollective, if entry synchronization was requested.
+//   Execute:    EnqueueBarrierBeforeLaunch, if requested.
 //   Any stage:  Destroy after all device work using the resource has finished.
 //
 // The extension ABI is versioned independently from the root XLA FFI API.
@@ -308,7 +308,7 @@ typedef XLA_FFI_Error* XLA_FFI_NcclCollectiveResources_Resolve(
 // every rank in the NCCL LSA reaches the same boundary. This operation is
 // valid only during FFI Execute, only when Request set barrier_before_launch,
 // and at most once per resource. It does not synchronize multiple LSA teams.
-struct XLA_FFI_NcclCollectiveResources_BeginCollective_Args {
+struct XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args {
   size_t struct_size;
   XLA_FFI_Extension_Base* extension_start;
 
@@ -317,10 +317,11 @@ struct XLA_FFI_NcclCollectiveResources_BeginCollective_Args {
 };
 
 XLA_FFI_DEFINE_STRUCT_TRAITS(
-    XLA_FFI_NcclCollectiveResources_BeginCollective_Args, resource);
+    XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args, resource);
 
-typedef XLA_FFI_Error* XLA_FFI_NcclCollectiveResources_BeginCollective(
-    XLA_FFI_NcclCollectiveResources_BeginCollective_Args* args);
+typedef XLA_FFI_Error*
+XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch(
+    XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args* args);
 
 // Releases the host-side token and resources owned specifically by it. This
 // does not synchronize a GPU stream or invalidate XLA's underlying buffer
@@ -338,11 +339,11 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_NcclCollectiveResources_Destroy_Args,
 typedef void XLA_FFI_NcclCollectiveResources_Destroy(
     XLA_FFI_NcclCollectiveResources_Destroy_Args* args);
 
-// Extension table published through XLA_FFI_Api::extension_start. Callers must
-// require an exact ABI major-version match. They may use fields introduced by a
-// minor version only when abi_minor_version and extension_base.struct_size both
-// include that field. Callers must also check optional callbacks for null.
-// destroy is required for every returned resource.
+// Extension table published through XLA_FFI_Api::extension_start. Minor
+// versions preserve this table as a prefix and append new fields at the end.
+// Callers must apply the version and struct-size rules documented above and
+// check optional callbacks for null. destroy is required for every returned
+// resource.
 struct XLA_FFI_NcclCollectiveResources_Extension {
   XLA_FFI_Extension_Base extension_base;
   int32_t abi_major_version;
@@ -352,7 +353,8 @@ struct XLA_FFI_NcclCollectiveResources_Extension {
   XLA_FFI_NcclCollectiveResources_Commit* commit;
   XLA_FFI_NcclCollectiveResources_Initialize* initialize;
   XLA_FFI_NcclCollectiveResources_Resolve* resolve;
-  XLA_FFI_NcclCollectiveResources_BeginCollective* begin_collective;
+  XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch*
+      enqueue_barrier_before_launch;
   XLA_FFI_NcclCollectiveResources_Destroy* destroy;
   XLA_FFI_NcclCollectiveResources_QueryTopology* query_topology;
 };
