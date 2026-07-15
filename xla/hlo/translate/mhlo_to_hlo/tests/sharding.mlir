@@ -496,3 +496,18 @@ func.func @main() -> tensor<4xf32> {
   return %1#0 : tensor<4xf32>
 }
 
+// -----
+
+// A tiled sharding whose rank does not match the op shape is invalid: here a
+// rank-3 {devices=[1,2,1]} sharding on a rank-0 scalar constant, which sharding
+// propagation can produce. It must be dropped so the export succeeds (XLA
+// infers a valid sharding) instead of aborting with "Number of tile assignment
+// dimensions ... different than the input rank".
+// CHECK-LABEL: HloModule main
+// CHECK: constant(3.1415925)
+// CHECK-NOT: sharding
+func.func @main() -> tensor<f32> {
+  %0 = mhlo.constant {mhlo.sharding = "{devices=[1,2,1]0,1}"} dense<3.1415926> : tensor<f32>
+  return %0 : tensor<f32>
+}
+

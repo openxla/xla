@@ -147,7 +147,18 @@ absl::Status NormalizeAndAssignSharing(HloInstructionProto* instr,
   ASSIGN_OR_RETURN(Shape shape, Shape::FromProto(instr->shape()));
   ASSIGN_OR_RETURN(HloSharding sharding, HloSharding::FromProto(op_sharding));
   sharding = sharding.NormalizeTupleSharding(shape);
-  RETURN_IF_ERROR(sharding.Validate(shape));
+  absl::Status validate_status = sharding.Validate(shape);
+  if (!validate_status.ok()) {
+    // A tiled sharding whose rank doesn't match the op shape (e.g. propagated
+    // onto a scalar) is invalid; drop it and let XLA infer a valid sharding
+    // instead of aborting the import.
+    if (!shape.IsTuple() && sharding.IsTiled() &&
+        sharding.TiledDataRank() !=
+            static_cast<int64_t>(shape.dimensions().size())) {
+      return absl::OkStatus();
+    }
+    return validate_status;
+  }
   *instr->mutable_sharding() = sharding.ToProto();
   return absl::OkStatus();
 }
