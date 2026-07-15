@@ -657,6 +657,8 @@ absl::Status RunLatencyHidingSchedulerPasses(
       memory_limit,
       options.xla_gpu_experimental_parallel_collective_overlap_limit(),
       options.xla_gpu_experimental_parallel_async_compute_limit());
+  config.enforce_memory_limit =
+      options.xla_gpu_experimental_lhs_enforce_memory_limit();
 
   auto shape_size_in_bytes = ShapeSizeBytesFunction(pointer_size);
 
