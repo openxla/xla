@@ -40,6 +40,7 @@ struct TestState {
   int request_count = 0;
   int commit_count = 0;
   int initialize_count = 0;
+  int query_topology_count = 0;
   int resolve_count = 0;
   int enqueue_count = 0;
   int destroy_count = 0;
@@ -109,6 +110,19 @@ XLA_FFI_Error* Resolve(XLA_FFI_NcclCollectiveResources_Resolve_Args* args) {
   return nullptr;
 }
 
+XLA_FFI_Error* QueryTopology(
+    XLA_FFI_NcclCollectiveResources_QueryTopology_Args* args) {
+  TestState* state = GetState(args->resource);
+  ++state->query_topology_count;
+  EXPECT_EQ(args->ctx, state->context);
+  args->topology->clique_size = 2;
+  args->topology->lsa_size = 2;
+  args->topology->lsa_team_count = 1;
+  args->topology->world_is_lsa = 1;
+  args->topology->multimem_supported = 1;
+  return nullptr;
+}
+
 XLA_FFI_Error* Enqueue(
     XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args* args) {
   TestState* state = GetState(args->resource);
@@ -125,28 +139,20 @@ XLA_FFI_NcclCollectiveResources_Extension TestExtension() {
   return {
       {XLA_FFI_NcclCollectiveResources_Extension_STRUCT_SIZE,
        XLA_FFI_Extension_NcclCollectiveResources, nullptr},
-      XLA_FFI_NCCL_COLLECTIVE_RESOURCES_API_MAJOR,
-      XLA_FFI_NCCL_COLLECTIVE_RESOURCES_API_MINOR,
+      XLA_FFI_NCCL_COLLECTIVE_RESOURCES_ABI_MAJOR,
+      XLA_FFI_NCCL_COLLECTIVE_RESOURCES_ABI_MINOR,
       Request,
       Commit,
       Initialize,
       Resolve,
       Enqueue,
       Destroy,
+      QueryTopology,
   };
 }
 
-TEST(NcclCollectiveResourcesTest, DispatchesResourceLifecycle) {
-  TestState state;
-  state.context = reinterpret_cast<XLA_FFI_ExecutionContext*>(&state);
-  state.resource.state = &state;
-
-  XLA_FFI_NcclCollectiveResources_Extension extension = TestExtension();
-  XLA_FFI_Api api = {};
-  api.struct_size = XLA_FFI_Api_STRUCT_SIZE;
-  api.extension_start = &extension.extension_base;
-  NcclCollectiveResources resources(&api, state.context);
-
+ErrorOr<std::unique_ptr<NcclCollectiveResource>> RequestTestResource(
+    const NcclCollectiveResources& resources) {
   std::vector<size_t> group_offsets = {0, 2};
   std::vector<int64_t> group_members = {0, 1};
   NcclCollectiveGroup group = {
@@ -165,16 +171,37 @@ TEST(NcclCollectiveResourcesTest, DispatchesResourceLifecycle) {
       /*required_alignment=*/16,
       NcclCollectiveMemoryKind::kSymmetric,
   }};
+  return resources.Request(group, regions, /*barrier_before_launch=*/true);
+}
+
+TEST(NcclCollectiveResourcesTest, DispatchesResourceLifecycle) {
+  TestState state;
+  state.context = reinterpret_cast<XLA_FFI_ExecutionContext*>(&state);
+  state.resource.state = &state;
+
+  XLA_FFI_NcclCollectiveResources_Extension extension = TestExtension();
+  XLA_FFI_Api api = {};
+  api.struct_size = XLA_FFI_Api_STRUCT_SIZE;
+  api.extension_start = &extension.extension_base;
+  NcclCollectiveResources resources(&api, state.context);
 
   ASSERT_TRUE(resources.available());
   ErrorOr<std::unique_ptr<NcclCollectiveResource>> requested =
-      resources.Request(group, regions, true);
+      RequestTestResource(resources);
   ASSERT_TRUE(requested.has_value()) << requested.error().message();
   std::unique_ptr<NcclCollectiveResource> resource = std::move(*requested);
   EXPECT_EQ(resource->info().rank, 1);
   EXPECT_EQ(resource->info().clique_size, 2);
   EXPECT_TRUE(resources.Commit(*resource).success());
   EXPECT_TRUE(resources.Initialize(*resource).success());
+
+  ErrorOr<NcclCollectiveTopology> topology = resources.QueryTopology(*resource);
+  ASSERT_TRUE(topology.has_value()) << topology.error().message();
+  EXPECT_EQ(topology->clique_size, 2);
+  EXPECT_EQ(topology->lsa_size, 2);
+  EXPECT_EQ(topology->lsa_team_count, 1);
+  EXPECT_TRUE(topology->world_is_lsa);
+  EXPECT_TRUE(topology->multimem_supported);
 
   std::vector<uint64_t> addresses(2);
   EXPECT_TRUE(resources
@@ -188,9 +215,69 @@ TEST(NcclCollectiveResourcesTest, DispatchesResourceLifecycle) {
   EXPECT_EQ(state.request_count, 1);
   EXPECT_EQ(state.commit_count, 1);
   EXPECT_EQ(state.initialize_count, 1);
+  EXPECT_EQ(state.query_topology_count, 1);
   EXPECT_EQ(state.resolve_count, 1);
   EXPECT_EQ(state.enqueue_count, 1);
   EXPECT_EQ(state.destroy_count, 1);
+}
+
+TEST(NcclCollectiveResourcesTest, AcceptsNewerAbiMinorVersion) {
+  TestState state;
+  state.context = reinterpret_cast<XLA_FFI_ExecutionContext*>(&state);
+  state.resource.state = &state;
+
+  XLA_FFI_NcclCollectiveResources_Extension extension = TestExtension();
+  ++extension.abi_minor_version;
+  XLA_FFI_Api api = {};
+  api.struct_size = XLA_FFI_Api_STRUCT_SIZE;
+  api.extension_start = &extension.extension_base;
+  NcclCollectiveResources resources(&api, state.context);
+
+  ASSERT_TRUE(resources.available());
+  ErrorOr<std::unique_ptr<NcclCollectiveResource>> requested =
+      RequestTestResource(resources);
+  ASSERT_TRUE(requested.has_value()) << requested.error().message();
+  ErrorOr<NcclCollectiveTopology> topology =
+      resources.QueryTopology(**requested);
+  ASSERT_TRUE(topology.has_value()) << topology.error().message();
+  EXPECT_EQ(state.query_topology_count, 1);
+}
+
+TEST(NcclCollectiveResourcesTest, RejectsOlderAbiMinorVersion) {
+  XLA_FFI_NcclCollectiveResources_Extension extension = TestExtension();
+  --extension.abi_minor_version;
+  XLA_FFI_Api api = {};
+  api.struct_size = XLA_FFI_Api_STRUCT_SIZE;
+  api.extension_start = &extension.extension_base;
+
+  NcclCollectiveResources resources(&api, /*ctx=*/nullptr);
+  EXPECT_FALSE(resources.available());
+}
+
+TEST(NcclCollectiveResourcesTest, RejectsIncompleteAbiZeroOneTable) {
+  XLA_FFI_NcclCollectiveResources_Extension extension = TestExtension();
+  extension.extension_base.struct_size =
+      offsetof(XLA_FFI_NcclCollectiveResources_Extension, query_topology);
+  XLA_FFI_Api api = {};
+  api.struct_size = XLA_FFI_Api_STRUCT_SIZE;
+  api.extension_start = &extension.extension_base;
+
+  NcclCollectiveResources resources(&api, /*ctx=*/nullptr);
+  EXPECT_FALSE(resources.available());
+  EXPECT_LT(
+      offsetof(XLA_FFI_NcclCollectiveResources_Extension, query_topology),
+      XLA_FFI_NCCL_COLLECTIVE_RESOURCES_ABI_0_1_STRUCT_SIZE);
+}
+
+TEST(NcclCollectiveResourcesTest, RejectsIncompatibleAbiMajorVersion) {
+  XLA_FFI_NcclCollectiveResources_Extension extension = TestExtension();
+  ++extension.abi_major_version;
+  XLA_FFI_Api api = {};
+  api.struct_size = XLA_FFI_Api_STRUCT_SIZE;
+  api.extension_start = &extension.extension_base;
+
+  NcclCollectiveResources resources(&api, /*ctx=*/nullptr);
+  EXPECT_FALSE(resources.available());
 }
 
 TEST(NcclCollectiveResourcesTest, ReportsMissingExtension) {

@@ -528,6 +528,43 @@ TEST(FfiNcclCollectiveResourcesTest, ResolvesSymmetricAndMultimemRegions) {
                                      AddressValue(multimem1.bytes.data(), 96)));
 }
 
+TEST(FfiNcclCollectiveResourcesTest,
+     RejectsMultimemWithoutCliqueWidePeerAccess) {
+  Storage local;
+  Storage multimem;
+  CollectiveResourcesInvocation invocation(
+      /*replica_count=*/2, /*partition_count=*/1, /*current_device=*/0,
+      {local.address()});
+  RegionSpec region = {local.address(), /*byte_offset=*/0, /*byte_size=*/16,
+                       /*required_alignment=*/16,
+                       XLA_FFI_NCCL_COLLECTIVE_MEMORY_KIND_MULTIMEM};
+
+  ASSERT_THAT(invocation.status(), IsOk());
+  ASSERT_THAT(invocation.Begin(XLA_FFI_ExecutionStage_PREPARE), IsOk());
+  ASSERT_THAT(invocation.Request(GroupSpec{}, {region}), IsOk());
+  ASSERT_THAT(invocation.Commit(), IsOk());
+  std::vector<CollectiveCliqueRequests::CliqueRequest> requests =
+      invocation.clique_requests().OrderedRequestedCliques();
+  ASSERT_EQ(requests.size(), 1);
+
+  absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
+      memories;
+  memories.emplace(std::make_pair(requests[0].key, 0),
+                   std::make_shared<FakeSymmetricMemory>(
+                       local.address(),
+                       std::vector<se::DeviceAddressBase>{
+                           local.address(), se::DeviceAddressBase()},
+                       multimem.address()));
+  invocation.SetSymmetricMemories(std::move(memories));
+
+  ASSERT_THAT(invocation.Begin(XLA_FFI_ExecutionStage_INITIALIZE), IsOk());
+  ASSERT_THAT(invocation.Initialize(), IsOk());
+  std::vector<uint64_t> addresses(2);
+  EXPECT_THAT(invocation.Resolve(addresses),
+              StatusIs(absl::StatusCode::kFailedPrecondition,
+                       HasSubstr("rank 1 has no peer address")));
+}
+
 TEST(FfiNcclCollectiveResourcesTest, PreservesPrefixBarrierOptIn) {
   // Creating and launching the barrier requires live GPU communicators. This
   // host test verifies that the opt-in reaches XLA's acquired-context check.

@@ -60,12 +60,12 @@ struct NcclCollectiveGroup {
 
 // Selects the device address exposed for a collective region.
 enum class NcclCollectiveMemoryKind : uint8_t {
-  // One load/store-accessible pointer per clique rank. Resolution fails unless
-  // every rank is directly accessible, including for cross-host cliques whose
-  // underlying symmetric registration itself succeeds.
+  // One directly load/store-accessible pointer per clique rank. These pointers
+  // can cross physical hosts within one NCCL MNNVL LSA.
   kSymmetric = XLA_FFI_NCCL_COLLECTIVE_MEMORY_KIND_SYMMETRIC,
   // One hardware multicast alias repeated across the region's address-table
-  // row. All ranks must be in one multicast-capable LSA team.
+  // row. Resolution verifies that all clique ranks are in one
+  // multicast-capable LSA team.
   kMultimem = XLA_FFI_NCCL_COLLECTIVE_MEMORY_KIND_MULTIMEM,
 };
 
@@ -89,12 +89,20 @@ struct NcclCollectiveInfo {
   int32_t clique_size;
 };
 
-// Describes direct load/store reachability within an acquired clique.
+// Describes direct load/store reachability within an acquired clique. LSA
+// membership follows NCCL's logical topology and can span processes and
+// physical hosts within one properly configured MNNVL/IMEX fabric.
 struct NcclCollectiveTopology {
+  // Number of communicator ranks in the complete XLA clique.
   int32_t clique_size;
+  // Number of contiguous ranks in each equal-sized LSA team.
   int32_t lsa_size;
+  // Number of LSA teams; lsa_size * lsa_team_count == clique_size.
   int32_t lsa_team_count;
+  // Derived convenience value: lsa_size == clique_size &&
+  // lsa_team_count == 1. This is not an independent health probe.
   bool world_is_lsa;
+  // Hardware multicast support for an LSA team, not necessarily the world.
   bool multimem_supported;
 };
 
@@ -281,7 +289,9 @@ class NcclCollectiveResources {
   }
 
   // Returns direct-access topology metadata during Initialize. Call after
-  // Initialize succeeds. Host boundaries do not constrain LSA membership.
+  // Initialize succeeds. A healthy single-clique MNNVL communicator can report
+  // the complete cross-host clique as one LSA; ordinary network connectivity
+  // or healthy IMEX alone does not imply that result.
   ErrorOr<NcclCollectiveTopology> QueryTopology(
       const NcclCollectiveResource& resource) const {
     Error association = CheckResource(resource);
@@ -324,7 +334,9 @@ class NcclCollectiveResources {
 
   // Writes a region-major address table during Initialize. addresses.size()
   // must equal region_count * resource.info().clique_size. Symmetric rows have
-  // one address per rank; multimem rows repeat one multicast alias.
+  // one address per rank; multimem rows repeat one multicast alias after
+  // verifying that the complete clique is directly accessible. Request a byte
+  // range twice when the kernel needs both representations.
   Error ResolveAddresses(const NcclCollectiveResource& resource,
                          Span<uint64_t> addresses) const {
     Error association = CheckResource(resource);
@@ -390,20 +402,21 @@ class NcclCollectiveResources {
           Unimplemented("NCCL collective-resources extension not found"));
     }
     if (extension_->extension_base.struct_size <
-        XLA_FFI_NcclCollectiveResources_Extension_STRUCT_SIZE) {
+        XLA_FFI_NCCL_COLLECTIVE_RESOURCES_ABI_0_1_STRUCT_SIZE) {
       return Unexpected(Unimplemented(
           "NCCL collective-resources extension table is incomplete"));
     }
-    if (extension_->api_major_version !=
-        XLA_FFI_NCCL_COLLECTIVE_RESOURCES_API_MAJOR) {
-      return Unexpected(Unimplemented(
-          "Incompatible NCCL collective-resources extension major version"));
-    }
-    if (extension_->api_minor_version <
-        XLA_FFI_NCCL_COLLECTIVE_RESOURCES_API_MINOR) {
+    if (extension_->abi_major_version !=
+        XLA_FFI_NCCL_COLLECTIVE_RESOURCES_ABI_MAJOR) {
       return Unexpected(
-          Unimplemented("NCCL collective-resources extension requires a newer "
-                        "minor version"));
+          Unimplemented("Incompatible NCCL collective-resources extension ABI "
+                        "major version"));
+    }
+    if (extension_->abi_minor_version <
+        XLA_FFI_NCCL_COLLECTIVE_RESOURCES_ABI_MINOR) {
+      return Unexpected(Unimplemented(
+          "NCCL collective-resources extension ABI minor version is older "
+          "than the client requires"));
     }
     if (extension_->destroy == nullptr) {
       return Unexpected(Unimplemented(

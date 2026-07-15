@@ -132,6 +132,35 @@ absl::StatusOr<uint64_t> AddAddressOffset(void* base, uint64_t offset,
   return address + offset;
 }
 
+absl::Status ValidateMultimemCliqueCoverage(SymmetricMemory& symmetric_memory,
+                                            RankId rank, int32_t clique_size,
+                                            uint64_t offset, uint64_t size,
+                                            size_t region_index) {
+  for (int32_t peer = 0; peer < clique_size; ++peer) {
+    if (peer == rank.value()) continue;
+
+    absl::StatusOr<se::DeviceAddressBase> peer_memory =
+        symmetric_memory.peer_addr(RankId(peer));
+    if (!peer_memory.ok()) {
+      return absl::FailedPreconditionError(absl::StrFormat(
+          "Collective multimem region %d requires the complete clique to be "
+          "one load/store-accessible team; rank %d is unavailable: %s",
+          region_index, peer, peer_memory.status().message()));
+    }
+    if (peer_memory->is_null()) {
+      return absl::FailedPreconditionError(absl::StrFormat(
+          "Collective multimem region %d requires the complete clique to be "
+          "one load/store-accessible team; rank %d has no peer address",
+          region_index, peer));
+    }
+    RETURN_IF_ERROR(ValidateByteRange(
+        offset, size, peer_memory->size(),
+        absl::StrFormat("Collective multimem region %d rank %d", region_index,
+                        peer)));
+  }
+  return absl::OkStatus();
+}
+
 absl::StatusOr<CollectiveOpGroupMode> DecodeGroupMode(
     XLA_FFI_NcclCollectiveGroupMode mode) {
   switch (mode) {
@@ -858,6 +887,9 @@ absl::Status FfiNcclCollectiveResources::Resolve(
     uint64_t offset = symmetric_offset + region.offset;
 
     if (region.memory_kind == XLA_FFI_NCCL_COLLECTIVE_MEMORY_KIND_MULTIMEM) {
+      RETURN_IF_ERROR(ValidateMultimemCliqueCoverage(
+          *symmetric_memory, resource->rank_, resource->clique_size_, offset,
+          region.size, region_index));
       ASSIGN_OR_RETURN(se::DeviceAddressBase multimem,
                        symmetric_memory->multimem_addr());
       if (multimem.is_null()) {

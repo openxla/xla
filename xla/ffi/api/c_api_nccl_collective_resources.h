@@ -30,6 +30,12 @@ extern "C" {
 // addresses, and can provide a stream-ordered barrier before the handler's
 // kernel launch.
 //
+// This is the same resource model used by XLA's Mosaic GPU collective-metadata
+// path: the handler receives a clique rank, peer pointers for symmetric
+// buffers, optional multimem aliases, and an optional clique-wide prefix
+// barrier. The extension does not prescribe a device metadata layout or copy
+// the returned address table to device memory; the handler owns that policy.
+//
 // A handler uses the extension in the following FFI stages:
 //
 //   Prepare:    Request, then Commit.
@@ -37,11 +43,14 @@ extern "C" {
 //   Execute:    EnqueuePrefixBarrier, if requested.
 //   Any stage:  Destroy after all device work using the resource has finished.
 //
-// The extension is versioned independently from the root XLA FFI API. Existing
-// structs are frozen. Minor versions may append callbacks to the extension
-// table or add new structs, but must not change an existing field's meaning.
-#define XLA_FFI_NCCL_COLLECTIVE_RESOURCES_API_MAJOR 0
-#define XLA_FFI_NCCL_COLLECTIVE_RESOURCES_API_MINOR 1
+// The extension ABI is versioned independently from the root XLA FFI API.
+// Existing structs are frozen. A major version change may break compatibility.
+// A minor version may only append fields to the extension table or add new
+// structs. Clients must require an exact major version, a runtime minor version
+// greater than or equal to the client minor version, and sufficient struct_size
+// before reading the table.
+#define XLA_FFI_NCCL_COLLECTIVE_RESOURCES_ABI_MAJOR 0
+#define XLA_FFI_NCCL_COLLECTIVE_RESOURCES_ABI_MINOR 1
 
 typedef struct XLA_FFI_NcclCollectiveResource XLA_FFI_NcclCollectiveResource;
 
@@ -101,14 +110,18 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_NcclCollectiveGroup, members);
 
 typedef enum {
   // Resolves one load/store-accessible device pointer per clique rank. Address
-  // resolution fails unless every rank is directly accessible from the current
-  // device, even when the underlying symmetric registration spans hosts.
+  // resolution calls the backend's peer-address API for every non-local rank
+  // and fails unless the complete clique is directly accessible. The returned
+  // pointers may span processes and physical hosts when NCCL exposes one
+  // MNNVL LSA through CUDA fabric handles and IMEX.
   XLA_FFI_NCCL_COLLECTIVE_MEMORY_KIND_SYMMETRIC = 0,
 
   // Resolves an LSA multimem alias for hardware multicast operations. The same
-  // alias is repeated for every rank in the region's address-table row. All
-  // clique ranks must belong to one multicast-capable load/store-accessible
-  // team; this is not a network-spanning address.
+  // alias is repeated for every rank in the region's address-table row.
+  // Resolve verifies peer access to every clique rank before returning the
+  // alias, so this kind succeeds only when the complete clique is one
+  // multicast-capable LSA team. It can span hosts within one MNNVL partition;
+  // it cannot span separate NVLink cliques through a network transport.
   XLA_FFI_NCCL_COLLECTIVE_MEMORY_KIND_MULTIMEM = 1,
 } XLA_FFI_NcclCollectiveMemoryKind;
 
@@ -209,26 +222,38 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_NcclCollectiveResources_Initialize_Args,
 typedef XLA_FFI_Error* XLA_FFI_NcclCollectiveResources_Initialize(
     XLA_FFI_NcclCollectiveResources_Initialize_Args* args);
 
-// Describes the load/store-accessible topology of an acquired clique. LSA
-// teams are determined by the collective backend from direct GPU load/store
-// reachability, not process or host boundaries. For example, an IMEX-backed
-// multi-node NVLink partition can form one LSA team across physical hosts.
+// Describes the load/store-accessible topology of an acquired clique. An LSA
+// (load/store accessible) team is a set of communicator ranks whose registered
+// symmetric memory can be addressed directly from GPU device code. Teams are
+// determined by NCCL's logical topology, not by process or physical-host
+// boundaries.
+//
+// With NCCL 2.29, a communicator contained in one healthy MNNVL partition can
+// appear as one logical topology node across multiple hosts. When CUDA fabric
+// handles can be exchanged through IMEX, this commonly produces
+// lsa_size == clique_size and lsa_team_count == 1. IMEX health alone is not
+// sufficient: every communicator rank must also belong to that MNNVL clique,
+// and NCCL must enable and discover the fabric topology.
 struct XLA_FFI_NcclCollectiveTopology {
   size_t struct_size;
   XLA_FFI_Extension_Base* extension_start;
 
   // Number of ranks in the complete clique.
   int32_t clique_size;
-  // Number of ranks directly load/store accessible from the current rank,
-  // including the current rank.
+  // Number of contiguous communicator ranks in the current rank's LSA team,
+  // including the current rank. NCCL uses equal-sized teams; a rank's team is
+  // rank / lsa_size and its rank within that team is rank % lsa_size.
   int32_t lsa_size;
-  // Number of LSA teams partitioning the complete clique.
+  // Number of equal-sized LSA teams partitioning the complete clique. The
+  // invariant lsa_size * lsa_team_count == clique_size always holds.
   int32_t lsa_team_count;
-  // Nonzero exactly when every clique rank belongs to one LSA team.
+  // Convenience value derived from lsa_size and lsa_team_count. It is nonzero
+  // exactly when lsa_size == clique_size and lsa_team_count == 1; it is not an
+  // independent fabric-health probe.
   uint8_t world_is_lsa;
-  // Nonzero when the backend reports hardware multicast support for the
-  // current LSA team. Individual multimem address resolution can still fail
-  // if its symmetric window is ineligible.
+  // Nonzero when NCCL reports hardware multicast support for an LSA team. This
+  // does not imply the complete clique is one LSA, and an individual multimem
+  // address can still fail when its symmetric window is ineligible.
   uint8_t multimem_supported;
 };
 
@@ -256,7 +281,10 @@ typedef XLA_FFI_Error* XLA_FFI_NcclCollectiveResources_QueryTopology(
 // Writes the region-major address table resolved during Initialize. The table
 // contains region_count * clique_size entries. Entry
 // addresses[region * clique_size + rank] describes that region for that rank.
-// For MULTIMEM regions, every entry in a row contains the same multicast alias.
+// For MULTIMEM regions, every entry in a row contains the same multicast alias,
+// after Resolve verifies that all clique ranks are load/store accessible from
+// the current rank. Request the same byte range once as SYMMETRIC and once as
+// MULTIMEM when a kernel needs both per-rank pointers and a multicast alias.
 // address_count must equal the complete table size; zero regions permit a null
 // addresses pointer. This operation is valid only during FFI Initialize.
 struct XLA_FFI_NcclCollectiveResources_Resolve_Args {
@@ -312,12 +340,14 @@ typedef void XLA_FFI_NcclCollectiveResources_Destroy(
     XLA_FFI_NcclCollectiveResources_Destroy_Args* args);
 
 // Extension table published through XLA_FFI_Api::extension_start. Callers must
-// validate the version and struct size, and must check an optional callback for
-// null before calling it. destroy is required for every returned resource.
+// require an exact ABI major-version match. They may use fields introduced by a
+// minor version only when abi_minor_version and extension_base.struct_size both
+// include that field. Callers must also check optional callbacks for null.
+// destroy is required for every returned resource.
 struct XLA_FFI_NcclCollectiveResources_Extension {
   XLA_FFI_Extension_Base extension_base;
-  int32_t api_major_version;
-  int32_t api_minor_version;
+  int32_t abi_major_version;
+  int32_t abi_minor_version;
 
   XLA_FFI_NcclCollectiveResources_Request* request;
   XLA_FFI_NcclCollectiveResources_Commit* commit;
@@ -325,12 +355,15 @@ struct XLA_FFI_NcclCollectiveResources_Extension {
   XLA_FFI_NcclCollectiveResources_Resolve* resolve;
   XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier* enqueue_prefix_barrier;
   XLA_FFI_NcclCollectiveResources_Destroy* destroy;
-  // Added in API minor version 1. Appended to preserve existing field offsets.
   XLA_FFI_NcclCollectiveResources_QueryTopology* query_topology;
 };
 
 XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_NcclCollectiveResources_Extension,
                              query_topology);
+
+// Minimum table size for ABI 0.1. Later minor versions preserve this prefix.
+#define XLA_FFI_NCCL_COLLECTIVE_RESOURCES_ABI_0_1_STRUCT_SIZE \
+  XLA_FFI_STRUCT_SIZE(XLA_FFI_NcclCollectiveResources_Extension, query_topology)
 
 #ifdef __cplusplus
 }

@@ -66,8 +66,12 @@ struct NcclCapabilities {
   std::string one_sided_comm_unsupported_reason;
 
   // NCCL partitions communicator ranks into equal-sized contiguous LSA teams.
+  // NCCL 2.29 derives these teams from its logical topology. On MNNVL, one
+  // logical topology node and therefore one LSA team can span physical hosts.
   int64_t lsa_size = 0;
   int64_t lsa_team_count = 0;
+  // Reports multicast support for an LSA team, not necessarily for the whole
+  // communicator when lsa_team_count is greater than one.
   bool multimem_supported = false;
 
   absl::Status GetOneSidedCommUnsupportedError(absl::string_view op) const;
