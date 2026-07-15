@@ -278,11 +278,11 @@ class CollectiveResourcesInvocation {
     return resources_.Resolve(&args);
   }
 
-  absl::Status EnqueuePrefixBarrier() {
-    XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args args = {
-        XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args_STRUCT_SIZE,
+  absl::Status BeginCollective() {
+    XLA_FFI_NcclCollectiveResources_BeginCollective_Args args = {
+        XLA_FFI_NcclCollectiveResources_BeginCollective_Args_STRUCT_SIZE,
         /*extension_start=*/nullptr, context(), resource()};
-    return resources_.Enqueue(&args);
+    return resources_.BeginCollective(&args);
   }
 
   void SetSymmetricMemories(
@@ -565,7 +565,7 @@ TEST(FfiNcclCollectiveResourcesTest,
                        HasSubstr("rank 1 has no peer address")));
 }
 
-TEST(FfiNcclCollectiveResourcesTest, PreservesPrefixBarrierOptIn) {
+TEST(FfiNcclCollectiveResourcesTest, PreservesEntrySynchronizationOptIn) {
   // Creating and launching the barrier requires live GPU communicators. This
   // host test verifies that the opt-in reaches XLA's acquired-context check.
   CollectiveResourcesInvocation barrier(
@@ -592,9 +592,9 @@ TEST(FfiNcclCollectiveResourcesTest, PreservesPrefixBarrierOptIn) {
   ASSERT_THAT(no_barrier.Begin(XLA_FFI_ExecutionStage_INITIALIZE), IsOk());
   ASSERT_THAT(no_barrier.Initialize(), IsOk());
   ASSERT_THAT(no_barrier.Begin(XLA_FFI_ExecutionStage_EXECUTE), IsOk());
-  EXPECT_THAT(no_barrier.EnqueuePrefixBarrier(),
+  EXPECT_THAT(no_barrier.BeginCollective(),
               StatusIs(absl::StatusCode::kFailedPrecondition,
-                       HasSubstr("did not request a prefix barrier")));
+                       HasSubstr("did not request entry synchronization")));
 }
 
 TEST(FfiNcclCollectiveResourcesTest, RejectsWrongStagesAndForeignResources) {

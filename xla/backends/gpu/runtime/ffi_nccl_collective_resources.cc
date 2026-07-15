@@ -82,7 +82,6 @@ struct BarrierResources {
   std::unique_ptr<se::MemoryAllocation> signal_value;
   tsl::TiedRef<SymmetricMemory> symmetric_memory_ref;
   std::shared_ptr<SymmetricMemory> symmetric_memory;
-  std::vector<se::DeviceAddressBase> peer_addresses;
 };
 
 struct ValidatedRequest {
@@ -423,6 +422,17 @@ absl::StatusOr<std::unique_ptr<BarrierResources>> InitializeBarrier(
         clique_size, se::gpu::MultiGpuBarrierKernel::kMaxPeers));
   }
 
+  ASSIGN_OR_RETURN(GpuCommunicator * communicator,
+                   collective_cliques.GetComm(clique_key, rank));
+  ASSIGN_OR_RETURN(GpuCommunicatorTopology topology,
+                   communicator->GetTopology());
+  if (topology.lsa_size != clique_size || topology.lsa_team_count != 1) {
+    return absl::FailedPreconditionError(absl::StrFormat(
+        "Collective entry synchronization requires the complete clique to be "
+        "one LSA; got LSA size %d and %d teams for clique size %d",
+        topology.lsa_size, topology.lsa_team_count, clique_size));
+  }
+
   ASSIGN_OR_RETURN(
       std::unique_ptr<se::MemoryAllocator> allocator,
       stream->parent()->CreateMemoryAllocator(se::MemorySpace::kCollective));
@@ -454,8 +464,6 @@ absl::StatusOr<std::unique_ptr<BarrierResources>> InitializeBarrier(
   RETURN_IF_ERROR(stream->MemZero(&signal_value, signal_value.size()));
   RETURN_IF_ERROR(stream->BlockHostUntilDone());
 
-  ASSIGN_OR_RETURN(GpuCommunicator * communicator,
-                   collective_cliques.GetComm(clique_key, rank));
   ASSIGN_OR_RETURN(std::unique_ptr<SymmetricMemory> symmetric_memory,
                    communicator->CreateSymmetricMemory(signal_buffer));
   ASSIGN_OR_RETURN(
@@ -475,24 +483,6 @@ absl::StatusOr<std::unique_ptr<BarrierResources>> InitializeBarrier(
         "allocation");
   }
 
-  resources->peer_addresses.reserve(clique_size);
-  for (int32_t peer = 0; peer < clique_size; ++peer) {
-    se::DeviceAddressBase peer_address;
-    if (peer == rank.value()) {
-      peer_address = signal_buffer;
-    } else {
-      ASSIGN_OR_RETURN(peer_address,
-                       resources->symmetric_memory->peer_addr(RankId(peer)));
-    }
-    if (peer_address.is_null() || peer_address.size() < signal_buffer.size()) {
-      return absl::FailedPreconditionError(absl::StrFormat(
-          "Collective prefix barrier address for rank %d is unavailable or "
-          "too small",
-          peer));
-    }
-    resources->peer_addresses.push_back(
-        peer_address.GetByteSlice(0, signal_buffer.size()));
-  }
   return resources;
 }
 
@@ -1017,24 +1007,23 @@ absl::Status FfiNcclCollectiveResources::QueryTopology(
   return absl::OkStatus();
 }
 
-absl::Status FfiNcclCollectiveResources::Enqueue(
-    XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args* args) {
+absl::Status FfiNcclCollectiveResources::BeginCollective(
+    XLA_FFI_NcclCollectiveResources_BeginCollective_Args* args) {
   if (args == nullptr) {
     return absl::InvalidArgumentError(
-        "NCCL collective prefix barrier args must not be null");
+        "NCCL collective BeginCollective args must not be null");
   }
   RETURN_IF_ERROR(CheckStructSize(
-      "XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args",
-      XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args_STRUCT_SIZE,
+      "XLA_FFI_NcclCollectiveResources_BeginCollective_Args",
+      XLA_FFI_NcclCollectiveResources_BeginCollective_Args_STRUCT_SIZE,
       args->struct_size));
   if (args->ctx == nullptr || args->resource == nullptr) {
     return absl::InvalidArgumentError(
-        "NCCL collective prefix barrier requires context and resource");
+        "NCCL collective BeginCollective requires context and resource");
   }
   if (state_->stage != XLA_FFI_ExecutionStage_EXECUTE) {
     return absl::FailedPreconditionError(
-        "NCCL collective prefix barrier can only be enqueued during FFI "
-        "Execute");
+        "NCCL collective BeginCollective is valid only during FFI Execute");
   }
 
   auto* handle =
@@ -1050,11 +1039,11 @@ absl::Status FfiNcclCollectiveResources::Enqueue(
   }
   if (!resource->barrier_before_launch_ || resource->barrier_ == nullptr) {
     return absl::FailedPreconditionError(
-        "NCCL collective resource did not request a prefix barrier");
+        "NCCL collective resource did not request entry synchronization");
   }
   if (resource->barrier_enqueued_) {
     return absl::FailedPreconditionError(
-        "NCCL collective prefix barrier was already enqueued");
+        "NCCL collective execution was already begun");
   }
   if (state_->stream == nullptr || state_->collective_params == nullptr ||
       state_->stream->parent() != resource->executor_ ||
@@ -1073,9 +1062,9 @@ absl::Status FfiNcclCollectiveResources::Enqueue(
       resource->barrier_->signal_value->address().GetByteSlice(
           0, GetMultiGpuBarrierSignalValueSize());
   resource->barrier_enqueued_ = true;
-  return LaunchMultiGpuBarrier(
+  return LaunchNcclLsaBarrier(
       state_->stream, resource->clique_size_, resource->rank_,
-      resource->barrier_->peer_addresses, signal_value);
+      resource->barrier_->symmetric_memory.get(), signal_value);
 }
 
 }  // namespace xla::gpu

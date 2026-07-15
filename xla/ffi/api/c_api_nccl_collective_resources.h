@@ -40,7 +40,7 @@ extern "C" {
 //
 //   Prepare:    Request, then Commit.
 //   Initialize: Initialize, then Resolve.
-//   Execute:    EnqueuePrefixBarrier, if requested.
+//   Execute:    BeginCollective, if entry synchronization was requested.
 //   Any stage:  Destroy after all device work using the resource has finished.
 //
 // The extension ABI is versioned independently from the root XLA FFI API.
@@ -303,13 +303,12 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_NcclCollectiveResources_Resolve_Args,
 typedef XLA_FFI_Error* XLA_FFI_NcclCollectiveResources_Resolve(
     XLA_FFI_NcclCollectiveResources_Resolve_Args* args);
 
-// Enqueues the requested prefix barrier on the FFI execution stream. Work
-// enqueued after this call does not begin until every clique rank reaches its
-// corresponding barrier. This operation is valid only during FFI Execute, only
-// when Request set barrier_before_launch, and at most once per resource. The
-// barrier uses direct peer stores and therefore does not span LSA teams. It
-// can span physical hosts when cross-host LSA is provided by an NVLink fabric.
-struct XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args {
+// Begins collective execution by enqueueing the entry synchronization
+// requested during Prepare. Work enqueued after this call does not begin until
+// every rank in the NCCL LSA reaches the same boundary. This operation is
+// valid only during FFI Execute, only when Request set barrier_before_launch,
+// and at most once per resource. It does not synchronize multiple LSA teams.
+struct XLA_FFI_NcclCollectiveResources_BeginCollective_Args {
   size_t struct_size;
   XLA_FFI_Extension_Base* extension_start;
 
@@ -318,10 +317,10 @@ struct XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args {
 };
 
 XLA_FFI_DEFINE_STRUCT_TRAITS(
-    XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args, resource);
+    XLA_FFI_NcclCollectiveResources_BeginCollective_Args, resource);
 
-typedef XLA_FFI_Error* XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier(
-    XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args* args);
+typedef XLA_FFI_Error* XLA_FFI_NcclCollectiveResources_BeginCollective(
+    XLA_FFI_NcclCollectiveResources_BeginCollective_Args* args);
 
 // Releases the host-side token and resources owned specifically by it. This
 // does not synchronize a GPU stream or invalidate XLA's underlying buffer
@@ -353,7 +352,7 @@ struct XLA_FFI_NcclCollectiveResources_Extension {
   XLA_FFI_NcclCollectiveResources_Commit* commit;
   XLA_FFI_NcclCollectiveResources_Initialize* initialize;
   XLA_FFI_NcclCollectiveResources_Resolve* resolve;
-  XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier* enqueue_prefix_barrier;
+  XLA_FFI_NcclCollectiveResources_BeginCollective* begin_collective;
   XLA_FFI_NcclCollectiveResources_Destroy* destroy;
   XLA_FFI_NcclCollectiveResources_QueryTopology* query_topology;
 };

@@ -117,13 +117,16 @@ absl::Status LaunchMultiGpuBarrier(
 }
 
 // See MultiGpuBarrierWithNcclKernel for more details.
-absl::Status LaunchMultiGpuBarrierWithNccl(
+absl::Status LaunchNcclLsaBarrier(
     stream_executor::Stream* stream, int64_t num_devices, RankId rank,
     xla::SymmetricMemory* symmetric_memory,
     stream_executor::DeviceAddressBase local_barrier_signal_value) {
   using MultiGpuBarrierWithNcclKernel =
       stream_executor::gpu::MultiGpuBarrierWithNcclKernel;
 
+  TF_RET_CHECK(num_devices <= MultiGpuBarrierWithNcclKernel::kMaxPeers)
+      << "Number of participants exceeds "
+         "MultiGpuBarrierWithNcclKernel::kMaxPeers";
   TF_RET_CHECK(symmetric_memory != nullptr) << "Symmetric memory is required";
 
   ASSIGN_OR_RETURN(

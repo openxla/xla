@@ -157,14 +157,14 @@ class NcclCollectiveResource {
 };
 
 // Header-only wrapper for the NCCL collective-resources C extension. XLA owns
-// clique acquisition, symmetric registration, and the optional prefix barrier;
-// the handler owns only the opaque request token.
+// clique acquisition, symmetric registration, and optional entry
+// synchronization; the handler owns only the opaque request token.
 //
 // The required lifecycle is:
 //
 //   Prepare:    Request, then Commit.
 //   Initialize: Initialize, then ResolveAddresses.
-//   Execute:    EnqueuePrefixBarrier, if requested.
+//   Execute:    BeginCollective, if entry synchronization was requested.
 //
 // The resource token must remain alive until all enqueued device work using its
 // addresses or barrier has completed.
@@ -356,24 +356,23 @@ class NcclCollectiveResources {
     return error == nullptr ? Error::Success() : TakeError(error);
   }
 
-  // Enqueues a stream-ordered, direct-peer clique barrier during Execute. This
-  // is valid only when Request enabled the barrier and may be called at most
-  // once. The barrier does not span LSA teams, but can span physical hosts in
-  // an IMEX-backed multi-node NVLink partition.
-  Error EnqueuePrefixBarrier(const NcclCollectiveResource& resource) const {
+  // Begins collective execution by enqueueing the entry synchronization
+  // requested during Prepare. This may be called at most once and does not
+  // synchronize multiple LSA teams.
+  Error BeginCollective(const NcclCollectiveResource& resource) const {
     Error association = CheckResource(resource);
     if (association.failure()) return association;
-    if (extension_->enqueue_prefix_barrier == nullptr) {
+    if (extension_->begin_collective == nullptr) {
       return Unimplemented(
-          "NCCL collective prefix-barrier operation is unavailable");
+          "NCCL collective BeginCollective operation is unavailable");
     }
 
-    XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args args = {};
+    XLA_FFI_NcclCollectiveResources_BeginCollective_Args args = {};
     args.struct_size =
-        XLA_FFI_NcclCollectiveResources_EnqueuePrefixBarrier_Args_STRUCT_SIZE;
+        XLA_FFI_NcclCollectiveResources_BeginCollective_Args_STRUCT_SIZE;
     args.ctx = ctx_;
     args.resource = resource.resource_;
-    XLA_FFI_Error* error = extension_->enqueue_prefix_barrier(&args);
+    XLA_FFI_Error* error = extension_->begin_collective(&args);
     return error == nullptr ? Error::Success() : TakeError(error);
   }
 
