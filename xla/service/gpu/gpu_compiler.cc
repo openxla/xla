@@ -1130,7 +1130,8 @@ absl::Status RunCollectiveOptimizationPasses(
     collectives_pipeline.AddPass<CollectivePipeliner>(config);
   }
 
-  if (debug_options.xla_gpu_enable_pipelined_host_offloading()) {
+  if (debug_options.xla_gpu_enable_pipelined_host_offloading() ||
+      IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)) {
     // Forward pass host offloading pipelining
     CollectivePipeliner::Config config{
         /*level_to_operate_on=*/0,
@@ -1160,7 +1161,8 @@ absl::Status RunCollectiveOptimizationPasses(
     collectives_pipeline.AddPass<CollectivePipeliner>(config);
   }
 
-  if (debug_options.xla_gpu_enable_pipelined_host_offloading()) {
+  if (debug_options.xla_gpu_enable_pipelined_host_offloading() ||
+      IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)) {
     // Backward pass host offloading pipelining
     auto acceptable_formatting = [](const HloInstruction* instr) {
       return instr->opcode() == HloOpcode::kReshape ||
@@ -1856,6 +1858,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
         mlir_context, ShapeSizeBytesFunction(), options.key_value_store));
 
     RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
+    mlir_context_pool_.Clear();
   }
 
   {
@@ -2339,14 +2342,12 @@ bool DefinesCollectiveMemorySpaceFrontendAttr(const HloValue* value) {
 }
 
 bool RequiresCollectiveInput(const HloUse& use, const DebugOptions& opts) {
-  const bool is_nccl_buffers_used =
-      opts.xla_gpu_enable_nccl_user_buffers() ||
-      opts.xla_gpu_experimental_enable_nccl_symmetric_buffers();
-
   HloInstruction* user = use.instruction;
 
   // Handle standard non-fusion/fusion collectives under NCCL user buffers
-  if (is_nccl_buffers_used && IsCollective(user)) {
+  if (IsCollective(user) &&
+      (opts.xla_gpu_enable_nccl_user_buffers() ||
+       IsNcclSymmetricBuffersEnabledForCollective(user, opts))) {
     return true;
   }
   // Handle one-shot RaggedAllToAll with NCCL enabled.
@@ -2379,12 +2380,11 @@ bool RequiresCollectiveInput(const HloUse& use, const DebugOptions& opts) {
 
 bool RequiresCollectiveOutput(const HloValue* value, const DebugOptions& opts) {
   HloInstruction* def = value->defining_instruction();
-  const bool is_nccl_buffers_used =
-      opts.xla_gpu_enable_nccl_user_buffers() ||
-      opts.xla_gpu_experimental_enable_nccl_symmetric_buffers();
 
   // Handle standard non-fusion/fusion collectives under NCCL user buffers
-  if (is_nccl_buffers_used && IsCollective(def)) {
+  if (IsCollective(def) &&
+      (opts.xla_gpu_enable_nccl_user_buffers() ||
+       IsNcclSymmetricBuffersEnabledForCollective(def, opts))) {
     return true;
   }
   // Handle one-shot RaggedAllToAll with NCCL enabled.

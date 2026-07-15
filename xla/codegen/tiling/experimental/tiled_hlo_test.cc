@@ -52,6 +52,20 @@ using ::testing::Pointee;
 using ::testing::Property;
 using ::testing::UnorderedElementsAre;
 
+MATCHER_P(IsUniquePointerTo, ptr, "") { return arg.get() == ptr; }
+MATCHER(HasValidRoots, "") {
+  for (const TiledHloInstruction* root : arg.roots()) {
+    if (!absl::c_any_of(
+            arg.tiled_hlo_instructions(),
+            [root](const auto& instr) { return instr.get() == root; })) {
+      *result_listener << "root " << root->ToString()
+                       << " is not in tiled_hlo_instructions()";
+      return false;
+    }
+  }
+  return true;
+}
+
 class TiledHloTest : public HloHardwareIndependentTestBase {
  public:
   TiledHloTest() { RegisterSymbolicExprStorage(&mlir_context_); }
@@ -174,6 +188,8 @@ Tiled HLO:
       Contains(IsHloWithOperands(
           HloOpcode::kReduce, std::vector<HloOpcode>{HloOpcode::kParameter,
                                                      HloOpcode::kConstant})));
+
+  EXPECT_THAT(tiled_computation, HasValidRoots());
 }
 
 TEST_F(TileAnalysisTest, SimpleNormalizationDiamond) {
@@ -224,6 +240,8 @@ Tiled HLO:
       tiled_computation.tiled_hlo_instructions(),
       Contains(IsHloWithOperands(HloOpcode::kBroadcast,
                                  std::vector<HloOpcode>{HloOpcode::kReduce})));
+
+  EXPECT_THAT(tiled_computation, HasValidRoots());
 }
 
 TEST_F(TileAnalysisTest, ConcatenateIsSupported) {
@@ -269,6 +287,8 @@ Tiled HLO:
               Contains(IsHloWithOperands(
                   HloOpcode::kConcatenate,
                   std::vector<HloOpcode>(3, HloOpcode::kParameter))));
+
+  EXPECT_THAT(tiled_computation, HasValidRoots());
 }
 
 TEST_F(TileAnalysisTest, DuplicateRegionRoots) {
@@ -295,6 +315,8 @@ TEST_F(TileAnalysisTest, DuplicateRegionRoots) {
          p0.tile_1 = parameter(0)  offsets [tid_2 * 16, tid_1 * 16] sizes [16, 16] strides [1, 1] upper bounds [128, 128]
        }
   )"));
+
+  EXPECT_THAT(tiled_computation, HasValidRoots());
 }
 
 TEST_F(TileAnalysisTest, Dot) {
@@ -335,6 +357,8 @@ TEST_F(TileAnalysisTest, Dot) {
       tiled_computation.tiled_hlo_instructions(),
       Contains(IsHloWithOperands(
           HloOpcode::kDot, std::vector<HloOpcode>(2, HloOpcode::kParameter))));
+
+  EXPECT_THAT(tiled_computation, HasValidRoots());
 }
 
 TEST_F(TileAnalysisTest, DotWithFullContractionDimTile) {
@@ -375,6 +399,8 @@ Tiled HLO:
       tiled_computation.tiled_hlo_instructions(),
       Contains(IsHloWithOperands(
           HloOpcode::kDot, std::vector<HloOpcode>(2, HloOpcode::kParameter))));
+
+  EXPECT_THAT(tiled_computation, HasValidRoots());
 }
 
 TEST_F(TileAnalysisTest, ScaledDot) {
@@ -421,6 +447,8 @@ Tiled HLO:
               Contains(IsHloWithOperands(
                   HloOpcode::kScaledDot,
                   std::vector<HloOpcode>(4, HloOpcode::kParameter))));
+
+  EXPECT_THAT(tiled_computation, HasValidRoots());
 }
 
 TEST_F(TileAnalysisTest, RuntimeVariablesAreEmittedFirst) {
@@ -463,6 +491,8 @@ Tiled HLO:
                                      Pointee(Property(&HloInstruction::opcode,
                                                       Eq(HloOpcode::kAdd))))),
                     ::testing::_))));
+
+  EXPECT_THAT(tiled_computation, HasValidRoots());
 }
 
 TEST_F(TileAnalysisTest, CSEWorksCorrectly) {
@@ -509,6 +539,8 @@ Tiled HLO:
   d1.tile_1 = dynamic-slice(c0.tile_2, off.tile_0)  offsets [rt_0] sizes [16] strides [1] upper bounds [rt_0 + 10]
   d2.tile_0 = dynamic-slice(d1.tile_1, off2.tile_0)  offsets [0] sizes [16] strides [1] upper bounds [10]
   )"));
+
+  EXPECT_THAT(tiled_computation, HasValidRoots());
 }
 
 TEST_F(TileAnalysisTest, CollectiveDotBasic) {
@@ -545,14 +577,13 @@ TEST_F(TileAnalysisTest, CollectiveDotBasic) {
         p1.1.tile_0 = parameter(1)  offsets [tid_2 * 32, tid_1 * 32] sizes [32, 32] strides [1, 1] upper bounds [256, 512]
       }
   )"));
+
+  EXPECT_THAT(tiled_computation, HasValidRoots());
 }
 
-// TODO: b/502910372 - there is a bug (likely use after free) in multi-output
-// fusions processing (only without -c opt).
-TEST_F(TileAnalysisTest, DISABLED_DuplicateFusionRoots) {
-  EXPECT_DEATH(
-      {
-        auto result = ParseAndTile(R"hlo(
+TEST_F(TileAnalysisTest, DuplicateFusionRoots) {
+  ASSERT_OK_AND_ASSIGN(const TiledHloComputation tiled_computation,
+                       ParseAndTile(R"hlo(
     fusion {
       p0 = f32[128] parameter(0)
       add0 = f32[128] add(p0, p0)
@@ -563,9 +594,22 @@ TEST_F(TileAnalysisTest, DISABLED_DuplicateFusionRoots) {
       p0 = f32[128] parameter(0)
       ROOT call = (f32[128], f32[128]) fusion(p0), kind=kLoop, calls=fusion
     })hlo",
-                                   {128, 128});
-      },
-      "xla::gpu::experimental::SortTiledHloInstructionsInPostOrder()");
+                                    {128, 128}));
+
+  EXPECT_THAT(tiled_computation, MatchString(R"(
+    Dimensions:
+      0 type: parallel size: 128 tile size: 128 dim ID:0 hlo: %add0 = f32[128]{0} add(%p0, %p0)
+      1 type: parallel size: 128 tile size: 128 dim ID:0 hlo: %add0 = f32[128]{0} add(%p0, %p0)
+    Root tiles:
+      0 root tile:  offsets [0] sizes [128] strides [1] upper bounds [128]
+      1 root tile:  offsets [0] sizes [128] strides [1] upper bounds [128]
+
+    Tiled HLO:
+      p0.1.tile_0 = parameter(0)  offsets [0] sizes [128] strides [1] upper bounds [128]
+      add0.tile_0 = add(p0.1.tile_0, p0.1.tile_0)  offsets [0] sizes [128] strides [1] upper bounds [128]
+  )"));
+
+  EXPECT_THAT(tiled_computation, HasValidRoots());
 }
 
 // TODO(b/422676780): Port the remaining tests.

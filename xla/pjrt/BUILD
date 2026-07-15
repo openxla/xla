@@ -136,6 +136,7 @@ cc_library(
         ":pjrt_compiler",
         ":pjrt_executable",
         ":raw_buffer",
+        ":staging_buffer",
         ":transpose",
         ":utils",
         "//xla:executable_run_options",
@@ -154,6 +155,7 @@ cc_library(
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:nullability",
@@ -1215,7 +1217,11 @@ cc_library(
     srcs = ["staging_buffer.cc"],
     hdrs = ["staging_buffer.h"],
     visibility = internal_visibility([":friends"]),
-    deps = ["@com_google_absl//absl/types:span"],
+    deps = [
+        "//xla/tsl/concurrency:async_value",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/types:span",
+    ],
 )
 
 cc_library(

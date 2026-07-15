@@ -33,7 +33,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/logical_buffer.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -41,8 +40,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/xla.pb.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 
 class ThunkExecutor;
 
@@ -95,9 +93,8 @@ class GpuExecutableBufferAllocator {
 
     // Builds the BufferAllocations for an execution. Entry-computation
     // parameter buffers are obtained from `get_parameter_buffer`; all other
-    // allocations are resolved internally, including collective-memory
-    // granularity rounding, alignment checking, and any subclass
-    // allocation-address policy.
+    // allocations are resolved internally, including alignment checking and
+    // any subclass allocation-address policy.
     absl::StatusOr<BufferAllocations> GenerateBufferAllocations(
         const ServiceExecutableRunOptions* run_options,
         ParameterBufferResolver get_parameter_buffer,
@@ -134,15 +131,12 @@ class GpuExecutableBufferAllocator {
     // Hook called once per GenerateBufferAllocations before any allocation is
     // resolved. The base implementation does nothing.
     virtual absl::Status PrepareReservation(
-        const ServiceExecutableRunOptions* run_options, int device_ordinal,
-        const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
-            allocate_granularity) {
+        const ServiceExecutableRunOptions* run_options, int device_ordinal) {
       return absl::OkStatus();
     }
 
     // Hook that allocates a non-parameter, non-constant allocation of
-    // `buffer_size` bytes (> 0, already rounded to the collective-memory
-    // granularity). The base implementation allocates from
+    // `buffer_size` bytes (> 0). The base implementation allocates from
     // `memory_allocator`.
     virtual absl::StatusOr<se::DeviceAddressBase> AllocateTransientBuffer(
         int device_ordinal, const BufferAllocation& allocation,
@@ -156,9 +150,7 @@ class GpuExecutableBufferAllocator {
         const BufferAllocToDeviceMemoryMap* globals,
         const BufferAllocation& allocation,
         se::DeviceAddressAllocator* memory_allocator, int device_ordinal,
-        int64_t arg_idx,
-        const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
-            allocate_granularity);
+        int64_t arg_idx);
 
     const GpuExecutableBufferAllocator* owner_ = nullptr;
   };
@@ -229,7 +221,6 @@ class GpuExecutableBufferAllocator {
   std::vector<BufferAllocation::Index> persistent_alloc_indices_;
 };
 
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu
 
 #endif  // XLA_SERVICE_GPU_GPU_EXECUTABLE_BUFFER_ALLOCATOR_H_

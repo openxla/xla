@@ -35,7 +35,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_executable_buffer_allocator.h"
-#include "xla/service/logical_buffer.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_address.h"
@@ -100,9 +99,8 @@ class GpuExecutableVaRemapAllocator::VaRemapExecutionScope
 
  private:
   absl::Status PrepareReservation(
-      const ServiceExecutableRunOptions* run_options, int device_ordinal,
-      const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
-          allocate_granularity) override;
+      const ServiceExecutableRunOptions* run_options,
+      int device_ordinal) override;
   absl::StatusOr<se::DeviceAddressBase> AllocateTransientBuffer(
       int device_ordinal, const BufferAllocation& allocation,
       int64_t buffer_size,
@@ -121,9 +119,7 @@ class GpuExecutableVaRemapAllocator::VaRemapExecutionScope
 
 absl::Status
 GpuExecutableVaRemapAllocator::VaRemapExecutionScope::PrepareReservation(
-    const ServiceExecutableRunOptions* run_options, int device_ordinal,
-    const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
-        allocate_granularity) {
+    const ServiceExecutableRunOptions* run_options, int device_ordinal) {
   uint64_t granularity =
       vmm_allocator_->GetAllocationGranularity(run_options->stream()->parent());
   if (remapping_->va_reservation != nullptr &&
@@ -145,11 +141,6 @@ GpuExecutableVaRemapAllocator::VaRemapExecutionScope::PrepareReservation(
   for (BufferAllocation::Index idx : owner_->va_remapped_alloc_indices_) {
     const BufferAllocation& allocation = *owner_->allocations()[idx];
     uint64_t buffer_size = allocation.size();
-    if (auto it = allocate_granularity.find(allocation.color());
-        it != allocate_granularity.end()) {
-      buffer_size =
-          RoundUpToGranularity(buffer_size, static_cast<uint64_t>(it->second));
-    }
     remapping_->allocation_to_reservation_offset[idx] = remapping_->total_size;
     remapping_->total_size =
         remapping_->total_size +
@@ -310,7 +301,7 @@ GpuExecutableVaRemapAllocator::CreateExecutionScope(
     remapping = &remappings_[executor];
   }
 
-  auto remap_lock = std::make_unique<absl::MutexLock>(&remapping->mutex);
+  auto remap_lock = std::make_unique<absl::MutexLock>(remapping->mutex);
   if (remapping->vmm_allocator != nullptr &&
       remapping->vmm_allocator != vmm_allocator) {
     return Internal(

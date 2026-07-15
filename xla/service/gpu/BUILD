@@ -141,6 +141,7 @@ xla_cc_test(
     srcs = ["gpu_memory_space_assignment_test.cc"],
     deps = [
         ":gpu_memory_space_assignment",
+        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_alias_analysis",
@@ -562,6 +563,7 @@ cc_library(
         "//xla/core/host_offloading:host_offloading_executable_proto_cc",
         "//xla/ffi:attribute_map",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_instruction_utils",
         "//xla/mlir/utils:error_util",
         "//xla/mlir_hlo:transforms_gpu_passes",
         "//xla/runtime:device_id",
@@ -713,7 +715,6 @@ cc_library(
         "//xla/backends/gpu/runtime:thunk",
         "//xla/backends/gpu/runtime:thunk_executor",
         "//xla/service:buffer_assignment",
-        "//xla/service:logical_buffer",
         "//xla/service:service_executable_run_options",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
@@ -3735,7 +3736,6 @@ xla_cc_test(
     srcs = ["flag_utils_test.cc"],
     deps = [
         ":flag_utils",
-        "//xla:debug_options_flags",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms:double_buffer_loop_unrolling",
         "//xla/hlo/ir:hlo",

@@ -38,7 +38,6 @@ limitations under the License.
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable_va_remap_allocator.h"
-#include "xla/service/logical_buffer.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -50,8 +49,7 @@ limitations under the License.
 #include "xla/xla.pb.h"
 #include "tsl/profiler/lib/traceme.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 namespace {
 
 absl::Status CheckAlignment(const BufferAllocation& allocation,
@@ -174,9 +172,7 @@ GpuExecutableBufferAllocator::ExecutionScope::BufferForAllocation(
     const BufferAllocToDeviceMemoryMap* globals,
     const BufferAllocation& allocation,
     se::DeviceAddressAllocator* const memory_allocator, int device_ordinal,
-    int64_t arg_idx,
-    const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
-        allocate_granularity) {
+    int64_t arg_idx) {
   if (allocation.is_thread_local()) {
     return se::DeviceAddressBase{};
   }
@@ -208,11 +204,6 @@ GpuExecutableBufferAllocator::ExecutionScope::BufferForAllocation(
   int64_t buffer_size = allocation.size();
   se::DeviceAddressBase buffer_address;
   if (buffer_size > 0) {
-    // Maybe round up buffer allocation size to the requested granularity.
-    if (auto it = allocate_granularity.find(allocation.color());
-        it != allocate_granularity.end()) {
-      buffer_size = RoundUpTo(buffer_size, it->second);
-    }
     ASSIGN_OR_RETURN(buffer_address,
                      AllocateTransientBuffer(device_ordinal, allocation,
                                              buffer_size, memory_allocator));
@@ -230,30 +221,13 @@ GpuExecutableBufferAllocator::ExecutionScope::GenerateBufferAllocations(
       [&] { return std::string("Build buffer allocations"); },
       tsl::profiler::TraceMeLevel::kInfo);
 
-  absl::flat_hash_map<LogicalBuffer::Color, int64_t> allocate_granularity;
-  if (run_options && run_options->stream()) {
-    absl::StatusOr<uint64_t> collective_memory_granularity =
-        run_options->stream()->parent()->GetCollectiveMemoryGranularity();
-    if (collective_memory_granularity.ok()) {
-      // BFC allocator ignores memory alignment and always allocates 256 byte
-      // aligned buffers, however for collective memory underlying libraries
-      // require larger alignment. We conservatively round up all allocation
-      // sizes to the alignment requirement. Proper fix must be done in BFC
-      // allocator and all the other allocator adaptors that we have in XLA.
-      static constexpr int64_t kCollectiveMemoryColor = 1;
-      allocate_granularity[kCollectiveMemoryColor] =
-          *collective_memory_granularity;
-    }
-  }
-
   // Tag allocations made in this invocation as multi-device for VMM reuse.
   se::DeviceAddressVmmAllocator::DeviceAssignmentScope
       vmm_device_assignment_scope(
           run_options->run_options().device_assignment());
 
   const int64_t num_buffers = owner_->allocations_.size();
-  RETURN_IF_ERROR(
-      PrepareReservation(run_options, device_ordinal, allocate_granularity));
+  RETURN_IF_ERROR(PrepareReservation(run_options, device_ordinal));
 
   std::vector<se::DeviceAddressBase> buffers;
   buffers.reserve(num_buffers);
@@ -262,8 +236,7 @@ GpuExecutableBufferAllocator::ExecutionScope::GenerateBufferAllocations(
     ASSIGN_OR_RETURN(
         buffers.emplace_back(),
         BufferForAllocation(get_parameter_buffer, globals, allocation,
-                            memory_allocator, device_ordinal, i,
-                            allocate_granularity));
+                            memory_allocator, device_ordinal, i));
     RETURN_IF_ERROR(CheckAlignment(allocation, buffers.back(), i));
   }
   return BufferAllocations(buffers, device_ordinal, memory_allocator);
@@ -319,5 +292,4 @@ GpuExecutableBufferAllocator::CreateExecutionScope(
   return std::unique_ptr<ExecutionScope>(new ExecutionScope(this));
 }
 
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu
