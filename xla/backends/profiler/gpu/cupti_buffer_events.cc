@@ -276,8 +276,8 @@ void AddMarkerActivityEvent(CuptiEventCollectorDelegate &collector,
   }
 }
 
-void AddMarkerDataActivityEvent(CuptiEventCollectorDelegate& collector,
-                                void* marker_data_trace) {
+void AddMarkerDataActivityEvent(CuptiEventCollectorDelegate &collector,
+                                void *marker_data_trace) {
   std::optional<std::pair<std::string, uint32_t>> result =
       ParseMarkerDataActivity(marker_data_trace);
   if (result.has_value() && !result.value().first.empty()) {
@@ -299,9 +299,9 @@ void AddMarkerDataActivityEvent(CuptiEventCollectorDelegate& collector,
   }
 }
 
-void AddEnvironmentActivityEvent(const CUpti_ActivityEnvironment* environment,
-                                 CuptiEventCollectorDelegate& collector) {
-  auto create_and_receive = [&](const char* name, uint64_t value) {
+void AddEnvironmentActivityEvent(const CUpti_ActivityEnvironment *environment,
+                                 CuptiEventCollectorDelegate &collector) {
+  auto create_and_receive = [&](const char *name, uint64_t value) {
     CuptiTracerEvent event{};
     event.type = CuptiTracerEventType::Environment;
     event.source = CuptiTracerEventSource::Activity;
@@ -581,14 +581,20 @@ void AddSynchronizationActivityEvent(
 }
 
 static absl::Status ConvertActivityBuffer(
-    CuptiEventCollectorDelegate &collector, uint8_t *buffer, const size_t size,
+    CuptiEventCollectorDelegate &collector,
+    const CuptiActivityBufferManager::CachedActivityBufferBatch &cached_buffers,
+    const CuptiActivityBufferManager::ActivityBufferAndSize &buffer_and_size,
     const size_t max_activity_event_count, size_t &total_activity_event_count,
-    size_t &dropped_activity_event_count) {
-  CuptiInterface *cupti_interface = GetCuptiInterface();
+    size_t &dropped_activity_event_count, CuptiInterface *cupti_interface) {
   CUpti_Activity *record = nullptr;
   while (true) {
     CUptiResult status =
-        cupti_interface->ActivityGetNextRecord(buffer, size, &record);
+        cached_buffers.use_v2_records
+            ? cupti_interface->ActivityGetNextRecordV2(
+                  cached_buffers.subscriber, buffer_and_size.buffer.get(),
+                  buffer_and_size.size, &record)
+            : cupti_interface->ActivityGetNextRecord(
+                  buffer_and_size.buffer.get(), buffer_and_size.size, &record);
     if (status == CUPTI_SUCCESS) {
       if (total_activity_event_count >= max_activity_event_count) {
         dropped_activity_event_count++;
@@ -646,11 +652,11 @@ static absl::Status ConvertActivityBuffer(
               collector, reinterpret_cast<CuptiActivityMarkerTy *>(record));
           break;
         case CUPTI_ACTIVITY_KIND_MARKER_DATA:
-          AddMarkerDataActivityEvent(collector, static_cast<void*>(record));
+          AddMarkerDataActivityEvent(collector, static_cast<void *>(record));
           break;
         case CUPTI_ACTIVITY_KIND_ENVIRONMENT:
           AddEnvironmentActivityEvent(
-              reinterpret_cast<CUpti_ActivityEnvironment*>(record), collector);
+              reinterpret_cast<CUpti_ActivityEnvironment *>(record), collector);
           break;
         default:
           VLOG(3) << "Activity type " << record->kind << " is not supported.";
@@ -668,7 +674,8 @@ static absl::Status ConvertActivityBuffer(
                           "Parse cupti activity buffer error.");
     }
   }
-  VLOG(3) << "CUPTI tracer post-process one ACTIVITY buffer of size: " << size
+  VLOG(3) << "CUPTI tracer post-process one ACTIVITY buffer of size: "
+          << buffer_and_size.size
           << ", total events count:" << total_activity_event_count;
   return absl::OkStatus();
 }
@@ -748,7 +755,7 @@ absl::string_view AnnotationMap::Add(uint32_t device_id,
     VLOG(3) << "Add annotation: device_id: " << device_id
             << " correlation_id: " << correlation_id
             << " annotation: " << annotation;
-    auto& per_device_map = per_device_map_[device_id];
+    auto &per_device_map = per_device_map_[device_id];
     if (per_device_map.annotation_deduper.Size() < max_size_) {
       AnnotationInfo info;
       info.annotation = per_device_map.annotation_deduper.Dedup(annotation);
@@ -780,18 +787,17 @@ CuptiActivityBufferManager::ActivityBufferAndSize::ActivityBufferAndSize(
 
 void AddActivityBufferListEventsTo(
     CuptiEventCollectorDelegate &collector,
-    std::list<CuptiActivityBufferManager::ActivityBufferAndSize> &buffer_list,
+    CuptiActivityBufferManager::CachedActivityBufferBatch &cached_buffers,
     size_t max_activity_event_count, size_t &dropped_activity_event_count) {
   dropped_activity_event_count = 0;
   size_t total_activity_event_count = 0;
-  while (!buffer_list.empty()) {
+  while (!cached_buffers.buffers.empty()) {
     CuptiActivityBufferManager::ActivityBufferAndSize buffer_and_size(
-        std::move(buffer_list.front()));
-    buffer_list.pop_front();
-    ConvertActivityBuffer(collector, buffer_and_size.buffer.get(),
-                          buffer_and_size.size, max_activity_event_count,
-                          total_activity_event_count,
-                          dropped_activity_event_count)
+        std::move(cached_buffers.buffers.front()));
+    cached_buffers.buffers.pop_front();
+    ConvertActivityBuffer(collector, cached_buffers, buffer_and_size,
+                          max_activity_event_count, total_activity_event_count,
+                          dropped_activity_event_count, GetCuptiInterface())
         .IgnoreError();
   }
 }

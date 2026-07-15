@@ -739,6 +739,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
+        "@local_config_cuda//cuda:cupti_headers",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:thread_annotations",

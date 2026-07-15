@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <stdlib.h>
-
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -27,6 +25,7 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include <stdlib.h>
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/cupti_tracer.h"
 #include "xla/backends/profiler/gpu/cupti_tracer_options_utils.h"
@@ -130,7 +129,9 @@ absl::Status GpuTracer::DoStart() {
     collector_options.num_gpus = num_gpus;
   }
 
-  uint64_t start_gputime_ns = CuptiTracer::GetTimestamp();
+  // A fresh V2 subscriber must exist before its timestamp API can be used.
+  RETURN_IF_ERROR(cupti_tracer_->PrepareForProfilerStart(options_));
+  uint64_t start_gputime_ns = cupti_tracer_->GetTimestampForSubscriber();
   uint64_t start_walltime_ns = tsl::profiler::GetCurrentTimeNanos();
   cupti_collector_ = CreateCuptiCollector(collector_options, start_walltime_ns,
                                           start_gputime_ns);

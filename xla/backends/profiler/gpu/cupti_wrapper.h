@@ -16,15 +16,14 @@ limitations under the License.
 #ifndef XLA_BACKENDS_PROFILER_GPU_CUPTI_WRAPPER_H_
 #define XLA_BACKENDS_PROFILER_GPU_CUPTI_WRAPPER_H_
 
-#include <stddef.h>
-#include <stdint.h>
-
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_callbacks.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_target.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_result.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_target.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include <stddef.h>
+#include <stdint.h>
 #include "xla/backends/profiler/gpu/cupti_interface.h"
 
 namespace xla {
@@ -46,6 +45,11 @@ class CuptiWrapper : public xla::profiler::CuptiInterface {
   CUptiResult ActivityGetNextRecord(uint8_t* buffer,
                                     size_t valid_buffer_size_bytes,
                                     CUpti_Activity** record) override;
+
+  CUptiResult ActivityGetNextRecordV2(CUpti_SubscriberHandle subscriber,
+                                      uint8_t* buffer,
+                                      size_t valid_buffer_size_bytes,
+                                      CUpti_Activity** record) override;
 
   CUptiResult ActivityGetNumDroppedRecords(CUcontext context,
                                            uint32_t stream_id,
@@ -86,6 +90,9 @@ class CuptiWrapper : public xla::profiler::CuptiInterface {
   CUptiResult GetDeviceId(CUcontext context, uint32_t* deviceId) override;
 
   CUptiResult GetTimestamp(uint64_t* timestamp) override;
+
+  CUptiResult GetTimestampV2(CUpti_SubscriberHandle subscriber,
+                             uint64_t* timestamp) override;
 
   // cuptiFinalize is only defined in CUDA8 and above.
   // To enable it in CUDA8, the environment variable CUPTI_ENABLE_FINALIZE must
@@ -250,6 +257,11 @@ class CuptiWrapperStub : public xla::profiler::CuptiInterface {
                                     size_t valid_buffer_size_bytes,
                                     CUpti_Activity** record) override;
 
+  CUptiResult ActivityGetNextRecordV2(CUpti_SubscriberHandle subscriber,
+                                      uint8_t* buffer,
+                                      size_t valid_buffer_size_bytes,
+                                      CUpti_Activity** record) override;
+
   CUptiResult ActivityGetNumDroppedRecords(CUcontext context,
                                            uint32_t stream_id,
                                            size_t* dropped) override;
@@ -289,6 +301,9 @@ class CuptiWrapperStub : public xla::profiler::CuptiInterface {
   CUptiResult GetDeviceId(CUcontext context, uint32_t* deviceId) override;
 
   CUptiResult GetTimestamp(uint64_t* timestamp) override;
+
+  CUptiResult GetTimestampV2(CUpti_SubscriberHandle subscriber,
+                             uint64_t* timestamp) override;
 
   // cuptiFinalize is only defined in CUDA8 and above.
   // To enable it in CUDA8, the environment variable CUPTI_ENABLE_FINALIZE must
