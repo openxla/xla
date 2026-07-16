@@ -2983,8 +2983,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       SetterForRepeatedEnum<DebugOptions::CollectiveKernelType>(
           "xla_gpu_experimental_use_collective_kernels",
           /*enum_prefix=*/"COLLECTIVE_KERNEL_",
-          &DebugOptions::CollectiveKernelType_Parse,
-          debug_options->mutable_xla_gpu_experimental_use_collective_kernels()),
+          [](absl::string_view s, DebugOptions::CollectiveKernelType* v) {
+            return DebugOptions::CollectiveKernelType_Parse(s, v);
+          },
+          [debug_options]() {
+            return debug_options
+                ->mutable_xla_gpu_experimental_use_collective_kernels();
+          }),
       collective_op_types_to_string(
           debug_options->xla_gpu_experimental_use_collective_kernels()),
       "Experimental: comma-separated filter of collective ops that should use "
