@@ -176,10 +176,6 @@ class GpuExecutableBufferAllocator {
     return persistent_alloc_indices_.size();
   }
 
-  // Number of command-buffer-referenced allocations eligible for the
-  // SKIP_PROFILED address-stability profile. Zero for other update modes.
-  virtual size_t profile_candidate_allocation_count() const { return 0; }
-
   virtual absl::StatusOr<std::unique_ptr<ExecutionScope>> CreateExecutionScope(
       const ServiceExecutableRunOptions* run_options,
       se::DeviceAddressAllocator* memory_allocator, int device_ordinal);

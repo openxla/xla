@@ -70,10 +70,6 @@ class GpuExecutableVaRemapAllocator : public GpuExecutableBufferAllocator {
       ThunkExecutor* thunk_executor);
   ~GpuExecutableVaRemapAllocator() override;
 
-  size_t profile_candidate_allocation_count() const override {
-    return profile_candidate_alloc_indices_.size();
-  }
-
   // Creates the per-run execution scope. When VA remapping applies to this
   // execution, the returned scope holds the lock for the executable/executor
   // remapping state for the whole execution.

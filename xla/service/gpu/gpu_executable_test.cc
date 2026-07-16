@@ -290,7 +290,6 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
 
   struct AllocationPolicy {
     size_t command_buffer_allocation_count;
-    size_t profile_candidate_allocation_count;
     std::optional<std::vector<BufferAllocation::Index>>
         persistent_alloc_indices;
   };
@@ -322,35 +321,29 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
           }
           return absl::OkStatus();
         }));
-    return AllocationPolicy{
-        buffer_allocator->command_buffer_allocation_count(),
-        buffer_allocator->profile_candidate_allocation_count(),
-        std::move(persistent_indices)};
+    return AllocationPolicy{buffer_allocator->command_buffer_allocation_count(),
+                            std::move(persistent_indices)};
   };
 
   ASSERT_OK_AND_ASSIGN(
       auto always_update_policy,
       get_allocation_policy_without_vmm(DebugOptions::ALWAYS_UPDATE));
   EXPECT_EQ(always_update_policy.command_buffer_allocation_count, 1);
-  EXPECT_EQ(always_update_policy.profile_candidate_allocation_count, 0);
   EXPECT_THAT(always_update_policy.persistent_alloc_indices,
               Optional(ElementsAre(1)));
 
   ASSERT_OK_AND_ASSIGN(auto skip_temp_policy, get_allocation_policy_without_vmm(
                                                   DebugOptions::SKIP_TEMP));
   EXPECT_EQ(skip_temp_policy.command_buffer_allocation_count, 2);
-  EXPECT_EQ(skip_temp_policy.profile_candidate_allocation_count, 0);
   EXPECT_THAT(skip_temp_policy.persistent_alloc_indices,
               Optional(ElementsAre(1)));
 
-  // SKIP_PROFILED profiles the temp (0), parameter (2), and live-out (3)
-  // allocations; the zero-sized allocation (4) is excluded. Without a VMM
-  // allocator the scope has no remapping and passes only the constant (1).
+  // Without a VMM allocator, SKIP_PROFILED falls back to the base scope and
+  // passes only the constant (1) as persistent.
   ASSERT_OK_AND_ASSIGN(
       auto skip_profiled_policy,
       get_allocation_policy_without_vmm(DebugOptions::SKIP_PROFILED));
   EXPECT_EQ(skip_profiled_policy.command_buffer_allocation_count, 1);
-  EXPECT_EQ(skip_profiled_policy.profile_candidate_allocation_count, 3);
   EXPECT_THAT(skip_profiled_policy.persistent_alloc_indices,
               Optional(ElementsAre(1)));
 }

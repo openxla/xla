@@ -671,7 +671,6 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
                                           ShapeUtil::MakeShape(F32, {256}),
                                           &debug_options, &thunk_executor);
   allocator.AddProfileCandidateAllocationForTesting(0);
-  EXPECT_EQ(allocator.profile_candidate_allocation_count(), 1);
 
   // The parameter keeps the same VMM-backed address on every execution, so
   // the profile selects it.
