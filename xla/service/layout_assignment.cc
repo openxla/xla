@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <ostream>
@@ -961,23 +962,53 @@ absl::Status LayoutAssignment::AddMandatoryConstraints(
           LayoutConstraints* async_constraint = it->second.get();
           ComputationLayout async_layout =
               async_constraint->computation_layout();
+          Shape async_result_shape = async_layout.result_layout().shape();
           bool reset_needed = false;
-          auto done_layout = InferArrayLayout(instruction, {});
-          if (constraints->computation()->IsEntryComputation() &&
-              instruction == constraints->computation()->root_instruction() &&
-              entry_computation_layout_->result_layout().AnyLayoutIsSet()) {
-            done_layout = entry_computation_layout_->result_layout().layout();
-          }
-          if (done_layout.ok() &&
-              async_layout.result_layout().shape().has_layout() &&
-              async_layout.result_layout().shape().layout() !=
-                  done_layout.value()) {
-            Shape s = instruction->shape();
-            *s.mutable_layout() = done_layout.value();
-            *async_layout.mutable_result_layout() = ShapeLayout(s);
-            reset_needed = true;
-          }
+
+          std::function<absl::Status(const Shape&, const ShapeIndex&)>
+              propagate_result_layout =
+                  [&](const Shape& shape,
+                      const ShapeIndex& index) -> absl::Status {
+            if (shape.IsTuple()) {
+              for (int64_t i = 0; i < shape.tuple_shapes().size(); ++i) {
+                ShapeIndex next_index = index;
+                next_index.push_back(i);
+                RETURN_IF_ERROR(
+                    propagate_result_layout(shape.tuple_shapes(i), next_index));
+              }
+              return absl::OkStatus();
+            }
+            auto done_layout = InferArrayLayout(instruction, index);
+            if (constraints->computation()->IsEntryComputation() &&
+                instruction == constraints->computation()->root_instruction() &&
+                entry_computation_layout_->result_layout().AnyLayoutIsSet()) {
+              const Shape& entry_result_shape =
+                  entry_computation_layout_->result_layout().shape();
+              if (ShapeUtil::IndexIsValid(entry_result_shape, index)) {
+                const Shape& subshape =
+                    ShapeUtil::GetSubshape(entry_result_shape, index);
+                if (subshape.has_layout()) {
+                  done_layout = subshape.layout();
+                }
+              }
+            }
+            if (done_layout.ok()) {
+              Shape* async_result_subshape =
+                  ShapeUtil::GetMutableSubshape(&async_result_shape, index);
+              if (async_result_subshape->has_layout() &&
+                  async_result_subshape->layout() != done_layout.value()) {
+                *async_result_subshape->mutable_layout() = done_layout.value();
+                reset_needed = true;
+              }
+            }
+            return absl::OkStatus();
+          };
+
+          RETURN_IF_ERROR(propagate_result_layout(instruction->shape(), {}));
+
           if (reset_needed) {
+            *async_layout.mutable_result_layout() =
+                ShapeLayout(async_result_shape);
             async_constraint->mutable_computation_constraint()
                 ->ResetComputationLayout(
                     async_layout,
@@ -985,8 +1016,7 @@ absl::Status LayoutAssignment::AddMandatoryConstraints(
                     /*prop_result_layout=*/true,
                     /*prop_parameter_layout=*/true);
           }
-          if (async_layout.result_layout().shape().has_layout() &&
-              instruction->shape().IsArray()) {
+          if (async_layout.result_layout().shape().has_layout()) {
             RETURN_IF_ERROR(SetInstructionLayout(
                 async_layout.result_layout().shape(), instruction,
                 /*mandatory=*/reset_needed ||

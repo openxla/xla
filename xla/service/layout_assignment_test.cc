@@ -2749,5 +2749,29 @@ ENTRY %main (param: f32[4,8]) -> f32[4,8] {
                                 LayoutUtil::MakeLayout({0, 1})));
 }
 
+TEST_F(LayoutAssignmentTest, AsyncStartTupleResultMandatoryConstraints) {
+  const char* module_str = R"hlo(
+HloModule AsyncStartTupleResultMandatoryConstraints
+
+%async_comp (param1: f32[4,8], param2: f32[4,8]) -> (f32[4,8], f32[4,8]) {
+  %param1 = f32[4,8]{0,1} parameter(0)
+  %param2 = f32[4,8]{0,1} parameter(1)
+  ROOT %tuple = (f32[4,8]{0,1}, f32[4,8]{0,1}) tuple(%param1, %param2)
+}
+
+ENTRY %main (param: f32[4,8]) -> (f32[4,8], f32[4,8]) {
+  %param = f32[4,8]{0,1} parameter(0)
+  %async_start = ((f32[4,8]{0,1}, f32[4,8]{0,1}), (f32[4,8]{0,1}, f32[4,8]{0,1}), s32[]) async-start(%param, %param), calls=%async_comp
+  ROOT %async_done = (f32[4,8]{0,1}, f32[4,8]{0,1}) async-done(%async_start)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(module_str));
+  ComputationLayout* computation_layout = m->mutable_entry_computation_layout();
+  LayoutAssignment layout_assignment(computation_layout);
+  EXPECT_OK(layout_assignment.Run(m.get()).status());
+}
+
 }  // namespace
 }  // namespace xla
