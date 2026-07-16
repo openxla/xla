@@ -55,7 +55,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/window_util.h"
@@ -1646,6 +1645,79 @@ ENTRY %entry_spmd () -> s32[1,3] {
 
 )"
 },
+
+{
+"DebugAttributes",
+R"(HloModule module, entry_computation_layout={()->s32[1,3]{1,0}},
+debug_attributes={
+  {"constant"}:({log_mode=default,callback_id=123,partitioned=true})
+}
+
+ENTRY %e () -> s32[1,3] {
+  ROOT %c = s32[1,3]{1,0} constant({ { 0, 1, 2 } }), origin={{"constant"}}
+}
+
+)"
+},
+
+{
+"DebugAttributesFusionDebugger",
+R"(HloModule module, entry_computation_layout={()->s32[1,3]{1,0}},
+debug_attributes={
+  {"constant"}:({log_mode=fusion_debugger,callback_id=123})
+}
+
+ENTRY %e () -> s32[1,3] {
+  ROOT %c = s32[1,3]{1,0} constant({ { 0, 1, 2 } }), origin={{"constant"}}
+}
+
+)"
+},
+
+{
+"DebugAttributesLogModeOnly",
+R"(HloModule module, entry_computation_layout={()->s32[1,3]{1,0}},
+debug_attributes={
+  {"constant"}:({log_mode=default})
+}
+
+ENTRY %e () -> s32[1,3] {
+  ROOT %c = s32[1,3]{1,0} constant({ { 0, 1, 2 } }), origin={{"constant"}}
+}
+
+)"
+},
+
+{
+"DebugAttributesPartitionedOnly",
+R"(HloModule module, entry_computation_layout={()->s32[1,3]{1,0}},
+debug_attributes={
+  {"constant"}:({partitioned=true})
+}
+
+ENTRY %e () -> s32[1,3] {
+  ROOT %c = s32[1,3]{1,0} constant({ { 0, 1, 2 } }), origin={{"constant"}}
+}
+
+)"
+},
+
+{
+"DebugAttributesHloIdOnly",
+R"(HloModule module, entry_computation_layout={()->s32[1,3]{1,0}},
+debug_attributes={
+  {"constant"}:({callback_id=123})
+}
+
+ENTRY %e () -> s32[1,3] {
+  ROOT %c = s32[1,3]{1,0} constant({ { 0, 1, 2 } }), origin={{"constant"}}
+}
+
+)"
+},
+
+
+
 {
 "OriginalValueRecoveryTableWithNestedQuotes",
 R"(HloModule module, entry_computation_layout={()->s32[1,3]{1,0}}, num_partitions=2, origin_recovery_table={
@@ -3166,6 +3238,23 @@ ENTRY %blabla (x: f32[], y: f32[]) -> f32[] {
   EXPECT_NE(absl::OkStatus(), result.status());
 }
 
+TEST_F(HloParserTest, InvalidDebugLogMode) {
+  const std::string original =
+      R"(HloModule module, entry_computation_layout={()->s32[1,3]{1,0}},
+debug_attributes={
+  {"constant"}:({log_mode=invalid_mode})
+}
+
+ENTRY %e () -> s32[1,3] {
+  ROOT %c = s32[1,3]{1,0} constant({ { 0, 1, 2 } }), origin={{"constant"}}
+}
+)";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  EXPECT_TRUE(absl::StrContains(result.status().message(),
+                                "Invalid debug_log_mode value: invalid_mode"));
+}
+
 TEST_F(HloParserTest, MetadataWithCholesky) {
   const std::string original = R"(HloModule metadata_with_cholesky
 ENTRY %blabla (a: f32[1,291,291]) -> f32[1,291,291] {
@@ -3274,6 +3363,61 @@ ENTRY test {
   EXPECT_FALSE(result.ok());
   EXPECT_THAT(result.status().message(),
               HasSubstr("GTE index -1 out of bounds"));
+}
+
+TEST_F(HloParserTest, MeshReplicaGroupInvalidAxisName) {
+  const std::string original = R"(HloModule m
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT a = f32[] add(lhs, rhs)
+}
+
+ENTRY e {
+  p = f32[128,32] parameter(0)
+  ROOT ar = f32[128,32] all-reduce(p), replica_groups=mesh['axis_0'=2,'axis_1'=2] {'bogus'}, to_apply=add
+})";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_FALSE(result.ok());
+  EXPECT_THAT(result.status().message(),
+              HasSubstr("is not a valid axis name or index"));
+}
+
+TEST_F(HloParserTest, MeshReplicaGroupAxisIndexOutOfBounds) {
+  const std::string original = R"(HloModule m
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT a = f32[] add(lhs, rhs)
+}
+
+ENTRY e {
+  p = f32[128,32] parameter(0)
+  ROOT ar = f32[128,32] all-reduce(p), replica_groups=mesh['axis_0'=2,'axis_1'=2] {'5'}, to_apply=add
+})";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_FALSE(result.ok());
+  EXPECT_THAT(result.status().message(), HasSubstr("out of bounds for mesh"));
+}
+
+TEST_F(HloParserTest, MeshReplicaGroupDeviceIdsCountMismatch) {
+  const std::string original = R"(HloModule m
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT a = f32[] add(lhs, rhs)
+}
+
+ENTRY e {
+  p = f32[128,32] parameter(0)
+  ROOT ar = f32[128,32] all-reduce(p), replica_groups=mesh['axis_0'=2,'axis_1'=2, device_ids=(0,1,2)] {'axis_0'}, to_apply=add
+})";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_FALSE(result.ok());
+  EXPECT_THAT(result.status().message(), HasSubstr("device_ids"));
 }
 
 TEST_F(HloParserTest, CompactGteRoundTrip) {
@@ -7275,8 +7419,34 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
   HloInstruction* async_done = module->entry_computation()->root_instruction();
   HloComputation* called_computation = async_done->async_wrapped_computation();
-  EXPECT_EQ(called_computation->num_parameters(), 1);
-  EXPECT_EQ(called_computation->root_instruction()->operand_count(), 1);
+  EXPECT_EQ(called_computation->num_parameters(), 2);
+  EXPECT_EQ(called_computation->root_instruction()->operand_count(), 2);
+}
+
+TEST_F(HloParserTest,
+       DesugarParsingTest_CallStart_RootShape_CallDone_Mismatch) {
+  const char* const hlo = R"(
+HloModule main
+
+ENTRY main {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  %call-start = ((), (), s32[]) call-start(), to_apply={
+    p0 = f32[] parameter(0)
+    ROOT negate = f32[32] custom-call(p0), custom_call_target="foo"
+  }
+  %call-update = ((f32[], f32[]), (), s32[]) call-update(%call-start, p0, p1)
+  ROOT %call-done = f32[64] call-done(%call-update)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  HloInstruction* async_done = module->entry_computation()->root_instruction();
+  HloComputation* async_wrapped_computation =
+      async_done->async_wrapped_computation();
+  // the shape of the root of the async-wrapped computation is determined by the
+  // shape of async-done.
+  EXPECT_EQ(async_wrapped_computation->root_instruction()->shape().ToString(),
+            "f32[64]");
 }
 
 TEST_F(HloParserTest, DeeplyNestedOperandsExceedsRecursionLimit) {
