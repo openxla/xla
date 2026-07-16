@@ -264,10 +264,16 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
   xla::Future<std::unique_ptr<SequentialThunk>> future_sequential_thunk =
       thunk_emitter.EmitHloEntryComputation(hlo_module);
 
-  ASSIGN_OR_RETURN(
-      results.constants_binary,
-      compiler->CompileToTargetBinary(thunk_emitter.ConsumeConstantsModule())
-          .Await());
+  llvm::Module* constants_module = thunk_emitter.constants_module();
+  if (!constants_module->empty() || !constants_module->global_empty()) {
+    ASSIGN_OR_RETURN(
+        results.constants_binary,
+        compiler->CompileToTargetBinary(thunk_emitter.ConsumeConstantsModule())
+            .Await());
+  } else {
+    VLOG(2) << "Constants LLVM module is empty; skipping target compilation.";
+  }
+
   ASSIGN_OR_RETURN(results.executable,
                    std::move(future_sequential_thunk).Await());
 
