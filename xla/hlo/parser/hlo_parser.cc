@@ -4847,10 +4847,10 @@ bool HloParserImpl::ParseSingleSharding(std::optional<HloSharding>& sharding,
       }
       auto tiles = std::make_shared<Array<int64_t>>(tile_assignment_dimensions);
       if (devices.size() != tiles->num_elements()) {
-        return Error(loc, absl::StrCat("sharding device count ", devices.size(),
-                                       " does not match the tile assignment "
-                                       "size ",
-                                       tiles->num_elements()));
+        return Error(
+            loc, absl::StrCat("sharding device count ", devices.size(),
+                              " does not match the tile assignment size ",
+                              tiles->num_elements()));
       }
       absl::c_copy(devices, tiles->begin());
       sharding =
