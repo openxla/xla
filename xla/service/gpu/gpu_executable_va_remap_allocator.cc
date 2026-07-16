@@ -144,7 +144,7 @@ class GpuExecutableVaRemapAllocator::VaRemapExecutionScope
   // Installs reservation aliases for selected parameter buffers and returns an
   // execution-only address table that refers to them. The owning address table
   // remains unchanged.
-  absl::StatusOr<BufferAllocations> MapParameterBuffers(
+  absl::StatusOr<BufferAllocations> GetRemappedBufferAllocations(
       const BufferAllocations& owning_buffer_allocations, int device_ordinal);
 
   const GpuExecutableVaRemapAllocator* owner_ = nullptr;
@@ -255,9 +255,10 @@ GpuExecutableVaRemapAllocator::VaRemapExecutionScope::ReleaseStepAliases() {
   return status;
 }
 
-absl::StatusOr<BufferAllocations>
-GpuExecutableVaRemapAllocator::VaRemapExecutionScope::MapParameterBuffers(
-    const BufferAllocations& owning_buffer_allocations, int device_ordinal) {
+absl::StatusOr<BufferAllocations> GpuExecutableVaRemapAllocator::
+    VaRemapExecutionScope::GetRemappedBufferAllocations(
+        const BufferAllocations& owning_buffer_allocations,
+        int device_ordinal) {
   // This is a non-owning copy of the finalized address table. Output donation
   // and copy protection run before this method and may replace parameter
   // entries, so parameter aliases must be installed from these current
@@ -338,7 +339,7 @@ absl::Status GpuExecutableVaRemapAllocator::VaRemapExecutionScope::
       owner_->module_name(), owner_->va_remapped_alloc_indices_.size());
 
   absl::StatusOr<BufferAllocations> execution_allocations =
-      MapParameterBuffers(owning_buffer_allocations, device_ordinal);
+      GetRemappedBufferAllocations(owning_buffer_allocations, device_ordinal);
   if (!execution_allocations.ok()) {
     absl::Status release_status = ReleaseStepAliases();
     if (!release_status.ok()) {
