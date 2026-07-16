@@ -403,7 +403,7 @@ absl::Status GpuExecutableVaRemapAllocator::VaRemapExecutionScope::
 
     DCHECK(remapping_->phase == Remapping::ProfilePhase::kActive);
     XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
-        "VA remapping: module %s executing with %d profiled command buffer "
+        "VA remapping: module %s executing with %d selected command buffer "
         "allocation(s)",
         owner_->module_name(),
         remapping_->profiled_va_remapped_alloc_indices.size());
@@ -467,7 +467,8 @@ GpuExecutableVaRemapAllocator::GpuExecutableVaRemapAllocator(
           // Collected by the base class.
           return;
         }
-        if (update_mode_ == DebugOptions::SKIP_TEMP &&
+        if ((update_mode_ == DebugOptions::SKIP_TEMP ||
+             update_mode_ == DebugOptions::SKIP_PROFILED) &&
             allocation.IsPreallocatedTempBuffer()) {
           va_remapped_alloc_indices_.insert(index);
         } else if (update_mode_ == DebugOptions::SKIP_PROFILED &&
@@ -512,7 +513,7 @@ void GpuExecutableVaRemapAllocator::AddProfileCandidateAllocationForTesting(
 void GpuExecutableVaRemapAllocator::TransitionProfiledRemapping(
     Remapping* remapping, se::DeviceAddressVmmAllocator* vmm_allocator,
     int device_ordinal) {
-  AllocationIndexSet selected;
+  AllocationIndexSet profiled_selected;
   // Parameter buffers are owned by the caller and can only be remapped by
   // aliasing them with Map(), which requires the exact address to be an
   // active allocator address of `vmm_allocator` and allows at most one alias
@@ -541,13 +542,13 @@ void GpuExecutableVaRemapAllocator::TransitionProfiledRemapping(
       }
       ++parameter_address_count[it->second.opaque()];
     }
-    selected.insert(idx);
+    profiled_selected.insert(idx);
   }
 
   // Drop parameters whose observed address backs more than one selected
   // parameter allocation: Map() supports only one reservation alias per
   // allocator address.
-  for (auto it = selected.begin(); it != selected.end();) {
+  for (auto it = profiled_selected.begin(); it != profiled_selected.end();) {
     const BufferAllocation& allocation = *allocations()[*it];
     bool duplicate_parameter_address = false;
     if (allocation.is_entry_computation_parameter()) {
@@ -561,12 +562,15 @@ void GpuExecutableVaRemapAllocator::TransitionProfiledRemapping(
           "VA remapping: module %s parameter allocation %d shares its buffer "
           "with another parameter; not remapping it",
           module_name(), *it);
-      it = selected.erase(it);
+      it = profiled_selected.erase(it);
     } else {
       ++it;
     }
   }
 
+  AllocationIndexSet selected(va_remapped_alloc_indices_.begin(),
+                              va_remapped_alloc_indices_.end());
+  selected.insert(profiled_selected.begin(), profiled_selected.end());
   if (selected.empty()) {
     remapping->phase = Remapping::ProfilePhase::kDisabled;
     XLA_VLOG_DEVICE(1, device_ordinal) << absl::StreamFormat(
@@ -585,10 +589,13 @@ void GpuExecutableVaRemapAllocator::TransitionProfiledRemapping(
                                                       persistent.end());
   remapping->phase = Remapping::ProfilePhase::kActive;
   XLA_VLOG_DEVICE(1, device_ordinal) << absl::StreamFormat(
-      "VA remapping: module %s profile selected %d of %d command buffer "
-      "allocation(s) for remapping after %d profiling execution(s)",
-      module_name(), remapping->profiled_va_remapped_alloc_indices.size(),
-      profile_candidate_alloc_indices_.size(), remapping->profiled_steps);
+      "VA remapping: module %s profile selected a remapping set with %d "
+      "automatically included preallocated temp allocation(s) and %d of %d "
+      "profiled command buffer allocation(s) after %d profiling "
+      "execution(s)",
+      module_name(), va_remapped_alloc_indices_.size(),
+      profiled_selected.size(), profile_candidate_alloc_indices_.size(),
+      remapping->profiled_steps);
 }
 
 GpuExecutableVaRemapAllocator::~GpuExecutableVaRemapAllocator() {
@@ -618,7 +625,8 @@ GpuExecutableVaRemapAllocator::CreateExecutionScope(
   };
 
   const bool profiled_mode = update_mode_ == DebugOptions::SKIP_PROFILED;
-  if (profiled_mode ? profile_candidate_alloc_indices_.empty()
+  if (profiled_mode ? (profile_candidate_alloc_indices_.empty() &&
+                       va_remapped_alloc_indices_.empty())
                     : va_remapped_alloc_indices_.empty()) {
     return scope_without_remapping();
   }

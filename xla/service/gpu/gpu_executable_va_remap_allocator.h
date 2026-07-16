@@ -54,13 +54,16 @@ class ThunkExecutor;
 // them:
 //  - SKIP_TEMP remaps the command-buffer-referenced preallocated temp buffer
 //    allocations, selected at construction time.
-//  - SKIP_PROFILED profiles the address stability of all
-//    command-buffer-referenced non-constant allocations over the first
-//    executions and then remaps the ones whose addresses stayed stable.
+//  - SKIP_PROFILED automatically selects command-buffer-referenced
+//    preallocated temp buffers, profiles the address stability of the other
+//    non-constant, non-thread-local allocations over the first executions,
+//    and then remaps the union of the temp buffers and stable profile
+//    candidates.
 //
 // When VA remapping is unavailable for an execution (no VMM allocator,
-// nothing to remap, or the SKIP_PROFILED profile selected no allocations),
-// executions fall back to the base-class behavior.
+// nothing to remap, or SKIP_PROFILED has neither automatically selected temp
+// buffers nor stable profile candidates), executions fall back to the
+// base-class behavior.
 class GpuExecutableVaRemapAllocator : public GpuExecutableBufferAllocator {
  public:
   GpuExecutableVaRemapAllocator(
@@ -102,9 +105,9 @@ class GpuExecutableVaRemapAllocator : public GpuExecutableBufferAllocator {
       kInactive,
       // Observing allocation addresses; executions pass std::nullopt.
       kProfiling,
-      // Profile transition done; the profiled allocation set is VA-remapped.
+      // Profile transition done; the selected allocation set is VA-remapped.
       kActive,
-      // Profiling selected no allocations; executions pass only constants.
+      // No automatic or profiled allocations; executions pass only constants.
       kDisabled,
     };
 
@@ -127,7 +130,8 @@ class GpuExecutableVaRemapAllocator : public GpuExecutableBufferAllocator {
     // Candidates disqualified from remapping because their address changed
     // between executions or was null.
     absl::flat_hash_set<BufferAllocation::Index> unstable_alloc_indices;
-    // Allocations selected for VA remapping by the profile transition.
+    // Automatic temp buffers and profile candidates selected for VA remapping
+    // by the profile transition.
     AllocationIndexSet profiled_va_remapped_alloc_indices;
     // Sorted union of constant allocation indices and
     // profiled_va_remapped_alloc_indices, set by the profile transition.
@@ -141,23 +145,24 @@ class GpuExecutableVaRemapAllocator : public GpuExecutableBufferAllocator {
   // The VA-remapping ExecutionScope, defined in the .cc file.
   class VaRemapExecutionScope;
 
-  // Runs the SKIP_PROFILED transition for one executor: selects profiled
-  // candidates whose addresses stayed stable, filters parameter allocations
-  // that cannot be Map()ed (not backed by `vmm_allocator` or sharing an
-  // address with another parameter), and moves the phase to kActive, or to
-  // kDisabled when nothing can be remapped.
+  // Runs the SKIP_PROFILED transition for one executor: combines automatic
+  // temp buffers with profiled candidates whose addresses stayed stable,
+  // filters parameter allocations that cannot be Map()ed (not backed by
+  // `vmm_allocator` or sharing an address with another parameter), and moves
+  // the phase to kActive, or to kDisabled when nothing can be remapped.
   void TransitionProfiledRemapping(Remapping* remapping,
                                    se::DeviceAddressVmmAllocator* vmm_allocator,
                                    int device_ordinal);
 
   DebugOptions::CommandBufferUpdateMode update_mode_ = DebugOptions::SKIP_TEMP;
 
-  // SKIP_TEMP: indices of command-buffer-referenced temporary allocations
-  // assigned stable addresses through VMM remapping.
+  // SKIP_TEMP and SKIP_PROFILED: indices of command-buffer-referenced
+  // preallocated temp buffers selected for VMM remapping.
   AllocationIndexSet va_remapped_alloc_indices_;
 
-  // SKIP_PROFILED: command-buffer-referenced non-constant allocations whose
-  // address stability is profiled during the first executions.
+  // SKIP_PROFILED: command-buffer-referenced non-constant, non-temp
+  // allocations whose address stability is profiled during the first
+  // executions.
   AllocationIndexSet profile_candidate_alloc_indices_;
 
   absl::Mutex remappings_mutex_;

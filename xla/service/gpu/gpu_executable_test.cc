@@ -343,7 +343,7 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
   ASSERT_OK_AND_ASSIGN(
       auto skip_profiled_policy,
       get_allocation_policy_without_vmm(DebugOptions::SKIP_PROFILED));
-  EXPECT_EQ(skip_profiled_policy.command_buffer_allocation_count, 1);
+  EXPECT_EQ(skip_profiled_policy.command_buffer_allocation_count, 2);
   EXPECT_THAT(skip_profiled_policy.persistent_alloc_indices,
               Optional(ElementsAre(1)));
 }

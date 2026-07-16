@@ -2705,8 +2705,9 @@ TEST_F(VmmTest, CommandBufferSkipProfiledTwoGemmChain) {
 
   ScopedBufferAllocatorVLog vlog;
   absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
-  // The profile transition happens exactly once and selects at least the
-  // stable parameter buffers, after which the VA reservation is created.
+  // The profile transition happens exactly once, combining the automatically
+  // selected temp buffer with stable parameter buffers, after which the VA
+  // reservation is created.
   EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
                             ::testing::HasSubstr("profile selected")))
       .Times(1);
