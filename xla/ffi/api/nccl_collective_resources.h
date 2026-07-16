@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -52,8 +53,6 @@ struct NcclCollectiveGroup {
   NcclCollectiveGroupMode group_mode;
   // Distinguishes independent communication channels with identical members.
   uint64_t communication_id;
-  // Must match the size of the clique derived by XLA for the current device.
-  int32_t expected_clique_size;
   Span<const size_t> group_offsets;
   Span<const int64_t> members;
 };
@@ -89,6 +88,14 @@ struct NcclCollectiveInfo {
   int32_t clique_size;
 };
 
+// Device-resident region-major peer-address table materialized in
+// caller-provided storage. Its contents become ready in Initialize stream
+// order.
+struct NcclCollectiveDeviceAddressTable {
+  const uint64_t* device_data;
+  size_t address_count;
+};
+
 // Describes direct load/store reachability within an acquired clique. LSA
 // membership follows NCCL's logical topology and can span processes and
 // physical hosts within one properly configured MNNVL/IMEX fabric.
@@ -108,9 +115,10 @@ struct NcclCollectiveTopology {
 
 class NcclCollectiveResources;
 
-// Move-only owner for one execution-scoped collective resource request. It
-// must outlive all device work that uses the resource; destruction does not
-// synchronize the GPU stream.
+// Move-only owner for one execution-scoped collective resource request. It must
+// outlive all device work that uses the resource. Resolve staging remains
+// retained independently until its stream-ordered copy completes; destruction
+// does not synchronize the GPU stream.
 class NcclCollectiveResource {
  public:
   NcclCollectiveResource(const NcclCollectiveResource&) = delete;
@@ -119,7 +127,8 @@ class NcclCollectiveResource {
   NcclCollectiveResource(NcclCollectiveResource&& other) noexcept
       : extension_(std::exchange(other.extension_, nullptr)),
         resource_(std::exchange(other.resource_, nullptr)),
-        info_(other.info_) {}
+        info_(other.info_),
+        address_count_(other.address_count_) {}
 
   NcclCollectiveResource& operator=(NcclCollectiveResource&& other) noexcept {
     if (this == &other) return *this;
@@ -127,6 +136,7 @@ class NcclCollectiveResource {
     extension_ = std::exchange(other.extension_, nullptr);
     resource_ = std::exchange(other.resource_, nullptr);
     info_ = other.info_;
+    address_count_ = other.address_count_;
     return *this;
   }
 
@@ -139,8 +149,12 @@ class NcclCollectiveResource {
 
   NcclCollectiveResource(
       const XLA_FFI_NcclCollectiveResources_Extension* extension,
-      XLA_FFI_NcclCollectiveResource* resource, NcclCollectiveInfo info)
-      : extension_(extension), resource_(resource), info_(info) {}
+      XLA_FFI_NcclCollectiveResource* resource, NcclCollectiveInfo info,
+      size_t address_count)
+      : extension_(extension),
+        resource_(resource),
+        info_(info),
+        address_count_(address_count) {}
 
   void Reset() {
     if (resource_ == nullptr) return;
@@ -154,6 +168,7 @@ class NcclCollectiveResource {
   const XLA_FFI_NcclCollectiveResources_Extension* extension_ = nullptr;
   XLA_FFI_NcclCollectiveResource* resource_ = nullptr;
   NcclCollectiveInfo info_ = {};
+  size_t address_count_ = 0;
 };
 
 // Header-only wrapper for the NCCL collective-resources C extension. XLA owns
@@ -163,7 +178,7 @@ class NcclCollectiveResource {
 // The required lifecycle is:
 //
 //   Prepare:    Request, then Commit.
-//   Initialize: Initialize, then ResolveAddresses.
+//   Initialize: Initialize, then ResolveDeviceAddresses.
 //   Execute:    EnqueueBarrierBeforeLaunch, if requested.
 //
 // The resource token must remain alive until all enqueued device work using its
@@ -182,7 +197,8 @@ class NcclCollectiveResources {
   // This does not publish the requests; call Commit before Prepare returns.
   // Only one request may succeed in an FFI execution. The optional barrier
   // requires every clique rank to be directly load/store accessible and does
-  // not span LSA teams.
+  // not span LSA teams. It uses execution-scoped control buffers and is not
+  // command-buffer compatible.
   ErrorOr<std::unique_ptr<NcclCollectiveResource>> Request(
       const NcclCollectiveGroup& group,
       Span<const NcclCollectiveRegion> regions,
@@ -200,7 +216,6 @@ class NcclCollectiveResources {
     c_group.group_mode =
         static_cast<XLA_FFI_NcclCollectiveGroupMode>(group.group_mode);
     c_group.communication_id = group.communication_id;
-    c_group.expected_clique_size = group.expected_clique_size;
     c_group.num_groups =
         group.group_offsets.size() == 0 ? 0 : group.group_offsets.size() - 1;
     c_group.group_offsets = group.group_offsets.begin();
@@ -245,10 +260,19 @@ class NcclCollectiveResources {
       return Unexpected(Error::Internal(
           "NCCL collective resource Request returned invalid clique metadata"));
     }
+    if (regions.size() > std::numeric_limits<size_t>::max() /
+                             static_cast<size_t>(args.clique_size)) {
+      Destroy(*extension, args.resource);
+      return Unexpected(Error::Internal(
+          "NCCL collective resource Request returned a clique size that "
+          "overflows the address table"));
+    }
 
     NcclCollectiveInfo info = {args.rank, args.clique_size};
-    return std::unique_ptr<NcclCollectiveResource>(
-        new NcclCollectiveResource(*extension, args.resource, std::move(info)));
+    size_t address_count =
+        regions.size() * static_cast<size_t>(args.clique_size);
+    return std::unique_ptr<NcclCollectiveResource>(new NcclCollectiveResource(
+        *extension, args.resource, std::move(info), address_count));
   }
 
   // Publishes a planned resource during Prepare so XLA can acquire its clique
@@ -270,7 +294,7 @@ class NcclCollectiveResources {
   }
 
   // Associates a committed token with resources acquired by XLA. Call during
-  // Initialize before ResolveAddresses.
+  // Initialize before ResolveDeviceAddresses.
   Error Initialize(const NcclCollectiveResource& resource) const {
     Error association = CheckResource(resource);
     if (association.failure()) return association;
@@ -332,28 +356,60 @@ class NcclCollectiveResources {
     };
   }
 
-  // Writes a region-major address table during Initialize. addresses.size()
-  // must equal region_count * resource.info().clique_size. Symmetric rows have
-  // one address per rank; multimem rows repeat one multicast alias after
-  // verifying that the complete clique is directly accessible. Request a byte
-  // range twice when the kernel needs both representations.
-  Error ResolveAddresses(const NcclCollectiveResource& resource,
-                         Span<uint64_t> addresses) const {
+  // Materializes a region-major address table in caller-provided device storage
+  // during Initialize. Storage may be larger than the logical table but must
+  // contain at least one entry per requested region and clique rank, fit in one
+  // XLA buffer allocation, and not overlap a requested collective region.
+  // Symmetric rows have one address per rank; multimem rows repeat one
+  // multicast alias after verifying that the complete clique is directly
+  // accessible. Request a byte range twice when the kernel needs both
+  // representations. A transient result is insufficient because its allocation
+  // can be reused before Execute; a dedicated entry operand aliased to a result
+  // can reserve storage for the complete execution. Storage must be a declared
+  // FFI argument or result. For command-buffer-compatible handlers, that also
+  // lets XLA track its address across graph replay. This does not make other
+  // handler operations command-buffer compatible.
+  ErrorOr<NcclCollectiveDeviceAddressTable> ResolveDeviceAddresses(
+      const NcclCollectiveResource& resource,
+      BufferR1<DataType::U64> device_storage) const {
     Error association = CheckResource(resource);
-    if (association.failure()) return association;
+    if (association.failure()) return Unexpected(std::move(association));
     if (extension_->resolve == nullptr) {
-      return Unimplemented(
-          "NCCL collective resource Resolve operation is unavailable");
+      return Unexpected(Unimplemented(
+          "NCCL collective resource Resolve operation is unavailable"));
+    }
+    size_t address_capacity = device_storage.element_count();
+    uint64_t* device_data = device_storage.typed_data();
+    if (address_capacity < resource.address_count_) {
+      return Unexpected(Error::InvalidArgument(
+          "NCCL collective device address storage is too small"));
+    }
+    if (address_capacity != 0 && device_data == nullptr) {
+      return Unexpected(Error::InvalidArgument(
+          "NCCL collective device address storage must not be null"));
     }
 
+    XLA_FFI_NcclCollectiveDeviceAddressTable table = {};
+    table.struct_size = XLA_FFI_NcclCollectiveDeviceAddressTable_STRUCT_SIZE;
+    table.device_data = device_data;
+    table.address_capacity = address_capacity;
     XLA_FFI_NcclCollectiveResources_Resolve_Args args = {};
     args.struct_size = XLA_FFI_NcclCollectiveResources_Resolve_Args_STRUCT_SIZE;
     args.ctx = ctx_;
     args.resource = resource.resource_;
-    args.addresses = addresses.begin();
-    args.address_count = addresses.size();
-    XLA_FFI_Error* error = extension_->resolve(&args);
-    return error == nullptr ? Error::Success() : TakeError(error);
+    args.table = &table;
+    if (XLA_FFI_Error* error = extension_->resolve(&args)) {
+      return Unexpected(TakeError(error));
+    }
+    if (table.device_data != device_data ||
+        table.address_capacity != address_capacity ||
+        table.address_count != resource.address_count_) {
+      return Unexpected(Error::Internal(
+          "NCCL collective resource Resolve returned an invalid device "
+          "address table"));
+    }
+    return NcclCollectiveDeviceAddressTable{table.device_data,
+                                            table.address_count};
   }
 
   // Begins collective execution by enqueueing the entry synchronization

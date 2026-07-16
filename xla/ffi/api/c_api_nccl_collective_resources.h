@@ -31,10 +31,9 @@ extern "C" {
 // kernel launch.
 //
 // This is the same resource model used by XLA's Mosaic GPU collective-metadata
-// path: the handler receives a clique rank, peer pointers for symmetric
-// buffers, optional multimem aliases, and an optional clique-wide prefix
-// barrier. The extension does not prescribe a device metadata layout or copy
-// the returned address table to device memory; the handler owns that policy.
+// path: the handler receives a clique rank, a device-resident table of peer
+// pointers for symmetric buffers and optional multimem aliases, and an optional
+// clique-wide prefix barrier.
 //
 // A handler uses the extension in the following FFI stages:
 //
@@ -88,10 +87,6 @@ struct XLA_FFI_NcclCollectiveGroup {
   // Distinguishes independent communication channels with identical members.
   // Every rank participating in an operation must use the same value.
   uint64_t communication_id;
-
-  // Number of devices expected in the current device's derived clique. Request
-  // rejects a mismatch with XLA's device assignment.
-  int32_t expected_clique_size;
 
   // Number of groups represented by group_offsets and members.
   size_t num_groups;
@@ -159,9 +154,10 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_NcclCollectiveRegion, memory_kind);
 // device's zero-based rank in the derived clique, and clique_size is the number
 // of ranks. The caller must eventually destroy resource.
 //
-// Destroy does not synchronize the GPU stream. The caller must keep `resource`
-// alive until all device work that uses its resolved addresses or prefix
-// barrier has completed.
+// The caller must keep `resource` alive until all device work that uses its
+// resolved addresses or prefix barrier has completed. Resolve retains its host
+// staging independently until the stream-ordered copy completes. Destroy does
+// not synchronize device work or make early destruction safe.
 struct XLA_FFI_NcclCollectiveResources_Request_Args {
   size_t struct_size;
   XLA_FFI_Extension_Base* extension_start;
@@ -173,7 +169,8 @@ struct XLA_FFI_NcclCollectiveResources_Request_Args {
   // When nonzero, asks XLA to create a one-shot barrier that the handler must
   // enqueue before its kernel. Every clique rank must be directly accessible
   // from every other rank; cliques spanning multiple LSA teams are not
-  // supported.
+  // supported. This mode uses execution-scoped control buffers and is not
+  // command-buffer compatible.
   uint8_t barrier_before_launch;
   XLA_FFI_NcclCollectiveResource* resource;  // out
   int32_t rank;                              // out
@@ -278,27 +275,60 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_NcclCollectiveResources_QueryTopology_Args,
 typedef XLA_FFI_Error* XLA_FFI_NcclCollectiveResources_QueryTopology(
     XLA_FFI_NcclCollectiveResources_QueryTopology_Args* args);
 
-// Writes the region-major address table resolved during Initialize. The table
-// contains region_count * clique_size entries. Entry
-// addresses[region * clique_size + rank] describes that region for that rank.
+// Caller-provided device storage for a region-major address table. The caller
+// must reserve the storage for the table before Initialize and keep it alive
+// through all device work that reads it. Its contents become ready in
+// Initialize stream order and are visible to later Execute work under XLA's
+// normal FFI execution ordering.
+struct XLA_FFI_NcclCollectiveDeviceAddressTable {
+  size_t struct_size;
+  XLA_FFI_Extension_Base* extension_start;
+
+  // Caller-provided writable device storage. Null is valid only when
+  // address_capacity is zero.
+  uint64_t* device_data;
+  // Number of uint64_t entries available at device_data.
+  size_t address_capacity;
+  // Number of entries materialized by Resolve. The caller initializes this to
+  // zero; Resolve sets it to region_count * clique_size on success. Resolve
+  // does not change device_data or address_capacity.
+  size_t address_count;  // out
+};
+
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_NcclCollectiveDeviceAddressTable,
+                             address_count);
+
+// Resolves and materializes the resource's region-major address table in the
+// caller-provided device storage. address_capacity must be at least
+// region_count * clique_size. Resolve writes only that logical prefix; any
+// remaining entries are unchanged. The complete capacity must fit in one XLA
+// buffer allocation, and the logical prefix must not overlap a requested
+// collective region. Entry
+// device_data[region * clique_size + rank] describes that region for that rank.
 // For MULTIMEM regions, every entry in a row contains the same multicast alias,
 // after Resolve verifies that all clique ranks are load/store accessible from
 // the current rank. Request the same byte range once as SYMMETRIC and once as
 // MULTIMEM when a kernel needs both per-rank pointers and a multicast alias.
-// address_count must equal the complete table size; zero regions permit a null
-// addresses pointer. This operation is valid only during FFI Initialize.
+// Zero regions materialize no entries and permit null, zero-capacity storage.
+// This operation is valid only during FFI Initialize and may be called once.
+// Storage must not be a transient result whose allocation can be reused before
+// the handler executes. A dedicated entry operand aliased to a result is one
+// way to reserve it for the complete execution. The storage must be a declared
+// FFI argument or result. For command-buffer-compatible handlers, that also
+// lets XLA track its address across graph replay. Tracked storage is necessary
+// but does not by itself make every handler operation command-buffer
+// compatible.
 struct XLA_FFI_NcclCollectiveResources_Resolve_Args {
   size_t struct_size;
   XLA_FFI_Extension_Base* extension_start;
 
   XLA_FFI_ExecutionContext* ctx;
   XLA_FFI_NcclCollectiveResource* resource;
-  uint64_t* addresses;
-  size_t address_count;
+  XLA_FFI_NcclCollectiveDeviceAddressTable* table;  // in/out
 };
 
 XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_NcclCollectiveResources_Resolve_Args,
-                             address_count);
+                             table);
 
 typedef XLA_FFI_Error* XLA_FFI_NcclCollectiveResources_Resolve(
     XLA_FFI_NcclCollectiveResources_Resolve_Args* args);
@@ -323,9 +353,10 @@ typedef XLA_FFI_Error*
 XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch(
     XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args* args);
 
-// Releases the host-side token and resources owned specifically by it. This
-// does not synchronize a GPU stream or invalidate XLA's underlying buffer
-// allocations. A null resource is not valid.
+// Releases the host-side token and resources owned specifically by it. Resolve
+// staging remains retained independently until its stream-ordered copy
+// completes. Destroy does not synchronize a GPU stream or invalidate XLA's
+// underlying buffer allocations. A null resource is not valid.
 struct XLA_FFI_NcclCollectiveResources_Destroy_Args {
   size_t struct_size;
   XLA_FFI_Extension_Base* extension_start;

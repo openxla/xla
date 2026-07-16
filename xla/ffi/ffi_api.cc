@@ -747,12 +747,22 @@ static XLA_FFI_Error* NcclCollectiveResourcesResolve(
       "XLA_FFI_NcclCollectiveResources_Resolve_Args",
       XLA_FFI_NcclCollectiveResources_Resolve_Args_STRUCT_SIZE,
       args->struct_size));
-  if (args->resource == nullptr) {
-    return ToFfiError(InvalidArgument("NCCL collective resource is null"));
+  if (args->resource == nullptr || args->table == nullptr) {
+    return ToFfiError(
+        InvalidArgument("NCCL collective resource or address table is null"));
   }
-  if (args->address_count != 0 && args->addresses == nullptr) {
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_NcclCollectiveDeviceAddressTable",
+      XLA_FFI_NcclCollectiveDeviceAddressTable_STRUCT_SIZE,
+      args->table->struct_size));
+  if (args->table->address_capacity != 0 &&
+      args->table->device_data == nullptr) {
     return ToFfiError(InvalidArgument(
-        "NCCL collective address table is null for non-zero address count"));
+        "NCCL collective device address storage must not be null"));
+  }
+  if (args->table->address_count != 0) {
+    return ToFfiError(InvalidArgument(
+        "NCCL collective device address count must be initialized to zero"));
   }
   XLA_FFI_RETURN_IF_ERROR(ValidateNcclCollectiveResourcesStage(
       args->ctx, XLA_FFI_ExecutionStage_INITIALIZE,
