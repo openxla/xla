@@ -38,6 +38,8 @@ class NcclCollectiveResourcesApi {
       XLA_FFI_NcclCollectiveResources_Initialize_Args* args) = 0;
   virtual absl::Status Resolve(
       XLA_FFI_NcclCollectiveResources_Resolve_Args* args) = 0;
+  virtual absl::Status ResolveHost(
+      XLA_FFI_NcclCollectiveResources_ResolveHost_Args* args) = 0;
   virtual absl::Status QueryTopology(
       XLA_FFI_NcclCollectiveResources_QueryTopology_Args* args) = 0;
   virtual absl::Status EnqueueBarrierBeforeLaunch(

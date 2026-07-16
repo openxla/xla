@@ -809,39 +809,14 @@ absl::Status FfiNcclCollectiveResources::Initialize(
   return absl::OkStatus();
 }
 
-absl::Status FfiNcclCollectiveResources::Resolve(
-    XLA_FFI_NcclCollectiveResources_Resolve_Args* args) {
-  if (args == nullptr) {
-    return absl::InvalidArgumentError(
-        "NCCL collective resource Resolve args must not be null");
-  }
-  RETURN_IF_ERROR(
-      CheckStructSize("XLA_FFI_NcclCollectiveResources_Resolve_Args",
-                      XLA_FFI_NcclCollectiveResources_Resolve_Args_STRUCT_SIZE,
-                      args->struct_size));
-  if (args->ctx == nullptr || args->resource == nullptr ||
-      args->table == nullptr) {
-    return absl::InvalidArgumentError(
-        "NCCL collective resource Resolve requires context, resource, and "
-        "address table storage");
-  }
-  RETURN_IF_ERROR(
-      CheckStructSize("XLA_FFI_NcclCollectiveDeviceAddressTable",
-                      XLA_FFI_NcclCollectiveDeviceAddressTable_STRUCT_SIZE,
-                      args->table->struct_size));
-  if (args->table->address_count != 0) {
-    return absl::InvalidArgumentError(
-        "NCCL collective device address count must be initialized to zero");
-  }
+absl::StatusOr<size_t> FfiNcclCollectiveResources::ValidateAddressResolution(
+    Resource* resource) {
   if (state_->stage != XLA_FFI_ExecutionStage_INITIALIZE) {
     return absl::FailedPreconditionError(
         "NCCL collective addresses can only be resolved during FFI "
         "Initialize");
   }
 
-  auto* handle =
-      reinterpret_cast<ffi::NcclCollectiveResourceHandle*>(args->resource);
-  auto* resource = static_cast<Resource*>(handle);
   if (resource->owner_.get() != state_->owner.get()) {
     return absl::InvalidArgumentError(
         "NCCL collective resource belongs to a different execution");
@@ -853,7 +828,7 @@ absl::Status FfiNcclCollectiveResources::Resolve(
   }
   if (resource->address_table_resolved_) {
     return absl::FailedPreconditionError(
-        "NCCL collective device address table was already resolved");
+        "NCCL collective address table was already resolved");
   }
   if (state_->stream == nullptr || state_->buffer_allocations == nullptr ||
       (!resource->regions_.empty() && state_->collective_memory == nullptr)) {
@@ -867,67 +842,12 @@ absl::Status FfiNcclCollectiveResources::Resolve(
     return absl::InvalidArgumentError(
         "NCCL collective device address table size overflows");
   }
-  size_t expected_count = resource->regions_.size() * clique_size;
-  if (args->table->address_capacity >
-      std::numeric_limits<size_t>::max() / sizeof(uint64_t)) {
-    return absl::InvalidArgumentError(
-        "NCCL collective device address storage size overflows");
-  }
-  if (args->table->address_capacity < expected_count) {
-    return absl::InvalidArgumentError(absl::StrFormat(
-        "NCCL collective device address storage has capacity %d; expected at "
-        "least %d",
-        args->table->address_capacity, expected_count));
-  }
-  if (args->table->address_capacity != 0 &&
-      args->table->device_data == nullptr) {
-    return absl::InvalidArgumentError(
-        "NCCL collective device address storage must not be null");
-  }
-  size_t storage_byte_size = args->table->address_capacity * sizeof(uint64_t);
-  size_t address_table_byte_size = expected_count * sizeof(uint64_t);
-  if (storage_byte_size != 0) {
-    uintptr_t storage_address =
-        reinterpret_cast<uintptr_t>(args->table->device_data);
-    if (storage_address % alignof(uint64_t) != 0) {
-      return absl::InvalidArgumentError(
-          "NCCL collective device address storage is not uint64 aligned");
-    }
-    se::DeviceAddressBase storage(args->table->device_data, storage_byte_size);
-    std::optional<BufferAllocation::Index> storage_allocation_index =
-        state_->buffer_allocations->FindAllocationIndex(storage);
-    if (!storage_allocation_index.has_value()) {
-      return absl::InvalidArgumentError(
-          "NCCL collective device address storage does not belong to an XLA "
-          "buffer allocation");
-    }
-    se::DeviceAddressBase storage_allocation =
-        state_->buffer_allocations->GetDeviceAddress(*storage_allocation_index);
-    uintptr_t allocation_address =
-        reinterpret_cast<uintptr_t>(storage_allocation.opaque());
-    if (storage_address < allocation_address) {
-      return absl::InternalError(
-          "XLA buffer allocation lookup returned an invalid allocation");
-    }
-    uint64_t storage_offset = storage_address - allocation_address;
-    RETURN_IF_ERROR(ValidateByteRange(
-        storage_offset, storage_byte_size, storage_allocation.size(),
-        "NCCL collective device address storage"));
-    for (size_t region_index = 0; region_index < resource->regions_.size();
-         ++region_index) {
-      const Region& region = resource->regions_[region_index];
-      if (address_table_byte_size != 0 &&
-          region.allocation == *storage_allocation_index &&
-          ByteRangesOverlap(storage_offset, address_table_byte_size,
-                            region.offset, region.size)) {
-        return absl::InvalidArgumentError(absl::StrFormat(
-            "NCCL collective device address storage overlaps collective "
-            "region %d",
-            region_index));
-      }
-    }
-  }
+  return resource->regions_.size() * clique_size;
+}
 
+absl::StatusOr<std::vector<uint64_t>>
+FfiNcclCollectiveResources::BuildResolvedAddresses(Resource* resource,
+                                                   size_t expected_count) {
   std::vector<uint64_t> resolved;
   resolved.reserve(expected_count);
   for (size_t region_index = 0; region_index < resource->regions_.size();
@@ -1036,6 +956,100 @@ absl::Status FfiNcclCollectiveResources::Resolve(
       resolved.push_back(address);
     }
   }
+  return resolved;
+}
+
+absl::Status FfiNcclCollectiveResources::Resolve(
+    XLA_FFI_NcclCollectiveResources_Resolve_Args* args) {
+  if (args == nullptr) {
+    return absl::InvalidArgumentError(
+        "NCCL collective resource Resolve args must not be null");
+  }
+  RETURN_IF_ERROR(
+      CheckStructSize("XLA_FFI_NcclCollectiveResources_Resolve_Args",
+                      XLA_FFI_NcclCollectiveResources_Resolve_Args_STRUCT_SIZE,
+                      args->struct_size));
+  if (args->ctx == nullptr || args->resource == nullptr ||
+      args->table == nullptr) {
+    return absl::InvalidArgumentError(
+        "NCCL collective resource Resolve requires context, resource, and "
+        "address table storage");
+  }
+  RETURN_IF_ERROR(
+      CheckStructSize("XLA_FFI_NcclCollectiveDeviceAddressTable",
+                      XLA_FFI_NcclCollectiveDeviceAddressTable_STRUCT_SIZE,
+                      args->table->struct_size));
+  if (args->table->address_count != 0) {
+    return absl::InvalidArgumentError(
+        "NCCL collective device address count must be initialized to zero");
+  }
+
+  auto* handle =
+      reinterpret_cast<ffi::NcclCollectiveResourceHandle*>(args->resource);
+  auto* resource = static_cast<Resource*>(handle);
+  ASSIGN_OR_RETURN(size_t expected_count, ValidateAddressResolution(resource));
+  if (args->table->address_capacity >
+      std::numeric_limits<size_t>::max() / sizeof(uint64_t)) {
+    return absl::InvalidArgumentError(
+        "NCCL collective device address storage size overflows");
+  }
+  if (args->table->address_capacity < expected_count) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "NCCL collective device address storage has capacity %d; expected at "
+        "least %d",
+        args->table->address_capacity, expected_count));
+  }
+  if (args->table->address_capacity != 0 &&
+      args->table->device_data == nullptr) {
+    return absl::InvalidArgumentError(
+        "NCCL collective device address storage must not be null");
+  }
+  size_t storage_byte_size = args->table->address_capacity * sizeof(uint64_t);
+  size_t address_table_byte_size = expected_count * sizeof(uint64_t);
+  if (storage_byte_size != 0) {
+    uintptr_t storage_address =
+        reinterpret_cast<uintptr_t>(args->table->device_data);
+    if (storage_address % alignof(uint64_t) != 0) {
+      return absl::InvalidArgumentError(
+          "NCCL collective device address storage is not uint64 aligned");
+    }
+    se::DeviceAddressBase storage(args->table->device_data, storage_byte_size);
+    std::optional<BufferAllocation::Index> storage_allocation_index =
+        state_->buffer_allocations->FindAllocationIndex(storage);
+    if (!storage_allocation_index.has_value()) {
+      return absl::InvalidArgumentError(
+          "NCCL collective device address storage does not belong to an XLA "
+          "buffer allocation");
+    }
+    se::DeviceAddressBase storage_allocation =
+        state_->buffer_allocations->GetDeviceAddress(*storage_allocation_index);
+    uintptr_t allocation_address =
+        reinterpret_cast<uintptr_t>(storage_allocation.opaque());
+    if (storage_address < allocation_address) {
+      return absl::InternalError(
+          "XLA buffer allocation lookup returned an invalid allocation");
+    }
+    uint64_t storage_offset = storage_address - allocation_address;
+    RETURN_IF_ERROR(ValidateByteRange(
+        storage_offset, storage_byte_size, storage_allocation.size(),
+        "NCCL collective device address storage"));
+    for (size_t region_index = 0; region_index < resource->regions_.size();
+         ++region_index) {
+      const Region& region = resource->regions_[region_index];
+      if (address_table_byte_size != 0 &&
+          region.allocation == *storage_allocation_index &&
+          ByteRangesOverlap(storage_offset, address_table_byte_size,
+                            region.offset, region.size)) {
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "NCCL collective device address storage overlaps collective "
+            "region %d",
+            region_index));
+      }
+    }
+  }
+
+  ASSIGN_OR_RETURN(std::vector<uint64_t> resolved,
+                   BuildResolvedAddresses(resource, expected_count));
 
   if (expected_count != 0) {
     ASSIGN_OR_RETURN(
@@ -1081,6 +1095,44 @@ absl::Status FfiNcclCollectiveResources::Resolve(
   }
 
   args->table->address_count = expected_count;
+  resource->address_table_resolved_ = true;
+  return absl::OkStatus();
+}
+
+absl::Status FfiNcclCollectiveResources::ResolveHost(
+    XLA_FFI_NcclCollectiveResources_ResolveHost_Args* args) {
+  if (args == nullptr) {
+    return absl::InvalidArgumentError(
+        "NCCL collective resource ResolveHost args must not be null");
+  }
+  RETURN_IF_ERROR(CheckStructSize(
+      "XLA_FFI_NcclCollectiveResources_ResolveHost_Args",
+      XLA_FFI_NcclCollectiveResources_ResolveHost_Args_STRUCT_SIZE,
+      args->struct_size));
+  if (args->ctx == nullptr || args->resource == nullptr) {
+    return absl::InvalidArgumentError(
+        "NCCL collective resource ResolveHost requires context and resource");
+  }
+
+  auto* handle =
+      reinterpret_cast<ffi::NcclCollectiveResourceHandle*>(args->resource);
+  auto* resource = static_cast<Resource*>(handle);
+  ASSIGN_OR_RETURN(size_t expected_count, ValidateAddressResolution(resource));
+  if (args->address_count != expected_count) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "NCCL collective host address table has %d entries; expected %d",
+        args->address_count, expected_count));
+  }
+  if (expected_count != 0 && args->addresses == nullptr) {
+    return absl::InvalidArgumentError(
+        "NCCL collective host address table must not be null");
+  }
+
+  ASSIGN_OR_RETURN(std::vector<uint64_t> resolved,
+                   BuildResolvedAddresses(resource, expected_count));
+  if (!resolved.empty()) {
+    std::copy(resolved.begin(), resolved.end(), args->addresses);
+  }
   resource->address_table_resolved_ = true;
   return absl::OkStatus();
 }

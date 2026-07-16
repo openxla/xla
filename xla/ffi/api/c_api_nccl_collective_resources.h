@@ -333,6 +333,29 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_NcclCollectiveResources_Resolve_Args,
 typedef XLA_FFI_Error* XLA_FFI_NcclCollectiveResources_Resolve(
     XLA_FFI_NcclCollectiveResources_Resolve_Args* args);
 
+// Writes the resource's region-major address table to caller-provided host
+// storage. address_count must equal region_count * clique_size. Entry
+// addresses[region * clique_size + rank] has the same meaning as the
+// corresponding entry materialized by Resolve. Zero regions permit a null
+// addresses pointer. This operation is valid only during FFI Initialize.
+// Resolve and ResolveHost share one resolution attempt: exactly one of them may
+// succeed for a resource.
+struct XLA_FFI_NcclCollectiveResources_ResolveHost_Args {
+  size_t struct_size;
+  XLA_FFI_Extension_Base* extension_start;
+
+  XLA_FFI_ExecutionContext* ctx;
+  XLA_FFI_NcclCollectiveResource* resource;
+  uint64_t* addresses;
+  size_t address_count;
+};
+
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_NcclCollectiveResources_ResolveHost_Args,
+                             address_count);
+
+typedef XLA_FFI_Error* XLA_FFI_NcclCollectiveResources_ResolveHost(
+    XLA_FFI_NcclCollectiveResources_ResolveHost_Args* args);
+
 // Begins collective execution by enqueueing the entry synchronization
 // requested during Prepare. Work enqueued after this call does not begin until
 // every rank in the NCCL LSA reaches the same boundary. This operation is
@@ -388,14 +411,15 @@ struct XLA_FFI_NcclCollectiveResources_Extension {
       enqueue_barrier_before_launch;
   XLA_FFI_NcclCollectiveResources_Destroy* destroy;
   XLA_FFI_NcclCollectiveResources_QueryTopology* query_topology;
+  XLA_FFI_NcclCollectiveResources_ResolveHost* resolve_host;
 };
 
 XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_NcclCollectiveResources_Extension,
-                             query_topology);
+                             resolve_host);
 
 // Minimum table size for ABI 0.1. Later minor versions preserve this prefix.
 #define XLA_FFI_NCCL_COLLECTIVE_RESOURCES_ABI_0_1_STRUCT_SIZE \
-  XLA_FFI_STRUCT_SIZE(XLA_FFI_NcclCollectiveResources_Extension, query_topology)
+  XLA_FFI_STRUCT_SIZE(XLA_FFI_NcclCollectiveResources_Extension, resolve_host)
 
 #ifdef __cplusplus
 }

@@ -178,7 +178,7 @@ class NcclCollectiveResource {
 // The required lifecycle is:
 //
 //   Prepare:    Request, then Commit.
-//   Initialize: Initialize, then ResolveDeviceAddresses.
+//   Initialize: Initialize, then ResolveDeviceAddresses or ResolveAddresses.
 //   Execute:    EnqueueBarrierBeforeLaunch, if requested.
 //
 // The resource token must remain alive until all enqueued device work using its
@@ -410,6 +410,39 @@ class NcclCollectiveResources {
     }
     return NcclCollectiveDeviceAddressTable{table.device_data,
                                             table.address_count};
+  }
+
+  // Writes the region-major address table to caller-provided host storage
+  // during Initialize. addresses.size() must equal the requested region count
+  // times resource.info().clique_size. ResolveAddresses and
+  // ResolveDeviceAddresses share one resolution attempt; exactly one may
+  // succeed for a resource.
+  Error ResolveAddresses(const NcclCollectiveResource& resource,
+                         Span<uint64_t> addresses) const {
+    Error association = CheckResource(resource);
+    if (association.failure()) return association;
+    if (extension_->resolve_host == nullptr) {
+      return Unimplemented(
+          "NCCL collective resource host Resolve operation is unavailable");
+    }
+    if (addresses.size() != resource.address_count_) {
+      return Error::InvalidArgument(
+          "NCCL collective host address table has the wrong size");
+    }
+    if (addresses.size() != 0 && addresses.begin() == nullptr) {
+      return Error::InvalidArgument(
+          "NCCL collective host address table must not be null");
+    }
+
+    XLA_FFI_NcclCollectiveResources_ResolveHost_Args args = {};
+    args.struct_size =
+        XLA_FFI_NcclCollectiveResources_ResolveHost_Args_STRUCT_SIZE;
+    args.ctx = ctx_;
+    args.resource = resource.resource_;
+    args.addresses = addresses.begin();
+    args.address_count = addresses.size();
+    XLA_FFI_Error* error = extension_->resolve_host(&args);
+    return error == nullptr ? Error::Success() : TakeError(error);
   }
 
   // Begins collective execution by enqueueing the entry synchronization

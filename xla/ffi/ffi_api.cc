@@ -776,6 +776,35 @@ static XLA_FFI_Error* NcclCollectiveResourcesResolve(
   return ToFfiError((*api)->Resolve(args));
 }
 
+static XLA_FFI_Error* NcclCollectiveResourcesResolveHost(
+    XLA_FFI_NcclCollectiveResources_ResolveHost_Args* args) {
+  if (args == nullptr) {
+    return ToFfiError(InvalidArgument(
+        "XLA_FFI_NcclCollectiveResources_ResolveHost_Args is null"));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_NcclCollectiveResources_ResolveHost_Args",
+      XLA_FFI_NcclCollectiveResources_ResolveHost_Args_STRUCT_SIZE,
+      args->struct_size));
+  if (args->resource == nullptr) {
+    return ToFfiError(InvalidArgument("NCCL collective resource is null"));
+  }
+  if (args->address_count != 0 && args->addresses == nullptr) {
+    return ToFfiError(
+        InvalidArgument("NCCL collective host address table must not be null"));
+  }
+  XLA_FFI_RETURN_IF_ERROR(ValidateNcclCollectiveResourcesStage(
+      args->ctx, XLA_FFI_ExecutionStage_INITIALIZE,
+      "NCCL collective-resources ResolveHost"));
+
+  absl::StatusOr<NcclCollectiveResourcesApi*> api =
+      GetNcclCollectiveResourcesApi(args->ctx);
+  if (!api.ok()) {
+    return ToFfiError(api.status());
+  }
+  return ToFfiError((*api)->ResolveHost(args));
+}
+
 static XLA_FFI_Error* NcclCollectiveResourcesQueryTopology(
     XLA_FFI_NcclCollectiveResources_QueryTopology_Args* args) {
   if (args == nullptr) {
@@ -868,6 +897,7 @@ const XLA_FFI_Api* GetXlaFfiApi() {
       NcclCollectiveResourcesEnqueueBarrierBeforeLaunch,
       NcclCollectiveResourcesDestroy,
       NcclCollectiveResourcesQueryTopology,
+      NcclCollectiveResourcesResolveHost,
   };
 
   static XLA_FFI_Api api = {

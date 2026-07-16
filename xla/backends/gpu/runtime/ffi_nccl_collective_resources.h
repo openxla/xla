@@ -16,9 +16,13 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_FFI_NCCL_COLLECTIVE_RESOURCES_H_
 #define XLA_BACKENDS_GPU_RUNTIME_FFI_NCCL_COLLECTIVE_RESOURCES_H_
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/nccl_collective_resources_api.h"
 
@@ -64,6 +68,8 @@ class FfiNcclCollectiveResources final
       XLA_FFI_NcclCollectiveResources_Initialize_Args* args) override;
   absl::Status Resolve(
       XLA_FFI_NcclCollectiveResources_Resolve_Args* args) override;
+  absl::Status ResolveHost(
+      XLA_FFI_NcclCollectiveResources_ResolveHost_Args* args) override;
   absl::Status QueryTopology(
       XLA_FFI_NcclCollectiveResources_QueryTopology_Args* args) override;
   absl::Status EnqueueBarrierBeforeLaunch(
@@ -73,6 +79,10 @@ class FfiNcclCollectiveResources final
  private:
   class Resource;
   struct State;
+
+  absl::StatusOr<size_t> ValidateAddressResolution(Resource* resource);
+  absl::StatusOr<std::vector<uint64_t>> BuildResolvedAddresses(
+      Resource* resource, size_t expected_count);
 
   std::unique_ptr<State> state_;
 };

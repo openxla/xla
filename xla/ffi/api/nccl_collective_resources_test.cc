@@ -42,6 +42,7 @@ struct TestState {
   int initialize_count = 0;
   int query_topology_count = 0;
   int resolve_count = 0;
+  int resolve_host_count = 0;
   int enqueue_count = 0;
   int destroy_count = 0;
   uint64_t* expected_device_data = nullptr;
@@ -49,6 +50,8 @@ struct TestState {
   uint64_t* returned_device_data = nullptr;
   size_t returned_address_capacity = 0;
   size_t returned_address_count = 0;
+  size_t expected_region_count = 1;
+  bool expected_barrier_before_launch = true;
 };
 
 class DeviceStorage {
@@ -94,14 +97,16 @@ XLA_FFI_Error* Request(XLA_FFI_NcclCollectiveResources_Request_Args* args) {
   EXPECT_EQ(args->group->group_offsets[1], 2);
   EXPECT_EQ(args->group->members[0], 0);
   EXPECT_EQ(args->group->members[1], 1);
-  EXPECT_EQ(args->region_count, 1);
-  if (args->region_count != 1) return nullptr;
-  EXPECT_EQ(args->regions[0].byte_offset, 16);
-  EXPECT_EQ(args->regions[0].byte_size, 32);
-  EXPECT_EQ(args->regions[0].required_alignment, 16);
-  EXPECT_EQ(args->regions[0].memory_kind,
-            XLA_FFI_NCCL_COLLECTIVE_MEMORY_KIND_SYMMETRIC);
-  EXPECT_EQ(args->barrier_before_launch, 1);
+  EXPECT_EQ(args->region_count, state->expected_region_count);
+  if (args->region_count == 1) {
+    EXPECT_EQ(args->regions[0].byte_offset, 16);
+    EXPECT_EQ(args->regions[0].byte_size, 32);
+    EXPECT_EQ(args->regions[0].required_alignment, 16);
+    EXPECT_EQ(args->regions[0].memory_kind,
+              XLA_FFI_NCCL_COLLECTIVE_MEMORY_KIND_SYMMETRIC);
+  }
+  EXPECT_EQ(args->barrier_before_launch,
+            state->expected_barrier_before_launch ? 1 : 0);
   args->resource =
       reinterpret_cast<XLA_FFI_NcclCollectiveResource*>(&state->resource);
   args->rank = 1;
@@ -136,6 +141,18 @@ XLA_FFI_Error* Resolve(XLA_FFI_NcclCollectiveResources_Resolve_Args* args) {
   args->table->device_data = state->returned_device_data;
   args->table->address_capacity = state->returned_address_capacity;
   args->table->address_count = state->returned_address_count;
+  return nullptr;
+}
+
+XLA_FFI_Error* ResolveHost(
+    XLA_FFI_NcclCollectiveResources_ResolveHost_Args* args) {
+  TestState* state = GetState(args->resource);
+  ++state->resolve_host_count;
+  EXPECT_EQ(args->ctx, state->context);
+  EXPECT_EQ(args->address_count, state->expected_region_count * 2);
+  for (size_t i = 0; i < args->address_count; ++i) {
+    args->addresses[i] = 0x1000 + i;
+  }
   return nullptr;
 }
 
@@ -177,11 +194,12 @@ XLA_FFI_NcclCollectiveResources_Extension TestExtension() {
       EnqueueBarrierBeforeLaunch,
       Destroy,
       QueryTopology,
+      ResolveHost,
   };
 }
 
 ErrorOr<std::unique_ptr<NcclCollectiveResource>> RequestTestResource(
-    const NcclCollectiveResources& resources) {
+    const NcclCollectiveResources& resources, bool include_region = true) {
   std::vector<size_t> group_offsets = {0, 2};
   std::vector<int64_t> group_members = {0, 1};
   NcclCollectiveGroup group = {
@@ -191,15 +209,19 @@ ErrorOr<std::unique_ptr<NcclCollectiveResource>> RequestTestResource(
       group_members,
   };
   alignas(16) std::byte allocation[64];
-  std::vector<NcclCollectiveRegion> regions = {{
-      allocation,
-      sizeof(allocation),
-      /*byte_offset=*/16,
-      /*byte_size=*/32,
-      /*required_alignment=*/16,
-      NcclCollectiveMemoryKind::kSymmetric,
-  }};
-  return resources.Request(group, regions, /*barrier_before_launch=*/true);
+  std::vector<NcclCollectiveRegion> regions;
+  if (include_region) {
+    regions.push_back({
+        allocation,
+        sizeof(allocation),
+        /*byte_offset=*/16,
+        /*byte_size=*/32,
+        /*required_alignment=*/16,
+        NcclCollectiveMemoryKind::kSymmetric,
+    });
+  }
+  return resources.Request(group, regions,
+                           /*barrier_before_launch=*/include_region);
 }
 
 TEST(NcclCollectiveResourcesTest, DispatchesResourceLifecycle) {
@@ -282,6 +304,55 @@ TEST(NcclCollectiveResourcesTest, AcceptsOverprovisionedDeviceStorage) {
   EXPECT_EQ(table->device_data, device_data);
   EXPECT_EQ(table->address_count, 2);
   EXPECT_EQ(state.resolve_count, 1);
+}
+
+TEST(NcclCollectiveResourcesTest, ResolvesAddressesIntoHostStorage) {
+  TestState state;
+  state.context = reinterpret_cast<XLA_FFI_ExecutionContext*>(&state);
+  state.resource.state = &state;
+  XLA_FFI_NcclCollectiveResources_Extension extension = TestExtension();
+  XLA_FFI_Api api = {};
+  api.struct_size = XLA_FFI_Api_STRUCT_SIZE;
+  api.extension_start = &extension.extension_base;
+  NcclCollectiveResources resources(&api, state.context);
+  ErrorOr<std::unique_ptr<NcclCollectiveResource>> requested =
+      RequestTestResource(resources);
+  ASSERT_TRUE(requested.has_value()) << requested.error().message();
+
+  uint64_t undersized[1] = {};
+  Error invalid =
+      resources.ResolveAddresses(**requested, Span<uint64_t>(undersized, 1));
+  EXPECT_TRUE(invalid.failure());
+  EXPECT_EQ(invalid.errc(), ErrorCode::kInvalidArgument);
+  EXPECT_EQ(state.resolve_host_count, 0);
+
+  uint64_t addresses[2] = {};
+  Error error =
+      resources.ResolveAddresses(**requested, Span<uint64_t>(addresses, 2));
+  EXPECT_TRUE(error.success()) << error.message();
+  EXPECT_EQ(addresses[0], 0x1000);
+  EXPECT_EQ(addresses[1], 0x1001);
+  EXPECT_EQ(state.resolve_host_count, 1);
+}
+
+TEST(NcclCollectiveResourcesTest, ResolvesEmptyHostAddressTable) {
+  TestState state;
+  state.context = reinterpret_cast<XLA_FFI_ExecutionContext*>(&state);
+  state.resource.state = &state;
+  state.expected_region_count = 0;
+  state.expected_barrier_before_launch = false;
+  XLA_FFI_NcclCollectiveResources_Extension extension = TestExtension();
+  XLA_FFI_Api api = {};
+  api.struct_size = XLA_FFI_Api_STRUCT_SIZE;
+  api.extension_start = &extension.extension_base;
+  NcclCollectiveResources resources(&api, state.context);
+  ErrorOr<std::unique_ptr<NcclCollectiveResource>> requested =
+      RequestTestResource(resources, /*include_region=*/false);
+  ASSERT_TRUE(requested.has_value()) << requested.error().message();
+
+  Error error = resources.ResolveAddresses(**requested, Span<uint64_t>());
+  EXPECT_TRUE(error.success()) << error.message();
+  EXPECT_EQ(state.resolve_host_count, 1);
 }
 
 TEST(NcclCollectiveResourcesTest, RejectsInvalidDeviceStorageBeforeDispatch) {
@@ -401,16 +472,15 @@ TEST(NcclCollectiveResourcesTest, RejectsOlderAbiMinorVersion) {
 TEST(NcclCollectiveResourcesTest, RejectsIncompleteAbiZeroOneTable) {
   XLA_FFI_NcclCollectiveResources_Extension extension = TestExtension();
   extension.extension_base.struct_size =
-      offsetof(XLA_FFI_NcclCollectiveResources_Extension, query_topology);
+      offsetof(XLA_FFI_NcclCollectiveResources_Extension, resolve_host);
   XLA_FFI_Api api = {};
   api.struct_size = XLA_FFI_Api_STRUCT_SIZE;
   api.extension_start = &extension.extension_base;
 
   NcclCollectiveResources resources(&api, /*ctx=*/nullptr);
   EXPECT_FALSE(resources.available());
-  EXPECT_LT(
-      offsetof(XLA_FFI_NcclCollectiveResources_Extension, query_topology),
-      XLA_FFI_NCCL_COLLECTIVE_RESOURCES_ABI_0_1_STRUCT_SIZE);
+  EXPECT_LT(offsetof(XLA_FFI_NcclCollectiveResources_Extension, resolve_host),
+            XLA_FFI_NCCL_COLLECTIVE_RESOURCES_ABI_0_1_STRUCT_SIZE);
 }
 
 TEST(NcclCollectiveResourcesTest, RejectsIncompatibleAbiMajorVersion) {

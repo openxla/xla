@@ -354,6 +354,17 @@ class CollectiveResourcesInvocation {
     return table;
   }
 
+  absl::Status ResolveHost(uint64_t* addresses, size_t address_count) {
+    XLA_FFI_NcclCollectiveResources_ResolveHost_Args args = {
+        XLA_FFI_NcclCollectiveResources_ResolveHost_Args_STRUCT_SIZE,
+        /*extension_start=*/nullptr,
+        context(),
+        resource(),
+        addresses,
+        address_count};
+    return resources_.ResolveHost(&args);
+  }
+
   absl::Status EnqueueBarrierBeforeLaunch() {
     XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args args = {
         XLA_FFI_NcclCollectiveResources_EnqueueBarrierBeforeLaunch_Args_STRUCT_SIZE,
@@ -657,6 +668,61 @@ TEST(FfiNcclCollectiveResourcesTest,
 }
 
 TEST(FfiNcclCollectiveResourcesTest,
+     ResolvesHostAddressesAndSharesOneShotState) {
+  Storage local;
+  Storage remote;
+  CollectiveResourcesInvocation invocation(
+      /*replica_count=*/2, /*partition_count=*/1, /*current_device=*/0,
+      {local.address()});
+  RegionSpec region = {local.address(), /*byte_offset=*/16,
+                       /*byte_size=*/32, /*required_alignment=*/16,
+                       XLA_FFI_NCCL_COLLECTIVE_MEMORY_KIND_SYMMETRIC};
+
+  ASSERT_THAT(invocation.status(), IsOk());
+  ASSERT_THAT(invocation.Begin(XLA_FFI_ExecutionStage_PREPARE), IsOk());
+  ASSERT_THAT(invocation.Request(GroupSpec{}, {region}), IsOk());
+  ASSERT_THAT(invocation.Commit(), IsOk());
+  std::vector<CollectiveCliqueRequests::CliqueRequest> requests =
+      invocation.clique_requests().OrderedRequestedCliques();
+  ASSERT_EQ(requests.size(), 1);
+
+  absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
+      memories;
+  memories.emplace(
+      std::make_pair(requests[0].key, 0),
+      std::make_shared<FakeSymmetricMemory>(
+          local.address(), std::vector<se::DeviceAddressBase>{
+                               local.address(), remote.address()}));
+  invocation.SetSymmetricMemories(std::move(memories));
+
+  ASSERT_THAT(invocation.Begin(XLA_FFI_ExecutionStage_INITIALIZE), IsOk());
+  ASSERT_THAT(invocation.Initialize(), IsOk());
+  EXPECT_CALL(invocation.stream(),
+              Memcpy(testing::A<se::DeviceAddressBase*>(),
+                     testing::A<const void*>(), testing::_))
+      .Times(0);
+  EXPECT_CALL(invocation.stream(), DoHostCallbackWithStatus(testing::_))
+      .Times(0);
+
+  std::array<uint64_t, 1> undersized = {};
+  EXPECT_THAT(invocation.ResolveHost(undersized.data(), undersized.size()),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("has 1 entries; expected 2")));
+
+  std::array<uint64_t, 2> addresses = {};
+  ASSERT_THAT(invocation.ResolveHost(addresses.data(), addresses.size()),
+              IsOk());
+  EXPECT_THAT(addresses, ElementsAre(AddressValue(local.bytes.data(), 16),
+                                     AddressValue(remote.bytes.data(), 16)));
+
+  XLA_FFI_NcclCollectiveDeviceAddressTable device_table =
+      MakeAddressTable(/*device_data=*/nullptr, /*address_capacity=*/0);
+  EXPECT_THAT(invocation.Resolve(&device_table),
+              StatusIs(absl::StatusCode::kFailedPrecondition,
+                       HasSubstr("already resolved")));
+}
+
+TEST(FfiNcclCollectiveResourcesTest,
      RejectsInvalidCallerStorageWithoutPublishingResolution) {
   constexpr uint64_t kUnwritten = 0xdeadbeefdeadbeef;
   Storage local;
@@ -883,6 +949,11 @@ TEST(FfiNcclCollectiveResourcesTest,
 
   ASSERT_THAT(invocation.Begin(XLA_FFI_ExecutionStage_INITIALIZE), IsOk());
   ASSERT_THAT(invocation.Initialize(), IsOk());
+  std::array<uint64_t, 2> host_addresses = {};
+  EXPECT_THAT(
+      invocation.ResolveHost(host_addresses.data(), host_addresses.size()),
+      StatusIs(absl::StatusCode::kFailedPrecondition,
+               HasSubstr("rank 1 has no peer address")));
   EXPECT_THAT(invocation.Resolve(table_storage.entries.data(),
                                  /*address_capacity=*/2),
               StatusIs(absl::StatusCode::kFailedPrecondition,
