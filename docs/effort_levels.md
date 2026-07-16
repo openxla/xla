@@ -31,17 +31,18 @@ each value:
 
 ### Use in XLA:GPU
 
+Pipelining for all-gather, all-reduce, and reduce-scatter is configured
+independently of the optimization level and separately for each operation. The
+`xla_gpu_pipeline_all_gather`, `xla_gpu_pipeline_all_reduce`, and
+`xla_gpu_pipeline_reduce_scatter` flags accept `off`, `auto`, or `explicit`.
+Their defaults are `off`, `off`, and `auto`, respectively. See
+[GPU XLA flags](flags_guidance.md#gpu-xla-flags) for the mode semantics.
+
 In XLA:GPU, there are several passes that we disable by default because they
 significantly increase compilation time by increasing the HLO size. For
 convenience, we consolidate them under the optimization level option, such that
 setting optimization_level to O1 or above will lead to the following behavior:
 
-*   Collectives commonly used for data-parallel communication will be pipelined.
-    This behavior can also be steered more granularly by enabling individual
-    flags.
-    *   `xla_gpu_enable_pipelined_all_gather`
-    *   `xla_gpu_enable_pipelined_all_reduce`
-    *   `xla_gpu_enable_pipelined_reduce_scatter`
 *   Unrolling while loops by a factor of two. Breaks down the loop-barrier
     potentially leading to a better compute-communication overlap and less
     copies.

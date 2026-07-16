@@ -1014,6 +1014,21 @@ absl::Status RunOptimizationPasses(
       .status();
 }
 
+template <HloOpcode opcode>
+static HloPredicate CollectivePipeliningPredicate(
+    DebugOptions::CollectivePipeliningMode mode) {
+  switch (mode) {
+    case DebugOptions::COLLECTIVE_PIPELINING_MODE_AUTO:
+      return HloPredicateIsOp<opcode>;
+    case DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT:
+      return HloPredicateIsPipelineableOp<opcode>();
+    case DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF:
+      return HloPredicateFalse;
+    default:
+      return HloPredicateFalse;
+  }
+}
+
 absl::Status RunCollectiveOptimizationPasses(
     HloModule* hlo_module, const GpuCompiler::CompileOptions& options,
     const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
@@ -1076,8 +1091,10 @@ absl::Status RunCollectiveOptimizationPasses(
   collectives_pipeline.AddPass<HloDCE>();
 
   collectives_pipeline.AddPass<CollectivePipeliningAnalyzer>(pointer_size);
-  if (debug_options.xla_gpu_enable_pipelined_all_reduce() ||
-      IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)) {
+
+  DebugOptions::CollectivePipeliningMode all_reduce_pipelining =
+      debug_options.xla_gpu_pipeline_all_reduce();
+  if (all_reduce_pipelining != DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF) {
     CollectivePipeliner::Config config{
         /*level_to_operate_on=*/0,
         /*max_pipelining_per_loop=*/INT64_MAX,
@@ -1086,7 +1103,9 @@ absl::Status RunCollectiveOptimizationPasses(
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
         collective_pipeliner_utils::PipeliningDirection::kForward,
-        /*should_process=*/HloPredicateIsOp<HloOpcode::kAllReduce>,
+        /*should_process=*/
+        CollectivePipeliningPredicate<HloOpcode::kAllReduce>(
+            all_reduce_pipelining),
         /*acceptable_formatting=*/HloPredicateTrue,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
@@ -1100,8 +1119,10 @@ absl::Status RunCollectiveOptimizationPasses(
     };
     collectives_pipeline.AddPass<CollectivePipeliner>(config);
   }
-  if (debug_options.xla_gpu_enable_pipelined_all_gather() ||
-      IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)) {
+
+  DebugOptions::CollectivePipeliningMode all_gather_pipelining =
+      debug_options.xla_gpu_pipeline_all_gather();
+  if (all_gather_pipelining != DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF) {
     CollectivePipeliner::Config config{
         /*level_to_operate_on=*/0,
         /*max_pipelining_per_loop=*/INT64_MAX,
@@ -1110,7 +1131,9 @@ absl::Status RunCollectiveOptimizationPasses(
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
         collective_pipeliner_utils::PipeliningDirection::kBackward,
-        /*should_process=*/HloPredicateIsOp<HloOpcode::kAllGather>,
+        /*should_process=*/
+        CollectivePipeliningPredicate<HloOpcode::kAllGather>(
+            all_gather_pipelining),
         /*acceptable_formatting=*/HloPredicateTrue,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
@@ -1124,8 +1147,11 @@ absl::Status RunCollectiveOptimizationPasses(
     };
     collectives_pipeline.AddPass<CollectivePipeliner>(config);
   }
-  if (debug_options.xla_gpu_enable_pipelined_reduce_scatter() ||
-      IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)) {
+
+  DebugOptions::CollectivePipeliningMode reduce_scatter_pipelining =
+      debug_options.xla_gpu_pipeline_reduce_scatter();
+  if (reduce_scatter_pipelining !=
+      DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF) {
     CollectivePipeliner::Config config{
         /*level_to_operate_on=*/0,
         /*max_pipelining_per_loop=*/INT64_MAX,
@@ -1134,7 +1160,9 @@ absl::Status RunCollectiveOptimizationPasses(
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
         collective_pipeliner_utils::PipeliningDirection::kForward,
-        /*should_process=*/HloPredicateIsOp<HloOpcode::kReduceScatter>,
+        /*should_process=*/
+        CollectivePipeliningPredicate<HloOpcode::kReduceScatter>(
+            reduce_scatter_pipelining),
         /*acceptable_formatting=*/HloPredicateTrue,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
