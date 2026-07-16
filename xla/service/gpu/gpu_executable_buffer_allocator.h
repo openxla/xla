@@ -115,12 +115,9 @@ class GpuExecutableBufferAllocator {
 
     // Runs `execute` with the allocation-address policy for this execution.
     // The base implementation passes the command-buffer-referenced constant
-    // allocations as the persistent allocation indices. Subclasses may
-    // rewrite `owning_buffer_allocations` entries after `execute` returns so
-    // that TearDown and result handling see external (caller- or
-    // allocator-owned) addresses.
+    // allocations as the persistent allocation indices.
     virtual absl::Status ExecuteWithBufferAllocations(
-        BufferAllocations& owning_buffer_allocations, int device_ordinal,
+        const BufferAllocations& owning_buffer_allocations, int device_ordinal,
         absl::FunctionRef<absl::Status(
             const BufferAllocations&,
             std::optional<absl::Span<const BufferAllocation::Index>>
@@ -136,15 +133,6 @@ class GpuExecutableBufferAllocator {
     virtual absl::Status Prepare(const ServiceExecutableRunOptions* run_options,
                                  int device_ordinal) {
       return absl::OkStatus();
-    }
-
-    // Hook that resolves the address execution sees for the (non-null-checked)
-    // caller-owned parameter buffer of `allocation`. The base implementation
-    // returns `buffer` unchanged.
-    virtual absl::StatusOr<se::DeviceAddressBase> ResolveParameterBuffer(
-        int device_ordinal, const BufferAllocation& allocation,
-        se::DeviceAddressBase buffer) {
-      return buffer;
     }
 
     // Hook that allocates a non-parameter, non-constant allocation of

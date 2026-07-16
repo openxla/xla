@@ -100,6 +100,9 @@ class TestMemoryReservation final : public se::MemoryReservation {
   }
 
   int active_mapping_count() const { return active_mapping_count_; }
+  const void* last_mapped_allocation_address() const {
+    return last_mapped_allocation_address_;
+  }
 
  private:
   absl::Status Map(size_t reservation_offset, size_t allocation_offset,
@@ -109,6 +112,7 @@ class TestMemoryReservation final : public se::MemoryReservation {
         size > allocation.address().size() - allocation_offset) {
       return absl::InvalidArgumentError("mapping range is out of bounds");
     }
+    last_mapped_allocation_address_ = allocation.address().opaque();
     ++active_mapping_count_;
     return absl::OkStatus();
   }
@@ -129,6 +133,7 @@ class TestMemoryReservation final : public se::MemoryReservation {
   AlignedStorage storage_;
   uint64_t size_;
   int active_mapping_count_ = 0;
+  const void* last_mapped_allocation_address_ = nullptr;
 };
 
 // Host-only VMM allocator: the 4 platform hooks are backed by heap memory, so
@@ -147,6 +152,12 @@ class TestVmmAllocator final : public se::DeviceAddressVmmAllocator {
   }
 
   TestMemoryReservation* last_reservation() const { return last_reservation_; }
+  const void* last_created_allocation_address() const {
+    return last_created_allocation_address_;
+  }
+  void FailNextDeferredDeallocation() {
+    fail_next_deferred_deallocation_ = true;
+  }
 
  protected:
   absl::Status InitializeDeviceState(PerDeviceState& state) override {
@@ -159,7 +170,10 @@ class TestVmmAllocator final : public se::DeviceAddressVmmAllocator {
 
   absl::StatusOr<std::unique_ptr<se::MemoryAllocation>> CreateAllocation(
       se::StreamExecutor* /*executor*/, uint64_t size) override {
-    return std::make_unique<TestMemoryAllocation>(RoundUpTestSize(size));
+    std::unique_ptr<se::MemoryAllocation> allocation =
+        std::make_unique<TestMemoryAllocation>(RoundUpTestSize(size));
+    last_created_allocation_address_ = allocation->address().opaque();
+    return allocation;
   }
 
   absl::StatusOr<std::unique_ptr<se::MemoryReservation>> CreateReservation(
@@ -172,6 +186,10 @@ class TestVmmAllocator final : public se::DeviceAddressVmmAllocator {
 
   absl::Status EnqueueDeferredDeallocation(PerDeviceState& state,
                                            uint64_t seqno) override {
+    if (fail_next_deferred_deallocation_) {
+      fail_next_deferred_deallocation_ = false;
+      return absl::InternalError("injected deferred deallocation failure");
+    }
     __atomic_store_n(state.pinned_timeline, seqno, __ATOMIC_RELEASE);
     return absl::OkStatus();
   }
@@ -181,6 +199,8 @@ class TestVmmAllocator final : public se::DeviceAddressVmmAllocator {
       : DeviceAddressVmmAllocator(platform) {}
 
   TestMemoryReservation* last_reservation_ = nullptr;
+  const void* last_created_allocation_address_ = nullptr;
+  bool fail_next_deferred_deallocation_ = false;
 };
 
 class GpuExecutableVaRemapAllocatorTest : public ::testing::Test {
@@ -230,6 +250,14 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
       se::ScopedDeviceAddress<uint8_t> param_buffer,
       vmm_allocator->Allocate(/*device_ordinal=*/0, kBufferSize,
                               /*retry_on_failure=*/true, /*memory_space=*/0));
+  const void* param_allocation_address =
+      vmm_allocator->last_created_allocation_address();
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> replacement_buffer,
+      vmm_allocator->Allocate(/*device_ordinal=*/0, kBufferSize,
+                              /*retry_on_failure=*/true, /*memory_space=*/0));
+  const void* replacement_allocation_address =
+      vmm_allocator->last_created_allocation_address();
 
   auto get_parameter_buffer = [&](const BufferAllocation& allocation)
       -> absl::StatusOr<GpuExecutableBufferAllocator::ParameterBuffer> {
@@ -253,37 +281,50 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
                              &globals, vmm_allocator.get(),
                              /*device_ordinal=*/0));
 
-    // Execution sees the reservation address, not the caller-owned buffer,
-    // and the address is stable across executions.
-    se::DeviceAddressBase mapped = buffer_allocations.GetDeviceAddress(0);
-    EXPECT_NE(mapped.opaque(), param_buffer.cref().opaque());
-    if (run == 0) {
-      reservation_address = mapped.opaque();
-      ASSERT_NE(vmm_allocator->last_reservation(), nullptr);
-      EXPECT_EQ(mapped.opaque(),
-                vmm_allocator->last_reservation()->address().opaque());
+    // GenerateBufferAllocations and any output handling before execution keep
+    // the owning table at external, deallocatable addresses. The second run
+    // simulates copy protection replacing the parameter entry with an output
+    // buffer after allocation generation.
+    se::DeviceAddressBase external_address = param_buffer.cref();
+    const void* external_allocation_address = param_allocation_address;
+    EXPECT_EQ(buffer_allocations.GetDeviceAddress(0).opaque(),
+              external_address.opaque());
+    if (run == 1) {
+      external_address = replacement_buffer.cref();
+      external_allocation_address = replacement_allocation_address;
+      buffer_allocations.GetMutableDeviceAddress(0) = external_address;
     }
-    EXPECT_EQ(mapped.opaque(), reservation_address);
+    ASSERT_NE(vmm_allocator->last_reservation(), nullptr);
 
     bool executed = false;
-    ASSERT_OK(scope->ExecuteWithBufferAllocations(
+    absl::Status execute_status = scope->ExecuteWithBufferAllocations(
         buffer_allocations, /*device_ordinal=*/0,
         [&](const BufferAllocations& execution_buffers,
             std::optional<absl::Span<const BufferAllocation::Index>>
                 persistent_alloc_indices) {
           executed = true;
-          EXPECT_EQ(execution_buffers.GetDeviceAddress(0).opaque(),
-                    reservation_address);
+          se::DeviceAddressBase mapped = execution_buffers.GetDeviceAddress(0);
+          EXPECT_NE(mapped.opaque(), external_address.opaque());
+          if (run == 0) {
+            reservation_address = mapped.opaque();
+          }
+          EXPECT_EQ(mapped.opaque(), reservation_address);
+          EXPECT_EQ(mapped.opaque(),
+                    vmm_allocator->last_reservation()->address().opaque());
+          EXPECT_EQ(vmm_allocator->last_reservation()
+                        ->last_mapped_allocation_address(),
+                    external_allocation_address);
           EXPECT_TRUE(persistent_alloc_indices.has_value());
           EXPECT_THAT(*persistent_alloc_indices, ElementsAre(0));
-          return absl::OkStatus();
-        }));
+          return run == 0 ? absl::OkStatus()
+                          : absl::InternalError("execution failed");
+        });
     EXPECT_TRUE(executed);
+    EXPECT_EQ(execute_status.ok(), run == 0);
 
-    // After the execution, the entry is rewritten to the caller-owned address
-    // so TearDown and result handling see a deallocatable address.
+    // The owning table is never rewritten, including when execution fails.
     EXPECT_EQ(buffer_allocations.GetDeviceAddress(0).opaque(),
-              param_buffer.cref().opaque());
+              external_address.opaque());
   }
 
   // All reservation-address aliases are released once deferred operations
@@ -293,11 +334,91 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
 }
 
 TEST_F(GpuExecutableVaRemapAllocatorTest,
-       NullParameterBufferFailsWhenSelectedForRemapping) {
+       MappingFailureReleasesPreviouslyInstalledAliases) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<TestVmmAllocator> vmm_allocator,
                        CreateAllocator());
 
-  BufferAllocation param_alloc(/*index=*/0, /*size=*/1024, /*color=*/0);
+  constexpr int64_t kBufferSize = 1024;
+  BufferAllocation valid_param_alloc(/*index=*/0, kBufferSize, /*color=*/0);
+  valid_param_alloc.set_entry_computation_parameter(
+      /*parameter_number=*/0, /*param_shape_index=*/{},
+      /*parameter_aliased_with_output=*/false);
+  BufferAllocation null_param_alloc(/*index=*/1, kBufferSize, /*color=*/0);
+  null_param_alloc.set_entry_computation_parameter(
+      /*parameter_number=*/1, /*param_shape_index=*/{},
+      /*parameter_aliased_with_output=*/false);
+  std::vector<const BufferAllocation*> allocations = {&valid_param_alloc,
+                                                      &null_param_alloc};
+
+  ThunkExecutor thunk_executor{ThunkSequence{}};
+  DebugOptions debug_options;
+  debug_options.set_xla_gpu_command_buffer_update_mode(DebugOptions::SKIP_TEMP);
+  GpuExecutableVaRemapAllocator allocator("test", allocations,
+                                          ShapeUtil::MakeShape(F32, {256}),
+                                          &debug_options, &thunk_executor);
+  allocator.AddVaRemappedAllocationForTesting(0);
+  allocator.AddVaRemappedAllocationForTesting(1);
+
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> valid_param_buffer,
+      vmm_allocator->Allocate(/*device_ordinal=*/0, kBufferSize,
+                              /*retry_on_failure=*/true, /*memory_space=*/0));
+  const void* valid_param_allocation_address =
+      vmm_allocator->last_created_allocation_address();
+
+  auto get_parameter_buffer = [&](const BufferAllocation& allocation)
+      -> absl::StatusOr<GpuExecutableBufferAllocator::ParameterBuffer> {
+    if (allocation.parameter_number() == 0) {
+      return GpuExecutableBufferAllocator::ParameterBuffer{
+          valid_param_buffer.cref(), allocation.parameter_number()};
+    }
+    return GpuExecutableBufferAllocator::ParameterBuffer{
+        se::DeviceAddressBase(), allocation.parameter_number(),
+        /*allow_null_buffer=*/true};
+  };
+  GpuExecutableBufferAllocator::BufferAllocToDeviceMemoryMap globals;
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutableBufferAllocator::ExecutionScope> scope,
+      allocator.CreateExecutionScope(&service_run_options_, vmm_allocator.get(),
+                                     /*device_ordinal=*/0));
+  ASSERT_OK_AND_ASSIGN(BufferAllocations buffer_allocations,
+                       scope->GenerateBufferAllocations(
+                           &service_run_options_, get_parameter_buffer,
+                           &globals, vmm_allocator.get(),
+                           /*device_ordinal=*/0));
+  EXPECT_EQ(buffer_allocations.GetDeviceAddress(0).opaque(),
+            valid_param_buffer.cref().opaque());
+  EXPECT_TRUE(buffer_allocations.GetDeviceAddress(1).is_null());
+
+  bool executed = false;
+  absl::Status status = scope->ExecuteWithBufferAllocations(
+      buffer_allocations, /*device_ordinal=*/0,
+      [&](const BufferAllocations&,
+          std::optional<absl::Span<const BufferAllocation::Index>>) {
+        executed = true;
+        return absl::OkStatus();
+      });
+  EXPECT_FALSE(status.ok());
+  EXPECT_FALSE(executed);
+
+  // The first alias was installed before mapping the null parameter failed;
+  // it must still be released before ExecuteWithBufferAllocations returns.
+  ASSERT_NE(vmm_allocator->last_reservation(), nullptr);
+  EXPECT_EQ(vmm_allocator->last_reservation()->last_mapped_allocation_address(),
+            valid_param_allocation_address);
+  EXPECT_EQ(vmm_allocator->last_reservation()->active_mapping_count(), 1);
+  ASSERT_OK(vmm_allocator->SynchronizePendingOperations(/*device_ordinal=*/0));
+  EXPECT_EQ(vmm_allocator->last_reservation()->active_mapping_count(), 0);
+}
+
+TEST_F(GpuExecutableVaRemapAllocatorTest,
+       ExecutionScopeRetriesFailedAliasRelease) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<TestVmmAllocator> vmm_allocator,
+                       CreateAllocator());
+
+  constexpr int64_t kBufferSize = 1024;
+  BufferAllocation param_alloc(/*index=*/0, kBufferSize, /*color=*/0);
   param_alloc.set_entry_computation_parameter(
       /*parameter_number=*/0, /*param_shape_index=*/{},
       /*parameter_aliased_with_output=*/false);
@@ -311,11 +432,14 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
                                           &debug_options, &thunk_executor);
   allocator.AddVaRemappedAllocationForTesting(0);
 
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> param_buffer,
+      vmm_allocator->Allocate(/*device_ordinal=*/0, kBufferSize,
+                              /*retry_on_failure=*/true, /*memory_space=*/0));
   auto get_parameter_buffer = [&](const BufferAllocation& allocation)
       -> absl::StatusOr<GpuExecutableBufferAllocator::ParameterBuffer> {
     return GpuExecutableBufferAllocator::ParameterBuffer{
-        se::DeviceAddressBase(), allocation.parameter_number(),
-        /*allow_null_buffer=*/true};
+        param_buffer.cref(), allocation.parameter_number()};
   };
   GpuExecutableBufferAllocator::BufferAllocToDeviceMemoryMap globals;
 
@@ -323,11 +447,30 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
       std::unique_ptr<GpuExecutableBufferAllocator::ExecutionScope> scope,
       allocator.CreateExecutionScope(&service_run_options_, vmm_allocator.get(),
                                      /*device_ordinal=*/0));
-  EXPECT_FALSE(scope
-                   ->GenerateBufferAllocations(
-                       &service_run_options_, get_parameter_buffer, &globals,
-                       vmm_allocator.get(), /*device_ordinal=*/0)
-                   .ok());
+  ASSERT_OK_AND_ASSIGN(BufferAllocations buffer_allocations,
+                       scope->GenerateBufferAllocations(
+                           &service_run_options_, get_parameter_buffer,
+                           &globals, vmm_allocator.get(),
+                           /*device_ordinal=*/0));
+
+  vmm_allocator->FailNextDeferredDeallocation();
+  absl::Status status = scope->ExecuteWithBufferAllocations(
+      buffer_allocations, /*device_ordinal=*/0,
+      [](const BufferAllocations&,
+         std::optional<absl::Span<const BufferAllocation::Index>>) {
+        return absl::OkStatus();
+      });
+  EXPECT_FALSE(status.ok());
+  ASSERT_NE(vmm_allocator->last_reservation(), nullptr);
+  EXPECT_EQ(vmm_allocator->last_reservation()->active_mapping_count(), 1);
+  EXPECT_EQ(buffer_allocations.GetDeviceAddress(0).opaque(),
+            param_buffer.cref().opaque());
+
+  // ReleaseStepAliases retains the failed alias. Destroying the execution
+  // scope retries UnMap after the one-shot injected failure.
+  scope.reset();
+  ASSERT_OK(vmm_allocator->SynchronizePendingOperations(/*device_ordinal=*/0));
+  EXPECT_EQ(vmm_allocator->last_reservation()->active_mapping_count(), 0);
 }
 
 }  // namespace
