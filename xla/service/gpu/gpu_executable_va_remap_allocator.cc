@@ -141,15 +141,11 @@ class GpuExecutableVaRemapAllocator::VaRemapExecutionScope
   absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> AllocateBuffer(
       int device_ordinal, const BufferAllocation& allocation,
       int64_t buffer_size);
-  // Maps the current parameter buffer into the reservation slice for
-  // `allocation` and returns the reservation address seen by execution.
-  absl::StatusOr<se::DeviceAddressBase> MapParameterBuffer(
-      int device_ordinal, const BufferAllocation& allocation,
-      se::DeviceAddressBase buffer);
-  // Rewrites selected parameter entries in the execution-only address table
-  // to their stable reservation addresses.
-  absl::Status MapParameterBuffers(BufferAllocations& execution_allocations,
-                                   int device_ordinal);
+  // Installs reservation aliases for selected parameter buffers and returns an
+  // execution-only address table that refers to them. The owning address table
+  // remains unchanged.
+  absl::StatusOr<BufferAllocations> MapParameterBuffers(
+      const BufferAllocations& owning_buffer_allocations, int device_ordinal);
 
   const GpuExecutableVaRemapAllocator* owner_ = nullptr;
   Remapping* remapping_ = nullptr;
@@ -259,45 +255,46 @@ GpuExecutableVaRemapAllocator::VaRemapExecutionScope::ReleaseStepAliases() {
   return status;
 }
 
-absl::StatusOr<se::DeviceAddressBase>
-GpuExecutableVaRemapAllocator::VaRemapExecutionScope::MapParameterBuffer(
-    int device_ordinal, const BufferAllocation& allocation,
-    se::DeviceAddressBase buffer) {
-  if (buffer.is_null()) {
-    return Internal(
-        "Command buffer VA remapping selected parameter allocation %d, but "
-        "the parameter buffer is null for this execution",
-        allocation.index());
-  }
-  ASSIGN_OR_RETURN(uint64_t va_offset,
-                   remapping_->GetReservationOffset(allocation.index()));
-  ASSIGN_OR_RETURN(uint64_t mapping_size,
-                   remapping_->GetMappingSize(allocation.index()));
-  // Map() reactivates a matching stale mapping from the previous execution,
-  // so a parameter that keeps its address across executions performs no VMM
-  // driver calls here.
-  RETURN_IF_ERROR(vmm_allocator_->Map(device_ordinal, buffer,
-                                      remapping_->va_reservation.get(),
-                                      va_offset, mapping_size));
-  RecordStepAlias(device_ordinal, va_offset, mapping_size);
-  return ReservationSlice(va_offset, mapping_size);
-}
-
-absl::Status
+absl::StatusOr<BufferAllocations>
 GpuExecutableVaRemapAllocator::VaRemapExecutionScope::MapParameterBuffers(
-    BufferAllocations& execution_allocations, int device_ordinal) {
+    const BufferAllocations& owning_buffer_allocations, int device_ordinal) {
+  // This is a non-owning copy of the finalized address table. Output donation
+  // and copy protection run before this method and may replace parameter
+  // entries, so parameter aliases must be installed from these current
+  // addresses instead of during GenerateBufferAllocations.
+  BufferAllocations execution_allocations(
+      owning_buffer_allocations.buffers(),
+      owning_buffer_allocations.device_ordinal(),
+      owning_buffer_allocations.memory_allocator());
+
   for (BufferAllocation::Index index : owner_->va_remapped_alloc_indices_) {
     const BufferAllocation& allocation = *owner_->allocations()[index];
     if (!allocation.is_entry_computation_parameter()) {
       continue;
     }
-    ASSIGN_OR_RETURN(
-        se::DeviceAddressBase mapped_buffer,
-        MapParameterBuffer(device_ordinal, allocation,
-                           execution_allocations.GetDeviceAddress(index)));
-    execution_allocations.GetMutableDeviceAddress(index) = mapped_buffer;
+    const se::DeviceAddressBase buffer =
+        owning_buffer_allocations.GetDeviceAddress(index);
+    if (buffer.is_null()) {
+      return Internal(
+          "Command buffer VA remapping selected parameter allocation %d, but "
+          "the parameter buffer is null for this execution",
+          allocation.index());
+    }
+    ASSIGN_OR_RETURN(uint64_t va_offset,
+                     remapping_->GetReservationOffset(allocation.index()));
+    ASSIGN_OR_RETURN(uint64_t mapping_size,
+                     remapping_->GetMappingSize(allocation.index()));
+    // Map() reactivates a matching stale mapping from the previous execution,
+    // so a parameter that keeps its address across executions performs no VMM
+    // driver calls here.
+    RETURN_IF_ERROR(vmm_allocator_->Map(device_ordinal, buffer,
+                                        remapping_->va_reservation.get(),
+                                        va_offset, mapping_size));
+    RecordStepAlias(device_ordinal, va_offset, mapping_size);
+    execution_allocations.GetMutableDeviceAddress(index) =
+        ReservationSlice(va_offset, mapping_size);
   }
-  return absl::OkStatus();
+  return execution_allocations;
 }
 
 absl::StatusOr<se::ScopedDeviceAddress<uint8_t>>
@@ -340,29 +337,20 @@ absl::Status GpuExecutableVaRemapAllocator::VaRemapExecutionScope::
       "allocation(s)",
       owner_->module_name(), owner_->va_remapped_alloc_indices_.size());
 
-  // This is a non-owning copy of the finalized address table. Output donation
-  // and copy protection run before this method and may replace parameter
-  // entries, so parameter aliases must be installed from these current
-  // addresses instead of during GenerateBufferAllocations.
-  BufferAllocations execution_allocations(
-      owning_buffer_allocations.buffers(),
-      owning_buffer_allocations.device_ordinal(),
-      owning_buffer_allocations.memory_allocator());
-
-  absl::Status map_status =
-      MapParameterBuffers(execution_allocations, device_ordinal);
-  if (!map_status.ok()) {
+  absl::StatusOr<BufferAllocations> execution_allocations =
+      MapParameterBuffers(owning_buffer_allocations, device_ordinal);
+  if (!execution_allocations.ok()) {
     absl::Status release_status = ReleaseStepAliases();
     if (!release_status.ok()) {
       LOG(ERROR) << "Failed to release command buffer VA remapping aliases "
                     "after mapping failed for module "
                  << owner_->module_name() << ": " << release_status;
     }
-    return map_status;
+    return execution_allocations.status();
   }
 
   absl::Status execute_status =
-      execute(execution_allocations,
+      execute(*execution_allocations,
               absl::MakeConstSpan(owner_->persistent_alloc_indices()));
   // Release per-execution aliases even when execution failed. The owning
   // address table was never modified, so result handling and TearDown continue
