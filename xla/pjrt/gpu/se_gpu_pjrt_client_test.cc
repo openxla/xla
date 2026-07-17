@@ -1868,6 +1868,43 @@ TEST(StreamExecutorGpuClientTest,
   EXPECT_THAT(proto.serialized_executable(), Not(IsEmpty()));
 }
 
+TEST(StreamExecutorGpuClientTest, DeserializeExecutableWithOptionsOverrides) {
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(GpuClientOptions()));
+
+  static constexpr absl::string_view kAddProgram = R"(
+    HloModule Add.6, entry_computation_layout={(f32[], f32[])->(f32[], f32[])}
+    ENTRY %add.6 (a.1: f32[], b.2: f32[]) -> (f32[], f32[]) {
+      %a.1 = f32[] parameter(0)
+      %b.2 = f32[] parameter(1)
+      %add.3 = f32[] add(f32[] %a.1, f32[] %b.2)
+      %add.4 = f32[] add(f32[] %add.3, f32[] %add.3)
+      ROOT %tuple.5 = (f32[], f32[]) tuple(f32[] %add.3, f32[] %add.4)
+    }
+  )";
+
+  CompileOptions compile_options;
+  // Use a debug option override
+  compile_options.env_option_overrides.push_back(
+      {"xla_gpu_graph_min_graph_size", int64_t{42}});
+  ASSERT_OK_AND_ASSIGN(auto executable, CompileExecutable(kAddProgram, *client,
+                                                          compile_options));
+  auto gpu_exe =
+      static_cast<PjRtStreamExecutorLoadedExecutable*>(executable.get());
+  ASSERT_OK_AND_ASSIGN(std::string serialized, gpu_exe->SerializeExecutable());
+  // Reload without passing explicit CompileOptions (so it deserializes from
+  // proto)
+  ASSERT_OK_AND_ASSIGN(auto reloaded_executable,
+                       client->DeserializeExecutable(serialized, std::nullopt));
+
+  // Verify the override has been applied after deserialization
+  ASSERT_OK_AND_ASSIGN(CompileOptions reloaded_options,
+                       reloaded_executable->GetCompileOptions());
+  EXPECT_EQ(reloaded_options.executable_build_options.debug_options()
+                .xla_gpu_graph_min_graph_size(),
+            42);
+}
+
 TEST(StreamExecutorGpuClientTest, MlirParameterLayoutIsSetInHlo) {
   constexpr char kMlirWithParameterLayout[] =
       R"(
