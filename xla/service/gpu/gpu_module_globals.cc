@@ -95,8 +95,10 @@ GpuModuleGlobals::Resolve(se::Stream* stream) {
   auto globals = std::make_unique<BufferAllocToDeviceMemoryMap>();
   se::ModuleHandle module_handle;
   // There is no module to load when constants compilation produced no binary.
-  // In this case `constants_` is also empty, so there are no symbols to resolve.
-  if (!binary_.empty()) {
+  if (binary_.empty()) {
+    TF_RET_CHECK(constants_.empty())
+        << "Constants metadata is present without a constants binary";
+  } else {
     ASSIGN_OR_RETURN(module_handle, executor->LoadModule(module_spec));
   }
 
