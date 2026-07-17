@@ -1265,9 +1265,9 @@ ENTRY main {
   EXPECT_FALSE(HasSplitCoupledReductionShiftExpFusion(*module));
 }
 
-// The coupling is not specific to multiply: add(dot, bias) feeding the same
-// max-reduce / exp-shift pair has the identical recompute-divergence risk, so
-// the elementwise shift value must not be split across kernels either.
+// Conservatively treat any elementwise shift value as coupled. Multiply is
+// the case with a known divergence mechanism (FMA contraction); other
+// elementwise ops are included defensively.
 TEST_F(InstructionFusionTest,
        AvoidSplitCoupledReductionShiftExpFusionsAddBias) {
   absl::string_view module_string = R"(

@@ -90,7 +90,8 @@ bool IsMaxReduction(const HloInstruction* reduce) {
   return root->opcode() == HloOpcode::kMaximum;
 }
 
-// Matches subtract(shift_value, broadcast(reduce)) used by exponential, i.e.
+// Matches subtract(shift_value, broadcast(reduce)) or the reversed operand
+// order subtract(broadcast(reduce), shift_value), used by exponential, i.e.
 // the numerically sensitive stable-softmax shift pattern.
 bool IsExpShiftCoupledSubtract(const HloInstruction& subtract,
                                const HloInstruction& shift_value,
@@ -353,6 +354,12 @@ CpuInstructionFusion::ComputeGloballyUnfusible(
       InstructionFusion::ComputeGloballyUnfusible(post_order, reachability);
   for (HloInstruction* producer : post_order) {
     if (IsCoupledReductionShiftExpProducer(producer)) {
+      // The base implementation treats effectively-unary elementwise ops as
+      // free to duplicate. For producers feeding both a max-reduce and its
+      // exp-shift subtract, duplication is unsound: FMA contraction can make
+      // the recomputed copy differ from the copy the max was taken over by up
+      // to one ulp, which exp() turns into inf/nan. Force such producers to be
+      // materialized once.
       do_not_duplicate.insert(producer);
     }
   }
