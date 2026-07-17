@@ -35,7 +35,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
-#include "xla/hlo/analysis/hlo_reachability.h"
+#include "xla/hlo/analysis/hlo_dfs_reachability.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -667,6 +667,48 @@ absl::Status SetDynamicSliceFusionBackendConfig(HloInstruction* fusion) {
   return fusion->set_backend_config(std::move(gpu_config));
 }
 
+// Returns an existing GetTupleElement of `fusion` at `index`, or creates one.
+HloInstruction* GetOrCreateGte(HloInstruction* fusion, int64_t index) {
+  for (HloInstruction* user : fusion->users()) {
+    auto* gte = DynCast<HloGetTupleElementInstruction>(user);
+    if (gte != nullptr && gte->tuple_index() == index) {
+      return gte;
+    }
+  }
+  return fusion->parent()->AddInstruction(
+      HloInstruction::CreateGetTupleElement(fusion, index));
+}
+
+// Returns true if some consumer of the hero's values cannot be rerouted to
+// the fusion output: raw-tuple consumers, and consumers feeding a fusion
+// operand (rerouting those would form a cycle).
+bool HasUnroutableUsers(HloInstruction* hero,
+                        absl::Span<HloInstruction* const> fusion_operands) {
+  std::vector<HloInstruction*> heads;
+  if (hero->shape().IsTuple()) {
+    for (HloInstruction* user : hero->users()) {
+      if (user->opcode() != HloOpcode::kGetTupleElement) {
+        return true;
+      }
+      heads.push_back(user);
+    }
+  } else {
+    heads.push_back(hero);
+  }
+  std::unique_ptr<HloDfsReachability> reachability =
+      HloDfsReachability::Build(hero->parent());
+  for (HloInstruction* head : heads) {
+    for (HloInstruction* user : head->users()) {
+      for (const HloInstruction* operand : fusion_operands) {
+        if (reachability->IsReachable(user, operand)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 // Reroutes hero users outside the DUS chains, leaving the original hero dead.
 absl::Status RerouteExternalUsers(
     HloInstruction* hero, HloInstruction* fusion,
@@ -675,40 +717,32 @@ absl::Status RerouteExternalUsers(
   bool tuple_hero = hero->shape().IsTuple();
 
   if (tuple_hero) {
-    // Non-GTE consumers need the raw tuple, which the fusion lacks; skip.
-    if (absl::c_any_of(hero->users(), [](const HloInstruction* user) {
-          return user->opcode() != HloOpcode::kGetTupleElement;
-        })) {
-      VLOG(2) << "Not rerouting " << hero->name() << ": non-GTE tuple user";
-      return absl::OkStatus();
-    }
     // Fold duplicate GTEs into the resolved one so each result has one head.
     absl::flat_hash_map<int64_t, HloInstruction*> canonical;
     for (const SlicedResult& sliced_result : sliced_results) {
-      if (!sliced_result.noops.empty())
+      if (!sliced_result.noops.empty()) {
         canonical[sliced_result.result_number] = sliced_result.noops.front();
+      }
     }
     std::vector<HloInstruction*> users(hero->users().begin(),
                                        hero->users().end());
     for (HloInstruction* user : users) {
       auto* gte = Cast<HloGetTupleElementInstruction>(user);
       auto [it, inserted] = canonical.try_emplace(gte->tuple_index(), gte);
-      if (inserted || it->second == gte) continue;
+      if (inserted || it->second == gte) {
+        continue;
+      }
       RETURN_IF_ERROR(gte->ReplaceAllUsesWith(it->second));
       RETURN_IF_ERROR(parent->RemoveInstruction(gte));
     }
   }
-
-  // Rerouting a user that (transitively) feeds the fusion would create a
-  // cycle; such users keep reading the original hero.
-  std::unique_ptr<HloReachabilityMap> reachability =
-      HloReachabilityMap::Build(parent);
 
   for (const SlicedResult& sliced_result : sliced_results) {
     if (sliced_result.update_slice == nullptr) {
       continue;  // RewriteHero's GTE replacement covers these.
     }
     // Noops are single-user, so exactly one user of head continues the chain.
+    // Tuple heroes carry their GTE as noops[0]; heads are never tuple-shaped.
     HloInstruction* head = hero;
     absl::Span<HloInstruction* const> tail = sliced_result.noops;
     if (tuple_hero) {
@@ -719,16 +753,17 @@ absl::Status RerouteExternalUsers(
         tail.empty() ? sliced_result.update_slice : tail.front();
     std::vector<HloInstruction*> external_users;
     for (HloInstruction* user : head->users()) {
-      if (user != chain_user && !reachability->IsReachable(user, fusion)) {
+      if (user != chain_user) {
         external_users.push_back(user);
       }
     }
-    if (external_users.empty()) continue;
+    if (external_users.empty()) {
+      continue;
+    }
 
     HloInstruction* slot =
         fusion->shape().IsTuple()
-            ? parent->AddInstruction(HloInstruction::CreateGetTupleElement(
-                  fusion, sliced_result.result_number))
+            ? GetOrCreateGte(fusion, sliced_result.result_number)
             : fusion;
     const Shape& update_shape = sliced_result.update_slice->operand(1)->shape();
     HloInstruction* value =
@@ -761,6 +796,12 @@ absl::StatusOr<bool> RewriteHero(
     return false;
   }
 
+  // Skip the rewrite entirely rather than leave a duplicated hero.
+  if (HasUnroutableUsers(hero, plan->external_operands)) {
+    VLOG(2) << "Skipping " << hero->name() << ": unroutable users";
+    return false;
+  }
+
   ASSIGN_OR_RETURN(HloComputation * fusion_body,
                    CreateFusionBody(module, *plan, sliced_results, hero));
 
@@ -778,8 +819,7 @@ absl::StatusOr<bool> RewriteHero(
   if (sliced_results.size() > 1) {
     bool any_result_replaced = false;
     for (int64_t i = 0; i < sliced_results.size(); ++i) {
-      auto* gte = parent->AddInstruction(
-          HloInstruction::CreateGetTupleElement(fusion, i));
+      HloInstruction* gte = GetOrCreateGte(fusion, i);
       if (sliced_results[i].update_slice != nullptr) {
         RETURN_IF_ERROR(
             parent->ReplaceInstruction(sliced_results[i].update_slice, gte));
