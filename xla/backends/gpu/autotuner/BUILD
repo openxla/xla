@@ -111,6 +111,7 @@ xla_test(
     deps = [
         ":block_level_emitter",
         "//xla:autotuning_proto_cc",
+        "//xla:debug_options_flags",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner:codegen_backend",
         "//xla/hlo/ir:hlo",
@@ -920,6 +921,7 @@ xla_cc_binary(
         "//xla/backends/autotuner:codegen_orchestrator",
         "//xla/backends/autotuner:config_assigner",
         "//xla/backends/autotuner:directory_cache",
+        "//xla/backends/autotuner:hlo_extractor",
         "//xla/backends/autotuner:local_cache",
         "//xla/backends/autotuner:profiler",
         "//xla/backends/autotuner:tiered_cache",
@@ -991,6 +993,7 @@ xla_test(
         "//xla/backends/autotuner:codegen_orchestrator",
         "//xla/backends/autotuner:config_assigner",
         "//xla/backends/autotuner:directory_cache",
+        "//xla/backends/autotuner:hlo_extractor",
         "//xla/backends/autotuner:local_cache",
         "//xla/backends/autotuner:profiler",
         "//xla/backends/autotuner:tiered_cache",
