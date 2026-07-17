@@ -1391,6 +1391,12 @@ OpSharding HloSharding::ToProto() const {
     if (sharding.IsReplicated()) {
       return HloSharding::Replicate(metadata);
     }
+    if (sharding.IsManual()) {
+      return HloSharding::Manual(metadata);
+    }
+    if (sharding.IsUnreduced()) {
+      return HloSharding::Unreduced(metadata);
+    }
     if (sharding.IsSingleDevice()) {
       return HloSharding::SingleDevice(mesh.device_assignment()(0), metadata);
     }
