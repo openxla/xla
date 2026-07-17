@@ -265,7 +265,9 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
       thunk_emitter.EmitHloEntryComputation(hlo_module);
 
   llvm::Module* constants_module = thunk_emitter.constants_module();
-  if (!constants_module->empty() || !constants_module->global_empty()) {
+  const bool has_constants_module =
+    !constants_module->empty() || !constants_module->global_empty();
+  if (has_constants_module) {
     ASSIGN_OR_RETURN(
         results.constants_binary,
         compiler->CompileToTargetBinary(thunk_emitter.ConsumeConstantsModule())
