@@ -2605,9 +2605,9 @@ TEST_F(DynamicSliceFusionRewriterV2Test, O2LooksThroughOptBarrier) {
 }
 
 TEST_F(DynamicSliceFusionRewriterV2Test,
-       ExternalUserFeedingFusionIsNotRerouted) {
+       ExternalUserFeedingFusionSkipsRewrite) {
   // The hero's external user is also the DUS target buffer; rerouting it to
-  // the fusion output would create a cycle, so it keeps the original hero.
+  // the fusion output would create a cycle, so the rewrite is skipped.
   const char* hlo = R"(
     HloModule test
 
@@ -2645,14 +2645,11 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
     }
   )";
 
-  // The fusion forms, and the broadcast still consumes the original hero.
   const char* expected = R"(
-    ; CHECK: %dynamic-slice-fusion{{.*}} {
-    ; CHECK:   ROOT {{.*}} dynamic-update-slice(
-    ; CHECK: }
-    ; CHECK: body
-    ; CHECK:   %hero = {{.*}} custom-call(
-    ; CHECK:   {{.*}} = f32[4,64]{{.*}} broadcast(%hero)
+    ; CHECK-NOT: dynamic-slice-fusion
+    ; CHECK:     %hero = {{.*}} custom-call(
+    ; CHECK:     {{.*}} = f32[4,64]{{.*}} broadcast(%hero)
+    ; CHECK-NOT: dynamic-slice-fusion
   )";
   RunAndFilecheckHloRewrite(hlo, MakePipeline(), expected);
 }

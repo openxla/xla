@@ -177,8 +177,8 @@ TEST_F(DynamicSliceFusionV2Test, SingleOutputOneDUS) {
 }
 
 TEST_F(DynamicSliceFusionV2Test, HeroWithExternalUserRunsOncePerIteration) {
-  // A duplicate hero surviving the rewrite would show up in the optimized
-  // HLO as a second custom-call and skew the accumulated result.
+  // A surviving duplicate computes identical values -- a pure performance
+  // defect, visible as a second custom-call in the optimized HLO.
   const char* hlo = R"(
     HloModule test
 
@@ -227,8 +227,6 @@ TEST_F(DynamicSliceFusionV2Test, HeroWithExternalUserRunsOncePerIteration) {
       LiteralUtil::CreateFullWithDescendingLayout<float>({4, 64}, 7.0f));
   EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
 
-  // A duplicate of the hero surviving the rewrite is visible in the optimized
-  // HLO as a second custom-call next to the one inside the fusion.
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized,
                        GetOptimizedModule(hlo));
   int64_t hero_count = 0;
