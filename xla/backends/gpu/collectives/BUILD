@@ -263,7 +263,6 @@ xla_cc_test(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
-        "//xla/tsl/platform:threadpool",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",

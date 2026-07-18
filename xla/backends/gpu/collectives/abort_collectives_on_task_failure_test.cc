@@ -205,6 +205,7 @@ TEST(AbortCollectivesOnTaskFailureTest, AbortsAcquiredGpuCliqueOnTaskFailure) {
   // access and tear the clique down (same as healthy ranks releasing after
   // cancel notification in production).
   locks.clear();
+  futures.clear();
   acquired_cliques.clear();
 
   ASSERT_OK(AbortCollectivesOnTaskFailure(
@@ -214,14 +215,22 @@ TEST(AbortCollectivesOnTaskFailureTest, AbortsAcquiredGpuCliqueOnTaskFailure) {
   EXPECT_THAT(CheckCliqueIsNotStale(key),
               StatusIs(absl::StatusCode::kFailedPrecondition));
 
-  // Re-acquiring the same failed-incarnation key must fail as stale instead of
-  // blocking in NCCL setup forever.
-  AcquiredCliquesMap empty_map;
-  EXPECT_THAT(
-      AcquireGpuClique(collectives, executors[0], RunId(1), key, groups,
-                       DefaultCliqueId(), RankId(0), empty_map)
-          .status(),
-      StatusIs(absl::StatusCode::kFailedPrecondition));
+  // Re-acquiring the same failed-incarnation key must fail as stale. Both local
+  // ranks must join AcquireGpuClique (num_local_participants=2) or rendezvous
+  // hangs waiting for the missing rank.
+  std::vector<AcquiredCliquesMap> reacquire_maps(2);
+  std::vector<Future<std::shared_ptr<LockableGpuClique::Lock>>> reacquire(2);
+  for (size_t i = 0; i < 2; ++i) {
+    reacquire[i] = MakeFutureOn(exec, [=, &reacquire_maps] {
+      return AcquireGpuClique(collectives, executors.at(i), RunId(1), key,
+                              groups, DefaultCliqueId(), RankId(i),
+                              reacquire_maps.at(i));
+    });
+  }
+  for (size_t i = 0; i < 2; ++i) {
+    EXPECT_THAT(reacquire[i].Await().status(),
+                StatusIs(absl::StatusCode::kFailedPrecondition));
+  }
 }
 
 }  // namespace
