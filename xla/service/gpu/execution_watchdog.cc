@@ -77,20 +77,27 @@ void ExecutionWatchdogScope::Arm(HangWatchdog::CancelCallback pre_abort) {
 
   HangWatchdog::CancelCallback on_timeout;
   if (gpu_run_options_ && gpu_run_options_->execution_timeout_handler()) {
-    auto guard_holder = guard_holder_;
+    // Capture a weak_ptr so the timeout callback does not keep the Guard alive
+    // after this scope is destroyed (otherwise scope.reset() cannot cancel the
+    // watchdog due to a shared_ptr cycle through the callback).
+    std::weak_ptr<std::shared_ptr<HangWatchdog::Guard>> weak_guard_holder =
+        guard_holder_;
     auto watchdog_name = watchdog_name_;
     auto watchdog_timeout = watchdog_timeout_;
     auto* gpu_run_options = gpu_run_options_;
     on_timeout = [watchdog_name, watchdog_timeout,
                   pre_abort = std::move(pre_abort), gpu_run_options,
-                  guard_holder]() mutable {
+                  weak_guard_holder]() mutable {
       if (pre_abort) {
         std::move(pre_abort)();
       }
 
-      *guard_holder = HangWatchdog::Global().Watch(
-          "post-abort ...", absl::Minutes(1),
-          HangWatchdog::Abort("post-abort ...", absl::Minutes(1)));
+      if (std::shared_ptr<std::shared_ptr<HangWatchdog::Guard>> guard_holder =
+              weak_guard_holder.lock()) {
+        *guard_holder = HangWatchdog::Global().Watch(
+            "post-abort ...", absl::Minutes(1),
+            HangWatchdog::Abort("post-abort ...", absl::Minutes(1)));
+      }
 
       gpu_run_options->execution_timeout_handler()(watchdog_name,
                                                    watchdog_timeout);
@@ -118,6 +125,11 @@ ExecutionWatchdogScope::~ExecutionWatchdogScope() {
                     "execution watchdog: "
                  << block_status;
     }
+  }
+
+  // Drop the HangWatchdog guard now that execution is done (or abandoned).
+  if (guard_holder_ != nullptr) {
+    *guard_holder_ = nullptr;
   }
 }
 
