@@ -513,6 +513,33 @@ int64_t IotaTileAssignment::value_at(absl::Span<const int64_t> index) const {
   return value;
 }
 
+std::vector<int64_t> IotaTileAssignment::index_for(int64_t device_index) const {
+  const auto dims = this->dims();
+  const auto reshape_dims = this->reshape_dims();
+  const auto transpose_perm = this->transpose_perm();
+  absl::InlinedVector<int64_t, 6> reshaped_index(reshape_dims.size());
+  for (int64_t i = reshape_dims.size() - 1; i >= 0; --i) {
+    const int64_t dim_size = reshape_dims[i];
+    reshaped_index[i] = device_index % dim_size;
+    device_index /= dim_size;
+  }
+  DCHECK_EQ(device_index, 0);
+  int64_t flat_index = reshaped_index[transpose_perm[0]];
+  for (int64_t i = 1; i < reshape_dims.size(); ++i) {
+    const int64_t dim = transpose_perm[i];
+    flat_index *= reshape_dims[dim];
+    flat_index += reshaped_index[dim];
+  }
+  std::vector<int64_t> tile_index(ndims_);
+  for (int64_t i = ndims_ - 1; i >= 0; --i) {
+    const int64_t dim_size = dims[i];
+    tile_index[i] = flat_index % dim_size;
+    flat_index /= dim_size;
+  }
+  DCHECK_EQ(flat_index, 0);
+  return tile_index;
+}
+
 TileAssignment::TileAssignment(const TileAssignment& other) {
   iota_ = other.iota_;
   absl::MutexLock other_lock(other.mu_);
@@ -574,6 +601,25 @@ int64_t TileAssignment::operator()(absl::Span<const int64_t> indexes) const {
     return (*arr)(indexes);
   }
   return iota_->value_at(indexes);
+}
+
+std::vector<int64_t> TileAssignment::index_for(int64_t device) const {
+  if (iota_.has_value()) {
+    return iota_->index_for(device);
+  }
+
+  const Array<int64_t>& arr = array();
+  auto it = absl::c_find(arr, device);
+  CHECK_NE(it, arr.end());
+
+  int64_t flat_index = it - arr.begin();
+  std::vector<int64_t> tile_index(arr.num_dimensions());
+  for (int64_t i = arr.num_dimensions() - 1; i >= 0; --i) {
+    tile_index[i] = flat_index % arr.dim(i);
+    flat_index /= arr.dim(i);
+  }
+  DCHECK_EQ(flat_index, 0);
+  return tile_index;
 }
 
 absl::Span<const int64_t> TileAssignment::dimensions() const {

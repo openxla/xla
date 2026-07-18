@@ -89,7 +89,11 @@ class IotaTileAssignment {
            transpose_perm() == other.transpose_perm();
   }
 
+  // Returns the device index at the given tile index.
   int64_t value_at(absl::Span<const int64_t> index) const;
+
+  // Returns the tile index for the given device index.
+  std::vector<int64_t> index_for(int64_t device_index) const;
 
   int64_t ndims() const { return ndims_; }
 
@@ -212,6 +216,8 @@ class TileAssignment {
     return operator()(indexes);
   }
   int64_t operator()(absl::Span<const int64_t> indexes) const;
+
+  std::vector<int64_t> index_for(int64_t device) const;
 
   absl::Span<const int64_t> dimensions() const;
   int64_t num_dimensions() const;
