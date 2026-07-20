@@ -143,6 +143,12 @@ class TilingSpace {
   //
   // RTVarInfo are accessed by (user_hlo, operand_id), in this case it is
   // (dynamic-slice, 1).
+  //
+  // For ragged_dot group sizes, `hlo` points to the group_sizes operand
+  // (a rank-1 array). `sequential_dim_id` names the kSequential dimension
+  // whose loop induction variable is used as the array index at emit time.
+  // If `is_prefix_sum` is true the emitter maintains a loop-carried
+  // running sum instead of a direct array load.
   struct RTVarInfo {
     // Unique ID for the runtime variable within the tiling space.
     int64_t id;
@@ -151,6 +157,15 @@ class TilingSpace {
     Interval bounds;
     // HLO instruction that defines the runtime variable.
     const HloInstruction* hlo;
+    // If set, this RTVar is an array indexed by the sequential dimension with
+    // this ID.  At emit time the emitter uses that dimension's loop induction
+    // variable as the load index rather than a scalar load.
+    std::optional<int64_t> sequential_dim_id;
+    // If true this RTVar represents the prefix sum of the array pointed to by
+    // `hlo` up to (exclusive) the current loop iteration of the sequential
+    // dimension given by `sequential_dim_id`.  The emitter maintains this as
+    // a loop-carried value rather than loading from memory.
+    bool is_prefix_sum = false;
   };
 
   // Special constraint requiring that `expr` evaluated at concrete tile sizes
@@ -212,8 +227,18 @@ class TilingSpace {
 
   void AppendDimension(const HloInstruction* hlo, int64_t dim_position,
                        int64_t dim_size, DimensionSemantics dim_type);
+
+  // Registers a runtime variable associated with (`hlo`, `operand_id`).
+  // `rt_var` is the HLO instruction whose value is the runtime variable.
+  // `upper_bound` is a compile-time upper bound on the variable's value.
+  // `sequential_dim_id` (optional) indicates that this is an array RTVar
+  //   whose index is the loop IV of the given kSequential dimension.
+  // `is_prefix_sum` marks the variable as a loop-carried prefix sum over
+  //   the array identified by `hlo`.
   void AppendRTVar(const HloInstruction* hlo, int64_t operand_id,
-                   const HloInstruction* rt_var, int64_t upper_bound);
+                   const HloInstruction* rt_var, int64_t upper_bound,
+                   std::optional<int64_t> sequential_dim_id = std::nullopt,
+                   bool is_prefix_sum = false);
 
   bool IsSymbolic() const { return is_symbolic_; }
 
@@ -235,6 +260,10 @@ class TilingSpace {
   void ProcessScan(const HloInstruction& hlo);
   void ProcessDynamicSlice(const HloInstruction& hlo);
   void ProcessGetTupleElement(const HloInstruction& hlo);
+  // Registers the sequential dimensions and RTVars for a kRaggedDot
+  // instruction.  Handles kRaggedNonContracting (G is a kSequential outer
+  // loop) and kRaggedContracting (G is kParallel, M is kSequential).
+  void ProcessRaggedDot(const HloInstruction& hlo);
   void ProcessInstruction(const HloInstruction& hlo);
 
   // Initializes cached indexing map variables. This is necessary to allow
