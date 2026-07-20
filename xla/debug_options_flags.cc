@@ -360,7 +360,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_gemm_fusion_v2(false);
   opts.set_xla_gpu_verify_triton_fusion_numerics(false);
   opts.set_xla_gpu_experimental_enable_tiling_propagation(false);
-
+  opts.set_xla_gpu_experimental_triton_ragged_dot(false);
   // Moving reduce-scatter out of while loops can increase memory footprint, so
   // turning it off by default.
   opts.set_xla_gpu_enable_while_loop_reduce_scatter_code_motion(false);
@@ -3403,6 +3403,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_experimental_enable_tiling_propagation),
       debug_options->xla_gpu_experimental_enable_tiling_propagation(),
       "If true, enable experimental tiling propagation."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_triton_ragged_dot",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_triton_ragged_dot),
+      debug_options->xla_gpu_experimental_triton_ragged_dot(),
+      "If true, route kRaggedDot through the experimental Triton XTile "
+      "backend instead of hipBLASLt GroupedGEMM."));
 
   auto setter_for_xla_gpu_detect_nan =
       [debug_options, detection_mode](const std::string& value) {
@@ -3597,7 +3604,7 @@ FlagStatus GetFlagStatus(absl::string_view flag_name) {
           "xla_gpu_all_reduce_combine_threshold_bytes",
           "xla_gpu_autotune_level",
           "xla_gpu_collective_permute_decomposer_threshold",
-          "xla_gpu_cublas_fallback",
+          "xla_gpu_cublas_fallback", 
           "xla_gpu_dot_merger_threshold_mb",
           "xla_gpu_enable_dynamic_slice_fusion",
           "xla_gpu_enable_latency_hiding_scheduler",
