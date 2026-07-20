@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -147,6 +148,87 @@ class GpuHloScheduleTest : public HloTestBaseLegacy {
 class GpuHloScheduleParameterizedTest
     : public GpuHloScheduleTest,
       public ::testing::WithParamInterface<std::tuple<bool, bool>> {};
+
+// A large buffer (`big`) whose last user (`wg`) is independent of the
+// collective-permute chain, so the latency-hiding scheduler is free to defer
+// the `wg` chain past the collective windows unless memory fencing pins it.
+constexpr absl::string_view kFencingHloText = R"(
+HloModule m
+
+ENTRY entry {
+  p0 = f32[1024,1024]{1,0} parameter(0)
+  p1 = f32[16]{0} parameter(1)
+  big = f32[1024,1024]{1,0} add(p0, p0)
+  wg = f32[1024,1024]{1,0} multiply(big, big)
+  wg_slice = f32[16,1]{1,0} slice(wg), slice={[0:16], [0:1]}
+  wg_small = f32[16]{0} reshape(wg_slice)
+  cp1s = (f32[16]{0}, f32[16]{0}) collective-permute-start(p1), source_target_pairs={{0,1},{1,0}}
+  cp1d = f32[16]{0} collective-permute-done(cp1s)
+  cp2s = (f32[16]{0}, f32[16]{0}) collective-permute-start(cp1d), source_target_pairs={{0,1},{1,0}}
+  cp2d = f32[16]{0} collective-permute-done(cp2s)
+  ROOT r = f32[16]{0} add(cp2d, wg_small)
+})";
+
+class GpuHloScheduleFencingTest : public GpuHloScheduleTest {
+ protected:
+  HloModuleConfig GetFencingModuleConfig(bool enable_memory_fencing) {
+    TestConfig test_config;
+    test_config.enable_latency_hiding_scheduler = true;
+    HloModuleConfig config = GetModuleConfig(test_config);
+    DebugOptions options = config.debug_options();
+    options.set_xla_gpu_experimental_enable_scheduler_memory_fencing(
+        enable_memory_fencing);
+    options.set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(
+        1024 * 1024);
+    config.set_debug_options(options);
+    config.set_replica_count(2);
+    return config;
+  }
+};
+
+TEST_F(GpuHloScheduleFencingTest, MemoryFencingAddsScheduleRespectedFences) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kFencingHloText,
+                                   GetFencingModuleConfig(
+                                       /*enable_memory_fencing=*/true)));
+  TF_ASSERT_OK(ScheduleGpuModule(module.get()).status());
+
+  const HloComputation* entry = module->entry_computation();
+  const std::vector<HloInstruction*>& sequence =
+      module->schedule().sequence(entry).instructions();
+  auto position = [&](const HloInstruction* instruction) {
+    return std::distance(
+        sequence.begin(),
+        std::find(sequence.begin(), sequence.end(), instruction));
+  };
+
+  // The fencing pass only adds control edges that end in an async collective
+  // start, and the post-LHS schedule must respect every one of them.
+  int64_t fence_count = 0;
+  for (const HloInstruction* instruction : entry->instructions()) {
+    for (const HloInstruction* successor : instruction->control_successors()) {
+      EXPECT_EQ(successor->opcode(), HloOpcode::kCollectivePermuteStart);
+      EXPECT_LT(position(instruction), position(successor));
+      ++fence_count;
+    }
+  }
+  EXPECT_GT(fence_count, 0);
+}
+
+TEST_F(GpuHloScheduleFencingTest, MemoryFencingDisabledAddsNoControlDeps) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kFencingHloText,
+                                   GetFencingModuleConfig(
+                                       /*enable_memory_fencing=*/false)));
+  TF_ASSERT_OK(ScheduleGpuModule(module.get()).status());
+
+  for (const HloInstruction* instruction :
+       module->entry_computation()->instructions()) {
+    EXPECT_TRUE(instruction->control_successors().empty());
+  }
+}
 
 // Test of a single stream, where data dependencies fully determine the
 // execution order.
