@@ -6614,6 +6614,7 @@ cc_library(
     hdrs = ["algorithm_util.h"],
     deps = [
         "//xla:shape_util",
+        "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:blas",
