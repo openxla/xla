@@ -635,8 +635,123 @@ absl::StatusOr<TensorValue> EmitRaggedDot(
   };
 
   if (is_batch) {
-    return absl::UnimplementedError(
-        "kRaggedBatch: not yet implemented");
+    // --- kRaggedBatch ---
+    //
+    // kRaggedBatch = regular batched GEMM: output[b,:,:] = LHS[b,:,:] @
+    // RHS[b,:,:] for all b in [0, B_total). group_sizes control which batch
+    // elements belong to which group (for scheduling only, not computation).
+    //
+    // TilingSpace: B_total, M, N kParallel; K kSequential.
+    // Output tile: [1, BLOCK_M, BLOCK_N] (one batch element per program).
+    // The group_sizes operand (op 2) is NOT loaded — it's irrelevant here.
+
+    const ge::TilingSpace::DimensionInfo& k_dim_info =
+        tiling_space.GetDimensionInfo(*ragged_dot_instr, output_rank);
+    CHECK(k_dim_info.tile_size.has_value())
+        << "K tile size not set for kRaggedBatch.";
+    const int64_t K_tiles =
+        CeilOfRatio(k_dim_info.dimension_size, *k_dim_info.tile_size);
+
+    const int64_t num_batch = dot_dims.lhs_batch_dimensions_size();
+
+    const ge::TiledHloInstruction* lhs_tiled = tiled_ragged_dot.operand(0);
+    const ge::TiledHloInstruction* rhs_tiled = tiled_ragged_dot.operand(1);
+    // operand(2) = group_sizes — NOT emitted.
+
+    // K sequential accumulation loop (same structure as EmitDot).
+    auto k_for =
+        mlir::scf::ForOp::create(b, MakeIndex(b, 0), MakeIndex(b, K_tiles),
+                                 MakeIndex(b, 1), accumulator);
+    {
+      mlir::OpBuilder::InsertionGuard g(b);
+      b.setInsertionPointToStart(k_for.getBody());
+      Value k_iv = k_for.getInductionVar();
+      Value k_iv_i32 = Cast(b, k_iv, b.getI32Type());
+
+      CHECK(emitter_ctx.MapSymbolIdToSequentialDimValue(
+          k_dim_info.id, k_iv, Interval{0, K_tiles - 1}));
+
+      ASSIGN_OR_RETURN(TensorValue lhs_tensor, emit_operand(lhs_tiled));
+      ASSIGN_OR_RETURN(TensorValue rhs_tensor, emit_operand(rhs_tiled));
+
+      // K-boundary masking.
+      ASSIGN_OR_RETURN(lhs_tensor,
+                       MaskDotOperand(b, *lhs_tiled, lhs_tensor, k_iv_i32,
+                                      dot_dims.lhs_contracting_dimensions(0)));
+      ASSIGN_OR_RETURN(rhs_tensor,
+                       MaskDotOperand(b, *rhs_tiled, rhs_tensor, k_iv_i32,
+                                      dot_dims.rhs_contracting_dimensions(0)));
+
+      // Squeeze batch dims before inner 2-D dot (same as batched
+      // kRaggedNonContracting pattern).
+      auto lhs_type = lhs_tensor.getType();
+      auto acc_rc = mlir::cast<mlir::RankedTensorType>(
+          k_for.getRegionIterArgs()[0].getType());
+      auto acc_ref = acc_rc.getShape();
+
+      llvm::SmallVector<int64_t> lhs_2d(lhs_type.getShape().begin() + num_batch,
+                                        lhs_type.getShape().end());
+      llvm::SmallVector<int64_t> rhs_2d(
+          rhs_tensor.getType().getShape().begin() + num_batch,
+          rhs_tensor.getType().getShape().end());
+      llvm::SmallVector<int64_t> acc_2d(acc_ref.begin() + num_batch,
+                                        acc_ref.end());
+
+      TensorValue dot_lhs = lhs_tensor, dot_rhs = rhs_tensor;
+      Value dot_acc = k_for.getRegionIterArgs()[0];
+      if (num_batch > 0) {
+        dot_lhs = mlir::cast<TensorValue>(
+            stablehlo::ReshapeOp::create(
+                b,
+                mlir::RankedTensorType::get(lhs_2d, lhs_type.getElementType()),
+                lhs_tensor)
+                .getResult());
+        dot_rhs = mlir::cast<TensorValue>(
+            stablehlo::ReshapeOp::create(
+                b,
+                mlir::RankedTensorType::get(
+                    rhs_2d, rhs_tensor.getType().getElementType()),
+                rhs_tensor)
+                .getResult());
+        dot_acc =
+            stablehlo::ReshapeOp::create(
+                b, mlir::RankedTensorType::get(acc_2d, acc_rc.getElementType()),
+                dot_acc)
+                .getResult();
+      }
+
+      DotDimensionNumbers inner_dot_dims;
+      inner_dot_dims.add_lhs_contracting_dimensions(
+          dot_dims.lhs_contracting_dimensions(0) - num_batch);
+      inner_dot_dims.add_rhs_contracting_dimensions(
+          dot_dims.rhs_contracting_dimensions(0) - num_batch);
+
+      ASSIGN_OR_RETURN(
+          Value acc_next,
+          xtile::EmitSingleTileDot(
+              b, *ragged_dot_instr, inner_dot_dims,
+              xtile::DotOperands{dot_lhs, dot_rhs,
+                                 mlir::cast<TensorValue>(dot_acc)}));
+
+      if (num_batch > 0) {
+        acc_next =
+            stablehlo::ReshapeOp::create(
+                b,
+                mlir::RankedTensorType::get(
+                    llvm::SmallVector<int64_t>(acc_ref.begin(), acc_ref.end()),
+                    acc_rc.getElementType()),
+                acc_next)
+                .getResult();
+      }
+      mlir::scf::YieldOp::create(b, acc_next);
+    }
+
+    Value result = k_for.getResult(0);
+    ASSIGN_OR_RETURN(Type out_type,
+                     PrimitiveTypeToMlirType(
+                         b, tiled_ragged_dot.hlo()->shape().element_type()));
+    if (out_type != acc_type) result = Cast(b, result, out_type);
+    return mlir::cast<TensorValue>(result);
   }
 
   // Helper to emit group_sizes and any transitively required instructions
