@@ -1832,16 +1832,25 @@ bool BufferAssigner::LiveRangeInterferes(
       [&assignment, this](
           const HloValue* user_value, const HloValue* operand_value,
           const HloLiveRange::LiveRangeBounds& operand_live_range) {
-        // An hlo value can hold multiple instructions during its life time. We
-        // only look at the last instruction and check if it can be shared with
-        // the operand.
-        HloPosition operand_end_position = operand_live_range.end_position;
-        return user_value->instruction()->opcode() != HloOpcode::kCopy &&
-               user_value->instruction()->IsUserOf(
-                   operand_end_position.instruction) &&
-               assignment->dataflow_analysis().CanShareOperandBufferWithUser(
-                   operand_end_position.instruction, operand_end_position.index,
-                   user_value->instruction(), user_value->index(), alias_info_);
+        if (user_value->instruction()->opcode() == HloOpcode::kCopy) {
+          return false;
+        }
+        // An HloValue can appear at multiple positions in the module (e.g.
+        // passed into a while loop, tuple, or bitcast view). The live range's
+        // end_position might point to one of these secondary positions rather
+        // than the instruction position that user_value directly consumes.
+        // Therefore, we check all positions of operand_value to see if any
+        // position can share its buffer with user_value.
+        for (const HloPosition& operand_pos : operand_value->positions()) {
+          if (user_value->instruction()->IsUserOf(operand_pos.instruction) &&
+              assignment->dataflow_analysis().CanShareOperandBufferWithUser(
+                  operand_pos.instruction, operand_pos.index,
+                  user_value->instruction(), user_value->index(),
+                  alias_info_)) {
+            return true;
+          }
+        }
+        return false;
       };
 
   if (!(live_range1.start > live_range2.end ||
