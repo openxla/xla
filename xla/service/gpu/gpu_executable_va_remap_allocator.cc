@@ -31,7 +31,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_executable_buffer_allocator.h"
@@ -42,6 +41,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address_vmm_allocator.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 
@@ -359,7 +359,7 @@ GpuExecutableVaRemapAllocator::VaRemapExecutionScope::AllocateBuffer(
   return vmm_allocator_->Allocate(
       device_ordinal, mapping_size, /*retry_on_failure=*/true,
       /*memory_space=*/allocation.color(), remapping_->va_reservation.get(),
-      va_offset, mapping_size, /*return_reservation_address=*/true);
+      va_offset, mapping_size);
 }
 
 absl::StatusOr<se::DeviceAddressBase>

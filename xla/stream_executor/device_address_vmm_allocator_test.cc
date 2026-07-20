@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/stream_executor/device_address_vmm_allocator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -234,8 +235,7 @@ TEST_F(DeviceAddressVmmAllocatorTest,
       allocator->Allocate(
           /*device_ordinal=*/0, /*allocation_size=*/2 * kGranularity,
           /*retry_on_failure=*/false, /*memory_space=*/0, reservation.get(),
-          /*reservation_offset=*/0, /*mapping_size=*/2 * kGranularity,
-          /*return_reservation_address=*/true));
+          /*reservation_offset=*/0, /*mapping_size=*/2 * kGranularity));
   EXPECT_EQ(reservation->active_mapping_count(), 1);
   EXPECT_EQ(allocator->allocation_count(), 2);
 }
