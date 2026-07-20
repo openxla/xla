@@ -987,11 +987,14 @@ xla_test(
     ],
     deps = [
         ":cudnn_fusion_compiler",
+        "//xla:comparison_util",
+        "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
 )
