@@ -43,10 +43,11 @@ limitations under the License.
 #include "xla/backends/autotuner/profiler.h"
 #include "xla/backends/autotuner/tiered_cache.h"
 #include "xla/backends/gpu/autotuner/gpu_profiler.h"
+#include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/debug_options_flags.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/runtime/object_pool.h"
 #include "xla/service/compiler.h"
 #include "xla/service/gpu/autotuning/autotuner_pass.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -135,7 +136,8 @@ absl::StatusOr<std::vector<std::string>> GetHloFiles(
 struct AutotunerEnvironment {
   // For codegen backends.
   std::unique_ptr<Compiler> compiler;
-  std::unique_ptr<mlir::MLIRContext> mlir_context;
+  std::unique_ptr<ObjectPool<std::unique_ptr<mlir::MLIRContext>>>
+      mlir_context_pool;
   std::unique_ptr<AliasInfo> alias_info;
   std::unique_ptr<Compiler::GpuTargetConfig> target_config;
   std::unique_ptr<se::DeviceAddressAllocator> allocator;
@@ -177,8 +179,9 @@ absl::StatusOr<AutotunerEnvironment> CreateAutotunerEnvironment(
       std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
           stream_executor_0);
 
-  auto mlir_context = std::make_unique<mlir::MLIRContext>();
-  xla::RegisterSymbolicExprStorage(mlir_context.get());
+  auto mlir_context_pool =
+      std::make_unique<ObjectPool<std::unique_ptr<mlir::MLIRContext>>>(
+          CreateMlirContext, /*preallocate=*/0);
 
   auto thread_pool = std::make_unique<tsl::thread::ThreadPool>(
       tsl::Env::Default(), "autotuner", tsl::port::MaxParallelism());
@@ -208,7 +211,7 @@ absl::StatusOr<AutotunerEnvironment> CreateAutotunerEnvironment(
       std::vector<std::unique_ptr<CodegenBackend>> autotuner_backends,
       AutotunerPass::GetGpuAutotunerBackends(
           stream_executor_0, allocator.get(), target_config.get(),
-          alias_info.get(), debug_options, mlir_context.get(),
+          alias_info.get(), debug_options, mlir_context_pool.get(),
           gpu_compiler->ShapeSizeBytesFunction(), gpu_compiler,
           platform->id()));
 
@@ -235,10 +238,14 @@ absl::StatusOr<AutotunerEnvironment> CreateAutotunerEnvironment(
                                      std::move(autotuner_profilers),
                                      autotuner_options, thread_pool.get()));
 
-  return AutotunerEnvironment{std::move(compiler),    std::move(mlir_context),
-                              std::move(alias_info),  std::move(target_config),
-                              std::move(allocator),   std::move(ctx),
-                              std::move(thread_pool), std::move(autotuner)};
+  return AutotunerEnvironment{std::move(compiler),
+                              std::move(mlir_context_pool),
+                              std::move(alias_info),
+                              std::move(target_config),
+                              std::move(allocator),
+                              std::move(ctx),
+                              std::move(thread_pool),
+                              std::move(autotuner)};
 }
 
 }  // namespace

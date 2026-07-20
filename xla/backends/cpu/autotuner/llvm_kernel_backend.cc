@@ -90,7 +90,7 @@ LlvmKernelBackend::GetDefaultConfig(const HloInstruction& instr) {
 }
 
 absl::Status LlvmKernelBackend::ApplyConfig(HloInstruction& instr,
-                                            const xla::BackendConfig& config) {
+                                            const xla::BackendConfig& config) const {
   ASSIGN_OR_RETURN(auto backend_config,
                    instr.backend_config<xla::cpu::BackendConfig>());
 

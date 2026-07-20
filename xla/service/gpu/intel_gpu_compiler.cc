@@ -50,6 +50,7 @@ absl::Status IntelGpuCompiler::AddAutotunerPass(
     stream_executor::StreamExecutor* stream_executor,
     const GpuTargetConfig* target_config, const AliasInfo* alias_info,
     mlir::MLIRContext* mlir_context,
+    ObjectPool<std::unique_ptr<mlir::MLIRContext>>* mlir_context_pool,
     HloCostAnalysis::ShapeSizeFunction shape_size_fn,
     const MultiProcessKeyValueStore& key_value_store) {
   // Return OkStatus as a stub.

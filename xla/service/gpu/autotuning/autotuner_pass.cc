@@ -354,7 +354,8 @@ AutotunerPass::GetGpuAutotunerBackends(
     se::StreamExecutor* stream_exec,
     se::DeviceAddressAllocator* device_allocator,
     const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
-    const DebugOptions& debug_options, mlir::MLIRContext* mlir_context,
+    const DebugOptions& debug_options,
+    ObjectPool<std::unique_ptr<mlir::MLIRContext>>* mlir_context_pool,
     HloCostAnalysis::ShapeSizeFunction shape_size_fn, Compiler* compiler,
     se::PlatformId platform_id) {
   std::vector<autotuner::Backend> autotune_backends;
@@ -398,7 +399,7 @@ AutotunerPass::GetGpuAutotunerBackends(
                    registry.FindObject<GetCodegenBackends>(platform_id));
   std::vector<std::unique_ptr<CodegenBackend>> backends = get_codegen_backends(
       stream_exec, device_allocator, &debug_options, compiler, target_config,
-      alias_info, mlir_context, shape_size_fn, autotune_backends);
+      alias_info, mlir_context_pool, shape_size_fn, autotune_backends);
 
   return backends;
 }
@@ -409,7 +410,6 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
     const se::GpuComputeCapability& gpu_version,
     se::StreamExecutor* stream_executor, tsl::thread::ThreadPool* thread_pool,
     const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
-    mlir::MLIRContext* mlir_context,
     HloCostAnalysis::ShapeSizeFunction shape_size_fn,
     se::DeviceAddressAllocator* allocator,
     MultiProcessKeyValueStore key_value_store) {

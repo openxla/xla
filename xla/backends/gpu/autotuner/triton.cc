@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/triton/cost_model_config_optimization.h"
 #include "xla/backends/gpu/autotuner/triton/dot_search_space.h"
 #include "xla/backends/gpu/autotuner/triton/triton_configs.h"
+#include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/backends/gpu/transforms/fusion_wrapper.h"
 #include "xla/backends/gpu/transforms/priority_fusion.h"
@@ -167,10 +168,12 @@ TritonBackend::GetSupportedConfigsForDot(const HloInstruction* instr) {
     if (!debug_options()
              .xla_gpu_experimental_cost_model_gemm_tiling_options()
              .empty()) {
+      ASSIGN_OR_RETURN(BorrowedMlirContext mlir_context,
+                       mlir_context_pool_->GetOrCreate());
       ASSIGN_OR_RETURN(gemm_configs, OptimizeConfigsWithCostModel(
                                          dot, all_configs, gemm_configs,
                                          target_config().device_description,
-                                         debug_options(), mlir_context_));
+                                         debug_options(), mlir_context->get()));
     }
   }
   configs.reserve(gemm_configs.size());
@@ -183,7 +186,8 @@ TritonBackend::GetSupportedConfigsForDot(const HloInstruction* instr) {
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
-TritonBackend::GetSupportedConfigsForScaledDot(const HloInstruction* instr) {
+TritonBackend::GetSupportedConfigsForScaledDot(
+    const HloInstruction* instr) {
   // The ROCm Triton backend does not support mixed FP4/FP8 scaled-dot inputs.
   const auto& gpu_cc =
       target_config().device_description.gpu_compute_capability();
@@ -277,7 +281,7 @@ absl::StatusOr<std::unique_ptr<BackendConfig>> TritonBackend::GetDefaultConfig(
 }
 
 absl::Status TritonBackend::ApplyConfig(HloInstruction& instr,
-                                        const BackendConfig& config) {
+                                        const BackendConfig& config) const {
   if (!IsSupported(instr)) {
     return absl::InvalidArgumentError(
         "TritonBackend does not support this instruction.");
@@ -309,7 +313,7 @@ absl::Status TritonBackend::ApplyConfig(HloInstruction& instr,
 
 absl::StatusOr<std::unique_ptr<HloModule>> TritonBackend::RunHloPasses(
     std::unique_ptr<HloModule> hlo_module,
-    const Compiler::CompileOptions& options) {
+    const Compiler::CompileOptions& options) const {
   auto gpu_device_info = target_config().device_description;
   for (PrimitiveType type :
        {BF16, F8E5M2, F8E4M3FN, F8E4M3B11FNUZ, F8E5M2FNUZ, F8E4M3FNUZ}) {
@@ -319,11 +323,13 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonBackend::RunHloPasses(
     RETURN_IF_ERROR(float_normalization.Run(hlo_module.get()).status());
   }
 
+  ASSIGN_OR_RETURN(BorrowedMlirContext mlir_context,
+                   mlir_context_pool_->GetOrCreate());
   HloCostAnalysis::Options priority_fusion_options;
   priority_fusion_options.count_multiple_input_accesses = true;
   PriorityFusion priority_fusion(
       /*thread_pool=*/nullptr, gpu_device_info, alias_info_,
-      priority_fusion_options, mlir_context_);
+      priority_fusion_options, mlir_context->get());
   RETURN_IF_ERROR(priority_fusion.Run(hlo_module.get()).status());
 
   // If the priority fusion pass above skipped some instructions, turn them
@@ -331,12 +337,12 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonBackend::RunHloPasses(
   FusionWrapper fusion_wrapper(gpu_device_info);
   RETURN_IF_ERROR(fusion_wrapper.Run(hlo_module.get()).status());
   ConvertTritonGemmConfig convert_triton_gemm_config(gpu_device_info,
-                                                     mlir_context_);
+                                                     mlir_context->get());
   RETURN_IF_ERROR(convert_triton_gemm_config.Run(hlo_module.get()).status());
   return hlo_module;
 }
 
-bool TritonBackend::IsSupported(const HloInstruction& instr) {
+bool TritonBackend::IsSupported(const HloInstruction& instr) const {
   if (instr.opcode() != HloOpcode::kFusion) {
     return false;
   }
@@ -350,6 +356,13 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
   // TODO: b/487920266 - sometimes we create fusions that can't be tiled.
   // Bail out here if that's the case.
   if (backend_config.kind() == kTritonGemmFusionKind) {
+    absl::StatusOr<BorrowedMlirContext> mlir_context =
+        mlir_context_pool_->GetOrCreate();
+    if (!mlir_context.ok()) {
+      LOG(ERROR) << "Failed to borrow MLIRContext: "
+                 << mlir_context.status().message();
+      return false;
+    }
     auto fusion = Cast<HloFusionInstruction>(&instr);
     std::unique_ptr<HloFusionAdaptor> fusion_adaptor =
         HloFusionAdaptor::ForInstruction(fusion);
@@ -357,8 +370,8 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
             ->config()
             .debug_options()
             .xla_gpu_experimental_enable_tiling_propagation()) {
-      auto ts =
-          experimental::TilingSpace::Create(*fusion_adaptor, mlir_context_);
+      auto ts = experimental::TilingSpace::Create(*fusion_adaptor,
+                                                  (*mlir_context)->get());
       if (!ts.ok()) {
         VLOG(1) << "Failed to create tiling space: " << ts.status().message();
         return false;
@@ -378,7 +391,7 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
     auto device_info = target_config().device_description;
     SymbolicTileAnalysisOrError analysis_or_error =
         SymbolicTileAnalysis::AnalyzeFusion(
-            *fusion_adaptor, mlir_context_,
+            *fusion_adaptor, (*mlir_context)->get(),
             TritonEmitterConstraints::GetBuilder(device_info));
     if (const auto* fusion_decision =
             std::get_if<FusionDecision>(&analysis_or_error)) {

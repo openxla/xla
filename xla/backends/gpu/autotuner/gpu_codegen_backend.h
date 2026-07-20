@@ -66,13 +66,13 @@ class GpuCodegenBackend : public CodegenBackend {
     return target_config_;
   }
   const DebugOptions& debug_options() const { return debug_options_; }
-  stream_executor::StreamExecutor* stream_executor() {
+  stream_executor::StreamExecutor* stream_executor() const {
     return stream_executor_;
   }
 
   absl::StatusOr<std::unique_ptr<Executable>> Compile(
       const HloInstruction& hlo_instruction,
-      const BackendConfig& config) override {
+      const BackendConfig& config) const override {
     // We only check that all the n-1 users are get tuple instructions,
     // ideally we should also check if they are extracting the first n-1
     // elements of the tuple and ignoring the last one. But for codegen backends
@@ -146,12 +146,12 @@ class GpuCodegenBackend : public CodegenBackend {
   // only optimized and fused HLOs.
   virtual absl::StatusOr<std::unique_ptr<HloModule>> RunHloPasses(
       std::unique_ptr<HloModule> hlo_module,
-      const Compiler::CompileOptions& options) {
+      const Compiler::CompileOptions& options) const {
     // No additional passes needed for most backends.
     return hlo_module;
   };
 
-  virtual bool IsSupported(const HloInstruction& instr) = 0;
+  virtual bool IsSupported(const HloInstruction& instr) const = 0;
 
   friend class FissionBackend;
 

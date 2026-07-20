@@ -78,10 +78,10 @@ class BlockLevelEmitterBackend : public GpuCodegenBackend {
 
   // Applies a given block-level fusion configuration to the instruction.
   absl::Status ApplyConfig(HloInstruction& instr,
-                           const BackendConfig& config) override;
+                           const BackendConfig& config) const override;
 
   // Determines whether the given HLO instruction is supported by this backend.
-  bool IsSupported(const HloInstruction& instr) override;
+  bool IsSupported(const HloInstruction& instr) const override;
 
   // We don't want to use the Triton emitter as a reference because it can
   // produce wrong results.

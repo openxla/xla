@@ -362,7 +362,7 @@ absl::Status ApplyConfigToCudnnCustomCall(HloInstruction& instr,
 
 }  // namespace
 
-bool CudnnBackend::IsSupported(const HloInstruction& instr) {
+bool CudnnBackend::IsSupported(const HloInstruction& instr) const {
   if (instr.opcode() == HloOpcode::kFusion) {
     return IsSupportedCudnnFusion(instr, stream_executor(), debug_options());
   }
@@ -417,7 +417,7 @@ CudnnBackend::GetSupportedConfigs(const HloInstruction& instr) {
 }
 
 absl::Status CudnnBackend::ApplyConfig(HloInstruction& instr,
-                                       const BackendConfig& config) {
+                                       const BackendConfig& config) const {
   if (!config.has_algorithm()) {
     return absl::InvalidArgumentError(
         "Expected AlgorithmProto config for CudnnBackend.");

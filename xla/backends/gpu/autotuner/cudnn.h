@@ -72,7 +72,7 @@ class CudnnBackend : public GpuCodegenBackend {
   // Can replace the instruction with a new one in the parent computation, to
   // apply the configs with non-zero workspace size.
   absl::Status ApplyConfig(HloInstruction& instr,
-                           const BackendConfig& config) override;
+                           const BackendConfig& config) const override;
 
   bool CanProduceWrongResults() const override { return true; }
 
@@ -81,7 +81,7 @@ class CudnnBackend : public GpuCodegenBackend {
   }
 
  private:
-  bool IsSupported(const HloInstruction& instr) override;
+  bool IsSupported(const HloInstruction& instr) const override;
 };
 
 }  // namespace gpu

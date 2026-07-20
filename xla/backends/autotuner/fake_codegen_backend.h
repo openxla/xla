@@ -45,11 +45,11 @@ class FakeCodegenBackend : public CodegenBackend {
     return std::vector<std::unique_ptr<BackendConfig>>();
   }
   absl::StatusOr<std::unique_ptr<Executable>> Compile(
-      const HloInstruction& instr, const BackendConfig& config) override {
+      const HloInstruction& instr, const BackendConfig& config) const override {
     return absl::UnimplementedError("");
   }
   absl::Status ApplyConfig(HloInstruction& instr,
-                           const BackendConfig& config) override {
+                           const BackendConfig& config) const override {
     return absl::OkStatus();
   }
 

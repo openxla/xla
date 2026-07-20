@@ -58,14 +58,14 @@ class CodegenBackend {
   // Wraps the HLO instruction in a module, applies the given config, and
   // compiles it.
   virtual absl::StatusOr<std::unique_ptr<Executable>> Compile(
-      const HloInstruction& instr, const BackendConfig& config) = 0;
+      const HloInstruction& instr, const BackendConfig& config) const = 0;
 
   // Apply config to the given HLO instruction.
   // This can rarely lead to the instruction being replaced by new ones in the
   // parent computation. Please check the documentation of the specific backend
   // to understand if this is the case.
   virtual absl::Status ApplyConfig(HloInstruction& instr,
-                                   const BackendConfig& config) = 0;
+                                   const BackendConfig& config) const = 0;
 
   // Returns true if the backend can produce numerically wrong results.
   virtual bool CanProduceWrongResults() const = 0;

@@ -48,7 +48,7 @@ class LlvmKernelBackend : public CpuCodegenBackend {
       const HloInstruction& instr) final;
 
   absl::Status ApplyConfig(HloInstruction& instr,
-                           const xla::BackendConfig& config) final;
+                           const xla::BackendConfig& config) const final;
 
   autotuner::Backend backend() const final {
     return autotuner::Backend::LLVM_KERNEL_EMITTER;

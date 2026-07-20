@@ -72,7 +72,7 @@ llvm::SmallSet<int64_t, 4> ComputeUnrollFactors(
 // it has a config for another backend, and we currently don't have an easy way
 // to check that. Therefore, we only support fusions that are already set up to
 // go through the native emitter.
-bool NativeEmitterBackend::IsSupported(const HloInstruction& instr) {
+bool NativeEmitterBackend::IsSupported(const HloInstruction& instr) const {
   if (instr.opcode() != HloOpcode::kFusion) {
     return false;
   }
@@ -134,8 +134,8 @@ NativeEmitterBackend::GetDefaultConfig(const HloInstruction& instr) {
   return config;
 }
 
-absl::Status NativeEmitterBackend::ApplyConfig(HloInstruction& instr,
-                                               const BackendConfig& config) {
+absl::Status NativeEmitterBackend::ApplyConfig(
+    HloInstruction& instr, const BackendConfig& config) const {
   if (!config.has_native_emitter()) {
     return absl::InvalidArgumentError("Expected NativeEmitterBackendConfig.");
   }

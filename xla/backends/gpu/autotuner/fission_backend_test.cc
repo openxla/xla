@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/hipblaslt.h"
 #endif
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
+#include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/backends/gpu/transforms/dot_algorithm_rewriter.h"
 #include "xla/backends/gpu/transforms/gemm_rewriter.h"
 #include "xla/backends/gpu/transforms/scaled_dot_rewriter.h"
@@ -45,6 +46,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/runtime/object_pool.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
@@ -199,11 +201,10 @@ class FissionTest : public HloHardwareIndependentTestBase,
   std::unique_ptr<Compiler> compiler_;
   Compiler::GpuTargetConfig target_config_;
   se::DeviceDescription device_description_;
-  std::unique_ptr<HloPassPipeline> rewriter_pipeline_;
   std::unique_ptr<GpuCodegenBackend> base_codegen_backend_;
   GpuAliasInfo alias_info_;
+  ObjectPool<std::unique_ptr<mlir::MLIRContext>> mlir_context_pool_;
   std::unique_ptr<FissionBackend> fission_backend_;
-  mlir::MLIRContext mlir_context_;
 
   FissionTest()
       : platform_(PlatformUtil::GetDefaultPlatform().value()),
@@ -211,15 +212,19 @@ class FissionTest : public HloHardwareIndependentTestBase,
         compiler_(Compiler::GetForPlatform(platform_->id()).value()),
         target_config_(stream_executor_),
         device_description_(stream_executor_->GetDeviceDescription()),
-        rewriter_pipeline_(GetParam().pipeline_factory(device_description_)),
         base_codegen_backend_(
             GetParam().backend_factory(stream_executor_, &debug_options_,
                                        compiler_.get(), &target_config_)),
         alias_info_(device_description_),
+        mlir_context_pool_(CreateMlirContext),
         fission_backend_(std::make_unique<FissionBackend>(
             &debug_options_, compiler_.get(), &target_config_,
-            std::move(base_codegen_backend_), std::move(rewriter_pipeline_),
-            &alias_info_, &mlir_context_, stream_executor_)) {}
+            std::move(base_codegen_backend_),
+            [pipeline_factory = GetParam().pipeline_factory,
+             device_description = device_description_] {
+              return pipeline_factory(device_description);
+            },
+            &alias_info_, &mlir_context_pool_, stream_executor_)) {}
 };
 
 TEST_P(FissionTest, CanCreateFissionBackend) {
@@ -369,8 +374,8 @@ class CublasFissionBackendTest : public HloHardwareIndependentTestBase {
   Compiler::GpuTargetConfig target_config_;
   se::DeviceDescription device_description_;
   GpuAliasInfo alias_info_;
+  ObjectPool<std::unique_ptr<mlir::MLIRContext>> mlir_context_pool_;
   std::unique_ptr<FissionBackend> fission_backend_;
-  mlir::MLIRContext mlir_context_;
 
   CublasFissionBackendTest()
       : platform_(PlatformUtil::GetDefaultPlatform().value()),
@@ -379,12 +384,15 @@ class CublasFissionBackendTest : public HloHardwareIndependentTestBase {
         target_config_(stream_executor_),
         device_description_(stream_executor_->GetDeviceDescription()),
         alias_info_(device_description_),
+        mlir_context_pool_(CreateMlirContext),
         fission_backend_(std::make_unique<FissionBackend>(
             &debug_options_, compiler_.get(), &target_config_,
             CreateCublasLtBackend(stream_executor_, &debug_options_,
                                   compiler_.get(), &target_config_),
-            GetCublasRewriterPipeline(device_description_), &alias_info_,
-            &mlir_context_, stream_executor_)) {}
+            [device_description = device_description_] {
+              return GetCublasRewriterPipeline(device_description);
+            },
+            &alias_info_, &mlir_context_pool_, stream_executor_)) {}
 };
 
 TEST_F(CublasFissionBackendTest, ApplyConfigReplacesFusionWithControlDeps) {

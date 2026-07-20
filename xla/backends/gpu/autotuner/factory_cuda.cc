@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/scaled_dot_rewriter.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/runtime/object_pool.h"
 #include "xla/service/compiler.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
@@ -76,7 +77,8 @@ std::vector<std::unique_ptr<CodegenBackend>> GetCodegenBackendsForCuda(
     stream_executor::DeviceAddressAllocator* device_allocator,
     const DebugOptions* debug_options, Compiler* compiler,
     const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
-    MLIRContext* mlir_context, HloCostAnalysis::ShapeSizeFunction shape_size_fn,
+    ObjectPool<std::unique_ptr<MLIRContext>>* mlir_context_pool,
+    HloCostAnalysis::ShapeSizeFunction shape_size_fn,
     absl::Span<const autotuner::Backend> backend_allowlist) {
   // Selecting the "first' config in the autotuner is backend order dependent.
   // To make all tests pass we need to keep the CuDnn backend first and the
@@ -85,15 +87,18 @@ std::vector<std::unique_ptr<CodegenBackend>> GetCodegenBackendsForCuda(
   backends.push_back(std::make_unique<CudnnBackend>(
       stream_executor, debug_options, compiler, target_config));
   backends.push_back(std::make_unique<TritonBackend>(
-      debug_options, compiler, target_config, alias_info, mlir_context));
+      debug_options, compiler, target_config, alias_info,
+      mlir_context_pool));
   backends.push_back(std::make_unique<CublasLtBackend>(
       stream_executor, debug_options, compiler, target_config));
   backends.push_back(std::make_unique<FissionBackend>(
       debug_options, compiler, target_config,
       std::make_unique<CublasLtBackend>(stream_executor, debug_options,
                                         compiler, target_config),
-      GetCublasLtRewriterPipeline(target_config->device_description),
-      alias_info, mlir_context));
+      [device_description = target_config->device_description] {
+        return GetCublasLtRewriterPipeline(device_description);
+      },
+      alias_info, mlir_context_pool));
   backends.push_back(std::make_unique<NativeEmitterBackend>(
       debug_options, compiler, target_config));
   backends.push_back(std::make_unique<BlockLevelEmitterBackend>(

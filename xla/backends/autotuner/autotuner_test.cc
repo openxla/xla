@@ -96,10 +96,10 @@ class MockCodegenBackend : public CodegenBackend {
               (const HloInstruction& instr), (override));
   MOCK_METHOD(absl::StatusOr<std::unique_ptr<Executable>>, Compile,
               (const HloInstruction& instr, const BackendConfig& config),
-              (override));
+              (const, override));
   MOCK_METHOD(absl::Status, ApplyConfig,
               (HloInstruction & instr, const BackendConfig& config),
-              (override));
+              (const, override));
   MOCK_METHOD(bool, CanProduceWrongResults, (), (const, override));
 };
 
