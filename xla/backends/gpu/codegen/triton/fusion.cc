@@ -289,6 +289,7 @@ xla::Future<KernelReuseCache::Kernel> TritonFusion::Emit(
           // need so many different fusion kinds?
           const std::vector<absl::string_view> kSupportedFusionKinds = {
               kTritonFusionKind,
+              kTritonGemmFusionKind,
               kTritonNestedGemmFusionKind,
               kTritonCollectiveFusionKind,
           };

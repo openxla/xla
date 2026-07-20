@@ -125,6 +125,8 @@ class GpuCodegenBackend : public CodegenBackend {
     AdjustDebugOptionsForAutotuning(
         hlo_module->mutable_config().mutable_debug_options());
 
+    ABSL_RETURN_IF_ERROR(ApplyConfig(*instruction_to_tune, config));
+
     Compiler::CompileOptions options;
     options.gpu_topology = GetSingleDeviceGpuTopology("", target_config_);
     options.embed_hlo_module = false;
