@@ -1999,13 +1999,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "collective will execute multiple times (will yield incorrect results)"));
 
   flag_list->push_back(tsl::Flag(
-      "xla_llvm_force_inline_before_split",
-      bool_setter_for(&DebugOptions::set_xla_llvm_force_inline_before_split),
-      debug_options->xla_llvm_force_inline_before_split(),
-      "Decide whether to force inline before llvm module split to get a more "
-      "balanced splits for parallel compilation"));
-
-  flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_reassociation_for_converted_ar",
       bool_setter_for(
           &DebugOptions::set_xla_gpu_enable_reassociation_for_converted_ar),
