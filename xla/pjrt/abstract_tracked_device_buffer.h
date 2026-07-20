@@ -205,6 +205,8 @@ class CommonPjRtBuffer : public PjRtBuffer {
   // converted/confirmed.
   class ScopedHold {
    public:
+    struct UninitializedTag {};
+
     enum Type { kUsage = 0, kExternalReference, kDonation, kMaxValue };
     // Use a State enum instead of encoding the state in an error absl::Status
     // to avoid creating absl::Status values in non-error cases. Creating a
@@ -220,6 +222,7 @@ class CommonPjRtBuffer : public PjRtBuffer {
       kError
     };
 
+    explicit ScopedHold(UninitializedTag);
     ~ScopedHold();
     ScopedHold(ScopedHold&& other);
     ScopedHold(const ScopedHold&) = delete;
