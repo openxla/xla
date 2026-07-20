@@ -233,6 +233,7 @@ xla_cc_test(
         ":raw_buffer",
         "//xla:future",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
         "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
         "//xla/tsl/concurrency:async_value",
