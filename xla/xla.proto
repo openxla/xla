@@ -358,10 +358,14 @@ message DebugOptions {
   // mode can be configured independently for each supported collective
   // operation.
   //
+  // COLLECTIVE_PIPELINING_MODE_DEFAULT:
+  //   Select ON or OFF based on optimization effort. This is the protobuf
+  //   default for an uninitialized mode.
+  //
   // COLLECTIVE_PIPELINING_MODE_OFF:
   //   Do not run the collective pipeliner for this collective type.
   //
-  // COLLECTIVE_PIPELINING_MODE_AUTO:
+  // COLLECTIVE_PIPELINING_MODE_ON:
   //   Run the collective pipeliner and consider every structurally eligible
   //   instruction of this collective type.
   //
@@ -370,9 +374,10 @@ message DebugOptions {
   //   boolean-true is_pipelineable frontend attribute.
   //
   enum CollectivePipeliningMode {
-    COLLECTIVE_PIPELINING_MODE_OFF = 0;
-    COLLECTIVE_PIPELINING_MODE_AUTO = 1;
-    COLLECTIVE_PIPELINING_MODE_EXPLICIT = 2;
+    COLLECTIVE_PIPELINING_MODE_DEFAULT = 0;
+    COLLECTIVE_PIPELINING_MODE_OFF = 1;
+    COLLECTIVE_PIPELINING_MODE_ON = 2;
+    COLLECTIVE_PIPELINING_MODE_EXPLICIT = 3;
   }
 
   // Memory mode for XLA:GPU collective operations.

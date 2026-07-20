@@ -78,9 +78,11 @@ Flag                                            | Type                 | Notes
 ### GPU XLA flags
 
 The `-O1` optimization level enables advanced compiler passes for improved GPU
-performance, including several categories of flags below: while loop unrolling
+performance, including data-parallel collective pipelining
+(`xla_gpu_pipeline_all_gather`, `xla_gpu_pipeline_all_reduce`, and
+`xla_gpu_pipeline_reduce_scatter`), while loop unrolling
 (`xla_gpu_enable_while_loop_double_buffering`), latency hiding scheduling
-(`xla_gpu_enable_latency_hiding_scheduler`), and SOL latency estimator on
+(`xla_gpu_enable_latency_hiding_scheduler`), and SOL latency estimation on
 Hopper/Blackwell (`xla_gpu_enable_analytical_sol_latency_estimator`). See
 [GPU Effort Levels](https://openxla.org/xla/effort_levels) for details.
 
@@ -94,9 +96,9 @@ Flag                                              | Type                        
 `xla_gpu_all_reduce_combine_threshold_bytes`      | Integer (bytes)              | These flags tune when to combine multiple small AllGather / ReduceScatter / AllReduce into one big AllGather / ReduceScatter / AllReduce to reduce time spent on cross-device communication. For example, for the AllGather / ReduceScatter thresholds on a Transformer-based workload, consider tuning them high enough so as to combine at least a Transformer Layer’s weight AllGather / ReduceScatter. By default, the combine_threshold_bytes is set to 256.
 `xla_gpu_all_gather_combine_threshold_bytes`      | Integer (bytes)              | See xla_gpu_all_reduce_combine_threshold_bytes above.
 `xla_gpu_reduce_scatter_combine_threshold_bytes`  | Integer (bytes)              | See xla_gpu_all_reduce_combine_threshold_bytes above.
-`xla_gpu_pipeline_all_gather`                     | Enum (off/auto/explicit)     | Control all-gather pipelining. `off` disables it, `auto` considers all eligible all-gathers, and `explicit` considers only operations marked with `is_pipelineable=true`. The default is `off`.
-`xla_gpu_pipeline_all_reduce`                     | Enum (off/auto/explicit)     | Control all-reduce pipelining with the same mode semantics as `xla_gpu_pipeline_all_gather`. The default is `off`.
-`xla_gpu_pipeline_reduce_scatter`                 | Enum (off/auto/explicit)     | Control reduce-scatter pipelining with the same mode semantics as `xla_gpu_pipeline_all_gather`. The default is `auto`.
+`xla_gpu_pipeline_all_gather`                     | Enum (default/off/on/explicit) | Control all-gather pipelining. `default` follows optimization effort and is the flag default: it selects `on` at O1 or above, or when execution-time optimization effort is at least 0.2; otherwise, it selects `off`. `off` disables pipelining, `on` considers all eligible all-gathers, and `explicit` considers only operations marked with `is_pipelineable=true`.
+`xla_gpu_pipeline_all_reduce`                     | Enum (default/off/on/explicit) | Control all-reduce pipelining with the same mode semantics and default as `xla_gpu_pipeline_all_gather`.
+`xla_gpu_pipeline_reduce_scatter`                 | Enum (default/off/on/explicit) | Control reduce-scatter pipelining with the same mode semantics as `xla_gpu_pipeline_all_gather`. The flag default is `on`.
 `xla_gpu_enable_pipelined_host_offloading`        | Boolean (true/false)         | Enable pipelining of host offloading instructions.
 `xla_gpu_enable_while_loop_double_buffering`      | Boolean (true/false)         | Enable double-buffering for while loop.
 `xla_gpu_enable_all_gather_combine_by_dim`        | Boolean (true/false)         | Combine all-gather ops with the same gather dimension or irrespective of their dimension.

@@ -1018,10 +1018,11 @@ template <HloOpcode opcode>
 static HloPredicate CollectivePipeliningPredicate(
     DebugOptions::CollectivePipeliningMode mode) {
   switch (mode) {
-    case DebugOptions::COLLECTIVE_PIPELINING_MODE_AUTO:
+    case DebugOptions::COLLECTIVE_PIPELINING_MODE_ON:
       return HloPredicateIsOp<opcode>;
     case DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT:
       return HloPredicateIsPipelineableOp<opcode>();
+    case DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT:
     case DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF:
       return HloPredicateFalse;
     default:
@@ -1092,8 +1093,16 @@ absl::Status RunCollectiveOptimizationPasses(
 
   collectives_pipeline.AddPass<CollectivePipeliningAnalyzer>(pointer_size);
 
+  const DebugOptions::CollectivePipeliningMode effort_default =
+      IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)
+          ? DebugOptions::COLLECTIVE_PIPELINING_MODE_ON
+          : DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF;
   DebugOptions::CollectivePipeliningMode all_reduce_pipelining =
       debug_options.xla_gpu_pipeline_all_reduce();
+  if (all_reduce_pipelining ==
+      DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT) {
+    all_reduce_pipelining = effort_default;
+  }
   if (all_reduce_pipelining != DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF) {
     CollectivePipeliner::Config config{
         /*level_to_operate_on=*/0,
@@ -1122,6 +1131,10 @@ absl::Status RunCollectiveOptimizationPasses(
 
   DebugOptions::CollectivePipeliningMode all_gather_pipelining =
       debug_options.xla_gpu_pipeline_all_gather();
+  if (all_gather_pipelining ==
+      DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT) {
+    all_gather_pipelining = effort_default;
+  }
   if (all_gather_pipelining != DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF) {
     CollectivePipeliner::Config config{
         /*level_to_operate_on=*/0,
@@ -1150,6 +1163,10 @@ absl::Status RunCollectiveOptimizationPasses(
 
   DebugOptions::CollectivePipeliningMode reduce_scatter_pipelining =
       debug_options.xla_gpu_pipeline_reduce_scatter();
+  if (reduce_scatter_pipelining ==
+      DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT) {
+    reduce_scatter_pipelining = effort_default;
+  }
   if (reduce_scatter_pipelining !=
       DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF) {
     CollectivePipeliner::Config config{

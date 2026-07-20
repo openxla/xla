@@ -518,21 +518,32 @@ TEST_F(GpuCompilerTest, CollectivePipeliningModes) {
     absl::string_view name;
     DebugOptions::CollectivePipeliningMode mode;
     ExecutionOptions::EffortLevel optimization_level;
+    float exec_time_optimization_effort;
     absl::string_view frontend_attributes;
     bool expect_pipelined;
   };
 
   const std::vector<TestCase> test_cases = {
-      {"auto_at_o0", DebugOptions::COLLECTIVE_PIPELINING_MODE_AUTO,
-       ExecutionOptions::EFFORT_O0, "", true},
+      {"default_at_o0", DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT,
+       ExecutionOptions::EFFORT_O0, 0.0f, "", false},
+      {"default_at_o0_with_execution_effort",
+       DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT,
+       ExecutionOptions::EFFORT_O0, 0.2f, "", true},
+      {"default_at_o1", DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT,
+       ExecutionOptions::EFFORT_O1, 0.0f, "", true},
+      {"on_at_o0", DebugOptions::COLLECTIVE_PIPELINING_MODE_ON,
+       ExecutionOptions::EFFORT_O0, 0.0f, "", true},
       {"explicit_marked_at_o0",
        DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT,
-       ExecutionOptions::EFFORT_O0, R"(is_pipelineable="1")", true},
+       ExecutionOptions::EFFORT_O0, 0.0f, R"(is_pipelineable="1")", true},
       {"explicit_unmarked_at_o0",
        DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT,
-       ExecutionOptions::EFFORT_O0, "", false},
-      {"off_at_o1", DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF,
-       ExecutionOptions::EFFORT_O1, R"(is_pipelineable="1")", false},
+       ExecutionOptions::EFFORT_O0, 0.0f, "", false},
+      {"explicit_unmarked_at_o1",
+       DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT,
+       ExecutionOptions::EFFORT_O1, 0.0f, "", false},
+      {"explicit_off_at_o1", DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF,
+       ExecutionOptions::EFFORT_O1, 0.0f, R"(is_pipelineable="1")", false},
   };
 
   for (const TestCase& test_case : test_cases) {
@@ -542,6 +553,8 @@ TEST_F(GpuCompilerTest, CollectivePipeliningModes) {
 
     HloModuleConfig config = GetModuleConfigForTest();
     config.set_optimization_level(test_case.optimization_level);
+    config.set_exec_time_optimization_effort(
+        test_case.exec_time_optimization_effort);
 
     DebugOptions& debug_options = config.mutable_debug_options();
     debug_options.set_xla_gpu_pipeline_all_reduce(test_case.mode);
