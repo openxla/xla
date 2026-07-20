@@ -1,0 +1,239 @@
+/* Copyright 2026 The OpenXLA Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "xla/service/scheduler_memory_fencing.h"
+
+#include <cstdint>
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
+#include "xla/hlo/analysis/hlo_reachability.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/utils/hlo_query.h"
+#include "xla/service/hlo_buffer.h"
+#include "xla/service/hlo_value.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
+
+namespace xla {
+namespace {
+
+// Per-computation state derived from the reference schedule.
+struct ComputationFencingInfo {
+  // Schedule position of every instruction in the computation.
+  absl::flat_hash_map<const HloInstruction*, int64_t> position;
+  // Async collective windows, ordered by the schedule position of their start
+  // operations.
+  std::vector<HloInstruction*> window_starts;
+  std::vector<int64_t> window_start_positions;
+  std::vector<int64_t> window_done_positions;
+  std::unique_ptr<HloReachabilityMap> reachability;
+};
+
+ComputationFencingInfo BuildComputationFencingInfo(
+    HloComputation* computation, const HloInstructionSequence& sequence) {
+  ComputationFencingInfo info;
+  const std::vector<HloInstruction*>& instructions = sequence.instructions();
+  info.position.reserve(instructions.size());
+  for (int64_t i = 0; i < instructions.size(); ++i) {
+    info.position[instructions[i]] = i;
+  }
+  for (int64_t i = 0; i < instructions.size(); ++i) {
+    HloInstruction* instruction = instructions[i];
+    if (!hlo_query::IsAsyncCollectiveStartOp(instruction,
+                                             /*include_send_recv=*/false)) {
+      continue;
+    }
+    // The window closes at the corresponding done operation. If it cannot be
+    // located in this sequence, treat the window as closing immediately.
+    int64_t done_position = i;
+    for (const HloInstruction* user : instruction->users()) {
+      if (hlo_query::IsAsyncCollectiveDoneOp(user,
+                                             /*include_send_recv=*/false)) {
+        auto it = info.position.find(user);
+        if (it != info.position.end()) {
+          done_position = it->second;
+        }
+        break;
+      }
+    }
+    info.window_starts.push_back(instruction);
+    info.window_start_positions.push_back(i);
+    info.window_done_positions.push_back(done_position);
+  }
+  info.reachability = HloReachabilityMap::Build(computation);
+  return info;
+}
+
+// Returns the last user of `buffer` in the reference schedule, or nullptr if
+// the buffer must not be fenced: it is (partially) defined by a parameter,
+// escapes its computation, or is not fully contained in one scheduled
+// computation.
+HloInstruction* FindFencedLastUser(const HloBuffer& buffer,
+                                   const HloComputation* computation,
+                                   const ComputationFencingInfo& info) {
+  HloInstruction* last_user = nullptr;
+  int64_t last_use_position = -1;
+  for (const HloValue* value : buffer.values()) {
+    if (value->live_out_of_module()) {
+      return nullptr;
+    }
+    HloInstruction* definition = value->defining_instruction();
+    // The lifetime of parameter-backed buffers is not owned by this
+    // computation; fencing them cannot release memory.
+    if (definition->parent() != computation ||
+        definition->opcode() == HloOpcode::kParameter) {
+      return nullptr;
+    }
+    for (const HloPosition& hlo_position : value->positions()) {
+      // A buffer that appears in the root escapes the computation (e.g. a
+      // while-body output); its live range does not end at its last user.
+      if (hlo_position.instruction->parent() != computation ||
+          hlo_position.instruction == computation->root_instruction()) {
+        return nullptr;
+      }
+    }
+    for (const HloUse& use : value->GetUses()) {
+      if (use.instruction->parent() != computation ||
+          use.instruction == computation->root_instruction()) {
+        return nullptr;
+      }
+      auto it = info.position.find(use.instruction);
+      if (it == info.position.end()) {
+        return nullptr;
+      }
+      if (it->second > last_use_position) {
+        last_use_position = it->second;
+        last_user = use.instruction;
+      }
+    }
+  }
+  return last_user;
+}
+
+}  // namespace
+
+absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  if (!module->has_schedule()) {
+    return absl::FailedPreconditionError(
+        "SchedulerMemoryFencing requires a scheduled module.");
+  }
+  ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                   HloAliasAnalysis::Run(module, alias_info_));
+  const HloSchedule& schedule = module->schedule();
+
+  absl::flat_hash_set<const HloComputation*> fenceable_computations;
+  for (const HloComputation* computation :
+       module->MakeNonfusionComputations(execution_threads)) {
+    if (schedule.is_computation_scheduled(computation)) {
+      fenceable_computations.insert(computation);
+    }
+  }
+
+  absl::flat_hash_map<const HloComputation*, ComputationFencingInfo>
+      computation_infos;
+  absl::flat_hash_set<std::pair<HloInstruction*, HloInstruction*>> added_edges;
+  int64_t buffers_considered = 0;
+  int64_t edges_added = 0;
+
+  for (const HloBuffer& buffer : alias_analysis->buffers()) {
+    const int64_t buffer_size = shape_size_bytes_(buffer.values()[0]->shape());
+    if (buffer_size < size_threshold_bytes_) {
+      continue;
+    }
+    HloComputation* computation =
+        buffer.values()[0]->defining_instruction()->parent();
+    if (!fenceable_computations.contains(computation)) {
+      continue;
+    }
+    ++buffers_considered;
+
+    auto info_it = computation_infos.find(computation);
+    if (info_it == computation_infos.end()) {
+      info_it = computation_infos
+                    .emplace(computation,
+                             BuildComputationFencingInfo(
+                                 computation, schedule.sequence(computation)))
+                    .first;
+    }
+    const ComputationFencingInfo& info = info_it->second;
+    if (info.window_starts.empty()) {
+      continue;
+    }
+
+    HloInstruction* last_user = FindFencedLastUser(buffer, computation, info);
+    if (last_user == nullptr) {
+      continue;
+    }
+    const int64_t last_use_position = info.position.at(last_user);
+
+    // Window index of the last use: the first window (in start order) that is
+    // still open at, or opens after, the last use.
+    int64_t window_index = 0;
+    while (window_index < info.window_starts.size() &&
+           info.window_done_positions[window_index] <= last_use_position) {
+      ++window_index;
+    }
+    int64_t target_index = window_index + slack_windows_;
+    // Never fence backwards: the target start must come after the last use in
+    // the reference schedule, otherwise the edge could contradict existing
+    // dependencies. This keeps every edge forward in the schedule order and
+    // therefore acyclic.
+    while (target_index < info.window_starts.size() &&
+           info.window_start_positions[target_index] <= last_use_position) {
+      ++target_index;
+    }
+    if (target_index >= info.window_starts.size()) {
+      continue;
+    }
+    HloInstruction* target = info.window_starts[target_index];
+
+    if (!added_edges.insert({last_user, target}).second) {
+      continue;
+    }
+    // Skip edges that are already implied by the dependency graph. The
+    // reachability map is not updated for added edges; a stale map can only
+    // let a redundant (but still forward and acyclic) edge through.
+    if (info.reachability->IsReachable(last_user, target)) {
+      continue;
+    }
+    RETURN_IF_ERROR(last_user->AddControlDependencyTo(target));
+    ++edges_added;
+    VLOG(2) << "Fenced buffer " << buffer.ToString() << " (" << buffer_size
+            << " bytes): control edge " << last_user->name() << " -> "
+            << target->name();
+  }
+
+  VLOG(1) << "SchedulerMemoryFencing: considered " << buffers_considered
+          << " buffers >= " << size_threshold_bytes_ << " bytes, added "
+          << edges_added << " control edges (slack_windows=" << slack_windows_
+          << ").";
+  return edges_added > 0;
+}
+
+}  // namespace xla
