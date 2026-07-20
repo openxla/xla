@@ -72,6 +72,7 @@ limitations under the License.
 #include "xla/service/legalize_scheduling_annotations.h"
 #include "xla/service/p2p_schedule_preparation.h"
 #include "xla/service/profile_guided_latency_estimator.h"
+#include "xla/service/scheduler_memory_fencing.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -742,6 +743,20 @@ absl::Status RunLatencyHidingSchedulerPasses(
           ? GpuScheduleCrossesOverlapLimit
           : nullptr);
 
+  if (options.xla_gpu_experimental_enable_scheduler_memory_fencing()) {
+    int64_t fencing_threshold_bytes =
+        options.xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes();
+    if (fencing_threshold_bytes <= 0) {
+      // By default only fence buffers of at least 1% of the memory limit;
+      // smaller buffers cannot meaningfully contribute to an OOM but would
+      // constrain the scheduler.
+      fencing_threshold_bytes = static_cast<int64_t>(memory_limit / 100);
+    }
+    pipeline.AddPass<SchedulerMemoryFencing>(
+        shape_size_in_bytes, fencing_threshold_bytes,
+        options.xla_gpu_experimental_scheduler_memory_fencing_slack_windows(),
+        alias_info);
+  }
   pipeline.AddPass<LatencyHidingScheduler>(scheduling_context,
                                            std::move(scheduler_core));
   pipeline.AddPass<SchedulingInstructionAnnotator>();
