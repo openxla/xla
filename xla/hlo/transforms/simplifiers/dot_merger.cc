@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/dot_merger.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -392,6 +393,35 @@ struct ConcatTargetInfo {
   ShapeTracker tracker;
 };
 
+// Decides whether the canonical concat-operand form should place the
+// contracting dimensions last (minor), i.e. [Batch, NonContracting,
+// Contracting], or the non-contracting dimension last, i.e. [Batch,
+// Contracting, NonContracting].
+//
+// The canonical form is produced by transposing the concat operand into the
+// chosen order. We pick the order that keeps the concat operand's existing
+// minor-most dimension minor, so that the alignment transpose remains a cheap
+// loop transpose that fuses into the surrounding concatenate/convert, rather
+// than a standalone tiled transpose that materializes the whole tensor. See
+// GetDescriptionForTiledTransposeEmitter(): swapping the minor dimension with a
+// large dimension triggers the dedicated (non-fusible) tiled transpose emitter.
+bool ContractingShouldBeMinor(const DotOperandDims& concat_before) {
+  const int64_t rank = concat_before.shape().dimensions().size();
+  if (rank == 0) {
+    return true;
+  }
+  // DotMerger runs before layout assignment, so use the operand's current
+  // minor-most dimension (from its layout if present, else the last logical
+  // dimension under the default descending layout).
+  const Shape& shape = concat_before.shape();
+  const int64_t minor_dim =
+      shape.has_layout() ? shape.layout().minor_to_major(0) : rank - 1;
+  // Keep contracting minor only if a contracting dimension is already minor;
+  // otherwise the non-contracting dimension is minor and should stay minor.
+  return absl::c_linear_search(
+      concat_before.Indices(DotOperandDims::kContracting), minor_dim);
+}
+
 // We have original (old) shared operand, new shared operand, and a tracker
 // that maps from old to new.
 // To compute new other operand (that we'll concatenate), we need to:
@@ -399,10 +429,13 @@ struct ConcatTargetInfo {
 //   operand.
 // - Reshape non-contracting dimensions to rank 1 (as we'll going to concatenate
 // over it).
+// `contracting_is_minor` selects the canonical dimension order: when true, the
+// output is [Batch, NonContracting, Contracting]; when false, it is [Batch,
+// Contracting, NonContracting].
 absl::StatusOr<ConcatTargetInfo> TransformConcatDims(
     const DotOperandDims& concat_before, const DotOperandDims& shared_before,
     const DotOperandDims& shared_after, const ShapeTracker& shared_tracker,
-    PrimitiveType output_type) {
+    PrimitiveType output_type, bool contracting_is_minor) {
   // Make the transformations in the batch and contracting dimensions.
   ASSIGN_OR_RETURN(
       ShapeTracker batch_tracker,
@@ -424,30 +457,67 @@ absl::StatusOr<ConcatTargetInfo> TransformConcatDims(
   int64_t total_nc_size = ShapeUtil::ElementsIn(nc_shape);
   RETURN_IF_ERROR(nc_tracker.AppendReshape({total_nc_size}));
 
-  ASSIGN_OR_RETURN(
-      ShapeTracker zipped_tracker,
-      ShapeTracker::Zip({batch_tracker, nc_tracker, contracting_tracker}));
+  // Category order in the canonical form. The non-contracting dimension is
+  // placed either last ([B,N,C]) or right after batch ([B,C,N]) depending on
+  // which choice keeps the concat operand's minor dimension minor.
+  const std::array<DotOperandDims::Category, 3> category_order =
+      contracting_is_minor
+          ? std::array<DotOperandDims::Category,
+                       3>{DotOperandDims::kBatch,
+                          DotOperandDims::kNonContracting,
+                          DotOperandDims::kContracting}
+          : std::array<DotOperandDims::Category, 3>{
+                DotOperandDims::kBatch, DotOperandDims::kContracting,
+                DotOperandDims::kNonContracting};
 
-  // Now the tracker expects [B,N,C] as input. Prepend a transpose to use the
-  // original order.
+  auto tracker_for = [&](DotOperandDims::Category cat) -> const ShapeTracker& {
+    switch (cat) {
+      case DotOperandDims::kBatch:
+        return batch_tracker;
+      case DotOperandDims::kNonContracting:
+        return nc_tracker;
+      case DotOperandDims::kContracting:
+        return contracting_tracker;
+    }
+    LOG(FATAL) << "Unknown category: " << cat;
+  };
+
+  ASSIGN_OR_RETURN(ShapeTracker zipped_tracker,
+                   ShapeTracker::Zip({tracker_for(category_order[0]),
+                                      tracker_for(category_order[1]),
+                                      tracker_for(category_order[2])}));
+
+  // Now the tracker expects the categories in `category_order` as input.
+  // Prepend a transpose mapping from the original operand order.
   std::vector<int64_t> p_in;
   p_in.reserve(concat_before.shape().dimensions().size());
-  for (DotOperandDims::Category cat :
-       {DotOperandDims::kBatch, DotOperandDims::kNonContracting,
-        DotOperandDims::kContracting}) {
+  for (DotOperandDims::Category cat : category_order) {
     absl::c_copy(concat_before.Indices(cat), std::back_inserter(p_in));
   }
   RETURN_IF_ERROR(zipped_tracker.PrependTranspose(p_in));
 
-  // The output is [B,N,C]
+  // Build target dims following `category_order`. The non-contracting category
+  // is a single dimension (we reshaped it to rank 1 above); the contracting
+  // category keeps shared_after's contracting rank.
   const int64_t batch_rank_out = shared_after.Rank(DotOperandDims::kBatch);
+  const int64_t contracting_rank_out =
+      shared_after.Rank(DotOperandDims::kContracting);
   std::vector<int64_t> target_batch_dims(batch_rank_out);
   std::iota(target_batch_dims.begin(), target_batch_dims.end(), 0);
-  std::vector<int64_t> target_nc_dims = {batch_rank_out};
-  std::vector<int64_t> target_contracting_dims(
-      shared_after.Rank(DotOperandDims::kContracting));
-  std::iota(target_contracting_dims.begin(), target_contracting_dims.end(),
-            batch_rank_out + 1);
+  std::vector<int64_t> target_nc_dims;
+  std::vector<int64_t> target_contracting_dims;
+  int64_t pos = batch_rank_out;
+  for (DotOperandDims::Category cat : category_order) {
+    if (cat == DotOperandDims::kNonContracting) {
+      target_nc_dims = {pos};
+      pos += 1;
+    } else if (cat == DotOperandDims::kContracting) {
+      target_contracting_dims.resize(contracting_rank_out);
+      std::iota(target_contracting_dims.begin(), target_contracting_dims.end(),
+                pos);
+      pos += contracting_rank_out;
+    }
+  }
   DotOperandDims target_dims(zipped_tracker.output_shape(), target_batch_dims,
                              target_nc_dims, target_contracting_dims);
   return ConcatTargetInfo{target_dims, zipped_tracker};
@@ -458,6 +528,17 @@ absl::StatusOr<std::vector<ConcatTargetInfo>> ComputeTargetConcatDims(
     HloInstruction* new_shared_op, const DotOperandDims& target_shared_dims) {
   std::vector<ConcatTargetInfo> target_concat_infos;
   target_concat_infos.reserve(dots_to_merge.size());
+
+  // Decide the canonical dimension order once, from the first dot, and apply it
+  // uniformly: all dots in an equivalence class share the same category
+  // structure, so the concat operands must be brought to the same order to be
+  // concatenable. We pick the order that keeps the concat operand's minor
+  // dimension minor to avoid a non-fusible tiled transpose.
+  ASSIGN_OR_RETURN(
+      DotOperandDims first_concat_dims,
+      DotOperandDims::FromDotOperand(dots_to_merge[0].dot,
+                                     1 - dots_to_merge[0].shared_operand_idx));
+  const bool contracting_is_minor = ContractingShouldBeMinor(first_concat_dims);
 
   for (const auto& usage : dots_to_merge) {
     ASSIGN_OR_RETURN(DotOperandDims concat_dims_at_dot,
@@ -474,14 +555,16 @@ absl::StatusOr<std::vector<ConcatTargetInfo>> ComputeTargetConcatDims(
         ShapeTracker shared_dot_to_target,
         ShapeTracker::FromSiblings(old_shared_operand, new_shared_op));
 
-    // Bring the concat (non-shared) to the [B, NC, C] layout, where B and C are
-    // identical for all dots, and NC is a single dimension (that we'll
-    // concatenate over).
+    // Bring the concat (non-shared) operand to the canonical layout, where B
+    // and C are identical for all dots, and NC is a single dimension (that
+    // we'll concatenate over). The contracting dimension is placed minor or
+    // major according to `contracting_is_minor`.
     ASSIGN_OR_RETURN(
         ConcatTargetInfo info,
         TransformConcatDims(concat_dims_at_dot, shared_dims_at_dot,
                             target_shared_dims, shared_dot_to_target,
-                            usage.dot->shape().element_type()));
+                            usage.dot->shape().element_type(),
+                            contracting_is_minor));
 
     // TransformConcatDims returns a old->new tracker for the concat operand.
     // What we actually want is a source->new tracker. To build it, we compose
