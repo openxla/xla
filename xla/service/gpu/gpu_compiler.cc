@@ -3149,10 +3149,7 @@ absl::Status GpuCompiler::RunPreSchedulingPasses(
         gpu_device_info, cost_analysis_options, mlir_context,
         module->config()
             .debug_options()
-            .xla_gpu_experimental_enable_tiling_propagation(),
-        module->config()
-            .debug_options()
-            .xla_experimental_enable_same_shape_multi_output_fusion());
+            .xla_gpu_experimental_enable_tiling_propagation());
     // S-curve model analysis for collectives.
     if (module->config()
             .debug_options()
