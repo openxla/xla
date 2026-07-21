@@ -62,24 +62,8 @@ dnnl::engine FindOrCreateEngine(::sycl::queue* stream) {
 }
 
 dnnl::fpmath_mode GetFP32MathMode() {
-  std::string fp32_math_mode = "fp32";
-  TF_CHECK_OK(
-      tsl::ReadStringFromEnvVar("XLA_FP32_MATH_MODE", "fp32", &fp32_math_mode));
-  fp32_math_mode = tsl::str_util::Lowercase(fp32_math_mode);
-  if (fp32_math_mode == "fp32") {
-    return dnnl::fpmath_mode::strict;
-  }
-  if (fp32_math_mode == "tf32") {
-    return dnnl::fpmath_mode::tf32;
-  }
-  if (fp32_math_mode == "bf32") {
-    LOG(WARNING) << "Did not support BF32 math mode on GPU, falling back to "
-                    "FP32";
-    return dnnl::fpmath_mode::strict;
-  }
-  LOG(WARNING)
-      << "Invalid XLA_FP32_MATH_MODE, should be FP32, TF32 or BF32, but got "
-      << fp32_math_mode << "; falling back to FP32";
+  // TODO (intel-tf): Add support to check for GPU capability for FP32,
+  // TF32 and BF32 math mode.
   return dnnl::fpmath_mode::strict;
 }
 
