@@ -195,6 +195,39 @@ bool IsAsyncPair(const HloInstruction& from, const HloInstruction& target) {
   return IsGpuAsyncStart(from) && IsGpuAsyncDone(target);
 }
 
+// Classifies kernels that are dominated by HBM bandwidth rather than compute.
+// Overlapping an async D2D memcpy with such a kernel provides almost no
+// latency hiding because both contend for memory bandwidth, so these kernels
+// are not valuable for selectively overlapping the memcpy resource.
+bool IsMemoryBoundKernel(const HloInstruction& hlo) {
+  if (IsNopInstruction(hlo) || IsGpuAsyncStart(hlo) || IsGpuAsyncDone(hlo)) {
+    return false;
+  }
+  switch (hlo.opcode()) {
+    case HloOpcode::kFusion:
+      // Fusions containing a dot or a convolution are compute bound; all
+      // other fusions (loop, transpose, reduce, ...) are memory bound.
+      return !hlo_query::ContainsInstrWithOpcode(
+          hlo.fused_instructions_computation(),
+          {HloOpcode::kDot, HloOpcode::kConvolution});
+    case HloOpcode::kDot:
+    case HloOpcode::kConvolution:
+    // Custom calls are typically compute-bound library kernels (cuBLAS
+    // gemms, cuDNN convolutions/attention, ...).
+    case HloOpcode::kCustomCall:
+    // Control flow ops contain arbitrary computations; give them the benefit
+    // of the doubt instead of penalizing the copy overlap window.
+    case HloOpcode::kWhile:
+    case HloOpcode::kConditional:
+    case HloOpcode::kCall:
+      return false;
+    default:
+      // Remaining sync HLO ops lowered to kernels (copies, transposes,
+      // reductions, elementwise ops, data movement) are memory bound.
+      return true;
+  }
+}
+
 // Count the maximum overlapping count in subgroups of group and other
 size_t CountOverlappingRanks(const std::vector<std::vector<int64_t>>& group,
                              const std::vector<std::vector<int64_t>>& other) {
@@ -414,6 +447,20 @@ void GpuAsyncTrackerBase::PostProcessScheduleGraph(
         VLOG(5) << "Setting force delay for instruction: " << inst->ToString();
       }
     }
+
+    // With selective resources enabled, the async D2D memcpy resource can
+    // only have its latency hidden by compute-bound kernels. Mark
+    // memory-bandwidth-bound kernels as not valuable for selective overlap so
+    // the scheduler prefers compute-bound kernels inside copy windows.
+    if (config_.enable_selective_resources) {
+      HloGraphNode& node = schedule_graph->GetNode(inst);
+      node.SetValuableForSelectiveOverlap(!IsMemoryBoundKernel(*inst));
+      if (IsMemoryBoundKernel(*inst)) {
+        VLOG(5) << "Marking instruction as not valuable for selective "
+                   "overlap: "
+                << inst->ToString();
+      }
+    }
   }
 }
 
@@ -564,6 +611,15 @@ ResourceHazardType GpuAsyncTracker::GetResourceHazardType(
            ResourceTypeToIndex(GpuResourceType::kGpuResourceTypeEnd));
   if (resource_type < GetTargetDefinedResourceTypeBegin()) {
     return GpuAsyncTrackerBase::GetResourceHazardType(resource_type);
+  }
+  // Async D2D memcpys saturate HBM bandwidth, so hiding their latency behind
+  // memory-bound kernels provides no effective overlap. Treat the memcpy
+  // resource as selective so that only kernels marked as valuable for
+  // selective overlap (compute-bound ones) are scheduled into its window.
+  if (config_.enable_selective_resources &&
+      resource_type ==
+          ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamMemcpy)) {
+    return ResourceHazardType::kSelective;
   }
   return ResourceHazardType::kUnshareable;
 }

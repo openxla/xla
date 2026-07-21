@@ -657,6 +657,15 @@ absl::Status RunLatencyHidingSchedulerPasses(
       memory_limit,
       options.xla_gpu_experimental_parallel_collective_overlap_limit(),
       options.xla_gpu_experimental_parallel_async_compute_limit());
+  // Only overlap async D2D memcpys with compute-bound kernels; memory-bound
+  // kernels contend with the copy for HBM bandwidth and leave it exposed.
+  config.enable_selective_resources =
+      options.xla_gpu_experimental_enable_selective_memcpy_overlap();
+  if (config.enable_selective_resources) {
+    // Allow the scheduler to hold back compute-bound kernels when an async
+    // D2D memcpy window opens nearby so they can be scheduled inside it.
+    config.max_hops_to_closest_selective_overlap = 1;
+  }
 
   auto shape_size_in_bytes = ShapeSizeBytesFunction(pointer_size);
 

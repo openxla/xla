@@ -466,6 +466,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_parallel_collective_overlap_limit(1);
   opts.set_xla_gpu_experimental_collective_start_as_early_as_possible(false);
   opts.set_xla_gpu_experimental_parallel_async_compute_limit(2);
+  opts.set_xla_gpu_experimental_enable_selective_memcpy_overlap(false);
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
@@ -3008,6 +3009,17 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_parallel_async_compute_limit(),
       "This controls how many in-flight asynchronous computations "
       "latency hiding scheduler can schedule."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_selective_memcpy_overlap",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_enable_selective_memcpy_overlap),
+      debug_options->xla_gpu_experimental_enable_selective_memcpy_overlap(),
+      "If true, the latency hiding scheduler only considers compute-bound "
+      "kernels (dots, convolutions and library calls) as valuable for "
+      "overlapping with async D2D memcpy operations. Memory-bandwidth-bound "
+      "kernels contend with the copy for HBM bandwidth and provide almost no "
+      "effective overlap."));
   flag_list->push_back(tsl::Flag(
       "xla_pjrt_allow_auto_layout_in_hlo",
       bool_setter_for(&DebugOptions::set_xla_pjrt_allow_auto_layout_in_hlo),

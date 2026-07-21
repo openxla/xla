@@ -1175,6 +1175,158 @@ ENTRY main {
             GetIndexByName(instruction_sequence, "dynamic-slice-done"));
 }
 
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       SelectiveMemcpyOverlapMakesMemcpyResourceSelective) {
+  SchedulerConfig selective_config;
+  selective_config.enable_selective_resources = true;
+  GpuAsyncTracker selective_tracker(selective_config);
+  EXPECT_EQ(selective_tracker.GetResourceHazardType(
+                ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamMemcpy)),
+            ResourceHazardType::kSelective);
+  // Other GPU resources keep their default hazard type.
+  EXPECT_EQ(selective_tracker.GetResourceHazardType(ResourceTypeToIndex(
+                GpuResourceType::kGpuAsyncStreamCollectives)),
+            ResourceHazardType::kUnshareable);
+
+  SchedulerConfig default_config;
+  GpuAsyncTracker default_tracker(default_config);
+  EXPECT_EQ(default_tracker.GetResourceHazardType(
+                ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamMemcpy)),
+            ResourceHazardType::kUnshareable);
+}
+
+constexpr absl::string_view kSelectiveMemcpyOverlapHloModule = R"(
+HloModule test, num_partitions=4
+
+%dsf_computation (param_0: f32[2,2,2], param_1: s32[], param_2: s32[], param_3: s32[]) -> f32[1,2,2] {
+  %param_0 = f32[2,2,2]{2,1,0} parameter(0)
+  %param_1 = s32[] parameter(1)
+  %param_2 = s32[] parameter(2)
+  %param_3 = s32[] parameter(3)
+  ROOT %dynamic-slice = f32[1,2,2]{2,1,0} dynamic-slice(%param_0, %param_1, %param_2, %param_3), dynamic_slice_sizes={1,2,2},
+      backend_config={"dynamic_slice_config":{"byte_offset":"0","byte_stride":"0"}}
+}
+
+%async_computation (param_0: f32[2,2,2], param_1: s32[], param_2: s32[], param_3: s32[]) -> f32[1,2,2] {
+  %param_0 = f32[2,2,2]{2,1,0} parameter(0)
+  %param_1 = s32[] parameter(1)
+  %param_2 = s32[] parameter(2)
+  %param_3 = s32[] parameter(3)
+  ROOT %dynamic-slice-fusion = f32[1,2,2]{2,1,0} fusion(%param_0, %param_1, %param_2, %param_3), kind=kLoop, calls=%dsf_computation
+}
+
+%dot_computation (param_0: f32[64,64], param_1: f32[64,64]) -> f32[64,64] {
+  %param_0 = f32[64,64]{1,0} parameter(0)
+  %param_1 = f32[64,64]{1,0} parameter(1)
+  ROOT %dot = f32[64,64]{1,0} dot(%param_0, %param_1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+%transpose_computation (param_0: f32[64,64]) -> f32[64,64] {
+  %param_0 = f32[64,64]{1,0} parameter(0)
+  ROOT %transpose = f32[64,64]{1,0} transpose(%param_0), dimensions={1,0}
+}
+
+ENTRY main {
+ %p0 = f32[64,64]{1,0} parameter(0)
+ %p1 = f32[64,64]{1,0} parameter(1)
+ %p2 = f32[2,2,2]{2,1,0} parameter(2)
+ %c0 = s32[] constant(0)
+ %dynamic-slice-start = ((f32[2,2,2]{2,1,0}, s32[], s32[], s32[]), f32[1,2,2]{2,1,0}, u32[]) async-start(
+      %p2, %c0, %c0, %c0), calls=%async_computation
+ %dynamic-slice-done = f32[1,2,2]{2,1,0} async-done(%dynamic-slice-start)
+ %dot_fusion = f32[64,64]{1,0} fusion(%p0, %p1), kind=kOutput, calls=%dot_computation
+ %transpose_fusion = f32[64,64]{1,0} fusion(%p0), kind=kLoop, calls=%transpose_computation
+ %add = f32[64,64]{1,0} add(%p0, %p1)
+ ROOT tuple = (f32[1,2,2]{2,1,0}, f32[64,64]{1,0}, f32[64,64]{1,0}, f32[64,64]{1,0}) tuple(%dynamic-slice-done, %dot_fusion, %transpose_fusion, %add)
+})";
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       SelectiveMemcpyOverlapMarksMemoryBoundKernelsNotValuable) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kSelectiveMemcpyOverlapHloModule));
+  // HloScheduleGraph requires a scheduled module.
+  HloSchedule schedule(module.get());
+  for (HloComputation* computation : module->MakeNonfusionComputations()) {
+    schedule.set_sequence(computation, computation->MakeInstructionPostOrder());
+  }
+  TF_ASSERT_OK(module->set_schedule(std::move(schedule)));
+
+  SchedulerConfig sched_config;
+  sched_config.enable_selective_resources = true;
+  auto async_tracker = std::make_shared<GpuAsyncTracker>(sched_config);
+  auto latency_estimator =
+      std::make_shared<GpuLatencyEstimator>(/*pointer_size=*/8);
+  stream_executor::DeviceDescription gpu_device_info =
+      TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  GpuAliasInfo alias_info(gpu_device_info);
+  auto scheduling_context = std::make_shared<const SchedulingContext>(
+      module.get(), latency_estimator, async_tracker, &alias_info);
+  std::vector<HloInstruction*> post_order =
+      module->entry_computation()->MakeInstructionPostOrder();
+  HloScheduleGraph schedule_graph(&post_order, scheduling_context);
+  async_tracker->PostProcessScheduleGraph(&schedule_graph,
+                                          latency_estimator.get());
+
+  HloComputation* comp = module->entry_computation();
+  // Memory-bandwidth-bound kernels are not valuable for hiding the latency
+  // of an async D2D copy.
+  EXPECT_FALSE(
+      schedule_graph.GetNode(comp->GetInstructionWithName("transpose_fusion"))
+          .GetValuableForSelectiveOverlap());
+  EXPECT_FALSE(schedule_graph.GetNode(comp->GetInstructionWithName("add"))
+                   .GetValuableForSelectiveOverlap());
+  // Compute-bound kernels, async ops and nops remain valuable.
+  EXPECT_TRUE(schedule_graph.GetNode(comp->GetInstructionWithName("dot_fusion"))
+                  .GetValuableForSelectiveOverlap());
+  EXPECT_TRUE(schedule_graph
+                  .GetNode(comp->GetInstructionWithName("dynamic-slice-start"))
+                  .GetValuableForSelectiveOverlap());
+  EXPECT_TRUE(
+      schedule_graph.GetNode(comp->GetInstructionWithName("dynamic-slice-done"))
+          .GetValuableForSelectiveOverlap());
+  EXPECT_TRUE(schedule_graph.GetNode(comp->GetInstructionWithName("p0"))
+                  .GetValuableForSelectiveOverlap());
+
+  // With the feature disabled, all nodes keep the default marking.
+  SchedulerConfig default_config;
+  auto default_tracker = std::make_shared<GpuAsyncTracker>(default_config);
+  auto default_context = std::make_shared<const SchedulingContext>(
+      module.get(), latency_estimator, default_tracker, &alias_info);
+  HloScheduleGraph default_graph(&post_order, default_context);
+  default_tracker->PostProcessScheduleGraph(&default_graph,
+                                            latency_estimator.get());
+  EXPECT_TRUE(
+      default_graph.GetNode(comp->GetInstructionWithName("transpose_fusion"))
+          .GetValuableForSelectiveOverlap());
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       SelectiveMemcpyOverlapSchedulesComputeBoundKernelInsideCopyWindow) {
+  absl::string_view kFdoProfile = "";
+  HloModuleConfig config = GetModuleConfig(kFdoProfile);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kSelectiveMemcpyOverlapHloModule, config));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_experimental_enable_selective_memcpy_overlap(true);
+
+  EXPECT_OK(ScheduleModule(module.get(), /*num_parallel_resources=*/2));
+  const HloSchedule& schedule = module->schedule();
+  std::vector<HloInstruction*> instruction_sequence =
+      schedule.sequence(module->entry_computation()).instructions();
+  int start_idx = GetIndexByName(instruction_sequence, "dynamic-slice-start");
+  int done_idx = GetIndexByName(instruction_sequence, "dynamic-slice-done");
+  int dot_idx = GetIndexByName(instruction_sequence, "dot_fusion");
+
+  // The compute-bound dot fusion is scheduled inside the async D2D copy
+  // window so that the copy latency is hidden behind compute rather than
+  // behind memory-bound kernels.
+  EXPECT_LT(start_idx, dot_idx);
+  EXPECT_LT(dot_idx, done_idx);
+}
+
 TEST_F(GpuLatencyHidingSchedulerBaseTest, ParallelThreadsShouldBeScheduled) {
   absl::string_view kHloModule = R"(
     HloModule Test1
