@@ -16,8 +16,18 @@ limitations under the License.
 #ifndef XLA_PJRT_INFER_DISPATCH_INFO_H_
 #define XLA_PJRT_INFER_DISPATCH_INFO_H_
 
+#include <memory>
+#include <vector>
+
 #include "absl/status/statusor.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/pjrt/common_pjrt_client.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_executable.h"
+#include "xla/service/computation_layout.h"
+#include "xla/service/computation_placer.h"
+#include "xla/shape.h"
 
 namespace xla {
 
