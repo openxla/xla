@@ -82,9 +82,9 @@ ENTRY entry {
 })";
 
 TEST_F(SchedulerMemoryFencingTest, FencesLastUserToSlackShiftedStart) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kLayeredHlo));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kLayeredHlo));
+  ASSERT_OK_AND_ASSIGN(
       bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
                                /*slack_windows=*/1));
   EXPECT_TRUE(changed);
@@ -96,9 +96,9 @@ TEST_F(SchedulerMemoryFencingTest, FencesLastUserToSlackShiftedStart) {
 }
 
 TEST_F(SchedulerMemoryFencingTest, ThresholdFiltersSmallBuffers) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kLayeredHlo));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kLayeredHlo));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       RunFencing(module.get(), /*size_threshold_bytes=*/100 * kMebibyte,
                  /*slack_windows=*/1));
@@ -124,9 +124,9 @@ ENTRY entry {
 })";
 
 TEST_F(SchedulerMemoryFencingTest, SlackZeroFencesToOwnWindowStart) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kUseBeforeWindowHlo));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kUseBeforeWindowHlo));
+  ASSERT_OK_AND_ASSIGN(
       bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
                                /*slack_windows=*/0));
   EXPECT_TRUE(changed);
@@ -135,9 +135,9 @@ TEST_F(SchedulerMemoryFencingTest, SlackZeroFencesToOwnWindowStart) {
 }
 
 TEST_F(SchedulerMemoryFencingTest, SlackOneShiftsTargetByOneWindow) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kUseBeforeWindowHlo));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kUseBeforeWindowHlo));
+  ASSERT_OK_AND_ASSIGN(
       bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
                                /*slack_windows=*/1));
   EXPECT_TRUE(changed);
@@ -165,9 +165,9 @@ ENTRY entry {
   cp2d = f32[16]{0} collective-permute-done(cp2s)
   ROOT r = f32[16]{0} add(cp2d, cp2d)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHlo));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(
       bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
                                /*slack_windows=*/1));
   EXPECT_FALSE(changed);
@@ -191,9 +191,9 @@ ENTRY entry {
   cp2d = f32[16]{0} collective-permute-done(cp2s)
   ROOT r = (f32[16]{0}, f32[1024,1024]{1,0}) tuple(cp2d, big)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHlo));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(
       bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
                                /*slack_windows=*/1));
   EXPECT_FALSE(changed);
@@ -210,18 +210,52 @@ ENTRY entry {
   wg = f32[1024,1024]{1,0} multiply(big, big)
   ROOT r = f32[1024,1024]{1,0} subtract(wg, big)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHlo));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(
       bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
                                /*slack_windows=*/1));
   EXPECT_FALSE(changed);
 }
 
+TEST_F(SchedulerMemoryFencingTest, FencesAllUsersOfABuffer) {
+  // `big` has two independent consumers; the buffer stays live until both
+  // have executed, so both must receive the fence — constraining only the
+  // schedule-last one would let the other be deferred arbitrarily far.
+  constexpr absl::string_view kHlo = R"(
+HloModule m, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[1024,1024]{1,0} parameter(0)
+  p1 = f32[16]{0} parameter(1)
+  big = f32[1024,1024]{1,0} add(p0, p0)
+  cp1s = (f32[16]{0}, f32[16]{0}) collective-permute-start(p1), source_target_pairs={{0,1},{1,0}}
+  wg = f32[1024,1024]{1,0} multiply(big, big)
+  sibling = f32[1024,1024]{1,0} subtract(big, p0)
+  cp1d = f32[16]{0} collective-permute-done(cp1s)
+  cp2s = (f32[16]{0}, f32[16]{0}) collective-permute-start(cp1d), source_target_pairs={{0,1},{1,0}}
+  cp2d = f32[16]{0} collective-permute-done(cp2s)
+  ROOT r = f32[16]{0} add(cp2d, cp2d)
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/1));
+  EXPECT_TRUE(changed);
+  // Both users of `big` are fenced to the same target, not just `sibling`
+  // (the last user in the reference schedule).
+  EXPECT_THAT(Instr(module.get(), "wg")->control_successors(),
+              UnorderedElementsAre(Instr(module.get(), "cp2s")));
+  EXPECT_THAT(Instr(module.get(), "sibling")->control_successors(),
+              UnorderedElementsAre(Instr(module.get(), "cp2s")));
+  TF_EXPECT_OK(module->schedule().Verify());
+}
+
 TEST_F(SchedulerMemoryFencingTest, SkipsWhenSlackExceedsRemainingWindows) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kLayeredHlo));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kLayeredHlo));
+  ASSERT_OK_AND_ASSIGN(
       bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
                                /*slack_windows=*/2));
   EXPECT_FALSE(changed);

@@ -3011,10 +3011,10 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
               set_xla_gpu_experimental_enable_scheduler_memory_fencing),
       debug_options->xla_gpu_experimental_enable_scheduler_memory_fencing(),
       "If true, run the SchedulerMemoryFencing pass before the latency-hiding "
-      "scheduler. It adds control dependencies from last users of large "
-      "buffers to later async collective starts, derived from the pre-LHS "
-      "schedule, so LHS cannot defer those users across many collective "
-      "windows and inflate peak memory."));
+      "scheduler. It adds control dependencies from every user of a large "
+      "buffer to a later async collective start, derived from the pre-LHS "
+      "schedule, so LHS cannot defer any of those users across many "
+      "collective windows and inflate peak memory."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes",
       int64_setter_for(
@@ -3032,8 +3032,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
               set_xla_gpu_experimental_scheduler_memory_fencing_slack_windows),
       debug_options
           ->xla_gpu_experimental_scheduler_memory_fencing_slack_windows(),
-      "How many async collective windows the last user of a fenced buffer "
-      "may be deferred past its window in the pre-LHS schedule."));
+      "How many async collective windows the users of a fenced buffer may be "
+      "deferred past the buffer's last-use window in the pre-LHS schedule."));
   flag_list->push_back(tsl::Flag(
       "xla_pjrt_allow_auto_layout_in_hlo",
       bool_setter_for(&DebugOptions::set_xla_pjrt_allow_auto_layout_in_hlo),

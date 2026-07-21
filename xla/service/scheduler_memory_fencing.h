@@ -34,14 +34,15 @@ namespace xla {
 // (memory-minimizing) schedule as the reference.
 //
 // For every buffer of at least `size_threshold_bytes`, the pass finds the
-// buffer's last user U in the reference schedule and the async collective
-// window W in which (or before which) U is scheduled, and adds a control
-// dependency from U to the async collective start that opens window
+// buffer's users and the async collective window W in which (or before which)
+// the last use is scheduled in the reference schedule, and adds a control
+// dependency from every user to the async collective start that opens window
 // W + `slack_windows`. Any schedule that respects the dependency graph can
-// then defer U by at most `slack_windows` collective windows relative to the
-// reference schedule, which bounds how many such buffers a scheduler can keep
-// simultaneously live by deferring their last users ("release before
-// advance").
+// then defer the buffer's release by at most `slack_windows` collective
+// windows relative to the reference schedule, which bounds how many such
+// buffers a scheduler can keep simultaneously live by deferring their last
+// users ("release before advance"). All users are fenced because the buffer
+// stays live until every user has executed.
 //
 // Every added edge points forward in the reference schedule, which is a valid
 // topological order, so the added edges can never create a cycle, and the

@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/scheduler_memory_fencing.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -88,50 +89,59 @@ ComputationFencingInfo BuildComputationFencingInfo(
   return info;
 }
 
-// Returns the last user of `buffer` in the reference schedule, or nullptr if
-// the buffer must not be fenced: it is (partially) defined by a parameter,
-// escapes its computation, or is not fully contained in one scheduled
-// computation.
-HloInstruction* FindFencedLastUser(const HloBuffer& buffer,
-                                   const HloComputation* computation,
-                                   const ComputationFencingInfo& info) {
-  HloInstruction* last_user = nullptr;
+// The users of a fenced buffer and the schedule position of its last use in
+// the reference schedule.
+struct FencedUsers {
+  // All distinct users of the buffer, each of which must be fenced: the
+  // buffer stays live until every user has executed, so constraining only
+  // one of them would not bound the buffer's live range.
+  std::vector<HloInstruction*> users;
   int64_t last_use_position = -1;
+};
+
+// Returns the users of `buffer`, or an empty user set if the buffer must not
+// be fenced: it has no users, is (partially) defined by a parameter, escapes
+// its computation, or is not fully contained in one scheduled computation.
+FencedUsers FindFencedUsers(const HloBuffer& buffer,
+                            const HloComputation* computation,
+                            const ComputationFencingInfo& info) {
+  FencedUsers result;
+  absl::flat_hash_set<HloInstruction*> seen_users;
   for (const HloValue* value : buffer.values()) {
     if (value->live_out_of_module()) {
-      return nullptr;
+      return FencedUsers();
     }
     HloInstruction* definition = value->defining_instruction();
     // The lifetime of parameter-backed buffers is not owned by this
     // computation; fencing them cannot release memory.
     if (definition->parent() != computation ||
         definition->opcode() == HloOpcode::kParameter) {
-      return nullptr;
+      return FencedUsers();
     }
     for (const HloPosition& hlo_position : value->positions()) {
       // A buffer that appears in the root escapes the computation (e.g. a
       // while-body output); its live range does not end at its last user.
       if (hlo_position.instruction->parent() != computation ||
           hlo_position.instruction == computation->root_instruction()) {
-        return nullptr;
+        return FencedUsers();
       }
     }
     for (const HloUse& use : value->GetUses()) {
       if (use.instruction->parent() != computation ||
           use.instruction == computation->root_instruction()) {
-        return nullptr;
+        return FencedUsers();
       }
       auto it = info.position.find(use.instruction);
       if (it == info.position.end()) {
-        return nullptr;
+        return FencedUsers();
       }
-      if (it->second > last_use_position) {
-        last_use_position = it->second;
-        last_user = use.instruction;
+      if (seen_users.insert(use.instruction).second) {
+        result.users.push_back(use.instruction);
       }
+      result.last_use_position = std::max(result.last_use_position, it->second);
     }
   }
-  return last_user;
+  return result;
 }
 
 }  // namespace
@@ -186,11 +196,11 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
       continue;
     }
 
-    HloInstruction* last_user = FindFencedLastUser(buffer, computation, info);
-    if (last_user == nullptr) {
+    FencedUsers fenced = FindFencedUsers(buffer, computation, info);
+    if (fenced.users.empty()) {
       continue;
     }
-    const int64_t last_use_position = info.position.at(last_user);
+    const int64_t last_use_position = fenced.last_use_position;
 
     // Window index of the last use: the first window (in start order) that is
     // still open at, or opens after, the last use.
@@ -199,6 +209,7 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
            info.window_done_positions[window_index] <= last_use_position) {
       ++window_index;
     }
+
     int64_t target_index = window_index + slack_windows_;
     // Never fence backwards: the target start must come after the last use in
     // the reference schedule, otherwise the edge could contradict existing
@@ -213,20 +224,25 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
     }
     HloInstruction* target = info.window_starts[target_index];
 
-    if (!added_edges.insert({last_user, target}).second) {
-      continue;
+    // Fence every user: the buffer stays live until all of its users have
+    // executed, so a single fenced user would not bound the live range — an
+    // unfenced sibling could still be deferred arbitrarily far.
+    for (HloInstruction* user : fenced.users) {
+      if (user == target || !added_edges.insert({user, target}).second) {
+        continue;
+      }
+      // Skip edges that are already implied by the dependency graph. The
+      // reachability map is not updated for added edges; a stale map can only
+      // let a redundant (but still forward and acyclic) edge through.
+      if (info.reachability->IsReachable(user, target)) {
+        continue;
+      }
+      RETURN_IF_ERROR(user->AddControlDependencyTo(target));
+      ++edges_added;
+      VLOG(2) << "Fenced buffer " << buffer.ToString() << " (" << buffer_size
+              << " bytes): control edge " << user->name() << " -> "
+              << target->name();
     }
-    // Skip edges that are already implied by the dependency graph. The
-    // reachability map is not updated for added edges; a stale map can only
-    // let a redundant (but still forward and acyclic) edge through.
-    if (info.reachability->IsReachable(last_user, target)) {
-      continue;
-    }
-    RETURN_IF_ERROR(last_user->AddControlDependencyTo(target));
-    ++edges_added;
-    VLOG(2) << "Fenced buffer " << buffer.ToString() << " (" << buffer_size
-            << " bytes): control edge " << last_user->name() << " -> "
-            << target->name();
   }
 
   VLOG(1) << "SchedulerMemoryFencing: considered " << buffers_considered

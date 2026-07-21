@@ -187,7 +187,7 @@ class GpuHloScheduleFencingTest : public GpuHloScheduleTest {
 };
 
 TEST_F(GpuHloScheduleFencingTest, MemoryFencingAddsScheduleRespectedFences) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       ParseAndReturnVerifiedModule(kFencingHloText,
                                    GetFencingModuleConfig(
@@ -217,7 +217,7 @@ TEST_F(GpuHloScheduleFencingTest, MemoryFencingAddsScheduleRespectedFences) {
 }
 
 TEST_F(GpuHloScheduleFencingTest, MemoryFencingDisabledAddsNoControlDeps) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       ParseAndReturnVerifiedModule(kFencingHloText,
                                    GetFencingModuleConfig(
