@@ -38,6 +38,8 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
+#include "xla/core/collectives/collectives.h"
+#include "xla/core/collectives/collectives_registry.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
@@ -56,6 +58,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 namespace {
@@ -676,6 +679,51 @@ TEST(GpuCollectivesTest, AllocatorMemoryRegistrationRegistersWithClique) {
                    std::make_shared<CancellationToken>());
 
   ASSERT_OK(registration->RegisterWithClique(clique));
+}
+
+// Smoke test for the MORI backbone: creates a MORI communicator and exercises
+// MoriCollectives::Allocate/Deallocate. MORI is a ROCm-only backend and the
+// current implementation is bindings-free (stubbed), so this only verifies the
+// plumbing is reachable and does not crash.
+TEST(GpuCollectivesTest, MoriCreateCommunicatorAndAllocate) {
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       PlatformUtil::GetPlatform("gpu"));
+
+  // MORI is a ROCm-only backend; skip on any other platform.
+  if (platform->Name() != "ROCM") {
+    GTEST_SKIP() << "MORI is only available on the ROCM platform";
+  }
+
+  if (platform->VisibleDeviceCount() < 4) {
+    GTEST_SKIP() << "Test requires at least 4 GPUs";
+  }
+
+  // The MORI backend is only registered on ROCm builds.
+  auto collectives_or = CollectivesRegistry::Get("GPU", "mori");
+  if (!collectives_or.ok()) {
+    GTEST_SKIP() << "MORI collectives backend is not available";
+  }
+  auto* mori = tsl::down_cast<GpuCollectives*>(*collectives_or);
+  ASSERT_NE(mori, nullptr);
+
+  ASSERT_OK_AND_ASSIGN(std::vector<se::StreamExecutor*> executors,
+                       CreateExecutors(platform, 4));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto comms,
+      CreateCommunicators(executors, {kD0, kD1, kD2, kD3}, /*blocking=*/true,
+                          /*num_ids=*/1, mori));
+  ASSERT_EQ(comms.size(), 4u);
+  ASSERT_NE(comms[0], nullptr);
+  ASSERT_OK_AND_ASSIGN(size_t num_ranks, comms[0]->NumRanks());
+  EXPECT_EQ(num_ranks, 4u);
+
+  // Exercise Allocate/Deallocate wiring. The bindings-free stubs are inert
+  // (Allocate returns an error, Deallocate is unimplemented), so we only verify
+  // the calls are reachable and do not crash.
+  auto buffer_or = mori->Allocate(1024);
+  void* buffer = buffer_or.ok() ? *buffer_or : nullptr;
+  mori->Deallocate(buffer).IgnoreError();
 }
 
 }  // namespace
