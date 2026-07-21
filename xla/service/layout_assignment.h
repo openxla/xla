@@ -573,6 +573,12 @@ class LayoutAssignment : public HloModulePass {
   // Initializes the layout assignment object for a new Run() call.
   absl::Status Init(HloModule* module);
 
+  // Clones conditional computations with multiple callsites and adds copies
+  // for operands of Send and layout-constrained CustomCall instructions.
+  absl::Status PrepareHloForLayoutAssignment(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads);
+
   // Adds constraints which must be satisfied for correctness on all
   // backends. Called once prior to propagating constraints.
   absl::Status AddMandatoryConstraints(
