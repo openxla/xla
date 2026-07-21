@@ -29,7 +29,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -92,7 +91,7 @@ TEST_F(SchedulerMemoryFencingTest, FencesLastUserToSlackShiftedStart) {
   EXPECT_THAT(Instr(module.get(), "wg")->control_successors(),
               UnorderedElementsAre(Instr(module.get(), "cp2s")));
   // The schedule was not touched and still satisfies the new dependency.
-  TF_EXPECT_OK(module->schedule().Verify());
+  EXPECT_OK(module->schedule().Verify());
 }
 
 TEST_F(SchedulerMemoryFencingTest, ThresholdFiltersSmallBuffers) {
@@ -249,7 +248,7 @@ ENTRY entry {
               UnorderedElementsAre(Instr(module.get(), "cp2s")));
   EXPECT_THAT(Instr(module.get(), "sibling")->control_successors(),
               UnorderedElementsAre(Instr(module.get(), "cp2s")));
-  TF_EXPECT_OK(module->schedule().Verify());
+  EXPECT_OK(module->schedule().Verify());
 }
 
 TEST_F(SchedulerMemoryFencingTest, SkipsWhenSlackExceedsRemainingWindows) {
