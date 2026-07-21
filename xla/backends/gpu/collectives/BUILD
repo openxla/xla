@@ -1,4 +1,3 @@
-load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_test")

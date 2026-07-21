@@ -1,6 +1,5 @@
 """ROCm-platform specific StreamExecutor support code."""
 
-load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "rocm_library",
