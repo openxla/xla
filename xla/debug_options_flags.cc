@@ -1887,11 +1887,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_match_tpu_precision(),
       "Use the dot precision algorithm `ALG_DOT_BF16_BF16_F32 by default for "
       "f32 dots. This leads to the same precision as on TPU."));
-  flag_list->push_back(
-      tsl::Flag("xla_gpu_deterministic_ops",
-                bool_setter_for(&DebugOptions::set_xla_gpu_deterministic_ops),
-                debug_options->xla_gpu_deterministic_ops(),
-                "Guarantees run-to-run determinism on GPU."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_deterministic_ops",
+      bool_setter_for(&DebugOptions::set_xla_gpu_exclude_nondeterministic_ops),
+      debug_options->xla_gpu_exclude_nondeterministic_ops(),
+      "Deprecated. Use `xla_gpu_exclude_nondeterministic_ops` instead."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_exclude_nondeterministic_ops",
       bool_setter_for(&DebugOptions::set_xla_gpu_exclude_nondeterministic_ops),
@@ -3018,7 +3018,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "be made deterministic using a slower implementation. "
       "Note that even when this flag is disabled, scatter operations may still "
       "be deterministic. This is the case when "
-      "'xla_gpu_exclude_nondeterministic_ops' or 'xla_gpu_deterministic_ops' "
+      "'xla_gpu_exclude_nondeterministic_ops' "
       "is enabled."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_unsupported_enable_all_reduce_decomposer",

@@ -636,11 +636,6 @@ message DebugOptions {
   // but potentially higher the performance.
   optional int32 xla_gpu_cudnn_gemm_max_plans = 318;
 
-  // Guarantees run-to-run determinism.
-  // This flag disables autotuning and selects the first __valid__ autotune
-  // config.
-  optional bool xla_gpu_deterministic_ops = 148;
-
   repeated CollectiveOpType xla_gpu_disable_async_collectives = 289;
 
   // If set to true XLA:GPU invokes `ptxas` with -O0 (default is -O3).
@@ -1696,6 +1691,7 @@ message DebugOptions {
   reserved "xla_gpu_bef_thunk";
   reserved "xla_gpu_enable_llvm_module_compilation_parallelism";
   reserved "xla_gpu_collectives_use_persistent_cliques";
+  reserved "xla_gpu_deterministic_ops";
   reserved "xla_gpu_deterministic_reductions";
   reserved "xla_gpu_disable_multi_streaming";
   reserved "xla_gpu_dump_hlo_unoptimized_snapshots";
@@ -1784,14 +1780,14 @@ message DebugOptions {
   reserved "xla_llvm_force_inline_before_split";
   reserved "xla_gpu_enable_shared_constants";
 
-  reserved 5, 63, 80, 93, 94, 98, 117, 130, 133, 134, 139, 141, 143, 152, 156,
-      158, 160, 161, 162, 165, 167, 168, 169, 171, 172, 173, 176, 177, 178, 179,
-      180, 183, 184, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202,
-      204, 206, 207, 211, 214, 218, 220, 221, 226, 229, 230, 233, 234, 238, 241,
-      242, 243, 249, 263, 264, 266, 270, 271, 275, 276, 278, 279, 281, 282, 286,
-      298, 299, 300, 302, 303, 309, 313, 314, 319, 320, 325, 326, 332, 346, 352,
-      354, 355, 358, 361, 367, 369, 371, 385, 388, 389, 394, 396, 398, 402, 420,
-      423, 430, 443, 446, 458, 464, 477;
+  reserved 5, 63, 80, 93, 94, 98, 117, 130, 133, 134, 139, 141, 143, 148, 152,
+      156, 158, 160, 161, 162, 165, 167, 168, 169, 171, 172, 173, 176, 177, 178,
+      179, 180, 183, 184, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201,
+      202, 204, 206, 207, 211, 214, 218, 220, 221, 226, 229, 230, 233, 234, 238,
+      241, 242, 243, 249, 263, 264, 266, 270, 271, 275, 276, 278, 279, 281, 282,
+      286, 298, 299, 300, 302, 303, 309, 313, 314, 319, 320, 325, 326, 332, 346,
+      352, 354, 355, 358, 361, 367, 369, 371, 385, 388, 389, 394, 396, 398, 402,
+      420, 423, 430, 443, 446, 458, 464, 477;
 }
 
 // Contains flags which affects the GPU compilation result.
