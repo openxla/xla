@@ -117,7 +117,7 @@ OnecclCollectives::CreateCommunicators(
       });
     }
   }
-  TF_RETURN_IF_ERROR(status);
+  RETURN_IF_ERROR(status);
   return comms;
 }
 }  // namespace xla::gpu
