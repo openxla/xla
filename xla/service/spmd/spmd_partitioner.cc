@@ -4445,7 +4445,7 @@ absl::Status SpmdPartitioningVisitor::HandleConstant(HloInstruction* hlo) {
 }
 
 // Rewrites a replicated dynamic-slice from an operand that is tiled only along
-// the sliced dimension into a single-slice collective broadcast.
+// a single slicing dimension into a single-slice collective broadcast.
 //
 // The targeted pattern is intentionally narrow:
 //
@@ -4471,10 +4471,15 @@ absl::Status SpmdPartitioningVisitor::HandleConstant(HloInstruction* hlo) {
 // the full operand.
 //
 // Keep the guard conditions conservative. The rewrite relies on one-to-one
-// ownership between tiles of the sliced dimension and partitions: no tuple
-// shapes, one sliced dimension of size 1, scalar S32 index, no partial
-// replication, no sharding on non-sliced dimensions, an evenly divisible
-// shard size, and a bounded number of owner branches.
+// ownership between tiles of the slicing dimension and partitions: no tuple
+// shapes, one slicing dimension of size 1, scalar S32 index, no partial
+// replication or other subgroups, no sharding on non-slicing dimensions, an
+// evenly divisible shard size, and a bounded number of owner branches.
+//
+// Collective-broadcast supports replica groups, but this lowering assigns one
+// static root partition to each slicing tile. Partial replication maps a tile
+// to multiple partitions, so supporting it would require selecting a canonical
+// root for each replicated tile instead of using the one-to-one mapping below.
 absl::StatusOr<bool>
 SpmdPartitioningVisitor::TryDynamicSliceWithCollectiveBroadcast(
     HloInstruction* hlo) {
@@ -4527,7 +4532,7 @@ SpmdPartitioningVisitor::TryDynamicSliceWithCollectiveBroadcast(
   }
 
   const int64_t num_slice_partitions = input_sharding.dimension(*sliced_dim);
-  if (num_slice_partitions <= 1 ||
+  if (num_slice_partitions <= 1 || num_slice_partitions != num_partitions_ ||
       num_slice_partitions >
           options_.max_dynamic_slice_collective_broadcast_partitions ||
       input_dim_size % num_slice_partitions != 0) {
@@ -4543,6 +4548,9 @@ SpmdPartitioningVisitor::TryDynamicSliceWithCollectiveBroadcast(
   }
 
   std::vector<int64_t> owner_partition(num_slice_partitions, -1);
+  // Verified shardings have rank-consistent tile coordinates and unique,
+  // in-range device IDs. After the eligibility checks above, every slicing
+  // tile must map to exactly one partition.
   bool valid_tile_assignment = true;
   input_sharding.EachTile(
       [&](absl::Span<const int64_t> indices, int64_t device) {
@@ -4557,19 +4565,21 @@ SpmdPartitioningVisitor::TryDynamicSliceWithCollectiveBroadcast(
             return;
           }
         }
-        const int64_t owner = indices[*sliced_dim];
-        if (owner < 0 || owner >= num_slice_partitions ||
-            owner_partition[owner] != -1) {
+        const int64_t slice_index = indices[*sliced_dim];
+        if (slice_index < 0 || slice_index >= num_slice_partitions ||
+            owner_partition[slice_index] != -1) {
           valid_tile_assignment = false;
           return;
         }
-        owner_partition[owner] = device;
+        owner_partition[slice_index] = device;
       });
-  if (!valid_tile_assignment ||
-      absl::c_any_of(owner_partition,
-                     [](int64_t device) { return device < 0; })) {
-    return false;
-  }
+  TF_RET_CHECK(valid_tile_assignment)
+      << "Invalid tile assignment for dynamic-slice collective-broadcast: "
+      << input_sharding.ToString();
+  TF_RET_CHECK(!absl::c_any_of(owner_partition,
+                               [](int64_t device) { return device < 0; }))
+      << "Tile assignment does not contain an owner for every slicing tile: "
+      << input_sharding.ToString();
 
   HloInstruction* index =
       GetPartitionedHlo(hlo->operand(*sliced_dim + 1)).Replicate().hlo();
