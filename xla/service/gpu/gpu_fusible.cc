@@ -349,6 +349,19 @@ const HloInstruction* GetRealHeroForMultiOutputFusion(
   return fused_expression_root->operands()[0];
 }
 
+// Returns true if `hero` is a column (i.e. non-row) reduction. Column
+// reductions use a 2D-tiled read pattern that differs from the row-major
+// element-wise loop pattern; multi-output fusing them with a plain element-wise
+// root forces the shared input to be read with conflicting patterns, which is
+// usually a net slowdown.
+bool IsColumnReductionHero(const HloInstruction* hero,
+                           const se::DeviceDescription& device_info) {
+  if (!IsReductionFromOrToContiguousDimensions(*hero, device_info)) {
+    return false;
+  }
+  return !GetReductionKindAndContiguousComponents(*hero).is_row_reduction;
+}
+
 FusionDecision FusionHeroesAreCompatible(
     const HloInstruction* hero1, const HloInstruction* hero2,
     const se::DeviceDescription& device_info) {
