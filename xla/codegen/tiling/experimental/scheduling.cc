@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/codegen/tiling/experimental/scheduling.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <numeric>
 #include <set>
@@ -22,6 +23,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
@@ -171,59 +173,61 @@ llvm::SmallVector<int64_t> GetParallelDimensionsPermutation(
       std::swap(permutation[m_dim_info.id.value()],
                 permutation[n_dim_info.id.value()]);
       return permutation;
+    }
+    // kRaggedContracting: parallel dims are G (output dim 0), K (output dim
+    // 1), N (output dim 2).  Apply the M/N-like heuristic to K vs N:
+    // M_avg is the average number of contracting elements per group; if it
+    // is small, the per-tile LHS slice (M_avg × K) is smaller than the
+    // per-tile RHS slice (M_avg × N), so traverse N more slowly.
+    const int64_t num_batch = dot_dims.lhs_batch_dimensions_size();
+    // Output ordering: [G, batch..., K (lhs_nc), N (rhs_nc)].
+    const int64_t k_output_dim = 1 + num_batch;
+    const int64_t n_output_dim = k_output_dim + 1;
 
-    } else {
-      // kRaggedContracting: parallel dims are G (output dim 0), K (output dim
-      // 1), N (output dim 2).  Apply the M/N-like heuristic to K vs N:
-      // M_avg is the average number of contracting elements per group; if it
-      // is small, the per-tile LHS slice (M_avg × K) is smaller than the
-      // per-tile RHS slice (M_avg × N), so traverse N more slowly.
-      const int64_t num_batch = dot_dims.lhs_batch_dimensions_size();
-      // Output ordering: [G, batch..., K (lhs_nc), N (rhs_nc)].
-      const int64_t k_output_dim = 1 + num_batch;
-      const int64_t n_output_dim = k_output_dim + 1;
+    if (n_output_dim >= root->shape().dimensions().size()) {
+      return {};
+    }
+    if (M_avg >= root->shape().dimensions(n_output_dim)) {
+      return {};  // Per-group LHS not smaller; no swap beneficial.
+    }
 
-      if (n_output_dim >= root->shape().dimensions().size()) {
-        return {};
-      }
-      if (M_avg >= root->shape().dimensions(n_output_dim)) {
-        return {};  // Per-group LHS not smaller; no swap beneficial.
-      }
-
-      const TilingSpace::DimensionInfo& k_dim_info =
-          tiling_space.GetDimensionInfo(*root, k_output_dim);
-      const TilingSpace::DimensionInfo& n_dim_info =
-          tiling_space.GetDimensionInfo(*root, n_output_dim);
-      if (k_dim_info.type != TilingSpace::DimensionSemantics::kParallel ||
-          n_dim_info.type != TilingSpace::DimensionSemantics::kParallel) {
-        return {};
-      }
-      // Compute the parallel-position index (rank among kParallel dims only)
-      // for K and N.  We must NOT use the global dimension IDs here because
-      // the permutation has size num_parallel_dims, but G's global ID is 0,
-      // which shifts K to global ID 1 and N to global ID 2.  Using global IDs
-      // directly would index the permutation out of bounds.
-      int64_t k_parallel_pos = -1, n_parallel_pos = -1;
-      {
-        int64_t pos = 0;
-        for (const auto& d : tiling_space.dimensions()) {
-          if (d.type == TilingSpace::DimensionSemantics::kParallel) {
-            if (d.id == k_dim_info.id) k_parallel_pos = pos;
-            if (d.id == n_dim_info.id) n_parallel_pos = pos;
-            ++pos;
+    const TilingSpace::DimensionInfo& k_dim_info =
+        tiling_space.GetDimensionInfo(*root, k_output_dim);
+    const TilingSpace::DimensionInfo& n_dim_info =
+        tiling_space.GetDimensionInfo(*root, n_output_dim);
+    if (k_dim_info.type != TilingSpace::DimensionSemantics::kParallel ||
+        n_dim_info.type != TilingSpace::DimensionSemantics::kParallel) {
+      return {};
+    }
+    // Compute the parallel-position index (rank among kParallel dims only)
+    // for K and N.  We must NOT use the global dimension IDs here because
+    // the permutation has size num_parallel_dims, but G's global ID is 0,
+    // which shifts K to global ID 1 and N to global ID 2.  Using global IDs
+    // directly would index the permutation out of bounds.
+    int64_t k_parallel_pos = -1, n_parallel_pos = -1;
+    {
+      int64_t pos = 0;
+      for (const auto& d : tiling_space.dimensions()) {
+        if (d.type == TilingSpace::DimensionSemantics::kParallel) {
+          if (d.id == k_dim_info.id) {
+            k_parallel_pos = pos;
           }
+          if (d.id == n_dim_info.id) {
+            n_parallel_pos = pos;
+          }
+          ++pos;
         }
       }
-      if (k_parallel_pos < 0 || n_parallel_pos < 0 ||
-          k_parallel_pos >= num_parallel_dims ||
-          n_parallel_pos >= num_parallel_dims) {
-        return {};  // safety check
-      }
-      llvm::SmallVector<int64_t> permutation(num_parallel_dims);
-      std::iota(permutation.begin(), permutation.end(), 0);
-      std::swap(permutation[k_parallel_pos], permutation[n_parallel_pos]);
-      return permutation;
     }
+    if (k_parallel_pos < 0 || n_parallel_pos < 0 ||
+        k_parallel_pos >= num_parallel_dims ||
+        n_parallel_pos >= num_parallel_dims) {
+      return {};  // safety check
+    }
+    llvm::SmallVector<int64_t> permutation(num_parallel_dims);
+    std::iota(permutation.begin(), permutation.end(), 0);
+    std::swap(permutation[k_parallel_pos], permutation[n_parallel_pos]);
+    return permutation;
   }
 
   return {};
