@@ -19,7 +19,6 @@ limitations under the License.
 #include <atomic>
 
 #include "absl/status/status.h"
-#include "absl/strings/str_format.h"  // IWYU pragma: keep
 #include "oneapi/ccl.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/util.h"                  // IWYU pragma: keep
