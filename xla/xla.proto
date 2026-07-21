@@ -1632,7 +1632,10 @@ message DebugOptions {
   optional bool xla_gpu_experimental_scaled_dot_with_triton = 410;
 
   // If true, use third-party library raft::matrix::select_k to implement TopK.
-  optional bool xla_gpu_experimental_use_raft_select_k = 413;
+  // DEPRECATED: Use top_k(is_stable=False) instead. This flag will be no-op
+  // in the future.
+  optional bool xla_gpu_experimental_use_raft_select_k = 413
+      [deprecated = true];
 
   // If true, use MultiGpuBarrierKernel in one-shot RaggedAllToAll thunk.
   optional bool xla_gpu_experimental_ragged_all_to_all_use_barrier = 450;
