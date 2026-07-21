@@ -192,7 +192,7 @@ TEST_F(GpuHloScheduleFencingTest, MemoryFencingAddsScheduleRespectedFences) {
       ParseAndReturnVerifiedModule(kFencingHloText,
                                    GetFencingModuleConfig(
                                        /*enable_memory_fencing=*/true)));
-  TF_ASSERT_OK(ScheduleGpuModule(module.get()).status());
+  ASSERT_OK(ScheduleGpuModule(module.get()).status());
 
   const HloComputation* entry = module->entry_computation();
   const std::vector<HloInstruction*>& sequence =
@@ -222,7 +222,7 @@ TEST_F(GpuHloScheduleFencingTest, MemoryFencingDisabledAddsNoControlDeps) {
       ParseAndReturnVerifiedModule(kFencingHloText,
                                    GetFencingModuleConfig(
                                        /*enable_memory_fencing=*/false)));
-  TF_ASSERT_OK(ScheduleGpuModule(module.get()).status());
+  ASSERT_OK(ScheduleGpuModule(module.get()).status());
 
   for (const HloInstruction* instruction :
        module->entry_computation()->instructions()) {
