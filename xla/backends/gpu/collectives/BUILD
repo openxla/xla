@@ -365,6 +365,8 @@ xla_test(
         ":gpu_communicator",
         "//xla:future",
         "//xla:xla_data_proto_cc",
+        "//xla/core/collectives",
+        "//xla/core/collectives:collectives_registry",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/core/collectives:reduction_kind",
@@ -1135,15 +1137,13 @@ cc_library(
 
 cc_library(
     name = "mori_collectives",
-    hdrs = if_rocm_is_configured([
-            "mori_collectives.h",
+    hdrs = ["mori_collectives.h",
             "mori_communicator.h",
             "mori_stub.h",
-            ]),
-    srcs = if_rocm_is_configured([
-            "mori_collectives.cc",
+           ],
+    srcs = ["mori_collectives.cc",
             "mori_communicator.cc",
-            ]),
+            ],
     tags = [
         "gpu",
     ],
