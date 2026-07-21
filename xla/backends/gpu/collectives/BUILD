@@ -362,7 +362,7 @@ xla_test(
         ":collectives_test_util",
         ":gpu_clique",
         ":gpu_clique_key",
-        ":gpu_collectives_plugin",
+        ":gpu_collectives",
         ":gpu_communicator",
         "//xla:future",
         "//xla:xla_data_proto_cc",
@@ -392,6 +392,8 @@ xla_test(
         "@com_google_googletest//:gtest_main",  # buildcleaner: keep
     ] + if_cuda_or_rocm_is_configured([
         ":nccl_or_rccl_collectives",
+    ]) + if_rocm_is_configured([
+        ":mori_collectives",
     ])
 )
 
