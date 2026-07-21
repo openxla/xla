@@ -392,10 +392,6 @@ xla_test(
         "@com_google_googletest//:gtest_main",  # buildcleaner: keep
     ] + if_cuda_or_rocm_is_configured([
         ":nccl_or_rccl_collectives",
-    ]) + if_cuda_is_configured([
-        "//xla/stream_executor:cuda_platform",
-    ]) + if_rocm_is_configured([
-        "//xla/stream_executor:rocm_platform",
     ])
 )
 

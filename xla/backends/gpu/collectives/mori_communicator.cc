@@ -234,13 +234,12 @@ absl::Status MoriCommunicator::LaunchAllReduce(
   if (primitive_util::IsComplexType(dtype)) count *= 2;
 
   VLOG(3) << absl::StreamFormat(
-      "Launch MORI AllReduce operation on device #%d; send_buffer=%p; "
-      "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%v; "
-      "stream=%p",
+      "Launch MORI AllReduce send_buffer=%p; recv_buffer=%p; dtype=%s; "
+      "count=%d; reduction_kind=%v; device_ordinal=%d",
       send_buffer.opaque(), recv_buffer.opaque(),
       primitive_util::LowercasePrimitiveTypeName(dtype), count, reduction_kind,
-      stream);
-  return absl::InternalError("Invalid MORI reduction type.");
+      stream->parent()->device_ordinal());
+  return absl::UnimplementedError("Not implemented");
 }
 
 absl::Status MoriCommunicator::LaunchReduceScatter(
