@@ -104,11 +104,11 @@ class MoriIdStore {
 
     CliqueId clique_id;
     if (process_id_ == device_to_process_.at(gpu_key->devices().front())) {
-      TF_ASSIGN_OR_RETURN(clique_id, mori_collectives.CreateUniqueCliqueId());
-      TF_RETURN_IF_ERROR(
+      ASSIGN_OR_RETURN(clique_id, mori_collectives.CreateUniqueCliqueId());
+      RETURN_IF_ERROR(
           kv_store_->Set(gpu_key->ToString(), clique_id.ToString()));
     } else {
-      TF_ASSIGN_OR_RETURN(
+      ASSIGN_OR_RETURN(
           std::string id_str,
           kv_store_->Get(gpu_key->ToString(), absl::Minutes(10)));
       clique_id = CliqueId(id_str);
@@ -167,7 +167,7 @@ absl::Status MoriCollectives::InitPe(int32_t rank, int32_t nranks,
   // ShmemInitAttr keys the per-device MORI state off the calling thread's
   // active HIP device, so we must activate `executor`'s context here.
   auto activate_context = executor->Activate();
-  TF_ASSIGN_OR_RETURN(auto uid, AsMoriUniqueId(clique_id));
+  ASSIGN_OR_RETURN(auto uid, AsMoriUniqueId(clique_id));
   shmem::mori_shmem_init_attr_t init_attr;
   XLA_MORI_RETURN_IF_ERROR(
       shmem::ShmemSetAttrUniqueIdArgs(rank, nranks, &uid, &init_attr));
@@ -240,7 +240,7 @@ MoriCollectives::CreateCommunicatorsWithCancel(
     // uid setup.
     auto activate_context = device->stream_executor()->Activate();
     if (!initialized_) {
-      TF_RETURN_IF_ERROR(InitPe(ranks[i].rank.value(), clique_key.num_devices(),
+      RETURN_IF_ERROR(InitPe(ranks[i].rank.value(), clique_key.num_devices(),
                                 clique_ids->at(0), device->stream_executor()));
     }
 
@@ -276,7 +276,7 @@ MoriCollectives::CreateCommunicatorsWithCancel(
       });
     }
   }  // pool's destructor blocks until all scheduled work is done.
-  TF_RETURN_IF_ERROR(status);
+  RETURN_IF_ERROR(status);
   initialized_ = true;
   return comms;
 }
@@ -308,12 +308,12 @@ MoriCollectives::InitializeTopology(const Topology& topology) {
     return nullptr;
   }
 
-  TF_ASSIGN_OR_RETURN(se::Platform * platform,
+  ASSIGN_OR_RETURN(se::Platform * platform,
                       se::PlatformManager::PlatformWithName("ROCM"));
 
   // All local PEs share one unique id and must initialize concurrently, so
   // ShmemInitAttr's bootstrap collective can complete.
-  TF_ASSIGN_OR_RETURN(CliqueId clique_id, CreateUniqueCliqueId());
+  ASSIGN_OR_RETURN(CliqueId clique_id, CreateUniqueCliqueId());
 
   absl::Status status;
   absl::once_flag once;
@@ -332,7 +332,7 @@ MoriCollectives::InitializeTopology(const Topology& topology) {
       });
     }
   }  // pool's destructor blocks until all scheduled work is done.
-  TF_RETURN_IF_ERROR(status);
+  RETURN_IF_ERROR(status);
 
   initialized_ = true;
   VLOG(1) << "Eagerly initialized MORI for " << nranks << " local devices";

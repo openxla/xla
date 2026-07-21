@@ -860,7 +860,7 @@ RocmExecutor::CreateMemoryAllocator(MemorySpace type) {
       return std::make_unique<GenericMemoryAllocator>(
         [this](uint64_t size)
             -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
-          TF_ASSIGN_OR_RETURN(void* ptr, CollectiveMemoryAllocate(this, size));
+          ASSIGN_OR_RETURN(void* ptr, CollectiveMemoryAllocate(this, size));
           XLA_VLOG_DEVICE(2, device_ordinal())
               << "allocated " << ptr << " of " << size 
               << " bytes of collective memory";

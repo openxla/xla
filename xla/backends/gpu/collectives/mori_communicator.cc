@@ -89,7 +89,7 @@ absl::Status MoriCommunicator::Abort() {
 absl::Status MoriCommunicator::Barrier(const Communicator::Executor& executor) {
   VLOG(1) << "Barrier: " << ToString();
   CHECK_CANCELLED()
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+  ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   (void)stream;
   //return xla_mori::BarrierOnStream(AsRocmStream(stream));
   return absl::OkStatus();
@@ -210,7 +210,7 @@ absl::Status MoriCommunicator::LaunchAllGather(
     se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
     PrimitiveType dtype, size_t count, const Executor& executor) {
   CHECK_CANCELLED()
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+  ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   VLOG(3) << "LaunchAllGather: send_buffer=" << send_buffer.opaque()
           << " recv_buffer=" << recv_buffer.opaque() << " count=" << count
           << " dtype=" << primitive_util::LowercasePrimitiveTypeName(dtype)
@@ -224,7 +224,7 @@ absl::Status MoriCommunicator::LaunchAllReduce(
     const Executor& executor) {
   CHECK_CANCELLED()
 
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+  ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   auto gpu_stream = AsRocmStream(stream);
   (void)gpu_stream;
   void* source_ptr = send_buffer.opaque();
@@ -247,7 +247,7 @@ absl::Status MoriCommunicator::LaunchReduceScatter(
     PrimitiveType dtype, size_t count, ReductionKind kind,
     const Executor& executor) {
   CHECK_CANCELLED()
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+  ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
 
   VLOG(3) << "LaunchReduceScatter: send_buffer=" << send_buffer.opaque()
           << " recv_buffer=" << recv_buffer.opaque() << " count=" << count
@@ -261,7 +261,7 @@ absl::Status MoriCommunicator::LaunchCollectivePermute(
     PrimitiveType dtype, size_t count, std::optional<RankId> source_rank,
     absl::Span<const RankId> target_ranks, const Executor& executor) {
   CHECK_CANCELLED()
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+  ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   size_t bytes = ToMoriByteCount(dtype, count);
   (void)bytes;
   auto rank_formatter = [](std::string* out, RankId rank) {
@@ -296,7 +296,7 @@ absl::Status MoriCommunicator::P2P(P2PType p2p_type, PrimitiveType dtype,
   void* source_ptr = send_buffer.opaque();
   void* dest_ptr = recv_buffer.opaque();
 
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+  ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   auto gpu_stream = AsRocmStream(stream);
   size_t bytes = ToMoriByteCount(dtype, count);
   int res = 0;
@@ -328,7 +328,7 @@ absl::Status MoriCommunicator::GroupLaunch(
 absl::Status MoriCommunicator::Quiet(const Executor& executor) {
   VLOG(1) << "Quiet MORI communicator: " << ToString();
   CHECK_CANCELLED()
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+  ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   auto gpu_stream = AsRocmStream(stream);
   (void)gpu_stream;
   return absl::UnimplementedError("Not implemented");
