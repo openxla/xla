@@ -995,6 +995,13 @@ message DebugOptions {
   optional int32 xla_gpu_experimental_scheduler_memory_fencing_slack_windows =
       517;
 
+  // If true, the SchedulerMemoryFencing pass fences buffer users to the async
+  // collective done that closes their target window instead of the start that
+  // opens the following window. This prevents a fenced user from being placed
+  // after that collective completes and can preserve the opportunity for
+  // compute/communication overlap.
+  optional bool xla_gpu_experimental_scheduler_memory_fencing_to_done = 518;
+
   // This controls how many in-flight collectives latency hiding scheduler
   // can schedule. Example usage:
   // With xla_gpu_experimental_parallel_collective_overlap_limit = 1:
@@ -1686,7 +1693,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 518
+  // Next id: 519
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

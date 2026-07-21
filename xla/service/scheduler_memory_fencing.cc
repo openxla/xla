@@ -46,8 +46,10 @@ struct ComputationFencingInfo {
   // Schedule position of every instruction in the computation.
   absl::flat_hash_map<const HloInstruction*, int64_t> position;
   // Async collective windows, ordered by the schedule position of their start
-  // operations.
+  // operations. `window_dones` is nullptr for a window whose done operation
+  // could not be located in the sequence.
   std::vector<HloInstruction*> window_starts;
+  std::vector<HloInstruction*> window_dones;
   std::vector<int64_t> window_start_positions;
   std::vector<int64_t> window_done_positions;
   std::unique_ptr<HloReachabilityMap> reachability;
@@ -69,18 +71,21 @@ ComputationFencingInfo BuildComputationFencingInfo(
     }
     // The window closes at the corresponding done operation. If it cannot be
     // located in this sequence, treat the window as closing immediately.
+    HloInstruction* done = nullptr;
     int64_t done_position = i;
-    for (const HloInstruction* user : instruction->users()) {
+    for (HloInstruction* user : instruction->users()) {
       if (hlo_query::IsAsyncCollectiveDoneOp(user,
                                              /*include_send_recv=*/false)) {
         auto it = info.position.find(user);
         if (it != info.position.end()) {
+          done = user;
           done_position = it->second;
         }
         break;
       }
     }
     info.window_starts.push_back(instruction);
+    info.window_dones.push_back(done);
     info.window_start_positions.push_back(i);
     info.window_done_positions.push_back(done_position);
   }
@@ -209,19 +214,38 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
       ++window_index;
     }
 
-    int64_t target_index = window_index + slack_windows_;
-    // Never fence backwards: the target start must come after the last use in
-    // the reference schedule, otherwise the edge could contradict existing
-    // dependencies. This keeps every edge forward in the schedule order and
-    // therefore acyclic.
-    while (target_index < info.window_starts.size() &&
-           info.window_start_positions[target_index] <= last_use_position) {
-      ++target_index;
+    // Pick the fence target. Fence-to-start uses the start that opens window
+    // W + slack. Fence-to-done uses the done that closes window W + slack - 1,
+    // preventing users from being placed after that collective completes.
+    // The target must come after the last use in the reference schedule so
+    // every added edge remains forward and therefore acyclic.
+    HloInstruction* target = nullptr;
+    if (fence_to_done_) {
+      int64_t target_index = window_index + slack_windows_ - 1;
+      if (target_index < window_index) {
+        target_index = window_index;
+      }
+      while (target_index < info.window_starts.size() &&
+             (info.window_dones[target_index] == nullptr ||
+              info.window_done_positions[target_index] <= last_use_position)) {
+        ++target_index;
+      }
+      if (target_index < info.window_starts.size()) {
+        target = info.window_dones[target_index];
+      }
+    } else {
+      int64_t target_index = window_index + slack_windows_;
+      while (target_index < info.window_starts.size() &&
+             info.window_start_positions[target_index] <= last_use_position) {
+        ++target_index;
+      }
+      if (target_index < info.window_starts.size()) {
+        target = info.window_starts[target_index];
+      }
     }
-    if (target_index >= info.window_starts.size()) {
+    if (target == nullptr) {
       continue;
     }
-    HloInstruction* target = info.window_starts[target_index];
 
     // Fence every user: the buffer stays live until all of its users have
     // executed, so a single fenced user would not bound the live range — an
@@ -247,7 +271,7 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
   VLOG(1) << "SchedulerMemoryFencing: considered " << buffers_considered
           << " buffers >= " << size_threshold_bytes_ << " bytes, added "
           << edges_added << " control edges (slack_windows=" << slack_windows_
-          << ").";
+          << ", fence_to_done=" << fence_to_done_ << ").";
   return edges_added > 0;
 }
 

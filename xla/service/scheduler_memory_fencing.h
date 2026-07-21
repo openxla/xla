@@ -36,13 +36,21 @@ namespace xla {
 // For every buffer of at least `size_threshold_bytes`, the pass finds the
 // buffer's users and the async collective window W in which (or before which)
 // the last use is scheduled in the reference schedule, and adds a control
-// dependency from every user to the async collective start that opens window
-// W + `slack_windows`. Any schedule that respects the dependency graph can
-// then defer the buffer's release by at most `slack_windows` collective
-// windows relative to the reference schedule, which bounds how many such
-// buffers a scheduler can keep simultaneously live by deferring their last
-// users ("release before advance"). All users are fenced because the buffer
-// stays live until every user has executed.
+// dependency from every user to a fence target:
+//
+// * fence-to-start (default): the async collective start that opens window
+//   W + `slack_windows`.
+// * fence-to-done (`fence_to_done`): the async collective done that closes
+//   window W + `slack_windows` - 1. This prevents a fenced user from being
+//   placed after the target collective completes and can preserve the
+//   opportunity for compute/communication overlap.
+//
+// Any schedule that respects the dependency graph can then defer the buffer's
+// release by at most `slack_windows` collective windows relative to the
+// reference schedule, which bounds how many such buffers a scheduler can keep
+// simultaneously live by deferring their last users ("release before
+// advance"). All users are fenced because the buffer stays live until every
+// user has executed.
 //
 // Every added edge points forward in the reference schedule, which is a valid
 // topological order, so the added edges can never create a cycle, and the
@@ -55,10 +63,11 @@ class SchedulerMemoryFencing : public HloModulePass {
  public:
   SchedulerMemoryFencing(HloCostAnalysis::ShapeSizeFunction shape_size_bytes,
                          int64_t size_threshold_bytes, int32_t slack_windows,
-                         const AliasInfo* alias_info)
+                         bool fence_to_done, const AliasInfo* alias_info)
       : shape_size_bytes_(std::move(shape_size_bytes)),
         size_threshold_bytes_(size_threshold_bytes),
         slack_windows_(slack_windows),
+        fence_to_done_(fence_to_done),
         alias_info_(alias_info) {}
 
   absl::string_view name() const override { return "scheduler-memory-fencing"; }
@@ -72,6 +81,7 @@ class SchedulerMemoryFencing : public HloModulePass {
   HloCostAnalysis::ShapeSizeFunction shape_size_bytes_;
   int64_t size_threshold_bytes_;
   int32_t slack_windows_;
+  bool fence_to_done_;
   const AliasInfo* alias_info_;
 };
 

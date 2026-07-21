@@ -171,7 +171,8 @@ ENTRY entry {
 
 class GpuHloScheduleFencingTest : public GpuHloScheduleTest {
  protected:
-  HloModuleConfig GetFencingModuleConfig(bool enable_memory_fencing) {
+  HloModuleConfig GetFencingModuleConfig(bool enable_memory_fencing,
+                                         bool fence_to_done = false) {
     TestConfig test_config;
     test_config.enable_latency_hiding_scheduler = true;
     HloModuleConfig config = GetModuleConfig(test_config);
@@ -180,6 +181,8 @@ class GpuHloScheduleFencingTest : public GpuHloScheduleTest {
         enable_memory_fencing);
     options.set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(
         1024 * 1024);
+    options.set_xla_gpu_experimental_scheduler_memory_fencing_to_done(
+        fence_to_done);
     config.set_debug_options(options);
     config.set_replica_count(2);
     return config;
@@ -209,6 +212,36 @@ TEST_F(GpuHloScheduleFencingTest, MemoryFencingAddsScheduleRespectedFences) {
   for (const HloInstruction* instruction : entry->instructions()) {
     for (const HloInstruction* successor : instruction->control_successors()) {
       EXPECT_EQ(successor->opcode(), HloOpcode::kCollectivePermuteStart);
+      EXPECT_LT(position(instruction), position(successor));
+      ++fence_count;
+    }
+  }
+  EXPECT_GT(fence_count, 0);
+}
+
+TEST_F(GpuHloScheduleFencingTest, MemoryFencingToDoneFencesToWindowDones) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(
+                           kFencingHloText, GetFencingModuleConfig(
+                                                /*enable_memory_fencing=*/true,
+                                                /*fence_to_done=*/true)));
+  ASSERT_OK(ScheduleGpuModule(module.get()).status());
+
+  const HloComputation* entry = module->entry_computation();
+  const std::vector<HloInstruction*>& sequence =
+      module->schedule().sequence(entry).instructions();
+  auto position = [&](const HloInstruction* instruction) {
+    return std::distance(
+        sequence.begin(),
+        std::find(sequence.begin(), sequence.end(), instruction));
+  };
+
+  // Every fence ends at an async collective done, and the post-LHS schedule
+  // respects it: the fenced compute runs before the collective completes.
+  int64_t fence_count = 0;
+  for (const HloInstruction* instruction : entry->instructions()) {
+    for (const HloInstruction* successor : instruction->control_successors()) {
+      EXPECT_EQ(successor->opcode(), HloOpcode::kCollectivePermuteDone);
       EXPECT_LT(position(instruction), position(successor));
       ++fence_count;
     }

@@ -470,6 +470,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_enable_scheduler_memory_fencing(false);
   opts.set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(0);
   opts.set_xla_gpu_experimental_scheduler_memory_fencing_slack_windows(1);
+  opts.set_xla_gpu_experimental_scheduler_memory_fencing_to_done(false);
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
@@ -3034,6 +3035,16 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           ->xla_gpu_experimental_scheduler_memory_fencing_slack_windows(),
       "How many async collective windows the users of a fenced buffer may be "
       "deferred past the buffer's last-use window in the pre-LHS schedule."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_scheduler_memory_fencing_to_done",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_scheduler_memory_fencing_to_done),
+      debug_options->xla_gpu_experimental_scheduler_memory_fencing_to_done(),
+      "If true, the SchedulerMemoryFencing pass fences buffer users to the "
+      "async collective done closing their target window instead of the "
+      "start opening the following window, preventing users from being "
+      "placed after that collective completes."));
   flag_list->push_back(tsl::Flag(
       "xla_pjrt_allow_auto_layout_in_hlo",
       bool_setter_for(&DebugOptions::set_xla_pjrt_allow_auto_layout_in_hlo),

@@ -45,9 +45,10 @@ class SchedulerMemoryFencingTest : public HloHardwareIndependentTestBase {
  protected:
   absl::StatusOr<bool> RunFencing(HloModule* module,
                                   int64_t size_threshold_bytes,
-                                  int32_t slack_windows) {
+                                  int32_t slack_windows,
+                                  bool fence_to_done = false) {
     SchedulerMemoryFencing pass(&ShapeSize, size_threshold_bytes, slack_windows,
-                                &alias_info_);
+                                fence_to_done, &alias_info_);
     return pass.Run(module);
   }
 
@@ -248,6 +249,44 @@ ENTRY entry {
   EXPECT_THAT(Instr(module.get(), "sibling")->control_successors(),
               UnorderedElementsAre(Instr(module.get(), "cp2s")));
   EXPECT_OK(module->schedule().Verify());
+}
+
+TEST_F(SchedulerMemoryFencingTest, FenceToDoneTargetsOwnWindowDone) {
+  // With slack 1, the last use inside window 0 is fenced to that window's
+  // done, so it cannot be placed after the collective completes.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kLayeredHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/1, /*fence_to_done=*/true));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(Instr(module.get(), "wg")->control_successors(),
+              UnorderedElementsAre(Instr(module.get(), "cp1d")));
+  EXPECT_OK(module->schedule().Verify());
+}
+
+TEST_F(SchedulerMemoryFencingTest, FenceToDoneWithUseBeforeWindow) {
+  // The last use precedes window 0, so fence-to-done with slack 1 targets
+  // window 0's done. The user may move into the window but not past its done.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kUseBeforeWindowHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/1, /*fence_to_done=*/true));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(Instr(module.get(), "wg")->control_successors(),
+              UnorderedElementsAre(Instr(module.get(), "cp1d")));
+}
+
+TEST_F(SchedulerMemoryFencingTest, FenceToDoneWithSlackTwoTargetsNextDone) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kLayeredHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/2, /*fence_to_done=*/true));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(Instr(module.get(), "wg")->control_successors(),
+              UnorderedElementsAre(Instr(module.get(), "cp2d")));
 }
 
 TEST_F(SchedulerMemoryFencingTest, SkipsWhenSlackExceedsRemainingWindows) {
