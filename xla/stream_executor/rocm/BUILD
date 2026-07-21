@@ -134,7 +134,6 @@ cc_library(
         ":rocm_stream",
         ":rocm_timer",
         ":rocm_version_parser",
-        "//xla:debug_options_flags",
         "//xla:util",
         "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/core/collectives",

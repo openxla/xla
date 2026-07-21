@@ -176,13 +176,6 @@ struct CollectiveKernelSpec {
   uint32_t sync_count_increment = 1;
 };
 
-GpuCollectives* ResolveCollectives(const GpuExecutableRunOptions* gpu_options,
-                                   absl::string_view platform_name);
-
-GpuCollectives* ResolveCollectives(
-    const GpuExecutableRunOptions* gpu_options, absl::string_view platform_name,
-    std::optional<std::string> implementation_name);
-
 }  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_PARAMS_H_

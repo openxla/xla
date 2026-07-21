@@ -55,7 +55,6 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
-#include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/client/local_client.h"
 #include "xla/core/collectives/clique_id.h"
@@ -1767,8 +1766,10 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   gpu_executable_run_options->set_gpu_global_device_ids(
       std::move(gpu_device_ids));
 
-  auto* gpu_collectives =
-      gpu::ResolveCollectives(gpu_executable_run_options, platform_name);
+  auto* gpu_collectives = gpu_executable_run_options->collectives();
+  if (gpu_collectives == nullptr) {
+    gpu_collectives = gpu::GpuCollectives::Resolve(platform_name);
+  }
 
   size_t num_processes = global_topology.processes().size();
   if (gpu_collectives->IsImplemented()) {

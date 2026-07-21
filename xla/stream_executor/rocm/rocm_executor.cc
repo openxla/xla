@@ -49,9 +49,6 @@ limitations under the License.
 #include "rocm/rocm_config.h"
 #include <unistd.h>
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
-#include "xla/core/collectives/collectives.h"
-#include "xla/core/collectives/collectives_registry.h"
-#include "xla/debug_options_flags.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -490,33 +487,19 @@ absl::StatusOr<std::unique_ptr<MemoryAllocation>> AllocateHostMemory(
       });
 }
 
-// This function follows the logic of ResolveCollectives in collective_params.cc
-static xla::gpu::GpuCollectives* GpuCollectivesImpl() {
-  auto debug_options = xla::GetDebugOptionsFromFlags();
-  auto impl = debug_options.xla_gpu_collectives_implementation();
-  absl::StatusOr<xla::Collectives*> collectives_or =
-      !impl.empty() ? xla::CollectivesRegistry::Get("ROCM", impl)
-                    : xla::CollectivesRegistry::Default("ROCM");
-  CHECK_OK(collectives_or) << "Failed to get GPU collectives implementation: "
-                           << impl;
-  if (auto* gpu_coll =
-          absl::down_cast<xla::gpu::GpuCollectives*>(*collectives_or)) {
-    return gpu_coll;
-  }
-  LOG(FATAL) << "Unsupported collectives implementation for GPU";
-}
-
 absl::StatusOr<void*> CollectiveMemoryAllocate(StreamExecutor* executor,
                                                uint64_t bytes) {
   if (bytes == 0) return nullptr;
   auto activation = executor->Activate();
-  return GpuCollectivesImpl()->Allocate(bytes);
+  auto* collectives = xla::gpu::GpuCollectives::Resolve("ROCM");
+  return collectives->Allocate(bytes);
 }
 
 absl::Status CollectiveMemoryDeallocate(StreamExecutor* executor,
                                         void* location) {
   auto activation = executor->Activate();
-  return GpuCollectivesImpl()->Deallocate(location);
+  auto* collectives = xla::gpu::GpuCollectives::Resolve("ROCM");
+  return collectives->Deallocate(location);
 }
 
 }  // namespace

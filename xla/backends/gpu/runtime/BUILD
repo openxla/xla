@@ -2859,7 +2859,6 @@ cc_library(
     hdrs = ["collective_params.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
-        "//xla:debug_options_flags",
         "//xla:executable_run_options",
         "//xla:util",
         "//xla/backends/gpu/collectives:gpu_collectives",
