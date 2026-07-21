@@ -609,6 +609,8 @@ GpuCompiler::GpuCompiler(se::Platform::Id platform_id,
                         .getPointerSize(0 /* default address space */)),
       mlir_context_pool_(CreateMlirContext, kPreallocateMlirContexts) {}
 
+void GpuCompiler::ClearMlirContextPool() { mlir_context_pool_.Clear(); }
+
 namespace {
 // Adds the HloVerifier for GPU to the given pipeline.
 void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
