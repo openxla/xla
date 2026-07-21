@@ -38,8 +38,6 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
-#include "xla/core/collectives/collectives.h"
-#include "xla/core/collectives/collectives_registry.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
@@ -698,12 +696,7 @@ TEST(GpuCollectivesTest, MoriCreateCommunicatorAndAllocate) {
     GTEST_SKIP() << "Test requires at least 4 GPUs";
   }
 
-  // The MORI backend is only registered on ROCm builds.
-  auto collectives_or = CollectivesRegistry::Get("GPU", "mori");
-  if (!collectives_or.ok()) {
-    GTEST_SKIP() << "MORI collectives backend is not available";
-  }
-  auto* mori = tsl::down_cast<GpuCollectives*>(*collectives_or);
+  auto* mori = xla::gpu::GpuCollectives::Resolve("ROCM", "mori");
   ASSERT_NE(mori, nullptr);
 
   ASSERT_OK_AND_ASSIGN(std::vector<se::StreamExecutor*> executors,

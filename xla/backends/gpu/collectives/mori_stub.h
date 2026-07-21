@@ -41,8 +41,8 @@ struct mori_shmem_init_attr_t {
 };
 
 // Initialization flags.
-constexpr unsigned int MORI_SHMEM_INIT_WITH_MPI_COMM = 0;
-constexpr unsigned int MORI_SHMEM_INIT_WITH_UNIQUEID = 1;
+[[maybe_unused]] constexpr unsigned int MORI_SHMEM_INIT_WITH_MPI_COMM = 0;
+[[maybe_unused]] constexpr unsigned int MORI_SHMEM_INIT_WITH_UNIQUEID = 1;
 
 inline int ShmemGetUniqueId(mori_shmem_uniqueid_t* /*uid*/) { return 0; }
 

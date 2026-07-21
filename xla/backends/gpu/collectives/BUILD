@@ -366,8 +366,6 @@ xla_test(
         ":gpu_communicator",
         "//xla:future",
         "//xla:xla_data_proto_cc",
-        "//xla/core/collectives",
-        "//xla/core/collectives:collectives_registry",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/core/collectives:reduction_kind",

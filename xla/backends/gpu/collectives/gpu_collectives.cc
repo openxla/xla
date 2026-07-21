@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <optional>
+#include <string>
 
 #include "absl/base/casts.h"
 #include "absl/log/check.h"

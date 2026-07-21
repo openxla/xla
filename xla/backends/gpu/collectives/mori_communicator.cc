@@ -14,31 +14,41 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
-#include <thread>
+#include <utility>
+#include <vector>
 
+#include "absl/container/inlined_vector.h"
+#include "absl/functional/any_invocable.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/log.h"
+#include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
+#include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/mori_collectives.h"
+#include "xla/backends/gpu/collectives/mori_stub.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
-#include "xla/core/collectives/symmetric_memory.h"
+#include "xla/core/collectives/reduction_kind.h"
 #include "xla/future.h"
 #include "xla/primitive_util.h"
-#include "xla/service/collective_ops_utils.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 
-using namespace mori;
+namespace shmem = ::mori::shmem;
 namespace xla::gpu {
 
 static auto AsRocmStream(se::Stream* stream) {
@@ -47,7 +57,9 @@ static auto AsRocmStream(se::Stream* stream) {
 }
 
 static size_t ToMoriByteCount(PrimitiveType dtype, size_t count) {
-  if (primitive_util::IsComplexType(dtype)) count *= 2;
+  if (primitive_util::IsComplexType(dtype)) {
+    count *= 2;
+  }
   return count * primitive_util::BitWidth(dtype) / 8;
 }
 
@@ -189,7 +201,7 @@ Future<> MoriCommunicator::CollectivePermute(
   });
 }
 
-Future<> MoriCommunicator::Send(se::DeviceMemoryBase recv_buffer,
+Future<> MoriCommunicator::Send(se::DeviceAddressBase recv_buffer,
                                 se::DeviceAddressBase send_buffer,
                                 PrimitiveType dtype, size_t count, RankId peer,
                                 const Executor& executor) {
@@ -230,7 +242,9 @@ absl::Status MoriCommunicator::LaunchAllReduce(
   void* dest_ptr = recv_buffer.opaque();
   (void)source_ptr;
   (void)dest_ptr;
-  if (primitive_util::IsComplexType(dtype)) count *= 2;
+  if (primitive_util::IsComplexType(dtype)) {
+    count *= 2;
+  }
 
   VLOG(3) << absl::StreamFormat(
       "Launch MORI AllReduce send_buffer=%p; recv_buffer=%p; dtype=%s; "
@@ -283,8 +297,8 @@ absl::Status MoriCommunicator::LaunchCollectivePermute(
 //       and sets a completion flag on the peer.
 // Recv: launches a single-thread GPU kernel that waits for the flag.
 absl::Status MoriCommunicator::P2P(P2PType p2p_type, PrimitiveType dtype,
-                                   se::DeviceMemoryBase recv_buffer,
-                                   se::DeviceMemoryBase send_buffer,
+                                   se::DeviceAddressBase recv_buffer,
+                                   se::DeviceAddressBase send_buffer,
                                    size_t count, RankId peer,
                                    const Executor& executor) {
   const char* stype = (p2p_type == P2PType::Send ? " Send" : " Recv");
