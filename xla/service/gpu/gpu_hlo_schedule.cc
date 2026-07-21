@@ -662,6 +662,9 @@ absl::Status RunLatencyHidingSchedulerPasses(
   config.enable_selective_resources =
       options.xla_gpu_experimental_enable_selective_memcpy_overlap();
   if (config.enable_selective_resources) {
+    // Keep memory-bound kernels outside an open D2D memcpy window. They do not
+    // hide the copy because both operations contend for HBM bandwidth.
+    config.avoid_nonvaluable_selective_overlap = true;
     // Allow the scheduler to hold back compute-bound kernels when an async
     // D2D memcpy window opens nearby so they can be scheduled inside it.
     config.max_hops_to_closest_selective_overlap = 1;

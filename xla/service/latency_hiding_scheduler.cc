@@ -1606,7 +1606,26 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
   UpdateCandidateResourceConstrained(sched_state, b, bn);
 
   const SchedulerConfig& config = sched_state.config;
+  // While a bottom-up schedule is building a selective overlap window,
+  // partition candidates into valuable and nonvaluable classes before target
+  // rules compare individual pairs. This prevents pairwise target policies
+  // from forming a cycle that lets a nonvaluable operation win.
+  auto avoid_nonvaluable_selective_overlap = [&]() -> std::optional<bool> {
+    if (config.enable_selective_resources &&
+        config.avoid_nonvaluable_selective_overlap &&
+        !core_->top_down_scheduling_ &&
+        !sched_state.selective_resource_releasers.empty()) {
+      return CmpExplicit(an->GetValuableForSelectiveOverlap(),
+                         bn->GetValuableForSelectiveOverlap(),
+                         "kAvoidNonvaluableSelectiveOverlap", reason);
+    }
+    return std::nullopt;
+  };
+
   if (config.force_delay_over_memory_pressure) {
+    if (auto value = avoid_nonvaluable_selective_overlap()) {
+      return *value;
+    }
     if (ABSL_PREDICT_FALSE(core_->early_target_scheduling_rule_ != nullptr)) {
       if (auto value = InvokeTargetSchedulingFunction(
               core_->early_target_scheduling_rule_, a, b, reason)) {
@@ -1642,6 +1661,9 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
   }
 
   if (!config.force_delay_over_memory_pressure) {
+    if (auto value = avoid_nonvaluable_selective_overlap()) {
+      return *value;
+    }
     if (ABSL_PREDICT_FALSE(core_->early_target_scheduling_rule_ != nullptr)) {
       if (auto value = InvokeTargetSchedulingFunction(
               core_->early_target_scheduling_rule_, a, b, reason)) {

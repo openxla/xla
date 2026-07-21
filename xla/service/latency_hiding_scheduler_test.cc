@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -3751,16 +3752,16 @@ ENTRY %module {
   sched_config.enable_selective_resources = true;
   std::unique_ptr<AsyncTracker> async_tracker =
       std::make_unique<SelectiveOverlapAsyncTracker>(sched_config);
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
   HloSchedule& module_schedule = hlo_module->schedule();
   EXPECT_TRUE(hlo_module->has_entry_computation());
   HloComputation* entry_computation = hlo_module->entry_computation();
   std::vector<HloInstruction*> original_instruction_sequence =
       module_schedule.sequence(entry_computation).instructions();
 
-  TF_EXPECT_OK(RunScheduler(hlo_module.get(), sched_config,
-                            std::make_unique<ApproximateLatencyEstimator>(),
-                            std::move(async_tracker)));
+  ASSERT_OK(RunScheduler(hlo_module.get(), sched_config,
+                         std::make_unique<ApproximateLatencyEstimator>(),
+                         std::move(async_tracker)));
   std::vector<HloInstruction*> new_instruction_sequence =
       module_schedule.sequence(entry_computation).instructions();
 
@@ -3783,6 +3784,30 @@ ENTRY %module {
   EXPECT_LT(ag_start_index, c1_index);
   EXPECT_LT(c1_index, c2_index);
   EXPECT_LT(c2_index, ag_done_index);
+
+  SchedulerConfig avoiding_config = GetDefaultSchedConfig();
+  avoiding_config.enable_selective_resources = true;
+  avoiding_config.avoid_nonvaluable_selective_overlap = true;
+  std::unique_ptr<AsyncTracker> avoiding_tracker =
+      std::make_unique<SelectiveOverlapAsyncTracker>(avoiding_config);
+  ASSERT_OK_AND_ASSIGN(auto avoiding_module, ParseHloText(hlo_string));
+  HloSchedule& avoiding_schedule = avoiding_module->schedule();
+  ASSERT_OK(RunScheduler(avoiding_module.get(), avoiding_config,
+                         std::make_unique<ApproximateLatencyEstimator>(),
+                         std::move(avoiding_tracker)));
+  std::vector<HloInstruction*> avoiding_sequence =
+      avoiding_schedule.sequence(avoiding_module->entry_computation())
+          .instructions();
+
+  // When nonvaluable overlap is avoided, c2 is placed before the all-gather
+  // window while the valuable c1 remains inside it.
+  int avoiding_c1_index = GetIndex(avoiding_sequence, "c1");
+  int avoiding_c2_index = GetIndex(avoiding_sequence, "c2");
+  int avoiding_ag_start_index = GetIndex(avoiding_sequence, "ag-start");
+  int avoiding_ag_done_index = GetIndex(avoiding_sequence, "ag-done");
+  EXPECT_LT(avoiding_c2_index, avoiding_ag_start_index);
+  EXPECT_LT(avoiding_ag_start_index, avoiding_c1_index);
+  EXPECT_LT(avoiding_c1_index, avoiding_ag_done_index);
 }
 
 TEST_F(LatencyHidingSchedulerTest, AnnotationFirstDataIndependentConv) {

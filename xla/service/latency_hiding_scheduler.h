@@ -167,6 +167,10 @@ struct SchedulerConfig {
   bool resource_serializing = false;
   bool depth_based_memory_pressure_reduction = false;
   bool enable_selective_resources = false;
+  // While a selective overlap window is open, prioritize valuable operations
+  // over nonvaluable operations. In a bottom-up schedule, this keeps
+  // nonvaluable operations outside the overlap window.
+  bool avoid_nonvaluable_selective_overlap = false;
 
   // Freely schedule nodes at the start of a scheduling group, allowing the
   // scheduler to delay them to promote better overlap.
