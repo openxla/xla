@@ -63,8 +63,7 @@ absl::StatusOr<std::unique_ptr<MoriCommunicator>> MoriCommunicator::Create(
   return comm;
 }
 
-MoriCommunicator::~MoriCommunicator() {
-}
+MoriCommunicator::~MoriCommunicator() {}
 
 #define CHECK_CANCELLED()                                               \
   if (cancel_->IsCancelled()) {                                         \
@@ -91,7 +90,7 @@ absl::Status MoriCommunicator::Barrier(const Communicator::Executor& executor) {
   CHECK_CANCELLED()
   ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   (void)stream;
-  //return xla_mori::BarrierOnStream(AsRocmStream(stream));
+  // return xla_mori::BarrierOnStream(AsRocmStream(stream));
   return absl::OkStatus();
 }
 

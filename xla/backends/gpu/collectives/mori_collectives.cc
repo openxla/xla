@@ -43,6 +43,10 @@ limitations under the License.
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/runtime/device_id.h"
 #include "xla/runtime/process_id.h"
+#include "xla/status_macros.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform_manager.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -50,10 +54,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/numbers.h"
-#include "xla/status_macros.h"
-#include "xla/stream_executor/platform.h"
-#include "xla/stream_executor/platform_manager.h"
-#include "xla/stream_executor/stream_executor.h"
 
 using namespace mori;
 
@@ -108,9 +108,8 @@ class MoriIdStore {
       RETURN_IF_ERROR(
           kv_store_->Set(gpu_key->ToString(), clique_id.ToString()));
     } else {
-      ASSIGN_OR_RETURN(
-          std::string id_str,
-          kv_store_->Get(gpu_key->ToString(), absl::Minutes(10)));
+      ASSIGN_OR_RETURN(std::string id_str,
+                       kv_store_->Get(gpu_key->ToString(), absl::Minutes(10)));
       clique_id = CliqueId(id_str);
     }
 
@@ -241,7 +240,7 @@ MoriCollectives::CreateCommunicatorsWithCancel(
     auto activate_context = device->stream_executor()->Activate();
     if (!initialized_) {
       RETURN_IF_ERROR(InitPe(ranks[i].rank.value(), clique_key.num_devices(),
-                                clique_ids->at(0), device->stream_executor()));
+                             clique_ids->at(0), device->stream_executor()));
     }
 
     // Map each collective rank to its global MORI PE. In the single-process
@@ -309,7 +308,7 @@ MoriCollectives::InitializeTopology(const Topology& topology) {
   }
 
   ASSIGN_OR_RETURN(se::Platform * platform,
-                      se::PlatformManager::PlatformWithName("ROCM"));
+                   se::PlatformManager::PlatformWithName("ROCM"));
 
   // All local PEs share one unique id and must initialize concurrently, so
   // ShmemInitAttr's bootstrap collective can complete.

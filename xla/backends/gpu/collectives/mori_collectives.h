@@ -78,11 +78,11 @@ class MoriCollectives : public GpuCollectives {
   }
 
   absl::StatusOr<std::vector<std::unique_ptr<Communicator>>>
-  SplitCommunicatorsWithCancel(absl::Span<const Communicator* const> comms,
-                               int32_t color, absl::Span<const RankId> keys,
-                               const Collectives::Config& config,
-                               absl::Span<const DeviceRank> ranks,
-                               std::shared_ptr<CancellationToken> cancel) final {
+  SplitCommunicatorsWithCancel(
+      absl::Span<const Communicator* const> comms, int32_t color,
+      absl::Span<const RankId> keys, const Collectives::Config& config,
+      absl::Span<const DeviceRank> ranks,
+      std::shared_ptr<CancellationToken> cancel) final {
     return absl::UnimplementedError("Not implementedZ.");
   }
 

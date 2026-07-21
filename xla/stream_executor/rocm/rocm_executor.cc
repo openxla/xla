@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/stream_executor/rocm/rocm_executor.h"
 
-#include <unistd.h>
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -49,10 +47,11 @@ limitations under the License.
 #include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/hip/hip_version.h"
 #include "rocm/rocm_config.h"
-#include "xla/debug_options_flags.h"
+#include <unistd.h>
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
+#include "xla/debug_options_flags.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -495,12 +494,13 @@ absl::StatusOr<std::unique_ptr<MemoryAllocation>> AllocateHostMemory(
 static xla::gpu::GpuCollectives* GpuCollectivesImpl() {
   auto debug_options = xla::GetDebugOptionsFromFlags();
   auto impl = debug_options.xla_gpu_collectives_implementation();
-  absl::StatusOr<xla::Collectives*> collectives_or = !impl.empty() ?
-                       xla::CollectivesRegistry::Get("ROCM", impl) :
-                       xla::CollectivesRegistry::Default("ROCM");
+  absl::StatusOr<xla::Collectives*> collectives_or =
+      !impl.empty() ? xla::CollectivesRegistry::Get("ROCM", impl)
+                    : xla::CollectivesRegistry::Default("ROCM");
   CHECK_OK(collectives_or) << "Failed to get GPU collectives implementation: "
                            << impl;
-  if (auto *gpu_coll = absl::down_cast<xla::gpu::GpuCollectives*>(*collectives_or)) {
+  if (auto* gpu_coll =
+          absl::down_cast<xla::gpu::GpuCollectives*>(*collectives_or)) {
     return gpu_coll;
   }
   LOG(FATAL) << "Unsupported collectives implementation for GPU";
@@ -796,7 +796,7 @@ DeviceAddressBase RocmExecutor::Allocate(uint64_t size, int64_t memory_space) {
       auto result = CollectiveMemoryAllocate(this, size);
       if (!result.ok()) {
         XLA_LOG_DEVICE(ERROR, device_ordinal())
-          << "RocmExecutor::Allocate returns " << result.value();
+            << "RocmExecutor::Allocate returns " << result.value();
       }
       XLA_VLOG_DEVICE(1, device_ordinal())
           << "RocmExecutor::Allocate returns " << result.value();
@@ -858,25 +858,25 @@ RocmExecutor::CreateMemoryAllocator(MemorySpace type) {
           });
     case MemorySpace::kCollective:
       return std::make_unique<GenericMemoryAllocator>(
-        [this](uint64_t size)
-            -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
-          ASSIGN_OR_RETURN(void* ptr, CollectiveMemoryAllocate(this, size));
-          XLA_VLOG_DEVICE(2, device_ordinal())
-              << "allocated " << ptr << " of " << size 
-              << " bytes of collective memory";
-          return std::make_unique<GenericMemoryAllocation>(
-              ptr, size, [this](void* location, uint64_t size) {
-                auto status = CollectiveMemoryDeallocate(this, location);
-                if (!status.ok()) {
-                  XLA_LOG_DEVICE(ERROR, device_ordinal())
-                      << "failed to free collective memory at " << location
-                      << "; result: " << status;
-                } else {
-                  XLA_VLOG_DEVICE(2, device_ordinal())
-                      << "deallocated collective memory at " << location;
-                }
-              });
-        });
+          [this](uint64_t size)
+              -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
+            ASSIGN_OR_RETURN(void* ptr, CollectiveMemoryAllocate(this, size));
+            XLA_VLOG_DEVICE(2, device_ordinal())
+                << "allocated " << ptr << " of " << size
+                << " bytes of collective memory";
+            return std::make_unique<GenericMemoryAllocation>(
+                ptr, size, [this](void* location, uint64_t size) {
+                  auto status = CollectiveMemoryDeallocate(this, location);
+                  if (!status.ok()) {
+                    XLA_LOG_DEVICE(ERROR, device_ordinal())
+                        << "failed to free collective memory at " << location
+                        << "; result: " << status;
+                  } else {
+                    XLA_VLOG_DEVICE(2, device_ordinal())
+                        << "deallocated collective memory at " << location;
+                  }
+                });
+          });
     case MemorySpace::kHost:
       return std::make_unique<GenericMemoryAllocator>([this](uint64_t size) {
         return AllocateHostMemory(&rocm_context_, size);
