@@ -977,6 +977,63 @@ TEST_F(DeviceAddressVmmAllocatorTest, ReuseNeverCrossesMemorySpaces) {
   ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
 }
 
+// A mapped request never reuses a stale mapped record from another memory
+// space because the record would keep the wrong reclaim tag.
+TEST_F(DeviceAddressVmmAllocatorTest, MappedReuseNeverCrossesMemorySpaces) {
+  ASSERT_OK_AND_ASSIGN(auto probe, gpu::CudaDeviceAddressVmmAllocator::Create(
+                                       executor_, stream_.get()));
+  const uint64_t granularity = probe->GetAllocationGranularity(executor_);
+  ASSERT_GT(granularity, 0);
+  probe.reset();
+
+  ASSERT_OK_AND_ASSIGN(auto allocator,
+                       gpu::CudaDeviceAddressVmmAllocator::Create(
+                           executor_, stream_.get(),
+                           /*pa_budget=*/2 * granularity,
+                           /*reclaim_exempt_memory_space=*/0));
+  const int ordinal = executor_->device_ordinal();
+  ASSERT_OK_AND_ASSIGN(auto reservation, gpu::CudaMemoryReservation::Create(
+                                             executor_, granularity));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto first,
+      allocator->Allocate(ordinal, granularity, /*retry_on_failure=*/true,
+                          /*memory_space=*/0, reservation.get(),
+                          /*reservation_offset=*/0, granularity));
+  auto* first_raw = allocator->GetRawAllocation(ordinal, first.cref());
+  ASSERT_NE(first_raw, nullptr);
+  ASSERT_THAT(allocator->Deallocate(ordinal, first.Release()), IsOk());
+
+  // As a control a request in the same space does reuse the stale mapping.
+  // The equality holds only while the record stays alive through reuse.
+  ASSERT_OK_AND_ASSIGN(
+      auto second,
+      allocator->Allocate(ordinal, granularity, /*retry_on_failure=*/true,
+                          /*memory_space=*/0, reservation.get(),
+                          /*reservation_offset=*/0, granularity));
+  EXPECT_EQ(allocator->GetRawAllocation(ordinal, second.cref()), first_raw);
+  ASSERT_THAT(allocator->Deallocate(ordinal, second.Release()), IsOk());
+
+  // The request in another space must not resurrect the stale record. If it
+  // did, the record would keep the exempt space 0 tag and the reclaim below
+  // could not free it.
+  ASSERT_OK_AND_ASSIGN(
+      auto third,
+      allocator->Allocate(ordinal, granularity, /*retry_on_failure=*/true,
+                          /*memory_space=*/1, reservation.get(),
+                          /*reservation_offset=*/0, granularity));
+  ASSERT_THAT(allocator->Deallocate(ordinal, third.Release()), IsOk());
+
+  // Fits the two granularity budget only if the pending mapping is reclaimed,
+  // which requires its tag to be the space of the third request.
+  ASSERT_OK_AND_ASSIGN(
+      auto pressure,
+      allocator->Allocate(ordinal, 2 * granularity,
+                          /*retry_on_failure=*/true, /*memory_space=*/2));
+  ASSERT_THAT(allocator->Deallocate(ordinal, pressure.Release()), IsOk());
+  ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
+}
+
 // A request with a different size at the same reservation offset does not
 // match the stale mapping: it must be rejected as a partial overlap instead
 // of remapping underneath the pending teardown, and the stale mapping must

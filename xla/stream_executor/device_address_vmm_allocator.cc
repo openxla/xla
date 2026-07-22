@@ -427,6 +427,7 @@ DeviceAddressVmmAllocator::TryReuseMappedAllocation(
   if (record->kind() != AllocationRecord::Kind::kAllocateAndMap ||
       !record->allocator_stale() ||
       record->multi_device() != request.multi_device ||
+      record->memory_space() != request.memory_space ||
       !record->allocator_matches(request.reservation_address)) {
     return std::nullopt;
   }
