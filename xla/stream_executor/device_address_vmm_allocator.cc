@@ -530,6 +530,7 @@ template <typename TryReuseFn, typename TryFreshFn>
 absl::StatusOr<DeviceAddressBase>
 DeviceAddressVmmAllocator::TryWithPendingReclaim(PerDeviceState& state,
                                                  uint64_t reclaim_size,
+                                                 int64_t memory_space,
                                                  TryReuseFn try_reuse,
                                                  TryFreshFn try_fresh) {
   // First try to reactivate a compatible pending deallocation without waiting.
@@ -550,7 +551,7 @@ DeviceAddressVmmAllocator::TryWithPendingReclaim(PerDeviceState& state,
     // deallocations first, without blocking for later pending work and without
     // destroying unrelated stale reservation mappings that may be reused.
     CompleteReadyAllocatorDeallocationsForReclaim(
-        state, LoadTimeline(state.pinned_timeline));
+        state, LoadTimeline(state.pinned_timeline), memory_space);
     result = try_fresh();
   }
 
@@ -578,7 +579,8 @@ DeviceAddressVmmAllocator::TryWithPendingReclaim(PerDeviceState& state,
           state.records_by_allocator_address.find(pending.addr.opaque());
       CHECK(record_it != state.records_by_allocator_address.end());
       CHECK(record_it->second->allocator_stale());
-      if (record_it->second->memory_space() == reclaim_exempt_memory_space_) {
+      if (record_it->second->memory_space() == reclaim_exempt_memory_space_ ||
+          record_it->second->memory_space() == memory_space) {
         continue;
       }
       uint64_t reclaimable_bytes =
@@ -683,8 +685,9 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
     return absl::StatusOr<DeviceAddressBase>(allocator_address);
   };
 
-  ASSIGN_OR_RETURN(DeviceAddressBase result,
-                   TryWithPendingReclaim(*state, size, try_reuse, try_fresh));
+  ASSIGN_OR_RETURN(
+      DeviceAddressBase result,
+      TryWithPendingReclaim(*state, size, memory_space, try_reuse, try_fresh));
 
   VLOG(3) << absl::StreamFormat(
       "Allocated virtual address %p (%uB) on device ordinal %d",
@@ -742,9 +745,9 @@ DeviceAddressVmmAllocator::Allocate(
   // The shared retry helper handles PA-budget pressure: try reuse, try fresh,
   // complete already-finished pending work on ResourceExhausted, and finally
   // wait for enough pending deallocations only if necessary.
-  ASSIGN_OR_RETURN(
-      DeviceAddressBase result,
-      TryWithPendingReclaim(*state, allocation_size, try_reuse, try_fresh));
+  ASSIGN_OR_RETURN(DeviceAddressBase result,
+                   TryWithPendingReclaim(*state, allocation_size, memory_space,
+                                         try_reuse, try_fresh));
 
   // `result` is the reservation slice, which acts as the allocator address for
   // this allocation.
@@ -1112,7 +1115,7 @@ void DeviceAddressVmmAllocator::WaitUntilSeqno(PerDeviceState& state,
 }
 
 void DeviceAddressVmmAllocator::CompleteReadyAllocatorDeallocationsForReclaim(
-    PerDeviceState& state, uint64_t completed_seqno) {
+    PerDeviceState& state, uint64_t completed_seqno, int64_t memory_space) {
   std::vector<uint64_t> selected;
   for (const PendingDeallocation& pending : state.pending_deallocations) {
     if (pending.seqno > completed_seqno ||
@@ -1122,7 +1125,8 @@ void DeviceAddressVmmAllocator::CompleteReadyAllocatorDeallocationsForReclaim(
     auto record_it =
         state.records_by_allocator_address.find(pending.addr.opaque());
     if (record_it != state.records_by_allocator_address.end() &&
-        record_it->second->memory_space() == reclaim_exempt_memory_space_) {
+        (record_it->second->memory_space() == reclaim_exempt_memory_space_ ||
+         record_it->second->memory_space() == memory_space)) {
       continue;
     }
     selected.push_back(pending.seqno);

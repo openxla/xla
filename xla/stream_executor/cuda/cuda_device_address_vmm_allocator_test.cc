@@ -934,9 +934,16 @@ TEST_F(DeviceAddressVmmAllocatorTest,
 
 TEST_F(DeviceAddressVmmAllocatorTest, ReclaimNeverEvictsExemptPendingMappings) {
   // The helper creates the allocator with reclaim_exempt_memory_space = 1.
-  RunReclaimPressureOnPendingMapping(/*memory_space=*/0,
+  RunReclaimPressureOnPendingMapping(/*memory_space=*/2,
                                      /*expect_mapping_survives=*/false);
   RunReclaimPressureOnPendingMapping(/*memory_space=*/1,
+                                     /*expect_mapping_survives=*/true);
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       ReclaimSkipsPendingMappingsInTheRequestingSpace) {
+  // The pressure allocation in the helper requests memory space 0.
+  RunReclaimPressureOnPendingMapping(/*memory_space=*/0,
                                      /*expect_mapping_survives=*/true);
 }
 

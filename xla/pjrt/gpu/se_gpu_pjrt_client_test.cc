@@ -2812,6 +2812,9 @@ XLA_FFI_DEFINE_HANDLER(
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "RecordBufferAddress", "CUDA",
                          kRecordBufferAddressCustomCall);
 
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "RecordBufferAddress", "ROCM",
+                         kRecordBufferAddressCustomCall);
+
 // s is placed in the collective memory space by the results_memory_spaces
 // attribute alone. Run i yields 2*i*i.
 constexpr char kAttrPlacedModule[] = R"(
