@@ -411,9 +411,22 @@ message DebugOptions {
   //   SKIP_TEMP: Command-buffer-referenced preallocated temp buffers
   //     use fixed VMM reservation addresses; other dynamic allocations still
   //     trigger command updates when their addresses change.
+  //   SKIP_PROFILED: For the first few executions, buffers use regular
+  //     dynamically allocated addresses. Preallocated temp buffers are
+  //     automatically selected for remapping while the runtime records which
+  //     other non-constant, non-thread-local command-buffer-referenced
+  //     allocations keep a stable address. Afterwards, the temp buffers and
+  //     stable profile candidates use fixed VMM reservation addresses during
+  //     execution. Temp buffers are allocated through the reservation;
+  //     finalized input and output addresses are aliased into it immediately
+  //     before execution.
+  //     Remapping enforces address stability, so a mispredicted profile costs
+  //     an extra VMM remap instead of correctness. Requires the VMM allocator
+  //     and assumes symmetric behavior across ranks.
   enum CommandBufferUpdateMode {
     ALWAYS_UPDATE = 0;
     SKIP_TEMP = 1;
+    SKIP_PROFILED = 2;
   }
 
   // Controls when cuDNN fusions are compiled in "deviceless" mode, i.e. driven
@@ -507,10 +520,6 @@ message DebugOptions {
   // Enable communication optimization patterns specified in Enzyme. More
   // details in http://shortn/_jXJ2VFoyMN.
   optional bool xla_enable_enzyme_comms_opt = 429;
-
-  // Enable experimental support for multi-output Triton fusions where all roots
-  // share the same shape.
-  optional bool xla_experimental_enable_same_shape_multi_output_fusion = 515;
 
   // Denylist for cuDNN convolutions.
   optional string xla_gpu_algorithm_denylist_path = 128;
@@ -1645,10 +1654,6 @@ message DebugOptions {
   optional bool xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl =
       462;
 
-  // DEPRECATED: This flag is a no-op.
-  optional bool xla_gpu_experimental_ragged_all_to_all_zero_copy = 480
-      [deprecated = true];
-
   // If true, enable the GXL (GPU Collective Library) backend for collectives.
   optional bool xla_gpu_enable_gxl_ragged_all_to_all = 513;
 
@@ -1669,7 +1674,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 516
+  // Next id: 515
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
@@ -1748,6 +1753,7 @@ message DebugOptions {
   reserved "xla_gpu_experimental_enable_triton_i4_rewrites";
   reserved "xla_gpu_experimental_enable_triton_softmax_priority_fusion";
   reserved "xla_gpu_experimental_enable_triton_tma";
+  reserved "xla_gpu_experimental_ragged_all_to_all_zero_copy";
   reserved "xla_gpu_experimental_use_autotuner_pass";
   reserved "xla_gpu_graph_eviction_timeout_seconds";
   reserved "xla_gpu_graph_level";
@@ -1795,7 +1801,7 @@ message DebugOptions {
       242, 243, 249, 263, 264, 266, 270, 271, 275, 276, 278, 279, 281, 282, 286,
       298, 299, 300, 302, 303, 309, 313, 314, 319, 320, 325, 326, 332, 346, 352,
       354, 355, 358, 361, 367, 369, 371, 385, 388, 389, 394, 396, 398, 402, 420,
-      423, 430, 443, 446, 458, 464, 477;
+      423, 430, 443, 446, 458, 464, 477, 480;
 }
 
 // Contains flags which affects the GPU compilation result.
