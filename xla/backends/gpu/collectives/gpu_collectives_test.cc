@@ -706,10 +706,10 @@ class GpuCollectivesSpeedTest : public ::testing::Test {
 
   static absl::StatusOr<std::vector<se::StreamExecutor*>> SetupExecutors(
       size_t n) {
-    TF_ASSIGN_OR_RETURN(std::string platform_name,
-                        PlatformUtil::CanonicalPlatformName("gpu"));
-    TF_ASSIGN_OR_RETURN(se::Platform * platform,
-                        se::PlatformManager::PlatformWithName(platform_name));
+    ASSIGN_OR_RETURN(std::string platform_name,
+                     PlatformUtil::CanonicalPlatformName("gpu"));
+    ASSIGN_OR_RETURN(se::Platform * platform,
+                     se::PlatformManager::PlatformWithName(platform_name));
     if (platform->VisibleDeviceCount() < n) {
       return absl::InternalError(
           absl::StrFormat("Test requires at least %d GPUs", n));
@@ -737,7 +737,7 @@ absl::Status GpuCollectivesSpeedTest::RunBenchmark(const TestParams& params) {
   }
   // Propagate the first failure (if any) back to the caller/test.
   for (const absl::Status& s : results) {
-    TF_RETURN_IF_ERROR(s);
+    RETURN_IF_ERROR(s);
   }
   return absl::OkStatus();
 }
@@ -747,7 +747,7 @@ absl::Status GpuCollectivesSpeedTest::RunInternal(size_t rank,
   se::StreamExecutor* stream_exec = params.executors[rank];
   GpuCommunicator* gpu_comm = params.comms[rank].get();
 
-  TF_ASSIGN_OR_RETURN(auto stream, stream_exec->CreateStream());
+  ASSIGN_OR_RETURN(auto stream, stream_exec->CreateStream());
   size_t dbytes = primitive_util::BitWidth(params.dtype) / 8,
          max_bytes = params.max_elems * dbytes;
 
@@ -763,7 +763,7 @@ absl::Status GpuCollectivesSpeedTest::RunInternal(size_t rank,
   };
 
   if (params.use_comm_alloc) {
-    TF_ASSIGN_OR_RETURN(send_ptr, params.gpu_coll->Allocate(max_bytes * 2));
+    ASSIGN_OR_RETURN(send_ptr, params.gpu_coll->Allocate(max_bytes * 2));
     send_buf = se::DeviceMemoryBase{send_ptr, max_bytes * 2};
   } else {
     send_buf = stream_exec->AllocateArray<uint8_t>(max_bytes * 2, 0);
@@ -782,14 +782,14 @@ absl::Status GpuCollectivesSpeedTest::RunInternal(size_t rank,
     Future<> future;
     for (uint32_t i = 0; i < n_warmups + n_runs; i++) {
       if (i == n_warmups) {
-        TF_ASSIGN_OR_RETURN(timer, stream->CreateEventBasedTimer(false));
+        ASSIGN_OR_RETURN(timer, stream->CreateEventBasedTimer(false));
       }
       future = params.func(send_buf, recv_buf, num_elems, gpu_comm, executor);
     }
     EXPECT_TRUE(stream_exec->SynchronizeAllActivity());
-    TF_RETURN_IF_ERROR(future.Await());  // do we need this ??
+    RETURN_IF_ERROR(future.Await());  // do we need this ??
 
-    TF_ASSIGN_OR_RETURN(auto elapsed, timer->GetElapsedDuration());
+    ASSIGN_OR_RETURN(auto elapsed, timer->GetElapsedDuration());
     auto msec = absl::ToDoubleMilliseconds(elapsed) / n_runs;
     // alg_bw is the total payload (num_bytes) over time; bus_bw applies the
     // per-collective traffic factor passed in by the caller.
@@ -835,8 +835,8 @@ TEST_F(GpuCollectivesSpeedTest, TestAllReduce) {
                     auto* gpu_comm, const auto& executor) -> Future<> {
     auto future = gpu_comm->AllReduce(send_buf, recv_buf, params.dtype, n_elems,
                                       ReductionKind::SUM, executor);
-    TF_RETURN_IF_ERROR(gpu_comm->Barrier(executor));
-    // TF_RETURN_IF_ERROR(comm->Quiet(executor));
+    RETURN_IF_ERROR(gpu_comm->Barrier(executor));
+    // RETURN_IF_ERROR(comm->Quiet(executor));
     return future;
   };
   ASSERT_OK(RunBenchmark(params));
@@ -875,8 +875,8 @@ TEST_F(GpuCollectivesSpeedTest, TestReduceScatter) {
     auto future =
         gpu_comm->ReduceScatter(send_buf, recv_buf, params.dtype, recv_count,
                                 ReductionKind::SUM, executor);
-    // TF_RETURN_IF_ERROR(gpu_comm->Barrier(executor));
-    // TF_RETURN_IF_ERROR(comm->Quiet(executor));
+    // RETURN_IF_ERROR(gpu_comm->Barrier(executor));
+    // RETURN_IF_ERROR(comm->Quiet(executor));
     return future;
   };
   ASSERT_OK(RunBenchmark(params));

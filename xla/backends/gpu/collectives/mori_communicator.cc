@@ -110,7 +110,7 @@ absl::StatusOr<std::unique_ptr<MoriCommunicator>> MoriCommunicator::Create(
   // NOTE NOTE NOTE we need to share allocated mem between different
   // communicators since communicators can be created for a subset of the ranks
   const size_t buffer_size = 2UL << 30;  // 2GB
-  TF_ASSIGN_OR_RETURN(void* addr, coll->Allocate(buffer_size));
+  ASSIGN_OR_RETURN(void* addr, coll->Allocate(buffer_size));
 
   // Carve a small, 8-byte-aligned tail of the staging allocation for the push
   // reduce-scatter's local-only group counters and zero it once. The kernel
@@ -125,7 +125,7 @@ absl::StatusOr<std::unique_ptr<MoriCommunicator>> MoriCommunicator::Create(
   // MORI heap (like staging) so peers can write into it via SDMA/P2P; the same
   // allocation order on every participant keeps the heap offset symmetric.
   const size_t flags_bytes = kMaxRanks * sizeof(uint64_t);
-  TF_ASSIGN_OR_RETURN(comm->allgather_flags_, coll->Allocate(flags_bytes));
+  ASSIGN_OR_RETURN(comm->allgather_flags_, coll->Allocate(flags_bytes));
   xla_mori::InitSignalMemory(comm->allgather_flags_, flags_bytes);
 
   VLOG(1) << "Created " << *comm << " with participants: " << num_ranks;
@@ -167,7 +167,7 @@ absl::Status MoriCommunicator::Abort() {
 absl::Status MoriCommunicator::Barrier(const Communicator::Executor& executor) {
   VLOG(1) << "Barrier: " << ToString();
   CHECK_CANCELLED()
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+  ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   return xla_mori::BarrierOnStream(AsRocmStream(stream));
 }
 
@@ -271,7 +271,7 @@ Future<> MoriCommunicator::CollectivePermute(
   });
 }
 
-Future<> MoriCommunicator::Send(se::DeviceMemoryBase recv_buffer,
+Future<> MoriCommunicator::Send(se::DeviceAddressBase recv_buffer,
                                 se::DeviceAddressBase send_buffer,
                                 PrimitiveType dtype, size_t count, RankId peer,
                                 const Executor& executor) {
@@ -291,7 +291,7 @@ absl::Status MoriCommunicator::LaunchAllGather(
     se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
     PrimitiveType dtype, size_t count, const Executor& executor) {
   CHECK_CANCELLED()
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+  ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   VLOG(3) << "LaunchAllGather: send_buffer=" << send_buffer.opaque()
           << " recv_buffer=" << recv_buffer.opaque() << " count=" << count
           << " dtype=" << primitive_util::LowercasePrimitiveTypeName(dtype)
@@ -308,7 +308,7 @@ absl::Status MoriCommunicator::LaunchAllReduce(
     const Executor& executor) {
   CHECK_CANCELLED()
 
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+  ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   auto gpu_stream = AsRocmStream(stream);
   (void)gpu_stream;
   void* source_ptr = send_buffer.opaque();
@@ -351,7 +351,7 @@ absl::Status MoriCommunicator::LaunchReduceScatter(
     PrimitiveType dtype, size_t count, ReductionKind kind,
     const Executor& executor) {
   CHECK_CANCELLED()
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+  ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
 
   // TODO: check if staging buffer is large enough for the operation
   if (staging_buffer_.size() < ToMoriByteCount(dtype, count)) {
@@ -373,7 +373,7 @@ absl::Status MoriCommunicator::LaunchCollectivePermute(
     PrimitiveType dtype, size_t count, std::optional<RankId> source_rank,
     absl::Span<const RankId> target_ranks, const Executor& executor) {
   CHECK_CANCELLED()
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+  ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   size_t bytes = ToMoriByteCount(dtype, count);
   (void)bytes;
   auto rank_formatter = [](std::string* out, RankId rank) {
@@ -390,7 +390,7 @@ absl::Status MoriCommunicator::LaunchCollectivePermute(
 
   // NOTE normally we could merge these to a single kernel
   for (auto target_rank : target_ranks) {
-    TF_RETURN_IF_ERROR(
+    RETURN_IF_ERROR(
         xla_mori::SendSDMA(recv_buffer.opaque(), send_buffer.opaque(), bytes,
                            target_rank.value(), AsRocmStream(stream)));
   }
@@ -402,8 +402,8 @@ absl::Status MoriCommunicator::LaunchCollectivePermute(
 //       and sets a completion flag on the peer.
 // Recv: launches a single-thread GPU kernel that waits for the flag.
 absl::Status MoriCommunicator::P2P(P2PType p2p_type, PrimitiveType dtype,
-                                   se::DeviceMemoryBase recv_buffer,
-                                   se::DeviceMemoryBase send_buffer,
+                                   se::DeviceAddressBase recv_buffer,
+                                   se::DeviceAddressBase send_buffer,
                                    size_t count, RankId peer,
                                    const Executor& executor) {
   const char* stype = (p2p_type == P2PType::Send ? " Send" : " Recv");
@@ -414,7 +414,7 @@ absl::Status MoriCommunicator::P2P(P2PType p2p_type, PrimitiveType dtype,
   void* source_ptr = send_buffer.opaque();
   void* dest_ptr = recv_buffer.opaque();
 
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+  ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   auto gpu_stream = AsRocmStream(stream);
   size_t bytes = ToMoriByteCount(dtype, count);
   int res = 0;
@@ -454,7 +454,7 @@ absl::Status MoriCommunicator::GroupLaunch(
 absl::Status MoriCommunicator::Quiet(const Executor& executor) {
   VLOG(1) << "Quiet MORI communicator: " << ToString();
   CHECK_CANCELLED()
-  TF_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+  ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
   auto gpu_stream = AsRocmStream(stream);
   (void)gpu_stream;
   return absl::UnimplementedError("Not implementedA");

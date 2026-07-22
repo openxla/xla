@@ -28,7 +28,7 @@ limitations under the License.
 #include "xla/core/collectives/rank_id.h"
 #include "xla/future.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/xla_data.pb.h"
@@ -66,31 +66,31 @@ class MoriCommunicator : public GpuCommunicator {
 
   Future<> GroupExecute(absl::AnyInvocable<absl::Status() &&> group) final;
 
-  Future<> AllReduce(se::DeviceMemoryBase send_buffer,
-                     se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
+  Future<> AllReduce(se::DeviceAddressBase send_buffer,
+                     se::DeviceAddressBase recv_buffer, PrimitiveType dtype,
                      size_t count, ReductionKind reduction_kind,
                      const Executor& executor) final;
 
-  Future<> Broadcast(se::DeviceMemoryBase send_buffer,
-                     se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
+  Future<> Broadcast(se::DeviceAddressBase send_buffer,
+                     se::DeviceAddressBase recv_buffer, PrimitiveType dtype,
                      size_t count, RankId root, const Executor& executor) final;
 
-  Future<> ReduceScatter(se::DeviceMemoryBase send_buffer,
-                         se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
+  Future<> ReduceScatter(se::DeviceAddressBase send_buffer,
+                         se::DeviceAddressBase recv_buffer, PrimitiveType dtype,
                          size_t count, ReductionKind reduction_kind,
                          const Executor& executor) final;
 
-  Future<> AllGather(se::DeviceMemoryBase send_buffer,
-                     se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
+  Future<> AllGather(se::DeviceAddressBase send_buffer,
+                     se::DeviceAddressBase recv_buffer, PrimitiveType dtype,
                      size_t count, const Executor& executor) final;
 
-  Future<> AllToAll(absl::InlinedVector<se::DeviceMemoryBase, 4> send_buffers,
-                    absl::InlinedVector<se::DeviceMemoryBase, 4> recv_buffers,
+  Future<> AllToAll(absl::InlinedVector<se::DeviceAddressBase, 4> send_buffers,
+                    absl::InlinedVector<se::DeviceAddressBase, 4> recv_buffers,
                     PrimitiveType dtype, size_t count,
                     const Executor& executor) final;
 
-  Future<> CollectivePermute(se::DeviceMemoryBase send_buffer,
-                             se::DeviceMemoryBase recv_buffer,
+  Future<> CollectivePermute(se::DeviceAddressBase send_buffer,
+                             se::DeviceAddressBase recv_buffer,
                              PrimitiveType dtype, size_t count,
                              std::optional<RankId> source_rank,
                              absl::Span<const RankId> target_ranks,
@@ -106,12 +106,12 @@ class MoriCommunicator : public GpuCommunicator {
     return absl::UnimplementedError("Not implemented12");
   }
 
-  Future<> Send(se::DeviceMemoryBase recv_buffer,
-                se::DeviceMemoryBase send_buffer, PrimitiveType dtype,
+  Future<> Send(se::DeviceAddressBase recv_buffer,
+                se::DeviceAddressBase send_buffer, PrimitiveType dtype,
                 size_t count, RankId peer, const Executor& executor) final;
 
-  Future<> Recv(se::DeviceMemoryBase recv_buffer,
-                se::DeviceMemoryBase send_buffer, PrimitiveType dtype,
+  Future<> Recv(se::DeviceAddressBase recv_buffer,
+                se::DeviceAddressBase send_buffer, PrimitiveType dtype,
                 size_t count, RankId peer, const Executor& executor) final;
 
   // Polls the communicator until any pending non-blocking operations are done
@@ -192,8 +192,8 @@ class MoriCommunicator : public GpuCommunicator {
   enum class P2PType : int32_t { Send, Recv };
 
   absl::Status P2P(P2PType p2p_type, PrimitiveType type,
-                   se::DeviceMemoryBase recv_buffer,
-                   se::DeviceMemoryBase send_buffer, size_t count, RankId peer,
+                   se::DeviceAddressBase recv_buffer,
+                   se::DeviceAddressBase send_buffer, size_t count, RankId peer,
                    const Executor& executor);
 
   static absl::StatusOr<se::Stream*> ToStream(const Executor& executor);
