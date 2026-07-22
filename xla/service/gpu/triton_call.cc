@@ -73,16 +73,18 @@ TritonCall TritonCall::Parse(absl::string_view backend_config,
   int64_t waves_per_eu = 0;
   if (auto attr = attrs.getAs<mlir::StringAttr>("serialized_metadata")) {
     llvm::Expected<llvm::json::Value> parsed =
-        llvm::json::parse(attr.getValue().str());
+        llvm::json::parse(attr.getValue());
     if (parsed) {
       if (llvm::json::Object* obj = parsed->getAsObject()) {
         if (std::optional<llvm::StringRef> v = obj->getString("waves_per_eu")) {
           int64_t tmp = 0;
-          if (llvm::to_integer(*v, tmp)) {
+          if (llvm::to_integer(*v, tmp) && tmp > 0) {
             waves_per_eu = tmp;
           }
         } else if (std::optional<int64_t> n = obj->getInteger("waves_per_eu")) {
-          waves_per_eu = *n;
+          if (*n > 0) {
+            waves_per_eu = *n;
+          }
         }
       }
     } else {
