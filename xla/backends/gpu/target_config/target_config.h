@@ -40,12 +40,14 @@ enum class GpuModel {
   H100_SXM,
   H200,
   MI200,
+  MI350,
   P100,
   PVC,
   V100,
   GB200,
   GB300,
-  RTX6000PRO
+  RTX6000PRO,
+  GFX1250,
 };
 
 // Description of a target device for compilation.
@@ -72,6 +74,11 @@ struct GpuTargetConfig {
 // Returns the GpuTargetConfigProto for the given GPU model.
 absl::StatusOr<stream_executor::GpuTargetConfigProto> GetGpuTargetConfig(
     GpuModel gpu_model);
+
+// Returns the GpuTargetConfigProto for the given device kind string
+// (device_description_str from the spec files).
+absl::StatusOr<stream_executor::GpuTargetConfigProto>
+GetGpuTargetConfigFromDeviceKind(absl::string_view device_kind);
 
 // Reads a `GpuTargetConfigProto` textproto from the specified `filename`.
 absl::StatusOr<GpuTargetConfig> GetTargetConfigFromFile(

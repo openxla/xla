@@ -18,11 +18,14 @@ limitations under the License.
 #include <cstddef>
 #include <string>
 
+#include "absl/base/no_destructor.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "google/protobuf/text_format.h"
 #include "xla/backends/gpu/target_config/embed_gpu_specs.h"
 #include "xla/status_macros.h"
@@ -78,6 +81,9 @@ absl::StatusOr<absl::string_view> GetEmbeddedGpuTargetConfigData(
     case GpuModel::MI200:
       filename = "mi200.txtpb";
       break;
+    case GpuModel::MI350:
+      filename = "mi350.txtpb";
+      break;
     case GpuModel::P100:
       filename = "p100.txtpb";
       break;
@@ -95,6 +101,9 @@ absl::StatusOr<absl::string_view> GetEmbeddedGpuTargetConfigData(
       break;
     case GpuModel::RTX6000PRO:
       filename = "rtx6000pro.txtpb";
+      break;
+    case GpuModel::GFX1250:
+      filename = "gfx1250.txtpb";
       break;
     default:
       return absl::NotFoundError(
@@ -115,6 +124,22 @@ absl::StatusOr<absl::string_view> GetEmbeddedGpuTargetConfigData(
 
 absl::StatusOr<stream_executor::GpuTargetConfigProto> GetGpuTargetConfig(
     GpuModel gpu_model) {
+
+  using GpuModelTargetConfigMap =
+      absl::flat_hash_map<GpuModel, stream_executor::GpuTargetConfigProto>;
+
+  static absl::Mutex mu;
+  static absl::NoDestructor<GpuModelTargetConfigMap> cache ABSL_GUARDED_BY(mu);
+
+  auto it = cache->end();
+  {
+    absl::MutexLock lock(mu);
+    it = cache->find(gpu_model);
+  }
+  if (it != cache->end()) {
+    return it->second;
+  }
+
   ABSL_ASSIGN_OR_RETURN(absl::string_view gpu_spec,
                         GetEmbeddedGpuTargetConfigData(gpu_model));
 
@@ -124,6 +149,12 @@ absl::StatusOr<stream_executor::GpuTargetConfigProto> GetGpuTargetConfig(
         "Failed to parse GpuTargetConfigProto from embedded data for: ",
         gpu_model));
   }
+
+  {
+    absl::MutexLock lock(mu);
+    cache->emplace(gpu_model, config);
+  }
+
   return config;
 }
 
