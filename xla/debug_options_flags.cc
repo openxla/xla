@@ -108,7 +108,8 @@ absl::StatusOr<std::vector<RepeatedFlagModifier>> ParseRepeatedEnumModifiers(
 namespace {
 
 template <typename T>
-static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list, T value) {
+static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list,
+                                   T value) {
   for (auto it = list->begin(); it != list->end(); ++it) {
     if (*it == value) {
       return it;
@@ -122,7 +123,8 @@ template <typename T>
 static std::function<bool(const std::string&)> SetterForRepeatedEnum(
     absl::string_view flag_name, absl::string_view enum_prefix,
     std::function<bool(absl::string_view, T*)> enum_parser,
-    std::function<google::protobuf::RepeatedField<int>*()> mutable_array_getter) {
+    std::function<google::protobuf::RepeatedField<int>*()>
+        mutable_array_getter) {
   return [flag_name, enum_prefix, enum_parser,
           mutable_array_getter](absl::string_view input) {
     auto* mutable_array = mutable_array_getter();
@@ -465,6 +467,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_parallel_collective_overlap_limit(1);
   opts.set_xla_gpu_experimental_collective_start_as_early_as_possible(false);
   opts.set_xla_gpu_experimental_parallel_async_compute_limit(2);
+  opts.set_xla_gpu_experimental_enable_scheduler_memory_fencing(false);
+  opts.set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(0);
+  opts.set_xla_gpu_experimental_scheduler_memory_fencing_slack_windows(1);
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
@@ -3000,6 +3005,36 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "This controls how many in-flight asynchronous computations "
       "latency hiding scheduler can schedule."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_scheduler_memory_fencing",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_enable_scheduler_memory_fencing),
+      debug_options->xla_gpu_experimental_enable_scheduler_memory_fencing(),
+      "If true, run the SchedulerMemoryFencing pass before the latency-hiding "
+      "scheduler. It adds control dependencies from every user of a large "
+      "buffer to a later async collective start, derived from the pre-LHS "
+      "schedule, so LHS cannot defer any of those users across many "
+      "collective windows and inflate peak memory."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes",
+      int64_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes),
+      debug_options
+          ->xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(),
+      "Buffers of at least this size in bytes are fenced by the "
+      "SchedulerMemoryFencing pass. 0 means 1% of the scheduler memory "
+      "limit."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_scheduler_memory_fencing_slack_windows",
+      int32_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_scheduler_memory_fencing_slack_windows),
+      debug_options
+          ->xla_gpu_experimental_scheduler_memory_fencing_slack_windows(),
+      "How many async collective windows the users of a fenced buffer may be "
+      "deferred past the buffer's last-use window in the pre-LHS schedule."));
+  flag_list->push_back(tsl::Flag(
       "xla_pjrt_allow_auto_layout_in_hlo",
       bool_setter_for(&DebugOptions::set_xla_pjrt_allow_auto_layout_in_hlo),
       debug_options->xla_pjrt_allow_auto_layout_in_hlo(),
@@ -3581,8 +3616,7 @@ FlagStatus GetFlagStatus(absl::string_view flag_name) {
           "xla_gpu_all_reduce_combine_threshold_bytes",
           "xla_gpu_autotune_level",
           "xla_gpu_collective_permute_decomposer_threshold",
-          "xla_gpu_cublas_fallback",
-          "xla_gpu_dot_merger_threshold_mb",
+          "xla_gpu_cublas_fallback", "xla_gpu_dot_merger_threshold_mb",
           "xla_gpu_enable_dynamic_slice_fusion",
           "xla_gpu_enable_latency_hiding_scheduler",
           "xla_gpu_enable_pipelined_all_gather",
