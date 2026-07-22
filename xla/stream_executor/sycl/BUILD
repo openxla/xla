@@ -596,3 +596,19 @@ cc_library(
         "@tsl//tsl/platform:str_util",
     ],
 )
+
+cc_library(
+    name = "sycl_matmul_utils",
+    srcs = ["sycl_matmul_utils.cc"],
+    hdrs = ["sycl_matmul_utils.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":onednn_util",
+        ":sycl_executor",
+        "//xla/service/gpu:matmul_utils",
+        "@com_google_absl//absl/strings",
+    ],
+)
