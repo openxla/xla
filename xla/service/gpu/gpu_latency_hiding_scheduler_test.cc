@@ -1170,9 +1170,9 @@ ENTRY main {
   const HloSchedule& schedule = module->schedule();
   std::vector<HloInstruction*> instruction_sequence =
       schedule.sequence(module->entry_computation()).instructions();
-  EXPECT_LT(GetIndexByName(instruction_sequence, "dynamic-slice-start"),
-            GetIndexByName(instruction_sequence, "add"));
   EXPECT_LT(GetIndexByName(instruction_sequence, "add"),
+            GetIndexByName(instruction_sequence, "dynamic-slice-start"));
+  EXPECT_LT(GetIndexByName(instruction_sequence, "dynamic-slice-start"),
             GetIndexByName(instruction_sequence, "dynamic-slice-done"));
 }
 
@@ -1304,62 +1304,26 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
 
 TEST_F(GpuLatencyHidingSchedulerBaseTest,
        SelectiveMemcpyOverlapSchedulesOnlyComputeBoundKernelInsideCopyWindow) {
-  absl::string_view kFdoProfile = "";
-  HloModuleConfig default_config = GetModuleConfig(kFdoProfile);
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> default_module,
-                       ParseAndReturnVerifiedModule(
-                           kSelectiveMemcpyOverlapHloModule, default_config));
-  default_module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_experimental_enable_selective_memcpy_overlap(false);
-  ASSERT_OK(ScheduleModule(default_module.get(), /*num_parallel_resources=*/2));
-  const HloSchedule& default_schedule = default_module->schedule();
-  std::vector<HloInstruction*> default_sequence =
-      default_schedule.sequence(default_module->entry_computation())
-          .instructions();
-  int default_start_idx =
-      GetIndexByName(default_sequence, "dynamic-slice-start");
-  int default_done_idx = GetIndexByName(default_sequence, "dynamic-slice-done");
-  int default_transpose_idx =
-      GetIndexByName(default_sequence, "transpose_fusion");
-  int default_add_idx = GetIndexByName(default_sequence, "add");
+  HloModuleConfig config = GetModuleConfig("");
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kSelectiveMemcpyOverlapHloModule, config));
 
-  // Without selective overlap, the memory-bound transpose is scheduled
-  // inside the async D2D copy window.
-  EXPECT_LT(default_start_idx, default_transpose_idx);
-  EXPECT_LT(default_transpose_idx, default_done_idx);
-  EXPECT_LT(default_start_idx, default_add_idx);
-  EXPECT_LT(default_add_idx, default_done_idx);
-
-  HloModuleConfig selective_config = GetModuleConfig(kFdoProfile);
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> selective_module,
-                       ParseAndReturnVerifiedModule(
-                           kSelectiveMemcpyOverlapHloModule, selective_config));
-  selective_module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_experimental_enable_selective_memcpy_overlap(true);
-
-  ASSERT_OK(
-      ScheduleModule(selective_module.get(), /*num_parallel_resources=*/2));
-  const HloSchedule& selective_schedule = selective_module->schedule();
-  std::vector<HloInstruction*> selective_sequence =
-      selective_schedule.sequence(selective_module->entry_computation())
-          .instructions();
-  int selective_start_idx =
-      GetIndexByName(selective_sequence, "dynamic-slice-start");
-  int selective_done_idx =
-      GetIndexByName(selective_sequence, "dynamic-slice-done");
-  int selective_dot_idx = GetIndexByName(selective_sequence, "dot_fusion");
-  int selective_transpose_idx =
-      GetIndexByName(selective_sequence, "transpose_fusion");
-  int selective_add_idx = GetIndexByName(selective_sequence, "add");
+  ASSERT_OK(ScheduleModule(module.get(), /*num_parallel_resources=*/2));
+  const std::vector<HloInstruction*>& sequence =
+      module->schedule().sequence(module->entry_computation()).instructions();
+  int start_idx = GetIndexByName(sequence, "dynamic-slice-start");
+  int done_idx = GetIndexByName(sequence, "dynamic-slice-done");
+  int dot_idx = GetIndexByName(sequence, "dot_fusion");
+  int transpose_idx = GetIndexByName(sequence, "transpose_fusion");
+  int add_idx = GetIndexByName(sequence, "add");
 
   // Memory-bound kernels are kept outside the async D2D copy window, while
   // the compute-bound dot fusion remains inside to hide the copy latency.
-  EXPECT_LT(selective_transpose_idx, selective_start_idx);
-  EXPECT_LT(selective_add_idx, selective_start_idx);
-  EXPECT_LT(selective_start_idx, selective_dot_idx);
-  EXPECT_LT(selective_dot_idx, selective_done_idx);
+  EXPECT_LT(transpose_idx, start_idx);
+  EXPECT_LT(add_idx, start_idx);
+  EXPECT_LT(start_idx, dot_idx);
+  EXPECT_LT(dot_idx, done_idx);
 }
 
 TEST_F(GpuLatencyHidingSchedulerBaseTest,
@@ -1417,8 +1381,6 @@ ENTRY main {
 })";
 
   HloModuleConfig config = GetModuleConfig("");
-  config.mutable_debug_options()
-      .set_xla_gpu_experimental_enable_selective_memcpy_overlap(true);
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       ParseAndReturnVerifiedModule(kHloModule, std::move(config)));

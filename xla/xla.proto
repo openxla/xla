@@ -971,15 +971,6 @@ message DebugOptions {
   // For sub-byte dot operands, layout them along contracting dimensions.
   optional bool xla_gpu_experimental_pack_dot_operands_along_k_dimension = 362;
 
-  // If true, the latency hiding scheduler treats the async D2D memcpy
-  // resource (e.g. dynamic-slice copy fusions) as a selective resource:
-  // only compute-bound kernels (dots, convolutions and library calls) are
-  // considered valuable for hiding the copy latency. Memory-bandwidth-bound
-  // kernels (transposes, copies, loop fusions, ...) contend with the copy
-  // for HBM bandwidth and provide almost no effective overlap, which leaves
-  // the copy exposed in practice.
-  optional bool xla_gpu_experimental_enable_selective_memcpy_overlap = 516;
-
   // This controls the limitation of async-compute resource.
   // This provides ample flexibility for control, enabling more asynchronous
   // computations to execute concurrently. In host-offloading experiments,
@@ -1678,7 +1669,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 517
+  // Next id: 516
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
