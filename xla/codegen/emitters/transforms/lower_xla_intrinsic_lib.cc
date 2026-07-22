@@ -12,7 +12,6 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <utility>
 
@@ -35,11 +34,10 @@ limitations under the License.
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "xla/codegen/emitters/transforms/passes.h"
+#include "xla/codegen/emitters/transforms/passes.h"  // NOLINT(misc-include-cleaner)
 #include "xla/codegen/intrinsic/cpp/intrinsic_declarations.h"
 #include "xla/codegen/intrinsic/erf.h"
 #include "xla/codegen/intrinsic/exp.h"
@@ -338,6 +336,8 @@ class LowerXlaIntrinsicLibPass
         LowerIntrinsicPattern<codegen::intrinsics::Tanh, mlir::math::TanhOp>,
         LowerIntrinsicPattern<codegen::intrinsics::EigenAtan,
                               mlir::math::AtanOp>,
+        LowerIntrinsicPattern<codegen::intrinsics::EigenSin, mlir::math::SinOp>,
+        LowerIntrinsicPattern<codegen::intrinsics::EigenCos, mlir::math::CosOp>,
         SimplifyAtan2Pattern, LowerErfPattern, LowerTruncF32BF16FPattern>(
         &getContext(), module_op);
 
