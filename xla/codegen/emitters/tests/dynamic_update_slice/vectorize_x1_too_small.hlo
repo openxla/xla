@@ -23,3 +23,5 @@ ENTRY main {
 
 // CHECK-NOT: vector.transfer_read {{.*}} vector<4xf32>
 // CHECK-NOT: vector.transfer_write {{.*}} vector<4xf32>
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

@@ -16,3 +16,5 @@ fusion {
 }
 // CHECK-COUNT-2: func.func
 // CHECK-NOT:     func.func
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

@@ -10,3 +10,5 @@ neg {
 
 // CHECK-NOT: vector.
 // CHECK: tensor.extract
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

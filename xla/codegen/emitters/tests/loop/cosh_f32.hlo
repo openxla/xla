@@ -8,3 +8,4 @@ fusion {
 }
 
 // CHECK: llvm.call @__nv_coshf(
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

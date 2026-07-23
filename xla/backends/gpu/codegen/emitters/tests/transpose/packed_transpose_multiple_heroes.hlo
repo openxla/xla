@@ -28,3 +28,4 @@
 // CHECK-SAME:  -> (tensor<64x64xf16>, tensor<64x64xf16>, tensor<64x64xf16>)
 // CHECK:  xla.yield
 // CHECK-SAME:  tensor<64x64xf16>, tensor<64x64xf16>, tensor<64x64xf16>
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

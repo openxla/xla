@@ -26,3 +26,5 @@ ENTRY entry_computation {
 }
 // CHECK-COUNT-4: arith.add
 // CHECK-NOT: arith.add
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

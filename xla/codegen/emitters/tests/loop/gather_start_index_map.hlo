@@ -31,3 +31,5 @@ ENTRY main {
 // CHECK: %[[IDX1_I:.*]] = arith.index_cast %[[IDX1]]
 // CHECK: %[[C26:.*]] = arith.constant 26 : index
 // CHECK: arith.minsi %[[IDX1_I]], %[[C26]]
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

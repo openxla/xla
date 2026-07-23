@@ -30,3 +30,5 @@ fusion {
 // CHECK-NEXT: complex.add
 // CHECK-NEXT: tensor.extract
 // CHECK-NEXT: complex.mul
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

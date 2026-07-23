@@ -7,3 +7,5 @@ fusion {
   ROOT sinh = f64[256] sinh(p0)
 }
 // CHECK: llvm.call @__nv_sinh(
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

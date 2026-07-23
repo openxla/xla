@@ -17,3 +17,5 @@ fusion {
 // CHECK-NOT: allocate_shared
 // Check that the addf op in the reducer has the nsz fastmath flag
 // CHECK: arith.addf %{{.*}}, %{{.*}} fastmath<nsz> : f64
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

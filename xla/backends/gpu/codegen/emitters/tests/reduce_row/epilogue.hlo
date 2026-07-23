@@ -22,3 +22,5 @@ fusion {
 // CHECK:      shuffle_reduce
 // CHECK-NEXT: %[[OUT:.*]] = math.log
 // CHECK:      predicated_insert %[[OUT]]
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

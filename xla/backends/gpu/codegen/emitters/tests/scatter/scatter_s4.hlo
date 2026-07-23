@@ -18,3 +18,4 @@ add {
     index_vector_dim=1,
     to_apply=add
 }
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

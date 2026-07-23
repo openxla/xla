@@ -21,3 +21,5 @@ fusion {
 // CHECK:         %[[SIDE_OUTPUT:.*]] = xla.pure_call @fusion_exp
 // CHECK-NEXT:    tensor.insert %[[SIDE_OUTPUT]]
 // CHECK:         xla.yield
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

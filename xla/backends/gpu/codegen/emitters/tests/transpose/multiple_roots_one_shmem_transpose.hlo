@@ -18,3 +18,4 @@ fusion {
 // CHECK: xla_gpu.allocate_shared : tensor<64x64xbf16>
 // CHECK:  vector.transfer_read
 // CHECK-SAME: tensor<64x64xbf16>, vector<2xbf16>
+// Touch to re-trigger flaky SIGSEGV investigation in CI.
