@@ -67,6 +67,10 @@ class GpuCollectives : public Collectives {
     size_t device_count_per_process;
     std::shared_ptr<KeyValueStoreInterface> kv_store;
     absl::flat_hash_map<GlobalDeviceId, ProcessId> device_to_process;
+    // Maps this process's local device ordinals to their global device ids.
+    // Used by backends (e.g. MORI) that must eagerly initialize each local
+    // device with its global rank across the whole distributed topology.
+    absl::flat_hash_map<LocalDeviceId, GlobalDeviceId> local_device_global_ids;
   };
 
   // Initializes the collectives backend with the provided topology information

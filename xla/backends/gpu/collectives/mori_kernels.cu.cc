@@ -269,11 +269,13 @@ absl::Status ReduceScatter(void* send_buffer, void* recv_buffer,
   BarrierKernel<<<1, 1, 0, stream>>>();
   MORI_HIP_ERROR(hipGetLastError());
 
-  ReduceScatterPushKernel<VecBytes, NumVecs, ElemT, SumOp>
-      <<<pushBlocks, kThreads, 0, stream>>>(
-          myPe, npes, logS, static_cast<const ElemT*>(send_buffer),
-          static_cast<ElemT*>(staging_buffer), static_cast<ElemT*>(recv_buffer),
-          groupCounters, chunkElems);
+  // ReduceScatterPushKernel<VecBytes, NumVecs, ElemT, SumOp>
+  //     <<<pushBlocks, kThreads, 0, stream>>>(
+  //         myPe, npes, logS, static_cast<const ElemT*>(send_buffer),
+  //         static_cast<ElemT*>(staging_buffer),
+  //         static_cast<ElemT*>(recv_buffer), groupCounters, chunkElems);
+  return absl::UnimplementedError("ReduceScatterPushKernel not implemented");
+
   MORI_HIP_ERROR(hipGetLastError());
   MORI_HIP_ERROR(hipStreamSynchronize(stream));
   return absl::OkStatus();

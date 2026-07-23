@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -78,11 +79,11 @@ class MoriCollectives : public GpuCollectives {
   }
 
   absl::StatusOr<std::vector<std::unique_ptr<Communicator>>>
-  SplitCommunicatorsWithCancel(absl::Span<const Communicator* const> comms,
-                               int32_t color, absl::Span<const RankId> keys,
-                               const Collectives::Config& config,
-                               absl::Span<const DeviceRank> ranks,
-                               std::shared_ptr<CancellationToken> cancel) final {
+  SplitCommunicatorsWithCancel(
+      absl::Span<const Communicator* const> comms, int32_t color,
+      absl::Span<const RankId> keys, const Collectives::Config& config,
+      absl::Span<const DeviceRank> ranks,
+      std::shared_ptr<CancellationToken> cancel) final {
     return absl::UnimplementedError("Not implementedZ.");
   }
 
@@ -103,6 +104,16 @@ class MoriCollectives : public GpuCollectives {
   // InitializeTopology path and the lazy CreateCommunicatorsWithCancel path.
   absl::Status InitPe(int32_t rank, int32_t nranks, const CliqueId& clique_id,
                       stream_executor::StreamExecutor* executor);
+
+  using LocalDevIdMap = absl::flat_hash_map<LocalDeviceId, GlobalDeviceId>;
+
+  // Eagerly initializes a set of local PEs concurrently. `local_ordinal_to_pe`
+  // maps each local device ordinal to its global PE (rank) within a world of
+  // `nranks` PEs sharing `clique_id`. All PEs across all processes must run
+  // this concurrently for MORI's bootstrap to rendezvous. Sets `initialized_`
+  // on success.
+  absl::Status EagerInitLocalPes(const LocalDevIdMap& local_dev_id_map,
+                                 int32_t nranks, const CliqueId& clique_id);
 
   bool initialized_ = false;
 };

@@ -56,7 +56,6 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/target_config/target_config.h"
-#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/client/local_client.h"
 #include "xla/core/collectives/clique_id.h"
 #include "xla/core/collectives/collectives.h"
@@ -849,67 +848,69 @@ void StreamExecutorGpuClient::ScheduleTransfersOnLocalDevice(
   };
 
   // Form the closure to schedule on the device's execute thread.
-  auto execute_transfers_fn =
-      [this, local_device_state, stream,
-       transfer_dependencies = std::move(transfer_dependencies),
-       prepared_transfers = std::move(prepared_transfers),
-       launch_transfer_group = std::move(launch_transfer_group),
-       transfer_event = std::move(transfer_event)]() mutable {
-        // Wait for transfer dependencies.
-        if (auto status =
-                WaitForDeviceEventRefsOnStream(transfer_dependencies, stream);
-            !status.ok()) {
+  auto execute_transfers_fn = [this, local_device_state, stream,
+                               transfer_dependencies =
+                                   std::move(transfer_dependencies),
+                               prepared_transfers =
+                                   std::move(prepared_transfers),
+                               launch_transfer_group =
+                                   std::move(launch_transfer_group),
+                               transfer_event =
+                                   std::move(transfer_event)]() mutable {
+    // Wait for transfer dependencies.
+    if (auto status =
+            WaitForDeviceEventRefsOnStream(transfer_dependencies, stream);
+        !status.ok()) {
+      FulfillDeviceEvent(this, local_device_state, stream, transfer_event,
+                         status);
+      return;
+    }
+
+    // Group transfers by GPU clique.
+    std::vector<std::pair<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>>
+        grouped_transfers =
+            GroupTransfersByCliqueKey(std::move(prepared_transfers));
+
+    // Transfers for a particular clique are executed as a group. This
+    // vector holds group futures for each clique_key in grouped_transfers.
+    std::vector<Future<>> group_futures;
+    group_futures.reserve(grouped_transfers.size());
+
+    for (auto& [clique_key, curr_transfers] : grouped_transfers) {
+      tsl::profiler::TraceMe trace([&k = clique_key] {
+        return tsl::profiler::TraceMeEncode("LaunchTransfer", {{"clique", k}});
+      });
+
+      // Get the communicator on which we will execute this group of
+      // transfers. We assume each clique key is associated with a unique
+      // communicator, so we just take the communicator of the first
+      // transfer_idx of this clique key.
+      gpu::GpuCommunicator* gpu_communicator =
+          curr_transfers[0].clique_and_communicator_.second;
+
+      // Launch the group of transfers.
+      group_futures.push_back(gpu_communicator->GroupExecute(
+          [&launch_transfer_group, &curr_transfers = curr_transfers, stream,
+           gpu_communicator]() {
+            return launch_transfer_group(
+                gpu_communicator, absl::MakeSpan(curr_transfers), stream);
+          }));
+    }
+
+    // On a separate thread pool, await group futures and fulfill buffer
+    // sequencing events and promises.
+    Future<> all_transfers_future = JoinFutures(group_futures);
+
+    all_transfers_future.OnReady(
+        *async_work_runner(),
+        [this, local_device_state, stream, transfer_event,
+         grouped_transfers =
+             std::move(grouped_transfers)](const absl::Status& status) mutable {
+          // Add transfer_event onto the stream.
           FulfillDeviceEvent(this, local_device_state, stream, transfer_event,
                              status);
-          return;
-        }
-
-        // Group transfers by GPU clique.
-        std::vector<std::pair<gpu::GpuCliqueKey, std::vector<PreparedTransfer>>>
-            grouped_transfers =
-                GroupTransfersByCliqueKey(std::move(prepared_transfers));
-
-        // Transfers for a particular clique are executed as a group. This
-        // vector holds group futures for each clique_key in grouped_transfers.
-        std::vector<Future<>> group_futures;
-        group_futures.reserve(grouped_transfers.size());
-
-        for (auto& [clique_key, curr_transfers] : grouped_transfers) {
-          tsl::profiler::TraceMe trace([&k = clique_key] {
-            return tsl::profiler::TraceMeEncode("LaunchTransfer",
-                                                {{"clique", k}});
-          });
-
-          // Get the communicator on which we will execute this group of
-          // transfers. We assume each clique key is associated with a unique
-          // communicator, so we just take the communicator of the first
-          // transfer_idx of this clique key.
-          gpu::GpuCommunicator* gpu_communicator =
-              curr_transfers[0].clique_and_communicator_.second;
-
-          // Launch the group of transfers.
-          group_futures.push_back(gpu_communicator->GroupExecute(
-              [&launch_transfer_group, &curr_transfers = curr_transfers, stream,
-               gpu_communicator]() {
-                return launch_transfer_group(
-                    gpu_communicator, absl::MakeSpan(curr_transfers), stream);
-              }));
-        }
-
-        // On a separate thread pool, await group futures and fulfill buffer
-        // sequencing events and promises.
-        Future<> all_transfers_future = JoinFutures(group_futures);
-
-        all_transfers_future.OnReady(
-            *async_work_runner(),
-            [this, local_device_state, stream, transfer_event,
-             grouped_transfers = std::move(grouped_transfers)](
-                const absl::Status& status) mutable {
-              // Add transfer_event onto the stream.
-              FulfillDeviceEvent(this, local_device_state, stream,
-                                 transfer_event, status);
-            });
-      };
+        });
+  };
 
   // Schedule transfers on the execute thread.
   local_device_state->execute_thread()->Schedule(
@@ -1763,11 +1764,13 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   VLOG(3) << absl::StreamFormat(
       "Set GPU device id map for process %d: %s", process_id,
       absl::StrJoin(gpu_device_ids, ",", absl::PairFormatter("->")));
+  absl::flat_hash_map<LocalDeviceId, GlobalDeviceId> local_device_global_ids(
+      gpu_device_ids.begin(), gpu_device_ids.end());
   gpu_executable_run_options->set_gpu_global_device_ids(
       std::move(gpu_device_ids));
 
-  auto *gpu_collectives = gpu::ResolveCollectives(gpu_executable_run_options, 
-            platform_name);
+  auto* gpu_collectives =
+      gpu::ResolveCollectives(gpu_executable_run_options, platform_name);
 
   size_t num_processes = global_topology.processes().size();
   if (gpu_collectives->IsImplemented()) {
@@ -1775,7 +1778,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
         auto clique_id_callback,
         gpu_collectives->InitializeTopology(
             {ProcessId(process_id), num_processes, local_device_states.size(),
-             kv_store, device_to_process}));
+             kv_store, device_to_process, std::move(local_device_global_ids)}));
     gpu_executable_run_options->set_clique_id_callback(
         std::move(clique_id_callback));
   }
@@ -2079,7 +2082,8 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetSharedStreamExecutorGpuClient(
       VLOG(2) << "  pjrt_device " << i++ << ":"
               << pjrt_device->description().DebugString();
     } else {
-      VLOG(2) << "  pjrt_device " << i++ << ":" << "nullptr";
+      VLOG(2) << "  pjrt_device " << i++ << ":"
+              << "nullptr";
     }
   }
   ASSIGN_OR_RETURN(auto gpu_topology,
