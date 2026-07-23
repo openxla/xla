@@ -247,10 +247,10 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
     const int64_t workspace_size =
         ShapeUtil::ByteSizeOf(output_shape.tuple_shapes().back());
 
-    const auto max_algorithms =
-        debug_options().xla_gpu_blas_max_algorithms()
-            ? debug_options().xla_gpu_blas_max_algorithms()
-            : GemmConfig::kNumAlgorithms;
+    int max_algorithms = debug_options().xla_gpu_blas_max_algorithms();
+    if (max_algorithms <= 0) {
+      max_algorithms = GemmConfig::kNumAlgorithms;
+    }
 
     ASSIGN_OR_RETURN(std::vector<BlasLt::MatmulAlgorithm> algorithms,
                      plan->GetAlgorithms(max_algorithms, workspace_size));
