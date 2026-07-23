@@ -396,7 +396,7 @@ class CuptiActivityBufferManager {
 };
 
 void AddActivityBufferListEventsTo(
-    CuptiEventCollectorDelegate& receiver,
+    CuptiEventCollectorDelegate& collector,
     CuptiActivityBufferManager::CachedActivityBufferBatch& cached_buffers,
     size_t max_activity_event_count, size_t& dropped_activity_event_count);
 

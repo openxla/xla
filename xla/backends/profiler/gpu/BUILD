@@ -269,6 +269,30 @@ cc_library(
     ],
 )
 
+xla_test(
+    name = "cupti_tracer_test",
+    size = "small",
+    srcs = ["cupti_tracer_test.cc"],
+    backends = ["gpu"],
+    tags = [
+        "cuda-only",
+        "no_mac",
+    ],
+    deps = [
+        ":cuda_test",
+        ":cupti_collector",
+        ":cupti_error_manager",
+        ":cupti_interface",
+        ":cupti_tracer",
+        ":cupti_wrapper",
+        ":mock_cupti",
+        "//xla/tsl/profiler/utils:time_utils",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_cuda//cuda:cupti_headers",
+    ],
+)
+
 cc_library(
     name = "cupti_tracer_options_utils",
     srcs = ["cupti_tracer_options_utils.cc"],

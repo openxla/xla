@@ -96,143 +96,6 @@ class CuptiErrorManagerTest : public ::testing::Test {
 
   bool CuptiDisabled() const { return cupti_error_manager_->Disabled(); }
 
-  CuptiTracerOptions KernelTraceOptions() {
-    CuptiTracerOptions options;
-    options.activities_selected = {CUPTI_ACTIVITY_KIND_KERNEL};
-    options.cbids_selected = {CUPTI_DRIVER_TRACE_CBID_cuLaunchKernel};
-    return options;
-  }
-
-  void ExpectSuccessfulV1KernelTrace(CUpti_SubscriberHandle subscriber) {
-    const int resource_cb_count = IsCudaNewEnoughForGraphTraceTest() ? 5 : 0;
-    EXPECT_CALL(*mock_,
-                EnableCallback(1, subscriber, CUPTI_CB_DOMAIN_RESOURCE, _))
-        .Times(resource_cb_count)
-        .WillRepeatedly(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_,
-                EnableCallback(1, subscriber, CUPTI_CB_DOMAIN_DRIVER_API,
-                               CUPTI_DRIVER_TRACE_CBID_cuLaunchKernel))
-        .WillOnce(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_, SetThreadIdType(CUPTI_ACTIVITY_THREAD_ID_TYPE_SYSTEM))
-        .WillOnce(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_, ActivityUsePerThreadBuffer())
-        .WillOnce(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_, ActivityRegisterCallbacks(_, _))
-        .WillOnce(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_, ActivityEnable(CUPTI_ACTIVITY_KIND_KERNEL))
-        .WillOnce(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_,
-                EnableCallback(0, subscriber, CUPTI_CB_DOMAIN_RESOURCE, _))
-        .Times(resource_cb_count)
-        .WillRepeatedly(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_,
-                EnableCallback(0, subscriber, CUPTI_CB_DOMAIN_DRIVER_API,
-                               CUPTI_DRIVER_TRACE_CBID_cuLaunchKernel))
-        .WillOnce(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_, Unsubscribe(subscriber))
-        .WillOnce(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_, ActivityDisable(CUPTI_ACTIVITY_KIND_KERNEL))
-        .WillOnce(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_, ActivityFlushAll(CUPTI_ACTIVITY_FLAG_FLUSH_FORCED))
-        .WillOnce(Return(CUPTI_SUCCESS));
-  }
-
-  void ExpectV2ResourceCallbacks(Sequence& sequence,
-                                 CUpti_SubscriberHandle subscriber,
-                                 uint32_t enable) {
-    const int count = IsCudaNewEnoughForGraphTraceTest() ? 5 : 0;
-    if (count == 0) {
-      return;
-    }
-    EXPECT_CALL(*mock_,
-                EnableCallback(enable, subscriber, CUPTI_CB_DOMAIN_RESOURCE, _))
-        .Times(count)
-        .InSequence(sequence)
-        .WillRepeatedly(Return(CUPTI_SUCCESS));
-  }
-
-  void ExpectV2KernelCallback(Sequence& sequence,
-                              CUpti_SubscriberHandle subscriber,
-                              uint32_t enable,
-                              CUptiResult result = CUPTI_SUCCESS) {
-    EXPECT_CALL(*mock_,
-                EnableCallback(enable, subscriber, CUPTI_CB_DOMAIN_DRIVER_API,
-                               CUPTI_DRIVER_TRACE_CBID_cuLaunchKernel))
-        .InSequence(sequence)
-        .WillOnce(Return(result));
-  }
-
-  void ExpectV2KernelSession(Sequence& sequence,
-                             CUpti_SubscriberHandle subscriber,
-                             uint64_t preflight_timestamp,
-                             uint64_t fallback_stop_timestamp,
-                             uint64_t stop_timestamp,
-                             CUptiResult stop_timestamp_status = CUPTI_SUCCESS,
-                             bool expect_preflight_timestamp = true) {
-    if (expect_preflight_timestamp) {
-      EXPECT_CALL(*mock_, GetTimestampV2(subscriber, _))
-          .InSequence(sequence)
-          .WillOnce(SetTimestampAndReturnSuccess(preflight_timestamp));
-    }
-    ExpectV2ResourceCallbacks(sequence, subscriber, /*enable=*/1);
-    ExpectV2KernelCallback(sequence, subscriber, /*enable=*/1);
-    EXPECT_CALL(*mock_, ActivityUseSystemThreadIdV2(subscriber))
-        .InSequence(sequence)
-        .WillOnce(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_, ActivityUsePerThreadBufferV2())
-        .InSequence(sequence)
-        .WillOnce(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_, ActivityRegisterCallbacksV2(subscriber, _, _))
-        .InSequence(sequence)
-        .WillOnce(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_,
-                ActivityEnableV2(subscriber, CUPTI_ACTIVITY_KIND_KERNEL, _))
-        .InSequence(sequence)
-        .WillOnce(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_, GetTimestampV2(subscriber, _))
-        .InSequence(sequence)
-        .WillOnce(SetTimestampAndReturnSuccess(fallback_stop_timestamp));
-    ExpectV2ResourceCallbacks(sequence, subscriber, /*enable=*/0);
-    ExpectV2KernelCallback(sequence, subscriber, /*enable=*/0);
-    EXPECT_CALL(*mock_,
-                ActivityDisableV2(subscriber, CUPTI_ACTIVITY_KIND_KERNEL, _))
-        .InSequence(sequence)
-        .WillOnce(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_, ActivityFlushAll(CUPTI_ACTIVITY_FLAG_FLUSH_FORCED))
-        .InSequence(sequence)
-        .WillOnce(Return(CUPTI_SUCCESS));
-    if (stop_timestamp_status == CUPTI_SUCCESS) {
-      EXPECT_CALL(*mock_, GetTimestampV2(subscriber, _))
-          .InSequence(sequence)
-          .WillOnce(SetTimestampAndReturnSuccess(stop_timestamp));
-    } else {
-      EXPECT_CALL(*mock_, GetTimestampV2(subscriber, _))
-          .InSequence(sequence)
-          .WillOnce(Return(stop_timestamp_status));
-    }
-  }
-
-  void ExpectV2KernelSessionWithFatalStopTimestamp(
-      Sequence& sequence, CUpti_SubscriberHandle subscriber,
-      uint64_t preflight_timestamp, uint64_t fallback_stop_timestamp) {
-    ExpectV2KernelSession(sequence, subscriber, preflight_timestamp,
-                          fallback_stop_timestamp,
-                          /*stop_timestamp=*/0, CUPTI_ERROR_INVALID_PARAMETER);
-    EXPECT_CALL(*mock_, GetResultString(CUPTI_ERROR_INVALID_PARAMETER, _))
-        .InSequence(sequence)
-        .WillOnce(Invoke(cupti_wrapper_.get(), &CuptiWrapper::GetResultString));
-
-    EXPECT_CALL(*mock_,
-                ActivityDisableV2(subscriber, CUPTI_ACTIVITY_KIND_KERNEL, _))
-        .InSequence(sequence)
-        .WillOnce(Return(CUPTI_SUCCESS));
-    ExpectV2KernelCallback(sequence, subscriber, /*enable=*/0);
-    ExpectV2ResourceCallbacks(sequence, subscriber, /*enable=*/0);
-    EXPECT_CALL(*mock_, Unsubscribe(subscriber))
-        .InSequence(sequence)
-        .WillOnce(Return(CUPTI_SUCCESS));
-  }
-
   void RunGpuApp() {
     MemCopyH2D();
     PrintfKernel(/*iters=*/10);
@@ -255,6 +118,14 @@ class CuptiErrorManagerTest : public ::testing::Test {
 
   std::unique_ptr<xla::profiler::CuptiTraceCollector> cupti_collector_;
 };
+
+class CuptiV2ActivityConfigurationErrorTest
+    : public CuptiErrorManagerTest,
+      public ::testing::WithParamInterface<CUptiResult> {};
+
+class CuptiV2ActivityRecordErrorTest
+    : public CuptiErrorManagerTest,
+      public ::testing::WithParamInterface<CUptiResult> {};
 
 // Verifies that failed EnableProfiling() does not kill an application.
 TEST_F(CuptiErrorManagerTest, GpuTraceActivityEnableTest) {
@@ -396,180 +267,41 @@ TEST_F(CuptiErrorManagerTest, GpuTraceAutoEnableTest) {
   EXPECT_TRUE(CuptiDisabled());
 }
 
-TEST_F(CuptiErrorManagerTest, V2AvailabilityFailuresFallBackToV1) {
-  EXPECT_FALSE(CuptiDisabled());
-
-  // CuptiWrapper returns CUPTI_ERROR_NOT_SUPPORTED without calling
-  // cuptiSubscribe_v2 when either cuptiSubscribe_v2 or cuptiGetTimestamp_v2 is
-  // unavailable. CUPTI_ERROR_UNKNOWN from cuptiSubscribe_v2 is also safe to
-  // fall back from because no V2 subscriber was successfully created.
-  uintptr_t subscriber_id = 1;
-  for (CUptiResult result : {CUPTI_ERROR_NOT_SUPPORTED, CUPTI_ERROR_UNKNOWN}) {
-    auto* const v1_subscriber =
-        reinterpret_cast<CUpti_SubscriberHandle>(subscriber_id++);
-    EXPECT_CALL(*mock_, SubscribeV2(_, _, _)).WillOnce(Return(result));
-    EXPECT_CALL(*mock_, Subscribe(_, _, _))
-        .WillOnce(
-            DoAll(SetArgPointee<0>(v1_subscriber), Return(CUPTI_SUCCESS)));
-    ExpectSuccessfulV1KernelTrace(v1_subscriber);
-
-    CuptiTracerOptions options = KernelTraceOptions();
-    EnableProfiling(options);
-    DisableProfiling();
-  }
-
-  EXPECT_FALSE(CuptiDisabled());
-}
-
-TEST_F(CuptiErrorManagerTest, V2TimestampFailuresAfterSubscribeFallBackToV1) {
-  EXPECT_FALSE(CuptiDisabled());
-
-  uintptr_t subscriber_id = 10;
-  for (CUptiResult result : {CUPTI_ERROR_NOT_SUPPORTED,
-                             CUPTI_ERROR_NOT_COMPATIBLE, CUPTI_ERROR_UNKNOWN}) {
-    auto* const v2_subscriber =
-        reinterpret_cast<CUpti_SubscriberHandle>(subscriber_id++);
-    auto* const v1_subscriber =
-        reinterpret_cast<CUpti_SubscriberHandle>(subscriber_id++);
-    Sequence fallback_sequence;
-    EXPECT_CALL(*mock_, SubscribeV2(_, _, _))
-        .InSequence(fallback_sequence)
-        .WillOnce(
-            DoAll(SetArgPointee<0>(v2_subscriber), Return(CUPTI_SUCCESS)));
-    EXPECT_CALL(*mock_, GetTimestampV2(v2_subscriber, _))
-        .InSequence(fallback_sequence)
-        .WillOnce(Return(result));
-    EXPECT_CALL(*mock_, Unsubscribe(v2_subscriber))
-        .InSequence(fallback_sequence)
-        .WillOnce(Return(CUPTI_SUCCESS));
-    EXPECT_CALL(*mock_, Subscribe(_, _, _))
-        .InSequence(fallback_sequence)
-        .WillOnce(
-            DoAll(SetArgPointee<0>(v1_subscriber), Return(CUPTI_SUCCESS)));
-    ExpectSuccessfulV1KernelTrace(v1_subscriber);
-
-    CuptiTracerOptions options = KernelTraceOptions();
-    EnableProfiling(options);
-    DisableProfiling();
-  }
-
-  EXPECT_FALSE(CuptiDisabled());
-}
-
-TEST_F(CuptiErrorManagerTest,
-       FatalTimestampV2FailureDoesNotUnsubscribeFreshSubscriberTwice) {
-  EXPECT_FALSE(CuptiDisabled());
-
-  auto* const v2_subscriber =
-      reinterpret_cast<CUpti_SubscriberHandle>(uintptr_t{1});
-  EXPECT_CALL(*mock_, SubscribeV2(_, _, _))
-      .WillOnce(DoAll(SetArgPointee<0>(v2_subscriber), Return(CUPTI_SUCCESS)));
-  EXPECT_CALL(*mock_, GetTimestampV2(v2_subscriber, _))
-      .WillOnce(Return(CUPTI_ERROR_INVALID_PARAMETER));
-  EXPECT_CALL(*mock_, GetResultString(CUPTI_ERROR_INVALID_PARAMETER, _))
-      .WillOnce(Invoke(cupti_wrapper_.get(), &CuptiWrapper::GetResultString));
-  // The error-manager undo stack owns this newly created subscriber and must
-  // be the only code path that unsubscribes it.
-  EXPECT_CALL(*mock_, Unsubscribe(v2_subscriber))
-      .WillOnce(Return(CUPTI_SUCCESS));
-
-  CuptiTracerOptions options;
-  EnableProfiling(options);
-
-  EXPECT_TRUE(CuptiDisabled());
-}
-
-TEST_F(CuptiErrorManagerTest,
-       PreparesFreshV2SubscriberBeforeEachSessionTimestamp) {
-  EXPECT_FALSE(CuptiDisabled());
-
-  Sequence sequence;
-  CuptiTracerOptions options = KernelTraceOptions();
-
-  for (uintptr_t session = 1; session <= 2; ++session) {
-    auto* const subscriber = reinterpret_cast<CUpti_SubscriberHandle>(session);
-    EXPECT_CALL(*mock_, SubscribeV2(_, _, _))
-        .InSequence(sequence)
-        .WillOnce(DoAll(SetArgPointee<0>(subscriber), Return(CUPTI_SUCCESS)));
-    EXPECT_CALL(*mock_, GetTimestampV2(subscriber, _))
-        .InSequence(sequence)
-        .WillOnce(SetTimestampAndReturnSuccess(session * 10));
-
-    absl::Status prepare_status =
-        cupti_tracer_->PrepareForProfilerStart(options);
-    ASSERT_TRUE(prepare_status.ok()) << prepare_status;
-
-    EXPECT_CALL(*mock_, GetTimestampV2(subscriber, _))
-        .InSequence(sequence)
-        .WillOnce(SetTimestampAndReturnSuccess(session * 10 + 1));
-    EXPECT_EQ(cupti_tracer_->GetTimestampForSubscriber(), session * 10 + 1);
-
-    ExpectV2KernelSession(sequence, subscriber, /*preflight_timestamp=*/0,
-                          /*fallback_stop_timestamp=*/session * 10 + 2,
-                          /*stop_timestamp=*/session * 10 + 3, CUPTI_SUCCESS,
-                          /*expect_preflight_timestamp=*/false);
-    EXPECT_CALL(*mock_, Unsubscribe(subscriber))
-        .InSequence(sequence)
-        .WillOnce(Return(CUPTI_SUCCESS));
-
-    EnableProfiling(options);
-    DisableProfiling();
-    EXPECT_EQ(cupti_collector_->GetTracingEndTimeNs(), session * 10 + 3);
-  }
-
-  EXPECT_FALSE(CuptiDisabled());
-}
-
-TEST_F(CuptiErrorManagerTest,
-       FatalStopTimestampDoesNotUnsubscribeFreshSubscriberTwice) {
-  Sequence s1;
-  auto* const subscriber =
-      reinterpret_cast<CUpti_SubscriberHandle>(uintptr_t{1});
-  EXPECT_CALL(*mock_, SubscribeV2(_, _, _))
-      .InSequence(s1)
-      .WillOnce(DoAll(SetArgPointee<0>(subscriber), Return(CUPTI_SUCCESS)));
-  ExpectV2KernelSessionWithFatalStopTimestamp(s1, subscriber,
-                                              /*preflight_timestamp=*/1,
-                                              /*fallback_stop_timestamp=*/2);
-
-  CuptiTracerOptions options = KernelTraceOptions();
-  EnableProfiling(options);
-  DisableProfiling();
-  EXPECT_EQ(cupti_collector_->GetTracingEndTimeNs(), 2);
-  EXPECT_TRUE(CuptiDisabled());
-  // A stale handle would make this retry issue an unexpected second
-  // Unsubscribe call through the disabled error manager.
-  EnableProfiling(options);
-}
-
-TEST_F(CuptiErrorManagerTest,
-       V2CapabilityErrorsDoNotDisableCuptiOrUseV1Parser) {
+TEST_P(CuptiV2ActivityConfigurationErrorTest, DoesNotDisableCupti) {
+  const CUptiResult result = GetParam();
   auto* const v2_subscriber =
       reinterpret_cast<CUpti_SubscriberHandle>(uintptr_t{1});
   EXPECT_CALL(*mock_, ActivityUseSystemThreadIdV2(v2_subscriber))
-      .WillOnce(Return(CUPTI_ERROR_NOT_COMPATIBLE));
-  EXPECT_CALL(*mock_, ActivityUsePerThreadBufferV2())
-      .WillOnce(Return(CUPTI_ERROR_NOT_COMPATIBLE));
+      .WillOnce(Return(result));
+  EXPECT_CALL(*mock_, ActivityUsePerThreadBufferV2()).WillOnce(Return(result));
 
   EXPECT_EQ(cupti_error_manager_->ActivityUseSystemThreadIdV2(v2_subscriber),
-            CUPTI_ERROR_NOT_COMPATIBLE);
-  EXPECT_EQ(cupti_error_manager_->ActivityUsePerThreadBufferV2(),
-            CUPTI_ERROR_NOT_COMPATIBLE);
+            result);
+  EXPECT_EQ(cupti_error_manager_->ActivityUsePerThreadBufferV2(), result);
+  EXPECT_FALSE(CuptiDisabled());
+}
 
+INSTANTIATE_TEST_SUITE_P(NonfatalErrors, CuptiV2ActivityConfigurationErrorTest,
+                         ::testing::Values(CUPTI_ERROR_NOT_SUPPORTED,
+                                           CUPTI_ERROR_NOT_COMPATIBLE));
+
+TEST_P(CuptiV2ActivityRecordErrorTest, DoesNotDisableCuptiOrUseV1Parser) {
+  const CUptiResult result = GetParam();
   uint8_t buffer[1] = {};
   CUpti_Activity* record = nullptr;
   EXPECT_CALL(*mock_, ActivityGetNextRecord(_, _, _)).Times(0);
-
-  for (CUptiResult result : {CUPTI_ERROR_NOT_SUPPORTED, CUPTI_ERROR_UNKNOWN}) {
-    EXPECT_CALL(*mock_, ActivityGetNextRecordV2(_, buffer, sizeof(buffer), _))
-        .WillOnce(Return(result));
-    EXPECT_EQ(cupti_error_manager_->ActivityGetNextRecordV2(
-                  /*subscriber=*/nullptr, buffer, sizeof(buffer), &record),
-              result);
-    EXPECT_EQ(record, nullptr);
-  }
+  EXPECT_CALL(*mock_, ActivityGetNextRecordV2(_, buffer, sizeof(buffer), _))
+      .WillOnce(Return(result));
+  EXPECT_EQ(cupti_error_manager_->ActivityGetNextRecordV2(
+                /*subscriber=*/nullptr, buffer, sizeof(buffer), &record),
+            result);
+  EXPECT_EQ(record, nullptr);
   EXPECT_FALSE(CuptiDisabled());
 }
+
+INSTANTIATE_TEST_SUITE_P(NonfatalErrors, CuptiV2ActivityRecordErrorTest,
+                         ::testing::Values(CUPTI_ERROR_NOT_SUPPORTED,
+                                           CUPTI_ERROR_UNKNOWN));
 
 }  // namespace test
 }  // namespace profiler
