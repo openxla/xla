@@ -377,6 +377,31 @@ CodegenDecision IsTritonSupportedAllReduce(
   return CodegenDecision::Allow();
 }
 
+CodegenDecision IsTritonSupportedAllGather(
+    const HloAllGatherInstruction& all_gather,
+    const se::GpuComputeCapability& gpu_version) {
+  if (!absl::c_linear_search(
+          all_gather.GetModule()
+              ->config()
+              .debug_options()
+              .xla_gpu_experimental_use_collective_kernels(),
+          static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER))) {
+    return CodegenDecision::Forbid(
+        "Triton backend for all-gather is disabled. Enable with "
+        "--xla_gpu_experimental_use_collective_kernels=ALL_GATHER");
+  }
+  if (all_gather.operand_count() == 1) {
+    PrimitiveType element_type = all_gather.operand(0)->shape().element_type();
+    if (element_type == PrimitiveType::F8E4M3FN ||
+        element_type == PrimitiveType::F8E5M2 ||
+        element_type == PrimitiveType::S4) {
+      return CodegenDecision::Forbid(
+          "S4, F8E4M3FN and F8E5M2 are not supported for all-gathers.");
+    }
+  }
+  return CodegenDecision::Allow();
+}
+
 bool IsInTritonNestedGemmFusion(const HloInstruction& hlo) {
   if (!hlo.parent()->IsFusionComputation()) {
     return false;
@@ -809,6 +834,17 @@ CodegenDecision IsTritonSupportedInstructionImpl(
       return IsTritonSupportedAllReduce(*Cast<HloAllReduceInstruction>(&instr),
                                         gpu_version);
     case HloOpcode::kAllGather:
+      // If the Triton AllGather backend is enabled, use the dedicated checker.
+      if (absl::c_linear_search(
+              instr.GetModule()
+                  ->config()
+                  .debug_options()
+                  .xla_gpu_experimental_use_collective_kernels(),
+              static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER))) {
+        return IsTritonSupportedAllGather(
+            *Cast<HloAllGatherInstruction>(&instr), gpu_version);
+      }
+      // Legacy tiling-propagation path.
       if (instr.shape().element_type() == S4) {
         return CodegenDecision::Forbid("S4 is not supported.");
       }
