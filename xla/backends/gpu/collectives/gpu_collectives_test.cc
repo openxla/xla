@@ -697,10 +697,8 @@ TEST(GpuCollectivesTest, MoriCreateCommunicatorAndAllocate) {
 
   auto* mori = xla::gpu::GpuCollectives::Resolve("ROCM", "mori");
   ASSERT_NE(mori, nullptr);
-
   ASSERT_OK_AND_ASSIGN(std::vector<se::StreamExecutor*> executors,
                        CreateExecutors(platform, 4));
-
   ASSERT_OK_AND_ASSIGN(
       auto comms,
       CreateCommunicators(executors, {kD0, kD1, kD2, kD3}, /*blocking=*/true,
@@ -715,7 +713,7 @@ TEST(GpuCollectivesTest, MoriCreateCommunicatorAndAllocate) {
   // the calls are reachable and do not crash.
   auto buffer_or = mori->Allocate(1024);
   void* buffer = buffer_or.ok() ? *buffer_or : nullptr;
-  mori->Deallocate(buffer).IgnoreError();
+  ASSERT_OK(mori->Deallocate(buffer));
 }
 
 }  // namespace

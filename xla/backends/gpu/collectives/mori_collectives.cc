@@ -199,7 +199,7 @@ absl::Status MoriCollectives::Deallocate(void* buffer) {
   VLOG(3) << absl::StreamFormat("Start de-allocation for MORI buffer: %p",
                                 buffer);
   shmem::ShmemFree(buffer);
-  return absl::UnimplementedError("Not implemented");
+  return absl::OkStatus();
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<Communicator>>>

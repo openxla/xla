@@ -82,11 +82,11 @@ class MoriCollectives : public GpuCollectives {
       absl::Span<const RankId> keys, const Collectives::Config& config,
       absl::Span<const DeviceRank> ranks,
       std::shared_ptr<CancellationToken> cancel) final {
-    return absl::UnimplementedError("Not implementedZ.");
+    return absl::UnimplementedError("Not implemented");
   }
 
   absl::StatusOr<std::unique_ptr<Communicator>> CreateCommunicator() final {
-    return absl::UnimplementedError("Not implementedW");
+    return absl::UnimplementedError("Not implemented");
   }
 
   absl::StatusOr<CliqueIdCallback> InitializeTopology(

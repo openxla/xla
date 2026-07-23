@@ -89,7 +89,7 @@ absl::Status MoriCommunicator::Abort() {
 
   VLOG(1) << "Abort MORI communicator: " << ToString();
   if (aborted_) {
-    return FailedPrecondition("RcclCommunicator already aborted");
+    return FailedPrecondition("MoriCommunicator already aborted");
   }
   aborted_ = true;
   // Call rocm_mori_global_exit with a non-zero return code to abort the
