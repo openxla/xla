@@ -149,6 +149,7 @@ cc_library(
         ":rocm_stream",
         ":rocm_timer",
         ":rocm_version_parser",
+        "//xla/backends/gpu/collectives:gpu_collectives",
         ":rocm_xgmi_topology",
         "//xla/stream_executor:activate_context",
         "//xla/stream_executor:blas",
