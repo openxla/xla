@@ -481,7 +481,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_autotune_cache_mode(
       DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE);
 
-
   opts.set_xla_gpu_autotune_gemm_rtol(0.1f);
 
   // TODO(b/355487968): Remove this flag once all data will be presented in
@@ -3742,10 +3741,8 @@ FlagStatus GetFlagStatus(absl::string_view flag_name) {
           "xla_gpu_enable_latency_hiding_scheduler",
           "xla_gpu_enable_triton_gemm",
           "xla_gpu_enable_while_loop_double_buffering",
-          "xla_gpu_exhaustive_tiling_search",
-          "xla_gpu_pipeline_all_gather",
-          "xla_gpu_pipeline_all_reduce",
-          "xla_gpu_pipeline_reduce_scatter",
+          "xla_gpu_exhaustive_tiling_search", "xla_gpu_pipeline_all_gather",
+          "xla_gpu_pipeline_all_reduce", "xla_gpu_pipeline_reduce_scatter",
           "xla_gpu_reduce_scatter_combine_threshold_bytes",
           // go/keep-sorted end
       });
