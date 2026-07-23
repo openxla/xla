@@ -530,6 +530,10 @@ message DebugOptions {
   // details in http://shortn/_jXJ2VFoyMN.
   optional bool xla_enable_enzyme_comms_opt = 429;
 
+  // Enable experimental support for multi-output Triton fusions where all roots
+  // share the same shape.
+  optional bool xla_experimental_enable_same_shape_multi_output_fusion = 516;
+
   // Denylist for cuDNN convolutions.
   optional string xla_gpu_algorithm_denylist_path = 128;
 
