@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/executable_run_options.h"
@@ -47,9 +48,8 @@ struct CollectiveParams {
   static absl::StatusOr<CollectiveParams> Create(
       const ServiceExecutableRunOptions& run_options,
       absl::Span<se::Stream* const> async_streams,
-      LocalDeviceId local_device_id,
-      std::optional<std::string> implementation_name = std::nullopt,
-      int64_t collective_max_nchannels = 0, int64_t p2p_max_nchannels = 0,
+      LocalDeviceId local_device_id, int64_t collective_max_nchannels = 0,
+      int64_t p2p_max_nchannels = 0,
       bool collective_use_minimal_resource = false);
 
   GpuCollectives* collectives;
@@ -175,6 +175,13 @@ struct CollectiveKernelSpec {
   // this is 2 and so on.
   uint32_t sync_count_increment = 1;
 };
+
+GpuCollectives* ResolveCollectives(const GpuExecutableRunOptions* gpu_options,
+                                   absl::string_view platform_name);
+
+GpuCollectives* ResolveCollectives(
+    const GpuExecutableRunOptions* gpu_options, absl::string_view platform_name,
+    std::optional<std::string> implementation_name);
 
 }  // namespace xla::gpu
 

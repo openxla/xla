@@ -91,7 +91,7 @@ cc_library(
         "@tsl//tsl/platform:statusor",
     ] + if_cuda_or_rocm([
         "//xla/service:gpu_plugin",
-        "//xla/backends/profiler/gpu:device_tracer",
+        #"//xla/backends/profiler/gpu:device_tracer",
     ]) + if_cuda([
         "//xla/stream_executor:cuda_platform",
         "//xla/backends/profiler/gpu:cupti_tracer",
@@ -114,6 +114,7 @@ xla_cc_binary(
     deps = [
         ":hlo_runner_main_lib",
     ],
+    linkstatic = True,
 )
 
 xla_cc_binary(

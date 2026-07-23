@@ -1,11 +1,8 @@
-/* Copyright 2024 The OpenXLA Authors.
-
+/* Copyright 2025 The OpenXLA Authors.
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
-
     http://www.apache.org/licenses/LICENSE-2.0
-
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -13,65 +10,59 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_BACKENDS_GPU_COLLECTIVES_RCCL_COMMUNICATOR_H_
-#define XLA_BACKENDS_GPU_COLLECTIVES_RCCL_COMMUNICATOR_H_
+#ifndef XLA_BACKENDS_GPU_COLLECTIVES_MORI_COMMUNICATOR_H_
+#define XLA_BACKENDS_GPU_COLLECTIVES_MORI_COMMUNICATOR_H_
 
 #include <cstddef>
-#include <memory>
 #include <optional>
 #include <string>
-#include <utility>
 
 #include "absl/container/inlined_vector.h"
-#include "absl/functional/any_invocable.h"
-#include "absl/functional/function_ref.h"
-#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "rocm/include/rccl/rccl.h"
-#include "rocm/rocm_config.h"  // IWYU pragma: keep
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
-#include "xla/core/collectives/reduction_kind.h"
 #include "xla/future.h"
+#include "xla/service/collective_ops_utils.h"
 #include "xla/stream_executor/device_address.h"
-#include "xla/tsl/concurrency/executor.h"
-#include "xla/tsl/platform/env.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 
-// XLA collectives communicator wrapping an RCCL communicator.
-class RcclCommunicator : public GpuCommunicator {
+class MoriCollectives;
+
+// XLA collectives communicator wrapping a MORI communicator.
+class MoriCommunicator : public GpuCommunicator {
  public:
-  // Creates a RCCL communicator.
-  //
-  // make_comm should construct and return a new ncclComm_t. For example, it
-  // could call ncclCommInitRank. make_comm should not return a ncclComm_t that
-  // was created by a different thread.
-  //
-  // If is_async is true, all collective methods (e.g., AllReduce) are performed
-  // asynchronously on a separate thread. Otherwise, they are performed
-  // synchronously on the calling thread.
-  static absl::StatusOr<std::unique_ptr<RcclCommunicator>> Create(
-      absl::AnyInvocable<absl::StatusOr<ncclComm_t>()> make_comm,
-      std::shared_ptr<CancellationToken> cancel, bool is_async = false,
-      tsl::Env& env = *tsl::Env::Default());
+  constexpr static uint32_t kMaxTeams = 24;
 
-  ~RcclCommunicator() override;
+  friend class MoriCollectives;
+  ~MoriCommunicator() override;
 
-  // RcclCommunicator is not copyable or movable.
-  RcclCommunicator(const RcclCommunicator&) = delete;
-  RcclCommunicator(RcclCommunicator&&) = delete;
-  RcclCommunicator& operator=(const RcclCommunicator&) = delete;
-  RcclCommunicator& operator=(RcclCommunicator&&) = delete;
+  static absl::StatusOr<std::unique_ptr<MoriCommunicator>> Create(
+      MoriCollectives* coll, std::shared_ptr<CancellationToken> cancel,
+      int rank, absl::Span<const int> rank_to_pe);
+
+  // MoriCommunicator is not copyable or movable.
+  MoriCommunicator(const MoriCommunicator&) = delete;
+  MoriCommunicator(MoriCommunicator&&) = delete;
+  MoriCommunicator& operator=(const MoriCommunicator&) = delete;
+  MoriCommunicator& operator=(MoriCommunicator&&) = delete;
 
   absl::Status Abort() final;
-  absl::Status HealthCheck() const final;
   absl::StatusOr<size_t> NumRanks() const final;
+  absl::StatusOr<size_t> CurrentRank() final;
+
+  absl::StatusOr<std::unique_ptr<SymmetricMemory>> CreateSymmetricMemory(
+      se::DeviceAddressBase addr) final;
+
+  absl::Status Barrier(const Executor& executor) final;
 
   Future<> GroupExecute(absl::AnyInvocable<absl::Status() &&> group) final;
 
@@ -106,39 +97,28 @@ class RcclCommunicator : public GpuCommunicator {
                              const Executor& executor) final;
 
   Future<> Send(se::DeviceAddressBase send_buffer, PrimitiveType dtype,
-                size_t count, RankId peer, const Executor& executor) final;
-
-  Future<> Recv(se::DeviceAddressBase recv_buffer, PrimitiveType dtype,
-                size_t count, RankId peer, const Executor& executor) final;
-
-  absl::StatusOr<std::unique_ptr<SymmetricMemory>> CreateSymmetricMemory(
-      se::DeviceAddressBase addr) final;
-
-  std::string ToString() const final;
-
-  absl::Status Barrier(const Executor& executor) final {
-    return absl::OkStatus();
+                size_t count, RankId peer, const Executor& executor) final {
+    return absl::UnimplementedError("Not implemented11");
   }
 
-  ncclComm_t comm() const { return comm_; }
+  Future<> Recv(se::DeviceAddressBase recv_buffer, PrimitiveType dtype,
+                size_t count, RankId peer, const Executor& executor) final {
+    return absl::UnimplementedError("Not implemented12");
+  }
 
-  bool IsBlocking() const { return executor_ == nullptr; }
+  Future<> Send(se::DeviceAddressBase recv_buffer,
+                se::DeviceAddressBase send_buffer, PrimitiveType dtype,
+                size_t count, RankId peer, const Executor& executor) final;
+
+  Future<> Recv(se::DeviceAddressBase recv_buffer,
+                se::DeviceAddressBase send_buffer, PrimitiveType dtype,
+                size_t count, RankId peer, const Executor& executor) final;
 
   // Polls the communicator until any pending non-blocking operations are done
   // or aborted.
   absl::Status PollUntilDone() const;
 
  private:
-  class RcclRegisteredBufferHandle;
-
-  RcclCommunicator(ncclComm_t comm, std::unique_ptr<tsl::Executor> executor,
-                   std::shared_ptr<CancellationToken> cancel)
-      : comm_(comm),
-        executor_(std::move(executor)),
-        cancel_(std::move(cancel)) {
-    VLOG(1) << "Created RCCL communicator" << *this;
-  }
-
   absl::Status GroupLaunch(absl::FunctionRef<absl::Status()> group);
 
   absl::Status LaunchAllReduce(se::DeviceAddressBase send_buffer,
@@ -150,7 +130,9 @@ class RcclCommunicator : public GpuCommunicator {
   absl::Status LaunchBroadcast(se::DeviceAddressBase send_buffer,
                                se::DeviceAddressBase recv_buffer,
                                PrimitiveType dtype, size_t count, RankId root,
-                               const Executor& executor) final;
+                               const Executor& executor) final {
+    return absl::UnimplementedError("Not implemented3");
+  }
 
   absl::Status LaunchReduceScatter(se::DeviceAddressBase send_buffer,
                                    se::DeviceAddressBase recv_buffer,
@@ -166,7 +148,9 @@ class RcclCommunicator : public GpuCommunicator {
   absl::Status LaunchAllToAll(
       absl::InlinedVector<se::DeviceAddressBase, 4> send_buffers,
       absl::InlinedVector<se::DeviceAddressBase, 4> recv_buffers,
-      PrimitiveType dtype, size_t count, const Executor& executor) final;
+      PrimitiveType dtype, size_t count, const Executor& executor) final {
+    return absl::UnimplementedError("Not implemented6");
+  }
 
   absl::Status LaunchCollectivePermute(se::DeviceAddressBase send_buffer,
                                        se::DeviceAddressBase recv_buffer,
@@ -177,56 +161,69 @@ class RcclCommunicator : public GpuCommunicator {
 
   absl::Status LaunchSend(se::DeviceAddressBase send_buffer,
                           PrimitiveType dtype, size_t count, RankId peer,
-                          const Executor& executor) final;
+                          const Executor& executor) final {
+    return absl::UnimplementedError("Not implemented8");
+  }
 
   absl::Status LaunchRecv(se::DeviceAddressBase recv_buffer,
                           PrimitiveType dtype, size_t count, RankId peer,
-                          const Executor& executor) final;
+                          const Executor& executor) final {
+    return absl::UnimplementedError("Not implemented9");
+  }
 
+  absl::Status Quiet(const Executor& executor) final;
+
+  absl::Status Fence() final;
+
+  std::string ToString() const final;
+
+ private:
   // Executes f on executor_, or calls f directly if executor_ is null.
   Future<> Execute(absl::AnyInvocable<absl::Status() &&> f) const;
 
-  // Executes f on executor_, or calls f directly if executor_ is null.
-  template <typename T>
-  Future<T> Execute(absl::AnyInvocable<absl::StatusOr<T>() &&> f) const;
+  MoriCommunicator(MoriCollectives* coll,
+                   std::shared_ptr<CancellationToken> cancel)
+      : collectives_(coll), cancel_(std::move(cancel)) {}
 
-  absl::Status ExecuteAwait(absl::AnyInvocable<absl::Status() &&> f) const {
-    return Execute(std::move(f)).Await();
-  }
+  // Maximum number of participants supported by the pre-allocated all-gather
+  // completion flag buffer.
+  static constexpr int kMaxRanks = 64;
 
-  template <typename T>
-  absl::StatusOr<T> ExecuteAwait(
-      absl::AnyInvocable<absl::StatusOr<T>() &&> f) const {
-    return Execute<T>(std::move(f)).Await();
-  }
+  enum class P2PType : int32_t { Send, Recv };
 
-  // Underlying RCCL communicator.
-  ncclComm_t comm_;
+  absl::Status P2P(P2PType p2p_type, PrimitiveType type,
+                   se::DeviceAddressBase recv_buffer,
+                   se::DeviceAddressBase send_buffer, size_t count, RankId peer,
+                   const Executor& executor);
 
-  // If not null, used to execute methods.
-  //
-  // RCCL communicators (instances of ncclComm_t) are not thread safe. Thus,
-  // multiple threads cannot concurrently access the same ncclComm_t. This is
-  // not surprising. What is very surprising is that multiple threads cannot
-  // serially access the same ncclComm_t. In fact, a ncclComm_t must be created
-  // by, live on, and be destroyed by a single thread. A ncclComm_t cannot be
-  // accessed by any thread except the one that created it. To accomplish this,
-  // we perform all comm_ operations on executor_, if it is not null.
-  //
-  // Concretely, the lack of thread safety comes from the fact that the RCCL
-  // code uses thread-local variables that do not work properly when a
-  // ncclComm_t is accessed from multiple threads. Empirically, the lack of
-  // thread safety only manifests as buggy behavior when using non-blocking
-  // communicators.
-  std::unique_ptr<tsl::Executor> executor_;
+  static absl::StatusOr<se::Stream*> ToStream(const Executor& executor);
 
+  // Number of per-group block counters reserved for the push reduce-scatter
+  // (the kernel indexes groupCounters[g] for g in [0, S), with S <= 8).
+  static constexpr size_t kReduceScatterGroupCounters = 8;
+
+  MoriCollectives* collectives_;  // Parent MoriCollectives instance
+
+  // This communicator's participant set (NOT the global MORI clique). `rank_`
+  // is this rank within the collective, `num_ranks_` the participant count, and
+  // `rank_to_pe_dev_` a device array mapping collective rank -> global MORI PE.
+  int rank_ = 0;
+  int num_ranks_ = 0;
+  int* rank_to_pe_dev_ = nullptr;
+  // Symmetric-heap completion flags for AllGather (kMaxRanks uint64 slots) and
+  // a per-communicator monotonically increasing generation counter.
+  void* allgather_flags_ = nullptr;
+  uint64_t allgather_gen_ = 0;
+
+  se::DeviceAddressBase staging_buffer_;
+  // Local-only per-group block counters for the push reduce-scatter, carved
+  // from the tail of the staging allocation and zeroed once at creation.
+  void* rs_group_counters_ = nullptr;
   // Should all pending collectives cancel?
   std::shared_ptr<CancellationToken> cancel_;
-
-  // Has comm_ been aborted?
-  bool aborted_ = false;
+  bool aborted_ = false;  // Has Abort() been called?
 };
 
 }  // namespace xla::gpu
 
-#endif  // XLA_BACKENDS_GPU_COLLECTIVES_RCCL_COMMUNICATOR_H_
+#endif  // XLA_BACKENDS_GPU_COLLECTIVES_MORI_COMMUNICATOR_H_
