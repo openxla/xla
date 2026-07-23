@@ -5034,8 +5034,8 @@ TEST_F(ShapeInferenceTest, UnboundedCollectiveReduce) {
   ASSERT_OK_AND_ASSIGN(const Shape operand, ParseShape("f32[?, 10]"));
   ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("f32[?, 10]"));
   ASSERT_OK_AND_ASSIGN(const Shape inferred_shape,
-                          ShapeInference::InferCollectiveReduceShape(
-                              /*operand_shapes=*/{&operand}));
+                       ShapeInference::InferCollectiveReduceShape(
+                           /*operand_shapes=*/{&operand}));
   EXPECT_TRUE(ShapeUtil::Equal(inferred_shape, expected))
       << "inferred: " << ShapeUtil::HumanString(inferred_shape)
       << " expected: " << ShapeUtil::HumanString(expected);
@@ -5045,8 +5045,8 @@ TEST_F(ShapeInferenceTest, CollectiveReduceMultiOperand) {
   ASSERT_OK_AND_ASSIGN(const Shape operand0, ParseShape("f32[8, 4]"));
   ASSERT_OK_AND_ASSIGN(const Shape operand1, ParseShape("f32[16]"));
   ASSERT_OK_AND_ASSIGN(const Shape inferred_shape,
-                          ShapeInference::InferCollectiveReduceShape(
-                              /*operand_shapes=*/{&operand0, &operand1}));
+                       ShapeInference::InferCollectiveReduceShape(
+                           /*operand_shapes=*/{&operand0, &operand1}));
   EXPECT_TRUE(inferred_shape.IsTuple());
   EXPECT_EQ(inferred_shape.tuple_shapes_size(), 2);
   EXPECT_TRUE(ShapeUtil::Equal(inferred_shape.tuple_shapes(0), operand0));
@@ -5057,9 +5057,9 @@ TEST_F(ShapeInferenceTest, CollectiveReduceWithDynamicRootSingleOperand) {
   ASSERT_OK_AND_ASSIGN(const Shape operand, ParseShape("f32[8]"));
   ASSERT_OK_AND_ASSIGN(const Shape roots, ParseShape("s32[1]"));
   ASSERT_OK_AND_ASSIGN(const Shape inferred_shape,
-                          ShapeInference::InferCollectiveReduceShape(
-                              /*operand_shapes=*/{&operand, &roots},
-                              /*has_dynamic_root=*/true));
+                       ShapeInference::InferCollectiveReduceShape(
+                           /*operand_shapes=*/{&operand, &roots},
+                           /*has_dynamic_root=*/true));
   EXPECT_TRUE(ShapeUtil::Equal(inferred_shape, operand));
 }
 
@@ -5068,9 +5068,9 @@ TEST_F(ShapeInferenceTest, CollectiveReduceWithDynamicRootMultipleOperands) {
   ASSERT_OK_AND_ASSIGN(const Shape operand1, ParseShape("f32[16]"));
   ASSERT_OK_AND_ASSIGN(const Shape roots, ParseShape("s32[2]"));
   ASSERT_OK_AND_ASSIGN(const Shape inferred_shape,
-                          ShapeInference::InferCollectiveReduceShape(
-                              /*operand_shapes=*/{&operand0, &operand1, &roots},
-                              /*has_dynamic_root=*/true));
+                       ShapeInference::InferCollectiveReduceShape(
+                           /*operand_shapes=*/{&operand0, &operand1, &roots},
+                           /*has_dynamic_root=*/true));
   EXPECT_TRUE(inferred_shape.IsTuple());
   EXPECT_EQ(inferred_shape.tuple_shapes_size(), 2);
   EXPECT_TRUE(ShapeUtil::Equal(inferred_shape.tuple_shapes(0), operand0));
