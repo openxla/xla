@@ -32,7 +32,8 @@ module {
     func.return %call : f32
   }
 
-  func.func @stores(%arg0: tensor<17xf32> {xla.invariant, xla.slice_index = 0},
+  func.func @stores(%arg0: tensor<17xf32> {xla.invariant, xla.slice_index = 0,
+                                           xla.streamed_once},
                     %arg1: tensor<43xf32> {xla.slice_index = 1}) -> tensor<43xf32>
                     attributes { xla.entry } {
     %c17 = arith.constant 17 : index
@@ -45,6 +46,6 @@ module {
 }
 
 // CHECK-DAG: @add(%{{.*}}: f32, %{{.*}}: f32)
-// CHECK-DAG: @tensorarg(%{{.*}}: tensor<43xf32> {xla.invariant, xla.slice_index = 0 : i64}, %{{.*}}: index)
-// CHECK-DAG: @tensorcall(%{{.*}}: tensor<43xf32> {xla.invariant, xla.slice_index = 0 : i64}, %{{.*}}: index)
-// CHECK-DAG: @stores(%{{.*}}: tensor<17xf32> {xla.invariant, xla.slice_index = 0 : i64}, %{{.*}}: tensor<43xf32> {xla.slice_index = 1 : i64})
+// CHECK-DAG: @tensorarg(%{{.*}}: tensor<43xf32> {xla.invariant, xla.slice_index = 0 : i64, xla.streamed_once}, %{{.*}}: index)
+// CHECK-DAG: @tensorcall(%{{.*}}: tensor<43xf32> {xla.invariant, xla.slice_index = 0 : i64, xla.streamed_once}, %{{.*}}: index)
+// CHECK-DAG: @stores(%{{.*}}: tensor<17xf32> {xla.invariant, xla.slice_index = 0 : i64, xla.streamed_once}, %{{.*}}: tensor<43xf32> {xla.slice_index = 1 : i64})
