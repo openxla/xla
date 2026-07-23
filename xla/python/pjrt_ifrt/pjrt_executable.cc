@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
@@ -59,6 +60,7 @@ limitations under the License.
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/bundle.h"
+#include "xla/python/ifrt/client_impl_util.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
@@ -87,8 +89,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/protobuf.h"
@@ -516,6 +516,8 @@ absl::StatusOr<std::string> PjRtExecutable::CommonMetadata::Serialize(
   // Get parameter specs.
   const std::optional<std::vector<xla::OpSharding>> parameter_shardings =
       pjrt_executable->GetParameterShardings();
+  // TODO(skye): add API for getting number of parameters, so we don't need this
+  // convoluted logic that potentially results in setting num_parameters = 0.
   uint64_t num_parameters;
   std::vector<std::shared_ptr<const xla::PjRtLayout>> parameter_layouts;
   if (auto maybe_layouts = pjrt_executable->GetParameterLayouts();
@@ -557,10 +559,12 @@ absl::StatusOr<std::string> PjRtExecutable::CommonMetadata::Serialize(
   for (int i = 0; i < num_parameters; ++i) {
     SerializedXlaExecutableMetadata::ParameterSpec& parameter_spec =
         *metadata.add_parameter_specs();
-    // Layout
-    auto pjrt_layout = PjRtLayout::Create(parameter_layouts[i]);
-    ASSIGN_OR_RETURN(*parameter_spec.mutable_layout(),
-                     pjrt_layout->ToProto(serdes_version));
+    // Layout (nullptr means default layout)
+    if (parameter_layouts[i] != nullptr) {
+      auto pjrt_layout = PjRtLayout::Create(parameter_layouts[i]);
+      ASSIGN_OR_RETURN(*parameter_spec.mutable_layout(),
+                       pjrt_layout->ToProto(serdes_version));
+    }
 
     // Sharding
     if (parameter_shardings.has_value()) {
@@ -573,6 +577,11 @@ absl::StatusOr<std::string> PjRtExecutable::CommonMetadata::Serialize(
   }
 
   metadata.set_portable(is_portable);
+
+  if (outputs_bundle_slice_sizes.has_value()) {
+    metadata.mutable_outputs_bundle_slice_sizes()->Add(
+        outputs_bundle_slice_sizes->begin(), outputs_bundle_slice_sizes->end());
+  }
 
   // Write the metadata to a serialized executable string.
   std::string serialized_executable;
@@ -592,24 +601,24 @@ absl::StatusOr<std::string> PjRtExecutable::CommonMetadata::Serialize(
   return serialized_executable;
 }
 
-absl::StatusOr<std::pair<PjRtExecutable::CommonMetadata, absl::string_view>>
+absl::StatusOr<std::pair<PjRtExecutable::CommonMetadata, absl::Cord>>
 PjRtExecutable::CommonMetadata::Deserialize(
-    absl::string_view serialized_executable,
+    const absl::Cord& serialized_executable,
     absl::FunctionRef<absl::Status(const ExecutableVersion& executable_version,
                                    const DeviceListRef& devices)>
         is_executable_version_compatible,
     const XlaDeserializeExecutableOptions& xla_deserialize_executable_options) {
   SerializedXlaExecutableMetadata metadata;
-  tsl::protobuf::io::ArrayInputStream input_stream(
-      serialized_executable.data(), serialized_executable.size());
+  tsl::protobuf::io::CordInputStream input_stream(&serialized_executable);
   if (!tsl::protobuf::util::ParseDelimitedFromZeroCopyStream(
           &metadata, &input_stream, nullptr)) {
     return absl::InvalidArgumentError(
         "Failed to parse SerializedXlaExecutableMetadata");
   }
 
-  absl::string_view serialized_pjrt_executable =
-      serialized_executable.substr(input_stream.ByteCount());
+  absl::Cord serialized_pjrt_executable = serialized_executable.Subcord(
+      input_stream.ByteCount(),
+      serialized_executable.size() - input_stream.ByteCount());
 
   ASSIGN_OR_RETURN(
       std::unique_ptr<xla::ifrt::XlaExecutableVersion> executable_version,
@@ -687,6 +696,13 @@ PjRtExecutable::CommonMetadata::Deserialize(
     }
   }
 
+  std::optional<std::vector<int>> outputs_bundle_slice_sizes;
+  if (!metadata.outputs_bundle_slice_sizes().empty()) {
+    outputs_bundle_slice_sizes.emplace(
+        metadata.outputs_bundle_slice_sizes().begin(),
+        metadata.outputs_bundle_slice_sizes().end());
+  }
+
   CommonMetadata common_metadata;
   common_metadata.is_portable = metadata.portable();
   common_metadata.donatable_input_indices = std::move(donated_input_indices);
@@ -695,7 +711,11 @@ PjRtExecutable::CommonMetadata::Deserialize(
   common_metadata.output_hlo_shardings = std::move(output_hlo_shardings);
   common_metadata.output_memory_kinds = std::move(output_memory_kinds);
   common_metadata.output_layouts = std::move(output_layouts);
-  return std::make_pair(std::move(common_metadata), serialized_pjrt_executable);
+  common_metadata.outputs_bundle_slice_sizes =
+      std::move(outputs_bundle_slice_sizes);
+
+  return std::make_pair(std::move(common_metadata),
+                        std::move(serialized_pjrt_executable));
 }
 
 absl::StatusOr<std::string> PjRtExecutable::Serialize() const {
@@ -720,6 +740,7 @@ absl::StatusOr<LoadedExecutableRef> PjRtLoadedExecutable::Create(
     PjRtClient* client, xla::MaybeOwningMlirModule module,
     xla::CompileOptions compile_options,
     std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks,
+    std::optional<std::vector<int>> outputs_bundle_slice_sizes,
     DeviceListRef executable_devices) {
   VLOG(3) << "PjRtLoadedExecutable::Create";
   if (VLOG_IS_ON(3)) {
@@ -772,6 +793,8 @@ absl::StatusOr<LoadedExecutableRef> PjRtLoadedExecutable::Create(
   common_metadata.output_hlo_shardings = std::move(output_hlo_shardings);
   common_metadata.output_memory_kinds = std::move(output_memory_kinds);
   common_metadata.output_layouts = std::move(output_layouts);
+  common_metadata.outputs_bundle_slice_sizes =
+      std::move(outputs_bundle_slice_sizes);
 
   return LoadedExecutableRef(new PjRtLoadedExecutable(
       client, std::move(pjrt_loaded_executable), std::move(executable_devices),
@@ -850,9 +873,13 @@ PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
           "Only PjRtCompatibleArray is supported, but argument %d is %s", i,
           args[i] ? args[i]->DebugString() : "null");
     }
+    if (pjrt_array->pjrt_buffers().size() != num_computations) {
+      return InvalidArgument(
+          "Argument %d has %d buffers, but executable expects %d computations",
+          i, static_cast<int>(pjrt_array->pjrt_buffers().size()),
+          num_computations);
+    }
     int j = 0;
-    // TODO(hyeontaek): Check pjrt_array->pjrt_buffers().size() ==
-    // num_computations
     for (const auto& pjrt_buffer : pjrt_array->pjrt_buffers()) {
       argument_handles[j].push_back(pjrt_buffer.get());
       ++j;
@@ -864,6 +891,14 @@ PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
   opts.use_major_to_minor_data_layout_for_callbacks = true;
   opts.non_donatable_input_indices = options.non_donatable_input_indices;
   opts.execution_stream_id = options.execution_stream_id;
+  opts.use_output_arena = false;
+  if (options.custom_options.has_value()) {
+    if (auto use_output_arena =
+            options.custom_options->Get<bool>("use_output_arena");
+        use_output_arena.ok()) {
+      opts.use_output_arena = *use_output_arena;
+    }
+  }
   absl::StatusOr<absl::flat_hash_map<int, IncarnationId>> incarnations =
       client()->Incarnations();
   if (incarnations.ok()) {
@@ -1087,7 +1122,8 @@ PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
 absl::StatusOr<LoadedExecutable::ExecuteBundleResult>
 PjRtLoadedExecutable::ExecuteBundle(absl::Span<BundleRef> args,
                                     const ExecuteOptions& options) {
-  return absl::UnimplementedError("ExecuteBundle is not implemented.");
+  return xla::ifrt::LoadedExecutableExecuteBundle(
+      this, args, options, common_metadata_.outputs_bundle_slice_sizes);
 }
 
 absl::StatusOr<std::optional<std::string>> PjRtLoadedExecutable::Fingerprint()

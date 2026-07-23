@@ -167,9 +167,44 @@ class CommonPjRtClient : public PjRtClient {
   // for when the linearization is complete.
   virtual absl::StatusOr<PjRtDeviceEventRef> LinearizeInto(
       const LiteralSlice& literal, const xla::Shape& device_shape,
-      HostBufferSemantics host_buffer_semantics, PjRtRawBufferRef raw_buffer) {
-    return absl::UnimplementedError("LinearizeInto is not supported");
+      HostBufferSemantics host_buffer_semantics, PjRtRawBufferRef raw_buffer);
+
+  // Tests if a buffer is eligible for zero copy linearization.
+  virtual bool ShouldPerformZeroCopyLinearize(
+      const void* data, const xla::Shape& device_shape, PrimitiveType type,
+      absl::Span<int64_t const> dims,
+      std::optional<absl::Span<int64_t const>> byte_strides,
+      PjRtMemorySpace* memory_space) {
+    return false;
   }
+
+  // Creates a staging buffer directly from host data for zero copy.
+  virtual tsl::AsyncValueRef<PjRtStagingBuffer>
+  CreateStagingForZeroCopyLinearize(
+      const void* data, const xla::Shape& device_shape,
+      PjRtMemorySpace* memory_space,
+      absl::AnyInvocable<void() &&> on_done_with_host_buffer);
+
+  // Allocates a destination buffer for linearizing into.
+  virtual absl::StatusOr<tsl::AsyncValueRef<PjRtStagingBuffer>>
+  AllocateLinearizeDest(bool sync, const xla::Shape& device_shape,
+                        absl::Span<const int64_t> byte_strides,
+                        PjRtRawBufferRef dest_buffer);
+
+  // Linearizes data into dest.
+  virtual absl::Status Linearize(absl::Span<uint8_t> dest, const void* data,
+                                 absl::Span<const int64_t> byte_strides,
+                                 const Shape& device_shape,
+                                 absl::Span<const uint32_t> dynamic_sizes,
+                                 PjRtMemorySpace* memory_space);
+
+  absl::StatusOr<PjRtDeviceEventRef> LinearizeIntoImpl(
+      const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
+      std::optional<absl::Span<int64_t const>> byte_strides,
+      HostBufferSemantics host_buffer_semantics,
+      absl::AnyInvocable<void() &&> on_done_with_host_buffer,
+      const xla::Shape& device_shape, absl::Span<const uint32_t> dynamic_sizes,
+      PjRtRawBufferRef raw_buffer);
 
   // Defines a pjrt buffer from a shape, raw_buffer and definition events.
   virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> DefineBuffer(
@@ -185,6 +220,12 @@ class CommonPjRtClient : public PjRtClient {
         std::make_shared<const Shape>(std::move(on_device_shape)), memory_space,
         std::move(raw_buffer), std::move(definition_device_events));
   }
+
+  // Turns an existing buffer into an undonatable buffer. Consumes the input
+  // buffer and returns an equivalent hold-free buffer aliasing the same device
+  // memory.
+  absl::StatusOr<std::unique_ptr<PjRtBuffer>> MakeUndonatable(
+      std::unique_ptr<PjRtBuffer> buffer);
 
   // When calling APIs that take extra debug information, we may want
   // to omit this debug information if it is not going to be used.
@@ -318,19 +359,17 @@ class CommonPjRtClient : public PjRtClient {
       std::optional<absl::Span<int64_t const>> byte_strides,
       HostBufferSemantics host_buffer_semantics,
       absl::AnyInvocable<void() &&> on_done_with_host_buffer,
-      const xla::Shape& device_shape, PjRtRawBufferRef raw_buffer) {
-    return absl::UnimplementedError("LinearizeHostBufferInto is not supported");
-  }
+      const xla::Shape& device_shape, PjRtRawBufferRef raw_buffer);
 
   absl::StatusOr<std::shared_ptr<TransposePlan>> GetTransposePlan(
       const TransposePlan::Options& options);
 
-  virtual void ScheduleRemoteSend(
-      PjRtMemorySpace* memory_space, PjRtRawBufferRef raw_buffer,
-      std::vector<PjRtDeviceEventRef> definition_events,
-      PjRtDeviceEventPromiseRef usage_event_promise,
-      Future<std::string> serialized_descriptor,
-      PjRtBuffer::RemoteSendCallback on_done);
+  virtual void ScheduleRemoteSend(PjRtMemorySpace* memory_space,
+                                  PjRtRawBufferRef raw_buffer,
+                                  PjRtDeviceEventRefVector definition_events,
+                                  PjRtDeviceEventPromiseRef usage_event_promise,
+                                  Future<std::string> serialized_descriptor,
+                                  PjRtBuffer::RemoteSendCallback on_done);
 
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
@@ -342,11 +381,10 @@ class CommonPjRtClient : public PjRtClient {
   // Takes raw buffers, a notifier, and the transfer dependency AVs that must
   // be ready before the receive can complete. Returns a vector of definition
   // events that will be fulfilled once the receive operation completes.
-  virtual absl::StatusOr<std::vector<PjRtDeviceEventRef>>
-  CrossHostReceiveBuffersInto(
-      absl::Span<const tsl::RCReference<PjRtRawBuffer>> buffers,
+  virtual absl::StatusOr<PjRtDeviceEventRefVector> CrossHostReceiveBuffersInto(
+      absl::Span<const PjRtRawBufferRef> buffers,
       PjRtCrossHostRecvNotifier notifier,
-      absl::Span<const PjRtDeviceEventRef> transfer_dependency_avs) {
+      PjRtDeviceEventSpan transfer_dependency_avs) {
     return absl::UnimplementedError(
         "CrossHostReceiveBuffersInto is not implemented.");
   }
@@ -372,12 +410,11 @@ class CommonPjRtClient : public PjRtClient {
   struct CrossHostTransferSpec {
     GlobalDeviceId src_global_device_id;
     GlobalDeviceId dst_global_device_id;
-    tsl::RCReference<PjRtRawBuffer> raw_buffer;
+    PjRtRawBufferRef raw_buffer;
   };
 
-  virtual absl::StatusOr<std::vector<PjRtDeviceEventRef>>
-  CrossHostTransferBuffers(
-      std::vector<PjRtDeviceEventRef> transfer_dependencies,
+  virtual absl::StatusOr<PjRtDeviceEventRefVector> CrossHostTransferBuffers(
+      PjRtDeviceEventRefVector transfer_dependencies,
       std::vector<CrossHostTransferSpec> transfer_specs) {
     return absl::UnimplementedError(
         "CrossHostTransferBuffers is not implemented.");
@@ -387,8 +424,8 @@ class CommonPjRtClient : public PjRtClient {
       const ExecuteOptions& options,
       absl::Span<PjRtBuffer* const> argument_handles,
       absl::Span<int const> donated_params,
-      std::vector<PjRtDeviceEventRef>& extra_deps,
-      std::vector<PjRtDeviceEventRef>& control_deps,
+      PjRtDeviceEventRefVector& extra_deps,
+      PjRtDeviceEventRefVector& control_deps,
       absl::InlinedVector<PjRtRawBufferRef, 4>& input_buffers,
       absl::InlinedVector<CommonPjRtBuffer::ScopedHold, 4>& device_buffers,
       PjRtDevice* device, int replica, int partition,
@@ -400,7 +437,8 @@ class CommonPjRtClient : public PjRtClient {
       const Shape& output_device_shape,
       absl::Span<const CommonPjRtBuffer::ScopedHold> input_device_buffer_holds,
       const HloInputOutputAliasConfig& alias_config, PjRtDevice* device,
-      absl::Span<const int> output_memory_space_kind_ids);
+      absl::Span<const int> output_memory_space_kind_ids,
+      const ExecuteOptions& options);
 
   std::vector<std::unique_ptr<PjRtBuffer>> CreateOutputs(
       const std::shared_ptr<const Shape>& output_device_shape,
@@ -419,6 +457,9 @@ class CommonPjRtClient : public PjRtClient {
   virtual void AddEventDependencies(
       PjRtMemorySpace* memory_space, PjRtDeviceEventPtr device_event,
       absl::Span<const PjRtDeviceEventRef> dependencies) {}
+  virtual void AddEventDependencies(PjRtMemorySpace* memory_space,
+                                    PjRtDeviceEventPtr device_event,
+                                    PjRtDeviceEventSpan dependencies) {}
 
   virtual void RegisterClientThreadWait(PjRtMemorySpace* memory_space,
                                         PjRtDeviceEventPtr device_event,
@@ -429,6 +470,12 @@ class CommonPjRtClient : public PjRtClient {
                                     std::intptr_t stream);
 
  protected:
+  // Returns the required alignment for device memory addresses when slicing.
+  virtual absl::StatusOr<size_t> GetDeviceAddressAlignment() const {
+    return absl::UnimplementedError(
+        "GetDeviceAddressAlignment is not implemented.");
+  }
+
   absl::Status DelinearizeHostBuffer(absl::Span<const uint8_t> input_data,
                                      const Shape& shape,
                                      MutableLiteralBase* literal);
@@ -456,8 +503,8 @@ class PjRtRawLoadedExecutable {
   virtual RawExecuteResult Execute(const ExecuteOptions& options,
                                    absl::Span<const PjRtRawBufferRef> inputs,
                                    absl::Span<const PjRtRawBufferRef> results,
-                                   std::vector<PjRtDeviceEventRef> extra_deps,
-                                   std::vector<PjRtDeviceEventRef> control_deps,
+                                   PjRtDeviceEventRefVector extra_deps,
+                                   PjRtDeviceEventRefVector control_deps,
                                    bool is_predetermined_error,
                                    bool fill_future) && = 0;
 };
@@ -654,8 +701,8 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
     std::unique_ptr<PjRtRawLoadedExecutable> executable;
     absl::InlinedVector<PjRtRawBufferRef, 4> input_buffers;
     absl::InlinedVector<CommonPjRtBuffer::ScopedHold, 4> device_buffers;
-    std::vector<PjRtDeviceEventRef> extra_deps;
-    std::vector<PjRtDeviceEventRef> control_deps;
+    PjRtDeviceEventRefVector extra_deps;
+    PjRtDeviceEventRefVector control_deps;
     absl::InlinedVector<PjRtRawBufferRef, 4> output_leaf_buffers;
     bool is_predetermined_error;
     const ExecuteOptions* options;
@@ -746,13 +793,20 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
   std::unique_ptr<DispatchInfo::Extras> extras_;
 };
 
-class CommonPjRtRawBufferImpl : public CommonPjRtRawBuffer {
+class CommonPjRtRawBufferImpl : public PjRtRawBuffer {
  public:
   Future<> CopyRawHostToDevice(const void* src, int64_t offset,
                                int64_t transfer_size) override;
 
   Future<> CopyRawDeviceToHost(void* dst, int64_t offset,
                                int64_t transfer_size) override;
+
+  void ScheduleCopyTo(
+      PjRtDeviceEventRefVector transfer_dependency_events,
+      PjRtRawBufferRef dst_raw_buffer,
+      PjRtDeviceEventPromiseRef definition_event_promise,
+      PjRtDeviceEventPromiseRef src_usage_event_promise,
+      absl::AnyInvocable<void(absl::Status) &&> allocation_event) override;
 };
 
 // TODO(parkers): Merge everything here into CommonPjRtBuffer.
@@ -828,7 +882,7 @@ class CommonPjRtBufferImpl : public CommonPjRtBuffer {
   Future<> LazyToLiteral(
       absl::AnyInvocable<Future<MutableLiteralBase*>() &&> generator) override;
 
-  absl::StatusOr<tsl::RCReference<PjRtRawBuffer>> CreateRawAliasOfBuffer();
+  absl::StatusOr<PjRtRawBufferRef> CreateRawAliasOfBuffer();
 
   absl::StatusOr<std::unique_ptr<ExternalReference>> AcquireExternalReference()
       override;

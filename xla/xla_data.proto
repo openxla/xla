@@ -1142,6 +1142,12 @@ message NamedShardingProto {
   // A sharding can have unreduced axes, meaning the tensor is unreduced
   // along these axes.
   repeated AxisRefProto unreduced_axes = 5;
+  enum ReductionOpProto {
+    SUM = 0;
+    MAX = 1;
+    MIN = 2;
+  }
+  ReductionOpProto reduction_op = 8;
   // A list of axes that is controlled by the users.
   repeated AxisRefProto manual_axes = 7;
 
@@ -1478,9 +1484,9 @@ message WhileLoopBackendConfig {
   }
 
   // Tuple positions that should be treated as induction variables for dynamic
-  // memcpy analysis, even though they are not the primary induction variable.
-  // When `init`/`step` are set, they take precedence over `known_init_step`
-  // for offset computation.
+  // slice offset analysis, even though they are not the primary induction
+  // variable. When `init`/`step` are set, they take precedence over
+  // `known_init_step` for offset computation.
   repeated DynamicVariable dynamic_variables = 5;
 }
 

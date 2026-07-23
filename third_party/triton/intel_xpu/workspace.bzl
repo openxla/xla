@@ -2,8 +2,8 @@
 
 load("//third_party:repo.bzl", "tf_mirror_urls")
 
-XPU_TRITON_COMMIT = "0ba44beb6746a3f4935198bfcc353ee0abe0b5ac"
-XPU_TRITON_SHA256 = "c7ac24d81221f33c57e02246a342bc26dc00a11f12217137efa6c0d220cb01f1"
+XPU_TRITON_COMMIT = "08b57e380650d325b73c8fb882bc1f752e000407"
+XPU_TRITON_SHA256 = "ea9ee31fba900d00bf6e45252d050620a4cf9a835e953aaad57f0bb04c8caa70"
 
 def _use_xpu_triton(repository_ctx):
     return repository_ctx.getenv("ENABLE_INTEL_XPU_TRITON", "").strip() == "1"

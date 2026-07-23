@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
+#include "xla/literal.h"
 #include "xla/pjrt/compiled_memory_stats.h"
 #include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -234,7 +235,7 @@ struct HloOutputCallback {
   // instruction.
   //             Missing operands are represented by nullptr.
   std::function<void(int64_t replica_id, int64_t partition_id,
-                     absl::Span<std::shared_ptr<Literal> const> literals)>
+                     absl::Span<std::shared_ptr<const Literal> const> literals)>
       callback;
 };
 
@@ -325,6 +326,12 @@ struct ExecuteOptions {
   // The PRNG seed to use for execution. A seed of 0 means that the seed is not
   // set and that the default seed (usually random) should be used.
   int64_t seed = 0;
+
+  // If true, use arena allocation for output buffers. When this is true, a
+  // single device buffer is allocated for all output buffers, and each output
+  // buffer is a sub-buffer of the arena. The allocated arena will be released
+  // only after all the sub-buffers are deleted.
+  bool use_output_arena = false;
 
   absl::StatusOr<ExecuteOptionsProto> ToProto() const;
   static absl::StatusOr<ExecuteOptions> FromProto(

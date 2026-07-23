@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace ifrt {
@@ -2302,29 +2303,38 @@ TEST_P(ArrayImplHashTest, HashValuesInconsistentReplicas) {
 
   absl::Span<Device* const> devices =
       client->addressable_devices().subspan(0, 2);
+  ASSERT_OK_AND_ASSIGN(
+      auto array0,
+      client->MakeArrayFromHostBuffer(
+          data0.data(), dtype, shape, /*byte_strides=*/std::nullopt,
+          SingleDeviceSharding::Create(devices[0], MemoryKind()),
+          /*layout=*/nullptr,
+          Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+          /*on_done_with_host_buffer=*/nullptr));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto array1,
+      client->MakeArrayFromHostBuffer(
+          data1.data(), dtype, shape, /*byte_strides=*/std::nullopt,
+          SingleDeviceSharding::Create(devices[1], MemoryKind()),
+          /*layout=*/nullptr,
+          Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+          /*on_done_with_host_buffer=*/nullptr));
+
+  std::vector<ArrayRef> arrays = {array0, array1};
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
                        client->MakeDeviceList(devices));
   ShardingRef sharding = ConcreteEvenSharding::Create(
       device_list, MemoryKind(), shape, /*shard_shape=*/shape,
       /*is_fully_replicated=*/true);
 
-  std::vector<Client::MakeArraysFromHostBufferShardsSpec> specs;
-  specs.push_back({
-      /*buffers=*/{{{0},
-                    {data0.data(), dtype, shape,
-                     /*byte_strides=*/std::nullopt, /*layout=*/nullptr}},
-                   {{1},
-                    {data1.data(), dtype, shape,
-                     /*byte_strides=*/std::nullopt, /*layout=*/nullptr}}},
-      /*array_spec=*/{dtype, shape, sharding, /*layout=*/nullptr},
-  });
+  ASSERT_OK_AND_ASSIGN(ArrayRef array,
+                       client->AssembleArrayFromSingleDeviceArrays(
+                           dtype, shape, sharding, absl::MakeSpan(arrays),
+                           ArrayCopySemantics::kAlwaysCopy,
+                           SingleDeviceShardSemantics::kAddressableShards));
 
-  ASSERT_OK_AND_ASSIGN(
-      std::vector<ArrayRef> arrays,
-      client->MakeArraysFromHostBufferShards(
-          absl::MakeSpan(specs),
-          Client::HostBufferSemantics::kImmutableOnlyDuringCall));
-  ArrayRef array = arrays.front();
   ASSERT_OK(array->GetReadyFuture().Await());
 
   absl::StatusOr<std::vector<uint64_t>> result =
@@ -2407,7 +2417,38 @@ TEST(ArrayImplTest, Delete) {
                                       /*byte_strides=*/std::nullopt, sharding,
                                       /*layout=*/nullptr, semantics,
                                       /*on_done_with_host_buffer=*/{}));
-  TF_EXPECT_OK(array->Delete().Await());
+  EXPECT_OK(array->Delete().Await());
+  EXPECT_TRUE(array->IsDeleted());
+}
+
+TEST(ArrayImplTest, BatchedDelete) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+
+  std::vector<ValueRef> values;
+  for (int i = 0; i < 10; ++i) {
+    DType dtype(DType::kF32);
+    Shape shape({2, 3});
+    std::vector<float> data(6);
+    absl::c_iota(data, 0);
+    Device* device = client->addressable_devices().at(0);
+    ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
+    auto semantics = Client::HostBufferSemantics::kImmutableOnlyDuringCall;
+
+    TF_ASSERT_OK_AND_ASSIGN(
+        values.emplace_back(),
+        client->MakeArrayFromHostBuffer(data.data(), dtype, shape,
+                                        /*byte_strides=*/std::nullopt, sharding,
+                                        /*layout=*/nullptr, semantics,
+                                        /*on_done_with_host_buffer=*/{}));
+  }
+
+  // Delete the first value separately to test that Delete is idempotent.
+  EXPECT_OK(values.front()->Delete().Await());
+  EXPECT_OK(client->DeleteValues(absl::MakeSpan(values)).Await());
+
+  for (const auto& value : values) {
+    EXPECT_TRUE(value->IsDeleted());
+  }
 }
 
 TEST(ArrayImplTest, DeleteIsIdempotent) {

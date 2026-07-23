@@ -123,8 +123,8 @@ XTileTestBase::CreateXTileIrAndFileCheck(
     namespace ge = ::xla::gpu::experimental;
     auto* fusion = Cast<HloFusionInstruction>(computation.FusionInstruction());
     auto fusion_adaptor = HloFusionAdaptor::ForInstruction(fusion);
-    std::unique_ptr<ge::TilingSpace> tiling_space =
-        ge::TilingSpace::Create(*fusion_adaptor, mlir_context());
+    ASSIGN_OR_RETURN(std::unique_ptr<ge::TilingSpace> tiling_space,
+                     ge::TilingSpace::Create(*fusion_adaptor, mlir_context()));
     ASSIGN_OR_RETURN(
         llvm::SmallVector<int64_t> concrete_sizes,
         GetTilingSpaceConcreteSizes(*tiling_space, block_level_parameters));
@@ -133,6 +133,8 @@ XTileTestBase::CreateXTileIrAndFileCheck(
     ASSIGN_OR_RETURN(ge::TiledHloComputation tiled_computation,
                      ge::TiledHloComputation::Tile(*fusion_adaptor,
                                                    std::move(tiling_space)));
+    tiled_computation.Simplify();
+    tiled_computation.SortInstructionsPostOrder();
     if (Decision constraints = ge::VerifyTritonConstraints(
             tiled_computation, TestGpuDeviceInfo::RTXA6000DeviceInfo());
         !constraints) {
