@@ -789,14 +789,6 @@ class HloInstruction {
       bool constrain_layout, const std::optional<int64_t>& channel_id,
       bool use_global_device_ids, bool has_dynamic_root = false);
 
-  ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
-  static std::unique_ptr<HloInstruction> CreateCollectiveReduce(
-      const Shape& shape, absl::Span<HloInstruction* const> operands,
-      HloComputation* reduce_computation,
-      absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
-      const std::optional<int64_t>& channel_id, bool use_global_device_ids,
-      bool has_dynamic_root = false);
-
   // Creates a communication instruction that permutes data cross replicas.
   // Data is sent/received according to the (source_replica_id,
   // target_replica_id) pairs in `source_target_pairs`. If a replica id is not a

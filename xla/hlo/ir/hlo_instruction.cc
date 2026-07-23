@@ -1935,19 +1935,6 @@ HloInstruction::CreateCollectiveReduce(
 }
 
 /* static */ std::unique_ptr<HloInstruction>
-HloInstruction::CreateCollectiveReduce(
-    const Shape& shape, absl::Span<HloInstruction* const> operands,
-    HloComputation* reduce_computation,
-    absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
-    const std::optional<int64_t>& channel_id, bool use_global_device_ids,
-    bool has_dynamic_root) {
-  return CreateCollectiveReduce(
-      shape, operands, reduce_computation,
-      std::make_shared<CollectiveDeviceList>(replica_groups), constrain_layout,
-      channel_id, use_global_device_ids, has_dynamic_root);
-}
-
-/* static */ std::unique_ptr<HloInstruction>
 HloInstruction::CreateCollectiveBroadcast(
     const Shape& shape, absl::Span<HloInstruction* const> operands,
     std::shared_ptr<CollectiveDeviceListBase> device_list,

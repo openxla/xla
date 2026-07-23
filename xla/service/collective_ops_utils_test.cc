@@ -731,11 +731,14 @@ TEST_P(GetCollectOpGroupModeTestForInstruction, Test) {
               channel_id()));
       break;
     case HloOpcode::kCollectiveReduce: {
-      TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloComputation> max_computation,
-                              CreateMaxComputation());
+      ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloComputation> max_computation,
+                           CreateMaxComputation());
+      std::unique_ptr<CollectiveDeviceListBase> device_list =
+          std::make_unique<CollectiveDeviceList>(std::vector<ReplicaGroup>{});
       collective =
           builder.AddInstruction(HloInstruction::CreateCollectiveReduce(
-              two_elements, {parameter}, max_computation.get(), {group},
+              two_elements, {parameter}, max_computation.get(),
+              std::move(device_list),
               /*constrain_layout=*/true, channel_id(),
               use_global_device_ids()));
       break;
