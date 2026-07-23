@@ -66,6 +66,19 @@ struct PlatformCommunicatorHandle {
   void* handle = nullptr;  // will be nullptr if not supported
 };
 
+// Direct load/store topology for a GPU communicator. LSA teams are backend
+// topology groups and are not constrained to process or physical-host
+// boundaries. In particular, a multi-host NVLink fabric can expose the whole
+// communicator as one LSA team.
+struct GpuCommunicatorTopology {
+  // Number of contiguous communicator ranks in each LSA team.
+  int64_t lsa_size = 0;
+  // Number of equal-sized LSA teams partitioning the communicator.
+  int64_t lsa_team_count = 0;
+  // Whether the current LSA team supports a hardware multicast alias.
+  bool multimem_supported = false;
+};
+
 // A device communicator that corresponds to the host side GPU communicator
 // object (it has same rank in the collective clique and shares underlying
 // resources). A host-side GPU communicator object can instantiate multiple
@@ -144,6 +157,13 @@ class GpuCommunicator : public Communicator {
   // or nullptr if not backed by a StreamExecutor.
   virtual stream_executor::StreamExecutor* stream_executor() const {
     return nullptr;
+  }
+
+  // Returns direct load/store topology discovered by the backend. A successful
+  // query describes topology, not a guarantee that any particular symmetric
+  // memory registration or peer-address lookup will succeed.
+  virtual absl::StatusOr<GpuCommunicatorTopology> GetTopology() const {
+    return Unimplemented("Communicator topology is not implemented");
   }
 
   // Returns GXL communicator if supported.

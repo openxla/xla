@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/ffi_nccl_collective_resources.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/traced_command.h"
@@ -296,14 +297,15 @@ CustomCallThunk::BuildCallFrame(
   return call_frame;
 }
 
-InvokeContext CustomCallThunk::BuildInvokeContext(
-    RunId run_id, se::Stream* absl_nullable stream,
+absl::StatusOr<InvokeContext> CustomCallThunk::BuildInvokeContext(
+    RunId run_id, XLA_FFI_ExecutionStage stage,
+    se::Stream* absl_nullable stream,
     Thunk::ExecutionScopedState* absl_nullable execution_scoped_state,
     const BufferAllocations* absl_nullable buffer_allocations,
     const CollectiveParams* absl_nullable collective_params,
     CollectiveCliqueRequests* absl_nullable collective_clique_requests,
     CollectiveMemoryRequests* absl_nullable collective_memory_requests,
-    const CollectiveCliques* absl_nullable collective_cliques,
+    CollectiveCliques* absl_nullable collective_cliques,
     const CollectiveMemory* absl_nullable collective_memory,
     const ffi::ExecutionContext* absl_nullable execution_context,
     absl::Span<se::Stream* const> computation_streams) {
@@ -322,12 +324,18 @@ InvokeContext CustomCallThunk::BuildInvokeContext(
 
   ffi::ExecutionState* prepare_state = nullptr;
   ffi::ExecutionState* initialize_state = nullptr;
+  FfiNcclCollectiveResources* nccl_collective_resources = nullptr;
 
   if (execution_scoped_state) {
     auto [it, _] = execution_scoped_state->try_emplace(
         this->thunk_info().thunk_id, std::in_place_type<PrepareAndInitState>);
     PrepareAndInitState& prepare_and_init =
         tsl::any_cast<PrepareAndInitState>(it->second);
+    RETURN_IF_ERROR(prepare_and_init.nccl_collective_resources.BeginInvocation(
+        stage, stream, buffer_allocations, collective_params,
+        collective_clique_requests, collective_memory_requests,
+        collective_cliques, collective_memory));
+    nccl_collective_resources = &prepare_and_init.nccl_collective_resources;
     prepare_state = &prepare_and_init.prepare;
     initialize_state = &prepare_and_init.init;
   }
@@ -347,7 +355,8 @@ InvokeContext CustomCallThunk::BuildInvokeContext(
           cpu_target_machine_options_ ? &*cpu_target_machine_options_ : nullptr,
           computation_streams,
           collective_params ? absl::MakeSpan(collective_params->async_streams)
-                            : absl::Span<se::Stream* const>()},
+                            : absl::Span<se::Stream* const>(),
+          nccl_collective_resources},
       InvokeContext::StateContext{execution_state_.get(), prepare_state,
                                   initialize_state},
       called_computation_,
@@ -362,7 +371,7 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
     const CollectiveParams* absl_nullable collective_params,
     CollectiveCliqueRequests* absl_nullable collective_clique_requests,
     CollectiveMemoryRequests* absl_nullable collective_memory_requests,
-    const CollectiveCliques* absl_nullable collective_cliques,
+    CollectiveCliques* absl_nullable collective_cliques,
     const CollectiveMemory* absl_nullable collective_memory,
     absl::Span<se::Stream* const> computation_streams) {
   if (handler == nullptr) {
@@ -374,11 +383,13 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
   }
 
   ASSIGN_OR_RETURN(auto call_frame, BuildCallFrame(buffer_allocations));
-  InvokeContext context = BuildInvokeContext(
-      run_id, stream, execution_scoped_state, buffer_allocations,
-      collective_params, collective_clique_requests, collective_memory_requests,
-      collective_cliques, collective_memory, execution_context,
-      computation_streams);
+  ASSIGN_OR_RETURN(
+      InvokeContext context,
+      BuildInvokeContext(run_id, stage, stream, execution_scoped_state,
+                         buffer_allocations, collective_params,
+                         collective_clique_requests, collective_memory_requests,
+                         collective_cliques, collective_memory,
+                         execution_context, computation_streams));
   return Invoke(ffi::GetXlaFfiApi(), handler, *call_frame, context, stage);
 }
 
@@ -390,7 +401,7 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
     const CollectiveParams* absl_nullable collective_params,
     CollectiveCliqueRequests* absl_nullable collective_clique_requests,
     CollectiveMemoryRequests* absl_nullable collective_memory_requests,
-    const CollectiveCliques* absl_nullable collective_cliques,
+    CollectiveCliques* absl_nullable collective_cliques,
     const CollectiveMemory* absl_nullable collective_memory,
     absl::Span<se::Stream* const> computation_streams) {
   if (stage != xla::ffi::ExecutionStage::kPrepare &&
@@ -399,11 +410,14 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
   }
 
   ASSIGN_OR_RETURN(auto call_frame, BuildCallFrame(buffer_allocations));
-  InvokeContext context = BuildInvokeContext(
-      run_id, stream, execution_scoped_state, buffer_allocations,
-      collective_params, collective_clique_requests, collective_memory_requests,
-      collective_cliques, collective_memory, execution_context,
-      computation_streams);
+  ASSIGN_OR_RETURN(
+      InvokeContext context,
+      BuildInvokeContext(run_id, static_cast<XLA_FFI_ExecutionStage>(stage),
+                         stream, execution_scoped_state, buffer_allocations,
+                         collective_params, collective_clique_requests,
+                         collective_memory_requests, collective_cliques,
+                         collective_memory, execution_context,
+                         computation_streams));
   return Invoke(ffi::GetXlaFfiApi(), handler, *call_frame, context, stage);
 }
 

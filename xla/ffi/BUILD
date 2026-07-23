@@ -41,6 +41,16 @@ cc_library(
 )
 
 cc_library(
+    name = "nccl_collective_resources_api",
+    hdrs = ["nccl_collective_resources_api.h"],
+    visibility = ["//xla/backends/gpu:__subpackages__"],
+    deps = [
+        "//xla/ffi/api:c_api_nccl_collective_resources",
+        "@com_google_absl//absl/status",
+    ],
+)
+
+cc_library(
     name = "call_frame",
     srcs = ["call_frame.cc"],
     hdrs = ["call_frame.h"],
@@ -223,10 +233,12 @@ cc_library(
         ":ffi_interop",
         ":ffi_registry",
         ":ffi_structs",
+        ":nccl_collective_resources_api",
         ":invoke",
         ":type_registry",
         "//xla:util",
         "//xla/ffi/api:c_api",
+        "//xla/ffi/api:c_api_nccl_collective_resources",
         "//xla/ffi/api:c_api_internal",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
