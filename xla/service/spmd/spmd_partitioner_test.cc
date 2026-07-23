@@ -2750,8 +2750,9 @@ ENTRY entry {
 TEST_P(SpmdPartitioningTest,
        DynamicSliceReplicatedResultUsesCollectiveBroadcast) {
   SpmdPartitionerOptions options;
-  EXPECT_TRUE(options.enable_dynamic_slice_collective_broadcast);
+  EXPECT_FALSE(options.enable_dynamic_slice_collective_broadcast);
   EXPECT_EQ(options.max_dynamic_slice_collective_broadcast_partitions, 32);
+  options.enable_dynamic_slice_collective_broadcast = true;
 
   ASSERT_OK_AND_ASSIGN(auto module,
                        PartitionComputation(kReplicatedDynamicSliceHlo,
