@@ -116,10 +116,7 @@ namespace {
 // * This set provides a convenient method to extract the unique pointers into a
 //   vector.
 // * Values are stored in the order of insertion. This is useful when we have
-//   information about the order in which we process elements. For example,
-//   during the construction of TiledHloComputation from
-//   TiledHloInstructions, we know that instruction are already sorted
-//   in def-before-use order.
+//   information about the order in which we process elements.
 class OrderedTiledHloPtrSet {
  public:
   // Inserts an element into the set.
@@ -169,8 +166,10 @@ class OrderedTiledHloPtrSet {
 };
 
 // Sorts tiled hlo instructions in def-before-use order, starting from
-// `roots_with_no_users`. If instruction is not reachable from the root then it
-// might be put in an arbitrary position.
+// `roots_with_no_users`.
+//
+// Precondition: all `tiled_hlo_instructions` are reachable from
+// `roots_with_no_users`.
 void SortTiledHloInstructionsInPostOrder(
     std::vector<std::unique_ptr<TiledHloInstruction>>& tiled_hlo_instructions,
     ArrayRef<const TiledHloInstruction*> roots_with_no_users) {
@@ -194,16 +193,17 @@ void SortTiledHloInstructionsInPostOrder(
   for (const TiledHloInstruction* root_with_no_user : roots_with_no_users) {
     visit_instruction(root_with_no_user);
   }
-  absl::c_sort(
-      tiled_hlo_instructions,
-      [&](const std::unique_ptr<TiledHloInstruction>& t1,
-          const std::unique_ptr<TiledHloInstruction>& t2) {
-        auto it1 = topological_order.find(t1.get());
-        auto it2 = topological_order.find(t2.get());
-        int64_t order1 = (it1 != topological_order.end()) ? it1->second : -1;
-        int64_t order2 = (it2 != topological_order.end()) ? it2->second : -1;
-        return order1 < order2;
-      });
+  absl::c_sort(tiled_hlo_instructions,
+               [&](const std::unique_ptr<TiledHloInstruction>& t1,
+                   const std::unique_ptr<TiledHloInstruction>& t2) {
+                 auto it1 = topological_order.find(t1.get());
+                 auto it2 = topological_order.find(t2.get());
+                 CHECK(it1 != topological_order.end())
+                     << "Unexpected stray instruction: " << t1->ToString();
+                 CHECK(it2 != topological_order.end())
+                     << "Unexpected stray instruction: " << t2->ToString();
+                 return it1->second < it2->second;
+               });
 
   VLOG(4) << "Sorted symbolic tiled HLO instructions in def-before-use order:\n"
           << absl::StrJoin(
@@ -325,6 +325,26 @@ absl::InlinedVector<const HloInstruction*, 2> ToInstructions(
 
 }  // namespace
 
+void TiledHloRegion::Simplify() {
+  for (auto& instruction : instructions_) {
+    Tile tile = instruction->tile();
+    tile.Simplify();
+    instruction->set_tile(std::move(tile));
+    for (auto& region : instruction->hlo_regions()) {
+      region.Simplify();
+    }
+  }
+}
+
+void TiledHloRegion::SortInstructionsPostOrder() {
+  for (auto& instruction : instructions_) {
+    for (auto& region : instruction->hlo_regions()) {
+      region.SortInstructionsPostOrder();
+    }
+  }
+  SortTiledHloInstructionsInPostOrder(instructions_, roots_);
+}
+
 // Recursively constructs a tiled HLO region starting from a set of root
 // instructions.
 //
@@ -332,7 +352,7 @@ absl::InlinedVector<const HloInstruction*, 2> ToInstructions(
 // the fusion boundary to reconstruct the tiled HLO dependency graph and any
 // nested computation regions (e.g., reduction bodies or dot computations).
 //
-// The instructions in the returned region are sorted in def-before-use order.
+// Instructions are not ordered.
 absl::StatusOr<TiledHloRegion> TiledHloComputation::CreateHloRegion(
     std::vector<std::unique_ptr<TiledHloInstruction>> roots,
     const HloFusionAdaptor& fusion, TilingSpace& tiling_space,
@@ -422,8 +442,6 @@ absl::StatusOr<TiledHloRegion> TiledHloComputation::CreateHloRegion(
   std::vector<std::unique_ptr<TiledHloInstruction>> tiled_hlo_instructions =
       tiled_hlo_instructions_set.ExtractData();
 
-  SortTiledHloInstructionsInPostOrder(tiled_hlo_instructions, canonical_roots);
-
   return TiledHloRegion{std::move(tiled_hlo_instructions),
                         std::move(canonical_roots)};
 }
@@ -444,23 +462,14 @@ absl::StatusOr<TiledHloRegion> TiledHloComputation::CreateHloRegion(
                    CreateHloRegion(std::move(tiled_roots), fusion,
                                    *tiling_space, rt_symbol_to_tiled_hlo));
 
-  std::function<void(TiledHloInstruction*)> simplify_instruction;
-  simplify_instruction = [&](TiledHloInstruction* instruction) {
-    class Tile tile = instruction->tile();
-    tile.Simplify();
-    instruction->set_tile(std::move(tile));
-    for (const auto& region : instruction->hlo_regions()) {
-      for (const auto& nested : region.instructions()) {
-        simplify_instruction(nested.get());
-      }
-    }
-  };
-  for (auto& instr : region.instructions()) {
-    simplify_instruction(instr.get());
-  }
-
   return TiledHloComputation(std::move(tiling_space), std::move(region),
                              std::move(rt_symbol_to_tiled_hlo));
+}
+
+void TiledHloComputation::Simplify() { region_.Simplify(); }
+
+void TiledHloComputation::SortInstructionsPostOrder() {
+  region_.SortInstructionsPostOrder();
 }
 
 std::string TiledHloComputation::ToString() const {

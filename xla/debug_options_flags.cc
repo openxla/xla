@@ -241,7 +241,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_cpu_enable_fast_math(false);
   opts.set_xla_cpu_enable_platform_dependent_math(true);
-  opts.set_xla_cpu_experimental_enable_tiling_propagation(false);
+  opts.set_xla_cpu_experimental_enable_tiling_propagation(true);
   // Disable forms of fast math that have caused users problems in the past.
   opts.set_xla_cpu_fast_math_honor_nans(true);
   opts.set_xla_cpu_fast_math_honor_infs(true);
@@ -430,10 +430,11 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_per_fusion_autotune_cache_dir("");
 
+  opts.set_xla_gpu_use_new_autotune_cache_format(false);
+
   opts.set_xla_gpu_experimental_autotune_cache_mode(
       DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE);
 
-  opts.set_xla_gpu_experimental_autotuner_cache_dir("");
 
   opts.set_xla_gpu_autotune_gemm_rtol(0.1f);
 
@@ -471,7 +472,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
   opts.set_xla_gpu_unsupported_enable_ragged_all_to_all_decomposer(false);
-  opts.set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel(true);
+  opts.add_xla_gpu_experimental_use_collective_kernels(
+      DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE);
   opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
   opts.set_xla_gpu_experimental_enable_fusion_autotuner(true);
   opts.set_xla_gpu_experimental_max_unroll_factor(32);
@@ -533,7 +535,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_pdl_launch(true);
   opts.set_xla_gpu_command_buffer_update_mode(DebugOptions::ALWAYS_UPDATE);
 
-  opts.set_xla_gpu_experimental_aot_compiled_thunks(true);
   opts.set_xla_gpu_deviceless_cub_mode(
       DebugOptions::DEVICELESS_CUB_WITH_FALLBACK);
   opts.set_xla_gpu_cudnn_deviceless_compilation_mode(
@@ -2201,15 +2202,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "sizes. "
       "Format: op:size:op_type or op. E.g. "
       "AllReduce:1024:F32,AllGather:2048,ReduceScatter,all."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_aot_compiled_thunks",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_experimental_aot_compiled_thunks),
-      debug_options->xla_gpu_experimental_aot_compiled_thunks(),
-      "Enables an Ahead-of-Time (AOT) compilation flow where the compiled "
-      "binary includes the generated Thunks. In contrast, the legacy flow "
-      "only compiles up to the HLO optimization stage, before Thunk "
-      "generation."));
 
   flag_list->push_back(tsl::Flag(
       "xla_gpu_temp_buffer_use_separate_color",
@@ -2796,12 +2788,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "cache. Supported modes: read (provides readonly access to "
       "the cache), update (loads if the cache exists, runs autotuning "
       "and dumps the result otherwise). Default: update."));
+
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_autotuner_cache_dir",
-      string_setter_for(
-          &DebugOptions::set_xla_gpu_experimental_autotuner_cache_dir),
-      debug_options->xla_gpu_experimental_autotuner_cache_dir(),
-      "Experimental: Specify the directory to read/write autotuner cache to."));
+      "xla_gpu_use_new_autotune_cache_format",
+      bool_setter_for(&DebugOptions::set_xla_gpu_use_new_autotune_cache_format),
+      debug_options->xla_gpu_use_new_autotune_cache_format(),
+      "Whether to use the new protos for the autotune cache"
+      " (xla.autotuner.AutotuneCache rather than xla.AutotuneResults."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_autotune_backends",
       SetterForRepeatedEnum<autotuner::Backend>(
@@ -2980,6 +2973,27 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 "Enable the experimental explicit stream annotation support. "
                 "If false, the annotations are ignored."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_use_collective_kernels",
+      SetterForRepeatedEnum<DebugOptions::CollectiveKernelType>(
+          "xla_gpu_experimental_use_collective_kernels",
+          /*enum_prefix=*/"COLLECTIVE_KERNEL_",
+          [](absl::string_view s, DebugOptions::CollectiveKernelType* v) {
+            return DebugOptions::CollectiveKernelType_Parse(s, v);
+          },
+          [debug_options]() {
+            return debug_options
+                ->mutable_xla_gpu_experimental_use_collective_kernels();
+          }),
+      collective_op_types_to_string(
+          debug_options->xla_gpu_experimental_use_collective_kernels()),
+      "Experimental: comma-separated filter of collective ops that should use "
+      "custom kernels (e.g. Triton one-shot / two-shot) instead of NCCL. "
+      "Accepted values: ALL_REDUCE, ALL_GATHER (case-insensitive; the "
+      "COLLECTIVE_KERNEL_ prefix may be omitted). Supports +/- "
+      "incremental modifiers (e.g. +ALL_REDUCE,-ALL_GATHER). The deprecated "
+      "--xla_gpu_unsupported_use_all_reduce_one_shot_kernel flag also adds "
+      "ALL_REDUCE to this filter for legacy compatibility."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_parallel_collective_overlap_limit",
       int32_setter_for(
           &DebugOptions::
@@ -3061,10 +3075,27 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "overridden."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_unsupported_use_all_reduce_one_shot_kernel",
-      bool_setter_for(
-          &DebugOptions::
-              set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel),
-      debug_options->xla_gpu_unsupported_use_all_reduce_one_shot_kernel(),
+      [debug_options](bool value) {
+        // Legacy: sync with xla_gpu_experimental_use_collective_kernels.
+        auto* ops = debug_options
+                        ->mutable_xla_gpu_experimental_use_collective_kernels();
+        const bool already_present =
+            absl::c_find(
+                *ops,
+                static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE)) !=
+            ops->end();
+        if (value && !already_present) {
+          ops->Add(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE);
+        } else if (!value) {
+          ops->erase(absl::c_find(
+              *ops,
+              static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE)));
+        }
+        return true;
+      },
+      !debug_options->xla_gpu_experimental_use_collective_kernels().empty(),
+      "DEPRECATED: Use "
+      "--xla_gpu_experimental_use_collective_kernels=ALL_REDUCE instead. "
       "Internal: Enable the one-shot kernel for single-host all-reduce "
       "operations."));
   flag_list->push_back(tsl::Flag(
