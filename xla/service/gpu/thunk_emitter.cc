@@ -374,10 +374,9 @@ absl::StatusOr<std::string> CanonicalGemmHlo(
          BackendConfigWrapper(gpu_config).GetRawString();
 }
 
-ThunkEmitter::ThunkEmitter(
-    IrEmitterContext* absl_nonnull ir_emitter_context,
-    llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
-        llvm_options_lock)
+ThunkEmitter::ThunkEmitter(IrEmitterContext* absl_nonnull ir_emitter_context,
+                           llvm_ir::LLVMCommandLineOptionsReleasableLock*
+                               absl_nonnull llvm_options_lock)
     : ir_emitter_context_(ir_emitter_context),
       send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
       call_graph_(CallGraph::Build(&ir_emitter_context->hlo_module())),
@@ -2354,10 +2353,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCopyStartThunk(
                    ShapeHasHostMemorySpace(shape, 0, host_memory_space));
   ASSIGN_OR_RETURN(bool is_src_host_memory,
                    ShapeHasHostMemorySpace(shape, 1, host_memory_space));
-  if (is_dst_host_memory == is_src_host_memory) {
+  // H2H is not a supported copy-start variant.
+  if (is_dst_host_memory && is_src_host_memory) {
     return absl::InternalError(
-        absl::StrFormat("Copy-start %s doesn't have correct host memory space "
-                        "color S(%d)",
+        absl::StrFormat("Copy-start %s has host memory space S(%d) on both "
+                        "source and destination, which is unsupported",
                         copy_start_instr->ToString(),
                         static_cast<int>(stream_executor::MemorySpace::kHost)));
   }
@@ -2366,8 +2366,15 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCopyStartThunk(
   Thunk::ThunkInfo copy_thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
       copy_start_instr, ir_emitter_context_->GetNextThunkId());
 
-  std::unique_ptr<CopyThunk> copy_thunk;
-  if (is_dst_host_memory) {
+  std::unique_ptr<Thunk> copy_thunk;
+  if (!is_dst_host_memory && !is_src_host_memory) {
+    // D2D async copy: both source and destination reside in device memory.
+    copy_thunk = std::make_unique<DeviceToDeviceCopyThunk>(
+        copy_thunk_info,
+        /*source_buffer=*/ShapedSlice{src_buffer, input_shape},
+        /*destination_buffer=*/ShapedSlice{dst_buffer, input_shape},
+        /*mem_size=*/ShapeUtil::ByteSizeOf(input_shape));
+  } else if (is_dst_host_memory) {
     copy_thunk = std::make_unique<DeviceToHostCopyThunk>(
         copy_thunk_info,
         /*source_buffer=*/ShapedSlice{src_buffer, input_shape},
