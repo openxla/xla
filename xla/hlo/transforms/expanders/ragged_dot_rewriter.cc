@@ -403,19 +403,32 @@ bool CanBeHandledByGpublasltGroupGemm(
 absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  const bool has_grouped_gemm =
-      module->config()
-          .debug_options()
-          .xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
-      module->config().debug_options().xla_gpu_enable_cublaslt();
+  // Backend selection priority for ragged-dot (mirrors GemmRewriter):
+  //   1. cuDNN (NVIDIA/CUDA targets) or hipBLASLt (AMD/ROCm targets)
+  //      when enabled and configuration is supported.
+  //   2. Triton XTile when enabled.
+  //   3. Default backend (expand to a regular dot here).
   const se::CudaComputeCapability* cuda_cc =
       gpu_compute_capability_.cuda_compute_capability();
+  // Priority 1a: cuDNN (NVIDIA/CUDA targets only).
   const bool ragged_dot_fusion_enabled =
       module->config()
           .debug_options()
           .xla_gpu_experimental_use_ragged_dot_fusion() &&
       cudnn_version_ >= kMinCudnnVersionForRaggedDotFusion &&
       cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere();
+  // Priority 1b: hipBLASLt group-gemm backend (AMD/ROCm targets only).
+  const bool has_grouped_gemm =
+      gpu_compute_capability_.rocm_compute_capability() != nullptr &&
+      module->config()
+          .debug_options()
+          .xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
+      module->config().debug_options().xla_gpu_enable_cublaslt();
+  // Priority 2: Triton XTile backend.
+  // When enabled, GemmRewriter will wrap every kRaggedDot in a
+  // kTritonGemmFusionKind fusion.  Do not expand them here.
+  const bool triton_ragged_dot_enabled =
+      module->config().debug_options().xla_gpu_experimental_triton_ragged_dot();
 
   // Gather all Ragged Dot operations.
   std::vector<HloRaggedDotInstruction*> ragged_dots;
@@ -423,17 +436,27 @@ absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
        module->MakeNonfusionComputations(execution_threads)) {
     for (auto* instruction : computation->instructions()) {
       if (instruction->opcode() == HloOpcode::kRaggedDot) {
-        // Only ragged-dot that cannot be lowered through Gpublaslt
-        // GroupGemm or cuDNN fusion are added to the list of operations to
-        // rewrite in regular dot.
+        // Only ragged-dots that cannot be lowered by a higher-priority backend
+        // are expanded here as regular dots (default / Priority 3 backend).
+        // Priority 1a: cuDNN (NVIDIA/CUDA targets).
         if (ragged_dot_fusion_enabled &&
             CanBeHandledByCuDNNFusion(instruction)) {
           continue;
         }
+        // Priority 1b: hipBLASLt (AMD/ROCm targets).
         if (has_grouped_gemm && CanBeHandledByGpublasltGroupGemm(
                                     gpu_compute_capability_, instruction)) {
           continue;
         }
+        // Priority 2: Triton XTile backend (when enabled and configuration
+        // supported: single LHS ragged dim, tiling propagation on, supported
+        // element types).
+        if (triton_ragged_dot_enabled &&
+            gpu::IsTritonSupportedRaggedDot(gpu_compute_capability_,
+                                            *instruction)) {
+          continue;
+        }
+        // Priority 3: Default backend — expand to a regular dot.
         ragged_dots.push_back(Cast<HloRaggedDotInstruction>(instruction));
       }
     }

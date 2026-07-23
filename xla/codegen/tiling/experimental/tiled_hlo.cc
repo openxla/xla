@@ -63,7 +63,7 @@ using ::llvm::SmallVector;
 
 TiledHloRegion::TiledHloRegion(
     std::vector<absl_nonnull std::unique_ptr<TiledHloInstruction>> instructions,
-    llvm::SmallVector<const TiledHloInstruction* absl_nonnull, 4> roots)
+    llvm::SmallVector<const TiledHloInstruction * absl_nonnull, 4> roots)
     : instructions_(std::move(instructions)), roots_(std::move(roots)) {
   for (const TiledHloInstruction* root : roots_) {
     CHECK(absl::c_any_of(
@@ -241,7 +241,8 @@ OperandsSpec GetSpec(const TiledHloInstruction& tiled_hlo,
   const HloOpcode opcode = tiled_hlo.hlo()->opcode();
   const int64_t num_operands = tiled_hlo.hlo()->operand_count();
   OperandsSpec spec;
-  if (opcode == HloOpcode::kDot || opcode == HloOpcode::kScaledDot) {
+  if (opcode == HloOpcode::kDot || opcode == HloOpcode::kScaledDot ||
+      opcode == HloOpcode::kRaggedDot) {
     spec.region_roots.push_back(iota(num_operands));
   } else if (opcode == HloOpcode::kConcatenate) {
     spec.region_roots.reserve(num_operands);

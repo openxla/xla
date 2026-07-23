@@ -1024,6 +1024,12 @@ message DebugOptions {
 
   optional bool xla_gpu_experimental_use_ragged_dot_grouped_gemm = 501;
 
+  // If true, route kRaggedDot through the experimental Triton XTile backend
+  // instead of hipBLASLt GroupedMatMul or cuDNN fusions.
+  // Requires xla_gpu_experimental_enable_tiling_propagation=true for the
+  // XTile emitter to use the experimental tiling analysis path.
+  optional bool xla_gpu_experimental_triton_ragged_dot = 516;
+
   // If true, PTX compilation will fail if a kernel spills registers.
   // This is meant for debugging and only applies to CUDA PTX compilation.
   optional bool xla_gpu_fail_ptx_compilation_on_register_spilling = 353;

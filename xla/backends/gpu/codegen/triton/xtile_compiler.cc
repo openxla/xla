@@ -372,16 +372,11 @@ absl::StatusOr<TritonKernelSource> CreateTritonModule(
     }
   }
 
-  if (fusion_kind == kTritonGemmFusionKind) {
-    return Internal(
-        "Attempted to emit a GEMM fusion through the legacy Triton "
-        "emitter, but it has been deleted. This is a bug.");
-  }
-
   // TODO(bchetioui,pifon): this list should be consolidated; why do we need so
   // many different fusion kinds?
   const std::vector<absl::string_view> kSupportedFusionKinds = {
       kTritonFusionKind,
+      kTritonGemmFusionKind,
       kTritonNestedGemmFusionKind,
       kTritonCollectiveFusionKind,
   };
