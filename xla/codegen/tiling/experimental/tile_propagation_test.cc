@@ -189,12 +189,6 @@ TEST_F(TilePropagationTest, CanPropagateToInputsOfAllGatherOp) {
          sizes [ts_0, ts_1]
          strides [1, 2]
          upper bounds [64, 256]
-         replica ids {
-           offsets [(tid_0 * ts_0) / 64]
-           sizes [1]
-           strides [1]
-           upper bounds [2]
-         }
   )"));
 }
 
@@ -826,15 +820,10 @@ TEST_F(TilePropagationTest, CanPropagateReplicaIdThroughBroadcast) {
          sizes [ts_0, ts_1, ts_2]
          strides [1, 2, 3]
          upper bounds [10, 32, 5]
-         replica ids {
-           offsets [(tid_1 * ts_1) / 32]
-           sizes [1]
-           strides [1]
-           upper bounds [2]
-         }
   )"));
   // operand(0) is the broadcast, tile_ag_operands[0] is its output tile.
-  // This should preserve the replica_id and drop dimension 2.
+  // AllGather does not use a replica_id, so no replica_id
+  // is propagated through the broadcast either.
   ASSERT_OK_AND_ASSIGN(auto tiled_broadcast_operands,
                        PropagateTileToInput(*tiling_space, *root->operand(0),
                                             tiled_ag_operands[0], 0));
@@ -844,12 +833,6 @@ TEST_F(TilePropagationTest, CanPropagateReplicaIdThroughBroadcast) {
          sizes [ts_0, ts_1]
          strides [1, 2]
          upper bounds [10, 32]
-         replica ids {
-           offsets [(tid_1 * ts_1) / 32]
-           sizes [1]
-           strides [1]
-           upper bounds [2]
-         }
   )"));
 }
 
