@@ -1711,6 +1711,20 @@ message DebugOptions {
   // Scratch buffer size (in bytes) for GXL collectives.
   optional int64 xla_gpu_gxl_scratch_size_bytes = 514;
 
+  // If true, GpuCopyAsyncWrapper converts eligible device-to-device HLO
+  // `copy` instructions to `copy-start`/`copy-done` pairs before scheduling,
+  // enabling the latency-hiding scheduler to overlap the D2D memcpy with
+  // compute-bound kernels on the main stream. Requires distinct compute streams
+  // to be allocated (controlled by the number of async compute streams). Only
+  // copies at or above xla_gpu_async_copy_min_bytes are wrapped.
+  optional bool xla_gpu_enable_async_device_to_device_copy = 515;
+
+  // Minimum transfer size (in bytes) for a device-to-device copy to be
+  // converted to an async copy-start/copy-done pair by GpuCopyAsyncWrapper.
+  // Smaller copies remain synchronous to avoid stream-synchronisation overhead.
+  // Default: 65536 (64 KiB).
+  optional int64 xla_gpu_async_copy_min_bytes = 516;
+
   // If true, enable experimental tiling propagation.
   optional bool xla_gpu_experimental_enable_tiling_propagation = 456;
 

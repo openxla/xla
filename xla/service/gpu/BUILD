@@ -1803,6 +1803,7 @@ cc_library(
         "//xla/backends/gpu/transforms:explicit_stream_annotation_async_wrapper",
         "//xla/backends/gpu/transforms:fusion_block_level_rewriter",
         "//xla/backends/gpu/transforms:fusion_wrapper",
+        "//xla/backends/gpu/transforms:gpu_copy_async_wrapper",
         "//xla/backends/gpu/transforms:gemm_broadcast_folding_rewriter",
         "//xla/backends/gpu/transforms:gemm_fusion",
         "//xla/backends/gpu/transforms:gemm_fusion_swap_operands",
