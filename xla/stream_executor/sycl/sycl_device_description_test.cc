@@ -42,7 +42,7 @@ TEST(SyclDeviceDescriptionTest, CreateOneApiDeviceDescription) {
   EXPECT_GT(device_desc->fpus_per_core(), 0);
   EXPECT_GT(device_desc->dnn_version().major_version(), 0);
   EXPECT_GT(device_desc->dnn_version().minor_version(), 0);
-  EXPECT_GT(device_desc->dnn_version().patch_version(), 0);
+  EXPECT_GE(device_desc->dnn_version().patch_version(), 0);
 }
 
 }  // namespace

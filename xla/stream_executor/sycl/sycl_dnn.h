@@ -42,6 +42,9 @@ class OnednnSupport : public dnn::DnnSupport {
   absl::Status Init() override;
   absl::StatusOr<stream_executor::dnn::VersionInfo> GetVersion() override;
 
+  // Static helper to get oneDNN version without requiring an instance.
+  static absl::StatusOr<stream_executor::dnn::VersionInfo> GetOnednnVersion();
+
   absl::Status DoConvolveWithGpuConfig(
       Stream* stream, const xla::gpu::GpuConvConfig& config,
       absl::Span<const DeviceMemoryBase> operand_se_buffers,
@@ -54,7 +57,8 @@ class OnednnSupport : public dnn::DnnSupport {
                              const dnn::BatchDescriptor& output_dimensions,
                              DeviceMemoryBase output_data,
                              ScratchAllocator* workspace_allocator) override {
-    return absl::UnimplementedError("Not Implemented");
+    return absl::UnimplementedError(
+        "DoPoolForward is not implemented for SYCL");
   }
 
   absl::Status DoPoolBackward(dnn::DataType element_type, Stream* stream,
@@ -66,7 +70,8 @@ class OnednnSupport : public dnn::DnnSupport {
                               DeviceMemoryBase input_diff_data,
                               DeviceMemoryBase output_diff_data,
                               ScratchAllocator* workspace_allocator) override {
-    return absl::UnimplementedError("Not Implemented");
+    return absl::UnimplementedError(
+        "DoPoolBackward is not implemented for SYCL");
   }
 
   absl::StatusOr<std::unique_ptr<const dnn::ConvRunner>> ConvolveRunnerFromDesc(
@@ -76,7 +81,8 @@ class OnednnSupport : public dnn::DnnSupport {
       const dnn::FilterDescriptor& filter_descriptor,
       const dnn::BatchDescriptor& output_descriptor,
       const dnn::ConvolutionDescriptor& convolution_descriptor) override {
-    return absl::UnimplementedError("Not Implemented");
+    return absl::UnimplementedError(
+        "ConvolveRunnerFromDesc is not implemented for SYCL");
   }
 
   absl::Status DoCtcLoss(Stream* stream, dnn::DataType element_type,
@@ -90,7 +96,7 @@ class OnednnSupport : public dnn::DnnSupport {
                          DeviceMemoryBase grads_data,
                          DeviceMemory<uint8_t> scratch_memory,
                          int ctc_loss_algo_id) override {
-    return absl::UnimplementedError("Not Implemented");
+    return absl::UnimplementedError("DoCtcLoss is not implemented for SYCL");
   }
 
  private:

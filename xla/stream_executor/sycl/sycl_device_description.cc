@@ -216,9 +216,9 @@ CreateOneApiDeviceDescription(int device_ordinal) {
 
   desc.set_oneapi_compute_capability(ip_version_ext.ipVersion);
 
-  // Get oneDNN version using OnednnSupport::GetVersion()
-  OnednnSupport dnn_support(nullptr);
-  absl::StatusOr<dnn::VersionInfo> dnn_version_info = dnn_support.GetVersion();
+  // Get oneDNN version using OnednnSupport::GetOnednnVersion()
+  absl::StatusOr<dnn::VersionInfo> dnn_version_info =
+      OnednnSupport::GetOnednnVersion();
   if (dnn_version_info.ok()) {
     desc.set_dnn_version(SemanticVersion{
         static_cast<unsigned int>(dnn_version_info->major_version()),

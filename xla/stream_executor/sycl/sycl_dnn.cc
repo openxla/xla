@@ -37,7 +37,7 @@ OnednnSupport::OnednnSupport(StreamExecutor* parent) : parent_(parent) {}
 
 absl::Status OnednnSupport::Init() { return absl::OkStatus(); }
 
-absl::StatusOr<dnn::VersionInfo> OnednnSupport::GetVersion() {
+absl::StatusOr<dnn::VersionInfo> OnednnSupport::GetOnednnVersion() {
   const dnnl_version_t* v = dnnl::version();
   if (v == nullptr) {
     return absl::InternalError("Failed to query oneDNN version.");
@@ -45,11 +45,16 @@ absl::StatusOr<dnn::VersionInfo> OnednnSupport::GetVersion() {
   return dnn::VersionInfo(v->major, v->minor, v->patch);
 }
 
+absl::StatusOr<dnn::VersionInfo> OnednnSupport::GetVersion() {
+  return GetOnednnVersion();
+}
+
 absl::Status OnednnSupport::DoConvolveWithGpuConfig(
     Stream* stream, const xla::gpu::GpuConvConfig& config,
     absl::Span<const DeviceMemoryBase> operand_se_buffers,
     DeviceMemoryBase result_se_buffer, ScratchAllocator* scratch_allocator) {
-  return absl::OkStatus();
+  return absl::UnimplementedError(
+      "DoConvolveWithGpuConfig is not implemented for SYCL oneDNN");
 }
 
 void initialize_onednn() {
