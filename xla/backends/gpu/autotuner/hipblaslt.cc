@@ -304,8 +304,8 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
     }
 
     int64_t workspace_size = GemmConfig::kGFX950Workspace;
-    size_t max_algorithms = debug_options().xla_gpu_blas_max_algorithms();
-    if (max_algorithms == 0) {
+    int max_algorithms = debug_options().xla_gpu_blas_max_algorithms();
+    if (max_algorithms <= 0) {
       max_algorithms = GemmConfig::kNumAlgorithms;
     }
     ASSIGN_OR_RETURN(std::vector<BlasLt::MatmulAlgorithm> algorithms,
@@ -357,8 +357,8 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
     }
     workspace_size = ShapeUtil::ByteSizeOf(output_shape.tuple_shapes().back());
 
-    size_t max_algorithms = debug_options().xla_gpu_blas_max_algorithms();
-    if (max_algorithms == 0) {
+    int max_algorithms = debug_options().xla_gpu_blas_max_algorithms();
+    if (max_algorithms <= 0) {
       max_algorithms = GemmConfig::kNumAlgorithms;
     }
 
