@@ -334,27 +334,6 @@ bool IsMemoryBoundKernel(const HloInstruction& hlo) {
   }
 }
 
-// Count the maximum overlapping count in subgroups of group and other
-size_t CountOverlappingRanks(const std::vector<std::vector<int64_t>>& group,
-                             const std::vector<std::vector<int64_t>>& other) {
-  size_t overlapping_count = 0;
-  for (const std::vector<int64_t>& curr_replica_group : group) {
-    absl::flat_hash_set<int64_t> curr_replica_ids;
-    for (const int64_t curr_replica_id : curr_replica_group) {
-      curr_replica_ids.insert(curr_replica_id);
-    }
-
-    for (const std::vector<int64_t>& replica_group : other) {
-      size_t subgroup_count = 0;
-      for (const int64_t replica_id : replica_group) {
-        if (curr_replica_ids.contains(replica_id)) ++subgroup_count;
-      }
-      overlapping_count = std::max(overlapping_count, subgroup_count);
-    }
-  }
-  return overlapping_count;
-}
-
 }  // namespace
 
 HloCostAnalysis::ShapeSizeFunction ShapeSizeBytesFunction(
