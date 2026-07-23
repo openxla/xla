@@ -934,6 +934,39 @@ bool AsyncTracker::OccupiesSelectiveResource(const HloGraphNode* node) const {
       });
 }
 
+uint64_t AsyncTracker::GetSelectiveResourceMask(int64_t resource_type) const {
+  auto [it, inserted] = selective_resource_bit_indices_.emplace(
+      resource_type, selective_resource_bit_indices_.size());
+  CHECK_LT(it->second, 64) << "At most 64 selective resources are supported.";
+  return uint64_t{1} << it->second;
+}
+
+uint64_t AsyncTracker::GetReleasedSelectiveResourceMask(
+    const ResourcesVector& resources) const {
+  uint64_t mask = 0;
+  for (const ResourcePair& resource : resources) {
+    if (resource.second == ResourceUsageType::kResourceRelease &&
+        GetResourceHazardType(resource.first) ==
+            ResourceHazardType::kSelective) {
+      mask |= GetSelectiveResourceMask(resource.first);
+    }
+  }
+  return mask;
+}
+
+uint64_t AsyncTracker::GetOccupiedSelectiveResourceMask(
+    const ResourcesVector& resources) const {
+  uint64_t mask = 0;
+  for (const ResourcePair& resource : resources) {
+    if (resource.second == ResourceUsageType::kResourceOccupy &&
+        GetResourceHazardType(resource.first) ==
+            ResourceHazardType::kSelective) {
+      mask |= GetSelectiveResourceMask(resource.first);
+    }
+  }
+  return mask;
+}
+
 BufferInfoTracker::BufferInfoTracker(
     const HloModule* module, const HloAliasAnalysis* alias_analysis,
     const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes) {
@@ -1274,23 +1307,23 @@ DefaultSchedulerCore::ScheduleCandidate InitializeCandidate(
 
 namespace {
 
-// Find the num hops to the closest selective resource overlap in ready set that
-// provided node can be scheduled in between.
-int64_t GetNumHopsToClosestSelectiveOverlap(
+// Returns the mask of the selective resources occupied within `max_distance`
+// hops of the ready set that the provided node can be scheduled in between.
+uint64_t GetNearbySelectiveResourcesMask(
     const DefaultSchedulerCore::ReadyQueueSet& ready_set,
-    const HloGraphNode* node) {
-  int64_t num_hops_to_closest_selective_resource_occupier =
-      std::numeric_limits<int64_t>::max();
+    const HloGraphNode* node, int64_t max_distance) {
+  uint64_t nearby_selective_resources_mask = 0;
   for (const HloGraphNode* n : ready_set) {
     // Skip the node itself.
     if (n == node) {
       continue;
     }
-    num_hops_to_closest_selective_resource_occupier =
-        std::min(num_hops_to_closest_selective_resource_occupier,
-                 n->GetNumHopsToClosestSelectiveResourceOccupier());
+    if (n->GetNumHopsToClosestSelectiveResourceOccupier() <= max_distance) {
+      nearby_selective_resources_mask |=
+          n->GetClosestSelectiveResourceOccupierMask();
+    }
   }
-  return num_hops_to_closest_selective_resource_occupier;
+  return nearby_selective_resources_mask;
 }
 
 }  // namespace
@@ -1398,22 +1431,21 @@ bool ReadySetLt::ShouldScheduleAsyncStart(const SchedulingState& state,
 std::optional<bool> ReadySetLt::IsValuableForSelectiveOverlap(
     const SchedulingState& sched_state, ScheduleCandidate& a,
     ScheduleCandidate& b, const char** reason) const {
-  // If a is valuable for selective overlap and there is a selective
-  // overlap in the near future a can be scheduled inside, hold off
-  // scheduling a and schedule b instead. Same logic applies in reverse.
-  int64_t distance_to_selective_overlap_for_a =
-      GetNumHopsToClosestSelectiveOverlap(sched_state.ready_set, a.node);
-  int64_t distance_to_selective_overlap_for_b =
-      GetNumHopsToClosestSelectiveOverlap(sched_state.ready_set, b.node);
+  // If a is valuable for a selective overlap that opens in the near future so
+  // that a can be scheduled inside it, hold off scheduling a and schedule b
+  // instead. Same logic applies in reverse.
   int64_t max_distance =
       sched_state.config.max_hops_to_closest_selective_overlap;
+  uint64_t nearby_selective_resources_for_a = GetNearbySelectiveResourcesMask(
+      sched_state.ready_set, a.node, max_distance);
+  uint64_t nearby_selective_resources_for_b = GetNearbySelectiveResourcesMask(
+      sched_state.ready_set, b.node, max_distance);
   // Reversal of b and a here is intentional due to comment above.
-  if (auto res =
-          CmpExplicit((b.node->GetValuableForSelectiveOverlap() &&
-                       distance_to_selective_overlap_for_b <= max_distance),
-                      (a.node->GetValuableForSelectiveOverlap() &&
-                       distance_to_selective_overlap_for_a <= max_distance),
-                      "kNotValuableForSelectiveOverlap", reason)) {
+  if (auto res = CmpExplicit(b.node->IsValuableForAnySelectiveResource(
+                                 nearby_selective_resources_for_b),
+                             a.node->IsValuableForAnySelectiveResource(
+                                 nearby_selective_resources_for_a),
+                             "kNotValuableForSelectiveOverlap", reason)) {
     return res;
   }
   return std::nullopt;
@@ -1615,8 +1647,12 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
         config.avoid_nonvaluable_selective_overlap &&
         !core_->top_down_scheduling_ &&
         !sched_state.selective_resource_releasers.empty()) {
-      return CmpExplicit(an->GetValuableForSelectiveOverlap(),
-                         bn->GetValuableForSelectiveOverlap(),
+      // Only the selective windows currently open matter: a node is
+      // deprioritized only if it cannot hide the latency of one of them.
+      return CmpExplicit(an->IsValuableForSelectiveOverlap(
+                             sched_state.open_selective_resources_mask),
+                         bn->IsValuableForSelectiveOverlap(
+                             sched_state.open_selective_resources_mask),
                          "kAvoidNonvaluableSelectiveOverlap", reason);
     }
     return std::nullopt;
@@ -2623,16 +2659,26 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
                    << n->ToString();
     } else {
       sched_state->selective_resource_releasers.erase(it);
+      // Recompute the union of the open selective windows since another
+      // releaser may release the same selective resource.
+      sched_state->open_selective_resources_mask = 0;
+      for (const HloGraphNode* releaser :
+           sched_state->selective_resource_releasers) {
+        sched_state->open_selective_resources_mask |=
+            releaser->GetReleasedSelectiveResourcesMask();
+      }
     }
   }
 
-  // If scheduled node cannot overlap with nodes that hold selective
-  // resources, we increment the ready time of all nodes that release a
+  // If the scheduled node cannot cover the latency of an open selective
+  // window, we increment the ready time of the node releasing that window's
   // selective resource with the cost of the scheduled node.
-  if (sched_state->config.enable_selective_resources &&
-      !n->GetValuableForSelectiveOverlap()) {
+  if (sched_state->config.enable_selective_resources) {
     for (HloGraphNode* node : sched_state->selective_resource_releasers) {
-      node->SetReadyTime(node->GetReadyTime() + n->GetCost());
+      if (!n->IsValuableForSelectiveOverlap(
+              node->GetReleasedSelectiveResourcesMask())) {
+        node->SetReadyTime(node->GetReadyTime() + n->GetCost());
+      }
     }
   }
 
@@ -2837,6 +2883,8 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
     if (sched_state->config.enable_selective_resources &&
         edge.Target().ReleasesSelectiveResource()) {
       sched_state->selective_resource_releasers.push_back(&edge.Target());
+      sched_state->open_selective_resources_mask |=
+          edge.Target().GetReleasedSelectiveResourcesMask();
     }
   }
   ++sched_state->scheduled_count;
@@ -2995,6 +3043,10 @@ HloScheduleGraph::HloScheduleGraph(
         async_tracker->ReleasesSelectiveResource(n);
     n->occupies_selective_resource_ =
         async_tracker->OccupiesSelectiveResource(n);
+    if (n->releases_selective_resource_) {
+      n->released_selective_resources_mask_ =
+          async_tracker->GetReleasedSelectiveResourceMask(resources);
+    }
     n->does_occupy_any_resource_ =
         absl::c_any_of(resources, [](const ResourcePair& resource) {
           return resource.second == ResourceUsageType::kResourceOccupy;
@@ -3358,10 +3410,14 @@ void HloScheduleGraph::InitializeGraphAnalysis() {
     // If a node occupies a selective resource, it is the closest selective
     // resource occupier to itself and is 0 hops away. Otherwise, the num hops
     // to closest selective resource occupier is the minimum of that of all
-    // predecessors plus 1.
+    // predecessors plus 1. Alongside the distance, track the mask of the
+    // selective resources occupied at that distance.
     if (scheduling_context_->GetAsyncTracker()->OccupiesSelectiveResource(
             node)) {
       node->num_hops_to_closest_selective_resource_occupier_ = 0;
+      node->closest_selective_resource_occupier_mask_ =
+          scheduling_context_->GetAsyncTracker()
+              ->GetOccupiedSelectiveResourceMask(node->GetResources());
     } else {
       int64_t closest_predecessor_distance =
           std::numeric_limits<int64_t>::max();
@@ -3373,6 +3429,13 @@ void HloScheduleGraph::InitializeGraphAnalysis() {
       if (closest_predecessor_distance != std::numeric_limits<int64_t>::max()) {
         node->num_hops_to_closest_selective_resource_occupier_ =
             closest_predecessor_distance + 1;
+        for (auto& pred : node->GetPredecessors()) {
+          if (pred.Target().num_hops_to_closest_selective_resource_occupier_ ==
+              closest_predecessor_distance) {
+            node->closest_selective_resource_occupier_mask_ |=
+                pred.Target().closest_selective_resource_occupier_mask_;
+          }
+        }
       }
     }
     if (node->IsSupportedAsyncDone()) {
@@ -3742,6 +3805,7 @@ void DefaultSchedulerCore::SchedulingState::Reset() {
   next_ready_stack.clear();
   shareable_resource_occupiers.clear();
   selective_resource_releasers.clear();
+  open_selective_resources_mask = 0;
   num_successors_for_annotation.clear();
   num_predecessors_for_annotation.clear();
   ready_annotations.clear();

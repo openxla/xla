@@ -540,16 +540,16 @@ void GpuAsyncTrackerBase::PostProcessScheduleGraph(
 
     // With selective resources enabled, the async D2D memcpy resource can
     // only have its latency hidden by compute-bound kernels. Mark
-    // memory-bandwidth-bound kernels as not valuable for selective overlap so
-    // the scheduler prefers compute-bound kernels inside copy windows.
-    if (config_.enable_selective_resources) {
+    // memory-bandwidth-bound kernels as not valuable for overlapping the
+    // memcpy resource specifically, so that this D2D policy does not affect
+    // any other selective resource a target may define.
+    if (config_.enable_selective_resources && IsMemoryBoundKernel(*inst)) {
       HloGraphNode& node = schedule_graph->GetNode(inst);
-      node.SetValuableForSelectiveOverlap(!IsMemoryBoundKernel(*inst));
-      if (IsMemoryBoundKernel(*inst)) {
-        VLOG(5) << "Marking instruction as not valuable for selective "
-                   "overlap: "
-                << inst->ToString();
-      }
+      node.AddNonvaluableSelectiveResources(GetSelectiveResourceMask(
+          ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamMemcpy)));
+      VLOG(5) << "Marking instruction as not valuable for selective memcpy "
+                 "overlap: "
+              << inst->ToString();
     }
   }
 }

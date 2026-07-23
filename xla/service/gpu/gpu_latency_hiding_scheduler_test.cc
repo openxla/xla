@@ -1606,6 +1606,20 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
   EXPECT_TRUE(schedule_graph.GetNode(comp->GetInstructionWithName("p0"))
                   .GetValuableForSelectiveOverlap());
 
+  // The D2D classification is attached to the async memcpy resource only;
+  // memory-bound kernels remain valuable for any other selective resource a
+  // target may define.
+  uint64_t memcpy_resource_mask = async_tracker->GetSelectiveResourceMask(
+      ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamMemcpy));
+  uint64_t other_resource_mask = async_tracker->GetSelectiveResourceMask(
+      ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamCollectives));
+  const HloGraphNode& transpose_node =
+      schedule_graph.GetNode(comp->GetInstructionWithName("transpose_fusion"));
+  EXPECT_FALSE(
+      transpose_node.IsValuableForSelectiveOverlap(memcpy_resource_mask));
+  EXPECT_TRUE(
+      transpose_node.IsValuableForSelectiveOverlap(other_resource_mask));
+
   // With the feature disabled, all nodes keep the default marking.
   SchedulerConfig default_config;
   auto default_tracker = std::make_shared<GpuAsyncTracker>(default_config);

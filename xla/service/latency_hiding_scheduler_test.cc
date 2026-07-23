@@ -3684,11 +3684,19 @@ ENTRY %module {
 )";
 
   // Extend AsyncTracker for a fake target where all-gather contains
-  // non-extendable and selective resources.
+  // non-extendable and selective resources. If
+  // mark_c2_nonvaluable_for_unrelated_resource is true, c2 is marked
+  // nonvaluable only for a second selective resource that no instruction in
+  // the module uses; otherwise c2 is marked nonvaluable for all selective
+  // resources.
   class SelectiveOverlapAsyncTracker : public AsyncTracker {
    public:
-    explicit SelectiveOverlapAsyncTracker(const SchedulerConfig& sched_config)
-        : AsyncTracker(sched_config) {}
+    explicit SelectiveOverlapAsyncTracker(
+        const SchedulerConfig& sched_config,
+        bool mark_c2_nonvaluable_for_unrelated_resource = false)
+        : AsyncTracker(sched_config),
+          mark_c2_nonvaluable_for_unrelated_resource_(
+              mark_c2_nonvaluable_for_unrelated_resource) {}
 
     ResourceHazardType GetResourceHazardType(
         int64_t resource_type) const override {
@@ -3699,6 +3707,12 @@ ENTRY %module {
       if (resource_type == AsyncTracker::GetTargetDefinedResourceTypeBegin()) {
         return ResourceHazardType::kNonextendable;
       }
+      // The second target defined resource is a selective resource that no
+      // instruction in the module uses.
+      if (resource_type ==
+          AsyncTracker::GetTargetDefinedResourceTypeBegin() + 1) {
+        return ResourceHazardType::kSelective;
+      }
       return AsyncTracker::GetResourceHazardType(resource_type);
     }
 
@@ -3706,7 +3720,8 @@ ENTRY %module {
         const HloInstruction& hlo) const override {
       ResourcesVector result =
           AsyncTracker::GetResourcesFromInstructionImpl(hlo);
-      // There is only one target defined resource (which is non-extendable).
+      // Only the first target defined resource (which is non-extendable) is
+      // used by instructions.
       if (hlo.opcode() == HloOpcode::kAllGatherStart) {
         result.push_back({AsyncTracker::GetTargetDefinedResourceTypeBegin(),
                           ResourceUsageType::kResourceRelease});
@@ -3716,13 +3731,14 @@ ENTRY %module {
       }
       return result;
     }
-    int64_t GetNumTargetDefinedResources() const override { return 1; }
+    int64_t GetNumTargetDefinedResources() const override { return 2; }
     void SetConcurrentResourceLimits(
         absl::flat_hash_map<int64_t, int64_t>& max_concurrent_resource)
         const override {
       max_concurrent_resource[ResourceTypeToIndex(ResourceType::kAllGather)] =
           1;
       max_concurrent_resource[GetTargetDefinedResourceTypeBegin()] = 1;
+      max_concurrent_resource[GetTargetDefinedResourceTypeBegin() + 1] = 1;
     }
     absl::InlinedVector<int64_t, 1> GetReleasedNonextendableResourcesFromVector(
         const ResourcesVector& resources) const override {
@@ -3743,10 +3759,21 @@ ENTRY %module {
       for (const HloInstruction* instr :
            schedule_graph->GetOriginalInstrList()) {
         if (instr->name() == "c2") {
-          schedule_graph->GetNode(instr).SetValuableForSelectiveOverlap(false);
+          HloGraphNode& node = schedule_graph->GetNode(instr);
+          if (mark_c2_nonvaluable_for_unrelated_resource_) {
+            // c2 remains valuable for the all-gather selective resource; it
+            // is nonvaluable only for the unused second selective resource.
+            node.AddNonvaluableSelectiveResources(GetSelectiveResourceMask(
+                AsyncTracker::GetTargetDefinedResourceTypeBegin() + 1));
+          } else {
+            node.SetValuableForSelectiveOverlap(false);
+          }
         }
       }
     }
+
+   private:
+    bool mark_c2_nonvaluable_for_unrelated_resource_;
   };
   SchedulerConfig sched_config = GetDefaultSchedConfig();
   sched_config.enable_selective_resources = true;
@@ -3808,6 +3835,33 @@ ENTRY %module {
   EXPECT_LT(avoiding_c2_index, avoiding_ag_start_index);
   EXPECT_LT(avoiding_ag_start_index, avoiding_c1_index);
   EXPECT_LT(avoiding_c1_index, avoiding_ag_done_index);
+
+  // The nonvaluable classification is indexed by selective resource: marking
+  // c2 nonvaluable only for a selective resource unrelated to the all-gather
+  // does not evict it from the all-gather window, even with
+  // avoid_nonvaluable_selective_overlap enabled. c2's cost fully covers the
+  // all-gather latency, so it is the only computation kept in the window.
+  SchedulerConfig isolated_config = GetDefaultSchedConfig();
+  isolated_config.enable_selective_resources = true;
+  isolated_config.avoid_nonvaluable_selective_overlap = true;
+  std::unique_ptr<AsyncTracker> isolated_tracker =
+      std::make_unique<SelectiveOverlapAsyncTracker>(
+          isolated_config,
+          /*mark_c2_nonvaluable_for_unrelated_resource=*/true);
+  ASSERT_OK_AND_ASSIGN(auto isolated_module, ParseHloText(hlo_string));
+  HloSchedule& isolated_schedule = isolated_module->schedule();
+  ASSERT_OK(RunScheduler(isolated_module.get(), isolated_config,
+                         std::make_unique<ApproximateLatencyEstimator>(),
+                         std::move(isolated_tracker)));
+  std::vector<HloInstruction*> isolated_sequence =
+      isolated_schedule.sequence(isolated_module->entry_computation())
+          .instructions();
+
+  int isolated_c2_index = GetIndex(isolated_sequence, "c2");
+  int isolated_ag_start_index = GetIndex(isolated_sequence, "ag-start");
+  int isolated_ag_done_index = GetIndex(isolated_sequence, "ag-done");
+  EXPECT_LT(isolated_ag_start_index, isolated_c2_index);
+  EXPECT_LT(isolated_c2_index, isolated_ag_done_index);
 }
 
 TEST_F(LatencyHidingSchedulerTest, AnnotationFirstDataIndependentConv) {

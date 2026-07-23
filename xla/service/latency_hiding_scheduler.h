@@ -356,6 +356,22 @@ class AsyncTracker {
   // Returns whether the provided node occupies a selective resource.
   bool OccupiesSelectiveResource(const HloGraphNode* node) const;
 
+  // Selective resources are assigned compact bit indices (in order of first
+  // use) so that per-node selective overlap state can be stored in bit masks
+  // indexed by selective resource. At most 64 selective resources are
+  // supported.
+  uint64_t GetSelectiveResourceMask(int64_t resource_type) const;
+
+  // Returns the bit mask of the selective resources released by the given
+  // resources vector.
+  uint64_t GetReleasedSelectiveResourceMask(
+      const ResourcesVector& resources) const;
+
+  // Returns the bit mask of the selective resources occupied by the given
+  // resources vector.
+  uint64_t GetOccupiedSelectiveResourceMask(
+      const ResourcesVector& resources) const;
+
   inline CanonicalAsyncOp GetCanonicalAsyncOp(const HloInstruction& hlo) const {
     return get_canonical_async_op_(hlo);
   }
@@ -413,6 +429,9 @@ class AsyncTracker {
       std::unique_ptr<absl::flat_hash_map<int64_t, int64_t>>>
       async_in_computation_cache_;
   GetCanonicalAsyncOpFunc get_canonical_async_op_;
+  // Lazily assigned compact bit indices for selective resources. See
+  // GetSelectiveResourceMask().
+  mutable absl::flat_hash_map<int64_t, int> selective_resource_bit_indices_;
 
  protected:
   const SchedulerConfig config_;
@@ -774,11 +793,43 @@ class HloGraphNode {
   void SetForceDelayAfterTarget(bool force_delay_after_target) {
     force_delay_after_target_ = force_delay_after_target;
   }
-  bool GetValuableForSelectiveOverlap() const {
-    return valuable_for_selective_overlap_;
+  // Returns true if this node provides useful latency hiding for every
+  // selective resource in the given mask. Masks are assigned by
+  // AsyncTracker::GetSelectiveResourceMask().
+  bool IsValuableForSelectiveOverlap(uint64_t selective_resources_mask) const {
+    return (nonvaluable_selective_resources_mask_ & selective_resources_mask) ==
+           0;
   }
+  // Returns true if this node provides useful latency hiding for at least one
+  // selective resource in the given mask.
+  bool IsValuableForAnySelectiveResource(
+      uint64_t selective_resources_mask) const {
+    return (selective_resources_mask &
+            ~nonvaluable_selective_resources_mask_) != 0;
+  }
+  // Returns true if this node is valuable for every selective resource.
+  bool GetValuableForSelectiveOverlap() const {
+    return nonvaluable_selective_resources_mask_ == 0;
+  }
+  // Marks this node as valuable/nonvaluable for all selective resources.
   void SetValuableForSelectiveOverlap(bool valuable_for_selective_overlap) {
-    valuable_for_selective_overlap_ = valuable_for_selective_overlap;
+    nonvaluable_selective_resources_mask_ =
+        valuable_for_selective_overlap ? 0 : ~uint64_t{0};
+  }
+  // Marks this node as not valuable for the selective resources in the given
+  // mask, leaving its classification for other selective resources unchanged.
+  void AddNonvaluableSelectiveResources(uint64_t selective_resources_mask) {
+    nonvaluable_selective_resources_mask_ |= selective_resources_mask;
+  }
+  // Bit mask of the selective resources released by this node.
+  uint64_t GetReleasedSelectiveResourcesMask() const {
+    return released_selective_resources_mask_;
+  }
+  // Bit mask of the selective resources occupied by the closest selective
+  // resource occupier(s), i.e. the occupier(s)
+  // GetNumHopsToClosestSelectiveResourceOccupier() hops away.
+  uint64_t GetClosestSelectiveResourceOccupierMask() const {
+    return closest_selective_resource_occupier_mask_;
   }
   bool ReleasesSelectiveResource() const {
     return releases_selective_resource_;
@@ -989,7 +1040,6 @@ class HloGraphNode {
     has_operand_that_is_supported_async_done_ = false;
     has_user_that_is_supported_async_start_ = false;
     scheduled_ = false;
-    valuable_for_selective_overlap_ = true;
     releases_selective_resource_ = false;
     occupies_selective_resource_ = false;
     has_recursive_resources_ = false;
@@ -1063,9 +1113,6 @@ class HloGraphNode {
   bool has_user_that_is_supported_async_start_ : 1;
   // Whether this node has been scheduled or not yet.
   bool scheduled_ : 1;
-  // Whether this node can be overlapped with (can cover the latency/cost of)
-  // edges occupying selective resources.
-  bool valuable_for_selective_overlap_ : 1;
   // Whether this node releases a selective resource.
   bool releases_selective_resource_ : 1;
   // Whether this node occupies a selective resource.
@@ -1096,6 +1143,16 @@ class HloGraphNode {
 
   // Depth in latency terms of node based on distance to the entry node.
   int64_t graph_depth_ = 0;
+  // Bit mask of the selective resources (bit indices assigned by the
+  // AsyncTracker) for which this node does NOT provide useful latency hiding.
+  // The default (0) means the node is valuable for every selective resource.
+  uint64_t nonvaluable_selective_resources_mask_ = 0;
+  // Bit mask of the selective resources released by this node.
+  uint64_t released_selective_resources_mask_ = 0;
+  // Bit mask of the selective resources occupied by the closest selective
+  // resource occupier(s), num_hops_to_closest_selective_resource_occupier_
+  // hops away.
+  uint64_t closest_selective_resource_occupier_mask_ = 0;
   // Nums hops to closest selective resource occupier.
   int32_t num_hops_to_closest_selective_resource_occupier_ =
       std::numeric_limits<int32_t>::max();
@@ -1775,6 +1832,10 @@ class DefaultSchedulerCore : public SchedulerCore {
         shareable_resource_occupiers;
     // List of the graph nodes that release selective resources.
     std::vector<HloGraphNode*> selective_resource_releasers;
+    // Union of the selective resources released by the nodes in
+    // selective_resource_releasers, i.e. the selective windows currently open
+    // in a bottom-up schedule.
+    uint64_t open_selective_resources_mask = 0;
     // Similar to ready set, but only contains the no-op instructions.
     ReadyQueueSet nop_set;
     // Number of {scheduled, all} nodes that are a successor for the given
