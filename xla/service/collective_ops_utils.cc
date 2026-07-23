@@ -718,6 +718,7 @@ bool IsNonFusionCollective(const HloInstruction* instruction) {
     case HloOpcode::kAllGatherDone:
     case HloOpcode::kAllToAll:
     case HloOpcode::kCollectiveBroadcast:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kCollectivePermuteStart:
     case HloOpcode::kCollectivePermuteDone:
@@ -761,6 +762,7 @@ absl::StatusOr<bool> IsAsyncCollective(const HloInstruction* instruction) {
       case HloOpcode::kAllReduce:
       case HloOpcode::kAllToAll:
       case HloOpcode::kCollectiveBroadcast:
+      case HloOpcode::kCollectiveReduce:
       case HloOpcode::kCollectivePermute:
       case HloOpcode::kRaggedAllToAll:
       case HloOpcode::kReduceScatter:
@@ -786,6 +788,7 @@ absl::StatusOr<bool> IsAsyncCollective(const HloInstruction* instruction) {
     case HloOpcode::kAllReduce:
     case HloOpcode::kAllToAll:
     case HloOpcode::kCollectiveBroadcast:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kReduceScatter:
@@ -963,6 +966,8 @@ std::optional<DebugOptions::CollectiveOpType> GetCollectiveOpType(
       return DebugOptions::ALLGATHER;
     case HloOpcode::kReduceScatter:
       return DebugOptions::REDUCESCATTER;
+    case HloOpcode::kCollectiveReduce:
+      return DebugOptions::ALLREDUCE;
     case HloOpcode::kCollectiveBroadcast:
       return DebugOptions::COLLECTIVEBROADCAST;
     case HloOpcode::kAllToAll:
