@@ -610,5 +610,6 @@ cc_library(
         ":sycl_executor",
         "//xla/service/gpu:matmul_utils",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/status",
     ],
 )

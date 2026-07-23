@@ -27,7 +27,7 @@ namespace sycl_gemm {
 constexpr absl::string_view kValidEpilogueNames =
     "DEFAULT, RELU, GELU, BIAS, BIAS_RELU, BIAS_GELU";
 
-absl::StatusOr<GemmBackendEpilogue> EpilogueCast(std::string& epilogue) {
+absl::StatusOr<GemmBackendEpilogue> EpilogueCast(absl::string_view epilogue) {
   if (epilogue == "DEFAULT") {
     return GemmBackendEpilogue::DEFAULT;
   } else if (epilogue == "RELU") {
@@ -590,8 +590,9 @@ absl::Status DoOnednnGemm(int64_t batch_size, const MatrixDescriptor& lhs,
     case sycl_gemm::GemmBackendEpilogue::BIAS:
       break;
     default:
-      return xla::Internal("Unsupported activation mode: %d",
-                           static_cast<int>(epilogue));
+      return absl::InvalidArgumentError(
+        absl::StrCat("Unsupported activation mode: ",
+        static_cast<int>(epilogue)));
   }
   post_ops_attr.set_post_ops(post_ops);
   auto matmul_pd =
@@ -644,7 +645,11 @@ absl::Status DoOnednnGemm(int64_t batch_size, const MatrixDescriptor& lhs,
       // Buffers are different - need to copy c_data into destination
       size_t output_size =
           batch_size * output.num_rows * output.num_cols * sizeof(OutputT);
-      stream_handle->memcpy(out_data, c_data, output_size).wait();
+      se::DeviceMemoryBase dst_mem(out_data, output_size);
+      if (absl::Status status = stream->MemcpyD2D(&dst_mem, c, output_size);
+          !status.ok()) {
+        return status;
+      }
     }
     // else: buffers already aliased, SUM post-op will read directly from
     // the destination buffer - true in-place operation with zero copy!
@@ -667,7 +672,8 @@ absl::Status DoGemm(int64_t batch_size, const MatrixDescriptor& lhs,
                                          alpha, beta, epilogue, stream,
                                          workspace, scratch_allocator);
   } else {
-    return xla::Internal("Unsupported GEMM algorithm: %d", algorithm);
+    return absl::InvalidArgumentError(
+      absl::StrCat("Unsupported GEMM algorithm: ", algorithm));
   }
 }
 

@@ -56,7 +56,7 @@ enum class GemmBackendEpilogue {
   BIAS_GELU,
 };
 
-absl::StatusOr<GemmBackendEpilogue> EpilogueCast(std::string& epilogue);
+absl::StatusOr<GemmBackendEpilogue> EpilogueCast(absl::string_view epilogue);
 
 absl::StatusOr<std::string> EpilogueCast(GemmBackendEpilogue epilogue);
 
@@ -88,12 +88,13 @@ CreateMatMulPrimDescFromGemmConfig(
     xla::gpu::GemmBackendConfig_Epilogue epilogue);
 absl::StatusOr<dnnl::memory::desc> TransposeLastTwoDims(
     const dnnl::memory::desc& md);
-#define TRANSPOSE_LAST_TWO_DIMS_IF(pred, mem_desc)        \
-  if (pred) {                                             \
-    auto trans_mem_desc = TransposeLastTwoDims(mem_desc); \
-    TF_CHECK_OK(trans_mem_desc.status());                 \
-    mem_desc = *trans_mem_desc;                           \
+inline absl::Status TransposeLastTwoDimsIf(bool pred,
+                                           dnnl::memory::desc& mem_desc) {
+  if (pred) {
+    ASSIGN_OR_RETURN(mem_desc, TransposeLastTwoDims(mem_desc));
   }
+  return absl::OkStatus();
+}
 
 }  // namespace sycl
 }  // namespace stream_executor
