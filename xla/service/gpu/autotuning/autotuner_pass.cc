@@ -93,8 +93,23 @@ AutotuneDecision AllowRegSpillsForGpuInstruction(
     if (gpu_config.ok()) {
       const FusionBackendConfig& backend_config =
           gpu_config->fusion_backend_config();
-      if (backend_config.kind() == kTritonGemmFusionKind ||
-          backend_config.kind() == kCuDnnFusionKind ||
+      if (backend_config.kind() == kTritonGemmFusionKind) {
+        // kRaggedDot (group-GEMM XTile) fusions may spill registers with
+        // certain tile configurations (e.g. over-tiled N or multi-K-loop
+        // iterations). Allow spilling so the select_first / autotuner path
+        // can still use these configs when no non-spilling alternative
+        // exists within the searched config space.
+        const HloComputation* fused_comp =
+            instruction.fused_instructions_computation();
+        for (const HloInstruction* inner : fused_comp->instructions()) {
+          if (inner->opcode() == HloOpcode::kRaggedDot) {
+            return AutotuneDecision::Allow();
+          }
+        }
+        return AutotuneDecision::Forbid(
+            "Register spilling is not allowed for GEMM/Conv fusions");
+      }
+      if (backend_config.kind() == kCuDnnFusionKind ||
           backend_config.kind() == kCustomFusionKind) {
         return AutotuneDecision::Forbid(
             "Register spilling is not allowed for GEMM/Conv fusions");
@@ -181,6 +196,13 @@ AutotuneDecision ShouldAutotunGenericFusion(bool enable_fusion_autotuner,
   if (fusion->fusion_kind() == HloInstruction::FusionKind::kCustom) {
     return AutotuneDecision::Forbid(
         "Custom fusions are not supported for generic fusion autotuning");
+  }
+  // Skip constant-only fusions (operand_count == 0): these are trivial
+  // computations (e.g. broadcast-of-constant group-sizes tensors created by
+  // priority_fusion) that no backend can tune and that need no profiling.
+  if (fusion->operand_count() == 0) {
+    return AutotuneDecision::Forbid(
+        "Constant fusion (no operands) needs no autotuning");
   }
   if (absl::c_any_of(fusion->fused_instructions_computation()->instructions(),
                      HloPredicateIsOp<HloOpcode::kScatter>)) {

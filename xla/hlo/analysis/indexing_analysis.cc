@@ -393,6 +393,137 @@ IndexingMap RescaleIndexingMap(const IndexingMap& operand_map,
       operand_map.GetRTVars()};
 }
 
+// Computes output-to-input indexing for kRaggedDot.
+//
+// For kRaggedNonContracting (LHS(M,K), RHS(G,K,N), gs(G), output(M,N)):
+//   - Symbols: s[0..C-1] = K contracting dims, s[C] = G group
+//   - lhs[m, k_sym]        for each output tile (m, n)
+//   - rhs[g_sym, k_sym, n] for each output tile (m, n)
+//   - gs[g_sym]             for each output tile (m, n)
+//
+// For kRaggedContracting and kRaggedBatch: falls back to unknown indexing.
+HloInstructionIndexing ComputeOutputToInputRaggedDotOpIndexing(
+    const HloRaggedDotInstruction* ragged_dot, MLIRContext* mlir_context) {
+  const auto& ragged_dims = ragged_dot->ragged_dot_dimension_numbers();
+  const auto& dot_dims = ragged_dims.dot_dimension_numbers();
+  const int64_t lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
+
+  const bool is_contracting =
+      absl::c_count(dot_dims.lhs_contracting_dimensions(), lhs_ragged_dim) > 0;
+  const bool is_batch =
+      absl::c_count(dot_dims.lhs_batch_dimensions(), lhs_ragged_dim) > 0;
+
+  if (is_batch || is_contracting) {
+    // kRaggedContracting / kRaggedBatch: not yet implemented for indexing.
+    // Callers that tolerate unknown indexing (e.g. the perf model) will handle
+    // this gracefully.
+    return CreateUnknownIndexing(ragged_dot->operand_count());
+  }
+
+  // kRaggedNonContracting.
+  const Shape& lhs_shape = ragged_dot->operand(0)->shape();
+  const Shape& rhs_shape = ragged_dot->operand(1)->shape();
+  const Shape& gs_shape = ragged_dot->operand(2)->shape();
+  const Shape& out_shape = ragged_dot->shape();
+  const int64_t output_rank =
+      static_cast<int64_t>(out_shape.dimensions().size());
+  const int64_t rhs_group_dim = ragged_dims.rhs_group_dimensions(0);
+  const int64_t C = dot_dims.lhs_contracting_dimensions().size();
+
+  // Symbols: indices 0..C-1 are K contracting dims; index C is G.
+  std::vector<int64_t> symbol_sizes;
+  symbol_sizes.reserve(C + 1);
+  for (int64_t i = 0; i < C; ++i) {
+    symbol_sizes.push_back(
+        lhs_shape.dimensions(dot_dims.lhs_contracting_dimensions(i)));
+  }
+  // G is the last dimension of group_sizes (for both 1D [G] and batched [B,
+  // G]).
+  symbol_sizes.push_back(gs_shape.dimensions().back());  // G
+
+  SmallVector<SymbolicExpr> lhs_exprs(lhs_shape.dimensions().size());
+  SmallVector<SymbolicExpr> rhs_exprs(rhs_shape.dimensions().size());
+  SmallVector<SymbolicExpr> gs_exprs(gs_shape.dimensions().size());
+
+  int64_t output_dim_id = 0;
+
+  // Batch dimensions (shared between LHS and RHS).
+  for (auto [lhs_bd, rhs_bd] : llvm::zip(dot_dims.lhs_batch_dimensions(),
+                                         dot_dims.rhs_batch_dimensions())) {
+    SymbolicExpr d = CreateDimExpr(output_dim_id++, mlir_context);
+    lhs_exprs[lhs_bd] = d;
+    rhs_exprs[rhs_bd] = d;
+  }
+
+  // LHS non-contracting, non-batch dims (M_total, ragged) → output dims.
+  absl::flat_hash_set<int64_t> lhs_batch_set(
+      dot_dims.lhs_batch_dimensions().begin(),
+      dot_dims.lhs_batch_dimensions().end());
+  absl::flat_hash_set<int64_t> lhs_contr_set(
+      dot_dims.lhs_contracting_dimensions().begin(),
+      dot_dims.lhs_contracting_dimensions().end());
+  for (int64_t i = 0; i < static_cast<int64_t>(lhs_shape.dimensions().size());
+       ++i) {
+    if (!lhs_batch_set.contains(i) && !lhs_contr_set.contains(i)) {
+      lhs_exprs[i] = CreateDimExpr(output_dim_id++, mlir_context);
+    }
+  }
+
+  // RHS non-contracting, non-batch, non-group dims (N) → output dims.
+  absl::flat_hash_set<int64_t> rhs_batch_set(
+      dot_dims.rhs_batch_dimensions().begin(),
+      dot_dims.rhs_batch_dimensions().end());
+  absl::flat_hash_set<int64_t> rhs_contr_set(
+      dot_dims.rhs_contracting_dimensions().begin(),
+      dot_dims.rhs_contracting_dimensions().end());
+  for (int64_t i = 0; i < static_cast<int64_t>(rhs_shape.dimensions().size());
+       ++i) {
+    if (!rhs_batch_set.contains(i) && !rhs_contr_set.contains(i) &&
+        i != rhs_group_dim) {
+      rhs_exprs[i] = CreateDimExpr(output_dim_id++, mlir_context);
+    }
+  }
+
+  // Contracting dims → symbols 0..C-1.
+  for (int64_t k = 0; k < C; ++k) {
+    SymbolicExpr k_sym = CreateSymbolExpr(k, output_rank, mlir_context);
+    lhs_exprs[dot_dims.lhs_contracting_dimensions(k)] = k_sym;
+    rhs_exprs[dot_dims.rhs_contracting_dimensions(k)] = k_sym;
+  }
+
+  // RHS group dim (G) → symbol C.
+  SymbolicExpr g_sym = CreateSymbolExpr(C, output_rank, mlir_context);
+  rhs_exprs[rhs_group_dim] = g_sym;
+
+  // Build gs_exprs for group_sizes which has shape [batch..., G].
+  // For non-batched gs [G]: gs_exprs = [g_sym].
+  // For batched gs [B, G]: gs_exprs[0..num_batch-1] = batch output dim exprs;
+  //                         gs_exprs[num_batch] = g_sym.
+  {
+    int64_t num_batch = dot_dims.lhs_batch_dimensions().size();
+    // Batch dims of gs map to the same output batch dims as LHS/RHS.
+    for (int64_t i = 0; i < num_batch; ++i) {
+      gs_exprs[i] = CreateDimExpr(i, mlir_context);  // output batch dim i
+    }
+    // G (last) dim maps to the G symbol.
+    gs_exprs[gs_shape.dimensions_size() - 1] = g_sym;
+  }
+
+  std::vector<int64_t> out_dims_vec(out_shape.dimensions().begin(),
+                                    out_shape.dimensions().end());
+
+  auto make_map = [&](SmallVector<SymbolicExpr> exprs) {
+    return IndexingMap::FromTensorSizes(
+        SymbolicMap::Get(mlir_context, output_rank, symbol_sizes.size(),
+                         std::move(exprs)),
+        out_dims_vec, symbol_sizes);
+  };
+
+  return HloInstructionIndexing::FromIndexingMaps(
+      {make_map(std::move(lhs_exprs)), make_map(std::move(rhs_exprs)),
+       make_map(std::move(gs_exprs))});
+}
+
 HloInstructionIndexing ComputeOutputToInputDotOpIndexing(
     const HloDotInstruction* dot, MLIRContext* mlir_context) {
   const Shape& lhs_shape = dot->operand(0)->shape();
@@ -1713,6 +1844,9 @@ HloInstructionIndexing ComputeOutputToInputIndexing(const HloInstruction* instr,
   }
   if (auto reverse = DynCast<HloReverseInstruction>(instr)) {
     return ComputeReverseOpIndexing(reverse, mlir_context);
+  }
+  if (auto ragged_dot = DynCast<HloRaggedDotInstruction>(instr)) {
+    return ComputeOutputToInputRaggedDotOpIndexing(ragged_dot, mlir_context);
   }
   if (auto scaled_dot = DynCast<HloScaledDotInstruction>(instr)) {
     return ComputeOutputToInputScaledDotOpIndexing(scaled_dot, mlir_context);

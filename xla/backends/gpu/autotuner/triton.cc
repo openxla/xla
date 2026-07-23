@@ -124,16 +124,26 @@ TritonBackend::GetSupportedConfigs(const HloInstruction& instr) {
     return overridden_configs;
   }
 
-  const HloInstruction* dot_instr = hlo_query::GetFirstInstructionWithOpcode(
-      *instr.fused_instructions_computation(), HloOpcode::kDot);
+  const HloComputation* fused_comp = instr.fused_instructions_computation();
+
+  const HloInstruction* dot_instr =
+      hlo_query::GetFirstInstructionWithOpcode(*fused_comp, HloOpcode::kDot);
   if (dot_instr != nullptr) {
     return GetSupportedConfigsForDot(dot_instr);
   }
   const HloInstruction* scaled_dot_instr =
-      hlo_query::GetFirstInstructionWithOpcode(
-          *instr.fused_instructions_computation(), HloOpcode::kScaledDot);
+      hlo_query::GetFirstInstructionWithOpcode(*fused_comp,
+                                               HloOpcode::kScaledDot);
   if (scaled_dot_instr != nullptr) {
     return GetSupportedConfigsForScaledDot(scaled_dot_instr);
+  }
+  // kRaggedDot fusions routed through the Triton XTile backend
+  // (kTritonFusionKind / "__triton").
+  const HloInstruction* ragged_dot_instr =
+      hlo_query::GetFirstInstructionWithOpcode(*fused_comp,
+                                               HloOpcode::kRaggedDot);
+  if (ragged_dot_instr != nullptr) {
+    return GetSupportedConfigsForRaggedDot(ragged_dot_instr);
   }
   return std::vector<std::unique_ptr<BackendConfig>>();
 }
@@ -293,6 +303,88 @@ absl::Status TritonBackend::ApplyConfig(HloInstruction& instr,
   FusionBackendConfig& backend_config =
       *gpu_config.mutable_fusion_backend_config();
 
+  // Detect ragged-dot XTile fusions by the presence of kRaggedDot inside the
+  // fused computation.
+  HloComputation* fused_comp = instr.fused_instructions_computation();
+  HloInstruction* inner_ragged_dot = nullptr;
+  for (HloInstruction* inner : fused_comp->instructions()) {
+    if (inner->opcode() == HloOpcode::kRaggedDot) {
+      inner_ragged_dot = inner;
+      break;
+    }
+  }
+
+  if (inner_ragged_dot != nullptr) {
+    // kRaggedDot XTile path — update:
+    //   (1) the fusion-level BlockLevelFusionConfig output tiles, and
+    //   (2) the inner ragged-dot's Tile backend config (sequential dims
+    //       read by GetTilingSpaceConcreteSizes).
+    const auto* ragged_dot = Cast<HloRaggedDotInstruction>(inner_ragged_dot);
+    const auto& ragged_dims = ragged_dot->ragged_dot_dimension_numbers();
+    const DotDimensionNumbers& dot_dims = ragged_dims.dot_dimension_numbers();
+    const int64_t lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
+    const bool is_contracting_apply =
+        absl::c_count(dot_dims.lhs_contracting_dimensions(), lhs_ragged_dim) >
+        0;
+    const bool is_batch_apply =
+        absl::c_count(dot_dims.lhs_batch_dimensions(), lhs_ragged_dim) > 0;
+
+    BlockLevelFusionConfig* blk_cfg =
+        backend_config.mutable_block_level_fusion_config();
+    blk_cfg->clear_output_tiles();
+    auto* output_tile = blk_cfg->add_output_tiles();
+    Tile inner_tile;
+
+    if (is_batch_apply) {
+      // kRaggedBatch: parallel dims = [B=1, M, N].
+      for (int64_t b_dim : dot_dims.lhs_batch_dimensions()) {
+        (void)b_dim;
+        output_tile->add_sizes(1);  // B tile = 1 per program
+      }
+      output_tile->add_sizes(triton_config_proto.block_m());
+      output_tile->add_sizes(triton_config_proto.block_n());
+      for (auto lhs_k : dot_dims.lhs_contracting_dimensions()) {
+        (void)lhs_k;
+        inner_tile.add_sizes(triton_config_proto.block_k());  // K sequential
+      }
+    } else if (!is_contracting_apply) {
+      // kRaggedNonContracting: parallel dims = [batch..., M, N].
+      // Sequential dims: G=1 (outer loop), K=block_k (inner K-loop).
+      for (int64_t b_dim : dot_dims.lhs_batch_dimensions()) {
+        (void)b_dim;
+        output_tile->add_sizes(1);
+      }
+      output_tile->add_sizes(triton_config_proto.block_m());
+      output_tile->add_sizes(triton_config_proto.block_n());
+      inner_tile.add_sizes(1);                              // G sequential
+      inner_tile.add_sizes(triton_config_proto.block_k());  // K sequential
+    } else {
+      // kRaggedContracting: Grid = G × K_tiles × N_tiles.
+      // output_tile = [G=1, batch..., K, N].
+      // inner_tile  = [M=block_m].
+      output_tile->add_sizes(1);  // G tile = 1
+      for (int64_t b_dim : dot_dims.lhs_batch_dimensions()) {
+        (void)b_dim;
+        output_tile->add_sizes(1);
+      }
+      output_tile->add_sizes(triton_config_proto.block_k());  // K output
+      output_tile->add_sizes(triton_config_proto.block_n());  // N output
+      inner_tile.add_sizes(triton_config_proto.block_m());    // M sequential
+    }
+
+    blk_cfg->set_num_warps(triton_config_proto.num_warps());
+    blk_cfg->set_num_ctas(
+        std::max(1, static_cast<int>(triton_config_proto.num_ctas())));
+    blk_cfg->set_num_stages(triton_config_proto.num_stages());
+    // group_size == 0 in old protos means "no reordering" (same as 1).
+    blk_cfg->set_group_size(
+        std::max(static_cast<int64_t>(1), triton_config_proto.group_size()));
+    RETURN_IF_ERROR(instr.set_backend_config(gpu_config));
+    RETURN_IF_ERROR(inner_ragged_dot->set_backend_config(inner_tile));
+    return absl::OkStatus();
+  }
+
+  // Regular dot / scaled-dot path: write a TritonGemmConfig into the fusion.
   backend_config.set_kind(kTritonGemmFusionKind);
   *backend_config.mutable_triton_gemm_config() = triton_config_proto;
   RETURN_IF_ERROR(instr.set_backend_config(gpu_config));
@@ -305,6 +397,203 @@ absl::Status TritonBackend::ApplyConfig(HloInstruction& instr,
   }
 
   return absl::OkStatus();
+}
+
+absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
+TritonBackend::GetSupportedConfigsForRaggedDot(const HloInstruction* instr) {
+  const auto* ragged_dot = Cast<HloRaggedDotInstruction>(instr);
+  const RaggedDotDimensionNumbers& ragged_dims =
+      ragged_dot->ragged_dot_dimension_numbers();
+  const DotDimensionNumbers& dot_dims = ragged_dims.dot_dimension_numbers();
+
+  // Extract problem dimensions for pruning the search space.
+  const Shape& lhs_shape = ragged_dot->operand(0)->shape();
+  const Shape& rhs_shape = ragged_dot->operand(1)->shape();
+
+  const int64_t lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
+  const bool is_contracting_rd =
+      absl::c_count(dot_dims.lhs_contracting_dimensions(), lhs_ragged_dim) > 0;
+  const int64_t M_total = lhs_shape.dimensions(lhs_ragged_dim);
+
+  // For kRaggedContracting, q_min = floor(M_total/G) is the min group size.
+  const int64_t G =
+      is_contracting_rd ? ragged_dot->operand(2)->shape().dimensions(0) : 0;
+  const int64_t q_min = (is_contracting_rd && G > 0) ? (M_total / G) : 0;
+
+  // K_dim: for kRaggedNonContracting, the (non-ragged) contracting dim size;
+  //        for kRaggedContracting, the non-contracting LHS dim size (output K).
+  int64_t K_dim = 1;
+  {
+    auto is_non_k = [&](int64_t d) -> bool {
+      // Exclude batch dims and the ragged dim from the search.
+      if (d == lhs_ragged_dim) return true;
+      for (int64_t x : dot_dims.lhs_batch_dimensions())
+        if (x == d) return true;
+      return false;
+    };
+    if (!is_contracting_rd) {
+      // kRaggedNonContracting: K = the contracting (non-ragged) dim.
+      K_dim = lhs_shape.dimensions(dot_dims.lhs_contracting_dimensions(0));
+    } else {
+      // kRaggedContracting: K = the non-contracting, non-ragged, non-batch dim.
+      for (int64_t i = 0; i < lhs_shape.dimensions_size(); ++i) {
+        if (!is_non_k(i)) K_dim = lhs_shape.dimensions(i);
+      }
+    }
+  }
+
+  // N is the non-contracting, non-group, non-batch RHS dimension.
+  int64_t N_dim = 1;
+  {
+    auto is_non_n_dim = [&](int64_t d) -> bool {
+      for (int64_t x : dot_dims.rhs_contracting_dimensions())
+        if (x == d) return true;
+      for (int64_t x : ragged_dims.rhs_group_dimensions())
+        if (x == d) return true;
+      for (int64_t x : dot_dims.rhs_batch_dimensions())
+        if (x == d) return true;
+      return false;
+    };
+    for (int64_t i = 0; i < static_cast<int64_t>(rhs_shape.dimensions_size());
+         ++i) {
+      if (!is_non_n_dim(i)) N_dim = rhs_shape.dimensions(i);
+    }
+  }
+
+  const bool exhaustive_search =
+      debug_options().xla_gpu_exhaustive_tiling_search();
+
+  // On ROCm (MI300X), 512 vector registers/thread allow larger output tiles
+  // without spilling; use a higher elements-per-thread cutoff than the 64
+  // that is appropriate for NVIDIA Ampere/Hopper.
+  const bool is_rocm =
+      target_config().device_description.gpu_compute_capability().IsRocm();
+  const int64_t kElemsPerThreadLimit = is_rocm ? 256 : 64;
+
+  // Search space: {16,32,64,128,256}³ block sizes × {2,4,8} num_warps × {1,2}
+  // num_stages × {1,2,4,8} group_size.
+  // Pruned by dimension sizes and per-thread register budget to avoid
+  // obviously invalid configs.
+  //
+  // The upper bound of 256 matches the MI300X benchmark's best configs, where
+  // BLOCK_M=256 and BLOCK_N=256 achieve peak GMM throughput on that platform.
+  //
+  // group_size controls L2 tile reordering (see BlockLevelFusionConfig):
+  //   1 = no reordering (default), 2/4/8 = reorder up to 2/4/8 M-tiles
+  //   before advancing to the next N-tile, improving L2 hit rate.
+  std::vector<std::unique_ptr<BackendConfig>> configs;
+  if (!exhaustive_search) {
+    const bool select_first =
+        debug_options().xla_gpu_autotune_level() == 0 ||
+        debug_options().xla_gpu_deterministic_ops() ||
+        debug_options().xla_gpu_exclude_nondeterministic_ops();
+    if (select_first) {
+      auto config = std::make_unique<BackendConfig>();
+      *config->mutable_triton() =
+          TritonGemmConfig(/*block_m=*/32, /*block_n=*/32, /*block_k=*/32,
+                           /*num_stages=*/1, /*num_warps=*/4,
+                           /*num_ctas=*/1, /*is_tma_allowed=*/false,
+                           /*is_warp_specialization_allowed=*/false,
+                           /*waves_per_eu=*/0,
+                           /*group_size=*/1)
+              .ToProto();
+      configs.push_back(std::move(config));
+      return configs;
+    }
+    // autotune_level>0: representative configs for real profiling.
+    struct SimpleConfig {
+      int block_m, block_n, block_k, num_stages, num_warps, group_size;
+    };
+    const SimpleConfig kDefaultConfigs[] = {
+        {32, 32, 32, 1, 4, 1},  {64, 32, 32, 1, 4, 1},  {64, 64, 32, 1, 4, 2},
+        {128, 32, 32, 1, 8, 1}, {128, 64, 32, 1, 8, 2},
+    };
+    for (const auto& c : kDefaultConfigs) {
+      if (c.block_m > M_total || c.block_n > N_dim) continue;
+      // For kRaggedContracting: skip configs where block_m*num_stages >= q_min
+      // (pipeline preloads beyond the group's contracting slice).
+      if (is_contracting_rd &&
+          static_cast<int64_t>(c.block_m) * c.num_stages >= q_min)
+        continue;
+      // For kRaggedContracting: group_size controls G-dim grouping (not M).
+      // Skip if group_size > G — impossible to group more slices than exist.
+      if (is_contracting_rd && c.group_size > G) continue;
+      auto config = std::make_unique<BackendConfig>();
+      *config->mutable_triton() =
+          TritonGemmConfig(c.block_m, c.block_n, c.block_k,
+                           /*num_stages=*/c.num_stages,
+                           /*num_warps=*/c.num_warps,
+                           /*num_ctas=*/1, /*is_tma_allowed=*/false,
+                           /*is_warp_specialization_allowed=*/false,
+                           /*waves_per_eu=*/0,
+                           /*group_size=*/c.group_size)
+              .ToProto();
+      configs.push_back(std::move(config));
+    }
+    if (configs.empty()) {
+      auto config = std::make_unique<BackendConfig>();
+      *config->mutable_triton() =
+          TritonGemmConfig(32, 32, 32, 1, 4, 1, false).ToProto();
+      configs.push_back(std::move(config));
+    }
+    return configs;
+  }
+
+  // Exhaustive search.
+  for (int block_m : {16, 32, 64, 128, 256}) {
+    if (block_m > M_total) continue;
+    for (int block_n : {16, 32, 64, 128, 256}) {
+      if (block_n > N_dim) continue;
+      for (int block_k : {16, 32, 64, 128, 256}) {
+        if (block_k > K_dim) continue;
+        for (int num_warps : {2, 4, 8}) {
+          for (int num_stages : {1, 2}) {
+            if (is_contracting_rd &&
+                static_cast<int64_t>(block_m) * num_stages >= q_min)
+              continue;
+            int64_t elems_per_thread =
+                static_cast<int64_t>(block_m) * block_n / (num_warps * 32);
+            if (elems_per_thread > kElemsPerThreadLimit) continue;
+            for (int group_size : {1, 2, 4, 8}) {
+              if (is_contracting_rd) {
+                // group_size controls G-dim grouping for kRaggedContracting.
+                // Skip if group_size > G — impossible to group more than G.
+                if (group_size > G) continue;
+              } else {
+                // group_size controls M-tile grouping for
+                // kRaggedNonContracting.
+                int64_t num_m_tiles = (M_total + block_m - 1) / block_m;
+                if (group_size > num_m_tiles) continue;
+              }
+              auto config = std::make_unique<BackendConfig>();
+              *config->mutable_triton() =
+                  TritonGemmConfig(block_m, block_n, block_k,
+                                   /*num_stages=*/num_stages,
+                                   /*num_warps=*/num_warps,
+                                   /*num_ctas=*/1,
+                                   /*is_tma_allowed=*/false,
+                                   /*is_warp_specialization_allowed=*/false,
+                                   /*waves_per_eu=*/0,
+                                   /*group_size=*/group_size)
+                      .ToProto();
+              configs.push_back(std::move(config));
+            }  // group_size
+          }
+        }
+      }
+    }
+  }
+
+  if (configs.empty()) {
+    // Fallback: always emit at least the default config.
+    auto config = std::make_unique<BackendConfig>();
+    *config->mutable_triton() =
+        TritonGemmConfig(32, 32, 32, /*num_stages=*/1, /*num_warps=*/4,
+                         /*num_ctas=*/1, /*is_tma_allowed=*/false)
+            .ToProto();
+    configs.push_back(std::move(config));
+  }
+  return configs;
 }
 
 absl::StatusOr<std::unique_ptr<HloModule>> TritonBackend::RunHloPasses(
@@ -333,6 +622,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonBackend::RunHloPasses(
   ConvertTritonGemmConfig convert_triton_gemm_config(gpu_device_info,
                                                      mlir_context_);
   RETURN_IF_ERROR(convert_triton_gemm_config.Run(hlo_module.get()).status());
+
   return hlo_module;
 }
 
@@ -346,6 +636,22 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
   }
   const FusionBackendConfig& backend_config =
       gpu_config->fusion_backend_config();
+
+  // kTritonGemmFusionKind ("__triton_gemm") is used by ragged-dot (group-GEMM)
+  // XTile fusions created by GemmRewriter::HandleRaggedDot.  We support
+  // autotuning for kRaggedDot fusions specifically.
+  if (backend_config.kind() == kTritonGemmFusionKind) {
+    const HloInstruction* ragged_dot_instr =
+        hlo_query::GetFirstInstructionWithOpcode(
+            *instr.fused_instructions_computation(), HloOpcode::kRaggedDot);
+    if (ragged_dot_instr != nullptr &&
+        instr.GetModule()
+            ->config()
+            .debug_options()
+            .xla_gpu_experimental_enable_tiling_propagation()) {
+      return true;
+    }
+  }
 
   // TODO: b/487920266 - sometimes we create fusions that can't be tiled.
   // Bail out here if that's the case.

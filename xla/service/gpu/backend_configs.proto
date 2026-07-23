@@ -269,6 +269,13 @@ message BlockLevelFusionConfig {
 
   // Number of waves per execution unit (0 = no restriction).
   int32 waves_per_eu = 8;
+
+  // Tile reordering group size for L2 locality (0 or 1 = no reordering).
+  // Used by group-GEMM (ragged-dot) kernels to improve L2 cache hit rate by
+  // grouping adjacent M-dimension tiles before moving to the next N-tile.
+  // Typical values: 1 (off), 2, 4, 8.  Corresponds to GROUP_SIZE in the
+  // Triton matmul tutorial.
+  int32 group_size = 9;
 }
 
 // A backend config for dynamic-slice and dynamic-update-slice instructions
