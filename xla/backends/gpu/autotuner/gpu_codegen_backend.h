@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/algorithm/container.h"
+#include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
@@ -99,11 +100,15 @@ class GpuCodegenBackend : public CodegenBackend {
       hlo_module = ExtractInstructionIntoNewModule(hlo_instruction);
       instruction_to_tune = hlo_module->entry_computation()->root_instruction();
     }
-    RETURN_IF_ERROR(ApplyConfig(*instruction_to_tune, config));
-
+    // Set the module's debug options BEFORE calling ApplyConfig so that
+    // IsSupported (called from ApplyConfig) reads the backend's debug options
+    // (e.g. xla_gpu_experimental_enable_tiling_propagation=true) rather than
+    // the default-constructed options from ExtractInstructionIntoNewModule.
     hlo_module->mutable_config().set_debug_options(debug_options_);
     AdjustDebugOptionsForAutotuning(
         hlo_module->mutable_config().mutable_debug_options());
+
+    RETURN_IF_ERROR(ApplyConfig(*instruction_to_tune, config));
 
     Compiler::CompileOptions options;
     options.gpu_topology = GetSingleDeviceGpuTopology("", target_config_);

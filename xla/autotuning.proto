@@ -105,6 +105,11 @@ message AutotuneResult {
     bool is_tma_allowed = 8;
     bool is_warp_specialization_allowed = 9;
     int64 waves_per_eu = 10;
+    // Tile reordering group size for L2 locality (1 = no reordering, which is
+    // also the default when the field is absent for backward compatibility).
+    // Only applicable to ragged-dot (group-GEMM) fusions; ignored by regular
+    // dot fusions.
+    int64 group_size = 11;
     // LINT.ThenChange(//tensorflow/compiler/xla/service/gpu/matmul_utils.h)
   }
 
