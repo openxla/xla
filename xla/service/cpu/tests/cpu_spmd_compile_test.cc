@@ -19,7 +19,6 @@ limitations under the License.
 #include <utility>
 
 #include "absl/status/statusor.h"
-#include "xla/debug_options_flags.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/cpu/cpu_compiler.h"
 #include "xla/service/cpu/test_target_triple_helper.h"
@@ -27,6 +26,7 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace cpu {
@@ -74,6 +74,8 @@ ENTRY entry {
   HloModuleConfig config;
   config.set_use_spmd_partitioning(true);
   config.set_num_partitions(4);
+  config.mutable_debug_options()
+      ->set_xla_spmd_enable_dynamic_slice_collective_broadcast(true);
 
   DeviceAssignment device_assignment(/*replica_count=*/1,
                                      /*computation_count=*/4);

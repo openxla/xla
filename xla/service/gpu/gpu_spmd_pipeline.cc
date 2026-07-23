@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
@@ -126,8 +127,7 @@ void AddSPMDPasses(
   }
   {
     const auto& debug_options = hlo_module->config().debug_options();
-    spmd::SpmdPartitionerOptions spmd_options =
-        spmd::StatefulRngSpmdPartitioner::GetDefaultOptions();
+    auto spmd_options = spmd::StatefulRngSpmdPartitioner::GetDefaultOptions();
     spmd_options.threshold_for_windowed_einsum_mib =
         debug_options.xla_gpu_threshold_for_windowed_einsum_mib();
     spmd_options.unroll_windowed_einsum =

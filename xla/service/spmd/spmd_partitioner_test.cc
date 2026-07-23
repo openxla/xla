@@ -2832,8 +2832,12 @@ ENTRY entry {
     dynamic_slice_sizes={8,1}, sharding={replicated}
 })";
 
-  ASSERT_OK_AND_ASSIGN(auto module,
-                       PartitionComputation(hlo_string, /*num_devices=*/4));
+  SpmdPartitionerOptions options;
+  options.enable_dynamic_slice_collective_broadcast = true;
+
+  ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/4, options));
 
   EXPECT_EQ(NumOfInstructions(module.get(), HloOpcode::kAllGather), 1);
   EXPECT_EQ(NumOfInstructions(module.get(), HloOpcode::kCollectiveBroadcast),

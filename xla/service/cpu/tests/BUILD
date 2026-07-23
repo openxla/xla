@@ -264,7 +264,7 @@ xla_test(
     srcs = ["cpu_spmd_compile_test.cc"],
     backends = ["cpu"],
     deps = [
-        "//xla:debug_options_flags",
+        "//xla:xla_proto_cc",
         "//xla/service:computation_placer",
         "//xla/service:hlo_module_config",
         "//xla/service/cpu:cpu_compiler",

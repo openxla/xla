@@ -86,6 +86,21 @@ TEST(DebugOptions, CommandBufferUpdateModeDefaultsToAlwaysUpdate) {
       DebugOptions::ALWAYS_UPDATE);
 }
 
+TEST(DebugOptions,
+     DynamicSliceCollectiveBroadcastDefaultsOffAndParsesFromFlags) {
+  DebugOptions options = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_TRUE(options.has_xla_spmd_enable_dynamic_slice_collective_broadcast());
+  EXPECT_FALSE(options.xla_spmd_enable_dynamic_slice_collective_broadcast());
+
+  std::vector<tsl::Flag> flags;
+  MakeDebugOptionsFlags(&flags, &options);
+  std::vector<std::string> flag_args = {
+      "--xla_spmd_enable_dynamic_slice_collective_broadcast=true"};
+
+  ASSERT_TRUE(tsl::Flags::Parse(flag_args, flags));
+  EXPECT_TRUE(options.xla_spmd_enable_dynamic_slice_collective_broadcast());
+}
+
 TEST(DebugOptions, CommandBufferUpdateModesParseFromFlags) {
   for (const auto& [name, expected] : std::vector<
            std::pair<const char*, DebugOptions::CommandBufferUpdateMode>>{
