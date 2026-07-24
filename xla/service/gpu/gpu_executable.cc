@@ -46,7 +46,6 @@ limitations under the License.
 #include "riegeli/bytes/writer.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
-#include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"

@@ -49,7 +49,7 @@ absl::StatusOr<std::unique_ptr<ExecutionWatchdogScope>> CreateArmedScope(
   DebugOptions debug_options;
   debug_options.set_xla_gpu_execution_terminate_timeout(
       absl::FormatDuration(timeout));
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       std::optional<ExecutionWatchdogScope> maybe_scope,
       ExecutionWatchdogScope::Create(&debug_options, "test_module",
                                      /*device_ordinal=*/0, gpu_run_options,

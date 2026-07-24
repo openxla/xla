@@ -15,11 +15,13 @@ limitations under the License.
 
 #include "xla/service/gpu/execution_watchdog.h"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 
+#include "absl/base/nullability.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -27,8 +29,10 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "xla/runtime/hang_watchdog.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 
