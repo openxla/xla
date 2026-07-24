@@ -46,6 +46,10 @@ class GemmBroadcastFoldingRewriteTest
     // cuBLAS for them.
     debug_options.set_xla_gpu_enable_triton_gemm(false);
     debug_options.set_xla_gpu_gemm_rewrite_size_threshold(0);
+    // SYCL does not support cuBLAS. Running the tests with cuBLASlt.
+    if (gpu_target_config().platform_name == "SYCL") {
+      debug_options.set_xla_gpu_enable_cublaslt(true);
+    }
     return debug_options;
   }
 };

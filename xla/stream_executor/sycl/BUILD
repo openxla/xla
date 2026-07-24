@@ -570,12 +570,14 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":sycl_platform_id",
+        ":sycl_matmul_utils",
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:plugin_registry",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/gpu:gpu_blas_lt",
         "//xla/stream_executor/platform:initialize",
+        "//xla/tsl/platform:status_macros",
     ],
     alwayslink = True,
 )
@@ -626,4 +628,23 @@ cc_library(
         "@com_google_absl//absl/types:span",
     ],
     alwayslink = True,
+)
+
+cc_library(
+    name = "sycl_matmul_utils",
+    srcs = ["sycl_matmul_utils.cc"],
+    hdrs = ["sycl_matmul_utils.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":onednn_util",
+        ":sycl_executor",
+        "//xla/service/gpu:matmul_utils",
+        "//xla/stream_executor:device_memory",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/status",
+    ],
 )
