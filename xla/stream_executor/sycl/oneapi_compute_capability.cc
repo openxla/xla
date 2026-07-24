@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/stream_executor/sycl/oneapi_compute_capability.h"
 
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>
