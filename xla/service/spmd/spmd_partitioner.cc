@@ -8054,6 +8054,16 @@ void SpmdPartitioningVisitor::SetPartitionedHlo(
                                            partitioning_state);
       // Creates computation to recover the partitioned value.
       param_partitioned_hlo.Replicate();
+      // SpmdPartitioner::Preprocess overwrites the manual subgroup sharding
+      // with an automatically manageable sharding attribute. The original
+      // sharding is saved in visiting_hlo_sharding_. This recovers the original
+      // sharding so tools like the TPU logger that need the manual dimensions
+      // in the manual subgroup sharding can work correctly. See b/449756032 for
+      // more details.
+      // See b/449756032: for more details.
+      if (visiting_hlo_sharding_.has_value()) {
+        param->set_sharding(*visiting_hlo_sharding_);
+      }
       recovery_module->AddEntryComputation(builder.Build());
       return recovery_module;
     };
