@@ -657,6 +657,15 @@ absl::Status RunLatencyHidingSchedulerPasses(
       memory_limit,
       options.xla_gpu_experimental_parallel_collective_overlap_limit(),
       options.xla_gpu_experimental_parallel_async_compute_limit());
+  // Only overlap async D2D memcpys with compute-bound kernels; memory-bound
+  // kernels contend with the copy for HBM bandwidth and leave it exposed.
+  // This makes the async memcpy resource selective (see
+  // GpuAsyncTracker::GetResourceHazardType) so that only kernels marked as
+  // valuable for selective overlap count towards hiding the copy latency.
+  config.enable_selective_resources = true;
+  // Allow the scheduler to hold back compute-bound kernels when an async
+  // D2D memcpy window opens nearby so they can be scheduled inside it.
+  config.max_hops_to_closest_selective_overlap = 1;
 
   auto shape_size_in_bytes = ShapeSizeBytesFunction(pointer_size);
 
@@ -685,6 +694,16 @@ absl::Status RunLatencyHidingSchedulerPasses(
           DefaultSchedulerCore::ScheduleCandidate& a,
           DefaultSchedulerCore::ScheduleCandidate& b)
       -> std::optional<DefaultSchedulerCore::CandidateResult> {
+    // While a selective overlap window (an async D2D memcpy) is open in a
+    // bottom-up schedule, keep nonvaluable (memory-bandwidth-bound) kernels
+    // outside of it before any other target policy compares the candidates.
+    // This partitions candidates into valuable and nonvaluable classes so
+    // pairwise policies below cannot form a cycle that lets a nonvaluable
+    // operation into the window.
+    if (auto value = AvoidNonvaluableSelectiveOverlapCandidateCondition(a, b)) {
+      return value;
+    }
+
     if (config.aggressive_scheduling_policies &&
         prioritize_compute_over_async_start) {
       HloGraphNode* a_node = a.node;

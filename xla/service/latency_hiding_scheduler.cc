@@ -1269,6 +1269,7 @@ DefaultSchedulerCore::ScheduleCandidate InitializeCandidate(
     const DefaultSchedulerCore::SchedulingState& sched_state) {
   DefaultSchedulerCore::ScheduleCandidate cand;
   cand.node = node;
+  cand.sched_state = &sched_state;
   return cand;
 }
 

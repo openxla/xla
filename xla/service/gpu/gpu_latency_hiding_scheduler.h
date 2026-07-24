@@ -48,6 +48,16 @@ bool GpuScheduleCrossesOverlapLimit(
     const DefaultSchedulerCore::SchedulingState& sched_state,
     const HloGraphNode* node);
 
+// GPU target scheduling rule that, while a selective resource overlap window
+// (e.g. an async D2D memcpy) is open in a bottom-up schedule, prefers
+// candidates marked as valuable for selective overlap. This keeps
+// memory-bandwidth-bound kernels outside the window: they contend with the
+// copy for HBM bandwidth and provide no effective latency hiding.
+std::optional<DefaultSchedulerCore::CandidateResult>
+AvoidNonvaluableSelectiveOverlapCandidateCondition(
+    DefaultSchedulerCore::ScheduleCandidate& a,
+    DefaultSchedulerCore::ScheduleCandidate& b);
+
 // GPU specific resources for latency hiding scheduler.
 //
 // We use two different set of resources to model the scheduling of asynchronous
