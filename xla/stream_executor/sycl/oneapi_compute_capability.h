@@ -17,11 +17,11 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_SYCL_ONEAPI_COMPUTE_CAPABILITY_H_
 
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>
 
-#include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -70,8 +70,8 @@ class OneAPIComputeCapability {
   explicit OneAPIComputeCapability(absl::string_view arch,
                                    absl::string_view variant = "");
 
-  const uint32_t generation() const { return generation_; }
-  const uint32_t version() const { return version_; }
+  uint32_t generation() const { return generation_; }
+  uint32_t version() const { return version_; }
 
   std::string architecture() const;
 

@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/ascii.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/sycl/oneapi_compute_capability.pb.h"
@@ -40,7 +41,8 @@ struct OneAPIComputeCapability::OneAPIDeviceVariantOps<OneAPIDeviceType::kBMG> {
 
   static uint32_t Encode(absl::string_view variant) {
     int value;
-    if (!absl::SimpleAtoi(variant.substr(1), &value)) {
+    if (variant.length() < 2 || variant[0] != 'G' ||
+        !absl::SimpleAtoi(variant.substr(1), &value)) {
       return OneAPIComputeCapability::unknown_variant_value_;
     }
     return (value - 11) / 10;
@@ -60,7 +62,7 @@ struct OneAPIComputeCapability::OneAPIDeviceVariantOps<OneAPIDeviceType::kPVC> {
 
   static uint32_t Encode(absl::string_view variant) {
     constexpr uint32_t kDefaultVersion = 0x3c;
-    return (variant == "") ? kDefaultVersion
+    return variant.empty() ? kDefaultVersion
            : (variant == "VG")
                ? (kDefaultVersion + 1)
                : OneAPIComputeCapability::unknown_variant_value_;
@@ -158,7 +160,8 @@ OneAPIComputeCapability::OneAPIComputeCapability(absl::string_view arch,
         auto ip_version = static_cast<uint32_t>(type);
         if ((ip_version & 0x3fff) >= std::size(known_devices_)) {
           return 0;
-        } else if (variant == "") {
+        }
+        if (variant.empty()) {
           return ip_version;
         }
         return ApplyVariantToIpVersion(
@@ -198,7 +201,7 @@ OneAPIComputeCapabilityProto OneAPIComputeCapability::ToProto() const {
 
 std::string OneAPIComputeCapability::ToString() const {
   const std::string& variant_string = variant();
-  return absl::StrCat(architecture(), (variant_string == "") ? "" : "_",
+  return absl::StrCat(architecture(), (variant_string.empty()) ? "" : "_",
                       variant_string);
 }
 
