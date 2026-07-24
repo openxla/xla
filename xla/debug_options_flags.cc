@@ -563,6 +563,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_thunk_buffer_debug_module_outputs(false);
   opts.set_xla_gpu_enable_gxl_ragged_all_to_all(false);
   opts.set_xla_gpu_gxl_scratch_size_bytes(64 * 1024 * 1024);
+  opts.set_xla_gpu_enable_async_device_to_device_copy(false);
+  opts.set_xla_gpu_async_copy_min_bytes(64 * 1024);
 
   // Disable float checks.
   opts.set_xla_gpu_detect_nan(DebugOptions::DETECTION_MODE_NONE);
@@ -3407,6 +3409,20 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       int64_setter_for(&DebugOptions::set_xla_gpu_gxl_scratch_size_bytes),
       debug_options->xla_gpu_gxl_scratch_size_bytes(),
       "Size in bytes of the scratch buffer for GXL collectives."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_async_device_to_device_copy",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_enable_async_device_to_device_copy),
+      debug_options->xla_gpu_enable_async_device_to_device_copy(),
+      "If true, convert eligible device-to-device HLO copy instructions to "
+      "copy-start/copy-done pairs so the D2D memcpy can overlap with compute "
+      "kernels."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_async_copy_min_bytes",
+      int64_setter_for(&DebugOptions::set_xla_gpu_async_copy_min_bytes),
+      debug_options->xla_gpu_async_copy_min_bytes(),
+      "Minimum transfer size (in bytes) for a device-to-device copy to be "
+      "converted to an async copy-start/copy-done pair."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_use_ragged_dot_grouped_gemm",
       bool_setter_for(
