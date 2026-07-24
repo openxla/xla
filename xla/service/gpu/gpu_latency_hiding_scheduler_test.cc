@@ -1835,7 +1835,9 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
   auto scheduling_context = std::make_shared<const SchedulingContext>(
       module.get(), latency_estimator, async_tracker, &alias_info);
   auto scheduler_core = std::make_shared<DefaultSchedulerCore>(
-      scheduling_context, config, GpuD2DOverlapSchedulingRule);
+      scheduling_context, config,
+      /*target_scheduling_rule=*/nullptr,
+      /*early_target_scheduling_rule=*/GpuD2DOverlapSchedulingRule);
   LatencyHidingScheduler scheduler(scheduling_context, scheduler_core);
   ASSERT_OK(scheduler.Run(module.get()).status());
 
