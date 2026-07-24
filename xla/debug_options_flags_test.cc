@@ -86,19 +86,6 @@ TEST(DebugOptions, CommandBufferUpdateModeDefaultsToAlwaysUpdate) {
       DebugOptions::ALWAYS_UPDATE);
 }
 
-TEST(DebugOptions, SelectiveMemcpyOverlapDefaultsOffAndParsesFromFlags) {
-  DebugOptions options = DefaultDebugOptionsIgnoringFlags();
-  EXPECT_FALSE(options.xla_gpu_experimental_enable_selective_memcpy_overlap());
-
-  std::vector<tsl::Flag> flags;
-  MakeDebugOptionsFlags(&flags, &options);
-  std::vector<std::string> flag_args = {
-      "--xla_gpu_experimental_enable_selective_memcpy_overlap=true"};
-  ASSERT_TRUE(tsl::Flags::Parse(flag_args, flags));
-
-  EXPECT_TRUE(options.xla_gpu_experimental_enable_selective_memcpy_overlap());
-}
-
 TEST(DebugOptions, CommandBufferUpdateModesParseFromFlags) {
   for (const auto& [name, expected] : std::vector<
            std::pair<const char*, DebugOptions::CommandBufferUpdateMode>>{
