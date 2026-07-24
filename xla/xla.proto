@@ -1717,13 +1717,13 @@ message DebugOptions {
   // compute-bound kernels on the main stream. Requires distinct compute streams
   // to be allocated (controlled by the number of async compute streams). Only
   // copies at or above xla_gpu_async_copy_min_bytes are wrapped.
-  optional bool xla_gpu_enable_async_device_to_device_copy = 515;
+  optional bool xla_gpu_enable_async_device_to_device_copy = 520;
 
   // Minimum transfer size (in bytes) for a device-to-device copy to be
   // converted to an async copy-start/copy-done pair by GpuCopyAsyncWrapper.
-  // Smaller copies remain synchronous to avoid stream-synchronisation overhead.
-  // Default: 65536 (64 KiB).
-  optional int64 xla_gpu_async_copy_min_bytes = 516;
+  // Smaller copies remain synchronous to avoid stream-synchronization
+  // overhead. Default: 65536 (64 KiB).
+  optional int64 xla_gpu_async_copy_min_bytes = 521;
 
   // If true, enable experimental tiling propagation.
   optional bool xla_gpu_experimental_enable_tiling_propagation = 456;
@@ -1739,7 +1739,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 520
+  // Next id: 522
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

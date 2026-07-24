@@ -2369,6 +2369,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCopyStartThunk(
   std::unique_ptr<Thunk> copy_thunk;
   if (!is_dst_host_memory && !is_src_host_memory) {
     // D2D async copy: both source and destination reside in device memory.
+    // The thunk is a raw memcpy, so source and destination layouts must
+    // match; layout-changing copies must not reach this path.
+    TF_RET_CHECK(LayoutUtil::LayoutsInShapesEqual(
+        shape.tuple_shapes(0), input_shape, Layout::Equal().MinorToMajorOnly()))
+        << "Copy-start " << copy_start_instr->ToString()
+        << " has mismatched source/destination layouts";
     copy_thunk = std::make_unique<DeviceToDeviceCopyThunk>(
         copy_thunk_info,
         /*source_buffer=*/ShapedSlice{src_buffer, input_shape},

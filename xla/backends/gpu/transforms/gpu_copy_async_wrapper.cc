@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/gpu_copy_async_wrapper.h"
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
@@ -26,6 +27,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/memory_space.h"
@@ -59,7 +62,13 @@ bool IsEligibleD2DCopy(const HloInstruction* instr, int64_t min_copy_bytes) {
       HasHostMemorySpace(instr->operand(0)->shape())) {
     return false;
   }
-  // Enforce the minimum size threshold to amortise sync overhead.
+  // Only wrap copies that are plain memcpys: a layout-changing copy is a
+  // transpose in disguise and must stay on the kernel emission path.
+  if (!LayoutUtil::LayoutsInShapesEqual(shape, instr->operand(0)->shape(),
+                                        Layout::Equal().MinorToMajorOnly())) {
+    return false;
+  }
+  // Enforce the minimum size threshold to amortize sync overhead.
   if (ShapeUtil::ByteSizeOf(shape) < min_copy_bytes) {
     return false;
   }
@@ -75,12 +84,7 @@ absl::StatusOr<bool> GpuCopyAsyncWrapper::RunImpl(
   if (!debug_options.xla_gpu_enable_async_device_to_device_copy()) {
     return false;
   }
-
-  // Allow the per-module proto field to override the constructor default.
-  int64_t min_bytes = min_copy_bytes_;
-  if (debug_options.xla_gpu_async_copy_min_bytes() > 0) {
-    min_bytes = debug_options.xla_gpu_async_copy_min_bytes();
-  }
+  const int64_t min_bytes = debug_options.xla_gpu_async_copy_min_bytes();
 
   bool changed = false;
   for (HloComputation* computation :
@@ -106,13 +110,17 @@ absl::StatusOr<bool> GpuCopyAsyncWrapper::RunImpl(
 
       HloInstruction* copy_start =
           computation->AddInstruction(HloInstruction::CreateCopyStart(
-              copy_start_shape, instr->operand(0),
+              copy_start_shape, instr->mutable_operand(0),
               /*cross_program_prefetch_index=*/std::nullopt));
 
       HloInstruction* copy_done =
           computation->AddInstruction(HloInstruction::CreateUnary(
               element_shape, HloOpcode::kCopyDone, copy_start));
 
+      // Preserve control dependencies: predecessors constrain the start,
+      // successors are constrained by the done.
+      RETURN_IF_ERROR(instr->CopyAllControlDepsTo(copy_start, copy_done));
+      RETURN_IF_ERROR(instr->DropAllControlDeps());
       RETURN_IF_ERROR(instr->ReplaceAllUsesWith(copy_done));
       RETURN_IF_ERROR(computation->RemoveInstruction(instr));
       changed = true;
