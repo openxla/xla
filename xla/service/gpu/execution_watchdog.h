@@ -16,10 +16,12 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_EXECUTION_WATCHDOG_H_
 #define XLA_SERVICE_GPU_EXECUTION_WATCHDOG_H_
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 
+#include "absl/base/nullability.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"

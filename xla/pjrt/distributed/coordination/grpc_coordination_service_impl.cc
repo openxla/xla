@@ -34,7 +34,7 @@ GrpcCoordinationServiceImpl::GrpcCoordinationServiceImpl(
 void GrpcCoordinationServiceImpl::HandleRPCsLoop() {
 #define ENQUEUE_REQUEST(method)                                               \
   do {                                                                        \
-    absl::ReaderMutexLock l(&shutdown_mu_);                                   \
+    absl::ReaderMutexLock l(shutdown_mu_);                                    \
     if (shutdown_) {                                                          \
       continue;                                                               \
     }                                                                         \
