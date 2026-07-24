@@ -467,7 +467,7 @@ int64_t CountCopies(const HloModule& module) {
   return count;
 }
 
-TEST_F(GpuCompilerTest, AnnotatesPipelinedInstructions) {
+TEST_F(GpuCompilerTest, CollectivePipeliningModes) {
   // Simple IR with AllReduce subjectible to pipelining.
   absl::string_view kHloString = R"(
      HloModule module
@@ -496,7 +496,8 @@ TEST_F(GpuCompilerTest, AnnotatesPipelinedInstructions) {
           current-loop-index, constant.0, constant.0),
             dynamic_slice_sizes={1,8,128}
         all-reduce = bf16[1,8,128] all-reduce(sliced-input-buffer),
-          replica_groups={}, to_apply=add, channel_id=1
+          replica_groups={}, to_apply=add, channel_id=1,
+          frontend_attributes={FRONTEND_ATTRIBUTES}
         dynamic-update-slice = bf16[3,8,128] dynamic-update-slice(output-buffer,
           all-reduce, current-loop-index, constant.0, constant.0)
         ROOT tuple = (s32[], bf16[3,8,128], bf16[3,8,128]) tuple(
@@ -513,23 +514,64 @@ TEST_F(GpuCompilerTest, AnnotatesPipelinedInstructions) {
       }
   )";
 
-  HloModuleConfig config = GetModuleConfigForTest();
-  auto& debug_options = config.mutable_debug_options();
-  debug_options.set_xla_gpu_enable_pipelined_all_reduce(true);
-  debug_options.set_xla_gpu_all_reduce_combine_threshold_bytes(0);
-  ASSERT_OK_AND_ASSIGN(auto module_and_executable,
-                       GetOptimizedModuleForExecutable(kHloString, config));
-  const HloModule* module = module_and_executable.first;
+  struct TestCase {
+    absl::string_view name;
+    DebugOptions::CollectivePipeliningMode mode;
+    ExecutionOptions::EffortLevel optimization_level;
+    float exec_time_optimization_effort;
+    absl::string_view frontend_attributes;
+    bool expect_pipelined;
+  };
 
-  absl::string_view kExpected = R"(
-    CHECK: all-reduce-start{{.*}}"is_pipelined":true
-  )";
-  HloPrintOptions options;
-  options.set_print_operand_shape(false);
-  options.set_print_result_shape(false);
-  ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
-                       RunFileCheck(module->ToString(options), kExpected));
-  EXPECT_TRUE(filecheck_matched);
+  const std::vector<TestCase> test_cases = {
+      {"default_at_o0", DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT,
+       ExecutionOptions::EFFORT_O0, 0.0f, "", false},
+      {"default_at_o0_with_execution_effort",
+       DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT,
+       ExecutionOptions::EFFORT_O0, 0.2f, "", true},
+      {"default_at_o1", DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT,
+       ExecutionOptions::EFFORT_O1, 0.0f, "", true},
+      {"on_at_o0", DebugOptions::COLLECTIVE_PIPELINING_MODE_ON,
+       ExecutionOptions::EFFORT_O0, 0.0f, "", true},
+      {"explicit_marked_at_o0",
+       DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT,
+       ExecutionOptions::EFFORT_O0, 0.0f, R"(is_pipelineable="1")", true},
+      {"explicit_unmarked_at_o0",
+       DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT,
+       ExecutionOptions::EFFORT_O0, 0.0f, "", false},
+      {"explicit_unmarked_at_o1",
+       DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT,
+       ExecutionOptions::EFFORT_O1, 0.0f, "", false},
+      {"explicit_off_at_o1", DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF,
+       ExecutionOptions::EFFORT_O1, 0.0f, R"(is_pipelineable="1")", false},
+  };
+
+  for (const TestCase& test_case : test_cases) {
+    SCOPED_TRACE(test_case.name);
+    std::string hlo_string = absl::StrReplaceAll(
+        kHloString, {{"FRONTEND_ATTRIBUTES", test_case.frontend_attributes}});
+
+    HloModuleConfig config = GetModuleConfigForTest();
+    config.set_optimization_level(test_case.optimization_level);
+    config.set_exec_time_optimization_effort(
+        test_case.exec_time_optimization_effort);
+
+    DebugOptions& debug_options = config.mutable_debug_options();
+    debug_options.set_xla_gpu_pipeline_all_reduce(test_case.mode);
+    debug_options.set_xla_gpu_all_reduce_combine_threshold_bytes(0);
+
+    ASSERT_OK_AND_ASSIGN(auto module_and_executable,
+                         GetOptimizedModuleForExecutable(hlo_string, config));
+    const HloModule* module = module_and_executable.first;
+
+    HloPrintOptions options;
+    options.set_print_operand_shape(false);
+    options.set_print_result_shape(false);
+    std::string optimized_hlo = module->ToString(options);
+    EXPECT_EQ(absl::StrContains(optimized_hlo, "\"is_pipelined\":true"),
+              test_case.expect_pipelined)
+        << optimized_hlo;
+  }
 }
 
 TEST_F(GpuCompilerTest, RemovesUnnecessaryCopyAfterScheduling) {
@@ -2981,7 +3023,7 @@ TEST_F(GpuCompilerTest, SymmetricBuffersOverlappingFilters) {
               absl_testing::IsOkAndHolds(true));
 }
 
-TEST_F(GpuCompilerTest, TritonGemmDisabledDotNormalization) {
+TEST_F(GpuCompilerTest, TritonGemmDisabledDotNormalizationToCublas) {
   const char* hlo_text = R"(
 HloModule source_dots
 
@@ -3001,6 +3043,45 @@ ENTRY source_dots_computation {
 
   HloModuleConfig config = GetModuleConfigForTest();
   config.mutable_debug_options().set_xla_gpu_enable_triton_gemm(false);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                       GetOptimizedModule(hlo_text, config));
+
+  constexpr absl::string_view expected_check = R"(
+    // CHECK: custom_call_target="__cublas
+  )";
+
+  EXPECT_THAT(RunFileCheck(optimized_module->ToString(), expected_check),
+              absl_testing::IsOkAndHolds(true));
+}
+
+TEST_F(GpuCompilerTest, PreAmpereTritonGemmEnabledDotNormalizationToCublas) {
+  if (device_description().gpu_compute_capability().IsRocm()) {
+    GTEST_SKIP() << "ROCm does not have Ampere compute capability concept.";
+  }
+  if (get_cuda_cc().IsAtLeast(se::CudaComputeCapability::kAmpere)) {
+    GTEST_SKIP() << "Test requires pre-Ampere GPU compute capability.";
+  }
+
+  const char* hlo_text = R"(
+HloModule source_dots
+
+ENTRY source_dots_computation {
+  %lhs = bf16[1024,32,128]{2,1,0} parameter(0)
+  %rhs_q = bf16[128,128]{1,0} parameter(1)
+  %rhs_k = bf16[128,128]{1,0} parameter(2)
+  %rhs_v = bf16[128,128]{1,0} parameter(3)
+
+  %dot_q = bf16[1024,32,128]{2,1,0} dot(%lhs, %rhs_q), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+  %dot_k = bf16[1024,32,128]{2,1,0} dot(%lhs, %rhs_k), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+  %dot_v = bf16[1024,32,128]{2,1,0} dot(%lhs, %rhs_v), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+
+  ROOT %result = (bf16[1024,32,128]{2,1,0}, bf16[1024,32,128]{2,1,0}, bf16[1024,32,128]{2,1,0}) tuple(%dot_q, %dot_k, %dot_v)
+}
+  )";
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options().set_xla_gpu_enable_triton_gemm(true);
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
                        GetOptimizedModule(hlo_text, config));

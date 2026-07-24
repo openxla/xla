@@ -1938,7 +1938,8 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       attrs["use_global_device_ids"] = {/*required=*/false, AttrTy::kBool,
                                         &use_global_device_ids};
       if ((!preset_operands && !ParseOperands(&operands, builder)) ||
-          !ParseAttributes(attrs, allow_attributes, shape)) {
+          !ParseAttributes(attrs, allow_attributes, shape) ||
+          dimensions->size() != 1) {
         return nullptr;
       }
       if (opcode == HloOpcode::kAllGather) {
@@ -1989,7 +1990,8 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       }
       const LocTy loc = lexer_.GetLoc();
       if ((!preset_operands && !ParseOperands(&operands, builder)) ||
-          !ParseAttributes(attrs, allow_attributes, shape)) {
+          !ParseAttributes(attrs, allow_attributes, shape) ||
+          (opcode == HloOpcode::kReduceScatter && dimensions->size() != 1)) {
         return nullptr;
       }
       if (!collective_op_group_mode.has_value()) {
@@ -2488,6 +2490,10 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         return nullptr;
       }
       // If the is_host_transfer attribute is not present then default to false.
+      if (!shape->IsTuple() || shape->tuple_shapes().empty()) {
+        TokenError("recv must have a non-empty tuple shape");
+        return nullptr;
+      }
       return builder->AddInstruction(HloInstruction::CreateRecv(
           shape->tuple_shapes(0), operands[0], channel_id, *is_host_transfer));
     }
@@ -2610,6 +2616,10 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       if (operands.size() % 2) {
         TokenError(StrCat("expects an even number of operands, but has ",
                           operands.size(), " operands"));
+        return nullptr;
+      }
+      if (operands.empty()) {
+        TokenError("reduce-window expects at least one input and init operand");
         return nullptr;
       }
       if (!maybe_infer_shape([&] {
@@ -2886,6 +2896,13 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
             if (num_inputs == 0) {
               return InvalidArgument(
                   "Cannot infer shape for scan with no inputs");
+            }
+            const int64_t operand_rank =
+                operands[0]->shape().dimensions().size();
+            if (scan_dim < 0 || scan_dim >= operand_rank) {
+              return InvalidArgument(
+                  "scan dimension %d is out of range for operand of rank %d",
+                  scan_dim, operand_rank);
             }
 
             int64_t scan_dim_size = operands[0]->shape().dimensions(scan_dim);
@@ -3251,7 +3268,8 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       optional<RandomAlgorithm> algorithm;
       attrs["algorithm"] = {/*required=*/true, AttrTy::kRandomAlgorithm,
                             &algorithm};
-      if ((!preset_operands && !ParseOperands(&operands, builder)) ||
+      if ((!preset_operands &&
+           !ParseOperands(&operands, builder, /*expected_size=*/1)) ||
           !ParseAttributes(attrs, allow_attributes, shape)) {
         return nullptr;
       }
@@ -3279,6 +3297,10 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       optional<HloComputation*> false_computation;
       optional<std::vector<HloComputation*>> branch_computations;
       if (!preset_operands && !ParseOperands(&operands, builder)) {
+        return nullptr;
+      }
+      if (operands.empty()) {
+        TokenError("conditional requires at least one operand");
         return nullptr;
       }
       if (!ShapeUtil::IsScalar(operands[0]->shape())) {
@@ -3873,7 +3895,8 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
                              &dimensions};
       if ((!preset_operands &&
            !ParseOperands(&operands, builder, /*expected_size=*/1)) ||
-          !ParseAttributes(attrs, allow_attributes, shape)) {
+          !ParseAttributes(attrs, allow_attributes, shape) ||
+          dimensions->size() != 1) {
         return nullptr;
       }
       if (!maybe_infer_shape([&] {
@@ -3891,7 +3914,8 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
                              &dimensions};
       if ((!preset_operands &&
            !ParseOperands(&operands, builder, /*expected_size=*/2)) ||
-          !ParseAttributes(attrs, allow_attributes, shape)) {
+          !ParseAttributes(attrs, allow_attributes, shape) ||
+          dimensions->size() != 1) {
         return nullptr;
       }
       if (!maybe_infer_shape([&] {

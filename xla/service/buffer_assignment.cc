@@ -584,6 +584,18 @@ absl::StatusOr<BufferAllocation::Slice> BufferAllocation::Slice::FromProto(
   }
   const BufferAllocation& allocation =
       buffer_allocations[proto.buffer_allocation_index()];
+  if (proto.offset() < 0 || proto.size() < 0) {
+    return absl::OutOfRangeError(absl::StrCat(
+        "Buffer slice has negative offset/size: offset=", proto.offset(),
+        " size=", proto.size()));
+  }
+  if (proto.size() > allocation.size() ||
+      proto.offset() > allocation.size() - proto.size()) {
+    return absl::OutOfRangeError(absl::StrCat(
+        "Buffer slice [offset=", proto.offset(), ", size=", proto.size(),
+        "] is out of range for allocation #", proto.buffer_allocation_index(),
+        " of size ", allocation.size()));
+  }
   return BufferAllocation::Slice(&allocation, proto.offset(), proto.size(),
                                  proto.element_type());
 }
@@ -2049,6 +2061,16 @@ absl::StatusOr<bool> BufferAssigner::AssignSpecialHloBuffer(
     const HloBuffer* hlo_buffer, bool is_thread_local,
     BufferAllocationsManagerForComputationsWithoutOrdering* allocation_manager,
     BufferAssignment* assignment) {
+  // "View" buffers are pointer stand-ins that alias into another allocation, so
+  // they get no allocation of their own.
+  if (opts_.dus_view_color.has_value()) {
+    ASSIGN_OR_RETURN(BufferValue::Color buffer_color, hlo_buffer->color());
+    if (buffer_color == *opts_.dus_view_color) {
+      VLOG(3) << "Not allocating buffer for view buffer: " << *hlo_buffer;
+      return true;
+    }
+  }
+
   const int64_t buffer_size = assignment->HloBufferSize(*hlo_buffer);
   for (const HloValue* value : hlo_buffer->values()) {
     if (value->instruction()->opcode() == HloOpcode::kConstant) {

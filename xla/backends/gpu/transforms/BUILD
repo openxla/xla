@@ -659,10 +659,25 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "cudnn_fusion_utils",
+    srcs = ["cudnn_fusion_utils.cc"],
+    hdrs = ["cudnn_fusion_utils.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/hlo/analysis:hlo_reachability",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log:check",
+    ],
+)
+
+cc_library(
     name = "conv_fusion_rewriter",
     srcs = ["conv_fusion_rewriter.cc"],
     hdrs = ["conv_fusion_rewriter.h"],
     deps = [
+        ":cudnn_fusion_utils",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -1568,11 +1583,8 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/service/gpu:backend_configs_cc",
-        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_macros",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
     ],
@@ -1583,14 +1595,13 @@ xla_cc_test(
     srcs = ["explicit_collectives_group_async_wrapper_test.cc"],
     deps = [
         ":explicit_collectives_group_async_wrapper",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service/gpu:backend_configs_cc",
-        "//xla/tsl/lib/core:status_test_util",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_googletest//:gtest_main",  # fixdeps: keep
     ],
 )
 
