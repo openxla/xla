@@ -691,12 +691,11 @@ absl::Status RunLatencyHidingSchedulerPasses(
           DefaultSchedulerCore::ScheduleCandidate& a,
           DefaultSchedulerCore::ScheduleCandidate& b)
       -> std::optional<DefaultSchedulerCore::CandidateResult> {
-    // The GPU early-target hook runs below memory pressure in this
-    // configuration and before generic async-window heuristics.
-    if (!config.force_delay_over_memory_pressure) {
-      if (auto result = GpuD2DOverlapSchedulingRule(a, b)) {
-        return result;
-      }
+    // Its priority relative to memory pressure follows
+    // force_delay_over_memory_pressure, and it always precedes generic
+    // async-window heuristics.
+    if (auto result = GpuD2DOverlapSchedulingRule(a, b)) {
+      return result;
     }
 
     if (config.aggressive_scheduling_policies &&
