@@ -1100,11 +1100,8 @@ ENTRY %main (arg0: f32[13,5,10,62], arg1: s32[3,1], arg2: f32[3,1,5,10,62])
 }
 )";
 
-TEST_F(InstructionFusionTest, SkipScatterComputationsIfFusionEmitters) {
+TEST_F(InstructionFusionTest, SkipScatterComputations) {
   auto mod_config = GetModuleConfigForTest();
-  auto debug_options = GetDebugOptionsForTest();
-  debug_options.set_xla_cpu_use_fusion_emitters(true);
-  mod_config.set_debug_options(debug_options);
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
                                            kScatterModuleString, mod_config));
   TF_ASSERT_OK_AND_ASSIGN(bool changed,
