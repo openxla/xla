@@ -104,14 +104,11 @@ static constexpr absl::string_view kAddScatterHlo = R"(
 )";
 
 TEST_F(CpuCompilerInternalsTest, DylibWithThunks) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(kAddScatterHlo));
-  DebugOptions& debug_options =
-      hlo_module->mutable_config().mutable_debug_options();
-  debug_options.set_xla_cpu_use_fusion_emitters(false);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kAddScatterHlo));
 
   CpuCompiler compiler;
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> optimized_module,
       compiler.RunHloPasses(std::move(hlo_module), /*stream_exec=*/nullptr,
                             /*options=*/{}));
@@ -125,9 +122,9 @@ TEST_F(CpuCompilerInternalsTest, DylibWithThunks) {
   };
 
   compiler.SetPreOptimizationHook(pre_opt_hook);
-  TF_ASSERT_OK(compiler.RunBackend(std::move(optimized_module),
-                                   /*stream_exec=*/nullptr,
-                                   /*options=*/{}));
+  ASSERT_OK(compiler.RunBackend(std::move(optimized_module),
+                                /*stream_exec=*/nullptr,
+                                /*options=*/{}));
   compiler.RemovePreOptimizationHook();
 
   EXPECT_GT(max_seen, 0) << "max dylib_index(" << max_seen << ") too low; "
@@ -135,15 +132,14 @@ TEST_F(CpuCompilerInternalsTest, DylibWithThunks) {
 }
 
 TEST_F(CpuCompilerInternalsTest, JustOneDylibWithThunks) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(kAddScatterHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kAddScatterHlo));
   DebugOptions& debug_options =
       hlo_module->mutable_config().mutable_debug_options();
-  debug_options.set_xla_cpu_use_fusion_emitters(false);
   debug_options.set_xla_cpu_parallel_codegen_split_count(1);
 
   CpuCompiler compiler;
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> optimized_module,
       compiler.RunHloPasses(std::move(hlo_module), /*stream_exec=*/nullptr,
                             /*options=*/{}));
@@ -157,8 +153,8 @@ TEST_F(CpuCompilerInternalsTest, JustOneDylibWithThunks) {
   };
 
   compiler.SetPreOptimizationHook(pre_opt_hook);
-  TF_ASSERT_OK(compiler.RunBackend(std::move(optimized_module),
-                                   /*stream_exec=*/nullptr, /*options=*/{}));
+  ASSERT_OK(compiler.RunBackend(std::move(optimized_module),
+                                /*stream_exec=*/nullptr, /*options=*/{}));
   compiler.RemovePreOptimizationHook();
 
   EXPECT_EQ(max_seen, 0) << "max dylib_index(" << max_seen
