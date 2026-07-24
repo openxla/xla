@@ -245,14 +245,20 @@ absl::StatusOr<ComputationType> GetBlasComputationType(
         // Accumulate in f32 precision.
         return ComputationType::kF32;
       case PrimitiveType::F32:  // fall-through
-      case PrimitiveType::C64:
-        if (cc.IsCuda() && tsl::tensor_float_32_execution_enabled() &&
+      case PrimitiveType::C64: {
+        const auto* rocm = cc.rocm_compute_capability();
+        const bool tf32_hw =
+            cc.IsCuda() ||
+            (rocm != nullptr && output_dtype == PrimitiveType::F32 &&
+             rocm->gfx9_mi300_series() && rocm->has_hipblaslt());
+        if (tf32_hw && tsl::tensor_float_32_execution_enabled() &&
             compute_precision <= 1 && lhs_dtype == output_dtype) {
           // CublasLt requires compute type to be F32 for F8 matmul.
           // TF32 should only be chosen for FP32 or C64 gemm
           return ComputationType::kTF32AsF32;
         }
         return ComputationType::kF32;
+      }
       case PrimitiveType::F64:  // fall-through
       case PrimitiveType::C128:
         return ComputationType::kF64;

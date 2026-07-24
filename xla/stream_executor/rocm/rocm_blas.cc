@@ -340,9 +340,10 @@ absl::StatusOr<rocblas_datatype> AsRocBlasComputeType(
       return rocblas_datatype_f64_r;
     case blas::ComputationType::kI32:
       return rocblas_datatype_i32_r;
+    case blas::ComputationType::kTF32AsF32:
+      return rocblas_datatype_f32_r;
     case blas::ComputationType::kF16AsF32:
     case blas::ComputationType::kBF16AsF32:
-    case blas::ComputationType::kTF32AsF32:
     default:
       return absl::InternalError(
           absl::StrFormat("Unsupported compute type: %d", (int)type));
