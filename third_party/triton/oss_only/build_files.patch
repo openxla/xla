@@ -5,13 +5,15 @@ diff --git b/BUILD b/BUILD
 new file mode 100644
 --- /dev/null
 +++ b/BUILD
-@@ -0,0 +1,1299 @@
+@@ -0,0 +1,1313 @@
 +# This package imports OpenAI's Triton (https://github.com/triton-lang/triton).
 +
 +# copybara:uncomment load("@rules:copybara.bzl", "copybara_config_test")
 +load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 +load("@rules_cc//cc:cc_library.bzl", "cc_library")
 +load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
++load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_is_configured")
++
 +# copybara:uncomment load("//tools/build_defs/license:license.bzl", "license")
 +
 +# See go/triton-sla.
@@ -552,7 +554,7 @@ new file mode 100644
 +        "lib/Dialect/TritonGPU/Transforms/Utility.cpp",  # Avoid circular dependency.
 +        "lib/Dialect/TritonNvidiaGPU/Transforms/ClusterBarrierMbarAllocator.cpp",  # Avoid circular dependency.
 +        "lib/Dialect/TritonNvidiaGPU/Transforms/TMAUtilities.cpp",  # Avoid circular dependency.
-+    ],
++    ] + if_sycl_is_configured(["//third_party/intel:TritonIntelGPU_srcs"]),
 +    hdrs = glob([
 +        "include/triton/Dialect/Gluon/IR/*.h",
 +        "include/triton/Dialect/Triton/IR/*.h",
@@ -572,7 +574,7 @@ new file mode 100644
 +        # it would be better if upstream moved it there.
 +        "include/triton/Conversion/MLIRTypes.h",
 +        "include/triton/Dialect/TritonInstrument/Transforms/ConSanTargetHooks.h",
-+    ],
++    ] + if_sycl_is_configured(["//third_party/intel:TritonIntelGPU_hdrs"]),
 +    copts = select({
 +        ":compiler_is_msvc": [],
 +        "//conditions:default": [
@@ -583,7 +585,10 @@ new file mode 100644
 +            "-Wno-implicit-fallthrough",
 +        ],
 +    }),
-+    includes = ["include"],
++    includes = ["include"] + if_sycl_is_configured([
++         "third_party",
++         "third_party/intel/include",
++    ]),
 +    deps = [
 +        ":Dump",
 +        ":GetEnv",  # for Utility
@@ -633,6 +638,7 @@ new file mode 100644
 +        "@llvm-project//mlir:MathDialect",
 +        "@llvm-project//mlir:Pass",
 +        "@llvm-project//mlir:SCFDialect",
++        "@llvm-project//mlir:SPIRVDialect",
 +        "@llvm-project//mlir:Support",
 +        "@llvm-project//mlir:TensorDialect",
 +        "@llvm-project//mlir:TransformUtils",  # for Utility
@@ -640,7 +646,15 @@ new file mode 100644
 +        "@llvm-project//mlir:UBDialect",
 +        "@triton//third_party/f2reduce",  # for Utility
 +        "@triton//third_party/nvidia:NVGPUDialect",
-+    ],
++    ] + if_sycl_is_configured([
++        "@llvm-project//llvm:AsmParser",
++        "@triton//third_party/intel:triton_gen_attr_defs_inc_gen",
++        "@triton//third_party/intel:triton_gen_dialect_inc_gen",
++        "@triton//third_party/intel:triton_gen_ops_inc_gen",
++        "@triton//third_party/intel:triton_intel_gpu_attr_defs_inc_gen",
++        "@triton//third_party/intel:triton_intel_gpu_ops_inc_gen",
++        "@triton//third_party/intel:triton_intel_gpu_dialect_inc_gen",
++    ]),
 +    alwayslink = True,
 +)
 +

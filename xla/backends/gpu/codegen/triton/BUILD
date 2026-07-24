@@ -1,3 +1,4 @@
+load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_is_configured")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
@@ -155,7 +156,9 @@ cc_library(
         "compilation_pipeline.cc",
         "compilation_pipeline_cuda.cc",
         "compilation_pipeline_rocm.cc",
-    ],
+    ] + if_sycl_is_configured([
+        # "compilation_pipeline_oneapi.cc",
+    ]),
     hdrs = ["compilation_pipeline.h"],
     deps = [
         ":extern_function_helper",
@@ -198,7 +201,12 @@ cc_library(
         "@triton//third_party/nvidia:NVGPUToLLVM",
         "@triton//third_party/nvidia:NVHopperTransforms",
         "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
-    ],
+    ] + if_sycl_is_configured([
+        "@triton//third_party/intel:TritonIntelGPUToLLVM",
+        "@triton//third_party/intel:TritonIntelTransforms",
+        "@triton//third_party/intel:TritonIntelGPUTransforms",
+        "@triton//third_party/intel:TritonAnnotateModule",
+    ]),
 )
 
 xla_cc_test(
