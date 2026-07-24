@@ -341,11 +341,6 @@ bool IsMemoryBoundKernel(const HloInstruction& hlo) {
     case HloOpcode::kConditional:
     case HloOpcode::kCall:
       return false;
-    default:
-      break;
-  }
-
-  switch (hlo.opcode()) {
     case HloOpcode::kFusion:
       return !IsConvFusion(hlo) &&
              !hlo_query::ContainsInstrWithOpcode(
