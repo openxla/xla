@@ -657,6 +657,12 @@ absl::Status RunLatencyHidingSchedulerPasses(
       memory_limit,
       options.xla_gpu_experimental_parallel_collective_overlap_limit(),
       options.xla_gpu_experimental_parallel_async_compute_limit());
+  const bool enable_selective_memcpy_overlap =
+      options.xla_gpu_experimental_enable_selective_memcpy_overlap();
+  if (enable_selective_memcpy_overlap) {
+    config.enable_selective_resources = true;
+    config.max_hops_to_closest_selective_overlap = 1;
+  }
 
   auto shape_size_in_bytes = ShapeSizeBytesFunction(pointer_size);
 
@@ -732,9 +738,11 @@ absl::Status RunLatencyHidingSchedulerPasses(
     return std::nullopt;
   };
 
+  DefaultSchedulerCore::TargetSchedulingRule gpu_target_scheduling_rule =
+      enable_selective_memcpy_overlap ? GpuD2DOverlapSchedulingRule : nullptr;
   auto scheduler_core = std::make_unique<DefaultSchedulerCore>(
       scheduling_context, config,
-      /*target_scheduling_rule=*/nullptr,
+      /*target_scheduling_rule=*/std::move(gpu_target_scheduling_rule),
       /*early_target_scheduling_rule=*/gpu_early_scheduling_rule,
       /*post_processing_fn=*/nullptr,
       /*scheduling_instruction_crosses_overlap_limit=*/
