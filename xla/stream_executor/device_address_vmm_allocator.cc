@@ -50,6 +50,9 @@ namespace {
 
 thread_local const xla::DeviceAssignment* current_device_assignment = nullptr;
 
+constexpr int64_t kMaxOpenDeallocationBatchEntries = 64;
+constexpr uint64_t kMaxOpenDeallocationBatchBytes = 64ull << 20;
+
 }  // namespace
 
 DeviceAddressVmmAllocator::DeviceAssignmentScope::DeviceAssignmentScope(
@@ -222,11 +225,31 @@ absl::Status DeviceAddressVmmAllocator::PopulateDevices(
 }
 
 DeviceAddressVmmAllocator::~DeviceAddressVmmAllocator() {
-  absl::Status status = SynchronizeAllPendingOperations();
-  CHECK(status.ok()) << status;
-
   for (auto& device : per_device_) {
     auto& state = device.second;
+    uint64_t last_seqno = 0;
+    {
+      absl::MutexLock lock(state->mu);
+      CHECK_EQ(state->open_deallocation_batch_seqno, 0)
+          << "DeviceAddressVmmAllocator subclasses must flush open "
+             "deallocation batches before the base destructor runs.";
+      if (!state->pending_deallocations.empty()) {
+        last_seqno = state->pending_deallocations.back().seqno;
+      }
+    }
+
+    if (last_seqno > 0) {
+      absl::MutexLock lock(state->mu);
+      absl::Status drain_status = WaitUntilSeqno(*state, last_seqno);
+      CHECK(drain_status.ok()) << drain_status;
+      while (!state->pending_deallocations.empty() &&
+             state->pending_deallocations.front().seqno <= last_seqno) {
+        PendingDeallocation pending = state->pending_deallocations.front();
+        state->pending_deallocations.pop_front();
+        CompletePendingDeallocation(*state, pending);
+      }
+    }
+
     // Free platform-specific per-device resources (e.g. pinned timeline).
     if (state->destroy_fn) {
       state->destroy_fn();
@@ -236,7 +259,20 @@ DeviceAddressVmmAllocator::~DeviceAddressVmmAllocator() {
 
 absl::Status DeviceAddressVmmAllocator::SynchronizeAllPendingOperations() {
   for (auto& device : per_device_) {
-    RETURN_IF_ERROR(SynchronizePendingOperations(device.first));
+    auto& state = device.second;
+    absl::MutexLock lock(state->mu);
+    RETURN_IF_ERROR(FlushOpenDeallocationBatch(
+        *state, DeallocationBatchFlushReason::kDestructor));
+    if (!state->pending_deallocations.empty()) {
+      uint64_t target_seqno = state->pending_deallocations.back().seqno;
+      RETURN_IF_ERROR(WaitUntilSeqno(*state, target_seqno));
+      while (!state->pending_deallocations.empty() &&
+             state->pending_deallocations.front().seqno <= target_seqno) {
+        PendingDeallocation pending = state->pending_deallocations.front();
+        state->pending_deallocations.pop_front();
+        CompletePendingDeallocation(*state, pending);
+      }
+    }
   }
   return absl::OkStatus();
 }
@@ -275,11 +311,13 @@ absl::Status DeviceAddressVmmAllocator::SynchronizePendingOperations(
     int device_ordinal) {
   ASSIGN_OR_RETURN(auto state, GetPerDeviceState(device_ordinal));
   absl::MutexLock lock(state->mu);
+  RETURN_IF_ERROR(
+      FlushOpenDeallocationBatch(*state, DeallocationBatchFlushReason::kSync));
   if (state->pending_deallocations.empty()) {
     return absl::OkStatus();
   }
   uint64_t target_seqno = state->pending_deallocations.back().seqno;
-  WaitUntilSeqno(*state, target_seqno);
+  RETURN_IF_ERROR(WaitUntilSeqno(*state, target_seqno));
   while (!state->pending_deallocations.empty() &&
          state->pending_deallocations.front().seqno <= target_seqno) {
     PendingDeallocation pending = state->pending_deallocations.front();
@@ -459,7 +497,7 @@ DeviceAddressVmmAllocator::EnsureReservationAvailableForFreshMapping(
     // VA is still protected by stream order. Complete only that conflicting
     // stale record, then rescan because another thread may have changed the
     // allocator state while the lock was released.
-    uint64_t pending_completion_seqno = 0;
+    std::optional<PendingDeallocationKey> pending_completion_key;
     {
       auto stale_overlap = FindOverlappingRecord(
           state, request.reservation_address, AddressRole::kBoth,
@@ -468,18 +506,22 @@ DeviceAddressVmmAllocator::EnsureReservationAvailableForFreshMapping(
         CHECK(!stale_overlap->is_active);
         AllocationRecord& record = *stale_overlap->record;
         if (stale_overlap->is_allocator) {
-          pending_completion_seqno = record.allocator_stale_seqno();
+          pending_completion_key = PendingDeallocationKey{
+              PendingDeallocationKind::kAllocation,
+              record.allocator_stale_seqno(), record.allocator_address()};
         } else {
           CHECK(record.reservation_stale());
-          pending_completion_seqno = record.reservation_stale_seqno();
+          pending_completion_key = PendingDeallocationKey{
+              PendingDeallocationKind::kMap, record.reservation_stale_seqno(),
+              record.reservation_address()};
         }
       }
     }
-    if (pending_completion_seqno == 0) {
+    if (!pending_completion_key.has_value()) {
       break;
     }
-    WaitUntilSeqno(state, pending_completion_seqno);
-    CompletePendingDeallocationBySeqno(state, pending_completion_seqno);
+    RETURN_IF_ERROR(WaitUntilSeqno(state, pending_completion_key->seqno));
+    CompletePendingDeallocationByKey(state, *pending_completion_key);
   }
 
   // At this point stale exact overlaps have been drained. Any remaining
@@ -544,6 +586,8 @@ DeviceAddressVmmAllocator::TryWithPendingReclaim(PerDeviceState& state,
     // already be past their stream timeline point. Complete ready allocator
     // deallocations first, without blocking for later pending work and without
     // destroying unrelated stale reservation mappings that may be reused.
+    RETURN_IF_ERROR(
+        FlushOpenDeallocationBatch(state, DeallocationBatchFlushReason::kWait));
     CompleteReadyAllocatorDeallocationsForReclaim(
         state, LoadTimeline(state.pinned_timeline));
     result = try_fresh();
@@ -560,7 +604,7 @@ DeviceAddressVmmAllocator::TryWithPendingReclaim(PerDeviceState& state,
     uint64_t accumulated_size = 0;
     uint64_t rounded_size = RoundUpToGranularity(state, reclaim_size);
     uint64_t target_seqno = 0;
-    std::vector<uint64_t> selected;
+    std::vector<PendingDeallocationKey> selected;
 
     // Target 1.1x the requested size to provide some headroom.
     uint64_t target_size = rounded_size + rounded_size / 10;
@@ -578,16 +622,17 @@ DeviceAddressVmmAllocator::TryWithPendingReclaim(PerDeviceState& state,
       CHECK_GT(reclaimable_bytes, 0);
       accumulated_size += reclaimable_bytes;
       target_seqno = std::max(target_seqno, pending.seqno);
-      selected.push_back(pending.seqno);
+      selected.push_back(
+          PendingDeallocationKey{pending.kind, pending.seqno, pending.addr});
       if (accumulated_size >= target_size) {
         break;
       }
     }
 
     if (!selected.empty()) {
-      WaitUntilSeqno(state, target_seqno);
-      for (uint64_t seqno : selected) {
-        CompletePendingDeallocationBySeqno(state, seqno);
+      RETURN_IF_ERROR(WaitUntilSeqno(state, target_seqno));
+      for (const PendingDeallocationKey& key : selected) {
+        CompletePendingDeallocationByKey(state, key);
       }
     }
     result = try_fresh();
@@ -776,16 +821,20 @@ absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
       "on device ordinal %d",
       mem.opaque(), mem.size(), state->executor->device_ordinal());
 
-  // Assign the next sequence number and enqueue a GPU write to the pinned
-  // timeline when the stream reaches this point. The CPU polls the timeline
-  // value to know when it is safe to free the memory.
-  uint64_t seqno = state->next_seqno++;
-  RETURN_IF_ERROR(EnqueueDeferredDeallocation(*state, seqno));
+  const uint64_t reclaimable_bytes = record.raw_allocation()->address().size();
+  CHECK_GT(reclaimable_bytes, 0);
+  RETURN_IF_ERROR(
+      FlushOpenDeallocationBatchIfNeededForEntry(*state, reclaimable_bytes));
+
+  // Assign this deferred Deallocate to the current per-device trailing batch.
+  // One stream marker will be enqueued for the whole batch when it is flushed.
+  uint64_t seqno = GetOrCreateOpenDeallocationBatchSeqno(*state);
   // Move the returned allocator address out of active ownership and keep its
   // mapping alive as stale state until the stream reaches `seqno`.
   record.MarkAllocatorStale(seqno);
   state->pending_deallocations.push_back(PendingDeallocation{
       PendingDeallocationKind::kAllocation, seqno, record.allocator_address()});
+  AddOpenDeallocationBatchEntry(*state, reclaimable_bytes);
   return absl::OkStatus();
 }
 
@@ -926,7 +975,7 @@ absl::Status DeviceAddressVmmAllocator::ResolveAndMapAlias(
   // a third attempt can install or reuse the requested mapping.
   constexpr int kMaxStaleMappingWaits = 2;
   for (int wait_count = 0;; ++wait_count) {
-    uint64_t pending_completion_seqno = 0;
+    std::optional<PendingDeallocationKey> pending_completion_key;
     {
       // Keep record pointers inside this scope so none survives a wait that
       // releases state.mu.
@@ -959,11 +1008,14 @@ absl::Status DeviceAddressVmmAllocator::ResolveAndMapAlias(
       if (source_record->reservation_stale()) {
         CHECK(source_record->has_reservation_alias());
         if (!source_record->reservation_matches(request.reservation_address)) {
-          pending_completion_seqno = source_record->reservation_stale_seqno();
+          pending_completion_key =
+              PendingDeallocationKey{PendingDeallocationKind::kMap,
+                                     source_record->reservation_stale_seqno(),
+                                     source_record->reservation_address()};
         }
       }
 
-      if (pending_completion_seqno == 0) {
+      if (!pending_completion_key.has_value()) {
         auto stale_reservation_overlap = FindOverlappingRecord(
             state, request.reservation_address, AddressRole::kReservation,
             RecordState::kStale, OverlapKind::kExact);
@@ -982,21 +1034,27 @@ absl::Status DeviceAddressVmmAllocator::ResolveAndMapAlias(
                                      request.reservation_address);
             return absl::OkStatus();
           }
-          pending_completion_seqno = stale_record.reservation_stale_seqno();
+          pending_completion_key =
+              PendingDeallocationKey{PendingDeallocationKind::kMap,
+                                     stale_record.reservation_stale_seqno(),
+                                     stale_record.reservation_address()};
         }
       }
 
-      if (pending_completion_seqno == 0) {
+      if (!pending_completion_key.has_value()) {
         auto stale_allocator_overlap = FindOverlappingRecord(
             state, request.reservation_address, AddressRole::kAllocator,
             RecordState::kStale, OverlapKind::kExact);
         if (stale_allocator_overlap.has_value()) {
           AllocationRecord& stale_record = *stale_allocator_overlap->record;
-          pending_completion_seqno = stale_record.allocator_stale_seqno();
+          pending_completion_key =
+              PendingDeallocationKey{PendingDeallocationKind::kAllocation,
+                                     stale_record.allocator_stale_seqno(),
+                                     stale_record.allocator_address()};
         }
       }
 
-      if (pending_completion_seqno == 0) {
+      if (!pending_completion_key.has_value()) {
         // Map() aliases the beginning of the source allocation into the
         // caller's VA slice. No physical allocation or PA accounting is added.
         ASSIGN_OR_RETURN(
@@ -1023,9 +1081,9 @@ absl::Status DeviceAddressVmmAllocator::ResolveAndMapAlias(
       }
     }
 
-    CHECK_NE(pending_completion_seqno, 0);
-    WaitUntilSeqno(state, pending_completion_seqno);
-    CompletePendingDeallocationBySeqno(state, pending_completion_seqno);
+    CHECK(pending_completion_key.has_value());
+    RETURN_IF_ERROR(WaitUntilSeqno(state, pending_completion_key->seqno));
+    CompletePendingDeallocationByKey(state, *pending_completion_key);
   }
 }
 
@@ -1056,10 +1114,100 @@ absl::Status DeviceAddressVmmAllocator::Map(int device_ordinal,
 
 // UnMap/deferred teardown helpers.
 
+absl::Status
+DeviceAddressVmmAllocator::FlushOpenDeallocationBatchIfNeededForEntry(
+    PerDeviceState& state, uint64_t reclaimable_bytes) {
+  if (state.open_deallocation_batch_seqno == 0) {
+    CHECK_EQ(state.open_deallocation_batch_entries, 0);
+    CHECK_EQ(state.open_deallocation_batch_bytes, 0);
+    return absl::OkStatus();
+  }
+
+  CHECK_GT(state.open_deallocation_batch_entries, 0);
+  bool entry_limit =
+      state.open_deallocation_batch_entries >= kMaxOpenDeallocationBatchEntries;
+  bool byte_limit =
+      reclaimable_bytes > 0 && state.open_deallocation_batch_bytes > 0 &&
+      (state.open_deallocation_batch_bytes >= kMaxOpenDeallocationBatchBytes ||
+       reclaimable_bytes > kMaxOpenDeallocationBatchBytes -
+                               state.open_deallocation_batch_bytes);
+  if (!entry_limit && !byte_limit) {
+    return absl::OkStatus();
+  }
+
+  return FlushOpenDeallocationBatch(
+      state, entry_limit ? DeallocationBatchFlushReason::kEntryLimit
+                         : DeallocationBatchFlushReason::kByteLimit);
+}
+
+uint64_t DeviceAddressVmmAllocator::GetOrCreateOpenDeallocationBatchSeqno(
+    PerDeviceState& state) {
+  if (state.open_deallocation_batch_seqno == 0) {
+    CHECK_EQ(state.open_deallocation_batch_entries, 0);
+    CHECK_EQ(state.open_deallocation_batch_bytes, 0);
+    state.open_deallocation_batch_seqno = state.next_seqno++;
+  }
+  return state.open_deallocation_batch_seqno;
+}
+
+void DeviceAddressVmmAllocator::AddOpenDeallocationBatchEntry(
+    PerDeviceState& state, uint64_t reclaimable_bytes) {
+  CHECK_NE(state.open_deallocation_batch_seqno, 0);
+  ++state.open_deallocation_batch_entries;
+  if (std::numeric_limits<uint64_t>::max() -
+          state.open_deallocation_batch_bytes <
+      reclaimable_bytes) {
+    state.open_deallocation_batch_bytes = std::numeric_limits<uint64_t>::max();
+  } else {
+    state.open_deallocation_batch_bytes += reclaimable_bytes;
+  }
+}
+
 void DeviceAddressVmmAllocator::ErasePendingDeallocationAt(
     PerDeviceState& state, std::deque<PendingDeallocation>::iterator it) {
   CHECK(it != state.pending_deallocations.end());
+  if (it->seqno == state.open_deallocation_batch_seqno) {
+    uint64_t reclaimable_bytes = 0;
+    if (it->kind == PendingDeallocationKind::kAllocation) {
+      auto record_it =
+          state.records_by_allocator_address.find(it->addr.opaque());
+      CHECK(record_it != state.records_by_allocator_address.end());
+      reclaimable_bytes = record_it->second->raw_allocation()->address().size();
+      CHECK_GT(reclaimable_bytes, 0);
+    }
+    CHECK_GT(state.open_deallocation_batch_entries, 0);
+    --state.open_deallocation_batch_entries;
+    CHECK_GE(state.open_deallocation_batch_bytes, reclaimable_bytes);
+    state.open_deallocation_batch_bytes -= reclaimable_bytes;
+    if (state.open_deallocation_batch_entries == 0) {
+      state.open_deallocation_batch_seqno = 0;
+      state.open_deallocation_batch_bytes = 0;
+    }
+  }
   state.pending_deallocations.erase(it);
+}
+
+absl::Status DeviceAddressVmmAllocator::FlushOpenDeallocationBatch(
+    PerDeviceState& state, DeallocationBatchFlushReason /*reason*/) {
+  if (state.open_deallocation_batch_seqno == 0) {
+    CHECK_EQ(state.open_deallocation_batch_entries, 0);
+    CHECK_EQ(state.open_deallocation_batch_bytes, 0);
+    return absl::OkStatus();
+  }
+
+  if (state.open_deallocation_batch_entries == 0) {
+    state.open_deallocation_batch_seqno = 0;
+    state.open_deallocation_batch_bytes = 0;
+    return absl::OkStatus();
+  }
+
+  const uint64_t seqno = state.open_deallocation_batch_seqno;
+  RETURN_IF_ERROR(EnqueueDeferredDeallocation(state, seqno));
+
+  state.open_deallocation_batch_seqno = 0;
+  state.open_deallocation_batch_entries = 0;
+  state.open_deallocation_batch_bytes = 0;
+  return absl::OkStatus();
 }
 
 void DeviceAddressVmmAllocator::ErasePendingDeallocation(
@@ -1083,8 +1231,11 @@ void DeviceAddressVmmAllocator::MoveAllocatorRecordToActive(
   record.ReactivateAllocator(new_size);
 }
 
-void DeviceAddressVmmAllocator::WaitUntilSeqno(PerDeviceState& state,
-                                               uint64_t target_seqno) {
+absl::Status DeviceAddressVmmAllocator::WaitUntilSeqno(PerDeviceState& state,
+                                                       uint64_t target_seqno) {
+  RETURN_IF_ERROR(
+      FlushOpenDeallocationBatch(state, DeallocationBatchFlushReason::kWait));
+
   // Release the lock before spin-waiting to avoid stalling other threads for
   // potentially milliseconds while the GPU drains its work queue.
   state.mu.unlock();
@@ -1097,30 +1248,33 @@ void DeviceAddressVmmAllocator::WaitUntilSeqno(PerDeviceState& state,
   }
 
   state.mu.lock();
+  return absl::OkStatus();
 }
 
 void DeviceAddressVmmAllocator::CompleteReadyAllocatorDeallocationsForReclaim(
     PerDeviceState& state, uint64_t completed_seqno) {
-  std::vector<uint64_t> selected;
+  std::vector<PendingDeallocationKey> selected;
   for (const PendingDeallocation& pending : state.pending_deallocations) {
     if (pending.seqno > completed_seqno ||
         pending.kind == PendingDeallocationKind::kMap) {
       continue;
     }
-    selected.push_back(pending.seqno);
+    selected.push_back(
+        PendingDeallocationKey{pending.kind, pending.seqno, pending.addr});
   }
-  for (uint64_t seqno : selected) {
-    CompletePendingDeallocationBySeqno(state, seqno);
+  for (const PendingDeallocationKey& key : selected) {
+    CompletePendingDeallocationByKey(state, key);
   }
 }
 
-void DeviceAddressVmmAllocator::CompletePendingDeallocationBySeqno(
-    PerDeviceState& state, uint64_t seqno) {
+void DeviceAddressVmmAllocator::CompletePendingDeallocationByKey(
+    PerDeviceState& state, const PendingDeallocationKey& key) {
   for (auto it = state.pending_deallocations.begin();
        it != state.pending_deallocations.end(); ++it) {
-    if (it->seqno == seqno) {
+    if (it->kind == key.kind && it->seqno == key.seqno &&
+        it->addr.IsSameAs(key.addr)) {
       PendingDeallocation pending = *it;
-      state.pending_deallocations.erase(it);
+      ErasePendingDeallocationAt(state, it);
       CompletePendingDeallocation(state, pending);
       return;
     }
@@ -1156,7 +1310,10 @@ void DeviceAddressVmmAllocator::CompletePendingDeallocation(
   CHECK(!record.reservation_active());
   if (record.reservation_stale()) {
     CHECK(record.has_reservation_alias());
-    CompletePendingDeallocationBySeqno(state, record.reservation_stale_seqno());
+    CompletePendingDeallocationByKey(
+        state, PendingDeallocationKey{PendingDeallocationKind::kMap,
+                                      record.reservation_stale_seqno(),
+                                      record.reservation_address()});
     CHECK(!record.has_reservation_alias());
   }
   uint64_t physical_size = record.raw_allocation()->address().size();
@@ -1214,11 +1371,16 @@ absl::Status DeviceAddressVmmAllocator::UnMap(int device_ordinal,
         "range passed to Map");
   }
 
-  uint64_t seqno = state->next_seqno++;
-  RETURN_IF_ERROR(EnqueueDeferredDeallocation(*state, seqno));
+  RETURN_IF_ERROR(FlushOpenDeallocationBatchIfNeededForEntry(
+      *state, /*reclaimable_bytes=*/0));
+
+  // Assign this deferred UnMap to the current per-device trailing batch. One
+  // stream marker will be enqueued for the whole batch when it is flushed.
+  uint64_t seqno = GetOrCreateOpenDeallocationBatchSeqno(*state);
   record->MarkReservationStale(seqno);
   state->pending_deallocations.push_back(PendingDeallocation{
       PendingDeallocationKind::kMap, seqno, reservation_address});
+  AddOpenDeallocationBatchEntry(*state, /*reclaimable_bytes=*/0);
   return absl::OkStatus();
 }
 
