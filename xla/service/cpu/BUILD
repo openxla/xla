@@ -1885,6 +1885,7 @@ xla_cc_test(
     name = "cpu_compiler_internals_test",
     srcs = ["cpu_compiler_internals_test.cc"],
     deps = [
+        ":thunk_emitter",
         "//xla/backends/cpu/codegen/emitters:cpu_fusion_emitter_config",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
