@@ -2124,6 +2124,8 @@ cc_library(
         "//xla/service:instruction_fusion",
         "//xla/service/gpu:alias_info",
         "//xla/service/gpu:gpu_fusible",
+        "//xla/service/gpu:ir_emission_utils",
+        "//xla/service/gpu:reduction_utils",
         "//xla/service/gpu/model:fusion_analysis_cache",
         "//xla/service/gpu/model:gpu_hlo_cost_analysis",
         "//xla/service/gpu/model:gpu_performance_model",
