@@ -5048,7 +5048,7 @@ TEST_F(ShapeInferenceTest, CollectiveReduceMultiOperand) {
                        ShapeInference::InferCollectiveReduceShape(
                            /*operand_shapes=*/{&operand0, &operand1}));
   EXPECT_TRUE(inferred_shape.IsTuple());
-  EXPECT_EQ(inferred_shape.tuple_shapes_size(), 2);
+  EXPECT_EQ(inferred_shape.tuple_shapes().size(), 2);
   EXPECT_TRUE(ShapeUtil::Equal(inferred_shape.tuple_shapes(0), operand0));
   EXPECT_TRUE(ShapeUtil::Equal(inferred_shape.tuple_shapes(1), operand1));
 }
@@ -5072,7 +5072,7 @@ TEST_F(ShapeInferenceTest, CollectiveReduceWithDynamicRootMultipleOperands) {
                            /*operand_shapes=*/{&operand0, &operand1, &roots},
                            /*has_dynamic_root=*/true));
   EXPECT_TRUE(inferred_shape.IsTuple());
-  EXPECT_EQ(inferred_shape.tuple_shapes_size(), 2);
+  EXPECT_EQ(inferred_shape.tuple_shapes().size(), 2);
   EXPECT_TRUE(ShapeUtil::Equal(inferred_shape.tuple_shapes(0), operand0));
   EXPECT_TRUE(ShapeUtil::Equal(inferred_shape.tuple_shapes(1), operand1));
 }
