@@ -1824,6 +1824,8 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
       MakeGPUSchedulerConfig(UINT64_MAX, /*overlap_limit=*/2,
                              /*async_compute_limit=*/2);
   config.top_down_scheduling = true;
+  // Exercise the early-target hook when it is above memory pressure.
+  config.force_delay_over_memory_pressure = true;
   config.enable_selective_resources = true;
   config.max_hops_to_closest_selective_overlap = 1;
   auto async_tracker = std::make_shared<GpuAsyncTracker>(config);
