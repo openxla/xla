@@ -640,6 +640,64 @@ TEST_F(DynamicSliceFusionRewriterV2Test, DUSOnlyNoSlicedInput) {
   RunAndFilecheckHloRewrite(hlo, MakePipeline(), expected, fusion_checks);
 }
 
+TEST_F(DynamicSliceFusionRewriterV2Test, HeroWithExternalUserIsRerouted) {
+  // The rewriter must reroute the residual add and leave the hero dead.
+  const char* hlo = R"(
+    HloModule test
+
+    body {
+      param = (s32[], f32[64], f32[4,64]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      res = f32[64] get-tuple-element(param), index=1
+      buf = f32[4,64] get-tuple-element(param), index=2
+      hero = f32[64] custom-call(res), custom_call_target="fake_target"
+      hero_2d = f32[1,64] bitcast(hero)
+      zero = s32[] constant(0)
+      updated = f32[4,64] dynamic-update-slice(buf, hero_2d, i, zero)
+      new_res = f32[64] add(res, hero)
+      one = s32[] constant(1)
+      next_i = s32[] add(i, one)
+      ROOT tuple = (s32[], f32[64], f32[4,64]) tuple(next_i, new_res, updated)
+    }
+
+    cond {
+      param = (s32[], f32[64], f32[4,64]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      limit = s32[] constant(4)
+      ROOT cmp = pred[] compare(i, limit), direction=LT
+    }
+
+    ENTRY main {
+      res = f32[64] parameter(0)
+      buf = f32[4,64] parameter(1)
+      zero = s32[] constant(0)
+      init = (s32[], f32[64], f32[4,64]) tuple(zero, res, buf)
+      ROOT while = (s32[], f32[64], f32[4,64]) while(init),
+          condition=cond, body=body,
+          backend_config={"known_trip_count":{"n":"4"},
+                          "known_init_step":{"init":"0","step":"1"},
+                          "known_induction_variable":{"tuple_index":"0"}}
+    }
+  )";
+
+  // No custom-call outside the fusion; the add reads back via dynamic-slice.
+  const char* expected = R"(
+    ; CHECK:     %dynamic-slice-fusion{{.*}} {
+    ; CHECK:       {{.*}} custom-call(
+    ; CHECK:              custom_call_target="fake_target"
+    ; CHECK:       ROOT {{.*}} dynamic-update-slice(
+    ; CHECK:     }
+    ; CHECK:     body
+    ; CHECK-NOT:   custom-call(
+    ; CHECK:       {{.*}} = f32[1,64]{{.*}} dynamic-slice(
+    ; CHECK:       {{.*}} = f32[64]{{.*}} add(
+    ; CHECK-NOT:   custom-call(
+    ; CHECK:       ROOT
+  )";
+
+  RunAndFilecheckHloRewrite(hlo, MakePipeline(), expected);
+}
+
 TEST_F(DynamicSliceFusionRewriterV2Test, DUSWithConstantOffset) {
   const char* hlo = R"(
     HloModule test
@@ -2544,6 +2602,56 @@ TEST_F(DynamicSliceFusionRewriterV2Test, O2LooksThroughOptBarrier) {
 
   RunAndFilecheckHloRewrite(hlo, MakePipeline(OptLevel::kO2), expected,
                             fusion_checks);
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       ExternalUserFeedingFusionSkipsRewrite) {
+  // The hero's external user is also the DUS target buffer; rerouting it to
+  // the fusion output would create a cycle, so the rewrite is skipped.
+  const char* hlo = R"(
+    HloModule test
+
+    body {
+      param = (s32[], f32[64], f32[4,64]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      res = f32[64] get-tuple-element(param), index=1
+      hero = f32[64] custom-call(res), custom_call_target="fake_target"
+      buf = f32[4,64] broadcast(hero), dimensions={1}
+      hero_2d = f32[1,64] bitcast(hero)
+      zero = s32[] constant(0)
+      updated = f32[4,64] dynamic-update-slice(buf, hero_2d, i, zero)
+      one = s32[] constant(1)
+      next_i = s32[] add(i, one)
+      ROOT tuple = (s32[], f32[64], f32[4,64]) tuple(next_i, res, updated)
+    }
+
+    cond {
+      param = (s32[], f32[64], f32[4,64]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      limit = s32[] constant(4)
+      ROOT cmp = pred[] compare(i, limit), direction=LT
+    }
+
+    ENTRY main {
+      res = f32[64] parameter(0)
+      buf = f32[4,64] parameter(1)
+      zero = s32[] constant(0)
+      init = (s32[], f32[64], f32[4,64]) tuple(zero, res, buf)
+      ROOT while = (s32[], f32[64], f32[4,64]) while(init),
+          condition=cond, body=body,
+          backend_config={"known_trip_count":{"n":"4"},
+                          "known_init_step":{"init":"0","step":"1"},
+                          "known_induction_variable":{"tuple_index":"0"}}
+    }
+  )";
+
+  const char* expected = R"(
+    ; CHECK-NOT: dynamic-slice-fusion
+    ; CHECK:     %hero = {{.*}} custom-call(
+    ; CHECK:     {{.*}} = f32[4,64]{{.*}} broadcast(%hero)
+    ; CHECK-NOT: dynamic-slice-fusion
+  )";
+  RunAndFilecheckHloRewrite(hlo, MakePipeline(), expected);
 }
 
 }  // namespace
