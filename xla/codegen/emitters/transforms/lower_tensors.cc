@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/numeric/bits.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -1441,8 +1442,10 @@ class LowerTensorsPass : public impl::LowerTensorsPassBase<LowerTensorsPass> {
       return;
     }
 
-    getOperation()->walk([this](ml::LoadOp load) {
-      Value addr = load.getAddr();
+    // Traces a load/store address back to the function-argument buffer it
+    // addresses. Returns a null BlockArgument for shared memory,
+    // global constants and temporaries (allocas), which must not be annotated.
+    auto global_buffer_arg = [](Value addr) -> mlir::BlockArgument {
       while (auto gep = addr.getDefiningOp<ml::GEPOp>()) {
         addr = gep.getBase();
       }
@@ -1452,19 +1455,66 @@ class LowerTensorsPass : public impl::LowerTensorsPassBase<LowerTensorsPass> {
       if (addr.getDefiningOp<ml::AddrSpaceCastOp>() ||
           addr.getDefiningOp<ml::AddressOfOp>() ||
           addr.getDefiningOp<ml::AllocaOp>()) {
-        // Shared memory, global constant or temporary - no need to annotate
-        // anything.
+        return nullptr;
+      }
+      return mlir::dyn_cast<mlir::BlockArgument>(addr);
+    };
+
+    auto arg_has_attr = [](mlir::BlockArgument arg,
+                           llvm::StringRef name) -> bool {
+      auto func =
+          mlir::dyn_cast<mlir::func::FuncOp>(arg.getOwner()->getParentOp());
+      return func && func.getArgAttr(arg.getArgNumber(), name) != nullptr;
+    };
+
+    // Count global-load sites per buffer argument.
+    // Buffers read at multiple sites are treated as reused.
+    llvm::DenseMap<Value, int> global_load_counts;
+    getOperation()->walk([&](ml::LoadOp load) {
+      mlir::BlockArgument arg = global_buffer_arg(load.getAddr());
+      if (!arg) {
+        // Shared memory, global constant or temporary - no need to annotate.
         return;
       }
-      if (auto base = mlir::dyn_cast<mlir::BlockArgument>(addr)) {
-        if (auto func = mlir::dyn_cast<mlir::func::FuncOp>(
-                base.getOwner()->getParentOp())) {
-          if (func.getArgAttr(base.getArgNumber(), "xla.invariant")) {
-            load.setInvariant(true);
-          }
-        }
+      ++global_load_counts[arg];
+      if (arg_has_attr(arg, "xla.invariant")) {
+        load.setInvariant(true);
       }
     });
+
+    // AMD-only non-temporal (streaming) cache hints.
+    if (device_spec_.IsAmdGpu()) {
+      // Streamed-once inputs: mark a read-only (xla.invariant) buffer
+      // non-temporal if read from a single global-load site (excludes
+      // reused/broadcast operands).
+      getOperation()->walk([&](ml::LoadOp load) {
+        mlir::BlockArgument arg = global_buffer_arg(load.getAddr());
+        if (!arg) {
+          return;
+        }
+        if (arg_has_attr(arg, "xla.invariant") &&
+            global_load_counts[arg] == 1) {
+          load.setNontemporal(true);
+        }
+      });
+      // Root output stores: a store to a kernel output buffer that is not also
+      // read back in the kernel is a streamed-once write; mark it non-temporal.
+      // Read-only inputs and buffers read back (e.g. in-place update) are
+      // conservatively excluded.
+      getOperation()->walk([&](ml::StoreOp store) {
+        mlir::BlockArgument arg = global_buffer_arg(store.getAddr());
+        if (!arg) {
+          return;
+        }
+        if (arg_has_attr(arg, "xla.invariant")) {
+          return;
+        }
+        if (global_load_counts.contains(arg)) {
+          return;
+        }
+        store.setNontemporal(true);
+      });
+    }
   }
 
  private:
