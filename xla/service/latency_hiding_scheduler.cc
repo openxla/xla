@@ -1642,13 +1642,6 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
     }
   }
 
-  if (ABSL_PREDICT_FALSE(core_->target_scheduling_rule_ != nullptr)) {
-    if (auto value = InvokeTargetSchedulingFunction(
-            core_->target_scheduling_rule_, a, b, reason)) {
-      return *value;
-    }
-  }
-
   if (!config.force_delay_over_memory_pressure) {
     if (ABSL_PREDICT_FALSE(core_->early_target_scheduling_rule_ != nullptr)) {
       if (auto value = InvokeTargetSchedulingFunction(
@@ -1848,6 +1841,13 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
                                  bn->HasOperandThatIsSupportedAsyncDone(),
                                  "kUnlockDone", reason)) {
         return *res;
+      }
+    }
+
+    if (ABSL_PREDICT_FALSE(core_->target_scheduling_rule_ != nullptr)) {
+      if (auto value = InvokeTargetSchedulingFunction(
+              core_->target_scheduling_rule_, a, b, reason)) {
+        return *value;
       }
     }
 

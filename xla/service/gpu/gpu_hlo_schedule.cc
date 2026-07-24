@@ -691,6 +691,14 @@ absl::Status RunLatencyHidingSchedulerPasses(
           DefaultSchedulerCore::ScheduleCandidate& a,
           DefaultSchedulerCore::ScheduleCandidate& b)
       -> std::optional<DefaultSchedulerCore::CandidateResult> {
+    // The GPU early-target hook runs below memory pressure in this
+    // configuration and before generic async-window heuristics.
+    if (!config.force_delay_over_memory_pressure) {
+      if (auto result = GpuD2DOverlapSchedulingRule(a, b)) {
+        return result;
+      }
+    }
+
     if (config.aggressive_scheduling_policies &&
         prioritize_compute_over_async_start) {
       HloGraphNode* a_node = a.node;
@@ -738,11 +746,9 @@ absl::Status RunLatencyHidingSchedulerPasses(
     return std::nullopt;
   };
 
-  DefaultSchedulerCore::TargetSchedulingRule gpu_target_scheduling_rule =
-      enable_selective_memcpy_overlap ? GpuD2DOverlapSchedulingRule : nullptr;
   auto scheduler_core = std::make_unique<DefaultSchedulerCore>(
       scheduling_context, config,
-      /*target_scheduling_rule=*/std::move(gpu_target_scheduling_rule),
+      /*target_scheduling_rule=*/nullptr,
       /*early_target_scheduling_rule=*/gpu_early_scheduling_rule,
       /*post_processing_fn=*/nullptr,
       /*scheduling_instruction_crosses_overlap_limit=*/
