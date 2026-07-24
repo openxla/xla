@@ -70,8 +70,10 @@ namespace xla {
 namespace gpu {
 
 using ::testing::_;
+using ::testing::Contains;
 using ::testing::ElementsAre;
 using ::testing::EndsWith;
+using ::testing::Not;
 
 class GpuHloScheduleTest : public HloTestBaseLegacy {
  protected:
@@ -171,27 +173,42 @@ ENTRY entry {
 
 class GpuHloScheduleFencingTest : public GpuHloScheduleTest {
  protected:
-  HloModuleConfig GetFencingModuleConfig(bool enable_memory_fencing) {
+  HloModuleConfig GetFencingModuleConfig(int64_t fencing_threshold_bytes) {
     TestConfig test_config;
     test_config.enable_latency_hiding_scheduler = true;
     HloModuleConfig config = GetModuleConfig(test_config);
     DebugOptions options = config.debug_options();
-    options.set_xla_gpu_experimental_enable_scheduler_memory_fencing(
-        enable_memory_fencing);
     options.set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(
-        1024 * 1024);
+        fencing_threshold_bytes);
     config.set_debug_options(options);
     config.set_replica_count(2);
     return config;
   }
 };
 
+TEST(GpuHloScheduleFencingThresholdTest, ResolvesConfiguredThreshold) {
+  constexpr uint64_t kMemoryLimit = 10'000;
+
+  EXPECT_EQ(GetSchedulerMemoryFencingThresholdBytes(
+                /*configured_threshold_bytes=*/-1, kMemoryLimit),
+            std::nullopt);
+  EXPECT_EQ(GetSchedulerMemoryFencingThresholdBytes(
+                /*configured_threshold_bytes=*/0, kMemoryLimit),
+            100);
+  EXPECT_EQ(GetSchedulerMemoryFencingThresholdBytes(
+                /*configured_threshold_bytes=*/123, kMemoryLimit),
+            123);
+  EXPECT_EQ(GetSchedulerMemoryFencingThresholdBytes(
+                /*configured_threshold_bytes=*/20'000, kMemoryLimit),
+            kMemoryLimit);
+}
+
 TEST_F(GpuHloScheduleFencingTest, MemoryFencingAddsScheduleRespectedFences) {
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
-      ParseAndReturnVerifiedModule(kFencingHloText,
-                                   GetFencingModuleConfig(
-                                       /*enable_memory_fencing=*/true)));
+      ParseAndReturnVerifiedModule(
+          kFencingHloText, GetFencingModuleConfig(
+                               /*fencing_threshold_bytes=*/1024 * 1024)));
   ASSERT_OK(ScheduleGpuModule(module.get()).status());
 
   const HloComputation* entry = module->entry_computation();
@@ -203,31 +220,28 @@ TEST_F(GpuHloScheduleFencingTest, MemoryFencingAddsScheduleRespectedFences) {
         std::find(sequence.begin(), sequence.end(), instruction));
   };
 
-  // The fencing pass only adds control edges that end in an async collective
-  // start, and the post-LHS schedule must respect every one of them.
-  int64_t fence_count = 0;
-  for (const HloInstruction* instruction : entry->instructions()) {
-    for (const HloInstruction* successor : instruction->control_successors()) {
-      EXPECT_EQ(successor->opcode(), HloOpcode::kCollectivePermuteStart);
-      EXPECT_LT(position(instruction), position(successor));
-      ++fence_count;
-    }
-  }
-  EXPECT_GT(fence_count, 0);
+  const HloInstruction* wg = entry->GetInstructionWithName("wg");
+  const HloInstruction* cp2s = entry->GetInstructionWithName("cp2s");
+  ASSERT_NE(wg, nullptr);
+  ASSERT_NE(cp2s, nullptr);
+  EXPECT_THAT(wg->control_successors(), Contains(cp2s));
+  EXPECT_LT(position(wg), position(cp2s));
 }
 
-TEST_F(GpuHloScheduleFencingTest, MemoryFencingDisabledAddsNoControlDeps) {
+TEST_F(GpuHloScheduleFencingTest, MemoryFencingDisabledOmitsFence) {
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       ParseAndReturnVerifiedModule(kFencingHloText,
                                    GetFencingModuleConfig(
-                                       /*enable_memory_fencing=*/false)));
+                                       /*fencing_threshold_bytes=*/-1)));
   ASSERT_OK(ScheduleGpuModule(module.get()).status());
 
-  for (const HloInstruction* instruction :
-       module->entry_computation()->instructions()) {
-    EXPECT_TRUE(instruction->control_successors().empty());
-  }
+  const HloComputation* entry = module->entry_computation();
+  const HloInstruction* wg = entry->GetInstructionWithName("wg");
+  const HloInstruction* cp2s = entry->GetInstructionWithName("cp2s");
+  ASSERT_NE(wg, nullptr);
+  ASSERT_NE(cp2s, nullptr);
+  EXPECT_THAT(wg->control_successors(), Not(Contains(cp2s)));
 }
 
 // Test of a single stream, where data dependencies fully determine the

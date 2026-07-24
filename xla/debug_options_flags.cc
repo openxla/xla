@@ -515,8 +515,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_collective_start_as_early_as_possible(false);
   opts.set_xla_gpu_experimental_enable_selective_memcpy_overlap(false);
   opts.set_xla_gpu_experimental_parallel_async_compute_limit(2);
-  opts.set_xla_gpu_experimental_enable_scheduler_memory_fencing(false);
-  opts.set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(0);
+  opts.set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(-1);
   opts.set_xla_gpu_experimental_scheduler_memory_fencing_slack_windows(1);
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
@@ -3157,17 +3156,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "This controls how many in-flight asynchronous computations "
       "latency hiding scheduler can schedule."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_enable_scheduler_memory_fencing",
-      bool_setter_for(
-          &DebugOptions::
-              set_xla_gpu_experimental_enable_scheduler_memory_fencing),
-      debug_options->xla_gpu_experimental_enable_scheduler_memory_fencing(),
-      "If true, run the SchedulerMemoryFencing pass before the latency-hiding "
-      "scheduler. It adds control dependencies from every user of a large "
-      "buffer to a later async collective start, derived from the pre-LHS "
-      "schedule, so LHS cannot defer any of those users across many "
-      "collective windows and inflate peak memory."));
-  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes",
       int64_setter_for(
           &DebugOptions::
@@ -3175,8 +3163,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options
           ->xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(),
       "Buffers of at least this size in bytes are fenced by the "
-      "SchedulerMemoryFencing pass. 0 means 1% of the scheduler memory "
-      "limit."));
+      "SchedulerMemoryFencing pass. -1 disables the pass, 0 uses 1% of the "
+      "scheduler memory limit, and positive values are capped at the scheduler "
+      "memory limit."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_scheduler_memory_fencing_slack_windows",
       int32_setter_for(
@@ -3184,7 +3173,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
               set_xla_gpu_experimental_scheduler_memory_fencing_slack_windows),
       debug_options
           ->xla_gpu_experimental_scheduler_memory_fencing_slack_windows(),
-      "How many async collective windows the users of a fenced buffer may be "
+      "How many async operation windows the users of a fenced buffer may be "
       "deferred past the buffer's last-use window in the pre-LHS schedule."));
   flag_list->push_back(tsl::Flag(
       "xla_pjrt_allow_auto_layout_in_hlo",

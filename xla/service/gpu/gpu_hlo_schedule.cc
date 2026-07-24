@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -756,17 +757,16 @@ absl::Status RunLatencyHidingSchedulerPasses(
           ? GpuScheduleCrossesOverlapLimit
           : nullptr);
 
-  if (options.xla_gpu_experimental_enable_scheduler_memory_fencing()) {
-    int64_t fencing_threshold_bytes =
-        options.xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes();
-    if (fencing_threshold_bytes <= 0) {
-      // By default only fence buffers of at least 1% of the memory limit;
-      // smaller buffers cannot meaningfully contribute to an OOM but would
-      // constrain the scheduler.
-      fencing_threshold_bytes = static_cast<int64_t>(memory_limit / 100);
-    }
+  const int64_t configured_fencing_threshold_bytes =
+      options.has_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes()
+          ? options
+                .xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes()
+          : -1;
+  if (std::optional<int64_t> fencing_threshold_bytes =
+          GetSchedulerMemoryFencingThresholdBytes(
+              configured_fencing_threshold_bytes, memory_limit)) {
     pipeline.AddPass<SchedulerMemoryFencing>(
-        shape_size_in_bytes, fencing_threshold_bytes,
+        shape_size_in_bytes, *fencing_threshold_bytes,
         options.xla_gpu_experimental_scheduler_memory_fencing_slack_windows(),
         alias_info);
   }
@@ -1031,6 +1031,19 @@ SchedulerConfig MakeGPUSchedulerConfig(uint64_t memory_limit,
         config.parallel_collective_overlap_limit);
 
   return config;
+}
+
+std::optional<int64_t> GetSchedulerMemoryFencingThresholdBytes(
+    int64_t configured_threshold_bytes, uint64_t memory_limit) {
+  if (configured_threshold_bytes < 0) {
+    return std::nullopt;
+  }
+
+  const uint64_t threshold_bytes =
+      configured_threshold_bytes == 0
+          ? memory_limit / 100
+          : static_cast<uint64_t>(configured_threshold_bytes);
+  return static_cast<int64_t>(std::min(threshold_bytes, memory_limit));
 }
 
 }  // namespace gpu

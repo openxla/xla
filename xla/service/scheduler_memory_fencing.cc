@@ -29,14 +29,15 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
-#include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_value.h"
+#include "xla/status_macros.h"
 
 namespace xla {
 namespace {
@@ -45,13 +46,25 @@ namespace {
 struct ComputationFencingInfo {
   // Schedule position of every instruction in the computation.
   absl::flat_hash_map<const HloInstruction*, int64_t> position;
-  // Async collective windows, ordered by the schedule position of their start
+  // Async operation windows, ordered by the schedule position of their start
   // operations.
   std::vector<HloInstruction*> window_starts;
   std::vector<int64_t> window_start_positions;
   std::vector<int64_t> window_done_positions;
   std::unique_ptr<HloReachabilityMap> reachability;
 };
+
+HloInstruction* FindAsyncDone(HloInstruction* async_start) {
+  if (async_start->opcode() == HloOpcode::kAsyncStart) {
+    return async_start->async_chain_done();
+  }
+  for (HloInstruction* user : async_start->users()) {
+    if (HloDataflowAnalysis::IsAsynchronousOperationDone(user->opcode())) {
+      return user;
+    }
+  }
+  return nullptr;
+}
 
 ComputationFencingInfo BuildComputationFencingInfo(
     HloComputation* computation, const HloInstructionSequence& sequence) {
@@ -63,21 +76,17 @@ ComputationFencingInfo BuildComputationFencingInfo(
   }
   for (int64_t i = 0; i < instructions.size(); ++i) {
     HloInstruction* instruction = instructions[i];
-    if (!hlo_query::IsAsyncCollectiveStartOp(instruction,
-                                             /*include_send_recv=*/false)) {
+    if (!HloDataflowAnalysis::IsAsynchronousOperationStart(
+            instruction->opcode())) {
       continue;
     }
     // The window closes at the corresponding done operation. If it cannot be
     // located in this sequence, treat the window as closing immediately.
     int64_t done_position = i;
-    for (const HloInstruction* user : instruction->users()) {
-      if (hlo_query::IsAsyncCollectiveDoneOp(user,
-                                             /*include_send_recv=*/false)) {
-        auto it = info.position.find(user);
-        if (it != info.position.end()) {
-          done_position = it->second;
-        }
-        break;
+    if (HloInstruction* async_done = FindAsyncDone(instruction)) {
+      auto it = info.position.find(async_done);
+      if (it != info.position.end()) {
+        done_position = it->second;
       }
     }
     info.window_starts.push_back(instruction);
@@ -152,6 +161,7 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
     return absl::FailedPreconditionError(
         "SchedulerMemoryFencing requires a scheduled module.");
   }
+  TF_RET_CHECK(slack_windows_ >= 0);
   ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                    HloAliasAnalysis::Run(module, alias_info_));
   const HloSchedule& schedule = module->schedule();

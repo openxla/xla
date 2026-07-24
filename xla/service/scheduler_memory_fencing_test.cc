@@ -33,6 +33,7 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::UnorderedElementsAre;
 
@@ -142,6 +143,100 @@ TEST_F(SchedulerMemoryFencingTest, SlackOneShiftsTargetByOneWindow) {
   EXPECT_TRUE(changed);
   EXPECT_THAT(Instr(module.get(), "wg")->control_successors(),
               UnorderedElementsAre(Instr(module.get(), "cp2s")));
+}
+
+TEST_F(SchedulerMemoryFencingTest, RejectsNegativeSlack) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kUseBeforeWindowHlo));
+  absl::StatusOr<bool> result =
+      RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                 /*slack_windows=*/-1);
+  ASSERT_FALSE(result.ok());
+  EXPECT_THAT(result.status().message(), HasSubstr("slack_windows_ >= 0"));
+}
+
+TEST_F(SchedulerMemoryFencingTest, FencesAcrossCopyWindows) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[1024,1024]{1,0} parameter(0)
+  p1 = f32[16]{0} parameter(1)
+  big = f32[1024,1024]{1,0} add(p0, p0)
+  copy1s = (f32[16]{0}, f32[16]{0}, u32[]) copy-start(p1)
+  wg = f32[1024,1024]{1,0} multiply(big, big)
+  copy1d = f32[16]{0} copy-done(copy1s)
+  copy2s = (f32[16]{0}, f32[16]{0}, u32[]) copy-start(copy1d)
+  copy2d = f32[16]{0} copy-done(copy2s)
+  ROOT r = f32[16]{0} add(copy2d, copy2d)
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/1));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(Instr(module.get(), "wg")->control_successors(),
+              UnorderedElementsAre(Instr(module.get(), "copy2s")));
+  EXPECT_OK(module->schedule().Verify());
+}
+
+TEST_F(SchedulerMemoryFencingTest, FencesAcrossSendRecvWindows) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[1024,1024]{1,0} parameter(0)
+  p1 = f32[16]{0} parameter(1)
+  token0 = token[] after-all()
+  big = f32[1024,1024]{1,0} add(p0, p0)
+  recv1 = (f32[16]{0}, u32[], token[]) recv(token0), channel_id=1
+  wg = f32[1024,1024]{1,0} multiply(big, big)
+  recv1d = (f32[16]{0}, token[]) recv-done(recv1), channel_id=1
+  recv_token = token[] get-tuple-element(recv1d), index=1
+  send2 = (f32[16]{0}, u32[], token[]) send(p1, recv_token), channel_id=2
+  ROOT send2d = token[] send-done(send2), channel_id=2
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/1));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(Instr(module.get(), "wg")->control_successors(),
+              UnorderedElementsAre(Instr(module.get(), "send2")));
+  EXPECT_OK(module->schedule().Verify());
+}
+
+TEST_F(SchedulerMemoryFencingTest, FencesAcrossGenericAsyncWindows) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m, is_scheduled=true
+
+async_computation {
+  p = f32[16]{0} parameter(0)
+  ROOT n = f32[16]{0} negate(p)
+}
+
+ENTRY entry {
+  p0 = f32[1024,1024]{1,0} parameter(0)
+  p1 = f32[16]{0} parameter(1)
+  big = f32[1024,1024]{1,0} add(p0, p0)
+  call1s = ((f32[16]{0}), f32[16]{0}, u32[]) call-start(p1), to_apply=async_computation
+  wg = f32[1024,1024]{1,0} multiply(big, big)
+  call1d = f32[16]{0} call-done(call1s)
+  call2s = ((f32[16]{0}), f32[16]{0}, u32[]) call-start(call1d), to_apply=async_computation
+  call2d = f32[16]{0} call-done(call2s)
+  ROOT r = f32[16]{0} add(call2d, call2d)
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/1));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(Instr(module.get(), "wg")->control_successors(),
+              UnorderedElementsAre(Instr(module.get(), "call2s")));
+  EXPECT_OK(module->schedule().Verify());
 }
 
 TEST_F(SchedulerMemoryFencingTest, SkipsEdgeImpliedByDataDependencies) {
