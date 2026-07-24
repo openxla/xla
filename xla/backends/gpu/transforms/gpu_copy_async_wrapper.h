@@ -28,11 +28,14 @@ namespace xla::gpu {
 // `copy-start`/`copy-done` pairs so that the latency-hiding scheduler can
 // overlap the D2D memcpy with compute-bound kernels on the main stream.
 //
-// A copy is eligible when:
+// The pass is gated by `xla_gpu_enable_async_device_to_device_copy`. A copy
+// is eligible when:
 //   - Both source and destination reside in device memory (no host memory
 //     space annotation), i.e. the copy is a true D2D transfer.
-//   - The transfer size is at or above `min_copy_bytes` to amortise
-//     stream-synchronization overhead.
+//   - Source and destination layouts are identical, so the copy is a plain
+//     memcpy rather than a layout-changing transpose.
+//   - The transfer size is at or above `xla_gpu_async_copy_min_bytes` to
+//     amortize stream-synchronization overhead.
 //   - The instruction is not already inside an async computation.
 //
 // The resulting `copy-start`/`copy-done` pair is handled by existing machinery:
@@ -44,21 +47,12 @@ namespace xla::gpu {
 //   - The LHS scheduler maximises the overlap window between start and done.
 class GpuCopyAsyncWrapper : public HloModulePass {
  public:
-  // `min_copy_bytes`: minimum transfer size (in bytes) to convert. Copies
-  // smaller than this threshold remain synchronous to avoid the overhead of
-  // stream-event synchronisation.
-  explicit GpuCopyAsyncWrapper(int64_t min_copy_bytes = 64 * 1024)
-      : min_copy_bytes_(min_copy_bytes) {}
-
   absl::string_view name() const override { return "gpu-copy-async-wrapper"; }
 
  protected:
   absl::StatusOr<bool> RunImpl(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
-
- private:
-  int64_t min_copy_bytes_;
 };
 
 }  // namespace xla::gpu
