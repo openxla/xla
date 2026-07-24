@@ -626,14 +626,15 @@ std::vector<int64_t> HloSharding::TileIndexForDevice(int64_t device) const {
   CHECK(!IsManual());
   CHECK(!IsUnknown());
   CHECK(!IsTuple());
-
-  if (UseNamedShardingLeaf()) {
-    return V3ToV2Sharding(*named_sharding_).TileIndexForDevice(device);
-  }
-
-  std::vector<int64_t> index = tile_assignment_.index_for(device);
-  index.resize(TiledDataRank());
-  return index;
+  std::vector<int64_t> ret_index;
+  EachTile([&](absl::Span<const int64_t> index, int64_t d) {
+    if (d == device) {
+      ret_index = {index.begin(), index.end()};
+    }
+  });
+  CHECK(!ret_index.empty());
+  ret_index.resize(TiledDataRank());
+  return ret_index;
 }
 
 std::vector<int64_t> HloSharding::TileOffsetForDevice(const Shape& shape,
