@@ -609,6 +609,8 @@ cc_library(
         ":onednn_util",
         ":sycl_executor",
         "//xla/service/gpu:matmul_utils",
+        "//xla/stream_executor:device_memory",
+        "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/status",
     ],

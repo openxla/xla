@@ -19,6 +19,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor {
 namespace sycl {
@@ -492,7 +493,7 @@ CreateMatMulPrimDescFromGemmConfig(
 
   // Set up post-ops based on epilogue
   dnnl::post_ops post_ops;
-  TF_ASSIGN_OR_RETURN(sycl_gemm::GemmBackendEpilogue sycl_epilogue,
+  ASSIGN_OR_RETURN(sycl_gemm::GemmBackendEpilogue sycl_epilogue,
                       sycl_gemm::AsSYCLEpilogue(epilogue));
 
   switch (sycl_epilogue) {
@@ -607,8 +608,8 @@ absl::Status DoOnednnGemm(int64_t batch_size, const MatrixDescriptor& lhs,
   void* workspace_addr = workspace.opaque();
   if (scratchpad_size > 0) {
     if (scratch_allocator != nullptr) {
-      TF_ASSIGN_OR_RETURN(stream_executor::DeviceMemory<uint8_t> alloc,
-                          scratch_allocator->AllocateBytes(scratchpad_size));
+      ASSIGN_OR_RETURN(stream_executor::DeviceMemory<uint8_t> alloc,
+                      scratch_allocator->AllocateBytes(scratchpad_size));
       workspace_addr = alloc.opaque();
     } else {
       workspace_addr = workspace.opaque();
