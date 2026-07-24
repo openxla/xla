@@ -277,6 +277,8 @@ bool IsSupportedDotAlgorithmOnGpu(
                             gpu_compute_capability.rocm_compute_capability()
                                 ->has_bf16_dtype_support();
 
+  const bool is_sycl = gpu_compute_capability.IsOneAPI();
+
   switch (algorithm) {
     case PrecisionConfig::ALG_DOT_ANY_F8_ANY_F8_F32:
     case PrecisionConfig::ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM:
@@ -302,7 +304,7 @@ bool IsSupportedDotAlgorithmOnGpu(
       return lhs_storage_type == rhs_storage_type && lhs_storage_type == F16 &&
              (output_storage_type == F16 || output_storage_type == F32);
     case PrecisionConfig::ALG_DOT_BF16_BF16_F32:
-      if (!is_cuda_ge_ampere && !is_rocm_bf16) {
+      if (!is_cuda_ge_ampere && !is_rocm_bf16 && !is_sycl) {
         return false;
       }
       if (lhs_storage_type != rhs_storage_type) {

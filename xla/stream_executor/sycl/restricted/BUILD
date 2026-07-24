@@ -74,7 +74,28 @@ xla_test(
     ],
 )
 
+xla_test(
+    name = "gemm_sycl_test",
+    srcs = ["gemm_sycl_test.cc"],
+    backends = ["gpu"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+        "pjrt_migration_candidate",
+    ],
+    use_legacy_runtime = True,
+    deps = [
+        "//xla:error_spec",
+        "//xla/tests/restricted:hlo_test_base_legacy",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
 xla_restricted_verify(allowed_targets = [
     xla_restricted_allow("sycl_blas_lt_test"),
     xla_restricted_allow("sycl_kernel_test"),
+    xla_restricted_allow("gemm_sycl_test"),
 ])

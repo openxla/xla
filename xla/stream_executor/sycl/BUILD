@@ -570,12 +570,14 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":sycl_platform_id",
+        ":sycl_matmul_utils",
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:plugin_registry",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/gpu:gpu_blas_lt",
         "//xla/stream_executor/platform:initialize",
+        "//xla/tsl/platform:status_macros",
     ],
     alwayslink = True,
 )

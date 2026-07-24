@@ -70,6 +70,8 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/stream_executor/semantic_version.h"
+#include "xla/stream_executor/sycl/oneapi_compute_capability.h"
+#include "xla/stream_executor/sycl/sycl_matmul_utils.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
@@ -2310,6 +2312,13 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   absl::StatusOr<absl::string_view> GetNonFp8GemmCustomCallTarget(
       const HloInstruction& instr,
       const GemmBackendConfig& gemm_backend_config) const {
+    // TODO (intel-tf) : For SYCL, we currently route all GEMMs to cublasLt.
+    // We should check the capabilities and route accordingly.
+    auto oneapi_cc = gpu_version_.oneapi_compute_capability();
+    if (oneapi_cc != nullptr) {
+      return absl::string_view(kCublasLtMatmulCallTarget);
+    }
+
     // All internal conditions are met, check if we meet the requirements of
     // cublasLt.
     ASSIGN_OR_RETURN(bool gemm_is_supported_by_cublas_lt,
@@ -2811,6 +2820,28 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
         workspace = GemmConfig::kGFX942Workspace;
       } else if (rocm_cc->gfx_version() == "gfx950") {
         workspace = GemmConfig::kGFX950Workspace;
+      }
+    }
+    auto oneapi_cc = gpu_version_.oneapi_compute_capability();
+    if (oneapi_cc != nullptr) {
+      // Getting the workspace size from the primitive descriptor
+      ASSIGN_OR_RETURN(GemmConfig gemm_config,
+                          GemmConfig::For(instr, gpu_version_));
+      ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                          instr->backend_config<GpuBackendConfig>());
+      const GemmBackendConfig& config = gpu_config.gemm_backend_config();
+
+      auto prim_desc_or =
+          stream_executor::sycl::CreateMatMulPrimDescFromGemmConfig(
+              gemm_config, config.epilogue());
+      if (prim_desc_or.ok()) {
+        // Get the scratchpad size from OneDNN primitive descriptor
+        size_t scratchpad_size = (*prim_desc_or)->scratchpad_desc().get_size();
+        workspace = std::max(workspace, static_cast<int64_t>(scratchpad_size));
+      } else {
+        VLOG(1) << "Failed to create OneDNN primitive descriptor for "
+                << instr->custom_call_target() << ": "
+                << prim_desc_or.status().message();
       }
     }
 
