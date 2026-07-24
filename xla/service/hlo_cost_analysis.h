@@ -445,7 +445,7 @@ class HloCostAnalysis : public ConstDfsHloVisitor {
           " count_multiple_input_accesses: %d\n"
           "}",
           per_second_rates.ToString(), min_latencies_seconds.ToString(),
-          static_cast<int>(count_multiple_input_accesses));
+          count_multiple_input_accesses);
     }
   };
 
