@@ -537,7 +537,6 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   template <typename TryReuseFn, typename TryFreshFn>
   absl::StatusOr<DeviceAddressBase> TryWithPendingReclaim(PerDeviceState& state,
                                                           uint64_t reclaim_size,
-                                                          int64_t memory_space,
                                                           TryReuseFn try_reuse,
                                                           TryFreshFn try_fresh)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
@@ -622,8 +621,7 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // Completes ready allocator-address deallocations for PA reclaim while
   // leaving unrelated kMap entries stale and reusable.
   void CompleteReadyAllocatorDeallocationsForReclaim(PerDeviceState& state,
-                                                     uint64_t completed_seqno,
-                                                     int64_t memory_space)
+                                                     uint64_t completed_seqno)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Completes a pending operation whose stream sequence has passed by dropping

@@ -940,13 +940,6 @@ TEST_F(DeviceAddressVmmAllocatorTest, ReclaimNeverEvictsExemptPendingMappings) {
                                      /*expect_mapping_survives=*/true);
 }
 
-TEST_F(DeviceAddressVmmAllocatorTest,
-       ReclaimSkipsPendingMappingsInTheRequestingSpace) {
-  // The pressure allocation in the helper requests memory space 0.
-  RunReclaimPressureOnPendingMapping(/*memory_space=*/0,
-                                     /*expect_mapping_survives=*/true);
-}
-
 // A request never reuses a pending record from another memory space because
 // the record keeps its reclaim tag and reuse across spaces would mistag it.
 TEST_F(DeviceAddressVmmAllocatorTest, ReuseNeverCrossesMemorySpaces) {
