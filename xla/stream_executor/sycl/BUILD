@@ -642,6 +642,7 @@ cc_library(
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:device_memory",
         "//xla/tsl/platform:status_macros",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/status",
     ],
