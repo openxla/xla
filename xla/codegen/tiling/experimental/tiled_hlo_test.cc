@@ -48,9 +48,11 @@ namespace {
 using ::mlir::MLIRContext;
 using ::testing::Contains;
 using ::testing::Eq;
+using ::testing::Not;
 using ::testing::Pair;
 using ::testing::Pointee;
 using ::testing::Property;
+using ::testing::StartsWith;
 using ::testing::UnorderedElementsAre;
 
 MATCHER_P(IsUniquePointerTo, ptr, "") { return arg.get() == ptr; }
@@ -221,6 +223,44 @@ Tiled HLO:
       Contains(IsHloWithOperands(
           HloOpcode::kReduce, std::vector<HloOpcode>{HloOpcode::kParameter,
                                                      HloOpcode::kConstant})));
+}
+
+TEST_F(TileAnalysisTest, TiledReduceWithLoops) {
+  ASSERT_OK_AND_ASSIGN(const TiledHloComputation tiled_computation,
+                       ParseAndTile(R"hlo(
+    max {
+      x = f32[] parameter(0)
+      y = f32[] parameter(1)
+      ROOT maximum = f32[] maximum(x, y)
+    }
+    ENTRY e {
+      p0 = f32[16,97]{1,0} parameter(0)
+      constant = f32[] constant(-inf)
+      ROOT reduce = f32[16]{0} reduce(p0, constant),
+        dimensions={1}, to_apply=max
+    })hlo",
+                                    {8, 32}));
+
+  EXPECT_THAT(tiled_computation, MatchString(R"(
+    Dimensions:
+    0 type: parallel size: 16 tile size: 8 dim ID:0
+      hlo: %reduce = f32[16]{0} reduce(%p0, %constant),
+            dimensions={1}, to_apply=%max
+    1 type: sequential size: 97 tile size: 32 dim ID:1
+      hlo: %reduce = f32[16]{0} reduce(%p0, %constant),
+      dimensions={1}, to_apply=%max
+    Root tiles:
+    0 root tile:  offsets [tid_0 * 8] sizes [8] strides [1] upper bounds [16]
+
+    Tiled HLO:
+    constant.tile_0 = constant()  offsets [] sizes [] strides [] upper bounds []
+    reduce.tile_0 = reduce(p0.tile_0, constant.tile_0) offsets [tid_0 * 8]
+      sizes [8] strides [1] upper bounds [16]
+    region #0 {
+      p0.tile_0 = parameter(0) offsets [tid_0 * 8, tid_1 * 32]
+        sizes [8, 32] strides [1, 1] upper bounds [16, 97]
+    }
+  )"));
 }
 
 TEST_F(TileAnalysisTest, SimpleNormalizationDiamond) {
@@ -686,6 +726,58 @@ TEST_F(TileAnalysisTest, ExplicitSimplify) {
   EXPECT_THAT(tiled_computation.ToString(), ::testing::HasSubstr("+ 32 - 256"));
   tiled_computation.Simplify();
   EXPECT_THAT(tiled_computation.ToString(), ::testing::HasSubstr("- 224"));
+}
+
+TEST_F(TileAnalysisTest, StrayInstructionsInFusionAreStripped) {
+  // Some parts of TiledHloComputation::Tile implementation CHECK() that all
+  // instructions in a fusion are reachable from its roots. This is an internal
+  // invariant ensured earlier in TiledHloComputation::Tile.
+  //
+  // This test verifies that the invariant holds even when the input contains
+  // some stray instructions, and that the stray instructions are not included
+  // in the result.
+  ASSERT_OK_AND_ASSIGN(auto unverified_module,
+                       xla::ParseAndReturnUnverifiedModule(R"hlo(
+    fusion {
+      p0 = f32[10] parameter(0)
+      stray_p1 = f32[10] parameter(1)
+      stray_constant = f32[10] constant(7.0)
+      stray_add = f32[10] add(stray_p1, stray_constant)
+      ROOT add = f32[10] add(p0, p0)
+    }
+
+    ENTRY main {
+      p0 = f32[10] parameter(0)
+      p1 = f32[10] parameter(1)
+      ROOT fusion = f32[10] fusion(p0, p1), kind=kCustom, calls=fusion
+    })hlo"));
+
+  HloInstruction* root =
+      unverified_module->entry_computation()->root_instruction();
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
+  ASSERT_OK_AND_ASSIGN(auto tiling_space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
+  ASSERT_OK(tiling_space->AssignTileSizes({10}));
+
+  // This will crash if Tile() fails to maintain the invariant.
+  ASSERT_OK_AND_ASSIGN(
+      const TiledHloComputation tiled_computation,
+      TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space)));
+
+  // Stray instructions should not be included in the result.
+  for (const auto* instr : tiled_computation.instructions()) {
+    EXPECT_THAT(instr->hlo()->name(), Not(StartsWith("stray_")));
+  }
+  EXPECT_THAT(tiled_computation, MatchString(R"(
+    Dimensions:
+      0 type: parallel size: 10 tile size: 10 dim ID:0 hlo: %add = f32[10]{0} add(%p0, %p0)
+    Root tiles:
+      0 root tile:  offsets [0] sizes [10] strides [1] upper bounds [10]
+
+    Tiled HLO:
+      add.tile_0 = add(p0.1.tile_0, p0.1.tile_0)  offsets [0] sizes [10] strides [1] upper bounds [10]
+      p0.1.tile_0 = parameter(0)  offsets [0] sizes [10] strides [1] upper bounds [10]
+  )"));
 }
 
 // TODO(b/422676780): Port the remaining tests.

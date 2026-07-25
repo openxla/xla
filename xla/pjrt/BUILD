@@ -174,6 +174,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
@@ -1550,4 +1551,16 @@ alias(
     name = "stream_executor_executable_proto_cc",
     actual = "//xla/pjrt/se:stream_executor_executable_proto_cc",
     visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "pjrt_compiler_variant",
+    srcs = ["pjrt_compiler_variant.cc"],
+    hdrs = ["pjrt_compiler_variant.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:fingerprint",
+    ],
 )

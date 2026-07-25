@@ -109,7 +109,8 @@ struct SpmdPartitionerOptions {
 
   // Enables a narrow dynamic-slice lowering that broadcasts a single slice
   // from its sharded owner instead of all-gathering the full operand first.
-  bool enable_dynamic_slice_collective_broadcast = true;
+  // Controlled via xla_spmd_enable_dynamic_slice_collective_broadcast.
+  bool enable_dynamic_slice_collective_broadcast = false;
 
   // Maximum number of partitions for the dynamic-slice collective-broadcast
   // lowering. The lowering creates one branch with a full replica group per
@@ -915,8 +916,9 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   SpmdLogger* logger_;
   const SpmdPartitionerOptions options_;
   SpmdPartitioner* partitioner_;
-  std::vector<HloSharding> visiting_hlo_operand_shardings_;
-  std::optional<HloSharding> visiting_hlo_sharding_;
+  std::vector<std::shared_ptr<const HloSharding>>
+      visiting_hlo_operand_shardings_;
+  std::shared_ptr<const HloSharding> visiting_hlo_sharding_;
   std::optional<int64_t> visiting_num_partitions_;
   std::optional<SPMDCollectiveOpsCreator> visiting_collective_ops_creator_;
   std::optional<HloInstruction*> visiting_partition_id_;

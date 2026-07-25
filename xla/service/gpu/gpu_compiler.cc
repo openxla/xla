@@ -1014,6 +1014,22 @@ absl::Status RunOptimizationPasses(
       .status();
 }
 
+template <HloOpcode opcode>
+static HloPredicate CollectivePipeliningPredicate(
+    DebugOptions::CollectivePipeliningMode mode) {
+  switch (mode) {
+    case DebugOptions::COLLECTIVE_PIPELINING_MODE_ON:
+      return HloPredicateIsOp<opcode>;
+    case DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT:
+      return HloPredicateIsPipelineableOp<opcode>();
+    case DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT:
+    case DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF:
+      return HloPredicateFalse;
+    default:
+      return HloPredicateFalse;
+  }
+}
+
 absl::Status RunCollectiveOptimizationPasses(
     HloModule* hlo_module, const GpuCompiler::CompileOptions& options,
     const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
@@ -1076,8 +1092,18 @@ absl::Status RunCollectiveOptimizationPasses(
   collectives_pipeline.AddPass<HloDCE>();
 
   collectives_pipeline.AddPass<CollectivePipeliningAnalyzer>(pointer_size);
-  if (debug_options.xla_gpu_enable_pipelined_all_reduce() ||
-      IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)) {
+
+  const DebugOptions::CollectivePipeliningMode effort_default =
+      IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)
+          ? DebugOptions::COLLECTIVE_PIPELINING_MODE_ON
+          : DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF;
+  DebugOptions::CollectivePipeliningMode all_reduce_pipelining =
+      debug_options.xla_gpu_pipeline_all_reduce();
+  if (all_reduce_pipelining ==
+      DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT) {
+    all_reduce_pipelining = effort_default;
+  }
+  if (all_reduce_pipelining != DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF) {
     CollectivePipeliner::Config config{
         /*level_to_operate_on=*/0,
         /*max_pipelining_per_loop=*/INT64_MAX,
@@ -1086,7 +1112,9 @@ absl::Status RunCollectiveOptimizationPasses(
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
         collective_pipeliner_utils::PipeliningDirection::kForward,
-        /*should_process=*/HloPredicateIsOp<HloOpcode::kAllReduce>,
+        /*should_process=*/
+        CollectivePipeliningPredicate<HloOpcode::kAllReduce>(
+            all_reduce_pipelining),
         /*acceptable_formatting=*/HloPredicateTrue,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
@@ -1100,8 +1128,14 @@ absl::Status RunCollectiveOptimizationPasses(
     };
     collectives_pipeline.AddPass<CollectivePipeliner>(config);
   }
-  if (debug_options.xla_gpu_enable_pipelined_all_gather() ||
-      IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)) {
+
+  DebugOptions::CollectivePipeliningMode all_gather_pipelining =
+      debug_options.xla_gpu_pipeline_all_gather();
+  if (all_gather_pipelining ==
+      DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT) {
+    all_gather_pipelining = effort_default;
+  }
+  if (all_gather_pipelining != DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF) {
     CollectivePipeliner::Config config{
         /*level_to_operate_on=*/0,
         /*max_pipelining_per_loop=*/INT64_MAX,
@@ -1110,7 +1144,9 @@ absl::Status RunCollectiveOptimizationPasses(
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
         collective_pipeliner_utils::PipeliningDirection::kBackward,
-        /*should_process=*/HloPredicateIsOp<HloOpcode::kAllGather>,
+        /*should_process=*/
+        CollectivePipeliningPredicate<HloOpcode::kAllGather>(
+            all_gather_pipelining),
         /*acceptable_formatting=*/HloPredicateTrue,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
@@ -1124,8 +1160,15 @@ absl::Status RunCollectiveOptimizationPasses(
     };
     collectives_pipeline.AddPass<CollectivePipeliner>(config);
   }
-  if (debug_options.xla_gpu_enable_pipelined_reduce_scatter() ||
-      IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)) {
+
+  DebugOptions::CollectivePipeliningMode reduce_scatter_pipelining =
+      debug_options.xla_gpu_pipeline_reduce_scatter();
+  if (reduce_scatter_pipelining ==
+      DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT) {
+    reduce_scatter_pipelining = effort_default;
+  }
+  if (reduce_scatter_pipelining !=
+      DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF) {
     CollectivePipeliner::Config config{
         /*level_to_operate_on=*/0,
         /*max_pipelining_per_loop=*/INT64_MAX,
@@ -1134,7 +1177,9 @@ absl::Status RunCollectiveOptimizationPasses(
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
         collective_pipeliner_utils::PipeliningDirection::kForward,
-        /*should_process=*/HloPredicateIsOp<HloOpcode::kReduceScatter>,
+        /*should_process=*/
+        CollectivePipeliningPredicate<HloOpcode::kReduceScatter>(
+            reduce_scatter_pipelining),
         /*acceptable_formatting=*/HloPredicateTrue,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
@@ -1451,7 +1496,16 @@ void AddCollectiveCombinerPasses(
   // of the NCCL ring model.  Only added when the Triton collective kernel flag
   // is enabled; when the flag is off all collectives keep
   // KERNEL_STRATEGY_DEFAULT.
-  if (opts.xla_gpu_unsupported_use_all_reduce_one_shot_kernel()) {
+  // Run the annotator if any collective kernel type is enabled.
+  // It annotates AllReduce and AllGather instructions with the
+  // kernel strategy determined at compile time (before scheduling),
+  // so that SolLatencyEstimator and the thunk emitter can consume it.
+  if (absl::c_linear_search(
+          opts.xla_gpu_experimental_use_collective_kernels(),
+          static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE)) ||
+      absl::c_linear_search(
+          opts.xla_gpu_experimental_use_collective_kernels(),
+          static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER))) {
     pipeline.AddPass<CollectiveKernelStrategyAnnotator>(
         gpu_topology, /*is_multimem_enabled=*/false);
   }

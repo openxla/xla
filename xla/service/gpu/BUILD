@@ -655,10 +655,22 @@ cc_library(
     hdrs = ["triton_call.h"],
     deps = [
         "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AsmParser",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Support",
+    ],
+)
+
+xla_cc_test(
+    name = "triton_call_test",
+    srcs = ["triton_call_test.cc"],
+    deps = [
+        ":triton_call",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
+        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -945,6 +957,8 @@ xla_cc_test(
         "//xla/service:xla_debug_info_manager",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor:mock_stream",
+        "//xla/stream_executor:mock_stream_executor",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/abi:executable_abi_version",
@@ -2051,6 +2065,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/types:variant",
