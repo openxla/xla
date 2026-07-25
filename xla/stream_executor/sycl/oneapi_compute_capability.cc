@@ -202,7 +202,7 @@ OneAPIComputeCapabilityProto OneAPIComputeCapability::ToProto() const {
 
 std::string OneAPIComputeCapability::ToString() const {
   const std::string& variant_string = variant();
-  return absl::StrCat(architecture(), (variant_string.empty()) ? "" : "_",
+  return absl::StrCat(architecture(), variant_string.empty() ? "" : "_",
                       variant_string);
 }
 
