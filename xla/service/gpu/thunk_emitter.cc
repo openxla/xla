@@ -374,10 +374,9 @@ absl::StatusOr<std::string> CanonicalGemmHlo(
          BackendConfigWrapper(gpu_config).GetRawString();
 }
 
-ThunkEmitter::ThunkEmitter(
-    IrEmitterContext* absl_nonnull ir_emitter_context,
-    llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
-        llvm_options_lock)
+ThunkEmitter::ThunkEmitter(IrEmitterContext* absl_nonnull ir_emitter_context,
+                           llvm_ir::LLVMCommandLineOptionsReleasableLock*
+                               absl_nonnull llvm_options_lock)
     : ir_emitter_context_(ir_emitter_context),
       send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
       call_graph_(CallGraph::Build(&ir_emitter_context->hlo_module())),
@@ -1339,7 +1338,7 @@ AsyncThunkSequence ThunkEmitter::EmitTritonCustomCall(
               buffer_assignment = &ir_emitter_context_->buffer_assignment(),
               &gpu_device_info = ir_emitter_context_->gpu_device_info()](
                  TritonWrapperResult result) mutable
-                 -> xla::Future<KernelReuseCache::Entry> {
+             -> xla::Future<KernelReuseCache::Entry> {
           auto local_module =
               std::move(result.kernel_source).thread_safe_module();
 
@@ -1392,24 +1391,24 @@ AsyncThunkSequence ThunkEmitter::EmitTritonCustomCall(
 
   Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
-  return status_or_entry.Map(
-      [thunk_info = std::move(thunk_info),
-       kernel_arguments = std::move(kernel_arguments),
-       call_zeroed_outputs = std::move(call_zeroed_outputs)](
-          const KernelReuseCache::Entry* entry) mutable
-          -> absl::StatusOr<ThunkSequence> {
-        ASSIGN_OR_RETURN(CustomKernel custom_kernel,
-                         kernel::CreateOwnedCubinCustomKernel(
-                             entry->kernel_name, entry->binary,
-                             kernel_arguments.args().size(),
-                             entry->launch_dimensions.block_counts(),
-                             entry->launch_dimensions.thread_counts_per_block(),
-                             entry->shmem_bytes));
-        return ThunkSequence::Of<CustomKernelThunk>(
-            std::move(thunk_info), std::move(custom_kernel),
-            std::move(kernel_arguments), entry->use_pdl, call_zeroed_outputs,
-            entry->tma_metadata);
-      });
+  return status_or_entry.Map([thunk_info = std::move(thunk_info),
+                              kernel_arguments = std::move(kernel_arguments),
+                              call_zeroed_outputs =
+                                  std::move(call_zeroed_outputs)](
+                                 const KernelReuseCache::Entry* entry) mutable
+                             -> absl::StatusOr<ThunkSequence> {
+    ASSIGN_OR_RETURN(
+        CustomKernel custom_kernel,
+        kernel::CreateOwnedCubinCustomKernel(
+            entry->kernel_name, entry->binary, kernel_arguments.args().size(),
+            entry->launch_dimensions.block_counts(),
+            entry->launch_dimensions.thread_counts_per_block(),
+            entry->shmem_bytes));
+    return ThunkSequence::Of<CustomKernelThunk>(
+        std::move(thunk_info), std::move(custom_kernel),
+        std::move(kernel_arguments), entry->use_pdl, call_zeroed_outputs,
+        entry->tma_metadata);
+  });
 }
 
 AsyncThunkSequence ThunkEmitter::EmitAsyncComputation(
@@ -1988,6 +1987,14 @@ AsyncThunkSequence ThunkEmitter::EmitCollectiveThunk(
           << "; partition count: " << partition_count
           << "; operand count: " << operand_count;
 
+  // A collective-broadcast may select its root rank at runtime, in which case
+  // the last operand is a root-rank vector rather than data to broadcast.
+  bool has_dynamic_root = false;
+  if constexpr (std::is_same_v<HloInstType,
+                               HloCollectiveBroadcastInstruction>) {
+    has_dynamic_root = inst->has_dynamic_root();
+  }
+
   // Stash relevant information in CollectiveThunk::Buffer even if
   // we may not generate an CollectiveThunk.
   std::vector<CollectiveThunk::Buffer> buffers;
@@ -2036,9 +2043,21 @@ AsyncThunkSequence ThunkEmitter::EmitCollectiveThunk(
     }
   } else {
     // For other operations simply zip operands with results.
-    for (int64_t i = 0; i < operand_count; i++) {
+    //
+    // A collective-broadcast with a dynamic root carries an extra trailing
+    // operand: a 1-D S32 vector holding the runtime-selected root rank for each
+    // data operand. That operand has no corresponding output, so it is not
+    // zipped with a result; instead it is mapped to its own allocation and
+    // consumed separately by the thunk.
+    int64_t num_data_operands =
+        has_dynamic_root ? operand_count - 1 : operand_count;
+    for (int64_t i = 0; i < num_data_operands; i++) {
       ShapeIndex idx = GetDstShapeIndex(async_start, inst, i, kind);
       RETURN_IF_ERROR(add_buffer(inst->operand(i), async_start, idx));
+    }
+    if (has_dynamic_root) {
+      const HloInstruction* roots = inst->operand(operand_count - 1);
+      RETURN_IF_ERROR(add_buffer(roots, roots, ShapeIndex({})));
     }
   }
 
@@ -2088,9 +2107,18 @@ AsyncThunkSequence ThunkEmitter::EmitCollectiveThunk(
     thunks = EmitCollectiveKernelThunk(std::move(thunk_info), buffers, inst,
                                        collective_config);
   } else {
-    if constexpr (std::is_constructible_v<
-                      CollectiveThunkType, Thunk::ThunkInfo, decltype(inst),
-                      std::vector<CollectiveThunk::Buffer>>) {
+    if constexpr (std::is_same_v<CollectiveThunkType,
+                                 CollectiveBroadcastThunk>) {
+      // CollectiveBroadcastThunk needs the dynamic-root flag so it can treat
+      // the trailing root-rank buffer specially at run time.
+      thunks = ThunkSequence::Of<CollectiveThunkType>(
+          thunk_info, inst, /*buffers=*/std::move(buffers),
+          ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
+          has_dynamic_root);
+    } else if constexpr (std::is_constructible_v<
+                             CollectiveThunkType, Thunk::ThunkInfo,
+                             decltype(inst),
+                             std::vector<CollectiveThunk::Buffer>>) {
       thunks = ThunkSequence::Of<CollectiveThunkType>(
           thunk_info, inst, /*buffers=*/std::move(buffers));
     } else {

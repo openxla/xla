@@ -78,14 +78,19 @@ CollectiveBroadcastThunk::CollectiveBroadcastThunk(
 
 absl::Status CollectiveBroadcastThunk::Initialize(
     const InitializeParams& params) {
-  se::StreamExecutor* executor = params.executor;
-  CollectiveBroadcastMetadata* cb_metadata = nullptr;
-  {
-    absl::MutexLock lock(mutex_);
-    cb_metadata = per_executor_cb_metadata_[executor].get();
+  if (!has_dynamic_root_) {
+    return absl::OkStatus();
   }
-  if (has_dynamic_root_ && cb_metadata && cb_metadata->bcast_roots == nullptr) {
-    // Last operand is the dynamic root buffer which contains actual root ranks
+  se::StreamExecutor* executor = params.executor;
+  absl::MutexLock lock(mutex_);
+  std::unique_ptr<CollectiveBroadcastMetadata>& cb_metadata =
+      per_executor_cb_metadata_[executor];
+  if (cb_metadata == nullptr) {
+    cb_metadata = std::make_unique<CollectiveBroadcastMetadata>();
+  }
+  if (cb_metadata->bcast_roots == nullptr) {
+    // The last buffer holds the runtime-selected root ranks (one S32 per
+    // broadcast); all other buffers are the data being broadcast.
     cb_metadata->num_roots = buffers().size() - 1;
     ASSIGN_OR_RETURN(
         std::unique_ptr<se::MemoryAllocation> alloc,
@@ -111,8 +116,9 @@ CollectiveBroadcastThunk::FromProto(
     buffers.push_back(buffer);
   }
 
-  return std::make_unique<CollectiveBroadcastThunk>(std::move(thunk_info),
-                                                    config, std::move(buffers));
+  return std::make_unique<CollectiveBroadcastThunk>(
+      std::move(thunk_info), config, std::move(buffers),
+      thunk_proto.has_dynamic_root());
 }
 
 absl::StatusOr<ThunkProto> CollectiveBroadcastThunk::ToProto() const {
@@ -127,6 +133,7 @@ absl::StatusOr<ThunkProto> CollectiveBroadcastThunk::ToProto() const {
   }
 
   *thunk_proto->mutable_collective_config() = config_.ToProto();
+  thunk_proto->set_has_dynamic_root(has_dynamic_root_);
 
   return proto;
 }
@@ -144,7 +151,7 @@ absl::Status CollectiveBroadcastThunk::RunCollective(
   }
 
   return ::xla::gpu::RunCollectiveBroadcast(device_buffers, stream, comm,
-                                            cb_metadata);
+                                            cb_metadata, has_dynamic_root_);
 }
 
 absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,
@@ -164,10 +171,14 @@ absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,
                           &stream, blocked.message()));
     }
   }
+  // With a dynamic root, the last buffer only carries the per-broadcast root
+  // ranks and must not itself be broadcast.
+  const int64_t num_broadcasts =
+      (has_dynamic_root && cb_metadata) ? buffers.size() - 1 : buffers.size();
   auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
   Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
     RankId root = RankId(0);
-    for (int64_t i = 0; i < buffers.size(); ++i) {
+    for (int64_t i = 0; i < num_broadcasts; ++i) {
       const DeviceBufferPair& buffer = buffers[i];
       if (has_dynamic_root && cb_metadata) {
         // If dynamic root is enabled, the actual root rank is read from the
