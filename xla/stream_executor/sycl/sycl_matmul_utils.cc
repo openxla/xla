@@ -288,7 +288,7 @@ std::unique_ptr<OneDnnMatMulParams> CreateMatMulParams(
   bias_dims[rhs_dims.size() - 1] = rhs_dims[rhs_dims.size() - 1];
   auto bias_strides = ComputeRowMajorStrides(bias_dims);
 
-  return absl::make_unique<OneDnnMatMulParams>(
+  return std::make_unique<OneDnnMatMulParams>(
       lhs_dims, rhs_dims, out_dims, bias_dims, lhs_strides, rhs_strides,
       out_strides, bias_strides);
 }
