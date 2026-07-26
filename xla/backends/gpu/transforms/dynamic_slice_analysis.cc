@@ -344,8 +344,16 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
       if (it != functional_dependency->required_parameters.end()) {
         auto param_it = absl::c_find(it->second, true);
         if (param_it != it->second.end()) {
-          local_ivar =
-              instr_comp->parameter_instruction(param_it - it->second.begin());
+          int64_t param_number = param_it - it->second.begin();
+          // required_parameters only means the parameter is needed to reach
+          // the induction variable, not that it equals it; only substitute
+          // the counter for it when the caller forwards the ivar unchanged.
+          auto callers = instr_comp->caller_instructions();
+          if (callers.size() != 1 || callers.front()->operand(param_number) !=
+                                         functional_dependency->induction_var) {
+            return std::nullopt;
+          }
+          local_ivar = instr_comp->parameter_instruction(param_number);
         }
       }
 
