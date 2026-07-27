@@ -3159,7 +3159,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes",
       int64_setter_for(
           &DebugOptions::
-              set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes),
+              // NOLINTNEXTLINE
+          set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes),
       debug_options
           ->xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(),
       "Buffers of at least this size in bytes are fenced by the "
