@@ -187,7 +187,7 @@ bool IsDeviceToDeviceCopyAsyncOp(const HloInstruction& hlo) {
   }
 
   const Shape& shape = copy_start->shape();
-  return shape.IsTuple() && shape.tuple_shapes_size() >= 2 &&
+  return shape.IsTuple() && shape.tuple_shapes().size() >= 2 &&
          !ShapeHasHostMemorySpace(shape.tuple_shapes(0)) &&
          !ShapeHasHostMemorySpace(shape.tuple_shapes(1));
 }

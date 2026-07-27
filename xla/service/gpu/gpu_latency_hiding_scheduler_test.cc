@@ -38,7 +38,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/gpu/alias_info.h"
-#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/hlo_module_config.h"
@@ -1626,15 +1625,20 @@ ENTRY main {
   p0 = f32[8,8] parameter(0)
   p1 = f32[8,8] parameter(1)
   memory_heavy_dot = f32[8,8] fusion(p0, p1), kind=kOutput,
-    calls=dot_computation
+    calls=dot_computation,
+    backend_config={"reification_cost":[{"exec_time_us":10,"compute_time_us":1,"memory_access_time_us":9}]}
   compute_heavy_loop = f32[8,8] fusion(p0, p1), kind=kLoop,
-    calls=loop_computation
+    calls=loop_computation,
+    backend_config={"reification_cost":[{"exec_time_us":10,"compute_time_us":9,"memory_access_time_us":1}]}
   exec_only_dot = f32[8,8] dot(p0, p1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    backend_config={"reification_cost":[{"exec_time_us":10}]}
   zero_cost_transpose = f32[8,8] fusion(p0), kind=kLoop,
-    calls=transpose_computation
+    calls=transpose_computation,
+    backend_config={"reification_cost":[{"exec_time_us":0,"compute_time_us":0,"memory_access_time_us":0}]}
   tie_unknown = f32[8,8] custom-call(p0),
-    custom_call_target="unknown_tie"
+    custom_call_target="unknown_tie",
+    backend_config={"reification_cost":[{"exec_time_us":10,"compute_time_us":5,"memory_access_time_us":5}]}
   unknown_call = f32[8,8] custom-call(p0), custom_call_target="unknown"
   cublas = f32[8,8] custom-call(p0, p1),
     custom_call_target="__cublas$gemm"
@@ -1649,25 +1653,6 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kHloModule));
   HloComputation* computation = module->entry_computation();
-
-  auto set_cost = [&](absl::string_view name, double exec_time,
-                      double compute_time, double memory_access_time) {
-    GpuBackendConfig config;
-    ReificationCost* cost = config.add_reification_cost();
-    cost->set_exec_time_us(exec_time);
-    cost->set_compute_time_us(compute_time);
-    cost->set_memory_access_time_us(memory_access_time);
-    return computation->GetInstructionWithName(name)->set_backend_config(
-        config);
-  };
-  ASSERT_OK(set_cost("memory_heavy_dot", 10.0, 1.0, 9.0));
-  ASSERT_OK(set_cost("compute_heavy_loop", 10.0, 9.0, 1.0));
-  ASSERT_OK(set_cost("zero_cost_transpose", 0.0, 0.0, 0.0));
-  ASSERT_OK(set_cost("tie_unknown", 10.0, 5.0, 5.0));
-  GpuBackendConfig exec_only_config;
-  exec_only_config.add_reification_cost()->set_exec_time_us(10.0);
-  ASSERT_OK(computation->GetInstructionWithName("exec_only_dot")
-                ->set_backend_config(exec_only_config));
 
   HloSchedule schedule(module.get());
   for (HloComputation* scheduled_computation :
