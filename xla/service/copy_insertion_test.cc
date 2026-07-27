@@ -5083,5 +5083,87 @@ ENTRY entry {
   ASSERT_THAT(rw_branch_2, NotNull());
   EXPECT_EQ(CountCopies(*rw_branch_2), 1);
 }
+
+// A two-branch conditional where one branch is a passthrough (identity) and
+// the other does an in-place update. Copy elision should be independent of
+// which position the passthrough branch occupies.
+class CopyInsertionCondOrderTest
+    : public CopyInsertionTest,
+      public ::testing::WithParamInterface<std::tuple<bool, int64_t>> {};
+
+TEST_P(CopyInsertionCondOrderTest, PassthroughPositionIrrelevant) {
+  const bool passthrough_first = std::get<0>(GetParam());
+  const int64_t region_limit = std::get<1>(GetParam());
+
+  // Passthrough branch in position 0.
+  constexpr absl::string_view kPassthroughFirst = R"(
+HloModule m, input_output_alias={ {}: (1, {}, may-alias) }
+
+branch_id {
+  p1 = (f32[8]) parameter(0)
+  v1 = f32[8] get-tuple-element(p1), index=0
+  ROOT r1 = (f32[8]) tuple(v1)
+}
+
+branch_dus {
+  p0 = (f32[8]) parameter(0)
+  v0 = f32[8] get-tuple-element(p0), index=0
+  one = f32[1] constant({1})
+  idx = s32[] constant(0)
+  dus = f32[8] dynamic-update-slice(v0, one, idx)
+  ROOT r0 = (f32[8]) tuple(dus)
+}
+
+ENTRY main {
+  b = s32[] parameter(0)
+  x = f32[8] parameter(1)
+  t = (f32[8]) tuple(x)
+  cond = (f32[8]) conditional(b, t, t), branch_computations={branch_id, branch_dus}
+  ROOT out = f32[8] get-tuple-element(cond), index=0
+}
+)";
+
+  // Passthrough branch in position 1.
+  constexpr absl::string_view kPassthroughSecond = R"(
+HloModule m, input_output_alias={ {}: (1, {}, may-alias) }
+
+branch_dus {
+  p0 = (f32[8]) parameter(0)
+  v0 = f32[8] get-tuple-element(p0), index=0
+  one = f32[1] constant({1})
+  idx = s32[] constant(0)
+  dus = f32[8] dynamic-update-slice(v0, one, idx)
+  ROOT r0 = (f32[8]) tuple(dus)
+}
+
+branch_id {
+  p1 = (f32[8]) parameter(0)
+  v1 = f32[8] get-tuple-element(p1), index=0
+  ROOT r1 = (f32[8]) tuple(v1)
+}
+
+ENTRY main {
+  b = s32[] parameter(0)
+  x = f32[8] parameter(1)
+  t = (f32[8]) tuple(x)
+  cond = (f32[8]) conditional(b, t, t), branch_computations={branch_dus, branch_id}
+  ROOT out = f32[8] get-tuple-element(cond), index=0
+}
+)";
+
+  std::string hlo =
+      std::string(passthrough_first ? kPassthroughFirst : kPassthroughSecond);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  CopyInsertion copy_insertion(&alias_info_, region_limit);
+  ASSERT_IS_OK(copy_insertion.Run(module.get()).status());
+  EXPECT_EQ(CountCopies(*module), 0);
+}
+
+INSTANTIATE_TEST_SUITE_P(CondOrder, CopyInsertionCondOrderTest,
+                         ::testing::Combine(::testing::Bool(),
+                                            ::testing::Values(int64_t{0},
+                                                             int64_t{-1})));
+
 }  // namespace
 }  // namespace xla
