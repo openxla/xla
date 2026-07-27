@@ -2047,6 +2047,9 @@ absl::Status CommonPjRtLoadedExecutable::CheckBufferCompatibilities(
 absl::StatusOr<PjRtLoadedExecutable::Result>
 CommonPjRtLoadedExecutable::ExecuteLaunch(ExecuteLaunchArgs& launch_args,
                                           bool fill_future) const {
+  if (execute_launch_hook_) {
+    execute_launch_hook_(launch_args.device);
+  }
   auto results = std::move(*launch_args.executable)
                      .Execute(*launch_args.options, launch_args.input_buffers,
                               launch_args.output_leaf_buffers,
