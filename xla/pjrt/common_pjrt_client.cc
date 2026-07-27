@@ -2324,17 +2324,17 @@ CommonPjRtLoadedExecutable::Execute(
               // Wait for prepare to finish on all cores.
               if (client()->supports_two_phase_launch()) {
                 absl::MutexLock lock(mu);
-                preparing--;
-                auto done_preparing = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu) {
-                  return preparing == 0;
-                };
-                mu.Await(absl::Condition(&done_preparing));
                 if (!launch_status.ok()) {
                   if (failed == 0) {
                     first_failure_status = launch_status;
                   }
                   failed++;
                 }
+                preparing--;
+                auto done_preparing = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu) {
+                  return preparing == 0;
+                };
+                mu.Await(absl::Condition(&done_preparing));
                 if (failed > 0) {
                   // Poison results for all cores.
                   results[i] = first_failure_status;
