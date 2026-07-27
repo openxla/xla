@@ -339,12 +339,14 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     Kind kind() const { return kind_; }
     DeviceAddressBase allocator_address() const { return allocator_address_; }
     void* allocator_key() const { return allocator_address_.opaque(); }
-    bool allocator_active() const { return allocator_stale_seqno_ == 0; }
+    bool allocator_active() const { return allocator_stale_id_ == 0; }
     bool allocator_stale() const { return !allocator_active(); }
     bool allocator_matches(DeviceAddressBase address) const {
       return allocator_address_.IsSameAs(address);
     }
-    uint64_t allocator_stale_seqno() const { return allocator_stale_seqno_; }
+    // Identifier of the pending queue entry that will complete this stale
+    // allocator address. Zero while active.
+    uint64_t allocator_stale_id() const { return allocator_stale_id_; }
     bool multi_device() const { return multi_device_; }
     MemoryAllocation* raw_allocation() const { return raw_allocation_.get(); }
     MemoryReservation* allocator_address_reservation() const {
@@ -355,32 +357,32 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       return reservation_alias_.has_value();
     }
     bool reservation_active() const {
-      return has_reservation_alias() && reservation_alias_->stale_seqno == 0;
+      return has_reservation_alias() && reservation_alias_->stale_id == 0;
     }
     bool reservation_stale() const {
-      return has_reservation_alias() && reservation_alias_->stale_seqno != 0;
+      return has_reservation_alias() && reservation_alias_->stale_id != 0;
     }
     DeviceAddressBase reservation_address() const;
     void* reservation_key() const { return reservation_address().opaque(); }
     bool reservation_matches(DeviceAddressBase address) const {
       return has_reservation_alias() && reservation_address().IsSameAs(address);
     }
-    uint64_t reservation_stale_seqno() const;
+    uint64_t reservation_stale_id() const;
 
-    void MarkAllocatorStale(uint64_t seqno);
+    void MarkAllocatorStale(uint64_t pending_id);
     void ReactivateAllocator(uint64_t new_size);
 
     void AddActiveReservationAlias(
         MemoryReservation::ScopedMapping reservation_address_mapping);
-    void MarkReservationStale(uint64_t seqno);
+    void MarkReservationStale(uint64_t pending_id);
     void ReactivateReservation();
     void CompleteStaleReservation();
 
    private:
     struct ReservationAlias {
       MemoryReservation::ScopedMapping mapping;
-      // Zero while active; the deferred UnMap() sequence number while stale.
-      uint64_t stale_seqno = 0;
+      // Zero while active; the deferred UnMap() pending entry id while stale.
+      uint64_t stale_id = 0;
     };
 
     Kind kind_;
@@ -397,28 +399,28 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     // Present while a reservation alias is active or stale.
     std::optional<ReservationAlias> reservation_alias_;
 
-    uint64_t allocator_stale_seqno_ = 0;
+    uint64_t allocator_stale_id_ = 0;
   };
 
   // Queue entry for a stream-ordered deferred operation. The heavy resources
   // live in AllocationRecord; this entry only says which stale address becomes
-  // safe to complete when the GPU timeline reaches `seqno`.
+  // safe to complete when the GPU timeline reaches `batch_seqno`.
+  //
+  // Identity and stream position are deliberately separate. `id` names this one
+  // entry and never repeats, so a caller can name an entry, drop state.mu to
+  // wait, and afterwards still refer to exactly the entry it selected.
+  // `batch_seqno` is shared by every entry in the same batch and is what the
+  // GPU timeline write carries, so it says nothing about which entry is which.
   struct PendingDeallocation {
+    // Unique, monotonically increasing. Never zero; zero is the "no entry"
+    // sentinel in AllocationRecord and in local variables.
+    uint64_t id;
+    // Sequence number of the batch protecting this entry. Shared with the other
+    // entries queued in the same batch.
+    uint64_t batch_seqno;
     PendingDeallocationKind kind;
-    // GPU stream sequence number recorded at deallocation time. When the
-    // pinned_timeline value reaches this seqno, the memory is safe to free.
-    uint64_t seqno;
     // Allocator address for allocation deallocations; reservation address for
     // kMap.
-    DeviceAddressBase addr;
-  };
-
-  // Stable identity for one pending operation. A batch shares one sequence
-  // number, so the operation kind and address are also needed to select an
-  // entry after WaitUntilSeqno() temporarily releases state.mu.
-  struct PendingDeallocationKey {
-    PendingDeallocationKind kind;
-    uint64_t seqno;
     DeviceAddressBase addr;
   };
 
@@ -452,6 +454,10 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     uint64_t pa_allocated ABSL_GUARDED_BY(mu) = 0;
     // Monotonically increasing counter for timeline sequence numbers.
     uint64_t next_seqno ABSL_GUARDED_BY(mu) = 1;
+    // Monotonically increasing counter for pending-entry ids. Separate from
+    // next_seqno because a batch shares one sequence number but every entry
+    // needs its own identity.
+    uint64_t next_pending_id ABSL_GUARDED_BY(mu) = 1;
     // Open trailing batch of deferred deallocations. Pending entries in the
     // open batch have been moved to stale state but do not have a stream
     // timeline write yet. We batch because many Deallocate()/UnMap() calls can
@@ -722,11 +728,17 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
                                    const PendingDeallocation& pending)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
+  // Waits for the device timeline to pass the batch marker protecting pending
+  // entry `id`. Does nothing if the entry is no longer queued. Temporarily
+  // releases and reacquires state.mu.
+  absl::Status WaitUntilPendingDeallocation(PerDeviceState& state, uint64_t id)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
   // Finds, erases, and completes the selected pending entry if it is still
-  // present. Another thread may already have reused or completed the entry
-  // while state.mu was released.
-  void CompletePendingDeallocationByKey(PerDeviceState& state,
-                                        const PendingDeallocationKey& key)
+  // present. Ids are unique per device, so this always names at most one entry;
+  // another thread may already have reused or completed it while state.mu was
+  // released.
+  void CompletePendingDeallocationById(PerDeviceState& state, uint64_t id)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Device ordinal -> per-device allocator state. Populated at construction by
