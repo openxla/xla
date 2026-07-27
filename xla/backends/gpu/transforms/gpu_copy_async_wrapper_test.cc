@@ -84,6 +84,38 @@ TEST_F(GpuCopyAsyncWrapperTest, DoesNotWrapByDefault) {
               absl_testing::IsOkAndHolds(true));
 }
 
+TEST_F(GpuCopyAsyncWrapperTest, DoesNotWrapWhenThresholdIsUnset) {
+  constexpr char kHlo[] = R"(
+    ENTRY main {
+      p0 = f32[1024] parameter(0)
+      ROOT copy = f32[1024] copy(p0)
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  module->mutable_config()
+      .mutable_debug_options()
+      .clear_xla_gpu_async_copy_min_bytes();
+  EXPECT_FALSE(
+      module->config().debug_options().has_xla_gpu_async_copy_min_bytes());
+
+  GpuCopyAsyncWrapper wrapper;
+  EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(false));
+}
+
+TEST_F(GpuCopyAsyncWrapperTest, WrapsD2DCopyWithZeroThreshold) {
+  constexpr char kHlo[] = R"(
+    ENTRY main {
+      p0 = f32[4] parameter(0)
+      ROOT copy = f32[4] copy(p0)
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  SetAsyncCopyMinBytes(module.get(), /*min_bytes=*/0);
+
+  GpuCopyAsyncWrapper wrapper;
+  EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(true));
+}
+
 TEST_F(GpuCopyAsyncWrapperTest, DoesNotWrapCopyBelowSizeThreshold) {
   // 4 floats = 16 bytes — below the 1024-byte threshold.
   constexpr char kHlo[] = R"(

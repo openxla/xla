@@ -80,6 +80,9 @@ absl::StatusOr<bool> GpuCopyAsyncWrapper::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   const auto& debug_options = module->config().debug_options();
+  if (!debug_options.has_xla_gpu_async_copy_min_bytes()) {
+    return false;
+  }
   const int64_t min_bytes = debug_options.xla_gpu_async_copy_min_bytes();
   if (min_bytes == -1) {
     return false;
