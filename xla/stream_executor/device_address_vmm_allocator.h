@@ -501,7 +501,10 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
   // Flushes open deallocation batches and drains all pending operations for all
   // devices. Subclasses with platform-specific timeline enqueue implementations
-  // must call this from their destructor before the base destructor runs.
+  // must call this from their destructor before the base destructor runs:
+  // draining needs EnqueueDeferredDeallocation(), which is no longer callable
+  // once the subclass has been destroyed. The base destructor CHECK-fails if
+  // pending work remains.
   absl::Status SynchronizeAllPendingOperations();
 
   // Validates device capabilities and initializes timeline fields
@@ -518,14 +521,6 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
                                                    uint64_t seqno) = 0;
 
  private:
-  enum class DeallocationBatchFlushReason {
-    kEntryLimit,
-    kByteLimit,
-    kWait,
-    kSync,
-    kDestructor,
-  };
-
   // Common helpers.
 
   // Returns pointer into per_device_ map, or NotFound if device_ordinal is not
@@ -687,8 +682,14 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
   // Enqueues one stream timeline write for the current open deallocation batch,
   // if any pending entries remain in that batch.
-  absl::Status FlushOpenDeallocationBatch(PerDeviceState& state,
-                                          DeallocationBatchFlushReason reason)
+  absl::Status FlushOpenDeallocationBatch(PerDeviceState& state)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Flushes the open deallocation batch, waits for the device timeline to reach
+  // the last pending sequence number, and completes every pending entry up to
+  // it. Shared by SynchronizePendingOperations() and, transitively,
+  // SynchronizeAllPendingOperations().
+  absl::Status DrainPendingDeallocations(PerDeviceState& state)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Removes the matching pending entry when a stale record is reused.
