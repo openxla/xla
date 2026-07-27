@@ -32,16 +32,10 @@ namespace {
 
 using GpuCopyAsyncWrapperTest = HloHardwareIndependentTestBase;
 
-// Enables the pass on `module`, optionally overriding the minimum copy size.
-void EnableAsyncCopy(HloModule* module, int64_t min_bytes = 0) {
+void SetAsyncCopyMinBytes(HloModule* module, int64_t min_bytes) {
   module->mutable_config()
       .mutable_debug_options()
-      .set_xla_gpu_enable_async_device_to_device_copy(true);
-  if (min_bytes > 0) {
-    module->mutable_config()
-        .mutable_debug_options()
-        .set_xla_gpu_async_copy_min_bytes(min_bytes);
-  }
+      .set_xla_gpu_async_copy_min_bytes(min_bytes);
 }
 
 TEST_F(GpuCopyAsyncWrapperTest, WrapsLargeD2DCopyWhenEnabled) {
@@ -54,7 +48,7 @@ TEST_F(GpuCopyAsyncWrapperTest, WrapsLargeD2DCopyWhenEnabled) {
     })";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  EnableAsyncCopy(module.get(), /*min_bytes=*/1024);
+  SetAsyncCopyMinBytes(module.get(), /*min_bytes=*/1024);
 
   GpuCopyAsyncWrapper wrapper;
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(true));
@@ -68,7 +62,7 @@ TEST_F(GpuCopyAsyncWrapperTest, WrapsLargeD2DCopyWhenEnabled) {
               absl_testing::IsOkAndHolds(true));
 }
 
-TEST_F(GpuCopyAsyncWrapperTest, DoesNotWrapWhenFlagIsDisabled) {
+TEST_F(GpuCopyAsyncWrapperTest, DoesNotWrapByDefault) {
   constexpr char kHlo[] = R"(
     ENTRY main {
       p0 = f32[1024] parameter(0)
@@ -76,7 +70,8 @@ TEST_F(GpuCopyAsyncWrapperTest, DoesNotWrapWhenFlagIsDisabled) {
     })";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  // Do NOT set the enable flag — it defaults to false.
+  EXPECT_EQ(module->config().debug_options().xla_gpu_async_copy_min_bytes(),
+            -1);
 
   GpuCopyAsyncWrapper wrapper;
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(false));
@@ -98,7 +93,7 @@ TEST_F(GpuCopyAsyncWrapperTest, DoesNotWrapCopyBelowSizeThreshold) {
     })";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  EnableAsyncCopy(module.get(), /*min_bytes=*/1024);
+  SetAsyncCopyMinBytes(module.get(), /*min_bytes=*/1024);
 
   GpuCopyAsyncWrapper wrapper;
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(false));
@@ -111,9 +106,8 @@ TEST_F(GpuCopyAsyncWrapperTest, DoesNotWrapCopyBelowSizeThreshold) {
               absl_testing::IsOkAndHolds(true));
 }
 
-TEST_F(GpuCopyAsyncWrapperTest, DoesNotWrapCopyBelowDefaultThreshold) {
-  // 1024 floats = 4096 bytes — below the default 64 KiB threshold that
-  // applies when xla_gpu_async_copy_min_bytes is not overridden.
+TEST_F(GpuCopyAsyncWrapperTest, DoesNotWrapCopyBelow64KiBThreshold) {
+  // 1024 floats = 4096 bytes — below a 64 KiB threshold.
   constexpr char kHlo[] = R"(
     ENTRY main {
       p0 = f32[1024] parameter(0)
@@ -121,14 +115,14 @@ TEST_F(GpuCopyAsyncWrapperTest, DoesNotWrapCopyBelowDefaultThreshold) {
     })";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  EnableAsyncCopy(module.get());
+  SetAsyncCopyMinBytes(module.get(), /*min_bytes=*/64 * 1024);
 
   GpuCopyAsyncWrapper wrapper;
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(false));
 }
 
-TEST_F(GpuCopyAsyncWrapperTest, WrapsCopyAboveDefaultThreshold) {
-  // 32768 floats = 128 KiB — above the default 64 KiB threshold.
+TEST_F(GpuCopyAsyncWrapperTest, WrapsCopyAbove64KiBThreshold) {
+  // 32768 floats = 128 KiB — above a 64 KiB threshold.
   constexpr char kHlo[] = R"(
     ENTRY main {
       p0 = f32[32768] parameter(0)
@@ -136,7 +130,7 @@ TEST_F(GpuCopyAsyncWrapperTest, WrapsCopyAboveDefaultThreshold) {
     })";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  EnableAsyncCopy(module.get());
+  SetAsyncCopyMinBytes(module.get(), /*min_bytes=*/64 * 1024);
 
   GpuCopyAsyncWrapper wrapper;
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(true));
@@ -152,7 +146,7 @@ TEST_F(GpuCopyAsyncWrapperTest, DoesNotWrapLayoutChangingCopy) {
     })";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  EnableAsyncCopy(module.get(), /*min_bytes=*/1024);
+  SetAsyncCopyMinBytes(module.get(), /*min_bytes=*/1024);
 
   GpuCopyAsyncWrapper wrapper;
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(false));
@@ -176,7 +170,7 @@ TEST_F(GpuCopyAsyncWrapperTest, PreservesControlDependencies) {
     })";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  EnableAsyncCopy(module.get(), /*min_bytes=*/1024);
+  SetAsyncCopyMinBytes(module.get(), /*min_bytes=*/1024);
 
   GpuCopyAsyncWrapper wrapper;
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(true));
@@ -201,7 +195,7 @@ TEST_F(GpuCopyAsyncWrapperTest, IsIdempotent) {
     })";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  EnableAsyncCopy(module.get(), /*min_bytes=*/1024);
+  SetAsyncCopyMinBytes(module.get(), /*min_bytes=*/1024);
 
   GpuCopyAsyncWrapper wrapper;
   EXPECT_THAT(wrapper.Run(module.get()), absl_testing::IsOkAndHolds(true));

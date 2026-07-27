@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/gpu_copy_async_wrapper.h"
 
 #include <cstdint>
-#include <optional>
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
@@ -81,10 +80,10 @@ absl::StatusOr<bool> GpuCopyAsyncWrapper::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   const auto& debug_options = module->config().debug_options();
-  if (!debug_options.xla_gpu_enable_async_device_to_device_copy()) {
+  const int64_t min_bytes = debug_options.xla_gpu_async_copy_min_bytes();
+  if (min_bytes == -1) {
     return false;
   }
-  const int64_t min_bytes = debug_options.xla_gpu_async_copy_min_bytes();
 
   bool changed = false;
   for (HloComputation* computation :
@@ -100,29 +99,10 @@ absl::StatusOr<bool> GpuCopyAsyncWrapper::RunImpl(
         continue;
       }
 
-      // Build the copy-start tuple shape: {dst_shape, src_shape, U32}.
-      // This matches the convention used by HloCopyStartInstruction and
-      // existing D2H/H2D async copies emitted by memory-space assignment.
-      const Shape& element_shape = instr->shape();
-      Shape copy_start_shape =
-          ShapeUtil::MakeTupleShape({element_shape, instr->operand(0)->shape(),
-                                     ShapeUtil::MakeScalarShape(U32)});
-
-      HloInstruction* copy_start =
-          computation->AddInstruction(HloInstruction::CreateCopyStart(
-              copy_start_shape, instr->mutable_operand(0),
-              /*cross_program_prefetch_index=*/std::nullopt));
-
-      HloInstruction* copy_done =
-          computation->AddInstruction(HloInstruction::CreateUnary(
-              element_shape, HloOpcode::kCopyDone, copy_start));
-
-      // Preserve control dependencies: predecessors constrain the start,
-      // successors are constrained by the done.
-      RETURN_IF_ERROR(instr->CopyAllControlDepsTo(copy_start, copy_done));
-      RETURN_IF_ERROR(instr->DropAllControlDeps());
-      RETURN_IF_ERROR(instr->ReplaceAllUsesWith(copy_done));
-      RETURN_IF_ERROR(computation->RemoveInstruction(instr));
+      RETURN_IF_ERROR(computation
+                          ->CreateAsyncInstructions(
+                              instr, {ShapeUtil::MakeScalarShape(U32)})
+                          .status());
       changed = true;
     }
   }

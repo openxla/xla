@@ -3129,9 +3129,7 @@ absl::Status GpuCompiler::RunPreSchedulingPasses(
   if (cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere()) {
     pipeline.AddPass<DynamicSliceCopyFusionAsyncWrapper>();
   }
-  // GpuCopyAsyncWrapper is gated by xla_gpu_enable_async_device_to_device_copy
-  // (default false) so it is always registered and the proto flag controls
-  // activation, consistent with how other async-copy passes are structured.
+  // GpuCopyAsyncWrapper is disabled when xla_gpu_async_copy_min_bytes is -1.
   pipeline.AddPass<GpuCopyAsyncWrapper>();
   if (module->config().debug_options().xla_gpu_collect_cost_model_stats()) {
     GpuHloCostAnalysis::Options cost_analysis_options{

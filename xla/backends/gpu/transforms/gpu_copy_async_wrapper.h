@@ -28,8 +28,8 @@ namespace xla::gpu {
 // `copy-start`/`copy-done` pairs so that the latency-hiding scheduler can
 // overlap the D2D memcpy with compute-bound kernels on the main stream.
 //
-// The pass is gated by `xla_gpu_enable_async_device_to_device_copy`. A copy
-// is eligible when:
+// The pass is disabled when `xla_gpu_async_copy_min_bytes` is -1. Otherwise, a
+// copy is eligible when:
 //   - Both source and destination reside in device memory (no host memory
 //     space annotation), i.e. the copy is a true D2D transfer.
 //   - Source and destination layouts are identical, so the copy is a plain
