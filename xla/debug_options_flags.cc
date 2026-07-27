@@ -227,6 +227,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_backend_optimization_level(3);
   opts.set_xla_gpu_autotune_level(4);
   opts.set_xla_gpu_autotune_max_solutions(0);
+  opts.set_xla_gpu_blas_max_algorithms(0);
   opts.set_xla_gpu_fusion_autotune_top_k_configs(1);
   opts.set_xla_cpu_multi_thread_eigen(true);
   opts.set_xla_gpu_cuda_data_dir("./cuda_sdk_lib");
@@ -261,7 +262,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 #ifdef XLA_CPU_USE_ACL
   opts.set_xla_cpu_use_acl(true);
 #endif
-  opts.set_xla_cpu_use_fusion_emitters(true);
   opts.set_xla_cpu_use_xnnpack(true);
   opts.set_xla_cpu_experimental_xnn_graph_fusion_mode(
       DebugOptions::XNN_GRAPH_FUSION_MODE_DISABLED);
@@ -565,6 +565,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_thunk_buffer_debug_module_outputs(false);
   opts.set_xla_gpu_enable_gxl_ragged_all_to_all(false);
   opts.set_xla_gpu_gxl_scratch_size_bytes(64 * 1024 * 1024);
+  opts.set_xla_gpu_async_copy_min_bytes(-1);
 
   // Disable float checks.
   opts.set_xla_gpu_detect_nan(DebugOptions::DETECTION_MODE_NONE);
@@ -1538,11 +1539,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_cpu_opt_preset", setter_for_xla_cpu_opt_preset,
       DebugOptions::CpuOptPreset_Name(debug_options->xla_cpu_opt_preset()),
       "Set CPU optimization preset (FAST_RUNTIME, FAST_COMPILE)"));
-  flag_list->push_back(
-      tsl::Flag("xla_cpu_use_fusion_emitters",
-                bool_setter_for(&DebugOptions::set_xla_cpu_use_fusion_emitters),
-                debug_options->xla_cpu_use_fusion_emitters(),
-                "Use fusion emitters for code generation in the CPU backend."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_use_thunk_runtime",
       [](bool) {
@@ -1679,6 +1675,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_autotune_max_solutions(),
       "Maximal number of GEMM solutions to consider for autotuning: 0 means "
       "consider all solutions returned by the GEMM library."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_blas_max_algorithms",
+      int64_setter_for(&DebugOptions::set_xla_gpu_blas_max_algorithms),
+      debug_options->xla_gpu_blas_max_algorithms(),
+      "Maximum number of BLAS library algorithms to evaluate during "
+      "autotuning. Setting this to a lower value (e.g., 16 or 32) speeds up "
+      "compilation at the cost of potentially missing the optimal algorithm. "
+      "Setting to 0 uses the default (128 for most BLAS libraries)."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_fusion_autotune_top_k_configs",
                 int32_setter_for(
@@ -3417,6 +3421,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_ragged_all_to_all_use_device_kernel(),
       "If true, use the device-initiated (NCCL GIN + LSA) kernel for "
       "ragged-all-to-all. Requires NCCL >= 2.29."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_async_copy_min_bytes",
+      int64_setter_for(&DebugOptions::set_xla_gpu_async_copy_min_bytes),
+      debug_options->xla_gpu_async_copy_min_bytes(),
+      "Minimum transfer size (in bytes) for a device-to-device copy to be "
+      "converted to an async copy-start/copy-done pair. Set to -1 to disable "
+      "async device-to-device copies."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_use_ragged_dot_grouped_gemm",
       bool_setter_for(

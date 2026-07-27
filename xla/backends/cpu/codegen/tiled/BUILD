@@ -30,6 +30,7 @@ cc_library(
     hdrs = ["tiled_fusion_emitter.h"],
     visibility = [
         "//xla/backends/cpu/codegen:__pkg__",
+        "//xla/backends/cpu/codegen/tiled/tools:__pkg__",
         "//xla/service/cpu:__pkg__",
     ],
     deps = [
@@ -66,6 +67,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
     ],
