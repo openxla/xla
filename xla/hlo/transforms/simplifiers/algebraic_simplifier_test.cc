@@ -10908,7 +10908,9 @@ TEST_F(AlgebraicSimplifierTest, SqrtOfSelfMultiply) {
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_fast_math(true);
+  ASSERT_TRUE(AlgebraicSimplifier(options).Run(m.get()).value());
   EXPECT_THAT(m->entry_computation()->root_instruction(),
               GmockMatch(m::Abs(m::Parameter(0))));
 }
