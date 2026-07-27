@@ -211,7 +211,7 @@ TEST_F(GpuHloScheduleFencingTest, MemoryFencingAddsScheduleRespectedFences) {
                                /*fencing_threshold_bytes=*/1024 * 1024)));
   ASSERT_OK(ScheduleGpuModule(module.get()).status());
 
-  const HloComputation* entry = module->entry_computation();
+  HloComputation* entry = module->entry_computation();
   const std::vector<HloInstruction*>& sequence =
       module->schedule().sequence(entry).instructions();
   auto position = [&](const HloInstruction* instruction) {
@@ -236,7 +236,7 @@ TEST_F(GpuHloScheduleFencingTest, MemoryFencingDisabledOmitsFence) {
                                        /*fencing_threshold_bytes=*/-1)));
   ASSERT_OK(ScheduleGpuModule(module.get()).status());
 
-  const HloComputation* entry = module->entry_computation();
+  HloComputation* entry = module->entry_computation();
   const HloInstruction* wg = entry->GetInstructionWithName("wg");
   const HloInstruction* cp2s = entry->GetInstructionWithName("cp2s");
   ASSERT_NE(wg, nullptr);
