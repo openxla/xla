@@ -411,6 +411,11 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     // Allocator address for allocation deallocations; reservation address for
     // kMap.
     DeviceAddressBase addr;
+    // Physical bytes released when this entry completes; 0 for kMap, which only
+    // drops a reservation alias. Stored here rather than re-derived from the
+    // AllocationRecord so that open-batch accounting reads exactly the value
+    // that was accounted when the entry was queued.
+    uint64_t reclaimable_bytes;
   };
 
   // Stable identity for one pending operation. A batch shares one sequence
@@ -467,9 +472,14 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     //   resets open_deallocation_batch_seqno to 0. A/R/B remain pending with
     //   seqno 1 until the device timeline reaches 1.
     //   The next deferred operation opens a new batch with seqno 2.
+    //
+    // Only the sequence number is stored. The batch's entry and byte totals are
+    // the trailing run of `pending_deallocations` carrying this seqno (entries
+    // are appended in non-decreasing seqno order, so that run is contiguous),
+    // and are computed on demand by OpenDeallocationBatchSize(). Keeping them
+    // derived means cancelling an entry -- which happens whenever a stale
+    // record is reused -- needs no batch bookkeeping at all.
     uint64_t open_deallocation_batch_seqno ABSL_GUARDED_BY(mu) = 0;
-    int64_t open_deallocation_batch_entries ABSL_GUARDED_BY(mu) = 0;
-    uint64_t open_deallocation_batch_bytes ABSL_GUARDED_BY(mu) = 0;
     std::deque<PendingDeallocation> pending_deallocations ABSL_GUARDED_BY(mu);
     // Owns AllocationRecord objects. Key is the allocator address pointer
     // (`AllocationRecord::allocator_address().opaque()`), including the
@@ -656,6 +666,19 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
   // UnMap/deferred teardown helpers.
 
+  // Entry and reclaimable-byte totals of the trailing open deallocation batch.
+  struct OpenDeallocationBatchSize {
+    int64_t entries = 0;
+    // Saturating: a total that would overflow is reported as uint64 max, which
+    // still compares correctly against the byte limit.
+    uint64_t bytes = 0;
+  };
+
+  // Sums the trailing run of pending entries carrying the open batch seqno.
+  // Returns all zeroes when no batch is open. Bounded by the batch entry limit.
+  OpenDeallocationBatchSize OpenBatchSize(const PerDeviceState& state) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
   // Flushes the current open deallocation batch before adding a new entry if
   // keeping it open would exceed the configured entry or reclaimable-byte
   // limit.
@@ -666,18 +689,6 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // Returns the sequence number for the current open deallocation batch,
   // creating a new batch if necessary.
   uint64_t GetOrCreateOpenDeallocationBatchSeqno(PerDeviceState& state)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  // Records that a pending entry was added to the current open deallocation
-  // batch. The batch sequence must already have been created.
-  void AddOpenDeallocationBatchEntry(PerDeviceState& state,
-                                     uint64_t reclaimable_bytes)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
-  // Removes pending entries while maintaining open-batch counters for entries
-  // that have not yet received their trailing stream marker.
-  void ErasePendingDeallocationAt(PerDeviceState& state,
-                                  std::deque<PendingDeallocation>::iterator it)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Enqueues one stream timeline write for the current open deallocation batch,
