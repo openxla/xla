@@ -283,34 +283,42 @@ TEST_F(DeviceAddressVmmAllocatorTest,
 
 TEST_F(DeviceAddressVmmAllocatorTest,
        BatchedUnmapAndDeallocateReclaimSelectedAllocation) {
-  auto reservation = std::make_unique<TestMemoryReservation>(kGranularity);
+  auto backing = std::make_unique<TestMemoryReservation>(kGranularity);
+  auto alias = std::make_unique<TestMemoryReservation>(kGranularity);
   const DeviceAddressVmmAllocator::DeviceConfig config = Config(kGranularity);
   ASSERT_OK_AND_ASSIGN(auto allocator, TestDeviceAddressVmmAllocator::Create(
                                            &platform_, {config}));
 
+  // The mapped overload returns the reservation slice as the allocator address,
+  // so the record is kAllocateAndMap. A later plain Allocate() cannot satisfy
+  // itself from such a record by reuse, which forces it through reclaim below.
   ASSERT_OK_AND_ASSIGN(
-      auto mapped,
-      allocator->Allocate(
-          /*device_ordinal=*/0, /*allocation_size=*/kGranularity,
-          /*retry_on_failure=*/false, /*memory_space=*/0, reservation.get(),
-          /*reservation_offset=*/0, /*mapping_size=*/kGranularity,
-          /*return_reservation_address=*/false));
-  EXPECT_EQ(reservation->active_mapping_count(), 1);
+      auto mapped, allocator->Allocate(
+                       /*device_ordinal=*/0, /*allocation_size=*/kGranularity,
+                       /*retry_on_failure=*/false, /*memory_space=*/0,
+                       backing.get(), /*reservation_offset=*/0,
+                       /*mapping_size=*/kGranularity));
+  ASSERT_THAT(allocator->Map(/*device_ordinal=*/0, mapped.cref(), alias.get(),
+                             /*reservation_offset=*/0, kGranularity),
+              absl_testing::IsOk());
+  EXPECT_EQ(alias->active_mapping_count(), 1);
 
-  ASSERT_THAT(allocator->UnMap(/*device_ordinal=*/0, reservation.get(),
+  // Queue the alias teardown and the allocation teardown back to back so both
+  // land in the same open batch and share one sequence number.
+  ASSERT_THAT(allocator->UnMap(/*device_ordinal=*/0, alias.get(),
                                /*reservation_offset=*/0, kGranularity),
               absl_testing::IsOk());
   ASSERT_THAT(allocator->Deallocate(/*device_ordinal=*/0, mapped.Release()),
               absl_testing::IsOk());
 
-  // UnMap() and Deallocate() share one batch sequence number. Reclaim must
-  // select the allocation entry rather than the earlier map entry with the
-  // same sequence number, then complete the paired stale mapping.
+  // Reclaim skips kMap entries, so it must select the allocation entry rather
+  // than the map entry carrying the same sequence number, and must then
+  // complete the paired stale mapping instead of leaving the alias mapped.
   ASSERT_OK_AND_ASSIGN(
       auto replacement,
       allocator->Allocate(/*device_ordinal=*/0, kGranularity,
                           /*retry_on_failure=*/false, /*memory_space=*/0));
-  EXPECT_EQ(reservation->active_mapping_count(), 0);
+  EXPECT_EQ(alias->active_mapping_count(), 0);
   EXPECT_EQ(allocator->allocation_count(), 2);
 }
 
