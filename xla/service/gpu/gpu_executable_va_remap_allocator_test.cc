@@ -173,6 +173,14 @@ class TestVmmAllocator final : public se::DeviceAddressVmmAllocator {
     return allocator;
   }
 
+  ~TestVmmAllocator() override {
+    // Draining needs EnqueueDeferredDeallocation(), which is pure virtual in
+    // the base and unusable once this subclass has been destroyed, so the base
+    // destructor requires subclasses to drain themselves.
+    absl::Status status = SynchronizeAllPendingOperations();
+    EXPECT_TRUE(status.ok()) << status;
+  }
+
   TestMemoryReservation* last_reservation() const { return last_reservation_; }
   const void* last_created_allocation_address() const {
     return last_created_allocation_address_;
@@ -496,7 +504,7 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
 }
 
 TEST_F(GpuExecutableVaRemapAllocatorTest,
-       ExecutionScopeRetriesFailedAliasRelease) {
+       ExecutionScopeAliasReleaseRetriesFailedBatchFlush) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<TestVmmAllocator> vmm_allocator,
                        CreateAllocator());
 
@@ -543,15 +551,23 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
          std::optional<absl::Span<const BufferAllocation::Index>>) {
         return absl::OkStatus();
       });
-  EXPECT_FALSE(status.ok());
+  // Deferred teardown is batched, so the alias release only queues the unmap
+  // and does not enqueue a timeline write. The injected failure is therefore
+  // not consumed here and the release itself succeeds.
+  EXPECT_TRUE(status.ok()) << status;
   ASSERT_NE(vmm_allocator->last_reservation(), nullptr);
+  // The mapping stays alive as stale state until the pending unmap completes.
   EXPECT_EQ(vmm_allocator->last_reservation()->active_mapping_count(), 1);
   EXPECT_EQ(buffer_allocations.GetDeviceAddress(0).opaque(),
             param_buffer.cref().opaque());
 
-  // ReleaseStepAliases retains the failed alias. Destroying the execution
-  // scope retries UnMap after the one-shot injected failure.
   scope.reset();
+  // The first flush is what enqueues the batch marker, so this is where the
+  // one-shot injected failure surfaces. A failed flush leaves the batch open
+  // with its entries still pending rather than dropping them.
+  EXPECT_FALSE(
+      vmm_allocator->SynchronizePendingOperations(/*device_ordinal=*/0).ok());
+  // Retrying flushes the same batch and drains it.
   ASSERT_OK(vmm_allocator->SynchronizePendingOperations(/*device_ordinal=*/0));
   EXPECT_EQ(vmm_allocator->last_reservation()->active_mapping_count(), 0);
 }
