@@ -1236,8 +1236,7 @@ bool CopyRemover::TryElideCopy(
     // the uses of dest to src. This is safe if those uses are live-range
     // before every value defined between src and dest.
     bool same_list = false;
-    for (ValueNode* n = copy_node.src->next; n != copy_node.src;
-         n = n->next) {
+    for (ValueNode* n = copy_node.src->next; n != copy_node.src; n = n->next) {
       if (n == copy_node.dest) {
         same_list = true;
         break;
@@ -1251,8 +1250,7 @@ bool CopyRemover::TryElideCopy(
     }
     ValueNode merged(copy_node.src->value);
     merged.uses = copy_node.dest->uses;
-    for (ValueNode* n = copy_node.src->next; n != copy_node.dest;
-         n = n->next) {
+    for (ValueNode* n = copy_node.src->next; n != copy_node.dest; n = n->next) {
       if (!LiveRangeBefore(merged, *n)) {
         VLOG(2) << copy->name()
                 << " connects values in the same buffer, but the uses of its "
