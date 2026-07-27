@@ -175,6 +175,23 @@ bool IsDynamicSliceCopyFusionAsyncOp(const HloInstruction& hlo) {
          IsDynamicSliceCopyFusion(hlo.async_wrapped_instruction());
 }
 
+bool IsDeviceToDeviceCopyAsyncOp(const HloInstruction& hlo) {
+  const HloInstruction* copy_start = nullptr;
+  if (hlo.opcode() == HloOpcode::kCopyStart) {
+    copy_start = &hlo;
+  } else if (hlo.opcode() == HloOpcode::kCopyDone &&
+             hlo.operand(0)->opcode() == HloOpcode::kCopyStart) {
+    copy_start = hlo.operand(0);
+  } else {
+    return false;
+  }
+
+  const Shape& shape = copy_start->shape();
+  return shape.IsTuple() && shape.tuple_shapes_size() >= 2 &&
+         !ShapeHasHostMemorySpace(shape.tuple_shapes(0)) &&
+         !ShapeHasHostMemorySpace(shape.tuple_shapes(1));
+}
+
 bool IsCollectivesGroupAsyncStartOp(const HloInstruction& hlo) {
   return HloPredicateIsOp<HloOpcode::kAsyncStart>(&hlo) &&
          hlo.frontend_attributes().map().contains(kCollectiveGroupMarkerAttr);
@@ -628,10 +645,12 @@ ResourcesVector GpuAsyncTracker::GetResourcesFromInstructionImpl(
     ResourceUsageType usage;
     GpuResourceType resource;
 
-    // Keep existing copy-start/copy-done and host-memory slicing fusions on the
-    // async-compute resource path. Only dynamic-slice memcpy async wrappers use
-    // the dedicated memcpy resource added for D2D copy overlap.
-    if (IsDynamicSliceCopyFusionAsyncOp(instr)) {
+    // Use the dedicated memcpy resource for dynamic-slice memcpy wrappers and
+    // device-only copy-start/copy-done pairs when selective D2D overlap is
+    // enabled. Keep host transfers on the async-compute resource path.
+    if (IsDynamicSliceCopyFusionAsyncOp(instr) ||
+        (config_.enable_selective_resources &&
+         IsDeviceToDeviceCopyAsyncOp(instr))) {
       resource = GpuResourceType::kGpuAsyncStreamMemcpy;
       usage = op.outer == HloOpcode::kAsyncStart
                   ? (config_.top_down_scheduling

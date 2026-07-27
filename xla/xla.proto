@@ -618,6 +618,13 @@ message DebugOptions {
   // solutions.
   optional int64 xla_gpu_autotune_max_solutions = 288 [deprecated = true];
 
+  // Maximum number of BLAS library algorithms to evaluate during autotuning.
+  // Setting this to a lower value (e.g., 16 or 32) speeds up compilation at the
+  // cost of potentially missing the optimal algorithm. Setting to 0 uses the
+  // default (128 for most BLAS libraries).
+  // Default: 0 (use library default).
+  optional int64 xla_gpu_blas_max_algorithms = 523;
+
   // If true, each fusion instruction will have a cost model runtime estimate in
   // backend config after compilation.
   optional bool xla_gpu_collect_cost_model_stats = 240;
@@ -972,7 +979,7 @@ message DebugOptions {
 
   // If true, the GPU latency hiding scheduler selectively overlaps async
   // device-to-device memcpys with compute-bound kernels.
-  optional bool xla_gpu_experimental_enable_selective_memcpy_overlap = 522;
+  optional bool xla_gpu_experimental_enable_selective_memcpy_overlap = 524;
 
   // Enable fusion for the subchannel dequantisation sequences like
   // [x,z]param -> [x,y,z]broadcast -> [x*y,z]bitcast -> multiply -> dot.
@@ -1716,6 +1723,12 @@ message DebugOptions {
   // ragged-all-to-all. Requires NCCL >= 2.29.
   optional bool xla_gpu_experimental_ragged_all_to_all_use_device_kernel = 521;
 
+  // Minimum transfer size (in bytes) for a device-to-device copy to be
+  // converted to an async copy-start/copy-done pair by GpuCopyAsyncWrapper.
+  // Smaller copies remain synchronous to avoid stream-synchronization
+  // overhead. Set to -1 to disable async device-to-device copies.
+  optional int64 xla_gpu_async_copy_min_bytes = 522;
+
   // If true, enable experimental tiling propagation.
   optional bool xla_gpu_experimental_enable_tiling_propagation = 456;
 
@@ -1738,7 +1751,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 523
+  // Next id: 525
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

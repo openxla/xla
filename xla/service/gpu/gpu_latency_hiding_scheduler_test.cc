@@ -1067,7 +1067,8 @@ ENTRY main {
   EXPECT_FALSE(async_tracker.IsSupportedAsyncStart(*dynamic_slice_done));
 }
 
-TEST_F(GpuLatencyHidingSchedulerBaseTest, CopyStartDoneUsesComputeResource) {
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       HostCopyStartDoneUsesComputeResource) {
   absl::string_view kHloModule = R"(
 HloModule test
 
@@ -1085,6 +1086,7 @@ ENTRY main {
   HloInstruction* copy_done = comp->GetInstructionWithName("copy-done");
 
   SchedulerConfig sched_config;
+  sched_config.enable_selective_resources = true;
   GpuAsyncTracker async_tracker(sched_config);
   EXPECT_TRUE(async_tracker.IsSupportedAsyncStart(*copy_start));
   EXPECT_TRUE(async_tracker.IsSupportedAsyncDone(*copy_done));
@@ -1102,6 +1104,68 @@ ENTRY main {
   ASSERT_EQ(done_resources.size(), 1);
   EXPECT_EQ(done_resources[0].first, compute_resource);
   EXPECT_EQ(done_resources[0].second, ResourceUsageType::kResourceOccupy);
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       DeviceToDeviceCopyStartDoneUsesSelectiveMemcpyResource) {
+  absl::string_view kHloModule = R"(
+HloModule test
+
+ENTRY main {
+  p0 = f32[2,3]{1,0} parameter(0)
+  copy-start = (f32[2,3]{1,0}, f32[2,3]{1,0}, u32[]) copy-start(p0)
+  ROOT copy-done = f32[2,3]{1,0} copy-done(copy-start)
+})";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+
+  HloComputation* comp = module->entry_computation();
+  HloInstruction* copy_start = comp->GetInstructionWithName("copy-start");
+  HloInstruction* copy_done = comp->GetInstructionWithName("copy-done");
+
+  const int64_t compute_resource =
+      ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamComputes);
+  SchedulerConfig default_config;
+  GpuAsyncTracker default_tracker(default_config);
+  auto default_start_resources =
+      default_tracker.GetResourcesFromInstruction(*copy_start);
+  ASSERT_EQ(default_start_resources.size(), 1);
+  EXPECT_EQ(default_start_resources[0].first, compute_resource);
+
+  const int64_t memcpy_resource =
+      ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamMemcpy);
+  SchedulerConfig selective_config;
+  selective_config.enable_selective_resources = true;
+  GpuAsyncTracker selective_tracker(selective_config);
+  auto start_resources =
+      selective_tracker.GetResourcesFromInstruction(*copy_start);
+  ASSERT_EQ(start_resources.size(), 1);
+  EXPECT_EQ(start_resources[0].first, memcpy_resource);
+  EXPECT_EQ(start_resources[0].second, ResourceUsageType::kResourceRelease);
+
+  auto done_resources =
+      selective_tracker.GetResourcesFromInstruction(*copy_done);
+  ASSERT_EQ(done_resources.size(), 1);
+  EXPECT_EQ(done_resources[0].first, memcpy_resource);
+  EXPECT_EQ(done_resources[0].second, ResourceUsageType::kResourceOccupy);
+
+  SchedulerConfig top_down_config;
+  top_down_config.enable_selective_resources = true;
+  top_down_config.top_down_scheduling = true;
+  GpuAsyncTracker top_down_tracker(top_down_config);
+  auto top_down_start_resources =
+      top_down_tracker.GetResourcesFromInstruction(*copy_start);
+  ASSERT_EQ(top_down_start_resources.size(), 1);
+  EXPECT_EQ(top_down_start_resources[0].first, memcpy_resource);
+  EXPECT_EQ(top_down_start_resources[0].second,
+            ResourceUsageType::kResourceOccupy);
+  auto top_down_done_resources =
+      top_down_tracker.GetResourcesFromInstruction(*copy_done);
+  ASSERT_EQ(top_down_done_resources.size(), 1);
+  EXPECT_EQ(top_down_done_resources[0].first, memcpy_resource);
+  EXPECT_EQ(top_down_done_resources[0].second,
+            ResourceUsageType::kResourceRelease);
 }
 
 TEST_F(GpuLatencyHidingSchedulerBaseTest,

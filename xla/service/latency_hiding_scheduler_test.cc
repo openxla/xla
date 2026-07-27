@@ -27,7 +27,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
