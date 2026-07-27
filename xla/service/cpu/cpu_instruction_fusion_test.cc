@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/cpu/cpu_instruction_fusion.h"
 
+#include <cstdint>
 #include <memory>
 #include <set>
 #include <string>
@@ -1251,10 +1252,10 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(module_string));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          CpuInstructionFusion(&alias_info_).Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
   EXPECT_TRUE(changed);
   EXPECT_FALSE(HasSplitCoupledReductionShiftExpFusion(*module));
 }
@@ -1287,10 +1288,10 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(module_string));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          CpuInstructionFusion(&alias_info_).Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
   EXPECT_TRUE(changed);
   EXPECT_FALSE(HasSplitCoupledReductionShiftExpFusion(*module));
 }
@@ -1324,10 +1325,10 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(module_string));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          CpuInstructionFusion(&alias_info_).Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
   EXPECT_TRUE(changed);
   EXPECT_FALSE(EntryHasStandaloneOp(*module, HloOpcode::kMultiply));
 }
@@ -1361,10 +1362,10 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(module_string));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          CpuInstructionFusion(&alias_info_).Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
   EXPECT_TRUE(changed);
   EXPECT_FALSE(EntryHasStandaloneOp(*module, HloOpcode::kMultiply));
 }

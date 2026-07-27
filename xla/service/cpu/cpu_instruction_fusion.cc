@@ -19,7 +19,9 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
+#include "absl/types/span.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
+#include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
