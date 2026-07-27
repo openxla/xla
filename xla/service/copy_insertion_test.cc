@@ -3083,8 +3083,17 @@ ENTRY TestComputation {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
   InsertCopies(module.get());
-  // An extra copy must be kept inside the loop due to uses in the conditional
-  EXPECT_EQ(CountCopies(*module), 4);
+  // An extra copy must be kept inside the loop due to uses in the conditional.
+  // A fifth copy is inserted because sharing between a use at a conditional
+  // and a def escaping one of its branches is now rejected whenever the def
+  // escapes, rather than depending on the order in which the uses happen to
+  // be examined. The previous count of 4 relied on that order dependence,
+  // which also caused copy elision to vary with branch order. The extra copy
+  // should not occur in practice: the CPU and GPU pipelines run
+  // ConditionalCanonicalizer before copy insertion, which makes every
+  // conditional operand a value-defining tuple, so the escape-based rejection
+  // cannot trigger there.
+  EXPECT_EQ(CountCopies(*module), 5);
 }
 
 TEST_F(CopyInsertionTest, ConditionalBranchMustCopy1) {
