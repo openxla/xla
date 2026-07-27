@@ -42,15 +42,19 @@ limitations under the License.
 namespace xla {
 namespace {
 
+struct AsyncOperationWindow {
+  HloInstruction* start;
+  int64_t start_position;
+  int64_t done_position;
+};
+
 // Per-computation state derived from the reference schedule.
 struct ComputationFencingInfo {
   // Schedule position of every instruction in the computation.
   absl::flat_hash_map<const HloInstruction*, int64_t> position;
   // Async operation windows, ordered by the schedule position of their start
   // operations.
-  std::vector<HloInstruction*> window_starts;
-  std::vector<int64_t> window_start_positions;
-  std::vector<int64_t> window_done_positions;
+  std::vector<AsyncOperationWindow> windows;
   std::unique_ptr<HloReachabilityMap> reachability;
 };
 
@@ -89,9 +93,7 @@ ComputationFencingInfo BuildComputationFencingInfo(
         done_position = it->second;
       }
     }
-    info.window_starts.push_back(instruction);
-    info.window_start_positions.push_back(i);
-    info.window_done_positions.push_back(done_position);
+    info.windows.push_back({instruction, i, done_position});
   }
   info.reachability = HloReachabilityMap::Build(computation);
   return info;
@@ -201,7 +203,7 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
                     .first;
     }
     const ComputationFencingInfo& info = info_it->second;
-    if (info.window_starts.empty()) {
+    if (info.windows.empty()) {
       continue;
     }
 
@@ -214,8 +216,8 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
     // Window index of the last use: the first window (in start order) that is
     // still open at, or opens after, the last use.
     int64_t window_index = 0;
-    while (window_index < info.window_starts.size() &&
-           info.window_done_positions[window_index] <= last_use_position) {
+    while (window_index < info.windows.size() &&
+           info.windows[window_index].done_position <= last_use_position) {
       ++window_index;
     }
 
@@ -224,14 +226,14 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
     // the reference schedule, otherwise the edge could contradict existing
     // dependencies. This keeps every edge forward in the schedule order and
     // therefore acyclic.
-    while (target_index < info.window_starts.size() &&
-           info.window_start_positions[target_index] <= last_use_position) {
+    while (target_index < info.windows.size() &&
+           info.windows[target_index].start_position <= last_use_position) {
       ++target_index;
     }
-    if (target_index >= info.window_starts.size()) {
+    if (target_index >= info.windows.size()) {
       continue;
     }
-    HloInstruction* target = info.window_starts[target_index];
+    HloInstruction* target = info.windows[target_index].start;
 
     // Fence every user: the buffer stays live until all of its users have
     // executed, so a single fenced user would not bound the live range — an
