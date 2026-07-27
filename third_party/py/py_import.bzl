@@ -9,21 +9,10 @@ def _unpacked_wheel_impl(ctx):
     args.add("--wheel=%s" % wheel.path)
     args.add("--output_dir=%s" % output_dir.path)
     srcs = [wheel]
-
-    # Collect runfiles from wheel_deps for propagation
-    runfiles_depsets = []
     for d in ctx.attr.wheel_deps:
-        # Collect default_runfiles and pass them to --wheel_files (for copying into wheel)
-        if hasattr(d[DefaultInfo], 'default_runfiles'):
-            default_files = d[DefaultInfo].default_runfiles.files
-            for f in default_files.to_list():
-                srcs.append(f)
-                args.add("--wheel_files=%s" % (f.path))
-
-        # Collect data_runfiles for propagation to tests (not copied into wheel)
-        if hasattr(d[DefaultInfo], 'data_runfiles'):
-            runfiles_depsets.append(d[DefaultInfo].data_runfiles)
-
+        for f in d[DefaultInfo].default_runfiles.files.to_list():
+            srcs.append(f)
+            args.add("--wheel_files=%s" % (f.path))
     for z in ctx.files.zip_deps:
         srcs.append(z)
         args.add("--zip_files=%s" % (z.path))
@@ -38,10 +27,7 @@ def _unpacked_wheel_impl(ctx):
     )
 
     return [
-        DefaultInfo(
-            files = depset([output_dir]),
-            runfiles = ctx.runfiles(files = [output_dir]).merge_all(runfiles_depsets),
-        ),
+        DefaultInfo(files = depset([output_dir])),
     ]
 
 _unpacked_wheel = rule(
@@ -75,7 +61,7 @@ def py_import(
     )
     py_library(
         name = name,
-        data = [":" + unpacked_wheel_name],
+        data = [":" + unpacked_wheel_name] + wheel_deps,
         imports = [unpacked_wheel_name],
         deps = deps,
         visibility = ["//visibility:public"],
