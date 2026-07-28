@@ -150,9 +150,8 @@ cc_library(
     hdrs = ["oneapi_compute_capability.h"],
     deps = [
         ":oneapi_compute_capability_proto_cc",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/utility",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -640,11 +639,10 @@ cc_library(
     ],
     deps = [
         ":onednn_util",
-        ":sycl_executor",
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:device_memory",
-        "//xla/tsl/platform:status_macros",
-        "@com_google_absl//absl/strings",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
 )
