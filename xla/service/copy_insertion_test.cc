@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -5136,8 +5137,8 @@ ENTRY main {
   ROOT out = f32[8] get-tuple-element(w), index=1
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   InsertCopies(module.get());
   // The while loop introduces 2 copies for the loop-carried state (i and x);
   // these are necessary for while-loop semantics and independent of the
@@ -5215,8 +5216,8 @@ ENTRY main {
 
   std::string hlo =
       std::string(passthrough_first ? kPassthroughFirst : kPassthroughSecond);
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo));
   CopyInsertion copy_insertion(&alias_info_, region_limit);
   ASSERT_IS_OK(copy_insertion.Run(module.get()).status());
   EXPECT_EQ(CountCopies(*module), 0);
