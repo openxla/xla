@@ -523,6 +523,17 @@ TEST_F(XTileDialectTest, HloAllGatherDotLowering) {
   BlockLevelParameters block_level_parameters;
   block_level_parameters.output_tile_sizes = {{128, 128}};
 
+  // The AllGather input tile carries a replica_id, so the tiling infra promotes
+  // the input parameter into a replica-id pointer table (memref<2xi64>) and
+  // dereferences it via xtile.select_buffer.
+  //
+  // NOTE: This test drives the emitter directly through EmitXTileModule without
+  // an IsParamScratchBuffer runtime-contract predicate, so the data-type gating
+  // is not applied here and wrapping is honored unconditionally (the default
+  // behavior when the predicate is null). The gating itself -- which prevents
+  // this wrapping when the runtime passes the input as a plain buffer, as the
+  // AllGather collective kernel does -- is verified separately by the unit
+  // tests in xla/codegen/xtile/codegen/emitter_helpers_test.cc.
   EXPECT_OK(CreateXTileIrAndFileCheck(*module->GetComputationWithName("ag_dot"),
                                       block_level_parameters, R"(
     CHECK: xtile.entry_func @xtile_dialect_fn(%arg0: memref<2xi64>

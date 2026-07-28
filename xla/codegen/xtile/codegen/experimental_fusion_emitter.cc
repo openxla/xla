@@ -1327,7 +1327,8 @@ absl::Status EmitGeneric(ImplicitLocOpBuilder& b,
                          const HloFusionInstruction& fusion,
                          const ge::TiledHloComputation& tiled_computation,
                          const ge::Schedule& schedule, xtile::EntryFuncOp fn,
-                         MLIRContext* mlir_context) {
+                         MLIRContext* mlir_context,
+                         const IsParamScratchBuffer& is_param_scratch_buffer) {
   if (VLOG_IS_ON(6)) {
     VLOG(6) << "Emitting XTile IR for fusion\n"
             << ExtractInstructionIntoNewModule(fusion)->ToString();
@@ -1362,8 +1363,9 @@ absl::Status EmitGeneric(ImplicitLocOpBuilder& b,
     tile_id = for_op.getInductionVar();
     b.setInsertionPointToStart(for_op.getBody());
   }
-  EmitterContext emitter_ctx{b,        &fusion, program_id,       tile_id,
-                             schedule, fn,      tiled_computation};
+  EmitterContext emitter_ctx{
+      b,        &fusion, program_id,        tile_id,
+      schedule, fn,      tiled_computation, is_param_scratch_buffer};
 
   VLOG(2) << "EmitTiledComputation: " << tiled_computation.ToString();
   EmitFullyTiledSequentialDimensions(b, emitter_ctx, tiled_computation);
@@ -1469,7 +1471,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
     absl::string_view fn_name, const HloFusionInstruction& fusion,
     const ::xla::gpu::experimental::TiledHloComputation& tiled_computation,
     MLIRContext& mlir_context, absl::Span<mlir::Type> opaque_args_types,
-    const std::optional<GpuComputeCapability>& gpu_cc, int num_tiles_per_pid) {
+    const std::optional<GpuComputeCapability>& gpu_cc, int num_tiles_per_pid,
+    const IsParamScratchBuffer& is_param_scratch_buffer) {
   const HloComputation* hlo_computation =
       fusion.fused_instructions_computation();
 
@@ -1481,10 +1484,13 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
       llvm_ir::CreateMlirModuleOp(loc);
   b.setInsertionPointToEnd(xtile_module->getBody());
 
-  // Compute function argument types.
+  // Compute function argument types. A parameter carrying a replica_id is only
+  // wrapped into a replica-id pointer table when the runtime passes it as a
+  // pointer table (scratch buffer), as reported by `is_param_scratch_buffer`.
   ASSIGN_OR_RETURN(SmallVector<Type> fn_arg_types,
                    GetFnArgTypes(b, fusion, opaque_args_types, gpu_cc,
-                                 TileRequirementsVisitor(tiled_computation)));
+                                 TileRequirementsVisitor(tiled_computation),
+                                 is_param_scratch_buffer));
   // Metadata arguments are opaque to the tiling infra.
   llvm::SmallVector<mlir::NamedAttribute> named_attributes{b.getNamedAttr(
       "num_opaque_args", b.getI32IntegerAttr(opaque_args_types.size()))};
@@ -1495,8 +1501,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
 
   ASSIGN_OR_RETURN(auto schedule,
                    GetSchedule(tiled_computation, num_tiles_per_pid));
-  RETURN_IF_ERROR(
-      EmitGeneric(b, fusion, tiled_computation, schedule, fn, &mlir_context));
+  RETURN_IF_ERROR(EmitGeneric(b, fusion, tiled_computation, schedule, fn,
+                              &mlir_context, is_param_scratch_buffer));
   if (VLOG_IS_ON(8)) {
     std::string s;
     llvm::raw_string_ostream os(s);

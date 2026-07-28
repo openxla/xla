@@ -853,7 +853,16 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
       llvm::to_vector(LayoutUtil::MinorToMajor(logical_shape));
   SmallVector<Value> replica_id_offsets;
   SmallVector<Value> replica_id_bounds;
-  if (!tiled_hlo.tile().replica_ids().empty()) {
+  // A parameter's tile may carry replica_ids, but we only wrap it into a
+  // replica-id pointer table (emitting SelectBufferOp below via
+  // EmitParameterExtract) when the runtime actually passes that parameter as a
+  // pointer table (scratch buffer). Otherwise the runtime provides a plain
+  // buffer and wrapping would dereference plain data as pointers.
+  const bool param_is_scratch_buffer =
+      tiled_hlo.hlo()->opcode() == HloOpcode::kParameter &&
+      emitter_ctx.IsParamPassedAsScratchBuffer(
+          tiled_hlo.hlo()->parameter_number());
+  if (!tiled_hlo.tile().replica_ids().empty() && param_is_scratch_buffer) {
     llvm::SmallVector<SymbolicExpr> offset_exprs;
     llvm::SmallVector<SymbolicExpr> bound_exprs;
     offset_exprs.reserve(tiled_hlo.tile().replica_ids().size());
@@ -1101,7 +1110,8 @@ absl::StatusOr<SmallVector<Type>> GetFnArgTypes(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     absl::Span<mlir::Type> opaque_args_types,
     const std::optional<GpuComputeCapability>& gpu_cc,
-    const DefaultTileRequirementsVisitor& tile_requirements_visitor) {
+    const DefaultTileRequirementsVisitor& tile_requirements_visitor,
+    const IsParamScratchBuffer& is_param_scratch_buffer) {
   SmallVector<Type> fn_arg_types;
 
   auto hlo_computation = fusion.fused_instructions_computation();
@@ -1111,7 +1121,13 @@ absl::StatusOr<SmallVector<Type>> GetFnArgTypes(
                      GetMlirType(b, p->shape().element_type(), gpu_cc));
     ASSIGN_OR_RETURN(SmallVector<int64_t> replica_id_bounds,
                      tile_requirements_visitor.RequiredReplicaIdBounds(*p));
-    if (!replica_id_bounds.empty()) {
+    // Only wrap the parameter into a replica-id pointer table when the runtime
+    // actually passes it as a pointer table (scratch buffer). When no predicate
+    // is provided, wrapping is honored unconditionally (default behavior).
+    const bool param_is_scratch_buffer =
+        is_param_scratch_buffer == nullptr ||
+        is_param_scratch_buffer(p->parameter_number());
+    if (!replica_id_bounds.empty() && param_is_scratch_buffer) {
       // Nested pointer schema for replica dimensions.
       // R x S x <type> where R is the number of replica dimensions and S is
       // the shape on the local device. In total we have R pointers to

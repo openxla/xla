@@ -230,6 +230,7 @@ cc_library(
         ":lowering_util",
         ":triton_kernel_source",
         ":triton_wrapper_result",
+        "//xla/backends/gpu/runtime:collective_params",
         "//xla:autotuning_proto_cc",
         "//xla:frontend_attributes",
         "//xla:util",

@@ -236,6 +236,26 @@ xla_cc_test(
 )
 
 xla_cc_test(
+    name = "emitter_helpers_test",
+    srcs = ["emitter_helpers_test.cc"],
+    deps = [
+        ":emitter_helpers",
+        "//xla/codegen/xtile/ir:xtile",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service/llvm_ir:llvm_util",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@stablehlo//:stablehlo_ops",
+    ],
+)
+
+xla_cc_test(
     name = "tiled_emitter_constraints_test",
     srcs = ["tiled_emitter_constraints_test.cc"],
     deps = [

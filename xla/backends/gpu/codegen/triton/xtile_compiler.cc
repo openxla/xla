@@ -88,6 +88,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/backends/gpu/codegen/triton/triton_kernel_source.h"
 #include "xla/backends/gpu/codegen/triton/triton_wrapper_result.h"
+#include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/codegen/emitters/ir/xla_dialect.h"
 #include "xla/codegen/emitters/transforms/passes.h"
 #include "xla/codegen/ir_printing.h"
@@ -279,7 +280,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     absl::Span<mlir::Type> opaque_args_types, mlir::MLIRContext& mlir_context,
-    bool use_experimental_tiling) {
+    bool use_experimental_tiling,
+    const xtile::IsParamScratchBuffer& is_param_scratch_buffer = nullptr) {
   const HloComputation* computation = fusion.fused_instructions_computation();
 
   if (use_experimental_tiling) {
@@ -321,7 +323,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
         fn_name, fusion, tiled_computation, mlir_context,
         absl::MakeSpan(opaque_args_types),
         std::make_optional(device_info.gpu_compute_capability()),
-        block_level_parameters.num_tiles_per_pid);
+        block_level_parameters.num_tiles_per_pid, is_param_scratch_buffer);
   }
   SymbolicTileAnalysisOrError symbolic_tile_analysis_or =
       SymbolicTileAnalysis::AnalyzeComputation(
@@ -396,6 +398,11 @@ absl::StatusOr<TritonKernelSource> CreateTritonModule(
   // This is done after the input and output arguments but before the tile
   // index.
   int32_t num_metadata_arguments = 0;
+  // Runtime-contract predicate: whether the runtime passes a given fusion
+  // parameter as a pointer table (scratch buffer). Derived from the collective
+  // kernel spec below. A parameter whose tile carries a replica_id is only
+  // wrapped into a replica-id pointer table when this predicate returns true.
+  xtile::IsParamScratchBuffer is_param_scratch_buffer = nullptr;
   if (fusion_kind == kTritonCollectiveFusionKind) {
     auto loc = mlir::NameLoc::get(
         mlir::StringAttr::get(&mlir_context, hlo_computation->name()));
@@ -404,6 +411,49 @@ absl::StatusOr<TritonKernelSource> CreateTritonModule(
     ASSIGN_OR_RETURN(
         num_metadata_arguments,
         AddCollectiveMetadataArguments(opaque_args_types, b, hlo_computation));
+
+    // Build the runtime-contract predicate from the collective kernel spec. The
+    // argument_descriptors are independent of launch dimensions, so a default
+    // LaunchDimensions is sufficient here to obtain them. The i-th fusion
+    // parameter maps to the i-th input-buffer argument descriptor; a parameter
+    // is considered a pointer table only if that descriptor's kernel-arg type
+    // is a scratch buffer.
+    //
+    // CreateCollectiveKernelSpec is not implemented for every collective. When
+    // the spec cannot be created we leave `is_param_scratch_buffer` null, which
+    // honors replica-id wrapping unconditionally (the default, legacy
+    // behavior).
+    absl::StatusOr<CollectiveKernelSpec> kernel_spec_or =
+        CreateCollectiveKernelSpec(&fusion, LaunchDimensions());
+    if (kernel_spec_or.ok()) {
+      is_param_scratch_buffer =
+          [kernel_spec =
+               std::move(kernel_spec_or).value()](int64_t param_index) -> bool {
+        int64_t input_like_seen = 0;
+        for (const KernelArgDescriptor& desc :
+             kernel_spec.argument_descriptors) {
+          if (desc.type != KernelArgType::kInputBuffer &&
+              desc.type != KernelArgType::kScratchBuffer) {
+            continue;
+          }
+          // Only input-like descriptors participate in the parameter ordering.
+          // kScratchBuffer descriptors that back a fusion parameter (pointer
+          // table inputs) count towards the parameter index as well.
+          if (desc.type == KernelArgType::kInputBuffer) {
+            if (input_like_seen == param_index) {
+              return false;  // Plain buffer input: do not wrap.
+            }
+            ++input_like_seen;
+          }
+        }
+        return false;
+      };
+    } else {
+      VLOG(3) << "CreateCollectiveKernelSpec unavailable for "
+              << hlo_computation->name() << " ("
+              << kernel_spec_or.status().message()
+              << "); keeping default replica-id pointer-table wrapping.";
+    }
   }
 
   RETURN_IF_ERROR(ValidateF4UseInTritonFusion(*hlo_computation));
@@ -412,7 +462,7 @@ absl::StatusOr<TritonKernelSource> CreateTritonModule(
                    TileAndEmitXTileModule(
                        fn_name, fusion, device_info, block_level_parameters,
                        absl::MakeSpan(opaque_args_types), mlir_context,
-                       use_experimental_tiling));
+                       use_experimental_tiling, is_param_scratch_buffer));
 
   const auto debug_options = fusion.GetModule()->config().debug_options();
   if (DumpingEnabledForHloModule(*hlo_computation->parent()) &&

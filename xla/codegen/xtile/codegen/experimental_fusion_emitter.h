@@ -28,6 +28,7 @@ limitations under the License.
 #include "mlir/Pass/PassManager.h"
 #include "xla/autotuning.pb.h"
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
+#include "xla/codegen/xtile/codegen/emitter_helpers.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/stream_executor/device_description.h"
 
@@ -42,13 +43,22 @@ namespace xla::xtile {
 // arguments for collectives in XLA:GPU.
 // gpu_cc: When set, used check for supported data types (e.g. FNUZ on ROCm),
 // Omit otherwise.
+// is_param_scratch_buffer: Optional runtime-contract predicate. Given a fusion
+// parameter index, returns whether the runtime passes that parameter as a
+// pointer table (scratch buffer). A parameter whose tile carries a replica_id
+// is only wrapped into a replica-id pointer table (arg type + SelectBufferOp)
+// when this predicate returns true for it. When null, wrapping is honored
+// unconditionally (default behavior). For collectives, the caller derives this
+// predicate from the runtime CollectiveKernelSpec, keeping this emitter
+// agnostic to runtime-specific types.
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
     absl::string_view fn_name, const HloFusionInstruction& fusion,
     const ::xla::gpu::experimental::TiledHloComputation& tiled_computation,
     mlir::MLIRContext& mlir_context,
     absl::Span<mlir::Type> opaque_args_types = {},
     const std::optional<stream_executor::GpuComputeCapability>& gpu_cc = {},
-    int num_tiles_per_pid = 1);
+    int num_tiles_per_pid = 1,
+    const IsParamScratchBuffer& is_param_scratch_buffer = nullptr);
 
 }  // namespace xla::xtile
 

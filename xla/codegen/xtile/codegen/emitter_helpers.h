@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_CODEGEN_XTILE_CODEGEN_EMITTER_HELPERS_H_
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <utility>
 
@@ -61,6 +62,16 @@ namespace xla::xtile {
 using TensorValue = mlir::TypedValue<mlir::RankedTensorType>;
 static constexpr auto kTritonDivisibilityAttr = "tt.divisibility";
 
+// Predicate describing the runtime contract for a fusion parameter: given a
+// fusion parameter index, returns whether the runtime passes that parameter as
+// a pointer table (a scratch/pointer-table kernel argument) rather than a plain
+// buffer. This is used to decide whether a parameter whose tile carries a
+// replica_id should actually be wrapped into a replica-id pointer table (with
+// an xtile::SelectBufferOp). When null, wrapping is honored unconditionally
+// (default behavior for callers without a runtime contract). Kept as a generic
+// std::function so the emitter stays agnostic to runtime-specific types.
+using IsParamScratchBuffer = std::function<bool(int64_t param_index)>;
+
 // Convenience class for holding the emitted values.
 class EmitterContext {
  public:
@@ -68,20 +79,30 @@ class EmitterContext {
       mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
       mlir::Value pid, mlir::Value tid, gpu::experimental::Schedule schedule,
       xtile::EntryFuncOp entry_func,
-      const gpu::experimental::TiledHloComputation& tiled_computation)
+      const gpu::experimental::TiledHloComputation& tiled_computation,
+      IsParamScratchBuffer is_param_scratch_buffer = nullptr)
       : b_(b),
         pid_(pid),
         tid_(tid),
         schedule_(std::move(schedule)),
         fusion_(fusion),
         entry_func_(entry_func),
-        tiled_computation_(tiled_computation) {}
+        tiled_computation_(tiled_computation),
+        is_param_scratch_buffer_(std::move(is_param_scratch_buffer)) {}
 
   mlir::ImplicitLocOpBuilder& b() { return b_; }
   mlir::Value pid() const { return pid_; }
   mlir::Value tid() const { return tid_; }
   const HloFusionInstruction& fusion() const { return *fusion_; }
   xtile::EntryFuncOp entry_func() const { return entry_func_; }
+
+  // Returns whether the runtime passes the given fusion parameter as a pointer
+  // table (scratch buffer). When no predicate was provided, returns true so
+  // that replica-id wrapping is honored unconditionally (default behavior).
+  bool IsParamPassedAsScratchBuffer(int64_t param_index) const {
+    return is_param_scratch_buffer_ == nullptr ||
+           is_param_scratch_buffer_(param_index);
+  }
 
   TensorValue TiledHloToTensorValue(
       const gpu::experimental::TiledHloInstruction& tiled_hlo) const {
@@ -130,6 +151,9 @@ class EmitterContext {
   absl::flat_hash_map<gpu::experimental::TiledDimId,
                       std::pair<mlir::Value, Interval>>
       sequential_dim_id_to_value_;
+  // Runtime contract predicate: is a given fusion parameter passed as a pointer
+  // table (scratch buffer)? Null => treat as always true (honor wrapping).
+  IsParamScratchBuffer is_param_scratch_buffer_;
 };
 
 // Constructs and holds information needed to construct a tile. This information
@@ -420,7 +444,8 @@ absl::StatusOr<llvm::SmallVector<mlir::Type>> GetFnArgTypes(
     absl::Span<mlir::Type> opaque_args_types,
     const std::optional<stream_executor::GpuComputeCapability>& gpu_cc,
     const DefaultTileRequirementsVisitor& tile_requirements_visitor =
-        DefaultTileRequirementsVisitor());
+        DefaultTileRequirementsVisitor(),
+    const IsParamScratchBuffer& is_param_scratch_buffer = nullptr);
 
 // Function to check if the operands of a concatenation are valid for tiling.
 absl::Status CheckConcatenateOperands(
