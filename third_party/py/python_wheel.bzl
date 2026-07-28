@@ -241,7 +241,7 @@ def _collect_data_files_impl(ctx):
     files_depset = depset(files.keys())
     return [DefaultInfo(
         files = files_depset,
-        runfiles = ctx.runfiles(files = files_depset.to_list()),
+        runfiles = ctx.runfiles(transitive_files = files_depset),
     )]
 
 collect_data_files = rule(
