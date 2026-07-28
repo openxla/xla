@@ -70,8 +70,8 @@ class RocmDeviceAddressVmmAllocator : public DeviceAddressVmmAllocator {
   //
   // Parameters:
   //   executor:  StreamExecutor for this device. Must outlive the allocator.
-  //   stream:    Stream used for deferred deallocation. Must outlive the
-  //              allocator.
+  //   stream:    Stream used for deferred deallocation. Must remain valid for
+  //              allocator operations other than destruction.
   //   pa_budget: Maximum bytes of physical memory that may be simultaneously
   //              allocated on this device. Defaults to unlimited.
   static absl::StatusOr<std::unique_ptr<RocmDeviceAddressVmmAllocator>> Create(

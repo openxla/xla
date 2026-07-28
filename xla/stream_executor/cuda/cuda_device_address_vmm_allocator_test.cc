@@ -1211,11 +1211,10 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(allocator->SynchronizePendingOperations(ordinal), IsOk());
 }
 
-// Verifies that the destructor correctly spin-waits on the pinned timeline
-// counter until all pending GPU timeline writes complete, then frees the
-// physical memory without crashing.
+// Verifies that destruction synchronizes through the executor and directly
+// retires pending state without accessing the allocator stream.
 TEST_F(DeviceAddressVmmAllocatorTest,
-       DestructorWithPendingDeallocationsDoesNotCrash) {
+       DestructorWithDestroyedStreamAndPendingDeallocationsDoesNotCrash) {
   ASSERT_OK_AND_ASSIGN(
       auto allocator,
       gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
@@ -1231,9 +1230,9 @@ TEST_F(DeviceAddressVmmAllocatorTest,
     ASSERT_THAT(allocator->Deallocate(ordinal, addr.Release()), IsOk());
   }
 
-  // Destroy without an explicit stream sync. The destructor must enqueue the
-  // trailing batch marker, wait for it to reach pinned_timeline, then free each
-  // virtual address safely.
+  // The stream may be destroyed before the allocator. Destruction must not try
+  // to enqueue the trailing batch marker through this now-dangling pointer.
+  stream_.reset();
   allocator.reset();  // Must not crash or leak.
 }
 

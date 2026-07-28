@@ -239,21 +239,37 @@ absl::Status DeviceAddressVmmAllocator::PopulateDevices(
 }
 
 DeviceAddressVmmAllocator::~DeviceAddressVmmAllocator() {
+  // Synchronize every device before releasing resources on any device. Work on
+  // one device can access mappings owned by another device, so releasing each
+  // device immediately after synchronizing it would race with peer work that is
+  // still running elsewhere.
+  //
+  // Synchronize unconditionally: all pending entries for a previously flushed
+  // batch can be cancelled by reuse while its timeline write is still in
+  // flight. The pinned timeline must remain alive until that write has
+  // completed.
+  for (const auto& [ordinal, state] : per_device_) {
+    // Do not hold state.mu while synchronizing. Completing device work can run
+    // host callbacks that need allocator locks.
+    CHECK(state->executor->SynchronizeAllActivity())
+        << "Failed to synchronize device " << ordinal
+        << " before destroying DeviceAddressVmmAllocator.";
+  }
+
   for (auto& device : per_device_) {
     auto& state = device.second;
     {
-      // Draining requires EnqueueDeferredDeallocation(), which is pure virtual
-      // in this class and therefore unusable once the subclass destructor has
-      // run. Subclasses must call SynchronizeAllPendingOperations() themselves;
-      // all this destructor can do is verify that they did.
       absl::MutexLock lock(state->mu);
-      CHECK_EQ(state->open_deallocation_batch_seqno, 0)
-          << "DeviceAddressVmmAllocator subclasses must flush open "
-             "deallocation batches before the base destructor runs.";
-      CHECK(state->pending_deallocations.empty())
-          << "DeviceAddressVmmAllocator subclasses must call "
-             "SynchronizeAllPendingOperations() before the base destructor "
-             "runs.";
+      // All device work is complete, including work protected by an open batch.
+      // Retire pending entries directly: virtual timeline-enqueue methods are
+      // no longer callable after the derived destructor has run, and the stream
+      // is allowed to have been destroyed already.
+      state->open_deallocation_batch_seqno = 0;
+      while (!state->pending_deallocations.empty()) {
+        PendingDeallocation pending = state->pending_deallocations.front();
+        state->pending_deallocations.pop_front();
+        CompletePendingDeallocation(*state, pending);
+      }
     }
 
     // Free platform-specific per-device resources (e.g. pinned timeline).

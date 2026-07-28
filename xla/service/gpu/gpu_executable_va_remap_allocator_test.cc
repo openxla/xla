@@ -173,14 +173,6 @@ class TestVmmAllocator final : public se::DeviceAddressVmmAllocator {
     return allocator;
   }
 
-  ~TestVmmAllocator() override {
-    // Draining needs EnqueueDeferredDeallocation(), which is pure virtual in
-    // the base and unusable once this subclass has been destroyed, so the base
-    // destructor requires subclasses to drain themselves.
-    absl::Status status = SynchronizeAllPendingOperations();
-    EXPECT_TRUE(status.ok()) << status;
-  }
-
   TestMemoryReservation* last_reservation() const { return last_reservation_; }
   const void* last_created_allocation_address() const {
     return last_created_allocation_address_;
@@ -249,6 +241,7 @@ class GpuExecutableVaRemapAllocatorTest : public ::testing::Test {
  protected:
   void SetUp() override {
     ON_CALL(executor_, device_ordinal()).WillByDefault(Return(0));
+    ON_CALL(executor_, SynchronizeAllActivity()).WillByDefault(Return(true));
     ON_CALL(stream_, parent()).WillByDefault(Return(&executor_));
     run_options_.set_stream(&stream_);
     service_run_options_ = ServiceExecutableRunOptions(run_options_);

@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 #include <gmock/gmock.h>
@@ -106,18 +107,16 @@ class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
  public:
   static absl::StatusOr<std::unique_ptr<TestDeviceAddressVmmAllocator>> Create(
       const Platform* platform, absl::Span<const DeviceConfig> devices,
-      uint64_t physical_size_padding = 0) {
+      uint64_t physical_size_padding = 0,
+      std::function<void(int)> on_device_destroy = nullptr) {
     auto allocator = std::unique_ptr<TestDeviceAddressVmmAllocator>(
-        new TestDeviceAddressVmmAllocator(platform, physical_size_padding));
+        new TestDeviceAddressVmmAllocator(platform, physical_size_padding,
+                                          on_device_destroy));
     absl::Status status = PopulateDevices(allocator.get(), devices);
     if (!status.ok()) {
       return status;
     }
     return allocator;
-  }
-
-  ~TestDeviceAddressVmmAllocator() override {
-    EXPECT_THAT(SynchronizeAllPendingOperations(), absl_testing::IsOk());
   }
 
   int allocation_count() const { return allocation_count_; }
@@ -127,7 +126,14 @@ class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
     state.allocation_granularity = kGranularity;
     auto* timeline = new uint64_t(0);
     state.pinned_timeline = timeline;
-    state.destroy_fn = [timeline] { delete timeline; };
+    int ordinal = state.executor->device_ordinal();
+    state.destroy_fn = [timeline, ordinal,
+                        on_device_destroy = on_device_destroy_] {
+      delete timeline;
+      if (on_device_destroy) {
+        on_device_destroy(ordinal);
+      }
+    };
     return absl::OkStatus();
   }
 
@@ -152,11 +158,14 @@ class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
 
  private:
   TestDeviceAddressVmmAllocator(const Platform* platform,
-                                uint64_t physical_size_padding)
+                                uint64_t physical_size_padding,
+                                std::function<void(int)> on_device_destroy)
       : DeviceAddressVmmAllocator(platform),
-        physical_size_padding_(physical_size_padding) {}
+        physical_size_padding_(physical_size_padding),
+        on_device_destroy_(on_device_destroy) {}
 
   uint64_t physical_size_padding_;
+  std::function<void(int)> on_device_destroy_;
   int allocation_count_ = 0;
 };
 
@@ -164,6 +173,7 @@ class DeviceAddressVmmAllocatorTest : public ::testing::Test {
  protected:
   void SetUp() override {
     ON_CALL(executor_, device_ordinal()).WillByDefault(Return(0));
+    ON_CALL(executor_, SynchronizeAllActivity()).WillByDefault(Return(true));
     ON_CALL(stream_, parent()).WillByDefault(Return(&executor_));
   }
 
@@ -175,6 +185,78 @@ class DeviceAddressVmmAllocatorTest : public ::testing::Test {
   NiceMock<MockStreamExecutor> executor_;
   NiceMock<MockStream> stream_;
 };
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       DestructorSynchronizesExecutorWithoutPendingOperations) {
+  EXPECT_CALL(executor_, SynchronizeAllActivity()).WillOnce(Return(true));
+  ASSERT_OK_AND_ASSIGN(auto allocator, TestDeviceAddressVmmAllocator::Create(
+                                           &platform_, {Config(UINT64_MAX)}));
+
+  allocator.reset();
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       DestructorSynchronizesAllExecutorsBeforeReleasingDeviceResources) {
+  bool device_0_synchronized = false;
+  bool device_1_synchronized = false;
+  EXPECT_CALL(executor_, SynchronizeAllActivity()).WillOnce([&] {
+    device_0_synchronized = true;
+    return true;
+  });
+
+  NiceMock<MockStreamExecutor> executor_1;
+  NiceMock<MockStream> stream_1;
+  ON_CALL(executor_1, device_ordinal()).WillByDefault(Return(1));
+  ON_CALL(stream_1, parent()).WillByDefault(Return(&executor_1));
+  EXPECT_CALL(executor_1, SynchronizeAllActivity()).WillOnce([&] {
+    device_1_synchronized = true;
+    return true;
+  });
+
+  auto reservation_0 = std::make_unique<TestMemoryReservation>(kGranularity);
+  auto reservation_1 = std::make_unique<TestMemoryReservation>(kGranularity);
+  int destroyed_devices = 0;
+  auto on_device_destroy = [&](int ordinal) {
+    EXPECT_TRUE(device_0_synchronized);
+    EXPECT_TRUE(device_1_synchronized);
+    if (ordinal == 0) {
+      EXPECT_EQ(reservation_0->active_mapping_count(), 0);
+    } else {
+      EXPECT_EQ(ordinal, 1);
+      EXPECT_EQ(reservation_1->active_mapping_count(), 0);
+    }
+    ++destroyed_devices;
+  };
+  const DeviceAddressVmmAllocator::DeviceConfig config_0 = Config(UINT64_MAX);
+  const DeviceAddressVmmAllocator::DeviceConfig config_1 = {
+      &executor_1, &stream_1, UINT64_MAX};
+  ASSERT_OK_AND_ASSIGN(auto allocator,
+                       TestDeviceAddressVmmAllocator::Create(
+                           &platform_, {config_0, config_1},
+                           /*physical_size_padding=*/0, on_device_destroy));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto address_0,
+      allocator->Allocate(
+          /*device_ordinal=*/0, /*allocation_size=*/kGranularity,
+          /*retry_on_failure=*/true, /*memory_space=*/0, reservation_0.get(),
+          /*reservation_offset=*/0, /*mapping_size=*/kGranularity));
+  ASSERT_OK_AND_ASSIGN(
+      auto address_1,
+      allocator->Allocate(
+          /*device_ordinal=*/1, /*allocation_size=*/kGranularity,
+          /*retry_on_failure=*/true, /*memory_space=*/0, reservation_1.get(),
+          /*reservation_offset=*/0, /*mapping_size=*/kGranularity));
+  EXPECT_EQ(reservation_0->active_mapping_count(), 1);
+  EXPECT_EQ(reservation_1->active_mapping_count(), 1);
+  ASSERT_THAT(allocator->Deallocate(/*device_ordinal=*/0, address_0.Release()),
+              absl_testing::IsOk());
+  ASSERT_THAT(allocator->Deallocate(/*device_ordinal=*/1, address_1.Release()),
+              absl_testing::IsOk());
+
+  allocator.reset();
+  EXPECT_EQ(destroyed_devices, 2);
+}
 
 TEST_F(DeviceAddressVmmAllocatorTest, RetryFlagDoesNotDisablePendingReclaim) {
   const DeviceAddressVmmAllocator::DeviceConfig config =

@@ -146,7 +146,8 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   struct DeviceConfig {
     // StreamExecutor for this device. Must outlive the allocator.
     StreamExecutor* executor;
-    // Stream used for deferred deallocation. Must outlive the allocator.
+    // Stream used for deferred deallocation. Must remain valid for allocator
+    // operations other than destruction.
     Stream* stream;
     // Maximum bytes of physical memory that may be allocated simultaneously on
     // this device. Defaults to unlimited.
@@ -490,11 +491,9 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
                                       absl::Span<const DeviceConfig> devices);
 
   // Flushes open deallocation batches and drains all pending operations for all
-  // devices. Subclasses with platform-specific timeline enqueue implementations
-  // must call this from their destructor before the base destructor runs:
-  // draining needs EnqueueDeferredDeallocation(), which is no longer callable
-  // once the subclass has been destroyed. The base destructor CHECK-fails if
-  // pending work remains.
+  // devices. The configured streams must remain valid for this explicit
+  // synchronization. Destruction instead synchronizes each StreamExecutor and
+  // retires pending state without accessing the streams.
   absl::Status SynchronizeAllPendingOperations();
 
   // Validates device capabilities and initializes timeline fields

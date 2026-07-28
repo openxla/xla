@@ -49,13 +49,7 @@ RocmDeviceAddressVmmAllocator::RocmDeviceAddressVmmAllocator(
     std::optional<int64_t> reclaim_exempt_memory_space)
     : DeviceAddressVmmAllocator(platform, reclaim_exempt_memory_space) {}
 
-RocmDeviceAddressVmmAllocator::~RocmDeviceAddressVmmAllocator() {
-  absl::Status status = SynchronizeAllPendingOperations();
-  if (!status.ok()) {
-    LOG(FATAL) << "Failed to synchronize pending ROCm VMM deallocations: "
-               << status;
-  }
-}
+RocmDeviceAddressVmmAllocator::~RocmDeviceAddressVmmAllocator() = default;
 
 absl::StatusOr<std::unique_ptr<RocmDeviceAddressVmmAllocator>>
 RocmDeviceAddressVmmAllocator::Create(
