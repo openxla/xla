@@ -223,7 +223,7 @@ TEST(CommandBufferThunkTest, CuDnnCmd) {
   initialize_params.command_buffer_trace_stream = stream.get();
   initialize_params.persistent_alloc_indices =
       absl::Span<const BufferAllocation::Index>();
-  TF_ASSERT_OK(thunk.Initialize(initialize_params));
+  ASSERT_OK(thunk.Initialize(initialize_params));
 
   // Execute command buffer thunk and verify that it executed a GEMM.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));

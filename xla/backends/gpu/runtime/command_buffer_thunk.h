@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -96,9 +95,10 @@ class CommandBufferThunk : public Thunk {
     // Updates recorded buffer allocation for the given `commands` using the
     // buffer allocations passed in `params`. Returns buffer allocations that
     // changed since the last update. Returned buffer allocations are sorted by
-    // the buffer allocation index.
+    // the buffer allocation index. `persistent_alloc_indices` must be sorted.
     std::vector<BufferAllocation::Index> UpdateBufferAllocations(
-        const CommandExecutor& commands, const Thunk::ExecuteParams& params)
+        const CommandExecutor& commands, const Thunk::ExecuteParams& params,
+        absl::Span<const BufferAllocation::Index> persistent_alloc_indices)
         ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
 
     // Returns true if `commands` references any allocation whose address is not

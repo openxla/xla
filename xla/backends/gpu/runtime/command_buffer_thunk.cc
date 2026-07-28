@@ -64,7 +64,6 @@ CommandBufferThunk::ExecutorCommandBuffer::ExecutorCommandBuffer(
 bool CommandBufferThunk::ExecutorCommandBuffer::HasDynamicAllocations(
     const CommandExecutor& commands,
     absl::Span<const BufferAllocation::Index> persistent_alloc_indices) {
-  DCHECK(absl::c_is_sorted(commands.allocs_indices()));
   DCHECK(absl::c_is_sorted(persistent_alloc_indices));
   return !absl::c_includes(persistent_alloc_indices, commands.allocs_indices());
 }
@@ -107,24 +106,18 @@ CommandBufferThunk::CommandBufferThunk(
 
 std::vector<BufferAllocation::Index>
 CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
-    const CommandExecutor& commands, const Thunk::ExecuteParams& params) {
+    const CommandExecutor& commands, const Thunk::ExecuteParams& params,
+    absl::Span<const BufferAllocation::Index> persistent_alloc_indices) {
   std::vector<BufferAllocation::Index> updated_allocs;
   const BufferAllocations* allocs = params.buffer_allocations;
-  absl::Span<const BufferAllocation::Index> allocs_to_check =
-      commands.allocs_indices();
   std::vector<BufferAllocation::Index> dynamic_alloc_indices;
 
-  DCHECK(params.persistent_alloc_indices.has_value());
-  DCHECK(absl::c_is_sorted(commands.allocs_indices()));
-  DCHECK(absl::c_is_sorted(*params.persistent_alloc_indices));
-  absl::c_set_difference(commands.allocs_indices(),
-                         *params.persistent_alloc_indices,
+  absl::c_set_difference(commands.allocs_indices(), persistent_alloc_indices,
                          std::back_inserter(dynamic_alloc_indices));
-  allocs_to_check = dynamic_alloc_indices;
 
   // We check only allocations referenced by commands in a cmd sequence, and
   // leave every other entry default initialized (nullptr device memory).
-  for (BufferAllocation::Index index : allocs_to_check) {
+  for (BufferAllocation::Index index : dynamic_alloc_indices) {
     se::DeviceAddressBase alloc = allocs->GetDeviceAddress(index);
 
     if (recorded_allocs.size() <= index) {
@@ -264,7 +257,8 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
 
     // Update recorded buffer allocations.
     std::optional<std::vector<BufferAllocation::Index>> updated_allocs =
-        cmd_buffer->UpdateBufferAllocations(commands_, execute_params);
+        cmd_buffer->UpdateBufferAllocations(commands_, execute_params,
+                                            *params.persistent_alloc_indices);
 
     Command::RecordParams record_params = {cmd_buffer->state,
                                            std::move(updated_allocs),
@@ -331,12 +325,12 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
   bool is_first_record =
       cmd_buffer->command_buffer->state() == se::CommandBuffer::State::kCreate;
 
-  auto updated_allocs = cmd_buffer->UpdateBufferAllocations(commands_, params);
-
   bool has_dynamic_allocations = cmd_buffer->HasDynamicAllocations(
       commands_, *params.persistent_alloc_indices);
-  bool needs_update = commands_.requires_update_on_execute() ||
-                      (has_dynamic_allocations && !updated_allocs.empty());
+  auto updated_allocs = cmd_buffer->UpdateBufferAllocations(
+      commands_, params, *params.persistent_alloc_indices);
+  bool needs_update =
+      commands_.requires_update_on_execute() || !updated_allocs.empty();
 
   if (is_first_record || needs_update) {
     XLA_VLOG_DEVICE(3, executor->device_ordinal())
