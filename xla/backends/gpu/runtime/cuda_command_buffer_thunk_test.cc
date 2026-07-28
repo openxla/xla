@@ -211,10 +211,17 @@ TEST(CommandBufferThunkTest, CuDnnCmd) {
   Thunk::ExecuteParams params =
       Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
                                    stream.get(), nullptr, nullptr, nullptr);
+  params.persistent_alloc_indices.emplace();
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  TF_ASSERT_OK(thunk.Initialize(
-      {stream_executor, source, &allocations, stream.get(), stream.get()}));
+  Thunk::InitializeParams initialize_params;
+  initialize_params.executor = stream_executor;
+  initialize_params.src = source;
+  initialize_params.buffer_allocations = &allocations;
+  initialize_params.stream = stream.get();
+  initialize_params.command_buffer_trace_stream = stream.get();
+  initialize_params.persistent_alloc_indices.emplace();
+  ASSERT_OK(thunk.Initialize(initialize_params));
 
   // Execute command buffer thunk and verify that it executed a GEMM.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));

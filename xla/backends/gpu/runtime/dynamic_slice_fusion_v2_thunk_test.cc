@@ -733,10 +733,17 @@ TEST(DynamicSliceFusionV2ThunkTest,
   ASSERT_OK(command_buffer_thunk.Prepare(prepare_params));
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  ASSERT_OK(command_buffer_thunk.Initialize(
-      {executor, source, &allocations, stream.get(), stream.get()}));
+  Thunk::InitializeParams initialize_params;
+  initialize_params.executor = executor;
+  initialize_params.src = source;
+  initialize_params.buffer_allocations = &allocations;
+  initialize_params.stream = stream.get();
+  initialize_params.command_buffer_trace_stream = stream.get();
+  initialize_params.persistent_alloc_indices.emplace();
+  ASSERT_OK(command_buffer_thunk.Initialize(initialize_params));
 
   auto params = MakeExecuteParams(allocations, stream.get());
+  params.persistent_alloc_indices.emplace();
 
   ScopedWhileLoop loop("dynamic_slice_fusion_v2_command_buffer",
                        /*trip_count=*/4);

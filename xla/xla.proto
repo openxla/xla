@@ -450,15 +450,18 @@ message DebugOptions {
   //     use fixed VMM reservation addresses; other dynamic allocations still
   //     trigger command updates when their addresses change.
   //
-  //   SKIP_PROFILED: For the first few executions, buffers use regular
-  //     dynamically allocated addresses. Preallocated temp buffers are
-  //     automatically selected for remapping while the runtime records which
-  //     other non-constant, non-thread-local command-buffer-referenced
-  //     allocations keep a stable address. Afterwards, the temp buffers and
-  //     stable profile candidates use fixed VMM reservation addresses during
-  //     execution. Temp buffers are allocated through the reservation;
-  //     finalized input and output addresses are aliased into it immediately
-  //     before execution.
+  //   SKIP_PROFILED: For the first few executions, command buffer thunks execute
+  //     their original thunk sequences and buffers use regular dynamically
+  //     allocated addresses. Preallocated temp buffers are automatically
+  //     selected for remapping while the runtime records which other
+  //     non-constant, non-thread-local command-buffer-referenced allocations
+  //     keep a stable address. The first execution after the profiling decision
+  //     receives a finalized persistent allocation policy, including an empty
+  //     policy when nothing is persistent, and enables command buffer lowering.
+  //     Afterwards, the temp buffers and stable profile candidates use fixed VMM
+  //     reservation addresses during execution. Temp buffers are allocated
+  //     through the reservation; finalized input and output addresses are
+  //     aliased into it immediately before execution.
   //     Remapping enforces address stability, so a mispredicted profile costs
   //     an extra VMM remap instead of correctness. Requires the VMM allocator
   //     and assumes symmetric behavior across ranks.

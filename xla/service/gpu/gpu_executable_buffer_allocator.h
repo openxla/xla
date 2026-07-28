@@ -114,8 +114,9 @@ class GpuExecutableBufferAllocator {
         absl::FunctionRef<absl::Status(absl::Status)> allocation_error);
 
     // Runs `execute` with the allocation-address policy for this execution.
-    // The base implementation passes the command-buffer-referenced constant
-    // allocations as the persistent allocation indices.
+    // The base implementation always passes a present span containing the
+    // command-buffer-referenced constant allocations. The span is present and
+    // empty when there are no such constants.
     virtual absl::Status ExecuteWithBufferAllocations(
         const BufferAllocations& owning_buffer_allocations, int device_ordinal,
         absl::FunctionRef<absl::Status(

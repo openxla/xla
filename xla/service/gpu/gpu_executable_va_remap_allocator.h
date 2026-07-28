@@ -98,14 +98,14 @@ class GpuExecutableVaRemapAllocator : public GpuExecutableBufferAllocator {
   // execution scopes created for that executor.
   struct Remapping {
     // SKIP_PROFILED per-executor profile state machine. The phase progresses
-    // kProfiling -> (kActive | kDisabled) exactly once, which keeps the
-    // persistent allocation indices passed to thunks consistent with the
-    // one-way absent-to-present transition required by
-    // Thunk::ExecuteParams::persistent_alloc_indices.
+    // kProfiling -> (kActive | kDisabled) exactly once. Profiling executions
+    // disable command buffer lowering; the first execution after the decision
+    // receives a present persistent allocation policy.
     enum class ProfilePhase {
       // Not a SKIP_PROFILED remapping (SKIP_TEMP).
       kInactive,
-      // Observing allocation addresses; executions pass std::nullopt.
+      // Observing allocation addresses; executions pass std::nullopt and use
+      // the original thunk sequences.
       kProfiling,
       // Profile transition done; the selected allocation set is VA-remapped.
       kActive,

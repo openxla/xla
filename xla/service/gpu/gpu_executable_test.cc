@@ -366,6 +366,29 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
   EXPECT_EQ(skip_profiled_policy.command_buffer_allocation_count, 2);
   EXPECT_THAT(skip_profiled_policy.persistent_alloc_indices,
               Optional(ElementsAre(1)));
+
+  // Without VMM, constants are the only allocations with persistent
+  // addresses. Verify that every update mode passes a present, empty policy on
+  // its first execution when there are no constants.
+  allocations[1].set_constant(false);
+
+  ASSERT_OK_AND_ASSIGN(
+      auto always_update_empty_policy,
+      get_allocation_policy_without_vmm(DebugOptions::ALWAYS_UPDATE));
+  EXPECT_THAT(always_update_empty_policy.persistent_alloc_indices,
+              Optional(ElementsAre()));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto skip_temp_empty_policy,
+      get_allocation_policy_without_vmm(DebugOptions::SKIP_TEMP));
+  EXPECT_THAT(skip_temp_empty_policy.persistent_alloc_indices,
+              Optional(ElementsAre()));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto skip_profiled_empty_policy,
+      get_allocation_policy_without_vmm(DebugOptions::SKIP_PROFILED));
+  EXPECT_THAT(skip_profiled_empty_policy.persistent_alloc_indices,
+              Optional(ElementsAre()));
 }
 
 TEST_F(GpuExecutableTest, ComputeComputationLayout) {

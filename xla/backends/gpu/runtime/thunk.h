@@ -266,12 +266,12 @@ class Thunk {
     ExecutionScopedState* execution_scoped_state = nullptr;
 
     // Optional allocation indices whose device addresses are stable for this
-    // execution. If absent, consumers that need address-change checks should
-    // conservatively treat allocation addresses as dynamic. Across execution
-    // steps, this may transition only from absent to present, and the
-    // transition must be passed to Initialize before ExecuteOnStream. Once
-    // present, the allocation indices must remain unchanged; consumers may
-    // rely on this invariant without revalidating the vector on each step.
+    // execution. Command buffer thunks execute their original thunk sequence
+    // when this is absent and lower to command buffers only when it is present.
+    // A present empty span represents a finalized policy with no persistent
+    // allocations. Once present, the allocation indices must remain unchanged;
+    // consumers may rely on this invariant without revalidating the vector on
+    // each step.
     std::optional<absl::Span<const BufferAllocation::Index>>
         persistent_alloc_indices = std::nullopt;
   };
@@ -348,12 +348,12 @@ class Thunk {
     uint64_t rng_seed = 0;
 
     // Optional allocation indices whose device addresses are stable for this
-    // execution. If absent, consumers that need address-change checks should
-    // conservatively treat allocation addresses as dynamic. Across execution
-    // steps, this may transition only from absent to present, and the
-    // transition must be passed to Initialize before ExecuteOnStream. Once
-    // present, the allocation indices must remain unchanged; consumers may
-    // rely on this invariant without revalidating the vector on each step.
+    // execution. Command buffer thunks execute their original thunk sequence
+    // when this is absent and lower to command buffers only when it is present.
+    // A present empty span represents a finalized policy with no persistent
+    // allocations. Once present, the allocation indices must remain unchanged;
+    // consumers may rely on this invariant without revalidating the vector on
+    // each step.
     std::optional<absl::Span<const BufferAllocation::Index>>
         persistent_alloc_indices = std::nullopt;
 

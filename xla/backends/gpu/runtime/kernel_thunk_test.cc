@@ -538,6 +538,8 @@ TEST_P(KernelThunkTmaPTXTest, TmaPTX) {
     auto cmd_buffer_thunk = std::make_unique<CommandBufferThunk>(
         std::move(cmds), Thunk::ThunkInfo(), std::move(sequential_thunk), true);
 
+    initialize_params.persistent_alloc_indices.emplace();
+    execute_params.persistent_alloc_indices.emplace();
     ASSERT_OK(cmd_buffer_thunk->Initialize(initialize_params));
     ASSERT_OK(cmd_buffer_thunk->ExecuteOnStream(execute_params));
   } else {

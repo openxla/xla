@@ -106,11 +106,11 @@ class GpuExecutableVaRemapAllocator::VaRemapExecutionScope
   bool va_remap_enabled() const override { return true; }
 
   // In the SKIP_PROFILED profiling phase this observes allocation addresses
-  // and passes std::nullopt as the persistent allocation indices. Otherwise it
-  // builds an execution-only address table, maps selected input/output buffers
-  // into their stable reservation addresses, and passes the persistent
-  // allocation indices to `execute`. The owning address table remains
-  // unchanged for result handling and TearDown.
+  // and passes std::nullopt so command buffer thunks execute their original
+  // thunk sequences. Otherwise it builds an execution-only address table, maps
+  // selected input/output buffers into their stable reservation addresses, and
+  // passes the persistent allocation indices to `execute`. The owning address
+  // table remains unchanged for result handling and TearDown.
   absl::Status ExecuteWithBufferAllocations(
       const BufferAllocations& owning_buffer_allocations, int device_ordinal,
       absl::FunctionRef<
@@ -388,9 +388,9 @@ absl::Status GpuExecutableVaRemapAllocator::VaRemapExecutionScope::
       owner_->update_mode_ == DebugOptions::SKIP_PROFILED;
   if (profiled_mode) {
     if (remapping_->phase == Remapping::ProfilePhase::kProfiling) {
-      // Profiling executions must pass std::nullopt: the persistent
-      // allocation indices may transition from absent to present only once,
-      // and the profiled set is not known yet.
+      // The persistent allocation policy is not known yet. Passing std::nullopt
+      // keeps command buffer thunks in their original execution mode while
+      // profiling allocation addresses.
       RETURN_IF_ERROR(execute(owning_buffer_allocations, std::nullopt));
       ObserveAllocationAddresses(owning_buffer_allocations);
       ++remapping_->profiled_steps;

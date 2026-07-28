@@ -185,17 +185,20 @@ void LaunchCommandBufferThunk(stream_executor::StreamExecutor* executor,
 
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream, stream, nullptr, nullptr, nullptr);
+  params.persistent_alloc_indices.emplace();
 
   // This is where we're getting the 'AddI32' kernel from.
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<uint8_t> fatbin,
-                          stream_executor::gpu::GetGpuTestKernelsFatbin(
-                              executor->GetPlatform()->Name()));
-  ASSERT_THAT(
-      thunk.Initialize({executor,
-                        Thunk::ExecutableSource{/*text=*/"", fatbin,
-                                                /*dnn_compiled_graphs=*/{}},
-                        &allocations, stream}),
-      IsOk());
+  ASSERT_OK_AND_ASSIGN(std::vector<uint8_t> fatbin,
+                       stream_executor::gpu::GetGpuTestKernelsFatbin(
+                           executor->GetPlatform()->Name()));
+  Thunk::InitializeParams initialize_params;
+  initialize_params.executor = executor;
+  initialize_params.src = Thunk::ExecutableSource{/*text=*/"", fatbin,
+                                                  /*dnn_compiled_graphs=*/{}};
+  initialize_params.buffer_allocations = &allocations;
+  initialize_params.stream = stream;
+  initialize_params.persistent_alloc_indices.emplace();
+  ASSERT_THAT(thunk.Initialize(initialize_params), IsOk());
 
   // Execute command buffer thunk and verify that it added the value.
   ASSERT_THAT(thunk.ExecuteOnStream(params), IsOk());
