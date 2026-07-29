@@ -210,7 +210,6 @@ cc_library(
         "//xla/hlo/ir:hlo_instruction_utils",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/strings",
     ],
 )
 
