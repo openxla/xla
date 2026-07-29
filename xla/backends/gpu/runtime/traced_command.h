@@ -52,11 +52,27 @@ class TracedCommand : public Command {
   // Creates a command buffer by calling a user-provided `trace` function and
   // adds it as a nested command to `command_buffer`. Traced command buffers
   // cached and reused in an instance of `TracedCommandBuffer` kept in `state`.
+  //
+  // If the command is guaranteed to never require an update (all buffer
+  // allocations used by the command have stable addresses, see
+  // `ShouldInlineTracedCommand` below), the `trace` function is instead traced
+  // directly into `command_buffer`, without a child node and a nested command
+  // buffer.
   absl::StatusOr<const se::CommandBuffer::Command*> RecordTracedCommand(
       const Thunk::ExecuteParams& execute_params,
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer,
       absl::FunctionRef<absl::Status(se::Stream*)> trace);
+
+ private:
+  // Returns true if this command can be traced directly into the parent
+  // command buffer instead of being recorded as a child node backed by a
+  // nested command buffer. This is the case only when the command is
+  // guaranteed to never require an update: every buffer allocation used by
+  // the command is persistent (its command-buffer-visible address never
+  // changes) and command parameters can't change for any other reason.
+  bool ShouldInlineTracedCommand(
+      const Thunk::ExecuteParams& execute_params) const;
 };
 
 }  // namespace xla::gpu

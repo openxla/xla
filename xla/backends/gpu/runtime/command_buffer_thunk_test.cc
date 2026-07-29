@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/traced_command.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/runtime/buffer_use.h"
@@ -191,6 +192,37 @@ class CountingDeviceToDeviceCopyThunk : public DeviceToDeviceCopyThunk {
   int* record_count_;
 };
 
+// A traced command that copies `src` to `dst` by tracing a device-to-device
+// memcpy. Used for testing traced command recording paths.
+class TracedCopyCommand : public TracedCommand {
+ public:
+  TracedCopyCommand(BufferAllocation::Slice src, BufferAllocation::Slice dst,
+                    int64_t byte_length, Shape shape)
+      : TracedCommand(Thunk::Kind::kCommand),
+        src_(src),
+        dst_(dst),
+        byte_length_(byte_length),
+        shape_(shape) {}
+
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    se::DeviceAddressBase src =
+        params.buffer_allocations->GetDeviceAddress(src_);
+    se::DeviceAddressBase dst =
+        params.buffer_allocations->GetDeviceAddress(dst_);
+    return params.stream->Memcpy(&dst, src, byte_length_);
+  }
+
+  BufferUses buffer_uses() const override {
+    return {BufferUse::Read(src_, shape_), BufferUse::Write(dst_, shape_)};
+  }
+
+ private:
+  BufferAllocation::Slice src_;
+  BufferAllocation::Slice dst_;
+  int64_t byte_length_;
+  Shape shape_;
+};
+
 // Creates execute params with a valid persistent allocation indices span
 // (empty by default). Command buffer lowering is enabled only when the span
 // is valid; production code always passes a valid - possibly empty - span.
@@ -271,6 +303,94 @@ TEST(CommandBufferThunkTest, DeviceToDeviceCopy) {
   TF_ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
 
   ASSERT_EQ(dst, std::vector<int32_t>(4, 42));
+}
+
+TEST(CommandBufferThunkTest, InlineTracedCommandWithPersistentAllocations) {
+  se::StreamExecutor* stream_executor = GpuExecutor();
+  if (!IsAtLeastCuda12300(stream_executor)) {
+    GTEST_SKIP() << "Tracing into an existing graph requires CUDA 12.3+";
+  }
+
+  ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
+
+  int64_t length = 4;
+  int64_t byte_length = sizeof(int32_t) * length;
+  Shape shape = ShapeUtil::MakeShape(S32, {length});
+
+  // Prepare arguments: a=42, b=0, c=0, d=0.
+  se::DeviceAddress<int32_t> a =
+      stream_executor->AllocateArray<int32_t>(length, 0);
+  se::DeviceAddress<int32_t> b =
+      stream_executor->AllocateArray<int32_t>(length, 0);
+  se::DeviceAddress<int32_t> c =
+      stream_executor->AllocateArray<int32_t>(length, 0);
+  se::DeviceAddress<int32_t> d =
+      stream_executor->AllocateArray<int32_t>(length, 0);
+
+  ASSERT_OK(stream->Memset32(&a, 42, byte_length));
+  ASSERT_OK(stream->MemZero(&b, byte_length));
+  ASSERT_OK(stream->MemZero(&c, byte_length));
+  ASSERT_OK(stream->MemZero(&d, byte_length));
+
+  BufferAllocation alloc_a(/*index=*/0, byte_length, /*color=*/0);
+  BufferAllocation alloc_b(/*index=*/1, byte_length, /*color=*/0);
+  BufferAllocation alloc_c(/*index=*/2, byte_length, /*color=*/0);
+
+  BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
+  BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
+  BufferAllocation::Slice slice_c(&alloc_c, 0, byte_length);
+
+  // The traced copy command uses only persistent allocations (0 and 1), so it
+  // is traced directly into the parent command buffer. The memset command
+  // uses a dynamic allocation (2) and takes the regular update path.
+  CommandSequence commands;
+  commands.Emplace<TracedCopyCommand>(slice_a, slice_b, byte_length, shape);
+  commands.Emplace<Memset32BitValueThunk>(Thunk::ThunkInfo(), uint32_t{84},
+                                          slice_c);
+  ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
+                       CommandExecutor::Create(std::move(commands), serialize));
+
+  CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
+
+  std::vector<BufferAllocation::Index> persistent_alloc_indices = {0, 1};
+
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
+  ServiceExecutableRunOptions run_options;
+  BufferAllocations allocations({a, b, c}, 0, &allocator);
+  Thunk::ExecuteParams params =
+      CreateExecuteParams(run_options, allocations, stream.get(),
+                          absl::MakeConstSpan(persistent_alloc_indices));
+
+  ASSERT_OK(thunk.ExecuteOnStream(params));
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::vector<int32_t> dst(4, 0);
+  ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
+  ASSERT_EQ(dst, std::vector<int32_t>(4, 42));
+
+  std::fill(dst.begin(), dst.end(), 0);
+  ASSERT_OK(stream->Memcpy(dst.data(), c, byte_length));
+  ASSERT_EQ(dst, std::vector<int32_t>(4, 84));
+
+  // Move the dynamic allocation to a new buffer to force a command buffer
+  // update pass. The inlined traced command must be skipped (its allocations
+  // are persistent and their addresses did not change) while the memset
+  // command is updated to write into `d`.
+  ASSERT_OK(stream->MemZero(&b, byte_length));
+  BufferAllocations changed_allocations({a, b, d}, 0, &allocator);
+  params = CreateExecuteParams(run_options, changed_allocations, stream.get(),
+                               absl::MakeConstSpan(persistent_alloc_indices));
+
+  ASSERT_OK(thunk.ExecuteOnStream(params));
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::fill(dst.begin(), dst.end(), 0);
+  ASSERT_OK(stream->Memcpy(dst.data(), b, byte_length));
+  ASSERT_EQ(dst, std::vector<int32_t>(4, 42));
+
+  std::fill(dst.begin(), dst.end(), 0);
+  ASSERT_OK(stream->Memcpy(dst.data(), d, byte_length));
+  ASSERT_EQ(dst, std::vector<int32_t>(4, 84));
 }
 
 TEST(CommandBufferThunkTest, UpdatePolicyIgnoresVaRemappedAllocations) {

@@ -221,6 +221,25 @@ class CommandBuffer {
       const Command* command,
       absl::AnyInvocable<absl::Status(CommandBuffer*)> update_fn) = 0;
 
+  // Creates a command by tracing `function` stream activity directly into
+  // this command buffer. In contrast to child commands created from a traced
+  // command buffer (see APIs above), no nested command buffer is created, and
+  // traced operations are recorded straight into the underlying graph.
+  //
+  // IMPORTANT: Commands created by this API can never be updated. It is only
+  // valid to use it when the traced operation parameters (e.g. device memory
+  // addresses) are guaranteed to stay the same for the lifetime of the
+  // command buffer.
+  //
+  // Returns an Unimplemented error if the platform does not support tracing
+  // into an existing command buffer.
+  virtual absl::StatusOr<const Command*> CreateTracedCommand(
+      Stream* stream, absl::Span<const Command* const> dependencies,
+      absl::AnyInvocable<absl::Status(Stream*)> function) {
+    return absl::UnimplementedError(
+        "Traced commands are not implemented for this command buffer.");
+  }
+
   // Creates a device-to-device memory copy.
   virtual absl::StatusOr<const Command*> CreateMemcpyD2D(
       DeviceAddressBase* dst, const DeviceAddressBase& src, uint64_t size,

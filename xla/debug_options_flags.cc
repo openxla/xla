@@ -151,7 +151,8 @@ void AbslStringify(Sink& sink, DebugOptions::CollectivePipeliningMode mode) {
 namespace {
 
 template <typename T>
-static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list, T value) {
+static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list,
+                                   T value) {
   for (auto it = list->begin(); it != list->end(); ++it) {
     if (*it == value) {
       return it;
@@ -165,7 +166,8 @@ template <typename T>
 static std::function<bool(const std::string&)> SetterForRepeatedEnum(
     absl::string_view flag_name, absl::string_view enum_prefix,
     std::function<bool(absl::string_view, T*)> enum_parser,
-    std::function<google::protobuf::RepeatedField<int>*()> mutable_array_getter) {
+    std::function<google::protobuf::RepeatedField<int>*()>
+        mutable_array_getter) {
   return [flag_name, enum_prefix, enum_parser,
           mutable_array_getter](absl::string_view input) {
     auto* mutable_array = mutable_array_getter();
@@ -3774,16 +3776,13 @@ FlagStatus GetFlagStatus(absl::string_view flag_name) {
           "xla_gpu_all_reduce_combine_threshold_bytes",
           "xla_gpu_autotune_level",
           "xla_gpu_collective_permute_decomposer_threshold",
-          "xla_gpu_cublas_fallback",
-          "xla_gpu_dot_merger_threshold_mb",
+          "xla_gpu_cublas_fallback", "xla_gpu_dot_merger_threshold_mb",
           "xla_gpu_enable_dynamic_slice_fusion",
           "xla_gpu_enable_latency_hiding_scheduler",
           "xla_gpu_enable_triton_gemm",
           "xla_gpu_enable_while_loop_double_buffering",
-          "xla_gpu_exhaustive_tiling_search",
-          "xla_gpu_pipeline_all_gather",
-          "xla_gpu_pipeline_all_reduce",
-          "xla_gpu_pipeline_reduce_scatter",
+          "xla_gpu_exhaustive_tiling_search", "xla_gpu_pipeline_all_gather",
+          "xla_gpu_pipeline_all_reduce", "xla_gpu_pipeline_reduce_scatter",
           "xla_gpu_reduce_scatter_combine_threshold_bytes",
           // go/keep-sorted end
       });

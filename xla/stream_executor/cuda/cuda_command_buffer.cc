@@ -768,6 +768,75 @@ absl::Status CudaCommandBuffer::Trace(
   return absl::OkStatus();
 }
 
+absl::StatusOr<std::vector<GraphNodeHandle>>
+CudaCommandBuffer::CreateTracedNodes(
+    Stream* stream, absl::Span<const GraphNodeHandle> dependencies,
+    absl::AnyInvocable<absl::Status(Stream*)> function) {
+  if (stream_exec_->GetDeviceDescription().driver_version() <
+      SemanticVersion{12, 3, 0}) {
+    return absl::UnimplementedError(
+        "StreamBeginCaptureToGraph is not implemented for CUDA below version "
+        "12.3. Therefore tracing nodes into an existing graph is not "
+        "supported.");
+  }
+
+  RETURN_IF_ERROR(CheckNotFinalized());
+
+  VLOG(5) << "Trace nodes into GPU command buffer graph " << graph_
+          << " on a stream: " << stream << "; deps(" << dependencies.size()
+          << "): " << FormatGraphNodeHandles(dependencies);
+
+  CudaStream* cuda_stream = static_cast<CudaStream*>(stream);
+  std::vector<CUgraphNode> deps = ToCudaGraphHandles(dependencies);
+
+  uint64_t start_nanos = tsl::Env::Default()->NowNanos();
+
+  std::vector<CUgraphNode> leaf_nodes;
+  {
+    ASSIGN_OR_RETURN(
+        CudaStream::CaptureHandle capture_handle,
+        cuda_stream->BeginCapture(graph_, deps.data(),
+                                  /*dependency_data=*/nullptr, deps.size(),
+                                  // See CudaCommandBuffer::Trace for why we
+                                  // use thread local capture mode.
+                                  CU_STREAM_CAPTURE_MODE_THREAD_LOCAL));
+    CudaStream* capture_stream =
+        static_cast<CudaStream*>(capture_handle.capturing_stream());
+    RETURN_IF_ERROR(function(capture_stream));
+
+    // Query the set of nodes that the next node captured on the stream would
+    // depend on: these are the leaf nodes of the traced region. The returned
+    // array is owned by the capture and must be copied before ending it.
+    CUstreamCaptureStatus capture_status;
+    const CUgraphNode* capture_deps = nullptr;
+    size_t num_capture_deps = 0;
+    RETURN_IF_ERROR(cuda::ToStatus(
+        cuStreamGetCaptureInfo(capture_stream->stream_handle(), &capture_status,
+                               /*id_out=*/nullptr, /*graph_out=*/nullptr,
+                               &capture_deps, &num_capture_deps),
+        "Failed to get capture info for a traced region"));
+    leaf_nodes.assign(capture_deps, capture_deps + num_capture_deps);
+
+    VLOG(5) << "End stream " << capture_stream << " capture";
+    RETURN_IF_ERROR(capture_handle.EndCapture());
+  }
+
+  uint64_t end_nanos = tsl::Env::Default()->NowNanos();
+  VLOG(5) << "Traced nodes into the GPU command buffer graph " << graph_
+          << " (took " << (end_nanos - start_nanos) / 1000 << " μs)";
+
+  // Note: if the traced function did not capture any nodes, `leaf_nodes`
+  // holds the initial dependencies (the capture info returns the nodes that
+  // the next captured node would depend on), which keeps follow-up commands
+  // correctly ordered.
+  std::vector<GraphNodeHandle> leaf_node_handles;
+  leaf_node_handles.reserve(leaf_nodes.size());
+  for (CUgraphNode leaf_node : leaf_nodes) {
+    leaf_node_handles.push_back(FromCudaGraphHandle(leaf_node));
+  }
+  return leaf_node_handles;
+}
+
 absl::Status CudaCommandBuffer::LaunchGraph(Stream* stream) {
   VLOG(3) << "Launch command buffer executable graph " << graph_exec()
           << " on a stream: " << stream;

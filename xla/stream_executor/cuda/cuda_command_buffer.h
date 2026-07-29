@@ -166,6 +166,10 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
       Stream* stream,
       absl::AnyInvocable<absl::Status(Stream* stream)> function) override;
 
+  absl::StatusOr<std::vector<GraphNodeHandle>> CreateTracedNodes(
+      Stream* stream, absl::Span<const GraphNodeHandle> dependencies,
+      absl::AnyInvocable<absl::Status(Stream*)> function) override;
+
   absl::Status LaunchGraph(Stream* stream) override;
 
   absl::StatusOr<size_t> GetNodeCount() const override;
