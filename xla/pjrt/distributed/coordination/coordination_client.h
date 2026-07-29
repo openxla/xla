@@ -16,9 +16,11 @@ limitations under the License.
 #ifndef XLA_PJRT_DISTRIBUTED_COORDINATION_COORDINATION_CLIENT_H_
 #define XLA_PJRT_DISTRIBUTED_COORDINATION_COORDINATION_CLIENT_H_
 
+#include <functional>
 #include <memory>
 #include <string>
 
+#include "absl/status/status.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/tsl/distributed_runtime/call_options.h"
 #include "xla/tsl/platform/status.h"
@@ -126,7 +128,8 @@ class CoordinationClient {
 
   virtual void ReportErrorToServiceAsync(
       const ReportErrorToServiceRequest* request,
-      ReportErrorToServiceResponse* response, tsl::StatusCallback done) = 0;
+      ReportErrorToServiceResponse* response,
+      std::function<void(const absl::Status&)> done) = 0;
 };
 
 }  // namespace xla

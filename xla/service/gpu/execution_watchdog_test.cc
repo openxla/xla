@@ -31,7 +31,6 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/tsl/platform/status_macros.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {

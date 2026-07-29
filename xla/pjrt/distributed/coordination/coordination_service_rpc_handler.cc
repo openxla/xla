@@ -339,7 +339,7 @@ void CoordinationServiceRpcHandler::PollForErrorAsync(
 void CoordinationServiceRpcHandler::ReportErrorToServiceAsync(
     const xla::coordination::ReportErrorToServiceRequest* request,
     xla::coordination::ReportErrorToServiceResponse* response,
-    tsl::StatusCallback done) {
+    std::function<void(const absl::Status&)> done) {
   absl::ReaderMutexLock l(mu_);
   if (absl::Status s = ValidateRequest(request, service_); !s.ok()) {
     done(s);

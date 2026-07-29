@@ -131,7 +131,8 @@ class TestCoordinationClient : public CoordinationClient {
               (override));
   MOCK_METHOD(void, ReportErrorToServiceAsync,
               (const ReportErrorToServiceRequest*,
-               ReportErrorToServiceResponse*, tsl::StatusCallback),
+               ReportErrorToServiceResponse*,
+               std::function<void(const absl::Status&)>),
               (override));
 };
 

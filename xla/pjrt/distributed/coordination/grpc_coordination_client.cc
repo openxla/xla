@@ -261,7 +261,7 @@ class GrpcCoordinationClient : public CoordinationClient {
   void ReportErrorToServiceAsync(
       const ReportErrorToServiceRequest* request,
       ReportErrorToServiceResponse* response,
-      tsl::StatusCallback done) override {
+      std::function<void(const absl::Status&)> done) override {
     new tsl::RPCState<tsl::protobuf::Message>(
         &stub_, cq_,
         "/xla.coordination.CoordinationService/ReportErrorToService", *request,
