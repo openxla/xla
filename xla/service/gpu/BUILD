@@ -1816,6 +1816,7 @@ cc_library(
         "//xla/backends/gpu/transforms:estimate_cub_scan_scratch_size",
         "//xla/backends/gpu/transforms:estimate_cub_sort_scratch_size",
         "//xla/backends/gpu/transforms:explicit_collectives_group_async_wrapper",
+        "//xla/backends/gpu/transforms:group_collectives_by_key",
         "//xla/backends/gpu/transforms:explicit_stream_annotation_async_wrapper",
         "//xla/backends/gpu/transforms:fusion_block_level_rewriter",
         "//xla/backends/gpu/transforms:fusion_wrapper",
