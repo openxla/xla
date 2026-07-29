@@ -1915,7 +1915,8 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetSharedStreamExecutorGpuClient(
       VLOG(2) << "  pjrt_device " << i++ << ":"
               << pjrt_device->description().DebugString();
     } else {
-      VLOG(2) << "  pjrt_device " << i++ << ":" << "nullptr";
+      VLOG(2) << "  pjrt_device " << i++ << ":"
+              << "nullptr";
     }
   }
   ASSIGN_OR_RETURN(auto gpu_topology,
