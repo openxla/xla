@@ -28,8 +28,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "xla/tsl/platform/status_macros.h"
-#include "third_party/gpus/cuda/include/cuda.h"
 #include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/Analysis/CGSCCPassManager.h"
 #include "llvm/Analysis/LazyCallGraph.h"
@@ -58,6 +56,9 @@ limitations under the License.
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/Internalize.h"
 #include "llvm/Transforms/Scalar.h"
+#include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #include "xla/service/gpu/llvm_gpu_backend/load_ir_module.h"
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
@@ -70,10 +71,9 @@ limitations under the License.
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu::nvptx {
 
@@ -215,9 +215,10 @@ std::vector<std::string> GetNVPTXBackendOptions(
   // better cost model.
   backend_llvm_opts.emplace_back("-bonus-inst-threshold=2");
 
-  // Use div.full -- it matters for some float-division heavy benchmarks.
-  // Using div.approx produces incorrect result for float32(max)/float32(max).
-  backend_llvm_opts.emplace_back("-nvptx-prec-divf32=1");
+  // Use IEEE-compliant div.rnd. Previously used div.full (value 1) which has
+  // up to 2 ULP error and violates IEEE 754 (e.g., a/a != 1.0).
+  // LLVM already defaults to IEEE754 mode; don't override it.
+  backend_llvm_opts.emplace_back("-nvptx-prec-divf32=2");
 
   // SLPVectorizer is useful (vectorizes f16x2 ops) but slow.  Most of the
   // slowness appears to be in trying to form horizontal reductions, which don't
