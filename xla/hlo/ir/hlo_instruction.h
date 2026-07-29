@@ -2513,6 +2513,9 @@ class HloInstruction {
   // Delagates to HloAsyncInstruction::async_chain_start().
   HloInstruction* async_chain_start() const;
 
+  // Delagates to HloAsyncInstruction::async_chain_next().
+  HloInstruction* async_chain_next() const;
+
   // Delagates to HloAsyncInstruction::async_done().
   HloInstruction* async_chain_done() const;
 

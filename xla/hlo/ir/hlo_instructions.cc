@@ -585,6 +585,64 @@ HloAsyncStartInstruction::CloneWithNewOperandsAndComputation(
                                   context);
 }
 
+HloAsyncUpdateInstruction::HloAsyncUpdateInstruction(
+    const Shape& shape, absl::Span<HloInstruction* const> operands)
+    : HloAsyncInstruction(
+          HloOpcode::kAsyncUpdate, shape, operands,
+          Cast<HloAsyncInstruction>(operands.at(0))->async_wrapped_opcode()) {}
+
+void HloAsyncUpdateInstruction::ToProto(HloInstructionProto* proto) const {
+  HloInstruction::ToProto(proto);
+  for (const auto& pair : output_to_operand_aliasing()) {
+    auto aliasing = proto->add_output_operand_aliasing();
+    aliasing->set_operand_index(pair.second.first);
+    for (int64_t index : pair.first) {
+      aliasing->add_output_shape_index(index);
+    }
+    for (int64_t index : pair.second.second) {
+      aliasing->add_operand_shape_index(index);
+    }
+  }
+}
+
+void HloAsyncUpdateInstruction::PrintExtraAttributesImpl(
+    AttributePrinter& printer, const HloPrintOptions& options) const {
+  if (!output_to_operand_aliasing().empty()) {
+    printer.Next([this](Printer* printer) {
+      printer->Append("output_to_operand_aliasing={");
+      AppendJoin(printer, output_to_operand_aliasing(), ", ",
+                 [](Printer* printer, auto& pair) {
+                   AppendCat(printer, pair.first.ToString(), ": (",
+                             pair.second.first, ", ");
+                   AppendCat(printer, pair.second.second.ToString(), ")");
+                 });
+      printer->Append("}");
+    });
+  }
+}
+
+bool HloAsyncUpdateInstruction::IdenticalSlowPath(
+    const HloInstruction& other,
+    absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
+        eq_computations) const {
+  const auto& casted_other =
+      static_cast<const HloAsyncUpdateInstruction&>(other);
+  return HloAsyncInstruction::opcode() == other.opcode() &&
+         output_to_operand_aliasing() ==
+             casted_other.output_to_operand_aliasing();
+}
+
+std::unique_ptr<HloInstruction>
+HloAsyncUpdateInstruction::CloneWithNewOperandsImpl(
+    const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+    HloCloneContext* context) const {
+  auto cloned =
+      std::make_unique<HloAsyncUpdateInstruction>(shape, new_operands);
+  cloned->HloAliasible::set_output_to_operand_aliasing(
+      output_to_operand_aliasing());
+  return cloned;
+}
+
 HloCopyStartInstruction::HloCopyStartInstruction(
     const Shape& shape, HloInstruction* operand,
     std::optional<int> cross_program_prefetch_index)
