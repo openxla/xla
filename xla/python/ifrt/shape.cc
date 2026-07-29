@@ -57,12 +57,31 @@ absl::StatusOr<Shape> Shape::FromProto(const ShapeProto& proto) {
 
   Shape::Dimensions dims;
   dims.reserve(proto.dims_size());
+  // Detects a dimension product that overflows int64_t. xla::ShapeUtil (the
+  // core XLA Shape type, a separate class from this one) already validates
+  // this via ValidateDimensions/OverflowSafeMultiply; this class has its own
+  // FromProto reachable independently (e.g. via ifrt_proxy's deserialized
+  // RPC request protos) and needs the equivalent check, since num_elements()
+  // below does not detect overflow itself -- an unchecked product silently
+  // wraps to a small value that undersizes any buffer computed from it.
+  int64_t product = 1;
+  bool overflow = false;
   for (int64_t dim : proto.dims()) {
     if (dim < 0) {
       return InvalidArgument(
           "Shape expects non-negative dimension sizes, but got %d", dim);
     }
+    int64_t new_product;
+    if (__builtin_mul_overflow(product, dim, &new_product)) {
+      overflow = true;
+    } else {
+      product = new_product;
+    }
     dims.push_back(dim);
+  }
+  if (overflow) {
+    return InvalidArgument(
+        "Shape dimensions overflow int64_t when multiplied together");
   }
   return Shape(std::move(dims));
 }
