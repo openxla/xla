@@ -1613,9 +1613,13 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   gpu_executable_run_options->set_gpu_global_device_ids(
       std::move(gpu_device_ids));
 
-  auto* gpu_collectives = gpu_executable_run_options->collectives();
+  ASSIGN_OR_RETURN(xla::Collectives * collectives,
+                   xla::CollectivesRegistry::Default("gpu"));
+  xla::gpu::GpuCollectives* gpu_collectives =
+      absl::down_cast<xla::gpu::GpuCollectives*>(collectives);
+
   if (gpu_collectives == nullptr) {
-    gpu_collectives = gpu::GpuCollectives::Resolve(platform_name);
+    return absl::InternalError("Failed to get GPU collectives");
   }
 
   size_t num_processes = global_topology.processes().size();
@@ -1911,8 +1915,7 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetSharedStreamExecutorGpuClient(
       VLOG(2) << "  pjrt_device " << i++ << ":"
               << pjrt_device->description().DebugString();
     } else {
-      VLOG(2) << "  pjrt_device " << i++ << ":"
-              << "nullptr";
+      VLOG(2) << "  pjrt_device " << i++ << ":" << "nullptr";
     }
   }
   ASSIGN_OR_RETURN(auto gpu_topology,
