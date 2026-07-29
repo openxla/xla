@@ -100,12 +100,17 @@ TEST_F(GpuIndexTest, CompatibleUseLinearIndexWithReshapeAndBroadcast) {
   // the addrspace(1) attribute for the lines being checked by the following
   // patterns.
   // need to investigate why that is the case, and whether or not it is ok
+  // The GEP that consumes idx1 is emitted differently per backend:
+  //   - CUDA (NVPTX):    getelementptr ... ptr addrspace(1) ...
+  //   - ROCm (AMDGPU):   getelementptr ... ptr ...   (no addrspace(1))
+  //   - oneAPI (SPIR-V): the GEP lowers to a @llvm.spv.gep intrinsic call.
+  // MakePlatformSpecificLlvm substitutes LINEAR_GEP_IDX1 with the right form.
   EXPECT_OK(CompileAndVerifyIr(std::move(module),
-                               R"(
+                               MakePlatformSpecificLlvm(R"(
 ; CHECK: %[[urem1:.*]] = urem i{{[0-9]*}} %[[linear_index:.*]], 14
 ; CHECK: %[[idx1:.*]] = zext nneg i{{[0-9]*}} %[[urem1]] to i64
-; CHECK: getelementptr inbounds{{( nuw)?}} [4 x i8], ptr{{( addrspace\(1\))?}} %[[alloc:.*]], i64 %[[idx1]]
-      )",
+; CHECK: LINEAR_GEP_IDX1
+      )"),
                                /*match_optimized_ir=*/true));
 }
 
