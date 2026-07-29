@@ -273,6 +273,106 @@ TEST(CudaCommandBufferTest, TraceDisallowsForbiddenOpsOnCaptureStream) {
           CommandBuffer::Mode::kPrimary));
 }
 
+TEST(CudaCommandBufferTest, CreateTracedCommandTracesIntoParentGraph) {
+  Platform* platform = CudaPlatform();
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  if (executor->GetDeviceDescription().driver_version() <
+      SemanticVersion{12, 3, 0}) {
+    GTEST_SKIP() << "Tracing into an existing graph is not supported";
+  }
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
+                          executor->CreateStream());
+
+  constexpr int64_t kLength = 4;
+  constexpr int64_t kByteLength = sizeof(uint32_t) * kLength;
+
+  DeviceAddress<uint32_t> a = executor->AllocateArray<uint32_t>(kLength);
+  DeviceAddress<uint32_t> b = executor->AllocateArray<uint32_t>(kLength);
+  DeviceAddress<uint32_t> c = executor->AllocateArray<uint32_t>(kLength);
+  ASSERT_OK(stream->MemZero(&a, kByteLength));
+  ASSERT_OK(stream->MemZero(&b, kByteLength));
+  ASSERT_OK(stream->MemZero(&c, kByteLength));
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommandBuffer> cmd_buffer,
+                       executor->CreateCommandBuffer(primary));
+
+  // a = 42
+  ASSERT_OK_AND_ASSIGN(const CommandBuffer::Command* memset_cmd,
+                       cmd_buffer->CreateMemset(&a, uint32_t{42}, kLength, {}));
+
+  // Trace b = a directly into the parent command buffer.
+  ASSERT_OK_AND_ASSIGN(
+      const CommandBuffer::Command* traced_cmd,
+      cmd_buffer->CreateTracedCommand(
+          stream.get(), {memset_cmd}, [&](Stream* capture_stream) {
+            return capture_stream->Memcpy(&b, a, kByteLength);
+          }));
+  ASSERT_NE(traced_cmd, nullptr);
+
+  // c = b
+  ASSERT_OK_AND_ASSIGN(
+      const CommandBuffer::Command* memcpy_cmd,
+      cmd_buffer->CreateMemcpyD2D(&c, b, kByteLength, {traced_cmd}));
+  ASSERT_NE(memcpy_cmd, nullptr);
+
+  ASSERT_OK(cmd_buffer->Finalize());
+  ASSERT_OK(cmd_buffer->Submit(stream.get()));
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::vector<uint32_t> dst(kLength, 0);
+  ASSERT_OK(stream->Memcpy(dst.data(), c, kByteLength));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_THAT(dst, Each(42u));
+}
+
+TEST(CudaCommandBufferTest, CreateTracedCommandWithEmptyTraceIsNoOp) {
+  Platform* platform = CudaPlatform();
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  if (executor->GetDeviceDescription().driver_version() <
+      SemanticVersion{12, 3, 0}) {
+    GTEST_SKIP() << "Tracing into an existing graph is not supported";
+  }
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
+                          executor->CreateStream());
+
+  constexpr int64_t kLength = 4;
+  constexpr int64_t kByteLength = sizeof(uint32_t) * kLength;
+
+  DeviceAddress<uint32_t> a = executor->AllocateArray<uint32_t>(kLength);
+  ASSERT_OK(stream->MemZero(&a, kByteLength));
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommandBuffer> cmd_buffer,
+                       executor->CreateCommandBuffer(primary));
+
+  // A traced command that does not capture any device work is a valid no-op.
+  ASSERT_OK_AND_ASSIGN(
+      const CommandBuffer::Command* traced_cmd,
+      cmd_buffer->CreateTracedCommand(
+          stream.get(), {}, [](Stream*) { return absl::OkStatus(); }));
+  ASSERT_NE(traced_cmd, nullptr);
+
+  // Follow-up commands can depend on the no-op traced command.
+  ASSERT_OK_AND_ASSIGN(
+      const CommandBuffer::Command* memset_cmd,
+      cmd_buffer->CreateMemset(&a, uint32_t{42}, kLength, {traced_cmd}));
+  ASSERT_NE(memset_cmd, nullptr);
+
+  ASSERT_OK(cmd_buffer->Finalize());
+  ASSERT_OK(cmd_buffer->Submit(stream.get()));
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  std::vector<uint32_t> dst(kLength, 0);
+  ASSERT_OK(stream->Memcpy(dst.data(), a, kByteLength));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_THAT(dst, Each(42u));
+}
+
 TEST(CudaCommandBufferTest, LaunchClusterKernelWithClusterDimsSucceeds) {
   Platform* platform = CudaPlatform();
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,

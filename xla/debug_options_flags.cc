@@ -151,7 +151,8 @@ void AbslStringify(Sink& sink, DebugOptions::CollectivePipeliningMode mode) {
 namespace {
 
 template <typename T>
-static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list, T value) {
+static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list,
+                                   T value) {
   for (auto it = list->begin(); it != list->end(); ++it) {
     if (*it == value) {
       return it;
@@ -165,7 +166,8 @@ template <typename T>
 static std::function<bool(const std::string&)> SetterForRepeatedEnum(
     absl::string_view flag_name, absl::string_view enum_prefix,
     std::function<bool(absl::string_view, T*)> enum_parser,
-    std::function<google::protobuf::RepeatedField<int>*()> mutable_array_getter) {
+    std::function<google::protobuf::RepeatedField<int>*()>
+        mutable_array_getter) {
   return [flag_name, enum_prefix, enum_parser,
           mutable_array_getter](absl::string_view input) {
     auto* mutable_array = mutable_array_getter();
@@ -312,6 +314,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_command_buffer_scheduling_mode(DebugOptions::LHS);
   opts.set_xla_gpu_command_buffer_unroll_loops(false);
   opts.set_xla_cmd_buffer_trace_cache_size(16);
+  opts.set_xla_gpu_command_buffer_inline_traced_commands(true);
 
   // Despite the name, fast min/max on GPUs does not seem to be any faster, and
   // adds very counter-intuitive "NaN-swallowing" behavior.
@@ -2184,6 +2187,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Set the command buffer trace cache size, increasing the cache size may "
       "sometimes reduces the chances of doing command buffer tracing for "
       "updating command buffer instance."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_command_buffer_inline_traced_commands",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_command_buffer_inline_traced_commands),
+      debug_options->xla_gpu_command_buffer_inline_traced_commands(),
+      "If true, traced commands whose buffer allocations all have stable "
+      "(persistent) addresses are traced directly into the parent command "
+      "buffer instead of being recorded as child nodes backed by nested "
+      "command buffers."));
   flag_list->push_back(
       tsl::Flag("xla_dump_disable_metadata",
                 bool_setter_for(&DebugOptions::set_xla_dump_disable_metadata),
@@ -3774,16 +3786,13 @@ FlagStatus GetFlagStatus(absl::string_view flag_name) {
           "xla_gpu_all_reduce_combine_threshold_bytes",
           "xla_gpu_autotune_level",
           "xla_gpu_collective_permute_decomposer_threshold",
-          "xla_gpu_cublas_fallback",
-          "xla_gpu_dot_merger_threshold_mb",
+          "xla_gpu_cublas_fallback", "xla_gpu_dot_merger_threshold_mb",
           "xla_gpu_enable_dynamic_slice_fusion",
           "xla_gpu_enable_latency_hiding_scheduler",
           "xla_gpu_enable_triton_gemm",
           "xla_gpu_enable_while_loop_double_buffering",
-          "xla_gpu_exhaustive_tiling_search",
-          "xla_gpu_pipeline_all_gather",
-          "xla_gpu_pipeline_all_reduce",
-          "xla_gpu_pipeline_reduce_scatter",
+          "xla_gpu_exhaustive_tiling_search", "xla_gpu_pipeline_all_gather",
+          "xla_gpu_pipeline_all_reduce", "xla_gpu_pipeline_reduce_scatter",
           "xla_gpu_reduce_scatter_combine_threshold_bytes",
           // go/keep-sorted end
       });

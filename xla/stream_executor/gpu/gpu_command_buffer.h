@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
@@ -108,6 +109,18 @@ class GpuCommandBuffer : public CommandBuffer {
     GraphConditionalNodeHandle conditional_node;
   };
 
+  // A GPU command recorded by tracing stream activity directly into the
+  // underlying graph. A traced region can produce an arbitrary subgraph, so
+  // the command keeps all leaf nodes of the traced region, and follow-up
+  // commands depend on all of them. Traced commands can never be updated.
+  struct GpuTracedCommand : public CommandBuffer::Command {
+    explicit GpuTracedCommand(std::vector<GraphNodeHandle> leaf_nodes)
+        : leaf_nodes(std::move(leaf_nodes)) {}
+
+    // Leaf nodes of the traced region in the gpu graph.
+    std::vector<GraphNodeHandle> leaf_nodes;
+  };
+
   // A child GPU command constructed from a `cb` command buffer. We use this
   // type of command only for `ChildGraphOwnership::kMoved`, so that we can
   // do efficient child command updates by recording command updates into `cb`.
@@ -155,6 +168,10 @@ class GpuCommandBuffer : public CommandBuffer {
   absl::Status UpdateChildCommand(
       const Command* command,
       absl::AnyInvocable<absl::Status(CommandBuffer*)> update_fn) override;
+
+  absl::StatusOr<const Command*> CreateTracedCommand(
+      Stream* stream, absl::Span<const Command* const> dependencies,
+      absl::AnyInvocable<absl::Status(Stream*)> function) override;
 
   absl::StatusOr<const Command*> CreateMemcpyD2D(
       DeviceAddressBase* dst, const DeviceAddressBase& src, uint64_t size,
@@ -375,6 +392,18 @@ class GpuCommandBuffer : public CommandBuffer {
   // buffer. Updated command buffer must have compatible graph structure.
   virtual absl::Status UpdateClonedChildNode(GraphNodeHandle node_handle,
                                              const CommandBuffer& nested) = 0;
+
+  // Adds new nodes to the underlying graph by tracing `function` stream
+  // activity directly into it. Returns the leaf nodes of the traced region,
+  // so that they can be used as dependencies for follow-up commands. Returns
+  // an empty vector if the traced function did not capture any nodes. Traced
+  // nodes can never be updated.
+  virtual absl::StatusOr<std::vector<GraphNodeHandle>> CreateTracedNodes(
+      Stream* stream, absl::Span<const GraphNodeHandle> dependencies,
+      absl::AnyInvocable<absl::Status(Stream*)> function) {
+    return absl::UnimplementedError(
+        "Tracing into an existing graph is not implemented");
+  }
 
   // Adds a new kernel launch node to the graph.
   virtual absl::StatusOr<GraphNodeHandle> CreateKernelNode(
