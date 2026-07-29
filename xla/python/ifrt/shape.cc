@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "xla/overflow_util.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/python/ifrt/serdes_version.h"
 #include "xla/python/ifrt/shape.pb.h"
@@ -57,9 +58,9 @@ absl::StatusOr<Shape> Shape::FromProto(const ShapeProto& proto) {
 
   Shape::Dimensions dims;
   dims.reserve(proto.dims_size());
-  // Detects a dimension product that overflows int64_t. xla::ShapeUtil (the
-  // core XLA Shape type, a separate class from this one) already validates
-  // this via ValidateDimensions/OverflowSafeMultiply; this class has its own
+  // Detects a dimension product that overflows int64_t, reusing the same
+  // OverflowSafeMultiply utility that xla::ShapeUtil::ValidateDimensions
+  // already uses for the core XLA Shape type. This class has its own
   // FromProto reachable independently (e.g. via ifrt_proxy's deserialized
   // RPC request protos) and needs the equivalent check, since num_elements()
   // below does not detect overflow itself -- an unchecked product silently
@@ -71,12 +72,10 @@ absl::StatusOr<Shape> Shape::FromProto(const ShapeProto& proto) {
       return InvalidArgument(
           "Shape expects non-negative dimension sizes, but got %d", dim);
     }
-    int64_t new_product;
-    if (__builtin_mul_overflow(product, dim, &new_product)) {
-      overflow = true;
-    } else {
-      product = new_product;
-    }
+    const auto [new_product, this_overflowed] =
+        OverflowSafeMultiply(product, dim);
+    product = new_product;
+    overflow |= this_overflowed;
     dims.push_back(dim);
   }
   if (overflow) {
