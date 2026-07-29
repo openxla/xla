@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/ragged_all_to_all.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/runtime/traced_command.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
@@ -656,25 +657,38 @@ absl::StatusOr<const se::CommandBuffer::Command*> RaggedAllToAllThunk::Record(
       ConvertToDeviceBuffers(execute_params.buffer_allocations, buffers(),
                              config_.config.operand_element_type));
 
+  auto trace = [&](se::Stream* stream) -> absl::Status {
+    ASSIGN_OR_RETURN(std::shared_ptr<std::vector<RaggedAllToAllRendezvousValue>>
+                         participants,
+                     RendezvousRaggedAllToAllBuffers(
+                         device_ordinal, rank, clique_key, device_buffers,
+                         cmd_state->barrier_signal_buffer.cref()));
+
+    return RunOneShotRaggedAllToAll(
+        clique_key, *stream, rank, cmd_state->barrier_signal_buffer.cref(),
+        cmd_state->barrier_signal_value.cref(), config_.num_total_updates,
+        config_.num_input_rows, config_.num_row_elements, device_buffers,
+        *participants);
+  };
+
+  // If the command uses only persistent buffer allocations, trace it directly
+  // into the parent command buffer: it will never need an update (this is
+  // symmetric across ranks because the persistent allocation set is derived
+  // from the compiled executable, which is the same on all ranks; the barrier
+  // buffers allocated above are stable for the lifetime of the command
+  // buffer by construction).
+  ASSIGN_OR_RETURN(
+      std::optional<const se::CommandBuffer::Command*> inlined_cmd,
+      TryRecordInlinedTracedCommand(*this, execute_params, record_params,
+                                    record_action, command_buffer, trace));
+  if (inlined_cmd.has_value()) {
+    return *inlined_cmd;
+  }
+
   ASSIGN_OR_RETURN(
       std::unique_ptr<se::CommandBuffer> nested_cmd,
       se::TraceCommandBufferFactory::Create(
-          executor, execute_params.command_buffer_trace_stream,
-          [&](se::Stream* stream) -> absl::Status {
-            ASSIGN_OR_RETURN(
-                std::shared_ptr<std::vector<RaggedAllToAllRendezvousValue>>
-                    participants,
-                RendezvousRaggedAllToAllBuffers(
-                    device_ordinal, rank, clique_key, device_buffers,
-                    cmd_state->barrier_signal_buffer.cref()));
-
-            return RunOneShotRaggedAllToAll(
-                clique_key, *stream, rank,
-                cmd_state->barrier_signal_buffer.cref(),
-                cmd_state->barrier_signal_value.cref(),
-                config_.num_total_updates, config_.num_input_rows,
-                config_.num_row_elements, device_buffers, *participants);
-          }));
+          executor, execute_params.command_buffer_trace_stream, trace));
 
   if (priority() != se::StreamPriority::Default) {
     RETURN_IF_ERROR(nested_cmd->SetPriority(priority()));

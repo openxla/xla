@@ -1640,6 +1640,13 @@ message DebugOptions {
   // updating command buffer instance.
   optional int64 xla_cmd_buffer_trace_cache_size = 311;
 
+  // If true, traced commands whose buffer allocations all have stable
+  // (persistent) addresses are traced directly into the parent command buffer
+  // instead of being recorded as child nodes backed by nested command
+  // buffers. Such commands never require an update, so the child node
+  // indirection and the trace cache are unnecessary for them.
+  optional bool xla_gpu_command_buffer_inline_traced_commands = 526;
+
   // This flag is used for controlling HLO dumping and NVTX marker. If turned
   // on, both HLO dumping and NVTX marker will use syntactic sugar wrappers
   // as op names, while the actual op names will be shown if turned off.
@@ -1756,7 +1763,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 526
+  // Next id: 527
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

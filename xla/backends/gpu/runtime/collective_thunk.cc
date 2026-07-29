@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_thunk.pb.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/traced_command.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/debug_options_flags.h"
@@ -406,6 +407,25 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 absl::StatusOr<const se::CommandBuffer::Command*> CollectiveThunk::Record(
     const ExecuteParams& execute_params, const RecordParams& record_params,
     RecordAction record_action, se::CommandBuffer* command_buffer) {
+  // If the collective uses only persistent buffer allocations, trace it
+  // directly into the parent command buffer: it will never need an update
+  // (this is symmetric across ranks because the persistent allocation set is
+  // derived from the compiled executable, which is the same on all ranks).
+  ASSIGN_OR_RETURN(std::optional<const se::CommandBuffer::Command*> inlined_cmd,
+                   TryRecordInlinedTracedCommand(
+                       *this, execute_params, record_params, record_action,
+                       command_buffer, [&](se::Stream* stream) {
+                         return RunWithCommAndRendezvous(
+                             execute_params, [&](const GpuCliqueKey& clique_key,
+                                                 Communicator& comm) {
+                               return RunCollective(execute_params, clique_key,
+                                                    *stream, comm);
+                             });
+                       }));
+  if (inlined_cmd.has_value()) {
+    return *inlined_cmd;
+  }
+
   std::unique_ptr<se::CommandBuffer> nested_cmd;
   RETURN_IF_ERROR(RunWithCommAndRendezvous(
       execute_params,

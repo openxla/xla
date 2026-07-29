@@ -119,6 +119,10 @@ GpuCommandBuffer::ToGraphNodeDependencies(
       handles.push_back(gpu_command->conditional_node.handle);
     } else if (auto* gpu_command = dynamic_cast<const GpuChildCommand*>(dep)) {
       handles.push_back(gpu_command->handle);
+    } else if (auto* gpu_command = dynamic_cast<const GpuTracedCommand*>(dep)) {
+      for (GraphNodeHandle leaf_node : gpu_command->leaf_nodes) {
+        handles.push_back(leaf_node);
+      }
     } else {
       LOG(FATAL) << "Unsupported command type";  // Crash OK
     }
@@ -267,6 +271,34 @@ absl::Status GpuCommandBuffer::UpdateChildCommand(
   RETURN_IF_ERROR(child_command_buffer->Update());
   RETURN_IF_ERROR(update_fn(child_command_buffer));
   return child_command_buffer->Finalize();
+}
+
+absl::StatusOr<const CommandBuffer::Command*>
+GpuCommandBuffer::CreateTracedCommand(
+    Stream* stream, absl::Span<const Command* const> dependencies,
+    absl::AnyInvocable<absl::Status(Stream*)> function) {
+  RETURN_IF_ERROR(CheckInState(State::kCreate));
+  std::vector<GraphNodeHandle> dependency_handles =
+      ToGraphNodeDependencies(dependencies);
+  ASSIGN_OR_RETURN(
+      std::vector<GraphNodeHandle> leaf_nodes,
+      CreateTracedNodes(stream, dependency_handles, std::move(function)));
+
+  // If the traced function did not capture any nodes, the command inherits
+  // the dependencies as its leaf nodes so that follow-up commands are still
+  // ordered after them. If there are no dependencies either, add an explicit
+  // empty node: a command buffer that contains no nodes at all crashes at
+  // graph instantiation time.
+  if (leaf_nodes.empty()) {
+    if (!dependency_handles.empty()) {
+      leaf_nodes = std::move(dependency_handles);
+    } else {
+      ASSIGN_OR_RETURN(GraphNodeHandle empty_node, CreateEmptyNode({}));
+      leaf_nodes.push_back(empty_node);
+    }
+  }
+
+  return AppendCommand(GpuTracedCommand{std::move(leaf_nodes)});
 }
 
 absl::StatusOr<const CommandBuffer::Command*> GpuCommandBuffer::CreateMemcpyD2D(

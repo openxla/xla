@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_TRACED_COMMAND_H_
 #define XLA_BACKENDS_GPU_RUNTIME_TRACED_COMMAND_H_
 
+#include <optional>
+
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -25,6 +27,44 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 
 namespace xla::gpu {
+
+//===----------------------------------------------------------------------===//
+// Inlined traced commands
+//===----------------------------------------------------------------------===//
+
+// Returns true if `command` can be traced directly into the parent command
+// buffer instead of being recorded as a child node backed by a nested command
+// buffer. This is the case only when the command is guaranteed to never
+// require an update: every buffer allocation used by the command is
+// persistent (its command-buffer-visible address never changes) and command
+// parameters can't change for any other reason. The inline lowering can be
+// disabled with the --xla_gpu_command_buffer_inline_traced_commands flag
+// (enabled by default).
+bool ShouldInlineTracedCommand(const Command& command,
+                               const Thunk::ExecuteParams& execute_params);
+
+// Tries to record a traced region produced by the `trace` function directly
+// into the parent command buffer (without a child node and a nested command
+// buffer). Returns:
+//  - the recorded command on success: on create the region is traced inline
+//    and the command is marked as inlined; on update of a previously inlined
+//    command the update is validated to be a no-op,
+//  - std::nullopt if the caller must record with its own child node recording
+//    path: the command is not eligible for inlining, the platform does not
+//    support tracing into an existing command buffer, or the command was not
+//    previously inlined.
+//
+// Commands recorded by this function can never be updated, see
+// `ShouldInlineTracedCommand` above. The traced region is always recorded at
+// default priority: the command's priority setting is not propagated to the
+// captured nodes.
+absl::StatusOr<std::optional<const se::CommandBuffer::Command*>>
+TryRecordInlinedTracedCommand(
+    Command& command, const Thunk::ExecuteParams& execute_params,
+    const Command::RecordParams& record_params,
+    const Command::RecordAction& record_action,
+    se::CommandBuffer* command_buffer,
+    absl::FunctionRef<absl::Status(se::Stream*)> trace);
 
 //===----------------------------------------------------------------------===//
 // TracedCommand
@@ -52,6 +92,12 @@ class TracedCommand : public Command {
   // Creates a command buffer by calling a user-provided `trace` function and
   // adds it as a nested command to `command_buffer`. Traced command buffers
   // cached and reused in an instance of `TracedCommandBuffer` kept in `state`.
+  //
+  // If the command is guaranteed to never require an update (all buffer
+  // allocations used by the command have stable addresses, see
+  // `ShouldInlineTracedCommand` above), the `trace` function is instead traced
+  // directly into `command_buffer`, without a child node and a nested command
+  // buffer.
   absl::StatusOr<const se::CommandBuffer::Command*> RecordTracedCommand(
       const Thunk::ExecuteParams& execute_params,
       const RecordParams& record_params, RecordAction record_action,

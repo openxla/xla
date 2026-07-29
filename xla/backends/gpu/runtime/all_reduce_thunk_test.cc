@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/runtime/traced_command.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
@@ -92,6 +93,17 @@ static bool IsAtLeastCuda12900(const se::StreamExecutor* executor) {
   }
   return std::min(desc.driver_version(), desc.compile_time_toolkit_version()) >=
          se::SemanticVersion(12, 9, 0);
+}
+
+// Tracing directly into an existing graph requires CUDA 12.3+.
+static bool IsAtLeastCuda12300(const se::StreamExecutor* executor) {
+  const auto& desc = executor->GetDeviceDescription();
+  const auto* cuda_cc = desc.gpu_compute_capability().cuda_compute_capability();
+  if (cuda_cc == nullptr) {
+    return false;
+  }
+  return std::min(desc.driver_version(), desc.compile_time_toolkit_version()) >=
+         se::SemanticVersion(12, 3, 0);
 }
 
 class FailingCommunicator : public Communicator {
@@ -156,18 +168,29 @@ class FailingCommunicator : public Communicator {
 // traces a trivial memset into a nested command buffer and attaches it as a
 // child command, mirroring the structure produced by the production Record.
 static absl::StatusOr<const se::CommandBuffer::Command*> RecordNoOpCollective(
-    const CollectiveThunk& thunk, const Thunk::ExecuteParams& execute_params,
-    const Command::RecordParams&, Command::RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
+    CollectiveThunk& thunk, const Thunk::ExecuteParams& execute_params,
+    const Command::RecordParams& record_params,
+    Command::RecordAction record_action, se::CommandBuffer* command_buffer) {
   stream_executor::DeviceAddressBase dst =
       execute_params.buffer_allocations->GetDeviceAddress(
           thunk.buffers()[0].destination_buffer.slice);
+  auto trace = [&](se::Stream* stream) { return stream->MemZero(&dst, 4); };
+
+  // Mirrors the production CollectiveThunk::Record structure: trace directly
+  // into the parent command buffer when the collective uses only persistent
+  // buffer allocations, and fall back to the child node path otherwise.
   ASSIGN_OR_RETURN(
-      std::unique_ptr<se::CommandBuffer> nested_cmd,
-      se::TraceCommandBufferFactory::Create(
-          execute_params.stream->parent(),
-          execute_params.command_buffer_trace_stream,
-          [&](se::Stream* stream) { return stream->MemZero(&dst, 4); }));
+      std::optional<const se::CommandBuffer::Command*> inlined_cmd,
+      TryRecordInlinedTracedCommand(thunk, execute_params, record_params,
+                                    record_action, command_buffer, trace));
+  if (inlined_cmd.has_value()) {
+    return *inlined_cmd;
+  }
+
+  ASSIGN_OR_RETURN(std::unique_ptr<se::CommandBuffer> nested_cmd,
+                   se::TraceCommandBufferFactory::Create(
+                       execute_params.stream->parent(),
+                       execute_params.command_buffer_trace_stream, trace));
 
   if (auto* create = std::get_if<Command::RecordCreate>(&record_action)) {
     return command_buffer->CreateChildCommand(*nested_cmd,
@@ -460,6 +483,79 @@ TEST(AllReduceThunkTest, RecordCommandBufferUpdate) {
   ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* updated_cmd,
       thunk.Record(params2, record_params2, Command::RecordUpdate{cmd},
+                   command_buffer.get()));
+  EXPECT_EQ(updated_cmd, cmd);
+
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
+  ASSERT_OK(stream->BlockHostUntilDone());
+}
+
+// Records AllReduceThunk with all-persistent buffer allocations: the command
+// is traced directly into the parent command buffer (no child node and no
+// nested command buffer), and a subsequent update is a validated no-op that
+// returns the same command.
+TEST(AllReduceThunkTest, RecordCommandBufferInlinedCreateAndUpdate) {
+  se::StreamExecutor* executor = GpuExecutor();
+  if (!IsAtLeastCuda12300(executor)) {
+    GTEST_SKIP() << "Tracing into an existing graph requires CUDA 12.3+";
+  }
+
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  int64_t length = 4;
+  int64_t byte_length = sizeof(float) * length;
+
+  se::DeviceAddress<float> src = executor->AllocateArray<float>(length, 0);
+  se::DeviceAddress<float> dst = executor->AllocateArray<float>(length, 0);
+
+  BufferAllocation alloc_src(/*index=*/0, byte_length, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, byte_length, /*color=*/0);
+
+  NoOpAllReduceThunk thunk = MakeNoOpThunk(alloc_src, alloc_dst, length);
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+  ServiceExecutableRunOptions run_options;
+
+  // Both allocations used by the thunk are persistent, so the record helper
+  // must trace the command directly into the parent command buffer.
+  std::vector<BufferAllocation::Index> persistent_alloc_indices = {0, 1};
+
+  BufferAllocations allocations({src, dst}, 0, &allocator);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   /*command_buffer_trace_stream=*/stream.get(),
+                                   /*collective_params=*/nullptr,
+                                   /*collective_cliques=*/nullptr,
+                                   /*collective_memory=*/nullptr);
+  params.persistent_alloc_indices =
+      absl::MakeConstSpan(persistent_alloc_indices);
+
+  CommandStateManager state;
+  Command::RecordParams record_params = {state};
+
+  ASSERT_OK_AND_ASSIGN(
+      auto command_buffer,
+      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
+  ASSERT_OK_AND_ASSIGN(const se::CommandBuffer::Command* cmd,
+                       thunk.Record(params, record_params,
+                                    Command::RecordCreate{/*dependencies=*/{}},
+                                    command_buffer.get()));
+  ASSERT_NE(cmd, nullptr);
+
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  // Update phase: the inlined command can not be re-recorded, so the update
+  // must be a no-op that returns the same command.
+  std::vector<BufferAllocation::Index> updated_allocs = {};
+  Command::RecordParams record_params2 = {state, std::move(updated_allocs)};
+
+  ASSERT_OK(command_buffer->Update());
+  ASSERT_OK_AND_ASSIGN(
+      const se::CommandBuffer::Command* updated_cmd,
+      thunk.Record(params, record_params2, Command::RecordUpdate{cmd},
                    command_buffer.get()));
   EXPECT_EQ(updated_cmd, cmd);
 
