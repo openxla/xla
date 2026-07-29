@@ -1708,12 +1708,8 @@ TEST_F(CollectiveOpsTestE2E, WhileLoopReduceScatterCodeMotion) {
       FindInstruction(executable_module, HloOpcode::kWhile);
   ASSERT_THAT(while_loop, NotNull());
   const HloInstruction* reduce_scatter =
-      FindInstruction(executable_module, HloOpcode::kAsyncStart);
+      FindInstruction(executable_module, HloOpcode::kReduceScatter);
   ASSERT_THAT(reduce_scatter, NotNull());
-
-  const HloAsyncInstruction* rs_async =
-      Cast<HloAsyncInstruction>(reduce_scatter);
-  EXPECT_EQ(rs_async->async_wrapped_opcode(), HloOpcode::kReduceScatter);
 
   // Verify that the reduce-scatter has been hoisted out of the while loop and
   // into the entry computation.
@@ -3241,9 +3237,8 @@ TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOnDim0OutputIsCorrect) {
                           ExecuteReplicated(std::move(unoptimized_module)));
 
   const HloModule* module = execution_result.optimized_module;
-  EXPECT_THAT(
-      module->entry_computation()->root_instruction(),
-      GmockMatch(m::Copy(m::Bitcast(m::AsyncDone().WithShape(S8, {4, 2})))));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Bitcast(m::AllGather().WithShape(S8, {4, 2}))));
 
   const Literal expected_result =
       LiteralUtil::CreateR2<s4>({{s4(0), s4(1), s4(2), s4(3)},
@@ -3282,7 +3277,7 @@ TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOnDim1OutputIsCorrect) {
   const HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(
       root,
-      GmockMatch(m::Fusion(m::Bitcast(m::AsyncDone().WithShape(S8, {2, 4})))));
+      GmockMatch(m::Fusion(m::Bitcast(m::AllGather().WithShape(S8, {2, 4})))));
   EXPECT_THAT(root->fused_expression_root(),
               GmockMatch(m::Transpose(m::Parameter())));
 
@@ -3320,8 +3315,8 @@ TEST_F(CollectiveOpsTestE2E, AllGatherOnChangedDimensionIsCorrect) {
                           test_runner().HloModuleFromWrapped(executable.get()));
   const HloInstruction* root = module->entry_computation()->root_instruction();
 
-  EXPECT_THAT(root, GmockMatch(m::Fusion(m::AsyncDone(
-                        m::AsyncStart(m::Bitcast(m::Copy(m::Constant())))))));
+  EXPECT_THAT(root,
+              GmockMatch(m::Fusion(m::AllGather(m::Bitcast(m::Constant())))));
   EXPECT_THAT(root->fused_expression_root(),
               GmockMatch(m::Transpose(m::Bitcast(m::Parameter()))));
 
