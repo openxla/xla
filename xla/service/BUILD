@@ -3978,6 +3978,7 @@ cc_library(
     deps = [
         ":hlo_value",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
     ],
@@ -3991,6 +3992,7 @@ xla_cc_test(
         ":hlo_phi_graph",
         "//xla:literal_util",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
     ],
 )
