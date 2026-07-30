@@ -413,6 +413,9 @@ static RewriteDecision CanRewrite(const HloModule& module,
     };
   }
 
+  VLOG(1) << "Ignore AR splitting profitability check: " 
+          << ignore_profitability_check;
+
   if (!ignore_profitability_check && !IsProfitableToSplit(replica_map, spec)) {
     return RewriteInfeasibleReason{
         &instruction,
