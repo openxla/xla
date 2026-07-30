@@ -160,6 +160,7 @@ rocm_lib_import(
         [
             "%{rocm_root}/lib/libamdhip64.so*",
             "%{rocm_root}/lib/librocm_kpack.so*",
+            "%{rocm_root}/lib/librocm-core.so*",
         ],
     ),
     interface_library = "%{rocm_root}/lib/libamdhip64.so",
@@ -529,6 +530,7 @@ filegroup(
         "%{rocm_root}/bin/rocminfo",
     ] + [
         ":hsa_rocr_libs_data",
+        ":rocm_core_libs_data",
         ":rocprofiler_register_libs_data",
         ":system_libs_data",
     ],
