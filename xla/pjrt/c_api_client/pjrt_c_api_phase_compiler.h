@@ -49,7 +49,7 @@ class PjRtCApiPhaseCompiler : public PjRtPhaseCompiler {
   // compatibility before invoking the appropriate phase compilers.
   absl::StatusOr<std::vector<xla::PjRtPartialProgramProto>> RunPhases(
       xla::CompileOptions options,
-      const std::vector<xla::PjRtPartialProgramProto>& partial_programs_in,
+      std::vector<xla::PjRtPartialProgramProto> partial_programs_in,
       const xla::PjRtTopologyDescription& topology,
       const std::vector<std::string>& phases_to_run) override;
 
