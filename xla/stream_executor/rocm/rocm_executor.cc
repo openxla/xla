@@ -442,7 +442,6 @@ absl::StatusOr<void*> HostAllocate(Context* context, uint64_t bytes) {
 
 // Deallocates memory on the host.
 void HostDeallocate(Context* context, void* location) {
-  ScopedActivateContext activation(context);
   hipError_t res = hipHostFree(location);
   if (res != hipSuccess) {
     LOG(ERROR) << "failed to deallocate host memory at " << location << ": "
@@ -779,8 +778,8 @@ DeviceAddressBase RocmExecutor::Allocate(uint64_t size, int64_t mem_space_id) {
     return DeviceAddressBase(nullptr, 0);
   }
   // Do not track allocations in device memory since they are the default case.
-  if (memory_space == MemorySpace::kCollective ||
-      memory_space == MemorySpace::kHost) {
+  if (*result != nullptr && (memory_space == MemorySpace::kCollective ||
+                             memory_space == MemorySpace::kHost)) {
     absl::MutexLock lock{&mu_};
     tracked_allocations_[*result] = memory_space;
   }
@@ -788,13 +787,16 @@ DeviceAddressBase RocmExecutor::Allocate(uint64_t size, int64_t mem_space_id) {
 }
 
 void RocmExecutor::Deallocate(DeviceAddressBase* mem) {
+  if (mem == nullptr || mem->opaque() == nullptr) {
+    return;
+  }
   MemorySpace space = MemorySpace::kDevice;
   {
     absl::MutexLock lock{&mu_};
     auto it = tracked_allocations_.find(mem->opaque());
     if (it != tracked_allocations_.end()) {
       space = it->second;
-      tracked_allocations_.erase(it->first);
+      tracked_allocations_.erase(it);
     }
   }
   switch (space) {
