@@ -4045,7 +4045,6 @@ cc_library(
         "//xla:shape_layout",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:tuple_points_to_analysis",
@@ -4053,9 +4052,7 @@ cc_library(
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/hlo/transforms/simplifiers:tuple_simplifier",
-        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_macros",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -4068,7 +4065,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:status",
     ],
 )
 
