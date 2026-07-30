@@ -2208,8 +2208,8 @@ static absl::StatusOr<std::string> EncodeBase64(absl::string_view input) {
   return absl::StrReplaceAll(encoded, {{"_", "/"}, {"-", "+"}});
 }
 
-static absl::StatusOr<std::string> WrapDotInHtml(absl::string_view dot,
-                                                 absl::string_view title) {
+absl::StatusOr<std::string> WrapDotInHtml(absl::string_view dot,
+                                          absl::string_view title) {
   std::string dot_graph = absl::StrFormat("[%s]", EscapeJSONString(dot));
   std::string frames = absl::StrFormat("[0, %s, %s]", EscapeJSONString(title),
                                        EscapeJSONString(""));
@@ -2243,6 +2243,10 @@ static absl::StatusOr<std::string> WrapDotInFormat(
     case RenderedGraphFormat::kDot:
       return std::string(dot);
   }
+}
+
+std::string GraphRenderingTitle(const HloComputation& computation) {
+  return GraphTitle(computation);
 }
 
 void RegisterGraphToURLRenderer(
@@ -2296,16 +2300,33 @@ absl::StatusOr<std::string> RenderGraph(
     HloRenderOptions hlo_render_options,
     std::optional<absl::flat_hash_map<const HloInstruction*, ColorStats>>
         color_map) {
-  absl::MutexLock lock(url_renderer_mu);
-  if (format == RenderedGraphFormat::kUrl && url_renderer == nullptr) {
-    return Unavailable("Can't render as URL; no URL renderer was registered.");
+  // Only the URL renderer needs the global lock; dot/html rendering is
+  // pure and may run concurrently.
+  if (format == RenderedGraphFormat::kUrl) {
+    absl::MutexLock lock(url_renderer_mu);
+    if (url_renderer == nullptr) {
+      return Unavailable(
+          "Can't render as URL; no URL renderer was registered.");
+    }
+    std::string rendered_dot =
+        HloDotDumper(&computation, label, debug_options, hlo_render_options,
+                     NodeFilter(), color_map)
+            .Dump();
+    return WrapDotInFormat(computation, rendered_dot, format);
   }
 
   std::string rendered_dot =
       HloDotDumper(&computation, label, debug_options, hlo_render_options,
                    NodeFilter(), color_map)
           .Dump();
-  return WrapDotInFormat(computation, rendered_dot, format);
+  switch (format) {
+    case RenderedGraphFormat::kUrl:
+      return Internal("Unreachable");
+    case RenderedGraphFormat::kHtml:
+      return WrapDotInHtml(rendered_dot, GraphTitle(computation));
+    case RenderedGraphFormat::kDot:
+      return std::string(rendered_dot);
+  }
 }
 
 absl::StatusOr<std::string> RenderAllComputationsToHtml(
