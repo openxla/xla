@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "xla/executable_run_options.h"
+#include "xla/ffi/api/c_api.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/execution_state.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -40,6 +41,10 @@ struct ThreadPoolDevice;
 namespace xla::cpu {
 class TargetMachineOptions;
 }  // namespace xla::cpu
+
+namespace xla::ffi {
+class NcclCollectiveResourcesApi;
+}  // namespace xla::ffi
 
 namespace stream_executor {
 class Stream;
@@ -86,6 +91,7 @@ struct XLA_FFI_ExecutionContext {
     const xla::cpu::TargetMachineOptions* cpu_target_machine_options = nullptr;
     absl::Span<stream_executor::Stream* const> computation_streams;
     absl::Span<stream_executor::Stream* const> communication_streams;
+    xla::ffi::NcclCollectiveResourcesApi* nccl_collective_resources = nullptr;
   };
 
   using BackendContext = std::variant<std::monostate, CpuContext, GpuContext>;
@@ -104,6 +110,7 @@ struct XLA_FFI_ExecutionContext {
 
   const xla::HloComputation* called_computation = nullptr;
   const xla::ffi::ExecutionContext* execution_context = nullptr;
+  XLA_FFI_ExecutionStage stage = XLA_FFI_ExecutionStage_EXECUTE;
 };
 
 #endif  // XLA_FFI_FFI_STRUCTS_H_

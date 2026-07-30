@@ -50,6 +50,10 @@ namespace xla::cpu {
 class TargetMachineOptions;
 }  // namespace xla::cpu
 
+namespace xla::ffi {
+class NcclCollectiveResourcesApi;
+}  // namespace xla::ffi
+
 namespace stream_executor {
 class Stream;
 class DeviceAddressAllocator;
@@ -90,6 +94,7 @@ struct InvokeContext {
     const xla::cpu::TargetMachineOptions* cpu_target_machine_options = nullptr;
     absl::Span<stream_executor::Stream* const> computation_streams;
     absl::Span<stream_executor::Stream* const> communication_streams;
+    NcclCollectiveResourcesApi* nccl_collective_resources = nullptr;
   };
 
   using BackendContext = std::variant<std::monostate, CpuContext, GpuContext>;

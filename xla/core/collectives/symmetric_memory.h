@@ -46,7 +46,9 @@ class SymmetricMemory {
     return absl::UnimplementedError("Multimem not supported");
   }
 
-  // Returns an address of the symmetric memory on a peer device.
+  // Returns a load/store-accessible address of the symmetric memory on a peer
+  // device. When `rank` is the local rank, this address may be a distinct
+  // virtual alias of `addr()`.
   //
   // The rank argument is in the same rank space as the collective clique that
   // created this memory. Backends are responsible for translating it to any

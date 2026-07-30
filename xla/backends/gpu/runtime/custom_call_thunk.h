@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/ffi_nccl_collective_resources.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/traced_command.h"
@@ -86,6 +87,7 @@ class CustomCallThunk : public TracedCommand {
 
   // A per-execution state that holds state for prepare and initialize stages.
   struct PrepareAndInitState {
+    FfiNcclCollectiveResources nccl_collective_resources;
     ffi::ExecutionState prepare;
     ffi::ExecutionState init;
   };
@@ -197,14 +199,15 @@ class CustomCallThunk : public TracedCommand {
   absl::StatusOr<ObjectPool<xla::ffi::CallFrame>::BorrowedObject>
   BuildCallFrame(const BufferAllocations* absl_nullable buffer_allocations);
 
-  xla::ffi::InvokeContext BuildInvokeContext(
-      RunId run_id, se::Stream* absl_nullable stream,
+  absl::StatusOr<xla::ffi::InvokeContext> BuildInvokeContext(
+      RunId run_id, XLA_FFI_ExecutionStage stage,
+      se::Stream* absl_nullable stream,
       Thunk::ExecutionScopedState* absl_nullable execution_scoped_state,
       const BufferAllocations* absl_nullable buffer_allocations,
       const CollectiveParams* absl_nullable collective_params,
       CollectiveCliqueRequests* absl_nullable collective_clique_requests,
       CollectiveMemoryRequests* absl_nullable collective_memory_requests,
-      const CollectiveCliques* absl_nullable collective_cliques,
+      CollectiveCliques* absl_nullable collective_cliques,
       const CollectiveMemory* absl_nullable collective_memory,
       const ffi::ExecutionContext* absl_nullable execution_context,
       absl::Span<se::Stream* const> computation_streams);
@@ -217,7 +220,7 @@ class CustomCallThunk : public TracedCommand {
       const CollectiveParams* absl_nullable collective_params,
       CollectiveCliqueRequests* absl_nullable collective_clique_requests,
       CollectiveMemoryRequests* absl_nullable collective_memory_requests,
-      const CollectiveCliques* absl_nullable collective_cliques,
+      CollectiveCliques* absl_nullable collective_cliques,
       const CollectiveMemory* absl_nullable collective_memory,
       absl::Span<se::Stream* const> computation_streams);
 
@@ -229,7 +232,7 @@ class CustomCallThunk : public TracedCommand {
       const CollectiveParams* absl_nullable collective_params,
       CollectiveCliqueRequests* absl_nullable collective_clique_requests,
       CollectiveMemoryRequests* absl_nullable collective_memory_requests,
-      const CollectiveCliques* absl_nullable collective_cliques,
+      CollectiveCliques* absl_nullable collective_cliques,
       const CollectiveMemory* absl_nullable collective_memory,
       absl::Span<se::Stream* const> computation_streams);
 

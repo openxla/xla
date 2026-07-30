@@ -145,6 +145,12 @@ NcclCapabilities GetCapabilities(std::shared_ptr<NcclCommState> comm_state) {
       /*supports_one_sided_comm=*/support_one_sided_comm,
       /*supports_gin=*/support_gin,
       /*one_sided_comm_unsupported_reason=*/one_sided_comm_unsupported_reason,
+      /*lsa_size=*/
+      props.nLsaTeams > 0 && props.nRanks % props.nLsaTeams == 0
+          ? props.nRanks / props.nLsaTeams
+          : 0,
+      /*lsa_team_count=*/props.nLsaTeams,
+      /*multimem_supported=*/props.multimemSupport,
   };
 #elif NCCL_VERSION_CODE >= 22900
   return {
@@ -200,6 +206,18 @@ NcclCommunicator::NcclCommunicator(se::StreamExecutor* stream_executor,
   XLA_VLOG_DEVICE(1, stream_executor_->device_ordinal())
       << absl::StreamFormat("Created NCCL communicator %v (gin=%d)", *this,
                             capabilities_.supports_gin);
+}
+
+absl::StatusOr<GpuCommunicatorTopology> NcclCommunicator::GetTopology() const {
+  if (capabilities_.lsa_size <= 0 || capabilities_.lsa_team_count <= 0) {
+    return Unimplemented(
+        "NCCL did not report valid load/store-accessible topology");
+  }
+  return GpuCommunicatorTopology{
+      capabilities_.lsa_size,
+      capabilities_.lsa_team_count,
+      capabilities_.multimem_supported,
+  };
 }
 
 bool NcclCommunicator::SupportsDeviceComm() const {

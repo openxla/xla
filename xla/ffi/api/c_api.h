@@ -47,6 +47,7 @@ typedef struct XLA_FFI_InternalApi XLA_FFI_InternalApi;  // Forward declare
 
 typedef enum {
   XLA_FFI_Extension_Metadata = 1,
+  XLA_FFI_Extension_NcclCollectiveResources = 2,
 } XLA_FFI_Extension_Type;
 
 typedef struct XLA_FFI_Extension_Base {
@@ -91,7 +92,7 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Extension_Base, next);
 // Minor changes include:
 // * Adding a new field to the XLA_FFI_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define XLA_FFI_API_MINOR 3
+#define XLA_FFI_API_MINOR 4
 
 struct XLA_FFI_Api_Version {
   size_t struct_size;
@@ -168,6 +169,17 @@ struct XLA_FFI_Error_GetMessage_Args {
 XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Error_GetMessage_Args, message);
 
 typedef void XLA_FFI_Error_GetMessage(XLA_FFI_Error_GetMessage_Args* args);
+
+struct XLA_FFI_Error_GetCode_Args {
+  size_t struct_size;
+  XLA_FFI_Extension_Base* extension_start;
+  XLA_FFI_Error* error;
+  XLA_FFI_Error_Code errc;  // out
+};
+
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Error_GetCode_Args, errc);
+
+typedef void XLA_FFI_Error_GetCode(XLA_FFI_Error_GetCode_Args* args);
 
 struct XLA_FFI_Error_Destroy_Args {
   size_t struct_size;
@@ -773,11 +785,12 @@ struct XLA_FFI_Api {
   _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_Future_SetError);
   _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_RunId_Get);
   _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_DeviceOrdinal_Get);
+  _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_Error_GetCode);
 };
 
 #undef _XLA_FFI_API_STRUCT_FIELD
 
-XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Api, XLA_FFI_DeviceOrdinal_Get);
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Api, XLA_FFI_Error_GetCode);
 
 const XLA_FFI_Api* XLA_FFI_GetApi();
 
