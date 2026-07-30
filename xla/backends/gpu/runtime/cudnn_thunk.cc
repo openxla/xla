@@ -24,6 +24,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/call_once.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -31,6 +32,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/traced_command.h"
@@ -47,6 +49,18 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+namespace {
+
+// Zero fill commands recorded ahead of the DNN graph command. Keyed by the DNN
+// graph command they precede, because the same thunk can be recorded into one
+// command buffer several times (e.g. for an unrolled loop).
+struct MemzeroCommands : public CommandState {
+  absl::flat_hash_map<const se::CommandBuffer::Command*,
+                      std::vector<const se::CommandBuffer::Command*>>
+      commands;
+};
+
+}  // namespace
 
 CuDnnThunk::CuDnnThunk(std::string fingerprint, ThunkInfo thunk_info,
                        std::vector<ShapedSlice> args,
@@ -135,12 +149,56 @@ absl::StatusOr<const se::CommandBuffer::Command*> CuDnnThunk::Record(
   ASSIGN_OR_RETURN(const bool supports_explicit,
                    graph_->get()->SupportsExplicitCommandBufferConstruction());
   if (supports_explicit) {
+    // The DNN graph command only covers the graph launch, so the output zero
+    // fill that ExecuteOnStream applies has to be recorded separately.
+    MemzeroCommands* memzero =
+        should_memzero_ ? record_params.state.GetOrCreate<MemzeroCommands>(
+                              this, command_buffer)
+                        : nullptr;
     if (auto* create = std::get_if<RecordCreate>(&record_action)) {
-      return command_buffer->CreateDnnGraphCommand(
-          *graph_->get(), *execute_params.stream,
-          absl::Span<se::DeviceAddressBase>(operands), create->dependencies);
+      std::vector<const se::CommandBuffer::Command*> memsets;
+      std::vector<const se::CommandBuffer::Command*> dependencies(
+          create->dependencies.begin(), create->dependencies.end());
+      if (memzero != nullptr) {
+        for (int i = 0; i < operands.size(); ++i) {
+          if (!output_args_[i] || operands[i].size() == 0) {
+            continue;
+          }
+          ASSIGN_OR_RETURN(
+              const se::CommandBuffer::Command* zero_fill,
+              command_buffer->CreateMemset(&operands[i], uint8_t{0},
+                                           /*num_elements=*/operands[i].size(),
+                                           create->dependencies));
+          memsets.push_back(zero_fill);
+          dependencies.push_back(zero_fill);
+        }
+      }
+      ASSIGN_OR_RETURN(
+          const se::CommandBuffer::Command* command,
+          command_buffer->CreateDnnGraphCommand(
+              *graph_->get(), *execute_params.stream,
+              absl::Span<se::DeviceAddressBase>(operands), dependencies));
+      if (memzero != nullptr) {
+        memzero->commands[command] = std::move(memsets);
+      }
+      return command;
     }
     if (auto* update = std::get_if<RecordUpdate>(&record_action)) {
+      if (memzero != nullptr) {
+        auto it = memzero->commands.find(update->command);
+        if (it == memzero->commands.end()) {
+          return Internal("Missing cuDNN output zero fill commands");
+        }
+        int memset_index = 0;
+        for (int i = 0; i < operands.size(); ++i) {
+          if (!output_args_[i] || operands[i].size() == 0) {
+            continue;
+          }
+          RETURN_IF_ERROR(command_buffer->UpdateMemset(
+              it->second[memset_index++], &operands[i], uint8_t{0},
+              /*num_elements=*/operands[i].size()));
+        }
+      }
       RETURN_IF_ERROR(command_buffer->UpdateDnnGraphCommand(
           update->command, *graph_->get(), *execute_params.stream,
           absl::Span<se::DeviceAddressBase>(operands)));
@@ -151,6 +209,14 @@ absl::StatusOr<const se::CommandBuffer::Command*> CuDnnThunk::Record(
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
+        if (should_memzero_) {
+          for (int i = 0; i < operands.size(); ++i) {
+            if (output_args_[i]) {
+              RETURN_IF_ERROR(
+                  stream->MemZero(&operands[i], operands[i].size()));
+            }
+          }
+        }
         return graph_->get()->Execute(
             *stream, absl::Span<se::DeviceAddressBase>(operands),
             execute_params.collective_params->local_device_id.value());

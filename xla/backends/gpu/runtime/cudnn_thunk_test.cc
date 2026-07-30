@@ -149,10 +149,13 @@ bool SupportsCudaGraphTracing(const se::StreamExecutor* executor) {
 // through to RecordTracedCommand, which traces Execute() onto the trace stream.
 // Execute() memsets a 32-bit sentinel across the last operand (the output
 // buffer), giving the test a verifiable observable side effect without needing
-// a real cuDNN arithmetic kernel.
+// a real cuDNN arithmetic kernel. With `write_output` false it leaves the
+// output untouched, which models a cuDNN graph that only writes the elements
+// covered by the sequence lengths.
 class FakeDnnGraph : public se::dnn::DnnGraph {
  public:
-  explicit FakeDnnGraph(uint32_t sentinel) : sentinel_(sentinel) {}
+  explicit FakeDnnGraph(uint32_t sentinel, bool write_output = true)
+      : sentinel_(sentinel), write_output_(write_output) {}
 
   absl::Status Prepare(se::dnn::DnnSupport*, const se::DeviceDescription&,
                        const se::EngineOptions&) override {
@@ -167,6 +170,9 @@ class FakeDnnGraph : public se::dnn::DnnGraph {
                        int64_t local_device_ordinal) const override {
     if (operands.empty()) {
       return absl::InternalError("FakeDnnGraph::Execute received no operands");
+    }
+    if (!write_output_) {
+      return absl::OkStatus();
     }
     se::DeviceAddressBase& output = operands.back();
     return stream.Memset32(&output, sentinel_, output.size());
@@ -186,6 +192,7 @@ class FakeDnnGraph : public se::dnn::DnnGraph {
 
  private:
   uint32_t sentinel_;
+  bool write_output_;
 };
 
 // Fixture shared by all Record() tests.
@@ -195,10 +202,15 @@ class FakeDnnGraph : public se::dnn::DnnGraph {
 // INT32. Input is zero-filled, so the explicit-path real-matmul output is also
 // zero. The implicit-path FakeDnnGraph ignores the math and memsets the output
 // to a 32-bit sentinel instead.
+//
+// The output buffer carries kPadElements past the matmul result that the real
+// graph never writes, standing in for the padded tokens of an fMHA output.
 class CuDnnThunkCmdBufTest : public ::testing::Test {
  protected:
   static constexpr int kDimSize = 32;
   static constexpr int kTotalElements = kDimSize * kDimSize;
+  static constexpr int kPadElements = 64;
+  static constexpr int kOutputElements = kTotalElements + kPadElements;
   static constexpr uint32_t kInitialOutput = 0xdeadbeefu;
   static constexpr uint32_t kFakeSentinel = 0x12345678u;
 
@@ -215,7 +227,7 @@ class CuDnnThunkCmdBufTest : public ::testing::Test {
     TF_ASSERT_OK_AND_ASSIGN(trace_stream_, executor_->CreateStream());
 
     input_buf_ = executor_->AllocateArray<int8_t>(kTotalElements);
-    output_buf_ = executor_->AllocateArray<int32_t>(kTotalElements);
+    output_buf_ = executor_->AllocateArray<int32_t>(kOutputElements);
     TF_ASSERT_OK(stream_->MemZero(&input_buf_, input_buf_.size()));
     TF_ASSERT_OK(
         stream_->Memset32(&output_buf_, kInitialOutput, output_buf_.size()));
@@ -223,13 +235,13 @@ class CuDnnThunkCmdBufTest : public ::testing::Test {
 
     // ShapedSlice args: {input, input, output} — matmul(A, A) → D.
     Shape int8_shape = ShapeUtil::MakeShape(S8, {kTotalElements});
-    Shape int32_shape = ShapeUtil::MakeShape(S32, {kTotalElements});
+    Shape int32_shape = ShapeUtil::MakeShape(S32, {kOutputElements});
     args_.push_back({BufferAllocation::Slice(&alloc_input_, 0, kTotalElements),
                      int8_shape});
     args_.push_back({BufferAllocation::Slice(&alloc_input_, 0, kTotalElements),
                      int8_shape});
     args_.push_back({BufferAllocation::Slice(&alloc_output_, 0,
-                                             kTotalElements * sizeof(int32_t)),
+                                             kOutputElements * sizeof(int32_t)),
                      int32_shape});
 
     run_options_.mutable_run_options()->set_stream(stream_.get());
@@ -253,7 +265,7 @@ class CuDnnThunkCmdBufTest : public ::testing::Test {
 
   // Builds a real cuDNN matmul graph and wraps it in a CuDnnThunk. Skips the
   // enclosing test if cuDNN is too old or the GPU is below Ampere.
-  void BuildRealGraphThunk() {
+  void BuildRealGraphThunk(bool should_memzero = false) {
     se::dnn::DnnSupport& dnn_support = *executor_->AsDnn();
     if (dnn_support.GetVersion().value_or(se::dnn::VersionInfo{0, 0, 0}) <
         se::dnn::VersionInfo(9, 7, 0)) {
@@ -300,7 +312,8 @@ class CuDnnThunkCmdBufTest : public ::testing::Test {
     std::vector<bool> output_args(args_.size(), false);
     output_args.back() = true;
     thunk_ = std::make_unique<CuDnnThunk>(
-        /*fingerprint=*/"", Thunk::ThunkInfo(), args_, std::move(output_args));
+        /*fingerprint=*/"", Thunk::ThunkInfo(), args_, std::move(output_args),
+        should_memzero);
     se::dnn::LazyDnnGraph prebuilt(
         std::make_unique<se::gpu::CudnnGraph>(std::move(graph)));
     thunk_->graph()->swap(prebuilt);
@@ -309,13 +322,15 @@ class CuDnnThunkCmdBufTest : public ::testing::Test {
   }
 
   // Builds a CuDnnThunk backed by the FakeDnnGraph (forces the traced path).
-  void BuildFakeGraphThunk() {
+  void BuildFakeGraphThunk(bool should_memzero = false,
+                           bool write_output = true) {
     std::vector<bool> output_args(args_.size(), false);
     output_args.back() = true;
     thunk_ = std::make_unique<CuDnnThunk>(
-        /*fingerprint=*/"", Thunk::ThunkInfo(), args_, std::move(output_args));
+        /*fingerprint=*/"", Thunk::ThunkInfo(), args_, std::move(output_args),
+        should_memzero);
     se::dnn::LazyDnnGraph prebuilt(
-        std::make_unique<FakeDnnGraph>(kFakeSentinel));
+        std::make_unique<FakeDnnGraph>(kFakeSentinel, write_output));
     thunk_->graph()->swap(prebuilt);
 
     InitializeThunk();
@@ -335,6 +350,15 @@ class CuDnnThunkCmdBufTest : public ::testing::Test {
     return dst;
   }
 
+  // Reads back the tail that the real cuDNN graph never writes.
+  std::vector<int32_t> ReadOutputTail(const se::DeviceAddress<int32_t>& buf) {
+    std::vector<int32_t> dst(kOutputElements, 0);
+    TF_CHECK_OK(
+        stream_->Memcpy(dst.data(), buf, kOutputElements * sizeof(int32_t)));
+    TF_CHECK_OK(stream_->BlockHostUntilDone());
+    return std::vector<int32_t>(dst.begin() + kTotalElements, dst.end());
+  }
+
   se::StreamExecutor* executor_ = nullptr;
   std::unique_ptr<se::Stream> stream_;
   std::unique_ptr<se::Stream> trace_stream_;
@@ -345,7 +369,7 @@ class CuDnnThunkCmdBufTest : public ::testing::Test {
   // pointers into them. See the analogous comment in
   // CublasLtMatmulThunkCmdBufTest.
   BufferAllocation alloc_input_{/*index=*/0, kTotalElements, /*color=*/0};
-  BufferAllocation alloc_output_{/*index=*/1, kTotalElements * sizeof(int32_t),
+  BufferAllocation alloc_output_{/*index=*/1, kOutputElements * sizeof(int32_t),
                                  /*color=*/0};
 
   std::vector<ShapedSlice> args_;
@@ -414,7 +438,7 @@ TEST_F(CuDnnThunkCmdBufTest, RecordUpdateExplicit) {
   // UpdateDnnGraphCommand with changed arguments. Pre-fill the new buffer with
   // a non-zero sentinel so the post-submit zero fill is observable.
   se::DeviceAddress<int32_t> output1 =
-      executor_->AllocateArray<int32_t>(kTotalElements);
+      executor_->AllocateArray<int32_t>(kOutputElements);
   TF_ASSERT_OK(stream_->Memset32(&output1, kInitialOutput, output1.size()));
   BufferAllocations updated_allocations(
       std::vector<se::DeviceAddressBase>{input_buf_, output1}, 0,
@@ -495,7 +519,7 @@ TEST_F(CuDnnThunkCmdBufTest, RecordUpdateImplicit) {
   // pointer-identical to the original across backends — only assert non-null
   // and that the side effect re-occurs on the new buffer.
   se::DeviceAddress<int32_t> output1 =
-      executor_->AllocateArray<int32_t>(kTotalElements);
+      executor_->AllocateArray<int32_t>(kOutputElements);
   TF_ASSERT_OK(stream_->Memset32(&output1, kInitialOutput, output1.size()));
   BufferAllocations updated_allocations(
       std::vector<se::DeviceAddressBase>{input_buf_, output1}, 0,
@@ -516,6 +540,112 @@ TEST_F(CuDnnThunkCmdBufTest, RecordUpdateImplicit) {
   EXPECT_EQ(ReadOutput(output1),
             std::vector<int32_t>(kTotalElements,
                                  static_cast<int32_t>(kFakeSentinel)));
+}
+
+//===----------------------------------------------------------------------===//
+// should_memzero on the Record() path.
+//
+// fMHA thunks are emitted with should_memzero, because cuDNN only writes the
+// tokens covered by seq_len_q / the ragged offsets and everything else must
+// read back as zero. ExecuteOnStream honours the flag; Record() has to do the
+// same or the padded region keeps whatever the donated buffer held.
+//===----------------------------------------------------------------------===//
+
+TEST_F(CuDnnThunkCmdBufTest, RecordCreateZeroFillsOutputExplicit) {
+  BuildRealGraphThunk(/*should_memzero=*/true);
+  if (HasFatalFailure() || IsSkipped()) {
+    return;
+  }
+
+  CommandStateManager state;
+  Command::RecordParams record_params = {state};
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto command_buffer,
+      executor_->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
+  TF_ASSERT_OK_AND_ASSIGN(
+      const se::CommandBuffer::Command* cmd,
+      thunk_->Record(*params_, record_params,
+                     Command::RecordCreate{/*dependencies=*/{}},
+                     command_buffer.get()));
+  ASSERT_NE(cmd, nullptr);
+  TF_ASSERT_OK(command_buffer->Finalize());
+  TF_ASSERT_OK(command_buffer->Submit(stream_.get()));
+
+  EXPECT_EQ(ReadOutput(output_buf_), std::vector<int32_t>(kTotalElements, 0));
+  EXPECT_EQ(ReadOutputTail(output_buf_), std::vector<int32_t>(kPadElements, 0));
+}
+
+TEST_F(CuDnnThunkCmdBufTest, RecordUpdateZeroFillsOutputExplicit) {
+  BuildRealGraphThunk(/*should_memzero=*/true);
+  if (HasFatalFailure() || IsSkipped()) {
+    return;
+  }
+
+  CommandStateManager state;
+  Command::RecordParams record_params = {state};
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto command_buffer,
+      executor_->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
+  TF_ASSERT_OK_AND_ASSIGN(
+      const se::CommandBuffer::Command* cmd,
+      thunk_->Record(*params_, record_params,
+                     Command::RecordCreate{/*dependencies=*/{}},
+                     command_buffer.get()));
+  ASSERT_NE(cmd, nullptr);
+  TF_ASSERT_OK(command_buffer->Finalize());
+  TF_ASSERT_OK(command_buffer->Submit(stream_.get()));
+
+  // The zero fill commands must be rebound to the new output buffer alongside
+  // the DNN graph command.
+  se::DeviceAddress<int32_t> output1 =
+      executor_->AllocateArray<int32_t>(kOutputElements);
+  TF_ASSERT_OK(stream_->Memset32(&output1, kInitialOutput, output1.size()));
+  BufferAllocations updated_allocations(
+      std::vector<se::DeviceAddressBase>{input_buf_, output1}, 0,
+      allocator_.get());
+  Thunk::ExecuteParams updated_params = Thunk::ExecuteParams::Create(
+      run_options_, updated_allocations, stream_.get(), trace_stream_.get(),
+      &*collective_params_, /*collective_cliques=*/nullptr,
+      /*collective_memory=*/nullptr);
+
+  TF_ASSERT_OK(command_buffer->Update());
+  TF_ASSERT_OK_AND_ASSIGN(
+      const se::CommandBuffer::Command* updated_cmd,
+      thunk_->Record(updated_params, record_params, Command::RecordUpdate{cmd},
+                     command_buffer.get()));
+  EXPECT_EQ(updated_cmd, cmd);
+  TF_ASSERT_OK(command_buffer->Finalize());
+  TF_ASSERT_OK(command_buffer->Submit(stream_.get()));
+
+  EXPECT_EQ(ReadOutput(output1), std::vector<int32_t>(kTotalElements, 0));
+  EXPECT_EQ(ReadOutputTail(output1), std::vector<int32_t>(kPadElements, 0));
+}
+
+TEST_F(CuDnnThunkCmdBufTest, RecordCreateZeroFillsOutputImplicit) {
+  BuildFakeGraphThunk(/*should_memzero=*/true, /*write_output=*/false);
+  if (HasFatalFailure() || IsSkipped()) {
+    return;
+  }
+
+  CommandStateManager state;
+  Command::RecordParams record_params = {state};
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto command_buffer,
+      executor_->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
+  TF_ASSERT_OK_AND_ASSIGN(
+      const se::CommandBuffer::Command* cmd,
+      thunk_->Record(*params_, record_params,
+                     Command::RecordCreate{/*dependencies=*/{}},
+                     command_buffer.get()));
+  ASSERT_NE(cmd, nullptr);
+  TF_ASSERT_OK(command_buffer->Finalize());
+  TF_ASSERT_OK(command_buffer->Submit(stream_.get()));
+
+  EXPECT_EQ(ReadOutput(output_buf_), std::vector<int32_t>(kTotalElements, 0));
+  EXPECT_EQ(ReadOutputTail(output_buf_), std::vector<int32_t>(kPadElements, 0));
 }
 
 }  // namespace
